@@ -37,10 +37,13 @@ func goldenPlan(t *testing.T, name string) *Plan {
 
 // goldenCover is the run each golden plan was made for (the tfvars the
 // script uses): project proj-1234 (the Firebase root's project aurora-fp is
-// a second one), the default registry and the default runs bucket.
+// a second one), the default registry and the default runs bucket, and the
+// installation's pull-through repository with the owner its images are
+// recorded against (installation-credentials names one of them, so the
+// credentials service's stricter image check reads both).
 func goldenCover(listed ...string) Cover {
 	return Cover{Projects: []string{"proj-1234", "aurora-fp"}, Registry: "us-east5-docker.pkg.dev", Region: "us-east5",
-		Buckets: []string{"fugaro-runs-proj-1234"}, Listed: listed}
+		Buckets: []string{"fugaro-runs-proj-1234"}, Ghcr: "fugaro-ghcr", Owner: "dimipaun", Listed: listed}
 }
 
 func TestGoldenPlansAreCovered(t *testing.T) {
@@ -52,8 +55,13 @@ func TestGoldenPlansAreCovered(t *testing.T) {
 		// (TestGoldenAccountJobMountsOnlyItsOwnToken reads the rest).
 		"installation-accounts": nil,
 		"installation-managed":  nil,
-		"repo":                  {"user:launcher@example.com", "user:operator@example.com"},
-		"firebase":              {"user:launcher@example.com", "user:operator@example.com", "user:extra@example.com", "user:owner@example.com", "group:editors@example.com"},
+		// The credentials service ON (C1.14): the same root and run with the
+		// service's seven environment variables on its revision, read off a
+		// real plan. TestGoldenCredentialsServiceCarriesItsSevenNames reads
+		// their values back against the fixture.
+		"installation-credentials": nil,
+		"repo":                     {"user:launcher@example.com", "user:operator@example.com"},
+		"firebase":                 {"user:launcher@example.com", "user:operator@example.com", "user:extra@example.com", "user:owner@example.com", "group:editors@example.com"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := goldenPlan(t, name)
@@ -387,18 +395,19 @@ func TestAdoptVariantShapeMatchesRealTerraform(t *testing.T) {
 // module, so TestGoldenPlansAreCovered is only a test of the deployer if the
 // deployer is in it: a golden left stale (no deployer account, roles or
 // bindings) would pass that test without reading any of them. This pins that
-// it carries the account, both roles (with the pinned permission lists), both
-// project bindings with their literal roles and binding (2)'s exact condition,
-// and — beside the deployer roles' creation — a non-project grant whose role is
-// computed (history_runner's), the shape the computed-role refusal must admit.
-// It then breaks the golden's own scoped binding and requires the cover to
-// refuse it, so the condition check runs against the real plan's shape and
-// not only against hand-written fixtures.
+// it carries the account, all eight roles (with the pinned permission lists),
+// all eight project bindings with their literal roles and each conditioned
+// binding's exact condition, and — beside the deployer roles' creation — a
+// non-project grant whose role is computed (history_runner's), the shape the
+// computed-role refusal must admit. It then breaks each of the golden's
+// conditioned bindings in turn and requires the cover to refuse that binding
+// alone, so the condition check runs against the real plan's shape and not only
+// against hand-written fixtures.
 //
-// The scoped role and its binding are gated off by default in 0.8.6
+// The conditioned roles and their bindings are gated off by default
 // (managed_deployer_scoped, deployer.tf's header), so they are read from
 // installation-managed, the same root planned with the gate open; the default
-// golden must carry everything else of the deployer and neither of the two.
+// golden must carry everything else of the deployer and none of the fourteen.
 func TestGoldenInstallationPlanCarriesTheDeployer(t *testing.T) {
 	const mod = "module.installation."
 	def := goldenPlan(t, "installation")
@@ -406,10 +415,12 @@ func TestGoldenInstallationPlanCarriesTheDeployer(t *testing.T) {
 	for _, rc := range def.ResourceChanges {
 		defAddr[rc.Address] = true
 	}
-	for _, addr := range []string{"google_project_iam_custom_role.fugaro_deployer_scoped", "google_project_iam_member.fugaro_deployer_scoped"} {
-		for _, a := range []string{mod + addr, mod + addr + "[0]"} {
-			if defAddr[a] {
-				t.Errorf("the default installation golden plans %s, which is gated off unless managed_deployer_scoped is set", a)
+	for _, label := range deployerRoleLabel {
+		for _, kind := range []string{"google_project_iam_custom_role.", "google_project_iam_member."} {
+			for _, a := range []string{mod + kind + label, mod + kind + label + "[0]"} {
+				if defAddr[a] {
+					t.Errorf("the default installation golden plans %s, which is gated off unless managed_deployer_scoped is set", a)
+				}
 			}
 		}
 	}
@@ -438,10 +449,15 @@ func TestGoldenInstallationPlanCarriesTheDeployer(t *testing.T) {
 	if got := str(need("google_service_account.fugaro_deployer").Change.After["account_id"]); got != DeployerAccountID {
 		t.Errorf("the deployer account's ID is %q, want %q", got, DeployerAccountID)
 	}
-	for addr, id := range map[string]string{
-		"google_project_iam_custom_role.fugaro_deployer":           DeployerRole,
-		"google_project_iam_custom_role.fugaro_deployer_scoped[0]": DeployerScopedRole,
-	} {
+	// roleID -> the golden address its custom role has. One role per service,
+	// each addressed by the module's own label.
+	roleAddr := map[string]string{"google_project_iam_custom_role.fugaro_deployer": DeployerRole}
+	memberAddr := map[string]string{"google_project_iam_member.fugaro_deployer": DeployerRole}
+	for role, label := range deployerRoleLabel {
+		roleAddr["google_project_iam_custom_role."+label+"[0]"] = role
+		memberAddr["google_project_iam_member."+label+"[0]"] = role
+	}
+	for addr, id := range roleAddr {
 		rc := need(addr)
 		if got := str(rc.Change.After["role_id"]); got != id {
 			t.Errorf("%s: role_id %q, want %q", addr, got, id)
@@ -458,10 +474,7 @@ func TestGoldenInstallationPlanCarriesTheDeployer(t *testing.T) {
 		}
 	}
 	member := "serviceAccount:" + DeployerAccount("proj-1234")
-	for addr, id := range map[string]string{
-		"google_project_iam_member.fugaro_deployer":           DeployerRole,
-		"google_project_iam_member.fugaro_deployer_scoped[0]": DeployerScopedRole,
-	} {
+	for addr, id := range memberAddr {
 		rc := need(addr)
 		if unknown(rc.Change, "role") || str(rc.Change.After["role"]) != "projects/proj-1234/roles/"+id {
 			t.Errorf("%s: role %v, want the literal projects/proj-1234/roles/%s", addr, rc.Change.After["role"], id)
@@ -469,16 +482,16 @@ func TestGoldenInstallationPlanCarriesTheDeployer(t *testing.T) {
 		if got := str(rc.Change.After["member"]); got != member {
 			t.Errorf("%s: member %q, want %q", addr, got, member)
 		}
+		want, _ := DeployerConditionExpression("proj-1234", id)
 		conds := objects(rc.Change.After["condition"])
-		switch id {
-		case DeployerRole:
+		if id == DeployerRole {
 			if len(conds) != 0 {
-				t.Errorf("%s: binding (1) carries a condition %v", addr, conds)
+				t.Errorf("%s: the unconditioned binding carries a condition %v", addr, conds)
 			}
-		case DeployerScopedRole:
-			if len(conds) != 1 || str(conds[0]["title"]) != DeployerConditionTitle || str(conds[0]["expression"]) != DeployerConditionExpression() {
-				t.Errorf("%s: binding (2)'s condition is not exactly %s on the managed prefix: %v", addr, DeployerConditionTitle, conds)
-			}
+			continue
+		}
+		if len(conds) != 1 || str(conds[0]["title"]) != DeployerConditionTitle || str(conds[0]["expression"]) != want {
+			t.Errorf("%s: the binding's condition is not exactly %s on the managed prefix for %s:\n%v\nwant\n%s", addr, DeployerConditionTitle, id, conds, want)
 		}
 	}
 	// The other side of the computed-role refusal: a computed role on a grant
@@ -493,27 +506,47 @@ func TestGoldenInstallationPlanCarriesTheDeployer(t *testing.T) {
 		t.Error("the installation golden has no non-project grant with a computed role, so the golden test no longer shows that refusal is scoped to project bindings")
 	}
 
-	// The golden's own scoped binding, with its condition removed and then
-	// widened, must be refused by address.
-	for name, cond := range map[string]any{
-		"no condition":      []any{},
-		"widened condition": []any{map[string]any{"title": DeployerConditionTitle, "expression": "true", "description": nil}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			var q Plan
-			b, _ := json.Marshal(p)
-			if err := json.Unmarshal(b, &q); err != nil {
-				t.Fatal(err)
-			}
-			for i, rc := range q.ResourceChanges {
-				if rc.Address == mod+"google_project_iam_member.fugaro_deployer_scoped[0]" {
-					q.ResourceChanges[i].Change.After["condition"] = cond
+	// Each of the golden's own conditioned bindings, with its condition
+	// removed, widened, and replaced by another service's: each must be refused
+	// by address, and the refusal must name the binding that was tampered with
+	// — a fence that stops being read on one service is a hole on that service
+	// alone, so a test that only tampered with one of them would not see it.
+	for _, role := range DeployerServiceRoles() {
+		label := deployerRoleLabel[role]
+		addr := mod + "google_project_iam_member." + label + "[0]"
+		// A condition that is a real one, and not this binding's: storage's
+		// own for any other service, and the Cloud Run job's for storage.
+		other := DeployerStorageRole
+		if role == DeployerStorageRole {
+			other = DeployerRunJobRole
+		}
+		otherExpr, _ := DeployerConditionExpression("proj-1234", other)
+		for name, cond := range map[string]any{
+			"no condition":                []any{},
+			"widened condition":           []any{map[string]any{"title": DeployerConditionTitle, "expression": "true", "description": nil}},
+			"another service's condition": []any{map[string]any{"title": DeployerConditionTitle, "expression": otherExpr, "description": nil}},
+		} {
+			t.Run(role+"/"+name, func(t *testing.T) {
+				var q Plan
+				b, _ := json.Marshal(p)
+				if err := json.Unmarshal(b, &q); err != nil {
+					t.Fatal(err)
 				}
-			}
-			got := goldenCover().NotCovered(&q, nil)
-			if len(got) != 1 || !strings.Contains(got[0], "fugaro_deployer_scoped") {
-				t.Fatalf("the golden with its scoped binding's condition changed (%s): %q, want that binding alone refused", name, got)
-			}
-		})
+				found := false
+				for i, rc := range q.ResourceChanges {
+					if rc.Address == addr {
+						found = true
+						q.ResourceChanges[i].Change.After["condition"] = cond
+					}
+				}
+				if !found {
+					t.Fatalf("the installation-managed golden has no %s: regenerate it with scripts/gen-golden-plans.sh", addr)
+				}
+				got := goldenCover().NotCovered(&q, nil)
+				if len(got) != 1 || !strings.Contains(got[0], role) {
+					t.Fatalf("the golden with %s's condition changed (%s): %q, want that binding alone refused", role, name, got)
+				}
+			})
+		}
 	}
 }

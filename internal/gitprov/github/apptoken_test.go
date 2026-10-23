@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"maps"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -214,5 +215,26 @@ func TestMintInstallationTokenBuildPermissions(t *testing.T) {
 	}
 	if _, _, err := MintInstallationToken(context.Background(), Options{Owner: "acme", Repo: "web", AppID: "1234", PrivateKey: key(t)}, nil); err == nil {
 		t.Error("minted without permissions")
+	}
+}
+
+// TestRunTokenPermissionsAreTheRuns: RunTokenPermissions is the run's own set
+// — the four permissions design §6.1 gives a run, and no more — and it is a
+// copy, so a caller that mutates what it was handed (the credentials service,
+// C2.1, builds its mint's request from it) cannot change what the next caller
+// asks GitHub for.
+//
+// The set itself is pinned where it is used: token_refresh.json's two mint
+// bodies are exactly these four permissions, and the fixture server refuses a
+// request body that is not the one it holds.
+func TestRunTokenPermissionsAreTheRuns(t *testing.T) {
+	want := map[string]string{"contents": "write", "pull_requests": "write", "issues": "read", "metadata": "read"}
+	perms := RunTokenPermissions()
+	if !maps.Equal(perms, want) {
+		t.Fatalf("RunTokenPermissions() = %v, want %v", perms, want)
+	}
+	perms["administration"] = "write"
+	if again := RunTokenPermissions(); !maps.Equal(again, want) {
+		t.Errorf("RunTokenPermissions() after a caller mutated its copy = %v, want %v", again, want)
 	}
 }

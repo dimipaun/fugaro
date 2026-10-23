@@ -28,6 +28,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/mailbox/keychain"
 	"github.com/dimipaun/fugaro/internal/mirror"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
@@ -152,6 +153,12 @@ type Config struct {
 	Profiles map[string]config.JobProfile `yaml:"profiles,omitempty"`
 	// Watch tunes fugaro watch.
 	Watch *Watch `yaml:"watch,omitempty"`
+	// Mailbox is what `fugaro mailbox` reads out of this project's config
+	// (mobile P4.1, T2). The pairing key itself is never here: the config
+	// holds the NAME of the OS keychain item the key lives at, which is not a
+	// secret and may be printed (M5, D113b — "the settings hold the item's
+	// name only").
+	Mailbox *Mailbox `yaml:"mailbox,omitempty"`
 	// UpdateCheck turns off the daily check for a newer fugaro release and
 	// its one-line stderr nag (FUGARO_NO_UPDATE_CHECK=1 does the same;
 	// `fugaro doctor`'s own cli-version check ignores both); nil or true
@@ -165,6 +172,23 @@ type Config struct {
 	// notes are warnings added after parsing (AddWarning), such as a
 	// published shared config's dropped legacy base_images entries.
 	notes []string
+}
+
+// Mailbox is the mailbox block: what the mailbox consumer needs from the
+// operator's own machine.
+type Mailbox struct {
+	// KeychainItem is the OS keychain item the pairing key lives at (M5,
+	// D113b). It is configuration and it is not a secret — it may be printed,
+	// and the diagnostic a missing key produces names it — but its shape is
+	// fixed, because it becomes an argv element of a keychain program: at most
+	// 64 characters of A-Z, a-z, 0-9, '.', '_' and '-', carrying this project's
+	// name, so a config file cannot name an arbitrary keychain query and two
+	// projects on one machine cannot be made to read each other's key.
+	//
+	// The shape is keychain.ParseItem's, not a second copy of the rule:
+	// validate refuses a name that package refuses, with that package's
+	// sentence.
+	KeychainItem string `yaml:"keychain_item,omitempty"`
 }
 
 // Watch is the watch block: how fugaro watch flags a fast burn.
@@ -428,7 +452,8 @@ type Batch struct {
 	// here too.
 	Image string `yaml:"image,omitempty"`
 	// MachineType is the Compute Engine machine type a run's VM is. Empty
-	// means the backend's own default (e2-standard-4); it must be one the
+	// means the backend's own default (e2-standard-8, the smallest type whose
+	// task share carries the config's default 4 CPU/8Gi); it must be one the
 	// price table carries, which the backend checks.
 	MachineType string `yaml:"machine_type,omitempty"`
 	// BootImage is the preloaded boot image a run's VM boots, as the family
@@ -469,6 +494,15 @@ type Batch struct {
 	// who wants the jobs bounded more tightly writes it here. The workflow's
 	// own timeouts.total is where this value comes from once the enable task
 	// reads it per workflow (internal/cli's batchTimeouts).
+	//
+	// It is also REFUSED above that ceiling (validateBatch): the reaper's
+	// deadline is max(the longest configured timeout, backend.MaxRunTime), and
+	// the reaper that runs from its own Cloud Run job's environment has no
+	// project config to read the first of those from, so it derives the base
+	// from the ceiling alone (internal/cli/reaper.go). A configured timeout
+	// above the ceiling makes the two disagree, in the one direction that ends
+	// a live run: the sweeper's bound would be shorter than the config's, and
+	// a job that is legitimately running would read as stuck.
 	TaskTimeout config.Duration `yaml:"task_timeout,omitempty"`
 }
 
@@ -523,6 +557,17 @@ func validateBatch(bad func(string, ...any), c *Config) {
 		// omitted key means.
 		bad("batch.task_timeout %v: it must be more than 0, or left out for the default (%v)", b.TaskTimeout.Duration, backend.MaxRunTime)
 	}
+	if b.TaskTimeout.Set && b.TaskTimeout.Duration > backend.MaxRunTime {
+		// The ceiling, and this refusal is the reaper's requirement rather
+		// than a cap for its own sake: no run may be given more than
+		// backend.MaxRunTime (--total-timeout is capped there), so a job sized
+		// past it is headroom no run can use -- while the reaper that runs
+		// from its own Cloud Run job's environment has no config to read this
+		// number from and derives its base from the ceiling
+		// (internal/cli/reaper.go). The two sources would disagree about when
+		// a live run has ended, and that disagreement deletes a running job.
+		bad("batch.task_timeout %v is longer than %v, the longest a run may be given (--total-timeout is capped there): a job sized past it is headroom no run can use, and the reaper of an installation whose config it cannot read derives its own bound from that ceiling, so the two would disagree about when a live run has ended", b.TaskTimeout.Duration, backend.MaxRunTime)
+	}
 	// Each entry is named by its position in the sorted map, and never by its
 	// key: neither side of the map is printed, because **either** side can hold
 	// a secret's value. The value slot is the one a value is usually written
@@ -567,6 +612,15 @@ type Endpoints struct {
 	// Engine root is not a CLI client's endpoint, it is the reaper job's
 	// (internal/backend/batch/reap.go's Endpoints).
 	Batch string `yaml:"batch,omitempty"`
+	// Compute is the Compute Engine API root, read by `fugaro doctor`'s
+	// checks for an installation that carries a batch block (the preload
+	// image family, and the network and subnetwork a run's VMs are placed
+	// in: design compute-backend.md §4.4). Empty is the real endpoint, as
+	// for every other field here. It is not the reaper's root: the reaper
+	// runs as its own job with its own env (internal/backend/batch's
+	// Endpoints), and this one is a client the operator's own doctor run
+	// reads with.
+	Compute string `yaml:"compute,omitempty"`
 	// The APIs only fugaro update calls: bucket and IAM policy reads and
 	// writes, service accounts, registries, the project's number, and the
 	// enable of Cloud Resource Manager.
@@ -1052,6 +1106,16 @@ func (c *Config) validate() error {
 			bad("watch.burn_alert_usd_per_hour: %v (a finite dollar amount, 0 or more)", err)
 		}
 	}
+	// The mailbox block's one field is a keychain item name, and the rule is
+	// keychain.ParseItem's: this file is the one place the name is written, and
+	// the package that turns it into an argv is the one that says what shape it
+	// may have. A name refused here is refused before `fugaro mailbox` can read
+	// a key, which is the run-level refusal §8's row 1 names.
+	if m := c.Mailbox; m != nil {
+		if _, err := keychain.ParseItem(m.KeychainItem, c.Name); err != nil {
+			bad("mailbox.keychain_item: %v", err)
+		}
+	}
 	for _, region := range slices.Sorted(maps.Keys(c.ComputePrices)) {
 		if !regionRE.MatchString(region) {
 			bad("compute_prices: %q is not a region such as us-central1", region)
@@ -1085,6 +1149,12 @@ func (c *Config) validate() error {
 		// Every sibling is refused here for that reason, and this one is no
 		// different.
 		{"batch", c.Endpoints.Batch},
+		// The Compute Engine root `fugaro doctor` reads a Batch
+		// installation's own facts through (the preload image family, the
+		// network, the subnetwork). Same kind of value as `batch` above and
+		// refused for the same reason: doctor attaches the operator's ADC to
+		// it.
+		{"compute", c.Endpoints.Compute},
 	} {
 		if ep.url == "" {
 			continue

@@ -12,6 +12,36 @@
 #     git add .github/workflows/console-release.yml
 #     git commit -m "console: sign and notarise the console on a version tag (plan Task 4.5)"
 #
+# **THIS FILE SUPERSEDES docs/pending-workflows/console-release.yml (2026-10-20,
+# the Linux leg).** It is that file with a third job, `linux`, and a `publish`
+# that merges both legs, so the staged copy and the applied copy are stale and
+# this one is what the owner wants. Apply it as a three-command sequence:
+#
+#     cp docs/pending-workflows/console-release-linux.yml docs/pending-workflows/console-release.yml
+#     cp docs/pending-workflows/console-release.yml .github/workflows/console-release.yml
+#     git rm docs/pending-workflows/console-release-linux.yml
+#     git add -A
+#     git commit -m "console: build, verify and attach the Linux artifacts on a version tag"
+#
+# That leaves `.github/workflows/console-release.yml` and the staged copy
+# byte-identical again -- which is what TestDocsConsoleReleaseWorkflowIsStaged-
+# AndPinned asserts, and why the intermediate step above exists rather than
+# copying straight over the applied file. Nothing else about the copy-in below
+# changes: the protected environment, the reviewer and the tag ruleset are the
+# same controls, and this file adds no secret to them.
+#
+# **What the Linux leg adds, in one paragraph.** A third job, `linux`, on
+# `ubuntu-24.04` with `contents: read` and `checks: read` and **no environment
+# and no secret**: it runs the same release gate, installs the same pinned
+# toolchain, builds with the same packer and the same fuses, verifies the shipped
+# AppImage and .deb (including reading the fuse wire back out of the executable
+# inside each one), and uploads them as `console-linux-assets`. `publish` now
+# waits for both jobs, re-checks each leg against its own sums file, merges the
+# two legs into one asset set with one `console-sha256sums.txt`, signs that file
+# keyless with cosign (`id-token: write`, the same call GoReleaser makes for the
+# CLI's archives) into `console-sha256sums.txt.sigstore.json`, and attaches all
+# of it to `console-vX.Y.Z`. Nothing else in the file moved.
+#
 # **Before the copy-in, the owner creates the protected environment this file
 # names** (Settings, Environments, `console-release`): required reviewers = the
 # owner, deployment branches restricted to tags. A staging file cannot create an
@@ -44,14 +74,19 @@
 #     console's *tests* are Task 1.4's separate console-tests.yml, which runs on
 #     every pull request and holds no secret at all (design section 9.4; plan
 #     Task 4.2's two-file table).
-#   - **Two jobs, and the write token is never in the job that runs the
+#   - **Three jobs, and the write token is never in a job that runs a
 #     packer.** `release` (protected environment, the Apple secrets, the
 #     packer) holds `contents: read` and `checks: read` only: it gates,
 #     builds, signs, notarises, staples, verifies, and uploads the finished
-#     assets with their SHA-256 sums as a workflow artifact. `publish` (no
-#     environment, no packer, no Apple secret, no checkout) is the only job
-#     with `contents: write`: it downloads the artifact, re-checks every asset
-#     against the sums, and publishes the release.
+#     macOS assets with their SHA-256 sums as a workflow artifact. `linux`
+#     (2026-10-20) is the same shape for the Linux artifacts: read-only, no
+#     environment, **no secret at all**, because an unsigned AppImage and .deb
+#     have nothing to sign with -- it gates, builds, verifies the shipped bytes
+#     and uploads them with their own sums file. `publish` (no environment, no
+#     packer, no Apple secret, no Linux secret, no checkout) is the only job
+#     with `contents: write`: it downloads both artifacts, re-checks every
+#     asset against the sums, merges the two legs, signs the merged sums file
+#     keyless with cosign, and publishes the release.
 #   - **It publishes its OWN release, `console-vX.Y.Z`, and never touches the
 #     CLI's release** (the owner's ruling of 2026-10-17, "Separate console
 #     release"). GoReleaser publishes the CLI's `vX.Y.Z` release from the same
@@ -71,7 +106,10 @@
 #     `-c.extraMetadata.version=X.Y.Z` from the tag (through `env:`), after a
 #     step that refuses any tag that is not a strict vX.Y.Z. The .dmg and .zip
 #     file names carry that version, the app's CFBundleShortVersionString is
-#     it, and the update feed of Task 4.3/4.4 depends on it.
+#     it, and the update feed of Task 4.3/4.4 depends on it. The Linux leg
+#     stamps the same version the same way, and
+#     `build.linux.artifactName` names its two artifacts
+#     `Fugaro.Console-X.Y.Z-linux-x64.AppImage` and `.deb`.
 #   - Its secrets come from a **job-level `environment:`** naming the protected
 #     GitHub environment `console-release`. They are reached only as
 #     `${{ secrets.NAME }}` in the `env:` of **exactly one step**, the one that
@@ -162,7 +200,11 @@
 #     the signing step, upload-artifact after it (when the key material is
 #     already removed) and download-artifact in `publish` -- are pinned to
 #     full commits with version comments, the artifact pins being the ones
-#     release.yml and images.yml already use.
+#     release.yml and images.yml already use. The `linux` job uses those same
+#     four pins and adds none: it signs nothing. `publish` adds exactly one,
+#     `sigstore/cosign-installer` at the pin release.yml and images.yml
+#     already carry, because signing the merged sums file keyless is the one
+#     thing no `run:` call can do without it.
 #
 # THE SECRETS, BY NAME (the owner's, 2026-10-17). D4 does not settle the
 # notarisation credential; the decision recorded here is the **App Store Connect
@@ -617,29 +659,287 @@ jobs:
           security delete-keychain "$RUNNER_TEMP/console-signing.keychain-db" || true
           rm -f "$RUNNER_TEMP/appstoreconnect.p8" "$RUNNER_TEMP/console-certificate.p12"
 
+  # The Linux leg (the owner's ruling of 2026-10-20: "yes, Linux for 0.10.0,
+  # unsigned"). The same tagged commit, the same pinned packer, the same fuses:
+  # `npm run package:linux` produces an AppImage and a .deb for x64. **This job
+  # holds no secret at all** -- no environment, no keychain, no certificate --
+  # because there is nothing to sign with and nothing to notarise: **an AppImage
+  # is not code-signed**, and the integrity claim for these files is the SHA-256
+  # sums file and the Sigstore bundle `publish` attaches beside them.
+  #
+  # Why it is a second job rather than a step in `release`: that job's runner is
+  # the macOS signing toolchain, and every step after the install runs inside the
+  # window in which the Apple key material is on disk. A Linux build there would
+  # be a `--linux` pack inside a job that has a certificate mounted, for no
+  # reason at all. It is also why this job can be re-run on its own.
+  linux:
+    name: linux
+    # One build at a time, for the same reason as `release`: GitHub keeps a
+    # single pending run per group.
+    concurrency:
+      group: console-release-linux
+      cancel-in-progress: false
+    # Pinned, never ubuntu-latest: the runner image is the packaging toolchain
+    # (`dpkg-deb`, and the AppImage runtime app-builder downloads), and a label
+    # that moves under a tag would change it without a reviewed edit.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    # Read-only: the write token is `publish`'s alone, and this job never holds
+    # one. `checks: read` is scripts/release-gate.sh.
+    permissions:
+      contents: read # the checkout
+      checks: read # scripts/release-gate.sh reads the commit's check-runs
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # The same three checks the macOS job makes, from the same script: the
+      # tagged commit is on main, the tag is a strict vX.Y.Z, and the commit's
+      # check-runs passed. Both legs run the gate rather than one trusting the
+      # other's: they are separate jobs, and either can be re-run alone.
+      - name: The tagged commit is on main
+        run: |
+          set -euo pipefail
+          git fetch --quiet --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not reachable from origin/main: refusing to package a console for a tag that is not on main"
+            exit 1
+          fi
+          echo "$GITHUB_REF_NAME ($GITHUB_SHA) is on main"
+
+      - name: The tag is a strict vX.Y.Z, and its version is the app's
+        id: tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::'$TAG' is not a strict vX.Y.Z tag: refusing to build a console whose version would be anything else"
+            exit 1
+          fi
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "the console is built as version ${TAG#v}"
+
+      - name: The tag is strict, on main, and its checks passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          scripts/release-gate.sh "$TAG"
+
+      # The Node version comes from console/package.json's `engines.node`, the
+      # field the console's own pinning test keeps an exact pin.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: console/package.json
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+
+      - name: Install the pinned toolchain
+        working-directory: console
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      # Electron's own download of its distribution, verified against the pinned
+      # package's `checksums.json`, and then the build. The archive this fetches
+      # is `electron-v<version>-linux-x64.zip` -- the one
+      # `build.electronDownload.checksums` pins beside the two darwin ones, so
+      # nothing here is verified against a hash fetched at pack time.
+      - name: Download Electron and build the app
+        working-directory: console
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          set -euo pipefail
+          node node_modules/electron/install.js
+          npm run build
+
+      # The packer, with no signing identity to discover and nothing to publish:
+      # `--publish never` is in the script itself. The `unset` below is
+      # unguarded on purpose: this job holds no signing material, and a shell
+      # that could not clear an inherited `CSC_*` variable has to fail here
+      # rather than carry it into the packer. It runs the fuse hook
+      # (`dist/main/fuses.js`) against `release/linux-unpacked/fugaro-console`,
+      # which reads the fuse wire back and fails the build if a flip did not
+      # take -- so the binary inside both artifacts is the hardened one, or
+      # there is no artifact at all. The version is stamped in from the tag
+      # (console/package.json says 0.0.0), and it is what names the artifacts.
+      - name: Build the Linux artifacts
+        working-directory: console
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          unset CSC_LINK CSC_NAME CSC_KEY_PASSWORD
+          npm run package:linux -- -c.extraMetadata.version="$VERSION"
+          shopt -s nullglob
+          appimages=(release/*.AppImage)
+          debs=(release/*.deb)
+          if [ "${#appimages[@]}" -ne 1 ] || [ "${#debs[@]}" -ne 1 ]; then
+            echo "::error::want exactly one .AppImage and one .deb under console/release, found ${#appimages[@]} and ${#debs[@]}"
+            exit 1
+          fi
+
+      # The fact the release records, in the same shape the macOS leg records
+      # its own: the commands, their real output, in a text file published with
+      # the artifacts. Every one of them must succeed -- a record that swallowed
+      # a failure would be the output of a verification that did not pass.
+      #
+      # **What is verified is what is shipped.** The SHA-256 of the AppImage and
+      # the .deb is the whole integrity claim these files carry, because an
+      # AppImage is not code-signed: there is no signature to check and no
+      # issuer to name. Both are then opened -- the .deb with `dpkg-deb`, the
+      # AppImage with its own runtime's `--appimage-extract` -- and the copy of
+      # the executable *inside each one* has its fuse wire read with the same
+      # `@electron/fuses` the build hook uses. That last check is the one thing
+      # the pack-time hook cannot say about the packaged result: that the
+      # **shipped** binary is the flipped one.
+      - name: Verify the shipped artifacts, and record it
+        working-directory: console
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          RECORD="$RUNNER_TEMP/console-linux-verification.txt"
+          SUMS="$RUNNER_TEMP/console-linux-sha256sums.txt"
+          : > "$RECORD"
+          printf '# Fugaro Console %s: the Linux artifacts, as shipped\n' "$GITHUB_REF_NAME" >> "$RECORD"
+          record() {
+            printf '\n$ %s\n' "$*" >> "$RECORD"
+            if ! "$@" >> "$RECORD" 2>&1; then
+              printf '::error::%s failed: this build is not shippable\n' "$*"
+              cat "$RECORD"
+              exit 1
+            fi
+          }
+          # The fuse reader, written here rather than inlined three times so the
+          # record shows the command that ran rather than a page of JavaScript.
+          # It exits non-zero naming the first fuse that is not what this build
+          # requires, and prints what it read when they all are.
+          cat > check-fuses.mjs <<'FUSES'
+          // Read the fuse wire out of a packaged executable and refuse it
+          // unless every fuse is the value design section 5.1 rule 4 requires.
+          // The same six the pack-time hook (`src/main/fuses.ts`) flips, read
+          // the same way -- `getCurrentFuseWire` is the read-back, not the
+          // flip, so this is an independent check of the bytes on disk.
+          import { FuseState, FuseV1Options, getCurrentFuseWire } from '@electron/fuses'
+          const required = [
+            [FuseV1Options.RunAsNode, false],
+            [FuseV1Options.EnableNodeOptionsEnvironmentVariable, false],
+            [FuseV1Options.EnableNodeCliInspectArguments, false],
+            [FuseV1Options.EnableEmbeddedAsarIntegrityValidation, true],
+            [FuseV1Options.OnlyLoadAppFromAsar, true],
+            [FuseV1Options.GrantFileProtocolExtraPrivileges, false],
+          ]
+          const path = process.argv[2]
+          const wire = await getCurrentFuseWire(path)
+          for (const [option, wanted] of required) {
+            const expected = wanted ? FuseState.ENABLE : FuseState.DISABLE
+            const actual = wire[option]
+            if (actual !== expected) {
+              console.error(`the fuse ${option} is ${actual} in ${path}, and this build requires ${expected}`)
+              process.exit(1)
+            }
+          }
+          console.log(`${required.length} fuses are set as required in ${path}`)
+          FUSES
+          # The app the two artifacts are built from, and the fuses it carries.
+          # The pack-time hook flipped this file and read the wire back; this
+          # reads it again, from the tree the packer archived.
+          record uname -m
+          record file release/linux-unpacked/fugaro-console
+          record node check-fuses.mjs release/linux-unpacked/fugaro-console
+          # The bytes this record is about, named exactly as the macOS leg names
+          # its own: bare file names, so the sums file verifies from the
+          # directory the assets ship in.
+          shopt -s nullglob
+          APPIMAGE="$(ls release/*.AppImage)"
+          DEB="$(ls release/*.deb)"
+          for f in "$APPIMAGE" "$DEB"; do
+            case "$f" in
+              *"-$VERSION-"*) ;;
+              *)
+                echo "::error::$f is not named for version $VERSION"
+                exit 1
+                ;;
+            esac
+          done
+          (cd "$(dirname "$APPIMAGE")" && sha256sum "$(basename "$APPIMAGE")" "$(basename "$DEB")") > "$SUMS"
+          record cat "$SUMS"
+          # The .deb, opened: its control fields and its own file list.
+          record dpkg-deb --info "$DEB"
+          record dpkg-deb --contents "$DEB"
+          # And the executable inside it -- the file an operator actually
+          # installs -- extracted and read the same way.
+          DEB_ROOT="$RUNNER_TEMP/deb-root"
+          rm -rf "$DEB_ROOT"
+          record dpkg-deb --extract "$DEB" "$DEB_ROOT"
+          record test -x "$DEB_ROOT/opt/Fugaro Console/fugaro-console"
+          record sha256sum "$DEB_ROOT/opt/Fugaro Console/fugaro-console"
+          record node check-fuses.mjs "$DEB_ROOT/opt/Fugaro Console/fugaro-console"
+          # And the AppImage, unpacked with its own runtime: `--appimage-extract`
+          # needs no FUSE mount, no display and no sandbox, so it works on a
+          # runner that can do neither.
+          APPIMAGE_ROOT="$RUNNER_TEMP/appimage-root"
+          APPIMAGE_ABS="$(realpath "$APPIMAGE")"
+          rm -rf "$APPIMAGE_ROOT"
+          mkdir -p "$APPIMAGE_ROOT"
+          chmod +x "$APPIMAGE"
+          (cd "$APPIMAGE_ROOT" && record "$APPIMAGE_ABS" --appimage-extract)
+          record test -x "$APPIMAGE_ROOT/squashfs-root/fugaro-console"
+          record sha256sum "$APPIMAGE_ROOT/squashfs-root/fugaro-console"
+          record node check-fuses.mjs "$APPIMAGE_ROOT/squashfs-root/fugaro-console"
+          cat "$RECORD"
+          ASSETS="$RUNNER_TEMP/console-linux-assets"
+          mkdir -p "$ASSETS"
+          cp "$APPIMAGE" "$DEB" "$RECORD" "$SUMS" "$ASSETS/"
+
+      # The finished assets go to the `publish` job as a workflow artifact, as
+      # the macOS leg's do: this job never holds a token that can write a
+      # release. No key material was ever on this runner.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: console-linux-assets
+          path: ${{ runner.temp }}/console-linux-assets
+          if-no-files-found: error
+          retention-days: 1
+
   # The only job that can write a release, and it runs no repository code: no
-  # checkout, no packer, no environment, no Apple secret. It takes the assets
-  # the `release` job verified, re-checks them against their SHA-256 sums, and
-  # publishes the console's own release.
+  # checkout, no packer, no environment, no Apple secret, no Linux secret. It
+  # takes the assets both build jobs verified, re-checks them against their
+  # SHA-256 sums, merges them into one release with one sums file, signs that
+  # sums file keyless with cosign, and publishes the console's own release.
   publish:
     name: publish
-    needs: release
+    needs: [release, linux]
     # Pinned for the same reason as the release job's runner.
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: write # create and publish the console-vX.Y.Z release
+      # `cosign sign-blob` below is keyless: the identity is this run's OIDC
+      # token, exchanged for a short-lived Fulcio certificate, and the
+      # transcript goes to Rekor. Exactly as release.yml declares it.
+      id-token: write # cosign keyless signing
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: console-release-assets
-          path: ${{ runner.temp }}/console-assets
+          path: ${{ runner.temp }}/console-macos
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: console-linux-assets
+          path: ${{ runner.temp }}/console-linux
 
       # The bytes that arrive are the bytes the release job verified: exactly
       # one .dmg and one .zip, both named for the tag's version, both listed in
       # the sums, and every listed file matching.
       - name: The assets match the sums the release job recorded
-        working-directory: ${{ runner.temp }}/console-assets
+        working-directory: ${{ runner.temp }}/console-macos
         env:
           TAG: ${{ github.ref_name }}
         run: |
@@ -671,6 +971,98 @@ jobs:
           done
           sha256sum --strict --check console-sha256sums.txt
 
+      # The same, for the Linux leg, in the same words -- and it is not a
+      # formality: this is the check that the unsigned AppImage and .deb are the
+      # bytes the linux job hashed, since there is no signature on them to say
+      # so later.
+      - name: The Linux assets match the sums the linux job recorded
+        working-directory: ${{ runner.temp }}/console-linux
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::'$TAG' is not a strict vX.Y.Z tag"
+            exit 1
+          fi
+          VERSION="${TAG#v}"
+          shopt -s nullglob
+          appimages=(./*.AppImage)
+          debs=(./*.deb)
+          if [ "${#appimages[@]}" -ne 1 ] || [ "${#debs[@]}" -ne 1 ]; then
+            echo "::error::want exactly one .AppImage and one .deb in the artifact, found ${#appimages[@]} and ${#debs[@]}"
+            exit 1
+          fi
+          for f in "${appimages[0]}" "${debs[0]}"; do
+            case "$f" in
+              *"-$VERSION-"*) ;;
+              *)
+                echo "::error::$f is not named for version $VERSION"
+                exit 1
+                ;;
+            esac
+            if ! grep -qF "  ${f#./}" console-linux-sha256sums.txt; then
+              echo "::error::$f is not listed in console-linux-sha256sums.txt"
+              exit 1
+            fi
+          done
+          sha256sum --strict --check console-linux-sha256sums.txt
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # One release, one sums file, one claim about all of it. Each leg wrote
+      # sums over its own artifacts and the two sets are disjoint, so the
+      # shipped file is the two concatenated -- and the concatenation is
+      # verified *in the directory that ships*, so the sums file the release
+      # carries is one whose every line was just checked against the bytes
+      # beside it. Two legs shipping the same file name stops the job rather
+      # than letting one quietly overwrite the other.
+      - name: Merge the two legs into one release, and one sums file
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/console-release"
+          rm -rf "$OUT"
+          mkdir -p "$OUT"
+          shopt -s nullglob
+          for leg in console-macos console-linux; do
+            files=("$leg"/*)
+            if [ "${#files[@]}" -eq 0 ]; then
+              echo "::error::$leg is empty: refusing to publish a release that is missing a leg"
+              exit 1
+            fi
+            for f in "${files[@]}"; do
+              base="$(basename "$f")"
+              case "$base" in
+                console-sha256sums.txt|console-linux-sha256sums.txt) continue ;;
+              esac
+              if [ -e "$OUT/$base" ]; then
+                echo "::error::both legs ship a file named $base: refusing to overwrite one with the other"
+                exit 1
+              fi
+              mv "$f" "$OUT/$base"
+            done
+          done
+          cat console-macos/console-sha256sums.txt console-linux/console-linux-sha256sums.txt > "$OUT/console-sha256sums.txt"
+          cd "$OUT"
+          ls -la
+          sha256sum --strict --check console-sha256sums.txt
+
+      # The signature that says who published this, over the sums file that
+      # covers every asset -- which is the only signature any of these files
+      # has: the AppImage and the .deb are unsigned, so this is what an operator
+      # verifies them against. It is the same call GoReleaser makes for the
+      # CLI's archives (.goreleaser.yaml): `cosign sign-blob --yes --bundle`,
+      # keyless, so the identity is this workflow's OIDC token and the
+      # transcript is in Rekor's transparency log. No key of the owner's is
+      # involved and none could be: this job holds no secret.
+      - name: Sign the release's sums file, keyless
+        working-directory: ${{ runner.temp }}/console-release
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes --bundle=console-sha256sums.txt.sigstore.json console-sha256sums.txt
+          ls -la console-sha256sums.txt.sigstore.json
+
       # The console's OWN release, console-vX.Y.Z, and never the CLI's: the
       # CLI's vX.Y.Z release is GoReleaser's, and with immutable releases on it
       # cannot take an asset once published (the owner's ruling of 2026-10-17,
@@ -680,7 +1072,7 @@ jobs:
       # latest. A re-run never clobbers: an existing console release (published,
       # or a draft from an earlier attempt) or tag stops the job with a message.
       - name: Publish the console's own release
-        working-directory: ${{ runner.temp }}/console-assets
+        working-directory: ${{ runner.temp }}/console-release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
@@ -688,10 +1080,21 @@ jobs:
           set -euo pipefail
           VERSION="${TAG#v}"
           CONSOLE_TAG="console-v$VERSION"
+          # Every one of these must exist: `ls` fails on a glob that does not
+          # match, and `set -e` turns that into a stopped job. A release that
+          # shipped without one of its legs, or without the sums file or the
+          # bundle that make it verifiable, is the one outcome this step must
+          # not be able to reach.
           DMG="$(ls ./*.dmg)"
           APP_ZIP="$(ls ./*.zip)"
+          APPIMAGE="$(ls ./*.AppImage)"
+          DEB="$(ls ./*.deb)"
           RECORD="console-verification.txt"
+          LINUX_RECORD="console-linux-verification.txt"
           SUMS="console-sha256sums.txt"
+          BUNDLE="console-sha256sums.txt.sigstore.json"
+          test -s "$LINUX_RECORD"
+          test -s "$BUNDLE"
           existing="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name == \"$CONSOLE_TAG\") | if .draft then \"draft\" else \"published\" end")"
           case "$existing" in
             "") ;;
@@ -721,7 +1124,7 @@ jobs:
           gh release create "$CONSOLE_TAG" --repo "$GITHUB_REPOSITORY" --draft --latest=false \
             --target "$GITHUB_SHA" \
             --title "Fugaro Console $VERSION" \
-            --notes "The Fugaro desktop console built from the CLI's $TAG tag (the same commit and the same release gate). Signed with a Developer ID certificate, notarised and stapled; console-verification.txt records the checks run on these exact files, and console-sha256sums.txt their SHA-256." \
-            "$DMG" "$APP_ZIP" "$RECORD" "$SUMS"
+            --notes "The Fugaro desktop console built from the CLI's $TAG tag (the same commit, the same release gate, the same pinned packer and the same Electron fuses on both platforms). The macOS build is signed with a Developer ID certificate, notarised and stapled; console-verification.txt records the checks run on those exact files. **The Linux build is unsigned**: an AppImage is not code-signed and this project has no Linux signing key, so the AppImage and the .deb for x64 carry no signature of their own -- their integrity claim is the SHA-256 in console-sha256sums.txt, which covers every file here and is itself signed keyless with Sigstore (console-sha256sums.txt.sigstore.json, verify with cosign verify-blob). console-linux-verification.txt records the commands run on those exact files, including a read-back of the Electron fuse wire from the executable inside each artifact." \
+            "$DMG" "$APP_ZIP" "$APPIMAGE" "$DEB" "$RECORD" "$LINUX_RECORD" "$SUMS" "$BUNDLE"
           gh release edit "$CONSOLE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
           echo "published $CONSOLE_TAG"

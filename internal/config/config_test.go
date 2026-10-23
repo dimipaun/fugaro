@@ -108,6 +108,13 @@ func TestParseProblems(t *testing.T) {
 		// mutation that checked only the prefix would pass the first.
 		{"codex-oauth-token workflow secret reserved", minimalYAML + "    secrets:\n      - { name: codex-oauth-token, env: TOK }\n", "workflows.server.secrets[0].name", "reserved for the Codex harness", 0},
 		{"codex-oauth-token-prefixed workflow secret reserved", minimalYAML + "    secrets:\n      - { name: codex-oauth-token-acme-personal, env: TOK }\n", "workflows.server.secrets[0].name", "reserved for the Codex harness", 0},
+		// The credentials service's bundle container (config.CredentialsBundleSecret,
+		// C1.11's review finding n2): its document is every model credential the
+		// installation holds, and the service is its only reader, so a workflow
+		// that declared the name would mount that document into a job. Refused
+		// here and again at the write path (internal/cli's
+		// credentialsBundleRefusal).
+		{"creds-bundle workflow secret reserved", minimalYAML + "    secrets:\n      - { name: creds-bundle, env: TOK }\n", "workflows.server.secrets[0].name", "credentials service's own bundle container", 0},
 		{"cache key", minimalYAML + "    cache:\n      - { key: [], paths: [~/.gradle] }\n", "workflows.server.cache[0].key", "at least one file", 0},
 		// A verbatim tag's own text stands in for !!str in yaml.v3's type
 		// error, so a fugaro.yaml can put anything a YAML tag allows,

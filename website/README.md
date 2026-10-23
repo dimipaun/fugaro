@@ -2097,24 +2097,14 @@ The deploy workflow is still W2.1's and **not a Fugaro run's to write**: W2.1 st
 workflow under `docs/pending-workflows/` for the owner to copy in, and the owner runs it to
 deploy to the Firebase project created for the website only (D91, D109) — a run may not
 change `.github/workflows/`. `docs/pending-workflows/` now holds five pending workflows,
-`docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
-P4.3) — `docs/pending-workflows/console-linux.yml` — the desktop console's Linux build check
-(2026-10-20: it packs the AppImage and the `.deb` on `ubuntu-latest` and uploads them, and
-holds no secret) — `docs/pending-workflows/console-release-linux.yml` — the console's
-signing pipeline with the Linux legs added, which supersedes the staged `console-release.yml`
-and so is copied over it as well as into `.github/workflows/` — a release-time job and so the
-first of the three files here that are not pull-request checks (2026-10-20: on the release tag
-and never on a pull request) — and
-`docs/pending-workflows/console-windows.yml` — the desktop console's Windows pack, the second of
-those three (2026-10-20: it typechecks, runs the unit suite
-and packs the unsigned NSIS installer on `windows-latest`, and holds no secret, and it runs **at
-release time only** — the release tag or a manual dispatch before one, never on a pull request,
-not even path-filtered) — and
-`docs/pending-workflows/mobile-release.yml` — the mobile app's release, the third of the three
-files here that are not pull-request checks (2026-10-20: on every
-`v[0-9]+.[0-9]+.[0-9]+` tag and by hand it builds the app on EAS and submits it to TestFlight's
-internal testers and to Play's internal-testing track, behind the `mobile-release`
-environment and the owner's approval). None of the five is this site's: the website's two manual
+`docs/pending-workflows/images.yml` — the credentials service's image leg (credentials-service plan, task C1.14) — `docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
+P4.3) — `docs/pending-workflows/console-windows.yml` — the console's Windows installer pack,
+which runs at release time only rather than on a pull request, and is copied in only after the
+packer and the unit suite can pass on a Windows runner — and
+`docs/pending-workflows/mobile-release.yml` — the mobile app's build and store submissions
+(2026-10-20) — and `docs/pending-workflows/dependabot-console.yml` — Dependabot's watch over
+the console's npm dependencies (2026-10-23), which is a settings file rather than a workflow and
+is copied over `.github/dependabot.yml` rather than into `.github/workflows/`. None of the five is this site's: the website's two manual
 workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the
 owner, and no deploy workflow is staged. The only other workflow files left there are the desktop
 console's `console-tests.yml` and `console-release.yml`, which the owner has copied in as well:

@@ -1,7 +1,12 @@
 package cli
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -11,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -532,7 +538,7 @@ func TestDocsComputeBackendNamesItsBase(t *testing.T) {
 	for _, want := range []string{
 		"**The base is named as that branch and the commit it was cut from rather than as a remote-tracking ref, because a default clone does not carry the ref**",
 		"git fetch origin integration-0.9.5",
-		"the owner moved this work, and the managed redesign with it, out of 0.9.0",
+		"the owner moved this work out of 0.9.0, and moved the managed redesign out of it too — but **to a different release, and this plan does not carry it**",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("%s no longer says %q: the first is the shape the base is named in, the second is how a clone that does not carry the ref resolves it, and the third is why the base is the 0.9.5 line and not 0.9.0", computeBackendPlan, want)
@@ -671,8 +677,8 @@ func TestDocsComputeBackendCheck57IsStillOnlyARow(t *testing.T) {
 // says the plan answers none of them, or the reversal — a section that looks
 // answered while the gate still refuses to let a task start. Both fail here.
 //
-// Both paragraphs also name the tasks that have landed — Task 14, Task 8's
-// first half and Task 9 — so a plan whose tasks are built while its prose still reads as
+// Both paragraphs also name the tasks that have landed — Task 14, Task 8 and
+// Task 9 — so a plan whose tasks are built while its prose still reads as
 // a proposal fails here too.
 func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 	doc := readDoc(t, computeBackendPlan)
@@ -714,9 +720,10 @@ func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 		// Task 12 is the owner's alone, and the gate has to say so.
 		"**Task 12 is OWNER-RUN**",
 		// The gate and the Status line agree on what the approval has built:
-		// Task 14 and Task 8's first half, and nothing else.
+		// Task 14 and Task 8, whose second half this branch's commits are, and
+		// Task 9 -- and nothing else.
 		"Three tasks have been built since: Task 14",
-		"**Task 14 is built, and so are Task 8's first half and Task 9, and nothing else here is**",
+		"**Task 14 is built, and so are Task 8 and Task 9, and nothing else here is**",
 	} {
 		if !strings.Contains(gate, want) {
 			t.Errorf("%s's OWNER APPROVAL GATE no longer says %q", computeBackendPlan, want)
@@ -772,10 +779,13 @@ func TestDocsComputeBackendStatusMatchesTheBranch(t *testing.T) {
 		"the owner APPROVED this plan on 2026-10-19",
 		// What the branch carries beyond the plan and its pin test.
 		"Task 8 is the one begun",
-		// And what that half does not include, which is the honest half of
-		// the account: a reader who reads only the Status knows the task is
-		// incomplete before opening its pull request.
-		"steps 4 (`fugaro validate`'s offline checks) and 5 (`fugaro doctor`'s live ones) not written",
+		// And what that half does not include and this branch's own commits
+		// do, which is the honest half of the account: a reader who reads only
+		// the Status knows which commits carry which steps, and which parts of
+		// step 4 are recorded rather than written.
+		"steps 4 (`fugaro validate`'s offline checks) and 5 (`fugaro doctor`'s live ones) not written by that half",
+		"**and written on this branch by its own commits, which is the rest of the task**",
+		"**The two parts of step 4 this tree has no surface for**",
 	} {
 		if !strings.Contains(status, want) {
 			t.Errorf("%s: the Status line no longer says %q", computeBackendPlan, want)
@@ -789,6 +799,10 @@ func TestDocsComputeBackendStatusMatchesTheBranch(t *testing.T) {
 		"no task's commit exists",
 		"this pull request builds none of it",
 		"no line of the work below has been written or run",
+		// The sentence this branch's own step-4/5 commits falsified: it said
+		// both steps were unwritten, full stop, and a reader who found it
+		// again would be told the task's second half does not exist.
+		"steps 4 (`fugaro validate`'s offline checks) and 5 (`fugaro doctor`'s live ones) not written, which that task's own pull request lists with the reason",
 	} {
 		if strings.Contains(doc, gone) {
 			t.Errorf("%s still says %q, and Task 8's first half is committed on this branch: the account a reader checks the diff against says nothing was built", computeBackendPlan, gone)
@@ -803,6 +817,10 @@ func TestDocsComputeBackendStatusMatchesTheBranch(t *testing.T) {
 		"internal/cli/cloud.go":         {"cloudOpeners", "batchOptions", "batchTimeouts"},
 		"internal/cli/backends.go":      {"newBackendsCmd", "selectableBackends", "backendsLs", "backendsListDoc"},
 		"internal/localcfg/localcfg.go": {"validateBatch", "BatchTaskTimeout"},
+		// The two halves of this branch's own commits, named by the Status
+		// line the same way: step 4's offline checks and step 5's live ones.
+		"internal/cli/validate_batch.go": {"batchValidateProblems", "artifactOnBatchMessage"},
+		"internal/cli/doctor_batch.go":   {"doctorBatchChecks"},
 	} {
 		data, err := os.ReadFile("../../" + file)
 		if err != nil {
@@ -1875,6 +1893,138 @@ func TestDocsComputeBackendTask10CarriesTheAccountRequirement(t *testing.T) {
 	}
 }
 
+// TestDocsComputeBackendTask10CarriesTheArtifactGatesRefResidual: the launch's
+// arm of the artifact boundary (run.go's checkArtifactLaunch) judges a
+// repository recipe by the file in the launcher's working tree, and the runner
+// reads it at the task's ref -- the repository's base branch unless the launch
+// names another. The plan does not ask Task 8 for more than validate's offline
+// refusal (Global Constraint 13 and Task 8 step 4 name the mechanisms), the
+// name is refused until Task 10, and Task 10's step 5 is the inventory a review
+// of the enable reads it against -- so the residual is a requirement there,
+// with its own test case, and TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef
+// pins the code's side of the same sentence. A trim of either half fails here.
+func TestDocsComputeBackendTask10CarriesTheArtifactGatesRefResidual(t *testing.T) {
+	doc := readDoc(t, computeBackendPlan)
+	task := section(t, doc, "### Task 10: The enable", "## Phase C")
+	for _, want := range []string{
+		"**And a sixth, of the artifact boundary's kind (Global Constraint 13): the launch's gate reads a repository recipe from the launcher's working tree, and the runner reads it at the task's ref.**",
+		"**A working-tree recipe may differ from the base branch's**",
+		"`TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef`",
+		"**This task closes it before the name is selectable**",
+		"**step 5's sixth entry as its own case**",
+	} {
+		if !strings.Contains(task, want) {
+			t.Errorf("%s's Task 10 no longer says %q: the review of Task 8's second half left the launch gate's working-tree read to the enable, and the enable's own text is where it has to be", computeBackendPlan, want)
+		}
+	}
+	// The code's comments claim only what the gate enforces: neither arm is
+	// described as knowing the recipe the run will actually use.
+	for _, path := range []string{"internal/cli/validate_batch.go", "internal/cli/run.go"} {
+		src := readDoc(t, path)
+		if strings.Contains(src, "recipe the run will actually use") {
+			t.Errorf("%s still says the launch gate knows the recipe the run will actually use: for a repository recipe it reads this launcher's working tree, and the runner reads the task's ref", path)
+		}
+		if !strings.Contains(src, "Task 10") || !strings.Contains(src, "working tree") {
+			t.Errorf("%s does not state the working-tree residual and the task that closes it", path)
+		}
+	}
+}
+
+// TestDocsComputeBackendTask10EnableIsTiedToTheArtifactGatesRefResidual: the
+// pin above says Task 10's step 5 carries the launch gate's residual, but
+// nothing tied that entry to the step that actually lifts the refusal — step 1,
+// which turns `TestCloudBatchIsRefused` into the acceptance. A later trim could
+// then leave Task 10 reading as "the name becomes selectable" with the closure
+// of entry 6 as one requirement among many, or drop `run.go` and `run_test.go`
+// from Task 10's Files line while the entry still named them. The tie is three
+// halves and all three are asserted: the entry says this task closes it **before
+// the name is selectable**, Task 10's Files name the files the closure lands in,
+// and the tree carries the mechanism and the cases the entry names — so the
+// enable's commit cannot claim the closure while the code it claims is absent.
+//
+// The closure itself is pinned too: the entry requires the runner's own
+// refusal of `mode: artifact` on cloud-batch, with the launcher's ref read as
+// defence in depth only, because that read uses this checkout's local
+// remote-tracking ref and never fetches.
+//
+// Mutation (drop `internal/cli/run.go` with `internal/cli/run_test.go` from
+// Task 10's Files, or drop the "before the name is selectable" sentence, or
+// rename `carriedRecipeAtRef`, or make the gate's ref read an alternative to
+// the runner's refusal again): the named assertion fails.
+func TestDocsComputeBackendTask10EnableIsTiedToTheArtifactGatesRefResidual(t *testing.T) {
+	doc := readDoc(t, computeBackendPlan)
+	task := section(t, doc, "### Task 10: The enable", "## Phase C")
+	for _, want := range []string{
+		// The step that makes the name selectable, and the entry that says the
+		// closure comes first: read together they are the tie.
+		"**The refusal becomes an acceptance.**",
+		"**This task closes it before the name is selectable**",
+		// And where the closure lands, per the task's own Files line.
+		"`internal/cli/run.go` with `internal/cli/run_test.go` for step 5's sixth entry",
+		// The closure the entry requires is the runner's refusal: the gate
+		// reads a local remote-tracking ref and never fetches, so a push after
+		// the launcher's last fetch passes it, and a gate-only closure would
+		// leave that window open on the day the name becomes selectable.
+		"`internal/runner/recipe.go` and `internal/runner/recipe_test.go` for that entry's required closure",
+		"**the runner itself refuses a `mode: artifact` recipe when the platform it runs on is cloud-batch**",
+		"**A launcher-side read is defence in depth and never the closure on its own:**",
+		"**the runner refuses `mode: artifact` on cloud-batch, as its own runner case**",
+	} {
+		if !strings.Contains(task, want) {
+			t.Errorf("%s's Task 10 no longer says %q: the enable is the commit that makes backend: cloud-batch selectable, so the closure of the launch gate's residual has to be tied to it here rather than left as a nearby requirement", computeBackendPlan, want)
+		}
+	}
+	// The mechanism the entry names is in the tree, so the tie above is about
+	// code the enable inherits and not about a sentence: the gate's ref read and
+	// both of its cases (the carried text the ref shadows, and the ref this
+	// checkout cannot read).
+	for _, f := range []struct{ path, sym string }{
+		{"internal/cli/run.go", "func carriedRecipeAtRef("},
+		{"internal/cli/run.go", "func recipeAtRef("},
+		{"internal/cli/run_test.go", "func TestAnArtifactRecipeAtTheRefShadowsTheTasksCarriedTextOnCloudBatch("},
+		{"internal/cli/run_test.go", "func TestACarriedRecipeTheRefCannotBeReadForIsRefusedOnCloudBatch("},
+	} {
+		if !strings.Contains(readDoc(t, f.path), f.sym) {
+			t.Errorf("%s does not declare %q: Task 10's step 5 names this mechanism as the half Task 8 already landed, and a task whose enable inherits it has to find it here", f.path, f.sym)
+		}
+	}
+}
+
+// TestDocsComputeBackendNamesTheDefaultMachineType: §1.3 called an
+// `e2-standard-4`-class VM "the likely default" while `internal/backend/batch`'s
+// defaultMachineType is `e2-standard-8` — the smallest type whose task share
+// carries the config's default ask of 4 CPU / 8Gi, because an e2-standard-4's
+// share of 2000m/4096MiB is below it and every workflow that names no
+// `resources:` would then be refused (the constant's own comment argues the
+// change). Nothing held the sentence, so the design and the code could disagree
+// about what a run gets with no test failing, which is the drift this pins: the
+// design states what the 57a figures were measured on and names the type a
+// default installation actually gets.
+//
+// Mutation (call a type the likely default again in §1.3, or change the
+// constant without the design): one of the two assertions fails.
+func TestDocsComputeBackendNamesTheDefaultMachineType(t *testing.T) {
+	src := readDoc(t, "internal/backend/batch/batch.go")
+	const decl = `defaultMachineType = "`
+	i := strings.Index(src, decl)
+	if i < 0 {
+		t.Fatal("internal/backend/batch/batch.go declares no defaultMachineType")
+	}
+	rest := src[i+len(decl):]
+	j := strings.Index(rest, `"`)
+	if j < 0 {
+		t.Fatalf("the constant's value is not a quoted string: %q", rest[:min(len(rest), 40)])
+	}
+	name := rest[:j]
+	design := readDoc(t, "docs/design/compute-backend.md")
+	if !strings.Contains(design, "`"+name+"`") || !strings.Contains(design, "defaultMachineType") {
+		t.Errorf("docs/design/compute-backend.md does not name %s (nor the constant that sets it), the machine type a run gets when the installation names none: the design's §1.3 cost figures are one type's and the default is the code's answer", name)
+	}
+	if strings.Contains(design, "likely default") {
+		t.Error("the design calls a machine type the likely default again: §1.3 states which type the 57a figures were measured on and what a run gets by default, and the default is the code's own constant")
+	}
+}
+
 // TestDocsSharedConfigStatesTheImageChecksExactly: the design's §5 bullet is
 // what a later reader checks the reader's own batch.image checks against, so it
 // has to claim exactly what they enforce. Two halves are pinned here, and the
@@ -1919,5 +2069,206 @@ func TestDocsSharedConfigStatesTheImageChecksExactly(t *testing.T) {
 	// restores the phrasing restores the overclaim with it.
 	if strings.Contains(readDoc(t, doc), "What the check leaves is an image in one of this installation's own repositories") {
 		t.Errorf("%s §5 claims the fugaro-ghcr refusal leaves an image in one of this installation's own repositories, which the reader does not enforce: it refuses one repository ID and passes the project's others", doc)
+	}
+}
+
+// TestComputeBackendPlanPlacesTheManagedRedesignRight: the plan's Fact 1 said the
+// owner moved this work "and the managed redesign with it" out of 0.9.0, which
+// reads as one placement for the two. They are not the same: this work is 0.9.5,
+// and the redesign is placed elsewhere — the number `internal/cli/recipes_skew.go`'s
+// `managedDeployerShipped` comment names (the release the flip shipped in, "true
+// as of"), and the one `docs_managed_label_test.go` pins in the managed
+// documents. A plan that gives a second answer for the redesign's release is
+// read by whoever schedules the fence's flip, so the number here is taken from
+// the constant's own comment rather than written into this test.
+//
+// Mutations (verified, run and restored): put "and the managed redesign with it"
+// back into Fact 1 — the first check fails naming it; change the release the plan
+// states to another number — the second check fails naming both.
+func TestComputeBackendPlanPlacesTheManagedRedesignRight(t *testing.T) {
+	gate, err := os.ReadFile("recipes_skew.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decl := regexp.MustCompile(`(?s)managedDeployerShipped is (?:true as of |false until the release\D*?)(\d+\.\d+\.\d+)`).FindStringSubmatch(string(gate))
+	if decl == nil {
+		t.Fatal("recipes_skew.go's managedDeployerShipped comment no longer names the release the redesign ships in: this test reads the tree's own answer from there")
+	}
+	release := decl[1]
+	doc := readDoc(t, computeBackendPlan)
+	// The reading that made the two look like one placement: this work's release
+	// is 0.9.5 and the redesign's is not, so a sentence that moves them together
+	// is the defect this test exists for.
+	if strings.Contains(doc, "managed redesign with it") {
+		t.Errorf("%s says the owner moved this work \"and the managed redesign with it\" out of 0.9.0: the redesign is placed in %s (recipes_skew.go's managedDeployerShipped comment), not in this work's release, so the sentence gives a reader two answers for one release", computeBackendPlan, release)
+	}
+	// The placement itself, as a number rather than as a phrase this test would
+	// otherwise be pinning: the plan says where the redesign lands, and that
+	// number is the tree's.
+	placed := regexp.MustCompile(`redesign is placed in \*\*(\d+\.\d+\.\d+)\*\*`).FindStringSubmatch(doc)
+	if placed == nil {
+		t.Errorf("%s does not state the managed redesign's own placement: it mentions the redesign without saying which release it lands in, and the tree's answer is recipes_skew.go's managedDeployerShipped comment", computeBackendPlan)
+	} else if placed[1] != release {
+		t.Errorf("%s places the managed redesign in %s, and recipes_skew.go's managedDeployerShipped comment places it in %s: one release, one answer", computeBackendPlan, placed[1], release)
+	}
+}
+
+// TestDocsComputeBackendSaysWhichWatchShowsTheDerivation: the design and the
+// plan both used to say the derived `failed (preempted)` reading shows in
+// `runs ls`, `fugaro watch` and `fugaro diagnose RUN` — and of the two watches
+// only the **degraded** one can show it. `fugaro watch` with a budget backend
+// builds its rows from the Realtime Database plus the queued scanner, and that
+// scanner opens the runs bucket alone and never the compute backend
+// (watch_queued.go's `openQueueBucket`; design watch-queued.md §3, which is a
+// permission boundary and not an oversight: the scanner works for a launcher or
+// operator who holds no compute role), so it holds no job report and has no
+// preemption to read. The wording is what a later reader implements against, so
+// the overclaim is held absent and the true surfaces are held present.
+//
+// Mutation (restore the old sentence in either document, or drop the debt
+// sentence from the design): the matching assertion fails.
+//
+// The boundary the sentence rests on is the code's, so it is enforced by
+// TestTheQueuedScannerOpensNoComputeBackend rather than by a second
+// assertion here: the documents and the scanner's permission boundary have to
+// move together, and that test is what fails when only one of them does.
+func TestDocsComputeBackendSaysWhichWatchShowsTheDerivation(t *testing.T) {
+	// The overclaim, verbatim as the two documents carried it: all three
+	// surfaces in one list. It flattens across the design's line break.
+	const overclaim = "`runs ls`, `fugaro watch` and `fugaro diagnose RUN`"
+	for _, path := range []string{"docs/design/compute-backend.md", computeBackendPlan} {
+		doc := flattenDoc(readDoc(t, path))
+		if strings.Contains(doc, overclaim) {
+			t.Errorf("%s still says the derived status shows in %s: the live watch's queued scanner never opens the compute backend, so it cannot read a preemption — only the degraded mode (which reads runs as `runs ls` does) shows it", path, overclaim)
+		}
+		for _, want := range []string{"degraded mode", "never opens the compute backend"} {
+			if !strings.Contains(doc, want) {
+				t.Errorf("%s no longer says %q of the preempted reading: the reader has to be told which watch shows it and why the other one cannot", path, want)
+			}
+		}
+	}
+	// And the debt the design owes the same reader: the history sweep writes its
+	// own word for the same run, so the two views disagree about the word and
+	// agree that the run did not finish.
+	design := flattenDoc(readDoc(t, "docs/design/compute-backend.md"))
+	if !strings.Contains(design, "`infra_error` outcome in the history database (`internal/budget/sweep.go`)") {
+		t.Errorf("docs/design/compute-backend.md no longer says a preempted run's history sweep records an `infra_error` outcome for the same run: `runs ls` reads `failed (preempted)` while the history view says infra_error, and a reader told only the first would think the two agree")
+	}
+}
+
+// queueBucketCalls returns the dotted name of every call in the body of
+// watch_queued.go's openQueueBucket: "blobx.Open" for blobx.Open(...), and so
+// on. The file is parsed rather than grepped, because the answer has to be the
+// code the scanner runs: a comment beside the function is not what opens a
+// bucket, and a grep for a comment passes with the comment left in place and
+// the compute backend opened under it.
+func queueBucketCalls(t *testing.T) []string {
+	t.Helper()
+	f, err := parser.ParseFile(token.NewFileSet(), "../../internal/cli/watch_queued.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body *ast.BlockStmt
+	ast.Inspect(f, func(n ast.Node) bool {
+		vs, ok := n.(*ast.ValueSpec)
+		if !ok || len(vs.Names) != 1 || vs.Names[0].Name != "openQueueBucket" || len(vs.Values) != 1 {
+			return true
+		}
+		lit, ok := vs.Values[0].(*ast.FuncLit)
+		if !ok {
+			return true
+		}
+		body = lit.Body
+		return false
+	})
+	if body == nil {
+		t.Fatalf("internal/cli/watch_queued.go no longer declares `var openQueueBucket = func(...)`: the queued scanner's one open was restructured, and this test reads the permission boundary off its body, so the test has to be moved to whatever replaced it")
+	}
+	var calls []string
+	ast.Inspect(body, func(n ast.Node) bool {
+		if call, ok := n.(*ast.CallExpr); ok {
+			if name := calleeName(call.Fun); name != "" {
+				calls = append(calls, name)
+			}
+		}
+		return true
+	})
+	return calls
+}
+
+// calleeName names the callee of a call expression: the identifier itself for
+// a plain call, the dotted name for one through a package or a receiver, and
+// "" for anything this test does not try to follow.
+func calleeName(e ast.Expr) string {
+	switch x := e.(type) {
+	case *ast.Ident:
+		return x.Name
+	case *ast.SelectorExpr:
+		if pre := calleeName(x.X); pre != "" {
+			return pre + "." + x.Sel.Name
+		}
+	}
+	return ""
+}
+
+// TestTheQueuedScannerOpensNoComputeBackend holds the permission boundary
+// docs/design/compute-backend.md §1.3's sentence about which watch shows a
+// preempted run is written against: the live watch's queued scanner reads the
+// runs bucket alone, so it holds no job report and has no preemption to derive
+// (design watch-queued.md §3, a boundary rather than an oversight: the scanner
+// works for a launcher or an operator who holds no compute role).
+//
+// Both facts are read off the code, not off a comment beside it, because the
+// comment is what a change would leave behind: the calls the one open the
+// scanner makes actually reach, and the env the production connect turns that
+// open into. A scanner that started opening the compute backend — inside
+// openQueueBucket, or by attaching the handle in connect — fails one of the two.
+//
+// Mutations (both verified, run and restored): add a call to the body of
+// openQueueBucket (say `if _, err := openCloudFor(ctx, lc); err != nil {...}`)
+// and the calls assertion fails naming it; attach a backend to the env connect
+// builds and the second assertion fails naming it.
+func TestTheQueuedScannerOpensNoComputeBackend(t *testing.T) {
+	const why = "the queued scanner opens the runs bucket alone (design watch-queued.md §3, the permission boundary the design's sentence about which watch shows a preempted run is written against)"
+	calls := queueBucketCalls(t)
+	for _, c := range calls {
+		if c != "blobx.Open" && c != "lc.BucketURL" {
+			t.Errorf("openQueueBucket calls %s, and %s: a call that can reach the compute backend makes the design's sentence wrong in the other direction, and makes the mode that works without the compute role pay for a role it does not have", c, why)
+		}
+	}
+	for _, want := range []string{"blobx.Open", "lc.BucketURL"} {
+		if !slices.Contains(calls, want) {
+			t.Errorf("openQueueBucket no longer calls %s: %s, and it has to open that bucket to read the queued rows at all", want, why)
+		}
+	}
+
+	// The other half: the env that open is turned into. connect is the
+	// production one (newQueuedScanner wires it to the production open), and
+	// the bucket is a file:// one — the shape watch's own child-process test
+	// runs against — so no credential and no cloud call is involved.
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	dir := t.TempDir()
+	marker := filepath.Join(dir, filepath.FromSlash(infra.ProjectMarkerObject))
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(infra.ProjectMarker{Version: 1, Name: "queuedscan", GCPProject: "proj-queued"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := newQueuedScanner(&localcfg.Config{Name: "queuedscan", GCPProject: "proj-queued", Bucket: "file://" + dir}, "acme/app")
+	defer s.Close()
+	env, err := s.connect(context.Background())
+	if err != nil {
+		t.Fatalf("the queued scanner could not open a local runs bucket whose marker names it: %v", err)
+	}
+	if env.bucket == nil {
+		t.Errorf("connect built an env with no runs bucket: %s, and the queued rows are read from that bucket", why)
+	}
+	if env.be != nil {
+		t.Errorf("connect built an env holding a compute backend (%T), and %s: deriving a role's data there is what the degraded watch does instead", env.be, why)
 	}
 }

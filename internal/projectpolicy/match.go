@@ -98,9 +98,14 @@ const (
 	// dozen "*" is a typo rather than an intent, and the allow-list is what
 	// decides which repositories a run may touch.
 	maxPatternStars = 4
-	// maxPatternLen bounds an allow_repos entry, so a pattern cannot be used to
-	// grow the policy node without limit.
-	maxPatternLen = 255
+	// MaxPatternLen bounds an allow_repos entry, so a pattern cannot be used to
+	// grow the policy node without limit. It is EXPORTED because it is not only
+	// this package's number: `fugaro project repos add` validates its argument
+	// with ValidPattern below, so it is the longest name that command accepts —
+	// and a listing that prints that command as its remedy has to be held to the
+	// same bound, or it advises a command the command itself refuses
+	// (internal/cli's enrollableArg, and the test named for exactly that).
+	MaxPatternLen = 255
 )
 
 // ValidPattern checks one allow_repos entry: "*", or a provider-qualified path
@@ -124,8 +129,8 @@ func ValidPattern(pattern string) error {
 	if pattern == "" {
 		return fmt.Errorf("the pattern is empty (use \"*\" to allow every repository)")
 	}
-	if len(pattern) > maxPatternLen {
-		return fmt.Errorf("the pattern is %d characters; at most %d are allowed", len(pattern), maxPatternLen)
+	if len(pattern) > MaxPatternLen {
+		return fmt.Errorf("the pattern is %d characters; at most %d are allowed", len(pattern), MaxPatternLen)
 	}
 	segs := strings.Split(pattern, "/")
 	if len(segs) < 3 {

@@ -365,3 +365,22 @@ func TestCoversBoundTheAddressesTheyPrint(t *testing.T) {
 		}
 	}
 }
+
+// ActionsText tells a guard item's actions from a cover item's why: it is what
+// internal/managed's refusals uses to find the "): " a guard item writes, since
+// a why may end in ")" itself (the entries rule's does) and the item's last
+// character therefore decides nothing. Everything terraform's actions can be —
+// one, or several in the order the plan wrote them — is an actions text, and
+// nothing else is.
+func TestActionsTextIsTheGatesActionWords(t *testing.T) {
+	for _, s := range []string{"delete", "create", "read", "update", "no-op", "forget", "delete, create", "no-op, read"} {
+		if !ActionsText(s) {
+			t.Errorf("ActionsText(%q) = false, want true", s)
+		}
+	}
+	for _, s := range []string{"", "actions delete", "delete): ", "delete, ", ", delete", "delete, bogus", "DELETE", "delete, create, ", "the object it removes was moved here from another address"} {
+		if ActionsText(s) {
+			t.Errorf("ActionsText(%q) = true, want false", s)
+		}
+	}
+}

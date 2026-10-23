@@ -71,6 +71,64 @@ func PathSpendRun(day int64, slug, run string) string {
 }
 func PathSpendMeta(day int64) string { return "spend/" + DayKey(day) + "/meta" }
 
+// The by-tier split's keys: the tiers that are paid for, as the rules'
+// `$tier` spells them (C1.3, `byTier/$tier/spent` with `$tier == 'b' ||
+// $tier == 'c'`). The credentials service's own answer spells them "B" and
+// "C" (the gateway's TierB, TierC, C1.15) and the gateway's stage report
+// keeps that spelling; tierKey is the one place that maps one to the other.
+//
+// Tier A has no leaf on purpose: a subscription call is accounted as
+// notional on the nodes that already exist (C1.16, D140), so only money --
+// tiers B and C -- is split by the tier that paid it.
+const (
+	TierB = "b"
+	TierC = "c"
+)
+
+// tierSeg escapes one tier for a path and panics on a tier no byTier leaf
+// exists for. The rules' `$tier` validation is what refuses such a key, and a
+// write under it would read as a deployed-rules mismatch rather than as the
+// programming error it is; a panic here is caught by the session's safely and
+// becomes a fail-closed halt, never a crash (session.go).
+func tierSeg(what, tier string) string {
+	if tier != TierB && tier != TierC {
+		panic("budget: " + what + ": " + tier + " has no byTier leaf (only b and c are paid tiers)")
+	}
+	return seg("tier", tier)
+}
+
+// PathRunByTier is one tier's real spend under the run's lifetime ledger
+// (D140); the leaf under it is `spent`. Only a cascade run writes it: no
+// other run's calls carry a tier.
+func PathRunByTier(slug, run, tier string) string {
+	return PathRun(slug, run) + "/byTier/" + tierSeg("run", tier)
+}
+
+// PathSpendRunByTier is the same split on the run's share of one day.
+func PathSpendRunByTier(day int64, slug, run, tier string) string {
+	return PathSpendRun(day, slug, run) + "/byTier/" + tierSeg("run share", tier)
+}
+
+// PathSpendRepoByTier is the repository's day counters' split, and
+// PathSpendGlobalByTier the project's. Any run of the project can write
+// those two (they carry the same latitude `spent` does) and nothing may
+// decide anything on them: the split is a display quantity (C1.3's
+// constraint on this split, stated in the design and in the plan).
+func PathSpendRepoByTier(day int64, slug, tier string) string {
+	return PathSpendRepo(day, slug) + "/byTier/" + tierSeg("repository day", tier)
+}
+
+func PathSpendGlobalByTier(day int64, tier string) string {
+	return PathSpendGlobal(day) + "/byTier/" + tierSeg("project day", tier)
+}
+
+// TierSpent is one tier's real spend: the only leaf the rules' byTier node
+// carries. It is the same quantity `spent` beside it is, split by the tier
+// that paid for it (D140).
+type TierSpent struct {
+	Spent Micros `json:"spent,omitempty"`
+}
+
 // PathAgent is a run's registry entry.
 func PathAgent(slug, run string) string {
 	return "agents/" + seg("slug", slug) + "/" + seg("run id", run)
@@ -280,6 +338,12 @@ type RunLedger struct {
 	Tokens   int64  `json:"tokens,omitempty"`
 	Exp      int64  `json:"exp,omitempty"`
 	Crashed  bool   `json:"crashed,omitempty"`
+	// ByTier is the split of Spent by the tier that paid for it, keyed b and
+	// c (D140, C1.16). It is read here so a write of one tier's leaf is the
+	// increase the rules validate (increase-only, absolute on the wire),
+	// never a write of the whole struct: the same rule as every other field.
+	// Only a cascade run has it, and it is never tied to Spent beside it.
+	ByTier map[string]TierSpent `json:"byTier,omitempty"`
 }
 
 // Outstanding is what the run still counts against the shared counters:
@@ -311,6 +375,10 @@ type Counters struct {
 	Notional Micros              `json:"notional,omitempty"`
 	Calls    int64               `json:"calls,omitempty"`
 	ByModel  map[string]ModelUse `json:"byModel,omitempty"`
+	// ByTier is the split of Spent by the tier that paid for it (D140,
+	// C1.16), keyed b and c, read and written one leaf at a time like every
+	// other field here. Nothing decides anything on it.
+	ByTier map[string]TierSpent `json:"byTier,omitempty"`
 }
 
 // Models returns ByModel with the model names unescaped.

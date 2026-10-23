@@ -82,8 +82,11 @@ resource "google_storage_bucket_iam_member" "job_tokens" {
 #
 # One grant per secret the profile names, and none by name prefix: the
 # design's §4.5 runtime fetch, which would grant a prefix of Secret Manager
-# names through an IAM condition, is not adopted (Check 52's U3 is unanswered,
-# so nothing here depends on it).
+# names through an IAM condition, is not adopted. That decision was taken
+# while Check 52's U3 was unanswered and is unchanged now that it is answered
+# — RUN 2026-10-16, the condition *is* honoured for
+# secretmanager.versions.access — so the prefix form is expressible and
+# nothing here depends on it either way.
 resource "google_secret_manager_secret_iam_member" "job" {
   for_each = toset(values(var.job.secret_env))
 

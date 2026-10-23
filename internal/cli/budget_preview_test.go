@@ -120,6 +120,9 @@ func (f *budgetFixture) Checkout(t *testing.T, agentYAML string) {
 type previewStage struct {
 	kind, model string
 	usd         float64
+	// notional is the part of usd a subscription paid (C1.16, P12): a
+	// cascade stage's figure holds both, and only the rest is a real dollar.
+	notional float64
 }
 
 // SeedRuns writes n runs of acme/app into the runs bucket, each with the
@@ -149,6 +152,9 @@ func (f *budgetFixture) SeedRunsBasis(t *testing.T, firstHourAgo, n int, stages 
 			if s.usd > 0 {
 				st["model_usd"] = s.usd
 				total += s.usd
+			}
+			if s.notional > 0 {
+				st["model_notional_usd"] = s.notional
 			}
 			if s.model != "" {
 				st["model"] = s.model
@@ -385,6 +391,33 @@ func TestBudgetPreviewTypicalExcludesSubscriptionRuns(t *testing.T) {
 	const mixed = "6 of the 11 runs of acme/app in the last 30 days ran on a subscription (agent.auth oauth): their model_usd is notional and is not averaged into a real-dollar figure"
 	if !strings.Contains(errOut, mixed) {
 		t.Errorf("the excluded oauth runs are not counted:\n%s", errOut)
+	}
+}
+
+// TestBudgetPreviewTypicalCountsAMixedStageAtItsMoney (C1.16, P12, D140): the
+// window's runs are cascade ones, whose stage figures hold the calls the
+// subscription paid as well as the billed ones. The mean a real-dollar line is
+// built from is the money part of each stage: counting the notional dollars in
+// it would print a typical run priced mostly by the plan.
+func TestBudgetPreviewTypicalCountsAMixedStageAtItsMoney(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.SetCaps(100, 3, 20, 3)
+	f.SetSpentToday(0)
+	f.Checkout(t, "  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
+	stages := previewRunStages(0.60, 0.10, 0.20, 1.00)
+	for i, n := range []float64{0.50, 0.05, 0, 0.50, 0} {
+		stages[i].notional = n
+	}
+	f.SeedRuns(t, 0, 6, stages)
+	out, _, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Money only: implement $0.10, review_first $0.05, fix $0.20, review
+	// $0.50 -- 1 + 2×$0.05 + 3×$0.20 + $0.50 = $1.30, not the $2.40 the whole
+	// figures would make.
+	if !strings.Contains(out, "typical: $1.30 a run") {
+		t.Errorf("the notional part of the stages is in the figure:\n%s", out)
 	}
 }
 

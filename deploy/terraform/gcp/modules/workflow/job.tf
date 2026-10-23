@@ -53,9 +53,12 @@ resource "google_cloud_run_v2_job" "this" {
         }
 
         # The secret's ID, the same-project short form the live jobs hold,
-        # never its projects/… path, which would plan an update.
+        # never its projects/… path, which would plan an update. job_mounts,
+        # not var.workflow.secret_env: a mount the account has no accessor on
+        # is a job Cloud Run refuses to create, so C2.3 takes the App key's
+        # mount away with its accessor (sa.tf, and C1.20 for the model ones).
         dynamic "env" {
-          for_each = var.workflow.secret_env
+          for_each = local.job_mounts
           content {
             name = env.key
             value_source {

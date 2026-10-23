@@ -135,9 +135,14 @@ locals {
 # current and inside preload_refresh_days costs one API call and nothing
 # else, and anything else is built beside it, in the same family.
 resource "google_cloud_scheduler_job" "preload_rebuild" {
-  project     = var.project
-  name        = var.names.preload_scheduler_job
-  region      = var.region
+  project = var.project
+  name    = var.names.preload_scheduler_job
+  # The scheduler region, not the installation's: Cloud Scheduler does not
+  # serve every Cloud Run region, and this module's documented installation
+  # (us-east5) is one it does not. The call below is to a global API
+  # (cloudbuild.googleapis.com), so nothing here names a location and the job
+  # is complete wherever it lives.
+  region      = var.scheduler_region
   schedule    = var.preload_schedule
   time_zone   = "Etc/UTC"
   description = "Rebuilds fugaro's preloaded Batch boot image: a Batch image's supported lifetime can end 60 days after its starting date (design compute-backend §1.2)."

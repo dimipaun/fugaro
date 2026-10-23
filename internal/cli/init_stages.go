@@ -134,6 +134,14 @@ func (e *initEngine) options() initflow.Options {
 func initStages(e *initEngine) []initflow.Stage {
 	e.images, e.repo = newImagesStage(e), newRepositoryStage(e)
 	stages := []initflow.Stage{&preflightStage{e}, newInstallationStage(e), newFirebaseStage(e), e.images, newInstallation2Stage(e)}
+	// The credentials service is turned on by its own owner-run flag and by
+	// nothing else, and the stage comes BEFORE the repository stage: a
+	// repository root reads the installation's credentials_service output to
+	// decide whether its jobs mount a model credential at all, and grants each
+	// job's account an invoker on the service (C1.20).
+	if e.r.o.provisionCredentials {
+		stages = append(stages, newCredentialsStage(e))
+	}
 	stages = append(stages, newSecretsStage(e), newPluginStage(e), e.repo)
 	// The Batch backend's provisioning is the owner's step and nothing else
 	// reaches it: the stage is registered only under its own flag, and

@@ -1,0 +1,10 @@
+version: 1
+project: aurora
+git: { provider: github }
+agent:
+  auth: cascade
+budget:
+  mode: observe
+  per_run_usd: 5
+workflows:
+  server: { commands: { build: make, test: make test } }

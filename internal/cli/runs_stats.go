@@ -129,11 +129,15 @@ func newRunsStatsCmd() *cobra.Command {
 			"    the bucket's run IDs place its start, so the window and the runs in it agree\n" +
 			"    with runs ls.\n\n" +
 			"The money is model dollars, counted the way the budget screens count them. COUNTED\n" +
-			"$ is the model spend that counts toward the caps (a run on an API key or Vertex),\n" +
-			"and NOTIONAL $ the model spend of a run on a subscription (agent.auth oauth),\n" +
-			"which counts toward the plan's limits and is no one's bill: they are separate\n" +
-			"columns and are never summed. Compute is not attributed to a person: no run's\n" +
-			"compute is, and the budget database's own person view leaves it out too. AVG\n" +
+			"$ is the model spend that counts toward the caps: the money part of a run's model\n" +
+			"figure (model_usd minus model_notional_usd, C1.16/P12). NOTIONAL $ is the part of\n" +
+			"that figure a subscription paid -- a run on agent.auth oauth whole, and a cascade\n" +
+			"run's tier-A calls, whose run is otherwise an api-key one -- which counts toward\n" +
+			"the plan's limits and is no one's bill. The spend basis decides only a record\n" +
+			"written before that breakdown existed, which is what says a figure was never\n" +
+			"billed. They are separate columns and are never summed. Compute is not attributed\n" +
+			"to a person: no run's compute is, and the budget database's own person view\n" +
+			"leaves it out too. AVG\n" +
 			"$/RUN is COUNTED $ over COUNTED RUNS, the runs that settled a real-dollar cost;\n" +
 			"a notional run, a run with no readable record and a record from before the cost\n" +
 			"breakdown existed are none of them averaged in as a run that cost nothing.\n\n" +
@@ -472,11 +476,13 @@ func userStatsRun(l *runstore.Launch, rec *runstore.Record) userStatsRecorded {
 	}
 	r.Status = string(rec.Status)
 	if rec.Cost != nil {
-		switch rec.Cost.ModelBasis {
-		case runstore.BasisSubscription:
-			r.NotionalUSD = rec.Cost.ModelUSD
-		default:
-			r.CountedUSD, r.CountedCost = rec.Cost.ModelUSD, true
+		// The two halves of the model figure (P12, D140): the subscription's
+		// part is notional whoever it belonged to, and the money part counts
+		// toward a cap. A cascade run has both, and its basis is api-list for
+		// the whole run, so neither half can be read off the basis alone.
+		r.NotionalUSD = rec.Cost.ModelSubscriptionUSD()
+		if rec.Cost.ModelBasis != runstore.BasisSubscription {
+			r.CountedUSD, r.CountedCost = rec.Cost.ModelMoneyUSD(), true
 		}
 	}
 	return userStatsRecorded{run: r, recorded: recorded}
@@ -611,7 +617,7 @@ func userStatsNotes(doc userStatsDoc) []string {
 		// caller started nothing in.
 		notes = append(notes, fmt.Sprintf("you:     your identity reads as %q, the key a run that recorded no launcher is grouped under: no row below is shown as yours, because a row under that key is not only yours", userstats.UnknownUser))
 	}
-	notes = append(notes, "money:   model dollars, as the budget screens count them: COUNTED counts toward the caps, NOTIONAL (agent.auth oauth) toward none. They are never summed, and compute is attributed to no person")
+	notes = append(notes, "money:   model dollars, as the budget screens count them: COUNTED is the money part of a run's model figure and counts toward the caps, NOTIONAL the part a subscription paid (a cascade run's tier-A dollars are in it) and counts toward the plan's limits alone. They are never summed, and compute is attributed to no person")
 	if doc.Truncated {
 		notes = append(notes, fmt.Sprintf("read:    the window holds more runs than the %d this call reads: no figure below is over more than its newest %d, and none is over the whole window", doc.MaxRuns, doc.MaxRuns))
 	}

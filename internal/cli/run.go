@@ -19,8 +19,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -432,6 +435,12 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		}
 	}
 	if prior == nil {
+		// The cascade's own gate, first: nothing about a run this launch
+		// cannot carry is worth an --attach upload, a cap check or a claim
+		// (cascadeLaunchRefusal).
+		if err := cascadeLaunchRefusal(ctx, env, spec); err != nil {
+			return launchResult{}, err
+		}
 		// --attach, before the gates below: its recipe refusal, its caps,
 		// D9's line and its image gate (design §4, plan P7/P9). It uploads
 		// nothing here — attachUpload does that below, after the last gate
@@ -547,7 +556,7 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		// the workflow's memory, a render or probe step against the
 		// commands they need), so it runs before the budget read below and
 		// before createTask writes anything at all.
-		if err := checkArtifactLaunch(ctx, spec); err != nil {
+		if err := checkArtifactLaunch(ctx, env, spec); err != nil {
 			return launchResult{}, err
 		}
 		if !skipBudget {
@@ -1141,6 +1150,75 @@ func agentAtRef(ctx context.Context, env *cloudEnv, repo, ref string) (config.Ag
 	return a, auth, true
 }
 
+// cascadeRefConfig is the document a cascade launch's own rules are read from
+// here — its agent.auth and its budget mode both: the fugaro.yaml at the ref
+// the run checks out (spec.Ref), read out of this checkout's object database,
+// resolved over the project layer the task carries (spec.ProjectLayer) through
+// runner.ResolveConfig, the runner's own function, exactly as
+// projectJobAgentAuth resolves the credential.
+//
+// It is deliberately not the launcher's working tree (checkoutConfig). The run
+// clones spec.Ref and resolves *that* file (runner.go's blobless checkout of
+// origin/spec.Ref), so a launcher judging its working tree judges a document
+// the run never reads: a checkout left on another branch, or carrying an
+// uncommitted edit, can say budget.mode: observe over a ref that says off, and
+// the launch this gate exists to refuse — one whose run cannot carry a single
+// call — would take the claim, mint a budget token and start an execution that
+// refuses in agent.BuildEnv instead. The reverse refuses a launch the run would
+// carry. agentAtRef reads the ref for this very reason; the mode has to come
+// from the same bytes as the auth, or the gate judges a run that does not
+// exist.
+//
+// nil when the ref cannot be read or does not resolve: the caller falls back to
+// the checkout's own document, as the auth read always has, and the run's own
+// bootstrap refuses what the launcher could not read.
+func cascadeRefConfig(ctx context.Context, env *cloudEnv, spec *task.Spec) *config.Config {
+	if spec.Ref == "" {
+		return nil
+	}
+	root := checkoutRoot(ctx, spec.Repo)
+	if root == "" {
+		return nil
+	}
+	data, err := readFugaroYAMLAtRef(ctx, root, spec.Ref)
+	if err != nil {
+		return nil
+	}
+	out := runner.ResolveConfig(data, spec.ProjectLayer, env.lc.Name)
+	if out.LayerErr != nil || len(out.Problems) > 0 {
+		return nil
+	}
+	return out.Cfg
+}
+
+// defaultBranchPolicyLayer is the default branch's policy as the run reads it:
+// the policy keys of origin/<default branch>'s fugaro.yaml (runner's
+// resolvePolicy, config.PolicyOf). The run merges three layers — the ceiling,
+// this one and the ref's file — and a layer can only tighten, so leaving this
+// one out is not neutral: a mode this layer raises (off < observe < enforce) is
+// one the run has and the gate would not see, and a launch the run would carry
+// would be refused. The security direction is safe the other way (no layer
+// below the ceiling can lower a mode), so a default branch this launcher cannot
+// read is an empty layer rather than a refusal: it has no fetch of its own — a
+// fetch is a network write into a repository this command does not own — and
+// the run's own bootstrap refuses the file it cannot read.
+func defaultBranchPolicyLayer(ctx context.Context, repo string) policy.Layer {
+	root := checkoutRoot(ctx, repo)
+	if root == "" {
+		return policy.Layer{}
+	}
+	db := defaultBranchParse(ctx, root)
+	if !db.read {
+		return policy.Layer{}
+	}
+	p, err := config.PolicyOf(db.data)
+	if err != nil {
+		return policy.Layer{}
+	}
+	return policy.Layer{Mode: p.Mode, PerRunUSD: p.PerRunUSD, PerDayUSD: p.PerDayUSD, MaxRunTokens: p.MaxRunTokens,
+		AllowedModels: p.AllowedModels, MaxOutputCoder: p.MaxOutputTokens.Coder, MaxOutputReviewer: p.MaxOutputTokens.Reviewer}
+}
+
 // checkoutAgentAuth is a checkout's own agent.auth as claudeAccountAllowed
 // judges a name with it, "" when there is no checkout to read one from.
 func checkoutAgentAuth(co *config.Config) string {
@@ -1176,7 +1254,7 @@ func claudeAccountAllowed(env *cloudEnv, repo, name, auth string) error {
 	}
 	// The two documents auth can come from are read differently, and only one
 	// of them is validated. The checkout's own config went through
-	// config.Validate (agent.auth is one of vertex, api-key, oauth), while the
+	// config.Validate (agent.auth is one of config.AgentAuths), while the
 	// ref's bytes are read by config.AgentOf, which decodes strictly and
 	// validates nothing — so an arbitrary string arrives here from a committed
 	// fugaro.yaml. A value this Fugaro cannot place is refused, which is what
@@ -1278,6 +1356,162 @@ func printRecipeNote(warn io.Writer, rr *resolvedRecipe, explicit bool) {
 	io.WriteString(warn, noteLine(rr.Note))
 }
 
+// cascadeLaunchRefusal is the launcher's own side of the cascade's rules
+// (C1.19): a `agent.auth: cascade` workflow is refused here, before the claim
+// is taken, before a budget token is minted and before any byte is written —
+// so a repository that asks for a cascade no installation can carry leaves no
+// task, no execution and no token behind.
+//
+// The runner refuses the rest of the same rules in the job (the missing
+// service, serviceUpstream). What is refused here is refused here because a
+// person is watching a terminal:
+//
+//   - an installation with no database, first of all: the switch the operator
+//     publishes and the credentials rules marker both live there, so this CLI
+//     can see neither and refuses rather than launching a run whose first
+//     recorded credential the deployed rules may refuse. The model credential
+//     is no longer mounted in such a job (C1.20), so there is nothing to fall
+//     back to either (D143) — and without a database there is no policy to
+//     read a mode from, so the gateway rule below could only guess.
+//   - the O2 switch: the project's published policy must carry
+//     routing.claude: {via: cascade}, or no run of this workflow is admitted
+//     anywhere. The policy read below is the one this needs, and the refusal
+//     is fugaro validate's cascadeProblems said again on this side — a
+//     repository asks for the cascade, and only the operator can set it there
+//     — except that here it is judged before the claim is taken, before a
+//     budget token is minted and before an execution starts, rather than
+//     leaving the runner's bootstrap to refuse a run already paid for.
+//   - the gateway rule (config.CheckCascadeGateway): a cascade run has no
+//     credential of its own, so a budget whose effective mode is off leaves it
+//     with nothing to carry its calls. config.CheckCascadeGateway is the one
+//     place that rule lives, and its own comment named this task as the
+//     launch's caller of it.
+//   - the project's published model allow-list (the owner's ruling of
+//     2026-10-22): the credentials service holds every call it carries to the
+//     project's budget.allowed_models and refuses a project that publishes
+//     none (internal/credsvc's requestNoAllowList), so a cascade run of such a
+//     project would have every call refused and halt on the first (D143). What
+//     is judged is the *policy node's* list and not the run's merged one: the
+//     node is the only list the service can read, and the environment's
+//     ceiling and the repository's file never reach it. The rule has no skip
+//     for a project layer this launcher cannot read — an absent node is
+//     refused by the switch's arm above — and this read is the one all three
+//     surfaces the cascade is judged on make: `fugaro validate` reports it to
+//     the author (validate.go's cascadeProblems) and the run refuses it in
+//     bootstrap, before any model call (internal/runner/routing.go's
+//     applyRouting).
+//   - the rules marker (budget/rules, C1.3): the deployed document must carry
+//     the credentials family, or the run's first write of the credential's
+//     name is denied and it halts named (HaltCredsRulesDenied, C1.17). This is
+//     the same read `fugaro update --provision-credentials` makes before it
+//     applies anything and the same pair `fugaro doctor` reports; here it is a
+//     refusal, because a launch is the moment it can still save the run. The
+//     marker's generation is wanted to be exactly this binary's, and the two
+//     ways it can miss it are two different problems with two different fixes
+//     (doctorCredsRules' pair): below this Fugaro's it is an old deploy, above
+//     it a newer Fugaro's document — and a newer marker is not one this
+//     binary may deploy over (internal/infra's DB.Plan refuses it), so telling
+//     its owner to re-run init from this Fugaro would send them at a command
+//     that refuses them.
+//
+// Both documents this gate judges are the run's: the auth *and* the mode come
+// from the file the run checks out (spec.Ref, read out of this checkout's
+// object database by cascadeRefConfig), never from the launcher's working tree,
+// which the run does not read — projectJobAgentAuth's finding, and the reason
+// the auth was read at the ref here from the start. The mode is judged over the
+// same three layers the run merges (runner's resolvePolicy): the environment's
+// ceiling, the default branch's policy (defaultBranchPolicyLayer) and the ref's
+// own file.
+func cascadeLaunchRefusal(ctx context.Context, env *cloudEnv, spec *task.Spec) error {
+	runCfg := cascadeRefConfig(ctx, env, spec)
+	if runCfg == nil {
+		// The ref could not be read or does not resolve: the checkout's own
+		// document stands in, as the auth read has always fallen back to it,
+		// and the run's own bootstrap refuses what the launcher could not
+		// read.
+		runCfg = checkoutConfig(ctx, spec.Repo)
+	}
+	auth := checkoutAgentAuth(runCfg)
+	if auth != config.AuthCascade {
+		return nil
+	}
+	if env.lc.Budget == nil || env.lc.Budget.RTDBURL == "" {
+		return userErr("agent.auth: cascade cannot run here: this installation has no database, so neither the policy switch that turns the cascade on (%s) nor the credentials rules marker (%s) can be read — and a job of such an installation mounts no model credential at all (C1.20), so this run would have nothing to fall back to (D143). Run 'fugaro update --provision-credentials' in your own terminal to enable the credentials service, or set agent.auth to api-key or oauth in this workflow",
+			projectpolicy.PathShared(), rules.PathCredsRulesMarker())
+	}
+	ceiling := ceilingLayer(env.lc)
+	def := defaultBranchPolicyLayer(ctx, spec.Repo)
+	var layer policy.Layer
+	if runCfg != nil {
+		layer = runner.FileLayer(runCfg)
+	}
+	p, found, err := env.policy.read(ctx, env.lc)
+	if err != nil {
+		return policyReadErr(err)
+	}
+	// O2, on the launch's own side (validate.go's cascadeProblems is the
+	// author's): the policy read above is the one the switch is judged from,
+	// and it fails closed in every direction — nothing published, a policy
+	// with no routing block, or a Claude switch written with another via
+	// (`direct` names the direct path and `auto` keeps today's routing
+	// meaning, O3) are all "not turned on".
+	switch {
+	case !found || p == nil:
+		return userErr("agent.auth: cascade cannot run here: this project has published no policy at %s, so nothing turns the cascade on. Set routing.claude: {via: cascade} in the project policy and publish it (fugaro project policy publish) — a repository asks for the cascade, and only the operator can set it there (O2)",
+			projectpolicy.PathShared())
+	case p.Routing == nil || p.Routing.Claude == nil || p.Routing.Claude.ViaValue() != config.RouteCascade:
+		return userErr("agent.auth: cascade cannot run here: this project's published policy (%s) does not turn the cascade on. Set routing.claude: {via: cascade} in the project policy and publish it (fugaro project policy publish) — a repository asks for the cascade, and only the operator can set it there (O2)",
+			projectpolicy.PathShared())
+	}
+	if p.Budget.Mode != "" {
+		ceiling.Mode = p.Budget.Mode
+	}
+	if ps := config.CheckCascadeGateway(config.Agent{Auth: auth}, policy.Merge(ceiling, def, layer).Mode); len(ps) > 0 {
+		msgs := make([]string, len(ps))
+		for i, p := range ps {
+			msgs[i] = p.String()
+		}
+		return userErr("agent.auth: cascade cannot run here: %s. A cascade run holds no model credential of its own — the gateway carries every call to the credentials service and accounts for it (D143) — so a budget that leaves the gateway off cannot run one", strings.Join(msgs, "; "))
+	}
+	// The allow-list the credentials service holds this run's calls to, read
+	// from the policy node and refused fail closed: there is no fall-back to
+	// the environment's ceiling or to the repository's file, because the
+	// service never sees either and refuses every call of a project that
+	// publishes none (the owner's ruling of 2026-10-22).
+	if len(p.Budget.AllowedModels) == 0 {
+		return userErr("agent.auth: cascade cannot run here: this project's published policy (%s) carries no budget.allowed_models, and the credentials service — which carries every call of a cascade run and accounts for it (D143) — refuses a project that publishes none, so this run's first call would be refused and halt it. agent.auth: cascade needs the project's budget.allowed_models; add the allow-list to the project layer and publish it (fugaro project policy publish)",
+			projectpolicy.PathShared())
+	}
+	db, err := newBudgetClient(ctx, env.lc.Budget.RTDBURL, env.lc.Endpoints.NoAuth)
+	if err != nil {
+		return userErr("%v", err)
+	}
+	var raw json.RawMessage
+	marker := rules.PathCredsRulesMarker()
+	foundMarker, err := db.Get(ctx, marker, &raw)
+	if err != nil {
+		return dbErr(env.lc, fmt.Errorf("reading the credentials rules marker at %s: %w", marker, err), false)
+	}
+	if !foundMarker {
+		return userErr("agent.auth: cascade cannot run here: the installation's database carries no credentials rules marker at %s, so its deployed rules predate the credentials service and the first credential this run records would be refused — the run would halt instead of running (C1.17). Re-run 'fugaro update --firebase-project <firebase-project-id>' in your own terminal from a Fugaro that carries the credentials rules (%s), then launch again",
+			marker, credsServiceSince)
+	}
+	var gen int
+	if err := json.Unmarshal(raw, &gen); err != nil || projectpolicy.MarkerHandEdited(gen) {
+		return userErr("agent.auth: cascade cannot run here: the credentials rules marker at %s is %s, which is not a generation number; fix it with 'fugaro update --firebase-project <firebase-project-id>'",
+			marker, oneLineCLI(string(raw)))
+	}
+	switch {
+	case gen < rules.CredsRulesVersion:
+		return userErr("agent.auth: cascade cannot run here: the credentials rules marker at %s records generation %d, below the generation %d this Fugaro's credentials rules carry, so the deployed document predates the credentials family and the first credential this run records would be refused (C1.17); re-run 'fugaro update --firebase-project <firebase-project-id>' in your own terminal from this Fugaro (%s), then launch again",
+			marker, gen, rules.CredsRulesVersion, credsServiceSince)
+	case gen > rules.CredsRulesVersion:
+		return userErr("agent.auth: cascade cannot run here: the credentials rules marker at %s records generation %d, above the generation %d this Fugaro's credentials rules carry, so a newer Fugaro deployed them and this release refuses to deploy its own rules over a newer marker; upgrade Fugaro first ('fugaro upgrade') and re-run 'fugaro update --firebase-project <firebase-project-id>' with the newer binary, then launch again",
+			marker, gen, rules.CredsRulesVersion)
+	}
+	return nil
+}
+
 // checkArtifactLaunch refuses a mode: artifact launch whose caps cannot fit
 // the workflow's memory, or whose render or probe step names a command the
 // workflow leaves empty: the launch's arm of runner.RecipeGateProblems
@@ -1286,17 +1520,102 @@ func printRecipeNote(warn io.Writer, rr *resolvedRecipe, explicit bool) {
 // execution behind. A launch whose recipe or workflow the launcher cannot
 // resolve locally is judged by the runner's own bootstrap instead
 // (checkGateCommands), which reports the same list.
-func checkArtifactLaunch(ctx context.Context, spec *task.Spec) error {
+//
+// It is also the arm of the artifact boundary that survives the enable (Global
+// Constraint 13, plan compute-backend.md Task 8 step 4): an artifact-producing
+// run is never launched on cloud-batch, and this is where the backend and the
+// recipe the launch names are both known -- `fugaro validate` judges the
+// checkout's own recipe offline, so a launch naming an artifact recipe with
+// --recipe is refused here rather than there. The two arms ask one function
+// (artifactOnBatchRefusal), so the boundary cannot be lifted from one path
+// while the other keeps it.
+//
+// What it judges is the recipe as recipeForLaunch resolves it, and that is not
+// always the recipe the runner reads, because the runner resolves the
+// repository layer at the task's ref FIRST (internal/runner/recipe.go's
+// resolveRecipe, TestRecipeRepoLayerWins):
+//
+//   - a project or catalog recipe's text travels in the task, but a file of
+//     that name at the ref is the recipe that runs, mode included, whatever
+//     text the task carries. So the ref is asked for that name as the runner
+//     asks it (carriedRecipeAtRef, recipeAtRef), and a ref this checkout has
+//     none of is refused fail-closed (artifactShadowedOnBatchRefusal) -- the
+//     text a task carries says nothing about what the base branch holds beside
+//     it. TestAnArtifactRecipeAtTheRefShadowsTheTasksCarriedTextOnCloudBatch
+//     pins both halves.
+//   - a repository recipe (named, or the one agent.recipe names) is read from
+//     this launcher's working tree, while the runner reads it at the task's
+//     ref -- the repository's base branch unless the launch names another. A
+//     working tree whose recipe is not mode: artifact therefore passes this
+//     gate for a ref whose recipe is. That residual is recorded in the plan's
+//     Task 10 step 5 inventory, which closes it before the name is selectable,
+//     and TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef pins it.
+//
+// It has three shapes of its own, because a launch can arrive without a recipe
+// this launcher can read at all: the refusal for a recipe known to be mode:
+// artifact, and -- on cloud-batch only -- the refusal for a recipe that could
+// not be resolved here (artifactUnreadOnBatchRefusal) and for a carried recipe
+// whose repository layer at the ref could not be read
+// (artifactShadowedOnBatchRefusal), since nothing on this path can then say the
+// run is not an artifact one. All are asked before anything about this launch
+// is written, so none leaves a task or an execution behind.
+func checkArtifactLaunch(ctx context.Context, env *cloudEnv, spec *task.Spec) error {
 	cfg := checkoutConfig(ctx, spec.Repo)
+	// The boundary is asked here, before the checkout can bail out below and
+	// with the recipe resolved as far as this checkout allows. Both of those
+	// are the arm itself and not an ordering detail: recipeForLaunch needs no
+	// checkout for a task that carries its own recipe text (a project or
+	// catalog recipe -- `fugaro run --recipe`), so asking the boundary only
+	// after the checkout had resolved left exactly that launch unrefused on
+	// cloud-batch, from any directory whose origin is not spec.Repo. The
+	// workflow is not consulted either: SelectWorkflow reads this checkout's
+	// config, which a launch whose local configuration disagrees with its
+	// repository would fail -- and the boundary is about the backend and the
+	// recipe, not about the workflow.
+	rcp := recipeForLaunch(ctx, cfg, spec)
+	if msg, ok := artifactOnBatchRefusal(launchBackend(env.be), rcp); ok {
+		// Before the caps below and before anything is written, like every
+		// other refusal here: the run the boundary holds back leaves no task
+		// and no execution behind.
+		return userErr("%s", msg)
+	}
+	if launchBackend(env.be) == backend.CloudBatch && rcp == nil {
+		// Fail closed, and this is the other shape of the same hole: a recipe
+		// this launcher cannot read (a repository recipe with no checkout of
+		// that repository here, or a first run whose recipe is the one this
+		// checkout's agent.recipe names) reaches the boundary as nil, which
+		// artifactOnBatchRefusal reads as "not an artifact run" -- and the
+		// runner resolves that recipe at the task's ref, so on
+		// cloud-batch an unread recipe is refused rather than passed on.
+		return userErr("%s", artifactUnreadOnBatchRefusal(spec.Repo))
+	}
+	if launchBackend(env.be) == backend.CloudBatch && spec.Recipe != nil && spec.Recipe.YAML != "" {
+		// A recipe whose text the task carries is not the run's recipe either,
+		// and for the same reason: the runner reads the repository layer at the
+		// task's ref FIRST and only falls back to the task's copy
+		// (internal/runner/recipe.go's resolveRecipe, TestRecipeRepoLayerWins),
+		// so a file of that name at the ref is the recipe that runs, its mode
+		// included. So the ref is asked for that name, as the runner asks it:
+		// the file it finds (if any) is judged on its own mode, and a ref this
+		// checkout has none of is refused fail-closed -- a project or catalog
+		// recipe's text says nothing about what the repository's base branch
+		// holds beside it.
+		refRcp, err := carriedRecipeAtRef(ctx, spec)
+		if err != nil {
+			return userErr("%s", artifactShadowedOnBatchRefusal(spec.Recipe.Name, spec.Repo, spec.Ref))
+		}
+		if msg, ok := artifactOnBatchRefusal(backend.CloudBatch, refRcp); ok {
+			return userErr("%s", msg)
+		}
+	}
 	if cfg == nil {
+		return nil
+	}
+	if rcp == nil || rcp.Mode != recipe.ModeArtifact {
 		return nil
 	}
 	name, wf, err := cfg.SelectWorkflow(spec.Workflow)
 	if err != nil {
-		return nil
-	}
-	rcp := recipeForLaunch(ctx, cfg, spec)
-	if rcp == nil || rcp.Mode != recipe.ModeArtifact {
 		return nil
 	}
 	var msgs []string
@@ -1307,6 +1626,79 @@ func checkArtifactLaunch(ctx context.Context, spec *task.Spec) error {
 		return nil
 	}
 	return userErr("recipe %s: %s", rcp.Name, strings.Join(msgs, "; "))
+}
+
+// carriedRecipeAtRef is the recipe the runner will use for a launch whose task
+// carries its own recipe text: the repository layer at the task's ref when the
+// ref has a file of that name -- which resolveRecipe reads FIRST and which wins
+// over the task's copy, mode included (internal/runner/recipe.go,
+// TestRecipeRepoLayerWins) -- else the text the task carries.
+//
+// err is non-nil whenever the ref's answer cannot be had at all: no checkout of
+// the run's repository in this directory, a checkout that does not hold
+// spec.Ref, or a file at the ref this launcher cannot parse. The caller refuses
+// on it, because then nothing here can say whether the run is an artifact one.
+func carriedRecipeAtRef(ctx context.Context, spec *task.Spec) (*recipe.Recipe, error) {
+	root := checkoutRoot(ctx, spec.Repo)
+	data, found, err := recipeAtRef(ctx, root, spec.Ref, spec.Recipe.Name)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		data = []byte(spec.Recipe.YAML)
+	}
+	rcp, ps := recipe.Parse(data)
+	if len(ps) > 0 {
+		return nil, fmt.Errorf("recipe %s at %s is invalid: %s", spec.Recipe.Name, spec.Ref, recipe.ProblemsText(ps))
+	}
+	if rcp.Name != spec.Recipe.Name {
+		return nil, fmt.Errorf("recipe %s at %s names itself %q; the file name and the name must agree", spec.Recipe.Name, spec.Ref, rcp.Name)
+	}
+	return rcp, nil
+}
+
+// recipeAtRef reads .fugaro/recipes/<name>.yaml at ref out of this checkout's
+// own object database -- git cat-file, never the network and never the working
+// tree -- the file the runner resolves first (internal/runner/recipe.go's
+// readRepoRecipe). found is false when the ref has no such file; err when the
+// answer cannot be had at all (no checkout root, a ref this checkout does not
+// hold, a path that is not a blob).
+//
+// The refs are tried the way checkoutFugaroYAMLAtRef tries them, and for its
+// reason: refs/remotes/origin/<ref> first, because that is the ref the run
+// clones, and the plain ref as the fallback for a checkout that has the branch
+// but no remote-tracking ref of it. Nothing is fetched here -- a fetch is a
+// network write into a repository this command does not own.
+func recipeAtRef(ctx context.Context, root, ref, name string) (data []byte, found bool, err error) {
+	if root == "" {
+		return nil, false, errors.New("this directory is not a checkout of the run's repository")
+	}
+	if ref == "" {
+		return nil, false, errors.New("the launch names no ref")
+	}
+	at := ""
+	for _, candidate := range []string{"refs/remotes/origin/" + ref, ref} {
+		sha, err := gitRead(ctx, root, "rev-parse", "--verify", "--quiet", "--end-of-options", candidate+"^{commit}")
+		if err == nil && sha != "" {
+			at = candidate
+			break
+		}
+	}
+	if at == "" {
+		return nil, false, fmt.Errorf("this checkout holds no %s ref (fetch it, or check it out)", ref)
+	}
+	rel := recipe.RepoPath(name)
+	if _, err := gitRead(ctx, root, "rev-parse", "--verify", "--quiet", "--end-of-options", at+":"+rel); err != nil {
+		return nil, false, nil
+	}
+	data, err = gitCmd(ctx, root, "cat-file", "blob", at+":"+rel).Output()
+	if err != nil {
+		return nil, false, fmt.Errorf("%s at %s is not a readable file", rel, at)
+	}
+	if len(data) > recipe.MaxBytes {
+		return nil, false, fmt.Errorf("%s at %s is %d bytes, over the 16 KiB limit", rel, at, len(data))
+	}
+	return data, true, nil
 }
 
 // recipeForLaunch is the recipe this launch will run, parsed: the task's own

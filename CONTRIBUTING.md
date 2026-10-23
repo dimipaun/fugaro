@@ -42,6 +42,7 @@ The plugin's skills are in `plugin/skills` (`setup`, `working`, `routing`, `para
 - **Hermetic tests.** Tests must not touch the network, your home directory or the machine's tools beyond what a tag documents. Use the fakes (`internal/gcpfake`, `internal/testutil`) and `t.TempDir()`.
 - **No real cloud in tests.** Anything that needs a real account is behind the `live` tag and is never required.
 - **No project specifics in the engine.** Anything particular to one repository belongs in that repository's `fugaro.yaml`.
+  - One exception is recorded here because it is a guarantee rather than a preference. `internal/backend/batch`'s reaper refuses two GCP project ids by name (`outOfBoundsFloor`), because the failure it guards against — a scheduled sweep deleting the jobs and VMs of an installation that is **not** the one being swept — has to hold on BOTH paths that can name a project: a project config's `gcp_project`, and the reaper Cloud Run job's own environment. Those two share no configuration file and no variable, so a guard a caller has to wire up twice is a guard with a gap in it, and the gap is someone else's live installation. An installation names further projects it must never sweep in `FUGARO_REAPER_REFUSE_PROJECTS`, which both paths read; the two ids cannot be removed, which is what makes it a floor rather than a default.
 - **Secrets never appear** in logs, PRs, errors or fixtures.
 - Update the docs (`README.md`, `docs/`) when behavior or a flag changes.
 

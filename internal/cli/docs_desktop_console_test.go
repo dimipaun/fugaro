@@ -369,6 +369,7 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(doctorCheck{}),
 		reflect.TypeOf(configListDoc{}),
 		reflect.TypeOf(configListInstallation{}),
+		reflect.TypeOf(configListCheckout{}),
 		reflect.TypeOf(plan.Document{}),
 		reflect.TypeOf(plan.Node{}),
 		reflect.TypeOf(plan.Edge{}),
@@ -433,6 +434,60 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 	}
 }
 
+// TestDocsDesktopConsoleContractNamesEveryReasonCode: §6.8 of the contract is
+// what the console is written against, so the list of reasons it gives must be
+// exactly the reasons `config list --json` can emit, and in the order it gives
+// them — the order is what a reader uses to say which of a row's problems is
+// *the* reason it is not valid. (An earlier revision of that block got the
+// order wrong and omitted `unreadable` entirely, which is the drift this pins.)
+//
+// The list is read out of the numbered block §6.8 introduces ("One row carries
+// one reason, and which one it is is fixed. In order:"), not searched for in
+// the prose: the field table further up names the codes too, so a `Contains`
+// over the whole document would pass with the ordered list wrong or a code
+// missing from it.
+//
+// Mutations (run, restore): delete the `unreadable` item, or move
+// `not_enrolled` off the end; each fails here. (Both leave the field table, and
+// so a whole-document search, untouched.)
+func TestDocsDesktopConsoleContractNamesEveryReasonCode(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	doc := readDoc(t, path)
+	const intro = "**One row carries one reason, and which one it is is fixed.** In order:"
+	i := strings.Index(doc, intro)
+	if i < 0 {
+		t.Fatalf("%s no longer states the order the reasons are reported in", path)
+	}
+	// The items that follow, up to the first line that is neither one nor a
+	// wrapped continuation of one (an item's prose is indented under it).
+	var got []string
+	for _, line := range strings.Split(doc[i+len(intro):], "\n") {
+		if line == "" || line[0] == ' ' || line[0] == '\t' {
+			continue
+		}
+		m := reasonItemRE.FindStringSubmatch(line)
+		if m == nil {
+			break
+		}
+		got = append(got, m[1])
+	}
+	want := []string{
+		checkoutNotRepresentable,
+		checkoutMissing,
+		checkoutUnreadable,
+		checkoutNotACheckout,
+		checkoutOtherProject,
+		checkoutOtherRepository,
+		checkoutNotEnrolled,
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("%s's ordered reason list = %v, want %v", path, got, want)
+	}
+}
+
+// reasonItemRE is one numbered item of §6.8's ordered list: "3. `unreadable` …".
+var reasonItemRE = regexp.MustCompile("^[0-9]+\\. `([a-z_]+)`")
+
 // jsonCellRE is a backticked identifier in a field table's first cell: the
 // field names of one row, one or more of them.
 var jsonCellRE = regexp.MustCompile("`([A-Za-z_][A-Za-z0-9_]*)`")
@@ -467,8 +522,13 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(report.JSONDoc{}), reflect.TypeOf(report.JSONLine{}),
 		reflect.TypeOf(report.JSONTokens{}), reflect.TypeOf(Diagnosis{}),
 		reflect.TypeOf(configListDoc{}), reflect.TypeOf(configListInstallation{}),
+		reflect.TypeOf(configListCheckout{}),
 		reflect.TypeOf(plan.Document{}), reflect.TypeOf(plan.Node{}),
 		reflect.TypeOf(plan.Edge{}), reflect.TypeOf(plan.Footprint{}),
+		// The read's own document (V2.2.3): the artifact's shape plus what is
+		// computed where the graph is read.
+		reflect.TypeOf(plan.Graph{}), reflect.TypeOf(plan.NodeState{}),
+		reflect.TypeOf(plan.CriticalPath{}),
 		reflect.TypeOf(runstore.ChangedFiles{}),
 		// §6.10, the same three shapes as the test above (CLI 0.9.0).
 		reflect.TypeOf(userStatsDoc{}),
@@ -651,9 +711,13 @@ func TestDocsDesktopConsoleContractStatesWhichDocumentsAreLineDelimited(t *testi
 
 // TestDocsDesktopConsoleContractNamesTheFlagInventory: the spawn contract's
 // one flag fact (design section 3.4 rule 3) must be the cobra commands', not
-// the document's word for it. Every command the console spawns except the
+// the document's word for it. Every command the dashboard spawns except the
 // version handshake carries --project and --config; version takes no flags at
 // all, so a console that appended --project to it would fail on every machine.
+// The map is the dashboard's commands, and deliberately not the picker's own
+// read: `config list --json` takes neither flag (it prints the installations,
+// so there is no project to name), which is why this inventory -- an inventory
+// of the flags a project read carries -- must not gain it (§5.1 rule 6).
 func TestDocsDesktopConsoleContractNamesTheFlagInventory(t *testing.T) {
 	const path = "console/docs/json-contract.md"
 	doc := readDoc(t, path)
@@ -707,10 +771,16 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	"cancel":      newCancelCmd,
 	"secrets ls":  newSecretsLsCmd,
 	"accounts ls": newAccountsLsCmd,
-	"doctor":      newDoctorCmd,
-	"version":     newVersionCmd,
-	"config list": newConfigListCmd,
-	"plan graph":  newPlanGraphCmd,
+	// §6.5a documents the operator's write to the cascade's state
+	// (credentials-service C1.21). It is deliberately NOT on the design's
+	// spawn allow-list — the console never writes — but the document
+	// describes its flags, so they are checked against this constructor like
+	// any other's.
+	"accounts clear": newAccountsClearCmd,
+	"doctor":         newDoctorCmd,
+	"version":        newVersionCmd,
+	"config list":    newConfigListCmd,
+	"plan graph":     newPlanGraphCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document
@@ -966,9 +1036,13 @@ func firstBacktick(cell string) string {
 // the bare substring "watch --json" is satisfied by a sentence about it, which
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
-// §5.1 rule 6 carries and compares their first cells exactly:
-// the allow-list is the eleven argvs and nothing else, and the "never" table
-// still names the two entries that make a name-based list a hole.
+// §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
+// the twelve argvs and nothing else -- the console's dashboard table
+// (SPAWN_COMMANDS) and its picker table (PICKER_COMMANDS) are together the
+// eleven it fixes, and a review of an earlier revision found the picker's own
+// read, `config list --json`, absent here, which left the specification
+// forbidding the one read the picker depends on -- and the "never" table still
+// names the two entries that make a name-based list a hole.
 func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 	const path = "docs/design/desktop-console.md"
 	doc := readDoc(t, path)
@@ -985,6 +1059,11 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		"accounts ls --json",
 		"version",
 		"doctor --json",
+		// The picker's own read: the twelfth argv, and the only one that
+		// belongs to the installations picker rather than the dashboard. It
+		// carries no --project and no --config, so it is absent from the
+		// contract document's flag inventory below, which is about flags.
+		"config list --json",
 	}
 	rows := docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |")
 	got := map[string]bool{}
@@ -1028,6 +1107,63 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 	for _, argv := range []string{"doctor --check-github-app", "logs --follow"} {
 		if !never[argv] {
 			t.Errorf("%s: the never table no longer names %q", path, argv)
+		}
+	}
+}
+
+// TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode: §5.1 rule 6's
+// table is the console's whole read-only guarantee — D14 rests it on the
+// exact-argv table, because the CLI cannot tell an admin's identity from
+// anyone else's — and a read changes nothing on the machine. The remembered
+// checkouts are a file this machine keeps and the resolver every cloud
+// command goes through is what writes it, so the code has to know which
+// commands are console reads: consoleReadPaths (internal/cli/project.go) is
+// that knowledge, and this test reads it back off the design's own table, so
+// the two cannot drift. Adding an argv to §5.1 without adding its command
+// here fails, and so does a command on the list that the design does not
+// allow (bar the one read the design names for the console and §5.1 has no
+// row for yet).
+func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
+	const path = "docs/design/desktop-console.md"
+	doc := readDoc(t, path)
+	allowed := map[string]bool{}
+	argvs := 0
+	for _, cells := range docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |") {
+		argv := firstBacktick(cells[0])
+		if argv == "" {
+			continue
+		}
+		argvs++
+		// "budget show --json" is the command `fugaro budget show`: its own
+		// words, up to its first flag or its first ARGUMENT (the RUN a
+		// diagnose or a logs row takes, spelled in capitals in the table).
+		var words []string
+		for _, tok := range strings.Fields(argv) {
+			if strings.HasPrefix(tok, "-") || tok == strings.ToUpper(tok) {
+				break
+			}
+			words = append(words, tok)
+		}
+		cmdPath := "fugaro " + strings.Join(words, " ")
+		allowed[cmdPath] = true
+		if !consoleReadPaths[cmdPath] {
+			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
+		}
+	}
+	// Eleven commands: the ten dashboard reads (logs has two argvs) and the
+	// picker's `config list --json` (D13's amendment of 2026-10-20).
+	if len(allowed) != 11 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 11 (logs has two argvs)", path, argvs, len(allowed))
+	}
+	// The other direction: the list carries §5.1's commands and nothing else,
+	// except the one read the design names for the console and §5.1 has not
+	// grown a row for yet (V2.2.1, the graph document). A second name is a
+	// command someone decided the console spawns, and that is a design change,
+	// not a table entry.
+	namedNotAllowed := map[string]bool{"fugaro plan graph": true}
+	for cmdPath := range consoleReadPaths {
+		if !allowed[cmdPath] && !namedNotAllowed[cmdPath] {
+			t.Errorf("consoleReadPaths carries %q, which is neither an argv §5.1 allows nor the one read the design names for the console (%v): the read-only list is the design's, not this file's", cmdPath, namedNotAllowed)
 		}
 	}
 }
@@ -6622,7 +6758,7 @@ func pendingReadmeOpening(t *testing.T, doc string) string {
 func consolePendingSentence(t *testing.T, what, text, namePattern string) ([]string, int) {
 	t.Helper()
 	flat := strings.Join(strings.Fields(text), " ")
-	words := map[string]int{"no": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
+	words := map[string]int{"no": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6}
 	count := -1
 	for _, pattern := range []*regexp.Regexp{
 		// "**Three files are pending: `shared-tests.yml`** ..."

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"gocloud.dev/blob"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/backend/backendtest"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
@@ -1405,5 +1407,150 @@ func TestLsLauncherShortFormAndClip(t *testing.T) {
 	}
 	if strings.Contains(out, "@") {
 		t.Errorf("an address reached the text table:\n%s", out)
+	}
+}
+
+// TestLsDerivesAPreemptedRunFromTheBatchJob: the whole read path of a run whose
+// Cloud Batch job was preempted -- loadRows (the loader runs ls, runs ls
+// --watch, diagnose and the degraded watch all share) and printRows (the table
+// and the --json document) -- end to end against the Batch fake.
+//
+// It is necessarily a rig and not the ordinary cloud fixture: `backend:
+// cloud-batch` is refused by config validation until the enable task (design
+// compute-backend.md §8.1, plan Task 10), so the only way a test reaches a
+// Batch-backed read is by handing the loader the backend the opener would build
+// (cloud_openers_test.go's rig). What it holds is the rule, not the wiring: one
+// run, its record never finalized, its job FAILED with the platform's own
+// preemption in its status events.
+//
+// The evidence here is the event's wording and not the reserved exit code:
+// that code has one home (`internal/backend/batch`'s preemptExitCode, whose own
+// test covers it) and a second literal in this package would be the copy that
+// drifts. Either half must derive the same row; this is that half.
+func TestLsDerivesAPreemptedRunFromTheBatchJob(t *testing.T) {
+	ctx := context.Background()
+	rig := newBatchRig(t, 412)
+	be := rig.batchBackend(t)
+	const runID = "20260919-120000-abcd"
+	ref, err := be.Launch(ctx, backend.LaunchSpec{
+		Repo:     backend.RepoRef{Repo: backendtest.Repo, Slug: backendtest.Slug},
+		Workflow: backendtest.Workflow,
+		RunID:    runID,
+	})
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	bucket, err := blobx.Open(ctx, "file://"+t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bucket.Close()
+	s := runstore.Open(bucket.Bucket, backendtest.Slug, runID)
+	// A launch.json and no result.json: the runner was killed before it could
+	// finalize, which is what a preemption looks like in the bucket.
+	if err := s.WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: runID, Execution: ref.Name}); err != nil {
+		t.Fatal(err)
+	}
+	env := &cloudEnv{lc: rig.lc, bucket: bucket, be: be}
+	f := lsFilter{runRef: backendtest.Slug + "/" + runID, warn: io.Discard}
+
+	// Before the preemption the job is running: the row must say so.
+	rig.bf.SetState(ref.Job, "RUNNING")
+	rows, err := loadRows(ctx, env, f, time.Now())
+	if err != nil {
+		t.Fatalf("loadRows: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Status != string(runstore.StatusRunning) || rows[0].Derived != "" {
+		t.Fatalf("a running job read as %+v, want running with nothing derived", rows)
+	}
+
+	// The platform reclaims the VM: the job ends FAILED and its own report says
+	// why. The run's own objects are untouched -- nothing is written back.
+	rig.bf.SetState(ref.Job, "FAILED")
+	rig.bf.SetStatusEvents(ref.Job, map[string]any{
+		"type": "STATUS_CHANGED", "description": "Task state is FAILED",
+		"taskState": "FAILED", "taskExecution": map[string]any{"exitCode": 50000},
+	}, map[string]any{
+		"type": "STATUS_CHANGED", "description": "The task's VM was preempted",
+	})
+	rows, err = loadRows(ctx, env, f, time.Now())
+	if err != nil {
+		t.Fatalf("loadRows: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("loadRows returned %d rows, want 1", len(rows))
+	}
+	row := rows[0]
+	if row.Status != string(runstore.StatusFailed) || row.Derived != runview.DerivedPreempted || row.Reason != runview.ReasonPreempted {
+		t.Fatalf("the derived row is %+v, want failed/%s with its reason", row, runview.DerivedPreempted)
+	}
+	if !row.Terminal || !row.Settled {
+		t.Errorf("the derived row is terminal=%v settled=%v: runs ls --watch could not stop on it", row.Terminal, row.Settled)
+	}
+	// The derived status is never written back: the bucket still holds the
+	// launch and nothing else.
+	if rec, err := absent(s.ReadRecord(ctx)); err != nil || rec != nil {
+		t.Fatalf("the read side wrote a record (%+v, %v): the derivation is never written anywhere", rec, err)
+	}
+
+	// And it reaches both of printRows' shapes: the table decorates the status,
+	// the document carries the field.
+	var b strings.Builder
+	if err := printRows(&b, rig.lc.Name, rows, nil, time.Now(), false); err != nil {
+		t.Fatal(err)
+	}
+	if out := b.String(); !strings.Contains(out, "failed (preempted)") {
+		t.Errorf("the table shows no derived status:\n%s", out)
+	}
+	b.Reset()
+	if err := printRows(&b, rig.lc.Name, rows, nil, time.Now(), true); err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Runs []runview.Row `json:"runs"`
+	}
+	if err := json.Unmarshal([]byte(b.String()), &doc); err != nil {
+		t.Fatalf("%v: %s", err, b.String())
+	}
+	if len(doc.Runs) != 1 || doc.Runs[0].Status != "failed" || doc.Runs[0].Derived != runview.DerivedPreempted {
+		t.Fatalf("the document is %+v: the derived field must be additive and the status must stay the vocabulary", doc.Runs)
+	}
+	// The optional field is absent for every row that is not derived, which is
+	// what keeps the shape additive for a reader that has never heard of it.
+	b.Reset()
+	if err := printRows(&b, rig.lc.Name, []runview.Row{{Run: "acme/app/20260919-120000-abcd", Status: "succeeded"}}, nil, time.Now(), true); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(b.String(), "derived") {
+		t.Errorf("a settled row carries the derived key:\n%s", b.String())
+	}
+}
+
+// TestDiagnoseShowsADerivedStatus: diagnose prints a derived run's status the
+// way runs ls's table does, so the one-run read says what happened to it rather
+// than leaving the reader to notice a reason line (the owner's 2026-10-21
+// ruling). The halted decoration beside it is unchanged, which is the half a
+// careless refactor would move.
+func TestDiagnoseShowsADerivedStatus(t *testing.T) {
+	var b strings.Builder
+	d := &Diagnosis{Row: runview.Row{Run: "acme/app/20260919-120000-abcd", Status: "failed",
+		Derived: runview.DerivedPreempted, Reason: runview.ReasonPreempted}}
+	if err := printDiagnosis(&b, d, false); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	if !strings.Contains(out, "Status:   failed (preempted)") {
+		t.Errorf("diagnose does not show the derived status:\n%s", out)
+	}
+	if !strings.Contains(out, "Reason:   "+runview.ReasonPreempted) {
+		t.Errorf("diagnose does not show the derived reason:\n%s", out)
+	}
+	b.Reset()
+	halt := &runstore.Halt{Reason: runstore.HaltRunCap, At: time.Now()}
+	if err := printDiagnosis(&b, &Diagnosis{Row: runview.Row{Run: "acme/app/x", Status: "halted", Halt: halt}}, false); err != nil {
+		t.Fatal(err)
+	}
+	if out := b.String(); !strings.Contains(out, "Status:   halted\n") {
+		t.Errorf("the halted status line changed shape:\n%s", out)
 	}
 }
