@@ -64,6 +64,7 @@ import {
   buildSpendModel,
   dayRange,
   keyClass,
+  peopleArguments,
   renderSpend,
   scopeOf,
 } from '../../src/renderer/screens/spend'
@@ -1204,6 +1205,77 @@ describe('the by-person view', () => {
     }
   })
 
+  it('fails private under the whole-project view too: with no identity it draws the totals and no row', () => {
+    // Design section 2.4 (console-styling.md) and section 6.2 (desktop-console.md):
+    // a by-person read with `data-view="all"` that does not say who it was
+    // resolved for draws the document's totals and **no row at all**. The CLI
+    // does write this document -- `--all-users` is admitted with no identity
+    // (`runs_stats.go` refuses only the private view without one) -- so this is
+    // the wire, not a defence. Both identity states the CLI cannot key a person
+    // by are asserted: `''` (unavailable) and the unattributed key itself.
+    for (const you of ['', 'unknown'] as const) {
+      const model = buildSpendModel(PERSON_REPORT, BUDGET, {
+        persons: true,
+        people: statsDocument({ you }),
+      })
+      const people = peopleOf(model)
+      expect(people.view, you).toBe('all')
+      expect(people.rows, you).toEqual([])
+      expect(people.failPrivate, you).toBe(true)
+      expect(people.withheld, you).toBe(STATS_ROWS.length)
+      // The totals are the document's own and are still drawn: they name nobody.
+      expect(people.totals, you).toHaveLength(1)
+      expect(people.sentences.join(' '), you).toContain(
+        'did not say who this read was resolved for',
+      )
+      expect(people.sentences.join(' '), you).not.toContain('every launcher')
+
+      const tree = renderSpend(factory, model, 'light')
+      expect(one(tree, 'spend-people').getAttribute('data-view'), you).toBe('all')
+      // No row inside the rows list -- read off the list's own children, so the
+      // assertion cannot pass on a selector that matches nothing.
+      expect(one(tree, 'spend-people-rows').childNodes(), you).toEqual([])
+      // The one `spend-person` line left is the total, and it is the total.
+      const lines = all(tree, 'spend-person')
+      expect(lines, you).toHaveLength(1)
+      expect(lines[0]?.classes, you).toContain('spend-person-total')
+      expect(texts(tree, 'spend-person-user'), you).toEqual(['total'])
+      for (const row of STATS_ROWS.filter((line) => line.user.includes('@'))) {
+        expect(drawn(tree), row.user).not.toContain(row.user)
+      }
+    }
+  })
+
+  it('draws everyone for an operator and the caller alone for a plain launcher, by the CLI’s view', () => {
+    // The two licensed states side by side, from the documents the CLI writes:
+    // an operator (`view: all`, identified) sees every launcher's row; a plain
+    // launcher (`view: own`, the default the CLI resolves) sees their own row
+    // alone, even though the window holds other people's runs.
+    const operator = renderSpend(
+      factory,
+      buildSpendModel(PERSON_REPORT, BUDGET, { persons: true, people: statsDocument() }),
+      'light',
+    )
+    const operatorRows = one(operator, 'spend-people-rows').childNodes()
+    expect(operatorRows).toHaveLength(STATS_ROWS.length)
+    expect(one(operator, 'spend-people').getAttribute('data-operator')).toBe('true')
+
+    const launcher = renderSpend(
+      factory,
+      buildSpendModel(PERSON_REPORT, BUDGET, {
+        persons: true,
+        people: statsOwnDocument('bob@example.com'),
+      }),
+      'light',
+    )
+    const launcherRows = one(launcher, 'spend-people-rows').childNodes() as readonly FakeScreen[]
+    expect(launcherRows).toHaveLength(1)
+    expect(launcherRows[0]?.classes).toContain('spend-person')
+    expect(launcherRows[0]?.classes).not.toContain('spend-person-total')
+    expect(one(launcher, 'spend-people').getAttribute('data-view')).toBe('own')
+    expect(one(launcher, 'spend-people').getAttribute('data-operator')).toBe('false')
+  })
+
   it('counts the rows of a private view a document should not have carried, and keeps no claim about totals', () => {
     // A document the CLI does not write, on purpose: an own view that still
     // carries other people's rows *and* a whole-window total. The rows are
@@ -1275,6 +1347,13 @@ describe('the by-person view', () => {
     // the arithmetic.
     expect(people.unlaunched.value).toBe(2)
     expect(people.sentences.join(' ')).toContain('never started')
+    // The sentence says the count is drawn, so it is: in its own cell, with its
+    // own hook and the console's word beside it, after the totals.
+    const counted = renderSpend(factory, model, 'light')
+    expect(texts(counted, 'spend-people-unlaunched')).toEqual([
+      formatReading(people.unlaunched, 'count'),
+    ])
+    expect(texts(counted, 'spend-people-unlaunched-word')).toEqual(['never started'])
 
     // The third row settled no real-dollar cost: `counted_runs` is 0, so the
     // average is *unavailable* and never `$0.00` -- which would be a figure
@@ -1312,6 +1391,24 @@ describe('the by-person view', () => {
     expect(one(renderSpend(factory, refused, 'light'), 'spend-people-reason').textContent).toBe(
       'the CLI refused this read',
     )
+  })
+
+  it('says a range with an end makes no by-person read, and draws that sentence in the panel it names', () => {
+    // `PERSON_UNTIL` is the reason the panel is handed when the picker holds an
+    // end of range: the panel *is* drawn -- `data-available="false"`, the
+    // sentence as its reason -- so the sentence must not say it is not.
+    const decision = peopleArguments({ since: '30d', until: '2026-10-11', by: 'day', persons: true })
+    expect(decision.ok).toBe(false)
+    const reason = decision.ok ? '' : decision.reason
+    expect(reason).toContain('no by-person read is made')
+    expect(reason).not.toContain('not drawn')
+    const tree = renderSpend(
+      factory,
+      buildSpendModel(PERSON_REPORT, BUDGET, { persons: true, peopleReason: reason }),
+      'light',
+    )
+    expect(one(tree, 'spend-people').getAttribute('data-available')).toBe('false')
+    expect(texts(tree, 'spend-people-reason')).toEqual([reason])
   })
 
   it('keeps the three accounts apart in a person row, and the sample with its average', () => {

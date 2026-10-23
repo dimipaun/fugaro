@@ -2037,9 +2037,14 @@ export const NO_ACTIVE_INSTALLATION = 'no installation has been chosen'
  *
  * The mapping is derived from the operation table rather than from the screens:
  * a screen is written in the renderer and names no channel, so the only thing
- * that can say which operation reads spend is this table. Two consequences a
+ * that can say which operation reads spend is this table. Three consequences a
  * reviewer should check:
  *
+ *   - **`spend` names both of the Spend screen's reads.** `runs.stats` (the
+ *     by-person panel, console L5b) publishes per-person `counted_usd` and
+ *     `notional_usd` -- the same spend figures the reduced mode withholds (D7),
+ *     under another name -- so withholding `spend.report` while answering it
+ *     would put the withheld dollars on screen through the by-person panel;
  *   - **`kill` is empty, and that is the answer rather than a gap.** There is no
  *     kill-switch operation in the surface: the controls live in the live feed's
  *     own fields (design C10, and `src/shared/version.ts`'s `HIDDEN_VIEW_WORDS`
@@ -2055,7 +2060,7 @@ export const NO_ACTIVE_INSTALLATION = 'no installation has been chosen'
  */
 export const REDUCED_VIEW_OPERATIONS: Readonly<Record<ReducedView, readonly OperationName[]>> =
   Object.freeze({
-    spend: Object.freeze(['spend.report'] as const),
+    spend: Object.freeze(['spend.report', 'runs.stats'] as const),
     caps: Object.freeze(['budget.show'] as const),
     kill: Object.freeze([] as const),
   })

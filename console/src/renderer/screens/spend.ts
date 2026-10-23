@@ -79,8 +79,9 @@
 // **What this screen adds is the drawing rule that ruling implies, and it draws
 // nothing it is not licensed to draw**: rows appear only when the document's own
 // `by` and `view` say who they are for, the private view draws the one row the
-// CLI keyed by the identity it resolved (`you`) and **no row at all** when the
-// document does not say who the caller is, and the totals drawn are the ones
+// CLI keyed by the identity it resolved (`you`), **either view draws no row at
+// all** when the document does not say who the caller is (the whole-project view
+// keeps its totals, which name nobody), and the totals drawn are the ones
 // that read published -- the CLI aggregates *after* it filters for the private
 // view (`internal/cli/runs_stats.go`), so under `all` they are the window's and
 // under `own` they are the caller's own alone, and the two states where the CLI
@@ -541,11 +542,14 @@ export type PeopleView = 'all' | 'own' | 'unknown'
  * their own row alone. What this screen adds is the drawing rule that ruling
  * implies, and it is **fail private**:
  *
- *   - only a `view` of `all` draws every row the document carries;
+ *   - only a `view` of `all` read for an identity draws every row the document
+ *     carries; read for no identity it draws the document's totals and **no
+ *     row** (design section 2.4's state list) -- `you` empty is *unavailable*
+ *     (the CLI could not tell), and the `unknown` key is a group of runs rather
+ *     than a person;
  *   - a `view` of `own` draws only the row the document keyed by the identity it
  *     resolved (`you`), and **nothing at all** when the document does not say
- *     who the caller is -- `you` empty is *unavailable* (the CLI could not tell),
- *     and the `unknown` key is a group of runs rather than a person;
+ *     who the caller is;
  *   - a `view` or a `by` this build does not know draws no rows;
  *   - the document's own `totals` are drawn **as the document published them,
  *     and never computed here** -- and what they are the sum of follows the
@@ -577,7 +581,7 @@ export interface SpendPeople {
    * could not tell who the caller is -- and never anonymous. */
   readonly you: string
   /** true when the document's own fields do not license drawing rows: an
-   * unknown `view` or `by`, or an `own` view with no identity to key a row by */
+   * unknown `view` or `by`, or either view with no identity to key a row by */
   readonly failPrivate: boolean
   /** how many rows the rule above did not draw */
   readonly withheld: number
@@ -921,9 +925,22 @@ const PEOPLE_TRUNCATED =
 
 /** PEOPLE_UNLAUNCHED is the sentence for the runs that never started. They are
  * the window’s count and not the caller’s: a run that never launched has no
- * launcher to attribute. */
+ * launcher to attribute. The count it names is drawn, in
+ * `span.spend-people-unlaunched` after the totals (`peoplePanel`). */
 const PEOPLE_UNLAUNCHED =
-  'runs in the window that never started are counted below and in no person’s row: they have no launcher to attribute'
+  'runs in the window that never started are counted after the totals, on the never-started line, and in no person’s row: they have no launcher to attribute'
+
+/** PEOPLE_UNLAUNCHED_WORD is the console's label for that count's cell. */
+const PEOPLE_UNLAUNCHED_WORD = 'never started'
+
+/** PEOPLE_ALL_UNIDENTIFIED is the fail-private sentence for the whole-project
+ * view read for nobody the CLI could name (`--all-users` is admitted with no
+ * identity; only the private view refuses one). Design section 2.4 and
+ * desktop-console.md section 6.2: `data-view="all"` with no identity draws the
+ * document's totals and no row at all -- the totals name nobody, and the rows
+ * are not drawn for a reader the read does not say it was resolved for. */
+const PEOPLE_ALL_UNIDENTIFIED =
+  'the CLI resolved this read as the whole project but did not say who this read was resolved for, so no rows are drawn here: only the read’s own totals, which name nobody'
 
 /** PEOPLE_YOU_UNIDENTIFIED is what the panel draws where the identity would go
  * when the CLI could not tell who the caller is. `''` is *unavailable* and not
@@ -1032,9 +1049,12 @@ function peopleOf(raw: JSONDoc | null, reason: string | null): SpendPeople {
 
   // `licensed` is the whole fail-private rule in one word: whether the
   // document's own fields say who these rows are *for*.
-  const licensed = byKnown && (view === 'all' || (view === 'own' && identified))
+  // An identity is required by **both** views: the whole-project view read for
+  // nobody the CLI could name draws its totals and no row (fail private, the
+  // design's 2.4 state list), the same as the private view without one.
+  const licensed = byKnown && identified && (view === 'all' || view === 'own')
   let drawn: readonly SpendPersonRow[] = []
-  if (byKnown && view === 'all') {
+  if (byKnown && identified && view === 'all') {
     drawn = rows
   } else if (byKnown && view === 'own' && identified) {
     // The private view shows the row keyed by the identity the CLI resolved --
@@ -1053,7 +1073,7 @@ function peopleOf(raw: JSONDoc | null, reason: string | null): SpendPeople {
       // for the private view is the caller's own runs and not the window's.
       if (totals.length > 0) sentences.push(PEOPLE_OWN_TOTAL)
     } else sentences.push(you === UNATTRIBUTED_KEY ? PEOPLE_UNATTRIBUTED : PEOPLE_PRIVATE)
-  } else sentences.push(PEOPLE_ALL)
+  } else sentences.push(identified ? PEOPLE_ALL : PEOPLE_ALL_UNIDENTIFIED)
   if (licensed && drawn.length === 0) sentences.push(PEOPLE_NO_ROW)
   if (rows.length > drawn.length) {
     // `licensed` decides which of the two sentences it is: a private view that
@@ -1836,7 +1856,7 @@ const PERSON_WINDOW_DAYS: ReadonlyMap<string, string> = new Map([
 const PERSON_DAY_WINDOW =
   'the range picker holds a range that starts on a UTC day, and the by-person read has no day form: it takes a number of days back from now (7d, 30d, 84d), so this window is either one of the picker’s four or no by-person read is made'
 const PERSON_UNTIL =
-  'the by-person read has no end-of-range form (runs stats takes no --until), and this range ends on a day: the panel is not drawn, rather than drawn from a window that is not this one'
+  'the by-person read has no end-of-range form (runs stats takes no --until), and this range ends on a day: no by-person read is made, and this panel says so rather than drawing a window that is not this one'
 
 /** personSince is the picker's `since` as `runs stats --since`, or `null` for a
  * value the command has no form for: a UTC day, or anything else outside
@@ -2436,6 +2456,10 @@ function peoplePanel(factory: ScreenFactory, people: SpendPeople): ScreenElement
     const none = cell(element, factory, 'p', 'spend-person-note')
     literal(none, NO_PEOPLE_TOTAL)
   }
+  // The window's runs that never started: a published count in no row and no
+  // total, drawn where `PEOPLE_UNLAUNCHED` says it is.
+  literal(cell(element, factory, 'span', 'spend-people-unlaunched-word'), PEOPLE_UNLAUNCHED_WORD)
+  numberCell(element, factory, 'span', people.unlaunched, 'count', 'spend-people-unlaunched')
   for (const note of people.notes) {
     // The document's own lines, verbatim (contract section 6.10: the notes are
     // the CLI's sentences about whose numbers these are and what the read left

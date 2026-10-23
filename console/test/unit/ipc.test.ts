@@ -2595,12 +2595,14 @@ describe('the source of the allow-list and the preload', () => {
  * THE_WITHHELD_OPERATIONS is the whole of what a reduced console refuses to
  * fetch, written out as a literal so that the mapping cannot be checked against
  * itself. Every entry is one operation of the surface, and the list is the
- * *answer* to "which channels does step 3 close": `spend.report` is the Spend
- * screen's one read, `budget.show` is the Caps screen's, and there is no third
- * because the kill switch has no operation of its own (design C10 -- its fields
- * travel inside `live.watch`, which a reduced console still draws).
+ * *answer* to "which channels does step 3 close": `spend.report` and
+ * `runs.stats` are the Spend screen's two reads (the report, and the by-person
+ * panel's per-person dollars, console L5b -- the same spend figures a reduced
+ * console cannot vouch for, D7), `budget.show` is the Caps screen's, and the
+ * kill switch has no operation of its own (design C10 -- its fields travel
+ * inside `live.watch`, which a reduced console still draws).
  */
-const THE_WITHHELD_OPERATIONS: readonly OperationName[] = ['budget.show', 'spend.report']
+const THE_WITHHELD_OPERATIONS: readonly OperationName[] = ['budget.show', 'runs.stats', 'spend.report']
 
 /** theRest is every operation that is *not* withheld: the non-vacuity guard for
  * the tests below, which otherwise would pass on a wrapper that refused the
@@ -2715,12 +2717,12 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: twelve of the surface's fifteen operations, all of
+    // The non-vacuity half: eleven of the surface's fifteen operations, all of
     // them reachable in a reduced mode (the handshake is the one the loop skips
     // and its own test covers; `installation.current`, Task 3.4b, is among the
-    // twelve, because a reduced console's header still names its installation).
+    // eleven, because a reduced console's header still names its installation).
     // A wrapper that refused the whole surface would fail here.
-    expect(THE_OPEN_OPERATIONS.length).toBe(12)
+    expect(THE_OPEN_OPERATIONS.length).toBe(11)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(
@@ -2732,7 +2734,29 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     expect([...reached].sort()).toEqual([...THE_OPEN_OPERATIONS].sort())
     expect(reached).toContain('live.watch')
     expect(reached).not.toContain('spend.report')
+    expect(reached).not.toContain('runs.stats')
     expect(reached).not.toContain('budget.show')
+  })
+
+  it('withholds the by-person read with the spend view, because it reads the same spend figures (D7)', async () => {
+    // `runs.stats` publishes per-person `counted_usd`/`notional_usd`: the spend
+    // a reduced console cannot vouch for, under another name. Withholding
+    // `spend.report` and answering this would put the withheld figures on the
+    // screen through the by-person panel, so it is in the `spend` list by name.
+    expect(REDUCED_VIEW_OPERATIONS.spend).toContain('runs.stats')
+    expect(REDUCED_VIEW_OPERATIONS.spend).toContain('spend.report')
+    const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
+    const reply = await asCallable(
+      (bridge as unknown as Record<string, unknown>)[methodFor('runs.stats')],
+    )(WELL_FORMED['runs.stats'])
+    expect(reply).toEqual({ ok: false, reason: REDUCED_REFUSAL })
+    // Refused before the source: the per-person figures were never read.
+    expect(reached).toEqual([])
+    // And in a supported console it is an ordinary read.
+    const source = answeredBy()
+    const open = reducedModeHandlers(source.handlers, () => SUPPORTED_HANDSHAKE)
+    expect(await open['runs.stats'](argsFor('runs.stats'))).toEqual({})
+    expect(source.reached).toEqual(['runs.stats'])
   })
 
   it('answers the handshake in a reduced mode, because the gate is what the answer is for', async () => {
