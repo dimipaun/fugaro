@@ -95,9 +95,14 @@ import { LEVELS } from '../lib/zoom-levels.mjs'
     text-decoration: none;
   }
 
-  .zoom-marker:hover,
   .zoom-marker:focus-visible {
     background: var(--border);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .zoom-marker:hover {
+      background: var(--border);
+    }
   }
 
   .zoom-figure {
