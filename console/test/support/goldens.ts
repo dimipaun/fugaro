@@ -52,11 +52,19 @@
 // with the exact re-record command for its own file instead of a comparison
 // against a picture of a tree that no longer exists.
 //
-// **The #629 set is a different case, and the timestamp cannot see it**: those
-// PNGs were committed on 2026-10-22, three days *after* the newest file of the
-// theme directory, so by commit time they are newer than the stylesheet they
-// predate. What fails for them is the comparison itself, which is why 2 above
-// exists: the diff is real, and the command is what makes it actionable.
+// **PR #629's darwin set, and what this clock sees of it.** Those PNGs were
+// committed on 2026-10-22, *after* the newest file of the theme directory at the
+// time, so by commit time they were newer than the stylesheet they predate and
+// the timestamp could not see that they were pictures of the unstyled tree: the
+// comparison caught them, and that is the case 2 above exists for. **That is no
+// longer this tree's state.** The theme has been committed to since — 0.10.2's
+// `screens.css` change is the latest commit that touches it — so the committed
+// darwin baselines are now *older* than the stylesheet they predate, and
+// `assertGoldenFresh` refuses them by name with the re-record command rather than
+// letting the comparison run. Either way the answer is the same one, and it is
+// the owner's: those frames are pictures of a tree that no longer exists and want
+// re-recording; the guard's message is what says so, and it says the same thing
+// whichever clock found it.
 //
 // **Why this module is imported by a unit test as well as by four specs**, and
 // why every path in it is an argument rather than a constant derived from this
@@ -395,13 +403,12 @@ export function recordingRun(updateSnapshots: string): boolean {
  *   - **no golden at all** — nothing has been recorded for this spec on this
  *     platform (the baselines are owner-run, per platform);
  *   - **older than the stylesheet** — the picture predates the rules that paint
- *     the screens, so it is a picture of a tree that no longer exists. This is
- *     the state the timestamp can see, and **PR #629's darwin set is not it**:
- *     those PNGs were committed *after* the newest file of the theme directory,
- *     so by commit time they are newer than the stylesheet they predate and this
- *     function answers null for them (the header, "the #629 set is a different
- *     case"). What catches that set is the comparison itself, which
- *     `expectGolden` re-reports with the re-record command;
+ *     the screens, so it is a picture of a tree that no longer exists, and this
+ *     is the state the timestamp can see. **PR #629's darwin set is in it now**:
+ *     those PNGs were newer than the newest theme file when they were committed
+ *     (which is why the comparison, not this function, was what caught them
+ *     then — see the header), and the theme has been committed to since, so this
+ *     function refuses them by name and the comparison is never reached;
  *   - otherwise null, and the comparison decides.
  *
  * It is a question about a **comparison** run, and `expectGolden` is what decides

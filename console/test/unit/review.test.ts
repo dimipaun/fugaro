@@ -423,9 +423,14 @@ describe('the review inbox’s drawing', () => {
 
   it('draws the section, and says so, when nothing is ready', () => {
     const section = drawnSection(aModel([]))
-    // The heading is drawn with a zero as it is with any other count: the CLI
-    // prints `Ready for your review (0)` too, and the section's answer to an
-    // empty list is the sentence below it rather than a heading that goes away.
+    // The heading carries a zero, and **that zero is this console's own
+    // decision, not the CLI's**: both renderers omit the whole section when
+    // nothing is ready (`if len(ready) > 0`, `internal/watch/plain.go:89`;
+    // `if !o.Help && len(o.Ready) > 0`, `internal/watch/render.go:302`), so
+    // `Ready for your review (0)` is a line the CLI never prints. The section
+    // stays -- "nothing is waiting for you" is an answer, and the sentence below
+    // is what gives it -- and the count in the heading is drawn the way every
+    // other count is, which is what the assertion is for.
     expect(one(section, 'live-review-title').textContent).toBe(`${LIVE_REVIEW_TITLE} (0)`)
     expect(one(section, 'live-review-empty').textContent).toBe(LIVE_REVIEW_EMPTY)
     expect(all(section, 'live-review-row')).toEqual([])

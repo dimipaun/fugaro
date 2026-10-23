@@ -315,10 +315,9 @@ describe('a golden older than the stylesheet', () => {
     const root = scratch('stale')
     const sheet = join(THEME_DIR, 'screens.css')
     // The stylesheet landed after the picture was taken: the state a golden is
-    // left in when the theme is edited and nothing is re-recorded. (PR #629's
-    // darwin set is *not* this state — its PNGs were committed after the newest
-    // theme file, so this guard cannot see them; the support module's header
-    // says so.)
+    // left in when the theme is edited and nothing is re-recorded — and the state
+    // the committed darwin set is in today, because the theme's newest commit is
+    // newer than PR #629's PNGs (the support module's header).
     plant(root, sheet, NOW - 60)
     const golden = plant(root, join('__screenshots__', 'live-light-darwin.png'), NOW - 6000)
 
@@ -404,9 +403,11 @@ describe('a recording run, which is the one the preflight stands aside for', () 
 
   it('stands aside for a stale golden too, not only a missing one', () => {
     // The other half: a recording run has to be able to replace a picture this
-    // guard refuses — here one older than the stylesheet, and by the same token
-    // one that is newer than it and still a picture of the tree before it landed
-    // (PR #629's set, which only the comparison catches).
+    // guard refuses — which is the state the committed darwin set is in today,
+    // since the theme's newest commit is newer than those PNGs — *and* one this
+    // guard cannot see, a picture newer than the stylesheet and still of the tree
+    // before it landed, which is how PR #629's set arrived and what only the
+    // comparison catches.
     const root = scratch('recording-stale')
     plant(root, join(THEME_DIR, 'screens.css'), NOW - 60)
     const golden = plant(root, join('__screenshots__', 'live-light-darwin.png'), NOW - 6000)
