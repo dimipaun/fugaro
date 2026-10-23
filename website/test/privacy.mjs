@@ -469,6 +469,17 @@ const SDK_BEARING = /\.(?:js|jsx|ts|tsx|mjs|cjs|json|sh)$/
  * `internal/` while still scanning enough files to look busy. */
 const REACH_BEARING = /\.(?:go|js|jsx|ts|tsx|mjs|cjs|json|sh)$/
 
+/** The names that keep a selected file out of the scan: a test spells the host in a fixture to
+ * test a rule rather than reaching anywhere. It is the first filter `softwareSources` applies, and
+ * the case below reads it, so an allow-list entry cannot name a file the scan would never read. */
+const NOT_PRODUCTION = /(?:_test\.go|\.test\.(?:js|ts|jsx|tsx|mjs))$/
+
+/** The ways a source reaches a service, as the tokens it would carry to do it. Nothing on
+ * `HOST_NAMING_CONSOLE` may carry one: those files are on the allow-list because they hold the
+ * project's own link and make no request, and a request grown inside one of them would be exactly
+ * what the rule is for while the host it names sits in a file the scan no longer reads. */
+const REACH_CALLS = Object.freeze(['fetch(', '.request(', 'XMLHttpRequest', 'WebSocket', 'EventSource', 'sendBeacon'])
+
 /** Every way a scanned file names something that collects, or []. `files` is `[{ rel, text }]`. */
 export function collectingFailures(files) {
   const out = []
@@ -676,7 +687,7 @@ export const SOFTWARE_ROOTS = Object.freeze(['cmd', 'internal', 'console/src', '
 export function softwareSources(roots = SOFTWARE_ROOTS, base = REPO) {
   return roots
     .flatMap((dir) => sourcesUnder(dir, REACH_BEARING, base))
-    .filter((file) => !/(?:_test\.go|\.test\.(?:js|ts|jsx|tsx|mjs))$/.test(file.rel))
+    .filter((file) => !NOT_PRODUCTION.test(file.rel))
     .filter((file) => !HOST_NAMING_CONSOLE.includes(file.rel))
 }
 
@@ -1009,13 +1020,37 @@ test('no production source names the host this project operates', () => {
     `${HOST_NAMING_TEST} is a test file and was scanned as a production source: the recorded exception is that a Go test may spell the host in a fixture, so the filter must skip it`,
   )
   assert.ok(existsSync(path.join(REPO, HOST_NAMING_TEST)), `the recorded exception ${HOST_NAMING_TEST} is gone: delete the constant and its note in website/test/privacy.mjs`)
+
+  // What the selector reads before the allow-list takes its two files out. An entry that the scan
+  // would never read anyway exempts nothing, and the `every` below would not say so: it is true of
+  // every path outside `SOFTWARE_ROOTS` — `console/package.json` names the host today and is not
+  // read — and of every test. So the check is the selector's own reading and not a prefix test.
+  const selected = new Set(
+    SOFTWARE_ROOTS.flatMap((dir) => sourcesUnder(dir, REACH_BEARING, REPO))
+      .filter((file) => !NOT_PRODUCTION.test(file.rel))
+      .map((file) => file.rel),
+  )
   for (const rel of HOST_NAMING_CONSOLE) {
     assert.ok(existsSync(path.join(REPO, rel)), `the recorded exception ${rel} is gone: delete it from HOST_NAMING_CONSOLE and its note in website/test/privacy.mjs, so the allow-list names only files that exist`)
+    assert.ok(
+      selected.has(rel),
+      `${rel} is on the allow-list and the reach scan would never read it: an entry exempts a file the rule already skips, so the exemption hides nothing and the note beside it reads as a live exception (the entries are the production sources the selector reads and nothing else)`,
+    )
     assert.ok(repoFile(rel).includes(FACTS.canonicalHost), `${rel} no longer names ${FACTS.canonicalHost}: it is on the allow-list for the console's own link to the project's website, and a file that has stopped naming the host is an entry that hides nothing`)
     assert.ok(
       files.every((file) => file.rel !== rel),
       `${rel} is one of the two recorded exceptions and was scanned as an ordinary production source: the console's link to the project's own website is not a host the software reports to, so the scan must skip it`,
     )
+    // The exemption is the file's own link and not a licence to reach: the scan cannot see the
+    // host inside an allow-listed file, so a request grown there would be invisible to the rule
+    // this file exists for. The two are read for the ways a source reaches a service.
+    const text = repoFile(rel)
+    for (const call of REACH_CALLS) {
+      assert.ok(
+        !text.includes(call),
+        `${rel} carries \`${call}\` and is on the allow-list: the exemption is for a file that holds the project's own link and makes no request, and the host inside it is not scanned — so a call that reaches a service here is what the page's "to nothing the Fugaro project operates" is about, in the one place the scan cannot look`,
+      )
+    }
   }
   const failures = reachFailures(files, FACTS.canonicalHost)
   assert.deepEqual(failures, [], `a source of the software names the host the project operates:\n  ${failures.join('\n  ')}`)

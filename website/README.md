@@ -1475,9 +1475,11 @@ added or removed without this sentence moving fails there:
     repository or a shorter cache each fails;
   - **the host the project operates** — no production source under `cmd/`, `internal/`,
     `console/src/`, `mobile/src/` or `shared/` may name the site's canonical host, since the page
-    says the software talks "to nothing the Fugaro project operates" (the one file that names it
-    is a Go test whose fixtures test the boundary rule itself, recorded in the test so the
-    exception stays visible);
+    says the software talks "to nothing the Fugaro project operates". Every exception is recorded
+    in the test by name rather than inferred from a filter, and there are three: a Go test whose
+    fixtures test the boundary rule itself, and the console's two first-run files, which hold the
+    console's own link to the project's website — a URL handed to the reader's own browser and
+    never a request the console makes — and which may carry no request call of their own;
   - **the contact route and no address** — the contact section links the issue tracker and
     `SECURITY.md`'s reporting route and nothing else, and the page carries no e-mail address, by
     the owner's ruling that there is no address to publish; and
