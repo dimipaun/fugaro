@@ -634,8 +634,7 @@ const doc = (path: string, fragment: string): string =>
       font-family: var(--font-sans);
       font-size: var(--font-size-xl);
       font-weight: var(--weight-black);
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
+      letter-spacing: var(--tracking-tight);
     }
 
     /* The grid of systems: one column on a phone and up to three across on a wide screen,
@@ -661,8 +660,7 @@ const doc = (path: string, fragment: string): string =>
        offer: a dashed edge, nothing to run, and nothing to click. */
     .os-note-card {
       padding: var(--space-lg);
-      border: var(--border-width) dashed var(--border);
-      border-radius: var(--radius-xl);
+      border-radius: var(--radius-lg);
       background: var(--panel);
     }
 
@@ -749,10 +747,11 @@ const doc = (path: string, fragment: string): string =>
       display: inline-flex;
       align-items: center;
       min-height: 44px;
+      max-width: 100%;
       padding: 0 var(--space-sm);
-      border: var(--border-width) solid var(--border);
-      border-radius: var(--radius-lg);
+      border-radius: var(--radius-sm);
       background: var(--panel);
+      overflow-wrap: anywhere;
       color: var(--accent-on-dark);
       font-size: var(--font-size-sm);
       font-weight: var(--weight-semibold);
