@@ -398,14 +398,13 @@ func TestKeyAToggleFilterAll(t *testing.T) {
 	}
 }
 
-// The x key acknowledges the selected row's failure when it names a failed
-// finished run, and the next rebuild hides it (design generic-tool §10.3).
-// On anything else (a live run, a header, a successful finished run) it does
-// nothing.
+// The x key dismisses the selected finished run and the next rebuild hides
+// it (design generic-tool §10.3, owner spec 2026-10-22, item 4). On anything
+// that is not a finished run (a live run, a header) it does nothing.
 func TestKeyXAcksSelectedFailedFinishedRun(t *testing.T) {
 	x := newTM(t)
 	x.m.o.Queued = func() ([]QueuedRun, []FinishedRun, string) {
-		return nil, []FinishedRun{{Run: "f1", Slug: "acme/app", Status: "failed", FinishedAt: x.now.Add(-time.Hour)}}, ""
+		return nil, []FinishedRun{{Run: "f1", Slug: "acme/app", Status: "failed", FinishedAt: x.now.Add(-time.Minute)}}, ""
 	}
 	x.seed()
 	if !strings.Contains(x.screen(), "f1") {
@@ -425,31 +424,43 @@ func TestKeyXAcksSelectedFailedFinishedRun(t *testing.T) {
 		t.Fatal("x did not record the acknowledgement")
 	}
 	if strings.Contains(x.screen(), "f1") {
-		t.Fatalf("acknowledged failure still shown:\n%s", x.screen())
+		t.Fatalf("a dismissed failure is still shown:\n%s", x.screen())
 	}
 }
 
-// x on a successful (non-failed) finished row is a no-op: Has stays false,
-// and — the stronger check — no ack file is ever written, so a viewer
-// pressing x out of habit on a row that needs no acknowledgement cannot
-// create $XDG_STATE_HOME/fugaro/watch-acks.json where none existed.
-func TestKeyXOnSuccessfulFinishedRowIsNoOp(t *testing.T) {
+// x dismisses any finished run at once, not only a failed one (owner spec
+// 2026-10-22, item 4): a succeeded row leaves the list, and the dismissal is
+// recorded, so it stays gone. On a live run it is still a no-op — nothing is
+// recorded, and no ack file is created where none existed, so a viewer
+// pressing x out of habit on a running row cannot create
+// $XDG_STATE_HOME/fugaro/watch-acks.json.
+func TestKeyXDismissesAnyFinishedRun(t *testing.T) {
 	x := newTM(t)
 	x.m.o.Queued = func() ([]QueuedRun, []FinishedRun, string) {
-		return nil, []FinishedRun{{Run: "s1", Slug: "acme/app", Status: "succeeded", FinishedAt: x.now.Add(-time.Hour)}}, ""
+		return nil, []FinishedRun{{Run: "s1", Slug: "acme/app", Status: "succeeded", Title: "done", FinishedAt: x.now.Add(-time.Minute)}}, ""
 	}
 	x.seed()
+	if !strings.Contains(x.screen(), "s1") {
+		t.Fatalf("the finished row is not shown before x:\n%s", x.screen())
+	}
 	x.key("down") // acme/app's live run, r1
-	x.key("down") // acme/app's finished (successful) run, s1
+	x.key("x")    // x on a live run: no-op
+	if x.m.acks.Has(budget.Key("acme/app"), "r1") {
+		t.Fatal("x dismissed a live run")
+	}
+	if _, err := os.Stat(x.m.o.AckPath); !os.IsNotExist(err) {
+		t.Fatalf("x on a live run wrote an ack file: stat err = %v", err)
+	}
+	x.key("down") // onto acme/app's finished (successful) run, s1
 	if x.m.cur.Run != "s1" {
 		t.Fatalf("cur = %+v, want the finished row", x.m.cur)
 	}
 	x.key("x")
-	if x.m.acks.Has(budget.Key("acme/app"), "s1") {
-		t.Fatal("x acknowledged a non-failed finished run")
+	if !x.m.acks.Has(budget.Key("acme/app"), "s1") {
+		t.Fatal("x did not record the dismissal")
 	}
-	if _, err := os.Stat(x.m.o.AckPath); !os.IsNotExist(err) {
-		t.Fatalf("x on a successful run wrote an ack file: stat err = %v", err)
+	if strings.Contains(x.screen(), "s1") {
+		t.Fatalf("a dismissed finished run is still shown:\n%s", x.screen())
 	}
 }
 
@@ -475,7 +486,7 @@ func TestRebuildDropsEmptyFinishedOnlyBlock(t *testing.T) {
 func TestKeyXUnderAllShowsAckedNotice(t *testing.T) {
 	x := newTM(t)
 	x.m.o.Queued = func() ([]QueuedRun, []FinishedRun, string) {
-		return nil, []FinishedRun{{Run: "f1", Slug: "acme/app", Status: "failed", FinishedAt: x.now.Add(-time.Hour)}}, ""
+		return nil, []FinishedRun{{Run: "f1", Slug: "acme/app", Status: "failed", FinishedAt: x.now.Add(-time.Minute)}}, ""
 	}
 	x.seed()
 	x.key("a") // --all: the failure stays shown even once acked
@@ -489,7 +500,7 @@ func TestKeyXUnderAllShowsAckedNotice(t *testing.T) {
 		t.Fatal("x did not record the acknowledgement under --all")
 	}
 	s := x.screen()
-	if !strings.Contains(s, "acknowledged (hidden in the recent view)") {
+	if !strings.Contains(s, "dismissed (hidden in the recent view)") {
 		t.Fatalf("no notice that the ack still recorded:\n%s", s)
 	}
 	if !strings.Contains(s, "f1") {
@@ -497,9 +508,45 @@ func TestKeyXUnderAllShowsAckedNotice(t *testing.T) {
 	}
 }
 
-// A ready PR stays in "Ready for your review" past --keep (6h by default):
-// the filter bounds how much history the dashboard shows, not what still
-// needs a look (design generic-tool §10.1).
+// A finished run leaves the list three minutes after it finished, on its own
+// — succeeded, failed and cancelled alike (owner spec 2026-10-22, item 3) —
+// and the a key shows every finished run again, auto-hidden ones included
+// (item 5). The three-minute edge is the same strict "younger than" boundary
+// the --keep flag has always had.
+func TestFinishedRunsLeaveAfterThreeMinutes(t *testing.T) {
+	x := newTM(t)
+	x.m.o.Queued = func() ([]QueuedRun, []FinishedRun, string) {
+		return nil, []FinishedRun{
+			{Run: "frsh", Slug: "acme/app", Title: "just done", Status: "succeeded", FinishedAt: x.now.Add(-2 * time.Minute)},
+			{Run: "edge", Slug: "acme/app", Title: "exactly", Status: "succeeded", FinishedAt: x.now.Add(-3 * time.Minute)},
+			{Run: "old2", Slug: "acme/app", Title: "done", Status: "succeeded", FinishedAt: x.now.Add(-4 * time.Minute)},
+			{Run: "oldf", Slug: "acme/app", Title: "failed", Status: "failed", FinishedAt: x.now.Add(-4 * time.Minute)},
+			{Run: "oldc", Slug: "acme/app", Title: "cancelled", Status: "cancelled", FinishedAt: x.now.Add(-10 * time.Minute)},
+		}, ""
+	}
+	x.seed()
+	s := x.screen()
+	if !strings.Contains(s, "frsh") {
+		t.Fatalf("a run finished two minutes ago must still be listed:\n%s", s)
+	}
+	for _, gone := range []string{"edge", "old2", "oldf", "oldc"} {
+		if strings.Contains(s, gone) {
+			t.Fatalf("run %s is still listed past the three-minute window:\n%s", gone, s)
+		}
+	}
+	x.key("a")
+	all := x.screen()
+	for _, want := range []string{"frsh", "edge", "old2", "oldf", "oldc"} {
+		if !strings.Contains(all, want) {
+			t.Fatalf("a must show every finished run again, %s included:\n%s", want, all)
+		}
+	}
+}
+
+// A ready PR stays in "Ready for your review" past --keep — three minutes by
+// default since the owner spec of 2026-10-22: the filter bounds how much
+// history the dashboard shows, not what still needs a look (design
+// generic-tool §10.1).
 func TestReadyForReviewSurvivesTheFilter(t *testing.T) {
 	x := newTM(t)
 	x.m.o.Queued = func() ([]QueuedRun, []FinishedRun, string) {

@@ -1784,7 +1784,13 @@ docs/plans/ is read; more than one is refused rather than guessed at.
 
 A graph this build does not understand is refused rather than rendered: a
 future schema version, a malformed document, an edge to a node that is not
-there, or a cycle. This is a local read and it writes nothing.
+there, or a cycle.
+
+The read also answers what the planner cannot: each task's level, whether it
+is ready or blocked, and the plan's critical path. A task is ready when every
+task it needs is done, so --done names the tasks that are — an id the graph
+does not carry is refused rather than ignored. This is a local read and it
+writes nothing.
 
 Usage: `fugaro plan graph`
 
@@ -1792,6 +1798,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--done` | stringSlice | `[]` | no | the tasks whose work is done, by id (comma-separated or repeated); a task is ready when every task it needs is done |
 | `-h`, `--help` | bool | `false` | no | help for graph |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--plan` | string | "" | no | the plan document the graph sits beside (default: the one graph artifact under docs/plans) |
@@ -3409,12 +3416,13 @@ A project with no budget backend shows its run records only (as fugaro runs ls
 does, for the last 24 hours) and says so; fugaro runs ls --watch stays for the
 question "did my runs finish".
 
-A finished run stays shown for --keep (default 6h) or among the most recent
---keep-count (default 15), whichever is stricter; a failed one stays until it
-is acknowledged (x in the interactive screen) or a day passes. --all shows
-every finished run (the a key toggles this without relaunching). --json is
-always unfiltered: it carries every finished run and, among them, the ones
-ready for review.
+A finished run leaves the list three minutes after it finishes, on its own
+(succeeded, failed and cancelled alike; --keep changes the window, --keep-count
+the number of rows, whichever is stricter). In the interactive screen x
+dismisses the selected finished run at once, and a toggles showing every
+finished run again, the ones the window or a dismissal hid included; --all
+starts that way. --json is always unfiltered: it carries every finished run
+and, among them, the ones ready for review.
 
 The "Ready for your review" list drops a pull request that is already merged
 or closed. The state is asked of your own gh (when it is installed and
@@ -3431,14 +3439,14 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--all` | bool | `false` | no | show every finished run, not just the active and recent ones |
+| `--all` | bool | `false` | no | show every finished run, not just the ones that finished within --keep |
 | `--ascii` | bool | `false` | no | use ASCII instead of ⚠ ▓░ ▸ |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for watch |
 | `--interval` | duration | `0s` | no | the least time between plain frames (default 10s) and the polling period (default 5s) |
 | `--json` | bool | `false` | no | print one JSON document per change instead of a screen |
-| `--keep` | duration | `6h0m0s` | no | how long a finished run stays shown (with --keep-count, whichever is stricter) |
+| `--keep` | duration | `3m0s` | no | how long a finished run stays shown after it finishes (with --keep-count, whichever is stricter) |
 | `--keep-count` | int | `15` | no | how many finished runs stay shown (with --keep, whichever is stricter) |
 | `--no-color` | bool | `false` | no | no colour (NO_COLOR and TERM=dumb do the same) |
 | `--no-pr-state` | bool | `false` | no | do not ask gh about the ready PRs: list every one of them, run nothing |

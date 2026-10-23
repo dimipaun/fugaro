@@ -23,7 +23,7 @@
 version: 1
 
 summaries:
-  v0.10.1: The credentials service is wired end to end for installations that opted in, so a cascade run takes its model credential from the service and a GitHub run has its installation token minted there, while an installation that has not opted in is unchanged.
+  v0.10.1: The credentials service is wired end to end, so an opted-in installation's per-repository runs ask it for their model credential and GitHub token, while the service stays dormant until an owner opts in and an installation that has not is unchanged.
   v0.10.0: Setup now asks every question before it changes anything, a separate update command brings an existing installation up to date and the old init command is gone, a credentials service that keeps model credentials out of the job ships switched off until the next release wires it end to end, and managed projects are available again for a project Fugaro created or that its owner flags.
   v0.9.7: The job images publish again after 0.9.6's failed their security scan, so the cheaper review stage of 0.9.6 reaches cloud runs once a repository refreshes its images.
   v0.9.6: The first-run and upgrade commands are now fugaro setup and fugaro update, and cloud runs on long-lived branches review only their own change, so they cost far less.
