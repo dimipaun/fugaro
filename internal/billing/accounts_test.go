@@ -530,8 +530,14 @@ func TestListSkipsAnAccountWhoseIDIsNotOne(t *testing.T) {
 // below. W4.3 is that one place — internal/cli's billing question — and adding
 // it here is a deliberate change to the privacy story, not a step a new
 // importer takes on its own.
+//
+// The list is by directory, so it allows internal/cli's other files to import
+// this package too. W4.3 adds two of them, and both are the one place: the
+// question itself (billing_prompt.go) and the project stage's guided line,
+// which is billing.Guided's own words (init_project.go) — the same line the
+// question leaves when it has no account to offer.
 func TestOnlyTheWizardMayImportThisPackage(t *testing.T) {
-	allowed := map[string]bool{}
+	allowed := map[string]bool{"internal/cli": true}
 	root := filepath.Join("..", "..") // internal/billing -> the module root
 	const self = "github.com/dimipaun/fugaro/internal/billing"
 	importers := map[string]bool{}
@@ -666,5 +672,51 @@ func TestListLogsNoAccount(t *testing.T) {
 	}
 	if s := string(b); strings.Contains(s, id) || strings.Contains(s, name) {
 		t.Errorf("the client logged the account list to stderr: %s", s)
+	}
+}
+
+// TestListMakesTheDisplayNameSafeToPrint pins the leftover W4.1's review
+// recorded: a display name is the API's own text, and W4.3's picker prints it
+// next to the account's id. It is made safe here rather than at every printer,
+// alongside the reasons ErrRefused already quotes through safetext; the ID is
+// left alone, because it is matched against the account-id shape, which admits
+// no control character.
+func TestListMakesTheDisplayNameSafeToPrint(t *testing.T) {
+	f := gcpfake.NewBilling(t)
+	f.AddAccountNamed(accountID(t, "one"), "the operator's\x07 own account", true)
+
+	got, err := List(context.Background(), fakeCreds(f))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("the list: %+v", got)
+	}
+	if strings.ContainsRune(got[0].DisplayName, '\x07') {
+		t.Errorf("a control character from the API's answer reached the account: %q", got[0].DisplayName)
+	}
+	if got[0].DisplayName != "the operator's? own account" {
+		t.Errorf("the display name: %q, want the API's answer made safe to print", got[0].DisplayName)
+	}
+}
+
+// TestListMakesTheQuotaProjectSafeToPrint is the same rule for the other
+// string the API hands back: the quota project in a SERVICE_DISABLED answer is
+// printed by the caller (its enable line, and W4.4's refusal), so it is made
+// safe where it is read.
+func TestListMakesTheQuotaProjectSafeToPrint(t *testing.T) {
+	f := gcpfake.NewBilling(t)
+	disabledOn(t, f, "projects/a\x07project")
+
+	_, err := List(context.Background(), fakeCreds(f))
+	var e *ErrDisabled
+	if !errors.As(err, &e) {
+		t.Fatalf("a disabled API: %v, want *ErrDisabled", err)
+	}
+	if strings.ContainsRune(err.Error(), '\x07') || strings.ContainsRune(e.EnableCommand, '\x07') {
+		t.Errorf("a control character from the API's answer reached the refusal: %q / %q", err.Error(), e.EnableCommand)
+	}
+	if e.QuotaProject != "a?project" {
+		t.Errorf("the quota project: %q, want the API's answer made safe to print", e.QuotaProject)
 	}
 }

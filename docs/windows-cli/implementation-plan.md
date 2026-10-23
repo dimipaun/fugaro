@@ -10,8 +10,9 @@ owner's answer.**
 
 The findings below are cited by number (**F1**, **D4**, **C1**) and live in
 [reconciliation.md](reconciliation.md) — the whole set is **F1–F42**, the
-decisions are **D1–D16** (all open) and the owner-run checks the plan needs are
-**U1–U13** in that document's UNVERIFIED table; the ranges are stated here so a
+decisions are **D1–D16** (D1–D6 and D16 answered on 2026-10-20; D7–D15 open)
+and the owner-run checks the plan needs are **U1–U13** in that document's
+UNVERIFIED table; the ranges are stated here so a
 citation in this plan can be read without opening the other document. Where a
 task cites a decision, the task is written to the *recommended* option and
 states what changes if the owner answers differently.
@@ -871,7 +872,8 @@ The gate was passed when all four of the following were true:
    2026-10-20 as that evidence; T6.3 remains the move that states the tier the
    work reached, and this run changed neither T6.3 nor that promise.
 
-**Answering D7–D16 is helpful but does not gate the gate**: each of those
+**Answering D7–D15 is helpful but does not gate the gate** (D16 is answered, and
+answering a decision does not approve a task): each of those
 sizes one task, and a task can be written to its recommended option and
 rebased when the answer arrives. D8 (where the config lives), D12 (the mode
 claim) and D15 (the platform status) are the three worth answering early,

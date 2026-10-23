@@ -13,8 +13,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/infra/tf"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 const (
@@ -32,12 +34,13 @@ const (
 // because it never refuses a delete itself, so the refusal the verdict carries
 // is the guard's. It is not the cover a managed apply hands Gate — that is
 // tf.ManagedCover, which judges the resource (managedCover below) — and its
-// WithDeleteList records the list Gate handed it, so a test can see the wiring.
-type admitAll struct{ deletes *[]string }
+// WithDeleteEntries records the list Gate handed it, so a test can see the
+// wiring.
+type admitAll struct{ deletes *[]tf.DeleteEntry }
 
 func (admitAll) NotCovered(*tf.Plan, []tf.ImportKey) []string { return nil }
 
-func (a admitAll) WithDeleteList(allowDelete []string) tf.Deletable {
+func (a admitAll) WithDeleteEntries(allowDelete []tf.DeleteEntry) tf.Deletable {
 	if a.deletes != nil {
 		*a.deletes = slices.Clone(allowDelete)
 	}
@@ -88,6 +91,15 @@ func managedChange(addr, typ string, actions []string, before, after map[string]
 	return ch
 }
 
+// bucketCreated is the time_created a storage bucket's state carries: the
+// per-instance value the delete rule binds an owner's entry to
+// (tf.removalInstanceAttributes), which terraform's state always has, so that
+// a bucket fixture here is a state terraform wrote. A fixture that left it out
+// would be a removal the rule refuses for identifying nothing, which is not
+// the rule those fixtures are about (TestGateRefusesARemovalTheRuleCannotIdentify
+// is where that refusal is exercised, on purpose).
+const bucketCreated = "2026-01-02T03:04:05.678Z"
+
 // deleted is one entry of a managed plan's resource_changes for a resource the
 // plan removes: the resource in before and null in after, which is what the
 // managed cover judges the resource itself on. The null is set here rather
@@ -98,6 +110,27 @@ func deleted(addr, typ string, before map[string]any) map[string]any {
 	ch := managedChange(addr, typ, []string{"delete"}, before, nil)
 	ch["change"].(map[string]any)["after"] = nil
 	return ch
+}
+
+// removing is change with the object the plan takes away in before: the shape
+// of a destroy and of a replace's before view, which is what the owner's list
+// is matched against (tf.DeleteEntry, plan Task 6.3). change's own before is
+// empty — it is the fixture for creates — and a removal whose before view
+// identifies no object is refused however the list is written, so a test of
+// the delete rule builds its removals here.
+func removing(addr, typ string, actions []string, before, after map[string]any) map[string]any {
+	ch := change(addr, typ, actions, after)
+	ch["change"].(map[string]any)["before"] = before
+	return ch
+}
+
+// entry is an approval spelled out rather than computed from the plan: for a
+// test whose point is an address the plan does not carry (a stale entry) or an
+// entry bound to another object than the one the plan removes. A test that
+// means "this removal is approved" calls rig.approving instead, which reads the
+// entry off the plan.
+func entry(address, before string) tf.DeleteEntry {
+	return tf.DeleteEntry{Address: address, Before: before}
 }
 
 // bucket is a storage bucket as the installation's module writes it: the one
@@ -202,6 +235,37 @@ func (r *rig) planFile(t *testing.T) string {
 	return p
 }
 
+// plan is the plan the rig has scripted for the fake's show.
+func (r *rig) plan(t *testing.T) *tf.Plan {
+	t.Helper()
+	sh, ok := r.script["show"].(map[string]any)
+	if !ok {
+		t.Fatal("the rig has no scripted plan")
+	}
+	var p tf.Plan
+	if err := json.Unmarshal([]byte(sh["stdout"].(string)), &p); err != nil {
+		t.Fatal(err)
+	}
+	return &p
+}
+
+// approving is the entry the owner's delete list holds for the removal at
+// address in the plan this rig has scripted: the address and the identity of
+// the object the plan shows there, which is what `fugaro allow-delete` records
+// (tf.ApprovalFor). A test that means "this removal is approved" computes its
+// entry from the plan rather than spelling it out, so a fixture cannot approve
+// an object the plan does not show.
+func (r *rig) approving(t *testing.T, address string) tf.DeleteEntry {
+	t.Helper()
+	for _, rc := range r.plan(t).ResourceChanges {
+		if rc.Address == address {
+			return tf.ApprovalFor(rc)
+		}
+	}
+	t.Fatalf("the rig's plan carries no change at %s", address)
+	return tf.DeleteEntry{}
+}
+
 // show scripts the fake's `show -json <plan>` with a plan of these changes.
 func (r *rig) show(t *testing.T, changes ...map[string]any) {
 	t.Helper()
@@ -268,8 +332,8 @@ func (r *rig) applied(t *testing.T) []string {
 }
 
 // spec is the managed project's gate spec: the project's names, the cover and
-// the owner's allow-list.
-func spec(t *testing.T, r *rig, c Cover, allow ...string) Spec {
+// the owner's delete list, as the entries the owner's object holds (Task 6.3).
+func spec(t *testing.T, r *rig, c Cover, allow ...tf.DeleteEntry) Spec {
 	t.Helper()
 	return Spec{Project: project, GCPProject: gcpProject, Cover: c, AllowDelete: allow, TF: r.tf(t)}
 }
@@ -463,12 +527,311 @@ func TestPlanRefusalsCarryTheAddressAndTheRule(t *testing.T) {
 	}
 }
 
+// A cover item's content is a rule's own words, and one of those words carries
+// a "): " of its own: the managed list's reason for google_compute_router_nat
+// names the owner-run root in parentheses and goes on to say why
+// ("(modules/compute/network.tf): the NAT is the runs' egress path, ...").
+// The two shapes are told apart by the ACTIONS between the address's
+// parentheses and that ": " — the guard's, and only the guard's
+// (tf.ActionsText) — and not by the first "): " in the item, so this item's why
+// is its whole content. A reader that cut at the first "): " instead would take
+// "Fugaro's own compute-backend network (modules/compute/network.tf" for the
+// actions and hand the owner a rule with that parenthesis dropped: the verdict
+// the owner decides on would misquote the gate, and nothing else in the suite
+// would notice.
+//
+// The item, the content and the reason are all read off the real cover and its
+// real plan here rather than spelled out, so this test cannot drift from the
+// rule it is about — and the premise it rests on (the content really carries a
+// "): ") is asserted, so a reason reworded without one fails this test loudly
+// instead of leaving it vacuous.
+func TestPlanRefusalsReadACoverItemsContentWhole(t *testing.T) {
+	const addr = "module.managed.google_compute_router_nat.runs"
+	r := newRig(t)
+	r.managedShow(t, managedChange(addr, "google_compute_router_nat", []string{"delete", "create"},
+		map[string]any{"name": "managed-nat", "id": "managed-nat", "project": gcpProject},
+		map[string]any{"name": "managed-nat", "project": gcpProject}))
+
+	// The removal is one the owner's list approves, so the guard admits it and
+	// the refusal below is the cover's rule about the resource itself.
+	approved := r.approving(t, addr)
+	v := gate(t, r, spec(t, r, managedCover(), approved))
+	if v.OK {
+		t.Fatal("a type the managed list drops was admitted")
+	}
+
+	// The same cover the gate was handed, read for its own items.
+	c := managedCover()
+	c.AllowDelete = []tf.DeleteEntry{approved}
+	var item string
+	for _, it := range c.NotCovered(r.plan(t), nil) {
+		if strings.HasPrefix(it, addr+" (") && strings.HasSuffix(it, ")") {
+			item = it
+			break
+		}
+	}
+	if item == "" {
+		t.Fatalf("the cover's items carry nothing at %s: the fixture is not the one this test is about", addr)
+	}
+	content := item[len(addr)+2 : len(item)-1]
+	if !strings.Contains(content, "): ") {
+		t.Fatalf("this test is about a rule whose own words carry a \")): \" — a cover item with a parenthesis inside its content — and %s's reason no longer has one: %q", addr, content)
+	}
+
+	ref, ok := findRefusal(v.Refusals, coverGate, addr)
+	if !ok {
+		t.Fatalf("the cover refused %s with no refusal at its address: %+v", addr, v.Refusals)
+	}
+	if ref.Why != content {
+		t.Errorf("the cover refusal for %s carries\n%q\nwant the item's whole content\n%q", addr, ref.Why, content)
+	}
+	if got := refusals(coverGate, []string{item}); len(got) != 1 || got[0].Why != content || got[0].Address != addr {
+		t.Errorf("refusals(%q) = %+v; want one refusal at %s carrying the content whole", item, got, addr)
+	}
+}
+
+// The entries rule's refusal is rendered whole, and this is the test that pins
+// it: a guard item is "<address> (<actions>): <why>", and the why this rule
+// writes — the list's own entry and the object the plan removes, each in
+// parentheses (tf.Approves) — ends in a ")" of its own. Reading the two shapes
+// apart by the item's LAST character instead took the actions as the why and
+// cut that closing parenthesis off with them: the verdict carried a Why
+// starting "delete): " and losing the sentence's end, while the address beside
+// it was right, so nothing else failed. Both gates' copies are pinned here,
+// and the why is read back from tf.Approves rather than spelled out, so this
+// test and the rule cannot drift.
+func TestGateRendersTheEntriesRefusalWhole(t *testing.T) {
+	const addr = "module.managed.google_storage_bucket.fmgd_data"
+	r := newRig(t)
+	// The plan removes an object the owner's entry is not about: the entry
+	// names the address for the object that is gone.
+	r.managedShow(t, deleted(addr, "google_storage_bucket", map[string]any{"name": "fmgd-other", "id": "fmgd-other", "time_created": bucketCreated}))
+	stale := entry(addr, "type=google_storage_bucket project="+gcpProject+" name=fmgd-gone id=fmgd-gone")
+	v := gate(t, r, spec(t, r, managedCover(), stale))
+	if v.OK {
+		t.Fatal("a removal the owner's entry is not about was admitted")
+	}
+	plan := r.plan(t)
+	var rc tf.ResourceChange
+	for i := range plan.ResourceChanges {
+		if plan.ResourceChanges[i].Address == addr {
+			rc = plan.ResourceChanges[i]
+		}
+	}
+	if rc.Address == "" {
+		t.Fatalf("the rig's plan carries no change at %s", addr)
+	}
+	if ok, why := tf.Approves([]tf.DeleteEntry{stale}, rc); ok || why == "" {
+		t.Fatalf("tf.Approves(%v) = %v, %q, want a refusal with its own sentence", stale, ok, why)
+	}
+	_, why := tf.Approves([]tf.DeleteEntry{stale}, rc)
+	for gate, want := range map[string]string{
+		guardGate: "delete: " + why,
+		coverGate: "actions delete: " + why,
+	} {
+		ref, ok := findRefusal(v.Refusals, gate, addr)
+		if !ok {
+			t.Fatalf("the %s refused %s with no refusal at its address: %+v", gate, addr, v.Refusals)
+		}
+		if ref.Why != want {
+			t.Errorf("the %s refusal for %s carries\n%q\nwant\n%q", gate, addr, ref.Why, want)
+		}
+		if !strings.HasSuffix(ref.Why, ")") {
+			t.Errorf("the %s refusal for %s lost the sentence's closing parenthesis: %q", gate, addr, ref.Why)
+		}
+		if strings.Contains(ref.Why, "delete): ") {
+			t.Errorf("the %s refusal for %s carries the actions as its why: %q", gate, addr, ref.Why)
+		}
+	}
+	// The address is one a new entry would admit, so the advice stands.
+	if !slices.Contains(v.Listable, addr) {
+		t.Errorf("Listable %v does not name %s, whose refusal a new entry would clear", v.Listable, addr)
+	}
+}
+
+// TestGateRefusesARemovalTheRuleCannotIdentify: a before view of a type the
+// provider gives a per-instance value to, without that value, is not a state
+// terraform writes — and the rule refuses it however the owner's list is
+// written, because the name such a view carries is known not to be enough to
+// tell one instance of it from the next (tf.Identifies). The refusal says
+// which value is missing rather than that the plan names nothing, and the
+// address is not offered as listable: no entry can be matched against that
+// view, so sending the owner to record one would lead nowhere.
+func TestGateRefusesARemovalTheRuleCannotIdentify(t *testing.T) {
+	const addr = "module.managed.google_storage_bucket.fmgd_data"
+	r := newRig(t)
+	before := map[string]any{"name": "fmgd-data", "id": "fmgd-data", "project": gcpProject}
+	r.managedShow(t, removing(addr, "google_storage_bucket", []string{"delete"}, before, nil))
+	// The owner's list names the address, and its entry is the strongest one
+	// the view could support: the type, the project, the name and the id are
+	// all exactly what the plan shows.
+	listed := entry(addr, "type=google_storage_bucket project="+gcpProject+" name=fmgd-data id=fmgd-data")
+	v := gate(t, r, spec(t, r, managedCover(), listed))
+	if v.OK {
+		t.Fatal("a removal whose before view carries no per-instance value was admitted")
+	}
+	ref, ok := findRefusal(v.Refusals, guardGate, addr)
+	if !ok {
+		t.Fatalf("the guard refused with no refusal at %s: %+v", addr, v.Refusals)
+	}
+	if !strings.Contains(ref.Why, "carries no time_created") {
+		t.Errorf("the guard's refusal is %q, want it to name the missing time_created", ref.Why)
+	}
+	if slices.Contains(v.Listable, addr) {
+		t.Errorf("Listable %v names %s, which no entry can be matched against", v.Listable, addr)
+	}
+}
+
+// The identity a refusal prints is the identity an entry has to hold, however
+// long it is. The removal rules print it for the owner to copy into fugaro
+// allow-delete, the entry they record is matched against the plan's own
+// identity byte for byte (tf.DeleteEntry, tf.Approves) — and a why rendered
+// through safetext.Field is cut at FieldMax, which for this sentence falls in
+// the middle of the identity: the entries rule names every entry the list holds
+// at the address BEFORE the object the plan removes (tf.Approves), so the
+// identity sits at the sentence's end and past rune 512. What the owner would
+// copy then is a prefix, the entry would match nothing, and every later apply
+// would refuse the same removal with the same sentence: a loop that cannot
+// close. The bound is refusalWhyMax instead, which is the parts' bound and not
+// a bound on the identity, and this test walks the whole way the owner does —
+// the verdict's refusal, the text the apply returns, and the identity read back
+// out of it into an entry that approves.
+func TestTheIdentityARefusalPrintsIsOneAnEntryCanHold(t *testing.T) {
+	const addr = "module.managed.google_storage_bucket.fmgd_data"
+	long := strings.Repeat("n", 300)
+	r := newRig(t)
+	r.managedShow(t, deleted(addr, "google_storage_bucket", map[string]any{
+		"name": long, "id": long, "project": gcpProject, "time_created": bucketCreated}))
+	// The entry names the address for another object, which is the refusal that
+	// prints what the plan removes beside what the list holds.
+	stale := entry(addr, "type=google_storage_bucket project="+gcpProject+" name=fmgd-gone id=fmgd-gone")
+	v := gate(t, r, spec(t, r, managedCover(), stale))
+	if v.OK {
+		t.Fatal("a removal the owner's entry is not about was admitted")
+	}
+	var rc tf.ResourceChange
+	for _, c := range r.plan(t).ResourceChanges {
+		if c.Address == addr {
+			rc = c
+		}
+	}
+	if rc.Address == "" {
+		t.Fatalf("the rig's plan carries no change at %s", addr)
+	}
+	want := tf.RemovedIdentity(rc).String()
+	// The fixture has to be an identity Field would change, or the test proves
+	// nothing about the renderers below: one Field leaves alone reads the same
+	// either way.
+	if safetext.Field(want) == want {
+		t.Fatalf("the fixture's identity of %d runes is one safetext.Field leaves alone", utf8.RuneCountInString(want))
+	}
+	for _, gate := range []string{guardGate, coverGate} {
+		ref, ok := findRefusal(v.Refusals, gate, addr)
+		if !ok {
+			t.Fatalf("the %s refused %s with no refusal at its address: %+v", gate, addr, v.Refusals)
+		}
+		if !strings.Contains(ref.Why, want) {
+			t.Errorf("the %s refusal for %s does not carry the identity whole:\n%q\nwant it to hold\n%q", gate, addr, ref.Why, want)
+		}
+		if strings.Contains(ref.Why, "…") {
+			t.Errorf("the %s refusal for %s is cut: %q", gate, addr, ref.Why)
+		}
+	}
+	// What the apply returns is the text a person reads, and the identity it
+	// carries is the one the owner pastes back.
+	msg := (&RefusedError{Verdict: v}).Error()
+	if !strings.Contains(msg, want) {
+		t.Errorf("the refusal the apply returns does not carry the identity whole:\n%s\nwant it to hold\n%s", msg, want)
+	}
+	// The owner copies the printed text out of the sentence, so what the copy
+	// holds is the identity AND the sentence's own closing bracket, and nothing
+	// else: the command that records it takes that one bracket off (internal/cli's
+	// approveArgument, TestAllowDeleteCommandTakesTheSentenceBracketOffAPaste),
+	// which is only a rule it can have because an identity holds no parenthesis
+	// of its own (tf.identityValue). Read any deeper into the sentence — or with
+	// the bracket left on — and the entry that comes out matches nothing, which
+	// is the loop that cannot close.
+	i := strings.LastIndex(msg, "and the plan removes ")
+	if i < 0 {
+		t.Fatalf("the refusal names no object:\n%s", msg)
+	}
+	copied := msg[i+len("and the plan removes "):]
+	if copied != want+")" {
+		t.Errorf("the refusal's copy is\n%q\nwant the plan's identity %q followed by the sentence's own bracket", copied, want)
+	}
+	if ok, why := tf.Approves([]tf.DeleteEntry{{Address: addr, Before: want}}, rc); !ok {
+		t.Errorf("the identity a refusal printed approves nothing (%s), so the loop the delete list works by cannot close", why)
+	}
+}
+
+// A why past refusalWhyMax is not one of the removal rules' sentences, whose
+// every part is bounded where the rule built it (refusalWhy): it is cut, with
+// safetext.Field's own marker, rather than printed unbounded — the looser bound
+// is for the identity the owner has to be able to paste, not a licence for a
+// plan or a cover to write a screenful.
+func TestARefusalWhyPastItsBoundIsCut(t *testing.T) {
+	item := "module.managed.google_storage_bucket.x (an address the rule refused " + strings.Repeat("a", refusalWhyMax) + ")"
+	got := refusals(coverGate, []string{item})
+	if len(got) != 1 {
+		t.Fatalf("refusals %+v, want one refusal", got)
+	}
+	if n := utf8.RuneCountInString(got[0].Why); n > refusalWhyMax {
+		t.Errorf("the why is %d runes, past the %d a verdict carries", n, refusalWhyMax)
+	}
+	if !strings.HasSuffix(got[0].Why, "…") {
+		t.Errorf("the why %d runes long is not marked as cut: %q", utf8.RuneCountInString(got[0].Why), got[0].Why)
+	}
+}
+
+// The wider bound belongs to the removal rules' own sentences and not to every
+// gate, and not to every line of the gates that write them (the review finding
+// on the Task 6.3 bound: refusalWhy lifted the safetext.Field cut to
+// refusalWhyMax — some 22.5 kB — for the cost gate's whys, and then for every
+// why of the two list-judging gates, most of which is the plan's own text). The
+// two directions of the sentence test are
+// TestACoverWhyThatIsNotARemovalRuleIsOneField and
+// TestACoverWhyThatIsARemovalRuleKeepsItsIdentityWhole; this is the gate that
+// never writes one of those sentences at all.
+//
+// A cost finding is the plan's own values about what a change states
+// (tf.ManagedCostFinding) and names an identity nowhere, so its why is one
+// Field, cut at FieldMax with Field's own marker.
+func TestOnlyARemovalRulesSentenceGetsTheIdentitysBound(t *testing.T) {
+	long := strings.Repeat("a", safetext.FieldMax*3)
+	item := "module.managed.google_storage_bucket.x (machine_type: " + long + ")"
+
+	cost := refusals(costGate, []string{item})
+	if len(cost) != 1 {
+		t.Fatalf("refusals %+v, want one refusal", cost)
+	}
+	if n := utf8.RuneCountInString(cost[0].Why); n > safetext.FieldMax {
+		t.Errorf("the cost gate's why is %d runes, past the %d one Field writes: the identity bound is not the cost gate's to use", n, safetext.FieldMax)
+	}
+	if !strings.HasSuffix(cost[0].Why, "…") {
+		t.Errorf("the cost gate's why is not marked as cut: %q", cost[0].Why)
+	}
+	if strings.Contains(cost[0].Why, long) {
+		t.Errorf("the cost gate's why carries the plan's %d-rune value unbounded", len(long))
+	}
+}
+
+// findRefusal is the refusal one gate made about one address, and whether it
+// made one.
+func findRefusal(rs []Refusal, gate, address string) (Refusal, bool) {
+	for _, r := range rs {
+		if r.Gate == gate && r.Address == address {
+			return r, true
+		}
+	}
+	return Refusal{}, false
+}
+
 // A guard that errs fails closed even when its message says nothing: OK is not
 // read off the refusals the message turns into.
 func TestGateGuardErrorWithEmptyMessageIsNotOK(t *testing.T) {
 	for _, msg := range []string{"", "  \n "} {
 		old := guard
-		guard = func(*tf.Plan, []string) error { return errors.New(msg) }
+		guard = func(*tf.Plan, []tf.DeleteEntry) error { return errors.New(msg) }
 		r := newRig(t)
 		r.show(t, bucket(planBucket))
 		v := gate(t, r, spec(t, r, admitAll{}))
@@ -488,8 +851,9 @@ func TestGateGuardErrorWithEmptyMessageIsNotOK(t *testing.T) {
 // the rule, this verdict is OK.
 func TestGateRefusesAListedDeleteTheCoverDoesNotJudge(t *testing.T) {
 	r := newRig(t)
-	r.show(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
-	v := gate(t, r, spec(t, r, judgesNothing{}, planBucket))
+	r.show(t, removing(planBucket, "google_storage_bucket", []string{"delete"},
+		map[string]any{"name": "fugaro-runs-" + gcpProject, "id": "bucket-0001", "time_created": bucketCreated}, nil))
+	v := gate(t, r, spec(t, r, judgesNothing{}, r.approving(t, planBucket)))
 	if v.OK {
 		t.Fatal("a delete of an address on the owner's list was admitted by a cover that judges no delete")
 	}
@@ -516,8 +880,10 @@ func TestGateRefusesAListedReplaceTheCoverDoesNotJudge(t *testing.T) {
 	for _, order := range [][]string{{"delete", "create"}, {"create", "delete"}} {
 		t.Run(strings.Join(order, ","), func(t *testing.T) {
 			r := newRig(t)
-			r.show(t, change(planBucket, "google_storage_bucket", order, map[string]any{"name": "fugaro-runs-" + gcpProject}))
-			v := gate(t, r, spec(t, r, judgesNothing{}, planBucket))
+			r.show(t, removing(planBucket, "google_storage_bucket", order,
+				map[string]any{"name": "fugaro-runs-" + gcpProject, "id": "bucket-0001", "time_created": bucketCreated},
+				map[string]any{"name": "fugaro-runs-" + gcpProject}))
+			v := gate(t, r, spec(t, r, judgesNothing{}, r.approving(t, planBucket)))
 			if v.OK {
 				t.Fatal("a replace of an address on the owner's list was admitted by a cover that judges no delete")
 			}
@@ -536,16 +902,18 @@ func TestGateRefusesAListedReplaceTheCoverDoesNotJudge(t *testing.T) {
 // given different ones — which is how a delete could be admitted by the list
 // one of them was told and refused by the other's.
 func TestGateHandsTheCoverTheSameDeleteListAsTheGuard(t *testing.T) {
-	var covered, guarded []string
+	var covered, guarded []tf.DeleteEntry
 	old := guard
-	guard = func(_ *tf.Plan, allowDelete []string) error { guarded = slices.Clone(allowDelete); return nil }
+	guard = func(_ *tf.Plan, allowDelete []tf.DeleteEntry) error { guarded = slices.Clone(allowDelete); return nil }
 	t.Cleanup(func() { guard = old })
 	r := newRig(t)
-	r.show(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
-	if v := gate(t, r, spec(t, r, admitAll{deletes: &covered}, planBucket)); !v.OK {
+	r.show(t, removing(planBucket, "google_storage_bucket", []string{"delete"},
+		map[string]any{"name": "fugaro-runs-" + gcpProject, "id": "bucket-0001", "time_created": bucketCreated}, nil))
+	approved := r.approving(t, planBucket)
+	if v := gate(t, r, spec(t, r, admitAll{deletes: &covered}, approved)); !v.OK {
 		t.Fatalf("a listed delete both gates admit is refused: %v", v.Refusals)
 	}
-	if !slices.Equal(guarded, []string{planBucket}) {
+	if !slices.Equal(guarded, []tf.DeleteEntry{approved}) {
 		t.Errorf("the guard was handed %v, want the spec's own list", guarded)
 	}
 	if !slices.Equal(covered, guarded) {
@@ -559,17 +927,17 @@ func TestGateHandsTheCoverTheSameDeleteListAsTheGuard(t *testing.T) {
 func TestGateAdmitsAListedDeleteOnlyInsideTheManagedAllowlist(t *testing.T) {
 	const addr = "module.managed.google_storage_bucket.fmgd_data"
 	allowed := func() map[string]any {
-		return deleted(addr, "google_storage_bucket", map[string]any{"name": "fmgd-data"})
+		return deleted(addr, "google_storage_bucket", map[string]any{"name": "fmgd-data", "time_created": bucketCreated})
 	}
 	r := newRig(t)
 	r.managedShow(t, allowed())
-	if v := gate(t, r, spec(t, r, managedCover(), addr)); !v.OK {
+	if v := gate(t, r, spec(t, r, managedCover(), r.approving(t, addr))); !v.OK {
 		t.Errorf("a listed delete of a resource the allowlist admits is refused: %v", v.Refusals)
 	}
 	// The resource judged although the address is listed: the plan's own
 	// bucket carries the prefix, this one is Fugaro's state bucket.
-	r.managedShow(t, deleted(addr, "google_storage_bucket", map[string]any{"name": "fugaro-tfstate-" + gcpProject}))
-	v := gate(t, r, spec(t, r, managedCover(), addr))
+	r.managedShow(t, deleted(addr, "google_storage_bucket", map[string]any{"name": "fugaro-tfstate-" + gcpProject, "time_created": bucketCreated}))
+	v := gate(t, r, spec(t, r, managedCover(), r.approving(t, addr)))
 	if v.OK {
 		t.Fatal("a listed delete of a resource outside the managed prefix was admitted")
 	}
@@ -578,8 +946,8 @@ func TestGateAdmitsAListedDeleteOnlyInsideTheManagedAllowlist(t *testing.T) {
 	}
 	// And a resource whose type the allowlist does not carry: the address is
 	// listed, so the guard admits it and the cover's own rule is the refusal.
-	r.managedShow(t, deleted(addr, "google_compute_instance", map[string]any{"name": "fmgd-data"}))
-	v = gate(t, r, spec(t, r, managedCover(), addr))
+	r.managedShow(t, deleted(addr, "google_compute_instance", map[string]any{"name": "fmgd-data", "time_created": bucketCreated}))
+	v = gate(t, r, spec(t, r, managedCover(), r.approving(t, addr)))
 	if v.OK {
 		t.Fatal("a listed delete of a type outside the managed allowlist was admitted")
 	}
@@ -600,8 +968,59 @@ func TestGateAdmitsAListedDeleteOnlyInsideTheManagedAllowlist(t *testing.T) {
 	if !guarded {
 		t.Errorf("refusals %v, want the guard's refusal of %s with its actions", v.Refusals, addr)
 	}
-	if v := gate(t, r, spec(t, r, managedCover(), "module.managed.google_storage_bucket.other")); v.OK {
+	if v := gate(t, r, spec(t, r, managedCover(), entry("module.managed.google_storage_bucket.other", "type=google_storage_bucket id=other"))); v.OK {
 		t.Error("a delete of an address not listed was admitted")
+	}
+}
+
+// The rule Task 6.3 exists for, at the managed Gate: an approval is of the
+// object the owner was shown, not a standing permission to delete whatever is
+// at the address later. The plan removes the object the entry was given for
+// and the removal is admitted; the same address carrying ANOTHER object — a
+// bucket under another name, which is what a state rebuilt from a backup or a
+// `state mv` leaves there — is an object the entry is not about, and both
+// halves of the gate refuse it, naming the object the plan removes, which is
+// what the owner needs to approve the deletion they now mean.
+//
+// The identity is the one the provider really writes for this type — for a
+// bucket `id` IS the name, so the two views differ in both — rather than an
+// id a fixture invents to make the rule look stronger than it is: a same-NAMED
+// re-creation of a bucket carries the same identity and is still approved,
+// which is the residual §6 item 5 and internal/infra/tf/identity.go record and
+// TestAnEntryApprovesASameNamedObjectReCreatedAtTheAddress pins.
+func TestGateRefusesARemovalAtAnAddressApprovedForAnotherObject(t *testing.T) {
+	const addr = "module.managed.google_storage_bucket.fmgd_data"
+	r := newRig(t)
+	r.managedShow(t, deleted(addr, "google_storage_bucket", map[string]any{"name": "fmgd-data", "id": "fmgd-data", "time_created": bucketCreated}))
+	approved := r.approving(t, addr)
+	if v := gate(t, r, spec(t, r, managedCover(), approved)); !v.OK {
+		t.Fatalf("the removal the owner's entry was given for is refused: %v", v.Refusals)
+	}
+	// The address now carries another object: a bucket under another name,
+	// whose identity the entry does not hold. The entry is about the object
+	// that is gone, so it approves nothing.
+	r.managedShow(t, deleted(addr, "google_storage_bucket", map[string]any{"name": "fmgd-other", "id": "fmgd-other", "time_created": bucketCreated}))
+	v := gate(t, r, spec(t, r, managedCover(), approved))
+	if v.OK {
+		t.Fatal("the entry approved a removal of an object it was not given for")
+	}
+	if len(v.Refusals) == 0 {
+		t.Fatal("the refused removal carried no refusal")
+	}
+	named := false
+	for _, ref := range v.Refusals {
+		if ref.Address == addr && strings.Contains(ref.Why, "another object") {
+			named = true
+		}
+	}
+	if !named {
+		t.Errorf("refusals %v, want one refusing %s for another object", v.Refusals, addr)
+	}
+	// The person who can change the answer is the owner, and the refusal says
+	// what they would approve: the identity the plan removes, which is the
+	// object now at the address and not the one the entry holds.
+	if v := gate(t, r, spec(t, r, managedCover(), r.approving(t, addr))); !v.OK {
+		t.Errorf("the entry for the object the plan removes is refused: %v", v.Refusals)
 	}
 }
 
@@ -611,8 +1030,8 @@ func TestGateAdmitsAListedDeleteOnlyInsideTheManagedAllowlist(t *testing.T) {
 func TestGateAdmitsAListedAddressThePlanDoesNotCarry(t *testing.T) {
 	r := newRig(t)
 	r.managedShow(t, managedChange("module.managed.google_storage_bucket.data", "google_storage_bucket",
-		[]string{"create"}, nil, map[string]any{"name": "fmgd-data"}))
-	if v := gate(t, r, spec(t, r, managedCover(), "module.managed.google_compute_instance.gone")); !v.OK {
+		[]string{"create"}, nil, map[string]any{"name": "fmgd-data", "time_created": bucketCreated}))
+	if v := gate(t, r, spec(t, r, managedCover(), entry("module.managed.google_compute_instance.gone", "type=google_compute_instance id=gone"))); !v.OK {
 		t.Errorf("a listed address the plan does not carry changed the verdict: %v", v.Refusals)
 	}
 }
@@ -625,7 +1044,7 @@ func TestGateListNeverAuthorizesACreate(t *testing.T) {
 	const gone = "module.managed.google_compute_instance.gone"
 	r := newRig(t)
 	r.managedShow(t, managedChange(gone, "google_compute_instance", []string{"create"}, nil, map[string]any{}))
-	v := gate(t, r, spec(t, r, managedCover(), gone))
+	v := gate(t, r, spec(t, r, managedCover(), r.approving(t, gone)))
 	if v.OK {
 		t.Fatal("a create at an address on the delete list was admitted although its type is not on the allowlist")
 	}
@@ -648,7 +1067,7 @@ func TestGateListNeverAuthorizesACreate(t *testing.T) {
 func TestGateListNeverAuthorizesACreateThroughACoverThatJudgesNothing(t *testing.T) {
 	r := newRig(t)
 	r.show(t, change(planBucket, "google_storage_bucket", []string{"create"}, map[string]any{"name": "fugaro-runs-" + gcpProject}))
-	for _, allow := range [][]string{nil, {planBucket}} {
+	for _, allow := range [][]tf.DeleteEntry{nil, {r.approving(t, planBucket)}} {
 		if v := gate(t, r, spec(t, r, judgesNothing{}, allow...)); !v.OK || len(v.Refusals) != 0 {
 			t.Errorf("a create with %v listed gives %v, want it admitted: the list is read for a remove and for nothing else", allow, v.Refusals)
 		}
@@ -664,7 +1083,7 @@ func TestGateManagedCoverReceivesSpecImports(t *testing.T) {
 	const addr = "module.managed.google_storage_bucket.data"
 	id := gcpProject + "/data-bucket"
 	r := newRig(t)
-	imp := managedChange(addr, "google_storage_bucket", []string{"no-op"}, nil, map[string]any{"name": "fmgd-data"})
+	imp := managedChange(addr, "google_storage_bucket", []string{"no-op"}, nil, map[string]any{"name": "fmgd-data", "time_created": bucketCreated})
 	imp["change"].(map[string]any)["importing"] = map[string]any{"id": id}
 	r.managedShow(t, imp)
 	s := spec(t, r, managedCover())
@@ -690,11 +1109,12 @@ func TestGateManagedCoverReceivesSpecImports(t *testing.T) {
 // TestGateAdmitsAListedDeleteOnlyInsideTheManagedAllowlist.
 func TestGateAdmitsADeleteOnlyForAListedAddress(t *testing.T) {
 	r := newRig(t)
-	r.show(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
-	if v := gate(t, r, spec(t, r, admitAll{}, planBucket)); !v.OK {
+	r.show(t, removing(planBucket, "google_storage_bucket", []string{"delete"},
+		map[string]any{"name": "fugaro-runs-" + gcpProject, "id": "bucket-0001", "time_created": bucketCreated}, nil))
+	if v := gate(t, r, spec(t, r, admitAll{}, r.approving(t, planBucket))); !v.OK {
 		t.Errorf("a delete of a listed address was refused: %v", v.Refusals)
 	}
-	if v := gate(t, r, spec(t, r, admitAll{}, "module.managed.google_storage_bucket.other")); v.OK {
+	if v := gate(t, r, spec(t, r, admitAll{}, entry("module.managed.google_storage_bucket.other", "type=google_storage_bucket id=other"))); v.OK {
 		t.Error("a delete of an address not listed was admitted")
 	}
 	if v := gate(t, r, spec(t, r, admitAll{})); v.OK {
@@ -813,5 +1233,71 @@ func TestGateGuardCarriesNoAdviceOfItsOwn(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "allow-delete") || strings.Contains(err.Error(), tf.AllowDeleteAdvice) {
 		t.Errorf("the gate's guard carries tf.Guard's advice:\n%s", err)
+	}
+}
+
+// The bound belongs to the SENTENCE and not to the gate (the review finding on
+// the Task 6.3 bound): printsRemovalIdentity switched on the gate, so every why
+// of the guard and cover gates got refusalWhyMax — some 22.5 kB, unbounded in
+// the number of lines — although most of what those two gates write is not a
+// removal rule's sentence at all. The plan-authored ones are the cover's own:
+// its action_reason line (managed_cover.go), and the image and provider strings
+// internal/infra/tf writes beside it, all of which the plan wrote. A removal
+// rule's sentence prints the identity of the object the plan removes for its
+// reader to copy into fugaro allow-delete, and that is the whole reason the
+// bound is wide — so a line that is not one of those sentences is one
+// safetext.Field, whichever gate it came through.
+//
+// Mutation (decide the bound by the gate again): the cover assertion fails, and
+// the plan's own action_reason text is echoed whole.
+func TestACoverWhyThatIsNotARemovalRuleIsOneField(t *testing.T) {
+	long := strings.Repeat("a", safetext.FieldMax*3)
+	// The cover's own line, in the shape it reaches refusals in: the address,
+	// the actions, and the rule that refused it — this one the plan's
+	// action_reason, which no removal rule wrote.
+	item := "module.managed.google_storage_bucket.x (actions delete: action_reason " + long + ", which the managed delete rule does not know)"
+	got := refusals(coverGate, []string{item})
+	if len(got) != 1 {
+		t.Fatalf("refusals %+v, want one refusal", got)
+	}
+	if strings.Contains(got[0].Why, long) {
+		t.Errorf("the cover's why carries the plan's %d-rune action_reason whole: the wider bound is for the identity a removal rule prints, and this line is the plan's own text", len(long))
+	}
+	if n := utf8.RuneCountInString(got[0].Why); n > safetext.FieldMax {
+		t.Errorf("the cover's why is %d runes, past the %d one Field writes", n, safetext.FieldMax)
+	}
+	if !strings.HasSuffix(got[0].Why, "…") {
+		t.Errorf("the cover's why is not marked as cut: %q", got[0].Why)
+	}
+}
+
+// And the other direction, on the same gate: a why that IS one of those
+// sentences is carried whole, because the identity in it is what its reader
+// records. The sentence is tf.Approves' own, with the identity the plan shows
+// longer than one Field — the case refusalWhyMax exists for — and the
+// assertion is on the identity itself rather than on a length: a why cut
+// anywhere inside it is an approval of nothing.
+func TestACoverWhyThatIsARemovalRuleKeepsItsIdentityWhole(t *testing.T) {
+	name := strings.Repeat("b", safetext.FieldMax*3)
+	rc := tf.ResourceChange{Address: "module.managed.google_storage_bucket.x", Mode: "managed",
+		Type: "google_storage_bucket", ProviderName: "registry.terraform.io/hashicorp/google",
+		Change: tf.Change{Actions: []string{"delete"}, Before: map[string]any{"id": name, "name": name, "project": "proj-1", "time_created": "2026-01-02T03:04:05Z"}}}
+	id := tf.RemovedIdentity(rc)
+	if !id.Identifies() {
+		t.Fatalf("the fixture's before view identifies nothing: %v", id)
+	}
+	ok, why := tf.Approves([]tf.DeleteEntry{{Address: rc.Address, Before: "type=google_storage_bucket name=other"}}, rc)
+	if ok {
+		t.Fatal("the fixture's entry approved the removal, so there is no why to bound")
+	}
+	got := refusals(coverGate, []string{rc.Address + " (actions delete: " + why + ")"})
+	if len(got) != 1 {
+		t.Fatalf("refusals %+v, want one refusal", got)
+	}
+	if !strings.Contains(got[0].Why, id.String()) {
+		t.Errorf("the why does not carry the plan's identity whole, so the owner cannot record the entry it approves:\n%q", got[0].Why)
+	}
+	if n := utf8.RuneCountInString(got[0].Why); n > refusalWhyMax {
+		t.Errorf("the why is %d runes, past the %d a verdict carries", n, refusalWhyMax)
 	}
 }

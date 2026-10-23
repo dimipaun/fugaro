@@ -10,7 +10,7 @@
 //
 // **Every sentence in "The software" is held to the thing that makes it true, never to a copy of
 // itself.** That is the whole rule of this file: a sentence and a fact, so that the fact moving
-// is the sentence failing. Seven rules, one function each, each with a case below that plants a
+// is the sentence failing. Eight rules, one function each, each with a case below that plants a
 // defect and watches the named refusal come back:
 //
 //   1. **The two parts.** The page carries "The website" and "The software" as its two `h2`s, in
@@ -60,13 +60,17 @@
 //      software source that names it is a source that has found a service to report to, and the
 //      page's "and to nothing the Fugaro project operates" is what fails (`reachFailures`).
 //      Tests are not scanned — a Go test that spells the host in a fixture is testing a rule
-//      rather than reaching anywhere — and the one file in the tree that names it today is
-//      recorded below, so that the exception is written down rather than inferred. The selector
-//      carries `.go`, because the CLI and the server are mostly Go: a scan that reads the tree's
-//      scripts and manifests but not its Go source reads everything except the software this
-//      page is about, and it reads enough files to look busy while doing it. The case below goes
-//      through the selector rather than around it for that reason, and the case above counts the
-//      Go sources it selected.
+//      rather than reaching anywhere — and the files in the tree that name it today are recorded
+//      below, one by one, so that every exception is written down rather than inferred: the Go
+//      test, and the console's two files — `onboarding.ts`, which holds the project's own link,
+//      and `window.ts`, which carries only the host in `ALLOWED_EXTERNAL_HOSTS` so that link may
+//      open — neither a service the software reports to (the note below `HOST_NAMING_CONSOLE` gives the reason and the ruling,
+//      and the case that plants a third file proves the rule still holds for every other source).
+//      The selector carries `.go`, because the CLI and the server are mostly Go: a scan that reads
+//      the tree's scripts and manifests but not its Go source reads everything except the software
+//      this page is about, and it reads enough files to look busy while doing it. The case below
+//      goes through the selector rather than around it for that reason, and the case above counts
+//      the Go sources it selected.
 //   6. **The contact route, and no address.** The page's contact section points at the issue
 //      tracker and at `SECURITY.md`'s reporting route, and the page carries no e-mail address
 //      anywhere: the owner's ruling of 2026-10-19 is that there is no address to publish, so a
@@ -75,6 +79,15 @@
 //   7. **There is no terms page.** The owner ruled it: no built page links to one, and no
 //      sitemap the build produced names one (`termsFailures`). This is the page a `/terms` page
 //      would have been linked from, which is why the rule is here rather than in `linkcheck.mjs`.
+//   8. **The look.** The owner approved the bold redesign on 2026-10-20 (`website/design-ref/`)
+//      and the look is written once, in `src/styles/base.css`'s section 2c. This page wears it —
+//      the headline on the display scale with its word in the gradient, the two part headings on
+//      the display scale, every subsection in one of the site's cards — and the classes it names
+//      are shapes `src/styles/base.css` draws and none of them is a rule of the page's own, so a
+//      page that grew a look of its own is refused (`lookFailures`, `shapeFailures`). What is
+//      held is the shape of the look, not its
+//      rendering: a gate cannot see a page, and the match to the owner's boards is the owner's
+//      check at the preview.
 //
 // It reads the built artifact and the repository's sources, standard library only, no network
 // (Global Constraint 4). The built half comes from `dist/`; `FUGARO_GATES_DIST` points it
@@ -85,7 +98,7 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { DIST, REPO, builtPages, find, parse, siteFacts, textOf, walk } from './lib/html.mjs'
+import { DIST, REPO, builtPages, cssRules, find, findAll, parse, siteFacts, textOf, walk } from './lib/html.mjs'
 
 // ---- the repository's files, by path -----------------------------------------------------
 
@@ -457,6 +470,17 @@ const SDK_BEARING = /\.(?:js|jsx|ts|tsx|mjs|cjs|json|sh)$/
  * `internal/` while still scanning enough files to look busy. */
 const REACH_BEARING = /\.(?:go|js|jsx|ts|tsx|mjs|cjs|json|sh)$/
 
+/** The names that keep a selected file out of the scan: a test spells the host in a fixture to
+ * test a rule rather than reaching anywhere. It is the first filter `softwareSources` applies, and
+ * the case below reads it, so an allow-list entry cannot name a file the scan would never read. */
+const NOT_PRODUCTION = /(?:_test\.go|\.test\.(?:js|ts|jsx|tsx|mjs))$/
+
+/** The ways a source reaches a service, as the tokens it would carry to do it. Nothing on
+ * `HOST_NAMING_CONSOLE` may carry one: those files are on the allow-list because they hold the
+ * project's own link and make no request, and a request grown inside one of them would be exactly
+ * what the rule is for while the host it names sits in a file the scan no longer reads. */
+const REACH_CALLS = Object.freeze(['fetch(', '.request(', 'XMLHttpRequest', 'WebSocket', 'EventSource', 'sendBeacon'])
+
 /** Every way a scanned file names something that collects, or []. `files` is `[{ rel, text }]`. */
 export function collectingFailures(files) {
   const out = []
@@ -624,12 +648,37 @@ export function updateCheckFailures({ page, updatecheckSource, updatewarnSource,
 
 // ---- 5. the project operates no host the software talks to --------------------------------
 
-// The one file in the tree that names the site's canonical host and is NOT a finding: a Go test
-// whose fixtures spell the host to test the website-boundary rule itself. It is a test, so the
-// scan skips every `_test.go`; this constant is here so the exception is written down rather
+// The one test file in the tree that names the site's canonical host and is NOT a finding: a Go
+// test whose fixtures spell the host to test the website-boundary rule itself. It is a test, so
+// the scan skips every `_test.go`; this constant is here so the exception is written down rather
 // than inferred from the filter, and so a production file that starts naming the host is not
-// mistaken for it.
+// mistaken for it. The two production files that name it are `HOST_NAMING_CONSOLE`, below.
 export const HOST_NAMING_TEST = 'internal/cli/docs_website_boundary_test.go'
+
+// The two production files in the tree that name the site's canonical host and are NOT a finding,
+// and the reason the rule above does not reach them: the console's own link to the project's
+// public website, at the host `site.yaml`'s `canonical_url` states and the owner ruled canonical
+// on 2026-10-17 (`docs/website/implementation-plan.md` Task W2.2, D92), which the owner's ruling
+// of 2026-10-20 put on the console's onboarding screens.
+//
+// This rule exists for the page's sentence "They talk to your own Google Cloud project, ... and to
+// nothing the Fugaro project operates. Nothing is reported anywhere": a source that names the
+// host has found a service to *report to*. These two do not report anywhere. `window.ts` carries
+// that host in the `openExternal` allow-list and `onboarding.ts` carries the getting-started URL
+// (`GETTING_STARTED_URL`), and the console opens that URL by handing it to the *user's own
+// browser* through the OS — the console itself makes no request, and what the reader then loads is
+// the project's own website, which the page's part one describes rather than a host the software
+// reaches. The sentence's subject is the software's own traffic, and a link the reader chooses to
+// follow is not that; a console that could not link to its own site would be a page the onboarding
+// ruling could not be written about.
+//
+// They are named one by one, with their full paths, so the exemption is exactly these two files
+// and nothing else: the rule stays in force for every other source, and the case below plants a
+// third file under the same directory and watches it refused. What is exempt is the link and not
+// the file: the scan cannot see the host inside an allow-listed file, so the gate also reads both
+// for the ways a source reaches a service (`REACH_CALLS`) and refuses one, which is the only place
+// this rule could be defeated from.
+export const HOST_NAMING_CONSOLE = Object.freeze(['console/src/main/onboarding.ts', 'console/src/main/window.ts'])
 
 /** The roots of the production sources the reach scan reads, as the repository's own directories. */
 export const SOFTWARE_ROOTS = Object.freeze(['cmd', 'internal', 'console/src', 'mobile/src', 'shared'].map((dir) => path.join(REPO, dir)))
@@ -642,7 +691,26 @@ export const SOFTWARE_ROOTS = Object.freeze(['cmd', 'internal', 'console/src', '
 export function softwareSources(roots = SOFTWARE_ROOTS, base = REPO) {
   return roots
     .flatMap((dir) => sourcesUnder(dir, REACH_BEARING, base))
-    .filter((file) => !/(?:_test\.go|\.test\.(?:js|ts|jsx|tsx|mjs))$/.test(file.rel))
+    .filter((file) => !NOT_PRODUCTION.test(file.rel))
+    .filter((file) => !HOST_NAMING_CONSOLE.includes(file.rel))
+}
+
+/** Every way an allow-listed file (`HOST_NAMING_CONSOLE`) carries a call that reaches a
+ * service, or []. `files` is `[{ rel, text }]`; a file not on the allow-list is the reach scan's
+ * business and not this one's. */
+export function allowListedReachFailures(files) {
+  const out = []
+  for (const { rel, text } of files) {
+    if (!HOST_NAMING_CONSOLE.includes(rel)) continue
+    for (const call of REACH_CALLS) {
+      if (text.includes(call)) {
+        out.push(
+          `${rel} carries \`${call}\` and is on the allow-list: the exemption is for a file that holds the project's own link and makes no request, and the host inside it is not scanned — so a call that reaches a service here is what the page's "to nothing the Fugaro project operates" is about, in the one place the scan cannot look`,
+        )
+      }
+    }
+  }
+  return out
 }
 
 /** Every production source that names `host`, or []. */
@@ -660,6 +728,17 @@ export function reachFailures(files, host) {
 /** An e-mail address, as a page would carry one: a mailto: link, or the shape in prose. */
 const ADDRESS_RE = /[\w.+-]+@[\w-]+\.[a-z]{2,}/i
 
+/**
+ * A literal string, as a pattern that matches it and nothing else. The repository below is
+ * interpolated into two patterns, and a repository URL is a string with `.` in it: unescaped,
+ * `github.com` would match `githubXcom` and a link to somebody else's issue tracker would be
+ * read as the owner's route, so the one link the section is allowed to carry is not the one
+ * it has to carry.
+ */
+function escaped(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 /** Every way the page's contact section departs from the owner's ruling, or []. */
 export function contactFailures(html, repository) {
   const out = []
@@ -676,7 +755,8 @@ export function contactFailures(html, repository) {
     section.push(sibling)
   }
   const hrefs = section.flatMap((node) => [...walk(node)]).filter((el) => el.name === 'a' && el.attrs.has('href')).map((el) => el.attrs.get('href'))
-  const wanted = [new RegExp(`^${repository}/issues/?$`), new RegExp(`^${repository}/blob/main/SECURITY\\.md#.+$`)]
+  const repo = escaped(repository)
+  const wanted = [new RegExp(`^${repo}/issues/?$`), new RegExp(`^${repo}/blob/main/SECURITY\\.md#.+$`)]
   for (const re of wanted) {
     if (!hrefs.some((href) => re.test(href))) {
       out.push(
@@ -731,6 +811,166 @@ export function termsFailures(dist) {
     }
   }
   return out
+}
+
+// ---- 8. the look ---------------------------------------------------------------------------
+//
+// The owner approved the bold redesign on 2026-10-20 (`website/design-ref/`, which carries the
+// boards) and the look itself is written once, in `src/styles/base.css`'s section 2c: the
+// display scale, the gradient, the card and the hero's glow. Every other page wears it, and the
+// privacy statement is the page a store listing links — the one page a redesign could quietly
+// leave behind, because it is a statement rather than a pitch and no board was drawn for it.
+//
+// **Two things are held, and they are different things.** The first is the markup: the page's
+// headline is on the display scale and the word the boards put the accent on is in the
+// gradient, its two part headings are on the display scale too, every subsection under them is
+// one of the site's own cards, and the glow behind the headline is decoration a reader is not
+// handed. The second is that the names it wears are SHAPES THE SITE DRAWS: every look class on
+// the page is one `src/styles/base.css` defines, and the page draws none of them itself. The
+// two halves are read from two places — the shared file, and what the build inlined into the
+// page — because `base.css` is inlined into every page, so the page's own scoped rules and the
+// shared ones end up side by side in one `<style>` where nothing can tell them apart. A class
+// with no rule behind it is a name rather than a look, and a rule of the page's own is a second
+// look: both are the shape of a page that grew its own.
+//
+// **What is not held is the rendering.** A gate cannot see a page, and the match to the owner's
+// boards is the owner's check at the preview; this section holds the shape of the look and says
+// so rather than pretending a string comparison is a design review.
+
+/** The file the look is written in, from the repository's root: the shared layer's section 2c,
+ *  and the only place a shape this page may name is defined. */
+export const SHARED_LOOK = 'website/src/styles/base.css'
+
+/** The display scale `base.css` defines: the headline steps the boards set. */
+export const DISPLAY = Object.freeze(['display-xl', 'display-lg', 'display-md'])
+
+/** The shapes the bold look is built from, by the class each is named. */
+export const LOOK_SHAPES = Object.freeze([...DISPLAY, 'gradient-text', 'card', 'hero-glow'])
+
+/** The classes on an element, as a list. */
+const classListOf = (el) => (el.attrs.get('class') ?? '').split(/\s+/).filter(Boolean)
+
+/**
+ * The classes on an element that name the look: the shapes above, and any `display-*` at all —
+ * a step nobody defined is exactly the defect the shape rule below is for, so the reader may
+ * not filter it out before that rule sees it.
+ */
+function lookClassesOf(el) {
+  return classListOf(el).filter((name) => LOOK_SHAPES.includes(name) || name.startsWith('display-'))
+}
+
+/** Whether `node` is `ancestor` or sits inside it. */
+function within(node, ancestor) {
+  for (let n = node; n; n = n.parent) if (n === ancestor) return true
+  return false
+}
+
+/** The nearest ancestor of `el` that is a card, or null. */
+function cardAround(el) {
+  for (let n = el.parent; n; n = n.parent) if (classListOf(n).includes('card')) return n
+  return null
+}
+
+/** The element's text as one line, for a failure line about it. */
+const textOn = (el) => JSON.stringify(textOf(el).replace(/\s+/g, ' ').trim())
+
+/** Every way the page's markup departs from the look, or []. */
+export function lookFailures(html) {
+  const main = mainOf(html)
+  const els = [...walk(main)]
+  const out = []
+
+  const h1 = els.find((el) => el.name === 'h1')
+  if (!h1) {
+    out.push(
+      `the privacy page has no h1: the page opens on its headline, and it is the headline the look is measured on (the bold redesign, website/design-ref/)`,
+    )
+  } else {
+    if (!classListOf(h1).some((name) => DISPLAY.includes(name))) {
+      out.push(
+        `the privacy page's headline ${textOn(h1)} is not on the display scale: the bold look's headline is one of ${JSON.stringify(DISPLAY)} (base.css), the oversized, tightly tracked, heaviest-weight step the boards set — a headline left on the default scale is a page that did not get the redesign`,
+      )
+    }
+    if (!els.some((el) => classListOf(el).includes('gradient-text') && textOf(el).trim() !== '' && within(el, h1))) {
+      out.push(
+        `the privacy page's headline carries no gradient: the emphasis the boards draw is the word in base.css's .gradient-text, inside the h1, and a headline of one flat tone is the look without its accent (the bold redesign, website/design-ref/)`,
+      )
+    }
+  }
+
+  for (const h2 of els.filter((el) => el.name === 'h2')) {
+    if (classListOf(h2).some((name) => DISPLAY.includes(name))) continue
+    out.push(
+      `the privacy page's part heading ${textOn(h2)} is not on the display scale: a part of the statement is a section headline the boards set at display-lg (base.css), so the two parts read as the page's own division rather than as bold body text`,
+    )
+  }
+
+  for (const h3 of els.filter((el) => el.name === 'h3')) {
+    if (cardAround(h3)) continue
+    out.push(
+      `the privacy page's subsection heading ${textOn(h3)} stands on the page rather than in a card: every subsection of the statement is one of the site's own panels (base.css's .card), which is what makes the page's hierarchy a heading over its box — a run of headings over loose prose is the old look (website/design-ref/)`,
+    )
+  }
+
+  for (const glow of els.filter((el) => classListOf(el).includes('hero-glow'))) {
+    if (glow.attrs.get('aria-hidden') !== 'true') {
+      out.push(
+        `the privacy page's hero glow is not aria-hidden: base.css's .hero-glow paints no text, so it is decoration and a reader with a screen reader is owed nothing from it`,
+      )
+    }
+    if (textOf(glow).trim() !== '') {
+      out.push(
+        `the privacy page's hero glow carries text (${textOn(glow)}): the layer behind the headline is decoration, and a word inside it is a word on the page that nothing styles`,
+      )
+    }
+  }
+
+  return out
+}
+
+/** The page's own stylesheets: what the build inlined, which is `base.css` plus the page's own
+ *  scoped rules, and so what a browser reads when it draws the page. */
+export function stylesheetsOf(html) {
+  return findAll(parse(html), 'style')
+    .map((el) => el.raw ?? '')
+    .join('\n')
+}
+
+/** The class names a stylesheet draws: every class its selectors name. */
+function drawnIn(css) {
+  const drawn = new Set()
+  for (const rule of cssRules(css)) {
+    for (const m of rule.selector.matchAll(/\.(-?[_a-zA-Z][\w-]*)/g)) drawn.add(m[1])
+  }
+  return drawn
+}
+
+/**
+ * Every look class the page names that the look does not draw, or [].
+ *
+ * **`shared` is the file the look is written in** — `src/styles/base.css` — and `own` is what
+ * the build inlined into this page, which is that file plus the page's own scoped rules. The
+ * two are read apart on purpose. Reading the built page alone would count a class as drawn by
+ * ANY rule in it, the page's own included, and a page that wrote its own `.display-xxl` — a
+ * second headline scale, which is the exact defect this rule exists for — would pass: the
+ * page's rules and the shared ones are inlined side by side in the same `<style>`, and no
+ * reader of the artifact alone can tell one from the other. So a class is a shape of the look
+ * when the shared file draws it, and a class the page draws ITSELF is refused as a second look
+ * rather than admitted as a shape.
+ */
+export function shapeFailures(html, shared, own = '') {
+  const named = new Set()
+  for (const el of walk(parse(html))) for (const name of lookClassesOf(el)) named.add(name)
+  const sharedDrawn = drawnIn(shared)
+  const ownDrawn = drawnIn(own)
+  return [...named]
+    .filter((name) => !sharedDrawn.has(name))
+    .sort()
+    .map((name) =>
+      ownDrawn.has(name)
+        ? `the privacy page draws .${name} itself: the look is written once, in src/styles/base.css, and a headline scale or a card of the page's own is a second look rather than the site's — which is why this rule reads the shared file and not only the built page, where the two are inlined side by side (the bold redesign, website/design-ref/)`
+        : `the privacy page wears .${name}, which nothing draws: the look is written once, in src/styles/base.css, and a page names the shapes that file defines — a class with no rule behind it draws nothing (the bold redesign, website/design-ref/)`,
+    )
 }
 
 // ---- the gate ----------------------------------------------------------------------------
@@ -802,6 +1042,33 @@ test('no production source names the host this project operates', () => {
     `${HOST_NAMING_TEST} is a test file and was scanned as a production source: the recorded exception is that a Go test may spell the host in a fixture, so the filter must skip it`,
   )
   assert.ok(existsSync(path.join(REPO, HOST_NAMING_TEST)), `the recorded exception ${HOST_NAMING_TEST} is gone: delete the constant and its note in website/test/privacy.mjs`)
+
+  // What the selector reads before the allow-list takes its two files out. An entry that the scan
+  // would never read anyway exempts nothing, and the `every` below would not say so: it is true of
+  // every path outside `SOFTWARE_ROOTS` — `console/package.json` names the host today and is not
+  // read — and of every test. So the check is the selector's own reading and not a prefix test.
+  const selected = new Set(
+    SOFTWARE_ROOTS.flatMap((dir) => sourcesUnder(dir, REACH_BEARING, REPO))
+      .filter((file) => !NOT_PRODUCTION.test(file.rel))
+      .map((file) => file.rel),
+  )
+  for (const rel of HOST_NAMING_CONSOLE) {
+    assert.ok(existsSync(path.join(REPO, rel)), `the recorded exception ${rel} is gone: delete it from HOST_NAMING_CONSOLE and its note in website/test/privacy.mjs, so the allow-list names only files that exist`)
+    assert.ok(
+      selected.has(rel),
+      `${rel} is on the allow-list and the reach scan would never read it: an entry exempts a file the rule already skips, so the exemption hides nothing and the note beside it reads as a live exception (the entries are the production sources the selector reads and nothing else)`,
+    )
+    assert.ok(repoFile(rel).includes(FACTS.canonicalHost), `${rel} no longer names ${FACTS.canonicalHost}: it is on the allow-list for the console's own link to the project's website, and a file that has stopped naming the host is an entry that hides nothing`)
+    assert.ok(
+      files.every((file) => file.rel !== rel),
+      `${rel} is one of the two recorded exceptions and was scanned as an ordinary production source: the console's link to the project's own website is not a host the software reports to, so the scan must skip it`,
+    )
+  }
+  // The exemption is the file's own link and not a licence to reach: the scan cannot see the
+  // host inside an allow-listed file, so a request grown there would be invisible to the rule
+  // this file exists for. The two are read for the ways a source reaches a service.
+  const reaching = allowListedReachFailures(HOST_NAMING_CONSOLE.map((rel) => ({ rel, text: repoFile(rel) })))
+  assert.deepEqual(reaching, [], reaching.join('\n'))
   const failures = reachFailures(files, FACTS.canonicalHost)
   assert.deepEqual(failures, [], `a source of the software names the host the project operates:\n  ${failures.join('\n  ')}`)
 })
@@ -814,6 +1081,31 @@ test("the page's contact section is the owner's two routes, and the page carries
 test('no page links to a terms page, and no sitemap lists one', () => {
   const failures = termsFailures(DIST)
   assert.deepEqual(failures, [], failures.join('\n'))
+})
+
+test("the privacy page wears the site's bold look, out of the shapes the site draws", () => {
+  const page = privacyPage()
+  const failures = lookFailures(page.html)
+  assert.deepEqual(failures, [], `the privacy page is not wearing the look:\n  ${failures.join('\n  ')}`)
+
+  // The shape rule reads two things: the file the look is written in, and what the build
+  // inlined into this page. Both are worth their answer only if they carry the look — a shared
+  // file that had lost `base.css`'s section, or a page the build inlined nothing into, would
+  // make the rule silent rather than strict.
+  const shared = repoFile(SHARED_LOOK)
+  assert.match(
+    shared,
+    /\.card\s*[,{]/,
+    `${SHARED_LOOK} carries no \`.card\` rule: the shape rule reads the file the look is written in, and a shared stylesheet without it is a rule that can say nothing about any shape`,
+  )
+  const inlined = stylesheetsOf(page.html)
+  assert.match(
+    inlined,
+    /\.card\s*[,{]/,
+    'the built privacy page carries no `.card` rule: `base.css` is inlined into every built page, so a page with none inlined is a page whose shapes did not reach the artifact',
+  )
+  const shapes = shapeFailures(page.html, shared, inlined)
+  assert.deepEqual(shapes, [], shapes.join('\n'))
 })
 
 // ---- the refusals, kept ------------------------------------------------------------------
@@ -1141,6 +1433,63 @@ test('a production source that names the host the project operates is refused, a
   )
 })
 
+test('the console’s two recorded exceptions are exactly that, and a third file that names the host is still refused', () => {
+  const host = FACTS.canonicalHost
+
+  // The allow-list is two full paths and not a directory, a pattern or a suffix: a new file that
+  // names the host, even one beside a recorded exception under `console/src/main/`, is selected
+  // and refused. This is the case that keeps HOST_NAMING_CONSOLE from becoming a hole.
+  const tree = mkdtempSync(path.join(tmpdir(), 'privacy-reach-console-'))
+  try {
+    const root = path.join(tree, 'console', 'src', 'main')
+    mkdirSync(root, { recursive: true })
+    writeFileSync(path.join(root, 'telemetry.ts'), `export const REPORT_URL = 'https://${host}/v1/report'\n`)
+    const scanned = softwareSources([root], tree).map((file) => file.rel)
+    assert.deepEqual(
+      scanned,
+      ['console/src/main/telemetry.ts'],
+      `the reach scan selected ${JSON.stringify(scanned)}: a console file that is not one of the two recorded exceptions must be selected, so that naming the host there is a finding`,
+    )
+    const planted = reachFailures(softwareSources([root], tree), host)
+    assert.equal(planted.length, 1, planted.join('\n'))
+    assert.match(planted[0], /^console\/src\/main\/telemetry\.ts names /)
+    assert.match(planted[0], /nothing the Fugaro project operates/)
+  } finally {
+    rmSync(tree, { recursive: true, force: true })
+  }
+
+  // And in the real tree the exemption is those two files rather than the console: the console's
+  // other sources are still read, and none of them names the host.
+  const consoleSources = softwareSources().filter((file) => file.rel.startsWith('console/src/'))
+  assert.ok(
+    consoleSources.length > 5,
+    `only ${consoleSources.length} console sources were scanned: skipping the two recorded exceptions must not skip the console`,
+  )
+  assert.deepEqual(
+    consoleSources.filter((file) => file.text.includes(host)).map((file) => file.rel),
+    [],
+    `a console source other than the two recorded exceptions names ${host}: the allow-list is those two files, and nothing about the directory they sit in`,
+  )
+})
+
+test('a call that reaches a service inside an allow-listed console file is refused', () => {
+  const host = FACTS.canonicalHost
+  const link = `export const GETTING_STARTED_URL = 'https://${host}/getting-started/'\n`
+  // The link alone is what the allow-list is for, and it passes.
+  assert.deepEqual(allowListedReachFailures([{ rel: HOST_NAMING_CONSOLE[0], text: link }]), [])
+  // Each way of reaching a service, grown inside either allow-listed file, is refused by name.
+  for (const rel of HOST_NAMING_CONSOLE) {
+    for (const call of REACH_CALLS) {
+      const text = `${link}export function report(body) { return ${call === 'fetch(' ? `fetch('https://${host}/v1/report', { method: 'POST', body })` : `${call} /* https://${host}/v1/report */`} }\n`
+      const failures = allowListedReachFailures([{ rel, text }])
+      assert.equal(failures.length, 1, `${rel} carrying \`${call}\` was not refused: ${JSON.stringify(failures)}`)
+      assert.ok(failures[0].startsWith(`${rel} carries \`${call}\``), failures[0])
+    }
+  }
+  // The same call in a file off the allow-list is the reach scan's to refuse, not this check's.
+  assert.deepEqual(allowListedReachFailures([{ rel: 'console/src/main/telemetry.ts', text: `fetch('https://${host}/')` }]), [])
+})
+
 test('a contact section with a third route, or a page carrying an address, is refused', () => {
   const repo = REPOSITORY_URL
   const good = `<h2>Contact</h2><p>Ask in the <a href="${repo}/issues">issue tracker</a>, or report through <a href="${repo}/blob/main/SECURITY.md#reporting-a-vulnerability">SECURITY.md</a>.</p>`
@@ -1158,6 +1507,21 @@ test('a contact section with a third route, or a page carrying an address, is re
   assert.equal(missing.length, 2, missing.join('\n'))
 })
 
+test('the contact route is matched literally, not as a pattern', () => {
+  // The repository is interpolated into two patterns and it is a URL, so it carries `.`:
+  // read as a pattern, `github.com` matches `githubXcom` and a link to a stranger's issue
+  // tracker is taken for the owner's route. A slug with a dot in it is a slug a repository
+  // can have, which is why the string is escaped rather than assumed to be pattern-free.
+  const repo = 'https://github.com/fugaro/fugaro.v2'
+  const good = `<h2>Contact</h2><p>Ask in the <a href="${repo}/issues">issue tracker</a>, or report through <a href="${repo}/blob/main/SECURITY.md#reporting-a-vulnerability">SECURITY.md</a>.</p>`
+  assert.deepEqual(contactFailures(SHELL(`<h1>Privacy</h1>${good}`), repo), [])
+
+  const decoy = `${repo.replace(/\.v2$/, 'Xv2')}/issues`
+  const failures = contactFailures(SHELL(`<h1>Privacy</h1>${good.replace('</p>', `<a href="${decoy}">help</a></p>`)}`), repo)
+  assert.equal(failures.length, 1, failures.join('\n'))
+  assert.match(failures[0], /links https:\/\/github\.com\/fugaro\/fugaroXv2\/issues: the owner's ruling/)
+})
+
 test('a page that links a terms page, and a sitemap that lists one, are refused', (t) => {
   const failures = termsFailures(distOf(t, { 'index.html': SHELL('<h1>t</h1><a href="/terms/">Terms</a>'), 'terms/index.html': SHELL('<h1>Terms</h1>') }))
   assert.equal(failures.length, 1, failures.join('\n'))
@@ -1168,4 +1532,82 @@ test('a page that links a terms page, and a sitemap that lists one, are refused'
   assert.match(named[0], /sitemap-index\.xml lists \/terms/)
 
   assert.deepEqual(termsFailures(distOf(t, { 'index.html': SHELL('<h1>t</h1><a href="/privacy/">Privacy</a>') })), [])
+})
+
+test('a headline off the display scale, or a gradient that left the headline, is refused', () => {
+  // The look in miniature: a page whose headline is plain text, one whose gradient sits on the
+  // lead instead of on the headline, and the page the site builds, which is neither.
+  const parts = '<h2 class="display-lg">The website</h2><div class="card"><h3>a</h3></div><h2 class="display-lg">The software</h2><div class="card"><h3>b</h3></div>'
+
+  const plain = SHELL(`<h1>Privacy</h1>${parts}`)
+  assert.match(lookFailures(plain).join('\n'), /headline "Privacy" is not on the display scale/)
+
+  const gilded = SHELL(`<h1 class="display-xl">Privacy</h1>${parts}`)
+  assert.match(lookFailures(gilded).join('\n'), /headline carries no gradient/)
+
+  // The gradient on the page and not on the headline: the accent is the headline's, so a
+  // `.gradient-text` somewhere else in `main` is not the look.
+  const elsewhere = SHELL(`<h1 class="display-xl">Privacy</h1><p class="gradient-text">the lead</p>${parts}`)
+  assert.match(lookFailures(elsewhere).join('\n'), /headline carries no gradient/)
+
+  const good = SHELL(`<h1 class="display-xl"><span class="gradient-text">Privacy</span></h1>${parts}`)
+  assert.deepEqual(lookFailures(good), [])
+
+  // And a page with no headline at all: the look is measured on the `h1`, so a page that lost
+  // one is refused before either rule above can say anything about a scale or a gradient.
+  const headless = SHELL(`<p>Privacy</p>${parts}`)
+  assert.match(lookFailures(headless).join('\n'), /has no h1/)
+})
+
+test('a part heading off the display scale, a subsection outside a card, and a glow a reader is handed are refused', () => {
+  const head = '<h1 class="display-xl"><span class="gradient-text">Privacy</span></h1>'
+  const good = SHELL(`${head}<h2 class="display-lg">The website</h2><div class="card"><h3>a</h3></div><h2 class="display-lg">The software</h2><div class="card"><h3>b</h3></div>`)
+  assert.deepEqual(lookFailures(good), [])
+
+  const flat = SHELL(`${head}<h2>The website</h2><div class="card"><h3>a</h3></div><h2 class="display-lg">The software</h2><div class="card"><h3>b</h3></div>`)
+  assert.match(lookFailures(flat).join('\n'), /part heading "The website" is not on the display scale/)
+
+  // An `h3` under the part heading and outside any card: the heading over loose prose the
+  // redesign replaced.
+  const loose = SHELL(`${head}<h2 class="display-lg">The website</h2><h3>a</h3><p>prose</p><h2 class="display-lg">The software</h2><div class="card"><h3>b</h3></div>`)
+  assert.match(lookFailures(loose).join('\n'), /subsection heading "a" stands on the page rather than in a card/)
+
+  const announced = SHELL(`${head}<div class="hero-glow">grid</div><h2 class="display-lg">The website</h2><div class="card"><h3>a</h3></div><h2 class="display-lg">The software</h2><div class="card"><h3>b</h3></div>`)
+  const glow = lookFailures(announced).join('\n')
+  assert.match(glow, /hero glow is not aria-hidden/)
+  assert.match(glow, /hero glow carries text/)
+
+  const hidden = SHELL(`${head}<div class="hero-glow" aria-hidden="true"></div><h2 class="display-lg">The website</h2><div class="card"><h3>a</h3></div><h2 class="display-lg">The software</h2><div class="card"><h3>b</h3></div>`)
+  assert.deepEqual(lookFailures(hidden), [])
+})
+
+test('a look class nothing draws is refused, and a class the page draws itself is refused as a second look', () => {
+  // The shared file and the page are written here rather than taken from the artifact, so the
+  // premise of this case is its own: a page that grew a `display-xxl` rule fails it whichever
+  // way the site's own stylesheets move, and it fails with the named refusal rather than a
+  // count. `good` is the page the site builds, in miniature.
+  const shared =
+    '.display-xl{font-size:clamp(1rem, 7.2vw, 6.5rem)}.display-lg{font-size:clamp(1rem, 4.4vw, 4.5rem)}' +
+    '.gradient-text{background-clip:text}.card{padding:2rem}.hero-glow{position:absolute}'
+  const good = '<h1 class="display-xl"><span class="gradient-text">t</span></h1><div class="card"><h3>a</h3></div><div class="hero-glow" aria-hidden="true"></div>'
+  assert.deepEqual(shapeFailures(SHELL(good), shared, shared), [])
+
+  // A step nobody defined: the class is a name, and a name draws nothing.
+  const undrawn = shapeFailures(SHELL('<h1 class="display-xxl">t</h1>'), shared, shared)
+  assert.equal(undrawn.length, 1, undrawn.join('\n'))
+  assert.match(undrawn[0], /wears \.display-xxl, which nothing draws/)
+
+  // And the page that answers that refusal by writing the rule itself: the class is drawn, and
+  // by the page rather than by the look. This is the defect the shared file is read for — the
+  // page's own rules and the shared ones are inlined side by side, so a reader of the built
+  // page alone would count this rule as a shape and pass it.
+  const invented = shapeFailures(SHELL('<h1 class="display-xxl">t</h1>'), shared, `${shared}\n.display-xxl{font-size:9rem}`)
+  assert.equal(invented.length, 1, invented.join('\n'))
+  assert.match(invented[0], /draws \.display-xxl itself/)
+
+  // The other half of the same reading: with no shared file behind it, every shape the page
+  // names is refused, which is what makes the gate's two control assertions worth their answer.
+  const nothing = shapeFailures(SHELL('<h1 class="display-xl">t</h1>'), '', '')
+  assert.equal(nothing.length, 1, nothing.join('\n'))
+  assert.match(nothing[0], /wears \.display-xl, which nothing draws/)
 })

@@ -105,9 +105,10 @@ var discardLogger = slog.New(slog.DiscardHandler)
 
 // Account is one billing account the caller may link a project to. ID is the
 // account's ID, the shape `gcloud billing projects link --billing-account`
-// takes; DisplayName is the name its owner gave it; and Open is whether it can
-// still be linked — true for every account List returns, carried so a caller
-// reads the flag rather than assuming it.
+// takes; DisplayName is the name its owner gave it, made safe to print
+// (safetext) because it is the API's own text and every caller shows it; and
+// Open is whether it can still be linked — true for every account List
+// returns, carried so a caller reads the flag rather than assuming it.
 type Account struct {
 	ID          string
 	DisplayName string
@@ -134,8 +135,9 @@ type Credentials struct {
 
 // ErrDisabled is the Cloud Billing API being off on the credentials' quota
 // project. QuotaProject is that project — the credentials' own, never the
-// project being set up — and EnableCommand is the exact line that turns the
-// API on there, so a caller prints either without re-deriving them.
+// project being set up, and made safe to print (safetext) because it is the
+// answer's own text — and EnableCommand is the exact line that turns the API
+// on there, so a caller prints either without re-deriving them.
 type ErrDisabled struct {
 	QuotaProject  string
 	EnableCommand string
@@ -221,7 +223,12 @@ func List(ctx context.Context, creds Credentials) ([]Account, error) {
 			if !billingAccountIDRE.MatchString(id) {
 				continue
 			}
-			out = append(out, Account{ID: id, DisplayName: a.DisplayName, Open: a.Open})
+			// The display name is the API's own text and the picker prints
+			// it, so it is made safe to print where it is read, the way
+			// ErrRefused's reason already is. The ID needs no such care: it
+			// matched the account-id shape above, which admits no control
+			// character.
+			out = append(out, Account{ID: id, DisplayName: safetext.OneLine(a.DisplayName), Open: a.Open})
 		}
 		if token = resp.NextPageToken; token == "" {
 			return out, nil
@@ -276,7 +283,11 @@ func listErr(err error) error {
 	case reasonServiceDisabled:
 		service, _ := metadata["service"].(string)
 		consumer, _ := metadata["consumer"].(string)
-		quota := strings.TrimPrefix(consumer, "projects/")
+		// The quota project is the answer's own text and a caller prints it
+		// (the enable line below, and W4.4's refusal), so it is made safe to
+		// print where it is read — before the two readings below, which a
+		// value this package cannot print must still be classified by.
+		quota := safetext.OneLine(strings.TrimPrefix(consumer, "projects/"))
 		switch {
 		case service != serviceCloudBilling || quota == "":
 			// An API is off, but not one this package can print an enable line

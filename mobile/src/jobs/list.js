@@ -47,11 +47,23 @@ function refuse(code, field) {
  *
  * The snapshot is `FeedReader.snapshot()`'s -- `FeedView`'s fields plus the
  * reader's day and its paths -- and this judgement is about the parts the list
- * reads: the liveness must be one of the feed's seven words (a word outside
- * them is a state nobody defined, and printing it would be printing something
- * this app has never said), the document is a document or `null` (the feed has
- * sent nothing), and the day, the note and the two flags are the shapes
- * `view.js` produces.
+ * reads:
+ *
+ *   * `liveness` must be one of the feed's seven words. A word outside them is
+ *     a state nobody defined, and printing it would be printing something this
+ *     app has never said.
+ *   * `document` must be an object or `null` (the feed has sent nothing) -- and
+ *     **an object is all that is judged here**. Whether it is a *document* is
+ *     `row.js`'s question, asked through the feed's own `isDocument`, and the
+ *     degraded branch's is whether it says `degraded: true`; this bullet used
+ *     to read "the document is a document or `null`", which claimed a check
+ *     that is not in this function.
+ *   * `day` and `note` must be strings or `null`/absent.
+ *   * The **three** flags (`dayChanged`, `broken`, `degraded`) are not judged:
+ *     each is read as `=== true`, so a snapshot that carries something else is
+ *     read as "not that flag" rather than refused. Three, not the two this
+ *     bullet used to name -- `view.js` reports all three, and `degraded` is the
+ *     one §10.8 is about.
  */
 function checkSnapshot(snapshot) {
   if (snapshot === null || typeof snapshot !== 'object' || Array.isArray(snapshot)) {

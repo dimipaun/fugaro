@@ -890,6 +890,8 @@ Caps must be finite, non-negative and at most $100,000, and a per-run cap can't 
 
 `ls` totals and `report` differ only by unreconciled and overrun amounts, which `report` shows separately. `cost_usd` remains the model figure.
 
+**A reader splits the model figure on `cost.model_notional_usd`, never on `model_basis` (C1.16, P12/D140).** The basis is the *run's* billing mode, and a cascade run's is `api-list` — its billed tiers' — so a run the plan served in full (every call tier A) has an api-list basis and billed nothing, and a reader that asks the basis bills that run's notional dollars. The split is `runstore.Cost.ModelMoneyUSD` and `Cost.ModelSubscriptionUSD` (`AllNotional` is the same question asked as a yes or no), with the basis only as their fallback for a record written before the field existed; the readers that ask it are `runs stats` (`counted_usd`/`notional_usd`), `budget preview`'s typical line, the halt report's "this run spent", the pull request's cost line, the console's screens and `internal/runstore/cost_readers_guard_test.go`, which fails on a new reader that reaches for the basis instead.
+
 ## 11. Threat model
 
 The attacker is a compromised agent in run A. It runs as the same user as the runner, can reach the metadata server, and has unrestricted network egress. It can read A's Firebase ID token and refresh token from the runner's process, and the custom token too if it gets there before the runner deletes it at bootstrap.

@@ -10,11 +10,21 @@ leaves a "live" session behind after a crash. Where the spec and the
 reconciliation disagree, **the reconciliation wins** — the spec was written
 without seeing this repository.
 
-**Status: plan only; nothing is implemented; decisions open.** Not one line of
-any task below has been written or run. **D201–D220 in
-[reconciliation.md](reconciliation.md) §5 are open**: every one carries a
-recommendation, and **none is taken**. Answering a decision is not approving a
-task. The gate at the end of this file is **not passed**.
+**Status: VS0 is implemented; every other part is not; one decision is
+answered.** **Amended 2026-10-22:** the owner **answered D205 as recommended**
+— the machine lives in JavaScript, in `mobile/src/voice-session/` — and
+**approved VS0.1, VS0.2 and VS0.3, and only those three**. They are written,
+tested and in review as **PR #921**, and they ship **no native code, no
+manifest change and no device step** (which is what the gate below says they
+never needed). **VS1 onward is not approved**, and **D201–D204 and D206–D220 in
+[reconciliation.md](reconciliation.md) §5 remain open**: every one carries a
+recommendation, and **a recommendation is not a decision**. Answering a decision
+is not approving a task, and this file's gate is **not passed for any part but
+VS0**.
+
+*The status as first written, kept:* **plan only; nothing is implemented;
+decisions open** — not one line of any task had been written or run, and none of
+D201–D220 was taken.
 
 **Checked against.** `main` at `c92093b6` (the mobile tree at `12fbe60e`), the
 same commit as [reconciliation.md](reconciliation.md). Every path and symbol
@@ -80,11 +90,11 @@ register, and checks 113–118) · [../../../mobile/README.md](../../../mobile/R
 | The interrupt rule the session must not stale: `interruptDecision({ switch, severity, highest, speaking, turn })`, `INTERRUPT_SWITCH`, `INTERRUPT_REASON` | `mobile/src/voice/interrupt.js` | VS1.1, VS0.2 |
 | The speaker port | `mobile/src/voice/speaker.js` (`createPipelineSpeaker`) | VS0.3 |
 | The app's one wiring file, and the fences over it | `mobile/index.js`, `mobile/src/boundary.test.js`, `dependencies.test.js` | VS1.3 |
-| The identity fences: no `com.` in `app.json`; no `dev.fugaro.app` anywhere under `mobile/` or `docs/mobile/`; `bundleIdentifier`/`package` absent from `app.json` | `mobile/src/app-config.test.js`, `app-config.ids.test.js` | VS2.1, VS2.3 |
+| The identity fences: no `com.` in `app.json`; the owner's own reverse-DNS identity in **no file** under `mobile/` or `docs/mobile/` (the pin's `IDENTITY_ALLOWED` is empty, and what it looks for is that value and not reverse-DNS literals in general -- the fictional `com.example.sample` fixtures under `mobile/src/` are allowed and are what the tests use); `bundleIdentifier`/`package` absent from `app.json` | `mobile/src/app-config.test.js`, `app-config.ids.test.js` | VS2.1, VS2.3 |
 | The dynamic config and its two environment variables: `ID_VARIABLES = { ios: 'FUGARO_IOS_BUNDLE_ID', android: 'FUGARO_ANDROID_PACKAGE' }`, the `ios.infoPlist` merge | `mobile/app.config.js` | VS2.1, VS2.2, VS4.1 |
 | The dependency scan: every bare import declared in `package.json`, the lockfile matching it, `metro.config.cjs` present | `mobile/src/dependencies.test.js` | VS1.3, VS3.1, VS4.2 |
 | The build profiles: `development` (`developmentClient: true`), `preview`, `internal` (`distribution: store`, `android.buildType: app-bundle`), `cli.requireCommit`, `submit.internal.ios.ascAppId` | `mobile/eas.json`, `mobile/src/eas-config.test.js` | VS2.2, VS3.3, VS4.3, VS7.1 |
-| The secure store that is unreadable while the phone is locked: `keychainAccessible: WHEN_UNLOCKED_THIS_DEVICE_ONLY`, `SECRET_ITEMS = ['idToken','macKey']` | `mobile/src/accounts/expo-secure-store.js`, `secret.js`, `secure-store.js` | VS0.3 (a paused session touches no credential), VS5.1 |
+| The secure store that is unreadable while the phone is locked — **on iOS** (`keychainAccessible: WHEN_UNLOCKED_THIS_DEVICE_ONLY`; Android has no such option and its Keystore key is not unlock-gated, see F24 and `mobile/README.md`): `SECRET_ITEMS = ['idToken','macKey']` | `mobile/src/accounts/expo-secure-store.js`, `secret.js`, `secure-store.js` | VS0.3 (a paused session touches no credential), VS5.1 (**the iOS half; the Android half is not established**) |
 | The demo's fences: `createDemoMode.length === 0`, no network, no secure storage, no secret | `mobile/src/demo/safety.test.js` | VS1.3 (the demo stays out of it) |
 | The check register, its numbering rule, and the house style of a check ("guard block, FACT lines, Passes/Fails when, Paste back, Restore") | `docs/gcp-live-checklist.md` | VS7.1–VS7.6 |
 | The decision register's block table ("D193 onward — free") | `docs/coordinator/README.md` | the D-row block this work takes |
@@ -106,7 +116,7 @@ the owner's.
 
 | Part | What it is | Tasks | Mergeable alone? | What it waits on |
 |---|---|---|---|---|
-| **VS0 — The machine, and its tests** | `mobile/src/voice-session/`: the state machine as a **pure reducer over the spec's §5 event stream**, with its own door, its own scan and a test for every transition — including the timeout and `shouldResume: false` paths the spec's §11 asks for. **No native, no device, no decision but D205.** | VS0.1–VS0.3 | **Yes** — nothing imports it yet | D205 (where the machine lives); safe to start the moment it is answered |
+| **VS0 — The machine, and its tests** | `mobile/src/voice-session/`: the state machine as a **pure reducer over the spec's §5 event stream**, with its own door, its own scan and a test for every transition — including the timeout and `shouldResume: false` paths the spec's §11 asks for. **No native, no device, no decision but D205.** | VS0.1–VS0.3 | **Yes** — nothing imports it yet | D205 (where the machine lives) — **answered 2026-10-22 as recommended, and VS0.1–VS0.3 are implemented (PR #921)** |
 | **VS1 — The seam** | The controller that joins the machine to reality: it drives `pipeline.start()`/`stop()`, reads `pipeline.speaking()`/`turn()` (never storing them), keeps P3.5's switch and queue where they are, and registers itself as `mobile/index.js`'s one construction site. Native is a **port** with a fake, exactly like `src/audio/`. | VS1.1–VS1.3 | **Yes** — the fake means the app runs unchanged | VS0; **D213** (VS1.2's reporting shape) |
 | **VS2 — The declarations** | Everything the two platforms need *declared*, through `app.config.js` and a config plugin (F6): the iOS background mode, the usage string, `NSSupportsLiveActivities` and the App Group; the Android permissions and the FGS type. **No native code yet** — this part is what turns the fence red if it is done in `app.json`. | VS2.1–VS2.3 | **Yes** — the declarations are inert until a module uses them | VS1 (the policy scan needs the module to exist); **D207** (VS2.1's background mode) |
 | **VS3 — Android** | The local Expo module's Kotlin half: `VoiceSessionModule.kt`, `VoiceSessionService.kt`, `AudioFocusController.kt`, the notification, the route signal, the `START_NOT_STICKY` contract. | VS3.1–VS3.3 | **Yes**, and independent of VS4 | VS2; **D209** (call state), **D210** (notifications denied), **D218** (the category) |
@@ -121,7 +131,7 @@ the owner's.
 
 | | Rule |
 |---|---|
-| **D205** (where the machine lives) gates **all of VS0–VS2**, which is the part of this plan that is otherwise safe to start at once. Its recommended answer — JavaScript — is the one the rest of the plan is written against, and a different answer rewrites VS0, VS2, VS3 and VS4. |
+| **D205** (where the machine lives) gates **all of VS0–VS2**, which is the part of this plan that is otherwise safe to start at once. Its recommended answer — JavaScript — is the one the rest of the plan is written against, and a different answer rewrites VS0, VS2, VS3 and VS4. **Answered 2026-10-22: the recommendation**, which is why **VS0.1–VS0.3 are implemented (PR #921)** and VS1's and VS2's own gates — D213 and D207 — are what they still wait on. |
 | **D204** (16.1 versus 17) gates **VS4.3 and VS4.4**, because it is the difference between one Live Activity UI and two, and between buttons and a deep link. Its recommended answer — iOS 17 — makes VS4.4's fallback row disappear. |
 | **D207** (background audio, extending D122) gates **VS2.1**, the commit that declares `UIBackgroundModes`. |
 | **D209** gates **VS3.2**'s call-state half: the recommended answer removes the `READ_PHONE_STATE` request and the whole denial path. |
@@ -174,10 +184,17 @@ mode, the microphone ask, Bluetooth, and barge-in"* (P3.5/P4.2, owner-run), its
 text is unwritten, and it keeps its number and its subject. The six below cover
 what it does not name. F17.
 
-**None of the six is written into the register by this plan.** The register's own
-rules are that *a check is never run before its text is in the register*, that
-*the phase that ships the check writes it*, and that *a reserved number is never
-reused or renumbered* — and no phase here is approved. D219 records the choice.
+**None of the six is written into the register by this plan.** The three rules
+that keep it out are not all the register's, and each is attributed to the file
+it is in: *"a reserved number is never reused or renumbered"* is the register's
+([../../gcp-live-checklist.md](../../gcp-live-checklist.md)); *"the phase that
+ships the check writes them"* is [../../design/voice.md](../../design/voice.md)
+§5.3's convention, the one the project-centric plan sets and the console plan
+follows; and *"A check is never run before its text is in the register"* is
+[docs/mobile/implementation-plan.md](../implementation-plan.md)'s own sentence —
+and no part that could write one is approved: **VS0, the only approved part, is
+the machine and its tests, and VS7 is where a check's text would be written**.
+D219 records the choice.
 
 | # | The check's subject (the text is VS7's) | Covers | Runs on |
 |---|---|---|---|
@@ -205,6 +222,17 @@ is what the spec's own §11 unit-test line asks for and what Global Constraint 1
 allows. Nothing here imports a native module, a clock, a random source, a file
 or the network.
 
+**Implemented 2026-10-22** (D205 answered as recommended; the owner approved
+VS0.1–VS0.3 and nothing else). The three tasks below are in `mobile/` on the
+branch of **PR #921**, with `npm test` at 701 pass, 0 fail (the whole mobile
+suite, of which 51 are this folder's); the files, the tests
+and the verification each task names were written as they stand here, and the
+three places the code had to decide something this plan leaves open are named in
+that pull request: the six app-side events beside §5's six, the **one field the
+contract adds to §5** — `interruptionBegan.suspended`, P8's suspension key,
+which §5's `{ source }` does not carry — and `shouldResume: false` ending as
+`interruption_timeout`.
+
 ### Task VS0.1: The event contract, as the spec's §5 writes it — **new**
 
 **Files.** `mobile/src/voice-session/events.js` (new; the spec's §5 types in the
@@ -214,7 +242,11 @@ tree's plain-JS-with-JSDoc style, next to `mobile/src/audio/pipeline.js`);
 **What it does.** Freezes the six event kinds and `AudioRoute` exactly as
 [spec.md](spec.md) §5 writes them, plus `SESSION_STATES` (the spec's §4 eight),
 `END_REASONS` and the two pause reasons, as frozen objects in the shape
-`PIPELINE_EVENTS`/`AUDIO_IN_EVENTS` already use. A single exported validator
+`PIPELINE_EVENTS`/`AUDIO_IN_EVENTS` already use — **and one field §5 does not
+carry**: the implemented task adds `interruptionBegan.suspended` for P8, because
+§5's `{ source }` cannot tell a real interruption from iOS's suspension
+notification (`events.js`'s header is where that argument is made, and it is the
+one place the reconciliation wins over the spec). A single exported validator
 (`isVoiceSessionEvent`) mirrors `isVoicePipeline`, so the module rejects a
 malformed event at the boundary rather than at the transition.
 **Tests.** Every kind and every route is exported; an unknown `type`, an unknown
@@ -270,7 +302,10 @@ controller, in the same commit as the export); the same
 three recursive scans `src/audio/index.test.js` runs (no package imports; only
 `shared/` outside `mobile/`; no clock, random, file or network) run over
 `src/voice-session/`; and two **new** assertions this work adds: **a paused
-session touches no credential** (no import of `src/accounts/`, matching F24) and
+session touches no credential** (no specifier that resolves into
+`src/accounts/` — the credential — **or `src/mailbox/`**, the module that reads
+it into a network client, and no production file here importing anything outside
+its own directory, matching F24) and
 **no file here builds a string from `transcript`** (F9, D213).
 **Verification.** `cd mobile && node --test src/voice-session/index.test.js`; then
 **`cd mobile && npm test`** or **`fugaro verify test`** for the whole suite — the
@@ -418,9 +453,13 @@ offline over `mobile/node_modules`, as VS2.1), then **`fugaro verify test`**.
 and `FUGARO_ANDROID_PACKAGE` remain the only two, `eas.json` gains no identity
 (`mobile/src/eas-config.test.js` stays as it is), and no committed file gains a
 reverse-DNS literal — including the new one this work adds for the widget.
-**Tests.** The existing scan stays green unchanged; one new assertion pins the
-widget identifier's derivation so that `dev.fugaro.app` never has to appear
-anywhere.
+**Tests.** The existing scan stays green unchanged — and note what it is: the
+pin in `app-config.ids.test.js` (`identityLiterals`, `IDENTITY_ALLOWED` empty)
+forbids **the owner's own reverse-DNS value**, not reverse-DNS literals in
+general, so this task's own "no committed file gains one" is an intent the new
+assertion must carry rather than something the existing scan already enforces.
+One new assertion pins the widget identifier's derivation, so that the owner's
+identity — and any hard-coded name for the widget — never has to appear.
 **Verification.** **`fugaro verify test`**.
 **Reviewer.** standard.
 
@@ -759,23 +798,32 @@ performs any step.**
 - **D205 is the plan's load-bearing decision.** Its recommended answer
   (JavaScript) is what makes VS0–VS2 CI-runnable and cheap; the alternative
   rewrites four parts and gives up every device-free test in this plan.
+  **Answered 2026-10-22 as recommended**, and the first of the parts it gates —
+  VS0, the machine and its tests — is implemented (PR #921).
 
 ---
 
 ## OWNER APPROVAL GATE
 
-**Not passed. No part is approved. Nothing is implemented.** D201–D220 in
-[reconciliation.md](reconciliation.md) §5 are open; each carries a
-recommendation, and **answering one is not a go**.
+**Passed for VS0 and for nothing else.** **Amended 2026-10-22:** the owner
+**answered D205 as recommended** (JavaScript, in `mobile/src/voice-session/`)
+and **approved VS0.1, VS0.2 and VS0.3 — the event contract, the reducer and its
+tests — and no other task**; those three are implemented and in review as
+**PR #921**. **No part from VS1 onward is approved**, and **D201–D204 and
+D206–D220 in [reconciliation.md](reconciliation.md) §5 remain open**; each
+carries a recommendation, and **answering one is not a go**.
+
+*The gate as first written, kept:* **not passed, no part approved, nothing
+implemented** — and answering a decision is not a go.
 
 To start any part the owner names it (or a task) and says go. What each part
 waits for, in one line:
 
 | To start | The owner must have |
 |---|---|
-| **VS0** | answered **D205** (where the machine lives) — and no other decision |
-| **VS1** | VS0 merged, and **D213** (VS1.2's reporting shape) |
-| **VS2** | VS1 merged, and **D207** (the background mode VS2.1 declares) |
+| **VS0** | answered **D205** (where the machine lives) — and no other decision. **Done 2026-10-22: answered as recommended, VS0.1–VS0.3 approved and implemented (PR #921); VS0 is complete once that pull request is merged** |
+| **VS1** | VS0 merged, and **D213** (VS1.2's reporting shape) — **still owed** |
+| **VS2** | VS1 merged, and **D207** (the background mode VS2.1 declares) — **still owed** |
 | **VS3** | VS2 merged, and **D209**, **D210**, **D218** |
 | **VS4** | VS2 merged, **D204**, **D203**, and the **Apple portal steps** of the reconciliation's §6.1 | 
 | **VS5** | VS3 and VS4 merged |
@@ -789,8 +837,11 @@ no manifest, open no microphone and require no device, and they are the whole of
 what the spec's own §11 asks CI to hold. **They are the minimum first cut that is
 useful and safe**, and they are useful even if every other part of this plan is
 never approved: they are the machine, written down, before anything can be built
-on a wrong idea of what it is.
+on a wrong idea of what it is. **They were approved on 2026-10-22 and are
+written** (PR #921) — the one part of this plan that is.
 
 **Not before the gate:** no `prebuild`, no `eas build`, no native module, no
 manifest change, no portal step, no check run. The gate is the owner's, and this
-file does not pass it.
+file does not pass it. **The 2026-10-22 approval did not move that line: VS0
+was approved *because* it needs none of those things**, and every part that
+does — VS1's native port onward — still waits for its own yes.

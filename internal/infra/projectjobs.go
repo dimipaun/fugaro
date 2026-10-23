@@ -70,7 +70,7 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 	}
 	// The profiles are the policy's own document (config.JobProfile, one
 	// declaration), so they are held to the policy's rules here rather than
-	// to a second copy of them: `fugaro init` must not deploy a job that
+	// to a second copy of them: `fugaro update` must not deploy a job that
 	// `fugaro project policy publish` would refuse, and a profile the nodes
 	// refuse describes a job no workflow could ever select.
 	//
@@ -209,7 +209,7 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 func addProjectJob(out map[string]ProjectJob, j ProjectJob) error {
 	for _, o := range out {
 		if o.Job == j.Job || o.ServiceAccount.AccountID == j.ServiceAccount.AccountID {
-			return userErr("profiles.%s: the shared job of (%s, %s, account %q) derives the job name %s and the service account %s, and the job of (%s, %s, account %q) already holds %s and %s: two jobs must never share either. Rename one profile or account and run fugaro init again",
+			return userErr("profiles.%s: the shared job of (%s, %s, account %q) derives the job name %s and the service account %s, and the job of (%s, %s, account %q) already holds %s and %s: two jobs must never share either. Rename one profile or account and run fugaro update again",
 				j.Profile, j.Profile, j.Provider, j.Account, j.Job, j.ServiceAccount.AccountID,
 				o.Profile, o.Provider, o.Account, o.Job, o.ServiceAccount.AccountID)
 		}
@@ -229,7 +229,7 @@ const githubProvider = "github"
 // ruling of 2026-10-17, plan task 3.5 step 4).
 //
 // It is the field each GitHub repository records (localcfg.Repo.GitHubAppID),
-// which `fugaro init --repo --github-app-id` writes and the per-repository
+// which `fugaro update --repo --github-app-id` writes and the per-repository
 // path reads to set the same variable (spec.go's ws.Env) — there is no second
 // place an App ID is recorded, and it is not a secret. The key stays the
 // github-app-key Secret Manager secret the profile mounts.
@@ -266,7 +266,7 @@ func projectJobGitHubAppID(lc *localcfg.Config) (string, error) {
 		}
 	}
 	if id == "" {
-		return "", userErr("this project's local config declares job profiles and records no GitHub App ID: a shared project job therefore cannot be deployed. A project job runs on the github provider, and the runner builds that provider from %s (the App's ID, which is not a secret), refusing to start without it — so a job deployed without it would halt every run it started. Record the App's ID by onboarding the repository the App serves (fugaro init --repo <owner/name> --github-app-id <id>), which writes it to the local config, then run fugaro init again",
+		return "", userErr("this project's local config declares job profiles and records no GitHub App ID: a shared project job therefore cannot be deployed. A project job runs on the github provider, and the runner builds that provider from %s (the App's ID, which is not a secret), refusing to start without it — so a job deployed without it would halt every run it started. Record the App's ID by onboarding the repository the App serves (fugaro update --repo <owner/name> --github-app-id <id>), which writes it to the local config, then run fugaro update again",
 			providers.EnvGitHubAppID)
 	}
 	return id, nil
@@ -287,7 +287,7 @@ func projectJobGitHubAppID(lc *localcfg.Config) (string, error) {
 // repositories never reach one"). Nothing about a Bitbucket profile is
 // refused: the profile is a document the policy carries, and skipping it here
 // is what makes "no job is deployed for it" true rather than an installation
-// `fugaro init` refuses whole.
+// `fugaro update` refuses whole.
 //
 // Every kind of config.Providers is answered — the list is the kinds a
 // repository may use — and the test beside this file pins that the two agree,
@@ -476,7 +476,7 @@ func projectAccountMount(lc *localcfg.Config, profile string, pr config.JobProfi
 		if account == "" {
 			source, shown = "project_secrets."+logical+".allow_data_to", config.DefaultClaudeAccount
 		}
-		return userErr("profiles.%s.claude_accounts: the account %q has no project-wide copy in this installation, so no shared job can mount its token: a job's secret_env names a container of the installation's project-wide secrets, and this installation creates none for %s. Give the account a non-empty list — %s, whose repositories are also what the account's policy list is derived from — and run fugaro init again",
+		return userErr("profiles.%s.claude_accounts: the account %q has no project-wide copy in this installation, so no shared job can mount its token: a job's secret_env names a container of the installation's project-wide secrets, and this installation creates none for %s. Give the account a non-empty list — %s, whose repositories are also what the account's policy list is derived from — and run fugaro update again",
 			profile, shown, logical, source)
 	}
 	v := config.ReservedSecrets[config.ClaudeOAuthToken]

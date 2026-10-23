@@ -2,7 +2,7 @@
 // currently names in the registry and verifies that specific digest's
 // OCI-attached cosign signature, from images.yml's own tag-push identity
 // (design retire-image-mirror.md §2). It is called when a base pin is
-// formed and only then (fugaro init --base / image refresh,
+// formed and only then (fugaro update --base / image refresh,
 // internal/cli/init_images.go) — never at a Cloud Build submission — and
 // nothing records its result anywhere beyond the pin it feeds: since the
 // registry-remote-repository change the base image is not copied, so the

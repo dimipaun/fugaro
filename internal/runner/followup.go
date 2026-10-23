@@ -10,7 +10,6 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
@@ -354,7 +353,11 @@ func (r *run) freshContext(ctx context.Context) {
 			r.follow.rootTask = t.Task
 		}
 	}
-	base := r.cfg.Git.BaseBranch
+	// The branch's diff against the run's own base of work — the branch the
+	// pull request targets now (diffbase.go, diffBase), not the run's
+	// configuration base, which is stale the moment the pull request is
+	// retargeted.
+	base := r.diffBase()
 	stat, err := sessionGit(ctx, r.repo, "diff", "--stat", "origin/"+base+"...HEAD")
 	if err != nil {
 		r.d.Log.Warn("reading the branch's diff stat failed", "err", r.redact(err.Error()))
@@ -366,7 +369,7 @@ func (r *run) freshContext(ctx context.Context) {
 func (r *run) promptData() followup.PromptData {
 	f := r.follow
 	return followup.PromptData{
-		PR: r.spec.PR, PRURL: f.pr.URL, Branch: r.rec.Branch, Base: r.cfg.Git.BaseBranch, StateDir: r.d.StateDir,
+		PR: r.spec.PR, PRURL: f.pr.URL, Branch: r.rec.Branch, Base: r.diffBase(), StateDir: r.d.StateDir,
 		Instructions: r.spec.Task, Resumed: f.restored.Resumed, MovedCommits: f.restored.Moved,
 		RootTask: f.rootTask, DiffStat: f.diffStat, PreviousAnswer: f.prevAnswer, Nonce: f.nonce, Redact: r.redactor(),
 	}
@@ -374,12 +377,22 @@ func (r *run) promptData() followup.PromptData {
 
 // fellBackFresh records that the saved session couldn't be resumed after
 // all, and gathers a fresh session's context for the retry.
+//
+// The session is cleared, and it has to be: the stage that failed with
+// ErrNoSession had already recorded the session it was asked to resume
+// (noteSession takes the requested ID when the agent reports none, which is
+// what a process that died before its result event does), and saveSession
+// uploads it. Left behind, it would be re-uploaded at writeback — with this
+// run's head and Pushed flag — if the fresh retry ends before the agent
+// reports a session of its own (a refusal at the top of stageOnce, an
+// exhausted budget, a cancel), and a later follow-up would resume a
+// conversation that never saw this branch's commits.
 func (r *run) fellBackFresh(ctx context.Context) {
 	r.d.Log.Warn("the saved session could not be resumed; starting a fresh session")
 	r.follow.restored = restored{Note: "the saved session could not be resumed"}
 	r.freshContext(ctx)
 	r.rec.FollowUp.Session, r.rec.FollowUp.SessionNote = "fresh", r.follow.restored.Note
-	r.sessionID = ""
+	r.sessionID, r.reviewSession = "", ""
 	r.save(ctx)
 }
 
@@ -387,7 +400,7 @@ func (r *run) fellBackFresh(ctx context.Context) {
 // it wrote none. It is read as a regular file only, never through a
 // symlink the agent could point at the runner's credentials.
 func (r *run) answer() string {
-	f, err := os.OpenFile(filepath.Join(r.d.StateDir, followupFile), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	f, err := openNoFollow(filepath.Join(r.d.StateDir, followupFile))
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			r.d.Log.Warn("reading followup.md failed", "err", r.redact(err.Error()))

@@ -45,7 +45,15 @@ import { CONSOLE_OPERATIONS } from '../../src/main/ipc'
 import { putText } from '../../src/renderer/app'
 import { PROJECT_PANEL_KEYS, PROJECTS_THEMES, buildProjectsModel, renderProjects } from '../../src/renderer/screens/projects'
 import type { ProjectsInputs, ScreenElement, ScreenFactory } from '../../src/renderer/screens/projects'
-import { RUN_LOG_CAP, buildRunModel, linkFor, parseLogWindow, pullRequestUrl, renderRun } from '../../src/renderer/screens/run'
+import {
+  PR_NO_LINK_REASON,
+  RUN_LOG_CAP,
+  buildRunModel,
+  linkFor,
+  parseLogWindow,
+  pullRequestUrl,
+  renderRun,
+} from '../../src/renderer/screens/run'
 import type { RunInputs } from '../../src/renderer/screens/run'
 import { ReplayBuffer } from '../../src/shared/replay'
 import { ADDRESS_PLACEHOLDER, sanitizeText, TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
@@ -115,6 +123,10 @@ function walk(node: ScreenElement): readonly FakeScreen[] {
   for (const child of fake.childNodes()) out.push(...walk(child))
   return out
 }
+
+/** PR_LINE_CLASSES is the pull-request line's cells in the order they are
+ * drawn: the three facts and the separator between them. */
+const PR_LINE_CLASSES = ['run-pr-repo', 'run-pr-number', 'run-pr-sep', 'run-pr-url'] as const
 
 /** all is every node carrying a class, in document order. */
 function all(node: ScreenElement, className: string): readonly FakeScreen[] {
@@ -697,6 +709,38 @@ describe('renderProjects', () => {
     expect(drawn(tree)).not.toContain(token)
   })
 
+  it('splits a job\'s model figure on `model_notional_usd`, never on the basis', () => {
+    // C1.16 (P12/D140): `model_usd` is the **whole** model figure and
+    // `model_notional_usd` the subscription's part of it, so the billed dollars
+    // are the difference. A mixed cascade run's `model_basis` is `api-list` for
+    // the whole run while part of its figure is the plan's, and this screen read
+    // that part as money: the basis is the fallback for a row written before the
+    // key, never the split. Three cases -- a mixed row, an all-notional one and
+    // an all-billed one -- each through the model the panel draws from.
+    const one_ = (cost: Record<string, unknown>) => {
+      const runs = { ...RUNS, runs: [{ ...RUNS.runs[0], cost }] }
+      return all(renderProjects(factory, buildProjectsModel(inputs({ runs })), 'light'), 'projects-job')
+    }
+    const figured = (cost: Record<string, unknown>) =>
+      buildProjectsModel(inputs({ runs: { ...RUNS, runs: [{ ...RUNS.runs[0], cost }] } })).jobs.rows[0]?.cost.model
+    const mixed = figured({ model_usd: 3.2, model_notional_usd: 2, compute_usd: 0.5, compute_estimated: true, total_usd: 1.7, model_basis: 'api-list' })
+    expect(mixed?.value).toBeCloseTo(1.2)
+    expect(mixed?.state).toBe('measured')
+    expect(drawnText(one_({ model_usd: 3.2, model_notional_usd: 2, compute_usd: 0.5, compute_estimated: true, total_usd: 1.7, model_basis: 'api-list' })[0] as ScreenElement)).toContain('$1.20')
+    // All notional: the figure drawn is the plan's, marked as the notional
+    // account -- with the key (C1.16) and without it (the fallback).
+    const notional = figured({ model_usd: 3.2, model_notional_usd: 3.2, compute_usd: 0.5, compute_estimated: true, total_usd: 0.5, model_basis: 'api-list' })
+    expect(notional?.value).toBeCloseTo(3.2)
+    expect(notional?.state).toBe('notional')
+    const before = figured({ model_usd: 3.2, compute_usd: 0.5, compute_estimated: true, total_usd: 0.5, model_basis: 'subscription' })
+    expect(before?.value).toBeCloseTo(3.2)
+    expect(before?.state).toBe('notional')
+    // All billed: no notional part at all, so the whole figure is the money.
+    const billed = figured({ model_usd: 1.25, compute_usd: 0.5, compute_estimated: true, total_usd: 1.75, model_basis: 'api-list' })
+    expect(billed?.value).toBeCloseTo(1.25)
+    expect(billed?.state).toBe('measured')
+  })
+
   it('draws a kill with its operator, its time and its reason', () => {
     const tree = renderProjects(factory, buildProjectsModel(inputs()), 'light')
     const kill = one(tree, 'projects-kill')
@@ -718,6 +762,29 @@ describe('renderProjects', () => {
     expect(drawn(rows[0] as FakeScreen)).not.toContain('operator@example.test')
     // The notional account is marked as notional wherever it is drawn.
     expect(drawn(rows[1] as FakeScreen)).toContain('NOTIONAL~')
+  })
+
+  it('draws who started a job, and no cell for a job the record does not name', () => {
+    // Owner request 2026-10-18: the Started-by column. `launched_by` is a
+    // different fact from the `requested_by` beside it -- who started the run,
+    // and who asked for it -- and it is drawn in the short form the CLI's own
+    // column uses (`runview.LauncherShort`), as a `label`: `shared/launcher.ts`
+    // says why that class is not `person`.
+    const runs = {
+      ...RUNS,
+      runs: [{ ...RUNS.runs[0], launched_by: 'dana.person+fugaro@example.test' }, RUNS.runs[1]],
+    }
+    const tree = renderProjects(factory, buildProjectsModel(inputs({ runs })), 'light')
+    expect(all(tree, 'projects-job-started-by').map((node) => node.textContent)).toEqual(['dana.person+fugaro'])
+    // The address the record named is in no cell of the screen: the cut is the
+    // column's, so no `@` -- and no domain -- reaches one.
+    expect(drawn(tree)).not.toContain('dana.person+fugaro@example.test')
+    // The second job's record names nobody, and a row without a launcher draws
+    // no cell at all -- not an empty span, which would add a flex gap -- and
+    // never another person's name (the request's "fail private").
+    expect(all(tree, 'projects-job-started-by')).toHaveLength(1)
+    const untouched = renderProjects(factory, buildProjectsModel(inputs()), 'light')
+    expect(all(untouched, 'projects-job-started-by')).toHaveLength(0)
   })
 })
 
@@ -839,6 +906,31 @@ describe('buildRunModel', () => {
     expect(model.stages[0]?.deadline).toBeNull()
     expect(model.stages[0]?.deadlineBecause).toBe('the document has no row.deadline')
     expect(model.halt?.reason).toBe('the daily cap was reached')
+  })
+
+  it('splits the ledger\'s model figure on `model_notional_usd`, never on the basis', () => {
+    // The same rule as the Projects screen's job rows, on this screen's own
+    // document (C1.16, P12/D140): `model_usd` is the whole model figure,
+    // `model_notional_usd` the subscription's part of it, and the billed dollars
+    // are the difference -- while a mixed cascade run's `model_basis` is
+    // `api-list` for the whole run. Read through the basis, the plan's dollars
+    // were the figure this ledger drew as money.
+    const costRow = (cost: Record<string, unknown>) => ({ ...DIAGNOSIS, row: { ...DIAGNOSIS.row, cost } })
+    const ledger = (cost: Record<string, unknown>) => buildRunModel(runInputs({ diagnosis: costRow(cost) })).ledger.model
+    // Mixed: money and the plan's list price in one figure.
+    const mixed = { model_usd: 3.2, model_notional_usd: 2, compute_usd: 0.5, compute_estimated: true, total_usd: 1.7, model_basis: 'api-list' }
+    expect(ledger(mixed).value).toBeCloseTo(1.2)
+    expect(ledger(mixed).state).toBe('measured')
+    const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis: costRow(mixed) })), 'light')
+    expect(one(tree, 'run-ledger-model-value').textContent).toBe('$1.20')
+    // All notional: the plan's figure, marked notional -- with the key (C1.16)
+    // and without it (the fallback for a row written before the split).
+    expect(ledger({ model_usd: 3.2, model_notional_usd: 3.2, compute_usd: 0, compute_estimated: true, total_usd: 0, model_basis: 'api-list' }).state).toBe('notional')
+    expect(ledger({ model_usd: 3.2, compute_usd: 0, compute_estimated: true, total_usd: 0, model_basis: 'subscription' }).state).toBe('notional')
+    // All billed: no notional part, so the whole figure is the money.
+    const billed = ledger({ model_usd: 1.25, compute_usd: 0.5, compute_estimated: true, total_usd: 1.75, model_basis: 'api-list' })
+    expect(billed.value).toBeCloseTo(1.25)
+    expect(billed.state).toBe('measured')
   })
 
   it('reads a compute the document did not estimate as unavailable, not as a free zero', () => {
@@ -999,6 +1091,52 @@ describe('renderRun', () => {
     expect(walk(pr).map((node) => node.getAttribute('data-href'))).toEqual(walk(pr).map(() => null))
   })
 
+  it('puts an element between the repository, the number and the URL', () => {
+    // The owner's report of 2026-10-21, from the screenshot run: the three
+    // facts stood side by side with nothing between them, and the panel read
+    // `acme/platform-core#412https://github.com/acme/platform-core/pull/412`
+    // -- three values run into one string, with the URL no longer a URL. The
+    // separator is a cell of its own rather than part of a value, so each value
+    // is still exactly the document's string (the case above draws them).
+    const tree = renderRun(factory, buildRunModel(runInputs()), 'light')
+    const line = walk(one(tree, 'run-pr'))
+      .filter((node) => PR_LINE_CLASSES.some((name) => node.classes.includes(name)))
+      .map((node) => node.textContent)
+    expect(line).toEqual([
+      'example-owner/example-repo',
+      ' · ',
+      '#42',
+      ' · ',
+      'https://bitbucket.org/example-owner/example-repo/pull-requests/42',
+    ])
+  })
+
+  it('separates what it draws, so a panel missing a field has no stray separator', () => {
+    // The separator belongs *between* the facts, not before the URL: a run whose
+    // `pr_url` the document does not carry draws two cells and one separator.
+    const withoutUrl = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, pr_url: undefined } }
+    const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis: withoutUrl })), 'light')
+    const pr = one(tree, 'run-pr')
+    const line = walk(pr)
+      .filter((node) => PR_LINE_CLASSES.some((name) => node.classes.includes(name)))
+      .map((node) => node.textContent)
+    expect(line).toEqual(['example-owner/example-repo', ' · ', '#42'])
+    expect(texts(pr, 'run-pr-url')).toEqual([])
+  })
+
+  it('gives the reason no link is offered in one line, in the design’s words', () => {
+    // Design section 5.1 rule 2's own sentence, and design gap 7 is why a link
+    // is not built from a repository and a number: it would name a repository
+    // this run does not use. The panel drew a two-clause explanation of that
+    // instead -- the owner's "long explanatory sentence under it" -- and the
+    // design's own line says the same thing in one.
+    expect(PR_NO_LINK_REASON).toBe(
+      'this CLI does not say which provider this run’s repository is on, so the console will not build a link from it',
+    )
+    const tree = renderRun(factory, buildRunModel(runInputs()), 'light')
+    expect(one(one(tree, 'run-pr'), 'run-pr-reason').textContent).toBe(PR_NO_LINK_REASON)
+  })
+
   it('offers the logs link as a destination attribute and never as a navigation', () => {
     const tree = renderRun(factory, buildRunModel(runInputs()), 'light')
     const link = one(tree, 'run-log-link')
@@ -1086,6 +1224,25 @@ describe('renderRun', () => {
       expect(one(tree, 'run-requested-by').textContent?.toLowerCase()).not.toContain('lopez')
       expect(drawnText(tree).toLowerCase()).not.toContain('lopez')
     }
+  })
+
+  it('draws the whole recorded launcher in the run view, in the person class', () => {
+    // The run view is where the owner's spec puts the **full identity** ("the
+    // full identity only in the expanded or run view and in JSON"): the Live and
+    // Projects columns draw the short form. It goes through the `person` class,
+    // the class the wire key carries, so an address is the console's marker here
+    // as it is in the requester cell beside it, and a login is itself.
+    const named = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, launched_by: 'dana@example.test' } }
+    const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis: named })), 'light')
+    expect(one(tree, 'run-started-by').textContent).toBe(ADDRESS_PLACEHOLDER)
+    expect(drawnText(tree)).not.toContain('dana@example.test')
+
+    const login = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, launched_by: 'ci-runner' } }
+    const other = renderRun(factory, buildRunModel(runInputs({ diagnosis: login })), 'light')
+    expect(one(other, 'run-started-by').textContent).toBe('ci-runner')
+
+    // A record whose `launch.json` recorded no launcher draws no cell at all.
+    expect(all(renderRun(factory, buildRunModel(runInputs()), 'light'), 'run-started-by')).toHaveLength(0)
   })
 
   it('puts the run record\'s status through the sanitizer too', () => {

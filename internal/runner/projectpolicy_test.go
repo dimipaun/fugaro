@@ -121,9 +121,9 @@ func TestRunnerWithoutTheMarkerTreatsADeniedReadAsLegacy(t *testing.T) {
 // Carried review item (a): the same denial with the marker deployed is genuine,
 // and the run does not start. The marker is written by the deploy that grants
 // the read, so a denial means the rules were changed out from under a published
-// policy (an older CLI's init --firebase redeploys rules that predate the
-// marker). Falling back to the environment ceiling here would run outside the
-// policy the owner published.
+// policy (an older CLI's fugaro update --firebase-project redeploys rules that
+// predate the marker). Falling back to the environment ceiling here would run
+// outside the policy the owner published.
 func TestRunnerHaltsOnADeniedReadWhenTheMarkerExists(t *testing.T) {
 	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":3,"budget":{"mode":"enforce","per_run_usd":0.05}}`, capScript(3)...)
 	b.db.DenyRead(projectpolicy.PathShared())
@@ -131,7 +131,7 @@ func TestRunnerHaltsOnADeniedReadWhenTheMarkerExists(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a denied read of a published policy must stop the run: rec = %+v", rec)
 	}
-	for _, want := range []string{projectpolicy.PathShared(), projectpolicy.PathRulesMarker(), "fugaro init --firebase"} {
+	for _, want := range []string{projectpolicy.PathShared(), projectpolicy.PathRulesMarker(), "fugaro update --firebase-project"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %q: %v", want, err)
 		}
@@ -251,7 +251,7 @@ func TestRunnerWithTheMintedMarkerRefusesAMissingToken(t *testing.T) {
 		// cause; a job account not re-applied since the token moved to
 		// tokens/ is the likely one, and gocloud reports its 403 exactly as
 		// a missing object. The refusal names that cause and its cure.
-		for _, want := range []string{"tokens/", "read grant", "fugaro init --repo", "start a new run (fugaro run with the same task)"} {
+		for _, want := range []string{"tokens/", "read grant", "fugaro update", "start a new run (fugaro run with the same task)"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("the refusal does not say %q: %v", want, err)
 			}
@@ -312,13 +312,13 @@ func TestTheMissingTokenRefusalWithoutTheMarkerReadsRight(t *testing.T) {
 	if !strings.Contains(msg, "was not launched with one") {
 		t.Fatalf("err = %v, want the refusal a launch with no marker gets", err)
 	}
-	for _, want := range []string{"tokens/", "read grant", "fugaro init --repo", "start a new run (fugaro run with the same task)"} {
+	for _, want := range []string{"tokens/", "read grant", "fugaro update", "start a new run (fugaro run with the same task)"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
 	}
 	// The sentence carries two causes and two cures, and they are told apart
-	// rather than run together: the grant's cure (the operator's `fugaro init
+	// rather than run together: the grant's cure (the operator's `fugaro update
 	// --repo`, inside the aside) and the new run that follows either cause.
 	// Reading it as a list — "…not launched with one, or <grant>, then start a
 	// new run…: … reports it; launch the run again" — left the reader to work
@@ -375,7 +375,7 @@ func TestRunnerWithTheMarkerAndNoBackendRefuses(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a marked run with no backend in its job must stop: rec = %+v", rec)
 	}
-	for _, want := range []string{runner.RTDBURLEnv, "fugaro init --repo"} {
+	for _, want := range []string{runner.RTDBURLEnv, "fugaro update"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %q: %v", want, err)
 		}
@@ -479,7 +479,7 @@ func TestRunnerWithNoBackendAndAStrayTokenRefuses(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a stray token object must stop the run: rec = %+v", rec)
 	}
-	for _, want := range []string{"launched with a budget token", runner.RTDBURLEnv, "fugaro init --repo"} {
+	for _, want := range []string{"launched with a budget token", runner.RTDBURLEnv, "fugaro update"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %q: %v", want, err)
 		}
@@ -511,7 +511,7 @@ func TestRunnerWithARefusedTokenRead(t *testing.T) {
 		if err == nil {
 			t.Fatalf("a marked run with no backend must stop: rec = %+v", rec)
 		}
-		for _, want := range []string{runner.RTDBURLEnv, "fugaro init --repo"} {
+		for _, want := range []string{runner.RTDBURLEnv, "fugaro update"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("the refusal does not name %q: %v", want, err)
 			}
@@ -559,7 +559,7 @@ func TestRunnerWithTheMarkerAndNoBackendRefusesBeforeTheClone(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a marked run with no backend in its job must stop: rec = %+v", rec)
 	}
-	for _, want := range []string{runner.RTDBURLEnv, "fugaro init --repo"} {
+	for _, want := range []string{runner.RTDBURLEnv, "fugaro update"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %q: %v", want, err)
 		}
@@ -601,7 +601,7 @@ func TestRunnerWithTheModeOnAndNoTokenHalts(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec, err := b.run(t, implement("feature"))
-	if err == nil || !strings.Contains(err.Error(), "could not be read") || !strings.Contains(err.Error(), "fugaro init --repo") || strings.Contains(err.Error(), "already taken") || strings.Contains(err.Error(), "--retry") {
+	if err == nil || !strings.Contains(err.Error(), "could not be read") || !strings.Contains(err.Error(), "fugaro update") || strings.Contains(err.Error(), "already taken") || strings.Contains(err.Error(), "--retry") {
 		t.Fatalf("err = %v, want the missing-token refusal naming the tokens/ grant", err)
 	}
 	if len(b.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
@@ -704,7 +704,7 @@ func TestPolicyParseErrorHaltsTheRun(t *testing.T) {
 // A policy carrying a profile that mounts a Claude OAuth token is the same
 // class: projectpolicy refuses the node (validProfiles — the rule publish, init
 // and both readers share), because the job that profile names is one
-// `fugaro init` refuses to deploy. Without that refusal the run computes the
+// `fugaro update` refuses to deploy. Without that refusal the run computes the
 // profile's job name with the default account where the deployer deploys the
 // empty one, matches no candidate of its own and halts with cannotPlaceJob,
 // which blames a stale module version instead of the profile — on every run of

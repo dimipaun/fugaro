@@ -17,8 +17,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 )
 
-// Logging is a stateful fake of Cloud Logging's entries.list, and of a log
-// bucket's get (for fugaro init's discovery). entries.list takes the two
+// Logging is a stateful fake of Cloud Logging's entries.list, of a log
+// bucket's get (for fugaro update's discovery) and of a project log sink's get
+// (`fugaro doctor` reads the installation's sink for the Batch arm of its
+// filter). entries.list takes the two
 // filter shapes Fugaro sends -- a Cloud Run job execution's entries, and a
 // Batch job's task logs by the job's UID (design compute-backend.md §2.3) --
 // each optionally from a timestamp on. Any other filter fails the test.
@@ -42,9 +44,43 @@ type Logging struct {
 	uidLogs   map[string][]LogEntry // Batch: a job's task logs by its UID
 	nextID    int
 	buckets   map[string]logBucket // projects/<p>/locations/<l>/buckets/<id>
+	sinks     map[string]logSink   // projects/<p>/sinks/<id>
 }
 
 type logBucket struct{ state, description string }
+
+// logSink is one project log sink as the fake stores it: a sink is a name, a
+// destination and a filter, and nothing Fugaro does changes either (the
+// installation's Terraform owns both).
+type logSink struct{ destination, filter string }
+
+// AddSink makes the project sink id exist in project, routing to destination
+// with filter. `fugaro doctor` reads it for the Batch arm: an installation
+// whose sink predates that arm routes only Cloud Run's lines.
+func (l *Logging) AddSink(project, id, destination, filter string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.sinks == nil {
+		l.sinks = map[string]logSink{}
+	}
+	l.sinks["projects/"+project+"/sinks/"+id] = logSink{destination, filter}
+}
+
+var logSinkRE = regexp.MustCompile(`^/v2/(projects/[^/]+/sinks/[^/:]+)$`)
+
+// getSink answers a project log sink's get.
+func (l *Logging) getSink(w http.ResponseWriter, name string) {
+	l.mu.Lock()
+	s, ok := l.sinks[name]
+	l.mu.Unlock()
+	if !ok {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Sink "+name+" does not exist")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"name": name, "destination": s.destination, "filter": s.filter, "writerIdentity": "serviceAccount:fake@fake.iam.gserviceaccount.com",
+	})
+}
 
 // AddBucket makes the log bucket id exist in project at location, in
 // state (ACTIVE, or DELETE_REQUESTED while it is pending deletion), with
@@ -237,6 +273,10 @@ func resourceProject(name string) string {
 func (l *Logging) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	if m := logBucketRE.FindStringSubmatch(r.URL.Path); r.Method == http.MethodGet && m != nil {
 		l.getBucket(w, m[1])
+		return
+	}
+	if m := logSinkRE.FindStringSubmatch(r.URL.Path); r.Method == http.MethodGet && m != nil {
+		l.getSink(w, m[1])
 		return
 	}
 	if r.Method != http.MethodPost || r.URL.Path != "/v2/entries:list" {

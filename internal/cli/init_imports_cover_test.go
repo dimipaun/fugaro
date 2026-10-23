@@ -52,7 +52,7 @@ func TestInstallationImportsCoveredOnlyAsDiscovered(t *testing.T) {
 		r.markedRuns(t, initProjectName, initProject)
 		r.setPlan(t, importing(change(runs, "no-op"), runsID))
 		fakeTerminal(t)
-		out, _, err := executeStdin(t, names(1), "init")
+		out, _, err := executeStdin(t, names(1), "setup")
 		if err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
@@ -72,7 +72,7 @@ func TestInstallationImportsCoveredOnlyAsDiscovered(t *testing.T) {
 			r.markedRuns(t, initProjectName, initProject)
 			r.setPlan(t, importing(change(runs, "no-op"), runsID), importing(change(stray, "no-op"), strayID))
 			fakeTerminal(t)
-			out, _, err := executeStdin(t, tc.stdin, "init")
+			out, _, err := executeStdin(t, tc.stdin, "setup")
 			if got := len(r.ran(t, "apply")); got != tc.apply {
 				t.Fatalf("%d applies, want %d (err %v)\n%s", got, tc.apply, err, out)
 			}

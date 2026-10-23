@@ -119,25 +119,34 @@ while a **launch** carrying one is `verb-target-mismatch`, because a launch is
 not read back at all. D162's launch therefore passes straight through and goes
 to the agent as text, through the same client.
 
-## What a confirmed action does NOT do yet, named
+## What a confirmed action does NOT do yet, and who owns it
 
 `propose` → typed `Fugaro, confirm` produces P6.3's **action record**, and the
-record is **returned, not delivered**: every `confirmed` answer carries
-`delivered: false` and `code: 'no-action-write'`.
+record is **returned by this module, not delivered**: every `confirmed` answer
+carries `delivered: false` and `code: 'no-action-write'`.
 
-The reason is a fact about the merged tree. The phone's one write path is
-`src/mailbox/client.js`, and the client it ships has exactly one send —
-`send(text)` — which writes `{ id, sender, text, at, mac }`: it has no way to
-carry a `kind` and an `action`. Sending a destructive command as its own text
-would be precisely what D169 forbids ("typed action records … not text to the
-agent"), so this module writes nothing rather than writing the wrong thing.
-`src/mailbox/` is P3.6's and P6.10's file — the plan's shared-files table gives
-it to those two tasks and this one is forbidden to fork it — and **P6.10's own
-verification ("an action record is never queued") is the clause that needs the
-send this client does not have.** Until it lands, a confirmed action is a value
-the app holds and can act on, and the screen shows it as confirmed with the
-reason it was not sent. `input.test.js` asserts the gap rather than leaving it
-to prose: a confirmation writes nothing at all to the store.
+**What changed, and this section used to say the opposite.** It said the client
+"has exactly one send — `send(text)`" and "has no way to carry a `kind` and an
+`action`". That was P3.6's client; it is not the merged one. **P6.10 added that
+write** — `client.send(text, { action })`, which writes P6.3's action record and
+keeps it out of the retry queue on purpose (D167's "an action record is never
+queued at all", which is the clause of P6.10's verification the send exists for).
+So the capability is in the tree and what is missing is the **wiring**: nothing
+under `src/text/` calls it. That call belongs to the screens that own a confirm
+path — **P6.9's own remaining half** for this one and **P6.12** for the voice
+one — because it decides what the owner is shown when the gate refuses the
+record (it is then dropped: an action is never queued, so there is nothing to
+retry) and that the confirmation is spent either way. Neither plan line names
+the delivery, so this is a gap in the plan rather than a task the plan assigns,
+and the pull request that added the send says so in its body.
+
+What did not change: sending a destructive command as its own text would be
+precisely what D169 forbids ("typed action records … not text to the agent"), so
+this module writes nothing rather than writing the wrong thing. Until the wiring
+lands, a confirmed action is a value the app holds and can act on, and the
+screen shows it as confirmed with the reason it was not sent. `input.test.js`
+asserts the gap rather than leaving it to prose: a confirmation writes nothing
+at all to the store.
 
 ## The screen
 

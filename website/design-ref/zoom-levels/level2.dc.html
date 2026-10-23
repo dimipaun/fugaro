@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Level 2: one orchestrator, many jobs</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="position: relative; width: 1280px; height: 720px; background: #0A0E16; color: #E6ECF5; font-family: 'Inter', system-ui, sans-serif">
+
+<svg width="103" height="8" viewBox="0 0 103 8" preserveAspectRatio="none" style="position: absolute; left: 296px; top: 356px; width: 103px; height: 8px; overflow: visible; fill: none; stroke: #8DA0BC; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><defs><marker id="dc-arrow-head-filled-1" orient="auto" markerWidth="5" markerHeight="5" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#8DA0BC" stroke="none" style="stroke: none; fill: #8DA0BC; fill: context-stroke"/></marker></defs><path d="M 0 4 L 99 4" marker-end="url(#dc-arrow-head-filled-1)"></path></svg>
+<svg width="100" height="8" viewBox="0 0 100 8" preserveAspectRatio="none" style="position: absolute; left: 600px; top: 356px; width: 100px; height: 8px; overflow: visible; fill: none; stroke: #8DA0BC; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><path d="M 0 4 L 100 4"></path></svg>
+<svg width="8" height="264" viewBox="0 0 8 264" preserveAspectRatio="none" style="position: absolute; left: 696px; top: 228px; width: 8px; height: 264px; overflow: visible; fill: none; stroke: #8DA0BC; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><path d="M 4 0 L 4 264"></path></svg>
+<svg width="99" height="8" viewBox="0 0 99 8" preserveAspectRatio="none" style="position: absolute; left: 700px; top: 224px; width: 99px; height: 8px; overflow: visible; fill: none; stroke: #8DA0BC; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><defs><marker id="dc-arrow-head-filled-2" orient="auto" markerWidth="5" markerHeight="5" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#8DA0BC" stroke="none" style="stroke: none; fill: #8DA0BC; fill: context-stroke"/></marker></defs><path d="M 0 4 L 95 4" marker-end="url(#dc-arrow-head-filled-2)"></path></svg>
+<svg width="99" height="8" viewBox="0 0 99 8" preserveAspectRatio="none" style="position: absolute; left: 700px; top: 356px; width: 99px; height: 8px; overflow: visible; fill: none; stroke: #8DA0BC; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><defs><marker id="dc-arrow-head-filled-3" orient="auto" markerWidth="5" markerHeight="5" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#8DA0BC" stroke="none" style="stroke: none; fill: #8DA0BC; fill: context-stroke"/></marker></defs><path d="M 0 4 L 95 4" marker-end="url(#dc-arrow-head-filled-3)"></path></svg>
+<svg width="99" height="8" viewBox="0 0 99 8" preserveAspectRatio="none" style="position: absolute; left: 700px; top: 488px; width: 99px; height: 8px; overflow: visible; fill: none; stroke: #8DA0BC; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><defs><marker id="dc-arrow-head-filled-4" orient="auto" markerWidth="5" markerHeight="5" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#8DA0BC" stroke="none" style="stroke: none; fill: #8DA0BC; fill: context-stroke"/></marker></defs><path d="M 0 4 L 95 4" marker-end="url(#dc-arrow-head-filled-4)"></path></svg>
+<svg width="71" height="8" viewBox="0 0 71 8" preserveAspectRatio="none" style="position: absolute; left: 968px; top: 224px; width: 71px; height: 8px; overflow: visible; fill: none; stroke: #4ADE80; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><defs><marker id="dc-arrow-head-filled-5" orient="auto" markerWidth="5" markerHeight="5" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#4ADE80" stroke="none" style="stroke: none; fill: #4ADE80; fill: context-stroke"/></marker></defs><path d="M 0 4 L 67 4" marker-end="url(#dc-arrow-head-filled-5)"></path></svg>
+<svg width="71" height="8" viewBox="0 0 71 8" preserveAspectRatio="none" style="position: absolute; left: 968px; top: 356px; width: 71px; height: 8px; overflow: visible; fill: none; stroke: #4ADE80; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><defs><marker id="dc-arrow-head-filled-6" orient="auto" markerWidth="5" markerHeight="5" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#4ADE80" stroke="none" style="stroke: none; fill: #4ADE80; fill: context-stroke"/></marker></defs><path d="M 0 4 L 67 4" marker-end="url(#dc-arrow-head-filled-6)"></path></svg>
+<svg width="71" height="8" viewBox="0 0 71 8" preserveAspectRatio="none" style="position: absolute; left: 968px; top: 488px; width: 71px; height: 8px; overflow: visible; fill: none; stroke: #4ADE80; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><defs><marker id="dc-arrow-head-filled-7" orient="auto" markerWidth="5" markerHeight="5" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#4ADE80" stroke="none" style="stroke: none; fill: #4ADE80; fill: context-stroke"/></marker></defs><path d="M 0 4 L 67 4" marker-end="url(#dc-arrow-head-filled-7)"></path></svg>
+
+<div style="position: absolute; left: 96px; top: 314px; width: 200px; height: 92px; box-sizing: border-box; padding: 8px; display: flex; align-items: center; justify-content: center; text-align: center; background: #111826; border: 1px solid #6AB0FF; border-radius: 46px; font-size: 14px; line-height: 20px"><span><b style="font-size: 16px">Orchestrator</b><br>an agent on the<br>developer's machine</span></div>
+<div style="position: absolute; left: 400px; top: 314px; width: 200px; height: 92px; box-sizing: border-box; padding: 8px; display: flex; align-items: center; justify-content: center; text-align: center; background: #111826; border: 1px solid #2B364A; border-radius: 12px; font-size: 14px; line-height: 20px"><span><b style="font-size: 16px">Fugaro</b><br>checks the budget,<br>then launches runs</span></div>
+<div style="position: absolute; left: 800px; top: 190px; width: 168px; height: 76px; box-sizing: border-box; padding: 8px; display: flex; align-items: center; justify-content: center; text-align: center; background: #111826; border: 2px solid #FF8B3D; border-radius: 14px; font-size: 14px; line-height: 20px"><span><b style="font-size: 16px">Job</b><br>one run</span></div>
+<div style="position: absolute; left: 800px; top: 322px; width: 168px; height: 76px; box-sizing: border-box; padding: 8px; display: flex; align-items: center; justify-content: center; text-align: center; background: #111826; border: 2px solid #FF8B3D; border-radius: 14px; font-size: 14px; line-height: 20px"><span><b style="font-size: 16px">Job</b><br>one run</span></div>
+<div style="position: absolute; left: 800px; top: 454px; width: 168px; height: 76px; box-sizing: border-box; padding: 8px; display: flex; align-items: center; justify-content: center; text-align: center; background: #111826; border: 2px solid #FF8B3D; border-radius: 14px; font-size: 14px; line-height: 20px"><span><b style="font-size: 16px">Job</b><br>one run</span></div>
+<div style="position: absolute; left: 1040px; top: 190px; width: 144px; height: 76px; box-sizing: border-box; padding: 8px; display: flex; align-items: center; justify-content: center; text-align: center; background: #16231C; border: 1px solid #4ADE80; border-radius: 12px; font-size: 16px; font-weight: 700">Draft PR</div>
+<div style="position: absolute; left: 1040px; top: 322px; width: 144px; height: 76px; box-sizing: border-box; padding: 8px; display: flex; align-items: center; justify-content: center; text-align: center; background: #16231C; border: 1px solid #4ADE80; border-radius: 12px; font-size: 16px; font-weight: 700">Draft PR</div>
+<div style="position: absolute; left: 1040px; top: 454px; width: 144px; height: 76px; box-sizing: border-box; padding: 8px; display: flex; align-items: center; justify-content: center; text-align: center; background: #16231C; border: 1px solid #4ADE80; border-radius: 12px; font-size: 16px; font-weight: 700">Draft PR</div>
+
+<div style="position: absolute; left: 64px; top: 64px; font-size: 32px; font-weight: 700; letter-spacing: -0.5px">One orchestrator, many jobs</div>
+<div style="position: absolute; left: 64px; top: 108px; font-size: 16px; color: #8DA0BC">Level 2 of 4. Each job is the tile from level 1.</div>
+<div style="position: absolute; left: 308px; top: 332px; width: 80px; text-align: center; font-size: 13px; line-height: 16px; color: #8DA0BC">fugaro run</div>
+<div style="position: absolute; left: 64px; top: 626px; width: 1152px; font-size: 14px; line-height: 22px; color: #8DA0BC">The orchestrator asks Fugaro for several runs at once. Fugaro takes a lease on the budget for each and launches the jobs in parallel; a launch the caps would exceed is refused. Every draft pull request flows back to the orchestrator.</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":720}}'>
+class Component extends DCLogic {
+renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

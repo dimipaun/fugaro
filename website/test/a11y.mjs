@@ -32,11 +32,8 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 
-const STYLES_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'styles')
 const TOKENS_FILE = 'tokens.css'
 
 // The palette files this check reads: D104's three candidates, which the owner chose
@@ -58,6 +55,7 @@ export const PALETTE_IN_FORCE = 'palette-logo.css'
 // requires every one of them.
 const COLOUR_TOKENS = [
   'ground',
+  'panel',
   'surface',
   'text',
   'text-muted',
@@ -65,6 +63,7 @@ const COLOUR_TOKENS = [
   'accent-on-dark',
   'border',
   'warn',
+  'ok',
   'gradient-from',
   'gradient-to',
 ]
@@ -95,41 +94,27 @@ const REQUIRED_SEMANTIC_TOKENS = [
   'duration-base',
 ]
 
-// ---- reading the stylesheets -----------------------------------------------------------
+// ---- reading the stylesheets, the palette and the colour arithmetic ----------------------
+//
+// The readers and the arithmetic are `website/test/lib/colour.mjs`: `website/test/how-it-works.mjs`
+// holds the run drawing's own labels to the surface they are drawn on, and the two gates
+// compute a ratio the same way (`docs/design/console-styling.md` §3.4's rule, one
+// implementation rather than two). They are re-exported here, where the cases below and the
+// console's design read them from.
 
-// Comments are stripped before anything is parsed, and that is load-bearing in both
-// directions: a palette's header explains the values and may quote them, and a colour
-// mentioned in prose is not a colour the page paints. The rule this file enforces is about
-// declarations.
-export function stripComments(css) {
-  return css.replace(/\/\*[\s\S]*?\*\//g, '')
-}
+import {
+  contrastRatio,
+  declarations,
+  luminance,
+  paletteTokens,
+  parseColour,
+  readStyleFile,
+  stripComments,
+} from './lib/colour.mjs'
 
-// The custom properties a stylesheet declares, as a Map of name (without the leading `--`)
-// to value. A tiny declaration reader rather than a CSS parser: the token files are flat
-// `:root` blocks of `--name: value;` and nothing else, and the checks below are about which
-// names exist and what they hold.
-export function declarations(css) {
-  const out = new Map()
-  for (const [, name, value] of stripComments(css).matchAll(/--([a-zA-Z0-9-]+)\s*:\s*([^;{}]+);/g)) {
-    out.set(name, value.trim())
-  }
-  return out
-}
+export { contrastRatio, declarations, luminance, paletteTokens, parseColour, readStyleFile, stripComments }
 
-function readStyleFile(fileName) {
-  const file = path.join(STYLES_DIR, fileName)
-  assert.ok(
-    existsSync(file),
-    `${fileName} is missing: the site's design tokens live in website/src/styles/ and this check reads them from the repository, not from a build output`,
-  )
-  return readFileSync(file, 'utf8')
-}
-
-export function paletteTokens(fileName) {
-  return declarations(readStyleFile(fileName))
-}
-
+/** The token layer itself, which is where the palette in force is named. */
 function tokensCss() {
   return readStyleFile(TOKENS_FILE)
 }
@@ -137,45 +122,6 @@ function tokensCss() {
 // The stylesheets a palette import names, in order, as written in the file.
 function importedFiles(css) {
   return [...stripComments(css).matchAll(/@import\s+["']([^"']+)["']/g)].map((m) => m[1])
-}
-
-// ---- colour arithmetic -----------------------------------------------------------------
-
-// A palette value has to be an opaque hex literal, and a value that is not is refused
-// rather than skipped: a colour function, an alpha channel or a `var()` indirection is a
-// pair this check cannot compute, and a pair it cannot compute is exactly the pair a
-// contrast regression would hide in.
-export function parseColour(value, name) {
-  assert.equal(
-    typeof value,
-    'string',
-    `${name} is not declared: every palette is a complete value set, and a token that is missing from one of them cannot be checked`,
-  )
-  const hex = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(value.trim())
-  assert.ok(
-    hex,
-    `${name}: ${JSON.stringify(value)} is not an opaque hex colour. The contrast check computes every pair from these literals, so a colour function, an alpha channel or a var() here would be a pair it cannot see`,
-  )
-  const digits = hex[1].length === 3 ? [...hex[1]].map((c) => c + c).join('') : hex[1]
-  return [0, 2, 4].map((i) => parseInt(digits.slice(i, i + 2), 16))
-}
-
-// WCAG 2.1 relative luminance, and the contrast ratio built from it.
-function channelLuminance(channel) {
-  const c = channel / 255
-  return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
-}
-
-export function luminance(rgb) {
-  const [r, g, b] = rgb.map(channelLuminance)
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b
-}
-
-export function contrastRatio(fg, bg) {
-  const a = luminance(fg)
-  const b = luminance(bg)
-  const [hi, lo] = a >= b ? [a, b] : [b, a]
-  return (hi + 0.05) / (lo + 0.05)
 }
 
 // ---- the pairs the site paints ---------------------------------------------------------
@@ -196,38 +142,52 @@ const LARGE_OR_UI = 3
 // largest type sits, so exempting it would be exempting the one place a contrast failure is
 // most visible.
 export const PAIRS = [
-  // Body copy on the ground, on a card, and on each stop of the hero's gradient.
+  // Body copy on the ground, on a card, on the panel a card is drawn on, and on each stop of
+  // the hero's gradient.
   ['--text', '--ground', BODY_TEXT],
+  ['--text', '--panel', BODY_TEXT],
   ['--text', '--surface', BODY_TEXT],
   ['--text', '--gradient-from', BODY_TEXT],
   ['--text', '--gradient-to', BODY_TEXT],
 
   // The quieter tone beside it, which is still prose and still has to be readable.
   ['--text-muted', '--ground', BODY_TEXT],
+  ['--text-muted', '--panel', BODY_TEXT],
   ['--text-muted', '--surface', BODY_TEXT],
   ['--text-muted', '--gradient-from', BODY_TEXT],
   ['--text-muted', '--gradient-to', BODY_TEXT],
 
-  // The accent as text: every link, and every heading that carries the accent. This is the
-  // token whose whole job is to be the legible form of `--accent`.
+  // The accent as text: every link, every heading that carries the accent, and the eyebrow the
+  // redesign sets above a section — which is small text on the ground or on a panel.
   ['--accent-on-dark', '--ground', BODY_TEXT],
+  ['--accent-on-dark', '--panel', BODY_TEXT],
   ['--accent-on-dark', '--surface', BODY_TEXT],
   ['--accent-on-dark', '--gradient-from', BODY_TEXT],
   ['--accent-on-dark', '--gradient-to', BODY_TEXT],
 
-  // Warnings and cost figures, which are text on both grounds and on the hero — the
-  // caps-and-costs teaser sits over the gradient, which is why `--warn` is a pair there and
-  // not only on the flat grounds — and the dark label on a filled warning chip.
+  // Warnings and cost figures, which are text on both grounds, on the hero and on the panel —
+  // the caps-and-costs teaser sits over the gradient, which is why `--warn` is a pair there and
+  // not only on the flat grounds, and the hero illustration's status line is the warn tone on a
+  // panel — and the dark label on a filled warning chip.
   ['--warn', '--ground', BODY_TEXT],
+  ['--warn', '--panel', BODY_TEXT],
   ['--warn', '--surface', BODY_TEXT],
   ['--warn', '--gradient-from', BODY_TEXT],
   ['--warn', '--gradient-to', BODY_TEXT],
   ['--ground', '--warn', BODY_TEXT],
 
+  // The success tone, which the redesign made a token: it is the last step of a run — the
+  // ground as a label on its fill — and a mark on the ground, on a panel and on the surface.
+  ['--ground', '--ok', BODY_TEXT],
+  ['--ok', '--ground', LARGE_OR_UI],
+  ['--ok', '--panel', LARGE_OR_UI],
+  ['--ok', '--surface', LARGE_OR_UI],
+
   // The accent as a fill and as structure: a filled button's label is text on the accent,
   // and the accent itself is a focus ring and a rule against the ground and the surface.
   ['--ground', '--accent', BODY_TEXT],
   ['--accent', '--ground', LARGE_OR_UI],
+  ['--accent', '--panel', LARGE_OR_UI],
   ['--accent', '--surface', LARGE_OR_UI],
   ['--accent', '--gradient-from', LARGE_OR_UI],
   ['--accent', '--gradient-to', LARGE_OR_UI],
@@ -255,6 +215,13 @@ export const BASE_PAIRS = [
   // The focus ring, the current page's underline and the blockquote rule, as UI colours.
   ['--accent', '--ground', LARGE_OR_UI],
   ['--accent', '--surface', LARGE_OR_UI],
+  // The redesign's own panel, which the card, the pill and the command bar are drawn on: body
+  // copy inside a card, the quieter tone of a pill's label, and the eyebrow the accent sets.
+  ['--text', '--panel', BODY_TEXT],
+  ['--text-muted', '--panel', BODY_TEXT],
+  ['--accent-on-dark', '--panel', BODY_TEXT],
+  // The success tone as a step's fill, with the ground as its label.
+  ['--ground', '--ok', BODY_TEXT],
 ]
 
 // The pairs of a palette that are below their ratio, as the lines a reader sees. Exported
@@ -1120,4 +1087,27 @@ test('motion gated on no-preference, or neutralised by its own reduce rule, pass
   const bare = GOOD_CSS.replace(/@media[\s\S]*$/, '')
   assert.deepEqual(motionFailures(bare + '@supports (animation-timeline:view()){@media (prefers-reduced-motion:no-preference){.s{animation:in linear both}}}'), [])
   assert.deepEqual(motionFailures(bare + '.t{animation:spin 1s}@media (prefers-reduced-motion:reduce){.t{animation:none}}'), [])
+})
+
+test('the four levels are four named anchors a keyboard reaches in order, each with a named picture', () => {
+  const page = builtPages().find((entry) => entry.rel === 'how-it-works/index.html')
+  assert.ok(page, 'the built site has no How It Works page, and the four levels are a section of it (D237)')
+  const doc = parse(page.html)
+  const nav = findAll(doc, (el) => el.name === 'nav' && classList(el).includes('zoom-nav'))
+  assert.equal(nav.length, 1, 'the zoom section carries one level <nav>')
+  assert.ok((nav[0].attrs.get('aria-label') || '') !== '', 'the zoom <nav> carries no name')
+  const markers = findAll(nav[0], (el) => el.name === 'a')
+  assert.deepEqual(markers.map((marker) => marker.attrs.get('href')), ['#level-1', '#level-2', '#level-3', '#level-4'], 'the markers do not point at the four anchors, in order (D245)')
+  for (const marker of markers) {
+    assert.ok(/^Level [1-4] /.test(marker.attrs.get('aria-label') || ''), 'a marker\'s name says which level it jumps to')
+    assert.ok(!(marker.attrs.get('tabindex') > 0), 'a marker carries a positive tabindex')
+  }
+  const figures = findAll(doc, (el) => el.name === 'figure' && classList(el).includes('zoom-figure'))
+  assert.equal(figures.length, 4, 'the page draws four levels')
+  for (const figure of figures) {
+    const images = findAll(figure, (el) => el.name === 'img')
+    assert.equal(images.length, 1, 'a level is one picture')
+    assert.ok((images[0].attrs.get('alt') || '').length > 40, 'a level\'s picture has no alt text')
+    assert.equal(findAll(figure, (el) => el.name === 'figcaption').length, 1, 'a level is named by one <figcaption>')
+  }
 })

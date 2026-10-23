@@ -19,14 +19,14 @@ import (
 // implementations of the canonical serialisation are held to (mobile plan P4.1,
 // task T1; Ruling M9 — the file is merged and is never edited by this task).
 //
-// The tag itself is computed HERE, in the test, and not by the package under
-// test: the plan gives the tag function to T2 (`internal/mailbox/mac.go`) and
-// this task no `mac.go`, and one function is what keeps the verifying half and
-// the signing half from drifting. What the replay therefore proves is the half
-// T1 owns — that Go's canonical bytes ARE the module's, byte for byte — and it
-// proves it the only way that is observable: by recomputing each vector's tag
-// over those bytes with crypto/hmac, the same composition mac.js is, and
-// comparing against the tag the file pins.
+// The tag itself is computed HERE, in the test, and not by MacOf (T2's, in
+// mac.go): a replay that called the function it checks would prove only that
+// the function equals itself. What it proves instead is the half T1 owns —
+// that Go's canonical bytes ARE the module's, byte for byte — and it proves it
+// the only way that is observable: by recomputing each vector's tag over those
+// bytes with crypto/hmac, the same composition mac.js is, and comparing
+// against the tag the file pins. mac_test.go is what holds MacOf to the same
+// file.
 const vectorsPath = "../../shared/mailbox-schema/vectors.json"
 
 // caseSchemaRefusal is the three vector cases whose record the schema refuses.
@@ -35,21 +35,33 @@ const vectorsPath = "../../shared/mailbox-schema/vectors.json"
 // file — and it is here rather than omitted because "every accepted vector's
 // record validates" is only half a statement without the other half. The
 // remaining 21 cases are asserted to validate.
+//
+// `field` is pinned as well, and it is the only refusal in the whole replay
+// whose field the two ends could answer differently: the code-point vector
+// carries TWO unknown fields (U+FFFF and U+1F600), and this side names the one
+// byte order reaches first where the module names the one insertion order
+// reaches first. They happen to be the same key here — U+FFFF's bytes sort
+// before U+1F600's — which is why the field can be pinned on this vector at
+// all. TestTwoUnknownFieldsAreNamedInByteOrder is the case where they differ.
 var caseSchemaRefusal = map[string]struct {
-	code Code
-	why  string
+	code  Code
+	field string
+	why   string
 }{
 	"an unknown field is inside the bytes": {
-		code: CodeUnknownField,
-		why:  "the file's own `why` says so: `landed_at` is an unknown field",
+		code:  CodeUnknownField,
+		field: "landed_at",
+		why:   "the file's own `why` says so: `landed_at` is an unknown field",
 	},
 	"keys are ordered by code point, not by UTF-16 code unit": {
-		code: CodeUnknownField,
-		why:  "U+FFFF and U+1F600 are not fields of any kind, so they are unknown fields",
+		code:  CodeUnknownField,
+		field: "￿",
+		why:   "U+FFFF and U+1F600 are not fields of any kind, so they are unknown fields",
 	},
 	"verb swapped": {
-		code: CodeBadTarget,
-		why:  "the record relabels a cancel as a merge and keeps its `run` target; a merge resolves to a repository, so the target does not agree with the verb",
+		code:  CodeBadTarget,
+		field: "action.target",
+		why:   "the record relabels a cancel as a merge and keeps its `run` target; a merge resolves to a repository, so the target does not agree with the verb",
 	},
 }
 
@@ -86,12 +98,17 @@ func TestSchemaVectorsReplay(t *testing.T) {
 			if refused, refusedBySchema := caseSchemaRefusal[name]; refusedBySchema {
 				if refusal == nil {
 					t.Errorf("the schema refuses this record (%s) and Go accepts it (%s)", refused.why, why)
-				} else if refusal.Code != refused.code {
-					// Which of two unknown fields is named is not pinned: the
-					// module answers in JavaScript's insertion order and this
-					// side answers in byte order, and the code is the answer a
-					// caller branches on.
-					t.Errorf("this record's schema refusal is %s, wanted %s (%s)", refusal, refused.code, refused.why)
+				} else if refusal.Code != refused.code || refusal.Field != refused.field {
+					// The field is part of the answer for these three, and it
+					// is the one part that is NOT part of it in general: with
+					// several unknown fields the module names the one insertion
+					// order reaches first and this side names the one byte
+					// order reaches first. The code is always the same, and
+					// that is what a caller branches on. The case where the two
+					// orders disagree is
+					// TestTwoUnknownFieldsAreNamedInByteOrder.
+					t.Errorf("this record's schema refusal is %s, wanted %s at %q (%s)",
+						refusal, refused.code, refused.field, refused.why)
 				}
 			} else if refusal != nil {
 				t.Errorf("the schema accepts this record and Go refuses it %s (%s)", refusal, why)
@@ -265,6 +282,68 @@ func TestSchemaVectorRefusals(t *testing.T) {
 	}
 }
 
+// TestTwoUnknownFieldsAreNamedInByteOrder pins the one refusal whose FIELD the
+// two ends need not spell the same, and it pins this side's rule rather than
+// leaving it incidental to `sortedKeys`.
+//
+// The module walks `Object.keys`, i.e. JavaScript's insertion order (the
+// integer-like keys first, in ascending order, and then the rest as written);
+// a Go map has no insertion order at all, so this side walks byte order, which
+// is code-point order for UTF-8. Both ends answer unknown-field either way — a
+// caller branching on the code is answered identically — and with ONE unknown
+// field they name the same one. With several they can disagree.
+//
+// The record below is a real message whose two unknown fields are written in
+// the order the module reads them and NOT in the order this side reads them:
+// the module answers `zz_extra` (written first) where this side answers
+// `0landed_at` (`'0'` is 0x30, `'z'` is 0x7a).
+func TestTwoUnknownFieldsAreNamedInByteOrder(t *testing.T) {
+	// Written in this order on purpose: insertion order reaches `zz_extra`
+	// first, byte order reaches `0landed_at` first.
+	document := `{"id":"m-0001","sender":"phone","text":"run 42 finished",` +
+		`"at":1700000000000,"mac":"` + strings.Repeat("f", MACMax) + `",` +
+		`"zz_extra":1,"0landed_at":2}`
+	record, err := Decode([]byte(document))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	_, refusal := ValidateMessage(record)
+	if refusal == nil {
+		t.Fatal("a record with two fields the schema does not name is accepted")
+	}
+	if refusal.Code != CodeUnknownField {
+		t.Errorf("the refusal code is %s, wanted %s: the code is the half both ends always agree on",
+			refusal.Code, CodeUnknownField)
+	}
+	if refusal.Field != "0landed_at" {
+		t.Errorf("the field named is %q, wanted %q: this side names the first unknown field in byte order", refusal.Field, "0landed_at")
+	}
+
+	// And the same two keys in the other written order: insertion order would
+	// now reach `0landed_at` first, byte order still reaches it first, so the
+	// answer is the record's own and not the order the keys happened to arrive
+	// in. (That is exactly what the module's answer would change on.)
+	swapped, err := Decode([]byte(strings.Replace(document, `"zz_extra":1,"0landed_at":2`, `"0landed_at":2,"zz_extra":1`, 1)))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if _, again := ValidateMessage(swapped); again == nil || again.Field != "0landed_at" {
+		t.Errorf("the same two keys written the other way round are refused %v, wanted %s at %q",
+			again, CodeUnknownField, "0landed_at")
+	}
+
+	// And whatever is named, the record is never accepted: the name is cosmetic
+	// to the verdict, which is the reason this difference was left open.
+	for _, name := range []string{"0landed_at", "zz_extra"} {
+		one := plainMessage(t)
+		one[name] = number("1")
+		if _, refusal := ValidateMessage(one); refusal == nil || refusal.Code != CodeUnknownField {
+			t.Errorf("a record carrying %s is refused %v, wanted %s: one unknown field is refused whichever one it is",
+				name, refusal, CodeUnknownField)
+		}
+	}
+}
+
 // TestTheRefusalCodesNoRefusalVectorCarries is the other half of the replay
 // above, and it is here because a code with no vector is a code with no test
 // anywhere: TestSchemaVectorRefusals replays what the file carries, so a check
@@ -430,6 +509,24 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 			"a separator in a database key is bad-key, as every other unencodable character is"},
 		{"an id carrying U+2029", message(Record{"id": "a b"}), false, CodeBadKey, "id",
 			"U+2029 in a key is the same refusal as U+2028"},
+		// The control characters the alphabets refuse that no vector carried, and
+		// the line breaks only a body may carry. Every one of these was a live
+		// mutant: the C0 check narrowed to `r < 0x1f`, the DEL class dropped from
+		// a key's alphabet and from a string's, and `lineBreaks` ignored — each
+		// left the whole file green, because no row here held the value it
+		// accepts.
+		{"an id carrying U+001F", message(Record{"id": "m\x1f0001"}), false, CodeBadKey, "id",
+			"U+001F is the last character of the C0 range a key refuses"},
+		{"an id carrying DEL", message(Record{"id": "m\x7f0001"}), false, CodeBadKey, "id",
+			"DEL is displayed as nothing and stored as something"},
+		{"a body carrying U+001F", message(Record{"text": "a\x1fb"}), false, CodeBadCharacter, "text",
+			"a body carries line breaks and no other control character"},
+		{"a body carrying DEL", message(Record{"text": "a\x7fb"}), false, CodeBadCharacter, "text",
+			"DEL is the one control character past the C0 range, and it is refused with it"},
+		{"a sender carrying a line break", message(Record{"sender": "pho\nne"}), false, CodeBadCharacter, "sender",
+			"a line break is allowed in a body and nowhere else, and the sender is one of the elsewhere"},
+		{"an option carrying a line break", message(Record{"kind": "prompt", "options": []any{"merge\nit"}}), false, CodeBadCharacter, "options[0]",
+			"an option is read aloud as one line, so a break in one is a second line nobody drew"},
 		{"a kind that is not a string", message(Record{"kind": true}), false, CodeWrongType, "kind",
 			"\"not a kind\" and \"not a string\" are different questions"},
 		{"an agent that is not a string", message(Record{"agent": number("1")}), false, CodeWrongType, "agent",
@@ -515,9 +612,9 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 		{"a repository that is not a string", merged(map[string]any{"target": map[string]any{
 			"repo": number("1"), "pr": number("532")}}), false, CodeWrongType, "action.target.repo",
 			"the repository is passed to `gh pr merge --repo` as one argument"},
-		{"a repository longer than its bound", merged(map[string]any{"target": map[string]any{
-			"repo": strings.Repeat("a", TargetMax) + "/b", "pr": number("532")}}), false, CodeTooLong, "action.target.repo",
-			"a repository is bounded like every other string"},
+		{"a repository one code unit past its bound", merged(map[string]any{"target": map[string]any{
+			"repo": strings.Repeat("a", TargetMax-1) + "/b", "pr": number("532")}}), false, CodeTooLong, "action.target.repo",
+			"the bound is the bound: 201 units are refused where 200 are the last accepted ones"},
 		{"a repository with a character a command line cannot carry", merged(map[string]any{"target": map[string]any{
 			"repo": repoName + ";rm", "pr": number("532")}}), false, CodeBadCharacter, "action.target.repo",
 			"a semicolon is not a character a repository is drawn from"},
@@ -554,6 +651,13 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 			"an epoch millisecond written as a string is not one"},
 		{"a head SHA that is not a string", merged(map[string]any{"head_sha": number("1")}), false, CodeBadSHA, "action.head_sha",
 			"an object name is a string of hex, not a number"},
+		// Two lengths are object names and nothing between them is: a git
+		// abbreviation is 40 characters and a full name is 64, and the check
+		// used to accept the whole range, which no vector held either end of.
+		{"a head SHA one past the short length", merged(map[string]any{"head_sha": strings.Repeat("a", SHAMin+1)}), false, CodeBadSHA, "action.head_sha",
+			"41 characters are not the abbreviation and not the full name"},
+		{"a head SHA one short of the long length", merged(map[string]any{"head_sha": strings.Repeat("a", SHAMax-1)}), false, CodeBadSHA, "action.head_sha",
+			"63 characters are the same nothing as 41"},
 
 		// A time, and the flag the phone writes later.
 		{"a time before the epoch", message(Record{"at": number("-1")}), false, CodeBadTimestamp, "at",
@@ -607,6 +711,170 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 		if _, ok := held[code]; !ok {
 			t.Errorf("the code %s is declared and nothing holds it: no refusal in vectors.json carries it and no row above produces it", code)
 		}
+	}
+}
+
+// TestTheDocSaysWhichValuesAreNotArgvSafe pins the package doc's paragraph about
+// argv safety, which is a claim about what this validator ACCEPTS rather than
+// about what it refuses: the four values a program may be handed, and the fields
+// that look like identifiers and are not.
+//
+// The four are `action.target.run`, `action.target.repo`, `action.target.pr` and
+// `action.head_sha`, and they are the four because nothing a program must never
+// be handed can be spelled in them — the first half of this test is that, and
+// what "never handed" means is different for each kind of value:
+//
+//   - the three string fields (`run`, `repo`) are held against the three shapes
+//     a command line must never receive: a flag character first, a metacharacter
+//     inside, and a path that walks out of its directory;
+//   - `pr` is an integer, so it is held against the three ways a value fails to
+//     be a whole number of at least one — a number below one, a number that is
+//     not whole, and a string, which is where a flag character would live;
+//   - `head_sha` is a git object name, so it is held against the three ways a
+//     string fails to be one: a character that is not hex, an uppercase one, and
+//     a length that is neither of the two an object name may have.
+//
+// Every other value the schema accepts may be `-`-leading, may be `.` or `..`,
+// may carry `*`, `?`, `\`, quotes or a format character, or may be a single
+// space — and an id, a boot, an agent id and a sender are all of those things.
+// That is the second half, and it is why the paragraph says what it says: T4's
+// ledger must not use an id as a file name without encoding it, and T5 and T6
+// must never pass an agent id, a boot or a key to a program as argv or as a path
+// segment. This test is the pin on the paragraph, not on the tasks: nothing here
+// can make those tasks safe.
+func TestTheDocSaysWhichValuesAreNotArgvSafe(t *testing.T) {
+	message := func(over Record) Record {
+		record := Record{
+			"id": "m-0001", "sender": "phone", "text": "run 42 finished",
+			"at": number("1700000000000"), "mac": strings.Repeat("f", MACMax),
+		}
+		for key, value := range over {
+			record[key] = value
+		}
+		return record
+	}
+	heartbeat := func(over Record) Record {
+		record := Record{
+			"at": number("1700000000000"), "boot": "boot-01",
+			"agents": []any{agent("orchestrator", "Orchestrator")},
+			"mac":    strings.Repeat("f", MACMax),
+		}
+		for key, value := range over {
+			record[key] = value
+		}
+		return record
+	}
+	cancel := func(target map[string]any) Record {
+		return message(Record{"kind": "action", "action": map[string]any{
+			"id": "a-0001", "verb": "cancel", "target": target,
+			"confirmation": map[string]any{"id": "c-0001", "at": number("1700000000000")},
+		}})
+	}
+	merge := func(target map[string]any, sha string) Record {
+		return message(Record{"kind": "action", "action": map[string]any{
+			"id": "a-0001", "verb": "merge", "target": target, "head_sha": sha,
+			"confirmation": map[string]any{"id": "c-0001", "at": number("1700000000000")},
+		}})
+	}
+	repo := func(name string) map[string]any { return map[string]any{"repo": name, "pr": number("532")} }
+
+	// The four argv-safe values, each against the three shapes a program must
+	// never be handed: a flag character first, a metacharacter inside, and a
+	// path that walks out of its directory.
+	refused := []struct {
+		name   string
+		record Record
+		why    string
+	}{
+		{"a run that begins with a flag character", cancel(map[string]any{"run": "--force"}),
+			"`fugaro cancel --force` is a command line the record would choose"},
+		{"a run carrying a shell metacharacter", cancel(map[string]any{"run": "run*42"}),
+			"a run id is drawn from [A-Za-z0-9._:-] and nothing else"},
+		{"a run that walks out of its directory", cancel(map[string]any{"run": ".."}),
+			"a run id's first character is alphanumeric, `_` or `:`"},
+		{"a repository that begins with a flag character", merge(repo("-o/name"), strings.Repeat("a", SHAMin)),
+			"`gh pr merge --repo -o/name` is a command line the record would choose"},
+		{"a repository carrying a shell metacharacter", merge(repo("owner/na;me"), strings.Repeat("a", SHAMin)),
+			"a repository is drawn from [A-Za-z0-9._:/-] and nothing else"},
+		{"a repository that walks out of its directory", merge(repo("owner/.."), strings.Repeat("a", SHAMin)),
+			"each half of a repository begins with an alphanumeric or `_`"},
+		{"a head SHA carrying a character that is not hex", merge(repo("owner/name"), strings.Repeat("a", SHAMin-1)+"*"),
+			"a head SHA is lowercase hex and nothing else"},
+		{"a head SHA carrying an uppercase character", merge(repo("owner/name"), strings.Repeat("a", SHAMin-1)+"A"),
+			"a git object name is lowercase hex, so an uppercase one is not a SHA this app signed"},
+		{"a head SHA of a length no object name has", merge(repo("owner/name"), strings.Repeat("a", SHAMin+1)),
+			"a head SHA is 40 or 64 characters, and nothing in between"},
+		{"a PR number below one", merge(map[string]any{"repo": "owner/name", "pr": number("0")}, strings.Repeat("a", SHAMin)),
+			"a PR is an integer of at least one, and no repository has a PR 0"},
+		{"a PR number that is not whole", merge(map[string]any{"repo": "owner/name", "pr": number("532.5")}, strings.Repeat("a", SHAMin)),
+			"a PR number is a whole number, and `gh pr merge 532.5` is not a command"},
+		{"a PR number written as a string", merge(map[string]any{"repo": "owner/name", "pr": "--force"}, strings.Repeat("a", SHAMin)),
+			"a PR is a number, so a flag character has no shape to arrive in"},
+	}
+	for _, tc := range refused {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, refusal := ValidateMessage(tc.record); refusal == nil {
+				t.Errorf("this value is accepted, and the paragraph says the four argv-safe fields cannot carry it: %s", tc.why)
+			}
+		})
+	}
+
+	// A boot is neither a key nor an id, and the paragraph says so: it is
+	// validated with the identity field, bounded by its own width. The two
+	// shapes an id would accept and a boot does not are a space -- an id may be
+	// one -- and a length past the bound, which is `BootMax` and not the wider
+	// `IDMax`.
+	refusedBoots := []struct {
+		name string
+		boot string
+		why  string
+	}{
+		{"a boot that is a single space", " ",
+			"a boot is an identity, and a space is not in [A-Za-z0-9._:-]"},
+		{"a boot one code unit past its bound", strings.Repeat("b", BootMax+1),
+			"a boot is bounded by BootMax, and not by the wider bound an id has"},
+	}
+	for _, tc := range refusedBoots {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, refusal := ValidateHeartbeat(heartbeat(Record{"boot": tc.boot})); refusal == nil {
+				t.Errorf("this boot is accepted, and the paragraph says no program may be handed one: %s", tc.why)
+			}
+		})
+	}
+
+	// And the fields the paragraph warns about, every one of them accepted.
+	accepted := []struct {
+		name    string
+		record  Record
+		message bool
+	}{
+		{"an id that is a single space", message(Record{"id": " "}), true},
+		{"an id that begins with a flag character", message(Record{"id": "--help"}), true},
+		{"an id carrying a shell metacharacter", message(Record{"id": "a*b?c"}), true},
+		{"an id carrying both quotes and a backslash", message(Record{"id": `a\b"c'd`}), true},
+		{"a sender that begins with a flag character", message(Record{"sender": "--sender"}), true},
+		{"a sender carrying a right-to-left override", message(Record{"sender": "pho\xe2\x80\xaene"}), true},
+		{"a body carrying a zero-width space", message(Record{"text": "run\xe2\x80\x8b 42"}), true},
+		{"a body carrying a byte-order mark", message(Record{"text": "\xef\xbb\xbfrun 42"}), true},
+		{"a body carrying an astral character", message(Record{"text": "run \U0001F600"}), true},
+		{"an option that begins with a flag character", message(Record{"kind": "prompt", "options": []any{"--force"}}), true},
+		{"an agent id that begins with a flag character", heartbeat(Record{"agents": []any{agent("--force", "Forcer")}}), false},
+		{"an agent id that is the parent directory", heartbeat(Record{"agents": []any{agent("..", "Parent")}}), false},
+		{"a boot that is the parent directory", heartbeat(Record{"boot": ".."}), false},
+		{"a spoken name that is a path", heartbeat(Record{"agents": []any{agent("orchestrator", "../../etc/hosts")}}), false},
+	}
+	for _, tc := range accepted {
+		t.Run(tc.name, func(t *testing.T) {
+			var refusal *Refusal
+			if tc.message {
+				_, refusal = ValidateMessage(tc.record)
+			} else {
+				_, refusal = ValidateHeartbeat(tc.record)
+			}
+			if refusal != nil {
+				t.Errorf("this value is refused %s, and the paragraph's whole point is that the schema accepts it and argv cannot carry it", refusal)
+			}
+		})
 	}
 }
 
@@ -1024,13 +1292,25 @@ func TestFloatsAreRefusedInBothHalves(t *testing.T) {
 	}
 }
 
-// TestAnythingValidatedCanBeCanonicalised is the property the two halves owe
-// each other: a record ValidateMessage accepts is a record CanonicalBytes can
-// serialise. Anything else is a record with two verdicts, and the second one
-// arrives only when the tag is made. Every numeric type this package accepts
-// goes into every position that takes a number, because a type accepted in one
-// field and refused in another is the same disagreement one field smaller.
-func TestAnythingValidatedCanBeCanonicalised(t *testing.T) {
+// TestAnythingValidatedCanBeCanonicalisedExceptNegativeZero is the property the
+// two halves owe each other: a record ValidateMessage accepts is a record
+// CanonicalBytes can serialise. Anything else is a record with two verdicts, and
+// the second one arrives only when the tag is made. Every numeric type this
+// package accepts goes into every position that takes a number, because a type
+// accepted in one field and refused in another is the same disagreement one
+// field smaller.
+//
+// The name says "except negative zero" because there is exactly one record the
+// property does not hold for, and leaving it out of the name was the claim that
+// there is none: `-0` is an integer, so the validator accepts it in `at` and in
+// the confirmation's `at` (the module does too — the schema's rule is "an
+// integer", not "a positive one"), and `-0` has no canonical form this package
+// will write, because json.Number's round trip spells it `-0` where the encoder
+// writes `0`. The record is therefore refused AT CANONICALISATION, fail-closed,
+// rather than accepted and signed with bytes a verifying end would recompute
+// differently. TestNegativeZeroValidates is that case, on its own, where this
+// test's `acceptedAndSerialisable` cannot hold.
+func TestAnythingValidatedCanBeCanonicalisedExceptNegativeZero(t *testing.T) {
 	const max = int64(1)<<53 - 1
 	for _, spelling := range []struct {
 		name  string
@@ -1660,8 +1940,8 @@ var (
 )
 
 // tagOf is the tag HMAC-SHA-256 produces over canonical bytes: mac.js's own
-// composition, written here rather than in the package because the package's
-// tag function is T2's (see the header comment).
+// composition, written here rather than in the package because a replay that
+// called MacOf would only prove MacOf equals itself (see the header comment).
 func tagOf(key, canonical string) string {
 	mac := hmac.New(sha256.New, []byte(key))
 	mac.Write([]byte(canonical))

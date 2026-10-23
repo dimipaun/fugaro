@@ -1,30 +1,52 @@
 ---
 /**
- * website/src/pages/console.astro — the console page (website plan, Task W1.6).
+ * website/src/pages/console.astro — the console page (website plan, Task W1.6; the owner's
+ * approved board `website/design-ref/ConsoleV2.dc.html`, 2026-10-20).
  *
- * The spec's section 4 asks for *"Console downloads: per-OS download links (placeholder
- * until the console ships)"*, and the console is built and **not released**: `console/` holds
- * the application and the workflow that signs, notarises and staples its macOS artifacts, that
- * workflow creates the release as a draft the owner publishes, and `features.console_downloads`
- * is false until then. This page is that placeholder, and it is built so that the placeholder
- * is honest in the way the reconciliation asks for: it says what the console is, that it is not
- * released yet and what it will be, and it renders **no link and no button** a reader could
- * follow (finding 23, finding 25, D95).
+ * The spec's section 4 asks for *"Console downloads: per-OS download links"*, and the console
+ * has shipped: `console/` holds the application and the workflow that signs, notarises and
+ * staples its macOS artifacts, that workflow created the `console-v0.9.0` release, and
+ * `features.console_downloads` is true. So this page is the console's own page — what it is,
+ * what it looks like, what a reader downloads and the three properties its own decisions fix
+ * — and the placeholder the section renders while the flag is off is still here, one build
+ * away, because a copy of this repository is built into it (`website/test/console.mjs`).
+ *
+ * **The page is the board's four blocks, in the board's order**: the hero (the release's own
+ * tag and platform, the name, what the console is and the two actions), the screenshot slider
+ * (`ScreenshotSlider.astro`), the downloads (`Downloads.astro`) and the facts. Each block is
+ * a component or a section of this file; nothing is drawn twice.
  *
  * Where its facts come from, and why nothing here is typed into the markup:
  *
  *   - `website/content/downloads.json` — the console's own facts, read and validated by
- *     `src/lib/console-downloads.mjs`: what the console is, the sentence that it is not
- *     released, the properties the console's own decisions fix (read-only, no telemetry,
- *     its own artifact), the release its download URLs are built from, and one download
- *     per published asset. Every sentence below is rendered from that file, and
- *     `website/test/console.mjs` asserts that: a page that writes its own copy of a fact is
- *     the copy that drifts first (F37, Global Constraint 6).
+ *     `src/lib/console-downloads.mjs`: what the console is, the sentence about the release,
+ *     the properties the console's own decisions fix (read-only, no telemetry, its own
+ *     artifact), the release its download URLs are built from, and one download per published
+ *     asset. Every sentence below is rendered from that file, and `website/test/console.mjs`
+ *     asserts that: a page that writes its own copy of a fact is the copy that drifts first
+ *     (F37, Global Constraint 6).
  *   - `website/data/site.yaml` — the site's own facts, read through `loadSite()`: the
  *     feature flag `features.console_downloads`, which is the flag the Go boundary test
  *     holds the whole of `website/` to (`internal/cli/docs_website_boundary_test.go`,
  *     `TestWebsiteLinksNoConsoleWhileTheFlagIsOff`), and the `repository` every download
  *     URL is composed from.
+ *   - `website/data/console-screens.yaml` — the console's screenshots, read through
+ *     `loadConsoleScreens()`: the four fixture captures the owner asked for on 2026-10-21
+ *     ("console page: screenshots missing"), served from `public/screenshots/`. The slider
+ *     renders the rows it is handed, and a list with no row in it draws no slider at all.
+ *
+ * **The headline is the data file's name, split and not rewritten.** The board draws the
+ * console's name in two lines with the last two words in the accent's gradient, so the line is
+ * split here the way the home page's headline is: the split is computed from the name itself,
+ * which is what keeps the rendered `h1` the data file's string rather than a second copy of it
+ * with a `<span>` in the middle (`website/src/components/Hero.astro`, D102).
+ *
+ * **The two actions are the page's own two phrases, and each one is held to the data file.**
+ * "Download for macOS" names the platform of the release's first published asset, and "Install
+ * the CLI first" is a clause of the data file's own sentence about the release — so the guard
+ * below refuses a build whose data file has stopped saying either. The first one is rendered
+ * only while the console has shipped: a page that offered a download for a console with no
+ * release would be pointing a reader at the section that says there is none.
  *
  * **The reader is shared, because two pages offer the console.** Getting Started's console
  * option renders the same artifact from the same module (the owner's changes spec of
@@ -33,7 +55,7 @@
  *
  * **The two flags are one fact, and the build refuses them disagreeing.** `site.yaml`'s
  * flag is what the repository-wide rule reads; `downloads.json`'s `available` is what the
- * section renders from. A build that rendered one state while the other said the opposite
+ * sections render from. A build that rendered one state while the other said the opposite
  * is exactly the drift the placeholder exists to prevent, so the disagreement stops the
  * build, naming both files — the same shape `content.ts` gives the analytics flag and its
  * measurement id (W1.3 step 2).
@@ -53,23 +75,133 @@ import { loadConsoleDownloads } from '../lib/console-downloads.mjs'
 const site = loadSite()
 const facts = loadConsoleDownloads(SITE_ROOT, site.facts.features.consoleDownloads, site.facts.repository)
 
-// The screenshots, at the top of the page and above the downloads (owner feedback
-// 2026-10-19). The list is empty until the owner takes the pictures, and an empty list
-// renders no slider and no placeholder: the page below is the page a reader gets today.
+// The screenshots, above the downloads (owner feedback 2026-10-19; the four captures landed on
+// 2026-10-21). The slider renders the data file's rows — the pictures, their alt text and their
+// captions — and a data file with no row in it renders no slider section at all.
 const { screens } = loadConsoleScreens()
+
+/**
+ * The two halves of the headline: the words before the gradient, and the words in it. The
+ * board draws `The Fugaro` in the text tone and `desktop console` in the accent's gradient,
+ * and **the split is taken from the name** rather than written here, so the `h1` a reader
+ * receives is still one string of the data file's with markup around its last words. Two
+ * words is the board's split, and a name of two words or fewer is a defect in this file
+ * rather than a headline with an empty first half.
+ */
+const GRADIENT_WORDS = 2
+const nameWords = facts.name.split(/\s+/).filter(Boolean)
+if (nameWords.length <= GRADIENT_WORDS) {
+  throw new Error(
+    `website/src/pages/console.astro: ${JSON.stringify(facts.name)} is ${nameWords.length} word(s), and the hero draws its last ${GRADIENT_WORDS} in the accent's gradient: a headline with nothing before the gradient is the split this page was written for, and the data file's name moved.`,
+  )
+}
+const HEADLINE_HEAD = nameWords.slice(0, -GRADIENT_WORDS).join(' ')
+const HEADLINE_GRADIENT = nameWords.slice(-GRADIENT_WORDS).join(' ')
+
+/**
+ * The status pill above the headline: the release a reader is looking at and the platform it
+ * is built for, both read out of the data file (`release.tag` is the prefix and the version
+ * composed, and the platform is the first published asset's own). The board draws the two
+ * together with a dot between them, and what makes this the repository's rather than this
+ * page's is the guard below: the platform is held to the data file's sentence about the
+ * release, so a pill can never name one no document speaks about.
+ *
+ * **The platform is `null` unless there is a release to read one from**, and that is what the
+ * pill and the download action are drawn on — not on `available` itself, and never on a bare
+ * first element of the list. Two states are the reason, and neither is hypothetical:
+ *
+ *   - an unavailable data file may carry the artifacts it will publish — the loader permits
+ *     `available: false` with a list of downloads, and the section renders none of them — so a
+ *     file that has not shipped can name a platform, and a hero that read the list would make
+ *     a claim about a release this repository says does not exist;
+ *   - and the opposite pair (`available: true` with an empty list) is refused by the loader,
+ *     naming the file (`src/lib/console-downloads.mjs`, "available is true and downloads is
+ *     empty"), which is why the read below asks for a first element rather than taking one:
+ *     the page's own guard against that state is its silence, because a `TypeError` from an
+ *     array position is a build with no message in it.
+ */
+const RELEASE_TAG = facts.release.tag
+const RELEASE_PLATFORM: string | null =
+  facts.available && facts.downloads.length > 0 ? facts.downloads[0].platform : null
+
+/**
+ * The two actions. The first names the platform the release's first asset is built for — the
+ * same platform the pill above carries, so the page's one download claim is made once and
+ * followed by the reader in one place — and the second is the data file's own clause about
+ * where a reader starts. Both are held to the data file below, and the first is `null` when
+ * there is no release to download.
+ */
+const CTA_DOWNLOAD: string | null = RELEASE_PLATFORM === null ? null : `Download for ${RELEASE_PLATFORM}`
+const CTA_CLI = 'Install the CLI first'
+
+// Hold the two actions and the pill to the data file's own sentence about the release. Each
+// name is a fact this page renders rather than a fact it holds: a platform the release's
+// sentence does not carry, or a "CLI first" the sentence has stopped saying, is this page
+// saying something no document of this repository says (Global Constraint 6) — and the day the
+// release's sentence is reworded, this is what stops the build rather than shipping a claim
+// with nothing behind it. A phrase that is `null` is a hero that draws nothing for it, so
+// there is nothing to hold.
+for (const phrase of [RELEASE_PLATFORM, CTA_CLI]) {
+  if (phrase === null) continue
+  if (!facts.released.text.includes(phrase)) {
+    throw new Error(
+      `website/src/pages/console.astro: the hero names ${JSON.stringify(phrase)} and ${JSON.stringify(facts.released.text)} — the data file's own sentence about the release — does not carry it: the hero's pill, its download action and its CLI link are written out of that sentence, and a page that names a fact its own data file does not is the page contradicting its data (Global Constraint 6).`,
+    )
+  }
+}
 ---
 
 <Base title="Console" description={facts.what.text}>
   <article>
-    <h1>{facts.name}</h1>
-    <p>{facts.what.text}</p>
+    {/* The board's first screen: what the console is, and the two things a reader does
+        next. It is a section with a name rather than a bare `div`, so the landmark is one a
+        screen reader can list, and it is the only block on the page with the board's
+        background glow behind it. */}
+    <section class="console-hero" aria-labelledby="console-title">
+      <div class="hero-glow" aria-hidden="true"></div>
 
-    {/* What the console looks like, before what it costs to get it: the slider is the first
-        thing under the lead, and it renders nothing at all while the data file is empty. */}
+      <div class="console-hero-copy">
+        {/* The release, while the repository says it has shipped: the tag its assets are
+            published under and the platform they are built for, both the data file's. */}
+        {RELEASE_PLATFORM !== null && (
+          <p class="pill console-pill">
+            <span class="console-pill-dot" aria-hidden="true" />
+            {RELEASE_TAG} · {RELEASE_PLATFORM}
+          </p>
+        )}
+
+        <h1 class="console-title display-xl" id="console-title">
+          {HEADLINE_HEAD}{' '}
+          <span class="gradient-text">{HEADLINE_GRADIENT}</span>
+        </h1>
+
+        {/* What the console is, in the data file's own sentence: a live view of your runs,
+            with no backend and no credential of its own. */}
+        <p class="console-lead">{facts.what.text}</p>
+
+        {/* What a reader does next: take the release, or read how to start with the CLI.
+            The first is rendered only while there is a release to take, and both are the
+            page's own words for actions the data file's sentence describes. */}
+        <p class="console-actions">
+          {CTA_DOWNLOAD !== null && (
+            <a class="console-cta" href="#downloads">
+              {CTA_DOWNLOAD}
+            </a>
+          )}
+          <a class="console-cta-quiet" href="/getting-started/">
+            {CTA_CLI}
+          </a>
+        </p>
+      </div>
+    </section>
+
+    {/* What the console looks like, before what it costs to get it: the slider renders the
+        data file's rows — the four fixture captures — and a data file with no row in it
+        renders no slider at all. */}
     <ScreenshotSlider screens={screens} />
 
-    {/* The downloads themselves: rendered from `downloads.json`, and rendering no link and
-        no button at all while the console is unreleased (W1.6 step 1). */}
+    {/* The downloads themselves: one card per platform, rendered from `downloads.json`, and
+        rendering no link and no button at all while the console is unreleased (W1.6 step 1). */}
     <Downloads
       available={facts.available}
       note={facts.notReleased.text}
@@ -78,18 +210,147 @@ const { screens } = loadConsoleScreens()
       linux={facts.linux}
     />
 
+    {/* The three properties the console's own decisions fix, in the board's cards: what it
+        does with a reader's cluster (nothing), what it sends (nothing) and where it comes
+        from (its own release). Each card is the data file's own title and sentence. */}
     <section id="console-facts" aria-labelledby="console-facts-heading">
-      <h2 id="console-facts-heading">Facts about the console</h2>
-      <dl class="console-properties">
+      <h2 id="console-facts-heading" class="display-lg">Facts about the console</h2>
+      <ul class="console-facts">
         {
           facts.properties.map((property) => (
-            <div class="console-property">
-              <dt>{property.title}</dt>
-              <dd>{property.text}</dd>
-            </div>
+            <li class="card console-fact">
+              <h3 class="console-fact-title">{property.title}</h3>
+              <p class="console-fact-text">{property.text}</p>
+            </li>
           ))
         }
-      </dl>
+      </ul>
     </section>
   </article>
 </Base>
+
+<style>
+  /* Tokens only (W1.2): every colour below is the palette in force, so the contrast check in
+     `website/test/a11y.mjs` is about the colours this page actually paints. */
+
+  /* The hero: the board's centred first screen, with the site's own glow behind it
+     (`base.css`'s `.hero-glow`, which needs a positioned, clipped parent). */
+  .console-hero {
+    position: relative;
+    overflow: hidden;
+    margin: 0 0 var(--space-2xl);
+  }
+
+  .console-hero-copy {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-md);
+    padding: var(--space-2xl) 0 var(--space-xl);
+    text-align: center;
+  }
+
+  .console-pill {
+    gap: var(--space-2xs);
+    font-size: var(--font-size-sm);
+  }
+
+  /* The pill's dot: the success tone, which is the one colour on the site that means "this is
+     running" — the same mark the home page's pill carries. A mark and not text, so it carries
+     no pair of its own. */
+  .console-pill-dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-pill);
+    background: var(--ok);
+  }
+
+  /* The headline: `base.css`'s `.display-xl`, the display scale's largest step, with the one
+     thing that is this page's own — a measure that keeps the name to the two lines the board
+     sets it in rather than running the width of a wide window. */
+  .console-title {
+    max-width: 20ch;
+  }
+
+  /* The lead under it: the data file's sentence about what the console is, at the size the
+     board sets a lead and no wider than a comfortable measure. */
+  .console-lead {
+    max-width: 60ch;
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xl);
+    line-height: var(--leading-snug);
+  }
+
+  /* The two actions, side by side and wrapping to two rows on a phone. */
+  .console-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-md);
+    margin: var(--space-xs) 0 0;
+  }
+
+  /* The filled action: the accent as the fill and the ground as the label, which is the one
+     colour on the page that means "this is the action" — the same shape the home page's call
+     to action is drawn in. It is written here rather than in `base.css` so that this page's
+     run touches no shared file; a second page needing it is the day it moves there. */
+  .console-cta {
+    display: inline-flex;
+    align-items: center;
+    box-sizing: border-box;
+    min-height: 44px;
+    padding: var(--space-sm) var(--space-lg);
+    border-radius: var(--radius-lg);
+    background: var(--accent);
+    color: var(--ground);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-lg);
+    font-weight: var(--weight-black);
+    text-decoration: none;
+  }
+
+  /* The second action is a link, not a second button: it keeps the underline `base.css` gives
+     every link in running text, so it reads as a link rather than as a disabled control beside
+     the filled one — and it is a control all the same, so it carries the same 44 px minimum. */
+  .console-cta-quiet {
+    display: inline-flex;
+    align-items: center;
+    box-sizing: border-box;
+    min-height: 44px;
+    font-size: var(--font-size-base);
+    font-weight: var(--weight-semibold);
+  }
+
+  /* The facts: the board's three cards, in the site's own grid shape, so a fourth property in
+     the data file needs no rule of its own. */
+  .console-facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+    gap: var(--space-md);
+    margin: var(--space-lg) 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .console-fact {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+  }
+
+  .console-fact-title {
+    margin: 0;
+    font-size: var(--font-size-xl);
+    font-weight: var(--weight-black);
+    letter-spacing: var(--tracking-tight);
+  }
+
+  .console-fact-text {
+    margin: 0;
+    color: var(--text-muted);
+  }
+</style>

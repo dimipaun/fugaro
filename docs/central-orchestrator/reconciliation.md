@@ -57,8 +57,8 @@ sentence turns on, for the reason `docs/coordinator/README.md` gives for its own
   the security service"*, *"its own named credential, issued and revocable through the
   security service"* — is a dependence on unbuilt work. This is the single largest ordering
   fact in this reconciliation, and it is **#21** below.
-- **C4 — and so is "the coordinator".** `docs/coordinator/` is *"reconciliation only; nothing
-  is implemented and no plan is approved"* (`README.md`), and its spec is explicit that the
+- **C4 — and so is "the coordinator".** `docs/coordinator/` is *"approved to build on the
+  branch `coordinator`, target 0.11.0; no code is implemented yet"* (`README.md`), and its spec is explicit that the
   coordinator never acts: *"Advisory, not authoritative … It never blocks or reorders
   merges"* (`spec.md`). The spec's *"Every orchestrator, local or central, reports to the
   coordinator in the same way"* therefore describes a reporting path with no reader.
@@ -511,7 +511,7 @@ escalation path in the spec ends at a notification channel that does not exist (
 --dangerously-skip-permissions`; `internal/runner/prompts.go`'s `SystemPrompt` tells the agent
 *"You are running unattended inside Fugaro, an ephemeral cloud worker. Nobody will answer
 questions"*; `internal/agent/settings.go`'s `WriteManagedSettings` adds only a
-`permissions.deny` for `deniedWebTools`. *Consequence:* *"When the agent needs input … it
+`permissions.deny` (`DenyRules`: `deniedWebTools`, and a review stage's binary reads). *Consequence:* *"When the agent needs input … it
 raises a prompt"* describes a capability the runner deliberately removed, and *"the job pauses
 only where it must"* has no pause (D8).
 
@@ -597,7 +597,8 @@ the tree does not have, and it must be written where the agent's prompt is built
 
 **#45 — A "restricted toolset" has one precedent, and it is narrow. — Exists (partial).**
 `internal/agent/settings.go`'s `WriteManagedSettings` writes a managed settings file whose only
-rule denies `deniedWebTools` (`WebSearch`, `WebFetch`) when a gateway is on. There is no
+rules are `DenyRules`' deny list: `deniedWebTools` (`WebSearch`, `WebFetch`) when a gateway is on,
+and the review stage's binary reads (`deniedBinaryReads`). There is no
 per-run tool allow-list, no per-run secret narrowing and no path-based tool refusal.
 
 **#46 — "They see only the secrets the fix needs" is not expressible today: secrets follow the job (profile), not the fix. — Wrong.**
@@ -645,8 +646,8 @@ branch would be the first Fugaro component to write a branch outside a run (D25)
 ### I. The neighbours: coordinator, always-on orchestrator, phase 2
 
 **#51 — The coordinator is advisory and unbuilt, and this spec gives it a job it has no way to do. — Gap.**
-`docs/coordinator/README.md` (*"reconciliation only; nothing is implemented and no plan is
-approved"*), `docs/coordinator/spec.md` (*"Advisory, not authoritative … It never blocks or
+`docs/coordinator/README.md` (*"approved to build on the branch `coordinator`, target
+0.11.0; no code is implemented yet"*), `docs/coordinator/spec.md` (*"Advisory, not authoritative … It never blocks or
 reorders merges"*), and its reconciliation's finding **#2** (there is no Cloud Run service;
 its #1 is the project-and-installation one). Its
 Q10 was answered **(A): one resident service per installation, with the coordinator as a role
@@ -1184,7 +1185,7 @@ unused, and **D193 onward** as free. **That is no longer the tree's state.** Rea
 at `main` now:
 
 - `docs/mobile/voice-session/` — merged on `main` in `1d325928` — writes **D201–D220**: its
-  `README.md` says *"decisions D201–D220"*, all open, and its `reconciliation.md` says of the
+  `README.md` says *"decisions D201–D220"*, all open when this was written (D205 has since been answered), and its `reconciliation.md` says of the
   gap beside them, *"this work starts at D201 and leaves D193–D200 alone"* — because the brief
   it was written from records **D200** as a ruling *"that this tree cannot cite"*. So
   **D201–D220 are written and taken by that work**, and **D193–D200 are unused** — and by the

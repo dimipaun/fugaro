@@ -37,6 +37,8 @@ import { REFUSALS as SCHEMA_REFUSALS, validateHeartbeat, validateMessage } from 
 import { REASON, STATE, evaluatePresence } from '../../../shared/presence/index.js';
 import { MemorySecureStore, SecretStore, secret } from '../accounts/index.js';
 import { CLIENT_CODES, MAILBOX_TTL_MS, PRESENCE_REASON, createMailboxClient, toPresenceHeartbeat } from './client.js';
+import { MemoryConnection } from './connection.js';
+import { GATE_CODES, OFFLINE_SPEECH } from './gate.js';
 import { macOf } from './mac.js';
 import { MemoryMailboxStore, STORE_CODES } from './store.js';
 import { MemorySpeaker } from './speaker.js';
@@ -122,6 +124,18 @@ class LoggedStore {
   reads() {
     return Object.freeze([...this.#reads]);
   }
+
+  /**
+   * Start counting from here: the harness's own observing pass (P6.10's M2) is
+   * fixture setup, and "poll read nothing" must stay a claim about the test's own
+   * calls and not about the pass that put the phone in the state the app is in.
+   * Nothing that happens after the mark is hidden, which is the whole point of
+   * marking rather than swapping the store out.
+   */
+  mark() {
+    this.#writes.length = 0;
+    this.#reads.length = 0;
+  }
 }
 
 /** A speaker that records the order it spoke in, beside the store's writes. */
@@ -153,6 +167,9 @@ async function harness(options = {}) {
   const store = new LoggedStore(db, events);
   const speaker = options.speaker ?? new LoggedSpeaker(events);
   const keys = options.keys ?? new SecretStore(new MemorySecureStore());
+  // P6.10's port: ONLINE unless a test says otherwise, so that a suite about
+  // signing and acking is not silently a suite about being in a tunnel.
+  const connection = options.connection ?? new MemoryConnection();
   // The key is stored under the INSTALLATION's id, which is not the mailbox's
   // (D114 vs the rules' `$mb == auth.uid`): the two tests that move the account
   // tuple are about exactly that.
@@ -163,6 +180,7 @@ async function harness(options = {}) {
     account: options.account ?? ACCOUNT,
     keys,
     store,
+    connection,
     speaker,
     now: () => nowMs,
     newId: options.newId ?? (() => `m-${++minted}`),
@@ -170,11 +188,51 @@ async function harness(options = {}) {
     heartbeatIntervalMs: options.heartbeatIntervalMs ?? INTERVAL_MS,
     ...(options.mailboxTtlMs === undefined ? {} : { mailboxTtlMs: options.mailboxTtlMs }),
   });
+
+  // **The phone starts where the app's does: one poll already made.**
+  //
+  // P6.10's gate fails closed on a consumer nothing has observed (the review's
+  // M2), so a harness that handed out a phone which had never looked would make
+  // every send in this file a test of the gate's `consumer-unobserved` refusal.
+  // The pass below is the state a paired, running phone is in within one
+  // heartbeat interval: a fresh heartbeat is delivered into the database the way
+  // the consumer's other end would write it (a delivery, not a phone write) and
+  // the client polls once, which is a read and mints no id.
+  //
+  // **It is fixture setup and not the scenario**, which is why the logs the test
+  // asserts on start here: `mark()` drops the reads this pass made, and it is
+  // the same for the event trail. Nothing else of the pass is invisible, and
+  // nothing needs to be: it speaks nothing (the databases a test hands in carry
+  // no unanswered outbox message -- the two restarts pass back a database whose
+  // one message is acked) and writes nothing (a poll on an empty outbox acks
+  // nothing). A test that wants the unobserved phone instead asks for it with
+  // `observe: false`, and a test that wants to watch this pass asserts on the
+  // client before the harness has made it.
+  if (options.observe !== false && options.pair !== false) {
+    // `deliver` and not `write`: this is the OTHER end's node, so it lands even
+    // where the phone's own port is set to refuse (`{failWrites: true}` is a
+    // store that says no to the phone, not a consumer that stopped writing),
+    // and it is not logged as a phone write -- `writes()` is the record of what
+    // the client asked for.
+    db.deliver(client.paths.heartbeat, signed(
+      { at: nowMs - 1_000, boot: 'boot-0001' },
+      'heartbeat',
+      options.key ?? MAC_KEY,
+    ));
+    await client.poll();
+    store.mark();
+    // The key's own count is fixture setup too: `countingKeys` answers "was the
+    // material asked for", and the observing poll asked for it legitimately.
+    if (typeof keys.mark === 'function') keys.mark();
+    events.length = 0;
+  }
+
   return {
     client,
     store,
     speaker,
     keys,
+    connection,
     db,
     events,
     paths: client.paths,
@@ -185,6 +243,11 @@ async function harness(options = {}) {
       nowMs += ms;
     },
     now: () => nowMs,
+    // How many ids the default source has minted. "The gate is asked before the
+    // id is minted" is an ordering claim about the client, and a claim about an
+    // ordering needs something to count: `minted` is that, the way
+    // `countingKeys`'s `asked()` is for the key.
+    minted: () => minted,
     valueAt: (path) => db.valueAt(path),
   };
 }
@@ -195,9 +258,13 @@ async function harness(options = {}) {
  * store answered, so the count is the thing a test asserts.
  */
 function countingKeys(inner) {
-  const asked = [];
+  let asked = [];
   return {
     asked: () => Object.freeze([...asked]),
+    /** Start counting from here: the harness's observing poll is setup. */
+    mark: () => {
+      asked = [];
+    },
     put: (accountId, item, value) => inner.put(accountId, item, value),
     use: (accountId, item, fn) => {
       asked.push(item);
@@ -275,6 +342,7 @@ test('every port and every value source is required, and nothing is guessed', ()
     account: ACCOUNT,
     keys: new SecretStore(new MemorySecureStore()),
     store: new MemoryMailboxStore(),
+    connection: new MemoryConnection(),
     speaker: new MemorySpeaker(),
     now: () => T0,
     newId: () => 'm-1',
@@ -285,11 +353,13 @@ test('every port and every value source is required, and nothing is guessed', ()
   // A missing port is a wiring bug, not a refusal a caller can ignore: a
   // client built without a key store would fail at the first utterance, with
   // the owner waiting.
+  // `connection` is deliberately NOT in this list: P6.10's port is optional and
+  // its default refuses (`UNWIRED_CONNECTION`) -- see the test below.
   for (const field of ['account', 'keys', 'store', 'speaker', 'now', 'newId', 'secrets', 'heartbeatIntervalMs']) {
     const { [field]: _gone, ...rest } = base;
     assert.throws(() => createMailboxClient(rest), TypeError, `without ${field}`);
   }
-  for (const field of ['keys', 'store', 'speaker']) {
+  for (const field of ['keys', 'store', 'connection', 'speaker']) {
     assert.throws(() => createMailboxClient({ ...base, [field]: {} }), TypeError, field);
   }
   assert.throws(() => createMailboxClient(null), TypeError);
@@ -309,6 +379,38 @@ test('every port and every value source is required, and nothing is guessed', ()
   }
 });
 
+test('a client built without a connection refuses to send, and says why (the review\'s BLOCKER)', async () => {
+  // The first version of P6.10 REQUIRED the port and threw without it, which
+  // broke seventy-seven of this app's own tests -- a wiring failure wearing a
+  // gate's clothes, and the review's BLOCKER. The port is optional now, and its
+  // default is the one that cannot send into the SDK's queue: a phone whose
+  // connection was never wired answers `no-connection`, so the owner is told
+  // "No connection. I have not sent that." instead of a write that arrives an
+  // hour later. (`connection.js`'s `UNWIRED_CONNECTION`.)
+  const wiring = {
+    account: ACCOUNT,
+    keys: new SecretStore(new MemorySecureStore()),
+    store: new MemoryMailboxStore(),
+    speaker: new MemorySpeaker(),
+    now: () => T0,
+    newId: () => 'm-1',
+    secrets: SECRETS,
+    heartbeatIntervalMs: INTERVAL_MS,
+  };
+  const client = createMailboxClient(wiring);
+  assert.equal(client.ok, true, 'a client without a connection is built, not thrown at');
+  assert.deepEqual(await client.send('run 42 finished'), {
+    ok: false,
+    code: GATE_CODES.NO_CONNECTION,
+    field: 'connection',
+    message: OFFLINE_SPEECH[GATE_CODES.NO_CONNECTION],
+    told: true,
+  });
+  // A port that IS given and cannot answer is still a wiring bug: the default
+  // covers "not wired", not "wired to nothing".
+  assert.throws(() => createMailboxClient({ ...wiring, connection: {} }), TypeError, 'a half-wired connection');
+});
+
 test('an account tuple that is not usable is a wiring failure carrying P3.1\'s code', () => {
   // The tuple is owner-typed, so its refusal is P3.1's -- and the message must
   // not echo what was in it (a tuple is printed nowhere).
@@ -318,6 +420,7 @@ test('an account tuple that is not usable is a wiring failure carrying P3.1\'s c
       account: broken,
       keys: new SecretStore(new MemorySecureStore()),
       store: new MemoryMailboxStore(),
+      connection: new MemoryConnection(),
       speaker: new MemorySpeaker(),
       now: () => T0,
       newId: () => 'm-1',
@@ -350,13 +453,15 @@ test('the client is frozen, and so are the paths it writes to', async () => {
   }, TypeError);
 });
 
-test('the client object is exactly its six names, and nothing else is on it', async () => {
+test('the client object is exactly its seven names, and nothing else is on it', async () => {
   // `index.test.js` pins the DOOR's export set; the object the builder returns
   // is the other half of the same rule, and it is the one a screen holds. A
   // `raw(path, value)` added here "for one screen" would be a second write path
   // with its own key handling -- the thing D113 and this whole task are about.
+  // `unsent` is P6.10's one addition, and it is a read: the utterances the gate
+  // refused, which nothing here will ever send.
   const h = await harness();
-  assert.deepEqual(Object.keys(h.client).sort(), ['flush', 'ok', 'paths', 'pending', 'poll', 'send']);
+  assert.deepEqual(Object.keys(h.client).sort(), ['flush', 'ok', 'paths', 'pending', 'poll', 'send', 'unsent']);
   for (const name of ['raw', 'write', 'read', 'store', 'keys', 'key', 'mac', 'database', 'ref']) {
     assert.equal(name in h.client, false, name);
   }
@@ -405,18 +510,28 @@ test('the message it writes is exactly the five fields, tagged over the schema\'
 });
 
 test('no unsigned write is ever attempted: without a key the store is not called', async () => {
-  // The plan's sentence, as a test. Three ways to have no usable key, and in
-  // all three the write set stays empty -- an unsigned message is never
-  // *attempted*, not merely never landed.
-  const unpaired = await harness({ pair: false });
+  // The plan's sentence, as a test. Two ways to have no usable key, and in both
+  // the write set stays empty -- an unsigned message is never *attempted*, not
+  // merely never landed.
+  //
+  // **The key goes missing AFTER the phone has looked, and P6.10's M2 is why.**
+  // A phone with no key cannot poll either (`poll` verifies the heartbeat with
+  // the same key), so a phone that never had one refuses at the gate as
+  // unobserved before the key is ever reached -- true, but not this test's
+  // question, which is what happens at the key. Taking the key away from a phone
+  // that has already observed the consumer is that question: the gate passes and
+  // the send stops where it should.
+  const gonePort = new MemorySecureStore();
+  const unpaired = await harness({ keys: new SecretStore(gonePort) });
+  await gonePort.deleteItem(`fugaro.account.${ACCOUNT.id}.macKey`);
   assert.deepEqual(await unpaired.client.send('run 42 finished'), refuse(CLIENT_CODES.NO_KEY, 'keys'));
   assert.deepEqual(unpaired.store.writes(), []);
 
   // The item is there and cannot be read (a value this module could not have
   // written): a different fact, and a different code.
   const port = new MemorySecureStore();
+  const unreadable = await harness({ keys: new SecretStore(port) });
   await port.setItem(`fugaro.account.${ACCOUNT.id}.macKey`, 42);
-  const unreadable = await harness({ keys: new SecretStore(port), pair: false });
   assert.deepEqual(await unreadable.client.send('run 42 finished'), refuse(CLIENT_CODES.KEY_UNREADABLE, 'keys'));
   assert.deepEqual(unreadable.store.writes(), []);
 
@@ -446,7 +561,11 @@ test('a pairing key short enough to turn up inside its own tag still speaks', as
   await plantOutbox(h, 'r-1', {}, { key: SHORT_KEY });
   const report = await h.client.poll();
   assert.deepEqual(report.spoken, ['r-1']);
-  assert.equal(report.presence.state, STATE.OFFLINE, 'an empty heartbeat node, and nothing more is claimed');
+  // The key reads BOTH directions: the harness has already observed the consumer
+  // through this same short key (P6.10's M2 means a phone has to have looked),
+  // so this poll sees a live orchestrator rather than an empty node -- and the
+  // fence cannot refuse one direction while accepting the other.
+  assert.equal(report.presence.state, STATE.LIVE);
 });
 
 test('the tag is over the REDACTED text, so a secret is in neither the bytes nor the tag', async () => {
@@ -548,12 +667,18 @@ test('a clock that is not a time, and an id that is not a database key, are refu
       account: ACCOUNT,
       keys: h.keys,
       store: h.store,
+      connection: h.connection,
       speaker: h.speaker,
       now: () => T0,
       newId: () => bad,
       secrets: SECRETS,
       heartbeatIntervalMs: INTERVAL_MS,
     });
+    // P6.10's gate refuses an unobserved consumer before it looks at the id
+    // (M2), and the observation is PER-CLIENT state: a second client is a second
+    // phone and has to have looked, so this one polls first, exactly as the
+    // harness does for its own.
+    await client.poll();
     assert.deepEqual(await client.send('run 42 finished'), refuse(CLIENT_CODES.BAD_ID, 'newId'), String(bad));
   }
   assert.deepEqual(h.store.writes(), [], 'an id the rules would refuse is not attempted either');
@@ -800,7 +925,9 @@ test('it acks nothing it has not spoken, and a failed speak leaves the message u
 });
 
 test('it does not speak or ack the same message twice', async () => {
-  const h = await harness();
+  // `observe: false`: this test is about the outbox, and the presence it asserts
+  // at the end is the one an EMPTY heartbeat node gives.
+  const h = await harness({ observe: false });
   await plantOutbox(h, 'r-1');
   await h.client.poll();
   const second = await h.client.poll();
@@ -1086,7 +1213,11 @@ test('an unreadable outbox is a refusal, and nothing is spoken', async () => {
 // ---------------------------------------------------------------------------
 
 test('a signed heartbeat is read through P1.4 and its agent list is carried', async () => {
-  const h = await harness();
+  // `observe: false`: every heartbeat below is this test's own, and the
+  // harness's observing pass would leave a heartbeat node the plant cannot
+  // rewrite (the template denies a second write) -- see the same note in
+  // `client.js`'s fixture section.
+  const h = await harness({ observe: false });
   await plantHeartbeat(h, { agents: [{ id: 'orch-1', name: 'orchestrator' }] });
   const report = await h.client.poll();
   assert.deepEqual(report.presence, {
@@ -1115,7 +1246,8 @@ test('an unsigned heartbeat, or one signed for another node, is offline with no 
   // itself as the agent the owner talks to -- which is why the tag covers the
   // agent list too.
   const AGENTS = [{ id: 'orch-1', name: 'orchestrator' }];
-  const unsigned = await harness();
+  // `observe: false`, here and below: every heartbeat is planted by this test.
+  const unsigned = await harness({ observe: false });
   // A heartbeat whose tag is there and wrong: the schema accepts the shape, so
   // the refusal is this client's (`heartbeat-unsigned`), not the schema's.
   await plantHeartbeat(unsigned, { agents: AGENTS }, { raw: { at: T0 - 1_000, boot: 'boot-0001', agents: AGENTS, mac: 'f'.repeat(64) } });
@@ -1129,18 +1261,18 @@ test('an unsigned heartbeat, or one signed for another node, is offline with no 
   });
   // ... and one with no tag at all is not a heartbeat: the schema refuses its
   // shape, before any tag is looked for.
-  const tagless = await harness();
+  const tagless = await harness({ observe: false });
   await plantHeartbeat(tagless, { agents: AGENTS }, { raw: { at: T0 - 1_000, boot: 'boot-0001', agents: AGENTS } });
   assert.equal((await tagless.client.poll()).presence.reason, PRESENCE_REASON.INVALID);
 
-  const reflected = await harness();
+  const reflected = await harness({ observe: false });
   await plantHeartbeat(reflected, {}, { direction: 'inbox' });
   assert.equal((await reflected.client.poll()).presence.reason, PRESENCE_REASON.UNSIGNED);
 
   // A heartbeat whose `at` was moved after it was signed: the tag no longer
   // covers the record, so it is worth nothing -- an old-but-honest heartbeat
   // and a rewritten one must not read the same.
-  const tampered = await harness();
+  const tampered = await harness({ observe: false });
   const honest = signed({ at: T0 - 1_000, boot: 'boot-0001' }, 'heartbeat');
   await plantHeartbeat(tampered, {}, { raw: { ...honest, at: T0 - 5_000_000 } });
   const tamperedReport = await tampered.client.poll();
@@ -1151,7 +1283,8 @@ test('an unsigned heartbeat, or one signed for another node, is offline with no 
 });
 
 test('an empty heartbeat node is offline, and garbage is offline too', async () => {
-  const empty = await harness();
+  // `observe: false`: an EMPTY node is the fixture, so nothing may plant one.
+  const empty = await harness({ observe: false });
   assert.deepEqual((await empty.client.poll()).presence, {
     state: STATE.OFFLINE,
     verified: false,
@@ -1159,7 +1292,7 @@ test('an empty heartbeat node is offline, and garbage is offline too', async () 
     agents: null,
     ageMs: null,
   });
-  const garbage = await harness();
+  const garbage = await harness({ observe: false });
   await garbage.db.write(HEARTBEAT, { boot: 'boot-0001' });
   const garbageReport = await garbage.client.poll();
   assert.equal(garbageReport.presence.reason, PRESENCE_REASON.INVALID);
@@ -1180,7 +1313,7 @@ test('a signed heartbeat P1.4 will not judge is offline for this module\'s own r
   // caller with a string neither `REASON` nor `PRESENCE_REASON` contains, which
   // is exactly what the presence contract at the top of `client.js` promises
   // cannot happen.
-  const h = await harness();
+  const h = await harness({ observe: false });
   await plantHeartbeat(h, { at: 0 });
   // The premise, held to the two modules' own code rather than to this comment.
   assert.equal(
@@ -1225,6 +1358,7 @@ test('an unreadable heartbeat does not stop the replies, and is never live', asy
     account: ACCOUNT,
     keys: h.keys,
     store: failing,
+    connection: h.connection,
     speaker: h.speaker,
     now: h.now,
     newId: () => 'm-1',
@@ -1427,7 +1561,17 @@ test('nothing in the module reads a clock, a random source, a file or a global',
   assert.equal(FORBIDDEN.some((pattern) => pattern.test(code(control))), true, 'the control is flagged');
   assert.equal(FORBIDDEN.some((pattern) => pattern.test(code(`// Date.now() is not read here`))), false, 'prose is not');
 
-  for (const name of ['client.js', 'paths.js', 'mac.js', 'sha256.js', 'store.js', 'speaker.js', 'redact.js']) {
+  for (const name of [
+    'client.js',
+    'paths.js',
+    'mac.js',
+    'sha256.js',
+    'store.js',
+    'speaker.js',
+    'redact.js',
+    'gate.js',
+    'connection.js',
+  ]) {
     const source = code(readFileSync(new URL(name, import.meta.url), 'utf8'));
     for (const pattern of FORBIDDEN) {
       assert.equal(pattern.test(source), false, `${name}: ${pattern}`);
@@ -1443,3 +1587,398 @@ test('nothing in the module reads a clock, a random source, a file or a global',
 function code(text) {
   return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 }
+
+// ---------------------------------------------------------------------------
+// The offline gate (P6.10; D167, G21)
+// ---------------------------------------------------------------------------
+//
+// The plan writes this task's verification as three clauses, and they are the
+// three sections below:
+//
+//   * with no connection, or a stale/offline consumer, **nothing is written**
+//     and **the user is told**;
+//   * an **action record is never queued**;
+//   * the client **never relies on the SDK's offline queue** -- a test that
+//     pending writes are never issued.
+//
+// Everything here runs over a fake connection state (`MemoryConnection`) and a
+// store whose SDK queue can be turned on (`MemoryMailboxStore.setOffline`), so
+// the claims are about decisions and not about a network.
+
+/** D169's action record, as P6.2's machine would hand one over. */
+function actionRecord(at) {
+  return {
+    id: 'a-1',
+    verb: 'cancel',
+    target: { run: 'run-42' },
+    confirmation: { id: 'c-1', at },
+  };
+}
+
+test('with no connection nothing is written, and the owner is told why', async () => {
+  const h = await harness();
+  h.connection.setOnline(false);
+  const refused = await h.client.send('cancel the docs refactor');
+  assert.deepEqual(refused, {
+    ok: false,
+    code: GATE_CODES.NO_CONNECTION,
+    field: 'connection',
+    message: OFFLINE_SPEECH[GATE_CODES.NO_CONNECTION],
+    told: true,
+  });
+  // Nothing was written, nothing was read, and no id was minted for it: the
+  // gate is asked before `newId`, so a refused utterance cannot leave a hole in
+  // the id sequence that looks like a lost message.
+  assert.deepEqual(h.store.writes(), [], 'nothing was written');
+  assert.deepEqual(h.store.reads(), [], 'nothing was read');
+  assert.equal(h.minted(), 0, 'no id was minted for a refused utterance');
+  // And the owner heard it. "Says why" is D167's own requirement, and the
+  // speaker is the one port this directory has for saying anything.
+  assert.deepEqual(h.speaker.spoken(), [OFFLINE_SPEECH[GATE_CODES.NO_CONNECTION]]);
+  // D167's "keeps the utterance only as unsent text the user can resend": the
+  // text is there, the REDACTED text, and it is not in the outbox queue.
+  assert.deepEqual(h.client.unsent(), [
+    { text: 'cancel the docs refactor', at: T0, code: GATE_CODES.NO_CONNECTION },
+  ]);
+  assert.deepEqual(h.client.pending(), [], 'unsent is not queued');
+});
+
+test('a gated utterance is not delivered when the connection comes back', async () => {
+  // D167's claim is not "it is not sent NOW" but "it is never sent": the phone
+  // holds no queue of its own for a sentence the gate refused. The refusal is
+  // one half of that; this is the other half, and it is the half the SDK's own
+  // queue fails -- a write handed over while offline arrives on reconnect, at a
+  // time nobody chose. The existing queue test does this for an ACTION; a
+  // command is the case the hazard is about, so it is done for one here.
+  const h = await harness();
+  h.connection.setOnline(false);
+  const refused = await h.client.send('cancel the docs refactor');
+  assert.equal(refused.code, GATE_CODES.NO_CONNECTION);
+  assert.equal(h.minted(), 0, 'no id was minted for the refused utterance');
+
+  // The tunnel ends and the phone does a full pass.
+  h.connection.setOnline(true);
+  h.advance(60_000);
+  const flushed = await h.client.flush();
+  const polled = await h.client.poll();
+
+  // Nothing either call did carries the sentence: no write on reconnect, nothing
+  // held for one, nothing in the outbox queue waiting for the TTL.
+  assert.equal(flushed.ok, true, 'the flush itself ran');
+  assert.equal(polled.ok, true, 'and so did the poll');
+  assert.deepEqual(h.store.writes(), [], 'the reconnect writes nothing of it');
+  assert.deepEqual(h.client.pending(), [], 'and never queued it');
+  // The id counter is the sharper witness: `flush` re-sends what `outbound`
+  // holds, and a refused utterance was never put there, so no id was minted for
+  // it even after the connection came back.
+  assert.equal(h.minted(), 0, 'no id was ever minted for it');
+  // What is left of it is the owner's text, waiting to be said again by hand --
+  // this module never resends it.
+  assert.deepEqual(h.client.unsent().map((kept) => kept.text), ['cancel the docs refactor']);
+});
+
+test('the connection is asked before the key is, and before anything is written', async () => {
+  // The ordering is the guard rather than a detail: a gate that runs after the
+  // tag is made has already read the pairing key for an utterance that was
+  // never going to be sent, and a gate that runs after the write has already
+  // handed the write to the SDK.
+  const h = await harness({ keys: countingKeys(new SecretStore(new MemorySecureStore())), pair: false });
+  await pair(h.keys, MAC_KEY);
+  h.connection.setOnline(false);
+  const refused = await h.client.send('run 42 finished');
+  assert.equal(refused.code, GATE_CODES.NO_CONNECTION);
+  assert.deepEqual(h.keys.asked(), [], 'the key was never asked for');
+  assert.deepEqual(h.store.writes(), [], 'nothing was written');
+  assert.deepEqual(h.connection.asked().slice(-1), [false], 'the connection was what was asked');
+});
+
+test('a connection that goes while the key is being read is caught at the write', async () => {
+  // **The review's M1, as a test.** The gate at the top of `send` is what keeps
+  // the id, the key and the tag from happening at all -- and it is not the last
+  // word, because the key read between the two is a Keychain on a device: a
+  // prompt the owner may take seconds to answer, over which the connection can
+  // go. A write handed to the SDK after that is a write the SDK HOLDS and sends
+  // on reconnect, which is the one thing D167 rules out (G21). So the gate is
+  // asked again immediately before the write, and this test takes the connection
+  // away inside the key's own callback -- the moment no other test can reach.
+  const inner = new SecretStore(new MemorySecureStore());
+  let goOff = null;
+  const keys = Object.freeze({
+    put: (...args) => inner.put(...args),
+    use: async (accountId, item, fn) => {
+      const answer = await inner.use(accountId, item, fn);
+      // The connection goes while the Keychain is up: the `await` above is that
+      // prompt, and the client has already minted an id and made a tag.
+      if (goOff !== null) goOff.setOnline(false);
+      return answer;
+    },
+  });
+  const h = await harness({ keys, newId: () => 'm-1' });
+  // Armed only now: the harness's own observing poll is fixture setup and reads
+  // the key too.
+  goOff = h.connection;
+
+  const refused = await h.client.send('run 42 finished');
+  assert.deepEqual(refused, {
+    ok: false,
+    code: GATE_CODES.NO_CONNECTION,
+    field: 'connection',
+    message: OFFLINE_SPEECH[GATE_CODES.NO_CONNECTION],
+    told: true,
+  });
+  assert.deepEqual(h.store.writes(), [], 'the write never reached the SDK, and never will');
+  // The id was minted and then NOT recorded as used: a send that died between
+  // the tag and the write leaves the id free rather than burning it, and the
+  // same id goes out on the next attempt. (Were it burned, this second send
+  // would be refused as `id-conflict` and the utterance would be lost.)
+  goOff = null;
+  h.connection.setOnline(true);
+  assert.deepEqual(await h.client.send('run 42 finished'), { ok: true, id: 'm-1', at: T0 });
+  assert.deepEqual(h.store.writes().map((entry) => entry.path), [h.paths.inboxMessage('m-1')]);
+});
+
+test('a speak that failed does not change the refusal, and says so', async () => {
+  // The refusal's CODE is what a screen switches on, and it must not depend on
+  // whether the owner happened to be listening. `told` reports that separately.
+  const h = await harness();
+  h.speaker.setFailing(true);
+  h.connection.setOnline(false);
+  const refused = await h.client.send('run 42 finished');
+  assert.equal(refused.code, GATE_CODES.NO_CONNECTION);
+  assert.equal(refused.told, false);
+  assert.deepEqual(h.store.writes(), []);
+  // The utterance is still kept: the owner can still resend it, and the text
+  // screen (P6.9) shows it even though the speaker did not.
+  assert.equal(h.client.unsent().length, 1);
+});
+
+test('flush writes nothing while the connection is down, and keeps what it has', async () => {
+  // The second half of "nothing is written", and the one a reader is most
+  // likely to miss: a re-send is a write too, and with no connection it goes
+  // into the SDK's queue exactly like a first one.
+  const h = await harness({ db: new MemoryMailboxStore({ failWrites: true }) });
+  const sent = await h.client.send('run 42 finished');
+  assert.equal(sent.ok, false, 'the write did not land');
+  h.db.setFailures({ failWrites: false });
+  const before = h.store.writes().length;
+  h.connection.setOnline(false);
+  const refused = await h.client.flush();
+  assert.deepEqual(refused, { ok: false, code: GATE_CODES.NO_CONNECTION, field: 'connection' });
+  assert.equal(h.store.writes().length, before, 'no write was attempted');
+  assert.equal(h.client.pending().length, 1, 'the record is still there');
+  // And with the connection back, the same record goes out, unchanged.
+  h.connection.setOnline(true);
+  const flushed = await h.client.flush();
+  assert.deepEqual(flushed.written, ['m-1']);
+  assert.equal(h.client.pending()[0].landed, true);
+  assert.equal(h.store.writes().length, before + 1);
+});
+
+test('an offline poll does nothing at all, and hears nothing', async () => {
+  // A poll with no connection would read the SDK's cache (and could believe a
+  // heartbeat that stopped being written) and would ack a message it read out
+  // of that cache. There is nothing it can do that is not wrong, so it does
+  // nothing.
+  const h = await harness();
+  await plantOutbox(h, 'r-1');
+  h.connection.setOnline(false);
+  const refused = await h.client.poll();
+  assert.deepEqual(refused, { ok: false, code: GATE_CODES.NO_CONNECTION, field: 'connection' });
+  assert.deepEqual(h.store.reads(), [], 'nothing was read');
+  assert.deepEqual(h.store.writes(), [], 'nothing was written');
+  assert.deepEqual(h.speaker.spoken(), [], 'and nothing was spoken over the owner');
+});
+
+test('a consumer that has gone quiet since the last poll refuses the sentence', async () => {
+  // The gate reads the LAST poll's heartbeat and judges it AGAIN, at the moment
+  // the owner speaks. A verdict cached at poll time would say "live" for a
+  // consumer that died five minutes ago, which is the sentence D167 is about.
+  const h = await harness();
+  await plantHeartbeat(h);
+  const polled = await h.client.poll();
+  assert.equal(polled.presence.state, STATE.LIVE);
+  assert.equal((await h.client.send('run 42 finished')).ok, true, 'a live consumer is spoken to');
+  h.advance(INTERVAL_MS * 5);
+  const refused = await h.client.send('and another thing');
+  assert.deepEqual(refused, {
+    ok: false,
+    code: GATE_CODES.CONSUMER_STALE,
+    field: 'presence',
+    message: OFFLINE_SPEECH[GATE_CODES.CONSUMER_STALE],
+    told: true,
+  });
+  assert.equal(h.store.writes().length, 1, 'only the first utterance was written');
+});
+
+test('a consumer that is offline, or unsigned, or on another clock, refuses too', async () => {
+  // P1.4's other three states, each through the client rather than through the
+  // gate alone: the presence the client reports is the presence the gate reads.
+  for (const [name, plant, code] of [
+    ['silent', async (h) => { await plantHeartbeat(h); h.advance(INTERVAL_MS * 20); }, GATE_CODES.CONSUMER_OFFLINE],
+    ['empty', async () => {}, GATE_CODES.CONSUMER_OFFLINE],
+    ['unsigned', async (h) => { await plantHeartbeat(h, {}, { raw: { at: h.now() - 1_000, boot: 'boot-0001' } }); }, GATE_CODES.CONSUMER_OFFLINE],
+    ['another node\'s', async (h) => { await plantHeartbeat(h, {}, { direction: 'inbox' }); }, GATE_CODES.CONSUMER_OFFLINE],
+    ['ahead of the server', async (h) => { await plantHeartbeat(h, { at: h.now() + INTERVAL_MS * 5 }); }, GATE_CODES.CONSUMER_CLOCK_DIFFERS],
+  ]) {
+    // `observe: false`: the presence each case asserts is the one its own
+    // planting (or its own empty database) produces, and each one polls for it
+    // before the send.
+    const h = await harness({ observe: false });
+    await plant(h);
+    const polled = await h.client.poll();
+    assert.equal(polled.presence.state === STATE.LIVE, false, name);
+    const refused = await h.client.send('run 42 finished');
+    assert.equal(refused.code, code, name);
+    assert.deepEqual(h.store.writes(), [], name);
+    assert.deepEqual(h.speaker.spoken(), [OFFLINE_SPEECH[code]], name);
+  }
+});
+
+test('before anything has been observed the phone refuses, and then sends once it has looked', async () => {
+  // **The review's M2, at the client.** The first version of the gate let a
+  // phone that had never polled send, on the argument that `null` is not
+  // evidence that the consumer is down. A gate that sends on "probably fine" is
+  // the gate G21 is about, so it fails closed: an unobserved consumer is a
+  // refusal, with its own code, and the owner is told which of the two it is
+  // ("I have not heard from the orchestrator yet" and not "it is offline").
+  // The cost is one poll before the first sentence, which is asserted here as
+  // the way out rather than argued about.
+  const h = await harness({ observe: false });
+  const refused = await h.client.send('run 42 finished');
+  assert.deepEqual(refused, {
+    ok: false,
+    code: GATE_CODES.CONSUMER_UNOBSERVED,
+    field: 'presence',
+    message: OFFLINE_SPEECH[GATE_CODES.CONSUMER_UNOBSERVED],
+    told: true,
+  });
+  assert.deepEqual(h.store.writes(), [], 'nothing was written');
+  assert.equal(h.minted(), 0, 'and no id was minted');
+  assert.deepEqual(h.client.pending(), []);
+  assert.deepEqual(h.client.unsent(), [
+    { text: 'run 42 finished', at: T0, code: GATE_CODES.CONSUMER_UNOBSERVED },
+  ]);
+
+  // The look that changes it: one poll over the consumer's own heartbeat, and
+  // the same sentence goes out.
+  await plantHeartbeat(h);
+  const polled = await h.client.poll();
+  assert.equal(polled.presence.state, STATE.LIVE);
+  assert.deepEqual(await h.client.send('run 42 finished'), { ok: true, id: 'm-1', at: T0 });
+
+  // ... and once the consumer has been observed and gone quiet, the refusal is
+  // the offline one and not the unobserved one: the two are not the same news.
+  h.advance(INTERVAL_MS * 20);
+  assert.equal((await h.client.send('and another thing')).code, GATE_CODES.CONSUMER_OFFLINE);
+});
+
+test('an action record is written once and never queued', async () => {
+  // D167: "a destructive action record is never queued at all". It is not in
+  // the outbox, so `flush` cannot re-send it, `pending()` cannot offer it and
+  // the next poll cannot retry it -- a destructive command that arrives late is
+  // exactly what the gate exists to prevent, and a retry is the same arrival
+  // with a longer fuse.
+  const h = await harness();
+  const sent = await h.client.send('cancel the docs refactor', { action: actionRecord(T0) });
+  assert.deepEqual(sent, { ok: true, id: 'm-1', at: T0 });
+  assert.deepEqual(h.store.writes().map((entry) => entry.path), [`${INBOX}/m-1`]);
+  assert.equal(h.store.writes()[0].value.kind, 'action');
+  assert.deepEqual(h.store.writes()[0].value.action, actionRecord(T0));
+  assert.deepEqual(h.client.pending(), [], 'an action is not in the outbox queue');
+  assert.deepEqual(h.client.unsent(), [], 'and it is not unsent text either');
+  await h.client.flush();
+  assert.equal(h.store.writes().length, 1, 'flush never re-sends an action');
+});
+
+test('an action whose write did not land is dropped, not retried', async () => {
+  // The same rule from the other side: an action that reaches the store and is
+  // refused is REPORTED and forgotten. The owner confirms again (P6.2), which
+  // is a new action id and a new confirmation -- not a silent retry of this one.
+  const h = await harness({ db: new MemoryMailboxStore({ failWrites: true }) });
+  const refused = await h.client.send('cancel the docs refactor', { action: actionRecord(T0) });
+  assert.equal(refused.ok, false);
+  assert.deepEqual(h.client.pending(), []);
+  h.db.setFailures({ failWrites: false });
+  await h.client.flush();
+  assert.equal(h.store.writes().length, 1, 'the failed action was not re-sent');
+});
+
+test('a gated action is not kept as unsent text either', async () => {
+  // The two rules meet here. With no connection the action is refused BEFORE
+  // anything is written -- and it is not offered back as text to resend, because
+  // resending a destructive command means confirming it again.
+  const h = await harness();
+  h.connection.setOnline(false);
+  const refused = await h.client.send('cancel the docs refactor', { action: actionRecord(T0) });
+  assert.equal(refused.code, GATE_CODES.NO_CONNECTION);
+  assert.equal(refused.told, true, 'the owner is still told');
+  assert.deepEqual(h.client.unsent(), [], 'but nothing is kept');
+  assert.deepEqual(h.client.pending(), []);
+  assert.deepEqual(h.store.writes(), []);
+});
+
+test('the client never relies on the SDK\'s offline queue: nothing is ever issued', async () => {
+  // G21's hazard made concrete. The store here is the SDK: with an offline flag
+  // set it does not refuse a write, it HOLDS it and resolves it as though it had
+  // landed. The gate's job is that the client never hands it anything -- and the
+  // test is worth nothing unless the queue would have noticed, so the positive
+  // control comes first.
+  const h = await harness();
+  h.db.setOffline(true);
+  await h.db.write(`${INBOX}/handed-over`, { any: 'value' });
+  assert.equal(h.db.pendingWrites().length, 1, 'the queue does notice a write it is given');
+  assert.equal(h.db.cancelPending(), 1);
+
+  h.connection.setOnline(false);
+  const refused = await h.client.send('cancel the docs refactor', { action: actionRecord(T0) });
+  assert.equal(refused.code, GATE_CODES.NO_CONNECTION);
+  assert.deepEqual(h.store.writes(), [], 'no write was issued');
+  assert.deepEqual(h.db.pendingWrites(), [], 'and the SDK is holding nothing of ours');
+  // The reconnect, spelled out: had a write been handed over, this is where it
+  // would have run -- hours later, at a time nobody chose. It is empty.
+  h.db.setOffline(false);
+  assert.deepEqual(h.db.flushQueue(), { applied: [], refused: [] });
+  assert.equal(h.valueAt(`${INBOX}/m-1`), null);
+  assert.equal(h.valueAt(`${INBOX}/handed-over`), null);
+});
+
+test('a sentence comes from the gate alone, and every other refusal is bare', async () => {
+  // README's bullet tells the screens (P6.9's text screen, P6.12's voice screen)
+  // which refusal they may render. The claim was wrong twice: first it said
+  // `flush` and `poll` carry a sentence too, then it said every refused `send`
+  // does -- and the second is the worse one, because a screen following it
+  // renders `undefined` on exactly the refusals it meets most (`bad-text`,
+  // `too-long`, the redactor's, the key's, the store's). So all three shapes are
+  // asserted here, and the `message` key's ABSENCE is the assertion.
+  const h = await harness();
+  h.connection.setOnline(false);
+
+  const gated = await h.client.send('cancel the docs refactor');
+  assert.equal(gated.message, OFFLINE_SPEECH[GATE_CODES.NO_CONNECTION]);
+  assert.equal(typeof gated.told, 'boolean', 'a gated `send` says whether it was heard');
+
+  // Still no connection: these two are the gate's refusals, and the gate has no
+  // sentence for a read or a re-send.
+  const whileOffline = [
+    ['flush', await h.client.flush()],
+    ['poll', await h.client.poll()],
+  ];
+
+  // The connection comes back, so this one is a refusal the gate did NOT make --
+  // an ordinary failure of an ordinary send, and the shape the screens meet most.
+  h.connection.setOnline(true);
+  const tooLong = await h.client.send('x'.repeat(4097));
+
+  for (const [what, refused] of [...whileOffline, ['a `send` the gate did not refuse', tooLong]]) {
+    assert.equal(refused.ok, false, `a refused ${what} is a refusal`);
+    assert.deepEqual(
+      Object.keys(refused).sort(),
+      ['code', 'field', 'ok'],
+      `nothing to render and nothing to speak on ${what}: no \`message\`, no \`told\``,
+    );
+    assert.equal(refused.message, undefined, `no sentence on ${what}`);
+  }
+  // And it is still refused for its own reason: the bare shape is not one code.
+  assert.equal(tooLong.code, CLIENT_CODES.TOO_LONG, 'and it is the refusal it says it is');
+  assert.equal(whileOffline[0][1].code, GATE_CODES.NO_CONNECTION);
+});

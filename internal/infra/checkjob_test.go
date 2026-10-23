@@ -25,7 +25,7 @@ const (
 )
 
 // The rewrite is byte for byte what Repo renders for the new base: the next
-// init --repo from that local config plans no change to the job.
+// fugaro update from that local config plans no change to the job.
 func TestRewriteCheckSpecEqualsTerraformRendering(t *testing.T) {
 	before, err := Repo(sandboxInputs(t, m5Additions))
 	if err != nil {
@@ -94,12 +94,12 @@ func TestRewriteCheckSpecRefusals(t *testing.T) {
 		"legacy spec, image names no kind": {`{"base_images":{"go":"` + oldBase + `"}}`, "elsewhere/img:1", "none of its spec's base images"},
 		"unknown key":                      {string(unknown), oldBase, "keys this fugaro does not know"},
 		"unknown, indented":                {string(indented), oldBase, "keys this fugaro does not know"},
-		"reformatted":                      {string(reformatted), oldBase, "not in the form fugaro init --repo writes"},
+		"reformatted":                      {string(reformatted), oldBase, "not in the form fugaro update writes"},
 		"legacy spec, unknown key":         {string(legacyUnknown), oldBase, "keys this fugaro does not know"},
-		"legacy spec, reformatted":         {string(legacyReformatted), oldBase, "not in the form fugaro init --repo writes"},
+		"legacy spec, reformatted":         {string(legacyReformatted), oldBase, "not in the form fugaro update writes"},
 	} {
 		_, _, err := RewriteCheckSpec(tc.raw, tc.image, map[string]string{"base": newBase})
-		if !errors.Is(err, ErrCheckJobShape) || !strings.Contains(err.Error(), tc.why) || !strings.Contains(err.Error(), "fugaro init --repo") {
+		if !errors.Is(err, ErrCheckJobShape) || !strings.Contains(err.Error(), tc.why) || !strings.Contains(err.Error(), "fugaro update") {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
@@ -135,7 +135,7 @@ func TestRewriteCheckSpecReplacesLegacyKinds(t *testing.T) {
 }
 
 // checkJobJSON is acme/sandbox's check job as Cloud Run's jobs get returns
-// it after init --repo made it from oldBase with check.tf (labels on the
+// it after fugaro update made it from oldBase with check.tf (labels on the
 // job and its template, max_retries = 0, timeout, service account, args,
 // the env with a secret reference), plus output-only fields and fields this
 // Go client does not model, which must all survive. edit changes it first.
@@ -237,7 +237,7 @@ func checkJobCloud(t *testing.T, edit func(j map[string]any)) (*cloud, RepoSpec,
 var toNew = map[string]string{"base": newBase}
 
 // workflowJobJSON is a workflow job as Cloud Run's jobs get returns it after
-// init --repo made it: labels on the job and its template (fugaro_workflow
+// fugaro update made it: labels on the job and its template (fugaro_workflow
 // in place of the check job's fugaro_role/check), max_retries 0, one
 // container, and output-only fields and fields this Go client does not
 // model, which must all survive. edit changes it first.
@@ -375,7 +375,7 @@ func TestPlanCheckJobIgnoresASpecsFormWhenNothingMoves(t *testing.T) {
 	}
 }
 
-// A job that is not this repository's check job as init --repo made it is
+// A job that is not this repository's check job as fugaro update made it is
 // refused before anything is written.
 func TestPlanCheckJobRefusesAForeignOrMisshapenJob(t *testing.T) {
 	setSpecRepo := func(j map[string]any, repo string) {
@@ -670,7 +670,7 @@ func TestApplyWorkflowJobChangesOnlyImage(t *testing.T) {
 	}
 }
 
-// A job that is not this repository's workflow job as init --repo made it
+// A job that is not this repository's workflow job as fugaro update made it
 // is refused before anything is written. The "wrong workflow" case is the
 // one that matters most: it is what would let PlanWorkflowJob match and
 // rewrite another workflow's job (or the check job) by mistake.
@@ -701,7 +701,7 @@ func TestPlanWorkflowJobRefusesAForeignOrMisshapenJob(t *testing.T) {
 		"no image": {func(j map[string]any) { container(j)["image"] = "" }, "no image"},
 		// A baked workflow's job must never be moved onto the base image: it
 		// still expects the checkout baked into its own image, so the
-		// FUGARO_CHECKOUT=clone init --repo writes is required too.
+		// FUGARO_CHECKOUT=clone fugaro update writes is required too.
 		"no FUGARO_CHECKOUT": {func(j map[string]any) { delete(container(j), "env") }, "no FUGARO_CHECKOUT=clone"},
 		"a baked job":        {func(j map[string]any) { envEntry(j)["value"] = config.CheckoutBaked }, "no FUGARO_CHECKOUT=clone"},
 		"FUGARO_CHECKOUT from a secret": {func(j map[string]any) {

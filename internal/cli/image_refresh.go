@@ -172,7 +172,7 @@ func (e *noCheckout) Unwrap() error { return e.err }
 func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions) (*refreshPlan, error) {
 	ver := releaseVersion()
 	if ver == "" {
-		return nil, &refusedAsIs{userErr("fugaro image refresh pins this release's base images through the remote repository, and this is a development build (%s) with none published: use a release build, or build a base from a checkout and point at it with fugaro init --base-image KIND=<tag>", Version)}
+		return nil, &refusedAsIs{userErr("fugaro image refresh pins this release's base images through the remote repository, and this is a development build (%s) with none published: use a release build, or build a base from a checkout and point at it with fugaro update --base-image KIND=<tag>", Version)}
 	}
 	if _, err := gitRead(ctx, o.checkoutDir(), "rev-parse", "--show-toplevel"); err != nil {
 		target := "the repository"
@@ -212,7 +212,7 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 		}
 	}
 	if oi, ok := readOrigin(ctx, root); !ok || !repoKnown(lc, oi) {
-		return nil, userErr("%s is not one of project %s's repositories in the local config, and fugaro image refresh never onboards a repository: onboard it with fugaro init in %s first", pluginwire.Printable(repo), lc.Name, o.checkoutName(root))
+		return nil, userErr("%s is not one of project %s's repositories in the local config, and fugaro image refresh never onboards a repository: onboard it with fugaro update --repo in %s first", pluginwire.Printable(repo), lc.Name, o.checkoutName(root))
 	}
 	all := slices.Sorted(maps.Keys(cfg.Workflows))
 	wfs := all
@@ -306,7 +306,7 @@ func (p *refreshPlan) print(w io.Writer) {
 	for _, wf := range p.workflows {
 		fmt.Fprintf(w, "     %s: %s\n", wf, p.why[wf])
 	}
-	fmt.Fprintln(w, "  5. then, if this checkout's fugaro.yaml lacks gcp_project: the fugaro init --anchor command to run next (fugaro image refresh never writes fugaro.yaml)")
+	fmt.Fprintln(w, "  5. then, if this checkout's fugaro.yaml lacks gcp_project: the fugaro update --anchor command to run next (fugaro image refresh never writes fugaro.yaml)")
 }
 
 // current: nothing for steps 2 and 4 to do, since every kind already records
@@ -335,13 +335,13 @@ func newImageRefreshCmd() *cobra.Command {
 			"(2) resolves this release's base image of each selected workflow's kind at\n" +
 			"its -pinned tag, verifies its cosign signature, reads the digest back\n" +
 			"through the installation's remote repository and pins base_images.<kind> to\n" +
-			"it, as fugaro init --base does (nothing is copied);\n" +
+			"it, as fugaro update --base does (nothing is copied);\n" +
 			"(3) points the repository's daily image check job at it (its image and\n" +
 			"FUGARO_CHECK_SPEC's base images) through the Cloud Run Admin API, with no\n" +
 			"Terraform; (4) rebuilds each selected workflow whose build record says it\n" +
 			"was built from another base, or that has no build record or one that\n" +
 			"cannot be read (billable: the project's name typed for each, or --yes);\n" +
-			"(5) names fugaro init --anchor when fugaro.yaml lacks gcp_project.\n\n" +
+			"(5) names fugaro update --anchor when fugaro.yaml lacks gcp_project.\n\n" +
 			"A base_images entry that is neither this release's pin nor a release image\n" +
 			"an earlier fugaro copied (a development or hand-pushed image) stops it\n" +
 			"before anything changes, with or\n" +
@@ -364,8 +364,8 @@ func newImageRefreshCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&o.repo, "repo", "", "owner/name of the repository; it must be this checkout's origin (refresh reads fugaro.yaml from the checkout)")
 	f.StringArrayVar(&o.workflows, "workflow", nil, "a workflow to refresh (repeatable; default: every workflow in fugaro.yaml)")
-	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release base images come from, as for fugaro init (default ghcr.io/dimipaun)")
-	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "cross-check the digest of a base image's release signature, KIND=sha256:<hex>, as for fugaro init (repeatable)")
+	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release base images come from, as for the converge (default ghcr.io/dimipaun)")
+	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "cross-check the digest of a base image's release signature, KIND=sha256:<hex>, as for the converge (repeatable)")
 	f.BoolVar(&o.yes, "yes", false, "confirm every step without asking (the base copy, the check-job update and each billable build, with no cap on how many run), and without a terminal: for CI or a script. The plan is still printed first. Never confirmed in a coding agent's session (CLAUDECODE and the like): nothing is applied there, --yes included. Without --yes nothing changes: a real terminal and the typed confirmations are still required, as always")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
@@ -442,7 +442,7 @@ var newRefreshSteps = func(r *initRun, e *initEngine, p *refreshPlan) refreshSte
 // lacks gcp_project; refresh never writes it.
 func refreshAnchorNote(ctx context.Context, w io.Writer, root, here string, lc *localcfg.Config) {
 	if co, err := checkoutProject(ctx, root); err == nil && needsAnchorHint(ctx, co, lc) {
-		fmt.Fprintf(w, "next: run fugaro init --anchor in %s to add the gcp_project line to fugaro.yaml (it checks the images first; fugaro image refresh never writes fugaro.yaml)\n", here)
+		fmt.Fprintf(w, "next: run fugaro update --anchor in %s to add the gcp_project line to fugaro.yaml (it checks the images first; fugaro image refresh never writes fugaro.yaml)\n", here)
 	}
 }
 
@@ -498,7 +498,7 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 		return refreshStopped(4, done, o, err)
 	}
 	if t.checkJobMissing {
-		fmt.Fprintf(r.w, "note: step 3 found that the daily image check job was not found, though this repository's spec has one; run fugaro init --repo in %s to deploy it\n", o.checkoutName(p.root))
+		fmt.Fprintf(r.w, "note: step 3 found that the daily image check job was not found, though this repository's spec has one; run fugaro update --repo in %s to deploy it\n", o.checkoutName(p.root))
 	}
 	refreshAnchorNote(ctx, r.w, p.root, o.checkoutName(p.root), t.lc)
 	fmt.Fprintf(r.w, "fugaro image refresh of %s is done\n", p.repo)

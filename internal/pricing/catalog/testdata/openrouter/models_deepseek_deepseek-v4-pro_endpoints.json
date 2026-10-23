@@ -3,17 +3,6 @@
   "endpoints": [
    {
     "context_length": 1048576,
-    "max_completion_tokens": 943718,
-    "pricing": {
-     "completion": "0.00000348",
-     "discount": 0,
-     "input_cache_read": "0.0000001",
-     "prompt": "0.00000045"
-    },
-    "tag": "parasail/fp8"
-   },
-   {
-    "context_length": 1048576,
     "max_completion_tokens": 393216,
     "pricing": {
      "completion": "0.0000015",

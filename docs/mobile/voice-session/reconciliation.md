@@ -1,13 +1,22 @@
 # Reconciliation: the hands-free voice session (`voice-session`) against the tree
 
-**Status: plan only; nothing is implemented; decisions open.** This document
-resolves nothing. It reads the owner's [spec.md](spec.md) — written **without
-seeing this repository** — against the code on `main`, names every place the
-spec is **Wrong**, already **Exists**, is a **Gap**, restates a **Rule** this
-tree has already made or leaves something **Open**, states the **consequence**
-of each for the design, and hands the choices to the owner as **D201–D220**,
-every row with a recommendation, the alternative and its cost. **No answer is
-recorded here and none is taken.**
+**Status: one decision is answered, VS0 is implemented, and everything else is
+plan only.** **Amended 2026-10-22:** the owner **answered D205 as
+recommended** — the machine lives in JavaScript, in `mobile/src/voice-session/`
+— and **approved VS0.1, VS0.2 and VS0.3, and only those three**; those three are
+written, tested and in review as **PR #921**, and the answer is recorded against
+D205 in §5 below. **VS1 onward is not approved**, and **D201–D204 and D206–D220
+remain open**. This document otherwise resolves nothing. It reads the owner's
+[spec.md](spec.md) — written **without seeing this repository** — against the
+code on `main`, names every place the spec is **Wrong**, already **Exists**, is a
+**Gap**, restates a **Rule** this tree has already made or leaves something
+**Open**, states the **consequence** of each for the design, and hands the
+choices to the owner as **D201–D220**, every row with a recommendation, the
+alternative and its cost. **No answer but D205's is recorded here and none other
+is taken.**
+
+*The status as first written, kept:* **plan only; nothing is implemented;
+decisions open.** **No answer is recorded here and none is taken.**
 
 **Owner:** the Fugaro owner (`dimipaun`). **Date:** 2026-10-20. **Base:** `main`
 at `c92093b6` (the mobile tree at `12fbe60e`, mobile P3.5, #677).
@@ -459,18 +468,25 @@ source. **And 112 is proposed by another work**: `docs/windows-cli/` — **merge
 check in the register's sense — a first run on a real Windows machine, from a
 downloaded archive, by the owner, in three terminals … and **not claimed and not
 written** by this pull request"*; the command is
-`git grep -n 'Check 112' origin/main -- docs/windows-cli/`. The register's own
-rules: *"A reserved number is never reused and never renumbered"*, and
-*"the phase that ships the check writes them"*, and a check *"is never run before
-its text is in the register"* — and the rule that decides between two claims,
-*"whichever of two open claims merges second renumbers itself"*.
+`git grep -n 'Check 112' origin/main -- docs/windows-cli/`. The four rules this
+finding rests on, each attributed to the file it is in rather than lumped as the
+register's: the register's own are *"a reserved number is never reused or
+renumbered"* and the rule that decides between two claims, *"whichever of two
+open claims merges second renumbers itself"*
+([../../gcp-live-checklist.md](../../gcp-live-checklist.md)); *"the phase that
+ships the check writes them"* is
+[../../design/voice.md](../../design/voice.md) §5.3's convention — the one the
+project-centric plan sets and the console plan follows, and **not** a sentence of
+the register's; and *"A check is never run before its text is in the register"* is
+[docs/mobile/implementation-plan.md](../implementation-plan.md)'s own sentence.
 
 **Consequence.** The register's collision rule decides it: **#757 is on `main`
 and this branch is not, so this branch merges second and yields 112.** This work
 therefore takes **113–118** — six checks, listed in the plan — exactly as
 [docs/setup-wizard/](../../setup-wizard/) recorded for the 110/111 collision, and
 **writes none of them into the register**, because the phase that ships a check
-writes it and no phase here is approved. Decision **D219**.
+writes it and the only phase approved here — VS0, the machine and its tests
+(2026-10-22) — ships none. Decision **D219**.
 
 ---
 
@@ -506,8 +522,11 @@ read is still a number this tree should not take.
 
 **Evidence.** [spec.md](spec.md)'s header (*"Platforms: iOS and Android, via Expo
 (development builds only, no Expo Go)"*). `grep -rn 'Expo Go' docs/ mobile/`
-finds nothing; `docs/coordinator/README.md`'s table stops at D192; no D200 row
-exists. `mobile/package.json` declares no `expo-dev-client` (only `eas.json`'s
+finds the phrase nowhere outside this folder: its seven hits are this folder
+citing the brief — the spec's header, [README.md](README.md)'s number table and
+this document's own rows — and the ruling itself is in no other file.
+`docs/coordinator/README.md`'s table stops at D192; no D200 row exists.
+`mobile/package.json` declares no `expo-dev-client` (only `eas.json`'s
 `build.development.developmentClient: true`).
 
 **Consequence.** The ruling is **taken as given** — the plan depends on it,
@@ -755,10 +774,12 @@ wrong feature.
 
 ---
 
-## 5. Decisions for the owner — **D201–D220, none answered**
+## 5. Decisions for the owner — **D201–D220, one answered (D205)**
 
 Each row: the question, a **recommended** option with its reason, and the
-alternative with its **cost**. **No row is filled in.**
+alternative with its **cost**. **One row is filled in — D205, answered
+2026-10-22 as recommended; the dated note at the end of its recommended cell
+records what the answer did and did not approve.**
 
 **The spec's own §12 asks four questions, and all four are carried here in
 order: D201 (item 1, the timeout), D202 (item 2, the "I'm back" cue), D203
@@ -778,7 +799,7 @@ numbers and the resume rule.
 | **D202** | **The "I'm back" cue: earcon, short spoken phrase, or both** (spec §12 item 2). | **A short earcon, and nothing spoken.** It is local, instantaneous, and needs no engine — which matters enormously while the app is **voiceless** (F7): a spoken cue is a TTS utterance that cannot be produced at all until Check 85 lands, so recommending the phrase would tie a part of this work to an unrun check. An earcon also cannot be mistaken for the assistant answering a question. | **A short spoken phrase** ("I'm listening"). Cost: it is an utterance that can fail (`TTS_CODES`), it needs an engine, and it is the app **talking at a moment the user did not ask it to** — which the spec's own §1 forbids in as many words. **Or both**: cost: the two failure modes above, plus a settings question nobody asked. |
 | **D203** | **Does Hang Up from outside the app open the app to a summary, or stay silent?** (spec §12 item 3). | **Stay silent.** The spec's own §10 already says *"Full teardown, no app launch required"*, and §1 promises the app will *"never … start talking or listening at a surprising moment"* — yanking the user into an app they did not open is the same surprise in a different medium. The intent runs in the app's process on iOS 17 anyway (P3), so nothing is gained by opening it. | **Open to a summary.** Cost: a background hang-up pulls the user out of whatever they were doing; and on Android, where the same action comes from the shade, it would open an activity from a service — which is the background-activity-launch restriction this work otherwise never has to touch. **Or open only when the app is already in the foreground**: cost: a third behaviour to test for one outcome. |
 | **D204** | **Minimum iOS version: 16.1 or 17** (spec §12 item 4). | **iOS 17.** It is **one** Live Activity, one set of buttons and one device check. Apple's own availability is the argument: `LiveActivityIntent` — the thing that makes the buttons work at all — is **iOS 17.0+** (P2), so 16.1 buys a second presentation (`widgetURL` deep-link only), a second state (a tap that opens the app instead of performing an intent) and a second check row, to cover a device generation that cannot run the feature's point. The app is unreleased; its first store build is still ahead of it. | **16.1** (the spec's floor, P1). Cost: two UIs in the widget target, two behaviours for "the user pressed Hang Up", an extra check row for a device only the owner may have, and the permanent risk that the 16.x path rots because nobody runs it. **Or 16.1 with the buttons simply absent**: cost: the spec's §2 Goal 2 — controls outside the app — is not met on those devices, which is worse than not shipping to them. |
-| **D205** | **Where the state machine lives: JavaScript, or native.** | **JavaScript — one machine, in `mobile/src/voice-session/`**, with the native module as a port that emits the spec's §5 events and executes `start`/`updateStatus`/`setMuted`/`end`. Every reason the tree already has points here: the spec's own §11 asks for the unit tests this makes possible, Global Constraint 10 forbids CI needing a device, and `src/audio/`'s fakes are the precedent. One machine also means one place where "why did this session end" is answered. | **A native machine on each platform** (which is what survives a JS teardown). Cost: **three** machines rather than one — Kotlin, Swift and JS — with three sets of transitions to keep in step and **nothing testable in CI at all**; and the drift between them would show up only as the app behaving differently on the two phones. **Or native state with the JS machine as a mirror**: cost: two sources of truth for the same question, which is the failure the tree's `sender`/`newId`/`now` injection exists to avoid. |
+| **D205** | **Where the state machine lives: JavaScript, or native.** | **JavaScript — one machine, in `mobile/src/voice-session/`**, with the native module as a port that emits the spec's §5 events and executes `start`/`updateStatus`/`setMuted`/`end`. Every reason the tree already has points here: the spec's own §11 asks for the unit tests this makes possible, Global Constraint 10 forbids CI needing a device, and `src/audio/`'s fakes are the precedent. One machine also means one place where "why did this session end" is answered. **Answered 2026-10-22: this recommendation.** The owner took the option above and approved **VS0.1, VS0.2 and VS0.3 — and only those three**: the event contract, the reducer and the module's door, written and tested on the branch of **PR #921**. **VS1 onward is not approved**, and every other row here is still a question. | **A native machine on each platform** (which is what survives a JS teardown). Cost: **three** machines rather than one — Kotlin, Swift and JS — with three sets of transitions to keep in step and **nothing testable in CI at all**; and the drift between them would show up only as the app behaving differently on the two phones. **Or native state with the JS machine as a mirror**: cost: two sources of truth for the same question, which is the failure the tree's `sender`/`newId`/`now` injection exists to avoid. |
 | **D206** | **How the new machine composes with P3.4's pipeline** (F3). | **By subject, and derived, never duplicated:** `voice-session` owns *is there a session, is it paused, why did it end*; the pipeline keeps *whose turn it is and whether an utterance is in flight*; the session's `listening`/`speaking` are **read** from `pipeline.turn()` / `pipeline.speaking()` on every render. This is what keeps `interruptDecision`'s two arguments current, and it is why no second `speaking` flag is stored. | **A stored `state` field that the pipeline updates.** Cost: `interruptDecision` can then judge a flag that is one event stale, and the failure it produces — an update spoken over the user — is the failure P3.5 was built to prevent. **Or flatten the two machines into one**: cost: P3.5's tests, P6.12's seam and `src/audio/`'s door all move, for no gain in behaviour. |
 | **D207** | **What background audio means for D122's conditional** (F2: D122 says the mode is declared *"only if barge-in needs it"*). | **Extend D122, and say so in one place.** The background audio mode is declared, and the reason is now the session's whole existence and not only barge-in. Every other half of D122 is unchanged: `NSMicrophoneUsageDescription` is the owner's sentence, the two denial codes stay, and the visible "tap to speak" fallback stays. | **Leave D122 as written and declare the mode as "barge-in"**. Cost: the declaration would be described by a rule narrower than the reason, which is how a permission string and its purpose drift apart — and a store reviewer reading `UIBackgroundModes: audio` against a spec that says "only if barge-in" has a fair question to ask. |
 | **D208** | **What a device check may assume about speech, while the app is voiceless** (F7). | **Every check is written to run with the session up and the pipeline silent.** Start, background, interrupt, route change, mute, hang up, force-kill, recover — all of it is observable without one word being said, and the pipeline's `say`/`turn` can be driven by the fakes. The one thing that must wait for **Check 85** is the "I'm back" cue and anything that depends on real speech. | **Hold the whole work until Check 85 is run.** Cost: the lifecycle half — which is what this spec is entirely about — waits on an unrelated measurement, and the owner's iPhone can prove nothing in the meantime. **Or ship the checks with a synthetic audio path only**: cost: the same checks then never meet a real microphone, and the thing most likely to be wrong (what iOS and Android actually do to a microphone on a call) is the thing not tested. |
@@ -795,9 +816,11 @@ numbers and the resume rule.
 | **D219** | **Which check numbers this work takes** (F18). | **113–118**, the first free numbers after reading the register name by name (written sections to 89; 90–99 the credentials service; 100–104 proposed and 105–109 reserved for the functional spec; **110 named and unwritten** by the P5.3 design; **111 taken** by the setup-wizard work; **112 proposed** by `docs/windows-cli/`, which is on `main` (PR #757) while this branch is not, so the register's two-claims rule renumbers this branch — F18). Six checks, and **none of them is written into the register** by this plan. | **Extend check 86** (which already owns hands-free audio, F17). Cost: 86 is allocated to P3.5's subject and to P4.2, and its text is not yet written — folding a Live Activity, a foreground service and a crash-recovery case into it would make one check carry two subjects and two owners. **Or take 118+ and leave a gap**: cost: nothing, but there is no reason to. |
 | **D220** | **May the session resume by itself after an interruption** (F26 point 3, against Play's evidence line for `TYPE_MICROPHONE`). | **Yes, within the timeout, exactly as the spec's §4 says** — the session was started by the user, the resume is the *same* session, and the user is looking at a notification that says it is paused (D216). The design's protection is not a second confirmation; it is that the paused state is **visible** and that the resume never happens after the timeout (spec §8's own rule). | **Always require a tap to resume.** Cost: the spec's primary promise — hands-free — is gone for the duration of every call and every alarm, and §2's Goal 3 is unmet. **Or resume only when the app is in the foreground**: cost: the headset case (paused on a Bluetooth drop) then behaves differently from the call case, for no reason the user can see. |
 
-**Nothing above is answered.** Every row is a question with a recommendation; the
-recommendation is not a decision, and answering a decision is not approving a
-task — the plan says so in its own gate.
+**Only D205 above is answered.** Every other row is a question with a
+recommendation; the recommendation is not a decision, and answering a decision
+is not approving a task — the plan says so in its own gate. The 2026-10-22
+approval was exactly that narrow: **D205 answered, VS0.1–VS0.3 approved, and
+nothing else**.
 
 ---
 
@@ -896,12 +919,12 @@ Nothing in this table is asserted anywhere above or in the plan.
 |---|---|---|---|
 | U1 | That `TelephonyCallback.CallStateListener` requires `READ_PHONE_STATE` | The API reference's "Requires permission" line does not render to a reader without JavaScript, and no other first-party page states it plainly | `developer.android.com/reference/android/telephony/TelephonyCallback.CallStateListener` read in a browser, or a device |
 | U2 | Whether Play treats `READ_PHONE_STATE` as needing a declaration or a Data safety answer of its own | Play's *Permissions and APIs that Access Sensitive Information* page describes declaration forms for **SMS and Call Log** and does not name this permission | The Play Console's own *App content* forms, which show what they ask for |
-| U3 | That `AudioManager.MODE_IN_COMMUNICATION` makes the platform apply echo cancellation | The reference documents the mode as a name and nothing more (P20); AEC is the separate `AcousticEchoCanceler`, and even that page says the platform inserts one *"on some devices … according to the `MediaRecorder.AudioSource` used"* | A device, by measurement — it is part of Check 86's subject and check 112's |
+| U3 | That `AudioManager.MODE_IN_COMMUNICATION` makes the platform apply echo cancellation | The reference documents the mode as a name and nothing more (P20); AEC is the separate `AcousticEchoCanceler`, and even that page says the platform inserts one *"on some devices … according to the `MediaRecorder.AudioSource` used"* | A device, by measurement — it is part of Check 86's subject and check 113's |
 | U4 | That `@bacons/apple-targets` 5.0.0 works with the Expo SDK in `mobile/package.json` (`^58.0.16`) | The package's peer range is `expo >= 52`, but it pins `@expo/prebuild-config ~55.0.6`, an older line than SDK 58's; nothing in this tree has run it | `npx expo prebuild -p ios --clean` after the widget part, and EAS Build |
 | U5 | Whether EAS's capability sync enables **App Groups** on the extension's App ID as well as the app's | Expo's page says App Groups is supported and that EAS syncs capabilities from entitlements; it does not say, in as many words, that it does so for a second target's identifier | The first `eas build --profile internal` after the widget part, and the Apple portal afterwards |
 | U6 | That the app's `WHEN_UNLOCKED_THIS_DEVICE_ONLY` Keychain item behaves as documented on a real device (F24) | `mobile/README.md` records the constant as unexercised; no device has run the store | A device, while the phone is locked mid-session |
-| U7 | That the iOS "I'm back" earcon can be played with the audio session in the state the resume leaves it | Depends on the resume path this work has not built, and on a real call | A device, in check 112 |
-| U8 | The exact behaviour of a **Live Activity started from a `LiveActivityIntent`** when the app process is launched but not opened (P3) — in particular whether a session that was never foregrounded can pass Android's analog on iOS | Apple's page states the process is launched without opening the app; it does not say what the app may then do with the microphone | A device, in check 113 |
+| U7 | That the iOS "I'm back" earcon can be played with the audio session in the state the resume leaves it | Depends on the resume path this work has not built, and on a real call | A device, in check 113 |
+| U8 | The exact behaviour of a **Live Activity started from a `LiveActivityIntent`** when the app process is launched but not opened (P3) — in particular whether a session that was never foregrounded can pass Android's analog on iOS | Apple's page states the process is launched without opening the app; it does not say what the app may then do with the microphone | A device, in check 114 |
 | U9 | That the Android emulator's `gsm call` cannot model the call case | Stated here as a reading of the platform's audio-focus behaviour, not measured | The owner's first Android check run |
 | U10 | Whether an `internal`-profile EAS build (store distribution) can be installed on the owner's device **with** the extension's new identifiers before the Apple portal steps of §6.1 are done | Depends on Apple's and EAS's behaviour at build time | The first `eas build --profile internal` after the widget part |
 

@@ -26,72 +26,110 @@ import (
 // caller that names a program gets that name), and it would pass just as well
 // if this package named none and every user read the loop's bare default.
 //
-// There is one front door today, `fugaro init`, and it is the string every
-// line here has to carry: W1.2 splits the command into `fugaro setup` and
-// `fugaro update`, and this file is renamed with it.
-const loopProgramWant = "fugaro init"
+// There are two front doors since W1.2 — `fugaro setup` and `fugaro update` —
+// and both run this same loop, so the table below runs it once per door: a
+// line that named one door to a user of the other is the failure this file
+// exists for, and it is the failure a hard-coded constant had.
+
+// doorOptions is the options of one real front door, and the program every
+// line of its loop has to name. The options are the command's own — built by
+// the constructor the tree registers, so the door's name is set the way a
+// real run sets it and not by the test. The flags are set after the build:
+// registering them writes their defaults into the same value, exactly as a
+// real parse would.
+func doorOptions(t *testing.T, name string, build func(*initOptions) *cobra.Command) (*initOptions, *cobra.Command) {
+	t.Helper()
+	o := &initOptions{}
+	cmd := build(o)
+	o.yes, o.asJSON = true, true
+	if o.door != name {
+		t.Fatalf("fugaro %s's own options carry the door %q: the loop would print the wrong command", name, o.door)
+	}
+	return o, cmd
+}
 
 func TestConvergeOutputNamesTheFrontDoor(t *testing.T) {
 	const region = "us-east5"
-	var out, js bytes.Buffer
-	r := &initRun{cmd: &cobra.Command{}, o: &initOptions{yes: true, asJSON: true}, w: &out}
-	r.cmd.SetOut(&js)
-	r.projectName, r.gcpProject = initProjectName, initProject
-	e := &initEngine{r: r, lc: &localcfg.Config{Name: initProjectName, Region: region}}
-
-	// One applying run that stops at a failed stage: the header, the result
-	// line and the failure's fix are all printed by the loop in this one run.
-	stage := &loopNameStage{name: initflow.Installation, err: errors.New("terraform apply: quota exceeded")}
-	res, err := initflow.Run(context.Background(), []initflow.Stage{stage}, e.options())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Failed == nil {
-		t.Fatalf("the stage did not fail: %+v", res)
-	}
-	human := out.String()
-	for _, want := range []string{
-		loopProgramWant + ": project " + initProjectName + " (GCP " + initProject + ", " + region + ")",
-		loopProgramWant + ": result",
-		"fix what the error says and rerun " + loopProgramWant + ": it resumes at " + initflow.Installation,
+	for _, door := range []struct {
+		name  string
+		build func(*initOptions) *cobra.Command
+	}{
+		{"setup", newSetupCmdWith},
+		{"update", newUpdateCmdWith},
 	} {
-		if !strings.Contains(human, want) {
-			t.Errorf("%q is not in the run's account:\n%s", want, human)
-		}
-	}
-	// The loop's own bare default ("fugaro") is what a caller that names no
-	// program gets; the CLI is not such a caller.
-	for _, fallback := range []string{"fugaro: project", "fugaro: result", "rerun fugaro:"} {
-		if strings.Contains(human, fallback) {
-			t.Errorf("the run fell back to the loop's default name (%q):\n%s", fallback, human)
-		}
-	}
+		t.Run(door.name, func(t *testing.T) {
+			want := "fugaro " + door.name
+			var out, js bytes.Buffer
+			o, cmd := doorOptions(t, door.name, door.build)
+			r := &initRun{cmd: cmd, o: o, w: &out}
+			r.cmd.SetOut(&js)
+			r.projectName, r.gcpProject = initProjectName, initProject
+			e := &initEngine{r: r, lc: &localcfg.Config{Name: initProjectName, Region: region}}
 
-	// The same run's --json result: failed.fix is the text a CI run reads,
-	// and it names the front door like the human account does.
-	if err := e.outcome(context.Background(), res, nil); err == nil {
-		t.Fatal("a failed stage did not reach the caller as an error")
-	}
-	var got struct {
-		Failed *initflow.Failure `json:"failed"`
-	}
-	if err := json.Unmarshal(js.Bytes(), &got); err != nil {
-		t.Fatalf("the run's --json result is not JSON: %v\n%s", err, js.String())
-	}
-	if want := "fix what the error says and rerun " + loopProgramWant + ": it resumes at " + initflow.Installation; got.Failed == nil || got.Failed.Fix != want {
-		t.Errorf("--json failed.fix = %+v, want %q", got.Failed, want)
-	}
+			// One applying run that stops at a failed stage: the header, the
+			// result line and the failure's fix are all printed by the loop in
+			// this one run.
+			stage := &loopNameStage{name: initflow.Installation, err: errors.New("terraform apply: quota exceeded")}
+			res, err := initflow.Run(context.Background(), []initflow.Stage{stage}, e.options())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.Failed == nil {
+				t.Fatalf("the stage did not fail: %+v", res)
+			}
+			human := out.String()
+			for _, wantLine := range []string{
+				want + ": project " + initProjectName + " (GCP " + initProject + ", " + region + ")",
+				want + ": result",
+				"fix what the error says and rerun " + want + ": it resumes at " + initflow.Installation,
+			} {
+				if !strings.Contains(human, wantLine) {
+					t.Errorf("%q is not in the run's account:\n%s", wantLine, human)
+				}
+			}
+			// And it names THIS door: the other one's name, and the loop's own
+			// bare default ("fugaro"), are both wrong here — the first because
+			// it is a different command, the second because "rerun fugaro" is
+			// not something a user can act on.
+			other := "update"
+			if door.name == "update" {
+				other = "setup"
+			}
+			for _, bad := range []string{"fugaro " + other + ": project", "fugaro " + other + ": result",
+				"rerun fugaro " + other + ":", "fugaro: project", "fugaro: result", "rerun fugaro:"} {
+				if strings.Contains(human, bad) {
+					t.Errorf("the run's account carries %q:\n%s", bad, human)
+				}
+			}
 
-	// A cancelled run is a failure too, and its fix is the other fix text.
-	out.Reset()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	res, err = initflow.Run(ctx, []initflow.Stage{stage}, e.options())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Failed == nil || !strings.Contains(out.String(), "fix: rerun "+loopProgramWant+": it resumes at "+initflow.Installation) {
-		t.Errorf("the cancelled run's account does not name the front door: %+v\n%s", res.Failed, out.String())
+			// The same run's --json result: failed.fix is the text a CI run
+			// reads, and it names the front door like the human account does.
+			if err := e.outcome(context.Background(), res, nil); err == nil {
+				t.Fatal("a failed stage did not reach the caller as an error")
+			}
+			var got struct {
+				Failed *initflow.Failure `json:"failed"`
+			}
+			if err := json.Unmarshal(js.Bytes(), &got); err != nil {
+				t.Fatalf("the run's --json result is not JSON: %v\n%s", err, js.String())
+			}
+			if fix := "fix what the error says and rerun " + want + ": it resumes at " + initflow.Installation; got.Failed == nil || got.Failed.Fix != fix {
+				t.Errorf("--json failed.fix = %+v, want %q", got.Failed, fix)
+			}
+
+			// A cancelled run is a failure too, and its fix is the other fix
+			// text.
+			out.Reset()
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			res, err = initflow.Run(ctx, []initflow.Stage{stage}, e.options())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.Failed == nil || !strings.Contains(out.String(), "fix: rerun "+want+": it resumes at "+initflow.Installation) {
+				t.Errorf("the cancelled run's account does not name the front door: %+v\n%s", res.Failed, out.String())
+			}
+		})
 	}
 }
 

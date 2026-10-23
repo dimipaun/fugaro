@@ -3,12 +3,16 @@
 # (desktop-console plan Tasks 3.3 and 3.4c).
 #
 # The console resolves its `fugaro` the way design section 3.4 rule 4 says: the
-# configured path, then the well-known prefixes, then every absolute entry of
-# the app's own `PATH`. There is no `FUGARO_BIN` and this task does not add one,
-# so the only way a spec can choose which CLI the app reads is to put a binary
-# where that resolution looks -- `test/support/cliStub.ts` copies this file into
-# a scratch directory and points the app's `PATH` (and `HOME`, so `~/.local/bin`
-# is covered too) at it.
+# configured path (a stored record's own optional override, when it has one) and
+# then the well-known prefixes (`/opt/homebrew/bin`, `/usr/local/bin`,
+# `~/.local/bin`, `/usr/bin`). It does **not** search the app's own `PATH` -- the
+# owner's ruling of 2026-10-20 -- so the only way a spec can choose which CLI the
+# app reads is to put a binary where that resolution looks.
+# `test/support/cliStub.ts` copies this file into a scratch directory and into a
+# scratch `HOME`'s `~/.local/bin`, which is the prefix that wins when the machine
+# has nothing in `/opt/homebrew/bin` or `/usr/local/bin`; the app's `PATH` it sets
+# is a **decoy** and nothing more, so a resolution that searched the `PATH` would
+# be caught here rather than accidentally satisfied.
 #
 # What it answers, and nothing else:
 #
@@ -20,6 +24,16 @@
 #     (contract section 6.4). It is what `verifyCandidate` runs to prove an
 #     installation is usable, so a spec that adds one through the picker needs
 #     it; nothing in the dashboard draws it.
+#   * `config list --json` -- the installations document (contract section 6.8),
+#     read off `installations.ndjson` beside it, which `cliStub.ts` writes. It is
+#     the picker's one read and the only command with **no** `--project`: the
+#     document is the list of installations, so there is no project to name. With
+#     no file seeded it prints the **empty document** --
+#     `{"installations":[],"warnings":[]}` -- because that is what a `config list
+#     --json` that succeeded prints on a machine with none, and it is the state
+#     the "set up your first installation" screen is drawn for. Printing nothing
+#     would be a different screen: the console refuses text it cannot parse, so a
+#     spec that wanted the refusal would seed that instead.
 #   * `watch --json --project P` -- the frames in `frames.ndjson` beside it, one
 #     compact document per line, which `cliStub.ts` writes from the committed
 #     `test/fixtures/synthetic.ndjson`. This is the read the Live screen makes
@@ -33,12 +47,14 @@
 # allow-list -- the spec would rather fail here, with the argv it was handed,
 # than pass on an answer the console should never have been able to obtain.
 #
-# **And so is a missing `--project`.** Every command but `version` carries one
-# (design section 3.4 rule 3), and it must be the project the spec seeded, which
-# is the line in `project.txt` beside this script. A console that dropped the
-# flag, or sent another installation's project, is refused here rather than
-# answered with a document for the wrong project. `set -eu` and exit 2 are the
-# shape `probeVersion` already treats as "a binary this console will not run".
+# **And so is a missing `--project`.** `doctor --json` and `watch --json` carry
+# one (design section 3.4 rule 3), and it must be the project the spec seeded,
+# which is the line in `project.txt` beside this script. A console that dropped
+# the flag, or sent another installation's project, is refused here rather than
+# answered with a document for the wrong project. `config list --json` is the
+# exception and is handled above: it is refused a `--project`, because a list for
+# one project is not a list. `set -eu` and exit 2 are the shape `probeVersion`
+# already treats as "a binary this console will not run".
 set -eu
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -58,6 +74,29 @@ if [ "$command" = 'version' ]; then
     refuse "'version' takes no arguments, and was asked for '$*'"
   fi
   cat "${here}/version.txt"
+  exit 0
+fi
+
+# `config list --json` is the installations read, and it is the one command that
+# takes **no** `--project`: it lists them (owner's ruling of 2026-10-20; the
+# console's picker draws exactly this document). It answers the lines in
+# `installations.ndjson` beside this script, or -- with none seeded -- the empty
+# document, which is "this machine has none" and not an error. It refuses any
+# `--project`, because a list for one project is not a list.
+if [ "$command" = 'config' ]; then
+  if [ "${1:-}" != 'list' ] || [ "${2:-}" != '--json' ]; then
+    refuse "the stub fugaro answers 'config list --json' and was asked for 'config $*'"
+  fi
+  if [ $# -gt 2 ]; then
+    refuse "'config list --json' takes no further arguments, and was asked for '${3}'"
+  fi
+  # A `--project` reaches this branch only if a console sent one, and it is not
+  # read as the seeded project: this command has no project.
+  if [ -f "${here}/installations.ndjson" ]; then
+    cat "${here}/installations.ndjson"
+  else
+    printf '{"installations":[],"warnings":[]}\n'
+  fi
   exit 0
 fi
 
@@ -95,6 +134,6 @@ case "$command" in
     printf '{"ok":true,"checks":[{"id":"project","ok":true}],"project":"%s"}\n' "$project"
     ;;
   *)
-    refuse "the stub fugaro answers 'version', 'doctor --json' and 'watch --json', and was asked for '$command'"
+    refuse "the stub fugaro answers 'version', 'config list --json', 'doctor --json' and 'watch --json', and was asked for '$command'"
     ;;
 esac

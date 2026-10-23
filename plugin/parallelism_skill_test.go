@@ -1,0 +1,91 @@
+package plugin_test
+
+// The parallelism skill's graph example, held to the CLI's own schema (console
+// v2 plan V2.8.1, design D25/D28 and the graph section of
+// docs/design/desktop-console-v2.md).
+//
+// The skill tells a planner what to write into `<plan>.graph.json`, and
+// `fugaro plan graph` refuses a document it does not understand rather than
+// rendering part of it. That makes a renamed json tag in
+// internal/plan/document.go a way to leave the skill instructing planners to
+// write a document this build refuses, with every other test still green — the
+// drift D36 names as the risk. Parsing the skill's own example with the real
+// parser is the tie: `plan.Parse` runs with DisallowUnknownFields and refuses a
+// document that is missing what it requires, so every key the skill spells is
+// either the tag the document type carries or a refusal.
+//
+// The example is read out of SKILL.md rather than restated here on purpose: a
+// copy in Go would be a second spelling of the schema, which is the thing being
+// guarded against.
+
+import (
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/dimipaun/fugaro/internal/plan"
+)
+
+const parallelismSkillPath = "skills/parallelism/SKILL.md"
+
+// TestParallelismSkillGraphExampleIsReadable: the document the skill shows a
+// planner is a document this build reads, and it exercises the fields the
+// skill's prose is about — a footprint that predicts paths, and an edge that
+// says why.
+func TestParallelismSkillGraphExampleIsReadable(t *testing.T) {
+	skill, err := os.ReadFile(parallelismSkillPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	example := firstJSONBlock(t, string(skill))
+	doc, err := plan.Parse(parallelismSkillPath, []byte(example))
+	if err != nil {
+		t.Fatalf("the graph example in %s is not a document this build reads: %v", parallelismSkillPath, err)
+	}
+	if doc.SchemaVersion != plan.SchemaVersion {
+		t.Errorf("the example is schema version %d and this build reads %d", doc.SchemaVersion, plan.SchemaVersion)
+	}
+	if doc.Plan == "" {
+		t.Error("the example names no plan")
+	}
+	if len(doc.Nodes) != 2 || len(doc.Edges) != 1 {
+		t.Fatalf("the example carries %d nodes and %d edges, want the two and the one it shows", len(doc.Nodes), len(doc.Edges))
+	}
+	for _, n := range doc.Nodes {
+		if n.Title == "" {
+			t.Errorf("node %q has no title", n.ID)
+		}
+		if !n.Footprint.Prediction {
+			t.Errorf("node %q's footprint is not labelled a prediction", n.ID)
+		}
+		if len(n.Footprint.Paths) == 0 {
+			t.Errorf("node %q predicts no path, so the example shows nothing of the footprint", n.ID)
+		}
+	}
+	if reason := doc.Edges[0].Reason; reason == "" {
+		t.Error("the example's edge carries no reason")
+	}
+}
+
+// firstJSONBlock returns the body of the first ```json fence in text.
+func firstJSONBlock(t *testing.T, text string) string {
+	t.Helper()
+	lines := strings.Split(text, "\n")
+	start := -1
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "```json" {
+			start = i + 1
+			break
+		}
+	}
+	if start < 0 {
+		t.Fatalf("%s carries no ```json block", parallelismSkillPath)
+	}
+	for i := start; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "```" {
+			return strings.Join(lines[start:i], "\n")
+		}
+	}
+	t.Fatalf("%s's ```json block is never closed", parallelismSkillPath)
+	return ""
+}

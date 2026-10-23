@@ -60,9 +60,9 @@ var cliRefFlagTokenRE = regexp.MustCompile("`(-{1,2}[A-Za-z0-9][A-Za-z0-9-]*)`")
 
 // cliRefRoot is the tree the reference is generated from: NewRootCmd() with
 // cobra's own defaults filled in -- the `help` command, the `completion`
-// command and the `-h, --help` flag of every command, all of which cobra adds
-// inside Execute. The generator makes the same three calls (internal/clidoc's
-// Prepare), and it has to: a test that read the un-executed tree would call
+// command, the root's `-v, --version` flag and the `-h, --help` flag of every
+// command, all of which cobra adds inside Execute. The generator makes the same
+// calls (internal/clidoc's Prepare), and it has to: a test that read the un-executed tree would call
 // `fugaro completion` invented, because the reference names it and this walk
 // would not have seen it. A walk that skipped them would instead agree with a
 // reference that omits two commands `fugaro --help` lists.
@@ -70,6 +70,7 @@ func cliRefRoot() *cobra.Command {
 	root := NewRootCmd()
 	root.InitDefaultHelpCmd()
 	root.InitDefaultCompletionCmd()
+	root.InitDefaultVersionFlag()
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
 		c.InitDefaultHelpFlag()

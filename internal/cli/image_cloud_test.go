@@ -59,12 +59,12 @@ func buildPosts(fb *gcpfake.Build) int {
 }
 
 // TestImageBuildCloudNeedsRegistry: the build pushes to the repository's
-// own registry, which fugaro init --repo creates; without it, nothing is
+// own registry, which fugaro update --repo creates; without it, nothing is
 // submitted.
 func TestImageBuildCloudNeedsRegistry(t *testing.T) {
 	fb, _ := cloudBuildCheckout(t, true)
 	_, _, err := executeBuild(t, "image", "build", "--base", "b:1")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro init --repo") || !strings.Contains(err.Error(), "proj-1234") ||
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro update --repo") || !strings.Contains(err.Error(), "proj-1234") ||
 		!strings.Contains(err.Error(), gcp.RegistryRepoID(mustSlug("bitbucket", "acme/app"))) {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}

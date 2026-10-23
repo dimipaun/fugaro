@@ -198,6 +198,27 @@ func repoKnown(lc *localcfg.Config, o originInfo) bool {
 	return false
 }
 
+// repoNameListed reports whether the local config lists this repository's
+// owner/name at all, whatever host it records it at — which is the difference
+// between a repository the run was never told about and one the config
+// already knows somewhere else (repoKnown's other half). The gate treats the
+// second as its own question and not as a step a --yes covers (W5.1).
+func repoNameListed(lc *localcfg.Config, o originInfo) bool {
+	if lc == nil {
+		return false
+	}
+	want, err := task.CanonicalRepo(o.Repo)
+	if err != nil {
+		return false
+	}
+	for name := range lc.Repos {
+		if c, err := task.CanonicalRepo(name); err == nil && c == want {
+			return true
+		}
+	}
+	return false
+}
+
 // sameRepo compares two owner/name strings the way the config does.
 func sameRepo(a, b string) bool {
 	x, err1 := task.CanonicalRepo(a)
@@ -243,7 +264,7 @@ type defaultBranchResult struct {
 // reading the project layer (docs/design/layered-config.md). Memoized per
 // command invocation (checkoutParseCache.defaultBranch, cloud.go):
 // resolveRepoTarget and defaultBranchConfig (initsecrets.go) both read
-// this exact file, and fugaro init calls them up to three times in one run.
+// this exact file, and the converge calls them up to three times in one run.
 func defaultBranchParse(ctx context.Context, root string) defaultBranchResult {
 	cache, _ := ctx.Value(checkoutParseCacheKey{}).(*checkoutParseCache)
 	if cache != nil {
@@ -282,7 +303,7 @@ func resolveRepoTarget(ctx context.Context, project string) (*repoTarget, initfl
 	}
 	root, err := gitRead(ctx, ".", "rev-parse", "--show-toplevel")
 	if err != nil {
-		return skip("not in a checkout: run fugaro init in a checkout of the repository to onboard it")
+		return skip(notInACheckout + ": run fugaro setup --repo in a checkout of the repository to onboard it")
 	}
 	oi, ok := readOrigin(ctx, root)
 	repo := oi.Repo
@@ -291,12 +312,12 @@ func resolveRepoTarget(ctx context.Context, project string) (*repoTarget, initfl
 	}
 	db := defaultBranchParse(ctx, root)
 	if db.ref == "" {
-		return skip("no origin/HEAD, origin/main or origin/master ref here, so no default branch to read: run git fetch origin, then rerun fugaro init")
+		return skip("no origin/HEAD, origin/main or origin/master ref here, so no default branch to read: run git fetch origin, then rerun fugaro setup --repo")
 	}
 	branch := strings.TrimPrefix(db.ref, "origin/")
 	shown := pluginwire.Printable(branch)
 	if !db.read {
-		return skip("no fugaro.yaml on the default branch (" + shown + "): /fugaro:setup writes it; merge its pull request, then rerun fugaro init")
+		return skip("no fugaro.yaml on the default branch (" + shown + "): /fugaro:setup writes it; merge its pull request, then rerun fugaro setup --repo")
 	}
 	cfg := db.cfg
 	if cfg == nil {
@@ -314,7 +335,7 @@ func resolveRepoTarget(ctx context.Context, project string) (*repoTarget, initfl
 	// file (line endings aside).
 	if wt, err := readFugaroYAML(filepath.Join(root, "fugaro.yaml")); err != nil || !bytes.Equal(normalEOL(wt), normalEOL(db.data)) {
 		lf := switchLeft(branch)
-		return nil, initflow.Status{State: initflow.NeedsYou, Detail: "this checkout's fugaro.yaml is not the default branch's (" + pluginwire.Printable(db.ref) + "): the repository is onboarded from the default branch, so run git fetch, switch to it and update it (git pull), then rerun fugaro init", Left: &lf}
+		return nil, initflow.Status{State: initflow.NeedsYou, Detail: "this checkout's fugaro.yaml is not the default branch's (" + pluginwire.Printable(db.ref) + "): the repository is onboarded from the default branch, so run git fetch, switch to it and update it (git pull), then rerun fugaro setup --repo", Left: &lf}
 	}
 	return &repoTarget{root: root, origin: oi, repo: repo, branch: branch, cfg: cfg}, initflow.Status{}
 }

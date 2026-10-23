@@ -1,11 +1,17 @@
 # The hands-free voice session (`voice-session`)
 
-**Status: plan only; nothing is implemented; decisions open.** The owner's spec
-of 2026-10-20 for a hands-free voice session — what happens when the session
-leaves the happy path: the app backgrounded, a call arriving, the headphones
-unplugged, the process killed — committed **verbatim** and reconciled against
-the code this repository already has. **No code, no config, no schema and no
-manifest change follows from these documents, and nothing here is approved.**
+**Status: one decision is answered, VS0 is implemented, and nothing else is.**
+**Amended 2026-10-22:** the owner **answered D205 as recommended** — the machine
+lives in JavaScript, in `mobile/src/voice-session/` — and **approved VS0.1,
+VS0.2 and VS0.3, and only those three**, which are written, tested and in review
+as **PR #921**. **VS1 onward is not approved**, the rest of D201–D220 is still
+open, and **no other part of these documents changes a line of the app.** The
+owner's spec of 2026-10-20 for a hands-free voice session — what happens when the
+session leaves the happy path: the app backgrounded, a call arriving, the
+headphones unplugged, the process killed — committed **verbatim** and reconciled
+against the code this repository already has. *The status as first written,
+kept:* **plan only; nothing is implemented; decisions open** … **nothing here is
+approved.**
 
 **Owner:** the Fugaro owner (`dimipaun`). **Date:** 2026-10-20. **Base:** `main`
 at `c92093b6` (the mobile tree at `12fbe60e`, mobile P3.5, #677).
@@ -14,7 +20,7 @@ at `c92093b6` (the mobile tree at `12fbe60e`, mobile P3.5, #677).
 |---|---|
 | [spec.md](spec.md) | The owner's spec, **verbatim** — the owner's text copied unchanged, and nothing else. Committed alone in its own first commit (`aef225b3`). |
 | [reconciliation.md](reconciliation.md) | What the spec asks for, read against the tree: findings **F1–F30**, each classified **Wrong / Exists / Gap / Rule / Open**, each with a path and a symbol and **the consequence for the design**; **25 rows of platform fact** read from Apple's and Google's own documentation on 2026-10-20, each with its URL and its verdict; **decisions D201–D220**, each with a recommendation and the alternative's cost; the owner-only steps (§6); items **O1–O8**; and the **UNVERIFIED** table. Where it disagrees with `spec.md`, **it wins**. |
-| [implementation-plan.md](implementation-plan.md) | The plan: parts **VS0–VS7**, ordered so that each is mergeable alone and leaves `main` green, each with its files, its tests, a verification an agent can run and the reviewer tier that applies; the owner-only steps; the six checks; and the **OWNER APPROVAL GATE** at the end. **No part is approved.** |
+| [implementation-plan.md](implementation-plan.md) | The plan: parts **VS0–VS7**, ordered so that each is mergeable alone and leaves `main` green, each with its files, its tests, a verification an agent can run and the reviewer tier that applies; the owner-only steps; the six checks; and the **OWNER APPROVAL GATE** at the end. **One part is approved and implemented — VS0, the machine and its tests (VS0.1–VS0.3), under the 2026-10-22 answer to D205, in review as PR #921. No other part is approved.** |
 
 ## What this work is, in one paragraph
 
@@ -42,20 +48,23 @@ than made silently (F2, decision D207).
 
 | Block | State |
 |---|---|
-| **D201–D220** | this work's decisions, all written and **all open**. The spec's own four open questions are D201–D204 (the timeout, the "I'm back" cue, Hang Up opening the app, and 16.1 versus 17); the other sixteen are what the reconciliation exposed, including two the spec does not raise at all (**D216**, what the paused activity shows; **D209**, whether `READ_PHONE_STATE` is asked for). |
+| **D201–D220** | this work's decisions, all written and **all open but one**: **D205 was answered on 2026-10-22 as recommended**, which is what approved **VS0.1–VS0.3 and nothing else** (PR #921). The spec's own four open questions are D201–D204 (the timeout, the "I'm back" cue, Hang Up opening the app, and 16.1 versus 17); the other sixteen are what the reconciliation exposed, including two the spec does not raise at all (**D216**, what the paused activity shows; **D209**, whether `READ_PHONE_STATE` is asked for). |
 | **D193–D200** | **left alone.** [docs/coordinator/README.md](../../coordinator/README.md) says "D193 onward — free", and **at this work's base commit `c92093b6`** that command's highest hit under `docs/` is **D193** (`git grep -hoE '\bD[0-9]{2,3}\b' c92093b6 -- docs/ | sort -t D -k2 -n | tail -1`) — the coordinator table's own **free-block label** (*"D193 onward"*), not a written decision, the highest *written* one being **D192** — so D193–D200 are free by that reading. The anchor is the point: from the commit that carries this folder, the same command returns D220. The brief records **D200** as an already-taken ruling ("development builds only, no Expo Go") that **this tree cannot cite** (F20), so this work starts at **D201** rather than collide with a number the owner's own notes may hold. |
-| **Checks 113–118** | this work's, **numbered but not written**. The register's written sections run to **89**; 90–99 are the credentials service's; 100–104 are the functional spec's, with 105–109 **reserved and unused**; **110** is named by the P5.3 design and never written; **111** is taken by [docs/setup-wizard/](../../setup-wizard/); and **112 is proposed** by `docs/windows-cli/` (merged to `main` as `58bd6b05`, PR #757 — **not in this branch**, which is why it is a code path and not a link), for its own owner-run Windows check. The register's rule for two open claims is that *whichever merges second renumbers itself*, and #757 is merged while this branch is not — so this branch yields 112 and takes the next six, **113–118**, exactly as the setup-wizard folder recorded for the 110/111 collision. **None is written into the register**: the register's own rule is that *the phase that ships the check writes it*, and no phase here is approved. |
+| **Checks 113–118** | this work's, **numbered but not written**. The register's written sections run to **89**; 90–99 are the credentials service's; 100–104 are the functional spec's, with 105–109 **reserved and unused**; **110** is named by the P5.3 design and never written; **111** is taken by [docs/setup-wizard/](../../setup-wizard/); and **112 is proposed** by `docs/windows-cli/` (merged to `main` as `58bd6b05`, PR #757 — **not in this branch**, which is why it is a code path and not a link), for its own owner-run Windows check. The register's collision rule is *"whichever of two open claims merges second renumbers itself"* ([../../gcp-live-checklist.md](../../gcp-live-checklist.md)), and #757 is merged while this branch is not — so this branch yields 112 and takes the next six, **113–118**, exactly as the setup-wizard folder recorded for the 110/111 collision. **None is written into the register**: what keeps it out is the convention *"the phase that ships the check writes them"* — [../../design/voice.md](../../design/voice.md) §5.3's, the project-centric plan's convention and **not** the register's own, the attribution [../design/voice-evaluation-switch.md](../design/voice-evaluation-switch.md) §13 already corrected — and the one part of this work that is approved, VS0, runs no check at all: it is the machine and its tests, and its own plan section says so. |
 | **Check 86** | **not touched.** It already owns *"Hands-free audio: the background mode, the microphone ask, Bluetooth, and barge-in"* (P3.5/P4.2, owner-run) and its text is unwritten. It keeps its number and its subject; the new checks cover what it does not name (F17). |
 
-## Why nothing here is decided
+## Why nothing else here is decided
 
 Every one of D201–D220 carries a **recommendation first, with its reason**, and
 then **the alternative with its cost**. A recommendation is not a decision.
-Answering a decision is not approving a task. The gate at the end of the
-implementation plan is **not passed**, and the plan's first part is the only one
-that touches anything an agent may run — a set of tests over the state machine
-against a mocked event stream, which is what the spec's own §11 asks for and what
-Global Constraint 10 allows CI to hold.
+Answering a decision is not approving a task. On 2026-10-22 the owner did both
+for exactly one of them — **D205 answered, VS0.1–VS0.3 approved** — and that is
+the whole of it: the gate at the end of the implementation plan is **passed for
+VS0 and for nothing else**, and **VS1 onward still waits** on its own decisions
+(VS1 on D213, VS2 on D207). What VS0 covers is the plan's first part, the only
+one that touches anything an agent may run — a set of tests over the state
+machine against a mocked event stream, which is what the spec's own §11 asks for
+and what Global Constraint 10 allows CI to hold.
 
 ## Typographical corrections
 

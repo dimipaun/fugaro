@@ -23,7 +23,7 @@ const (
 	// CheckFailed: the check itself could not decide.
 	CheckFailed = "check-failed"
 	// NotInstalled: head's fugaro.yaml and the installed check job
-	// disagree about the workflow (fugaro init --repo fixes it).
+	// disagree about the workflow (fugaro update fixes it).
 	NotInstalled = "not-installed"
 )
 

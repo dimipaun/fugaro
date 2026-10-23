@@ -395,6 +395,48 @@ test('a plugin manifest the changelog cannot read stops the build, naming the fi
   }
 })
 
+test('the generator steps over the mobile app’s notes directory, and nothing else', () => {
+  // `docs/releases/mobile/` is the app's own stream's notes (the app releases on
+  // `mobile-vX.Y.Z`, docs/release.md's "Mobile releases", and its highlights live in that
+  // directory). It is a directory rather than a release file, and the generator skips it
+  // by name: the rule below still refuses every other name this changelog does not
+  // recognise, one level down as well as here, so this case holds both halves — the
+  // directory an app note lives in, and the throw a stray file still gets.
+  const dir = mkdtempSync(path.join(tmpdir(), 'fugaro-changelog-mobile-'))
+  const releasesDir = path.join(dir, 'releases')
+  try {
+    mkdirSync(releasesDir)
+    mkdirSync(path.join(releasesDir, 'mobile'))
+    writeFileSync(path.join(releasesDir, 'v1.2.0.md'), '- a release file with one bullet\n')
+    writeFileSync(
+      path.join(releasesDir, 'mobile', 'v0.1.0.md'),
+      '- the app’s first release, Falcon\n',
+    )
+    writeFileSync(path.join(releasesDir, 'mobile', 'README.md'), 'the app’s notes format\n')
+    const pluginFile = path.join(dir, 'plugin.json')
+    writeFileSync(pluginFile, `${JSON.stringify({ name: 'fugaro', version: '1.2.0' })}\n`)
+
+    const entries = buildChangelog({ releasesDir, pluginFile })
+    assert.deepEqual(
+      entries.map((entry) => entry.tag),
+      ['v1.2.0'],
+      'an app note under docs/releases/mobile/ is not an entry of this changelog, and the CLI’s own file beside it still is',
+    )
+
+    // A stray *file* is still refused, which is what makes skipping the directory by name a
+    // rule rather than a hole: the app's notes are in their own directory, and a new file
+    // at the top level is a mistake this build stops on, naming it.
+    writeFileSync(path.join(releasesDir, 'draft.md'), '- a stray note\n')
+    assert.throws(
+      () => buildChangelog({ releasesDir, pluginFile }),
+      /docs\/releases\/draft\.md is not a release file/,
+      'a stray file in docs/releases/ is still refused by name, so the skipped directory did not widen into a general “ignore what does not parse”',
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('README carries no changelog section', () => {
   const readme = readFileSync(path.join(REPO_ROOT, 'README.md'), 'utf8')
 

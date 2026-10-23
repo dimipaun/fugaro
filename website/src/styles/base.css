@@ -121,14 +121,18 @@ a.skip-link:focus {
    * wordmark is what gives way at it, so a device whose font is wider than the one the row was
    * measured with truncates the name instead of pushing the menu past the viewport and giving
    * the page a sideways scroll. At every width the layout is measured at, the whole word is
-   * drawn. */
+   * drawn.
+   *
+   * It is set at the top of the weight scale (`--weight-black`) since the bold redesign: the
+   * wordmark is the one word in the header that is the site rather than a way through it, and
+   * a bar whose wordmark weighs the same as the nine labels beside it has no name in it. */
   display: inline-flex;
   align-items: center;
   min-width: 0;
   gap: var(--space-2xs);
   color: var(--text);
   font-size: var(--font-size-lg);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-black);
   letter-spacing: var(--tracking-tight);
   text-decoration: none;
 }
@@ -146,19 +150,42 @@ a.skip-link:focus {
   color: var(--accent-on-dark);
 }
 
-/* The way home on a phone (the owner's brief of 2026-10-19, item 1): below about 380 px the
- * three group labels and the wordmark share the header's row, and it is the wordmark's TEXT
- * that gives way — the mark stays. 380 px is where the ruling puts the cut; the rule below is
- * at 390 px because the row measures the way it is drawn here, and the labels keep a 4 px
- * padding at the widths above this one: at 381 px the full row is a few pixels wider than the
- * header's content box, and a few pixels is a sideways scroll.
+/* The way home on a phone (the owner's brief of 2026-10-19, item 1; the owner's feedback of
+ * 2026-10-21, item 2): below the phone breakpoint the menu's items and the wordmark share the
+ * header's row, and it is the wordmark's TEXT that gives way — the mark stays. The brief of
+ * 2026-10-19 put the cut at about 380 px and this rule was at 390 px, because the row is
+ * measured rather than estimated: at 381 px the wordmark's text plus the three labels of the
+ * time was a few pixels wider than the header's content box in the font the built site falls
+ * back to, and a few pixels is a sideways scroll.
+ *
+ * **The row carried one more item when the feedback of 2026-10-21 put Home in the menu**, and
+ * the same arithmetic moved the cut: the Home link and its gap are about 45 px at this size, so
+ * the text leaves the row from about 432 px down (27 rem, rounded up from the 426 px the
+ * four-item figure implies) instead of from 390 px down. **The owner's feedback of the same day
+ * then dropped the Reference group**, so the row carries three items again — Home and two
+ * labels — and the cut is left at the wider, four-item one it was measured at rather than being
+ * re-tightened against a narrower row the check has not seen: the cost is the wordmark's text
+ * leaving the row a width earlier than a three-item row would need, and it is the safe
+ * direction of the two. Above the cut the labels have the row to themselves, and the text is
+ * drawn as it always was.
+ *
+ * **The Home item is what the row's own spacing gives up inside this block**, and those two
+ * rules stay with it: the 8 px between the wordmark and the menu becomes 4, and the items stand
+ * with no gap between them — their own 4 px padding either side is what separates them, which is
+ * the 8 px a phone's labels have always been drawn with. That is 16 px of the 45 px back, and it
+ * is the part of the row that is not the mark (the ruling of 2026-10-19 keeps the mark) and not
+ * the labels (their 44 px height is the brief's tap target). With a group fewer in the row they
+ * are headroom rather than the whole of the payment, and leaving them is what keeps the row
+ * measured the way it was measured. Whether the row then fits a 320 px phone's content box is a
+ * rendered measurement no hermetic test can take: it is the owner's live check (70a), as the
+ * three-item row was.
  *
  * The text is hidden from the eye and not from a screen reader: `display: none` would take the
  * word out of the link's accessible name, and the logo beside it is decoration with an empty
  * `alt` (`layouts/Base.astro`), so the link would be left naming nothing. This is the standard
  * "visually hidden" rule — one pixel, clipped, out of the flow — and it is why the link keeps
  * its name at every width. */
-@media (max-width: 24.375rem) {
+@media (max-width: 27rem) {
   .site-wordmark-name {
     position: absolute;
     width: 1px;
@@ -167,13 +194,24 @@ a.skip-link:focus {
     clip-path: inset(50%);
     white-space: nowrap;
   }
+
+  .site-header {
+    gap: var(--space-3xs);
+  }
+
+  .site-nav-groups {
+    gap: 0;
+  }
 }
 
-/* The section nav (P3, D182; the owner's brief of 2026-10-19, item 1): three groups of three,
- * their three labels in the header's one row at every width. There is no toggle in front of
- * the menu — the brief took the single "Menu" button away, so a phone reaches a section in one
- * tap — and what each label opens is a panel of that group's links: a drawer across the
- * header's width on a phone, a dropdown under the label on a wide viewport.
+/* The section nav (P3, D182; the owner's brief of 2026-10-19, item 1; the owner's feedback of
+ * 2026-10-21, item 2, and the Reference group dropped by the same day's feedback): the way home
+ * and then the site's groups — three items in the header's one row at every width. There is no
+ * toggle in front of the menu — the brief of
+ * 2026-10-19 took the single "Menu" button away, so a phone reaches a section in one tap — and
+ * what each group label opens is a panel of that group's links: a drawer across the header's
+ * width on a phone, a dropdown under the label on a wide viewport. Home is the first item and
+ * the one of the three that opens nothing: it is a link, so it is reached in one tap too.
  *
  * Both levels are `<details>` — the markup is in `layouts/Base.astro` — so the menu opens and
  * closes with JavaScript off. `public/scripts/site.js` adds only what `<details>` does not do
@@ -202,9 +240,10 @@ a.skip-link:focus {
   list-style: none;
 }
 
-/* The three labels, side by side. The gap is the phone's 4 px and the wide block below opens
- * it to 8 px: three words 4 px apart are three words apart, and at 320 px the row has none to
- * spare. */
+/* The menu's items, side by side: the way home and the labels. The gap is the phone's
+ * 4 px and the wide block below opens it to 8 px — and the phone block above takes it to none
+ * at all, the payment the feedback of 2026-10-21's Home item asks of the row's spacing on the
+ * narrowest phones (kept with the item, and headroom now the row carries one group fewer). */
 .site-nav-groups {
   display: flex;
   gap: var(--space-3xs);
@@ -223,9 +262,14 @@ a.skip-link:focus {
   box-sizing: border-box;
   min-height: 44px;
   padding: var(--space-3xs);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   color: var(--text-muted);
   font-size: var(--font-size-sm);
+  /* Semibold, and it is the whole of what makes the bar bold rather than thin: the three
+   * labels are the menu, so they are set like the controls they are and not like running
+   * text. The colour stays muted — a bar of nine labels at full `--text` is a bar with no
+   * hierarchy in it — and the label of the page being read is the one that brightens. */
+  font-weight: var(--weight-semibold);
   cursor: pointer;
 }
 
@@ -245,7 +289,10 @@ a.skip-link:focus {
   left: 0;
   padding: var(--space-sm);
   border-bottom: var(--border-width) solid var(--border);
-  background: var(--ground);
+  /* The panel and not the ground, since the bold redesign: a menu hanging over the page is a
+   * thing laid on the page, and the step between the ground and the surface is what says so
+   * without a shadow (a shadow would be a colour literal no palette token holds). */
+  background: var(--panel);
 }
 
 .site-nav-group > details > summary:focus-visible {
@@ -290,7 +337,7 @@ a.skip-link:focus {
   text-underline-offset: 0.35em;
 }
 
-/* The wide viewport: the same three labels, and each one's list becomes a dropdown under it
+/* The wide viewport: the same two labels, and each one's list becomes a dropdown under it
  * rather than a drawer across the header. */
 @media (min-width: 48rem) {
   .site-header {
@@ -314,7 +361,8 @@ a.skip-link:focus {
    * header's own padding is still narrow, so a list opening rightwards from the last group
    * would run past the viewport and give the page a sideways scroll. Anchored right, no
    * group's list can reach that edge — and the wordmark at the other end leaves far more room
-   * than a three-item list needs at any width from 48rem up. */
+   * than either group's list needs at any width from 48rem up (five items under *Product*,
+   * five under *Project*). */
   .site-nav-group {
     position: relative;
   }
@@ -325,7 +373,7 @@ a.skip-link:focus {
     min-width: max-content;
     padding: var(--space-2xs);
     border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-lg);
   }
 }
 
@@ -337,10 +385,35 @@ a.skip-link:focus {
   box-sizing: border-box;
   min-height: 44px;
   padding: var(--space-3xs) var(--space-2xs);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   color: var(--text-muted);
   font-size: var(--font-size-sm);
+  font-weight: var(--weight-medium);
   text-decoration: none;
+}
+
+/* The menu's first item, the way home (the owner's feedback of 2026-10-21: "I think we need a
+ * 'Home' as the first menu"). It is a link where the two items beside it are `<details>`
+ * disclosures, and it is drawn in the same box a link inside a list is — the rule above gives
+ * it the 44 px height, the muted colour and the small label — with the inline padding of the
+ * labels it shares the header's row with: the phone's 4 px, which the wide rule below opens to
+ * 8 px beside the labels' own. It is a link and not a group, so it has no summary, no list and
+ * no disclosure state: Home is one page. */
+.site-nav-home > a {
+  padding-inline: var(--space-3xs);
+}
+
+/* The wide viewport's 8 px, and it is here rather than in the wide block above because of the
+ * order a browser reads this file in: `.site-nav a` above sets the whole `padding` shorthand on
+ * every link in the menu, and at this rule's specificity — one class and one type, the same as
+ * `.site-nav a` — the later rule wins. A `padding-inline` written up in the wide block would be
+ * read first and then overwritten by that shorthand, which is exactly what it was: 4 px at every
+ * width while the three labels beside it opened to 8 px, the opposite of what the rule above
+ * says. `website/test/base-styles.mjs` holds the two declarations to this order. */
+@media (min-width: 48rem) {
+  .site-nav-home > a {
+    padding-inline: var(--space-2xs);
+  }
 }
 
 .site-nav a:focus-visible {
@@ -362,7 +435,7 @@ a.skip-link:focus {
 }
 
 .site-footer {
-  padding-block: var(--space-lg);
+  padding-block: var(--space-xl);
   border-top: var(--border-width) solid var(--border);
   color: var(--text-muted);
   font-size: var(--font-size-sm);
@@ -484,6 +557,189 @@ a.skip-link:focus {
 .copy-status {
   color: var(--text-muted);
   font-size: var(--font-size-xs);
+}
+
+/* ---- 2c. the bold look (redesign part P1) ------------------------------------------------
+ *
+ * The owner's boards of 2026-10-20 draw the site in a set of shapes it repeats: an oversized
+ * heavy headline, a small uppercase eyebrow above a section, a pill, a card, a numbered
+ * step badge and a command block. They are written once here rather than per page, because the
+ * point of the redesign is that the whole site looks like one thing, and a shape each page
+ * invented would be the thing the boards are not. **Each one here is a shape a built page
+ * actually renders** — the display scale is the hero's headline and the two new blocks'
+ * headings, the card is the run band's four steps and the "what you get" grid's five, the
+ * command block is every `[data-copy]` block on the site, and a shape nothing rendered is a
+ * rule every page inlines for nothing.
+ *
+ * Two rules hold throughout and are the reason several of these look unusual:
+ *
+ *  - **No colour literal and no `box-shadow`.** A shadow is a colour function, and a colour
+ *    function outside a palette file is a pair `website/test/a11y.mjs` cannot compute. Depth is
+ *    drawn the way the boards draw it: a panel one step lighter than the ground, a hairline
+ *    `--border`, and a radius. This is also why the glow below is a `radial-gradient` in
+ *    `background-image` and not a blurred box: a gradient of palette tokens is still tokens.
+ *  - **`background-image`, not `background`, wherever the value is a gradient.** The contrast
+ *    check reads `background` and `background-color` as the colour a text pair sits on; a
+ *    gradient is not one colour, so writing it in `background-image` keeps the check honest
+ *    rather than making it guess. The gradient text below is the same idea from the other side:
+ *    it is decoration over a `color` the check does read.
+ */
+
+/* The display scale: the oversized, tightly tracked, heaviest-weight headline the boards set.
+ * Three steps, and the size is a `clamp` so that one rule is the whole of the responsive story
+ * — the board draws 104 px at 1440 and a phone cannot hold that, so the headline takes the
+ * viewport's width until it reaches the token, and `--font-size-3xl` is the floor rather than
+ * a size a phone overflows at. The leading and the tracking come from the tokens so that a
+ * headline and the sentence under it are set from one scale. */
+.display-xl,
+.display-lg,
+.display-md {
+  margin-block: 0;
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-weight: var(--weight-black);
+  letter-spacing: var(--tracking-display);
+  line-height: var(--leading-display);
+  text-wrap: balance;
+}
+
+.display-xl {
+  font-size: clamp(var(--font-size-3xl), 7.2vw, var(--font-size-6xl));
+}
+
+.display-lg {
+  font-size: clamp(var(--font-size-2xl), 4.4vw, var(--font-size-5xl));
+}
+
+.display-md {
+  font-size: clamp(var(--font-size-xl), 2.6vw, var(--font-size-3xl));
+}
+
+/* The gradient the wordmark's hue runs through, used as the emphasis on part of a headline.
+ * It is a background clipped to the glyphs, so the glyphs themselves are filled with nothing:
+ * `-webkit-text-fill-color` is the property that says so, and it is not a stylistic choice —
+ * `color: transparent` means the same thing and is rewritten by the build's CSS minifier into
+ * the hex literal `#0000`, which is a colour literal in a built stylesheet and so a rule the
+ * colour scan in `website/test/a11y.mjs` refuses (a literal is a colour no palette token
+ * holds). The `color` the display rules above set is left alone, so a browser that supports
+ * the fill but not the clip draws the headline in `--text` rather than in nothing at all. The
+ * three stops are palette tokens: the light cyan the accent is legible as, the accent itself,
+ * and the green that means "finished". */
+.gradient-text {
+  background-image: linear-gradient(
+    92deg,
+    var(--accent-on-dark) 0%,
+    var(--accent) 55%,
+    var(--ok) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* The eyebrow: the small uppercase label the boards put above a section's headline. It is the
+ * accent's legible form, because it is text and small text at that, and it is tracked wide
+ * rather than tight so that a label of three words reads as a label and not as a heading. */
+.eyebrow {
+  margin: 0;
+  color: var(--accent-on-dark);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-sm);
+  font-weight: var(--weight-black);
+  letter-spacing: 0.16em;
+  line-height: var(--leading-snug);
+  text-transform: uppercase;
+}
+
+/* The pill: a short status or a badge of one or two words. The radius is the pill rather than
+ * a corner, the ground it sits on is the panel so it reads as laid on the page, and its label
+ * is the quieter tone — a pill is a note beside a heading, never the heading. */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  padding: var(--space-3xs) var(--space-xs);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--panel);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: var(--leading-snug);
+}
+
+/* The card: the panel the boards draw everything on. One step above the ground, a hairline
+ * border and the larger radius, with the padding as a step of the spacing scale rather than a
+ * number — a card in a grid and a card standing alone are then the same box. The tone is the
+ * surface rather than the panel, because a card is laid on the page and a panel is what a pill
+ * or a tab bar is drawn on; the bold redesign's run band and "what you get" grid are the two
+ * blocks that use it, and each adds only the layout and the marks its own block needs. */
+.card {
+  padding: var(--space-lg);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+}
+
+/* The numbered step badge: the square the flow's steps are numbered in. The accent is the
+ * fill and the ground is the label on it — the pair the site's buttons already use — and the
+ * green variant is the last step of a run, which is the one that finished. */
+.step-badge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-xl);
+  height: var(--space-xl);
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: var(--ground);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-lg);
+  font-weight: var(--weight-black);
+  line-height: 1;
+}
+
+.step-badge[data-state='done'] {
+  background: var(--ok);
+}
+
+/* The hero's background: the two soft glows and the grid the boards draw behind the headline.
+ * It is one absolutely positioned layer at the top of the page and it is **decoration**: it is
+ * `aria-hidden` in the markup, it paints no text, and its whole content is gradients of palette
+ * tokens at an `opacity`, which is what keeps it out of the contrast pairs (a glow is not a
+ * background any text is read against — the hero's own ground still is). The grid is two
+ * one-pixel gradients sized to a 48 px tile and masked to fade out before the section ends, so
+ * the pattern belongs to the top of the page rather than tiling the whole of it. A parent that
+ * uses this must be `position: relative` and `overflow: hidden`. */
+.hero-glow {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.hero-glow::before,
+.hero-glow::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+
+.hero-glow::before {
+  background-image:
+    linear-gradient(var(--border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border) 1px, transparent 1px);
+  background-size: 48px 48px;
+  opacity: 0.6;
+  -webkit-mask-image: linear-gradient(180deg, var(--ground) 0%, transparent 78%);
+  mask-image: linear-gradient(180deg, var(--ground) 0%, transparent 78%);
+}
+
+.hero-glow::after {
+  background-image:
+    radial-gradient(58% 46% at 78% 16%, var(--accent) 0%, transparent 70%),
+    radial-gradient(52% 44% at 6% 74%, var(--ok) 0%, transparent 70%);
+  opacity: 0.22;
 }
 
 /* ---- 3. the element defaults (all zero-specificity) ------------------------------------- */

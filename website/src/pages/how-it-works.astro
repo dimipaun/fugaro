@@ -5,24 +5,244 @@
  *
  * The owner approved this page's drawing on 2026-10-19 (the draft "How it works, draft 2
  * (diagram)"), and the picture and its words both live in `RunDiagram.astro`. This page is
- * the heading and that component: everything a reader is told here is drawn once, quoted
- * once, and held to the repository's own documents at build time and again in
- * `website/test/how-it-works.mjs`.
+ * the opening, that component, and the closing call to action: everything a reader is told
+ * here is drawn once, quoted once, and held to the repository's own documents at build time
+ * and again in `website/test/how-it-works.mjs`.
  *
  * The homepage's four-step flow (`ArchitectureDiagram.astro`) was a different drawing and the
  * owner's ruling of 2026-10-20 retires it with the component: this is the site's one picture of
  * a run, and the run's stages are drawn here, where a reader has come to ask what happens
  * between asking for the work and getting the pull request.
+ *
+ * **The bold look (the owner's approved board `website/design-ref/HowItWorksV3.dc.html`,
+ * 2026-10-20).** The board draws this page as four blocks: the hero — a status pill, the
+ * headline with its last words in the accent's gradient, one line of what a run is, and the
+ * two links a reader acts on — then the run's diagram, which is the page's picture and the
+ * board's "hero of the page", then the same run in words, then the closing call to action.
+ * The drawing and the words under it are `RunDiagram.astro`'s, which took the board's shapes
+ * with it; this file is the opening and the close.
+ *
+ * **Every word of the opening is a line of a document.** The headline is the line the
+ * diagram's own picture is named with (`RunDiagram.astro`'s alt text, and the homepage's
+ * band) and the board writes it as this page's `h1`; the lead is three of the diagram's own
+ * labels, each rendered with the document it is quoted from, and `website/test/how-it-works.mjs`
+ * holds every one of them to that document over the built page. The two headings the board
+ * adds and no document writes — the lead's own composition is not one, but "Turn a task into
+ * a pull request" in the closing band is — are listed in the pull request for the owner to
+ * veto.
+ *
+ * The hero's glow is `base.css`'s `.hero-glow` (redesign part P1), written once for the site
+ * rather than again here, and this block is the `position: relative` / `overflow: hidden`
+ * parent that layer needs. Nothing here names a colour, a size or a gap of its own: every
+ * value below is a token of `src/styles/tokens.css`.
  */
 import Base from '../layouts/Base.astro'
 import RunDiagram from '../components/RunDiagram.astro'
+import ZoomLevels from '../components/ZoomLevels.astro'
+import { LABELS } from '../lib/run-labels.mjs'
+
+/**
+ * A label as a sentence rather than as the clause it is: the diagram's labels are written
+ * mid-sentence, and the page opens and closes with one of them. The text is the label's own
+ * and only its first letter moves — `website/test/how-it-works.mjs` holds every sourced line
+ * of this page, with the document its `data-source` names, over the built page, and refuses a
+ * block of text in the opening or the close that quotes no document at all.
+ */
+const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1)
+
+const LEAD_OPENING = sentence(LABELS.oneExecution.text)
+const LEAD_CLOSE = sentence(LABELS.ownProject.text)
 ---
 
 <Base title="How it works">
-  <h1 class="page-title">How it works</h1>
+  <section class="how-hero" aria-labelledby="how-title">
+    {/* The board's background layer: the two glows and the grid, behind the opening only.
+        Decoration, so it says so, and `base.css` paints it (P1). */}
+    <div class="hero-glow" aria-hidden="true"></div>
+
+    <div class="how-copy">
+      {/* The board's pill: the page's own name, which is also the word the menu gives it. */}
+      <p class="pill how-pill">
+        <span class="how-pill-dot" aria-hidden="true"></span>
+        How it works
+      </p>
+
+      {/* The headline: the line the picture below is named with, with the board's last three
+          words in the accent's gradient (`base.css`'s `.display-xl` and `.gradient-text`). */}
+      <h1 class="page-title display-xl" id="how-title">
+        How a task becomes <span class="gradient-text">a pull request</span>
+      </h1>
+
+      {/* What a run is, in three of the diagram's own labels — each rendered with the document
+          it is quoted from. The separators are the page's: a comma and two full stops. */}
+      <p class="how-lead">
+        <span data-source={LABELS.oneExecution.source}>{LEAD_OPENING}</span>{', '}
+        <span data-source={LABELS.ownProject.source}>{LABELS.ownProject.text}</span>{'. '}
+        <span data-source={LABELS.whatRemains.source}>{LABELS.whatRemains.text}</span>
+      </p>
+
+      {/* What a reader does next: the board's two links — the way to install it, and the page
+          that says what a run costs. */}
+      <p class="how-actions">
+        <a class="how-cta" href="/getting-started/">Get started</a>
+        <a class="how-cta-quiet" href="/caps-and-costs/">Caps and costs</a>
+      </p>
+    </div>
+  </section>
+
   <RunDiagram />
+
+  {/* The four levels, drawn out from the run above: where the run end to end is the page's
+      picture of one run, these are the same shapes zooming out — inside one job, the jobs the
+      orchestrator fans out, the developer's own view, and the whole project. D237 puts them
+      here, under "The run, end to end", and D244 makes them one `<defs>` of `<symbol>`s drawn
+      through `<use>`, so a job is the same tile at every level. Still pictures only: the pinned,
+      scroll-driven zoom between them is Part 5. */}
+  <ZoomLevels />
+
+  {/* The board's closing band: the same promise as the opening, and the one link that acts on
+      it. Its heading is the board's own — no document of this repository writes it — and it is
+      listed in the pull request for the owner to veto. The line under it is the README's. */}
+  <section class="how-close" aria-labelledby="how-close-title">
+    <div class="how-close-copy">
+      <h2 class="how-close-title display-md" id="how-close-title">Turn a task into a pull request</h2>
+      <p class="how-close-line" data-source={LABELS.ownProject.source}>{LEAD_CLOSE}</p>
+    </div>
+    <a class="how-cta" href="/getting-started/">Get started</a>
+  </section>
 </Base>
 
 <style>
-  .page-title { margin-bottom: var(--space-xl); }
+  /* Tokens only (W1.2): this page names the palette, the spacing scale, the type scale and the
+     radii, and defines none of them — `base.css` holds the display scale, the gradient, the
+     pill and the glow, and `website/test/base-styles.mjs` reads the room the page's own title
+     declares under itself. */
+
+  /* The opening: the page's first block, so it carries the room below itself rather than the
+     gap being two blocks' business. `position: relative` and `overflow: hidden` are what the
+     glow layer inside it needs (base.css, section 2c). */
+  .how-hero {
+    position: relative;
+    overflow: hidden;
+    padding-bottom: var(--space-2xl);
+  }
+
+  /* The copy paints above the glow: a positioned box paints after a static one, and the glow
+     is the block's first child. The stack is laid out by the room each line declares under
+     itself rather than by a gap, because the room under the title is this page's own rule and
+     `website/test/base-styles.mjs` reads it from here. */
+  .how-copy {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .how-pill {
+    gap: var(--space-2xs);
+    margin: 0 0 var(--space-md);
+    font-size: var(--font-size-sm);
+  }
+
+  /* The pill's dot: the success tone, the one colour on the site that means "this is running".
+     A mark and not text, so it carries no pair of its own. */
+  .how-pill-dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-pill);
+    background: var(--ok);
+  }
+
+  /* The headline is `base.css`'s `.display-xl` with the one thing that is this page's own: the
+     column it is set in, so it breaks where the board breaks it rather than running the width
+     of the page. The room under it is the page's own rule rather than a heading's default
+     margin — the title is the page's opening and what follows it is the page's own block — and
+     `website/test/base-styles.mjs` reads that room from this rule. */
+  .page-title {
+    max-width: 22ch;
+    margin-bottom: var(--space-2xl);
+  }
+
+  /* The lead: the diagram's three labels as one paragraph. It is prose, so it is the muted
+     tone at the size the site sets a lead in, and it stops short of the full column. */
+  .how-lead {
+    margin: 0 0 var(--space-md);
+    max-width: 34rem;
+    color: var(--text-muted);
+    font-size: var(--font-size-xl);
+    line-height: var(--leading-snug);
+  }
+
+  /* The action row: the board's two links, on one line while there is room and wrapping rather
+     than shrinking when there is not. Both are controls a reader taps, so both carry the 44 px
+     minimum the owner's brief of 2026-10-19 measures every control against. */
+  .how-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-sm) var(--space-lg);
+    margin: 0;
+  }
+
+  /* The primary: the accent as a fill and the ground as its label — the pair `a11y.mjs`
+     computes at 4.5:1 for a label a reader reads — at the control's radius. */
+  .how-cta {
+    display: inline-flex;
+    align-items: center;
+    box-sizing: border-box;
+    min-height: 44px;
+    padding: var(--space-sm) var(--space-lg);
+    border-radius: var(--radius-lg);
+    background: var(--accent);
+    color: var(--ground);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-lg);
+    font-weight: var(--weight-black);
+    text-decoration: none;
+  }
+
+  /* The second link is a link, not a second button: it keeps the underline `base.css` gives
+     every link in running text, so it reads as a link rather than as a disabled control. */
+  .how-cta-quiet {
+    display: inline-flex;
+    align-items: center;
+    box-sizing: border-box;
+    min-height: 44px;
+    font-size: var(--font-size-base);
+    font-weight: var(--weight-semibold);
+  }
+
+  /* The closing band: a panel laid on the page, the hairline every raised thing on this site
+     has and the larger radius, with the board's one filled link beside the promise. There is
+     no `box-shadow` anywhere on the site — a shadow is a colour function, and a colour function
+     outside a palette file is a contrast pair the a11y gate cannot compute. */
+  .how-close {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-lg);
+    margin-top: var(--space-2xl);
+    padding: var(--space-xl) var(--space-lg);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-xl);
+    background: var(--panel);
+  }
+
+  .how-close-copy {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+  }
+
+  .how-close-title {
+    margin: 0;
+  }
+
+  .how-close-line {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-lg);
+  }
 </style>

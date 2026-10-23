@@ -61,6 +61,22 @@ B9E2F5981AA6E0CD28160D9FF13993A75599653C
 tmp=$(mktemp -d)
 trap 'gpgconf --kill all 2>/dev/null || true; rm -rf "$tmp"' EXIT
 
+# download URL OUT fetches URL to OUT. Every download here went without a
+# retry until a transient failure failed the amd64 base build on #903 (and
+# docker-tests on #896): "curl: (92) HTTP/2 stream was not closed cleanly",
+# which a rerun carried. So the first attempt is HTTP/2 and is retried:
+# --retry-all-errors so that a reset connection and that exit-92 framing
+# failure are retried too, which plain --retry does not. The last attempt
+# speaks HTTP/1.1, which has no stream framing left to lose. What
+# the retries leave in OUT is still verified below as it was: SHASUMS256.txt
+# against its OpenPGP signature and the tarball against SHASUMS256.txt, so a
+# retried download can carry no byte the untried one could not, and a
+# failure still fails the build closed.
+download() {
+  curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "$2" "$1" \
+    || curl -fsSL --http1.1 --retry 5 --retry-all-errors --retry-delay 2 -o "$2" "$1"
+}
+
 if [ "$want" = keyring ]; then
   # Each key comes from the Node.js project's own release-keys repository,
   # falling back to the keyservers. The fingerprints above are the trust
@@ -69,7 +85,7 @@ if [ "$want" = keyring ]; then
   export GNUPGHOME="$tmp/gnupg"
   mkdir -m 0700 "$GNUPGHOME"
   for key in $node_release_keys; do
-    if curl -fsSL "https://raw.githubusercontent.com/nodejs/release-keys/main/keys/$key.asc" -o "$tmp/key.asc" \
+    if download "https://raw.githubusercontent.com/nodejs/release-keys/main/keys/$key.asc" "$tmp/key.asc" \
         && gpg --batch --quiet --import "$tmp/key.asc"; then
       continue
     fi
@@ -107,8 +123,8 @@ if [ ! -s "$keyring" ]; then
   exit 1
 fi
 
-curl -fsSL "$url/SHASUMS256.txt" -o "$tmp/SHASUMS256.txt"
-curl -fsSL "$url/SHASUMS256.txt.sig" -o "$tmp/SHASUMS256.txt.sig"
+download "$url/SHASUMS256.txt" "$tmp/SHASUMS256.txt"
+download "$url/SHASUMS256.txt.sig" "$tmp/SHASUMS256.txt.sig"
 gpgv --keyring "$keyring" "$tmp/SHASUMS256.txt.sig" "$tmp/SHASUMS256.txt"
 
 file=$(grep -o "node-v[0-9.]*-linux-$arch\.tar\.xz" "$tmp/SHASUMS256.txt" | head -n 1)
@@ -120,7 +136,7 @@ if [ -x "$prefix/bin/node" ] && [ "node-$("$prefix/bin/node" -v)-linux-$arch.tar
   echo "install-node: Node $("$prefix/bin/node" -v) is already installed"
   exit 0
 fi
-curl -fsSL "$url/$file" -o "$tmp/$file"
+download "$url/$file" "$tmp/$file"
 (cd "$tmp" && grep "  $file\$" SHASUMS256.txt | sha256sum -c -)
 rm -rf "$prefix"
 mkdir -p "$prefix"

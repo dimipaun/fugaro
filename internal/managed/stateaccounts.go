@@ -213,9 +213,16 @@ var stateAssetTypes = map[string]string{
 	"google_secret_manager_secret_iam_binding":       "",
 	"google_artifact_registry_repository_iam_member": "",
 	"google_cloud_run_v2_job_iam_member":             "",
-	"google_logging_log_view_iam_member":             "",
-	"google_logging_project_exclusion":               "",
-	"google_billing_budget":                          "",
+	// The credentials service's invoker grant (C1.18,
+	// deploy/terraform/gcp/modules/workflow/sa.tf): a Cloud Run IAM member, so
+	// the same answer as the job's own member above — GCP keeps the binding
+	// inside the service it grants on, and the listing holds no asset of its
+	// own for it. The service it grants on is the table's
+	// google_cloud_run_v2_service entry, which is an asset of the project.
+	"google_cloud_run_v2_service_iam_member": "",
+	"google_logging_log_view_iam_member":     "",
+	"google_logging_project_exclusion":       "",
+	"google_billing_budget":                  "",
 }
 
 // stateAssetName is a state resource's name in the terms the whole-project

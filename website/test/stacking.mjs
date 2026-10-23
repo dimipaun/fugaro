@@ -245,7 +245,11 @@ test('the slider and the run\'s picture name no layer of their own', () => {
     2,
     `dist carries ${pages.length} of the two pages this case is about: \`npm run build\` writes them (npm run check does it first)`,
   )
-  const blocks = /(^|[\s,>+~])\.(home-slider|panel|tab|tab-bar|easy-steps|easy-step|run-diagram|run-svg|run-words)(\[|[:,]|$)/
+  // Every class the two blocks draw with, so a rule added for any part of either one is read
+  // here: the slider's own row and its dots (the owner's feedback of 2026-10-21, item 3, turned
+  // the strip of tabs into the slider, and the two classes the tabs carried are gone with them).
+  const blocks =
+    /(^|[\s,>+~])\.(home-slider|slider-title|slider-controls|slider-step|slider-arrow|slider-dots|slider-dot-item|slider-dot|panels|panel|panel-title|easy-steps|easy-step|step-number|step-icon|step-name|step-line|watch-shot|watch-block|watch-command|watch-note|run-diagram|run-svg|run-words)(\[|[:,]|$)/
   let positioned = 0
   for (const page of pages) {
     const rules = cssRules(pageCss(page.html, DIST)).filter((rule) => blocks.test(rule.selector))

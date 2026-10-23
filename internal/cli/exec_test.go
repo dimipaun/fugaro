@@ -431,7 +431,7 @@ func TestExecOldJobEnvSaysInitRepo(t *testing.T) {
 	if ExitCode(err) != ExitRemoteError || err == nil {
 		t.Fatalf("err = %v (exit %d)", err, ExitCode(err))
 	}
-	for _, want := range []string{"FUGARO_GCP_PROJECT", "before M9a", "fugaro init --repo"} {
+	for _, want := range []string{"FUGARO_GCP_PROJECT", "before M9a", "fugaro update --repo"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("err %q lacks %q", err, want)
 		}
@@ -444,7 +444,7 @@ func TestExecOldJobEnvSaysInitRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 	if rec.Status != runstore.StatusInfraError || rec.Outcome != runstore.OutcomeNone || rec.Stage != "bootstrap" ||
-		!strings.Contains(rec.Reason, "FUGARO_GCP_PROJECT") || !strings.Contains(rec.Reason, "fugaro init --repo") ||
+		!strings.Contains(rec.Reason, "FUGARO_GCP_PROJECT") || !strings.Contains(rec.Reason, "fugaro update --repo") ||
 		strings.Contains(rec.Reason, "mismatch") || rec.Execution != "" || rec.Repo != "acme/app" || rec.Workflow != "app" {
 		t.Errorf("record = %+v", rec)
 	}

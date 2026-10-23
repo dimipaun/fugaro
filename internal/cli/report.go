@@ -212,7 +212,7 @@ func reportHistory(ctx context.Context, lc *localcfg.Config, wantSlug string, fr
 	case errors.Is(err, firestore.ErrNoDatabase):
 		return nil, "the project's Firebase project has no Firestore database", nil
 	case errors.Is(err, firestore.ErrNotFound):
-		return nil, "the project's Firestore database has no history mark (fugaro init --firebase has not set it up)", nil
+		return nil, "the project's Firestore database has no history mark (fugaro update --firebase-project has not set it up)", nil
 	case err != nil:
 		return nil, "", firestoreErr(lc, err)
 	}
@@ -476,22 +476,31 @@ func microsOfUSD(v float64) budget.Micros {
 }
 
 // recordOfRun is one run as a one-run day record, so the run-record totals
-// group like the history does. Subscription model spend is notional.
+// group like the history does. Subscription model spend is notional, and a
+// mixed run's model figure is split into its money and notional halves
+// (P12, D140).
 func recordOfRun(r runview.Row) budget.DayRecord {
 	rec := budget.DayRecord{
 		Repo: r.Repo, Slug: r.Repo, Date: budget.DayDate(budget.Day(r.Created.UTC())), Runs: 1,
 		Outcomes: map[string]int64{}, ByModel: map[string]budget.ModelTotals{}, ByPerson: map[string]budget.PersonTotals{},
 	}
-	spent, notional := microsOfUSD(r.Cost.ModelUSD), budget.Micros(0)
-	if r.Cost.ModelBasis == runstore.BasisSubscription {
-		spent, notional = 0, microsOfUSD(r.Cost.ModelUSD)
-	}
+	// The two halves of the model figure (P12, D140), so a mixed cascade
+	// run's tier-A dollars are notional in the history and a subscription
+	// run's whole figure still is.
+	spent := microsOfUSD(r.Cost.ModelMoneyUSD())
+	notional := microsOfUSD(r.Cost.ModelSubscriptionUSD())
 	rec.SpentMicros, rec.NotionalMicros = spent, notional
 	if r.Cost.ComputeEstimated {
 		rec.ComputeMicros, rec.ComputeEstimatedRuns = microsOfUSD(r.Cost.ComputeUSD), 1
 	}
+	// The by-model split of a run with a notional part is of its whole model
+	// figure and cannot be told apart per model, so it is left out rather
+	// than counted as money (a subscription run always had none of it here).
+	// The split is asked of the notional part, never of the basis (P12,
+	// D140): a cascade run the plan served in full is api-list and billed
+	// nothing.
 	for name, usd := range r.Cost.ModelBy {
-		if r.Cost.ModelBasis == runstore.BasisSubscription {
+		if r.Cost.AllNotional() || notional > 0 {
 			continue
 		}
 		rec.ByModel[budget.Key(name)] = budget.ModelTotals{Micros: microsOfUSD(usd)}

@@ -19,10 +19,12 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -188,6 +190,65 @@ func TestNoCapHaltAtBootstrap(t *testing.T) {
 	stored, err := g.store.ReadRecord(context.Background())
 	if err != nil || stored.Status != runstore.StatusHalted || stored.Halt == nil || stored.FinishedAt == nil {
 		t.Fatalf("stored = %+v, %v", stored, err)
+	}
+}
+
+// TestCascadeEnforceWithoutCapsHaltsNoCap is C1.19's admission half: a cascade
+// run is a *gatewayed* run — its model calls are leased and accounted for by
+// the credentials service's upstream, exactly as an api-key run's are (D143) —
+// so an enforcing installation with no caps has to halt it no_cap at bootstrap,
+// as TestNoCapHaltAtBootstrap's api-key run is halted, rather than admit it and
+// let the calls fail one by one against a service that has nothing to lease.
+//
+// The run is a real one through the policy path: the switch is published (O2,
+// without which the run does not start at all), the mode enforces and the caps
+// are gone from the database, so the halt is Admit's own. Its outcome is none
+// and the process exits 0: nothing was locked, pushed or opened, and no model
+// call was made.
+//
+// It is a job run, because a cascade run is: `fugaro exec` never cascades
+// (D149), and a local one is refused in bootstrap before it reaches admission
+// at all.
+//
+// Hand mutation this fails on: building Admit's Gateway flag from api-key and
+// vertex alone — the predicate C1.19 left behind here, which reads a cascade
+// run as the unleased run an oauth run is and returns no halt at all.
+func TestCascadeEnforceWithoutCapsHaltsNoCap(t *testing.T) {
+	cfg := strings.Replace(gwConfig(t, ""), "auth: api-key", "auth: cascade", 1)
+	if cfg == gwConfig(t, "") {
+		t.Fatal("the fixture's agent.auth line moved: this test is not switching it to cascade")
+	}
+	g := newGW(t, cfg, "enforce", "")
+	// A cascade run is a job run — `fugaro exec` never cascades (D149) — so
+	// the harness is the cloud here, as TestTestKnobIgnoredInCloud's is: the
+	// platform's own execution of this repository's job, and the project the
+	// job names.
+	g.deps.Local = false
+	g.deps.Project = "aurora"
+	g.deps.Execution = cloudRunExecution(gcp.JobName(repoSlug, gcp.WorkflowVariant("app", "")))
+	g.deps.Env = append(g.deps.Env, "CLOUD_RUN_EXECUTION=exec-1")
+	b := publishPolicy(t, g, fmt.Sprintf(`{"version":%d,"allow_repos":["*"],"routing":{"claude":{"via":"cascade"}},"budget":{"mode":"enforce","allowed_models":["claude-sonnet-5-5"]}}`, projectpolicy.Version))
+	// Nothing to lease against, anywhere: the run may not begin.
+	b.db.Set(budget.PathCapsRepo(repoSlug), nil)
+	b.db.Set(budget.PathCapsGlobal, nil)
+	rec, err := b.run(t) // no stage may run
+	if err != nil {
+		t.Fatalf("a bootstrap halt returned %v, want nil so exec exits 0", err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Outcome != runstore.OutcomeNone || rec.Halt == nil || rec.Halt.Reason != runstore.HaltNoCap {
+		t.Fatalf("record = %+v", rec)
+	}
+	if !strings.HasPrefix(rec.Reason, "halted: no_cap: ") || !strings.Contains(rec.Halt.Detail, "no per-run cap") {
+		t.Fatalf("reason = %q, halt = %+v", rec.Reason, rec.Halt)
+	}
+	if ok, _ := b.bucket.Exists(context.Background(), lock.Key(repoSlug, "fugaro/"+runID)); ok {
+		t.Fatal("the branch lock was taken")
+	}
+	if len(g.provider.State.PRs) != 0 {
+		t.Fatal("a halted bootstrap opened a PR")
+	}
+	if g.fake.Count() != 0 {
+		t.Fatal("the gateway was used")
 	}
 }
 

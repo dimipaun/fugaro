@@ -550,8 +550,12 @@ var (
 	// editSkills is prose telling the agent to change or commit a
 	// Fugaro-owned skill.
 	editSkills = regexp.MustCompile(`(?i)\b(edit|modify|change|commit|patch|rewrite|fork)\b[^.\n]*(plugin/skills|\.claude/skills/fugaro|fugaro-owned skill|fugaro skill)`)
-	// pipedSecret is a secret value fed to secrets set on a command line.
-	pipedSecret = regexp.MustCompile(`\b(echo|printf)\b[^|\n]*\|\s*\S*fugaro\s+secrets\s+set\b|\bfugaro\s+secrets\s+set\b[^\n]*<<<`)
+	// pipedSecret is a secret value fed to a set command on a command line:
+	// `echo "$TOKEN" | fugaro secrets set …`, the same line with `creds set`
+	// (C1.25 takes its value from stdin the same way, and a value written into
+	// a command line lands in the shell's history and the process list), or a
+	// here-string.
+	pipedSecret = regexp.MustCompile(`\b(echo|printf)\b[^|\n]*\|\s*\S*fugaro\s+(?:secrets|creds)\s+set\b|\bfugaro\s+(?:secrets|creds)\s+set\b[^\n]*<<<`)
 )
 
 // ownerCommands are the commands only the user runs, and only from a
@@ -567,10 +571,16 @@ var (
 // what turns that project's typed confirmation off (managed Task 6.1, D58/D55).
 // It refuses a coding agent's session itself, at the terminal it needs, and
 // this list is the other half of that: a skill never tells an agent to run it.
-var ownerCommands = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro project policy publish", "fugaro allow-delete", "fugaro managed flag"}
+//
+// creds set and creds ls (C1.25, Q6) are the owner's for a sharper reason than
+// any of the above: the credentials service's whole credential set is ONE
+// Secret Manager secret, and the only way to write one entry is to read the
+// document that holds them all. A skill that told an agent to run either would
+// be telling it to read every model credential the service issues.
+var ownerCommands = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro project policy publish", "fugaro allow-delete", "fugaro managed flag", "fugaro creds set", "fugaro creds ls"}
 
 // userRunsAllowed is every command a user-runs block may hold.
-var userRunsAllowed = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro project policy publish", "fugaro allow-delete", "fugaro managed flag", "fugaro init", "fugaro update-skills", "fugaro upgrade"}
+var userRunsAllowed = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro project policy publish", "fugaro allow-delete", "fugaro managed flag", "fugaro creds set", "fugaro creds ls", "fugaro setup", "fugaro update", "fugaro update-skills", "fugaro upgrade"}
 
 // userLeadRE is the sentence before a user-runs block: it says the user (or
 // the owner) runs it.
@@ -578,7 +588,9 @@ var userLeadRE = regexp.MustCompile(`(?i)\b(user|owner|admin|they|their)\b[^.\n]
 
 // lintForbidden is design §9's list: what a skill must never tell an agent to
 // do. The owner's commands (budget set, kill and resume, secrets set, the
-// project policy publish, an applying init) are named only in a block marked
+// project policy publish, and an applying `fugaro setup` or `fugaro update` --
+// the converge's two doors, which W1.2 split the retired verb into) are named
+// only in a block marked
 // user-runs, never anywhere else, not even in a "never" sentence, and wherever they sit (a span, a
 // block, a link text, a wrapped paragraph, behind a prefix or a global flag).
 // Other forbidden commands may be named by a sentence in an inline span that
@@ -645,7 +657,7 @@ func lintForbidden(f *skillFile, ci *commandIndex) []string {
 				add(u.line, "a flag the agent must never pass", u.text)
 			}
 			if inlineSecretValue(c) {
-				add(u.line, "fugaro secrets set with a value", u.text)
+				add(u.line, c.path+" with a value", u.text)
 			}
 		}
 		if pipedSecret.MatchString(u.text) {
@@ -685,8 +697,8 @@ func ownerViolation(c fugaroCmd) string {
 	switch {
 	case slices.Contains(ownerCommands, c.path):
 		return "an owner's command (" + c.path + ") outside a user-runs block"
-	case c.path == "fugaro init" && !slices.ContainsFunc(c.args, func(x string) bool { return x == "--plan-only" || x == "--print-vars" || x == "--help" }):
-		return "an applying fugaro init outside a user-runs block"
+	case (c.path == "fugaro setup" || c.path == "fugaro update") && !slices.ContainsFunc(c.args, func(x string) bool { return x == "--plan-only" || x == "--print-vars" || x == "--help" }):
+		return "an applying " + c.path + " outside a user-runs block"
 	}
 	return ""
 }
@@ -716,7 +728,7 @@ func lintUserRunsLine(ci *commandIndex, text string, add func(string)) {
 			add("a flag no one should pass for the user")
 		}
 		if inlineSecretValue(c) {
-			add("fugaro secrets set with a value")
+			add(c.path + " with a value")
 		}
 	}
 }
@@ -744,10 +756,11 @@ func upgradeYesOnly(c fugaroCmd) bool {
 	})
 }
 
-// inlineSecretValue reports whether a secrets set carries more than the
-// secret's NAME: the command takes the value on stdin only.
+// inlineSecretValue reports whether a command that stores a credential
+// carries more than its NAME: `fugaro secrets set` and `fugaro creds set`
+// both take the value on stdin only, never as an argument.
 func inlineSecretValue(c fugaroCmd) bool {
-	return c.path == "fugaro secrets set" && len(c.positional) > 1
+	return (c.path == "fugaro secrets set" || c.path == "fugaro creds set") && len(c.positional) > 1
 }
 
 func splitSentences(line string) []string {
@@ -1202,7 +1215,7 @@ func TestLintRejectsUnknownFlag(t *testing.T) {
 
 func TestLintJoinsContinuedLines(t *testing.T) {
 	// The forbidden flag sits on the continuation line, not the first.
-	expectViolation(t, demoTree(t, "```bash\nfugaro init \\\n  --yes\n```\n"), "a flag the agent must never pass")
+	expectViolation(t, demoTree(t, "```bash\nfugaro setup \\\n  --yes\n```\n"), "a flag the agent must never pass")
 	expectViolation(t, demoTree(t, "```bash\nfugaro budget \\\n  kill\n```\n"), "an owner's command")
 }
 
@@ -1285,21 +1298,31 @@ func multiLineCommands(f *skillFile) []string {
 	return out
 }
 
-func TestLintRejectsYesNearInit(t *testing.T) {
-	expectViolation(t, demoTree(t, "```bash\nfugaro init --yes\n```\n"), "a flag the agent must never pass")
-	expectViolation(t, demoTree(t, "Run `fugaro init --repo --yes`.\n"), "a flag the agent must never pass")
-	expectViolation(t, demoTree(t, "Run `fugaro init --allow-delete`.\n"), "a flag the agent must never pass")
-	expectViolation(t, demoTree(t, "```bash\ntime fugaro init --forget\n```\n"), "a flag the agent must never pass")
-	expectClean(t, demoTree(t, "Never run `fugaro init --plan-only --yes`.\n"))
+func TestLintRejectsYesNearSetup(t *testing.T) {
+	expectViolation(t, demoTree(t, "```bash\nfugaro setup --yes\n```\n"), "a flag the agent must never pass")
+	expectViolation(t, demoTree(t, "Run `fugaro setup --repo --yes`.\n"), "a flag the agent must never pass")
+	expectViolation(t, demoTree(t, "Run `fugaro setup --allow-delete`.\n"), "a flag the agent must never pass")
+	expectViolation(t, demoTree(t, "```bash\ntime fugaro update --forget\n```\n"), "a flag the agent must never pass")
+	expectClean(t, demoTree(t, "Never run `fugaro setup --plan-only --yes`.\n"))
 }
 
-// TestLintInitAppliesOnlyInUserRuns: init beyond its plan modes creates
-// billable resources and needs the user's terminal.
-func TestLintInitAppliesOnlyInUserRuns(t *testing.T) {
-	expectViolation(t, demoTree(t, "Then run `fugaro init`.\n"), "applying fugaro init")
-	expectViolation(t, demoTree(t, "Never run `fugaro init`.\n"), "applying fugaro init")
-	expectClean(t, demoTree(t, "Run `fugaro init --repo --plan-only` and `fugaro init --print-vars`.\n"))
-	expectClean(t, demoTree(t, "The user runs this once in their own terminal, not through the agent:\n\n```bash user-runs\nfugaro init\n```\n"))
+// TestLintSetupAndUpdateApplyOnlyInUserRuns: both doors of the converge —
+// `setup`, which stands an installation up, and `update`, which re-converges it
+// — apply Terraform beyond their plan modes, so neither may appear outside a
+// user-runs block. The two are one rule in ownerViolation, so both are driven
+// here: a case for one door alone would leave the other's half of that
+// condition untested, and deleting it would go unnoticed.
+func TestLintSetupAndUpdateApplyOnlyInUserRuns(t *testing.T) {
+	expectViolation(t, demoTree(t, "Then run `fugaro setup`.\n"), "applying fugaro setup")
+	expectViolation(t, demoTree(t, "Never run `fugaro setup`.\n"), "applying fugaro setup")
+	expectClean(t, demoTree(t, "Run `fugaro setup --repo --plan-only` and `fugaro setup --print-vars`.\n"))
+	expectClean(t, demoTree(t, "The user runs this once in their own terminal, not through the agent:\n\n```bash user-runs\nfugaro setup\n```\n"))
+
+	expectViolation(t, demoTree(t, "Then run `fugaro update`.\n"), "applying fugaro update")
+	expectViolation(t, demoTree(t, "Never run `fugaro update`.\n"), "applying fugaro update")
+	expectViolation(t, demoTree(t, "```bash\nfugaro update\n```\n"), "applying fugaro update")
+	expectClean(t, demoTree(t, "Run `fugaro update --repo --plan-only` and `fugaro update --print-vars`.\n"))
+	expectClean(t, demoTree(t, "The user runs this in their own terminal after an upgrade, not through the agent:\n\n```bash user-runs\nfugaro update\n```\n"))
 }
 
 func TestLintRejectsSecretShaped(t *testing.T) {
@@ -1374,6 +1397,52 @@ func TestLintRejectsBudgetOutsideUserRuns(t *testing.T) {
 	expectViolation(t, demoTree(t, "Never run `fugaro managed flag my-proj-123`.\n"), "an owner's command")
 	expectViolation(t, demoTree(t, "```bash\nfugaro managed flag my-proj-123 --budget 50 --budget-currency USD\n```\n"), "an owner's command")
 	expectViolation(t, demoTree(t, "Run `fugaro --project p managed flag my-proj-123`.\n"), "an owner's command")
+}
+
+// TestLintRejectsCredsOutsideUserRuns: C1.25's two commands are the owner's on
+// the same terms as the budget ones and for a sharper reason — the credentials
+// service's credentials are one bundle secret, so writing one entry means
+// reading them all — and the value goes in on stdin, never as an argument.
+func TestLintRejectsCredsOutsideUserRuns(t *testing.T) {
+	for _, c := range []string{
+		"fugaro creds set claude-oauth-token",
+		"fugaro creds ls",
+		"fugaro --project p creds ls",
+		"fugaro creds set claude-oauth-token < token-file",
+	} {
+		expectViolation(t, demoTree(t, "Run `"+c+"`.\n"), "an owner's command")
+		expectViolation(t, demoTree(t, "```bash\n"+c+"\n```\n"), "an owner's command")
+	}
+	// A user-runs block may hold them — the value still comes in on stdin, and
+	// a value written as an argument is a violation in the block too.
+	expectClean(t, demoTree(t, "The owner runs this in their own terminal, not through the agent:\n\n```bash user-runs\nfugaro creds set claude-oauth-token < token-file\nfugaro creds ls\n```\n"))
+	expectViolation(t, demoTree(t, userRuns("fugaro creds set claude-oauth-token fake-value-here")), "fugaro creds set with a value")
+	// The name is the one thing that may follow: a second positional is the
+	// value, whether or not it looks like one.
+	expectViolation(t, demoTree(t, userRuns("fugaro creds set claude-oauth-token sk-abc123")), "fugaro creds set with a value")
+}
+
+// TestLintRejectsAPipedSecretValue: the rule has one shape and two commands.
+// A value written into a command line is in the shell's history and the
+// process list, so `echo "$TOKEN" | fugaro secrets set …` is a violation —
+// and `creds set` takes its value from stdin the same way (C1.25), so the
+// same line with the other command is one too. It holds inside a user-runs
+// block as well: the block is what makes the command the user's to run, not
+// what makes a value on the command line safe.
+func TestLintRejectsAPipedSecretValue(t *testing.T) {
+	for _, line := range []string{
+		`echo "$TOKEN" | fugaro secrets set claude-oauth-token`,
+		`echo "$TOKEN" | fugaro creds set claude-oauth-token`,
+		`printf '%s' "$TOKEN" | fugaro creds set claude-oauth-token`,
+		`fugaro creds set claude-oauth-token <<< "$TOKEN"`,
+	} {
+		expectViolation(t, demoTree(t, "```bash\n"+line+"\n```\n"), "a secret value on the command line")
+		expectViolation(t, demoTree(t, userRuns(line)), "a secret value on the command line")
+	}
+	// The commands without a value on the line are what the skills do say: the
+	// pipe is the violation, not the command. A redirect from a file is the
+	// form the rule leaves alone — it is how the plan says the value arrives.
+	expectClean(t, demoTree(t, userRuns("fugaro creds set claude-oauth-token < token-file\nfugaro secrets set claude-oauth-token < token-file")))
 }
 
 func TestLintAllowsUserRunsBlock(t *testing.T) {
@@ -1504,8 +1573,8 @@ func TestLintOwnerCommandsHoweverTheyAreWritten(t *testing.T) {
 	expectViolation(t, demoTree(t, "Now run fugaro budget kill to stop everything.\n"), "an owner's command")
 	expectViolation(t, demoTree(t, "A paragraph that is\nwrapped: fugaro\nbudget set is here.\n"), "an owner's command")
 	expectViolation(t, demoTree(t, "    fugaro budget kill\n"), "an owner's command")
-	expectViolation(t, demoTree(t, "Then fugaro init applies.\n"), "an applying fugaro init")
-	expectClean(t, demoTree(t, "Run `fugaro budget show`, `fugaro --project p runs ls` and `fugaro init --repo --plan-only`.\n"))
+	expectViolation(t, demoTree(t, "Then fugaro setup applies.\n"), "an applying fugaro setup")
+	expectClean(t, demoTree(t, "Run `fugaro budget show`, `fugaro --project p runs ls` and `fugaro setup --repo --plan-only`.\n"))
 }
 
 // TestLintUserRunsBlocksAreNotExempt: a user-runs block is for a short list
@@ -1519,7 +1588,7 @@ func TestLintUserRunsBlocksAreNotExempt(t *testing.T) {
 		"gcloud auth print-access-token",
 		"fugaro run --no-smoke",
 		"fugaro image build --local --no-smoke",
-		"fugaro init --yes",
+		"fugaro setup --yes",
 		"fugaro run --no-budget-check",
 		"fugaro run --repo o/r",
 		"fugaro cancel run-1",
@@ -1543,23 +1612,23 @@ func TestLintUserRunsBlocksAreNotExempt(t *testing.T) {
 // cloud image build must go to the user's own terminal window.
 func TestLintBangShell(t *testing.T) {
 	for _, body := range []string{
-		"Run `! fugaro init` now.\n",
-		"Type !fugaro init in the prompt.\n",
+		"Run `! fugaro setup` now.\n",
+		"Type !fugaro setup in the prompt.\n",
 		"```bash\n! fugaro secrets set x --repo o/r\n```\n",
 		"Then ! fugaro image build --workflow web.\n",
-		"Use `!fugaro init`.\n",
-		"Type `! ./fugaro init`.\n",
-		"Type `!FUGARO_PROJECT=p fugaro init`.\n",
+		"Use `!fugaro setup`.\n",
+		"Type `! ./fugaro setup`.\n",
+		"Type `!FUGARO_PROJECT=p fugaro setup`.\n",
 		"Type `! gcloud auth login` or `! docker build .`.\n",
 	} {
 		expectViolation(t, demoTree(t, body), "a ! prefix")
 	}
 	// Exclamation marks, images and the real instruction are fine.
 	expectClean(t, demoTree(t, "Done! fugaro is ready.\n"))
-	expectClean(t, demoTree(t, userRuns("fugaro init")))
+	expectClean(t, demoTree(t, userRuns("fugaro setup")))
 	// A user-runs block says the terminal.
-	expectViolation(t, demoTree(t, "The user runs this in their terminal:\n\n```bash user-runs\nfugaro init\n```\n"), "not through the agent")
-	expectViolation(t, demoTree(t, "The user runs this:\n\n```bash user-runs\nfugaro init\n```\n"), "own terminal")
+	expectViolation(t, demoTree(t, "The user runs this in their terminal:\n\n```bash user-runs\nfugaro setup\n```\n"), "not through the agent")
+	expectViolation(t, demoTree(t, "The user runs this:\n\n```bash user-runs\nfugaro setup\n```\n"), "own terminal")
 }
 
 // TestLintHiddenInstructions: nothing that renders as nothing, loads from
@@ -1609,17 +1678,17 @@ func TestLintForbidsBypassFlags(t *testing.T) {
 // the agent pass these flags, in any spelling.
 func TestLintForbidsOnboardingAndMoneyFlags(t *testing.T) {
 	for _, body := range []string{
-		"```bash\nfugaro init --onboard-repo acme/app\n```\n",
-		"Run `fugaro init --onboard-repo=acme/app`.\n",
-		"Run `fugaro init --repo --onboard-repo acme/app`.\n",
-		"```bash\nfugaro init --base go --replace-image go\n```\n",
-		"Run `fugaro init --replace-image=history`.\n",
-		"```bash\nfugaro init --create-project --gcp-project my-proj-123\n```\n",
-		"Run `fugaro init --link-billing 0123AB-4567CD-89EF01`.\n",
-		"The user runs this:\n\n```bash user-runs\nfugaro init --create-project --gcp-project my-proj-123\n```\n",
-		"```bash\nfugaro init --provision-batch\n```\n",
-		"Run `fugaro init --provision-batch --yes`.\n",
-		"The user runs this:\n\n```bash user-runs\nfugaro init --provision-batch\n```\n",
+		"```bash\nfugaro setup --onboard-repo acme/app\n```\n",
+		"Run `fugaro setup --onboard-repo=acme/app`.\n",
+		"Run `fugaro setup --repo --onboard-repo acme/app`.\n",
+		"```bash\nfugaro setup --base go --replace-image go\n```\n",
+		"Run `fugaro setup --replace-image=history`.\n",
+		"```bash\nfugaro setup --create-project --gcp-project my-proj-123\n```\n",
+		"Run `fugaro setup --link-billing 0123AB-4567CD-89EF01`.\n",
+		"The user runs this:\n\n```bash user-runs\nfugaro setup --create-project --gcp-project my-proj-123\n```\n",
+		"```bash\nfugaro setup --provision-batch\n```\n",
+		"Run `fugaro setup --provision-batch --yes`.\n",
+		"The user runs this:\n\n```bash user-runs\nfugaro setup --provision-batch\n```\n",
 	} {
 		expectViolation(t, demoTree(t, body), "a flag")
 	}
@@ -1647,6 +1716,6 @@ func TestLintDangerousCommandsVariants(t *testing.T) {
 func TestLintUserRunsYesOnlyOnUpgrade(t *testing.T) {
 	expectClean(t, demoTree(t, userRuns("fugaro upgrade --yes")))
 	expectViolation(t, demoTree(t, userRuns("fugaro upgrade --yes --allow-fork")), "a flag no one should pass for the user")
-	expectViolation(t, demoTree(t, userRuns("fugaro init --yes")), "a flag no one should pass for the user")
+	expectViolation(t, demoTree(t, userRuns("fugaro setup --yes")), "a flag no one should pass for the user")
 	expectViolation(t, demoTree(t, "Run this:\n\n```bash\nfugaro upgrade --yes\n```\n"), "a flag the agent must never pass")
 }

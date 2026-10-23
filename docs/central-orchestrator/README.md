@@ -27,8 +27,8 @@ approval of anything**: no part of the plan has been accepted except the three t
 (P0's guard test, P1's admission of the service type and P3's lease), the gate in
 `implementation-plan.md` §9 is passed for nothing else, and the parts the twenty open decisions
 block do not start. The two siblings this work depends on are also
-unbuilt: the always-on orchestrator design is in **open PR #632** (with the rigor modes work
-in **open PR #773**), and `docs/credentials-service/` and `docs/coordinator/` are each
+unbuilt: the always-on orchestrator design is in **open PR #632** (the rigor modes work,
+PR #773, has since merged to `main`), and `docs/credentials-service/` and `docs/coordinator/` are each
 *"plan only; nothing is implemented"* in their own words.
 
 | File | What it is |
@@ -98,7 +98,7 @@ work rather than to whoever answers first (`docs/design/desktop-console-v2.md`).
   orchestrator would have to meet (a credential in the installation's own secret manager, a
   dedicated identity, and **behind the same launch claim and the same budget caps**). The
   central orchestrator *is* that question (§3 #53).
-- `docs/rigor-modes/` (**open PR #773**, not on `main`, so no link here) — the five modes this
+- [docs/rigor-modes/](../rigor-modes/) (PR #773, merged to `main` after this reconciliation) — the five modes this
   spec's escalation table names (`POC`, `Startup`, `Pro`, `Critical`, `Hotfix`), and the one place
   the spec's *"Escalation timeouts (resolved)"* has no home yet: that work builds no
   scheduler and never mentions a timeout (C6, §3 #39, **D8**).
@@ -108,7 +108,10 @@ work rather than to whoever answers first (`docs/design/desktop-console-v2.md`).
 - [docs/coordinator/](../coordinator/README.md) — the sibling document set, and the register
   of every D-block and check range. The coordinator is *"advisory, not authoritative … It
   never blocks or reorders merges"*, and unbuilt; the spec's *"every orchestrator … reports to
-  the coordinator"* therefore describes a path with no reader (§3 #51, **D14**).
+  the coordinator"* therefore describes a path with no reader (§3 #51, **D14**). **Added
+  2026-10-21:** the coordinator is **not** a role this work's service plays — the owner answered
+  that work's D196 **(B)**, so it gets **its own** resident service and every orchestrator,
+  this one included, reaches it **as a client**; this plan's P4/P5 no longer block it.
 - [docs/design/v1.md](../design/v1.md) §2 — the non-goal the spec's *"carries PRs through to
   merge"* contradicts: *"Auto-merge. Fugaro never merges."* (§3 #22, **D18**).
 - [SECURITY.md](../../SECURITY.md) — the trust assumptions every credential question here

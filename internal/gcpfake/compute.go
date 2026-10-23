@@ -17,9 +17,12 @@ import (
 // instances.delete, which is how a leaked VM is removed (one per VM, with the
 // zone the listing named).
 //
-// It implements exactly those two plus instances.get, and fails the test on
-// anything else, so a reaper that started sending a third call is noticed
-// rather than silently served. The delete is answered with a finished
+// It implements exactly those two plus instances.get, and the three
+// read-only gets `fugaro doctor` makes about a Batch installation's cloud
+// facts (an image family, a network, a subnetwork), and fails the test on
+// anything else, so a reaper that started sending a third call -- or a
+// doctor check reaching for a call nobody wrote -- is noticed rather than
+// silently served. The delete is answered with a finished
 // Operation; whether the real one is finished when the API answers is not
 // documented on the pages read (UNVERIFIED -- the reaper does not read the
 // operation, so the difference is invisible to it).
@@ -51,15 +54,28 @@ type Compute struct {
 	instances map[string]*computeInstance // by zone and name
 	order     []string                    // zone/name, oldest first
 	deletes   []string                    // zone/name, in order
-	ops       int
+	// families, networks and subnetworks are what the three read-only gets
+	// `fugaro doctor` makes for a Batch installation answer from: the
+	// preload image family a run's bootDisk names, and the network and
+	// subnetwork the batch block names. A name the test did not add is
+	// NOT_FOUND, which is a fact doctor reports rather than a failure.
+	families   map[string]bool   // image family, under defProject
+	networks   map[string]bool   // network name, under defProject
+	subnetwork map[string]string // "region/name" → name, under defProject
+	ops        int
 }
 
 type computeInstance struct {
-	zone    string
-	name    string
-	labels  map[string]string
-	status  string
-	created time.Time
+	zone   string
+	name   string
+	labels map[string]string
+	status string
+	// created is what the listing renders as creationTimestamp; rawCreated,
+	// when set, is rendered verbatim instead: the API answers a string, and a
+	// string this build cannot parse is a fact about the instance rather than
+	// a failure of the call.
+	created    time.Time
+	rawCreated *string
 }
 
 // NewCompute starts a Compute Engine fake that lives until the test ends.
@@ -88,6 +104,19 @@ func (f *Compute) AddInstanceCreated(zone, name string, labels map[string]string
 	f.add(zone, name, labels, created)
 }
 
+// SetInstanceCreatedRaw makes an instance's creationTimestamp the literal
+// string raw, whatever it is: the aggregated list then answers what the API
+// would have answered, so a caller's own reading of a stamp it cannot parse is
+// exercised. The instance has to exist already; a name the fake does not hold
+// is left alone (there is nothing to render).
+func (f *Compute) SetInstanceCreatedRaw(zone, name, raw string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if i := f.instances[zone+"/"+name]; i != nil {
+		i.rawCreated = &raw
+	}
+}
+
 func (f *Compute) add(zone, name string, labels map[string]string, created time.Time) {
 	if labels == nil {
 		labels = map[string]string{}
@@ -110,6 +139,42 @@ func (f *Compute) Instances() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.order...)
+}
+
+// AddImageFamily makes the preloaded boot image family exist in the fake's
+// project, which is what a run's bootDisk.image names (design §1.2): the
+// family, never one of its generations. The get answers the family with a
+// generation behind it, as the real API does once the preload stage has built
+// one.
+func (f *Compute) AddImageFamily(family string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.families == nil {
+		f.families = map[string]bool{}
+	}
+	f.families[family] = true
+}
+
+// AddNetwork makes the network named (its bare name, as the full resource
+// name's last element) exist in the fake's project.
+func (f *Compute) AddNetwork(name string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.networks == nil {
+		f.networks = map[string]bool{}
+	}
+	f.networks[name] = true
+}
+
+// AddSubnetwork makes the subnetwork named exist in region in the fake's
+// project.
+func (f *Compute) AddSubnetwork(region, name string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.subnetwork == nil {
+		f.subnetwork = map[string]string{}
+	}
+	f.subnetwork[region+"/"+name] = name
 }
 
 // Labels returns an instance's labels, or nil when it does not exist.
@@ -147,6 +212,12 @@ func (f *Compute) defZones() []string {
 var (
 	computeAggregatedRE = regexp.MustCompile(`^/projects/([^/]+)/aggregated/instances$`)
 	computeInstanceRE   = regexp.MustCompile(`^/projects/([^/]+)/zones/([^/]+)/instances/([^/]+)$`)
+	// The three read-only gets `fugaro doctor` makes about a Batch
+	// installation's cloud facts: the preload image family, and the network
+	// and subnetwork its batch block names.
+	computeImageFamilyRE = regexp.MustCompile(`^/projects/([^/]+)/global/images/family/([^/]+)$`)
+	computeNetworkRE     = regexp.MustCompile(`^/projects/([^/]+)/global/networks/([^/]+)$`)
+	computeSubnetworkRE  = regexp.MustCompile(`^/projects/([^/]+)/regions/([^/]+)/subnetworks/([^/]+)$`)
 )
 
 func (f *Compute) handle(w http.ResponseWriter, r *http.Request, body []byte) {
@@ -155,6 +226,31 @@ func (f *Compute) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	defer f.mu.Unlock()
 	if m := computeAggregatedRE.FindStringSubmatch(p); m != nil && r.Method == http.MethodGet {
 		f.aggregated(w, r, m[1])
+		return
+	}
+	if m := computeImageFamilyRE.FindStringSubmatch(p); m != nil && r.Method == http.MethodGet {
+		f.getImageFamily(w, m[1], m[2])
+		return
+	}
+	if m := computeNetworkRE.FindStringSubmatch(p); m != nil && r.Method == http.MethodGet {
+		if m[1] == f.defProject() && f.networks[m[2]] {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"kind": "compute#network", "name": m[2],
+				"selfLink": "https://www.googleapis.com/compute/v1/projects/" + m[1] + "/global/networks/" + m[2],
+			})
+			return
+		}
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "network "+m[2]+" not found")
+		return
+	}
+	if m := computeSubnetworkRE.FindStringSubmatch(p); m != nil && r.Method == http.MethodGet {
+		if m[1] == f.defProject() && f.subnetwork[m[2]+"/"+m[3]] != "" {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"kind": "compute#subnetwork", "name": m[3], "region": m[2],
+			})
+			return
+		}
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "subnetwork "+m[3]+" not found")
 		return
 	}
 	if m := computeInstanceRE.FindStringSubmatch(p); m != nil {
@@ -177,14 +273,33 @@ func (f *Compute) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	f.unhandled(w, r)
 }
 
+// getImageFamily answers an image family's get: the request Batch's
+// bootDisk.image resolves, which the API answers with the family's newest
+// generation. A family with no generation behind it is NOT_FOUND, as the real
+// API answers for a family the preload stage never published.
+func (f *Compute) getImageFamily(w http.ResponseWriter, project, family string) {
+	if project != f.defProject() || !f.families[family] {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "The resource 'projects/"+project+"/global/images/family/"+family+"' was not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"kind": "compute#image", "name": family + "-1", "family": family, "status": "READY",
+		"selfLink": "https://www.googleapis.com/compute/v1/projects/" + project + "/global/images/" + family + "-1",
+	})
+}
+
 func (f *Compute) render(i *computeInstance) map[string]any {
+	created := stamp(i.created)
+	if i.rawCreated != nil {
+		created = *i.rawCreated
+	}
 	return map[string]any{
 		"kind":              "compute#instance",
 		"name":              i.name,
 		"zone":              "https://www.googleapis.com/compute/v1/projects/" + f.defProject() + "/zones/" + i.zone,
 		"status":            i.status,
 		"labels":            i.labels,
-		"creationTimestamp": stamp(i.created),
+		"creationTimestamp": created,
 	}
 }
 

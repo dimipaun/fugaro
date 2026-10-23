@@ -1,0 +1,266 @@
+# STAGED, NOT APPLIED (2026-10-20). This file is the console's **Windows pack**:
+# it typechecks, runs the unit suite and packs the unsigned NSIS installer --
+# **at release time only**, on the release tag or on a manual dispatch before
+# one, and never on a pull request. **No agent copies, edits, renames or deletes
+# it** -- GitHub rejects a Fugaro push that touches .github/workflows/**, so an
+# agent run cannot deliver a workflow change at all, and every workflow change in
+# this repository is staged here for a human (docs/pending-workflows/README.md).
+#
+# To apply it, from the repository root:
+#
+#     cp docs/pending-workflows/console-windows.yml .github/workflows/console-windows.yml
+#     git add .github/workflows/console-windows.yml
+#     git rm docs/pending-workflows/console-windows.yml
+#     git commit -m "console: pack the Windows installer at release time"
+#
+# **The staged copy is deleted after the copy-in**, as console-linux.yml's is:
+# there is no byte-identity test for this file, because it is a new workflow with
+# nothing to be identical to. (`console-tests.yml` and `console-release.yml` are
+# kept staged instead, because named tests read the staged copies and assert they
+# match the applied ones.)
+#
+# DO NOT COPY THIS IN YET. Read this paragraph first, because it is not a
+# formality: **this job is red until three things in console/ have landed**, and a
+# red pack is worse than no pack, because it arrives at release time.
+#
+#   1. `console/package.json` has no `package:win` script and no `win` block,
+#      and `console/src/main/fuses.ts`'s `SUPPORTED_PLATFORMS` is
+#      `['darwin','linux']` with `fuseTarget` **throwing** for anything else.
+#      `afterPack` is the pack's only fuse flipper, so `electron-builder --win`
+#      produces **no artifact at all** today, and the pack step below cannot
+#      succeed. (docs/console-windows/implementation-plan.md Part B, findings
+#      F35 and F36.)
+#   2. The unit suite has never run on Windows. `spawn.ts`'s `isExecutableFile`
+#      reads `stat.mode & 0o111`, which Windows never sets, and the suite's
+#      stubs are host executables -- so the test step below is red on a Windows
+#      runner until that is platform-aware, along with the `':'` split of the
+#      app's own `PATH`. (Parts A and C.)
+#   3. `console/package.json`'s `build.electronDownload.checksums` pins three
+#      zips -- darwin-arm64, darwin-x64, linux-x64 -- and no `win32-x64` one, so
+#      the Electron step below downloads its distribution against **no pinned
+#      hash** on this runner. Adding the fourth is a supply-chain pin and
+#      therefore an owner-reviewable edit rather than a convenience, and it
+#      lands with the other two. (Part B, finding F37.)
+#
+# The order the plan gives is: stage this file, land those three edits, then copy
+# it in. Staging it now is the point of the staging directory -- the file is
+# reviewable while it is still a proposal.
+#
+# WHEN THIS RUNS, AND WHY THAT IS THE OWNER'S RULING RATHER THAN A CHOICE HERE
+#
+# **The release tag, or a manual dispatch before one, and nothing else.** The
+# owner answered D7 on 2026-10-20 with option (c), against the recommendation
+# (docs/console-windows/reconciliation.md D7): *"a waste of resources; if there
+# are problems we will fix them then."* So there is **no `pull_request` trigger
+# and no `paths:` filter** -- not even a path-filtered one, and a filter would in
+# any case be a second way for the job not to run, on the one trigger the ruling
+# rules out entirely.
+#
+# **The risk this accepts, stated rather than implied: a packaging break shows at
+# release time**, and it is fixed then. Nothing between releases exercises the
+# Windows pack, so a break in the `win` block below, in the fuse table's `win32`
+# row, or in a lockfile bump, is found by a release rather than by a pull
+# request. **The mitigation is the manual dispatch**: docs/release.md's "Before
+# you tag" checklist tells the owner to run this job by hand before the tag --
+# Actions -> console-windows -> "Run workflow" on main -- and to look at its
+# artifact, which is the only dry run this design has. That step and this file
+# are one decision; changing one without the other leaves the risk uncovered.
+#
+# WHY THIS IS ITS OWN WORKFLOW, AND NOT A SECOND JOB IN console-tests.yml
+#
+# The same reason console-linux.yml gives, and it is a test rather than a taste:
+# **the release gate's required-check list is derived from console-tests.yml's
+# job set.** `TestReleaseGateRequiresTheConsoleCheck`
+# (internal/cli/docs_desktop_console_test.go) reads that workflow, and
+# `deriveConsoleCheckNames` **refuses a workflow with more than one job** --
+# "this test cannot tell which of several jobs that is" -- and asserts that
+# scripts/release-gate.sh's `names=(...)` array is exactly those derived names
+# plus `test`, `terraform` and `rules`. A second job there would therefore not be
+# a packaging change at all: it would be a change to which checks gate a release
+# tag.
+#
+# **This job is deliberately NOT in the gate.** A red Windows pack is
+# information, not a blocked release, and that is a decision this file records
+# rather than one it makes (docs/console-windows/reconciliation.md D8(a), and the
+# finding F41 behind it). **Owner, if you want it to gate**: add
+# `console-windows` to the `#   ` comment block and the `names=(...)` array in
+# scripts/release-gate.sh, and widen `deriveConsoleCheckNames` so it reads a
+# workflow with several jobs. All of it in one commit, or the test that holds
+# them together fails.
+#
+# WHAT THIS FILE IS
+#
+#   - **A release-time job, and the only place the console's unit suite ever runs
+#     on Windows.** It is not build-only, and console-linux.yml is: that file
+#     proves the packaging path on every pull request, while this job's subject
+#     is that the console has never *run* on Windows -- so it typechecks and runs
+#     the unit suite before it packs. The e2e suite is not run here: it drives
+#     the console's real window under its real CSP and needs a display, which is
+#     a separate question and a separate task (docs/console-windows/implementation-plan.md,
+#     the owner's checklist).
+#   - It holds **no secret of any kind**, and it never will: it packs
+#     **unsigned**. There is no Authenticode identity for this project and this
+#     change buys none, so the installer this job produces is unsigned and
+#     Windows SmartScreen will warn that its publisher is unknown
+#     (docs/console-windows/reconciliation.md D10, and the note docs/release.md
+#     carries once this lands). Nothing in this file may ever claim otherwise.
+#   - **The artifact is this job's own, and it is not attached to any release.**
+#     The pack uploads `Fugaro.Console-0.0.0-win-x64.exe` as a build artifact
+#     with a 90-day retention, which is long enough to reach the release it was
+#     dispatched for. Attaching it to `console-vX.Y.Z` is **not** what D7
+#     decided: that release's `publish` job is the only job with
+#     `contents: write`, and it would have to fetch this workflow's artifact --
+#     a mechanism the console release does not have today. Until the owner
+#     decides that, a `console-vX.Y.Z` release carries macOS and Linux and
+#     nothing else, and docs/release.md says so.
+#   - **The version it packs is 0.0.0.** Nothing stamps console/package.json
+#     here: the release workflow stamps its own packs from the tag with
+#     `-c.extraMetadata.version`, and whether this job should do the same is part
+#     of the undecided "does the installer join the release" question above. So
+#     the artifact is named `Fugaro.Console-0.0.0-win-x64.exe` (the same product
+#     name and the same arch the Linux job's artifacts carry).
+#   - x64 only. There is no `build.win.target` in console/package.json today and
+#     this file does not add one: Part B does, pinned to x64, for the reason that
+#     a second architecture would be a cross-build nothing here can launch -- the
+#     same packer on the same runner, with the same fuses. That same part must
+#     also add the `win32-x64` hash to `build.electronDownload.checksums`, which
+#     pins three zips today and no Windows one, so that the Electron step below
+#     downloads against a pinned hash rather than merely fetching (finding F37).
+
+name: console-windows
+
+# The triggers are the D7 ruling, and they are the whole of it: the release tag
+# -- the same strict pattern console-release.yml runs on -- and a manual dispatch
+# before one. No `pull_request`, and no `paths:` filter anywhere: see the header.
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
+
+# The workflow inherits nothing: `contents: read` is all it needs to check the
+# repository out, and it is declared here and on the job so that neither can
+# gain a permission without an edit that a reviewer sees.
+permissions:
+  contents: read
+
+jobs:
+  console-windows:
+    name: console-windows
+    # windows-latest, and not a pinned image, for console-linux.yml's reason:
+    # this job's subject is the *packaging* path, and the two things about it
+    # that must not move -- electron-builder's version and Electron's own -- are
+    # pinned by the lockfile and by `build.electronDownload.checksums` in
+    # console/package.json, not by the runner image.
+    runs-on: windows-latest
+    # Longer than the Linux job's 30: a Windows runner is slower at `npm ci` and
+    # at the pack, and this job runs the unit suite as well. A timeout that fires
+    # on a slow-but-correct run teaches the reader to ignore this check.
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: console
+        # **bash, named rather than inherited.** The default shell for `run:` on
+        # a Windows runner is PowerShell, and every step below is a POSIX shell
+        # script -- `set -euo pipefail`, `unset`, a glob into an array. Naming
+        # the shell once here rather than rewriting four steps in PowerShell
+        # keeps this file's steps identical to console-linux.yml's, which is what
+        # makes the two comparable by eye. Git Bash is on every windows-latest
+        # image; a step that needs cmd.exe's own spelling is a step that should
+        # say so.
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The Node version comes from console/package.json's `engines.node`, the
+      # field test/unit/pinning.test.ts keeps an exact pin: a version written
+      # here a second time would be a pin that can disagree with the one the
+      # console's own tests enforce.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: console/package.json
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+      # `npm ci` from the committed lockfile, with lifecycle scripts off: the
+      # console's dependencies are exactly the ones the lockfile pins
+      # (test/unit/pinning.test.ts asserts the set), and a postinstall script is
+      # something this repository does not run from CI.
+      - name: install the pinned toolchain
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      # The half of this job the Linux one does not have, and the only place the
+      # console's suite ever runs on Windows. `npm run typecheck` is the
+      # TypeScript compiler over the whole tree with no emit, and
+      # `npm run test:unit` is vitest over the 57 `.ts` files under test/unit (54
+      # of them `*.test.ts`; `find console/test/unit -name '*.ts' | wc -l`), which
+      # need no display and no Electron. Both are expected to be red until the POSIX
+      # repairs this file's header names have landed; that is what the staging is
+      # for, and it is why this file is staged rather than applied.
+      - name: typecheck
+        run: npm run typecheck
+      - name: run the unit suite
+        run: npm run test:unit
+      # Electron's own download of its distribution, checked against the pinned
+      # package's `checksums.json`: `electron-v<version>-win32-x64.zip` will be
+      # one of the hashes `build.electronDownload.checksums` pins **once the
+      # win32-x64 pin this file's header asks for has landed** (finding F37) --
+      # today that block pins three zips and none of them is a Windows one, so
+      # this step fetches Electron unverified. Then the build the packer packs
+      # (`npm run build` is what writes the file package.json's `main` points
+      # at).
+      - name: download Electron and build the app
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          set -euo pipefail
+          node node_modules/electron/install.js
+          npm run build
+      # `npm run package:win` is `electron-builder --win --publish never`, with no
+      # `npx` in front of it: the packer is the lockfile's exact electron-builder
+      # and nothing else, and `--publish never` is in the script rather than in
+      # this line so no invocation can add one.
+      #
+      # The `CSC_*` variables are unset rather than merely unset-by-default, the
+      # same way console-linux.yml unsets them: this job has no signing material
+      # and must not acquire any by inheriting a variable from the runner's
+      # environment. `CSC_IDENTITY_AUTO_DISCOVERY=false` is the packer's own
+      # switch for "look for no identity at all" -- it is the macOS half of that
+      # setting, and it is set here for the same reason the Linux job sets it,
+      # which is that an unsigned pack is the only pack this job may produce. The
+      # `unset` is deliberately unguarded -- no `|| true` -- because a shell that
+      # could not unset them is a shell about to hand the packer a signing
+      # identity this job must not have, and that has to fail the step rather
+      # than be swallowed.
+      - name: build the Windows installer
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          set -euo pipefail
+          unset CSC_LINK CSC_NAME CSC_KEY_PASSWORD
+          npm run package:win
+          shopt -s nullglob
+          installers=(release/*.exe)
+          if [ "${#installers[@]}" -ne 1 ]; then
+            echo "::error::want exactly one .exe under console/release, found ${#installers[@]}"
+            exit 1
+          fi
+          ls -l "${installers[0]}"
+      # The artifact is the point of the job, so it is kept: a run that went red
+      # for a reason further down the pipeline, or a reviewer who wants to run the
+      # installer on a Windows machine, has it -- and running it is what the
+      # owner's manual checklist in docs/console-windows/implementation-plan.md
+      # section 4 needs. `if-no-files-found: error` because a build that produced
+      # nothing and still uploaded successfully is the one outcome this job must
+      # not be able to report.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: console-windows
+          path: console/release/*.exe
+          if-no-files-found: error
+          # 90 days, not console-linux.yml's 7: that job runs on every pull
+          # request and its artifact is for the pull request that produced it,
+          # while this one runs once per release and its artifact is what the
+          # owner's manual checklist installs. An artifact that expires before
+          # the release it was dispatched for is an artifact nobody can use.
+          retention-days: 90

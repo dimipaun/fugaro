@@ -180,21 +180,46 @@ type Refusal struct {
 	Reason string
 }
 
-// Report is what one pass did.
+// Report is what one pass did, and where and by what deadlines it did it.
+//
+// The four context fields are not the pass's own business -- Reap decides by
+// them, it does not decide them -- but they belong in the report, because the
+// report is read long after the process that wrote it is gone: the schedule
+// that runs the reaper starts a Cloud Run job whose whole output is this
+// report (internal/cli/reaper.go), and "deleted job X" is not a line anyone
+// can check months later without the project, the region and the deadlines it
+// was judged by -- an installation that changed a task timeout changed the
+// reaper's patience with it, which is the one thing that makes an old
+// deletion explainable. Reap fills them in from the Reaper; a zero one (a
+// Report built by hand, as the lines' own test does) renders no header line at
+// all.
 type Report struct {
-	DryRun  bool
-	Actions []Action
-	Refused []Refusal
+	// Project and Region are the GCP project and the region the pass swept.
+	Project, Region string
+	// QueueDeadline, RunBudget and MaxAge are the deadlines the pass decided
+	// by, after NewReaper's defaults (Reaper.QueueDeadline, RunBudget and
+	// MaxAge, which is what these are copied from).
+	QueueDeadline, RunBudget, MaxAge time.Duration
+	DryRun                           bool
+	Actions                          []Action
+	Refused                          []Refusal
 }
 
-// Lines renders the report for an operator: one line per action and per
-// refusal, every action first and every refusal after. That is not the order
-// they were decided in -- refusals come out of both passes, so a job refused
-// in the job pass prints after an instance deleted in the instance pass -- but
-// it is the order an operator reads: what the pass did to their project, then
-// what it left alone and why. A dry run says "would" on every action.
+// Lines renders the report for an operator: one line for what the pass was and
+// by what it judged, then one line per action and per refusal, every action
+// first and every refusal after. That is not the order they were decided in --
+// refusals come out of both passes, so a job refused in the job pass prints
+// after an instance deleted in the instance pass -- but it is the order an
+// operator reads: what the pass did to their project, then what it left alone
+// and why. A dry run says "would" on every action, and says so on the header
+// too, since a log that holds only "would delete job ..." lines must not be
+// mistaken later for a pass that deleted nothing because there was nothing to
+// delete.
 func (r Report) Lines() []string {
-	out := make([]string, 0, len(r.Actions)+len(r.Refused))
+	out := make([]string, 0, len(r.Actions)+len(r.Refused)+1)
+	if head := r.headline(); head != "" {
+		out = append(out, head)
+	}
 	for _, a := range r.Actions {
 		verb := actionVerb(a.Kind, r.DryRun)
 		line := verb + " " + a.Target
@@ -207,6 +232,23 @@ func (r Report) Lines() []string {
 		out = append(out, "refused "+f.Target+": "+f.Reason)
 	}
 	return out
+}
+
+// headline is the report's first line: the project and region the pass swept
+// and the three deadlines it decided by, or "" for a Report that names no
+// project (one built by hand rather than by Reap). It is the line that makes
+// the rest of the report checkable later -- every deletion in it was judged by
+// these numbers, and the numbers are the installation's own task timeouts.
+func (r Report) headline() string {
+	if r.Project == "" && r.Region == "" {
+		return ""
+	}
+	verb := "reaped"
+	if r.DryRun {
+		verb = "would reap"
+	}
+	return fmt.Sprintf("%s projects/%s/locations/%s: queue deadline %v, run budget %v, max age %v",
+		verb, r.Project, r.Region, r.QueueDeadline, r.RunBudget, r.MaxAge)
 }
 
 // actionVerb is how one action reads in a report: what it did, or what a dry
@@ -227,9 +269,91 @@ func actionVerb(k ActionKind, dryRun bool) string {
 	return past
 }
 
+// outOfBoundsFloor are the GCP projects no pass of this reaper may touch,
+// whatever path named them. The first is the installation the plan puts out of
+// bounds -- no agent and no automated run touches it, which is why the desktop
+// console's fixture recorder refuses it by name too (its BELONG_PROJECT) -- and
+// the second is the same installation under the project id it answers to now.
+//
+// WHY TWO PROJECT IDS ARE IN THE ENGINE, which is otherwise the one thing this
+// package never does (CONTRIBUTING.md's "No project specifics in the engine"):
+// because a refusal the caller can forget is not a guarantee. The failure this
+// list exists for is a pass pointed at an installation that is NOT the one
+// being swept -- a live installation's jobs and VMs deleted by a reaper that
+// read the wrong project from a config or from a shell -- and the two paths
+// that can name a project (a project config's gcp_project, and the reaper
+// job's own environment) do not share a configuration file or a variable, so
+// anything a caller has to wire up twice is a guarantee with a gap in it. The
+// owner's ruling for this task is that the refusal lives here, where both
+// paths meet; CONTRIBUTING.md carries the exception beside the rule.
+//
+// It is a FLOOR and not the whole list: a caller may name further projects it
+// never touches (ReaperOptions.OutOfBoundsProjects), and the two paths that
+// reach NewReaper both do, from the same environment variable
+// (internal/cli's FUGARO_REAPER_REFUSE_PROJECTS). What a caller cannot do is
+// take one of these two off the list, which is the point of a floor: an
+// installation that believes it is safe to sweep one of them is wrong, and
+// nothing in its own configuration can make it right.
+//
+// A deletion the reaper makes is a deletion of someone's billing or someone's
+// data, and this list is the one place where "the installation's own project"
+// is not enough of a reason: a reaper pointed at one of these is pointed at a
+// live installation that is not the one being swept, so it reads nothing and
+// deletes nothing. The list is matched EXACTLY (a project whose id merely
+// begins with one of these is another project, and refusing it would refuse a
+// project nobody named) and case-insensitively (Google's own API does not treat
+// project ids as case-sensitive, so `Edge-Devel-Dimi` is the same project) --
+// see outOfBounds.
+var outOfBoundsFloor = []string{"edge-devel-dimi", "fugaro-belong"}
+
+// outOfBounds reports whether project is in list. The value is trimmed first
+// because one of the two paths that reach NewReaper hands it over unvalidated:
+// a project config's gcp_project is checked against localcfg's own
+// gcp_project pattern (projectRE), but the reaper job's own environment
+// (internal/cli's reaperEnvOptions) is read straight out of FUGARO_GCP_PROJECT
+// -- so " edge-devel-dimi " is a spelling of the same project and must not be a
+// way around the list. Nothing else is folded and nothing is matched by prefix:
+// the list is exact, and this function is the whole of the rule.
+func outOfBounds(project string, list []string) bool {
+	p := strings.TrimSpace(project)
+	for _, bad := range list {
+		if strings.EqualFold(p, strings.TrimSpace(bad)) {
+			return true
+		}
+	}
+	return false
+}
+
+// outOfBoundsProjects is the list one pass refuses: the engine's floor plus
+// whatever the caller named. The floor is first, so the refusal names it first
+// -- it is the one an operator cannot remove.
+func outOfBoundsProjects(o ReaperOptions) []string {
+	return append(append([]string{}, outOfBoundsFloor...), o.OutOfBoundsProjects...)
+}
+
 // ReaperOptions configure a Reaper.
 type ReaperOptions struct {
 	GCPProject, Region string
+	// OutOfBoundsProjects are further GCP projects this pass refuses BY NAME,
+	// on top of the engine's own floor (outOfBoundsFloor, whose two ids and
+	// whose reason are stated there): a caller that knows of a project an
+	// automated sweep must never touch names it here, and the pass then
+	// refuses it exactly as it refuses the floor -- before any client is
+	// opened, so nothing is read and nothing can be deleted.
+	//
+	// It is the caller's data and not the engine's, which is why it is a field
+	// and not another constant: the ids are an installation's own (design
+	// §3.7's reach is project-wide, so "which projects must never be swept" is
+	// a fact about the installations, not about the reaper). Both paths that
+	// reach NewReaper fill it from the same variable, internal/cli's
+	// FUGARO_REAPER_REFUSE_PROJECTS, so the config path and the reaper job's
+	// own environment can never disagree about it.
+	//
+	// It can only ADD. The floor is not removable: an installation that
+	// believed it was safe to sweep one of those two is wrong, and a
+	// configuration that could say so would be a configuration that turns a
+	// guarantee into a preference.
+	OutOfBoundsProjects []string
 	// Timeouts is where the workflow timeouts come from, exactly as
 	// Options' own is (design §2.3). Required: both of the reaper's deadlines
 	// derive from the longest configured task timeout, so that an
@@ -320,6 +444,8 @@ func NewReaper(ctx context.Context, o ReaperOptions) (*Reaper, error) {
 	switch {
 	case o.GCPProject == "" || o.Region == "":
 		return nil, errors.New("the reaper needs a GCP project and a region")
+	case outOfBounds(o.GCPProject, outOfBoundsProjects(o)):
+		return nil, fmt.Errorf("GCP project %s is out of bounds: it is one of the projects this reaper never touches (%s), and it is refused here so that neither source of a project can reach it -- a project config's gcp_project and the reaper job's own environment alike. Nothing has been read and nothing deleted", o.GCPProject, strings.Join(outOfBoundsProjects(o), ", "))
 	case o.Timeouts == nil:
 		return nil, errors.New("the reaper needs a source for the workflow timeouts: both of its deadlines are derived from the longest one")
 	}
@@ -415,6 +541,70 @@ func (r *Reaper) location() string {
 	return "projects/" + r.o.GCPProject + "/locations/" + r.o.Region
 }
 
+// jobNameFor is the name this pass may act on for a job the listing answered
+// with name, and whether there is one at all.
+//
+// Every name this pass acts on comes from here, because a job is acted on by
+// the listing's own j.Name: jobs.get (deleteQueued's read-back) and
+// jobs.delete take that string as it stands, and jobs.delete is the
+// destructive verb of the five in this file's header -- so a name outside
+// this installation's location would send a read, and a delete, somewhere
+// else. Nothing about the listing makes that impossible: the reaper asks for
+// its location and filters by a label, and a server that answers a listing
+// with a job of another location is answering a question that was not asked.
+//
+// The check is therefore a rewrite and not a comparison, so that no name
+// outside this installation's own location can reach a request whatever the
+// listing says:
+//
+//   - the configured project ID: this installation's own project, and the
+//     name is rebuilt canonically all the same;
+//   - an all-digit project segment: Batch answers a created job's name with
+//     the project NUMBER (design §2.3, which is why Backend.canonical
+//     rewrites the project back to the ID, and why the fake carries its
+//     ProjectNumber knob and TestExecutionRewritesTheProjectNumber pins it).
+//     The number is not compared against this installation's own -- this
+//     pass has no number to compare with -- it is REPLACED by the configured
+//     project ID, so the request names this installation's project either
+//     way. Accepting the number is not a loosening of "this installation's
+//     own project": a numeric segment is a project number, never an ID of
+//     another project, since no project ID is all digits (an ID starts with
+//     a lowercase letter, the rule batch.go's own name checks spell), and
+//     whatever the number was, the name this pass returns is in its own
+//     project;
+//   - anything else: refused. A project segment that is neither this
+//     project's ID nor a number is a name this pass cannot place in its own
+//     project, so there is nothing here it may act on.
+//
+// The region is compared, never rewritten: a job is regional, this reaper
+// knows its own region, and the name has to be well-formed throughout --
+// BatchCodec().ParseInRegion is the tree's own shape, charset and region
+// check for a Batch name (runPartRE: [a-z0-9-] per part), the same one the
+// CLI's job-env check applies to a name it is handed.
+func (r *Reaper) jobNameFor(name string) (string, bool) {
+	id, err := backend.BatchCodec().ParseInRegion(name, r.o.Region)
+	if err != nil {
+		return "", false
+	}
+	if id.GCPProject != r.o.GCPProject && !digitsOnly(id.GCPProject) {
+		return "", false
+	}
+	return r.location() + "/jobs/" + id.Job, true
+}
+
+// digitsOnly reports whether s is one or more ASCII digits.
+func digitsOnly(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // Reap is one pass: the job pass, then the instance pass.
 //
 // The order is the design's (§3.4): the job pass decides every job before the
@@ -433,7 +623,15 @@ func (r *Reaper) location() string {
 // of what it did before that point is still returned, and a caller must not
 // read a short report as a clean project.
 func (r *Reaper) Reap(ctx context.Context) (Report, error) {
-	rep := Report{DryRun: r.o.DryRun}
+	// The report carries the context of the pass as well as its outcome, and
+	// it is filled in before the first request: a pass that errors on its
+	// first listing still hands back a report whose header says where it was
+	// looking and by what (Lines' headline).
+	rep := Report{
+		Project: r.o.GCPProject, Region: r.o.Region,
+		QueueDeadline: r.queueDeadline, RunBudget: r.runBudget, MaxAge: r.maxAge,
+		DryRun: r.o.DryRun,
+	}
 	jobs, err := r.listJobs(ctx)
 	if err != nil {
 		return rep, err
@@ -1034,6 +1232,25 @@ func (r *Reaper) listJobs(ctx context.Context) ([]*batch.Job, error) {
 			if j == nil || !managedJob(j) {
 				continue
 			}
+			// A job this pass may act on must be named under the location it
+			// asked about (jobNameFor has the whole of it). A listing that
+			// answers a job that cannot be placed there is not the listing
+			// this pass asked for, so nothing in it can be read as fact -- the
+			// pass ends, as it does on a partial listing, and the caller
+			// retries. The name is not printed: it is the one value this pass
+			// must not act on, and the message names the location instead,
+			// which is what an operator can check against the installation.
+			//
+			// The name this pass keeps is jobNameFor's, not the listing's, so
+			// every request the job leads to -- jobs.get, jobs.delete, and the
+			// target the report names -- is in this installation's own
+			// location even when the listing spelled it with the project
+			// number.
+			own, ok := r.jobNameFor(j.Name)
+			if !ok {
+				return nil, fmt.Errorf("listing jobs in %s: the API answered a job whose name is not under %s/jobs/, so this listing is not the one this pass asked for: refusing to reap anything from it", r.location(), r.location())
+			}
+			j.Name = own
 			out = append(out, j)
 		}
 		if resp.NextPageToken == "" {

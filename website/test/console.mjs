@@ -71,7 +71,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { READ_UNDER_PLUGIN, linkNodeModules } from './lib/build.mjs'
-import { builtPages } from './lib/html.mjs'
+import { controlTargetFailures } from './lib/controls.mjs'
+import { builtPages, find, parse, textOf, walk } from './lib/html.mjs'
 import {
   CONSOLE_README,
   DOWNLOADS_JSON,
@@ -187,6 +188,15 @@ function platformBlock(section) {
   return /<div class="downloads-linux"[^>]*>([\s\S]*?)<\/ul>\s*<\/div>/.exec(section)?.[1] ?? null
 }
 
+/**
+ * Whether an element carries a class, by token: `class="card download-card"` carries `card`
+ * and not `download-card-…`. Matched by substring instead, `download-card` would also match
+ * the platform heading's own `download-card-platform` and the cards would be read twice.
+ */
+function hasClass(el, name) {
+  return (el.attrs.get('class') ?? '').split(/\s+/).includes(name)
+}
+
 /** The links one piece of markup carries, as `{ href, label }` in document order. */
 function linksIn(html) {
   return [...html.matchAll(/<a[^>]*href="([^"]+)"[^>]*>([^<]*)<\/a>/g)].map((match) => ({
@@ -247,18 +257,31 @@ function assertEveryDownloadLinkIsAListedAsset(pages, data = downloadsData()) {
 }
 
 /**
- * The page's text as a reader sees it: Astro escapes the characters below, and a test that
+ * The page's TEXT as a reader sees it: Astro escapes the characters below, and a test that
  * compared escaped text with the data file would fail on an apostrophe rather than on a
  * claim.
+ *
+ * **Tags are left alone**, and that is what keeps the reader ahead of the page: an attribute
+ * may legitimately carry an escaped `&quot;` of its own — the slider's screenshot `alt` texts
+ * do, quoting the console's own status line — and decoding inside a tag would hand the strict
+ * reader a document whose attribute value ends at the wrong quote. What a text comparison is
+ * about is the text between the tags, so that is the half this decodes.
  */
 function decode(html) {
   return html
-    .replace(/&#39;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&#8212;/g, '—')
-    .replace(/&amp;/g, '&')
+    .split(/(<[^>]*>)/)
+    .map((part) =>
+      part.startsWith('<')
+        ? part
+        : part
+            .replace(/&#39;/g, "'")
+            .replace(/&quot;/g, '"')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&#8212;/g, '—')
+            .replace(/&amp;/g, '&'),
+    )
+    .join('')
 }
 
 test('the console page renders the facts its data file carries', async (t) => {
@@ -268,7 +291,28 @@ test('the console page renders the facts its data file carries', async (t) => {
 
   // Every sentence rendered on the page is the data file's own: the name, what the console
   // is, and each property with its title.
-  assert.ok(page.includes(`<h1>${data.name}</h1>`), `the page's heading is not ${JSON.stringify(data.name)}, the name the data file carries`)
+  //
+  // The heading is read as a **document** and not as a string, because the redesign draws the
+  // name in two tones: `website/src/pages/console.astro` splits it the way the home page's
+  // headline is split, so the `h1` carries a class and a `<span class="gradient-text">` around
+  // its last words. What has to hold is the thing the string comparison was really about — the
+  // headline a reader reads is the data file's name, and the words in the gradient are the
+  // name's own last two rather than a second copy of it with markup in the middle (D102).
+  const doc = parse(page)
+  const h1 = find(doc, 'h1')
+  assert.ok(h1, 'the built console page carries no h1')
+  assert.equal(
+    textOf(h1).replace(/\s+/g, ' ').trim(),
+    data.name,
+    `the page's heading is not ${JSON.stringify(data.name)}, the name the data file carries`,
+  )
+  const gradient = [...walk(h1)].find((el) => hasClass(el, 'gradient-text'))
+  assert.ok(gradient, 'the console page\'s headline carries no element of class "gradient-text", so the board\'s two-tone name is not drawn')
+  assert.equal(
+    textOf(gradient).trim(),
+    data.name.split(/\s+/).filter(Boolean).slice(-2).join(' '),
+    `the gradient carries ${JSON.stringify(textOf(gradient).trim())}, and the split is the name's own last two words: a headline whose halves are written down separately is a second copy of the name, and it is the copy that drifts`,
+  )
   assert.ok(page.includes(data.what.text), `the page does not render what.text ${JSON.stringify(data.what.text)}`)
   for (const property of data.properties) {
     assert.ok(page.includes(property.text), `the page does not render the property "${property.id}"`)
@@ -285,6 +329,22 @@ test('the console page renders the facts its data file carries', async (t) => {
   assert.ok(
     !page.includes(data.not_released.text),
     `the page still renders not_released.text ${JSON.stringify(data.not_released.text)} with the console released`,
+  )
+
+  // And the hero, in the state the checkout ships: the release's own tag and the platform its
+  // first published asset is built for in the pill, and the action that offers that release.
+  // Both are the data file's facts rather than this page's words — and the case below is the
+  // other half of this gate, where the console is unreleased and a data file that still lists
+  // its assets must draw neither. The pair is what makes the hero's release facts a reading of
+  // the release rather than of the list.
+  const hero = articleOf(page)
+  assert.ok(
+    hero.includes(consoleTag(data)),
+    `the hero does not render the release tag ${JSON.stringify(consoleTag(data))} while the console has shipped`,
+  )
+  assert.ok(
+    hero.includes(`Download for ${data.downloads[0].platform}`),
+    `the hero does not offer "Download for ${data.downloads[0].platform}", the platform of the release's first published asset`,
   )
 })
 
@@ -343,6 +403,298 @@ test('the downloads section carries no link and no download URL while the flag i
     section.includes(downloadsData().not_released.text),
     'the downloads section does not render the data file\'s unreleased sentence while the flag is false',
   )
+
+  // **And the hero says nothing about a release either.** It is the page's other half of the
+  // same state: the pill names the release's tag and platform and the filled action offers the
+  // download, and both are claims about a release this repository says has not shipped. The
+  // fixture is the shape that makes the reading worth something — the data file still LISTS the
+  // assets (a release's published names arrive before the release does, which is the state this
+  // file was in while the console was being built), so a hero that read a platform off the list
+  // without asking whether there is a release would draw the pill here. It draws the CLI link
+  // and the lead instead, which are not claims about a release.
+  const hero = articleOf(page)
+  const data = downloadsData()
+  assert.ok(
+    data.downloads.length > 0,
+    `${DOWNLOADS_JSON} lists no download, and this case's premise is a page whose data file lists the assets of a release that has not shipped`,
+  )
+  assert.ok(
+    !hero.includes(consoleTag(data)),
+    `the hero renders the release tag ${JSON.stringify(consoleTag(data))} while the console is unreleased: the pill is a claim about a release, and the data file naming an asset is not one`,
+  )
+  assert.ok(
+    !/Download for/.test(hero),
+    'the hero offers a download while the console is unreleased',
+  )
+  assert.ok(hero.includes('Install the CLI first'), 'the hero dropped its CLI link along with the download action')
+  assert.ok(hero.includes(data.what.text), 'the hero dropped the data file\'s sentence about the console')
+})
+
+/** One built console page's `<article>`: the page's own content, without the layout around it. */
+function articleOf(page) {
+  const m = /<article[^>]*>([\s\S]*?)<\/article>/.exec(page)
+  assert.ok(m, 'the built page carries no article')
+  return m[1]
+}
+
+/**
+ * The controls the console page asks a reader to tap, and what each one is: the classes the
+ * redesign gave them. The home page's own case calls the same reading with its own controls
+ * (`website/test/lib/controls.mjs`), so the owner's one rule is one reading — a control
+ * cannot pass here on a declaration that page's reader would refuse.
+ */
+const CONSOLE_CONTROLS = [
+  ['console-cta', "the hero's filled action"],
+  ['console-cta-quiet', "the hero's quiet link"],
+  ['download-link', 'a download link'],
+  ['screen-dot', 'a dot in the screenshot slider'],
+  ['screen-arrow', "an arrow in the screenshot slider's bar"],
+]
+
+/** The console page's own stylesheet, as the 44 px reading takes it: every `<style>` it ships. */
+function builtStylesheet(built) {
+  const css = [...walk(parse(decode(builtPage(built))))]
+    .filter((el) => el.name === 'style')
+    .map((el) => el.raw ?? '')
+    .join('\n')
+  assert.ok(
+    css.includes('.console-cta'),
+    'the built page ships no stylesheet of its own, so this case would be reading nothing',
+  )
+  return css
+}
+
+test('every control the console page asks a reader to tap is at least 44 px tall', async (t) => {
+  const built = buildWith(t, () => {})
+  const failures = controlTargetFailures(builtStylesheet(built), CONSOLE_CONTROLS)
+  assert.deepEqual(
+    failures,
+    [],
+    `a control on the console page is under the 44 px target the owner's brief of 2026-10-19 measures every control against:\n  ${failures.join('\n  ')}`,
+  )
+})
+
+test('a console control under the target is refused, wherever its minimum is missing or out of force', async (t) => {
+  // The passing case above proves what the page is, not what the reading refuses: a reading
+  // that looked for the wrong property, or that stopped seeing a rule, would pass it and hold
+  // nothing. Each plant below is one of the ways a minimum stops holding, and the case names
+  // the sentence that has to fire — the same three shapes the home page's plant case uses
+  // (`website/test/home.mjs`), because it is the same reading.
+  const css = builtStylesheet(buildWith(t, () => {}))
+  const ruleOf = (klass) => new RegExp(`\\.${klass}(?![\\w-])[^{}]*\\{[^}]*\\}`)
+  const withoutMinimum = (klass) =>
+    css.replace(ruleOf(klass), (rule) => rule.replace(/min-height\s*:\s*[^;}]+;?/, ''))
+  const cases = [
+    [
+      "the minimum taken off the download link's rule",
+      withoutMinimum('download-link'),
+      /a download link is no declared target/,
+    ],
+    [
+      'a slider dot declared under the target',
+      css.replace(ruleOf('screen-dot'), (rule) => rule.replace('min-height:44px', 'min-height:20px')),
+      /a dot in the screenshot slider is a 20 px target/,
+    ],
+    [
+      "the hero's filled action's minimum moved into a media query, where it holds at one width and not at every one",
+      `${withoutMinimum('console-cta')}@media (min-width:48rem){.console-cta{min-height:56px}}`,
+      /the hero's filled action is no declared target/,
+    ],
+  ]
+  for (const [what, planted, expected] of cases) {
+    assert.notEqual(planted, css, `${what} left the stylesheet as it is, so the plant is not a plant`)
+    const failures = controlTargetFailures(planted, CONSOLE_CONTROLS)
+    assert.ok(
+      failures.some((line) => expected.test(line)),
+      `${what} was not refused by the sentence that names it:\n  ${failures.join('\n  ') || '(nothing refused)'}`,
+    )
+  }
+})
+
+// ---- the cards the owner read on 2026-10-21 --------------------------------------------
+//
+// Three things the owner asked of the downloads section, all of them about the stylesheet the
+// cards are laid out by and none of them about the facts the section renders (those are held
+// above):
+//
+//   1. the platform cards "should fit in ONE row on desktop (wrap only on narrow screens)";
+//   2. "the cards should also keep equal heights";
+//   3. and they should "not show the long checksum text breaking awkwardly (keep the
+//      checksum, wrap it cleanly with word-break and a monospace smaller size)".
+//
+// None of the three is visible in the markup: a grid that wrapped because its columns ran out
+// of room, a row of cards of three different heights and a 64-character hash breaking wherever
+// the line happens to end are all the same HTML. So the reading is the built page's own
+// stylesheet — the rules that decide the layout — and each case below is one of the three,
+// with the plants that prove the reading refuses the state it names. **What the cards look like
+// is still the owner's check** (70a-70c, P9): this is the rule, not the picture.
+
+/**
+ * The console page's stylesheet as scopes: the top level under `''`, and one entry per
+ * `@media` block with the condition it is under. Brace-matched rather than regexed, because a
+ * declaration's own text may hold braces (a `var()` fallback, a `minmax()`) and a media block
+ * is where the one-row rule lives.
+ */
+function cssScopes(css) {
+  const scopes = []
+  let rest = ''
+  let at = css.indexOf('@media')
+  while (at !== -1) {
+    rest += css.slice(0, at)
+    const open = css.indexOf('{', at)
+    let depth = 1
+    let i = open + 1
+    while (i < css.length && depth > 0) {
+      if (css[i] === '{') depth++
+      else if (css[i] === '}') depth--
+      i++
+    }
+    scopes.push({ condition: css.slice(at + '@media'.length, open).trim(), body: css.slice(open + 1, i - 1) })
+    css = css.slice(i)
+    at = css.indexOf('@media')
+  }
+  scopes.push({ condition: '', body: rest + css })
+  return scopes
+}
+
+/** A CSS text with every space taken out: the built stylesheet is minified, and the two
+ * readings below look for declarations rather than for spacing. */
+function tight(text) {
+  return text.replace(/\s+/g, '')
+}
+
+/** Whether `klass`'s own rule in `scope` declares `declaration` (`grid-auto-flow:column`). */
+function declares(scope, klass, declaration) {
+  return new RegExp(`\\.${klass}(?![\\w-])[^{}]*\\{[^}]*${declaration}[^}]*\\}`).test(tight(scope))
+}
+
+/** Every way the cards' layout is not what the owner asked for on 2026-10-21. */
+function cardLayoutFailures(css) {
+  const out = []
+  const scopes = cssScopes(css)
+  const top = scopes.find((scope) => scope.condition === '').body
+  // A minimum-width block, as the build's minifier writes it: `@media (min-width: 60rem)`
+  // in the source, `@media (width>=60rem)` in the artifact. Both spellings are the same
+  // query, and the reading takes either rather than holding the artifact to the source's.
+  const wide = scopes.filter((scope) => /min-width\s*:|width\s*>=/.test(scope.condition))
+
+  // 1. The base rule wraps, and the wide block is one row.
+  if (!declares(top, 'download-cards', 'grid-template-columns:repeat\\(auto-fit,minmax\\(')) {
+    out.push(
+      "the download cards' rule declares no `repeat(auto-fit, minmax(…, 1fr))` grid, so a narrow viewport has no shape to wrap the cards in: the owner's feedback of 2026-10-21 is that they wrap on a narrow screen and stand in one row on a desktop",
+    )
+  }
+  const oneRow = wide.filter(
+    (scope) => declares(scope.body, 'download-cards', 'grid-auto-flow:column') && declares(scope.body, 'download-cards', 'grid-auto-columns:minmax\\(0,1fr\\)'),
+  )
+  if (oneRow.length === 0) {
+    out.push(
+      'no minimum-width block lays the download cards out as one row of equal columns (`grid-auto-flow: column` with `grid-auto-columns: minmax(0, 1fr)`): the owner\'s feedback of 2026-10-21 is that the platform cards "should fit in ONE row on desktop (wrap only on narrow screens)", and the base rule above is the wrap',
+    )
+  }
+  if (wide.some((scope) => declares(scope.body, 'download-cards', 'grid-template-columns:repeat\\(auto-fit'))) {
+    out.push(
+      "a minimum-width block keeps the auto-fit grid the base rule declares, so a desktop wide enough for the cards' minimum columns is what decides whether they are one row: the one-row rule is this block's to make, not the window's",
+    )
+  }
+
+  // 2. Equal heights: the grid stretches its items, so a row of cards is one height.
+  if (!declares(top, 'download-cards', 'align-items:stretch')) {
+    out.push(
+      'the download cards\' grid does not stretch its items (`align-items: stretch`), so a row of cards is as tall as each card\'s own text: the owner\'s feedback of 2026-10-21 is that the cards "keep equal heights"',
+    )
+  }
+
+  // 3. The checksum: kept, monospace, one step smaller than the running text, and broken
+  //    anywhere rather than left to widen its card.
+  const tokens = new Map([...css.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;}]+)/g)].map((m) => [m[1], m[2].trim()]))
+  const px = (value) => {
+    const named = /^var\((--[a-z0-9-]+)\)$/.exec((value ?? '').trim())
+    const resolved = named ? (tokens.get(named[1]) ?? '') : (value ?? '')
+    const m = /^([\d.]+)(rem|px)$/.exec(resolved.trim())
+    return m ? Number(m[1]) * (m[2] === 'rem' ? 16 : 1) : null
+  }
+  const shaRule = /\.download-sha256(?![\w-])[^{}]*\{([^}]*)\}/.exec(tight(top))
+  if (!shaRule) {
+    out.push('the stylesheet carries no rule for a download\'s checksum (`.download-sha256`), so a 64-character hash is laid out by whatever rule it inherits')
+    return out
+  }
+  const sha = shaRule[1]
+  if (!/word-break:(break-all|anywhere)/.test(sha)) {
+    out.push(
+      "a download's checksum declares no `word-break`, so a 64-character hash with no space in it widens its card or runs out of it: the owner's feedback of 2026-10-21 is to keep the checksum and wrap it cleanly",
+    )
+  }
+  if (!/font-family:var\(--font-mono\)/.test(sha)) {
+    out.push("a download's checksum is not drawn in the monospace stack, and it is the one run of text on the page a reader compares character by character")
+  }
+  const size = px(/font-size:([^;}]+)/.exec(sha)?.[1])
+  const body = px(tokens.get('--font-size-base'))
+  if (size === null || body === null) {
+    out.push("a download's checksum declares no readable font size, so its size is whatever it inherits")
+  } else if (size >= body) {
+    out.push(
+      `a download's checksum is ${size} px against the ${body} px of the page's running text, and the owner's feedback of 2026-10-21 asks for a smaller monospace size: a hash at the running text's size is the awkward block of characters the cards were read for`,
+    )
+  }
+  return out
+}
+
+test('the download cards are one row on a desktop, equal in height, and their checksums wrap', async (t) => {
+  const failures = cardLayoutFailures(builtStylesheet(buildWith(t, () => {})))
+  assert.deepEqual(
+    failures,
+    [],
+    `the download cards are not laid out the way the owner read them on 2026-10-21:\n  ${failures.join('\n  ')}`,
+  )
+})
+
+test('a card layout the owner did not ask for is refused, rule by rule', async (t) => {
+  // The case above proves what the page is, not what the reading refuses. Each plant below is
+  // one of the three things the owner asked for, taken back out of the stylesheet the way a
+  // later round would take it out.
+  const css = builtStylesheet(buildWith(t, () => {}))
+  assert.match(css, /grid-auto-flow/, 'the built stylesheet declares no one-row rule at all, so the plants below would prove nothing')
+  const cases = [
+    [
+      'the one-row block deleted, leaving the cards to wrap wherever the columns run out',
+      css.replace(/@media[^{]*\{\s*\.download-cards[^{}]*\{[^}]*\}\s*\}/, ''),
+      /no minimum-width block lays the download cards out as one row/,
+    ],
+    [
+      'the one-row block keeping the base rule\'s auto-fit grid',
+      css.replace('grid-auto-flow:column', 'grid-template-columns:repeat(auto-fit,minmax(17rem,1fr))'),
+      /a minimum-width block keeps the auto-fit grid/,
+    ],
+    [
+      'the cards allowed to be as tall as their own text',
+      css.replace(/align-items:\s*stretch/, 'align-items: start'),
+      /does not stretch its items/,
+    ],
+    [
+      'a checksum that stops breaking inside itself',
+      css.replace(/word-break:\s*(break-all|anywhere)/, 'overflow-wrap: normal'),
+      /declares no `word-break`/,
+    ],
+    [
+      'a checksum drawn in the running text\'s own size',
+      css.replace(/\.download-sha256([^{}]*)\{([^}]*)\}/, (rule) => rule.replace(/font-size:[^;}]+/, 'font-size:var(--font-size-base)')),
+      /against the \d+ px of the page's running text/,
+    ],
+    [
+      'a checksum in the page\'s sans rather than in the monospace stack',
+      css.replace(/\.download-sha256([^{}]*)\{([^}]*)\}/, (rule) => rule.replace(/font-family:[^;}]+/, 'font-family:var(--font-sans)')),
+      /not drawn in the monospace stack/,
+    ],
+  ]
+  for (const [what, planted, expected] of cases) {
+    assert.notEqual(planted, css, `${what} left the stylesheet as it is, so the plant is not a plant`)
+    const failures = cardLayoutFailures(planted)
+    assert.ok(
+      failures.some((line) => expected.test(line)),
+      `${what} was not refused by the sentence that names it:\n  ${failures.join('\n  ') || '(nothing refused)'}`,
+    )
+  }
 })
 
 test("the page names the console's read-only and no-telemetry properties", async (t) => {
@@ -935,7 +1287,10 @@ test('the page states nothing its data file does not carry', async (t) => {
   // the section titles, the navigation's words) that are the page's own furniture — appears
   // in the data file. A page that paraphrased a claim, or wrote a new sentence of its own
   // about the console, fails here (F37, Global Constraint 6).
-  const article = /<article>([\s\S]*?)<\/article>/.exec(page)
+  // The opening tag is matched loosely: the page has a stylesheet of its own now, so Astro
+  // scopes its markup with `data-astro-cid-…` and `<article>` is written `<article
+  // data-astro-cid-…>` in the artifact (the same reason `downloadsSection` above is loose).
+  const article = /<article[^>]*>([\s\S]*?)<\/article>/.exec(page)
   assert.ok(article, 'the built page carries no article')
 
   const rendered = article[1]
@@ -950,7 +1305,6 @@ test('the page states nothing its data file does not carry', async (t) => {
     data.name,
     data.what.text,
     data.released.text,
-    data.released.verify,
     data.not_released.text,
     ...data.properties.map((property) => property.text),
     // Each asset's own checksum, which the section prints beside its link: a 64-character
@@ -1040,7 +1394,37 @@ test('with no Linux block in the data file, no built page carries one', async (t
     null,
     `the downloads section carries a Linux block while ${DOWNLOADS_JSON} carries none: it renders only while the data file has one (D10)`,
   )
-  for (const word of ['Linux', 'AppImage', '.deb']) {
+
+  // **And no card names a platform the data file does not.** The redesign draws a card per
+  // platform — the one the release ships for and the two it does not — so the rule this case
+  // has always held ("the page makes no claim about a platform no document of this repository
+  // speaks about") is now read off the cards the page actually draws rather than as a ban on a
+  // list of words: whatever platform name a card carries has to be a word of the data file's
+  // own sentences. It is the same rule from the other end, and it is the end that holds a
+  // platform nobody here thought to write down.
+  //
+  // This assertion is also the one that failed on `main` before this branch, in its old form:
+  // the data file's own `released.text` says "Windows and Linux builds do not exist yet.", the
+  // page renders that sentence, and a rule that refused the word "Linux" anywhere on the page
+  // was refusing the page for rendering its own data file.
+  const cards = [...walk(parse(page))].filter((el) => hasClass(el, 'download-card-platform'))
+  assert.ok(
+    cards.length >= 3,
+    `the section draws ${cards.length} platform card(s), and this case is about the three the release's state makes: the platform it ships for and the two it does not`,
+  )
+  const claims = [data.released.text, data.not_released.text, ...(data.linux === undefined ? [] : [data.linux.text])]
+  for (const card of cards) {
+    const platform = textOf(card).trim()
+    assert.ok(
+      claims.some((claim) => claim.includes(platform)),
+      `the section draws a card for ${JSON.stringify(platform)} and no sentence of ${DOWNLOADS_JSON} names it: a card is a claim about a platform, and a claim no document of this repository makes is the one this case exists to refuse`,
+    )
+  }
+
+  // And the page names no artifact format of a platform whose artifacts it does not have: an
+  // AppImage and a `.deb` are what a Linux build is, and a page that named them while the data
+  // file carries no Linux asset would be describing a download that is not there (D10).
+  for (const word of ['AppImage', '.deb']) {
     assert.ok(
       !page.includes(word),
       `the page carries ${JSON.stringify(word)} and ${DOWNLOADS_JSON} says nothing about it: the page's sentence about the platform the release carries is the only one it makes`,

@@ -112,6 +112,36 @@ func dropMount(ws WorkflowSpec, logical string) {
 	}
 }
 
+// dropModelMounts removes from a job's mounts every variable that carries a
+// model credential (config.IsModelSecretEnv: the Claude OAuth token, the
+// Anthropic key, a provider's key). It is what an installation that has opted
+// in to the credentials service (D146, D147) gets: the service holds those
+// credentials and reads them as its own account, modules/workflow/sa.tf drops
+// the job account's accessor on each, and a job that still MOUNTED one would
+// not deploy at all — Cloud Run checks the mounting account's read access on
+// every secret it is given, so the mount and the grant have to go together
+// (C1.20; the module's local.job_secret_names is the other half of the same
+// rule).
+//
+// It is deliberately not dropMount: that one also deletes the name from
+// SecretIDs, and here the CONTAINER has to stay. The job's model secret is
+// declared in the repository root's own secrets.tf (rs.Secrets, filled from
+// SecretIDs), it carries prevent_destroy, and it may still hold the value the
+// installation used before it opted in: dropping it from the spec would plan
+// its destruction (which prevent_destroy refuses, failing the whole plan) and
+// make Retirements report a live container as retired. Only the mount goes;
+// the container is left exactly where it is.
+func dropModelMounts(ws *WorkflowSpec) {
+	for env := range ws.SecretEnv {
+		if config.IsModelSecretEnv(env) {
+			delete(ws.SecretEnv, env)
+		}
+	}
+	if ws.Env != nil {
+		ws.Env[runner.SecretEnvsVar] = redactionEnvs(ws.SecretEnv)
+	}
+}
+
 // Readiness decides, from what exists, what the plan may deploy. It
 // returns a deep copy of spec with the gates applied (spec itself is not
 // changed, and shares no map or slice with the result) and what is still
@@ -131,7 +161,7 @@ func dropMount(ws WorkflowSpec, logical string) {
 //     covers has a build record, so no unattended build starts for an
 //     image nobody has built on purpose.
 //
-// planOnly is fugaro init --repo's --plan-only, and it exempts the refusals
+// planOnly is fugaro update's --plan-only, and it exempts the refusals
 // that exist to stop a *change* rather than to describe a state: this function
 // returns one, for an existing job this apply would deploy without the backend
 // a published policy is read through (D11). A plan is read-only, so it may be
@@ -206,6 +236,50 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 		if dn, ok := ex.DisplayNames[name]; ok {
 			ws.ServiceAccount.DisplayName = dn
 		}
+		// A credential the credentials service holds and the job has given up
+		// is not mounted once the installation has opted in (D145, D146; C2.3,
+		// review finding F1). The job's account keeps no accessor on it then
+		// (modules/workflow/sa.tf), so a container that still declared the
+		// mount would be created with a secret reference it cannot resolve —
+		// the job is one Cloud Run refuses to create, and every run of that
+		// installation fails. The grant and the mount go together, always.
+		//
+		// Which names those are is config.ServiceHeldSecretNames, and it is
+		// empty on this branch: the GitHub App's private key joins it in the
+		// release that also stops the job READING the key (C2.2, the runner's
+		// fetch of the run's installation tokens from the service). Until then
+		// the job keeps both its accessor and its mount, and a GitHub run of an
+		// installation that opted in works exactly as it did before — which is
+		// what the flip's absence has to mean, since C2.1's mint and C2.2's
+		// fetch are not in this tree yet.
+		//
+		// It is dropped HERE rather than where the pre-readiness spec builds
+		// its mounts, and that is the whole point of the placement: the App
+		// key's CONTAINER, its operator grants and its project-wide resolution
+		// are not the job's and must survive the drop — the build account reads
+		// it to clone (`fugaro image build`, the daily check, D148/F3), the
+		// service mints from it (C2.1), and an operator stores its versions.
+		// Dropping the mount from the spec that feeds rs.Secrets,
+		// ProjectSecretCandidates and NeedsBuild would take all four away with
+		// it. Readiness is where the plan's mounts are decided (dropMount above
+		// does the same for the optional Anthropic key), and the workflows'
+		// jobs are the only containers it touches: the check job runs as the
+		// BUILD account and keeps its mount (CheckSpec.SecretEnv, which the
+		// build account's own accessor matches).
+		//
+		// With the opt-in off nothing is dropped, list or no list: the job
+		// mounts exactly what it mounted before this package knew about the
+		// service.
+		//
+		// The MODEL credentials' mounts are deliberately not dropped here yet:
+		// C1.20 is the task that drops them ("no model secret mounted when the
+		// service is on"), and it needs the runner to read each from the
+		// service first (C1.15).
+		if spec.Installation.CredentialsService != nil {
+			for _, logical := range config.ServiceHeldSecretNames {
+				dropMount(ws, logical)
+			}
+		}
 		type gate struct {
 			kind   MissingKind
 			reason string
@@ -253,7 +327,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 				dropMount(ws, logical)
 				if ws.Env[BudgetModeEnv] != localcfg.BudgetEnforce {
 					missing = append(missing, Missing{Workflow: name, Kind: MissingNote, Reason: fmt.Sprintf(
-						"%s has no version: the job deploys without it, and a run that calls Anthropic is refused until a key is stored (%s, then rerun fugaro init --repo)", logical, fix)})
+						"%s has no version: the job deploys without it, and a run that calls Anthropic is refused until a key is stored (%s, then rerun fugaro update)", logical, fix)})
 				}
 				continue
 			}
@@ -290,7 +364,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 		if !carriesFirebase(ws) {
 			if ex.PolicyExists {
 				reasons = append(reasons, gate{MissingFirebase, fmt.Sprintf(
-					"the project has published a policy (%s), which only a job carrying %s and %s can read: set the project's Firebase backend (fugaro init --firebase <firebase-project-id>), then run fugaro init --repo for %s",
+					"the project has published a policy (%s), which only a job carrying %s and %s can read: set the project's Firebase backend (fugaro update --firebase-project <firebase-project-id>), then run fugaro update for %s",
 					projectpolicy.PathShared(), RTDBURLEnv, FirebaseAPIKeyEnv, spec.Name)})
 			} else if ex.JobsFirebase[name] {
 				// The job has the backend today and this apply would take it
@@ -314,11 +388,11 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 				// this deploy" for the very apply that is taking the backend
 				// away from the jobs.
 				missing = append(missing, Missing{Workflow: name, Kind: MissingNote, Reason: fmt.Sprintf(
-					"workflow %s's job carries %s and %s today and this init --repo would remove them: the local config names no budget.rtdb_url (or no budget.firebase_api_key), so the job is deployed without the backend and every run of this repository stops reading the project's policy. Restore it with 'fugaro init --firebase <firebase-project-id>' (which writes budget.rtdb_url and budget.firebase_api_key), then run fugaro init --repo again",
+					"workflow %s's job carries %s and %s today and this fugaro update would remove them: the local config names no budget.rtdb_url (or no budget.firebase_api_key), so the job is deployed without the backend and every run of this repository stops reading the project's policy. Restore it with 'fugaro update --firebase-project <firebase-project-id>' (which writes budget.rtdb_url and budget.firebase_api_key), then run fugaro update again",
 					name, RTDBURLEnv, FirebaseAPIKeyEnv)})
 			} else if ws.Env[BudgetModeEnv] != "" {
 				missing = append(missing, Missing{Workflow: name, Kind: MissingNote, Reason: fmt.Sprintf(
-					"this job's budget is on (%s=%s) but it does not carry both %s and %s, so a run of it could not read a project policy: configure the project's Firebase backend (fugaro init --firebase <firebase-project-id>, then fugaro init --repo). Which of the two the local config is missing decides what happens next, and the gate above is exact about it: a config that names budget.rtdb_url sees a published policy, so the day the project publishes one this job stops being deployable until it can read it; a config that names no database address sees none, whatever the project has published — that same config is what the gate reads the node through — so nothing refuses this deploy and the job goes out unable to read a policy that may well exist. That gap is the owner's, accepted on purpose. A launch is held to what the launcher's own config can see and no stricter rule: it refuses a policy it can see and cannot honour, never a budget mode on its own",
+					"this job's budget is on (%s=%s) but it does not carry both %s and %s, so a run of it could not read a project policy: configure the project's Firebase backend (fugaro update --firebase-project <firebase-project-id>, then fugaro update). Which of the two the local config is missing decides what happens next, and the gate above is exact about it: a config that names budget.rtdb_url sees a published policy, so the day the project publishes one this job stops being deployable until it can read it; a config that names no database address sees none, whatever the project has published — that same config is what the gate reads the node through — so nothing refuses this deploy and the job goes out unable to read a policy that may well exist. That gap is the owner's, accepted on purpose. A launch is held to what the launcher's own config can see and no stricter rule: it refuses a policy it can see and cannot honour, never a budget mode on its own",
 					BudgetModeEnv, ws.Env[BudgetModeEnv], RTDBURLEnv, FirebaseAPIKeyEnv)})
 			}
 		}
@@ -332,7 +406,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 		// the published policy away from every run of the repository, and
 		// the operator learns at the next launch instead of here.
 		if !planOnly && exists && ex.PolicyExists && !carriesFirebase(ws) {
-			return RepoSpec{}, nil, userErr("the project has published a policy (%s), and this init --repo would deploy workflow %s's job without %s or %s in its environment: the job exists already, so it stays deployed and the policy it is bound by would stop being readable by every run of %s. Set the project's Firebase backend (fugaro init --firebase <firebase-project-id>) and run fugaro init --repo again",
+			return RepoSpec{}, nil, userErr("the project has published a policy (%s), and this fugaro update would deploy workflow %s's job without %s or %s in its environment: the job exists already, so it stays deployed and the policy it is bound by would stop being readable by every run of %s. Set the project's Firebase backend (fugaro update --firebase-project <firebase-project-id>) and run fugaro update again",
 				projectpolicy.PathShared(), name, RTDBURLEnv, FirebaseAPIKeyEnv, spec.Name)
 		}
 		// P7a: an existing job must never carry a secret_env entry with no
@@ -353,7 +427,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 			// job is ready as soon as the local config names one.
 			built = ws.Image != ""
 			if !built {
-				reasons = append(reasons, gate{MissingImage, fmt.Sprintf("the local config has no base_images.%s, which workflow %s's checkout: clone job runs: fugaro init --base %s", config.BaseKind, ws.Name, config.BaseKind)})
+				reasons = append(reasons, gate{MissingImage, fmt.Sprintf("the local config has no base_images.%s, which workflow %s's checkout: clone job runs: fugaro update --base %s", config.BaseKind, ws.Name, config.BaseKind)})
 			}
 		} else {
 			b, err := hasLatest(ctx, c, tg, spec, ws.Image)
@@ -384,9 +458,9 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 					fix := fmt.Sprintf("build it (fugaro image build --repo %s --workflow %s)", spec.Name, ws.Name)
 					if ws.Checkout == config.CheckoutClone {
 						what = fmt.Sprintf("the local config has no base_images.%s", config.BaseKind)
-						fix = fmt.Sprintf("set it (fugaro init --base %s)", config.BaseKind)
+						fix = fmt.Sprintf("set it (fugaro update --base %s)", config.BaseKind)
 					}
-					return RepoSpec{}, nil, userErr("Cloud Run job %s exists but has no container image, and %s; %s or fix the job, then run fugaro init --repo again",
+					return RepoSpec{}, nil, userErr("Cloud Run job %s exists but has no container image, and %s; %s or fix the job, then run fugaro update again",
 						ws.Job, what, fix)
 				}
 				ws.Image = current

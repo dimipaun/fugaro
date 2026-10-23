@@ -103,15 +103,21 @@ func (s *pluginStage) plan1(ctx context.Context) (*pluginwire.Change, *initflow.
 	case !errors.Is(rerr, os.ErrNotExist):
 		// Unknown is not a pass: a file that cannot be read (a symlink, a
 		// device, an oversize file) could name any project.
-		lf := initflow.Left{Stage: initflow.Plugin, Kind: initflow.LeftConsole, Text: "make fugaro.yaml a regular file of at most 1 MiB (or remove it), then rerun fugaro init"}
+		lf := initflow.Left{Stage: initflow.Plugin, Kind: initflow.LeftConsole, Text: "make fugaro.yaml a regular file of at most 1 MiB (or remove it), then rerun " + e.r.o.doorProgram()}
 		return status(initflow.NeedsYou, "this checkout's fugaro.yaml cannot be read, so which project it names is unknown and the plugin is not wired: "+pluginwire.Printable(oneLineCLI(rerr.Error())), &lf)
 	}
 	switch a, err := e.authState(repo); {
 	case err != nil:
 		return nil, nil, err
+	case a == authNeeded && !e.r.o.enrolling():
+		// A door that does not enrol a repository: one line naming the door
+		// that does, and never the typed question or --onboard-repo, which
+		// would be this run's to give (D5, W5.1).
+		lf := enrolLeft(e.r.o.doorName())
+		return status(initflow.NeedsYou, unknownDetailNotEnrolled(e.lc.Name, repo, e.r.o.doorName()), &lf)
 	case a == authNeeded:
-		lf := onboardLeft(repo)
-		return status(initflow.NeedsYou, unknownDetail(e.lc.Name, repo), &lf)
+		lf := onboardLeft(repo, e.r.o.doorName())
+		return status(initflow.NeedsYou, unknownDetail(e.lc.Name, repo, convergeOptIn(e.lc, repo)), &lf)
 	case a == authAsk:
 		s.origin, s.root, s.ask = repo, loc.Root, true
 	}
@@ -123,7 +129,7 @@ func (s *pluginStage) plan1(ctx context.Context) (*pluginwire.Change, *initflow.
 		lf := forkLeft()
 		return status(initflow.NeedsYou, fmt.Sprintf("the %q marketplace in %s names %s, not %s: not moved without --allow-fork", pluginwire.Marketplace, loc.Settings, pluginwire.Printable(fk.Repo), pluginwire.Repo), &lf)
 	case errors.As(err, &fe), pluginwire.IsInvalid(err):
-		lf := initflow.Left{Stage: initflow.Plugin, Kind: initflow.LeftConsole, Text: "fix " + loc.Settings + " (or merge the settings by hand: " + selfCommand() + " update-skills prints them), then rerun fugaro init"}
+		lf := initflow.Left{Stage: initflow.Plugin, Kind: initflow.LeftConsole, Text: "fix " + loc.Settings + " (or merge the settings by hand: " + selfCommand() + " update-skills prints them), then rerun " + e.r.o.doorProgram()}
 		return status(initflow.NeedsYou, pluginwire.Printable(oneLineCLI(err.Error())), &lf)
 	case err != nil:
 		return nil, &initflow.Status{State: initflow.NeedsYou, Detail: pluginwire.Printable(oneLineCLI(err.Error())), Left: nil}, nil
@@ -181,14 +187,14 @@ func (s *pluginStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 	r := s.e.r
 	if s.ask { // not the project's repository yet: its own typed confirmation, which --yes never gives
 		if !env.Interactive {
-			return initflow.Outcome{}, &initflow.NeedsYouError{Left: onboardLeft(s.origin)}
+			return initflow.Outcome{}, &initflow.NeedsYouError{Left: onboardLeft(s.origin, s.e.r.o.doorName())}
 		}
 		ok, err := s.e.confirmRepo(s.root, s.origin)
 		if err != nil {
 			return initflow.Outcome{}, err
 		}
 		if !ok {
-			return initflow.Outcome{}, &initflow.NeedsYouError{Left: onboardLeft(s.origin)}
+			return initflow.Outcome{}, &initflow.NeedsYouError{Left: onboardLeft(s.origin, s.e.r.o.doorName())}
 		}
 	}
 	fmt.Fprintf(r.w, "%s\n%s%s", ch.Path, ch.Diff(), ch.NoticeText())

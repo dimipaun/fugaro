@@ -117,6 +117,11 @@ func TestReleaseNotesV090FollowsTheFormat(t *testing.T) {
 	// it a shared job keeps a runner that refuses the policy just published
 	// (the review of PR #660).
 	last := steps[len(steps)-1]
+	// The notes' own spelling, which is frozen with them (docs/releases is a
+	// dated root, conversation D9): W3.3 renames the flag in the live tree, and
+	// this step quotes the released document, whose reader ran --firebase. The
+	// step's *flag* is held to the tree below, where the operator steps are
+	// resolved through the rename.
 	if !strings.Contains(last, "**Per installation") || !strings.Contains(last, "`fugaro init --firebase <gcp-project>`") {
 		t.Errorf("the operators' last step is %q: it must be the per-installation `fugaro init --firebase <gcp-project>` that moves the shared jobs onto the base image the image step pinned, since no image command touches them", last)
 	}
@@ -312,11 +317,11 @@ func TestReleaseNotesV090ClaimsHoldInTheTree(t *testing.T) {
 		{"image refresh", ""},
 	} {
 		words := c.path
-		cmd := commandAt(t, strings.Split(c.path, " ")...)
+		cmd := notesCommand(t, c.path)
 		if c.flag != "" {
 			words += " --" + c.flag
-			if cmd.Flags().Lookup(c.flag) == nil {
-				t.Errorf("fugaro %s has no --%s flag, and %s tells an operator to run it", c.path, c.flag, releaseNotesV090)
+			if cmd.Flags().Lookup(notesFlag(c.flag)) == nil {
+				t.Errorf("fugaro %s has no --%s flag (the step says `--%s`), and %s tells an operator to run it", c.path, notesFlag(c.flag), c.flag, releaseNotesV090)
 			}
 		}
 		// The command must end where the notes' span or its argument does: a
@@ -346,11 +351,12 @@ func TestReleaseNotesV090ClaimsHoldInTheTree(t *testing.T) {
 		t.Errorf("%s does not state plainly that `fugaro project export` is not in this release", releaseNotesV090)
 	}
 
-	// The shipped gates. Both are shut in this tree (internal/cli/recipes_skew.go),
-	// and a gate that is shut has to be said to be shut: the notes may not offer
-	// a gated feature as something a reader can use, and the paragraphs that
-	// carry the refusal are asserted here so the wording cannot quietly become a
-	// description of the feature.
+	// The shipped gates. Both are open in this tree (internal/cli/recipes_skew.go:
+	// managedDeployerShipped is true as of 0.10.0, batchProvisionShipped as of
+	// 0.9.5), so neither block below runs — the guards stay because these notes
+	// are 0.9.0's released record, written while both gates were shut, and a
+	// release that had to close one again would find the paragraphs it has to
+	// restore named here rather than in a reader's memory.
 	if !managedDeployerShipped {
 		if !names("Managed projects stay disabled") {
 			t.Errorf("%s does not say managed projects stay disabled, and managedDeployerShipped is false: every command that would create a managed project or act as its deployer refuses before any cloud call", releaseNotesV090)
@@ -365,8 +371,8 @@ func TestReleaseNotesV090ClaimsHoldInTheTree(t *testing.T) {
 		if !names("`fugaro init --provision-batch` refuses") {
 			t.Errorf("%s does not say `fugaro init --provision-batch` refuses, and batchProvisionShipped is false", releaseNotesV090)
 		}
-		if cmd := commandAt(t, "init"); cmd.Flags().Lookup("provision-batch") == nil {
-			t.Errorf("fugaro init has no --provision-batch flag, and %s describes what it does when it refuses (batchProvisionShipped is false: the flag stays, the provisioning refuses)", releaseNotesV090)
+		if cmd := notesCommand(t, "init"); cmd.Flags().Lookup("provision-batch") == nil {
+			t.Errorf("fugaro setup (the spelling the notes use is `fugaro init`) has no --provision-batch flag, and %s describes what it does when it refuses (batchProvisionShipped is false: the flag stays, the provisioning refuses)", releaseNotesV090)
 		}
 	}
 
@@ -420,47 +426,36 @@ func TestReleaseNotesV090ClaimsHoldInTheTree(t *testing.T) {
 	}
 }
 
-// TestReleaseNotesV090ManagedWordingMatchesTheGates is the other half of the
-// managed paragraph: the notes name four commands as refusing, and with the
-// shipped gates closed the CLI refuses exactly those, `fugaro managed flag` included. An
-// earlier draft of these notes offered `managed flag`, a `--managed` creation
-// and a `managed apply` as things a user can do; this is the test that would
-// have caught it, and the one a gate moved back onto the flag command fails.
-//
-// Mutation (verified, each planted and reverted): drop the
-// refuseManagedNotShipped() call from managedFlag; drop `fugaro managed apply` from
-// the refusals the notes name; and drop `fugaro restore` from them.
-func TestReleaseNotesV090ManagedWordingMatchesTheGates(t *testing.T) {
-	closeShippedGates(t)
-	notes := readReleaseNotesV090(t)
-
-	// Each of these is refused by the gate, before any cloud call, and named in
-	// the notes as a command that refuses: the reader is not left to discover it
-	// at a terminal. The names are the spellings the notes use, so a step that
-	// drops one is the failure.
-	for _, c := range []struct {
-		notes string
-		args  []string
-	}{
-		{"`fugaro init --create-project --managed`", []string{"init", "--create-project", "--gcp-project", "fugaro-newproj-1234", "--managed", "--budget", "50", "--budget-currency", "USD", "--billing-account", "000000-000000-000000"}},
-		{"`fugaro init --managed`", []string{"init", "--managed"}},
-		{"`fugaro managed flag`", []string{"managed", "flag", "fugaro-newproj-1234", "--budget", "50", "--budget-currency", "USD"}},
-		{"`fugaro managed apply`", []string{"managed", "apply", "infra"}},
-		{"`fugaro restore`", []string{"restore", "fugaro-newproj-1234", "infra"}},
-	} {
-		out, err := runGated(t, c.args...)
-		if err == nil || !strings.Contains(err.Error(), managedDisabled) {
-			t.Errorf("fugaro %s: exit %d (%v), want the user error %q\n%s", strings.Join(c.args, " "), ExitCode(err), err, managedDisabled, out)
-		}
-		if !strings.Contains(notes, c.notes) {
-			t.Errorf("%s does not name %s among the commands that refuse while managedDeployerShipped is false", releaseNotesV090, c.notes)
-		}
-	}
-}
-
 // commandAt walks the root command's tree for the command a release note names,
 // and fails if the tree does not carry it: the words are what a reader types
 // after `fugaro`.
+// notesCommand is the command a step of the release notes names: `init` is the
+// retired spelling these notes still use for `fugaro setup` (W1.2 split the
+// command into setup and update; the rename of the prose is W2.3's and
+// W2.4's), so a flag a step is checked against is the door's that carries it.
+// The string the notes themselves have to contain is the step's own spelling,
+// and that is checked against the notes and not through here.
+func notesCommand(t *testing.T, path string) *cobra.Command {
+	t.Helper()
+	if path == "init" {
+		path = "setup"
+	}
+	return commandAt(t, strings.Split(path, " ")...)
+}
+
+// notesFlag is the flag a step of the release notes names, under the name the
+// tree carries it today: `--firebase` is --firebase-project since W3.3 (D7),
+// and these notes are a dated record that keeps its own spelling (D9) — the
+// same translation notesCommand makes for the command word, for the same
+// reason. A step is still held to a flag the CLI has, or a reader who follows
+// it types a name nothing answers.
+func notesFlag(flag string) string {
+	if flag == "firebase" {
+		return "firebase-project"
+	}
+	return flag
+}
+
 func commandAt(t *testing.T, path ...string) *cobra.Command {
 	t.Helper()
 	cmd := findCommand(path...)

@@ -104,7 +104,7 @@ func executeStdin(t *testing.T, stdin string, args ...string) (string, string, e
 	cmd.SetIn(strings.NewReader(stdin))
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
-	cmd.SetArgs(NormalizeRepoArgs(args))
+	cmd.SetArgs(NormalizeArgs(args))
 	err := cmd.Execute()
 	return out.String(), errOut.String(), err
 }
@@ -318,8 +318,8 @@ func TestRunImageBuildCloudRefusesOnGrantMismatch(t *testing.T) {
 	// grant the apply fixed still names the project copy.
 	f.sm.Seed(repoID, nil, []byte("repo-token"))
 	_, _, err := executeBuild(t, "image", "build", "--base", "b:1")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), repoID) || !strings.Contains(err.Error(), projectID) || !strings.Contains(err.Error(), "init --repo") {
-		t.Fatalf("exit %d, err %v: want a refusal naming both %s and %s and fugaro init --repo", ExitCode(err), err, repoID, projectID)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), repoID) || !strings.Contains(err.Error(), projectID) || !strings.Contains(err.Error(), "update --repo") {
+		t.Fatalf("exit %d, err %v: want a refusal naming both %s and %s and fugaro update --repo", ExitCode(err), err, repoID, projectID)
 	}
 	if len(fb.Requests()) != 0 {
 		t.Errorf("a build was submitted anyway: %v", fb.Requests())

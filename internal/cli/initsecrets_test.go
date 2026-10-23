@@ -187,6 +187,11 @@ func (r *secretsRig) removeConfig(t *testing.T) {
 func newSecretsRig(t *testing.T, origin string, in io.Reader, opts ...func(*initOptions)) *secretsRig {
 	t.Helper()
 	testutil.IsolateGit(t)
+	// The rig runs the init flow from a checkout that has an origin, so every
+	// command in it remembers that checkout (recordCheckout): under a config
+	// home of the test's own, never the developer's — which is what this
+	// override is for.
+	isolateProjects(t, t.TempDir())
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q", "-b", "main")
 	testutil.Git(t, dir, "remote", "add", "origin", origin)
@@ -1176,7 +1181,7 @@ func TestInitSecretsStageThroughTheCommand(t *testing.T) {
 		cmd.SetIn(spy)
 		cmd.SetOut(&out)
 		cmd.SetErr(&errOut)
-		cmd.SetArgs(append([]string{"init", "--json"}, flags...))
+		cmd.SetArgs(append([]string{"setup", "--json"}, flags...))
 		err := cmd.Execute()
 		if ExitCode(err) != ExitUserError {
 			t.Fatalf("%v: exit %d, err %v\n%s", flags, ExitCode(err), err, errOut.String())
@@ -1214,7 +1219,7 @@ func TestInitSecretsStageThroughTheCommand(t *testing.T) {
 		return map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelSecret: name}
 	}
 	r.sm.Seed(gcp.SecretID(sandbox, "bitbucket-token"), labels("bitbucket-token"), []byte(tokenValue))
-	out, _, err := executeStdin(t, "", "init", "--yes", "--json")
+	out, _, err := executeStdin(t, "", "setup", "--yes", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}
