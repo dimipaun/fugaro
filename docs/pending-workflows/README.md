@@ -1173,62 +1173,133 @@ app's. The filter is strict for the same reason the siblings' are — a bare
 **The version comes from the tag, and the app's config has to agree with it.**
 The **first step of each job** holds the pushed tag to the app's strict
 `mobile-vX.Y.Z` shape, takes `X.Y.Z` out of it, reads `expo.version` out of
-`mobile/app.json` and **refuses to build when the two differ** (below,
-`### Every release, before the tag: the version the app reports
+`mobile/app.json` and **refuses to build when the two differ** — before the
+release gate runs and long before anything is built or submitted. The rule it
+enforces, and the release the app's first tag cuts, are
+`### Every release, before the tag: the version the app reports` below.
 
-**The tag names the version and `expo.version` in `mobile/app.json` is that
-number, and the file refuses a tag that disagrees.** The app releases on its own
-tag (`mobile-vX.Y.Z`, `docs/release.md`'s "Mobile releases"), and the version a
-store shows is `expo.version` in `mobile/app.json` — the file is checked in as
-`"version": "0.0.0"`, the placeholder a release replaces, and
-`mobile/app.config.js` spreads that static config, adding only the two store
-identities to it. So **the first step of each job is the version rule**: it holds
-the tag to a strict `mobile-vX.Y.Z` shape, takes `X.Y.Z` out of it (the one
-`mobile-` prefix `scripts/release-gate.sh` strips as well), reads `expo.version`
-out of `mobile/app.json` with a read that fails rather than printing nothing, and
-**stops the job when the two differ** — before the release gate runs and long
-before anything is built or submitted. A tag pushed over a `0.0.0` config
-therefore builds nothing, and what a build reports is fixed at its upload: the
-two numbers cannot disagree without the run going red.
+**A new file**, so nothing is replaced: it stages `.github/workflows/mobile-release.yml`
+entire. It is a separate file from `ci.yml` for the reason `console-release.yml`
+is: **the job holds an Expo access token and publishes to a store**, and a branch
+of this repository can open a pull request, so a job holding that material must
+never sit in a file that runs on every pull request. This one does not even run
+on a pull request: its triggers are a tag push and a manual dispatch, and nothing
+else.
 
-That step reads the committed `mobile/app.json`, never a resolved
-`mobile/app.config.js`, which requires the store identity only on EAS's own build
-machines. It carries `if: github.ref_type == 'tag'` — a fact about the ref rather
-than the event — so a manual dispatch that names a tag (`gh workflow run --ref
-mobile-v0.1.0`) is held to the same comparison a pushed tag is.
+**What the jobs are.** Two jobs, `ios` and `android`, each on the pinned
+`ubuntu-24.04` — the build itself runs on EAS's own workers, so the runner is
+only the client that uploads it — with `contents: read` and the `checks: read`
+the release gate below needs, and nothing else, and **neither job needs the
+other**, so a platform that fails never blocks the other's release. Each job
+checks the repository out with `persist-credentials: false` and
+`fetch-depth: 0`, runs the version rule and then the two gate steps (below),
+takes the Node line from `mobile/package.json`'s `engines.node` (the same way
+`console-linux.yml` takes
+the console's), installs `eas-cli` **at one exact version**, masks the store
+identity, runs `eas build
+--platform <platform> --profile internal --non-interactive --wait --json` under
+`eas env:exec production`, writes the build's **id** into
+`$GITHUB_STEP_SUMMARY`, and then runs `eas submit --profile internal --platform
+<platform> --id <that build> --non-interactive`. Every action is pinned by full
+commit SHA with its `# vX.Y.Z` beside it. The `concurrency` group is the
+workflow's own name and not the ref, so two releases queue rather than submit at
+once, and a release that is mid-submission is never cancelled.
 
-**[per repo, before every release tag] Set `expo.version` in `mobile/app.json` to
-the version being released, in a commit on `main` before the tag.** It is the
-ordering the Highlights file and the plugin bump already have
-(`scripts/bump-plugin-version.sh` bumps the plugin and touches nothing under
-`mobile/`), and `docs/release.md`'s "Before you tag" checklist and its "Mobile
-releases" section carry the same line, so a release reads it whether the owner
-comes to it from this document or from the release procedure.
+**Nothing is published unless it is on main and its checks passed.** On a tag
+push the **first step of each job** is `scripts/release-gate.sh "$TAG"` — the
+same gate `release.yml`, `images.yml` and `console-release.yml` run first, which
+refuses unless the tag is a strict `vX.Y.Z`, its commit is reachable from
+`origin/main`, and the required checks (`test`, `terraform`, `rules` and both
+console legs) succeeded on it. Without it, a tag pushed on an off-main or red
+commit would still build on EAS and submit to TestFlight and to Google Play:
+this is a publishing workflow, so it is held to the same rule as every other one
+here (`docs/release.md`, "What a tag does"). That step carries
+`if: github.event_name == 'push'`, the same condition the sibling workflows
+carry, because the gate is a claim about a tag.
 
-**The first mobile release is `mobile-v0.1.0`, "Falcon".** Read the line before
-you cut it: `mobile/app.json` carries `0.0.0` today, which is the placeholder
-rather than a version anybody released, so the release that cuts the first tag
-sets it to `0.1.0` in a commit on `main` first. If the config carries another
-version when you read it, **that** line is the release being cut and the tag is
-`mobile-v<that line>` — the config is the authority and the tag follows it, never
-the other way round. The app's releases are named after birds, spent in order:
-Falcon first, then Pelican, then Robin (`docs/releases/mobile/README.md`).
+**A manual dispatch that would submit passes a gate too.** The environment's
+approval is a person deciding to *run* this workflow, not a review of the commit
+it would submit, and a dispatch can name a **tag** as well as a branch
+(`gh workflow run --ref v1.2.3`): with only the step above, a dispatch on an
+off-main branch — or on a `vtest` tag — would build on EAS and submit behind
+nothing but that click. So each job carries a **second gate step**, under
+`if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'true'`:
+a dispatched **tag** goes through the whole gate (`scripts/release-gate.sh
+"$REF_NAME"`, the same script, so the tag shape and the required checks are
+checked as they are on a push), and a dispatched **branch** through the gate's
+second half — `git fetch origin main` and `git merge-base --is-ancestor
+"$GITHUB_SHA" origin/main` — because a branch has no tag to shape-check and "this
+commit is on main" is the claim a submission needs either way. A dispatch with
+`dry_run` set submits nothing and is held to neither gate — but it is **not**
+therefore runnable from any branch: a job that names an environment is held to
+that environment's **Deployment branches and tags** policy, `mobile-release`'s
+names `main` and the `mobile-v*` tags (step **1** of the owner's list below), and
+GitHub refuses a job whose ref is outside that policy **before its first step
+runs**, so the workflow's own conditions never get a say. A dry run is a dispatch
+from `main` — or from a `mobile-v*` tag — like any other, and the first dry run of *this*
+file is therefore made after its copy-in has landed on `main`, not from the
+branch that carries the edit.
 
-**Two checks read that version, and both now follow the app's own tag.** **C6**
-(`docs/mobile/implementation-plan.md`, "the app is versioned with the CLI's tag")
-is **superseded** by the owner's ruling of 2026-10-22: the app is versioned with
-its own tag, which is what the step above enforces. **Check 89 step 4**
-(`docs/gcp-live-checklist.md`) is the owner-run one: it reads the version the
-installed app reports against the version the guard's `$TAG` names. The console
-answers the same question the other way — `console-release.yml` stamps each pack
-with `-c.extraMetadata.version=X.Y.Z` taken from the tag, which is why
-`console/package.json` can stay `0.0.0`. **That way is not available here without
-a change to `mobile/app.config.js`**: the app's version comes from the app's own
-config, so this file cannot stamp it from the tag by itself. The check above is
-what holds the two together, and a later change that stamps the version from the
-tag replaces the check rather than adding to it.
+Because the gate reads the commit's check-runs, each job holds **`checks: read`
+beside `contents: read`** — and nothing else — and the checkout is **full-depth
+(`fetch-depth: 0`)**, because the gate asks whether that commit is reachable from
+`origin/main`, which a shallow clone cannot answer.
+`TestDocsMobileReleaseWorkflowIsStagedAndPinned` holds each job to exactly two
+gate steps, to those exact conditions, to the tag path and the on-main path
+inside the second one, and to both coming before anything is built or
+submitted.
 
-### After the first dry run: read that run's log`) rather than as a number: it
+**The submission submits the build the run made, and the summary carries no
+artifact link.** The build step captures `eas build --json` into
+`$RUNNER_TEMP/mobile-build.json`, and the submission reads that build's id out of
+it and passes it to `eas submit --id`. `--latest` is not used anywhere: it takes
+the latest build of the profile, whoever made it, which is a different claim —
+and one a second run of the workflow would silently change. The summary prints
+the build's **page id** and nothing else. It deliberately does **not** print
+`artifacts.buildUrl`: that link downloads a signed binary whose Info.plist
+carries the bundle identifier, and a run summary in a public repository is
+public. The id names a page on expo.dev that needs an Expo login, which is what
+a reviewer needs and what a stranger cannot use.
+
+**The store identity is not in this file, and cannot be.** The iOS bundle
+identifier and the Android package name live in the **EAS project's own
+`production` environment** (`mobile/README.md`, "Building for internal testing"),
+which is where the owner set them with `eas env:set`; both `eas` commands run
+through **`eas env:exec production`**, which is what loads them into the process.
+That matters twice over: EAS's build worker resolves `mobile/app.config.js` with
+the profile's environment, and the **local** `eas-cli` process that uploads the
+build resolves the same file before it uploads anything — the state the owner's
+first local submission stopped in, with `Specify ios.bundleIdentifier`. So there
+is nothing to add to the repository for the identity: no secret, no variable, no
+edit to `mobile/app.json` or `mobile/eas.json`.
+
+**The identity is masked before any `eas` command runs.** `eas build` and
+`eas submit` resolve the app's config locally, and a resolved config, a
+credential prompt or a submit report can carry the bundle identifier into a job
+log — and this repository is public. So the first step of each job that touches
+`eas` reads the two values out of the EAS project's `production` environment and
+hands each one to **`::add-mask::`**, the only mechanism that hides a value from
+a log it would otherwise reach. The values are never echoed: each one lives in a
+shell variable for the length of one loop and nowhere else, and the step prints
+nothing but the mask commands. **This is the one place in the whole workflow
+where the two variable names appear**, and it has to be: a mask cannot hide a
+value it is not given. `TestDocsMobileReleaseWorkflowIsStagedAndPinned` holds
+each name to exactly one occurrence per job and requires that occurrence to be
+the argument of a `mask` call in that job's mask step. A read that fails masks
+nothing and **stops the job**, before the build step. `mobile/app.config.js`
+requires the identity only on EAS's own build machines, so the build does not
+fail on its own when the mask is missing: it resolves the identity and prints it
+into this public log. A run that cannot mask a value is therefore a run that must
+not build, and the step says which variable it could not read and prints no
+value.
+
+**The one thing the owner has to check by eye, on the first dry run.** No test
+can prove that a job log carries no identifier, because no test can run the job
+and no `eas` command has ever been run from this repository. On the **first dry
+run** — a manual dispatch with `dry_run` left checked, which submits nothing —
+the owner reads the run's log and confirms that **no bundle identifier or package
+name appears anywhere in it**. It is written as a step of its own below
+(`### After the first dry run: read that run's log`) rather than as a number: it
 is a thing to look at, not a check that has been made. If an identifier does appear, the mask step is the thing to look at
 first, and the fix is in this file, which an agent cannot deliver — so it is
 worth doing before the first release rather than after.
@@ -1490,36 +1561,61 @@ is still here: `readme.mjs` reads the directory, not the file's own history.
 
 ### Every release, before the tag: the version the app reports
 
-**The version a store shows is `expo.version` in `mobile/app.json`, and nothing in
-this workflow sets it.** The file is checked in as `"version": "0.0.0"` — the
-placeholder a release replaces — and `mobile/app.config.js` spreads that static
-config, adding only the two store identities to it. So the tag push builds
-whatever `app.json` says, and what a build reports is fixed at its upload: an app
-that ships `0.0.0` behind a `vX.Y.Z` tag is a store record that disagrees with the
-release, and nothing in this workflow goes red to say so.
+**The tag names the version and `expo.version` in `mobile/app.json` is that
+number, and the file refuses a tag that disagrees.** The app releases on its own
+tag (`mobile-vX.Y.Z`, `docs/release.md`'s "Mobile releases"), and the version a
+store shows is `expo.version` in `mobile/app.json` — the file is checked in as
+`"version": "0.0.0"`, the placeholder a release replaces, and
+`mobile/app.config.js` spreads that static config, adding only the two store
+identities to it. So **the first step of each job is the version rule**: it holds
+the tag to a strict `mobile-vX.Y.Z` shape, takes `X.Y.Z` out of it (the one
+`mobile-` prefix `scripts/release-gate.sh` strips as well), reads `expo.version`
+out of `mobile/app.json` with a read that fails rather than printing nothing, and
+**stops the job when the two differ** — before the release gate runs and long
+before anything is built or submitted. A tag pushed over a `0.0.0` config
+therefore builds nothing, and what a build reports is fixed at its upload: the
+two numbers cannot disagree without the run going red.
 
-Two checks read that version against the tag: **C6**
-(`docs/mobile/implementation-plan.md`, "the app is versioned with the CLI's tag")
-and **Check 89 step 4** (`docs/gcp-live-checklist.md`: "the version the app
-reports equals the guard's `$TAG`"). `mobile/README.md` says the same in the
-release's own words: releasing this app means setting it to the version being
-released, and nothing bumps it for you.
+That step reads the committed `mobile/app.json`, never a resolved
+`mobile/app.config.js`, which requires the store identity only on EAS's own build
+machines. It carries `if: github.ref_type == 'tag'` — a fact about the ref rather
+than the event — so a manual dispatch that names a tag (`gh workflow run --ref
+mobile-v0.1.0`) is held to the same comparison a pushed tag is.
 
 **[per repo, before every release tag] Set `expo.version` in `mobile/app.json` to
 the version being released, in a commit on `main` before the tag.** It is the
 ordering the Highlights file and the plugin bump already have
 (`scripts/bump-plugin-version.sh` bumps the plugin and touches nothing under
-`mobile/`), and `docs/release.md`'s "Before you tag" checklist carries the same
-line, so a release reads it whether the owner comes to it from this document or
-from the release procedure.
+`mobile/`), and `docs/release.md`'s "Before you tag" checklist and its "Mobile
+releases" section carry the same line, so a release reads it whether the owner
+comes to it from this document or from the release procedure.
+
+**The first mobile release is `mobile-v0.1.0`, "Falcon".** Read the line before
+you cut it: `mobile/app.json` carries `0.0.0` today, which is the placeholder
+rather than a version anybody released, so the release that cuts the first tag
+sets it to `0.1.0` in a commit on `main` first. If the config carries another
+version when you read it, **that** line is the release being cut and the tag is
+`mobile-v<that line>` — the config is the authority and the tag follows it, never
+the other way round. The app's releases are named after birds, spent in order:
+Falcon first, then Pelican, then Robin (`docs/releases/mobile/README.md`).
+
+**Two checks read that version, and both now follow the app's own tag.** **C6**
+(`docs/mobile/implementation-plan.md`, "the app is versioned with the CLI's tag")
+is **superseded** by the owner's ruling of 2026-10-22: the app is versioned with
+its own tag, which is what the step above enforces. **Check 89 step 4**
+(`docs/gcp-live-checklist.md`) is the owner-run one: it reads the version the
+installed app reports against the version the guard's `$TAG` names, and that is
+the app's own tag. `mobile/README.md` says the same in the release's own words:
+releasing this app means setting it to the version being released, and nothing
+bumps it for you.
 
 The console answers the same question the other way — `console-release.yml` stamps
 each pack with `-c.extraMetadata.version=X.Y.Z` taken from the tag, which is why
 `console/package.json` can stay `0.0.0`. **That way is not available here without
 a change to `mobile/app.config.js`**: the app's version comes from the app's own
-config, so this staged file cannot set it from the tag by itself. The step above is
-what exists, and a later change that stamps the version from the tag replaces that
-step rather than adding to it.
+config, so this file cannot stamp it from the tag by itself. The rule above is
+what holds the two together, and a later change that stamps the version from the
+tag replaces the rule rather than adding to it.
 
 ### After the first dry run: read that run's log
 
@@ -1531,7 +1627,7 @@ has ever been run from this repository, so whether `eas build` or `eas submit`
 prints an identity into a job log is the kind of thing that can only be known by
 looking. It is an item to do rather than a numbered check, because a number would
 claim a check that has not been made. The dispatch itself has to come from `main`
-or from a `v*` tag, because the `mobile-release` environment's policy names those
+or from a `mobile-v*` tag, because the `mobile-release` environment's policy names those
 and GitHub refuses any other ref before the job starts. If an identifier does
 appear, the mask step is what to look at first — and its fix is an edit to this
 workflow, which an agent cannot deliver (GitHub refuses the push), so it is worth
@@ -1621,7 +1717,7 @@ first step** — exactly `if: github.ref_type == 'tag'`, the strict
 of `mobile/app.json`, each refusal a block that stops the job — and the tag's
 version compared with the config's, before the gate below it; the gate being the
 same `scripts/release-gate.sh` every other publishing workflow runs, which takes
-the app's tag under its one prefix; `contents: read` at the top and
+the app's tag under its one `mobile-` prefix; `contents: read` at the top and
 `{contents: read, checks: read}` on each job — the second being what the release
 gate's check-runs read needs — with no other scope and no job-level
 `env:`; the **release gate** as each job's step after the version rule, carrying
