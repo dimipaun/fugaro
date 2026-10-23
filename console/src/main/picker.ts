@@ -12,7 +12,7 @@
 //
 // The picker is a *separate window* (C9) and not a panel in the dashboard's
 // header, and the reason is the surface rather than the layout: the dashboard's
-// document is exposed to fourteen operations -- the CLI reads, the handshake,
+// document is exposed to fifteen operations -- the CLI reads, the handshake,
 // the link handover and `installation.current` -- and the picker's job is to
 // write a file. Two documents, two preloads, two channel prefixes, and a sender
 // gate narrowed to one document each (`isSenderOnDocument` in `src/main/ipc.ts`) --
@@ -287,7 +287,7 @@ export function pickerPreloadPath(appPath: string): string {
 export function createInstallationPicker(deps: InstallationPickerDeps): InstallationPicker {
   // The spawn surface is asserted here as well as in the dashboard, and the
   // picker's own table is the second argument: `installation.list` is a row the
-  // dashboard's fourteen operations do not have, and `assertSpawnSurface` holds
+  // dashboard's fifteen operations do not have, and `assertSpawnSurface` holds
   // it to the picker's one command (`config list --json`, no `--project`, no
   // `--dir`, no declared arguments). A row that grew an argument, or a name
   // outside `INSTALLATION_OPERATION_NAMES`, is refused before a window exists.

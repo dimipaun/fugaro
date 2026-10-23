@@ -84,7 +84,7 @@ import {
  * and the built tree are read from. */
 const CONSOLE_ROOT = join(__dirname, '..', '..')
 
-/** READ_METHODS is the seven reads `entry.ts` may reach for, by the name the
+/** READ_METHODS is the eight reads `entry.ts` may reach for, by the name the
  * preload exposes. Every one of them is on the fake bridge below, and every one
  * records its call -- so "this read was never made" is a claim this suite can
  * make about any of them. */
@@ -93,6 +93,7 @@ const READ_METHODS = [
   'showBudget',
   'runReport',
   'listRuns',
+  'statsRuns',
   'diagnoseRun',
   'readRunLogs',
   'runLogLink',
@@ -102,7 +103,7 @@ const READ_METHODS = [
 type AReply = (args: unknown) => unknown
 
 /** FakeBridge is the preload seam, recorded: the handshake, the installation,
- * and the seven reads, each answering what the case told it to and appending its
+ * and the eight reads, each answering what the case told it to and appending its
  * own call to `calls`. */
 interface FakeBridge {
   readonly bridge: Record<string, unknown>

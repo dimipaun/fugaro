@@ -242,7 +242,7 @@ function fakeRenderer(
 }
 
 /** stubHandlers is the whole surface's handlers, each answering an empty
- * document, so a test of the *plumbing* does not have to write twelve. */
+ * document, so a test of the *plumbing* does not have to write fifteen. */
 function stubHandlers(overrides: Record<string, ConsoleHandler> = {}): ConsoleHandlers {
   const handlers: Record<string, ConsoleHandler> = {}
   for (const operation of CONSOLE_OPERATIONS) handlers[operation.name] = () => ({})
@@ -296,7 +296,7 @@ function asCallable(method: unknown): (args?: unknown) => Promise<ConsoleReply> 
  * compile-time half of rule 5's closed surface, and the thing that checks it is
  * `npm run typecheck` (or the `tsc --noEmit` the review round runs), not vitest.
  *
- * The runtime tests below pin the twelve names and the twelve methods against
+ * The runtime tests below pin the fifteen names and the fifteen methods against
  * `CONSOLE_OPERATIONS`, and that is exactly why the defect this function guards
  * was silent: the object is built from the table, so no *extra* method can
  * exist at runtime, and a *misspelled* one is not a runtime question at all --
@@ -317,7 +317,7 @@ function assertClosedSurface(bridge: ConsoleBridge, method: ExposedMethod): void
 
   // A misspelling is a compile error and not an `undefined` call inside a
   // screen's render, which is what an index signature would have made it.
-  // @ts-expect-error `showBudgte` is not one of the twelve method names
+  // @ts-expect-error `showBudgte` is not one of the fifteen method names
   void bridge.showBudgte
   // @ts-expect-error there is no generic `invoke`: no method takes a channel
   void bridge.invoke
@@ -325,9 +325,9 @@ function assertClosedSurface(bridge: ConsoleBridge, method: ExposedMethod): void
   void bridge.send
 
   // The two unions are unions, in both halves of the table.
-  // @ts-expect-error `runs.listt` is not one of the twelve operation names
+  // @ts-expect-error `runs.listt` is not one of the fifteen operation names
   const notAName: ExposedName = 'runs.listt'
-  // @ts-expect-error `showBudgte` is not one of the twelve method names
+  // @ts-expect-error `showBudgte` is not one of the fifteen method names
   const notAMethod: ExposedMethod = 'showBudgte'
   void notAName
   void notAMethod
@@ -342,7 +342,7 @@ function assertClosedSurface(bridge: ConsoleBridge, method: ExposedMethod): void
   switch (method) {
     case 'subscribeLive':
       break
-    // @ts-expect-error `subscribeLiv` is not one of the twelve method names
+    // @ts-expect-error `subscribeLiv` is not one of the fifteen method names
     case 'subscribeLiv':
       break
   }
@@ -557,17 +557,19 @@ interface CliCommand {
  * (there is no command the console could drive that is not here), and nothing on
  * it that is not `allowed` may be driven either. Keeping the list complete is
  * what makes "the console is read-only" a fact about the surface rather than a
- * claim about the eleven argvs we happened to think of.
+ * claim about the twelve argvs we happened to think of.
  */
 const CLI_COMMANDS: readonly CliCommand[] = [
-  // The ten dashboard commands the design's allow-list admits (eleven argv:
-  // `logs` twice), and the one document each draws. The picker's own read
+  // The eleven dashboard commands the design's allow-list admits (twelve argv:
+  // `logs` twice, and console L5b's `runs stats`), and the one document each
+  // draws. The picker's own read
   // (`config list --json`) is deliberately not here: it is not a dashboard
   // operation, and it arrived on 2026-10-18, after this snapshot's date.
   { command: 'watch', kind: 'allowed', where: 'internal/cli/watch.go:134' },
   { command: 'budget show', kind: 'allowed', where: 'internal/cli/budget.go:214' },
   { command: 'report', kind: 'allowed', where: 'internal/cli/report.go:53' },
   { command: 'runs ls', kind: 'allowed', where: 'internal/cli/runs.go:87' },
+  { command: 'runs stats', kind: 'allowed', where: 'internal/cli/runs_stats.go:110' },
   { command: 'diagnose', kind: 'allowed', where: 'internal/cli/diagnose.go:87' },
   { command: 'logs', kind: 'allowed', where: 'internal/cli/logs.go:45' },
   { command: 'secrets ls', kind: 'allowed', where: 'internal/cli/secrets.go:536' },
@@ -655,6 +657,7 @@ const DESIGN_ARGV: readonly string[] = [
   'budget show --json',
   'report --json',
   'runs ls --json',
+  'runs stats --json',
   'diagnose --json',
   'logs --json',
   'logs --url',
@@ -952,6 +955,9 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   'budget.show': { repo: 'acme/app' },
   'spend.report': { by: 'model', since: '7d', until: '2026-10-16', repo: 'acme/app' },
   'runs.list': { repo: 'acme/app', since: '7d', mine: true, pr: 42, all: false },
+  // No `--all-users`: the operation has no such key, because the command
+  // resolves the view itself (see `CONSOLE_OPERATIONS`' own comment).
+  'runs.stats': { since: '7d' },
   'run.diagnose': { run: '20261016-121029-4a1b' },
   'run.logs': { run: '20261016-121029-4a1b' },
   'run.logLink': { run: '20261016-121029-4a1b' },
@@ -1579,21 +1585,25 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these fourteen, and no others".
+ * channel. The claim is "these fifteen, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
  * the handshake's answer the renderer gates on); Task 3.4b added the fourteenth
  * (`installation.current` / `getInstallation`, the installation the operator
  * chose, which the header names) and left the other thirteen exactly where they
- * were. Read that as a diff against the previous version of this list: one row,
- * in one place, and no method renamed.
+ * were. **Console L5b added the fifteenth** (`runs.stats` / `statsRuns`, the
+ * Spend screen's by-person view -- `runReport` could not carry it, because the
+ * document is `runs stats --json` and not `report`) and left the other fourteen
+ * exactly where they were. Read that as a diff against the previous version of
+ * this list: one row, in one place, and no method renamed.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
   ['budget.show', 'showBudget'],
   ['spend.report', 'runReport'],
   ['runs.list', 'listRuns'],
+  ['runs.stats', 'statsRuns'],
   ['run.diagnose', 'diagnoseRun'],
   ['run.logs', 'readRunLogs'],
   ['run.logLink', 'runLogLink'],
@@ -1634,7 +1644,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these fourteen, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the chosen installation on `getInstallation`', () => {
+  it('is exactly these fifteen, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the chosen installation on `getInstallation`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -1651,11 +1661,11 @@ describe('the frozen list of operations the preload exposes', () => {
     // unmutated surface is asserted clean first.
     expect(surfaceOffences(SHIPPED_SURFACE)).toEqual([])
 
-    // A fifteenth channel: what each task added must stay one row, and the next
+    // A sixteenth channel: what each task added must stay one row, and the next
     // task that adds a read cannot do it quietly.
-    const fifteenth = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
-    expect(fifteenth).toContain('fleet.report: a channel this console does not ship')
-    expect(fifteenth).toContain('15 rows, and this console ships 14')
+    const sixteenth = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
+    expect(sixteenth).toContain('fleet.report: a channel this console does not ship')
+    expect(sixteenth).toContain('16 rows, and this console ships 15')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -1669,7 +1679,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('13 rows, and this console ships 14')
+    expect(withoutTheNewRow).toContain('14 rows, and this console ships 15')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -1684,8 +1694,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the fourteen methods and nothing else', () => {
-    // The bridge the window is handed: the fourteen methods and the names, with
+  it('is frozen, and hands the window a bridge with the fifteen methods and nothing else', () => {
+    // The bridge the window is handed: the fifteen methods and the names, with
     // no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -2705,12 +2715,12 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: eleven of the surface's fourteen operations, all of
+    // The non-vacuity half: twelve of the surface's fifteen operations, all of
     // them reachable in a reduced mode (the handshake is the one the loop skips
     // and its own test covers; `installation.current`, Task 3.4b, is among the
-    // eleven, because a reduced console's header still names its installation).
+    // twelve, because a reduced console's header still names its installation).
     // A wrapper that refused the whole surface would fail here.
-    expect(THE_OPEN_OPERATIONS.length).toBe(11)
+    expect(THE_OPEN_OPERATIONS.length).toBe(12)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(
