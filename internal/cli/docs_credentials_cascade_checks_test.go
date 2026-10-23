@@ -101,7 +101,12 @@ func TestDocsChecklistHasChecks94And95And99(t *testing.T) {
 		if !strings.Contains(row, "wired end to end in 0.10.1") || !strings.Contains(row, "ships dormant") {
 			t.Errorf("%s's %q row does not state the one consistent truth about the service -- wired end to end in 0.10.1 but dormant: %q", path, strings.Trim(n, "| "), row)
 		}
-		for _, notWant := range []string{"does not serve yet", "refuses to start", "three environment names", "three names on the container"} {
+		// The revision's own state is part of the same truth: the deployment
+		// configures the service now, so a revision starts and refuses every
+		// call, and a row that still says it does not start (or refuses to
+		// start) contradicts its own first sentence. "does not start today" is
+		// what row 94 carried while it said exactly that.
+		for _, notWant := range []string{"does not serve yet", "refuses to start", "refusing to start", "does not start today", "three environment names", "three names on the container"} {
 			if strings.Contains(row, notWant) {
 				t.Errorf("%s's %q row still says %q: the service is configured from its own deployment now (the seven names credentials.tf sets), so the row has to state the truth the other rows state", path, strings.Trim(n, "| "), notWant)
 			}
@@ -129,7 +134,7 @@ func TestDocsChecklistHasChecks94And95And99(t *testing.T) {
 		// Its deployment sets the seven names `fugaro credentials serve` reads
 		// (#903); what refuses every call is its missing database role, and what
 		// keeps anything from reaching it is that no job is given its address.
-		for _, notWant := range []string{"refuses to start", "the service does not serve", "three environment names", "three names on the container", "the four facts a `credsvc.Config` needs"} {
+		for _, notWant := range []string{"refuses to start", "refusing to start", "does not start today", "the service does not serve", "three environment names", "three names on the container", "the four facts a `credsvc.Config` needs"} {
 			if strings.Contains(sec, notWant) {
 				t.Errorf("%s's section at %q still states %q: the wiring landed (#903), and the section's not-observable claims have to rest on what is actually missing — the service's database role and the job's missing address", path, heading, notWant)
 			}
