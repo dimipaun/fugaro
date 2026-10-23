@@ -1226,8 +1226,8 @@ function total(factory: ScreenFactory, model: LiveModel): ScreenElement {
  * ready run, and the sentence about the link the console does not build.
  *
  * **The pull request is text and is not a control.** The number is drawn with
- * this screen's `literal` (it is an integer the model read, `prNumberOf`'s
- * filter in `run.ts`), the URL goes through `putText` with the `url` class --
+ * this screen's `literal` (it is an integer the model already filtered,
+ * `prNumberAt` above), the URL goes through `putText` with the `url` class --
  * so a token-shaped run in it is redacted and a URL that carries a credential
  * is refused, drawn as the console's reason -- and neither is ever written into
  * `data-href`, which is the one attribute `src/renderer/app.ts` leaves a link
