@@ -668,9 +668,31 @@ func runInit(r *initRun) error {
 		return e.converge(cmd.Context())
 	}
 
+	// The installation's own record of the fence is read HERE, before the setup
+	// below prepares the workdir: that preparation rebuilds the tree afresh, so
+	// its first act is to delete this document (Workdir.PrevVars is that same
+	// read, taken by PrepareWorkdir itself). A refusal decided from the
+	// document after it is deleted would take the record with it, and the
+	// record is what the next attempt is refused from.
+	//
+	// The live creation fact is the other record, and it is asked inside the
+	// rollback instead: reading it needs the clients setup builds, and unlike
+	// this one it survives a run that rebuilds the workdir — the label and the
+	// marker are the project's and the runs bucket's, and any later converge
+	// writes the key back into the document from them.
+	ctx := cmd.Context()
+	if o.forget {
+		recorded, err := installationFenceRecorded(lc)
+		if err != nil {
+			return err
+		}
+		if recorded {
+			return managedForgetRefusal(spec.Project, fmt.Sprintf("The installation's own tfvars say so — %s = true, which every rewrite carries forward", infra.ManagedDeployerScopedKey))
+		}
+	}
+
 	// 1. The environment, 2. the workdir, the clients and Cloud Resource
 	// Manager.
-	ctx := cmd.Context()
 	if err := e.setup(ctx); err != nil {
 		return err
 	}
@@ -1754,8 +1776,8 @@ func (r *initRun) managedProject(ctx context.Context, c *infra.Clients) (bool, e
 // installation root with the answer any more — an installation that holds the
 // fence is refused whole, before a plan exists, managedForgetRefusal — and the
 // half of that decision which the live fact cannot see, the fence a project's
-// marks no longer admit to, is read from the installation's own tfvars,
-// managedFenceRecorded.)
+// marks no longer admit to, is read by the door from the installation's own
+// tfvars before the workdir is touched, installationFenceRecorded.)
 //
 // A failure is the run's own and not a refusal: there is no plan to refuse
 // yet, and a run that cannot tell whether the variable belongs on or off plans
@@ -1826,10 +1848,10 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports) (
 	// installation's outputs, adopt — that would otherwise write a document
 	// that reads as an installation without the fence. --forget rebuilds the
 	// same document from a spec that carries nothing, so this carry is what
-	// keeps the fourteen in it; and the two documents it reads are also what
-	// the rollback's own refusal is decided from, so an installation whose
-	// marks have come off is still refused for holding the fence
-	// (managedFenceRecorded, managedForgetRefusal).
+	// keeps the fourteen in it; and the document it reads first is also what
+	// the rollback's own refusal is decided from, before a workdir is touched,
+	// so an installation whose marks have come off is still refused for
+	// holding the fence (installationFenceRecorded, managedForgetRefusal).
 	for _, prev := range documents {
 		if vars, err = infra.CarriedManagedDeployerScoped(vars, prev); err != nil {
 			return nil, userErr("reading the installation's tfvars: %v", err)
@@ -2475,35 +2497,40 @@ func splitLines(s string) []string {
 	return strings.Split(s, "\n")
 }
 
-// managedFenceRecorded is whether the installation's own tfvars record the
-// managed deployer's fence, read from the same two documents prepare carries the
-// key out of: the workdir's snapshot from before the run and the tfvars it holds
-// now. Either one saying so is the answer; a document that cannot be read is an
-// error, not a "no".
+// installationFenceRecorded is whether the installation's own tfvars record the
+// managed deployer's fence: the document the workdir holds as this run finds
+// it, read before anything prepares that workdir. It is the INSTALLATION's
+// record of the fourteen and not the project's mode.
 //
-// This is the INSTALLATION's record and not the project's mode, and that
-// distinction is the whole point of reading it: removing the two marks that make
-// a project managed (docs/gcp-setup.md, "What makes a project managed") does not
-// touch the fourteen the installation holds, and this document goes on recording
-// them because the carry in prepare never drops the key. So a rollback decided
-// from the live creation fact alone would let exactly the owner the refusal is
-// written for walk past it — marks off, `--forget`, and the state removal takes
-// the fence out of Terraform's state while it stays live in the project.
-func managedFenceRecorded(wd *infra.Workdir) (bool, error) {
-	now, err := wd.Vars()
+// That distinction is the whole point of reading it. Removing the two marks
+// that make a project managed (docs/gcp-setup.md, "What makes a project
+// managed") does not touch the fourteen the installation holds, and this
+// document goes on recording them, because prepare's carry never drops the key.
+// A rollback decided from the live creation fact alone would therefore let
+// exactly the owner the refusal is written for walk past it — marks off,
+// `--forget`, and the state removal takes the fence out of Terraform's state
+// while it stays live in the project.
+//
+// The read is of the file on disk, and it is made where it is so that the
+// refusal it decides leaves the file where it is: the preparation that follows
+// deletes every file of the earlier run, and a refusal that deleted this one
+// would leave the next attempt nothing to be refused from. The error it returns
+// is the run's, not a refusal: a document that cannot be read is not a document
+// that does not record the fence.
+func installationFenceRecorded(lc *localcfg.Config) (bool, error) {
+	dir, err := infra.InstallationWorkdir(os.Getenv, lc.GCPProject)
 	if err != nil {
-		return false, userErr("reading the installation's tfvars: %v", err)
+		return false, userErr("%v", err)
 	}
-	for _, doc := range [][]byte{wd.PrevVars, now} {
-		recorded, err := infra.ManagedDeployerScopedRecorded(doc)
-		if err != nil {
-			return false, userErr("reading the installation's tfvars: %v", err)
-		}
-		if recorded {
-			return true, nil
-		}
+	vars, err := infra.ReadWorkdirVars(dir, "installation")
+	if err != nil {
+		return false, userErr("%v", err)
 	}
-	return false, nil
+	recorded, err := infra.ManagedDeployerScopedRecorded(vars)
+	if err != nil {
+		return false, userErr("%v", err)
+	}
+	return recorded, nil
 }
 
 // managedForgetRefusal is the sentence `fugaro update --forget` stops with for
@@ -2521,10 +2548,13 @@ func managedFenceRecorded(wd *infra.Workdir) (bool, error) {
 // every later run of that project would find the fence unaccounted for, and a
 // converge could not put it back — its plan creates roles that already exist.
 //
-// why names which records say the installation holds it, because both do not
-// always say so and the reader has to be able to check the one that does: the
-// project's two marks, or the installation's own tfvars, or both (Task 3.0's
-// half: a project whose marks have come off still holds the fence).
+// why names the record that says the installation holds it, because the two
+// records are asked at different moments and only one of them is always there
+// to answer: the installation's own tfvars, asked by the door before anything
+// prepares the workdir, or the project's two marks, asked here (Task 3.0's
+// half: a project whose marks have come off still holds the fence, and a
+// document that has lost the key still belongs to a project whose marks do not
+// come off by themselves).
 //
 // The next step is deliberately spelled here rather than left to a document,
 // and it is deliberately NOT "take the project out of managed mode": that is the
@@ -2546,29 +2576,19 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 	// written: what this command forgets is the installation, and the fence is
 	// the installation's (managedForgetRefusal says why it is not forgettable).
 	//
-	// Two records are asked, because neither one alone is the answer and the
-	// second is the one the live fact misses: the project's own creation fact,
-	// read the way installRoot reads it — the same read, made once, whose error
-	// stops the run here rather than being read as "not managed" — and the
-	// installation's own tfvars, which go on recording the fence after the
-	// project's marks have come off (managedFenceRecorded).
+	// What is asked here is the project's own creation fact, read the way
+	// installRoot reads it — the same read, made once, whose error stops the run
+	// here rather than being read as "not managed". The other record, the
+	// installation's own tfvars, was asked before this engine was set up, by
+	// the door that owns the run (installationFenceRecorded): the workdir this
+	// one holds has already been rebuilt, so the document is gone from it, and
+	// what is left here is the half of the decision the fact can answer.
 	marked, err := r.managedScope(ctx, c)
 	if err != nil {
 		return err
 	}
-	recorded, err := managedFenceRecorded(wd)
-	if err != nil {
-		return err
-	}
-	if marked || recorded {
-		var why []string
-		if marked {
-			why = append(why, fmt.Sprintf("The project's own creation fact says so — the %s label on %s, with the runs bucket's %s", managed.ProjectLabelKey, spec.Project, managed.MarkerObject))
-		}
-		if recorded {
-			why = append(why, fmt.Sprintf("The installation's own tfvars say so — %s = true, which every rewrite carries forward", infra.ManagedDeployerScopedKey))
-		}
-		return managedForgetRefusal(spec.Project, strings.Join(why, ". "))
+	if marked {
+		return managedForgetRefusal(spec.Project, fmt.Sprintf("The project's own creation fact says so — the %s label on %s, with the runs bucket's %s", managed.ProjectLabelKey, spec.Project, managed.MarkerObject))
 	}
 	exists, err := infra.CheckStateBucket(ctx, c, spec.Project, spec.StateBucket)
 	if err != nil {

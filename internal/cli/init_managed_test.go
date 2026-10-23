@@ -854,9 +854,17 @@ func TestForgetRefusesAManagedInstallation(t *testing.T) {
 // by nothing. Flags the project a managed apply would then find unaccounted for
 // on every later run.
 //
+// The record is read before the workdir is prepared, and the run stops there:
+// so this is also the test that the refusal leaves the document where it found
+// it. A refusal that ran after the preparation would have deleted the record it
+// was decided from, and the next attempt — and every converge after it — would
+// have nothing left to carry the key out of.
+//
 // Mutation (run, restore): decide the refusal from the live fact alone (drop
-// managedFenceRecorded from forget): the run exits 0 and runs state rm on the
-// installation, and this fails.
+// the door's read, installationFenceRecorded): the run exits 0 and runs state rm
+// on the installation, and this fails. Mutation (run, restore): make the read
+// inside the rollback instead of before the workdir is prepared: the refusal
+// still comes, and the assertion that the document is still there fails.
 func TestForgetRefusesAFenceTheMarksNoLongerAdmitTo(t *testing.T) {
 	r := newInitRig(t)
 	r.managedRuns(t, initProjectName, initProject)
@@ -921,11 +929,11 @@ func TestForgetRefusesAFenceTheMarksNoLongerAdmitTo(t *testing.T) {
 			t.Errorf("a refused rollback ran terraform %s: %q", sub, ran[before[sub]:])
 		}
 	}
-	// Nothing rewrote the document either: the installation's record of the
-	// fence is what the next run is refused from, and a refused rollback leaves
-	// it as it found it.
+	// The document is still there, and still records the fence: the refusal is
+	// decided from it before the workdir is prepared, so the record the next
+	// attempt is refused from is the one this run found.
 	if got := r.tfvars(t)["managed_deployer_scoped"]; got != true {
-		t.Errorf("a refused rollback rewrote the installation's tfvars: managed_deployer_scoped = %v, want true", got)
+		t.Errorf("a refused rollback left the installation's tfvars rewritten: managed_deployer_scoped = %v, want true", got)
 	}
 }
 
