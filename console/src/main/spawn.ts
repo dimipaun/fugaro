@@ -905,65 +905,76 @@ export function assertArgvFlags(operation: string, argv: readonly string[]): voi
 export const WSL_PREFIX_FLAGS: readonly string[] = Object.freeze(['-d', '--cd', '--'])
 
 /**
- * DISTRO_NAME_RE is the alphabet a WSL distribution's name may use when this
- * console hands it to `wsl.exe` (T-E3, F22). A distribution's name is a
- * registry key's name on Windows -- letters, digits, `.`, `_` and `-` -- and it
- * is checked as a name rather than as a path, because it is one.
+ * isSafeDistroName answers whether a distribution's name may become a wrapper
+ * word (T-E3, F22). Part C widened the argv this console builds with words that
+ * do not come from the CLI's own table: a distribution's name arrives from
+ * `wsl.exe --list --quiet` (a document's string) or from the store, and it lands
+ * on `wsl.exe`'s command line. This is the check it crosses.
  *
- * **Why a name needs an alphabet at all.** Part C widened the argv this console
- * builds with words that do not come from the CLI's own table: a distribution's
- * name arrives from `wsl.exe --list --quiet` (a document's string) or from the
- * store, and it lands on `wsl.exe`'s command line. With `shell: false` there is
- * no shell for it to be re-parsed by, so the hazard is not injection but
- * *argument confusion*: a name spelled `--help`, `-d` or `--` is a word
- * `wsl.exe` reads as its own, and a name carrying whitespace or a control
- * character is a name no `wsl.exe` ever printed. A name outside this alphabet,
- * or one that begins with a hyphen, is refused by name rather than run (see
- * `isSafeDistroName` and `assertWslPrefix`).
+ * **What it refuses, and why each one is a hazard rather than a taste:**
+ *
+ *   - a **leading `-`**. This is the whole of the argument confusion here:
+ *     `-d --help`, `-d -d` and `-d --` hand `wsl.exe` a word it may read as one
+ *     of its own instead of as the distribution it names. `-` is admitted
+ *     everywhere else (`Ubuntu-22.04` is a real distribution), so this rule and
+ *     not the alphabet is what keeps a flag out of the value position.
+ *   - a **control character or a NUL**, which is not a name any `wsl.exe` printed
+ *     and not a name any screen can draw.
+ *   - the **empty name**, because `-d ''` names nothing.
+ *   - an **absurd length** -- the bound the store's own values carry.
+ *
+ * **What it deliberately admits, and why the first version of this rule was
+ * wrong.** Whitespace, quotes, `;`, `~` and non-ASCII letters are *inside* it.
+ * With `shell: false` and an array argv there is no shell to re-parse a word and
+ * nothing splits one element into two, so a space in a name is not argument
+ * confusion -- it is a character in a name. A custom-registered distribution can
+ * be called `My Linux` (`wsl --import`), `wsl.exe --list --quiet` prints that
+ * name, and the console drives it: a rule built on the narrower alphabet
+ * Microsoft's own store names use (`[A-Za-z0-9._-]+`) would have refused a
+ * distribution that is listed and works, while claiming the narrowing cost
+ * nothing. That alphabet is a fact about the store's names and not a rule this
+ * console may refuse a drivable distribution by. **A review found this**; both
+ * halves are asserted in `test/unit/spawn.test.ts`, and the "no metacharacter"
+ * guard over the argv is not extended to this value for the same reason.
  */
-export const DISTRO_NAME_RE = /^[A-Za-z0-9._-]+$/
-
-/** isSafeDistroName answers whether a distribution's name may become a wrapper
- * word. It is the tight alphabet above, with the length bound the store's own
- * values carry, and an empty name is refused because `-d ''` names nothing.
- *
- * **A leading `-` is refused as well as the alphabet**, and that is the one
- * place this rule is narrower than the alphabet it is built on: `-` has to be
- * admitted (a real distribution is called `Ubuntu-22.04`), so `-d --help`,
- * `-d -d` and `-d --` are all *inside* the alphabet while being exactly the
- * argument confusion the alphabet exists to refuse. A distribution whose
- * registered name begins with a hyphen is not a distribution any `wsl.exe`
- * printed, so refusing it by name costs nothing real. */
 export function isSafeDistroName(value: string): boolean {
   if (value === '' || value.length > 256) return false
   if (value.startsWith('-')) return false
-  return DISTRO_NAME_RE.test(value)
+  // eslint-disable-next-line no-control-regex
+  return !/[\u0000-\u001f\u007f]/.test(value)
 }
 
 /**
- * assertWslPrefix holds the wrapper to its shape and to its two alphabets, and
- * it is the prefix's half of what `assertArgvFlags` is to the CLI's argv
- * (T-E3, F22). It is called by `wslWrapper`, the only producer of a prefix, for
- * the same reason `assertArgvFlags` is called by `argvFor`: a check in the
+ * assertWslPrefix holds the wrapper to its shape and its two values to their
+ * rule, and it is the prefix's half of what `assertArgvFlags` is to the CLI's
+ * argv (T-E3, F22). It is called by `wslWrapper`, the only producer of a prefix,
+ * for the same reason `assertArgvFlags` is called by `argvFor`: a check in the
  * callers is a check a later caller can forget.
  *
  * The shape is `-d <distribution>` and then either `--` or `--cd <directory> --`
- * -- exactly what `wslWrapper` builds, and nothing else. Two of the words are
- * **values**, and they are checked by two different rules:
+ * -- exactly what `wslWrapper` builds, and nothing else. Its word that is a flag
+ * is checked by absence from `SPAWN_FLAGS`, and its two **values** are checked
+ * as follows:
  *
- *   - **the distribution's name** is a *name*, and it is held to
- *     `DISTRO_NAME_RE`: it is the one word here that reaches `wsl.exe` as a
- *     selector, and a name that could be read as a flag or as two words is the
- *     argument confusion `DISTRO_NAME_RE` exists to refuse.
- *   - **the directory is exempt from that alphabet, by name and deliberately.**
- *     It is a Linux path, and a path is not a name: `/home/Ann Lee/src` is a
- *     directory an operator can have, and `ARGUMENT_RE` (which the renderer's
- *     own values satisfy) admits neither the space nor the `~` a shell would
- *     expand. It is checked by `isSafeInstallationValue` instead -- the rule the
- *     project name, the config path and the checkout already satisfy -- so what
- *     is refused is a control character, a NUL, an empty string, an absurd
- *     length and a leading `-`, and what is admitted is every path an operator
- *     can actually type.
+ *   - **the distribution's name**, the one word here that reaches `wsl.exe` as a
+ *     selector, is held to `isSafeDistroName`: not a flag, not a control
+ *     character, not empty, not absurd -- and whitespace is admitted, because
+ *     with an array argv a space is a character in a name rather than a second
+ *     word (see that function's own note).
+ *   - **the directory** is a Linux path, and it is held to
+ *     `isSafeInstallationValue` -- the rule the project name, the config path
+ *     and the checkout already satisfy. `ARGUMENT_RE`, which the renderer's own
+ *     values satisfy, would be the wrong rule here: it admits neither the space
+ *     of `/home/Ann Lee/src` nor the `~` a shell would expand, and it is a
+ *     renderer's alphabet rather than a path's.
+ *
+ * So the two values are held to the same rule -- no control character or NUL, not
+ * empty, not absurd, no leading `-` -- and the name differs only in its length
+ * bound (256, the store's own). That is deliberate and it is a correction: an
+ * earlier version of this guard gave the name a narrower alphabet
+ * (`[A-Za-z0-9._-]+`) and refused a listed, drivable distribution called
+ * `My Linux` while claiming the narrowing cost nothing. The two words differ in
+ * what they mean, not in what they may contain (see `isSafeDistroName`).
  */
 export function assertWslPrefix(prefix: readonly string[]): void {
   const words = [...prefix]
@@ -979,13 +990,13 @@ export function assertWslPrefix(prefix: readonly string[]): void {
   if (name === undefined || !isSafeDistroName(name)) {
     refused(
       `the distribution name ${JSON.stringify(name ?? '')} is not one this console will hand to wsl.exe: ` +
-        `a distribution's name is ${String(DISTRO_NAME_RE)}`,
+        `it must be a non-empty name that does not begin with "-" and carries no control character`,
     )
   }
   const rest = words.slice(2)
   if (rest.length === 1 && rest[0] === '--') return
   if (rest.length === 3 && rest[0] === '--cd' && rest[2] === '--') {
-    // The directory, and the exemption above: a path is not a name.
+    // The directory: the same rule as the name, without the name's length bound.
     const directory = rest[1] ?? ''
     if (!isSafeInstallationValue(directory)) {
       refused(`the wrapper would start the CLI in ${JSON.stringify(directory)}, which is not a directory this console will pass`)
@@ -1570,8 +1581,8 @@ export interface WslRoute {
  *
  * It is the only producer of a prefix, so `assertWslPrefix` is called here
  * rather than in the callers (T-E3): the distribution's name is a string that
- * came out of `wsl.exe` or out of the store, and it is checked against
- * `DISTRO_NAME_RE` on the way to `wsl.exe`'s command line. */
+ * came out of `wsl.exe` or out of the store, and it is checked by
+ * `isSafeDistroName` on the way to `wsl.exe`'s command line. */
 function wslWrapper(wsl: WslRoute): readonly string[] {
   const head = ['-d', wsl.distro]
   const prefix = wsl.directory === undefined ? [...head, '--'] : [...head, '--cd', wsl.directory, '--']
@@ -1881,8 +1892,20 @@ function boundAppend(current: string, chunk: string, limit: number): string {
  *     for anything this vocabulary does not name;
  *   - `no-wsl` -- `wsl.exe` could not answer at all (T-C4's `absent` outcome):
  *     WSL is not installed, or the feature is off;
- *   - `no-distro` -- WSL answered and the distribution this installation names
- *     is not among them;
+ *   - `no-distro` -- WSL answered and there is no distribution this console can
+ *     drive by the name the installation carries. It has **two shapes** (Part E,
+ *     T-E3, added the second):
+ *       1. the name is simply not among the ones `wsl.exe` lists, which is a
+ *          rename or a removal, and the reason carries the whole list;
+ *       2. the name *is* listed and is one this console will not hand to
+ *          `wsl.exe` -- a registered name beginning with `-` (see
+ *          `isSafeDistroName`), which is a name that would be read as one of
+ *          `wsl.exe`'s own flags.
+ *     The instruction to the operator is the same in both -- choose or add a
+ *     distribution -- which is why the second shape did not add a fifth kind: a
+ *     kind exists to say which of the four *remedies* applies, and the remedy
+ *     here is this one. The sentence in `reason` carries what is specific
+ *     (F26/F31's remedy list is unaffected);
  *   - `no-fugaro-in-distro` -- the distribution is there and the CLI is not in
  *     it: nothing named `fugaro` is on the distribution's own `PATH`.
  *
@@ -2082,10 +2105,17 @@ export async function resolveInstalledBinary(options: {
  *   - **`no-wsl`** -- `wsl.exe` could not answer at all (T-C4's `absent`
  *     outcome): WSL is not installed, or the feature is off. The operator's
  *     instruction is to install WSL, not to install a CLI;
- *   - **`no-distro`** -- WSL answered, and the distribution this installation
- *     names is not among them. The list `wsl.exe` gave is in the sentence,
- *     because the distribution was renamed or removed and the operator is the
- *     only one who can say which;
+ *   - **`no-distro`** -- WSL answered, and there is no distribution this console
+ *     can drive by the name the installation carries. Its two shapes are both
+ *     answered here, and they are told apart by their sentences rather than by
+ *     their kind (see `BinaryRefusalKind`):
+ *       1. the distribution is **not among them**. The list `wsl.exe` gave is in
+ *          the sentence, because the distribution was renamed or removed and the
+ *          operator is the only one who can say which;
+ *       2. the distribution **is among them**, and the name is one this console
+ *          will not hand to `wsl.exe` -- it begins with `-`
+ *          (`isSafeDistroName`). It is refused here, with a sentence, rather than
+ *          left for the wrapper's own guard to throw out of this async read;
  *   - **`no-fugaro-in-distro`** -- the distribution is there and the CLI is not
  *     in it: the probe came back as a shell's miss (see
  *     `SHELL_COMMAND_NOT_FOUND`). The instruction is to install the CLI inside
@@ -2152,23 +2182,23 @@ async function resolveInDistribution(
   }
 
   // A name this machine *lists* but this console will not hand to `wsl.exe`
-  // (T-E3, `isSafeDistroName`): `wsl.exe` lists the names it has, and a
-  // custom-registered distribution can be called something outside the alphabet
-  // -- `My Linux`, say. It is answered here, with a sentence, rather than left to
-  // the wrapper's own guard: `assertWslPrefix` is the last line of the boundary
-  // and not an error path an operator should meet as a crash, so the two
-  // refusals are told apart by where the name came from and both are refusals.
-  // The kind is `no-distro`, which is the honest one of the four: as far as this
-  // console is concerned there is no distribution it can drive by that name, and
-  // the reason carries the instruction the other three carry in different words.
+  // (T-E3, `isSafeDistroName`): the name is the one word `wsl.exe` reads as a
+  // selector, so a listed name that begins with `-` -- a custom registration can
+  // be called `-sneaky` -- is answered here rather than thrown from the wrapper's
+  // own guard. `assertWslPrefix` is the last line of the boundary and not an
+  // error path an operator should meet as a crash. `no-distro` and not a fifth
+  // kind: **this is the second shape of `no-distro`**, documented on
+  // `BinaryRefusalKind` -- the name is not one this console has a working route
+  // to, and the remedy the kinds drive (choose or add a distribution) is the
+  // same one; the reason below carries what is specific to this case.
   if (!isSafeDistroName(distro)) {
     return {
       ok: false,
       path: null,
       kind: 'no-distro',
       reason:
-        `the distribution this installation names, ${quote(distro)}, is not a name this console will hand to ` +
-        `wsl.exe: a distribution's name is ${String(DISTRO_NAME_RE)}`,
+        `the distribution this installation names, ${quote(distro)}, is listed by wsl.exe and is not a name ` +
+        `this console will hand to wsl.exe: it must not begin with "-"`,
     }
   }
 

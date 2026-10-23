@@ -52,7 +52,6 @@ import {
   CHILD_ENV_KEYS,
   COMMANDS_WITHOUT_PROJECT,
   DARWIN_LOCATIONS,
-  DISTRO_NAME_RE,
   FUGARO_BINARY_NAME,
   INSTALLATION_LIST_COMMAND,
   LINUX_LOCATIONS,
@@ -828,22 +827,30 @@ describe('the wrapper’s own words', () => {
   // the CLI's argv is held to is extended to the prefix. Part C put words on a
   // command line that do not come from the CLI's own table -- a distribution's
   // name arrives from `wsl.exe --list --quiet` or from the store -- so the
-  // prefix has an alphabet of its own rather than the CLI's, and the two are
-  // disjoint by design (T-C1: that is why `prefix` and `argv` are two fields).
+  // prefix has a guard of its own rather than the CLI's, and the two flag sets
+  // are disjoint by design (T-C1: that is why `prefix` and `argv` are two
+  // fields).
   //
-  // The directory is the one word **exempt from the name alphabet by name**, and
-  // the reason is written beside the exemption in `assertWslPrefix`: a Linux path
-  // is a path and not a name, and `/home/Ann Lee/src` is a directory an operator
-  // can have.
+  // **What the two values are held to is the *same* rule** -- no control
+  // character, not empty, not absurd, no leading `-` -- and not a narrower
+  // alphabet: a Linux path such as `/home/Ann Lee/src` and a registered
+  // distribution called `My Linux` are both things an operator has, and with an
+  // array argv and `shell: false` a space in one element is a character and not
+  // a second word. A first version of this guard used `[A-Za-z0-9._-]+` for the
+  // name and refused a listed, drivable distribution while claiming the
+  // narrowing cost nothing; a review found it, and the case below holds both
+  // halves.
   const words = (list: readonly string[]): readonly string[] => Object.freeze([...list])
   const inside = (directory: string): readonly string[] => words(['-d', 'Ubuntu', '--cd', directory, '--'])
 
   it('admits exactly the two shapes `wslWrapper` builds, and nothing else', () => {
     expect(() => assertWslPrefix(words(['-d', 'Ubuntu', '--']))).not.toThrow()
     expect(() => assertWslPrefix(words(['-d', 'Ubuntu-22.04', '--cd', '/home/dimi/src', '--']))).not.toThrow()
-    // The exemption, asserted as an admission *and* as a refusal below: a space
-    // is in a path and not in a name.
+    // Whitespace in either value, admitted: a space is a character in a
+    // distribution's name (`wsl --import "My Linux"`) exactly as it is in a
+    // Linux path, and neither becomes two words with an array argv.
     expect(() => assertWslPrefix(inside('/home/Ann Lee/src/fugaro'))).not.toThrow()
+    expect(() => assertWslPrefix(words(['-d', 'My Linux', '--cd', '/home/Ann Lee/src', '--']))).not.toThrow()
     for (const list of [
       [], // no `-d` at all
       ['-d', 'Ubuntu'], // no `--`
@@ -856,22 +863,31 @@ describe('the wrapper’s own words', () => {
     }
   })
 
-  it('refuses a distribution name that could be read as a flag, or as two words', () => {
-    // What `DISTRO_NAME_RE` is for. `-` has to be *in* the alphabet -- a real
-    // distribution is called `Ubuntu-22.04` -- so `-d --help`, `-d -d` and
-    // `-d --` are inside it while being exactly the argument confusion the
-    // alphabet exists to refuse; the leading-hyphen rule in `isSafeDistroName`
-    // is what refuses them. With `shell: false` there is no shell to re-parse
-    // any of this, so the hazard is argument confusion and not injection.
-    for (const name of ['-d', '--', '--help', 'Ubuntu 22.04', 'Ubuntu\t22.04', 'ubuntu\n', 'Ubuntu;rm -rf', '']) {
-      expect(isSafeDistroName(name)).toBe(false)
+  it('refuses a distribution name that could be read as a flag, and admits one that merely has a space', () => {
+    // What `isSafeDistroName` is for, in both directions. `-` has to be admitted
+    // -- a real distribution is called `Ubuntu-22.04` -- so `-d --help`, `-d -d`
+    // and `-d --` are words whose *content* is legal and whose *position* makes
+    // them a flag; the leading-hyphen rule is what refuses them, and that is the
+    // whole of the argument confusion with `shell: false` (no shell re-parses a
+    // word, and an array element is never split).
+    for (const name of ['-d', '--', '--help', '-sneaky', '', 'Ubuntu\t22.04', 'ubuntu\n', `a${'\u0007'}b`]) {
+      expect(isSafeDistroName(name), name).toBe(false)
       expect(() => assertWslPrefix(words(['-d', name, '--']))).toThrow(/distribution name/)
     }
-    expect(isSafeDistroName('Ubuntu-22.04')).toBe(true)
-    expect(isSafeDistroName('kali-linux')).toBe(true)
-    expect(DISTRO_NAME_RE.test('Ubuntu')).toBe(true)
+    // **A review found the first version of this rule wrong**, and this is the
+    // half it was wrong about: a custom-registered distribution can be called
+    // `My Linux` (`wsl --import`), `wsl.exe --list --quiet` prints it, and the
+    // console must drive it. Whitespace, quotes and `;` in a value are not
+    // hazards with an array argv -- they are characters in a name -- and a rule
+    // built on the alphabet Microsoft's store names use would have refused a
+    // distribution that is listed and works.
+    for (const name of ['Ubuntu', 'Ubuntu-22.04', 'kali-linux', 'My Linux', 'Ubuntu 22.04', "dimi's distro", 'Ubuntu;x']) {
+      expect(isSafeDistroName(name), name).toBe(true)
+      expect(() => assertWslPrefix(words(['-d', name, '--'])), name).not.toThrow()
+    }
     // The length bound is the one the store's own values carry.
     expect(isSafeDistroName('a'.repeat(257))).toBe(false)
+    expect(isSafeDistroName(`a${'b'.repeat(255)}`)).toBe(true)
   })
 
   it('keeps the wrapper’s flags and the CLI’s flags apart', () => {
@@ -901,33 +917,31 @@ describe('the wrapper’s own words', () => {
     expect(() => assertWslPrefix(inside(`/home/${'a'.repeat(1000)}/src`))).not.toThrow()
   })
 
-  it('leaves no shell metacharacter in the words the CLI’s own flags and name may use', () => {
-    // The argv guard's own rule (`leaves no shell metacharacter in any argv it
-    // builds`), extended to the prefix: every word that is a flag or the
-    // distribution's name carries nothing a shell could re-parse. The directory
-    // is left out **by name** and not by accident -- it is the word the alphabet
-    // exemption above admits, and a path may hold a space -- and it is asserted
-    // through `isSafeInstallationValue` instead.
+  it('spells its own flags and the two separators exactly, and never an approximation', () => {
+    // What survives of the argv block's "no shell metacharacter" rule here. That
+    // rule is **not** extended to the prefix's two values, and deliberately: with
+    // an array argv a space, a quote or a `;` in a *value* is a character and not
+    // a second word, which is why `My Linux` and `/home/Ann Lee/src` are admitted
+    // at all (a review corrected the first version of this guard, which refused
+    // them). What is checked instead is that the words *this module* chooses are
+    // exactly its own table -- so a prefix that grew a flag, or spelled `--cd` as
+    // `--cd=`, fails here. The values' own rule is `isSafeDistroName` /
+    // `isSafeInstallationValue`, above and below; that a value with a space
+    // reaches `wsl.exe` as one word is asserted through the fake in
+    // `hands wsl.exe a name and a directory with spaces as one word each`.
     const plan = planFor(
       'budget.show',
       {},
       safeContext({
         binaryPath: '',
-        wsl: { distro: 'Ubuntu', directory: '/home/Ann Lee/src', executable: 'C:\\Windows\\System32\\wsl.exe' },
+        wsl: { distro: 'My Linux', directory: '/home/Ann Lee/src', executable: 'C:\\Windows\\System32\\wsl.exe' },
       }),
     )
     const prefix = [...plan.prefix]
-    const distroFlag = prefix[0] ?? ''
-    const distro = prefix[1] ?? ''
-    const rest = prefix.slice(2)
-    expect(distroFlag).toBe('-d')
-    expect(distro).toBe('Ubuntu')
-    for (const word of [distroFlag, distro, ...rest.filter((word) => !word.startsWith('/'))]) {
-      expect(word, word).not.toMatch(/[\s;&|`$(){}<>"'\\]/)
-      expect(word).not.toContain('..')
-      if (word.startsWith('-')) expect([...WSL_PREFIX_FLAGS]).toContain(word)
+    for (const word of prefix.filter((word) => word.startsWith('-'))) {
+      expect([...WSL_PREFIX_FLAGS], word).toContain(word)
     }
-    expect(rest).toEqual(['--cd', '/home/Ann Lee/src', '--'])
+    expect(prefix).toEqual(['-d', 'My Linux', '--cd', '/home/Ann Lee/src', '--'])
   })
 
   it('checks the prefix on the way to `wsl.exe`, and not only when asked', () => {
@@ -936,7 +950,7 @@ describe('the wrapper’s own words', () => {
     // callers is a check a later caller can forget. The distribution's name is a
     // string that came out of `wsl.exe` or out of the store, so this says the
     // line it has to cross is the one the wrapper builds.
-    const wsl = { distro: 'Ubuntu --json', directory: '/home/dimi/src', executable: 'C:\\Windows\\System32\\wsl.exe' }
+    const wsl = { distro: '-sneaky', directory: '/home/dimi/src', executable: 'C:\\Windows\\System32\\wsl.exe' }
     expect(() => planFor('budget.show', {}, safeContext({ binaryPath: '', wsl }))).toThrow(/distribution name/)
     expect(() => planFor('budget.show', {}, safeContext({ binaryPath: '', wsl: { ...wsl, distro: 'Ubuntu' } }))).not.toThrow()
   })
@@ -2133,27 +2147,61 @@ describe('the WSL resolution path', () => {
     expect(arrangement.wsl.reports().filter((report) => report.kind === 'spawn')).toHaveLength(0)
   })
 
-  it('refuses, with a sentence, a listed distribution whose name it will not hand to `wsl.exe`', async () => {
-    // T-E3's edge, and the reason the guard is a name check and not a crash: a
-    // custom-registered distribution can be called something outside
-    // `DISTRO_NAME_RE` -- here a space -- and `wsl.exe --list --quiet` lists it
-    // happily. The console states that it will not drive it rather than letting
-    // the wrapper's own guard throw an exception out of an async read (which is
-    // the mutation this case exists for: answer it here, and the case fails with
-    // an unhandled error instead of a refusal).
+  it('hands `wsl.exe` a name and a directory with spaces as one word each', async () => {
+    // **The case a review asked for**: whitespace in either value is admitted
+    // (`isSafeDistroName`, `isSafeInstallationValue`), so the claim that it is
+    // *safe* has to be made where it can be observed -- at the fake's own argv.
+    // A registered distribution can be called `My Linux` (`wsl --import`), a
+    // Linux directory can be called `Ann Lee`, and with an array argv each is one
+    // element: nothing splits on the space, and nothing re-parses it, because
+    // there is no shell (`shell: false`). The mutation this catches is building
+    // the command line as a string, or a guard that splits a value to check it.
     const arrangement = wslRoot({
       list: 'Ubuntu\r\nMy Linux\r\n',
       status: 'Default Distribution: Ubuntu\r\nDefault Version: 2\r\n\r\nWSL version: 2.6.1.0\r\n',
     })
-    const resolution = await resolveInside(arrangement, { distro: 'My Linux' })
+    const spaced = join(arrangement.distroDirectory, 'Ann Lee')
+    mkdirSync(spaced, { recursive: true })
+    const resolution = await resolveInside(arrangement, { distro: 'My Linux', wslDirectory: spaced })
+    expect(resolution.ok).toBe(true)
+
+    const hop = only(arrangement.wsl.reports().filter((report) => report.kind === 'spawn'))
+    expect(hop.argv.filter((word) => word === 'My Linux')).toHaveLength(1)
+    expect(hop.distro).toBe('My Linux')
+    expect(hop.cd).toBe(spaced)
+    // ...and the Linux side really was started in it, so this is not only what
+    // the console asked for.
+    const child = only(arrangement.wsl.children())
+    expect(child.argv).toEqual(['version'])
+    expect(realpathSync(child.cwd)).toBe(realpathSync(spaced))
+  })
+
+  it('refuses, with a sentence, a listed distribution whose name it will not hand to `wsl.exe`', async () => {
+    // T-E3's edge, and the reason the guard is a name check and not a crash: a
+    // registered name can begin with `-` -- which is the one shape that is
+    // argument confusion, because `wsl.exe` may read it as its own flag -- and
+    // `wsl.exe --list --quiet` lists it regardless. The console states that it
+    // will not drive it rather than letting the wrapper's own guard throw an
+    // exception out of an async read (which is the mutation this case exists
+    // for: answer it here, and the case fails with an unhandled error instead of
+    // a refusal).
+    const arrangement = wslRoot({
+      list: 'Ubuntu\r\n-sneaky\r\n',
+      status: 'Default Distribution: Ubuntu\r\nDefault Version: 2\r\n\r\nWSL version: 2.6.1.0\r\n',
+    })
+    const resolution = await resolveInside(arrangement, { distro: '-sneaky' })
     expect(resolution.ok).toBe(false)
     if (resolution.ok) throw new Error('unreachable')
+    // `no-distro` and not a fifth kind: this is its second shape, documented on
+    // `BinaryRefusalKind` -- there is no distribution this console can drive by
+    // that name, and the remedy is the same one the first shape drives.
     expect(resolution.kind).toBe('no-distro')
     expect(resolution.path).toBeNull()
-    // The sentence names the name and the alphabet, so the operator can see what
-    // the console will not do rather than only that something failed.
-    expect(resolution.reason).toContain('"My Linux"')
-    expect(resolution.reason).toContain(String(DISTRO_NAME_RE))
+    // The sentence names the name and the rule, so the operator can see what the
+    // console will not do rather than only that something failed.
+    expect(resolution.reason).toContain('"-sneaky"')
+    expect(resolution.reason).toContain('listed by wsl.exe')
+    expect(resolution.reason).toContain('begin with "-"')
     expect(arrangement.wsl.childCalls()).toBe(0)
     expect(arrangement.wsl.reports().filter((report) => report.kind === 'spawn')).toHaveLength(0)
   })
