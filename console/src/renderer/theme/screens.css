@@ -141,7 +141,7 @@ p.run-draft-note,
 p.run-follow-up,
 p.live-review-empty,
 p.live-review-note,
-p.live-review-dropped {
+p.live-review-capped {
   margin-block: var(--space-2xs);
   font-size: var(--font-size-base);
 }
@@ -1403,7 +1403,7 @@ main p {
   span.run-halt-detail,
   p.live-review-empty,
   p.live-review-note,
-  p.live-review-dropped,
+  p.live-review-capped,
   p.degraded-notice,
   p.degraded-warning,
   p.unavailable-reason,

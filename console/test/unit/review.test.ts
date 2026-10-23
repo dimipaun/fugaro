@@ -478,16 +478,21 @@ describe('the review inbox’s drawing', () => {
   })
 
   it('draws the count of the rows the cap left undrawn', () => {
+    // The number under this label is the number of rows the cap left **out**,
+    // not the number on the screen: `run.ts`'s log panel and `projects.ts`'s job
+    // list both read `<label>: <not drawn> of <total>`, and the heading above
+    // already carries the number of rows that fit. Two undrawn of 52, then.
     const section = drawnSection(aModel(readyRows(LIVE_REVIEW_CAP + 2)))
-    const note = one(section, 'live-review-dropped')
+    const note = one(section, 'live-review-capped')
     // The console's own words are the `p`'s text and the two numbers are the
     // readings beside it, which is the shape the log panel's own "rows not
     // drawn" note has.
     expect(note.textContent).toBe('rows not drawn:')
-    expect(note.nodes.map((node) => node.textContent)).toEqual(['50', 'of', '52'])
+    expect(note.nodes.map((node) => node.textContent)).toEqual(['2', 'of', '52'])
+    expect(one(section, 'live-review-dropped').textContent).toBe('2')
     expect(one(section, 'live-review-count').textContent).toBe('52')
     // And the note is absent when every row was drawn.
-    expect(all(drawnSection(aModel(readyRows(1))), 'live-review-dropped')).toEqual([])
+    expect(all(drawnSection(aModel(readyRows(1))), 'live-review-capped')).toEqual([])
   })
 })
 

@@ -1266,9 +1266,21 @@ function reviewSection(factory: ScreenFactory, model: LiveModel): ScreenElement 
     literal(cell(element, factory, 'p', 'live-review-note'), LIVE_PR_NO_LINK_REASON)
   }
   if (model.review.length < model.reviewCount) {
-    const note = cell(element, factory, 'p', 'live-review-dropped')
+    // What was **not** drawn, in the shape `run.ts`'s log panel and
+    // `projects.ts`'s job list use: the label, the number of rows the cap left
+    // out, and the total the document carried. Drawing the number of rows that
+    // *are* on the screen under this label would be the same count the heading
+    // already carries, under a sentence saying the opposite of what it means.
+    const note = cell(element, factory, 'p', 'live-review-capped')
     literal(note, 'rows not drawn:')
-    numberCell(note, factory, 'span', measured(model.review.length), 'count', 'live-review-drawn')
+    numberCell(
+      note,
+      factory,
+      'span',
+      measured(model.reviewCount - model.review.length),
+      'count',
+      'live-review-dropped',
+    )
     literal(cell(note, factory, 'span', 'live-review-of'), 'of')
     numberCell(note, factory, 'span', measured(model.reviewCount), 'count', 'live-review-total')
   }

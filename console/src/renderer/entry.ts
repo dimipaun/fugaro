@@ -1485,7 +1485,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * asks about whatever the mark happens to be.
    *
    * **The review inbox's rows are the same door** (v2 plan Task V2.7.1):
-   * `live-review-id` is a run id drawn the same way, and `model.review` is
+   * `live-review-run-id` is a run id drawn the same way, and `model.review` is
    * where it is checked. A finished run is a run -- `fugaro diagnose RUN` reads
    * it from the runs bucket precisely because its registry entry is gone -- so
    * a ready row that could not be opened would be the one run row on this
