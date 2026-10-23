@@ -49,11 +49,13 @@ var costBasisSplitters = []struct {
 // why it exists: every site it fixed read the basis, and a new one that does is
 // the same defect arriving again.
 //
-// A line naming both the basis and the subscription basis is such a reader: it
-// is the comparison, whichever way it is spelled (`==`, `!=`, a switch case).
-// Lines are read with their comments cut, so the rule's own prose -- which
-// necessarily names both -- is not a match, and what is checked is this tree's
-// code rather than any of its documents.
+// A line naming the basis and the subscription basis is such a reader: it is
+// the comparison, whichever way it is spelled (`==`, `!=`, a switch case), and
+// the constant's own literal is caught beside it, so `ModelBasis ==
+// "subscription"` is not a way around this walk. Lines are read with their
+// comments cut, so the rule's own prose -- which necessarily names both -- is
+// not a match, and what is checked is this tree's code rather than any of its
+// documents.
 //
 // The desktop console's screens follow the same rule and this walk does not
 // reach them: they are TypeScript, outside this Go module, and a Go test that
@@ -103,7 +105,10 @@ func TestNoReaderSplitsTheRunDollarsOnTheBasis(t *testing.T) {
 			if j := strings.Index(code, "//"); j >= 0 {
 				code = code[:j]
 			}
-			if !strings.Contains(code, "ModelBasis") || !strings.Contains(code, "BasisSubscription") {
+			if !strings.Contains(code, "ModelBasis") {
+				continue
+			}
+			if !strings.Contains(code, "BasisSubscription") && !strings.Contains(code, `"subscription"`) {
 				continue
 			}
 			if allowed(rel, line) {

@@ -34,7 +34,8 @@ import (
 //
 // and, when the repository has recorded enough runs, what one run of the
 // recipe typically costs, from the real-dollar cost each stage of those runs
-// recorded (a subscription's figure is notional and is left out).
+// recorded (a run whose model_usd was a subscription's rather than a bill is
+// left out: agent.auth oauth, or a cascade run the plan served in full).
 //
 // Nothing here is written and no run is started: the caps and today's
 // counters are read as budget show reads them, the recipe is resolved as
@@ -581,9 +582,8 @@ func (m previewMean) mean() float64 { return m.total / float64(m.stages) }
 //
 // A run it cannot price is counted, not guessed at: unreadable (no readable
 // result.json), unpriced (a record with no cost for any stage), or notional
-// (a run whose model figure was a subscription's). Only a read that fails for
-// some other reason fails
-// the whole thing.
+// (a run whose model figure was a subscription's whole). Only a read that
+// fails for some other reason fails the whole thing.
 func readPreviewHistory(ctx context.Context, b *blobx.Bucket, slug string, now time.Time) (previewHistory, error) {
 	h := previewHistory{means: map[previewKind]previewMean{}}
 	ids, err := runstore.ListRunIDs(ctx, b.Bucket, slug, now.Add(-previewHistoryWindow))
