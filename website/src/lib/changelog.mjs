@@ -45,8 +45,18 @@ export const PLUGIN_FILE = path.join(REPO_ROOT, 'plugin', '.claude-plugin', 'plu
 // file must be a release file: one that is not named `vX.Y.Z.md` is a mistake in the tree
 // (a release notes draft, a stray note), and this module throws rather than dropping it
 // silently — a changelog that leaves a release out without saying so is the failure D100
-// and F44 exist to prevent.
+// and F44 exist to prevent. The one directory skipped by name is `mobile/`, the app's own
+// stream's notes (NON_RELEASE_DIRS, below).
 const NON_RELEASE = 'README.md'
+
+// `docs/releases/mobile/` is the **mobile app's** notes directory: the app has
+// its own release stream and its own tag (`mobile-vX.Y.Z`, docs/release.md's
+// "Mobile releases"), and its highlights live there rather than here. It is a
+// directory, so it is skipped by name exactly as `README.md` is and for the same
+// reason — every other name that is not `vX.Y.Z.md` still throws, one level down
+// as well as here. This changelog is the CLI's: the app's notes are not rendered
+// on the site's page, and the site's build must not fail because they exist.
+const NON_RELEASE_DIRS = ['mobile']
 
 // The `###` headings a release file may carry inside its body, in full: the operator steps,
 // and the release's known limits (`docs/releases/README.md`). Both are optional, either may
@@ -173,7 +183,7 @@ export function buildChangelog({ releasesDir = RELEASES_DIR, pluginFile = PLUGIN
   const published = releasedVersion(pluginFile)
 
   const files = readdirSync(releasesDir)
-    .filter((fileName) => fileName !== NON_RELEASE)
+    .filter((fileName) => fileName !== NON_RELEASE && !NON_RELEASE_DIRS.includes(fileName))
     .map((fileName) => {
       const version = versionOf(fileName)
       if (version === null) {
