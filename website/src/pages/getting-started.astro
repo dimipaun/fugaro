@@ -442,8 +442,8 @@ const doc = (path: string, fragment: string): string =>
       that runbook's own preconditions and short path in its own order, one line each, and
       every one of them links to the document that carries it — the page states what to do
       and the document states how, so the two cannot drift. **The project, the region and the
-      installation's name are not steps here**, because `fugaro setup` asks for them and
-      confirms the rest: a page that listed them would be a fourth copy of questions the
+      installation's name are not steps here**, because `fugaro setup` asks for the name and
+      offers the other two as defaults, and confirms the rest: a page that listed them would be a fourth copy of questions the
       command the step names answers. The two commands the steps name are rendered from
       `install.yaml`'s plugin path rather than typed here. No secret is named here, and no
       value is anywhere on this site. */}
@@ -479,10 +479,11 @@ const doc = (path: string, fragment: string): string =>
         <div class="gs-step-body">
           <h3 class="gs-step-name">Run <code>{installCommand}</code></h3>
           <p class="gs-step-line">
-            In your own terminal. It suggests the project's name, its new GCP project ID and the
-            region: press Enter to take each, and only the name is permanent. It creates the project
-            and links the billing account you pick; the rest is a confirmation you type, and
-            secrets come at hidden prompts.{' '}
+            In your own terminal. It asks for one thing, a name for the project. The GCP project ID
+            and the region come with defaults you accept with Enter (in a checkout whose
+            fugaro.yaml already names a project, you type the ID too); the rest is confirmations
+            you type, secrets come at hidden prompts, and it offers a billing account when one
+            needs linking.{' '}
             <a href={doc('docs/gcp-setup.md', 'turning-the-shared-budget-on-m9b')}>The shared budget</a>{' '}
             is optional.
           </p>
