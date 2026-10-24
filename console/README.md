@@ -321,10 +321,9 @@ piece: every TypeScript file at the console's root — today
 the vitest unit tests — is asserted to be inside `tsconfig.json`'s `include`,
 because a file outside `include` is not typechecked at all.
 
-### Dependabot's scope is not extended here (a decision, not an oversight)
+### Dependabot watches the console (the owner's decision, applied 2026-10-23)
 
-Recorded as the plan words it, because the plan hands this decision to this
-task: "**Dependabot's scope is not extended here.** §5.2 notes that the console
+The plan handed this decision to the owner rather than to this task: "**Dependabot's scope is not extended here.** §5.2 notes that the console
 adds a second thing Dependabot should watch — `console/package.json` and its
 lockfile — and that Electron's own binary is not an ordinary npm dependency at
 all. `.github/dependabot.yml` is not under `.github/workflows/`, so an agent may
@@ -335,12 +334,15 @@ decision, not an oversight.**"
 (`docs/plans/2026-10-15-desktop-console.md`, "Open items, listed rather than
 fixed", item 5.)
 
-So `.github/dependabot.yml` still tracks one ecosystem — `github-actions` from
-`/`, weekly — and nothing in this task edits it. What that costs is visible
-rather than hidden: the console's pins are bumped by hand, by a person, with the
-lockfile in the same commit, and the only things watching them are
-`test/unit/pinning.test.ts` and `test/unit/lockfile.test.ts`. Dependabot could
-not fully watch this tree even if it were pointed at it: **Electron's own binary
+The owner ruled on 2026-10-22 to extend the scope, and on 2026-10-23 the staged
+file was copied over `.github/dependabot.yml`. It now tracks two ecosystems —
+`github-actions` from `/` and `npm` from `/console`, both weekly — with the
+console's minor and patch bumps grouped into one pull request a week and a major
+left outside the group so it arrives on its own (see
+`docs/pending-workflows/README.md`, `## dependabot-console.yml`).
+`test/unit/pinning.test.ts` and `test/unit/lockfile.test.ts` still hold every
+bump to an exact pin with its lockfile. Dependabot cannot fully watch this tree
+even so: **Electron's own binary
 is not an npm dependency** — npm carries the package, but the runtime comes from
 Electron's download host, so its pin, download and checksum get the hand-bumped
 treatment the repository already gives the Trivy digest and the Dockerfile
