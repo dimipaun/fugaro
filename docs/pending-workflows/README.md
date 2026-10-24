@@ -670,7 +670,7 @@ and the publish step is run against a faked `gh` by
 `TestDocsConsoleReleasePublishRefusesToClobber`, which refuses a version whose
 notes are missing or empty. What no test here can do is push a `console-vX.Y.Z`
 tag: the first real run of the new trigger is the owner's, and the first console
-release on the new stream is `0.11.0` "Cherry" (`docs/release.md`).
+release on the new stream is `0.110.0` "Cherry" (`docs/release.md`).
 
 ## `console-linux.yml`
 
@@ -1657,7 +1657,7 @@ That step reads the committed `mobile/app.json` and `mobile/package.json`, never
 resolved `mobile/app.config.js`, which requires the store identity only on EAS's
 own build machines. It carries `if: github.ref_type == 'tag'` — a fact about the
 ref rather than the event — so a manual dispatch that names a tag (`gh workflow
-run --ref mobile-v0.1.0`) is held to the same comparison a pushed tag is.
+run --ref mobile-v0.200.0`) is held to the same comparison a pushed tag is.
 
 **[per repo, before every release tag] Set `expo.version` in `mobile/app.json`
 and `version` in `mobile/package.json` to the version being released, in one
@@ -1670,10 +1670,10 @@ procedure. Two files rather than one because the app has two records of its
 version and its own test holds them together; a release that sets one and not the
 other is the defect the workflow's first step now refuses.
 
-**The first mobile release is `mobile-v0.1.0`, "Falcon".** Read the lines before
+**The first mobile release is `mobile-v0.200.0`, "Falcon".** Read the lines before
 you cut it: `mobile/app.json` and `mobile/package.json` both carry `0.0.0` today,
 which is the placeholder rather than a version anybody released, so the release
-that cuts the first tag sets both to `0.1.0` in a commit on `main` first. If the
+that cuts the first tag sets both to `0.200.0` in a commit on `main` first. If the
 files carry another version when you read them, **that** line is the release being
 cut and the tag is `mobile-v<that line>` — the files are the authority and the tag
 follows them, never the other way round. The app's releases are named after birds,
