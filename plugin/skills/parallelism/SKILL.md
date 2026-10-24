@@ -41,7 +41,7 @@ A plan you write as a file can carry its tasks as a graph the CLI reads. Write i
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "plan": "docs/plans/foo.md",
   "nodes": [
     {"id": "T1", "title": "the parser", "run": null, "version": null,
