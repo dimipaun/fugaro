@@ -323,8 +323,9 @@ const repo = site.facts.repository
   }
 
   .privacy-lead {
-    max-width: 34rem;
+    max-width: var(--measure);
     margin: var(--space-md) 0 0;
+    text-wrap: balance;
     color: var(--text-muted);
     font-size: var(--font-size-xl);
     line-height: var(--leading-snug);

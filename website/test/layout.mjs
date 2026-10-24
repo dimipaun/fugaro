@@ -244,7 +244,7 @@ test('the build refuses a misspelled key in every nested map the loader reads', 
     // does not read at each of its three depths (the document, the window, a row).
     ['typical-costs.yaml', 'version: 1\n', 'version: 1\nrevision: 1\n', 'revision', 'the document'],
     ['typical-costs.yaml', '  to: 2026-10-19\n', '  to: 2026-10-19\n  until: 2026-10-19\n', 'until', 'window'],
-    ['typical-costs.yaml', '    name: An independent review-only run\n', '    name: An independent review-only run\n    label: review\n', 'label', 'jobs[]'],
+    ['typical-costs.yaml', '    name: A review-only run\n', '    name: A review-only run\n    label: review\n', 'label', 'jobs[]'],
   ]
   for (const [name, from, to, key, map] of cases) {
     const built = buildWithData(t, name, from, to)
