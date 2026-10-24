@@ -51,6 +51,16 @@ func (r *run) recordRigor(at string, paths []string) {
 	r.rec.Rigor = r.rec.Rigor.Applied(runstore.Moment{Resolved: res, At: at, Revision: r.rigorRev})
 }
 
+// rigorMode is the mode this run resolved at bootstrap, which is the mode it
+// runs under: "" when no resolution was recorded, which contributes no
+// per-mode default and so leaves the owner's cap alone.
+func (r *run) rigorMode() rigor.Mode {
+	if r.rec.Rigor == nil {
+		return ""
+	}
+	return r.rec.Rigor.Mode
+}
+
 // reachedRigor is the mode this run has already resolved at an earlier moment;
 // "" before the first one.
 func (r *run) reachedRigor() rigor.Mode {
