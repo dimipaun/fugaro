@@ -8891,10 +8891,12 @@ wc -l "$W/jobs-before.txt" "$W/instances-before.txt" "$W/templates-before.txt"
 ```
 
 **FACT:** the three `wc -l` numbers, and the three files' contents, cat'd back — **expected output:**
-on a sandbox whose Batch backend has never run a job, `0` jobs,
-`0` instances and exactly one template (the installation's own `fugaro-preload` one); a non-empty
-jobs or instances list here means a run of this backend is still in flight or was left behind, and
-it is **not** the check's to delete — write down what it is before going on.
+on a sandbox whose Batch backend has never run a job, `0` jobs, `0` instances and `0` templates: the
+installation provisions **no** instance template at all (what the preload builds is an **image
+family**, `projects/<project>/global/images/family/fugaro-preload-<8 hex>`, and a run's VM comes from
+the Batch job's own spec, not from a template), so a template here is something a person made by
+hand. A non-empty jobs or instances list means a run of this backend is still in flight or was left
+behind, and it is **not** the check's to delete — write down what it is before going on.
 
 **(124a-2) The plan-only form, and what it does not show.** FACT first, because this is the step
 that surprises an owner, and it is a fact about the tree rather than a defect of the flags.
@@ -9218,23 +9220,28 @@ exactly that value, and it refuses a VM whose `fugaro=managed` label is absent, 
 it is not this installation's at all.
 
 ```bash
+# The job, then its own label value, then the VM that carries it: every step is
+# a read, and only the last command deletes anything.
 JOB=$(gcloud batch jobs list --project="${P:?}" --location="${L:?}" \
   --filter="labels.fugaro_run=<slug>-<run-id>" --format='value(name)' | head -1)
 LABEL=$(gcloud batch jobs describe "${JOB:?}" --project="${P:?}" --location="${L:?}" \
   --format='value(labels.fugaro_run)')
-VM=$(gcloud compute instances list --project="${P:?}" \
-  --filter="labels.fugaro_run=${LABEL:?} AND labels.fugaro=managed" --format='value(name)' | head -1)
-[ -n "$VM" ] || { echo "Check 124c stopped: no VM carries this job's own label (${LABEL}); nothing was deleted" >&2; exit 1; }
-gcloud compute instances delete "${VM:?}" --project="${P:?}" --zone="${Z:?}" --quiet
+mapfile -t VMS < <(gcloud compute instances list --project="${P:?}" \
+  --filter="labels.fugaro_run=${LABEL:?} AND labels.fugaro=managed" \
+  --format='value(name,zone.basename())')
+[ "${#VMS[@]}" = 1 ] || { echo "Check 124c stopped: ${#VMS[@]} VM(s) carry this job's own label (${LABEL}), want exactly one; nothing was deleted" >&2; exit 1; }
+read -r VM ZONE <<<"${VMS[0]}"
+[ -n "${VM:-}" ] && [ -n "${ZONE:-}" ] || { echo "Check 124c stopped: no VM carries this job's own label (${LABEL}); nothing was deleted" >&2; exit 1; }
+gcloud compute instances delete "${VM:?}" --project="${P:?}" --zone="${ZONE:?}" --quiet
 ```
 
-**FACT:** the three reads and the delete. **expected output:** exactly one VM name, its zone, and the
-delete's `Deleted [https://www.googleapis.com/compute/v1/projects/fugaro-dev/zones/<zone>/instances/<name>]`.
-**FACT:** that the count of VMs carrying the label was **1** and not more, **expected output:** one
-line, one name — a second one means the selection is not the check's job's, and the step must
-stop. It refuses to delete a VM whose label does
-not carry the job's own `fugaro_run` value (the `[ -n "$VM" ]` stop above, and the filter's
-`labels.fugaro=managed` half).
+**FACT:** the four reads and the delete. **expected output:** one job name, its label value, the
+one VM's name and zone, and the delete's
+`Deleted [https://www.googleapis.com/compute/v1/projects/fugaro-dev/zones/<zone>/instances/<name>]`.
+**FACT:** that the count of VMs carrying the label was **1** and not more, **expected output:** the
+`mapfile` array holds one line — a second one means the selection is not the check's job's, and the
+step must stop (it refuses to delete a VM whose label does not carry the job's own `fugaro_run`
+value, and the filter's `labels.fugaro=managed` half refuses a VM that is not the installation's).
 
 **(124c-3) The run ends `FAILED`, and the report's exit code is the assertion.** This is the reading
 the whole part exists for.
@@ -9369,9 +9376,9 @@ diff <(sort "$W/templates-before.txt") <(gcloud compute instance-templates list 
 `labels.fugaro_run`
 (`gcloud batch jobs list --project="${P:?}" --location="${L:?}" --format='value(name,labels.fugaro_run)'`),
 so the VMs above are attributable to the runs that made them rather than to the installation.
-**FACT:** the three diffs, whole. **expected output:** three **empty** diffs for the instances and
-the templates — Batch deletes a finished job's VM itself (the design's §3.4 and 57a-8's measured
-teardown), and nothing this check did creates a template. For the jobs, the diff must hold the
+**FACT:** the three diffs, whole. **expected output:** **empty** diffs for the instances and the
+templates — Batch deletes a finished job's VM itself (the design's §3.4 and 57a-8's measured
+teardown), and neither the installation nor a run creates an instance template. For the jobs, the diff must hold the
 runs' own job names and nothing else: a terminal job keeps its record deliberately
 (`internal/backend/batch/reap.go`: *"It never deletes a finished job's record"*), so the two jobs are
 **expected** to remain and are named; a **third** job, or a job still in `QUEUED` or `RUNNING`, is the
@@ -9383,7 +9390,7 @@ the counts and not only the diff.
 pull request and deleted branch (that part's restore) and nothing else; there is no VM to delete here
 because Batch deleted it, and no job to delete because a terminal job's record is history. **What the
 restore — and anyone tidying up after it — must never delete** is **the installation's own, never
-deleted**: **the preload image family** and its instance template, **the reaper's and the preload's
+deleted**: **the preload image family** and every generation in it, **the reaper's and the preload's
 service accounts**, **the two custom roles** they hold, **the Cloud NAT and its router**, **the
 preload rebuild's and the reaper sweep's scheduler jobs**, **the reaper job**, and the two APIs the
 apply turned on. Each of those is what 124a applied and the reason this check exists; a teardown of
@@ -9392,12 +9399,12 @@ would take the installation's backend apart (and the two custom roles would
 keep counting against the project's custom-role limit for seven days after it — the note under the
 compute root's own teardown).
 
-**FACT:** the read-back that the installation is whole: `fugaro doctor --project fugaro` prints the **expected output:**
-same `batch-` lines it printed in 124a-5 (and still no summary line, for the reason 124a gives), and
-`gcloud compute instance-templates list --project="${P:?}"` still names the installation's preload
-template, the same lines, the same template, and no `fugaro-preload` template
-deleted. **FACT:** that nothing was torn down anywhere in this check — record it as a
-sentence, because the absence of a command is not visible in an output.
+**FACT:** the read-back that the installation is whole, **expected output:** the same `batch-` lines
+124a-5 printed and no summary line (for the reason 124a gives), plus
+`gcloud compute images list --project="${P:?}" --filter='name~^fugaro-preload-'` still listing the
+family's generation 124a's build produced — the read that says the preload half of the installation
+is intact. **FACT:** that nothing was torn down anywhere in this check — record it as a sentence,
+because the absence of a command is not visible in an output.
 
 **Never `belong`, EdgeWeb or EdgeServer**: every command above carries `--project fugaro` or
 `--project="${P:?}"`, and this check has no command that names any other installation. The name
