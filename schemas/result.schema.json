@@ -339,6 +339,38 @@
         "total": { "type": "integer", "minimum": 0, "description": "How many paths the run really changed, so a truncated record still says how big the set it is part of was." },
         "truncated": { "type": "boolean", "description": "Set only when paths is shorter than total, which happens at 200 paths or 16 KiB of path (runstore.MaxChangedPathBytes), whichever comes first: the stored set is then not the whole set." }
       }
+    },
+    "rigor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "from", "at"],
+      "description": "The mode the run resolved, the layer that decided it, the areas that matched and the moment of the run each was known at (docs/rigor-modes/implementation-plan.md T1.2, D22, D24, D25). The mode's configuration is read from the base branch (D25), so revision names where it came from. Absent for a run that resolved none — a record from before this field existed, or a run that died before bootstrap — and absent means 'no record of this run's rigor', never 'it resolved nothing'.",
+      "properties": {
+        "mode": { "enum": ["poc", "startup", "pro", "critical", "hotfix"], "description": "The resolved mode (internal/rigor's vocabulary; pro is Fugaro's built-in default, D19)." },
+        "from": { "enum": ["area", "repo", "project", "default", "request"], "description": "The layer that decided the mode: an area rule the run's paths matched, the repository's rigor.default, the project layer's defaults.rigor.default, Fugaro's built-in default, or the run's own request, which may raise and never lower — reserved: fugaro run has no --mode flag yet (plan T1.6 is not built), so no run writes it today. It is never reached: that is the resolver's answer to a later moment asking again — hold what you already have (D22) — and the record keeps the earlier, narrower reason instead, which is the layer that actually set the mode (D24's 'the layer that won'). internal/runstore's KnownRigorFrom is this set." },
+        "areas": {
+          "type": "array",
+          "maxItems": 100,
+          "description": "Every area rule that matched, strictest first (D23), each with the mode it sets and the moment it was first applied at. Absent when none matched: a reader must not see 'there were rules' where the answer is 'there were none'. The order is one the record establishes wherever a block is built — the writer folds a moment in and sorts, the reader sorts a block the job may have written — so the first entry is the rule whose mode decided, which is what fugaro runs ls's MODE column names.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "mode", "at"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]*$", "description": "The rule's name, as its layer wrote it (internal/rigor's Area.Validate)." },
+              "mode": { "enum": ["poc", "startup", "pro", "critical", "hotfix"], "description": "The mode this rule sets (internal/rigor's vocabulary). It is carried per rule, not only on the block, because D23's order is by it: without it a reader could not check that the first entry is the strictest." },
+              "at": { "enum": ["bootstrap", "round", "finalize"], "description": "The moment of the run this rule was first applied at: the run's own moment it matched." }
+            }
+          }
+        },
+        "at": { "enum": ["bootstrap", "round", "finalize"], "description": "The moment of the resolution this block records: the last one that changed it, so a moment that resolved the same answer leaves it as it was." },
+        "revision": { "type": "string", "maxLength": 120, "description": "The revision of the configuration the mode was read from, origin/<base branch> (D25), so a run whose other keys came from the checked-out ref can be told apart from the mode it ran under (F35's 'two answers' made visible). Absent when the run could not name it." }
+      }
+    },
+    "backlog": {
+      "type": "array",
+      "description": "The ids of the backlog items this run filed for what it left open, in the order it filed them (docs/rigor-modes/implementation-plan.md T4.5, D9, D26). The item files are on the run's branch and in its pull request, where `fugaro backlog list` reads them. Nothing consumes this property yet — neither `fugaro diagnose` nor the console's run row carries the ids — and it is written anyway, because the record is what survives the run. Absent — never an empty list — for a run that filed none, which is every record written before this field existed, so an old reader sees the record it always saw.",
+      "items": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{2}$", "description": "One item id: the day the item was filed and the day's sequence, the name its file under docs/backlog/ opens with (internal/backlog's AllocateID)." }
     }
   }
 }

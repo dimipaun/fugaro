@@ -19,6 +19,7 @@ Short area rules live under `.claude/rules/` and load automatically when Claude 
 | `.claude/rules/mobile.md` | `mobile/**`, `shared/**` |
 | `.claude/rules/website.md` | `website/**` |
 | `.claude/rules/credentials-service.md` | `internal/creds/**`, `internal/credsvc/**`, `SECURITY.md`, `website/content/security.md` |
+| `.claude/rules/ee.md` | `ee/**` |
 
 ## Commands
 

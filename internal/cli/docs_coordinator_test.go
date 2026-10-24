@@ -6,8 +6,16 @@ package cli
 // (spec.md, verbatim), the reconciliation of that spec against the code
 // (reconciliation.md), the index (README.md), and -- since 2026-10-21 -- the
 // plan that turns the owner's answers into ordered parts
-// (implementation-plan.md). No Go, no TypeScript, no Terraform, no rules change
-// and no live action follows from any of them.
+// (implementation-plan.md). Two parts have left this folder for the tree, and
+// they are the only two: P1 landed on the long-lived `coordinator` branch as
+// fugaro coordinator status (internal/cli/coordinator.go over
+// internal/coordinator), and P3 as the state that command reads from -- the
+// `coordinator/` subtree, the account that writes it and the read grant for the
+// signed-in person (internal/coordinator/state.go,
+// deploy/terraform/gcp/modules/firebase/iam.tf and
+// internal/budget/rules/rules.json.tmpl). So what follows from these documents
+// is that command, that subtree, one Terraform grant and one rules change, and
+// no TypeScript and no live action.
 //
 // The reconciliation's whole value is that every claim in it is checkable, and
 // the things a later edit can silently break are: the spec stops being verbatim,
@@ -36,7 +44,9 @@ package cli
 //    name no phrase and are held by no anchor.
 //  * TestDocsCoordinatorSpecIsVerbatim -- spec.md carries the spec's own title,
 //    status and eleven sections, and carries none of the reconciliation's
-//    apparatus: the two documents have not been mixed.
+//    apparatus: the two documents have not been mixed. Those are sentences, and
+//    the index's promise is about bytes, so the file is pinned by its SHA-256 as
+//    well -- the one check that fails when the file is edited anywhere else.
 //  * TestDocsCoordinatorNewDecisionsAreNumbered -- the five decisions planning
 //    found are D193-D197, written in the reconciliation's §6 as `### D<n> — ...`
 //    headings in order and with no gap, each stating its recommendation before
@@ -54,18 +64,22 @@ package cli
 //    records the same answer in each decision's own row, and the plan's gate
 //    says it passed for P0-P6 while naming the parts it did not open.
 //  * TestDocsCoordinatorPlanIsWritten -- the plan exists, is at the status the
-//    index gives it ("approved to build on the branch `coordinator`, target
-//    0.11.0; no code is implemented yet"), carries its parts P0..P8 contiguously
+//    index gives it (approved to build on the branch `coordinator`, target
+//    0.11.0, partly implemented: P0 and P1 on the branch), carries P1's own
+//    "Status: built" in P1's section, carries its parts P0..P8 contiguously
 //    and in order, carries the one section heading the brief asked for by name,
 //    names every decision D193-D197 with the part it blocks, marks the paths it
 //    cites that do not exist yet as new, and carries no sentence saying the
 //    coordinator is a role another service plays -- the reading D196 replaced.
 //  * TestDocsCoordinatorPlanCitationsExist -- every repository path the plan
-//    cites resolves, measured against the same independent census the
-//    reconciliation's citation check uses, with the plan's own exception list for
-//    the paths it declares new -- which must NOT exist yet, so the day one of
-//    them lands the entry fails instead of silently excusing a citation that
-//    would otherwise be checked.
+//    cites resolves -- the files, and the directories, each against an
+//    independent census of the shapes the document writes, the same way the
+//    reconciliation's citation check is measured -- with the plan's own
+//    exception lists: for the paths it declares new, which must NOT exist yet,
+//    so the day one of them lands the entry fails instead of silently excusing
+//    a citation that would otherwise be checked; and, by name, for the
+//    directory-shaped tokens that name a Realtime Database node rather than a
+//    directory in this tree, which D195's `coordinator/` subtree is.
 //  * TestDocsCoordinatorCitationsExist -- every repository path reconciliation.md
 //    cites resolves on disk, in either the full form or the
 //    deploy/terraform/gcp/-relative form the Terraform modules are cited in, in
@@ -113,7 +127,7 @@ package cli
 //    together once -- "eleven" over twelve tests -- because a count is the claim
 //    that moves while nothing about what it counts looks wrong.
 //
-// Mutation (verified, run and restored) -- 92, one per way these documents can
+// Mutation (verified, run and restored) -- 97, one per way these documents can
 // rot, each planted and reverted. The count is a digit and not a word, and
 // there is only one of it, because TestDocsCoordinatorMutationRecordIsCounted
 // reads it and counts the list under it: one arrow per mutation, so a number
@@ -149,7 +163,13 @@ package cli
 //	  by this same file, so the sentence would deny coverage this package has.
 //	TestDocsCoordinatorSpecIsVerbatim
 //	  paste a `### Q1 — ` heading into spec.md -> fails;
-//	  delete `## 9. Long-running behaviour` -> fails.
+//	  delete `## 9. Long-running behaviour` -> fails;
+//	  change one byte of the spec's prose ("and suggests sequencing" written
+//	  "and suggest sequencing": one character, no heading touched) -> fails,
+//	  naming the digest: the two mutations above are mutations of the lines this
+//	  test names, which is all it named before this round, and the index's
+//	  promise is that the file is byte for byte the owner's. This is the P0 red
+//	  step, run against the guard as it stood: it passed.
 //	TestDocsCoordinatorNewDecisionsAreNumbered
 //	  renumber the last of the five, D197 to D198 -> fails: the
 //	  headings are read in order and held to the block the index records;
@@ -213,6 +233,19 @@ package cli
 //	  create the file the plan declares new (`internal/cli/coordinator.go`) ->
 //	  fails: an exception that has outlived the thing it excused is a citation
 //	  nobody checks;
+//	  rename a cited DIRECTORY in the plan (`internal/coordinator/` written
+//	  `internal/coordinatorX/`) -> fails, naming it: the path check above is
+//	  written to find a file extension, and this is the citation it cannot see;
+//	  create the directory the plan declares new (`internal/coordinator/`) ->
+//	  fails, naming P1's own Files line as what excused it: the same expiry the
+//	  file entry has, and the one that fires when P1 lands;
+//	  drop one of the directory-shaped tokens that names a Realtime Database
+//	  node (`config/`) from the plan -> fails, naming the now-unused entry: an
+//	  exception that outlives its sentence is a token nobody is checking, the
+//	  same rule the citation exception maps follow;
+//	  add a slash-ending token in a shape the directory regexp does not know (a
+//	  path starting at the root, `/srv/fugaro/`) -> fails, against the directory
+//	  census, which is written differently from the check on purpose;
 //	  rename the symbol a possessive pairing names (`GetETag` in
 //	  internal/rtdb/client.go, which the plan cites as `internal/rtdb/client.go`'s
 //	  `GetETag`) -> fails, naming the symbol and the file: the path still
@@ -477,10 +510,13 @@ package cli
 // than presenting a fuzzy check as a complete one.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -501,14 +537,27 @@ const (
 // the document NAMES it, not that HEAD is it.
 const coordinatorBase = "1e0953b7"
 
-// coordinatorReadmeStatus is the index's status line after the owner answered
-// D193-D197 and passed the plan's gate for the parts that need only those
-// decisions. It replaces the "plan written; approval gate open" status this
-// package pinned before, and it is pinned whole: what a reader has to take from
-// it is that the work is APPROVED TO BUILD, on which branch, and for which
-// release -- and a rewrap that keeps the branch and drops the release is exactly
-// the edit this catches.
-const coordinatorReadmeStatus = "**Status: approved to build on the branch `coordinator`, target 0.11.0; no code is implemented yet.**"
+// coordinatorReadmeStatus is the index's status line after P4 landed on the
+// `coordinator` branch. It replaces the "approved to build ... no code is
+// implemented yet" status this package pinned while the plan was all there was,
+// and the P1 one before this, and it is pinned whole: what a reader has to take
+// from it is that the work is APPROVED TO BUILD, on which branch, for which
+// release, and HOW FAR IT HAS GOTTEN -- which parts are in the tree and which
+// are not -- and a rewrap that keeps the branch and drops the release, or drops
+// the parts, is exactly the edit this catches.
+//
+// The move is the repository's convention, not a preference: a status line moves
+// in the commit that lands a part (docs/mobile/README.md, "partly implemented --
+// P0.1, P0.2, ... are merged"; docs/setup-wizard/README.md, "approved to build;
+// implementation in progress"), because the alternative is a folder whose
+// documents say no code exists while the code is on the branch, with a test
+// pinning the false sentence.
+//
+// It has moved four times: with the owner's answers, with P1, with P2 and -- on
+// the same day -- with P3. P3 is the part that made the index's "no Terraform, no
+// rules change" sentence false, and the two are edited together for that reason:
+// a grant and a read are what it lands.
+const coordinatorReadmeStatus = "**Status (2026-10-24): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0, P1, P2, P3 and P4 are on `coordinator`, and P5–P8 are not started.**"
 
 // coordinatorReadmeDecisionsAnswered is the index's own sentence about the
 // decisions the planning found, after the owner answered them on 2026-10-21.
@@ -541,11 +590,22 @@ const coordinatorPlanGateColumns = "| Decision | What it blocks | The recommenda
 
 // coordinatorPlanStatus is the plan's own status line, the same statement the
 // index makes, held separately because the plan is the document a builder reads
-// first and it must not be able to say something else. It moved with the index
-// when the owner answered D193-D197: the plan used to say its gate was open, and
-// a plan whose parts may start while its own status still says they may not is
-// the mismatch this pair of pins exists to catch.
-const coordinatorPlanStatus = "**Status: approved to build on the branch `coordinator`, target 0.11.0; no code is implemented yet.**"
+// first and it must not be able to say something else. It has moved five times:
+// with the index when the owner answered D193-D197, again with the index when P1
+// landed, and again when P2, P3 and P4 did -- a plan whose parts are
+// being built while its own status still says none is the mismatch this pair of
+// pins exists to catch, and so is one that says a part is built while the
+// part's own section says otherwise (see coordinatorPlanBuiltStatus).
+const coordinatorPlanStatus = "**Status (2026-10-24): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0, P1, P2, P3 and P4 are on `coordinator`, and P5–P8 are not started.**"
+
+// coordinatorPlanBuiltStatus is a part's own status line in its section, in the
+// shape P0's carries ("**Status: written.**"): the status line above says how far
+// the plan has got, and each part says whether THAT part is in the tree, so that
+// the count in the status line and the parts it counts cannot drift apart. P1, P2
+// and P4 are the parts this pair of pins moved for -- P0's own line reads
+// "**Status: written.**", and the constant holds the built shape the others
+// carry -- and it is pinned whole for the same reason the two above are.
+const coordinatorPlanBuiltStatus = "**Status: built.**"
 
 // coordinatorPlanParts are the plan's parts in order, as their headings are
 // written. Contiguity and order are the assertion: the plan's whole claim is
@@ -739,7 +799,11 @@ func TestDocsCoordinatorIsWritten(t *testing.T) {
 // of its sections, in order -- and it carries none of the reconciliation's
 // apparatus. A reconciliation paragraph pasted into the spec, or a section
 // dropped from it, would leave the next reader unable to tell which of the two
-// documents is the owner's.
+// documents is the owner's. Those are sentence checks, and sentences are not
+// bytes: the index's promise is that the spec "is copied byte for byte from the
+// text the owner supplied", which no list of sentences can keep -- every check
+// above passes on a file edited anywhere outside the lines it names -- so the
+// file is pinned by its SHA-256 as well.
 func TestDocsCoordinatorSpecIsVerbatim(t *testing.T) {
 	spec := readDoc(t, coordinatorSpec)
 	for _, want := range []string{
@@ -768,6 +832,24 @@ func TestDocsCoordinatorSpecIsVerbatim(t *testing.T) {
 		if strings.Contains(spec, notWant) {
 			t.Errorf("%s carries %q, which belongs to the reconciliation: the spec is the owner's text verbatim", coordinatorSpec, notWant)
 		}
+	}
+	// "Byte for byte" is not a figure of speech, and the checks above cannot
+	// keep it: they name a title, a status line and eleven headings, so an edit
+	// to any other line of this 91-line file passes every one of them. That is
+	// the mutation the plan's P0 records as a red step -- change one byte of
+	// spec.md and the guard must fail -- and before this pin it did not: the
+	// byte was changed, and this package stayed green. So the whole file is
+	// pinned by its SHA-256, in the shape docs/voice-module pins its own spec,
+	// which carries the same promise. The checks above stay because they say
+	// *what* the spec has to say when they fail; this one says the file was
+	// touched at all. Editing spec.md means the owner's text changed, and the
+	// index's rule for a difference between the two is that the owner's copy is
+	// right and this file is the one to fix -- so an edit here comes with the
+	// owner's new text and this constant updated to it.
+	const coordinatorSpecSHA256 = "48a6b6f7545c44ae6fd07aed27c135f7ab87a938367c37962c17c44a0dab42f5"
+	sum := sha256.Sum256([]byte(spec))
+	if got := hex.EncodeToString(sum[:]); got != coordinatorSpecSHA256 {
+		t.Errorf("%s is not the text the owner supplied (sha256 %s, want %s): the index promises it is copied byte for byte, so any edit here -- one byte included -- is a difference from the owner's copy and needs the owner", coordinatorSpec, got, coordinatorSpecSHA256)
 	}
 }
 
@@ -2509,8 +2591,76 @@ func TestDocsCoordinatorSelfMapIsCounted(t *testing.T) {
 // test fails and the citation starts being checked as the ordinary path it has
 // become. An exception map that only excuses is how a check rots; this one is
 // written to expire by itself.
-var coordinatorPlanNewPaths = map[string]string{
-	"internal/cli/coordinator.go": "P1's new read command; P0's plan is what names it before it exists",
+// It is empty because P1 has landed: internal/cli/coordinator.go was the one
+// path it ever excused, and the entry went in the commit that created the file
+// (part P1, `fugaro coordinator status`). The map stays, empty, because
+// the check that reads it is the one that must fail the day a part's plan
+// declares a path that does not exist yet.
+var coordinatorPlanNewPaths = map[string]string{}
+
+// coordinatorPlanNewDirs are the same thing one level down: the directories the
+// plan names in backticks that are new -- written "New `<path>`" in the Files
+// line of the part that creates them -- each with that part. They are held to
+// the same rule as the files above, and the reason they need an entry is the
+// reason coordinatorPlanDirectoryRE exists: a directory is a citation the file
+// checks cannot see, because a citation is matched by its file extension and a
+// directory has none. Without this the plan could cite a directory that is
+// neither there nor declared new and nothing would say so -- which is the state
+// `internal/coordinator/` was in: cited seven times across the six parts after
+// P0 whose Files lines name it, not there, declared new by P1, and read by no
+// check at all.
+// It holds one entry today. `internal/coordinator/` and
+// `internal/coordinator/testdata/` left it in the commit that created them
+// (P1, `fugaro coordinator status`), the same commit that emptied
+// coordinatorPlanNewPaths above, and the plan's citations of both are now
+// checked as the ordinary directories they have become.
+var coordinatorPlanNewDirs = map[string]string{
+	"deploy/terraform/gcp/modules/coordinator/": "P7's new Terraform module: the service, its account and its scale-to-zero configuration",
+}
+
+// coordinatorPlanNonPaths are the plan's backticked directory-shaped tokens that
+// name something other than a directory in this tree, each with what it names.
+// They are excused by name for the same reason the citation exceptions are: the
+// check reads every token of that shape, and a token it cannot resolve has to be
+// accounted for rather than skipped, or the next such token is unread.
+//
+// All four name nodes in the **Realtime Database**, not the repository: D195
+// lays the coordinator's state out under a top-level `coordinator/` subtree with
+// `project/` and `repos/<slug>/` beneath it, and `config/` is the existing node
+// P4's writer account can reach. They are written in backticks exactly as a
+// directory in this tree would be, which is why the distinction is recorded here
+// rather than left to a reader of the plan.
+var coordinatorPlanNonPaths = map[string]string{
+	"coordinator/":              "the Realtime Database subtree D195 lays out, not a directory in this tree",
+	"coordinator/project/":      "the project-wide facts under D195's subtree, in the database",
+	"coordinator/repos/<slug>/": "the per-repository facts under D195's subtree, in the database",
+	"config/":                   "the database node P4's writer account can reach, not a directory in this tree",
+}
+
+// coordinatorPlanDirectoryRE finds a backticked token that names a directory:
+// one segment or more, each closed by `/`, and `<slug>` included so that a
+// directory-shaped token the check cannot resolve is reported rather than
+// skipped. It is the half of "the plan cites by path" that coordinatorCitationRE
+// and the census beside it are both blind to, because both look for a file
+// extension and a directory carries none.
+var coordinatorPlanDirectoryRE = regexp.MustCompile("`([A-Za-z0-9_.][A-Za-z0-9_./<>-]*/)`")
+
+// coordinatorPlanDirCensusRE is the independent count of the directory-shaped
+// tokens the document holds, and it is deliberately dumber than the regexp
+// above: any backticked token that ends in a slash, whatever it starts with and
+// whatever is inside it. It is the floor the directory check is measured
+// against, for the reason the path census is the floor of the citation check --
+// a regexp that has stopped matching the shapes the prose uses finds fewer
+// citations and says nothing.
+var coordinatorPlanDirCensusRE = regexp.MustCompile("`([^`\n]*/)`")
+
+// coordinatorPlanDirCensusExceptions are the plan's slash-ending tokens that are
+// not directory citations: a command line whose last word happens to be a path.
+// Each is an audited case, and the check fails if one goes unused, so an entry
+// that outlives its sentence is deleted rather than left excusing nothing --
+// the same rule the citation exception maps follow.
+var coordinatorPlanDirCensusExceptions = []string{
+	"terraform fmt -check -recursive deploy/terraform/",
 }
 
 // coordinatorPlanRolePhraseRE is the reading D196 replaced, and it is matched as
@@ -2561,6 +2711,11 @@ func TestDocsCoordinatorPlanIsWritten(t *testing.T) {
 		coordinatorPlanGateColumns,
 		coordinatorBase,
 		coordinatorCheckedAgainst,
+		// The part the status line counts as built says so itself, in its own
+		// section: a status line claiming a part is in the tree while the part's
+		// section still reads as unbuilt is the same class of mismatch as a
+		// status line claiming nothing is built while the code is on the branch.
+		coordinatorPlanBuiltStatus,
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("%s lacks %q", coordinatorPlan, want)
@@ -2637,17 +2792,24 @@ func TestDocsCoordinatorPlanIsWritten(t *testing.T) {
 	}
 }
 
-// TestDocsCoordinatorPlanCitationsExist: every repository path the plan cites
-// resolves on disk, or is one the plan declares new and which therefore must not
-// resolve yet.
+// TestDocsCoordinatorPlanCitationsExist: every repository path the plan cites --
+// file or directory -- resolves on disk, or is one the plan declares new and
+// which therefore must not resolve yet.
 //
 // It is the reconciliation's citation check, on the plan, with the same
 // independent census in front of it -- the census is what stops a regexp that
 // has stopped matching the document's shapes from passing vacuously, which is
-// the failure that hid the `path:line Symbol` gap next door. The exception list
-// here is small on purpose: the plan cites full paths, so there is nothing like
-// the reconciliation's shortened references and globs to excuse, and the one
-// entry is the file the plan itself says does not exist.
+// the failure that hid the `path:line Symbol` gap next door. Three things are
+// checked, each with its own census and its own exceptions: the files
+// (coordinatorPlanNewPaths, and the one entry is the file the plan itself says
+// does not exist), the symbols named beside a file by possessives
+// (coordinatorCheckPlanSymbols), and the directories
+// (coordinatorCheckPlanDirectories). The directory half exists because the
+// other two are both written to find a file extension, and the plan's most
+// repeated citation of all -- the package every part after P0 writes into -- is
+// a directory: before it, `internal/coordinator/` was cited seven times, was
+// not there, was declared new by P1's own Files line, and was read by no check
+// at all.
 func TestDocsCoordinatorPlanCitationsExist(t *testing.T) {
 	plan := readDoc(t, coordinatorPlan)
 	census := len(coordinatorPathCensusRE.FindAllString(plan, -1))
@@ -2684,8 +2846,94 @@ func TestDocsCoordinatorPlanCitationsExist(t *testing.T) {
 		}
 	}
 	symbols := coordinatorCheckPlanSymbols(t, plan)
-	t.Logf("%s: %d citation occurrences over %d distinct paths, against a census of %d path-looking tokens in the document; %d `path`'s `symbol` pairings checked against a census of %d possessives after a path token",
-		coordinatorPlan, len(matches), len(seen), census, symbols, len(coordinatorPlanPossessiveCensusRE.FindAllString(plan, -1)))
+	dirs := coordinatorCheckPlanDirectories(t, plan)
+	t.Logf("%s: %d citation occurrences over %d distinct paths, against a census of %d path-looking tokens in the document; %d `path`'s `symbol` pairings checked against a census of %d possessives after a path token; %d directory citation occurrences over %d distinct directories, against a census of %d directory-shaped tokens",
+		coordinatorPlan, len(matches), len(seen), census, symbols, len(coordinatorPlanPossessiveCensusRE.FindAllString(plan, -1)),
+		len(coordinatorPlanDirectoryRE.FindAllString(plan, -1)), dirs, len(coordinatorPlanDirCensusRE.FindAllString(plan, -1)))
+}
+
+// coordinatorCheckPlanDirectories holds every directory-shaped token the plan
+// writes to one of three things, and returns how many distinct ones it read: a
+// directory in this tree; a directory the plan declares new, which must NOT be
+// there yet; or one of the audited non-paths, each of which names something
+// else. A token that is none of the three is a citation of a path that does not
+// exist, which is what the whole check is for.
+//
+// It is deliberately a census rather than a skip: the token count is logged
+// beside it, and both excuse maps fail when an entry goes unused, so an entry
+// that has outlived the sentence it was written for is deleted by the next
+// person to run the package rather than left excusing nothing.
+func coordinatorCheckPlanDirectories(t *testing.T, plan string) int {
+	t.Helper()
+	// The census first, and independently: every token in the document that ends
+	// in a slash is either one coordinatorPlanDirectoryRE matches, or one of the
+	// audited non-citations. A token that is neither is a directory citation in
+	// a shape no check reads, which is the failure the two regexps being written
+	// differently is what makes visible.
+	unread := map[string]bool{}
+	for _, token := range coordinatorPlanDirCensusRE.FindAllStringSubmatch(plan, -1) {
+		if coordinatorPlanDirectoryRE.MatchString(token[0]) {
+			continue
+		}
+		if slices.Contains(coordinatorPlanDirCensusExceptions, token[1]) {
+			continue
+		}
+		unread[token[0]] = true
+	}
+	shapes := make([]string, 0, len(unread))
+	for token := range unread {
+		shapes = append(shapes, token)
+	}
+	sort.Strings(shapes)
+	for _, token := range shapes {
+		t.Errorf("%s holds %s, a token that ends in a slash and is matched by no directory check: the document has grown a shape the checks do not know, so that citation is checked by nothing", coordinatorPlan, token)
+	}
+	for _, want := range coordinatorPlanDirCensusExceptions {
+		if !strings.Contains(plan, "`"+want+"`") {
+			t.Errorf("%s no longer writes `%s`, which coordinatorPlanDirCensusExceptions excuses from the census: delete the entry, or a directory-shaped token goes unread", coordinatorPlan, want)
+		}
+	}
+	seen := map[string]bool{}
+	usedNew := map[string]bool{}
+	usedNon := map[string]bool{}
+	for _, m := range coordinatorPlanDirectoryRE.FindAllStringSubmatch(plan, -1) {
+		dir := m[1]
+		if seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		if _, ok := coordinatorPlanNonPaths[dir]; ok {
+			usedNon[dir] = true
+			continue
+		}
+		if reason, ok := coordinatorPlanNewDirs[dir]; ok {
+			usedNew[dir] = true
+			if _, err := os.Stat("../../" + dir); err == nil {
+				t.Errorf("%s cites the directory %q as new, but it exists now: the part that creates it has landed, so the entry in coordinatorPlanNewDirs must go and the directory must start being checked like any other. It was excused for: %s",
+					coordinatorPlan, dir, reason)
+			}
+			continue
+		}
+		fi, err := os.Stat("../../" + dir)
+		if err != nil {
+			t.Errorf("%s cites the directory %q, which does not exist: a plan whose citations have moved is a plan nobody can check (%v)", coordinatorPlan, dir, err)
+			continue
+		}
+		if !fi.IsDir() {
+			t.Errorf("%s cites %q as a directory, and it is a file", coordinatorPlan, dir)
+		}
+	}
+	for dir := range coordinatorPlanNewDirs {
+		if !usedNew[dir] {
+			t.Errorf("%s no longer cites the new directory %q, but coordinatorPlanNewDirs still excuses it: delete the entry, or the next citation of that name is unchecked", coordinatorPlan, dir)
+		}
+	}
+	for dir := range coordinatorPlanNonPaths {
+		if !usedNon[dir] {
+			t.Errorf("%s no longer writes %q, which coordinatorPlanNonPaths excuses from the directory check: delete the entry, or a directory-shaped token goes unread", coordinatorPlan, dir)
+		}
+	}
+	return len(seen)
 }
 
 // coordinatorPlanPossessiveCensusRE counts, independently of the pairing check

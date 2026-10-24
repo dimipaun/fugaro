@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 // WorkflowNameRE is a workflow's name, in fugaro.yaml and wherever else a
@@ -155,6 +156,11 @@ func Validate(c *Config) []Problem {
 	ps = append(ps, validateCascadeFollowup(c.Agent, c.Followup)...)
 	ps = append(ps, validateBudget(c.Budget)...)
 	ps = append(ps, validateFollowup(c.Git.Provider, c.Followup)...)
+	if c.Rigor != nil {
+		// The repository's own block, by the same rules the project layer's
+		// is judged by: one function, two prefixes.
+		ps = append(ps, validateRigor("rigor", c.Rigor.Default, c.Rigor.Areas)...)
+	}
 	if len(c.Workflows) == 0 {
 		add("workflows", "must define at least one workflow")
 	}
@@ -355,6 +361,32 @@ func validateRebuild(p string, r Rebuild) []Problem {
 			add(gp, "must not contain a .. component")
 		case !doublestar.ValidatePattern(g):
 			add(gp, "is not a valid glob pattern")
+		}
+	}
+	return ps
+}
+
+// validateRigor reports a rigor block's problems, each at p.<key> or
+// p.areas[i].<key>: p is "rigor" for the repository's own block and
+// "defaults.rigor" for the project layer's, so one function states the rules
+// for both layers (docs/project-layer.md §5 gives either layer both keys).
+//
+// It reads rigor.Area.Validate and rigor.Known, which is the whole point of
+// the vocabulary living in internal/rigor: the value a configuration may
+// write is the value the resolver can use, so a mode outside the vocabulary
+// or a glob no matcher can read is refused where it is written rather than
+// silently never firing at resolution time.
+func validateRigor(p string, mode rigor.Mode, areas []rigor.Area) []Problem {
+	var ps []Problem
+	if mode != "" && !rigor.Known(mode) {
+		ps = append(ps, Problem{Path: p + ".default", Message: "must be one of " + rigor.ModeList()})
+	}
+	if len(areas) > rigor.MaxAreas {
+		ps = append(ps, Problem{Path: p + ".areas", Message: fmt.Sprintf("must hold at most %d rules", rigor.MaxAreas)})
+	}
+	for i, a := range areas {
+		if msg := a.Validate(); msg != "" {
+			ps = append(ps, Problem{Path: fmt.Sprintf("%s.areas[%d]", p, i), Message: msg})
 		}
 	}
 	return ps

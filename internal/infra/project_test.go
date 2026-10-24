@@ -263,6 +263,9 @@ func TestCoverNamesAreTheCodes(t *testing.T) {
 			t.Errorf("account %s is not in tf.FugaroAccounts", a)
 		}
 	}
+	if CoordinatorAccountID != tf.CoordinatorAccountID || has(tf.FugaroAccounts, CoordinatorAccountID) {
+		t.Errorf("the coordinator's writer %s must be tf.CoordinatorAccountID (%s), its own kind, and not one of tf.FugaroAccounts", CoordinatorAccountID, tf.CoordinatorAccountID)
+	}
 	c := tf.Cover{Projects: []string{"proj-1"}}
 	for _, id := range []string{gcp.ServiceAccountID("acme-web", "web"), gcp.BuildServiceAccountID("acme-web")} {
 		if p := &(tf.Plan{ResourceChanges: []tf.ResourceChange{{Address: "m.google_project_iam_member.x", Type: "google_project_iam_member",

@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
@@ -504,6 +505,19 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			Tree: "working", ExitCode: 0, DurationS: 12.5, StartedAt: at.Format(time.RFC3339)},
 		Artifacts: []runstore.ArtifactFile{{Name: "sizzle.mp4", Bytes: 4096, SHA256: strings.Repeat("b", 64),
 			ContentType: "video/mp4", Probe: &runstore.ProbeResult{Ran: true, ExitCode: 1, Warning: "w"}}},
+		// And the rigor block (docs/rigor-modes/implementation-plan.md T1.2):
+		// the mode the run resolved, the layer that won, the areas that
+		// matched with the moment each was applied, and the revision it read.
+		Rigor: &runstore.RigorRecord{Mode: rigor.Critical, From: rigor.FromArea,
+			Areas: []runstore.RigorArea{
+				{Name: "payments", Mode: rigor.Critical, At: runstore.RigorAtBootstrap},
+				{Name: "docs", Mode: rigor.POC, At: runstore.RigorAtRound},
+			},
+			At:       runstore.RigorAtFinalize,
+			Revision: "origin/main"},
+		// And the items the run filed (docs/rigor-modes T4.5, D9): ids of
+		// the files a reviewer finds under docs/backlog/ on the branch.
+		Backlog: []string{"20261024-01", "20261024-02"},
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {
@@ -557,6 +571,80 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	}
 	if err := sch.Validate(bad); err == nil {
 		t.Error("schema accepts a switch with no reason")
+	}
+	// The rigor block is closed as well (docs/rigor-modes T1.2, D22, D24,
+	// D25): the vocabulary, the layer names, D22's three moments and the
+	// block's own keys are each a set the runner writes and a reader may rely
+	// on, so a value outside one of them is a record no reader should have to
+	// render. Each area carries its own mode, because D23's order is by it:
+	// without the field a reader could not tell the strictest rule from the
+	// first one written.
+	for _, tc := range []struct{ name, old, new string }{
+		{"a mode outside the vocabulary", `"mode":"critical"`, `"mode":"paranoid"`},
+		{"a layer that is not one", `"from":"area"`, `"from":"floor"`},
+		{"the layer only a resolution names", `"from":"area"`, `"from":"reached"`},
+		{"the block's moment outside D22's three", `"at":"finalize"`, `"at":"sometime"`},
+		{"an area's moment outside D22's three", `"at":"round"`, `"at":"lunchtime"`},
+		{"a revision that is not text", `"revision":"origin/main"`, `"revision":5`},
+		{"an area with no name", `"name":"payments"`, `"match":"internal/payments/**"`},
+		{"an area with no mode", `"mode":"critical","at":"bootstrap"`, `"at":"bootstrap"`},
+		{"an area's mode outside the vocabulary", `"mode":"critical","at":"bootstrap"`, `"mode":"paranoid","at":"bootstrap"`},
+		{"a name that is not one", `"name":"payments"`, `"name":"../../etc/passwd"`},
+		{"the block with no mode", `"mode":"critical",`, ``},
+		{"the block with no layer", `"from":"area",`, ``},
+		{"the block with no moment", `,"at":"finalize"`, ``},
+		{"a key the block does not carry", `"revision":"origin/main"`, `"score":9`},
+	} {
+		old, repl := []byte(tc.old), []byte(tc.new)
+		if !bytes.Contains(data, old) {
+			t.Fatalf("fixture lacks the literal this test replaces (%s): %s", tc.name, data)
+		}
+		bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, old, repl, 1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(bad); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, repl)
+		}
+	}
+	// The filed items (docs/rigor-modes T4.5, D9): an id is the day and the
+	// day's sequence, so a record carrying anything else names no file. The
+	// field is additive — a record from before it existed, which is most of
+	// them, decodes exactly as it did — which is what D9's note about the
+	// version staying 1 means.
+	for _, tc := range []struct{ name, old, new string }{
+		{"an id that is not one", `["20261024-01","20261024-02"]`, `["20261024-1"]`},
+		{"an id with no day", `"20261024-01"`, `"not-an-id"`},
+		{"an id that is not text", `"20261024-01"`, `20261024`},
+		{"a filing the record cannot name", `["20261024-01","20261024-02"]`, `{"20261024-01":1}`},
+	} {
+		old, repl := []byte(tc.old), []byte(tc.new)
+		if !bytes.Contains(data, old) {
+			t.Fatalf("fixture lacks the literal this test replaces (%s): %s", tc.name, data)
+		}
+		bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, old, repl, 1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(bad); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, repl)
+		}
+	}
+	without := rec
+	without.Backlog = nil
+	bare, err := json.Marshal(without)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(bare, []byte(`"backlog"`)) {
+		t.Fatalf("a run that filed nothing still writes the field: %s", bare)
+	}
+	inst, err = jsonschema.UnmarshalJSON(bytes.NewReader(bare))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a record that filed nothing: %v\n%s", err, bare)
 	}
 }
 

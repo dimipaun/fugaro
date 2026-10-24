@@ -96,9 +96,29 @@ var tokenPermissions = map[string]string{
 // clones the repository.
 var buildTokenPermissions = map[string]string{"contents": "read", "metadata": "read"}
 
+// coordinatorTokenPermissions is what the coordinator's token asks for (P2 of
+// docs/coordinator/implementation-plan.md, reconciliation Q3 answered (A)):
+// the four reads a project view is built from, and no value carrying a write
+// anywhere. A coordinator that could write would be a coordinator that could
+// answer a merge (Q10 C, refused), which is why this set is a set of its own
+// rather than a level taken off the run's.
+var coordinatorTokenPermissions = map[string]string{
+	"contents": "read", "pull_requests": "read", "issues": "read", "metadata": "read",
+}
+
 // BuildTokenPermissions are the permissions of an image build's token, a
 // copy the caller may keep.
 func BuildTokenPermissions() map[string]string { return maps.Clone(buildTokenPermissions) }
+
+// CoordinatorTokenPermissions are the permissions of the coordinator's
+// installation token, a copy the caller may keep: the read-only set the
+// coordinator's credential is, minted through MintInstallationToken with it.
+// Pull requests are read with pull_requests: read (U2, the owner's check that
+// the App holds it), and nothing here asks to write anything — the rule the
+// set's own test holds to the mint's body.
+func CoordinatorTokenPermissions() map[string]string {
+	return maps.Clone(coordinatorTokenPermissions)
+}
 
 // RunTokenPermissions are the permissions of a run's installation token, a
 // copy the caller may keep. It is the exported spelling of tokenPermissions,

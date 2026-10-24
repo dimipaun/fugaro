@@ -57,13 +57,15 @@ func Report(rec *runstore.Record, location string, tail *LogTail) string {
 
 // FollowUpReport is Report with a follow-up's section, when fu is non-nil.
 func FollowUpReport(rec *runstore.Record, location string, tail *LogTail, fu *FollowUpSection) string {
-	return followUpReport(rec, location, tail, fu, nil)
+	return followUpReport(rec, location, tail, fu, nil, "")
 }
 
 // followUpReport is FollowUpReport with notes about the pull request itself
 // (reviewers that could not be requested, a host without drafts), each
-// shown as a line after the outcome.
-func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *FollowUpSection, notes []string) string {
+// shown as a line after the outcome. filedFrom is the commit the run's
+// backlog filing was committed on top of, "" when it filed nothing: the
+// suite ran there, and the filing commit rec.HeadSHA names adds only items.
+func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *FollowUpSection, notes []string, filedFrom string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "### Fugaro run `%s`\n\n", rec.RunID)
 	if rec.Status == runstore.StatusHalted && rec.Halt != nil {
@@ -110,7 +112,7 @@ func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 		}
 		fmt.Fprintf(&b, "**Reviews:** %s\n\n", strings.Join(parts, "; "))
 	}
-	b.WriteString(testsLine(rec))
+	b.WriteString(testsLine(rec, filedFrom))
 	if rec.Cost != nil {
 		b.WriteString(CostLine(*rec.Cost) + "\n\n")
 	} else {
@@ -214,8 +216,16 @@ func secsText(s float64) string {
 	return time.Duration(s * float64(time.Second)).Round(time.Second).String()
 }
 
-func testsLine(rec *runstore.Record) string {
-	last := latestVerifiedTest(rec.Verify, rec.HeadSHA)
+// testsLine is the report's account of the suite on the final commit. A run
+// that filed backlog items committed them after the suite's last run and did
+// not run it again (finalize), so for that run the line names the commit the
+// suite ran on and says the final one adds only items, rather than claiming
+// no test ran.
+func testsLine(rec *runstore.Record, filedFrom string) string {
+	last, filed := latestVerifiedTest(rec.Verify, rec.HeadSHA), false
+	if last == nil && filedFrom != "" && filedFrom != rec.HeadSHA {
+		last, filed = latestVerifiedTest(rec.Verify, filedFrom), true
+	}
 	if last == nil {
 		return "**Tests:** no recorded test run on the final commit\n\n"
 	}
@@ -231,7 +241,11 @@ func testsLine(rec *runstore.Record) string {
 	if len(last.Flaky) > 0 {
 		s += ", flaky: " + strings.Join(last.Flaky, ", ")
 	}
-	return s + ")\n\n"
+	s += ")"
+	if filed {
+		s += fmt.Sprintf("; the final commit %s only adds backlog items", shortSHA(rec.HeadSHA))
+	}
+	return s + "\n\n"
 }
 
 // tableText renders a value into a markdown table cell. A pipe ends the cell

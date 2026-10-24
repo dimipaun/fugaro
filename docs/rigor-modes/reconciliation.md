@@ -398,7 +398,7 @@ turns that from a data bug into a parse error (D19, plan T5.1).
 **F23 — A new task field needs an image-skew gate.** Class: **Rule**.
 `internal/cli/recipes_skew.go`'s `…Since` constants and `checkImageSince` gate a
 task field on the image that understands it; the remedy printed to the user is
-`fugaro image refresh`. There are eleven such constants. Consequence: the task
+`fugaro image refresh`. There were eleven such constants when this was written; the census (§4) counts them now, `rigorSince` among them, which gates `fugaro.yaml`'s `rigor:` block and the project layer's `defaults.rigor` on the base image in `fugaro update --repo` — not the task field, which is not built. Consequence: the task
 file's `rigor:` key cannot ship before the image that validates it, and the plan
 orders the two in one slice with the skew test as its verification (plan T5.1).
 
@@ -673,8 +673,8 @@ folder's own: the pins were **48**, the 47 the base `1d325928` (§1) already hel
 plus this folder's `internal/cli/docs_rigor_modes_test.go`, and they are files
 rather than folders, 13 of them pinning one of `docs/`'s folders and the rest a
 standalone document, which is why the row above counts the pins and not the
-folders they sit beside. **The figure is 54 today, because six folders have
-written a pin since**: `internal/cli/docs_gcp_setup_test.go` (#764, the WSL
+folders they sit beside. **The figure is 71 at this branch's tree, because other
+folders have written a pin since** — `main` holds 70 — among them `internal/cli/docs_gcp_setup_test.go` (#764, the WSL
 route's Windows forms), `internal/cli/docs_setup_wizard_checks_test.go` (#771, the
 register's Check 27), `internal/cli/docs_live_init_census_test.go` (#772, the
 setup wizard's rename census), `internal/cli/docs_windows_console_test.go`
@@ -683,7 +683,16 @@ setup wizard's rename census), `internal/cli/docs_windows_console_test.go`
 workflow while it waits under `docs/pending-workflows/`) and
 `internal/cli/docs_mobile_eas_runbook_test.go` (`docs/mobile/eas-signing-runbook.md`,
 the EAS signing runbook of Task P4.4, whose page this repository's P4.4 refresh
-rewrote against the tree of 2026-10-22). The six
+rewrote against the tree of 2026-10-22), `internal/cli/docs_credentials_cascade_checks_test.go`
+(#951, which `main` gained after this sentence was written),
+`internal/cli/docs_batch_live_check_test.go` (#1022, the owner-run Check 124 for the
+Cloud Batch backend) and `internal/cli/docs_contributing_cla_test.go` (#1031, the
+contributor licence agreement), `internal/cli/docs_ee_repo_test.go` and
+`internal/cli/docs_ee_reserved_test.go` (#1032, the reserved `ee/` folder), the
+last four of which `main` gained before this branch merged it and are why `main`
+holds 70, and on this branch
+`internal/cli/docs_backlog_test.go`, which plan T4.3 wrote as the folder's own
+pin on `docs/backlog/` rather than on this folder. They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
@@ -691,16 +700,16 @@ stale has found a merge that did not.
 | Construct | Count | Command |
 | --- | --- | --- |
 | Catalog recipes | 8 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
-| Top-level `fugaro.yaml` keys | 9 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*": '` |
+| Top-level `fugaro.yaml` keys | 10 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*": '` |
 | Top-level `fugaro.yaml` keys whose name contains `review` | 0 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*review[a-z_]*": '` |
-| Config scope rows | 68 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
+| Config scope rows | 70 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
 | Layers a configuration key may be set in | 4 | `sed -n '/The layers a key may be set in/,/^)/p' internal/config/scope.go \| grep -c 'In[A-Z]'` |
-| Blocks the project layer's `defaults:` may set | 2 | `sed -n '/type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -c 'yaml:'` |
+| Blocks the project layer's `defaults:` may set | 3 | `sed -n '/type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -c 'yaml:'` |
 | Fields of `task.Spec.Overrides` | 4 | `sed -n '/type Overrides struct {/,/^}/p' internal/task/task.go \| grep -cE 'yaml:\|json:'` |
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 3 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 12 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 13 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
 | Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 71 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
@@ -709,7 +718,7 @@ stale has found a merge that did not.
 | Fields of `gitprov.PRSpec` whose name is a repository | 0 | `sed -n '/^type PRSpec struct {/,/^}/p' internal/gitprov/gitprov.go \| grep -ci repo` |
 | Sites that narrow an installation token to one repository | 1 | `git grep -hc '"repositories": \[\]string{s.repo}' internal/gitprov/github/apptoken.go` |
 | `docs/plans` sections whose heading the deferral pattern matches | 3 | `git grep -hE '^## .*(Deferred\|[Ff]ollow-ups)' -- docs/plans \| wc -l` |
-| Item files under `docs/backlog/` | 0 | `ls docs/backlog/*.md 2>/dev/null \| wc -l` |
+| Item files under `docs/backlog/` | 2 | `ls docs/backlog/[0-9]*.md 2>/dev/null \| wc -l` |
 
 Every one of those commands prints the number in the Count column and nothing
 else on stdout, so a reader — and this folder's guard — can re-run the row rather
@@ -729,8 +738,9 @@ is the entire surface a scoring change touches inside the runner, which is why D
 is as small as it is.
 
 The four layering rows the 2026-10-20 amendment added are these: **4** layers a
-key may be set in (F37), **2** blocks the project layer's closed `defaults:` may
-set (F36), **4** fields of `task.Spec.Overrides` and **0** fields of `task.Spec`
+key may be set in (F37), **3** blocks the project layer's closed `defaults:` may
+set (F36 — two at this folder's tree, the third Slice 1's `defaults.rigor`),
+**4** fields of `task.Spec.Overrides` and **0** fields of `task.Spec`
 or `recipe.Step` whose name is a path (F38). The last row counts *declared
 fields*, which is why its command matches a field name at the start of a line
 rather than any mention: the `Spec` struct's prose mentions a path, and a count of
@@ -743,16 +753,25 @@ token is narrowed to a single repository in exactly **one** place (F42, F43) —
 which is why D29 recommends a designated repository rather than a cross-repo
 write; **3** `docs/plans` sections match the deferral headings (F46 names them,
 and names the fourth list whose lower-case heading keeps it out of the figure);
-and **0** item files exist under `docs/backlog/`, which is this
-amendment's own claim about itself: it changes documents and nothing else. A later
-slice that writes its own pin moves the pin-count row above in the same commit
-(the plan's T4.3 is the first that will).
+and **0** item files existed under `docs/backlog/`, which was that
+amendment's own claim about itself: it changed documents and nothing else. Plan
+T4.3 moved that row to the two items it filed and the pin-count row above with
+it, in its own commit, and the row's command counts the item files alone — a
+name that starts with the id's first digit — so the folder's `FORMAT.md` and
+its generated index are not items and are not counted as ones. A slice that adds
+a top-level key, a scope row or a member of the project layer's `defaults:` moves
+the row that counts it in the same commit for the same reason: the figure and the
+command beside it are read together, and the command reads the tree the slice
+leaves behind — Slice 1 moved all three (10 keys, 70 scope rows, 3 `defaults:`
+blocks), which is the five-edit shape F7 and F36 price, measured.
 
-The **54** is the convention this folder follows: there is no registry test over
+The **67** is the convention this folder follows: there is no registry test over
 `docs/`, so a folder that wants its documents pinned writes its own file, and
 this folder's is `internal/cli/docs_rigor_modes_test.go` — the forty-eighth when
-this folder's own commit wrote it, and one of the six pins the row has counted
-since. It is the row in this table that this folder's own commit moved.
+this folder's own commit wrote it, and one of the pins the row has counted
+since. It is the row in this table that this folder's own commit moved;
+`internal/cli/docs_backlog_test.go`, which plan T4.3 wrote, is the folder's own
+pin on `docs/backlog/` rather than on this folder.
 
 ## 5. Decisions for the owner
 
@@ -1708,6 +1727,21 @@ the mode from the base branch, so `fugaro run --ref feature-x` can run on
 exactly the kind F35 is, and the honest mitigation is that the run's record says
 which revision each came from (D24) rather than that the divergence does not
 exist.
+
+**As T1.2 read it: "the base branch" is the repository's default branch.** A
+first run's checkout is cut from the ref the run will push, so `git.base_branch`
+is a key the branch under review writes for itself: reading `origin/<that name>`
+would let a branch be its own base, which is the one shape the answer above
+forbids. `internal/runner/rigor.go` therefore reads the mode through the same
+default-branch read the project check and the budget policy make
+(`internal/runner/policy.go`'s `defaultBranchFile`, `repo.DefaultBranch`) — the
+revision no file in the checkout can name — and D24's `revision` is what the
+record says it read. A repository whose `git.base_branch` is not its default
+branch resolves its mode from the default branch's file nonetheless. A local run
+is the exception, and has its own reason: it has no project, so checkProject and
+resolvePolicy already skip that read there, and it has no branch under review to
+be protected from — the checkout is the developer's own — so it reads the ref
+its own configuration names, as it did before the default-branch read arrived.
 
 **Alternative: the checked-out ref, for a first run only.** Cost: free (the file
 is already read), consistent with every other key a first run uses, and it means a

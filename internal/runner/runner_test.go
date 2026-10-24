@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -351,6 +352,97 @@ func TestReviewRoundsExhausted(t *testing.T) {
 	}
 	if rec.Outcome != runstore.OutcomeDraft || rec.Reason != "review round 2 still has 1 finding" {
 		t.Fatalf("record = %+v", rec)
+	}
+}
+
+// TestRigorRoundMomentRaisesTheModeFromTheRunsOwnDiff: D22's second moment, at
+// the loop. The repository starts the run at its own default, and the fix in
+// round 1 writes the one file the Critical area rule matches — so the mode the
+// run has reached is Critical from round 1 on, and the round is the moment that
+// decided it. The block's own moment is what proves the call site exists:
+// finalize resolves the same mode from the same diff and, answering the same
+// thing, leaves the block as the round left it.
+func TestRigorRoundMomentRaisesTheModeFromTheRunsOwnDiff(t *testing.T) {
+	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "agent:\n",
+		"rigor:\n  default: startup\n  areas:\n    - { name: app, match: \"feature.txt\", mode: critical }\nagent:\n", 1)
+	h := newHarness(t, cfg, nil)
+	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
+		verifyTest(t, ctx, req)
+		return agent.Result{}, nil
+	}
+	rec, err := h.run(t, implement("feature"), review("changes", 1), fix, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rg := rec.Rigor
+	if rg == nil {
+		t.Fatal("the record carries no rigor block")
+	}
+	if rg.Mode != rigor.Critical || rg.From != rigor.FromArea {
+		t.Fatalf("the mode = %q from %q; want critical from the area the run's own file matched", rg.Mode, rg.From)
+	}
+	if rg.At != runstore.RigorAtRound {
+		t.Errorf("the block was decided at %q; want %q — a mode a run's own diff reached must not wait for finalize (D22)", rg.At, runstore.RigorAtRound)
+	}
+	want := []runstore.RigorArea{{Name: "app", Mode: rigor.Critical, At: runstore.RigorAtRound}}
+	if !slices.Equal(rg.Areas, want) {
+		t.Errorf("the areas = %+v; want %+v", rg.Areas, want)
+	}
+}
+
+// TestFilingDoesNotSpendTheFinalizeReserveOnTheSuite: a run that left a
+// round open files its item at finalize, on finalize's context, which the
+// finalize reserve bounds. Filing only ever follows a round that did not ship,
+// so the run cannot be ready whatever the suite says on the filing commit:
+// running the suite again there buys nothing and, on a suite slower than the
+// reserve, spends the context the push needs. The suite here sleeps past the
+// reserve once the last review has run; the branch, the item and the review's
+// own reason must still reach the remote.
+func TestFilingDoesNotSpendTheFinalizeReserveOnTheSuite(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "slow")
+	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "test: sh test.sh", "test: sh slow.sh", 1)
+	cfg = strings.Replace(cfg, "finalize_reserve: 30s", "finalize_reserve: 3s", 1)
+	// Filing is opt-in: the repository writes a rigor: block, or its run
+	// files nothing and the case has no filing commit to measure.
+	cfg = strings.Replace(cfg, "agent:\n", "rigor:\n  default: pro\nagent:\n", 1)
+	slow := "#!/bin/sh\nif [ -f '" + marker + "' ]; then sleep 10; fi\nexec sh test.sh \"$@\"\n"
+	h := newHarnessFiles(t, cfg, nil, map[string]string{"slow.sh": slow})
+	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo more >> feature.txt && git commit -qam 'Try again'")
+		verifyTest(t, ctx, req)
+		return agent.Result{}, nil
+	}
+	lastReview := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if err := os.WriteFile(marker, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return review("changes", 1)(t, ctx, req)
+	}
+	rec, err := h.run(t, implement("feature"), review("changes", 1), fix, lastReview)
+	if err != nil {
+		t.Fatalf("finalize lost the run's push: %v", err)
+	}
+	if rec.Outcome != runstore.OutcomeDraft || rec.Reason != "review round 2 still has 1 finding" || len(rec.Backlog) != 1 {
+		t.Fatalf("record = %+v", rec)
+	}
+	if got := testutil.Git(t, h.remote, "rev-parse", "refs/heads/fugaro/"+runID); got != rec.HeadSHA {
+		t.Fatalf("remote branch %s != record head %s: the filing commit was not pushed", got, rec.HeadSHA)
+	}
+	// The report's tests line names the commit the suite ran on — the filing
+	// commit's parent — and says the filing commit adds only items, rather
+	// than reporting no test run because the head moved (owner ruling R3).
+	tested := strings.TrimSpace(testutil.Git(t, h.remote, "rev-parse", rec.HeadSHA+"^"))
+	report := onlyPR(t, h.provider).Comments[0]
+	want := fmt.Sprintf("**Tests:** passed on %s (", tested[:7])
+	if !strings.Contains(report, want) {
+		t.Errorf("the report's tests line does not name the tested commit %s:\n%s", tested[:7], report)
+	}
+	if !strings.Contains(report, fmt.Sprintf("the final commit %s only adds backlog items", rec.HeadSHA[:7])) {
+		t.Errorf("the report's tests line does not say the filing commit adds only items:\n%s", report)
+	}
+	if strings.Contains(report, "no recorded test run") {
+		t.Errorf("the report says no test ran, though the suite ran on the commit before the filing:\n%s", report)
 	}
 }
 
