@@ -2153,7 +2153,7 @@ function stopInsideDistribution(options: {
  * module returns, and `NUL` counts as a line boundary while matching (see
  * `wrapperMarkerOffset`). */
 const WSL_TEXT_NUL = '\u0000'
-const WSL_TEXT_BOM = '﻿'
+const WSL_TEXT_BOM = '\uFEFF'
 
 /** withoutWslTextNoise removes those two code points from text the console will
  * read or show. What it leaves is the warning `wsl.exe` meant to print: removing

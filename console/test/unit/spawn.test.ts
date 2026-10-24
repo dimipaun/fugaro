@@ -5111,7 +5111,7 @@ describe('the wrapper into a distribution', () => {
     expect(wrapperPidIn(glued, marker)).toBe(4321)
     // A leading BOM is a boundary too: a `wsl.exe` answer that starts with one
     // must not hide the line behind it.
-    expect(wrapperPidIn(`﻿${line}\n`, marker)).toBe(4321)
+    expect(wrapperPidIn(`${'\uFEFF'}${line}\n`, marker)).toBe(4321)
     // And what the operator reads is the warning `wsl.exe` meant to print, with
     // the console's own line gone and the NULs with it.
     expect(withoutWrapperMarker(withEnding, marker)).toBe('wsl: a relay warning\r\n')
