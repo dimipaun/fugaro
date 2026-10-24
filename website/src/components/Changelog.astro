@@ -329,4 +329,28 @@ function summaryOf(entry: Entry): string {
   .release-notes :global(code) {
     background: var(--ground);
   }
+
+  /* Opening the notes expands them rather than snapping (owner-approved motion opportunities
+     2026-10-23). Progressive enhancement: a browser without `::details-content` or keyword
+     interpolation keeps the instant open and close, and so does a reader who asked for less
+     motion. */
+  @supports (interpolate-size: allow-keywords) and selector(::details-content) {
+    @media (prefers-reduced-motion: no-preference) {
+      .release-notes {
+        interpolate-size: allow-keywords;
+      }
+
+      .release-notes::details-content {
+        block-size: 0;
+        overflow-y: clip;
+        transition:
+          block-size var(--duration-collapse) var(--ease-out),
+          content-visibility var(--duration-collapse) allow-discrete;
+      }
+
+      .release-notes[open]::details-content {
+        block-size: auto;
+      }
+    }
+  }
 </style>

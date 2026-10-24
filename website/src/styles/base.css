@@ -300,6 +300,34 @@ a.skip-link:focus {
    * a menu hanging over the page is a thing laid on the page, and the step between the ground
    * and the surface is what says so. */
   background: var(--surface);
+  transform-origin: top;
+}
+
+/* An opened group's panel grows out of its trigger (owner-approved motion opportunities
+ * 2026-10-23): enter only, and nothing for a reader who asked for less motion. A closed group's
+ * panel is not drawn at all, so the close is instant whatever its values do. The panel's resting
+ * values while closed and `@starting-style` are the same small, transparent frame: the first is
+ * the transition's start when the browser has already styled the hidden panel, the second when
+ * it has not. The phone's drawer hangs across the header and grows from its top edge; the wide
+ * block below moves the origin to the label's corner the dropdown hangs from. */
+@media (prefers-reduced-motion: no-preference) {
+  .site-nav-group > details > ul {
+    transition:
+      opacity var(--duration-enter) var(--ease-out),
+      transform var(--duration-enter) var(--ease-out);
+  }
+
+  .site-nav-group > details:not([open]) > ul {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+
+  @starting-style {
+    .site-nav-group > details[open] > ul {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+  }
 }
 
 .site-nav-group > details > summary:focus-visible {
@@ -380,6 +408,7 @@ a.skip-link:focus {
     min-width: max-content;
     padding: var(--space-2xs);
     border-radius: var(--radius-md);
+    transform-origin: top right;
   }
 }
 

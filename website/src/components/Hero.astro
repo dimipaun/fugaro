@@ -477,6 +477,24 @@ const WATCH = loadHomeScreens().screens.find((screen) => screen.src.endsWith('/f
     .hero-shot-job[data-arrive] {
       animation: hero-arrive var(--duration-base) var(--ease-out) both;
     }
+
+    /* A row that reaches "ready for review" settles its icon into place, once: `site.js` marks
+       the row when its last stage lands, and a row is never marked twice (owner-approved motion
+       opportunities 2026-10-23). The no-script card's rows carry no mark and do not move. */
+    .hero-shot-job[data-settled] .hero-shot-icon {
+      animation: hero-settle var(--duration-enter) var(--ease-out) both;
+    }
+  }
+
+  @keyframes hero-settle {
+    from {
+      opacity: 0;
+      transform: scale(0.92);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
   }
 
   @keyframes hero-shutter {

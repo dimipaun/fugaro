@@ -396,7 +396,9 @@ test('every layout refusal fires on the defect it names', () => {
     ],
     [
       "a group's list left in the header's flow",
-      plant('background:var(--surface);position:absolute;top:100%;left:0;right:0}', 'background:var(--surface);top:100%;left:0;right:0}'),
+      // The panel's `transform-origin` sits in the same rule since the owner-approved motion
+      // opportunities 2026-10-23 (the panel grows from its trigger).
+      plant('background:var(--surface);transform-origin:top;position:absolute;top:100%;left:0;right:0}', 'background:var(--surface);transform-origin:top;top:100%;left:0;right:0}'),
       /in the header's flow/,
     ],
     [
@@ -406,7 +408,7 @@ test('every layout refusal fires on the defect it names', () => {
     ],
     [
       "a rule that hides a group's list",
-      plant('background:var(--surface);position:absolute', 'background:var(--surface);display:none;position:absolute'),
+      plant('background:var(--surface);transform-origin:top;position:absolute', 'background:var(--surface);transform-origin:top;display:none;position:absolute'),
       /hides a group's list/,
     ],
     [
@@ -503,12 +505,13 @@ test('every layout refusal fires on the defect it names', () => {
     ],
     [
       "a wide dropdown that is still the header's width",
-      plant('border-radius:var(--radius-md);left:auto;right:0}', 'border-radius:var(--radius-sm);left:0;right:0}'),
+      // `transform-origin` joined the rule with the owner-approved motion opportunities 2026-10-23.
+      plant('border-radius:var(--radius-md);transform-origin:100% 0;left:auto;right:0}', 'border-radius:var(--radius-sm);transform-origin:100% 0;left:0;right:0}'),
       /hangs across the header/,
     ],
     [
       "a group's dropdown opening rightwards off the viewport",
-      plant('border-radius:var(--radius-md);left:auto;right:0}', 'border-radius:var(--radius-sm);left:auto;right:auto}'),
+      plant('border-radius:var(--radius-md);transform-origin:100% 0;left:auto;right:0}', 'border-radius:var(--radius-sm);transform-origin:100% 0;left:auto;right:auto}'),
       /sideways scroll/,
     ],
   ]

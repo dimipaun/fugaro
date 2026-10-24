@@ -8,6 +8,13 @@
  * the boards and cost more than it was worth (owner, 2026-10-22), so the picture is the board's
  * own render. A reader who cannot see it is given the `alt` text; the page's `<nav>` of anchors
  * (`#level-1` … `#level-4`) is the same as ever and needs no script.
+ *
+ * The scroll-linked zoom (owner-approved motion opportunities 2026-10-23) is CSS only and an
+ * enhancement of the four stills: where the browser has scroll-driven animations and the reader
+ * has not asked for less motion, each level's picture and caption stick under the top of the
+ * window while its figure scrolls past, and the next level fades in over it from a slight zoom.
+ * Each figure keeps its own place in the page, so the four anchors still land on four places.
+ * Everywhere else the stylesheet below is the same static stack it always was.
  */
 import { LEVELS } from '../lib/zoom-levels.mjs'
 
@@ -36,24 +43,26 @@ import { LEVELS } from '../lib/zoom-levels.mjs'
     </ul>
   </nav>
 
-  {
-    LEVELS.map((entry, index) => (
-      <figure class="zoom-figure" id={entry.id}>
-        <img
-          class="zoom-img"
-          src={`/images/zoom/level${index + 1}.png`}
-          width="2560"
-          height="1440"
-          alt={entry.alt}
-          loading={index === 0 ? 'eager' : 'lazy'}
-          decoding="async"
-        />
-        <figcaption class="zoom-caption">
-          <span class="zoom-level-name">{entry.name}</span>
-        </figcaption>
-      </figure>
-    ))
-  }
+  <div class="zoom-runway">
+    {
+      LEVELS.map((entry, index) => (
+        <figure class="zoom-figure" id={entry.id}>
+          <img
+            class="zoom-img"
+            src={`/images/zoom/level${index + 1}.png`}
+            width="2560"
+            height="1440"
+            alt={entry.alt}
+            loading={index === 0 ? 'eager' : 'lazy'}
+            decoding="async"
+          />
+          <figcaption class="zoom-caption">
+            <span class="zoom-level-name">{entry.name}</span>
+          </figcaption>
+        </figure>
+      ))
+    }
+  </div>
 </section>
 
 <style>
@@ -121,5 +130,141 @@ import { LEVELS } from '../lib/zoom-levels.mjs'
     margin-top: var(--space-xs);
     color: var(--text-muted);
     font-size: var(--font-size-sm);
+  }
+
+  /* The scroll-linked zoom. Without scroll-driven animations, or for a reader who asked for less
+     motion, none of this applies and the four stills above are the section.
+
+     Each figure is a stretch of scroll two steps long, and the next figure starts one step after
+     it, so two neighbours overlap by a step. A figure's picture and caption stick near the top of
+     the window while their figure passes; when the next figure's top reaches the same line its
+     picture is stuck in the same place, painted over this one, and the two crossfade over
+     `--zoom-fade` of scroll. The picture's height is capped so a picture and its caption fit in
+     the part of a step that is not the crossfade, which is what keeps the outgoing level from
+     being pushed up while it is still visible. The caption's own `top` is the picture's height
+     below the picture's, because a figcaption has to stay the figure's own child and the two
+     cannot share one sticky box. */
+  @supports (animation-timeline: view()) {
+    @media (prefers-reduced-motion: no-preference) {
+      .zoom-runway {
+        --zoom-top: var(--space-lg);
+        --zoom-img-h: min(56svh, 100cqi * 0.5625);
+        --zoom-fade: 18svh;
+        /* A picture, its caption, the crossfade and a short hold: a phone's small picture is
+           given less scroll per level than a desktop's tall one. */
+        --zoom-step: calc(var(--zoom-img-h) + var(--zoom-fade) + 6rem);
+        container-type: inline-size;
+        overflow-x: clip;
+      }
+
+      .zoom-figure {
+        height: calc(2 * var(--zoom-step));
+        margin: 0;
+        view-timeline: --zoom-level block;
+        /* An anchor lands where the level is fully faded in rather than where it starts to. */
+        scroll-margin-top: calc(var(--zoom-top) - var(--zoom-fade));
+      }
+
+      .zoom-figure + .zoom-figure {
+        margin-top: calc(-1 * var(--zoom-step));
+      }
+
+      .zoom-img {
+        position: sticky;
+        top: var(--zoom-top);
+        width: auto;
+        max-width: 100%;
+        height: var(--zoom-img-h);
+        margin-inline: auto;
+      }
+
+      .zoom-caption {
+        position: sticky;
+        top: calc(var(--zoom-top) + var(--zoom-img-h) + var(--space-xs));
+        margin-inline: auto;
+        text-align: center;
+      }
+
+      .zoom-img,
+      .zoom-caption {
+        animation-timeline: --zoom-level, --zoom-level;
+        animation-range:
+          cover calc(100svh - var(--zoom-top)) cover calc(100svh - var(--zoom-top) + var(--zoom-fade)),
+          cover calc(100svh - var(--zoom-top) + var(--zoom-step))
+            cover calc(100svh - var(--zoom-top) + var(--zoom-step) + var(--zoom-fade));
+      }
+
+      /* The incoming level fills backwards (hidden until its turn) and the outgoing one only
+         forwards, so before a level's exit begins its entrance is what shows. */
+      .zoom-img {
+        animation-name: zoom-level-in, zoom-level-out;
+        animation-fill-mode: both, forwards;
+        animation-timing-function: linear, linear;
+      }
+
+      .zoom-caption {
+        animation-name: zoom-caption-in, zoom-caption-out;
+        animation-fill-mode: both, forwards;
+        animation-timing-function: linear, linear;
+      }
+
+      .zoom-figure:first-child .zoom-img {
+        animation-name: none, zoom-level-out;
+      }
+
+      .zoom-figure:first-child .zoom-caption {
+        animation-name: none, zoom-caption-out;
+      }
+
+      .zoom-figure:last-child .zoom-img {
+        animation-name: zoom-level-in, none;
+      }
+
+      .zoom-figure:last-child .zoom-caption {
+        animation-name: zoom-caption-in, none;
+      }
+    }
+  }
+
+  /* Zooming out: the next level arrives from slightly closer and settles, while the one it
+     replaces recedes a little as it fades. */
+  @keyframes zoom-level-in {
+    from {
+      opacity: 0;
+      transform: scale(1.15);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @keyframes zoom-level-out {
+    from {
+      opacity: 1;
+      transform: none;
+    }
+    to {
+      opacity: 0;
+      transform: scale(0.94);
+    }
+  }
+
+  @keyframes zoom-caption-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes zoom-caption-out {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
   }
 </style>

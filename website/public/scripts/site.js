@@ -93,6 +93,48 @@
   // one a reader cannot tell from a fresh one.
   var CLEARS_AFTER_MS = 4000
 
+  // A short line that changes its words (the copy confirmation, the hero card's stages)
+  // crossfades instead of snapping (owner-approved motion opportunities 2026-10-23): the old
+  // words fade out and the new ones in, 120 ms in all (`--duration-fast`), on the site's
+  // `--ease-out`. Opacity only, through the element's own `animate()`, so a browser without it
+  // and a reader who asked for less motion get the plain swap.
+  var SWAP_MS = 120
+  var SWAP_EASE = 'cubic-bezier(0.22, 1, 0.36, 1)'
+
+  function swaps(el) {
+    if (typeof el.animate !== 'function' || !window.matchMedia) return false
+    return !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  }
+
+  // `then` runs at the moment the words change. A newer swap on the same element wins: an older
+  // fade that finishes after it does not write its words over the newer ones.
+  function swapText(el, text, then) {
+    var turn = (el.fugaroSwap || 0) + 1
+    el.fugaroSwap = turn
+    function apply() {
+      el.textContent = text
+      if (then) then()
+    }
+    if (!swaps(el) || el.textContent === text) {
+      apply()
+      return
+    }
+    // From nothing, the new words only fade in; otherwise half the time out, half in.
+    if (!el.textContent) {
+      apply()
+      el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: SWAP_MS, easing: SWAP_EASE })
+      return
+    }
+    var out = el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: SWAP_MS / 2, easing: SWAP_EASE, fill: 'forwards' })
+    out.onfinish = function () {
+      if (el.fugaroSwap === turn) {
+        apply()
+        if (text) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: SWAP_MS / 2, easing: SWAP_EASE })
+      }
+      out.cancel()
+    }
+  }
+
   // The menu, and everything that is open in it (P3).
   var OPEN_MENUS = '.site-nav details[open]'
 
@@ -138,9 +180,9 @@
   function say(block, message) {
     var status = block.querySelector('[data-copy-status]')
     if (!status) return
-    status.textContent = message
+    swapText(status, message)
     window.setTimeout(function () {
-      if (status.textContent === message) status.textContent = ''
+      if (status.textContent === message) swapText(status, '')
     }, CLEARS_AFTER_MS)
   }
 
@@ -746,6 +788,10 @@
   var STATUS_ID = 'consent-banner-status'
   var MAIN_ID = 'main'
 
+  // How long the bar's collapse may take before it is hidden anyway: the stylesheet's 200 ms
+  // (`--duration-collapse`) with room to spare, so the timer only ever catches a missed event.
+  var COLLAPSE_FLOOR_MS = 320
+
   // The two choices, as the markup names them, and the one answer that loads anything.
   var GRANTED = 'granted'
   var DENIED = 'denied'
@@ -959,13 +1005,39 @@
     if (!banner) return
 
     var status = document.getElementById(STATUS_ID)
+    var closing = false
 
-    function dismiss() {
+    function gone() {
       banner.hidden = true
+      if (closing) banner.removeAttribute('data-consent-closing')
       // The early decision's mark (`consent-early.js`) is what draws the banner in the flow from
       // the first frame; the decision is made, so the mark goes with the banner.
       if (document.documentElement && document.documentElement.removeAttribute) {
         document.documentElement.removeAttribute('data-consent-ask')
+      }
+    }
+
+    function dismiss() {
+      // The bar collapses before it is hidden (owner-approved motion opportunities 2026-10-23):
+      // the stylesheet runs the collapse from `data-consent-closing`, and `hidden` follows when
+      // it ends. The decision is already stored and announced by then; only the drawing waits.
+      // A browser with no `matchMedia` is too old for the collapse and is answered at once, and
+      // the timer is the floor for a `transitionend` that never comes (a bar not being drawn).
+      if (window.matchMedia && banner.removeAttribute) {
+        closing = true
+        var done = false
+        var finish = function () {
+          if (done) return
+          done = true
+          gone()
+        }
+        banner.addEventListener('transitionend', function (event) {
+          if (event && event.target === banner && event.propertyName === 'opacity') finish()
+        })
+        window.setTimeout(finish, COLLAPSE_FLOOR_MS)
+        banner.setAttribute('data-consent-closing', '')
+      } else {
+        gone()
       }
       // Focus goes to the content, not back to the top of the page and not to a control
       // that has just disappeared. `tabindex="-1"` makes <main> a focus target without
@@ -978,6 +1050,9 @@
     }
 
     function choose(decision) {
+      // One decision per banner: a second press or an Escape while the bar collapses is not a
+      // new choice, exactly as it could not be once the bar was gone.
+      if (closing) return
       if (!keep(banner, decision)) {
         // The answer cannot be kept, so it is not honoured: nothing is loaded, the banner
         // stays, and the status line says why.
@@ -1087,9 +1162,16 @@
     // the rows do not tick in lockstep.
     function advance(entry, step, delay) {
       entry.timers.push(window.setTimeout(function () {
-        entry.stage.textContent = LIVE_STAGES[step]
-        if (step === LIVE_STAGES.length - 1) entry.item.removeAttribute('data-stage')
-        else {
+        var last = step === LIVE_STAGES.length - 1
+        // The stage's words crossfade, and the row's finished look arrives with its last word:
+        // `data-settled` is what settles the row's icon into place, once, since a row reaches
+        // its last stage once (the owner-approved motion opportunities of 2026-10-23).
+        swapText(entry.stage, LIVE_STAGES[step], function () {
+          if (!last) return
+          entry.item.removeAttribute('data-stage')
+          entry.item.setAttribute('data-settled', '')
+        })
+        if (!last) {
           entry.item.setAttribute('data-stage', 'working')
           advance(entry, step + 1, 400 + Math.floor(Math.random() * 300))
         }
