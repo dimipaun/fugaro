@@ -15,11 +15,10 @@
 //      may appear on the page, and no entry's own line may be a sentence of the document
 //      it links. A page that restates a guide is a second copy of it: the one readers
 //      land on, and the one no test can hold to the first.
-//   3. **The generated reference is rendered, not described.** The CLI reference is
-//      generated from the command tree (W0.4), so the hub renders it rather than linking
-//      it — a command that lands in the tree appears on this page the day the file is
-//      regenerated, and the page's command sections have to equal the file's, one for
-//      one, or the build's own check fails.
+//   3. **The generated reference is linked, not rendered** (the owner's preview feedback on
+//      #1003, 2026-10-24). The CLI reference is generated from the command tree (W0.4) into
+//      `website/content/cli-reference.md`, and the hub links that file like every other
+//      guide; no command section of it is rendered on this page.
 //   4. **The look is the site's, and not this page's** (the bold redesign of 2026-10-21,
 //      the owner's approved home page in PR #779). The page is drawn in the shapes
 //      `base.css` writes once for the whole site — the display scale, the accent's
@@ -35,9 +34,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import os from 'node:os'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -45,7 +42,6 @@ import { fileURLToPath } from 'node:url'
 // approximation of the rule it is checking agrees with the page's bug instead of catching
 // it (the module's header says what the two approximations got wrong).
 import { headingAnchor } from '../src/lib/github-slug.mjs'
-import { copyRepository } from './lib/build.mjs'
 import { cssDeclarations, cssRules } from './lib/html.mjs'
 
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -53,9 +49,8 @@ const REPO = path.dirname(SITE)
 const BUILT_PAGE = path.join(SITE, 'dist', 'docs', 'index.html')
 const REFERENCE = 'website/content/cli-reference.md'
 
-// The attribute the page carries on the section that holds the rendered CLI reference.
-// Everything before it is the hub's own words, which is what the no-copied-prose case
-// reads; everything after it is a generated document, which is allowed to be one.
+// The attribute the page carried on the section that held the rendered CLI reference, when it
+// rendered one: its absence is part of what "linked, not rendered" means.
 const REFERENCE_MARKER = `data-generated-document="${REFERENCE}"`
 
 // The documents the hub is a hub for (the plan's Task W1.7, step 1), as repository paths
@@ -69,6 +64,7 @@ const LINKED = [
   'docs/project-layer.md',
   'docs/multi-model.md',
   'docs/git-providers.md',
+  REFERENCE,
 ]
 
 /** The built docs page: the artifact these cases are about. */
@@ -80,11 +76,10 @@ function builtPage() {
   return readFileSync(BUILT_PAGE, 'utf8')
 }
 
-/** The hub's own markup: the page up to the rendered, generated reference. */
+/** The hub's own markup: the whole page, since it renders no generated document. */
 function hubMarkup(page) {
-  const parts = page.split(REFERENCE_MARKER)
-  assert.equal(parts.length, 2, `the built page does not carry the attribute that separates the hub's own words from the rendered CLI reference, and this check reads the hub's words alone:\n${REFERENCE_MARKER}`)
-  return parts[0]
+  assert.ok(!page.includes(REFERENCE_MARKER), 'the built page renders the generated CLI reference, and the hub links it instead')
+  return page
 }
 
 /** A file of this repository, by its path relative to the repository root. */
@@ -229,11 +224,8 @@ test("the hub links every guide the plan names, by URL built from site.yaml's re
     `the docs page links ${JSON.stringify(relative.sort())} and the hub's guides are ${JSON.stringify(LINKED.slice().sort())}: the entry for a guide is added with the guide, and an entry whose file moves changes here in the same commit`,
   )
 
-  // The one entry that is not a link to GitHub is the generated reference, which this page
-  // renders rather than links — so it is an anchor of this page, and one that a reader can
-  // reach.
-  assert.ok(page.includes('href="#cli-reference"'), 'the hub does not link the rendered CLI reference, and the reference is the one guide that lives on this page')
-  assert.match(page, /id="cli-reference"/, 'the hub links #cli-reference and the page carries no element at that anchor')
+  // The generated reference is one of those links, and no part of it is on this page.
+  assert.ok(!page.includes('href="#cli-reference"') && !/id="cli-reference"/.test(page), 'the hub still points at a rendered CLI reference on this page, and it links the generated file instead')
 
   // Every absolute URL the page prints is composed from a fact rather than typed: the
   // repository from site.yaml, the canonical origin from site.yaml, and a host the site's
@@ -281,7 +273,7 @@ test('the docs page repeats no prose from a document it links', () => {
     href: /href="([^"]*)"/.exec(match[1])?.[1] ?? '',
     answers: normalise(/<p class="answers">([\s\S]*?)<\/p>/.exec(match[1])?.[1] ?? ''),
   }))
-  assert.equal(entries.length, LINKED.length + 1, `the built page carries ${entries.length} hub entries and the hub's guides plus the rendered reference are ${LINKED.length + 1}`)
+  assert.equal(entries.length, LINKED.length, `the built page carries ${entries.length} hub entries and the hub's guides and the reference are ${LINKED.length}`)
 
   const repository = siteFact('repository')
   for (const entry of entries) {
@@ -299,49 +291,23 @@ test('the docs page repeats no prose from a document it links', () => {
   }
 })
 
-test('the hub renders the generated CLI reference, command section for command section', () => {
+test('the hub links the generated CLI reference and renders none of it', () => {
   const page = builtPage()
   const markdown = repoFile(REFERENCE)
-
-  const generated = headingsOf(markdown)
-  const title = generated.find((heading) => heading.depth === 1)
-  assert.ok(title, `${REFERENCE} carries no title line, and the hub renders the document's title rather than typing one`)
-
-  // The document's own title is rendered as a section heading of this page: the page's h1
-  // is the hub's, so the rendered document sits a level below it, and the anchor the
-  // document's title carries survives the move (F40's rule, applied to the built page). The
-  // heading is read by the attributes it carries rather than by one exact spelling of the tag:
-  // the move also writes the display scale's class onto it (the bold look's case below), and a
-  // reading that pinned the whole opening tag would call a correctly moved title a missing one.
-  assert.ok(
-    new RegExp(`<h2\\b[^>]*\\bid="${title.anchor}"[^>]*>`).test(page),
-    `${path.relative(REPO, BUILT_PAGE)} does not render ${REFERENCE}'s own title ${JSON.stringify(title.text)} as a section heading: the page renders the generated document, and the document's title is part of it`,
-  )
-
-  const sections = [...page.matchAll(/<h2\b[^>]*\bid="([^"]*)"/g)].map((match) => match[1]).filter((id) => id !== title.anchor)
-  const commands = generated.filter((heading) => heading.depth === 2)
-  assert.equal(
-    sections.length,
-    commands.length,
-    `the built page renders ${sections.length} command sections and ${REFERENCE} carries ${commands.length}: the reference is generated from the command tree, so a command that lands in the tree appears on this page when the file is regenerated — and a page that dropped one is a page that lies about the CLI`,
-  )
+  const ids = new Set([...page.matchAll(/id="([^"]*)"/g)].map((match) => match[1]))
+  const rendered = headingsOf(markdown)
+    .filter((heading) => heading.depth <= 2)
+    .map((heading) => heading.anchor)
+    .filter((anchor) => ids.has(anchor))
+  assert.deepEqual(rendered, [], `the built page carries ${JSON.stringify(rendered)}, which are ${REFERENCE}'s own sections: the hub links the reference and does not render it (the owner's preview feedback on #1003, 2026-10-24)`)
+  assert.ok(page.includes(`/blob/HEAD/${REFERENCE}"`), `the hub does not link ${REFERENCE}`)
 })
 
-test('the docs page states one h1 of its own, and the rendered reference keeps its anchors', () => {
+test('the docs page states one h1 of its own', () => {
   const page = builtPage()
 
   const h1s = [...page.matchAll(/<h1\b[^>]*>([\s\S]*?)<\/h1>/g)].map((match) => normalise(match[1]))
-  assert.deepEqual(h1s, ['Documentation'], `the built page carries ${h1s.length} h1 headings (${JSON.stringify(h1s)}), and a page of the site carries one: the hub's own title, which the rendered document's title is a heading below (W1.11 asserts the same over every page)`)
-
-  // The reference's own sections keep the anchors the generated file gives them, so a
-  // reader who was sent to `#fugaro-budget-set` still lands on that section.
-  const markdown = repoFile(REFERENCE)
-  const anchors = new Set([...page.matchAll(/id="([^"]*)"/g)].map((match) => match[1]))
-  const missing = headingsOf(markdown)
-    .filter((heading) => heading.depth === 2)
-    .map((heading) => heading.anchor)
-    .filter((anchor) => !anchors.has(anchor))
-  assert.deepEqual(missing, [], `the built page renders no element at ${JSON.stringify(missing)}, and ${REFERENCE} reachable them as its command sections: a rendered document keeps the anchors its own headings carry`)
+  assert.deepEqual(h1s, ['Documentation'], `the built page carries ${h1s.length} h1 headings (${JSON.stringify(h1s)}), and a page of the site carries one: the hub's own title (W1.11 asserts the same over every page)`)
 })
 
 test("the anchor rule the hub links by is GitHub's own, not an approximation of it", () => {
@@ -350,9 +316,8 @@ test("the anchor rule the hub links by is GitHub's own, not an approximation of 
   // `\w` as the alphabet), a markdown link (unwrapped by a rule that reads the rendered
   // text and left alone by one that reads the line), and a run of spaces or a tab (where
   // only U+0020 is a hyphen and nothing is collapsed). `src/lib/github-slug.mjs` is the one
-  // place the rule is written, and the cases above resolve the generated reference's own
-  // command headings through it against the `id`s the built page carries — so a
-  // disagreement with the renderer fails here, on the headings a reader is sent to.
+  // place the rule is written, and the cases above resolve every anchor the hub links
+  // through it.
   assert.equal(headingAnchor('`fugaro_run_id` in the ledger'), 'fugaro_run_id-in-the-ledger', 'an underscore is a character GitHub keeps in a heading anchor')
   assert.equal(headingAnchor('The hub — and the guides'), 'the-hub--and-the-guides', 'an em dash is punctuation GitHub drops, and the spaces around it stay')
   assert.equal(headingAnchor('[Getting started](#getting-started)'), 'getting-started', 'a markdown link anchors at its text, which is what GitHub renders')
@@ -364,97 +329,6 @@ test("the anchor rule the hub links by is GitHub's own, not an approximation of 
   // one rule and was checked by another is how the check came to agree with the bug.
   for (const file of ['src/pages/docs.astro', 'test/docs-hub.mjs']) {
     assert.match(repoFile(`website/${file}`), /from '.*github-slug\.mjs'/, `${file} does not import the shared anchor rule, so it carries a second copy of it`)
-  }
-})
-
-// ---------------------------------------------------------------------------------------
-// The generated reference is TEXT, never markup (W1.7 follow-up). The reference documents
-// placeholders such as `<name>` and `<repo-slug>/<run-id>`; a markdown renderer that passes
-// raw HTML through hands the browser unknown elements, and the placeholder vanishes from
-// the page. A reference that carried a `<script>` would run it.
-
-/** The tags the markdown renderer itself emits into the reference section, and no others. */
-const RENDERED_TAGS = new Set([
-  'section', 'h2', 'h3', 'h4', 'p', 'code', 'pre', 'span', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
-  'ul', 'ol', 'li', 'a', 'em', 'strong', 'blockquote', 'hr', 'br',
-])
-
-/**
- * The section of a built page that holds the rendered reference.
- *
- * The page's own copy control is in there too — one per code block, written by
- * `website/src/lib/copy-control.mjs` (P6) — and the cases below are about the tags the
- * *renderer* emits, so the control's markup is taken back out here. `website/test/copy.mjs`
- * is the file that holds the control to its own shape, on every built page.
- */
-function referenceSection(page) {
-  // The section is found by its `id` and not by the whole opening tag: the page gives the
-  // section a class of its own as well (the bold look, 2026-10-21), and a reader that wanted
-  // the tag's exact text would call a page with one more attribute a page with no reference
-  // at all — the reading this case is least able to afford.
-  const opening = /<section\b[^>]*\bid="cli-reference"[^>]*>/.exec(page)
-  const start = opening ? opening.index : -1
-  assert.ok(start >= 0, 'the built page has no cli-reference section')
-  const section = page.slice(start, page.indexOf('</section>', start))
-  assert.match(
-    section,
-    /<div class="command-controls">/,
-    'the reference section carries no copy control, and every command the site prints has one (P6, D183)',
-  )
-  return section
-    .replace(/<div class="command-controls">[\s\S]*?<\/div>/g, '')
-    .replace(/<div class="command-block" data-copy[^>]*>/g, '')
-    .replace(/<\/pre><\/div>/g, '</pre>')
-}
-
-/** The tag names a fragment of HTML opens or closes. */
-function tagNames(html) {
-  return [...new Set([...html.matchAll(/<\/?([a-zA-Z][\w:-]*)/g)].map((match) => match[1].toLowerCase()))].sort()
-}
-
-test('the rendered reference carries only tags the renderer emits, and every placeholder is text', () => {
-  const section = referenceSection(builtPage())
-  const unexpected = tagNames(section).filter((name) => !RENDERED_TAGS.has(name))
-  assert.deepEqual(unexpected, [], `the built reference holds tags that are not the renderer's (${unexpected.join(', ')}): a raw \`<x>\` placeholder was passed through as an element, and a browser drops its text`)
-
-  const placeholders = new Set(
-    [...repoFile(REFERENCE).matchAll(/<([a-z][a-z0-9-]*)>/g)].map((match) => match[1]),
-  )
-  assert.ok(placeholders.size > 0, `${REFERENCE} documents no \`<x>\` placeholder, so this case checks nothing`)
-  for (const name of placeholders) {
-    assert.ok(section.includes(`&lt;${name}&gt;`), `the built reference does not show \`<${name}>\` as escaped text (&lt;${name}&gt;)`)
-  }
-})
-
-test('the reference shows its text unaltered: `--out` keeps two hyphens', () => {
-  const section = referenceSection(builtPage())
-  assert.ok(section.includes('--out'), 'the built reference does not contain the literal flag --out')
-  assert.ok(!/[\u2013\u2014]out/.test(section), 'smartypants rewrote `--out` to a dash in the reference')
-})
-
-test('markup planted in the reference source is rendered as text and never as a tag', () => {
-  const tmp = mkdtempSync(path.join(os.tmpdir(), 'docs-hub-'))
-  try {
-    // A throwaway copy of what the build reads, so the real reference is untouched: the
-    // whole repository but the Go tree, as the other copy-and-build tests take it, because
-    // other pages read root files (LICENSE, SECURITY.md) and .github/ (the community page).
-    const site = copyRepository(tmp)
-    const file = path.join(site, 'content', 'cli-reference.md')
-    writeFileSync(
-      file,
-      readFileSync(file, 'utf8') +
-        '\n## `fugaro planted`\n\nPlanted <script>alert(1)</script> and <img src=x onerror=alert(2)> in prose.\n\n<div onclick="alert(3)">block</div>\n\nIn code: `<script>alert(4)</script>`.\n',
-    )
-    const built = spawnSync('npx', ['astro', 'build'], { cwd: site, encoding: 'utf8', env: { ...process.env, ASTRO_TELEMETRY_DISABLED: '1' } })
-    assert.equal(built.status, 0, `the planted build failed: ${built.stdout}${built.stderr}`)
-    const section = referenceSection(readFileSync(path.join(site, 'dist', 'docs', 'index.html'), 'utf8'))
-    const unexpected = tagNames(section).filter((name) => !RENDERED_TAGS.has(name))
-    assert.deepEqual(unexpected, [], `planted markup became tags: ${unexpected.join(', ')}`)
-    assert.ok(section.includes('&lt;script&gt;alert(1)&lt;/script&gt;'), 'planted <script> is not shown as text')
-    assert.ok(section.includes('&lt;img src=x onerror=alert(2)&gt;'), 'planted <img onerror> is not shown as text')
-    assert.ok(!/<(script|img|div)\b/i.test(section) && !/\sonerror=/.test(section.replace(/&lt;[^]*?&gt;/g, '')), 'planted markup reached the page as a tag')
-  } finally {
-    rmSync(tmp, { recursive: true, force: true })
   }
 })
 
@@ -482,8 +356,7 @@ test('markup planted in the reference source is rendered as text and never as a 
 //
 // A gate whose refusal has never been seen to fire is a gate nobody knows the shape of, so
 // each assertion below was mutation-proved on the built page: dropping `display-xl` from the
-// headline, dropping the gradient's `span`, dropping `card` from an entry, dropping
-// `display-md` from the reference's own title, writing a `background` into the page's own
+// headline, dropping the gradient's `span`, dropping `card` from an entry, writing a `background` into the page's own
 // `.guide` rule, writing one into a `.guides .guide` rule (a selector the earlier reading did
 // not look at), and writing `font-size: 1rem; font-weight: 400` into `.docs-title` each fail
 // here, naming the page.
@@ -540,18 +413,10 @@ test("the hub is drawn in the site's shared bold look, and gives the page no sha
   // Every entry is one of the site's cards: `base.css`'s `.card`, which is what makes a card
   // on this page the same box as a card on any other.
   const entries = [...page.matchAll(/<li class="([^"]*)">/g)].map((match) => match[1]).filter((classes) => /\bguide\b/.test(classes))
-  assert.equal(entries.length, LINKED.length + 1, `the built page carries ${entries.length} guide entries and the hub's guides plus the rendered reference are ${LINKED.length + 1}`)
+  assert.equal(entries.length, LINKED.length, `the built page carries ${entries.length} guide entries and the hub's guides and the reference are ${LINKED.length}`)
   for (const classes of entries) {
     assert.match(classes, /(?:^|\s)card(?:\s|$)/, `a guide entry carries ${JSON.stringify(classes)} and not the site's shared \`card\` class: the bold look's card is written once in \`base.css\`, and a card this page drew itself is the page that stops looking like the site`)
   }
-
-  // The reference band's heading: the generated document's own title, which the page moves
-  // from `h1` to `h2` and onto which the move writes the display scale's middle step. It is a
-  // heading of this page, so it is a heading of the same shape as the Guides heading above it
-  // and not a copy of the scale written into this page's stylesheet.
-  const bandTitle = /<section\b[^>]*\bid="cli-reference"[^>]*>[\s\S]*?<h2\b([^>]*)>/.exec(page)
-  assert.ok(bandTitle, `${path.relative(REPO, BUILT_PAGE)} carries no rendered reference, and the band's heading is the generated document's own title`)
-  assert.match(bandTitle[1], /(?:^|\s)class="[^"]*\bdisplay-md\b[^"]*"/, `the rendered reference's own title carries ${JSON.stringify(bandTitle[1])} and no display step: the band's heading is \`base.css\`'s \`.display-md\`, which the page's \`demotedTitle\` writes onto the title as it moves it — a title styled by a rule of this page's own is a second copy of the scale, and the copy is what drifts from it`)
 
   // And the page writes none of those shapes out by hand. A rule of this page's may place a
   // heading — its margins, its measure — and may not set its type: the size, the face, the
