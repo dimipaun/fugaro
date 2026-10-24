@@ -238,3 +238,40 @@ func TestRunTokenPermissionsAreTheRuns(t *testing.T) {
 		t.Errorf("RunTokenPermissions() after a caller mutated its copy = %v, want %v", again, want)
 	}
 }
+
+// TestAppTokenCoordinatorPermissionsHoldNoWrite is Q3's hard rule made
+// mechanical (P2 of docs/coordinator/implementation-plan.md, D193(A)): the
+// installation token a coordinator mints carries the four reads the project
+// view needs and no write anywhere.
+//
+// The set is read twice, because the two are not the same claim: the accessor
+// is what the caller asks with, and testdata/coordinator_token.json holds the
+// body the mint actually sends — a fixture server refuses a request body that
+// is not the one it holds, so a permission added to the set after that file
+// was written fails here rather than reaching GitHub.
+func TestAppTokenCoordinatorPermissionsHoldNoWrite(t *testing.T) {
+	want := map[string]string{"contents": "read", "pull_requests": "read", "issues": "read", "metadata": "read"}
+	perms := CoordinatorTokenPermissions()
+	if !maps.Equal(perms, want) {
+		t.Fatalf("CoordinatorTokenPermissions() = %v, want %v", perms, want)
+	}
+	for name, level := range perms {
+		if strings.Contains(level, "write") {
+			t.Errorf("the coordinator's token asks GitHub for %s: %s", name, level)
+		}
+	}
+	perms["contents"] = "write"
+	if again := CoordinatorTokenPermissions(); !maps.Equal(again, want) {
+		t.Errorf("CoordinatorTokenPermissions() after a caller mutated its copy = %v, want %v", again, want)
+	}
+
+	now := time.Date(2026, 10, 24, 10, 0, 0, 0, time.UTC)
+	srv := httpfixture.Serve(t, filepath.Join("testdata", "coordinator_token.json"))
+	tok, exp, err := MintInstallationToken(context.Background(), Options{
+		Owner: "acme", Repo: "web", AppID: "1234", PrivateKey: key(t), BaseURL: srv.URL,
+		HTTP: &http.Client{Transport: jwtCheck{t, &key(t).PublicKey}}, Now: func() time.Time { return now },
+	}, CoordinatorTokenPermissions())
+	if err != nil || tok != "ghs_fixture_coordinator_token" || !exp.Equal(now.Add(time.Hour)) {
+		t.Fatalf("MintInstallationToken = %q %s %v", tok, exp, err)
+	}
+}

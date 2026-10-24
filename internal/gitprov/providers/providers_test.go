@@ -66,6 +66,36 @@ func TestGitHubFromEnvKeyOrFile(t *testing.T) {
 	}
 }
 
+// AppKey is the App's key as the opener reads it, for the caller that mints a
+// token of its own (the coordinator's read-only one): the environment's own
+// value, the file it names, and a refusal naming both when neither is there.
+func TestAppKeyFromEnv(t *testing.T) {
+	pemData := keyPEM(t)
+	file := filepath.Join(t.TempDir(), "key.pem")
+	if err := os.WriteFile(file, []byte(pemData), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, env := range map[string][]string{
+		"inline": {EnvGitHubAppKey + "=" + pemData},
+		"file":   {EnvGitHubAppKeyFile + "=" + file},
+	} {
+		got, err := AppKey(env)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got != pemData {
+			t.Errorf("%s: AppKey = %d bytes, want the key the environment names", name, len(got))
+		}
+	}
+	if _, err := AppKey([]string{EnvGitHubAppKeyFile + "=" + filepath.Join(t.TempDir(), "missing.pem")}); err == nil ||
+		!strings.Contains(err.Error(), EnvGitHubAppKeyFile) {
+		t.Errorf("an unreadable key file: err = %v, want it to name %s", err, EnvGitHubAppKeyFile)
+	}
+	if _, err := AppKey(nil); err == nil || !strings.Contains(err.Error(), EnvGitHubAppKey) || !strings.Contains(err.Error(), EnvGitHubAppKeyFile) {
+		t.Errorf("no key at all: err = %v, want it to name both variables", err)
+	}
+}
+
 func TestFromEnvErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name, kind, repo string
