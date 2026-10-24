@@ -102,6 +102,17 @@ func check124Section(t *testing.T, letter string) string {
 	return rest
 }
 
+// hasAnyPrefix is strings.HasPrefix over a list, for the two `fugaro` commands
+// the register's `--project fugaro` rule does not apply to.
+func hasAnyPrefix(s string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // check124Facts returns the section's `**FACT:**` lines. The register's FACT
 // convention is one line per assertion, starting at the line's beginning.
 func check124Facts(section string) []string {
@@ -180,8 +191,9 @@ func TestDocsCheck124IsWrittenAsFourPartsWithItsRow(t *testing.T) {
 
 // TestDocsCheck124EverySectionCarriesTheGuard: Check 43's three hard stops,
 // verbatim, in each of the four parts, plus the two pinning rules — every
-// `fugaro` command gets `--project fugaro`, every `gcloud` command gets
-// `--project=` from the guard's own `P`.
+// `fugaro` command gets `--project fugaro` (bar `version` and `validate`, which
+// take no such flag and are the register's own two exceptions), every `gcloud`
+// command gets `--project=` from the guard's own `P`.
 //
 // The register-wide backstop that would assert this for every check from 48
 // onward (`TestChecklistChecksAreGuarded`, the project-centric plan's Task 6.3)
@@ -203,7 +215,13 @@ func TestDocsCheck124EverySectionCarriesTheGuard(t *testing.T) {
 		}
 		for _, line := range strings.Split(section, "\n") {
 			code := strings.TrimSpace(line)
-			if strings.HasPrefix(code, "fugaro ") && !strings.HasPrefix(code, "fugaro version") {
+			// `fugaro version` and `fugaro validate` are the two commands with
+			// no `--project` flag at all (`fugaro validate --help`); the
+			// register says so where Check 43's rule is written out
+			// (docs/gcp-live-checklist.md, "Every `fugaro` command that takes
+			// `--project` gets `--project fugaro`"), and validate resolves the
+			// project from the checkout the guard's third stop pins.
+			if exempt := []string{"fugaro version", "fugaro validate"}; strings.HasPrefix(code, "fugaro ") && !hasAnyPrefix(code, exempt) {
 				if !strings.Contains(code, "--project fugaro") {
 					t.Errorf("Check 124%s runs %q without `--project fugaro`: the installation's name is what pins the command to the fugaro-dev one, and ommitting it resolves from the checkout or the operator's environment", letter, code)
 				}
@@ -334,14 +352,14 @@ func TestDocsCheck124FactsAreFactLined(t *testing.T) {
 			"failed (preempted)",
 			"fugaro reaper --dry-run --project fugaro",
 			"fugaro reaper --project fugaro",
-			"picking up",
+			"reaped projects/",
 		},
 		"d": {
 			"fugaro budget show --project fugaro",
 			"gcloud batch jobs list",
 			"gcloud compute instances list",
 			"gcloud compute instance-templates list",
-			"expected output:",
+			"fugaro runs ls --project fugaro",
 		},
 	}
 	for letter, wants := range wantFacts {
