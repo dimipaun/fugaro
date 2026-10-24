@@ -260,6 +260,9 @@ func TestGoreleaserReleaseBuild(t *testing.T) {
 			{name: "GOFLAGS in the release workflow's goreleaser step", workflow: workflowWithGOFLAGS(goreleaserStep, "GOFLAGS: -tags=ee"), want: []string{"ee"}},
 			{name: "GOFLAGS in the release workflow's goreleaser step, as a list", workflow: workflowWithGOFLAGS(goreleaserStep, `["GOFLAGS=-tags=ee"]`), want: []string{"ee"}},
 			{name: "GOFLAGS in a step that is not goreleaser's", workflow: workflowWithGOFLAGS("actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e", "GOFLAGS: -tags=ee"), want: nil},
+			{name: "GOFLAGS on the job that runs goreleaser", workflow: "jobs:\n  release:\n    env:\n      GOFLAGS: -tags=ee\n    steps:\n      - uses: " + goreleaserStep + "\n", want: []string{"ee"}},
+			{name: "GOFLAGS at the workflow's own level", workflow: "env:\n  GOFLAGS: -tags=ee\njobs:\n  release:\n    steps:\n      - uses: " + goreleaserStep + "\n", want: []string{"ee"}},
+			{name: "GOFLAGS on a job that runs no goreleaser", workflow: "jobs:\n  check:\n    env:\n      GOFLAGS: -tags=ee\n    steps:\n      - run: echo nothing\n", want: nil},
 		} {
 			t.Run(c.name, func(t *testing.T) {
 				cfg := parseGoreleaser(t, c.config)
@@ -646,12 +649,16 @@ func goflagTags(flags string) []string {
 	return tags
 }
 
-// workflowGOFLAGTags reads GOFLAGS out of the env of every goreleaser step of
-// the release workflow.
+// workflowGOFLAGTags reads GOFLAGS from every environment a goreleaser step
+// runs in: the workflow's own env, the env of a job holding such a step, and
+// the step's own env. A step's `run:` or another action's env is not the
+// build's, so only a goreleaser step's counts.
 func workflowGOFLAGTags(t *testing.T, workflow []byte) []string {
 	t.Helper()
 	var doc struct {
+		Env  envList `yaml:"env"`
 		Jobs map[string]struct {
+			Env   envList `yaml:"env"`
 			Steps []struct {
 				Uses string  `yaml:"uses"`
 				Env  envList `yaml:"env"`
@@ -662,16 +669,27 @@ func workflowGOFLAGTags(t *testing.T, workflow []byte) []string {
 		t.Fatalf("parsing the release workflow: %v", err)
 	}
 	var tags []string
+	add := func(env envList) {
+		for _, entry := range env {
+			if name, value, ok := strings.Cut(entry, "="); ok && name == "GOFLAGS" {
+				tags = append(tags, goflagTags(value)...)
+			}
+		}
+	}
+	add(doc.Env)
 	for _, job := range doc.Jobs {
+		var goreleaser []envList
 		for _, step := range job.Steps {
-			if !strings.HasPrefix(step.Uses, "goreleaser/goreleaser-action@") {
-				continue
+			if strings.HasPrefix(step.Uses, "goreleaser/goreleaser-action@") {
+				goreleaser = append(goreleaser, step.Env)
 			}
-			for _, entry := range step.Env {
-				if name, value, ok := strings.Cut(entry, "="); ok && name == "GOFLAGS" {
-					tags = append(tags, goflagTags(value)...)
-				}
-			}
+		}
+		if len(goreleaser) == 0 {
+			continue
+		}
+		add(job.Env)
+		for _, env := range goreleaser {
+			add(env)
 		}
 	}
 	return tags
