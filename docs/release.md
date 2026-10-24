@@ -251,6 +251,8 @@ docker pull ghcr.io/dimipaun/fugaro-history:$V
 # docker pull --platform linux/arm64 ghcr.io/dimipaun/fugaro-base:$V
 ```
 
+Each archive carries the binary, `LICENSE`, `README.md` and `THIRD_PARTY_NOTICES.md`, the licence and notice texts of every Go module the binary links, which `scripts/third-party-notices.sh` writes in GoReleaser's before hooks — one `go list -deps` per target of the build matrix, so a module only one target links is covered too, and the file is generated into the tree rather than committed.
+
 Also check on the release page: it is not a draft; for 0.4.0 and later it is not marked "Pre-release"; the body shows `## Highlights` above `## Changelog`.
 
 `fugaro version` prints `X.Y.Z` (no `v`); a `go install` build prints `dev` because the version is injected only by GoReleaser's `-ldflags`. SBOMs are the `*.sbom.json` assets (SPDX/syft JSON, one per archive).
