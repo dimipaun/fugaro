@@ -37,10 +37,7 @@ func TestDocsGCPSetupNotAnOwnerSaysWhatCreatingAndLinkingNeed(t *testing.T) {
 // the check and the refusals, and nothing else. A section of the old page
 // reappearing here is how the page grew to 688 lines before.
 func TestDocsGCPSetupStaysShort(t *testing.T) {
-	lines, err := fileLines(gcpSetupDoc)
-	if err != nil {
-		t.Fatal(err)
-	}
+	lines := strings.Count(readDoc(t, gcpSetupDoc), "\n")
 	if lines > 60 {
 		t.Errorf("%s is %d lines: the page is meant to be one short page", gcpSetupDoc, lines)
 	}
