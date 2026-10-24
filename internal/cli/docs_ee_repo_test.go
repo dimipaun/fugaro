@@ -59,6 +59,7 @@ const eeBoundaryPackage = "internal/eeboundary/"
 // out of it takes that workflow down.
 var eeReadingTests = []string{
 	"TestDocsEEReserved",
+	"TestDocsLicensingStatement",
 }
 
 // readRealEE reads one path of the real repository's ee/ tree, so that every
