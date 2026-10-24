@@ -1,6 +1,6 @@
 # The coordinator — the implementation plan
 
-**Status (2026-10-24): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0, P1, P2 and P3 are on `coordinator`, and P4–P8 are not started.** Each part carries its own **Status** line below, and this one moves with them: the status line and the pins that hold it change in the commit that lands a part, which is what the P0 section says of itself and what every earlier plan in this repository did (`docs/mobile/README.md`, `docs/setup-wizard/README.md`). This plan follows from
+**Status (2026-10-24): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0, P1, P2, P3 and P4 are on `coordinator`, and P5–P8 are not started.** Each part carries its own **Status** line below, and this one moves with them: the status line and the pins that hold it change in the commit that lands a part, which is what the P0 section says of itself and what every earlier plan in this repository did (`docs/mobile/README.md`, `docs/setup-wizard/README.md`). This plan follows from
 [reconciliation.md](reconciliation.md), which wins wherever it disagrees with
 [spec.md](spec.md). Every path and symbol below was re-read against `main` at `1e0953b7`
 (`docs(central-orchestrator): spec, reconciliation and plan for central orchestrators (#775)`)
@@ -456,6 +456,51 @@ its text is written by whoever can already run `fugaro run` (finding #11's trust
 adds no network surface.
 
 **Commit.** `coordinator: the intent record, and the report path every orchestrator uses`
+
+**Status: built.** Lands on the long-lived `coordinator` branch when its pull request merges, in
+this plan's own commit message, and the plan's status line above moves with it. The record, its
+deterministic ID (`IntentID`, over `DocumentID`'s length-prefixed parts), its two refusals and the
+writer are in `internal/coordinator/intent.go`; the node is
+`internal/coordinator/state.go`'s `PathIntents` and `PathIntent`; `fugaro coordinator report` is
+the transport; and `launchRun` calls the same writer beside `takeClaim`, so a launch declares
+itself without a second command. What a launch can
+declare before any code exists is the caller the task names and the branch the run is about to
+work on — the files and the services are what the run's own record holds once it has worked, and
+the join is P1's. The declaration is **advisory in the launch as it is everywhere**: a project
+with no database is skipped, a task that names no requester is not declared (the report path's own
+refusal is right when a person asks and pointless when nobody did), a failure is a warning on
+stderr and never a failed launch, and the whole thing is bounded at 15 seconds so a database that
+does not answer cannot eat the time the launch needs. The declaration also **follows the launch's
+own database switch**: `budget.mode: off`, a project with no `budget.rtdb_url`, and
+`--no-budget-check` all declare nothing, because the coordinator's state lives in the database the
+budget uses and a launch that was told not to use it may not be the one call that reaches it —
+beyond the policy read a launch always makes. Nothing is lost by it: the declaration is advisory,
+and the view P1 renders reads the runs bucket, where the launch's own record lands either way.
+
+**What this part does not do, and the one tension it leaves.** The record is written through the
+**caller's own credentials**, on the project's `budget.rtdb_url` database, because there is no
+other credential in the tree: P2's reader is read-only and P3's writer account does not exist until
+P5 creates it. But the rules P3 deployed grant `/coordinator` a **read** and `.write: false` to
+everybody (Q15 A), so what admits a report is the **database role its caller holds** —
+`roles/firebasedatabase.admin`, which `terraform.budget_admins` have — and nothing else. So
+`fugaro coordinator report` works for a person who is already a budget admin of the installation,
+and refuses, saying exactly that, for a launcher who is not: the local orchestrators Q15(C) is
+about report through the front door, `report_intent` (**P8**), which writes as the coordinator
+rather than as the person. That is the gap Q15(A) leaves between "the CLI is the transport" and
+"no client writes the subtree", and it is recorded here rather than papered over: this part is
+built as the P4 section specifies, and **a later part that wants the non-admin path builds it in
+P8**, not by widening the rules. Nothing in this part mints a credential, changes the rules,
+deploys anything or grants anybody: the grant and the rules deployment stay owner-run.
+
+**One deviation from the section above, and one proposal this part does not take.** The **Files**
+line names "one line of `internal/cli/root.go`"; the subcommand is registered beside the others in
+`newCoordinatorCmd` (`internal/cli/coordinator.go`), which is where every coordinator subcommand
+is added, and the root command's own file is untouched. And the record carries **no plan task
+id**: `docs/console-dependency-graph/reconciliation.md` **GD5** proposes one recorded in the
+launch record a run already writes, and its §4 item (f) says recording it in this record is
+*"proposed here and not made"*, so the record is the
+shape this plan gives it — the caller, the clock, the branch, the target release, the files and
+the services — and a later part that wants a plan task id adds a field and adds it to the ID.
 
 ---
 

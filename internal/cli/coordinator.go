@@ -22,6 +22,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -47,6 +49,212 @@ import (
 //     launched_by is a string a launcher writes about itself and nothing
 //     verifies (reconciliation finding #11), so the view carries it as
 //     declared_by and the table says so on every run of it.
+
+// fugaro coordinator report (docs/coordinator/implementation-plan.md, part
+// P4): the report path every orchestrator declares its work through, and the
+// coordinator's half of the central orchestrator plan's P9.
+//
+// It is the spec's §6 "intent signals … sent *before* code exists" with the
+// CLI as the transport, and it takes NOTHING BACK: the command writes one
+// record and prints it, and it issues no advice, reads no state back and
+// compares the declaration against nothing. The record's shape, its
+// deterministic ID and its validation live in internal/coordinator
+// (Intent, IntentID, Reporter), because `report_intent` (P8) is this same
+// writer behind the front door and a second transport must not invent a
+// second record.
+//
+// What it writes is a DECLARATION, never an identity: who declares it is the
+// caller's own string — the local config's user:, else git config user.email,
+// the string a run's launch.json records (reconciliation finding #11) — and
+// nothing here verifies it or authorises anything by it.
+//
+// The credential is the caller's own: the database client is the budget
+// commands' (newBudgetClient, budget.rtdb_url, the person's ADC). The rules
+// grant /coordinator a READ and no write to anybody (Q15 A, P3), so what
+// admits this write is the database IAM its caller holds —
+// roles/firebasedatabase.admin, which terraform.budget_admins have — and a
+// refusal says so rather than being reported as an outage.
+
+// coordinatorReportOptions are report's flags.
+type coordinatorReportOptions struct {
+	cloud    cloudOptions
+	repo     string
+	branch   string
+	release  string
+	files    []string
+	services []string
+	asJSON   bool
+}
+
+func newCoordinatorReportCmd() *cobra.Command {
+	var o coordinatorReportOptions
+	cmd := &cobra.Command{
+		Use:   "report",
+		Short: "Declare the work you are about to start",
+		Long: "Write one intent record for this project's repository: the branch and the\n" +
+			"target release the caller declares, and the files and services it is about\n" +
+			"to touch, so that work still in flight can be seen before code exists\n" +
+			"(spec §6).\n\n" +
+			"The record's ID is derived from the caller and the declaration, and from\n" +
+			"nothing else: reporting the same declaration twice writes ONE document, and\n" +
+			"the second report replaces the first rather than adding to it.\n\n" +
+			"The caller is who the local config names (user:), else git config\n" +
+			"user.email, and a report nobody can be named for is refused: every record\n" +
+			"is somebody's declaration, and one nobody can be named for is not one. That\n" +
+			"name is a declaration too — nothing verifies it, and nothing authorises\n" +
+			"anything by it (finding #11).\n\n" +
+			"This command writes and reads nothing back: it prints the record it wrote\n" +
+			"and issues no advice, which is the coordinator's whole posture in v1\n" +
+			"(spec §3, advisory and never authoritative).\n\n" +
+			"The write goes through the caller's own credentials, on the project's\n" +
+			"budget.rtdb_url database. The rules grant /coordinator a read and no write\n" +
+			"to anyone, so the write is admitted by the database role its caller holds\n" +
+			"(roles/firebasedatabase.admin, which terraform.budget_admins have); a\n" +
+			"launcher who is not an admin reports through the coordinator's front door\n" +
+			"once it is deployed.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error { return runCoordinatorReport(cmd, &o) },
+	}
+	f := cmd.Flags()
+	f.StringVar(&o.repo, "repo", "", "the repository this report is about (owner/name; default: the local config's, when it lists one)")
+	f.StringVar(&o.branch, "branch", "", "the branch you are about to work on")
+	f.StringVar(&o.release, "release", "", "the target release (default: the one the branch names, e.g. release/v0.11.0)")
+	f.StringArrayVar(&o.files, "file", nil, "a path you are about to touch (repeatable)")
+	f.StringArrayVar(&o.services, "service", nil, "a service you are about to touch (repeatable)")
+	f.BoolVar(&o.asJSON, "json", false, "print the record as it was written")
+	addCloudFlags(cmd, &o.cloud)
+	return cmd
+}
+
+func runCoordinatorReport(cmd *cobra.Command, o *coordinatorReportOptions) error {
+	ctx := cmd.Context()
+	env, err := openCloud(ctx, o.cloud)
+	if err != nil {
+		return err
+	}
+	defer env.Close()
+
+	repo, err := coordinatorReportRepo(env, o.repo)
+	if err != nil {
+		return err
+	}
+	// The caller, before anything is opened or written: a report nobody can be
+	// named for is refused, and the refusal is localcfg.Me's own (it names
+	// both places the identity can come from).
+	me, err := env.lc.Me(ctx)
+	if err != nil {
+		return userErr("%v", err)
+	}
+	co := checkoutOf(ctx, repo)()
+	slug, err := env.repoSlug(repo, func() *config.Config { return co })
+	if err != nil {
+		return err
+	}
+	store, err := openCoordinatorStore(ctx, env.lc)
+	if err != nil {
+		return err
+	}
+	rec, path, err := (&coordinator.Reporter{Store: store}).Report(ctx, slug, coordinator.Intent{
+		DeclaredBy: me,
+		Branch:     o.branch,
+		Release:    o.release,
+		Files:      o.files,
+		Services:   o.services,
+	})
+	if err != nil {
+		return coordinatorReportErr(env.lc, err)
+	}
+	out := cmd.OutOrStdout()
+	if o.asJSON {
+		return writeCoordinatorJSON(out, rec)
+	}
+	return writeCoordinatorReport(out, rec, path)
+}
+
+// coordinatorReportRepo is the one repository a report is about: --repo's,
+// else the single one the local config lists. There is no --all here and there
+// must not be: a declaration is made by one caller about the work it is about
+// to start, and a report about every repository at once would be a report
+// about none of them.
+func coordinatorReportRepo(env *cloudEnv, repo string) (string, error) {
+	if repo != "" {
+		return repo, nil
+	}
+	repos := slices.Sorted(maps.Keys(env.lc.Repos))
+	switch len(repos) {
+	case 0:
+		return "", userErr("the local config lists no repository: add one to its repos, or name one with --repo")
+	case 1:
+		return repos[0], nil
+	}
+	return "", userErr("the local config lists %d repositories; name the one this report is about with --repo", len(repos))
+}
+
+// coordinatorReportErr classifies a report that failed. The report path's own
+// refusals are the caller's (an unnamed caller, a declaration that declares
+// nothing), and so is a database that refused the write: /coordinator is
+// readable by a signed-in reader and writable by nobody through the rules
+// (Q15 A, P3), so what admits the write is the database role its caller holds.
+// Everything else — an unreachable database, a bad address — is the host's.
+func coordinatorReportErr(lc *localcfg.Config, err error) error {
+	switch {
+	case errors.Is(err, coordinator.ErrUnnamedCaller), errors.Is(err, coordinator.ErrNothingDeclared):
+		return userErr("%v", err)
+	case errors.Is(err, rtdb.ErrPermission):
+		return userErr("project %s's database refused the write: /coordinator is readable by a signed-in reader and writable by nobody through the rules, so a report is written under the database role its caller holds (roles/firebasedatabase.admin, which terraform.budget_admins have); ask an owner to add you, or report through the coordinator's front door once it is deployed (%v)", lc.Name, err)
+	}
+	return remote(err)
+}
+
+// openCoordinatorStore opens the coordinator's store over the project's own
+// database: the same client, the same address and the same credential the
+// budget commands open (newBudgetClient, the caller's ADC with the database
+// scopes). The store's own check, and not the rules and not IAM, is what keeps
+// the writer to the coordinator's subtree (D194), and it mints nothing.
+//
+// A package variable, so a test replaces exactly the one thing that would
+// reach a database.
+var openCoordinatorStore = func(ctx context.Context, lc *localcfg.Config) (*coordinator.Store, error) {
+	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
+		return nil, userErr("project %s has no Firebase database to report to (budget.rtdb_url is not set in its project config): an operator runs fugaro update --firebase-project %s --name %s", lc.Name, lc.GCPProject, lc.Name)
+	}
+	db, err := newBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)
+	if err != nil {
+		return nil, err
+	}
+	return coordinator.NewStore(db), nil
+}
+
+// writeCoordinatorReport prints the record the command wrote, and the path it
+// wrote it to. It is the record and nothing else: no advice, no comparison
+// against what is in flight, and no summary — the view (status) is where a
+// person reads what collides, and this command is not a second, worse answer
+// to that question.
+func writeCoordinatorReport(w io.Writer, rec coordinator.Intent, path string) error {
+	if _, err := fmt.Fprintf(w, "reported /%s\n", path); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "  declared by %s at %s\n", coordinatorCell(rec.DeclaredBy), rec.At.Format(time.RFC3339))
+	fmt.Fprintf(w, "  branch %s\n", coordinatorCell(rec.Branch))
+	fmt.Fprintf(w, "  release %s\n", coordinatorCell(rec.Release))
+	fmt.Fprintf(w, "  files %s\n", coordinatorCellList(rec.Files))
+	fmt.Fprintf(w, "  services %s\n", coordinatorCellList(rec.Services))
+	return nil
+}
+
+// coordinatorCellList is one cell holding a list somebody else wrote: "none"
+// for a list that declares nothing, and otherwise the values clipped and made
+// safe for a terminal line, one by one.
+func coordinatorCellList(vals []string) string {
+	if len(vals) == 0 {
+		return "none"
+	}
+	out := make([]string, 0, len(vals))
+	for _, v := range vals {
+		out = append(out, coordinatorCell(v))
+	}
+	return clipRunes(strings.Join(out, ", "), coordinatorMaxCellRunes*2)
+}
 
 // coordinatorDefaultSince is status's default window, and it is runs ls's:
 // the two read the same objects over the same span, and a person comparing
@@ -105,6 +313,7 @@ func newCoordinatorCmd() *cobra.Command {
 			"reorders or refuses a merge (spec §3).",
 	}
 	cmd.AddCommand(newCoordinatorStatusCmd())
+	cmd.AddCommand(newCoordinatorReportCmd())
 	return cmd
 }
 
@@ -399,12 +608,29 @@ func coordinatorAppCredential() (appID, pemData string, err error) {
 // is handed is installed on the provider before its first call, so every
 // installation token the read then uses is the coordinator's read-only one and
 // never the run's set, which holds two writes.
+//
+// The App credential is asked for before the provider is opened, and that is
+// the second half of the decision. providers.FromEnv reports a variable it does
+// not find as a plain error, and a failure through the host is a remote one
+// (exit 2) — so without this check a person who simply has not exported the
+// App's ID would be told the host failed and would retry it, when the refusal
+// is theirs to fix and the same condition is already a user error where the
+// mint asks for the credential (coordinatorAppCredential, exec 1). Asking here
+// is also what makes that wording reachable: the opener refuses before the mint
+// is reached, so the mint's own message could never be the one a person saw.
+// It costs a repository whose runs name a pull request the same two values read
+// a second time, and nothing at all for one without: Project.PullRequests
+// returns before opening when the runs name no pull request, so a project with
+// nothing in it is still read with no App credential anywhere.
 var openCoordinatorProvider = func(env []string, warn func(string)) (coordinator.ProviderOpener, error) {
 	_, open, err := providerOptions(execOptions{}, env, warn)
 	if err != nil {
 		return nil, err
 	}
 	return func(ctx context.Context, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		if _, _, err := coordinatorAppCredential(); err != nil {
+			return nil, nil, err
+		}
 		p, secrets, err := open(ctx, gitprov.KindGitHub, repo)
 		if err != nil {
 			return nil, secrets, err
