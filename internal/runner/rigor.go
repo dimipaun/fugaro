@@ -16,12 +16,15 @@ import (
 // rule, so a repository that configures POC is reviewed exactly as it was —
 // the stricter direction — while its record says what it asked for. That is
 // what lets this land alone. The one part that is real is the read: the mode's
-// configuration comes from the base branch (D25) and never from the branch
-// under review, which is the ground everything a later slice makes the mode do
-// will stand on.
+// configuration comes from the base branch (D25), read as the repository's
+// default branch — the revision no file in the checkout can name, which is what
+// makes it the base rather than the branch under review's own answer — and
+// never from the branch under review, which is the ground everything a later
+// slice makes the mode do will stand on.
 
-// bootstrapRigor resolves the run's mode from the base branch and records it at
-// D22's first moment, bootstrap.
+// bootstrapRigor resolves the run's mode from the base branch — for a run whose
+// checkout is the branch under review's, the repository's default branch — and
+// records it at D22's first moment, bootstrap.
 //
 // It never fails the run. The mode acts on nothing yet, so a base read that
 // cannot be made is a warning and a mode resolved from what the run does know —
@@ -51,8 +54,12 @@ func (r *run) recordRigor(at string, paths []string) {
 	r.rec.Rigor = r.rec.Rigor.Applied(runstore.Moment{Resolved: res, At: at, Revision: r.rigorRev})
 }
 
-// reachedRigor is the mode this run has already resolved at an earlier moment;
-// "" before the first one.
+// reachedRigor is the mode this run has resolved so far: bootstrap's answer
+// once it has run, and "" before the first resolution. It is what the policy
+// reads too — the mode a run gets its per-run default from is the one it
+// resolved at bootstrap, and a policy a run's own stages could move would not
+// be the ceiling it is (plan T6.1) — and what the resolver is given as
+// Request.Reached, so its own answer is monotone as well.
 func (r *run) reachedRigor() rigor.Mode {
 	if r.rec.Rigor == nil {
 		return ""
@@ -88,21 +95,29 @@ func (r *run) changedPaths() []string {
 // A follow-up and a review run have already read that file: readBaseConfig
 // fetched origin/<ref> and resolved fugaro.yaml from it, so the configuration
 // the run is running on *is* the base's, and only the mode's half of it is
-// taken from it. A first run reads its other keys from the checked-out ref
-// (bootstrap's own os.ReadFile), and the mode is the one key that must not come
-// from there: a branch that could set its own mode could set it to POC in the
-// same pull request it wants merged (D25).
+// taken from it. Neither reads a second time.
+//
+// A first run reads its other keys from the checked-out ref (bootstrap's own
+// os.ReadFile), and the mode is the one key that must not come from there: the
+// checkout is cut from the ref the run will push, so a branch that names itself
+// as git.base_branch would be reading its own file as "the base branch's" —
+// a branch that could set its own mode could set it to POC in the same pull
+// request it wants merged (D25). D25's base branch is therefore read as the
+// repository's default branch, through the read checkProject and resolvePolicy
+// already make (defaultBranchFile): the file no file in the checkout can
+// choose. A repository whose git.base_branch is not its default branch resolves
+// the mode from the default branch's file nonetheless, and D24's revision is
+// what the record says it read.
 //
 // A base that cannot be read, or whose fugaro.yaml does not resolve, falls back
 // to the project layer alone — the layer came with the task and is no branch's
 // — and names no revision, rather than falling back to the branch under
 // review's own value, which is the one answer this must never give.
 func (r *run) baseRigor(ctx context.Context) (rigor.Config, string) {
-	rev := "origin/" + r.cfg.Git.BaseBranch
 	if r.follow != nil || r.review {
-		return r.cfg.RigorConfig(), rev
+		return r.cfg.RigorConfig(), "origin/" + r.cfg.Git.BaseBranch
 	}
-	data, err := r.repo.ShowFile(ctx, rev, "fugaro.yaml")
+	rev, data, err := r.readBaseRigor(ctx)
 	if err != nil {
 		r.d.Log.Warn("the base branch's fugaro.yaml could not be read; the run resolves its rigor from the project layer alone",
 			"revision", rev, "err", r.redact(err.Error()))
@@ -121,4 +136,27 @@ func (r *run) baseRigor(ctx context.Context) (rigor.Config, string) {
 		return r.cfg.ProjectRigor(), ""
 	}
 	return out.Cfg.RigorConfig(), rev
+}
+
+// readBaseRigor is the file the mode is read from and the revision it was read
+// at. A run with a project reads the repository's default branch: the checkout
+// is the branch under review, and the base it names for itself is its own to
+// choose. A local run reads the checkout's own base ref, as it did before the
+// default-branch read arrived: it has no project, so checkProject and
+// resolvePolicy both skip that read there, and it has no branch under review
+// for the mode to be protected from — the checkout is the developer's own.
+//
+// The revision is "" when the repository never named a default branch, which is
+// the only case where the read has no revision to report.
+func (r *run) readBaseRigor(ctx context.Context) (rev string, data []byte, err error) {
+	if r.d.Project == "" {
+		rev = "origin/" + r.cfg.Git.BaseBranch
+		data, err = r.repo.ShowFile(ctx, rev, "fugaro.yaml")
+		return rev, data, err
+	}
+	data, def, err := r.defaultBranchFile(ctx)
+	if def != "" {
+		rev = "origin/" + def
+	}
+	return rev, data, err
 }

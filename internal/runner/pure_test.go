@@ -22,6 +22,10 @@ func TestParseVerdict(t *testing.T) {
 	if v := ParseVerdict(fenced); v.Verdict != "ship" {
 		t.Errorf("fenced = %+v", v)
 	}
+	scored := agent.Result{Structured: json.RawMessage(`{"verdict":"changes","findings":[{"severity":"low","summary":"x","likelihood":5,"impact":1,"fix_cost":2,"class":"cosmetic"}]}`)}
+	if f := ParseVerdict(scored).Findings[0]; f.Likelihood != 5 || f.Impact != 1 || f.FixCost != 2 || f.Class != "cosmetic" {
+		t.Errorf("scored = %+v, want the score read alongside the summary", f)
+	}
 	for _, bad := range []agent.Result{{Text: "no verdict here"}, {Structured: json.RawMessage(`{"verdict":"maybe"}`)}} {
 		v := ParseVerdict(bad)
 		if v.Verdict != "changes" || len(v.Findings) != 1 || !strings.Contains(v.Findings[0].Summary, "no parseable verdict") {

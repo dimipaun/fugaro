@@ -7,7 +7,7 @@
     ],
     "total": 1
   },
-  "config_sha256": "0a6ef89a86acafaceb44ccc7654b5dc480f3e6cc04bf21140712fc80654144f1",
+  "config_sha256": "9ae1906394bf3a9bfbfb76ccd68bf53b41d106baae057a2b5006ee1a3f011048",
   "cost": {
     "compute_estimated": false,
     "compute_usd": 0,
@@ -26,7 +26,7 @@
   "policy": {
     "effective": {
       "max_run_tokens": 900000,
-      "per_run_usd": 5
+      "per_run_usd": 4.25
     },
     "sources": {
       "max_run_tokens": "ceiling",

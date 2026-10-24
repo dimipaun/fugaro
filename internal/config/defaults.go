@@ -3,6 +3,10 @@ package config
 import (
 	"slices"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 // BaseKind is the one Fugaro base image's kind (design base-image.md): what a
@@ -46,6 +50,92 @@ const (
 	// every reader that places an auth places this one the same way.
 	AuthCascade = "cascade"
 )
+
+// RigorBudgetStageFloorUSD is the least model spend one stage can be granted:
+// the budget gateway's own lease floor (internal/budget's minLease, $0.25).
+// Under it the gateway grants a stage nothing, and a run that cannot be
+// granted dies on the cap — the most expensive outcome there is, because a
+// run that dies on the cap produces nothing (docs/rigor-modes D16).
+// TestRigorBudgetStageFloorIsTheLeaseFloor reads the two apart.
+const RigorBudgetStageFloorUSD = 0.25
+
+// RigorBudgetFractions are the per-run budget defaults the modes contribute,
+// as fractions of the deployed cap (D16, plan T6.1). A fraction rather than a
+// dollar figure is what makes "a mode lowers the ceiling and never raises it"
+// structural: the effective cap is a fraction of the ceiling, and a fraction
+// of a value is never above it (F15).
+//
+// Critical is absent on purpose: the whole deployed cap is what a run of the
+// strictest mode gets, which is what every run got before this table existed,
+// and a default below it would change a Critical run's outcome — the one
+// thing this work may not do (the plan's §5 and §7.1).
+//
+// The order is the owner's (D16): POC < Startup < Pro < Critical, with Hotfix
+// tightest of all, because a hotfix is the run with the least room to spend.
+var RigorBudgetFractions = map[rigor.Mode]float64{
+	rigor.Hotfix:  0.4,
+	rigor.POC:     0.55,
+	rigor.Startup: 0.7,
+	rigor.Pro:     0.85,
+}
+
+// RigorBudgetFloorUSD is the least a mode's per-run default may be: one
+// stage's floor for each model stage the smallest run the built-in recipe
+// catalog ships can start, which is the smoke check a run has to be able to
+// finish. The arithmetic is recipe.StageBound's, the same bound the cost
+// preview quotes.
+var RigorBudgetFloorUSD = RigorBudgetStageFloorUSD * float64(smokeStages())
+
+// smokeStages is the model stages the smallest run the built-in recipe
+// catalog ships can start, at the knobs' defaults: the smallest
+// recipe.StageBound over the catalog.
+func smokeStages() int {
+	smallest := 0
+	for _, name := range recipe.CatalogNames() {
+		text, ok := recipe.CatalogText(name)
+		if !ok {
+			continue
+		}
+		r, ps := recipe.Parse(text)
+		if len(ps) > 0 {
+			continue
+		}
+		if n := recipe.StageBound(r, DefaultFirstLineRounds, DefaultReviewRounds); smallest == 0 || n < smallest {
+			smallest = n
+		}
+	}
+	return smallest
+}
+
+// RigorBudgetFraction is the per-run budget default m contributes as a
+// fraction of the deployed cap. A mode the table does not hold — Critical, a
+// caller that resolved none, a name outside the vocabulary — contributes none
+// and so gets the whole cap: nothing here may tighten a run on the strength
+// of a value it could not place.
+func RigorBudgetFraction(m rigor.Mode) float64 {
+	if f, ok := RigorBudgetFractions[m]; ok {
+		return f
+	}
+	return 1
+}
+
+// RigorBudgetCap is the per-run cap a run of mode m gets from the deployed
+// cap: the deployed cap scaled by RigorBudgetFraction. It is a clamp in the
+// one direction that matters — the ceiling is the ceiling, and a mode lowers
+// it and never raises it (F15, D16) — and it never answers with a cap that
+// rounds to nothing, which reads as no cap at all (the trap SpendFromEnv
+// guards against at the other end).
+func RigorBudgetCap(m rigor.Mode, deployed pricing.Micros) pricing.Micros {
+	if deployed <= 0 {
+		return deployed
+	}
+	if f := RigorBudgetFraction(m); f < 1 {
+		if scaled, err := pricing.FromUSD(deployed.USD() * f); err == nil && scaled > 0 {
+			return min(scaled, deployed)
+		}
+	}
+	return deployed
+}
 
 // AgentAuths are the values agent.auth may take: validate's check and every
 // reader that has to tell "an auth this Fugaro knows" from an arbitrary string

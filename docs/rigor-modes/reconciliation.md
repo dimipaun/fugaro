@@ -1723,6 +1723,21 @@ exactly the kind F35 is, and the honest mitigation is that the run's record says
 which revision each came from (D24) rather than that the divergence does not
 exist.
 
+**As T1.2 read it: "the base branch" is the repository's default branch.** A
+first run's checkout is cut from the ref the run will push, so `git.base_branch`
+is a key the branch under review writes for itself: reading `origin/<that name>`
+would let a branch be its own base, which is the one shape the answer above
+forbids. `internal/runner/rigor.go` therefore reads the mode through the same
+default-branch read the project check and the budget policy make
+(`internal/runner/policy.go`'s `defaultBranchFile`, `repo.DefaultBranch`) — the
+revision no file in the checkout can name — and D24's `revision` is what the
+record says it read. A repository whose `git.base_branch` is not its default
+branch resolves its mode from the default branch's file nonetheless. A local run
+is the exception, and has its own reason: it has no project, so checkProject and
+resolvePolicy already skip that read there, and it has no branch under review to
+be protected from — the checkout is the developer's own — so it reads the ref
+its own configuration names, as it did before the default-branch read arrived.
+
 **Alternative: the checked-out ref, for a first run only.** Cost: free (the file
 is already read), consistent with every other key a first run uses, and it means a
 branch merges together with the rigor it was developed under — which is a genuine
