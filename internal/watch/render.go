@@ -110,9 +110,6 @@ type rend struct {
 	g   glyphs
 	col bool // colour on
 	dim bool // the data is not live: draw the body greyed
-	// recW is the room the widest recipe name needs after the models in the
-	// tier-3 table; 0 when no run shows one.
-	recW int
 }
 
 func (r *rend) paint(c, t string) string {
@@ -230,7 +227,7 @@ func Render(v View, o RenderOptions) Frame {
 	if o.Width <= 0 {
 		o.Width = 80
 	}
-	r := &rend{w: o.Width, g: glyphsOf(o.ASCII), col: o.Color, recW: recipeWidth(v)}
+	r := &rend{w: o.Width, g: glyphsOf(o.ASCII), col: o.Color}
 	tier := tierOf(o.Width)
 	if tier == 0 {
 		return Frame{Lines: []string{r.clipW(tooNarrow, o.Width)}}
@@ -563,7 +560,7 @@ func (r *rend) scope(tier int, label string, b Bar, counted, spent, notional bud
 }
 
 // runCols are the widths of the run table (tiers 2 and 3).
-type runCols struct{ run, title, stage, round, age, spend, by, flags, verify, models int }
+type runCols struct{ run, title, stage, round, age, spend, by, flags int }
 
 // launcherCol is the width of the table's BY column: who started a run, in
 // the short form a column has room for (launcherText). Nine columns hold a
@@ -580,10 +577,10 @@ const launcherColNarrow = 8
 // colsOf is the run table's column widths. Every cell but the title has a
 // fixed width, so the title takes what is left, never less than its own
 // minimum; a row whose fixed cells and title floor do not fit is cut off at
-// the screen's edge, which takes the flags — and, at tier 3, the models —
-// with it. So the fixed widths are budgeted to fit the width their tier
-// starts at: 70 columns for tier 2, 120 for tier 3 (the width the widest
-// golden draws). TestRunRowsFitAtEachTiersEntryWidth pins that.
+// the screen's edge, which takes the flags with it. So the fixed widths are
+// budgeted to fit the width their tier starts at: 70 columns for tier 2, 120
+// for tier 3 (the width the widest golden draws).
+// TestRunRowsFitAtEachTiersEntryWidth pins that.
 //
 // The BY column is the one cell the budgets had to absorb, and it comes out
 // of the cells with room to give: run is exactly shortRunLen, because the
@@ -595,15 +592,17 @@ const launcherColNarrow = 8
 // else, so it gives up five of its flags column's eighteen columns and one of
 // its own BY cell's. Both tiers end up whole where they were: a tier-3 row at
 // 120 columns is 119 wide, as main's was, and a tier-2 row fits at the 70
-// columns its tier starts at.
+// columns its tier starts at. Dropping the trailing VERIFY and MODELS columns
+// (owner request 2026-10-24) returns their columns to the title, which was
+// the cell the clip was eating.
 //
 // The trailing constants leave the elastic row one column short of the
 // screen's edge, so a cell is clipped by its own width and never by the
 // screen: a tail cell keeps its last column whatever the row holds.
-func colsOf(tier, w, recW int) runCols {
+func colsOf(tier, w int) runCols {
 	if tier == 3 {
-		c := runCols{run: shortRunLen, stage: 9, round: 3, age: 7, spend: 15, by: launcherCol, flags: 29, verify: 9, models: 14 + recW}
-		c.title = max(10, w-(2+c.run+c.stage+c.round+c.age+c.spend+c.by+c.flags+c.verify+c.models+9))
+		c := runCols{run: shortRunLen, stage: 9, round: 3, age: 7, spend: 15, by: launcherCol, flags: 29}
+		c.title = max(10, w-(2+c.run+c.stage+c.round+c.age+c.spend+c.by+c.flags+9))
 		return c
 	}
 	c := runCols{run: shortRunLen, stage: 8, round: 3, age: 7, spend: 9, by: launcherColNarrow, flags: 13}
@@ -691,7 +690,7 @@ func (r *rend) repo(tier int, b RepoBlock, sel Cursor, expanded map[Cursor]bool,
 	if collapsed {
 		return out, selTop, selBottom
 	}
-	c := colsOf(tier, r.w, r.recW)
+	c := colsOf(tier, r.w)
 	for _, run := range b.Runs {
 		runSel := sel.Slug == b.Slug && sel.Run != "" && sel.Run == run.Run
 		idx := len(out)
@@ -718,7 +717,11 @@ func (r *rend) repo(tier int, b RepoBlock, sel Cursor, expanded map[Cursor]bool,
 
 // finishedRow is one line for a run whose result.json already exists (design
 // generic-tool §10.3): the run id, its outcome and, once it has one, its PR
-// link, coloured to flag a failure or a review-ready success.
+// link, coloured to flag a failure or a review-ready success. The RUN cell is
+// the same short form every row of the table shows (shortRun, owner request
+// 2026-10-24): the id's leading characters are the launch stamp, so a whole
+// id here read unlike every row above it. The whole id is in the run's
+// detail, and `fugaro watch --json` carries it too.
 func (r *rend) finishedRow(run RunRow, selected bool) string {
 	cur := " "
 	if selected {
@@ -740,7 +743,7 @@ func (r *rend) finishedRow(run RunRow, selected bool) string {
 		// succeeded implement run does (design artifact-runs.md §3).
 		word, c = "artifacts, no PR", cOK
 	}
-	segs := []seg{{cur + " " + run.Run + " ", ""}, {dash(run.Title) + " ", cBold}, {word, c}}
+	segs := []seg{{cur + " " + shortRun(run.Run) + " ", ""}, {dash(run.Title) + " ", cBold}, {word, c}}
 	if run.PRURL != "" {
 		segs = append(segs, seg{" " + run.PRURL, ""})
 	}
@@ -864,13 +867,6 @@ func (r *rend) runRows(tier int, c runCols, run RunRow, selected bool) []string 
 		{r.fit(launcherText(run), c.by) + " ", ""},
 		{r.fit(fl, c.flags), fc},
 	}
-	if tier == 3 {
-		models := run.Models
-		if run.Recipe != "" {
-			models += " · " + r.clipW(run.Recipe, 24)
-		}
-		segs = append(segs, seg{" " + r.fit(run.Verify, c.verify) + " " + models, ""})
-	}
 	return []string{r.line(segs...)}
 }
 
@@ -945,29 +941,9 @@ func (r *rend) detail(run RunRow) []string {
 	return out
 }
 
-// recipeWidth is the width of " · <recipe>" for the widest recipe name among
-// the runs, capped; 0 when no run has one.
-func recipeWidth(v View) int {
-	w := 0
-	for _, b := range v.Repos {
-		for _, run := range b.Runs {
-			if run.Recipe != "" {
-				w = max(w, 3+min(rw.StringWidth(run.Recipe), 24))
-			}
-		}
-	}
-	return w
-}
-
 func (r *rend) colHeader(tier int) string {
-	c := colsOf(tier, r.w, r.recW)
-	segs := []seg{
-		{"  " + r.fit("RUN", c.run) + " " + r.fit("TITLE", c.title) + " " + r.fit("STAGE", c.stage) + " " +
-			r.fit("R", c.round) + " " + r.fit("AGE", c.age) + " " + r.fit("SPENT", c.spend) + " " +
-			r.fit("BY", c.by) + " " + r.fit("FLAGS", c.flags), cFaint},
-	}
-	if tier == 3 {
-		segs = append(segs, seg{" " + r.fit("VERIFY", c.verify) + " MODELS", cFaint})
-	}
-	return r.line(segs...)
+	c := colsOf(tier, r.w)
+	return r.line(seg{"  " + r.fit("RUN", c.run) + " " + r.fit("TITLE", c.title) + " " + r.fit("STAGE", c.stage) + " " +
+		r.fit("R", c.round) + " " + r.fit("AGE", c.age) + " " + r.fit("SPENT", c.spend) + " " +
+		r.fit("BY", c.by) + " " + r.fit("FLAGS", c.flags), cFaint})
 }

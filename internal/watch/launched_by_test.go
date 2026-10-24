@@ -344,7 +344,9 @@ func TestPlainLauncherCellCutsAtTheBoundary(t *testing.T) {
 // tuiRowCell is the value under the header's col column on the frame line
 // whose RUN cell is shortID, for the interactive screen's fixed-width table:
 // columns are space padded, so the header's own offsets are the row's. next is
-// the column the wanted one is followed by, which is where its cell ends.
+// the column the wanted one is followed by, which is where its cell ends; ""
+// means the wanted column is the header's last, so its cell runs to the end of
+// the row (the trailing blanks are not drawn).
 //
 // The offsets are counted in runes, not bytes: a row's title is clipped with
 // an ellipsis, which is three bytes wide, and a byte offset taken from the
@@ -362,7 +364,10 @@ func tuiRowCell(t *testing.T, frame, shortID, col, next string) string {
 		t.Fatalf("the frame has no run-table header with a %q column:\n%s", col, frame)
 	}
 	hr := []rune(hdr)
-	start, end := runeIndex(hr, col), runeIndex(hr, next)
+	start, end := runeIndex(hr, col), len(hr)
+	if next != "" {
+		end = runeIndex(hr, next)
+	}
 	if start < 0 || end <= start {
 		t.Fatalf("the header %q has no %q column before %q", hdr, col, next)
 	}
@@ -371,10 +376,8 @@ func tuiRowCell(t *testing.T, frame, shortID, col, next string) string {
 		if len(f) < 2 || (f[0] != shortID && !(f[0] == "▸" && f[1] == shortID)) {
 			continue
 		}
-		if r := []rune(l); len(r) >= end {
-			return strings.TrimSpace(string(r[start:end]))
-		}
-		return ""
+		r := []rune(l)
+		return strings.TrimSpace(string(r[min(start, len(r)):min(end, len(r))]))
 	}
 	t.Fatalf("no run row %q in the frame:\n%s", shortID, frame)
 	return ""
