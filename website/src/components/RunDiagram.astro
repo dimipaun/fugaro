@@ -339,7 +339,7 @@ function drawWide(): { viewBox: string; markup: string } {
   BOXES.forEach((b, index) => {
     const x = pad + index * (w + gap)
     // Each step and the arrow after it are a group the stylesheet reveals in order, left to
-    // right, as the picture scrolls in (owner-approved motion opportunities 2026-10-24).
+    // right, when the picture comes into view (`runReveal()` in site.js).
     markup.push(`<g class="run-step" data-step="${index}">${card(x, top, w, height, index + 1, contents[index].markup, geo.pad)}</g>`)
     if (index < BOXES.length - 1) {
       markup.push(`<g class="run-step run-link" data-step="${index}">${arrowWide(x + w, x + w + gap, top + height * 0.42)}</g>`)
@@ -469,61 +469,59 @@ const ALT =
      drawing's own coordinates and `width: 100%` is what maps them onto the column, so the
      SVG is a third of its size at a phone's width and full size on a desktop. `height: auto`
      keeps the drawing's own proportions, which is what makes the two viewBoxes one picture. */
-  /* The four steps arrive left to right as the wide picture scrolls into view, each arrow just
-     after the step it leaves (owner-approved motion opportunities 2026-10-24). CSS only, behind
-     the same two guards as the zoom levels: without scroll-driven animations, or for a reader
-     who asked for less motion, the picture is simply there. The motion is scroll-linked, so its
-     timing is distance: each step rises over 26% of the picture's entry and starts 10% after the
-     one before (the arrow 5% after its step), and the last step is in place by the time three
-     quarters of the picture is on screen. The tall drawing reads top to bottom and stays still. */
-  @supports (animation-timeline: view()) {
-    @media (prefers-reduced-motion: no-preference) {
-      .run-diagram {
-        view-timeline: --run-figure block;
-      }
+  /* The four steps arrive left to right, once, when the wide picture comes into view (the
+     owner's feedback of 2026-10-24). Each step rises in over `--duration-reveal` (750ms) on the
+     site's `--ease-out`, 450ms after the one before, and each arrow follows its step by 300ms.
 
-      /* Longhands in two rules on purpose: the build folds a rule's animation longhands into
-         the shorthand, and the shorthand cannot carry a timeline, so it would drop it. */
-      .run-diagram :global(.run-step) {
-        transform-box: fill-box;
-        transform-origin: left center;
-        animation-name: run-step-in;
-        animation-timing-function: linear;
-        animation-fill-mode: both;
-      }
+     **The held-back state is CSS, from the first paint**, and that is the fix for the version
+     that showed all four steps at once: each step's animation is declared paused, filling
+     backwards, so before it runs the step is the animation's first frame, invisible, and
+     `site.js` (`runReveal()`) only sets it running, by marking the picture `play` when it comes
+     into view (at once if it already is, or if the browser cannot observe it). The earlier
+     version hid the steps from the script, after the page had painted, and only when the
+     picture loaded below the fold, so a tall window never saw a reveal at all.
 
-      .run-diagram :global(svg .run-step) {
-        animation-timeline: --run-figure;
-        animation-range: entry 20% entry 46%;
-      }
+     Two conditions make the hold safe: the reader has not asked for less motion, and the
+     browser runs scripts (`scripting: enabled`), so a page with scripting off, or a reader who
+     asked for less motion, gets the whole picture with nothing paused. The tall drawing reads
+     top to bottom and stays still. */
+  @media (prefers-reduced-motion: no-preference) and (scripting: enabled) {
+    .run-diagram :global(.run-wide .run-step) {
+      transform-box: fill-box;
+      transform-origin: left center;
+      animation: run-step-in var(--duration-reveal) var(--ease-out) backwards paused;
+    }
 
-      .run-diagram :global(.run-link) {
-        animation-name: run-link-in;
-      }
+    .run-diagram :global(.run-wide .run-link) {
+      animation-name: run-link-in;
+    }
 
-      .run-diagram :global(.run-step[data-step='0'].run-link) {
-        animation-range: entry 25% entry 51%;
-      }
+    .run-diagram :global(.run-wide .run-step[data-step='0'].run-link) {
+      animation-delay: 300ms;
+    }
 
-      .run-diagram :global(.run-step[data-step='1']) {
-        animation-range: entry 30% entry 56%;
-      }
+    .run-diagram :global(.run-wide .run-step[data-step='1']) {
+      animation-delay: 450ms;
+    }
 
-      .run-diagram :global(.run-step[data-step='1'].run-link) {
-        animation-range: entry 35% entry 61%;
-      }
+    .run-diagram :global(.run-wide .run-step[data-step='1'].run-link) {
+      animation-delay: 750ms;
+    }
 
-      .run-diagram :global(.run-step[data-step='2']) {
-        animation-range: entry 40% entry 66%;
-      }
+    .run-diagram :global(.run-wide .run-step[data-step='2']) {
+      animation-delay: 900ms;
+    }
 
-      .run-diagram :global(.run-step[data-step='2'].run-link) {
-        animation-range: entry 45% entry 71%;
-      }
+    .run-diagram :global(.run-wide .run-step[data-step='2'].run-link) {
+      animation-delay: 1200ms;
+    }
 
-      .run-diagram :global(.run-step[data-step='3']) {
-        animation-range: entry 50% entry 76%;
-      }
+    .run-diagram :global(.run-wide .run-step[data-step='3']) {
+      animation-delay: 1350ms;
+    }
+
+    .run-diagram[data-run-reveal='play'] :global(.run-wide .run-step) {
+      animation-play-state: running;
     }
   }
 

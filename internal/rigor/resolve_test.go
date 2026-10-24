@@ -289,3 +289,23 @@ func TestLayersIsTheSetResolveNames(t *testing.T) {
 		t.Errorf("Layers has %d entries; the vocabulary is the six D24/D6 name", len(Layers))
 	}
 }
+
+// TestConfiguredIsAnyLayerSettingAnything: a zero Config is the unconfigured
+// repository, and any one of the five fields opts it in.
+func TestConfiguredIsAnyLayerSettingAnything(t *testing.T) {
+	if (Config{}).Configured() {
+		t.Error("a zero Config reports itself configured")
+	}
+	area := []Area{{Name: "docs", Match: "docs/**", Mode: POC}}
+	for name, c := range map[string]Config{
+		"repo block":    {RepoBlock: true},
+		"repo default":  {Repo: Pro},
+		"repo areas":    {RepoAreas: area},
+		"project mode":  {Project: Critical},
+		"project areas": {ProjectAreas: area},
+	} {
+		if !c.Configured() {
+			t.Errorf("%s: Configured() = false", name)
+		}
+	}
+}

@@ -76,12 +76,16 @@ const defaultReview = "You are reviewing a pull request written by another engin
 // the five labels D2 derives from them. The anchors are what makes a cheap
 // reviewer's "common" mean what the threshold table's "common" means, and each
 // word is written exactly once — a meaning stated twice is a meaning that can
-// drift. The coder never sees it: a coder that scored its own work would be
-// grading the findings a reviewer is there to make.
+// drift. The class is asked for beside the axes because the threshold table
+// reads it too, and a finding without a known class is unscored (D4); its
+// list repeats "cosmetic", impact's first anchor, which is a class name rather
+// than a second meaning. The coder never sees it: a coder that scored its own
+// work would be grading the findings a reviewer is there to make.
 const reviewScoring = `Score every finding on three axes, each an integer from 1 to 5, and set severity to one of five labels: blocker, high, medium, low, nit.
 - likelihood, how often it will occur: 1 rare, 2 uncommon, 3 occasional, 4 common, 5 certain.
 - impact, how bad it is when it does: 1 cosmetic, 2 minor, 3 degrading, 4 severe, 5 catastrophic.
 - fix_cost, the effort to address it: 1 trivial, 2 small, 3 moderate, 4 large, 5 rewrite.
+- class, the kind of issue, exactly one of: correctness, performance, security, data_loss, maintainability, cosmetic; a finding without one of these counts as unscored.
 Leave nothing unscored: a finding with no score blocks the pull request in every mode.`
 
 // DiffSize is how large a diff is: the files it changes and the lines it

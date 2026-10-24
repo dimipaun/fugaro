@@ -90,7 +90,7 @@ type Rigor struct {
 func (c *Config) RigorConfig() rigor.Config {
 	out := c.ProjectRigor()
 	if r := c.RepoRigor; r != nil {
-		out.Repo, out.RepoAreas = r.Default, r.Areas
+		out.Repo, out.RepoAreas, out.RepoBlock = r.Default, r.Areas, true
 	}
 	return out
 }

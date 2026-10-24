@@ -9,6 +9,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -264,9 +265,26 @@ func TestPromptScoringAnchors(t *testing.T) {
 				t.Errorf("%s does not name the %s axis: %s", name, ax.axis, p)
 			}
 			for i, anchor := range ax.anchors {
-				if got := countWord(p, anchor); got != 1 {
-					t.Errorf("%s writes %q (%s %d) %d times, want once: %s", name, anchor, ax.axis, i+1, got, p)
+				// "cosmetic" is both impact's first anchor and a class, so
+				// the class line is its second, deliberate, occurrence.
+				want := 1
+				if rigor.KnownClass(rigor.Class(anchor)) {
+					want = 2
 				}
+				if got := countWord(p, anchor); got != want {
+					t.Errorf("%s writes %q (%s %d) %d times, want %d: %s", name, anchor, ax.axis, i+1, got, want, p)
+				}
+			}
+		}
+		// A finding without a known class is unscored and blocks in every
+		// mode (D4), so the prompt asks for one and names every class the
+		// schema admits.
+		if !strings.Contains(p, "- class,") {
+			t.Errorf("%s does not ask the reviewer to set class: %s", name, p)
+		}
+		for _, c := range rigor.Classes {
+			if countWord(p, string(c)) == 0 {
+				t.Errorf("%s does not name the class %q: %s", name, c, p)
 			}
 		}
 		for _, label := range promptScoringLabels {

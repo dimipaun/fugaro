@@ -308,6 +308,10 @@ type run struct {
 	// review, and the mode must not come from there.
 	rigorCfg rigor.Config
 	rigorRev string
+	// filedFrom is the commit finalize's backlog filing was committed on
+	// top of, "" when the run filed nothing: the report names it as the
+	// commit the suite ran on (report.go's testsLine).
+	filedFrom string
 	// ckpt is the checkpoint pushes' state (checkpoint.go).
 	ckpt checkpointState
 	// skipPR is set when the check gate already ended the run (clean, or an
@@ -2626,6 +2630,7 @@ func (r *run) finalize(ctx context.Context) error {
 	// Hotfix's deferral (D30, D15) and the ordinary case for that row.
 	decided := sha
 	if r.fileOpenItems(ctx) {
+		r.filedFrom = decided
 		if sha, err = r.repo.HeadSHA(ctx); err != nil {
 			return fmt.Errorf("reading head sha after filing: %w", err)
 		}
@@ -2786,7 +2791,7 @@ func (r *run) finalize(ctx context.Context) error {
 		fu = r.followUpSection()
 		fu.MovedToDraft = r.follow.wasReady && !ready
 	}
-	report := agent.Redact(followUpReport(r.rec, r.d.Store.Prefix(), r.logTail(ready, records), fu, notes), r.secretList())
+	report := agent.Redact(followUpReport(r.rec, r.d.Store.Prefix(), r.logTail(ready, records), fu, notes, r.filedFrom), r.secretList())
 	// A follow-up's pull request is the one people watch: an earlier
 	// attempt of this execution may already have posted this report.
 	if r.follow != nil && r.reportPosted(ctx, pr) {
@@ -2828,8 +2833,9 @@ func openFindings(rs []runstore.ReviewSummary) *runstore.ReviewSummary {
 // were filed from, so the filing dirties nothing a reviewer was not already
 // reading (D9) — and their ids are recorded beside the round they came from.
 //
-// Whether a run files at all is D30's per-mode table, read from internal/rigor
-// (T4.6): a mode whose row files nothing of its own leaves the branch exactly
+// Whether a run files at all is first the repository's opt-in — a rigor:
+// block, or a project-layer rigor default (rigor.Config.Configured) — and then
+// D30's per-mode table, read from internal/rigor (T4.6): a mode whose row files nothing of its own leaves the branch exactly
 // as it was, so a Critical run's tree and pull request body are the ones main
 // produces. The table is asked rather than compared here, so a mode that files
 // differently is a row in that package and not a branch in this one.
@@ -2860,6 +2866,12 @@ func (r *run) fileOpenItems(ctx context.Context) bool {
 	// A halted or cancelled run was stopped mid-loop: its last round is not
 	// one it finished acting on, and its push needs the time a filing spends.
 	if r.haltValue() != nil || r.isCancelled() {
+		return false
+	}
+	// Filing is opt-in: a repository that configures no rigor resolves Pro
+	// for its budget (D19) and files nothing, so its tree, pull request body
+	// and record are the ones it had before modes existed.
+	if !r.rigorCfg.Configured() {
 		return false
 	}
 	files := rigor.Files(r.reachedRigor())
@@ -2969,15 +2981,17 @@ func (r *run) filedArea() string {
 	return "repo"
 }
 
-// filedBy is the item's launcher: the identity the task was requested by,
-// which is who asked for the run. A task that names nobody — a hand-built
-// one, or one an older launcher wrote — records Fugaro itself rather than an
-// empty field D27's format refuses.
+// filedBy is the item's launcher: the login the task was requested by, which
+// is who asked for the run (D27). An item is committed into the repository, so
+// it never carries an email address (the owner's ruling of 2026-10-24): a
+// launcher recorded as one — the cloud account `fugaro run` reads — is not
+// shortened to a guessed login, and it records `unknown`, as does a task that
+// names nobody, rather than the empty field D27's format refuses.
 func (r *run) filedBy() string {
-	if by := strings.TrimSpace(r.spec.RequestedBy); by != "" {
+	if by := strings.TrimSpace(r.spec.RequestedBy); by != "" && !strings.Contains(by, "@") {
 		return by
 	}
-	return "fugaro"
+	return "unknown"
 }
 
 // filedBody is the item's body: what the round left open, why it is filed

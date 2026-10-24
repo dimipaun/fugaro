@@ -111,9 +111,11 @@ func rowsFor(items []Item, status string) []Item {
 
 // cell makes text safe in a Markdown table cell: a pipe would end the row and
 // a newline would end the table. An item's title and area are a filer's own
-// words, so neither is trusted to be one line.
+// words, so neither is trusted to be one line. A backslash is escaped before
+// the pipe is, or a value's own backslash would escape the escape.
 func cell(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", " ")
 	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\\", "\\\\")
 	return strings.ReplaceAll(s, "|", "\\|")
 }

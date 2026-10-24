@@ -123,11 +123,11 @@ func TestTableCriticalBlocksEveryFinding(t *testing.T) {
 	}
 }
 
-// TestTablePOCIgonoresEverythingButTheCatastrophic: "POC — Ignore (except
+// TestTablePOCIgnoresEverythingButTheCatastrophic: "POC — Ignore (except
 // catastrophic)". The finding below is the most severe score the scale can
 // express that the override does not already cover, and POC still ignores it,
 // which is what "damn the torpedoes" costs.
-func TestTablePOCIgonoresEverythingButTheCatastrophic(t *testing.T) {
+func TestTablePOCIgnoresEverythingButTheCatastrophic(t *testing.T) {
 	severe := Score{Likelihood: 5, Impact: 4, FixCost: 5, Class: Correctness}
 	if Blocks(POC, severe) {
 		t.Errorf("POC blocks %+v; POC ignores everything but the catastrophic", severe)

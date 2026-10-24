@@ -403,6 +403,9 @@ func TestFilingDoesNotSpendTheFinalizeReserveOnTheSuite(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "slow")
 	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "test: sh test.sh", "test: sh slow.sh", 1)
 	cfg = strings.Replace(cfg, "finalize_reserve: 30s", "finalize_reserve: 3s", 1)
+	// Filing is opt-in: the repository writes a rigor: block, or its run
+	// files nothing and the case has no filing commit to measure.
+	cfg = strings.Replace(cfg, "agent:\n", "rigor:\n  default: pro\nagent:\n", 1)
 	slow := "#!/bin/sh\nif [ -f '" + marker + "' ]; then sleep 10; fi\nexec sh test.sh \"$@\"\n"
 	h := newHarnessFiles(t, cfg, nil, map[string]string{"slow.sh": slow})
 	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
@@ -425,6 +428,21 @@ func TestFilingDoesNotSpendTheFinalizeReserveOnTheSuite(t *testing.T) {
 	}
 	if got := testutil.Git(t, h.remote, "rev-parse", "refs/heads/fugaro/"+runID); got != rec.HeadSHA {
 		t.Fatalf("remote branch %s != record head %s: the filing commit was not pushed", got, rec.HeadSHA)
+	}
+	// The report's tests line names the commit the suite ran on — the filing
+	// commit's parent — and says the filing commit adds only items, rather
+	// than reporting no test run because the head moved (owner ruling R3).
+	tested := strings.TrimSpace(testutil.Git(t, h.remote, "rev-parse", rec.HeadSHA+"^"))
+	report := onlyPR(t, h.provider).Comments[0]
+	want := fmt.Sprintf("**Tests:** passed on %s (", tested[:7])
+	if !strings.Contains(report, want) {
+		t.Errorf("the report's tests line does not name the tested commit %s:\n%s", tested[:7], report)
+	}
+	if !strings.Contains(report, fmt.Sprintf("the final commit %s only adds backlog items", rec.HeadSHA[:7])) {
+		t.Errorf("the report's tests line does not say the filing commit adds only items:\n%s", report)
+	}
+	if strings.Contains(report, "no recorded test run") {
+		t.Errorf("the report says no test ran, though the suite ran on the commit before the filing:\n%s", report)
 	}
 }
 

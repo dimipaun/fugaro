@@ -112,6 +112,23 @@ func TestRenderKeepsARowOnOneLine(t *testing.T) {
 	t.Errorf("Render's index carries no row for the item:\n%s", doc)
 }
 
+// TestRenderEscapesABackslash: a title ending in a backslash would otherwise
+// escape the pipe that closes its cell, and the row's next columns would slide
+// into it. The backslash is escaped first, so a title's own `\|` stays text.
+func TestRenderEscapesABackslash(t *testing.T) {
+	doc := Render([]Item{synth("20261021-01", "open", `C:\temp\ and a\|b`)})
+	for _, line := range strings.Split(doc, "\n") {
+		if !strings.HasPrefix(line, "| [20261021-01]") {
+			continue
+		}
+		if !strings.Contains(line, `C:\\temp\\ and a\\\|b |`) {
+			t.Errorf("Render's row does not escape the backslashes in the title: %q", line)
+		}
+		return
+	}
+	t.Errorf("Render's index carries no row for the item:\n%s", doc)
+}
+
 // TestRenderNamesItsOwnCommandAndItsFormat: the header names the command that
 // regenerates the file, so a reader who finds a stale index has the fix on the
 // first line, and the document points at the format an item follows.

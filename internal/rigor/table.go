@@ -69,7 +69,7 @@ type Score struct {
 	Likelihood int
 	// Impact is how bad it is when it does: 1 cosmetic, 5 catastrophic.
 	Impact int
-	// FixCost is the effort to address it: 1 trivial, 5 expensive. Only the
+	// FixCost is the effort to address it: 1 trivial, 5 rewrite. Only the
 	// modes whose spec sentence weighs it read it.
 	FixCost int
 	// Class is what kind of issue it is.

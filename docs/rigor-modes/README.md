@@ -111,6 +111,24 @@ setting this folder picks.
 | **The backlog ruling** | one Markdown file per item under `docs/backlog/`, a generated index, and one backlog rather than two: §1.3, F42–F48, D26–D32, plan T4.3–T4.7. It adds no config key except D29's designated repository, no schema and no check number. |
 | **No new D-block, no new check range, no new schema** | the three registers this folder touches, and the reason each is written down here rather than discovered later. |
 
+## For operators
+
+When this branch ships, three facts go into the release notes' `### For
+operators` section:
+
+- **An unconfigured repository now resolves Pro** (D19): a repository whose
+  `fugaro.yaml` has no `rigor:` block, under a project layer that sets no rigor
+  default, runs at Pro, and Pro's per-run budget default is **0.85 of the
+  deployed per-run cap** (D16, plan T6.1). A repository that wants the whole cap
+  and today's readiness rule pins `rigor: { default: critical }`.
+- **Backlog filing is opt-in per repository** (the owner's ruling of
+  2026-10-24): a run files items under `docs/backlog/` only for a repository
+  whose `fugaro.yaml` has a `rigor:` block, even an empty one, or whose project
+  layer sets a rigor default. An unconfigured repository's runs file nothing, and
+  `fugaro backlog add` works everywhere.
+- **An older CLI is unaffected**: its runs use the runner image it deploys,
+  which has no modes, so nothing changes until the CLI is upgraded.
+
 ## What this folder is not
 
 - **Not implemented.** The decisions are answered and the plan's
