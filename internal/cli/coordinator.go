@@ -452,7 +452,7 @@ func coordinatorViewOf(ctx context.Context, env *cloudEnv, reader coordinator.Re
 	if err != nil {
 		return coordinator.View{}, err
 	}
-	prs, err := reader.PullRequests(ctx, env.repoProvider(repo, co), repo, coordinatorNumbers(runs))
+	prs, err := reader.PullRequests(ctx, env.repoProvider(repo, co), repo, coordinator.Numbers(runs))
 	if err != nil {
 		// The refusal of a project this read does not serve is the
 		// configuration's (reconciliation Q12 (A), finding #30). Everything else
@@ -467,24 +467,6 @@ func coordinatorViewOf(ctx context.Context, env *cloudEnv, reader coordinator.Re
 		return coordinator.View{}, remote(err)
 	}
 	return coordinator.Join(repo, prs, runs), nil
-}
-
-// coordinatorNumbers is the pull requests the runs name, each once, in the
-// order the runs list them.
-//
-// gitprov.Provider reads one pull request by number and has no call that lists
-// a repository's (reconciliation finding #10), so this is the whole of what a
-// reader can be asked for however it reads them: each run's task or record
-// names the pull request it is on, and a pull request no run names is never
-// asked for.
-func coordinatorNumbers(runs []coordinator.Run) []int {
-	var numbers []int
-	for _, run := range runs {
-		if run.PR != 0 && !slices.Contains(numbers, run.PR) {
-			numbers = append(numbers, run.PR)
-		}
-	}
-	return numbers
 }
 
 // coordinatorRuns reads the runs the view holds: every run of slug minted
