@@ -608,12 +608,29 @@ func coordinatorAppCredential() (appID, pemData string, err error) {
 // is handed is installed on the provider before its first call, so every
 // installation token the read then uses is the coordinator's read-only one and
 // never the run's set, which holds two writes.
+//
+// The App credential is asked for before the provider is opened, and that is
+// the second half of the decision. providers.FromEnv reports a variable it does
+// not find as a plain error, and a failure through the host is a remote one
+// (exit 2) — so without this check a person who simply has not exported the
+// App's ID would be told the host failed and would retry it, when the refusal
+// is theirs to fix and the same condition is already a user error where the
+// mint asks for the credential (coordinatorAppCredential, exec 1). Asking here
+// is also what makes that wording reachable: the opener refuses before the mint
+// is reached, so the mint's own message could never be the one a person saw.
+// It costs a repository whose runs name a pull request the same two values read
+// a second time, and nothing at all for one without: Project.PullRequests
+// returns before opening when the runs name no pull request, so a project with
+// nothing in it is still read with no App credential anywhere.
 var openCoordinatorProvider = func(env []string, warn func(string)) (coordinator.ProviderOpener, error) {
 	_, open, err := providerOptions(execOptions{}, env, warn)
 	if err != nil {
 		return nil, err
 	}
 	return func(ctx context.Context, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		if _, _, err := coordinatorAppCredential(); err != nil {
+			return nil, nil, err
+		}
 		p, secrets, err := open(ctx, gitprov.KindGitHub, repo)
 		if err != nil {
 			return nil, secrets, err

@@ -662,21 +662,32 @@ func TestCoordinatorStatusReadsWithTheReadOnlyToken(t *testing.T) {
 		t.Errorf("the view does not carry the pull request the host answered with:\n%s", out)
 	}
 
-	// With no App credential at all the provider opener refuses before this
-	// read's own mint is reached, so what a person sees is the opener's line —
-	// which names the variable — reported as a remote failure. That class is
-	// the command's own (coordinatorViewOf; providers.FromEnv reports a missing
-	// variable as a plain error and this command reads a failure through the
-	// host as remote), and it is pinned here because it is what really happens;
-	// the reachable mint refusal (exit 1) is asserted in
-	// TestCoordinatorStatusMintsAReadOnlyTokenPerRepository.
+	// With no App credential the opener refuses before this read's own mint is
+	// reached, and that refusal is the CALLER'S: an environment that does not
+	// carry the App credential is the person's to fix, and it is exit 1 here
+	// exactly as it is where the mint asks for the same credential
+	// (coordinatorAppCredential, asserted in
+	// TestCoordinatorStatusMintsAReadOnlyTokenPerRepository). The opener asks
+	// for it itself (openCoordinatorProvider) rather than letting
+	// providers.FromEnv's plain error travel as a failure through the host.
 	t.Setenv(providers.EnvGitHubAppID, "")
 	if _, _, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--since", "0"); err == nil ||
 		!strings.Contains(err.Error(), providers.EnvGitHubAppID) {
 		t.Errorf("no App ID: %v, want a failure naming %s", err, providers.EnvGitHubAppID)
-	} else if ExitCode(err) != ExitRemoteError {
-		t.Errorf("no App ID: exit %d, want %d: the opener refuses first and the command reports that failure as a remote one",
-			ExitCode(err), ExitRemoteError)
+	} else if ExitCode(err) != ExitUserError {
+		t.Errorf("no App ID: exit %d, want %d: the environment the caller holds the credential in is the caller's to fix",
+			ExitCode(err), ExitUserError)
+	}
+	// The App's key is the same refusal, from the other side: the ID is there
+	// and the key is not, and that too is the caller's own (exit 1).
+	t.Setenv(providers.EnvGitHubAppID, "12345")
+	t.Setenv(providers.EnvGitHubAppKey, "")
+	t.Setenv(providers.EnvGitHubAppKeyFile, filepath.Join(t.TempDir(), "no-such-key.pem"))
+	if _, _, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--since", "0"); err == nil ||
+		!strings.Contains(err.Error(), providers.EnvGitHubAppKeyFile) {
+		t.Errorf("no App key: %v, want a failure naming %s", err, providers.EnvGitHubAppKeyFile)
+	} else if ExitCode(err) != ExitUserError {
+		t.Errorf("no App key: exit %d, want %d", ExitCode(err), ExitUserError)
 	}
 }
 

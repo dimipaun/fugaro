@@ -2390,7 +2390,7 @@ const claimRounds = 3
 // they are what the run's own record holds once it has worked, and the join
 // (P1) is where the two meet.
 //
-// Four rules, and each is a decision rather than a detail:
+// Three rules, and each is a decision rather than a detail:
 //
 //   - The declaration follows the launch's own database switch. The coordinator
 //     keeps its state in the same database the budget uses, and a launch that
