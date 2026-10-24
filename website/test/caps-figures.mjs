@@ -678,11 +678,11 @@ test('every figures refusal fires on the defect it names', () => {
     ['a figure that prints nothing', plant(/>\$5\.24<\/dd>/, '></dd>'), /prints no figure under the name "Worst"/],
     ['a card with no list of figures', plant(/<dl class="caps-job-figures"[^>]*>([\s\S]*?)<\/dl>/, (_all, inner) => `<div class="caps-job-figures">${inner}</div>`), /carries no <dl> of labelled figures/],
     ['a card with no bar', plant(/class="caps-bar"/, 'class="caps-not-the-bar"'), /draws no bar/],
-    ['a bar with no accessible name', plant(/aria-label="An independent review-only run against the \$10\.00 per-run cap these runs ran under: [^"]*"/, 'aria-label=""'), /draws a bar with no accessible name/],
+    ['a bar with no accessible name', plant(/aria-label="A review-only run against the \$10\.00 per-run cap these runs ran under: [^"]*"/, 'aria-label=""'), /draws a bar with no accessible name/],
     // The bar's sentence and the marks it draws, read against each other — the pair the review
     // job's own figures pull apart.
     ['a bar whose sentence drops a mark it draws', plant(/aria-label="A first task run against the \$10\.00 per-run cap these runs ran under: the middle half, /, 'aria-label="A first task run against the $10.00 per-run cap these runs ran under: '), /draws the caps-bar-range mark and its sentence does not name "the middle half"/],
-    ['a bar whose sentence names a mark it does not draw', plant(/aria-label="An independent review-only run against the \$10\.00 per-run cap these runs ran under: the median/, 'aria-label="An independent review-only run against the $10.00 per-run cap these runs ran under: the middle half, the median'), /draws no caps-bar-range mark and its sentence names "the middle half"/],
+    ['a bar whose sentence names a mark it does not draw', plant(/aria-label="A review-only run against the \$10\.00 per-run cap these runs ran under: the median/, 'aria-label="A review-only run against the $10.00 per-run cap these runs ran under: the middle half, the median'), /draws no caps-bar-range mark and its sentence names "the middle half"/],
     ['a bar whose sentence loses the worst run it draws', plant(/ and the worst run\."/, '."'), /draws the caps-bar-worst mark and its sentence does not name "the worst run"/],
     // And the drawing the marks are placed in: a bar whose coordinate system is narrower than the
     // marks it draws is a bar whose figures are drawn off the card, which is the shape the scale

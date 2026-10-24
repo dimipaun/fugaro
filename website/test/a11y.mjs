@@ -514,13 +514,7 @@ test('every pair base.css paints is in the contrast set, for all four palettes',
 //     force's (so the pairs checked above are the pairs a reader gets), no shipped stylesheet
 //     paints a colour literal outside the token block, and an element that sets both its
 //     colour and its background inline (the code blocks) clears AA.
-//
-// One recorded exception, and it is a DEFECT: the docs page renders the generated CLI
-// reference, and cobra's own help text for `fugaro completion bash|zsh` writes `#### Linux:`
-// and `#### macOS:` under a `##` command heading — an h2 -> h4 jump. W1.11 may not edit the
-// generator (internal/clidoc) or the page (W1.7's), so exactly those headings are accepted on
-// that page, and a case fails once they are gone so the exception is deleted with the fix
-// (the generator demotes or escapes headings inside a command's long text).
+
 
 import { readFileSync as readBuilt } from 'node:fs'
 import {
@@ -537,14 +531,6 @@ import {
   textOf,
   walk,
 } from './lib/html.mjs'
-
-// The recorded heading-order defect described above: page, and the ids of the headings
-// that are accepted as the jump.
-export const HEADING_JUMP_DEFECT = {
-  page: 'docs/index.html',
-  ids: new Set(['linux', 'macos', 'linux-1', 'macos-1']),
-  why: "cobra's completion help writes #### headings under the reference's ## command headings",
-}
 
 const FOCUSABLE_NATIVE = (el) =>
   (el.name === 'a' && el.attrs.has('href')) ||
@@ -663,9 +649,7 @@ export function pageA11yFailures(html, rel, { css = null, dist = DIST, palette =
   for (const h of headings) {
     const level = Number(h.name[1])
     if (level > prev + 1) {
-      const known = rel === HEADING_JUMP_DEFECT.page && HEADING_JUMP_DEFECT.ids.has(h.attrs.get('id'))
-      if (!known) fail(`a heading jumps from h${prev} to h${level} ("${textOf(h).trim().slice(0, 60)}"): heading levels go down one at a time`)
-      if (known) continue // the recorded defect: the next heading is judged against its h2
+      fail(`a heading jumps from h${prev} to h${level} ("${textOf(h).trim().slice(0, 60)}"): heading levels go down one at a time`)
     }
     prev = level
   }
@@ -1032,16 +1016,6 @@ test('the slider and the picture refusals fire on the defect each one names', ()
   assert.ok(
     pictureA11yFailures(picture({ wordsHidden: true })).some((line) => /run in words under the picture is hidden/.test(line)),
     'the run in words hidden passes: it is what a reader who has no picture is given',
-  )
-})
-
-test('the recorded heading-order defect on the docs page is still real, so its exception is still needed', () => {
-  const docs = builtPages().find((p) => p.rel === HEADING_JUMP_DEFECT.page)
-  assert.ok(docs, `${HEADING_JUMP_DEFECT.page} was not built`)
-  const ids = [...docs.html.matchAll(/<h4 id="([^"]+)"/g)].map((m) => m[1]).filter((id) => HEADING_JUMP_DEFECT.ids.has(id))
-  assert.ok(
-    ids.length > 0,
-    `${HEADING_JUMP_DEFECT.page} no longer carries the recorded h2 -> h4 headings: the defect is fixed, so delete HEADING_JUMP_DEFECT in website/test/a11y.mjs and let every jump fail again`,
   )
 })
 

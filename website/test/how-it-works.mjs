@@ -89,6 +89,7 @@ import path from 'node:path'
 import { DIST, REPO, builtPages, cssDeclarations, cssRules, findAll, parse, textOf, walk } from './lib/html.mjs'
 import { ancestorsOf, classesOf, ruleReaches } from './lib/selectors.mjs'
 import { contrastRatio, paletteTokensInForce, parseColour } from './lib/colour.mjs'
+import { fakeDOM } from './lib/dom.mjs'
 
 // ---- the repository's own words ---------------------------------------------------------
 
@@ -2241,4 +2242,66 @@ test('the four levels are four figures with the boards\' pictures, in order, nam
     assert.ok((images[0].attrs.get('alt') || '').length > 40, `level ${index + 1}'s picture has no real alt text: a reader who cannot see it is told nothing`)
     assert.ok(images[0].attrs.get('width') && images[0].attrs.get('height'), `level ${index + 1}'s picture carries no width and height: the page would jump as it loads`)
   })
+})
+
+// ---- the four levels as a slider (the owner's preview feedback on #1003, 2026-10-24) ------
+
+function levelsPage() {
+  const page = builtPages().find((entry) => entry.rel === 'how-it-works/index.html')
+  assert.ok(page, 'the built site has no How It Works page')
+  return page.html
+}
+
+test('the levels slider: real, named controls, emitted hidden, and four stills without a script', () => {
+  const html = levelsPage()
+  const section = findAll(parse(html), (el) => el.name === 'section' && el.attrs.has('data-levels'))
+  assert.equal(section.length, 1, 'the page carries no levels slider')
+  assert.ok(!section[0].attrs.has('data-levels-ready'), 'the built page is already in the slider state, so a reader with no script would see one level of four')
+  const bar = findAll(section[0], (el) => el.attrs.has('data-levels-controls'))
+  assert.equal(bar.length, 1, 'the slider has no control bar')
+  assert.ok(bar[0].attrs.has('hidden'), 'the control bar is not emitted hidden: with no script it is buttons that do nothing')
+  const buttons = findAll(bar[0], (el) => el.name === 'button')
+  for (const button of buttons) {
+    assert.equal(button.attrs.get('type'), 'button', 'a slider control is not a plain button')
+    assert.ok((button.attrs.get('aria-label') || '').length > 0, 'a slider control has no accessible name')
+  }
+  for (const hook of ['data-levels-toggle', 'data-levels-prev', 'data-levels-next']) {
+    assert.equal(buttons.filter((el) => el.attrs.has(hook)).length, 1, `the bar carries no ${hook} button`)
+  }
+  const dots = buttons.filter((el) => el.attrs.has('data-levels-dot'))
+  assert.equal(dots.length, 4, 'the bar does not carry one dot per level')
+  assert.deepEqual(dots.map((dot) => dot.attrs.get('aria-current')), ['true', 'false', 'false', 'false'], 'the first dot is not the current one')
+
+  // Every rule that stacks the levels into one cell is scoped to the state the script writes.
+  const css = [...html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n')
+  const stacking = cssRules(css).filter((rule) => /\.zoom-figure/.test(rule.selector || '') && cssDeclarations(rule.body).some(([p, v]) => (p === 'opacity' && v === '0') || p === 'grid-area'))
+  assert.ok(stacking.length > 0, 'the slider\'s stacking rules are not in the page')
+  for (const rule of stacking) assert.match(rule.selector, /\[data-levels-ready\]/, `${rule.selector} hides or stacks a level without the script's state, so a reader with no script loses three levels`)
+})
+
+test('the levels slider advances by itself, pauses for a reader, and starts paused for less motion', () => {
+  const html = levelsPage()
+  const moving = fakeDOM(html)
+  const root = moving.find('[data-levels]')[0]
+  assert.ok(root.hasAttribute('data-levels-ready'), 'the script did not turn the stills into a slider')
+  assert.equal(root.querySelector('[data-levels-controls]').hidden, false, 'the script did not reveal the control bar')
+  const ticking = moving.running().filter((timer) => timer.ms === 4000)
+  assert.equal(ticking.length, 1, 'the slider does not advance every 4 seconds')
+  assert.equal(root.querySelector('[data-levels-track]').getAttribute('aria-live'), 'off', 'an advancing slider announces every slide')
+  ticking[0].fn()
+  assert.deepEqual(moving.find('[data-levels-dot]').map((dot) => dot.getAttribute('aria-current')), ['false', 'true', 'false', 'false'], 'a tick did not move to the next level')
+  root.dispatch('mouseenter')
+  assert.equal(moving.running().filter((timer) => timer.ms === 4000).length, 0, 'the slider keeps moving under the pointer')
+  assert.equal(root.querySelector('[data-levels-track]').getAttribute('aria-live'), 'polite', 'a paused slider does not announce a change')
+  root.dispatch('mouseleave')
+  root.querySelector('[data-levels-next]').dispatch('click')
+  assert.equal(root.querySelector('[data-levels-toggle]').textContent, 'Play', 'a manual move did not pause the slider')
+  assert.equal(moving.running().filter((timer) => timer.ms === 4000).length, 0, 'a manual move left the slider advancing')
+
+  const still = fakeDOM(html, { reduce: true })
+  const quietRoot = still.find('[data-levels]')[0]
+  assert.equal(quietRoot.querySelector('[data-levels-toggle]').textContent, 'Play', 'a reader who asked for less motion is not started paused')
+  assert.equal(still.running().filter((timer) => timer.ms === 4000).length, 0, 'the slider advances for a reader who asked for less motion')
+  quietRoot.querySelector('[data-levels-toggle]').dispatch('click')
+  assert.equal(still.running().filter((timer) => timer.ms === 4000).length, 1, 'Play does not start the slider')
 })

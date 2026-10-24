@@ -62,7 +62,7 @@ window:
   to: 2026-10-19
   runs: 980
 
-# One row per kind of run: a first task run, a follow-up round on a pull request, and a run
+# One row per kind of run: a first task run, a follow-up run, and a run
 # that only reviews. `middle_half_usd` and `worst_usd` are absent where the owner measured
 # none, and the page renders a dash for them rather than a number nobody measured.
 jobs:
@@ -74,14 +74,14 @@ jobs:
     nine_in_ten_under_usd: 1.27
     worst_usd: 5.24
   - id: follow_up
-    name: A follow-up round on a pull request
+    name: A follow-up run
     runs: 531
     median_usd: 0.35
     middle_half_usd: [0.17, 0.59]
     nine_in_ten_under_usd: 1.00
     worst_usd: 8.36
   - id: review
-    name: An independent review-only run
+    name: A review-only run
     runs: 53
     median_usd: 0.11
     nine_in_ten_under_usd: 0.22

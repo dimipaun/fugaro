@@ -33,15 +33,13 @@
 #      anything.
 #
 # The suite it runs is THIS module's tests, not the whole package's `npm test`,
-# and the difference is deliberate rather than convenient. On the node line
-# package.json's engines declares (22), the package suite has one PRE-EXISTING
-# failure that is not this module's: shared/url/index.test.js refuses
-# 'https://xn--github-9d0c.com/a' as 'not-a-url' where it expects
-# 'punycode-host' (P0.3's module, untouched by this task). A package-wide suite
-# would make the positive control below refuse to run at all, and calling that
-# failure "known" would let a real regression hide behind it. Narrowing the
-# suite to the module the mutations are in measures the right thing; the
-# pre-existing failure is reported in the pull request instead.
+# and the difference is deliberate rather than convenient: another module's
+# failure would make the positive control below refuse to run at all, and
+# calling it "known" would let a real regression hide behind it. That happened
+# on Node 22 until 2026-10-24, when shared/url/index.test.js's invalid
+# punycode fixture made Node 22's parser throw (the fixture is valid now).
+# Narrowing the suite to the module the mutations are in measures the right
+# thing.
 #
 # Expected output: one "killed" line per guard, no "SURVIVED", no "APPLY-FAILED"
 # (a pattern that no longer matches means this script is stale, not that the
