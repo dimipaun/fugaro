@@ -8889,7 +8889,9 @@ printf 'CHECK 130 SETUP: repository %s, default branch %s, licence API HTTP %s\n
      | python3 -c 'import json, sys; d = json.load(sys.stdin); print(json.dumps({"path": d.get("path"), "license": d.get("license"), "message": d.get("message")}, indent=2))'
    ```
 
-   **FACT:** the object verbatim — its `path`, and under `license` its `spdx_id`, `key` and `name`.
+   **FACT:** the object verbatim — its `path`, and under `license` its `spdx_id`, `key` and `name`;
+   and, when the endpoint has no licence to name, the `message` it carries in place of both, which is
+   the 404 the guard recorded, in full.
    The reading that passes is **`spdx_id: "MIT"`**, **`key: "mit"`** and **`path: "LICENSE"`**. The
    `path` is the half a reader would otherwise skip: it is **which file** GitHub classified, so a
    `path` of `LICENSING.md` — or an `spdx_id` of `other` or `NOASSERTION`, or the 404 the guard
