@@ -207,19 +207,21 @@ function summaryOf(entry: Entry): string {
           detail is one click away. A `<details>` needs no script. */}
       <details class="release-notes">
         <summary>Highlights</summary>
-        {body(entry).map((element) =>
-          element.kind === 'list' ? (
-            <ul>
-              {element.items.map((item) => (
-                <li set:html={inline(item)}></li>
-              ))}
-            </ul>
-          ) : element.kind === 'heading' ? (
-            <h3>{element.text}</h3>
-          ) : (
-            <p set:html={inline(element.text)}></p>
-          ),
-        )}
+        <div class="release-notes-body">
+          {body(entry).map((element) =>
+            element.kind === 'list' ? (
+              <ul>
+                {element.items.map((item) => (
+                  <li set:html={inline(item)}></li>
+                ))}
+              </ul>
+            ) : element.kind === 'heading' ? (
+              <h3>{element.text}</h3>
+            ) : (
+              <p set:html={inline(element.text)}></p>
+            ),
+          )}
+        </div>
       </details>
     </article>
   ))}
@@ -328,5 +330,76 @@ function summaryOf(entry: Entry): string {
      that cannot. */
   .release-notes :global(code) {
     background: var(--ground);
+  }
+
+  /* Opening the notes reveals them in every browser (the owner's request of 2026-10-24): the
+     body fades in and rises 6px over 200ms on the site's `--ease-out`, and its first six list
+     items follow 35ms apart. It is an entrance on `[open]`, which a reader triggers one press at
+     a time, so keyframes are the right tool; closing is instant. Gated on `no-preference`: a
+     reader who asked for less motion gets the notes at once, and a browser that runs no
+     animation shows them as they are, because nothing is hidden outside the animation. */
+  @media (prefers-reduced-motion: no-preference) {
+    .release-notes[open] .release-notes-body {
+      animation: notes-reveal var(--duration-collapse) var(--ease-out) both;
+    }
+
+    .release-notes[open] .release-notes-body :global(li:nth-child(-n + 6)) {
+      animation: notes-reveal var(--duration-collapse) var(--ease-out) both;
+    }
+
+    .release-notes[open] .release-notes-body :global(li:nth-child(2)) {
+      animation-delay: 35ms;
+    }
+
+    .release-notes[open] .release-notes-body :global(li:nth-child(3)) {
+      animation-delay: 70ms;
+    }
+
+    .release-notes[open] .release-notes-body :global(li:nth-child(4)) {
+      animation-delay: 105ms;
+    }
+
+    .release-notes[open] .release-notes-body :global(li:nth-child(5)) {
+      animation-delay: 140ms;
+    }
+
+    .release-notes[open] .release-notes-body :global(li:nth-child(6)) {
+      animation-delay: 175ms;
+    }
+  }
+
+  @keyframes notes-reveal {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  /* Opening the notes expands them rather than snapping (owner-approved motion opportunities
+     2026-10-23). Progressive enhancement: a browser without `::details-content` or keyword
+     interpolation keeps the instant open and close, and so does a reader who asked for less
+     motion. */
+  @supports (interpolate-size: allow-keywords) and selector(::details-content) {
+    @media (prefers-reduced-motion: no-preference) {
+      .release-notes {
+        interpolate-size: allow-keywords;
+      }
+
+      .release-notes::details-content {
+        block-size: 0;
+        overflow-y: clip;
+        transition:
+          block-size var(--duration-collapse) var(--ease-out),
+          content-visibility var(--duration-collapse) allow-discrete;
+      }
+
+      .release-notes[open]::details-content {
+        block-size: auto;
+      }
+    }
   }
 </style>

@@ -438,16 +438,16 @@ slipped through.
 
 **One deliberate difference from `mailbox-schema/mutation-proof.sh`:** this
 script's suite is this module's tests (`node --test "mailbox/*.test.js"` from
-`shared/`), not the whole package's `npm test`. The reason is a real one and is
-recorded rather than hidden: on the node line `package.json` declares, the
-package suite has **one pre-existing failure that is not this module's** —
-`shared/url/index.test.js` refuses `https://xn--github-9d0c.com/a` as
-`not-a-url` where the test expects `punycode-host` (P0.3's module, untouched
-here). A package-wide suite would make this harness's positive control refuse to
-run at all, and treating that failure as "known" would let a real regression hide
-behind it. Narrowing the suite to the module under test measures the thing the
-mutations are in, and the pre-existing failure is reported in the pull request
-instead.
+`shared/`), not the whole package's `npm test`, because the module's own tests
+are the ones that measure the thing the mutations are in, and another module's
+failure can neither stop this harness's positive control nor hide a regression
+here. That reason was first a concrete one: on the node line `package.json`
+declares, the package suite had **one failure that was not this module's** —
+`shared/url/index.test.js`'s sweep used `https://xn--github-9d0c.com/a`, which is
+not valid punycode, so Node 22's parser threw and the module answered
+`not-a-url` where the test expects `punycode-host`. That fixture was replaced on
+2026-10-24 with the valid `https://xn--gthub-n2e.com/a`, and the package suite
+passes on Node 22 and Node 26.
 
 ## Honest limits
 

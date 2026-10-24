@@ -65,7 +65,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { cssDeclarations, cssRules, findAll, filesUnder, parse, textOf, walk } from './lib/html.mjs'
@@ -514,6 +514,23 @@ const NEUTRALISERS = {
 /** The scroll-driven reveal the retired flow brought its steps in with. */
 const SCROLL_TIMELINE = ['animation-timeline', 'scroll-timeline', 'view-timeline']
 
+// The one scroll-driven motion the site admits: the run picture's left-to-right reveal of its
+// four steps on /how-it-works/ (owner-approved motion opportunities 2026-10-24; the four
+// levels' scroll zoom of 2026-10-23 was replaced by a slider the same day). It is admitted only
+// as the enhancement it was approved as — a rule of the picture (`.run-diagram` selectors and
+// nothing else) behind both the feature query and the reader's own `no-preference` — so the
+// same mechanism anywhere else, or unguarded, is still the retired flow's reveal and refused.
+const SCROLL_SUPPORTS = /@supports\s*\(\s*animation-timeline\s*:\s*view\(\)\s*\)/i
+export function admittedScrollMotion(rule) {
+  const parts = (rule.selector || '').split(',').map((part) => part.trim())
+  return (
+    parts.length > 0 &&
+    parts.every((part) => /^\.run-diagram(?![\w-])/.test(part)) &&
+    rule.conditions.some((condition) => SCROLL_SUPPORTS.test(condition)) &&
+    rule.conditions.some((condition) => ALLOWS_MOTION.test(condition))
+  )
+}
+
 /**
  * Every way one built page keeps motion for a reader who asked for less of it. The retired
  * flow's own gate (W1.4 step 3, D105) asked the page to bring its steps in on a scroll-driven
@@ -550,7 +567,7 @@ export function pageMotionFailures(css) {
     if (!rule.selector || rule.selector.startsWith('@')) continue
     const declared = cssDeclarations(rule.body)
     for (const [property, value] of declared) {
-      if (SCROLL_TIMELINE.includes(property) && !/^none\b/.test(value.trim())) {
+      if (SCROLL_TIMELINE.includes(property) && !/^none\b/.test(value.trim()) && !admittedScrollMotion(rule)) {
         out.push(
           `${rule.selector}${rule.conditions.length > 0 ? ` (inside ${rule.conditions.join(' and ')})` : ''} declares ${property}: ${value}, and the page is not revealed by scrolling: the flow's scroll-driven animation is retired with the flow (the owner's ruling of 2026-10-20), and the slider's panels are the fragment's while the drawing is a still picture (W1.4 step 3, D105)`,
         )
@@ -1936,20 +1953,29 @@ test("the flow's scroll-driven reveal is retired with it, and every motion the p
       `the ${where} page keeps motion a reader who asked for less would still be given:\n  ${pageMotionFailures(css).join('\n  ')}`,
     )
     const flat = css.replace(/\s+/g, '')
+    // Every spelling in the page's text is counted against the declarations the admitted rules
+    // carry, so one the rule reader does not see is still caught.
+    const admitted = cssRules(css).filter(admittedScrollMotion)
     for (const property of ['animation-timeline', 'scroll-timeline', 'view-timeline']) {
+      const allowed = route === 'how-it-works' ? admitted.reduce((n, rule) => n + cssDeclarations(rule.body).filter(([p]) => p === property).length, 0) : 0
+      // A feature query names the property too, and asks rather than declares.
       assert.ok(
-        !flat.includes(`${property}:`),
+        flat.replace(/@supports[^{]*/g, '').split(`${property}:`).length - 1 <= allowed,
         `the ${where} page declares \`${property}\`, and the page is not revealed by scrolling: the flow's scroll-driven animation is retired with the flow (the owner's ruling of 2026-10-20; W1.4 step 3, D105)`,
       )
     }
     // The homepage has a motion layer since the owner's rulings of 2026-10-23 (the redesign's
     // Step 3, lever 7: motion with reduced-motion fallbacks): the hero's capture opens once as the
     // page loads and the live card's rows arrive, so its keyframes are allowed, held by the
-    // reduced-motion reading above. How It Works keeps its drawing still.
+    // reduced-motion reading above. How It Works keeps its drawing still; its only keyframes are
+    // the run picture's step reveal (owner-approved motion opportunities 2026-10-24), which runs
+    // only through the admitted rule above.
     if (route !== '') {
-      assert.ok(
-        !/@keyframes/.test(flat),
-        `the ${where} page declares a \`@keyframes\` animation, and the drawing is a still picture (the owner's ruling of 2026-10-20; W1.4 step 3, D105)`,
+      const named = [...flat.matchAll(/@keyframes([\w-]+)/g)].map((match) => match[1])
+      assert.deepEqual(
+        named.filter((name) => !name.startsWith('run-step-') && !name.startsWith('run-link-')),
+        [],
+        `the ${where} page declares a \`@keyframes\` animation other than the run picture's step reveal, and the drawing is a still picture (the owner's ruling of 2026-10-20; W1.4 step 3, D105)`,
       )
     }
   }
@@ -2108,6 +2134,21 @@ test('the picture refusals fire on the defect each one names', () => {
   assert.ok(
     pageMotionFailures(`.step-card{animation-timeline:view()}${guard}`).some((line) => /declares animation-timeline: view\(\), and the page is not revealed by scrolling/.test(line)),
     "the flow's scroll-driven reveal passes the motion check as long as it is guarded: the flow is retired and neither thing in its place animates, so the mechanism is refused rather than guarded (the owner's ruling of 2026-10-20)",
+  )
+  // The run picture's reveal is admitted behind both guards, and only there (owner-approved
+  // motion opportunities 2026-10-24).
+  assert.deepEqual(
+    pageMotionFailures(`@supports (animation-timeline:view()){@media (prefers-reduced-motion:no-preference){.run-diagram .run-step{animation-timeline:--run-figure}}}${guard}`),
+    [],
+    'the run picture\'s guarded step reveal is refused, and the owner approved it on 2026-10-24',
+  )
+  assert.ok(
+    pageMotionFailures(`@media (prefers-reduced-motion:no-preference){.run-diagram .run-step{animation-timeline:--run-figure}}${guard}`).some((line) => /and the page is not revealed by scrolling/.test(line)),
+    'the run picture\'s reveal passes without its feature query',
+  )
+  assert.ok(
+    pageMotionFailures(`@supports (animation-timeline:view()){@media (prefers-reduced-motion:no-preference){.step-card{animation-timeline:view()}}}${guard}`).some((line) => /and the page is not revealed by scrolling/.test(line)),
+    'a guarded scroll-driven rule outside the zoom section passes, and the flow\'s reveal is still retired',
   )
   assert.ok(
     pageMotionFailures(`${guard}.step-card{animation:reveal 2s} .step-card:hover{transition:none}`).length === 0,
@@ -2417,4 +2458,48 @@ test('neither page names a claim the product cannot back', () => {
       )
     }
   }
+})
+
+// ---- the latest releases the hero names (owner's request of 2026-10-22, PR #940, and of
+// 2026-10-24 for the console) ------------------------------------------------------------
+
+/** The newest `vX.Y.Z` in `dir` at or below `ceiling`, read here and not from the site's own
+ *  modules, so the check and the page can disagree. */
+function newestAtOrBelow(dir, ceiling) {
+  const num = (v) => v.split('.').map(Number)
+  const cmp = (a, b) => {
+    for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] - b[i]
+    return 0
+  }
+  const top = num(ceiling)
+  const versions = readdirSync(path.join(REPO, dir))
+    .map((name) => /^v(\d+\.\d+\.\d+)\.md$/.exec(name))
+    .filter(Boolean)
+    .map((m) => m[1])
+    .filter((v) => cmp(num(v), top) <= 0)
+    .sort((a, b) => cmp(num(b), num(a)))
+  return versions[0] ?? null
+}
+
+test('the hero names the newest published CLI release and console release, each linked', () => {
+  const cli = newestAtOrBelow('docs/releases', JSON.parse(repoFile('plugin/.claude-plugin/plugin.json')).version)
+  const consoleVersion = newestAtOrBelow('docs/releases/console', JSON.parse(repoFile('console/package.json')).version)
+  assert.ok(cli, 'no CLI release file is published in this checkout, so the line would be held to nothing')
+  const html = readFileSync(path.join(SITE, 'dist', 'index.html'), 'utf8')
+  const lines = findAll(parse(html), (el) => el.name === 'p' && (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-release'))
+  assert.equal(lines.length, 1, 'the hero carries no single latest-release line')
+  const links = [...walk(lines[0])].filter((el) => el.name === 'a')
+  assert.equal(textOf(links[0]).trim(), `v${cli}`, `the hero names ${textOf(links[0]).trim()} and the newest published CLI release is v${cli}`)
+  assert.equal(links[0].attrs.get('href'), '/changelog/', 'the CLI release does not link the changelog')
+  if (consoleVersion === null) {
+    assert.equal(links.length, 1, 'the hero names a console release and none is published')
+  } else {
+    assert.equal(links.length, 2, 'the hero does not name the console release')
+    assert.equal(textOf(links[1]).trim(), `Console ${consoleVersion}`, `the hero names ${textOf(links[1]).trim()} and the newest published console is ${consoleVersion}`)
+    assert.match(links[1].attrs.get('href') ?? '', new RegExp(`/releases/tag/console-v${consoleVersion.replace(/\./g, '\\.')}$`), 'the console release does not link its own release page')
+  }
+  // Under the call to action (the owner's ruling of 2026-10-24), so the headline is the first
+  // thing in the hero and the action comes before the note.
+  const order = html.indexOf('class="hero-cta"') < html.indexOf('class="hero-release"')
+  assert.ok(order, 'the latest-release line is not under the call to action')
 })
