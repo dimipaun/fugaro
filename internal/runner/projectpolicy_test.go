@@ -912,7 +912,7 @@ func TestPolicySetsOnlyItsOwnKeys(t *testing.T) {
 	// The same node over the environment's own cap: the cap is the run's, so
 	// the third call is refused at it. One 4,000-token reply on sonnet costs
 	// about $0.04.
-	b = policyRun(t, gwConfig(t, ""), "enforce", "0.09", `{"version":3,"allow_repos":["github/acme/*"]}`, capScript(3)...)
+	b = policyRun(t, gwConfig(t, critRigor), "enforce", "0.09", `{"version":3,"allow_repos":["github/acme/*"]}`, capScript(3)...)
 	var st []int
 	rec, err = b.run(t, calling(&st, implement("feature"), call{sonnet, 4000}, call{sonnet, 4000}, call{sonnet, 4000}), review("ship", 0))
 	if err != nil || rec.Halt == nil || rec.Halt.Reason != runstore.HaltRunCap || !strings.Contains(rec.Halt.Detail, "0.09") {

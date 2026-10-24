@@ -17,6 +17,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 // Config is a parsed fugaro.yaml.
@@ -40,11 +41,73 @@ type Config struct {
 	Budget    *Budget             `yaml:"budget,omitempty"`
 	Workflows map[string]Workflow `yaml:"workflows"`
 	Followup  Followup            `yaml:"followup"`
+	// Rigor is the repository's rigor mode and its named area rules
+	// (docs/rigor-modes/spec.md, reconciliation D20): how much cost a run
+	// accepts to reduce risk. A file that writes no rigor: block sets none —
+	// this is a default, not a floor, and a project layer's
+	// defaults.rigor.default is what a repository that writes none takes.
+	// The json tag is what keeps an absent block out of the resolved
+	// config's hash: SHA256 marshals this struct (resolve.go), and a
+	// pointer with no json name would write a null key into every file
+	// that writes none, moving the hash of a file that did not change.
+	Rigor *Rigor `yaml:"rigor,omitempty" json:"rigor,omitempty"`
 
 	// Layer is the project layer Resolve resolved this config over, nil
 	// for none. It is never part of the file or of SHA256: a consumer that
 	// holds a resolved config (an image build) passes it on.
 	Layer *ProjectLayer `yaml:"-" json:"-"`
+	// RepoRigor is the rigor: block the repository's own file wrote, before
+	// the project layer's defaults.rigor merged over it, nil when the file
+	// wrote none. Like Layer it is never part of the file or of SHA256, and
+	// it exists because the project layer's area rules stay in effect beside
+	// the repository's rather than being replaced by them (D20c: the two
+	// lists are a union), which RigorConfig reads.
+	RepoRigor *Rigor `yaml:"-" json:"-"`
+}
+
+// Rigor is fugaro.yaml's rigor: block and the project layer's defaults.rigor
+// (D20): the mode a repository runs at when nothing narrower decides, and
+// the named area rules that decide it from the paths a run touches. Both
+// keys may be set in either layer (docs/project-layer.md §5).
+type Rigor struct {
+	// Default is the mode this layer sets; "" sets none, so a layer below
+	// decides (the built-in default is rigor.Default, D19). A narrower layer
+	// may set a *lower* mode than a wider one (D21): this is a default, and a
+	// project that wants a floor says so with a floor.
+	Default rigor.Mode `yaml:"default,omitempty"`
+	// Areas are this layer's area rules (D20c). A rule sets the mode for the
+	// paths it matches; the repository's list and the project layer's are
+	// both in effect, never one replacing the other (the merge rule §4
+	// otherwise gives a list), which is RepoRigor's reason to exist.
+	Areas []rigor.Area `yaml:"areas,omitempty"`
+}
+
+// RigorConfig is the rigor configuration a resolved config stands for: the
+// project layer's defaults.rigor and the repository's own rigor: block, kept
+// apart because both area lists are in effect at once (D20c). It is what
+// internal/rigor's one resolver reads, and it is built here rather than in
+// the resolver so that package never has to know about this one.
+func (c *Config) RigorConfig() rigor.Config {
+	out := c.ProjectRigor()
+	if r := c.RepoRigor; r != nil {
+		out.Repo, out.RepoAreas, out.RepoBlock = r.Default, r.Areas, true
+	}
+	return out
+}
+
+// ProjectRigor is the project layer's half alone: defaults.rigor.default and
+// its areas, with the repository's rigor: block left out. It is what a run
+// falls back to when the base branch's own fugaro.yaml cannot be read
+// (internal/runner, D25): the layer came with the task and is no branch's, so
+// it is the one part of the configuration that is still true when no branch
+// could be asked, and falling back to the checked-out ref's own value instead
+// would let the branch under review set its own mode.
+func (c *Config) ProjectRigor() rigor.Config {
+	var out rigor.Config
+	if c.Layer != nil {
+		out.Project, out.ProjectAreas = c.Layer.Defaults.Rigor.Default, c.Layer.Defaults.Rigor.Areas
+	}
+	return out
 }
 
 // Budget modes, as the project config spells them.

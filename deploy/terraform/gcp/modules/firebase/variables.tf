@@ -122,3 +122,14 @@ variable "history_account" {
     error_message = "history_account must be a service account email, <id>@<project>.iam.gserviceaccount.com."
   }
 }
+
+variable "coordinator_account" {
+  description = "The email of the coordinator's writer account (D194): the aggregation job's own, which the installation root creates (P5) as it creates the history account's. When set, it is granted roles/firebasedatabase.admin here to write the coordinator's subtree under the rules' floor. Empty, the default until P5 creates the account, grants nothing: IAM refuses a member that does not exist."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.coordinator_account == "" || can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\\.iam\\.gserviceaccount\\.com$", var.coordinator_account))
+    error_message = "coordinator_account must be empty or a service account email, <id>@<project>.iam.gserviceaccount.com."
+  }
+}

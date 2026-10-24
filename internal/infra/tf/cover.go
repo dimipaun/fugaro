@@ -84,6 +84,11 @@ var allowedTypes = map[string]bool{
 // it accepts this account: today exactly two do, the bundle's accessor and its
 // own database role, and a third means editing this table on purpose.
 // TestCredentialsAccountIsItsOwnPrincipalKind is what holds that.
+//
+// Coordinator is the coordinator's writer account (coordinator plan P3), its
+// own kind for the same reason: it holds the FP's database admin and nothing
+// else, and as one of FugaroAccounts every toAccounts row would have accepted
+// it. TestCoordinatorAccountIsItsOwnPrincipalKind holds that.
 type who uint8
 
 const (
@@ -91,6 +96,7 @@ const (
 	toAccounts
 	toDeployer
 	toCredentials
+	toCoordinator
 )
 
 // customKey is how grantRules names a custom role of the installation (by its
@@ -149,7 +155,7 @@ var grantRules = map[string]map[string]who{
 		"roles/datastore.user":                    toAccounts,
 		"roles/datastore.viewer":                  toPeople,
 		"roles/firebaseauth.admin":                toAccounts,
-		"roles/firebasedatabase.admin":            toPeople | toAccounts,
+		"roles/firebasedatabase.admin":            toPeople | toAccounts | toCoordinator,
 		"roles/firebasedatabase.viewer":           toPeople,
 		"roles/logging.logWriter":                 toAccounts,
 		"roles/serviceusage.serviceUsageConsumer": toPeople | toAccounts,
@@ -280,12 +286,21 @@ const (
 	CredentialsDatabaseRole = "fugaroCredentialsDatabase"
 )
 
+// CoordinatorAccountID is the coordinator's writer account (internal/infra's
+// CoordinatorAccountID; coordinator plan P3, D194), created in the
+// installation's project. It is NOT among FugaroAccounts, for the credentials
+// account's reason: it holds roles/firebasedatabase.admin on the Firebase
+// project and nothing else, so it is its own kind (toCoordinator).
+const CoordinatorAccountID = "fugaro-coordinator"
+
 // FugaroRoles are the custom role IDs the modules create; FugaroAccounts the
 // fixed service account IDs a toAccounts row accepts. Job and build accounts
 // are fugaro-<readable>-<8 hex>. The deployer account (DeployerAccountID) and
 // the credentials service's (CredentialsAccountID) are deliberately NOT among
 // FugaroAccounts: each holds roles of its own and nothing a job holds, so each
-// is its own kind of principal (toDeployer, toCredentials).
+// is its own kind of principal (toDeployer, toCredentials). The coordinator's
+// writer (CoordinatorAccountID) is not among them either, for the same reason
+// (toCoordinator).
 var (
 	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole}
 	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
@@ -602,6 +617,14 @@ func (c Cover) deployerProject() string { return c.installationProject() }
 func (c Cover) isCredentialsMember(m string) bool {
 	p := c.installationProject()
 	return p != "" && m == "serviceAccount:"+CredentialsAccountID+"@"+p+".iam.gserviceaccount.com"
+}
+
+// isCoordinatorMember is whether m is exactly the coordinator's writer
+// account as an IAM member, in the installation's project: its one grant is
+// on the Firebase project, which does not move the account.
+func (c Cover) isCoordinatorMember(m string) bool {
+	p := c.installationProject()
+	return p != "" && m == "serviceAccount:"+CoordinatorAccountID+"@"+p+".iam.gserviceaccount.com"
 }
 
 // isDeployerMember is whether m is exactly this run's deployer account as an
@@ -1175,6 +1198,10 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 			// listed its address on the review screen would otherwise be able
 			// to grant it a launcher's or an operator's role.
 			kind = toCredentials
+		case c.isCoordinatorMember(m):
+			// The coordinator's writer likewise: its one row is the FP's
+			// database admin.
+			kind = toCoordinator
 		case slices.Contains(c.Listed, m):
 			if !strings.HasPrefix(m, "user:") && !strings.HasPrefix(m, "group:") && !strings.HasPrefix(m, "serviceAccount:") {
 				return fmt.Sprintf("grants to %s, which is not a user, group or service account", m)

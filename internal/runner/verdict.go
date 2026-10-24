@@ -10,13 +10,25 @@ import (
 // VerdictSchema is passed to claude --json-schema for review stages. keep is
 // read only for a pick run (reviewmode.go): the pull request number to
 // keep, among the ones the prompt listed.
-const VerdictSchema = `{"type":"object","properties":{"verdict":{"type":"string","enum":["ship","changes"]},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string"},"file":{"type":"string"},"summary":{"type":"string"}},"required":["summary"]}},"keep":{"type":"integer"}},"required":["verdict","findings"]}`
+//
+// A finding's score is three anchored 1–5 axes and a class (D1, D3). All four
+// are optional, so a verdict written before them still validates and still
+// parses, and severity stays the free-form label it is (D2).
+const VerdictSchema = `{"type":"object","properties":{"verdict":{"type":"string","enum":["ship","changes"]},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string"},"likelihood":{"type":"integer","minimum":1,"maximum":5},"impact":{"type":"integer","minimum":1,"maximum":5},"fix_cost":{"type":"integer","minimum":1,"maximum":5},"class":{"type":"string","enum":["correctness","performance","security","data_loss","maintainability","cosmetic"]},"file":{"type":"string"},"summary":{"type":"string"}},"required":["summary"]}},"keep":{"type":"integer"}},"required":["verdict","findings"]}`
 
 // Finding is one issue a review asks to fix.
 type Finding struct {
 	Severity string `json:"severity"`
-	File     string `json:"file"`
-	Summary  string `json:"summary"`
+	// The mode's threshold table reads these, never Severity (D2). An
+	// unscored finding reads as zero on every axis and blocks in every
+	// mode, so a reviewer that stops scoring cannot turn a mode down
+	// silently (D4).
+	Likelihood int    `json:"likelihood,omitempty"`
+	Impact     int    `json:"impact,omitempty"`
+	FixCost    int    `json:"fix_cost,omitempty"`
+	Class      string `json:"class,omitempty"`
+	File       string `json:"file"`
+	Summary    string `json:"summary"`
 }
 
 // Verdict is a review stage's structured result.

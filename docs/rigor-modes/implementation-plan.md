@@ -1197,7 +1197,7 @@ from `Recipe` as the thing to watch for on an installation whose rules are older
 | a mode becomes a second readiness rule | F4 | §5's first constraint; §7's second review question |
 | the config key collides with `task.Spec.Mode` | F22 | the key is `rigor` (T5.1), and the collision is a parse error rather than a misreading |
 | the check number collides with an open claim | §3 | the register's own renumber-second rule, owned by T8.1 |
-| a branch sets its own rigor, and the run obeys it | F35, D25 | D25's answer is the real one — the mode is read from the **base branch** for every run kind, so the branch under review never supplies it; the built-in floors (T1.5) hold whatever the revision says |
+| a branch sets its own rigor, and the run obeys it | F35, D25 | D25's answer is the real one — the mode is read from the **base branch** for every run kind, so the branch under review never supplies it; the base branch is read as the repository's default branch (D25, "as T1.2 read it"), because `git.base_branch` is a key the branch being reviewed writes for itself; the built-in floors (T1.5) hold whatever the revision says |
 | the project default is read as a floor by a reader | D21's line between a default and a floor | D5's part three and D18: a floor is policy, and `docs/project-layer.md` §2 says "only tightens" of exactly that kind of value |
 | a live `watch` deploy breaks an installation whose rules are older | F40 | the drop-and-warn path T1.7 takes from `Recipe`, tested; the marker-and-halt path is the alternative the answer did not take, and §9's unnumbered check is where the deploy is watched |
 | cost: the modes make runs cheaper in theory and not in fact | **U2**, unverified | T6.3's per-mode reporting and D17's refusal to forecast |

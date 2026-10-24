@@ -486,6 +486,12 @@ var recencyWindows = []recencyWindow{
 		mint: []string{"wallRunID", "wallRunIDAt"}, since: true},
 	{cmd: "report", window: reportDefaultSince, run: []string{"report"},
 		seam: regexp.MustCompile(`budgetNow\s*=`), since: true},
+	// coordinator status lists the runs of a repository's bucket over
+	// lsDefaultSince, from lsNow — runs ls's clock, read through
+	// coordinatorSince (internal/cli/coordinator.go), so the same seam pins
+	// both.
+	{cmd: "coordinator status", window: lsDefaultSince, run: []string{"coordinator", "status"},
+		seam: regexp.MustCompile(`lsNow\s*=`), mint: []string{"recentRunID", "runIDAt"}, since: true},
 	{cmd: "budget preview", window: previewHistoryWindow.String(), run: []string{"budget", "preview"},
 		seam: regexp.MustCompile(`budgetNow\s*=`)},
 }
