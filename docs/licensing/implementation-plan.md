@@ -76,7 +76,7 @@ workspaces plan, which takes D302, D303, D308 and D309 as inputs.
 | No non-`ee/` Go file of any build tag imports the ee path (matched by path segment) except `cmd/fugaro/ee_on.go`, which must carry `//go:build ee` and blank-import only `…/ee/register`; no symlink, `//go:embed`, `//go:generate`, cgo include, `replace` or nested module reaches into `ee/` | L1.1 `TestCoreNeverImportsEE`, `TestCoreNeverEmbedsEE`, `TestNoModuleRouteIntoEE` |
 | Every `ee/` source file (any file but `README.md` and `LICENSE`) starts with the two-line notice, and `ee/LICENSE` exists whenever one source file does (R3, amended) | L1.1 `TestEEFilesCarryTheNotice`, `TestEESourceNeedsTheLicence` |
 | The core builds and tests with `ee/` deleted; the only tests skipped there are the ones that read the real `ee/` through the one helper | L1.2 `TestEEReadersAreListed`; L1.7 `TestDocsCoreWithoutEEWorkflow`; run after L1.8 |
-| The release build (D303 as amended): every goreleaser build's `main` is `./cmd/fugaro`; its build tags are empty at 0.11.0; a non-empty list may hold only `ee`, and only when the cask `license`, the plugin manifest `license`, README, `LICENSING.md` and the website elements name the enterprise licence; no archive file glob reaches `ee/` | L2.1 `TestGoreleaserReleaseBuild`, `TestEETagNeedsTheLabels` |
+| The release build (D303 as amended): every goreleaser build's `main` is `./cmd/fugaro`; its build tags are empty at 0.11.0; a non-empty effective tag set may hold only `ee`, and only when the cask `license`, the plugin manifest `license`, README, `LICENSING.md` and the website elements name the enterprise licence (`LicenseRef-Fugaro-Enterprise` and `ee/LICENSE`); `before.hooks` is an exact list; no archive file glob reaches `ee/` | L2.1 `TestGoreleaserReleaseBuild`, `TestEETagNeedsTheLabels` |
 | Both website licence elements (the Licence card and the `#licence` section) state the split and link `LICENSING.md`; "the only text that governs" is gone | L1.5 |
 | `ee/README.md` says the folder is reserved and carries no licence yet, until L4.1 | L1.2 creates it, L4.1 switches it |
 | The CLI archive carries a notice for every linked third-party module | L2.1 `TestThirdPartyNoticesCoverEveryLinkedModule` |
@@ -87,8 +87,13 @@ workspaces plan, which takes D302, D303, D308 and D309 as inputs.
 repository; a build-tagged core file importing `ee/` is the case `go list -deps` misses, so L1.1
 parses every file regardless of tags and its self-test plants one. A contributor who removes the
 test is caught by review, not by the test: L1.6's rule file names it. Adding `ee` to the release
-build's tags without the label change is refused by L2.1's coupling test; a second assembly file,
-or one without the tag line, is refused by L1.1. **Not covered, by D309's
+build's tags without the label change is refused by L2.1's coupling test, which reads the
+**effective** tag set (goreleaser's `tags`, `flags`, `env` and `overrides`, and the release
+workflow's environment), not one key; a second assembly file, one whose constraint is anything but
+exactly `ee`, or a `//go:linkname` onto the ee path is refused by L1.1. The three published images
+(`images/base/Dockerfile`, `images/history/Dockerfile`, `images/credentials/Dockerfile`) build their
+own `fugaro` with `go build` and no tag: a second release build, untagged by construction, which
+the workspaces plan must decide about (T3 (e)). **Not covered, by D309's
 accepted Go-only scope:** the image Dockerfiles (`images/`) and the Terraform sources
 (`deploy/terraform/`) could name `ee/` without any test noticing; that scope is extended with the
 first non-Go file under `ee/`.
@@ -126,7 +131,11 @@ first non-Go file under `ee/`.
     creds walker, so a file the go tool would not build today still cannot carry the import.
     **The one exception (D303 as amended):** `cmd/fugaro/ee_on.go` exactly, whose build
     constraint is `//go:build ee`, whose package is `main`, and whose only import of the ee path
-    is the blank import `_ "github.com/dimipaun/fugaro/ee/register"`. The ee path is matched **by path segment**: an
+    is the blank import `_ "github.com/dimipaun/fugaro/ee/register"`. Its constraint is parsed
+    with `go/build/constraint` from the `//go:build` line above the package clause and must be
+    **exactly** the expression `ee` (no `||`, no `!`, no other term; a legacy `// +build` line alone
+    does not count). The `ee` tag may appear in **no other** core file's constraint, and no core
+    file may carry a `//go:linkname` whose target is on the ee path. The ee path is matched **by path segment**: an
     import equal to `github.com/dimipaun/fugaro/ee` or starting with
     `github.com/dimipaun/fugaro/ee/` (so `…/eevee` is not a match). It also refuses any symlink
     outside `ee/` that resolves into `ee/` (the walker does not follow symlinks, and the tree
@@ -139,7 +148,10 @@ first non-Go file under `ee/`.
   - `TestEEFilesCarryTheNotice`: R3's exact rule (reconciliation R3) over the **tracked** files
     under `ee/` (`git ls-files -s ee/`, so an untracked `.DS_Store` or build output does not fail
     it, and mode `120000` marks a symlink, which is refused); nothing tracked is skipped
-    (dot-directories, `_` directories and `testdata/` included);
+    (dot-directories, `_` directories and `testdata/` included), except that a tracked file that
+    no longer exists on disk is skipped on `os.IsNotExist`, as
+    `internal/cli/docs_merge_markers_test.go` does, so the core-without-ee workflow, which deletes
+    `ee/` without committing, does not fail it;
     only the exact paths `ee/README.md` and `ee/LICENSE` are exempt; the comment syntax is chosen
     by file type; a `#!` file carries the notice on lines 2 and 3; a format with no comments
     (`.json`, `go.sum`, binaries, unknown types) needs a sibling `<name>.license` carrying the
@@ -160,7 +172,11 @@ first non-Go file under `ee/`.
     for the exception, each reported: a second file `cmd/fugaro/ee_more.go` with the tag importing
     `ee/register`; `cmd/fugaro/ee_on.go` without `//go:build ee`; `ee_on.go` importing an ee
     package other than `ee/register`, or `ee/register` by a non-blank name; an `ee_on.go`-named file
-    in another directory; an import of `ee/register` from `internal/cli` under the tag.
+    in another directory; an import of `ee/register` from `internal/cli` under the tag;
+    `ee_on.go` with `//go:build ee || linux`; with `//go:build !ee`; with the constraint placed
+    after the package clause; with only a legacy `// +build ee` line; another core file whose
+    constraint mentions `ee` without importing anything; a core `//go:linkname` onto
+    `github.com/dimipaun/fugaro/ee/register.x`.
 - **Command:** `go test ./internal/eeboundary/ -run 'TestCoreNeverImportsEE|TestCoreNeverEmbedsEE|TestNoModuleRouteIntoEE|TestEEFilesCarryTheNotice|TestEESourceNeedsTheLicence|TestEEBoundaryScanCatchesPlantedViolations' -count=1`
 - **Red step:** write `TestEEBoundaryScanCatchesPlantedViolations` first against a scan stub that
   returns nothing; every positive plant fails.
@@ -181,8 +197,11 @@ first non-Go file under `ee/`.
   `TestEEReadersAreListed` (both ways: every top-level test in `internal/cli` that calls
   `readRealEE` is in `eeReadingTests`, and every name in `eeReadingTests` is such a test; and no
   `_test.go` file anywhere in the module, outside `internal/eeboundary/` and this helper file,
-  holds a string literal naming a path under the repository's `ee/`, so a test cannot read it
-  around the helper). L1.1's tests pass on the reserved tree.
+  passes a path that starts at the repository's `ee` element to a **filesystem call**
+  (`os.ReadFile`, `os.Open`, `os.Stat`, `os.Lstat`, `os.ReadDir`, `filepath.Join`,
+  `filepath.Walk`/`WalkDir`, any `fs.*` function), so a test cannot read the real `ee/` around the
+  helper; a test that only **matches content** naming `ee/` (a link in `LICENSING.md`, the
+  workflow's `rm -rf ee`, an archive glob) is not a read and is allowed). L1.1's tests pass on the reserved tree.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDocsEEReserved|TestEEReadersAreListed|Docs' -count=1 -timeout 900s`
 - **Red step:** `TestDocsEEReserved` before `ee/README.md` exists; `TestEEReadersAreListed` against
   a list missing `TestDocsEEReserved`.
@@ -209,7 +228,7 @@ first non-Go file under `ee/`.
   trademark paragraph);
   `TestDocsLicensingVendoredNotice` (`.agents/LICENSE` exists and carries an MIT permission
   notice).
-- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDocsLicensing|Docs' -count=1 -timeout 900s`
+- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDocsLicensing|TestEEReadersAreListed|Docs' -count=1 -timeout 900s`
 - **Red step:** the three new-file tests against today's tree (`TestDocsLicensingRootLicenceUnchanged`
   passes from the start: it is the guard).
 - **Depends on:** L1.2 (`LICENSING.md` links `ee/README.md`; the helper and list). **Reviewer
@@ -270,14 +289,18 @@ first non-Go file under `ee/`.
   and **step B** `go test -race -timeout 40m ./internal/runner/...` with no skip, so the runner
   is not run twice and has the bound `CONTRIBUTING.md` gives it. The spec asks that the core "pass
   its tests" without `ee/`; the cost is a run about as long as `ci.yml`'s test job, on pushes to
-  `main` only); `docs/pending-workflows/README.md` (its opening count of pending files and a
-  `## core-without-ee.yml` section with the copy-in commands);
+  `main` only; its `name:` is `core-without-ee`, so `gh workflow run core-without-ee` finds it);
+  `docs/pending-workflows/README.md` (its opening count of pending files and a
+  ``## `core-without-ee.yml` `` section, backticks in the heading like every other section there,
+  with a status line and the copy-in commands); `website/README.md` (its sentence naming every
+  pending workflow, which `TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere` and
+  `website/test/readme.mjs` hold to the directory);
   `internal/cli/docs_core_without_ee_workflow_test.go` (new).
 - **Precedent:** `shared-tests.yml`'s (the staged copy is removed at copy-in, and the test then
   reads `.github/workflows/`). The test reads `docs/pending-workflows/core-without-ee.yml` while
   it exists and `.github/workflows/core-without-ee.yml` otherwise, and fails if neither exists.
-- **Tests:** `TestDocsCoreWithoutEEWorkflow` (the file parses; triggers only on push to `main` and
-  dispatch; holds no secret; pins every action by SHA; sets `timeout-minutes`; deletes `ee/` before
+- **Tests:** `TestDocsCoreWithoutEEWorkflow` (the file parses; its `name:` is `core-without-ee`;
+  triggers only on push to `main` and dispatch; holds no secret; pins every action by SHA; sets `timeout-minutes`; deletes `ee/` before
   building; step A's `-skip` alternation equals `eeReadingTests` exactly and step A excludes
   `internal/runner`; step B runs `./internal/runner/...` at `-timeout 40m` with no `-skip`; no
   step passes `-tags ee` (or any tag list holding `ee`); no
@@ -285,7 +308,8 @@ first non-Go file under `ee/`.
   `t.TempDir()`; the README section carries the copy-in), plus the existing pending-workflow tests
   (`internal/cli/docs_desktop_console_test.go`'s `pendingWorkflows` derives the set from the
   directory and checks the README's opening names it).
-- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDocsCoreWithoutEE|TestEEReadersAreListed|Pending|Docs' -count=1 -timeout 900s`
+- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDocsCoreWithoutEE|TestEEReadersAreListed|TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere|Pending|Docs' -count=1 -timeout 900s`,
+  then `cd website && npm run check`
 - **Red step:** the new test before the file exists.
 - **Depends on:** L1.1 (the workflow runs its tests), L1.2 and L1.3 (`eeReadingTests` is final for
   0.11.0 only after both). **Reviewer tier:** standard. **OWNER-RUN:** no.
@@ -297,7 +321,9 @@ first non-Go file under `ee/`.
   cp docs/pending-workflows/core-without-ee.yml .github/workflows/core-without-ee.yml
   git rm docs/pending-workflows/core-without-ee.yml
   git add .github/workflows/core-without-ee.yml
-  # README: lower the opening count and mark the section "applied", as the section says
+  # docs/pending-workflows/README.md: lower the opening count, and set the status line of the
+  #   ## `core-without-ee.yml` section to "applied, not pending" (shared-tests.yml's step 3)
+  # website/README.md: drop core-without-ee.yml from the sentence naming the pending workflows
   git commit -am "workflows: the core builds and tests with ee/ deleted"
   git push
   gh workflow run core-without-ee --ref main
@@ -312,7 +338,8 @@ first non-Go file under `ee/`.
   repository now reserves an `ee/` directory for future organisation features under their own
   licence, described in LICENSING.md; every earlier release stays MIT.* No `### For operators`
   entry (R5).
-- **Depends on:** L1.2, L1.3, L1.5 merged. **Done by:** the release PR.
+- **Depends on:** L1.2, L1.3, L1.5 merged. **Done by:** the release PR. **Reviewer tier:** the
+  release PR's own review. **OWNER-RUN:** no (the release itself is the owner's go).
 
 #### L1.10 — Write Check 130 (amended 2026-10-24: GitHub's MIT reading and `LICENSING.md` only)
 - **Files:** `docs/gcp-live-checklist.md` (a `## Check 130` section and its register row: after
@@ -337,8 +364,8 @@ first non-Go file under `ee/`.
   target of the build matrix** (`GOOS` darwin and linux × `GOARCH` amd64 and arm64, as
   `.goreleaser.yaml` builds), the union of the four module sets, then each
   non-main module's `LICENSE*`/`COPYING*`/`NOTICE*` from its module directory, into one file);
-  `scripts/notices_test.go` (new); `.goreleaser.yaml` (a `before.hooks` line running the script and
-  the file added to `archives[0].files`); `docs/release.md` (one sentence saying the archive
+  `scripts/notices_test.go` (new); `.goreleaser.yaml` (a `before.hooks` line running the script,
+  after `go mod verify`, and the file added to `archives[0].files`); `docs/release.md` (one sentence saying the archive
   carries it).
 - **Tests:** `TestThirdPartyNoticesCoverEveryLinkedModule` (runs the script into `t.TempDir()`
   against the already-downloaded module cache; every module `go list -deps ./cmd/fugaro` names for
@@ -346,12 +373,20 @@ first non-Go file under `ee/`.
   a module has one; a module reached only under one target, such as a `golang.org/x/sys` build for
   darwin, is covered);
   `TestGoreleaserArchivesShipNotices`; `TestGoreleaserReleaseBuild` (D303 as amended: every entry
-  in `builds` has `main: ./cmd/fugaro`; every build's `tags` list is empty, or holds only `ee`; no
-  `archives[].files` entry or glob reaches `ee/`); `TestEETagNeedsTheLabels` (the coupling: if any
-  build's tags hold `ee`, then the Homebrew cask `license`, `plugin/.claude-plugin/plugin.json`'s
-  `license`, the README Licensing section, `LICENSING.md` and the website's two licence elements
-  all name the enterprise licence; at 0.11.0 the tags are empty and the test holds trivially; a
-  planted goreleaser config with `tags: [ee]` and MIT labels is refused).
+  in `builds` has `main: ./cmd/fugaro`; `before.hooks` equals an exact list (`go mod verify` and
+  the notices script); no `archives[].files` entry or glob reaches `ee/`; the **effective tag set**
+  is the union of every build's `tags`, any `-tags`/`-tags=` value in its `flags`, any `-tags` in
+  `GOFLAGS` in its `env` or in the top-level `env`, the same three in each of its `overrides[]`,
+  and `GOFLAGS` in the `env:` of every goreleaser step in `.github/workflows/release.yml`; that set
+  is empty at 0.11.0, or holds only `ee`); `TestEETagNeedsTheLabels` (the coupling: if the effective
+  tag set holds `ee`, then each label **names the enterprise licence**, defined as: the Homebrew
+  cask `license` and `plugin/.claude-plugin/plugin.json`'s `license` are SPDX expressions holding
+  `LicenseRef-Fugaro-Enterprise`, and the README Licensing section, `LICENSING.md` and the
+  website's two licence elements each contain `LicenseRef-Fugaro-Enterprise` or link `ee/LICENSE`;
+  at 0.11.0 the set is empty and the test holds trivially. Plants refused: `tags: [ee]` with MIT
+  labels; `flags: [-tags=ee]`; `GOFLAGS=-tags=ee` in a build's `env`, in the top-level `env`, in an
+  `overrides[]` entry, and in the release workflow's goreleaser step. Positive plant accepted:
+  `tags: [ee]` with every label naming the enterprise licence).
 - **Command:** `go test ./scripts/ -run 'TestThirdPartyNotices|TestGoreleaserArchivesShipNotices|TestGoreleaserReleaseBuild|TestEETagNeedsTheLabels' -count=1`,
   then `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1 -timeout 900s` (for `docs/release.md`).
 - **Red step:** the coverage test against a stub script that writes an empty file.
@@ -365,7 +400,8 @@ first non-Go file under `ee/`.
   `console/tools/bundle-renderer/index.ts` (records every file it **walks** and every file it
   **copies** verbatim into one inputs list beside `dist/bundle/console.js`; today it walks only
   the console's own sources, because it refuses every bare specifier and never reads
-  `node_modules/`, and it copies nothing); `console/scripts/notices.mjs` (new: from that list, every
+  `node_modules/`, and the files it copies verbatim (`copyFileSync`) are today only the console's
+  own HTML documents, none from `node_modules/`); `console/scripts/notices.mjs` (new: from that list, every
   input under `node_modules/` maps to its package and that package's licence file, written to
   `console/THIRD_PARTY_NOTICES.md`); `console/THIRD_PARTY_NOTICES.md` (generated and committed;
   **the one notices file**, the same path GV2.2 names); `console/test/unit/packaging-licence.test.ts`
@@ -409,6 +445,8 @@ reads, stores or knows about keys (D308 with D303 as amended).
   is stored is left to the workspaces plan; minting is OWNER-RUN with a key kept off every machine
   an agent reaches (R8); U5 (secret scans) is a check the first implementing task runs.
 - **Tests:** `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1 -timeout 900s`.
+- **Red step:** none (a design note, no code); the reviewer checks that the raw-bytes, key-id and
+  clock-set-back rules and the "nothing in core" rule are each stated.
 - **Depends on:** nothing. **Reviewer tier:** opus + mandatory independent review (a trust
   boundary, even on paper). **OWNER-RUN:** no.
 - **Commit:** `docs(licensing): the licence-key design (D308), not built`
@@ -422,15 +460,20 @@ reads, stores or knows about keys (D308 with D303 as amended).
   `internal/cli/docs_licensing_test.go` (the statement test follows),
   `internal/cli/docs_ee_repo_test.go` (`eeReadingTests` follows the renamed and new tests),
   `docs/pending-workflows/core-without-ee.yml` (the applied workflow, staged again with step A's
-  `-skip` matching the new list) and `docs/pending-workflows/README.md` (its section, now pending
-  again). Without the staged update the applied workflow turns red, because a new test reads the
+  `-skip` matching the new list), `docs/pending-workflows/README.md` (its section, now pending
+  again) and `website/README.md` (its pending-workflows sentence names the file again);
+  `website/src/pages/community.astro` and `website/test/faq-community.mjs` (the "reserved" wording
+  from L1.5 becomes "under `ee/LICENSE`"); `CONTRIBUTING.md` and
+  `internal/cli/docs_contributing_cla_test.go` (L1.4's "`ee/` takes no contributions while it is
+  reserved" becomes the licensed rule). Without the staged update the applied workflow turns red, because a new test reads the
   `ee/` the workflow deletes, and no agent can change `.github/workflows/`.
 - **Interfaces:** consumes L0.1's approved text verbatim.
 - **Tests:** `TestDocsEELicenceIsTheApprovedText` (the file's SHA-256 equals a **constant in the
   test**, the hash of the text the owner approved; the commit body only restates it, since a test
   cannot read a commit message); `TestDocsEEReserved` renamed `TestDocsEELicensed`;
   `TestDocsLicensingStatement` updated.
-- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDocsEE|TestDocsLicensing|Docs' -count=1 -timeout 900s`
+- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDocsEE|TestDocsLicensing|TestEEReadersAreListed|TestDocsCoreWithoutEE|TestDocsContributingCLA|TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere|Docs' -count=1 -timeout 900s`,
+  then `cd website && npm run check`
 - **Red step:** `TestDocsEELicenceIsTheApprovedText` before the file exists.
 - **Depends on:** L0.1, L1.2, L1.3, L1.8 (the applied workflow exists to be updated). **Reviewer
   tier:** opus + mandatory independent review (legal text; the reviewer diffs it against L0.1's
@@ -443,7 +486,9 @@ reads, stores or knows about keys (D308 with D303 as amended).
   cp docs/pending-workflows/core-without-ee.yml .github/workflows/core-without-ee.yml
   git rm docs/pending-workflows/core-without-ee.yml
   git add .github/workflows/core-without-ee.yml
-  # README: lower the opening count and mark the section "applied" again
+  # docs/pending-workflows/README.md: lower the opening count, and set the
+  #   ## `core-without-ee.yml` section's status line to "applied, not pending" again
+  # website/README.md: drop core-without-ee.yml from the pending-workflows sentence again
   git commit -am "workflows: core-without-ee skips the tests that read the licensed ee/"
   git push
   gh workflow run core-without-ee --ref main
@@ -467,7 +512,7 @@ reads, stores or knows about keys (D308 with D303 as amended).
   `TestDocsLicensingReadmeSection` and `TestDocsLicensingStatement` updated; the website's pinned
   facts updated; `go test ./plugin/ -run 'TestPlugin' -count=1`.
 - **Command:** `go test ./scripts/ -run 'TestEETagNeedsTheLabels|TestGoreleaserReleaseBuild' -count=1`,
-  `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDocsLicensing|Docs' -count=1 -timeout 900s`,
+  `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDocsLicensing|TestEEReadersAreListed|Docs' -count=1 -timeout 900s`,
   `cd website && npm run check`.
 - **Red step:** `tags: [ee]` alone, before any label changes: `TestEETagNeedsTheLabels` fails.
 - **Depends on:** L5.1, L2.1, and the workspaces plan's first ee feature with its
@@ -493,8 +538,8 @@ plan's first ee feature).
 | 6 | L5.2 (with the first ee feature's release) |
 
 **Ready for the 0.11.0 tag** means these are merged: **L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7,
-L2.1 and L1.9** (L1.9 is the release PR itself). The owner-run L1.8, L1.11 and L0.2 may follow the
-tag if the owner says so. L2.2 ships with the console's own release; L3.1, L4.1, L4.2, L5.1 and
+L2.1 and L1.9** (L1.9 is the release PR itself). **May follow the tag** if the owner says so:
+L1.10 (the Check 130 text, an agent's) and the owner-run L1.8, L1.11 and L0.2. L2.2 ships with the console's own release; L3.1, L4.1, L4.2, L5.1 and
 L5.2 are not 0.11.0 work. At the 0.11.0 tag the release build sets no `ee` tag (D303 as amended),
 which L2.1's test pins.
 
@@ -523,8 +568,10 @@ L4.1; L5.2 after L5.1 and L2.1 (it makes L2.1's coupling test non-trivial).
 | `internal/cli/docs_ee_repo_test.go` | L1.2 (0), L1.3 (1), L4.1 (4) |
 | `internal/cli/docs_licensing_test.go` | L1.3 (1), L4.1 (4), L5.2 (6) |
 | `internal/eeboundary/boundary_test.go` | L1.1 (0) |
-| `CONTRIBUTING.md`, `.github/pull_request_template.md`, `internal/cli/docs_contributing_cla_test.go` | L1.4 (0) |
-| `website/src/pages/community.astro`, `website/test/faq-community.mjs` | L1.5 (2), L5.2 (6) |
+| `CONTRIBUTING.md`, `internal/cli/docs_contributing_cla_test.go` | L1.4 (0), L4.1 (4) |
+| `.github/pull_request_template.md` | L1.4 (0) |
+| `website/src/pages/community.astro`, `website/test/faq-community.mjs` | L1.5 (2), L4.1 (4), L5.2 (6) |
+| `website/README.md` | L1.7 (2), L1.8 (3, owner), L4.1 (4), L4.2 (5, owner) |
 | `plugin/.claude-plugin/plugin.json` | L5.2 (6) |
 | `.claude/rules/ee.md`, `CLAUDE.md` | L1.6 (1) |
 | `docs/pending-workflows/core-without-ee.yml`, `docs/pending-workflows/README.md` | L1.7 (2), L1.8 (3, owner), L4.1 (4), L4.2 (5, owner) |

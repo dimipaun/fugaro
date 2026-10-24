@@ -335,8 +335,10 @@ with no `ee/LICENSE`.
   by a test beside the boundary test; legal notices are outside the comment rule. (F24) **The
   rule the test holds (amended by T1's ruling, so a reserved `ee/` passes; made exact after the
   round-1 review):**
-  - **Scope.** Every file under `ee/`, walked without skipping any directory (dot-directories,
-    `_`-prefixed directories and `testdata/` included, unlike the creds walker), symlinks refused.
+  - **Scope.** Every **tracked** file under `ee/` (`git ls-files`), skipping no directory
+    (dot-directories, `_`-prefixed directories and `testdata/` included, unlike the creds walker),
+    symlinks refused; a tracked file missing on disk is skipped (the core-without-ee workflow
+    deletes `ee/` without committing).
     Only the exact paths `ee/README.md` and `ee/LICENSE` are exempt; a `README.md` in a
     subdirectory is a source file.
   - **Comment syntax by type.** `//` for `.go`, `.ts`, `.tsx`, `.js`, `.mjs`, `.cjs`; `#` for
@@ -419,7 +421,11 @@ unused.
   OWNER-RUN counsel review. (c) A user who wants a pure-MIT binary builds from source without the
   tag; whether to also publish a pure-MIT artifact is open for that release. (d) The repository's
   `go vet -tags` loop in `ci.yml` does not vet `//go:build ee` files today; the workspaces plan adds
-  the tag to it when the first such file lands.
+  the tag to it when the first such file lands. (e) The three published images
+  (`images/base/Dockerfile`, `images/history/Dockerfile`, `images/credentials/Dockerfile`) each
+  build their own `fugaro` with `go build` and no tag: a second release build whose `fugaro` stays
+  untagged, so a run's container never carries ee code unless the workspaces plan decides
+  otherwise (an input for that plan).
 - **O1 — Counsel (OWNER-RUN, task L0.1):** the `ee/LICENSE` text and licensor line (T1), the CLA
   text for the hosted app (D304), F3 (a) and (b), and whether D307's notices meet the dependencies'
   terms.
