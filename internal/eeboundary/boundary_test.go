@@ -42,8 +42,8 @@ package eeboundary
 // It is a text scan of this repository at one commit: it says nothing about a
 // fork, a second module, a file copied in by a build step, or a link the
 // operating system follows outside the tree it was given. And a contributor
-// who deletes this file is caught by review, not by the scan -- `.claude/rules/ee.md`
-// names these tests for exactly that reason.
+// who deletes this file is caught by review, not by the scan -- the path-scoped
+// rule for ee/ (plan task L1.6) names these tests for exactly that reason.
 //
 // The scan takes the tracked ee/ file list as an argument rather than reading
 // git itself, which is what lets the last test hand it a tree it built under
@@ -108,7 +108,6 @@ func (f finding) String() string { return f.rule + ": " + f.path + ": " + f.deta
 
 // report is what one scan of one tree answered.
 type report struct {
-	modulePath string
 	// goFiles counts the .go files outside ee/ the walk parsed: a test
 	// asserts it is the module and not an empty directory, so no check below
 	// can pass by looking at nothing.
@@ -128,26 +127,92 @@ func (r *report) byRule(rule string) []finding {
 	return out
 }
 
-// scanner is one walk in progress: the tree, the module path read from its
-// go.mod (so the ee import path follows a rename instead of being assumed),
-// and the tracked ee/ list the notice rule reads.
+// scanner is one walk in progress: the tree, the ee import path read from its
+// go.mod (so a rename is followed rather than assumed), and the tracked ee/
+// list the notice rule reads.
 type scanner struct {
-	root       string
-	modulePath string
-	eePath     string
-	tracked    map[string]bool
-	findings   []finding
+	root     string
+	eePath   string
+	tracked  map[string]bool
+	findings []finding
 }
 
 func (s *scanner) add(rule, path, detail string) {
 	s.findings = append(s.findings, finding{rule: rule, path: path, detail: detail})
 }
 
-// scanTree is the red step's stub: it walks nothing and reports nothing, so
-// every plant in TestEEBoundaryScanCatchesPlantedViolations fails until the
-// scan below exists.
+// scanTree runs every rule over one tree -- this module, or the one a plant
+// built -- and answers what it found. files is the tracked ee/ list the notice
+// rule reads; everything else is read from the tree.
+//
+// The walk steps out of no directory at all, and that is deliberate: a
+// testdata/, node_modules/, `.hidden/` or `_build/` directory is read like any
+// other, because a file the go tool would not build today still cannot carry
+// the import. It is also why the walk cannot be `go list -deps`: that sees one
+// build's files, and the files this rule exists for are the ones no build
+// reads.
 func scanTree(root string, files []eeFile) (*report, error) {
-	return &report{modulePath: "github.com/dimipaun/fugaro", eeFiles: len(files)}, nil
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	modulePath, err := modulePathOf(abs)
+	if err != nil {
+		return nil, err
+	}
+	s := &scanner{
+		root:    abs,
+		eePath:  modulePath + "/" + eeDirName,
+		tracked: make(map[string]bool, len(files)),
+	}
+	for _, f := range files {
+		s.tracked[f.path] = true
+	}
+	rep := &report{eeFiles: len(files)}
+	err = filepath.WalkDir(abs, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(abs, p)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if rel == "." || d.IsDir() {
+			return nil
+		}
+		if inEEPath(rel) {
+			// ee/'s own files are the notice rule's, and it reads the tracked
+			// list rather than this walk; a module file under ee/ is a route
+			// into it either way.
+			if d.Name() == "go.mod" || d.Name() == "go.work" {
+				s.add(ruleRoutes, rel, "a nested module under ee/")
+			}
+			return nil
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			return s.checkSymlink(p, rel)
+		}
+		switch {
+		case d.Name() == "go.mod" || d.Name() == "go.work":
+			return s.checkModuleFile(p, rel)
+		case strings.HasSuffix(d.Name(), ".go"):
+			rep.goFiles++
+			return s.checkGoFile(p, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.checkEELicence(files)
+	for _, f := range files {
+		if err := s.checkEEFile(f); err != nil {
+			return nil, err
+		}
+	}
+	rep.findings = s.findings
+	return rep, nil
 }
 
 // modulePathOf answers go.mod's module path, which is what makes the ee path
@@ -819,7 +884,7 @@ func TestEEBoundaryScanCatchesPlantedViolations(t *testing.T) {
 			files: map[string]string{
 				"internal/web/x.go": "package web\n\nimport \"github.com/dimipaun/fugaro/ee\"\n",
 			},
-			want: []string{"internal/web/x.go: it imports github.com/dimipaun/fugaro/ee\n"},
+			want: []string{"internal/web/x.go: it imports github.com/dimipaun/fugaro/ee"},
 		},
 		{
 			name:  "a symlink outside ee/ that resolves into it",
@@ -994,9 +1059,12 @@ func TestEEBoundaryScanCatchesPlantedViolations(t *testing.T) {
 			none:  true,
 		},
 		{
-			name:  "a shebang script whose notice follows the shebang",
-			files: map[string]string{"ee/run.sh": "#!/bin/sh\n" + noticeText("# ", "")},
-			none:  true,
+			name: "a shebang script whose notice follows the shebang",
+			files: map[string]string{
+				eeLicenceFile: licenceFixture,
+				"ee/run.sh":   "#!/bin/sh\n" + noticeText("# ", ""),
+			},
+			none: true,
 		},
 		{
 			name:  "the assembly file in the one shape R6 allows",
