@@ -103,7 +103,13 @@ document, release assignment later — so Slices 1–2 wait on no ruling; (e)
 - **Files:** new `internal/plan/levels.go`, new `internal/plan/levels_test.go`, new
   `internal/plan/testdata/hub.json`.
 - **Interfaces:** consumes `plan.Document`; produces `plan.Levels(Document) [][]string`,
-  `plan.CriticalPath(Document) []string`, `plan.Downstream(Document) map[string]int`.
+  `plan.CriticalPathTasks(Document) []string`, `plan.Downstream(Document) map[string]int`.
+  **Amended 2026-10-24, as GV1.1 shipped:** the second is `CriticalPathTasks`, not `CriticalPath`.
+  V2.2.3 merged on 2026-10-23 (§2's "absorbed by GV1.1"), so `internal/plan` already exports a
+  `CriticalPath` type — the read's own object, pinned by the console JSON contract and by
+  `internal/cli/docs_desktop_console_test.go` — and Go refuses a function carrying a name a type in
+  the package holds. Renaming the type would reach files outside this task. One function, the
+  answer this line meant; **GV1.6 consumes this name**.
 - **Schema/rules/config:** none (pure functions; nothing is read back from an artifact — a
   `critical_path` key in an artifact stays a refusal, `internal/plan/read_test.go`).
 - **Tests:** `TestLevels`, `TestCriticalPathByCount`, `TestCriticalPathTieBreak`,
