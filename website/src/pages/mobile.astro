@@ -1,0 +1,273 @@
+---
+/**
+ * website/src/pages/mobile.astro — the phone app's page (the zoom-diagrams plan,
+ * `docs/website/zoom-diagrams/implementation-plan.md` §3, **Part 3**; the owner's answers of
+ * 2026-10-21 under D239, D240, D241 and D242).
+ *
+ * **The page is a preview, and it says so three times over** (D240's three conditions). The
+ * badge above the headline says the app is coming; no date appears anywhere on the page — not
+ * in its prose, not in its `<title>`, not in its description — because the phone app's
+ * schedule is the owner's and a date here is a claim this repository cannot back; and every
+ * bullet the page prints is marked **shipped** or **planned**, so no line of it is a false
+ * present tense. `website/test/mobile.mjs` is what holds all three: it refuses a four-digit
+ * year or a month name in the page's text, and it holds every claim to the state the data
+ * file gives it.
+ *
+ * **Where its facts come from, and why the claims are not typed here:**
+ *
+ *   - `website/data/mobile-claims.yaml` — one row per claim, each with the claim's `text` and
+ *     its `state`, read and validated by `src/content.ts`'s `loadMobileClaims()`. The split is
+ *     the owner's, bullet by bullet (D241): status and spend are **shipped**, because the job
+ *     list reads both out of the Realtime Database today; the roster, switching by name, the
+ *     wake word, QR pairing and the three roles are **planned**. This page renders the rows it
+ *     is handed and writes no claim of its own — a page that restated one is the copy that
+ *     drifts first (Global Constraint 6).
+ *   - `website/data/mobile-screens.yaml` — the phone app's screenshots, read through
+ *     `loadMobileScreens()`. **The file carries no row, and that is the state this page is
+ *     written to render** (the plan's Part 3, item 4): the slider below renders the rows it is
+ *     handed, and a file with no row in it renders no slider, no heading and no frame at all —
+ *     never a picture-shaped hole a reader could not tell from a picture that failed to arrive.
+ *     The pictures are the owner's, supplied as files (D251); no agent commits a screenshot
+ *     (D190).
+ *
+ * **The voice bullet is on-device, and the page names no speech service** (D242): the row says
+ * where the listening and the recognition happen and nothing about where a transcript would be
+ * sent, because the local/remote evaluation switch is design only and not built
+ * (`docs/mobile/design/voice-evaluation-switch.md`, the reconciliation's ZF28). The sentence
+ * lives in the data file with the other claims, so this page holds no second copy of it.
+ *
+ * **There is no waitlist, and nothing here asks a reader for anything** (D239, answered
+ * 2026-10-21: "no waitlist"): no form, no `mailto:` and no third-party collector. The page
+ * carries the badge and the copy and nothing else, which is why the privacy page, the CSP's
+ * `form-action 'self'`, `linkcheck.mjs`'s `mailto:` refusal and Check 69b's "nothing phones
+ * home" are all untouched by this part.
+ *
+ * **The page is the console page's sister, and the shape is its own.** The hero is the
+ * console's (a pill above the headline, the headline, the lead), the slider is the same
+ * component, and the claims are the console's facts grid with the state marked on each card —
+ * a card's own label and the group's heading say which of the two a reader is looking at, so
+ * the marking is visible without reading every line (the owner's visual check). Every class
+ * below is this page's own and every colour is a token, so the contrast the palette check
+ * computes is the contrast a reader gets (W1.2).
+ */
+import Base from '../layouts/Base.astro'
+import ScreenshotSlider from '../components/ScreenshotSlider.astro'
+import { loadMobileClaims, loadMobileScreens } from '../content.ts'
+
+/**
+ * The lead: the page's own two sentences, and the only prose on it that is not a claim out of
+ * the data file. It says what the app is for and how to read the rest of the page, and it
+ * promises nothing and dates nothing — what the app does is the marked claims below it. It is
+ * also the page's `<meta name="description">`, so a search result carries the same words a
+ * reader meets at the top of the page rather than a second, unread sentence.
+ */
+const LEAD =
+  "Your runs' status and spend, in your pocket. The app is in progress: every line below says whether it is here today or still to come."
+
+// The claims, and the two lists the page renders them in. The rows come in as the data file
+// writes them; the split into the two states is this page's only reading of them.
+const { claims } = loadMobileClaims()
+
+// The screenshots. There is no row in the file today, so this renders no slider at all — and
+// the day the owner's files land, the section below appears with them and nothing here moves.
+const { screens } = loadMobileScreens()
+
+/** The word each state is marked with, which is the whole of what a card says about its state. */
+const STATE_LABEL: Record<string, string> = { shipped: 'Shipped', planned: 'Planned' }
+
+const shipped = claims.filter((claim) => claim.state === 'shipped')
+const planned = claims.filter((claim) => claim.state === 'planned')
+
+/**
+ * Each state is rendered as its own list under its own heading, so **a list with no row in it
+ * is a defect in this page rather than a section to draw empty**: a page whose planned list is
+ * empty says the app is finished, and a page whose shipped list is empty says it does nothing
+ * today. Both are claims about the product that this page is not allowed to make — the file's
+ * reader refuses an empty file for the same reason — so the build stops here, naming the file
+ * to fix, rather than shipping a heading over nothing.
+ */
+for (const [state, rows] of [
+  ['shipped', shipped],
+  ['planned', planned],
+] as const) {
+  if (rows.length === 0) {
+    throw new Error(
+      `website/src/pages/mobile.astro: ${JSON.stringify(state)} has no row in website/data/mobile-claims.yaml, and this page renders the two states as two lists under two headings: an empty list is a heading over nothing, and a page whose *${state}* list is empty claims the app has ${state === 'shipped' ? 'nothing to show today' : 'nothing left to build'} — neither of which is this page's to say (D240, D241). Add the row the state is missing, or take the page down.`,
+    )
+  }
+}
+---
+
+<Base title="Mobile" description={LEAD}>
+  <article>
+    {/* The page's first screen, and the badge D240 asks for: a preview label above the
+        headline, in the block that holds the headline and the lead — the shape the console
+        page's own pill is drawn in, and the place a reader looks for what a page is before
+        reading what it says. The mark beside it is the accent rather than the success tone the
+        console's pill carries: this page is not a running thing, and a green "it is up" dot
+        beside "Coming soon" would be the page contradicting itself. */}
+    <section class="mobile-hero" aria-labelledby="mobile-title">
+      <div class="hero-glow" aria-hidden="true"></div>
+
+      <div class="mobile-hero-copy">
+        <p class="pill mobile-badge" data-preview-badge>
+          <span class="mobile-badge-dot" aria-hidden="true" />
+          Coming soon
+        </p>
+
+        <h1 class="mobile-title display-xl" id="mobile-title">
+          Fugaro on your <span class="gradient-text">phone</span>
+        </h1>
+
+        {/* The lead: what the app is for, and the one sentence that tells a reader how to read
+            the rest of the page. It promises nothing and dates nothing — what the app does is
+            the claims below, each marked with the state the data file gives it. */}
+        <p class="mobile-lead">{LEAD}</p>
+      </div>
+    </section>
+
+    {/* The screenshots, in the slot the console page's own slider fills. `mobile-screens.yaml`
+        carries no row, so this renders nothing at all today; when the owner's files arrive,
+        the section appears with its own heading, its own ids and its own name — the mobile
+        page's, not the console's — and neither this file nor the component moves. */}
+    <ScreenshotSlider
+      screens={screens}
+      slot="mobile-screens"
+      idPrefix="mobile-screen"
+      label="Screenshots of the phone app. Scroll sideways to see the rest."
+    />
+
+    {/* The claims, in the two states D240's second condition requires. Each state is its own
+        `<section>` with its own heading, which is the console page's own shape — a section
+        named by the heading over it — and the reason there are two of them here: one section
+        holding both would be a region named "What the app does today" with "What is still to
+        come" inside it, which is a name that describes half of what it holds. Each card is
+        marked with its own state as well as standing in its own list, so which of the two a
+        bullet is can be read off the heading or off the card. The `data-claims` hooks are the
+        lists' names for the test that holds every row to the state the data file gives it. */}
+    <section id="mobile-claims" aria-labelledby="mobile-claims-heading">
+      <h2 id="mobile-claims-heading" class="display-lg">What the app does today</h2>
+      <ul class="mobile-claims" data-claims="shipped">
+        {
+          shipped.map((claim) => (
+            <li class="card mobile-claim" data-state={claim.state}>
+              <p class="mobile-claim-state">{STATE_LABEL[claim.state]}</p>
+              <p class="mobile-claim-text">{claim.text}</p>
+            </li>
+          ))
+        }
+      </ul>
+    </section>
+
+    <section id="mobile-planned" aria-labelledby="mobile-planned-heading">
+      <h2 id="mobile-planned-heading" class="display-lg">What is still to come</h2>
+      <ul class="mobile-claims" data-claims="planned">
+        {
+          planned.map((claim) => (
+            <li class="card mobile-claim" data-state={claim.state}>
+              <p class="mobile-claim-state">{STATE_LABEL[claim.state]}</p>
+              <p class="mobile-claim-text">{claim.text}</p>
+            </li>
+          ))
+        }
+      </ul>
+    </section>
+  </article>
+</Base>
+
+<style>
+  /* Tokens only (W1.2): every colour below is the palette in force, so the contrast check in
+     `website/test/a11y.mjs` is about the colours this page actually paints. */
+
+  /* The hero: the console page's centred first screen, with the site's own glow behind it
+     (`base.css`'s `.hero-glow`, which needs a positioned, clipped parent). */
+  .mobile-hero {
+    position: relative;
+    overflow: hidden;
+    margin: 0 0 var(--space-2xl);
+  }
+
+  .mobile-hero-copy {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-md);
+    padding: var(--space-2xl) 0 var(--space-xl);
+    text-align: center;
+  }
+
+  .mobile-badge {
+    gap: var(--space-2xs);
+    font-size: var(--font-size-sm);
+  }
+
+  /* The badge's dot: the accent, which is the colour the site marks a thing that is this
+     product's own. It is a mark and not text, so it carries no contrast pair of its own. */
+  .mobile-badge-dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-pill);
+    background: var(--accent);
+  }
+
+  /* The headline: `base.css`'s `.display-xl`, held to the two lines the console page's own
+     headline is held to rather than running the width of a wide window. */
+  .mobile-title {
+    max-width: 20ch;
+  }
+
+  /* The lead under it, at the size the console page sets its own lead and no wider than a
+     comfortable measure. */
+  .mobile-lead {
+    max-width: 60ch;
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xl);
+    line-height: var(--leading-snug);
+  }
+
+  /* The claims: the console page's facts grid, one list per state, so a row added to either
+     state in the data file needs no rule of its own. */
+  .mobile-claims {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+    gap: var(--space-md);
+    margin: var(--space-lg) 0 var(--space-2xl);
+    padding: 0;
+    list-style: none;
+  }
+
+  .mobile-claim {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+  }
+
+  /* The state, on the card: the small uppercase label the site's eyebrow already is, in the
+     two tones the states mean — the muted text for what is planned, and the text tone for what
+     has shipped, which is the one of the two a reader can act on today. The card's own edge
+     says the same thing a second way, so the marking survives a reader who is skimming rather
+     than reading: a shipped card carries the success tone's border, and a planned one the
+     ordinary border it is drawn with. */
+  .mobile-claim-state {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    font-weight: var(--weight-semibold);
+  }
+
+  .mobile-claim[data-state='shipped'] {
+    border-color: var(--ok);
+  }
+
+  .mobile-claim[data-state='shipped'] .mobile-claim-state {
+    color: var(--text);
+  }
+
+  .mobile-claim-text {
+    margin: 0;
+    color: var(--text-muted);
+  }
+</style>

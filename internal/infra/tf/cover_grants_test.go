@@ -40,13 +40,21 @@ func withCondFor(after map[string]any, typ, role string, person bool) {
 
 // deployerCondFor is the condition a project grant of one of the deployer's
 // roles needs so that deployerGrant never flips a cell this matrix tests
-// only at the table level: binding (2)'s exact condition for the scoped role,
-// which is bound with none for the other one. Every other role needs none.
+// only at the table level: each conditioned role's own condition, which is
+// bound with none for the unconditioned one. Every other role needs none.
 func deployerCondFor(typ, role string) []any {
-	if typ != "google_project_iam_member" || role != "projects/proj-1/roles/"+DeployerScopedRole {
+	if typ != "google_project_iam_member" {
 		return nil
 	}
-	return []any{map[string]any{"title": DeployerConditionTitle, "expression": DeployerConditionExpression(), "description": nil}}
+	id, ok := strings.CutPrefix(role, "projects/proj-1/roles/")
+	if !ok || id == DeployerRole {
+		return nil
+	}
+	expr, ok := DeployerConditionExpression("proj-1", id)
+	if !ok {
+		return nil
+	}
+	return []any{map[string]any{"title": DeployerConditionTitle, "expression": expr, "description": nil}}
 }
 
 // deployerGrantAccountFor is the account a grant of role through typ needs so
@@ -67,6 +75,11 @@ func deployerGrantAccountFor(typ, role string) string {
 func TestGrantRulesMatrix(t *testing.T) {
 	const person = "user:me@example.com"
 	const account = "serviceAccount:fugaro-history@proj-1.iam.gserviceaccount.com"
+	// The credentials service's account is a fourth kind of principal, not a
+	// second spelling of `account`: only the two rows that name it may hold it,
+	// and every other cell of the table refuses it (the ledger finding #903 —
+	// while it was one of FugaroAccounts, every account row accepted it).
+	const credentials = "serviceAccount:" + CredentialsAccountID + "@proj-1.iam.gserviceaccount.com"
 	all := map[string]bool{}
 	for _, row := range grantRules {
 		for k := range row {
@@ -79,7 +92,7 @@ func TestGrantRulesMatrix(t *testing.T) {
 	for typ, row := range grantRules {
 		for key := range all {
 			role := grantRoleString(key)
-			for kind, member := range map[who]string{toPeople: person, toAccounts: account, toDeployer: "serviceAccount:" + DeployerAccount("proj-1")} {
+			for kind, member := range map[who]string{toPeople: person, toAccounts: account, toDeployer: "serviceAccount:" + DeployerAccount("proj-1"), toCredentials: credentials} {
 				want := row[key]&kind != 0
 				after := map[string]any{"member": member, "role": role, "bucket": "fugaro-runs-proj-1"}
 				if acct := deployerGrantAccountFor(typ, role); acct != "" {
@@ -115,7 +128,7 @@ func TestGrantRulesMatrix(t *testing.T) {
 		// Roles no module grants through any type.
 		// tokenCreator is deliberately not among these any more: D75 grants it
 		// on a service account for a person (the matrix's own row above). The
-		// deployer's two roles are not here either: their row is
+		// deployer's eight roles are not here either: their row is
 		// google_project_iam_member's alone, so every other type refuses them.
 		for _, role := range []string{"roles/owner", "roles/editor", "roles/viewer", "roles/iam.securityAdmin", "roles/storage.admin", "roles/run.admin",
 			"projects/proj-1/roles/fugaroEverything", "projects/other/roles/fugaroLauncher"} {
@@ -177,7 +190,7 @@ func TestGrantRulesNameOnlyKnownTypesAndRoles(t *testing.T) {
 			t.Errorf("%s has no roles", typ)
 		}
 		for key, w := range row {
-			if w == 0 || w&^(toPeople|toAccounts|toDeployer) != 0 {
+			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials) != 0 {
 				t.Errorf("%s %s: bad principal kinds %d", typ, key, w)
 			}
 			if id, ok := strings.CutPrefix(key, customKey); ok {
@@ -286,6 +299,9 @@ func TestCoverCheckSpecBuildAccount(t *testing.T) {
 func TestGrantRulesPinnedCells(t *testing.T) {
 	const person = "user:me@example.com"
 	const account = "serviceAccount:fugaro-history@proj-1.iam.gserviceaccount.com"
+	// The credentials service's account (0.10.1, ledger #903): its own kind of
+	// principal, so exactly two rows hold it.
+	const credentials = "serviceAccount:" + CredentialsAccountID + "@proj-1.iam.gserviceaccount.com"
 	const (
 		project = "google_project_iam_member"
 		sacct   = "google_service_account_iam_member"
@@ -321,6 +337,26 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		{runjob, "projects/proj-1/roles/fugaroJobRunner", person, true},
 		{runjob, "roles/run.invoker", account, true},
 		{logview, "roles/logging.viewAccessor", person, true},
+		// The credentials service's two rows, and only these two (0.10.1,
+		// ledger #903): the bundle's accessor and its own database role. The
+		// database role is declared in the Firebase project (credentials.tf,
+		// var.credentials_service.firebase_project), so the two-project shape
+		// is a cell of its own — the account stays the installation's.
+		{secret, "roles/secretmanager.secretAccessor", credentials, true},
+		{project, "projects/proj-1/roles/" + CredentialsDatabaseRole, credentials, true},
+		{project, "projects/fp-2/roles/" + CredentialsDatabaseRole, credentials, true},
+		// ... and every other role it could be handed is refused, the two
+		// predefined database roles first: viewer cannot write and admin could
+		// delete the installation's database.
+		{project, "roles/firebasedatabase.admin", credentials, false},
+		{project, "roles/firebasedatabase.viewer", credentials, false},
+		{project, "projects/proj-1/roles/" + CredentialsDatabaseRole, account, false},
+		{project, "projects/proj-1/roles/" + CredentialsDatabaseRole, person, false},
+		{project, "roles/logging.logWriter", credentials, false},
+		{project, "roles/datastore.user", credentials, false},
+		{project, "projects/proj-1/roles/fugaroHistory", credentials, false},
+		{sacct, "roles/iam.serviceAccountUser", credentials, false},
+		{bkt, "roles/storage.objectViewer", credentials, false},
 		// Roles on the wrong type, or to the wrong kind of principal.
 		{bkt, "roles/storage.objectAdmin", account, false},
 		{project, "roles/storage.objectAdmin", person, false},
@@ -364,8 +400,8 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 	}
 }
 
-// The deployer's two roles are held by the deployer account and by nothing
-// else, and the deployer account holds those two roles and nothing else: a
+// The deployer's eight roles are held by the deployer account and by nothing
+// else, and the deployer account holds those eight roles and nothing else: a
 // plan that binds the scoped role — even under its exact condition — to a job
 // account, the scheduler or the history account hands that account every
 // update, delete, setIamPolicy and actAs on the managed prefix; a plan that
@@ -388,9 +424,13 @@ func TestDeployerRolesAndAccountAreTheDeployersAlone(t *testing.T) {
 		scheduler = "serviceAccount:fugaro-scheduler@proj-1.iam.gserviceaccount.com"
 		history   = "serviceAccount:fugaro-history@proj-1.iam.gserviceaccount.com"
 	)
-	scoped := "projects/proj-1/roles/" + DeployerScopedRole
+	// One service's conditioned role stands for the seven in this matrix, which
+	// is about the grant table and not about the conditions: the conditions are
+	// tested one by one, per service, in TestDeployerGrantConditions.
+	scoped := "projects/proj-1/roles/" + DeployerStorageRole
 	plain := "projects/proj-1/roles/" + DeployerRole
-	exact := []any{map[string]any{"title": DeployerConditionTitle, "expression": DeployerConditionExpression(), "description": nil}}
+	scopedExpr, _ := DeployerConditionExpression("proj-1", DeployerStorageRole)
+	exact := []any{map[string]any{"title": DeployerConditionTitle, "expression": scopedExpr, "description": nil}}
 	onDeployer := deployerAccountName("proj-1")
 	onScheduler := "projects/proj-1/serviceAccounts/fugaro-scheduler@proj-1.iam.gserviceaccount.com"
 	type tc struct {
@@ -511,13 +551,13 @@ func TestCloudAssetRoleIsTheSearchReadOnly(t *testing.T) {
 	}
 }
 
-// The deployer is its own kind of principal: only its two roles name it, and
+// The deployer is its own kind of principal: only its eight roles name it, and
 // they name nothing else. A row that let an account or a person hold either
 // role, or let the deployer hold any other, would undo the check above.
 func TestOnlyTheDeployerRolesNameTheDeployer(t *testing.T) {
 	for typ, row := range grantRules {
 		for key, w := range row {
-			isDeployerRole := typ == "google_project_iam_member" && (key == customKey+DeployerRole || key == customKey+DeployerScopedRole)
+			isDeployerRole := typ == "google_project_iam_member" && (key == customKey+DeployerRole || slices.Contains(DeployerServiceRoles(), strings.TrimPrefix(key, customKey)))
 			if isDeployerRole && w != toDeployer {
 				t.Errorf("%s %s is held by %d, want the deployer alone", typ, key, w)
 			}
@@ -531,23 +571,184 @@ func TestOnlyTheDeployerRolesNameTheDeployer(t *testing.T) {
 	}
 }
 
+// The credentials service's account is its own kind of principal (0.10.1,
+// ledger #903), and this is the test the finding asked for: a role granted to
+// it OUTSIDE its allowed set fails the cover.
+//
+// The finding, exactly. While fugaro-credentials was one of FugaroAccounts, the
+// toAccounts rows accepted it: a plan — written by hand, by an agent, or by a
+// module edited in a hurry — granting the service account roles/datastore.user,
+// roles/batch.jobsEditor, a job runner's run.jobs.run or a launcher's role was
+// covered by init's ONE typed confirmation, because the account's NAME was on a
+// list that means "a Fugaro service account of this run" and never "an account
+// that may hold this role". The service reads one secret and one database and
+// must hold nothing else: a role it does not need is reach at the budget
+// backend, at Fugaro's own secrets or at the authority to run jobs, held by the
+// one identity that holds every model credential.
+//
+// So both halves are asserted: fugaro-credentials is NOT in FugaroAccounts (the
+// list, which is where the finding started), and the table plus the cover refuse
+// it every role but its two — the table row by row, and the cover for real, on
+// the roles the modules grant elsewhere, on the roles the table does not name at
+// all, and on the one predefined role that would be the easy mistake
+// (roles/firebasedatabase.admin, which could delete the installation's
+// database).
+func TestCredentialsAccountIsItsOwnPrincipalKind(t *testing.T) {
+	const credentials = "serviceAccount:" + CredentialsAccountID + "@proj-1.iam.gserviceaccount.com"
+
+	if slices.Contains(FugaroAccounts, CredentialsAccountID) {
+		t.Errorf("the credentials service's account is one of FugaroAccounts, so every toAccounts row accepts it: one confirmation then covers a grant of the history account's datastore.user, a job runner's or a launcher's role to the identity that holds every model credential (ledger #903)")
+	}
+	// The two rows it may hold, and nothing else. A row that gains
+	// toCredentials is a role this account may be granted, so it is a decision
+	// this test makes deliberate.
+	allowed := map[string]map[string]bool{
+		"google_secret_manager_secret_iam_member": {"roles/secretmanager.secretAccessor": true},
+		"google_project_iam_member":               {customKey + CredentialsDatabaseRole: true},
+	}
+	for typ, row := range grantRules {
+		for key, w := range row {
+			if (w&toCredentials != 0) != allowed[typ][key] {
+				t.Errorf("%s %s: toCredentials is %v, want %v — the service's account holds the bundle's accessor and its database role, and no other role of the installation", typ, key, w&toCredentials != 0, allowed[typ][key])
+			}
+		}
+	}
+	for typ, row := range allowed {
+		for key := range row {
+			if grantRules[typ][key]&toCredentials == 0 {
+				t.Errorf("%s %s does not accept the credentials service's account, so the module's own grant of it is refused and init cannot cover the plan that turns the service on", typ, key)
+			}
+		}
+	}
+
+	// ... and the cover, role by role. Every role of every row, the roles the
+	// table names for other kinds of principal included, plus roles no row
+	// names at all.
+	roles := map[string][]string{}
+	for typ, row := range grantRules {
+		for key := range row {
+			roles[typ] = append(roles[typ], grantRoleString(key))
+		}
+	}
+	roles["google_project_iam_member"] = append(roles["google_project_iam_member"],
+		"roles/owner", "roles/editor", "roles/firebasedatabase.admin", "roles/firebasedatabase.viewer",
+		"projects/proj-1/roles/fugaroEverything", "projects/fp-2/roles/"+CredentialsDatabaseRole)
+	for typ, list := range roles {
+		for _, role := range slices.Sorted(slices.Values(list)) {
+			after := map[string]any{"member": credentials, "role": role, "bucket": "fugaro-runs-proj-1"}
+			withCondFor(after, typ, role, false)
+			ch := rc(typ, after, map[string]any{}, "create")
+			got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
+			want := allowed[typ][mustRoleKey(t, role)]
+			if (len(got) == 0) != want {
+				t.Errorf("%s: %s to the credentials service's account: NotCovered = %q, covered want %v", typ, role, got, want)
+			}
+		}
+	}
+
+	// A member computed from a service account the module creates is one of
+	// Fugaro's accounts, and it is NOT this one: the database role to a computed
+	// account is refused, the way the deployer's own bindings are (a plan that
+	// hands this role to an account nobody can name is not the module's). The
+	// module's own grant names its member, which is a literal plan-time string:
+	// google_service_account.credentials[0].member is
+	// serviceAccount:<account_id>@<project>.iam.gserviceaccount.com as soon as
+	// the account's ID and project are known.
+	sa := rc("google_service_account", map[string]any{}, map[string]any{}, "create")
+	ch := rc("google_project_iam_member", map[string]any{"role": "projects/proj-1/roles/" + CredentialsDatabaseRole, "bucket": "fugaro-runs-proj-1"}, map[string]any{"member": true}, "create")
+	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{sa, ch}}, nil); len(got) == 0 {
+		t.Errorf("the database role to a computed account is covered: only the credentials service's own account may hold it")
+	}
+
+	// The account in ANOTHER project is not it either: the module creates it in
+	// the installation's project, and the role's project does not move the
+	// account (a lookalike address in the Firebase project is refused).
+	for _, member := range []string{
+		"serviceAccount:" + CredentialsAccountID + "@fp-2.iam.gserviceaccount.com",
+		"serviceAccount:" + CredentialsAccountID + "-0123abcd@proj-1.iam.gserviceaccount.com",
+	} {
+		after := map[string]any{"member": member, "role": "projects/fp-2/roles/" + CredentialsDatabaseRole, "bucket": "fugaro-runs-proj-1"}
+		ch := rc("google_project_iam_member", after, map[string]any{}, "create")
+		if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
+			t.Errorf("%s: the database role is covered: the service's account is %s@proj-1 and nothing else", member, CredentialsAccountID)
+		}
+	}
+
+	// The account is not a person either: a review screen that listed its
+	// address (a project admin who added it by mistake) does not make any role
+	// grantable to it.
+	listed := Cover{Projects: testCover.Projects, Listed: []string{credentials}, Region: testCover.Region, Buckets: testCover.Buckets}
+	for _, tc := range []struct {
+		role    string
+		covered bool
+	}{
+		{"projects/proj-1/roles/" + CredentialsDatabaseRole, true},
+		{"roles/logging.logWriter", false},
+		{"roles/datastore.user", false},
+	} {
+		after := map[string]any{"member": credentials, "role": tc.role, "bucket": "fugaro-runs-proj-1"}
+		ch := rc("google_project_iam_member", after, map[string]any{}, "create")
+		if got := listed.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); (len(got) == 0) != tc.covered {
+			t.Errorf("listed on the review screen: %s to the credentials account: NotCovered = %q, covered want %v", tc.role, got, tc.covered)
+		}
+	}
+}
+
+// mustRoleKey is grantRules' key for a role as a module writes it, for the
+// table lookups above. It is the cover's own roleKey, so the test cannot
+// disagree with the code about which row a role lands on.
+func mustRoleKey(t *testing.T, role string) string {
+	t.Helper()
+	key, ok := testCover.roleKey(role)
+	if !ok {
+		return role
+	}
+	return key
+}
+
 // The fence of D75 (Task 1.5 step 5), tested the way it is applied: a project
-// binding of fugaroDeployerScoped is covered only under binding (2)'s exact
-// condition — the managed prefix, per service, byte for byte — and one of
-// fugaroDeployer only with no condition at all. A binding with the condition
+// binding of one of the deployer's conditioned roles is covered only under that
+// role's own condition — the managed prefix for its own service, byte for byte
+// — and one of fugaroDeployer only with no condition at all. A binding carrying
+// ANOTHER service's condition is refused too: it is the wrong fence, and the
+// review cannot tell a mistake from a widening. A binding with the condition
 // removed, with a wider one, with a narrowed one, with a condition known only
 // after apply or with more than one condition hands the deployer every update,
 // delete, setIamPolicy and actAs of the scoped role project-wide, which is the
 // account that could then reach the runs bucket and forge the marker.
+//
+// The condition known only after apply is a row for EACH of the two roles, and
+// the plain role is not the scoped one's case under another name. What catches
+// a condition the plan has not decided is the check's own `unknownAt` clauses,
+// which read `after_unknown` by path — condition[0].title, .expression,
+// .description — so they catch it whether the whole condition is computed or
+// only its expression is. The row the plain role needs is the WHOLLY computed
+// one: a condition the plan does not know at all is in `after` as nothing, so
+// the "under a condition" branch has no condition to see and the binding reads
+// as the modules' plain one — `fugaroDeployer` decided during apply, on the
+// account the fence exists for, with no refusal at all. A plan whose expression
+// alone is computed still carries its block in `after` (with the expression
+// null), so the plain branch refuses that one as "under a condition" with the
+// check gone and without it: that row is held to the refusal naming the unknown
+// condition, not to the binding being accepted.
+//
+// Mutation (verified, run and restored): removing the check's `unknownAt`
+// clauses fails the row whose expression alone is computed; removing the whole
+// check fails the wholly computed row with no refusal at all, and the scoped
+// role's unknown-condition row above with a refusal that is not the one it
+// names — so that row is evidence about the message and not about acceptance.
 func TestDeployerGrantConditions(t *testing.T) {
 	const account = "serviceAccount:fugaro-deployer@proj-1.iam.gserviceaccount.com"
-	scoped := "projects/proj-1/roles/" + DeployerScopedRole
+	scoped := "projects/proj-1/roles/" + DeployerStorageRole
 	plain := "projects/proj-1/roles/" + DeployerRole
 	cond := func(title, expr string) []any {
 		return []any{map[string]any{"title": title, "expression": expr, "description": nil}}
 	}
-	exact := cond(DeployerConditionTitle, DeployerConditionExpression())
-	first := DeployerConditionClauses()[0].String()
+	scopedExpr, _ := DeployerConditionExpression("proj-1", DeployerStorageRole)
+	otherExpr, _ := DeployerConditionExpression("proj-1", DeployerRunJobRole)
+	exact := cond(DeployerConditionTitle, scopedExpr)
+	cls, _ := DeployerConditionClauses("proj-1", DeployerStorageRole)
+	first := cls[0].String()
 	for name, tc := range map[string]struct {
 		role    string
 		member  string
@@ -558,18 +759,29 @@ func TestDeployerGrantConditions(t *testing.T) {
 	}{
 		"the scoped role under its condition":                  {role: scoped, member: account, after: map[string]any{"condition": exact}, covered: true},
 		"the scoped role with no condition":                    {role: scoped, member: account, covered: false, why: DeployerConditionTitle},
-		"the scoped role under a widened condition":            {role: scoped, member: account, after: map[string]any{"condition": cond(DeployerConditionTitle, DeployerConditionExpression()+" || true")}, covered: false, why: DeployerConditionTitle},
+		"the scoped role under a widened condition":            {role: scoped, member: account, after: map[string]any{"condition": cond(DeployerConditionTitle, scopedExpr+" || true")}, covered: false, why: DeployerConditionTitle},
+		"the scoped role under another service's condition":    {role: scoped, member: account, after: map[string]any{"condition": cond(DeployerConditionTitle, otherExpr)}, covered: false, why: DeployerConditionTitle},
 		"the scoped role under a narrowed condition":           {role: scoped, member: account, after: map[string]any{"condition": cond(DeployerConditionTitle, first)}, covered: false, why: DeployerConditionTitle},
-		"the scoped role under another title":                  {role: scoped, member: account, after: map[string]any{"condition": cond("fugaro-something-else", DeployerConditionExpression())}, covered: false, why: DeployerConditionTitle},
-		"the scoped role with a description":                   {role: scoped, member: account, after: map[string]any{"condition": []any{map[string]any{"title": DeployerConditionTitle, "expression": DeployerConditionExpression(), "description": "x"}}}, covered: false, why: "description"},
-		"the scoped role with two conditions":                  {role: scoped, member: account, after: map[string]any{"condition": []any{exact[0], map[string]any{"title": DeployerConditionTitle, "expression": DeployerConditionExpression(), "description": nil}}}, covered: false, why: "more than one condition"},
+		"the scoped role under another title":                  {role: scoped, member: account, after: map[string]any{"condition": cond("fugaro-something-else", scopedExpr)}, covered: false, why: DeployerConditionTitle},
+		"the scoped role with a description":                   {role: scoped, member: account, after: map[string]any{"condition": []any{map[string]any{"title": DeployerConditionTitle, "expression": scopedExpr, "description": "x"}}}, covered: false, why: "description"},
+		"the scoped role with two conditions":                  {role: scoped, member: account, after: map[string]any{"condition": []any{exact[0], map[string]any{"title": DeployerConditionTitle, "expression": scopedExpr, "description": nil}}}, covered: false, why: "more than one condition"},
 		"the scoped role with a condition that is not a block": {role: scoped, member: account, after: map[string]any{"condition": []any{"true", "true"}}, covered: false, why: "not a condition block"},
-		"the scoped role with an unknown condition":            {role: scoped, member: account, unknown: map[string]any{"condition": []any{map[string]any{"expression": true}}}, covered: false, why: "not known"},
+		"the scoped role with an unknown condition":            {role: scoped, member: account, after: map[string]any{"condition": []any{map[string]any{"title": DeployerConditionTitle, "expression": nil, "description": nil}}}, unknown: map[string]any{"condition": []any{map[string]any{"expression": true}}}, covered: false, why: "not known"},
 		"the scoped role to a person":                          {role: scoped, member: "user:me@example.com", after: map[string]any{"condition": exact}, covered: false, why: "kind of principal"},
 		"the plain role with no condition":                     {role: plain, member: account, covered: true},
 		"the plain role under the scoped condition":            {role: plain, member: account, after: map[string]any{"condition": exact}, covered: false, why: "under a condition"},
 		"the plain role under any condition":                   {role: plain, member: account, after: map[string]any{"condition": cond("fugaro-x", "true")}, covered: false, why: "under a condition"},
-		"the plain role to a person":                           {role: plain, member: "user:me@example.com", covered: false, why: "kind of principal"},
+		// The plain role's condition being UNKNOWN is its own row, and it is the
+		// one the two rows above cannot stand in for. The wholly computed
+		// condition is the plan shape that leaves `after` with no condition at
+		// all — the "under a condition" branch then sees nothing and the binding
+		// reads as the modules' plain one, which leaves `fugaroDeployer` decided
+		// during apply, on the account the fence exists for — and the second row
+		// is the other half of the same `unknownAt` read: a block that is in
+		// `after` with its expression known only after apply.
+		"the plain role with a wholly computed condition":        {role: plain, member: account, unknown: map[string]any{"condition": true}, covered: false, why: "not known"},
+		"the plain role with a condition known only after apply": {role: plain, member: account, after: map[string]any{"condition": []any{map[string]any{"title": DeployerConditionTitle, "expression": nil, "description": nil}}}, unknown: map[string]any{"condition": []any{map[string]any{"expression": true}}}, covered: false, why: "not known"},
+		"the plain role to a person":                             {role: plain, member: "user:me@example.com", covered: false, why: "kind of principal"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			after := map[string]any{"member": tc.member, "role": tc.role}
@@ -585,5 +797,64 @@ func TestDeployerGrantConditions(t *testing.T) {
 				t.Errorf("refused for another reason: %q, want it to name %q", got, tc.why)
 			}
 		})
+	}
+}
+
+// deployerGrant checks the member itself, and that check is not reachable
+// through NotCovered: the grant table holds every one of the eight roles to
+// toDeployer (TestOnlyTheDeployerRolesNameTheDeployer pins the table), so
+// checkGrant turns a deployer role held by anyone else away before
+// deployerGrant runs. It is there because deployerGrant is the one function
+// that reads a deployer binding, and a widening of the table — the kind of
+// change the table's own tests would have to notice for this one to stay
+// correct — would otherwise open the deployer path with nothing in this
+// function to object.
+//
+// So it is pinned here, directly: the test calls deployerGrant with a binding
+// that is the modules' in every other respect, and the member is what it must
+// refuse for. Delete the check and this test fails with the empty reason the
+// function then returns, which is what keeps a later cleanup from deleting it
+// as dead code.
+func TestDeployerGrantRefusesAMemberThatIsNotTheDeployer(t *testing.T) {
+	scoped := "projects/proj-1/roles/" + DeployerStorageRole
+	plain := "projects/proj-1/roles/" + DeployerRole
+	expr, ok := DeployerConditionExpression("proj-1", DeployerStorageRole)
+	if !ok {
+		t.Fatalf("no condition for %s", DeployerStorageRole)
+	}
+	cond := []any{map[string]any{"title": DeployerConditionTitle, "expression": expr, "description": nil}}
+	// want is the reason the member check produces, which names the account the
+	// binding should have been on.
+	want := "which is not serviceAccount:" + DeployerAccount("proj-1") + ": the deployer's roles are held by the deployer account and by nothing else (D75)"
+	for name, tc := range map[string]struct {
+		member string
+		role   string
+	}{
+		"another Fugaro account":     {"serviceAccount:fugaro-history@proj-1.iam.gserviceaccount.com", scoped},
+		"a person":                   {"user:me@example.com", scoped},
+		"a lookalike address":        {"serviceAccount:fugaro-deployer-0123abcd@proj-1.iam.gserviceaccount.com", plain},
+		"another project's deployer": {"serviceAccount:fugaro-deployer@fp-2.iam.gserviceaccount.com", plain},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// The binding is the modules' in every other respect — the
+			// conditioned role under its own condition, the plain one under
+			// none — so the member is the only thing left to refuse.
+			after := map[string]any{"member": tc.member, "role": tc.role, "project": "proj-1"}
+			if tc.role == scoped {
+				after["condition"] = cond
+			}
+			ch := rc("google_project_iam_member", after, map[string]any{}, "create")
+			got := testCover.deployerGrant("google_project_iam_member", ch.Change, false)
+			if !strings.Contains(got, want) {
+				t.Errorf("deployerGrant = %q, want it to name the member: %q", got, want)
+			}
+		})
+	}
+	// The control: the same binding on the deployer account is the modules', so
+	// the rows above are refused for the member and for nothing else.
+	after := map[string]any{"member": "serviceAccount:" + DeployerAccount("proj-1"), "role": scoped, "project": "proj-1", "condition": cond}
+	ch := rc("google_project_iam_member", after, map[string]any{}, "create")
+	if got := testCover.deployerGrant("google_project_iam_member", ch.Change, false); got != "" {
+		t.Errorf("deployerGrant on the deployer account = %q, want the modules' binding", got)
 	}
 }

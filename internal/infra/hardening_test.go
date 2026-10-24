@@ -48,7 +48,7 @@ func TestRunsBucketFindings(t *testing.T) {
 	// An installation not re-initialised since the budget token moved to
 	// tokens/: its launchers still carry the runs/-only write, so they cannot
 	// write the sealed token. The install guard says so, and its fix is
-	// fugaro init, which replaces the grant.
+	// fugaro update, which replaces the grant.
 	//
 	// The old condition is the SAME grant in its pre-0.9.0 form, and the one
 	// fix that must never appear for it is a removal: the member holds the
@@ -69,10 +69,10 @@ func TestRunsBucketFindings(t *testing.T) {
 			if strings.Contains(f.Fix, "remove-iam-policy-binding") {
 				t.Errorf("an operator is told to remove the launcher's own grant: %+v", f)
 			}
-			if f.Severity == "warning" && strings.Contains(f.Problem, "lacks") && strings.Contains(f.Problem, "tokens/") && strings.Contains(f.Fix, "fugaro init") {
+			if f.Severity == "warning" && strings.Contains(f.Problem, "lacks") && strings.Contains(f.Problem, "tokens/") && strings.Contains(f.Fix, "fugaro update") {
 				lacks = true
 			}
-			if f.Severity == "warning" && strings.Contains(f.Problem, gcp.LegacyLauncherBucketConditionTitle) && strings.Contains(f.Fix, "fugaro init (0.9.0 or later)") {
+			if f.Severity == "warning" && strings.Contains(f.Problem, gcp.LegacyLauncherBucketConditionTitle) && strings.Contains(f.Fix, "fugaro update (0.9.0 or later)") {
 				oldForm = true
 			}
 		}
@@ -100,7 +100,7 @@ func TestRunsBucketFindings(t *testing.T) {
 			if strings.Contains(f.Fix, "remove-iam-policy-binding") {
 				t.Errorf("unknown lists turned the launchers' old grant into a removal: %+v", f)
 			}
-			if f.Fix != "an operator runs fugaro init (0.9.0 or later), which replaces the grant" {
+			if f.Fix != "an operator runs fugaro update (0.9.0 or later), which replaces the grant" {
 				t.Errorf("fix = %q, want the init that replaces the grant", f.Fix)
 			}
 		}
@@ -128,8 +128,8 @@ func TestRunsBucketFindings(t *testing.T) {
 			t.Fatalf("findings %+v", fs)
 		}
 		for _, f := range fs {
-			if f.Severity == "warning" && !strings.Contains(f.Fix, "fugaro init") {
-				t.Errorf("a launcher's fix is not fugaro init: %+v", f)
+			if f.Severity == "warning" && !strings.Contains(f.Fix, "fugaro update") {
+				t.Errorf("a launcher's fix is not fugaro update: %+v", f)
 			}
 		}
 	})

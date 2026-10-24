@@ -11,17 +11,23 @@
 // variable that chooses the binary the console runs is its own SECURITY-SENSITIVE
 // change. So a spec chooses the CLI the only way the resolution allows: it puts
 // a binary where the resolution looks. `src/main/spawn.ts`'s `binDirectories`
-// walks the configured path (nothing here -- no config file is read at startup),
-// then the platform's well-known directories (`src/main/spawn.ts`'s
-// `locationsFor`, and which ones those are depends on `process.platform`), then
-// every absolute entry of the app's own `PATH`. This module therefore does two
-// things:
+// walks the configured path (the store's own optional override, which
+// `seedActiveInstallation` writes) and then the platform's well-known
+// directories (`src/main/spawn.ts`'s `locationsFor`, and which ones those are
+// depends on `process.platform`). It does
+// **not** walk the app's inherited `PATH` -- that is rule 4's whole point, the
+// owner's ruling of 2026-10-20 -- so the app's `PATH` below is a decoy on
+// purpose: a resolution that searched it would find the stub there and a spec
+// asserting the *machine's* answer would instead be asserting the environment's.
+// This module therefore does two things:
 //
 //   - copies `test/fixtures/bin/fugaro` into a scratch directory and returns the
 //     environment that makes it the winner -- `PATH` is that directory and
-//     nothing else, and `HOME` is a scratch home whose `~/.local/bin` holds the
-//     same stub, because `~/.local/bin` is one of the well-known prefixes and
-//     the operator's real one would otherwise be searched first;
+//     nothing else (so the decoy is the same stub, and a spec that wanted to
+//     prove the `PATH` is not searched installs a *different* one there), and
+//     `HOME` is a scratch home whose `~/.local/bin` holds the same stub, because
+//     `~/.local/bin` is one of the well-known prefixes and the operator's real
+//     one would otherwise be searched first;
 // Since Task 3.4c the stub is also the CLI a *dashboard* reads: it answers
 // `watch --json --project P` with the committed synthetic recording and
 // `doctor --json` with a minimal document, and refuses anything else -- and any
@@ -36,9 +42,10 @@
 //     `resolveBinary` with **exactly the arguments `src/main/index.ts` uses**, so
 //     a spec can ask the same question the app is about to ask and find out
 //     which binary will actually answer. That is what makes the specs honest on
-//     a machine with a real `fugaro` in `/usr/local/bin`: that one wins over any
-//     `PATH` entry, and a spec that assumed otherwise would be asserting a fact
-//     about the machine rather than about the console.
+//     a machine with a real `fugaro` in `/usr/local/bin`: a well-known location
+//     is searched by the rule itself, so a spec that assumed its scratch stub
+//     always won would be asserting a fact about the machine rather than about
+//     the console.
 //
 // **What this cannot fix, stated plainly.** On a machine whose `/usr/local/bin`
 // or `/opt/homebrew/bin` holds a real `fugaro` outside the supported range, the
@@ -94,8 +101,8 @@ function syntheticFrames(): string {
 }
 
 /** HANDSHAKE_TARGET is the target the startup read runs with, copied from
- * `src/main/index.ts`: no project, no configured path, so the resolution is the
- * well-known prefixes and the app's `PATH` and nothing else. */
+ * `src/main/index.ts`: no project and no configured path, so the resolution is
+ * the well-known prefixes and nothing else -- never the app's `PATH` (rule 4). */
 const HANDSHAKE_TARGET: SpawnTarget = Object.freeze({ project: '' })
 
 /** CliStub is an installed stub, and the environment that makes the console
@@ -128,13 +135,26 @@ export interface CliStub {
    * first, so it wins even over a machine's own `fugaro`) and the picker does
    * not open. It is for the specs whose subject is the dashboard, not the first
    * run. The stub's `project.txt` is rewritten with it, so the reads the
-   * dashboard makes carry the project the console was pointed at. */
-  seedActiveInstallation(project?: string, binaryPath?: string): void
+   * dashboard makes carry the project the console was pointed at.
+   *
+   * `binaryPath: null` is the shape **this console writes** (owner's ruling of
+   * 2026-10-20): the record carries an id and a project and no override at all,
+   * so rule 4 resolves the stub through the well-known prefixes instead. The
+   * default is the older shape, an override naming the stub, because it pins the
+   * resolution to this scratch tree whatever the machine has in `/usr/local/bin`
+   * -- a spec whose subject is not the resolution should not depend on it. */
+  seedActiveInstallation(project?: string, binaryPath?: string | null): void
   /** seedInstallations writes `installations.json` with these entries and
    * `active` (Task 3.4b), for a spec that needs more than one installation. The
-   * active entry's project becomes the one the stub answers for. */
+   * active entry's project becomes the one the stub answers for. An entry with
+   * no `binaryPath` is written without the field, which is the shape this
+   * console writes. */
   seedInstallations(
-    entries: readonly { readonly id: string; readonly project: string; readonly binaryPath: string }[],
+    entries: readonly {
+      readonly id: string
+      readonly project: string
+      readonly binaryPath?: string | null
+    }[],
     active: string | null,
   ): void
   /** extraStub installs one more stub, printing `line`, in its own directory
@@ -142,6 +162,18 @@ export interface CliStub {
    * path. It is a second CLI an installation can name. It carries the same
    * `project.txt` and frames as the installed one. */
   extraStub(name: string, line: string): string
+  /** seedInstallationsList writes the installations document the picker draws
+   * (`config list --json`, contract section 6.8): one row per name, with the GCP
+   * project and region made up from the name, and -- for a name prefixed
+   * `unreadable:` -- a row whose config could not be read, with its fields empty
+   * and the CLI's own warning line, which the picker must show rather than hide.
+   * Unseeded, the file is absent and the stub answers with the **empty
+   * document** (`{"installations":[],"warnings":[]}`, `test/fixtures/bin/fugaro`),
+   * which is the document with no installations at all: the machine has none, and
+   * it is the state the "set up your first installation" screen is drawn for.
+   * (Not "no output": a CLI that printed nothing is text the console refuses, and
+   * the picker draws its warning line instead of that screen.) */
+  seedInstallationsList(projects: readonly string[]): void
   /** setVersion rewrites the line the stub prints (`'0.8.1\n'`, `'banana\n'`, a
    * hostile line), in both places the stub was installed. */
   setVersion(line: string): void
@@ -167,11 +199,13 @@ export function installCliStub(line: string): CliStub {
   // prints). Both live beside every copy of the stub, because either copy can be
   // the one the resolution picks.
   let project = DEFAULT_PROJECT
+  let installationsList: string | null = null
   const frames = syntheticFrames()
   const writeSupport = (): void => {
     for (const where of [dir, wellKnown]) {
       writeFileSync(join(where, 'project.txt'), `${project}\n`)
       writeFileSync(join(where, 'frames.ndjson'), frames)
+      if (installationsList !== null) writeFileSync(join(where, 'installations.ndjson'), installationsList)
     }
   }
   for (const where of [dir, wellKnown]) {
@@ -207,9 +241,9 @@ export function installCliStub(line: string): CliStub {
       }
       return [consoleDir, `--user-data-dir=${profile}`]
     },
-    seedActiveInstallation(nextProject = DEFAULT_PROJECT, binaryPath = join(dir, 'fugaro')): void {
+    seedActiveInstallation(nextProject = DEFAULT_PROJECT, binaryPath: string | null = join(dir, 'fugaro')): void {
       const id = '0123456789abcdef'
-      stub.seedInstallations([{ id, project: nextProject, binaryPath }], id)
+      stub.seedInstallations([{ id, project: nextProject, ...(binaryPath === null ? {} : { binaryPath }) }], id)
     },
     seedInstallations(entries, active): void {
       // The stub answers for the **active** installation's project (Task 3.4c,
@@ -225,7 +259,15 @@ export function installCliStub(line: string): CliStub {
         serializeInstallationFile({
           version: INSTALLATION_FILE_VERSION as 1,
           active,
-          installations: entries.map((entry) => ({ id: entry.id, project: entry.project, binaryPath: entry.binaryPath })),
+          installations: entries.map((entry) => ({
+            id: entry.id,
+            project: entry.project,
+            // Absent, not `null` or `''`: `recordOf` in the app writes a record
+            // with no override at all, and `JSON.stringify` drops the key.
+            ...(entry.binaryPath === undefined || entry.binaryPath === null
+              ? {}
+              : { binaryPath: entry.binaryPath }),
+          })),
         }),
         { mode: 0o600 },
       )
@@ -241,6 +283,24 @@ export function installCliStub(line: string): CliStub {
       writeFileSync(join(where, 'project.txt'), `${project}\n`)
       writeFileSync(join(where, 'frames.ndjson'), frames)
       return join(where, 'fugaro')
+    },
+    seedInstallationsList(projects: readonly string[]): void {
+      // The document, as `internal/cli/config_list.go` marshals it: the
+      // installations in the CLI's order, and the warning lines beside them. A
+      // name prefixed `unreadable:` is the state that matters most here -- the
+      // CLI lists the installation with its fields empty *and* says why, and a
+      // picker that hid the row would be hiding an installation the machine
+      // has.
+      const installations = projects.map((name) =>
+        name.startsWith('unreadable:')
+          ? { name: name.slice('unreadable:'.length), gcp_project: '', region: '', shared_merged: false }
+          : { name, gcp_project: `fugaro-${name}-123456`, region: 'europe-west4', shared_merged: true },
+      )
+      const warnings = projects
+        .filter((name) => name.startsWith('unreadable:'))
+        .map((name) => `/Users/owner/.config/fugaro/projects/${name.slice('unreadable:'.length)}.yaml could not be read: permission denied`)
+      installationsList = `${JSON.stringify({ installations, warnings })}\n`
+      writeSupport()
     },
     setVersion(next: string): void {
       for (const where of [dir, wellKnown]) {
@@ -275,11 +335,20 @@ export function inRangeCliStub(): CliStub {
  * environment it passes to `electron.launch` and gets the binary the app will
  * actually find -- the stub when nothing well-known is installed, and the
  * machine's own binary when there is one.
+ *
+ * **`HOME` comes out of `env`**, because that is where the app reads `~` from:
+ * the main process calls the resolver with its own environment, so
+ * `~/.local/bin` is *the stub's* scratch home for a launch. Letting
+ * `homedir()` answer here would be the spec runner's home instead, and this
+ * function would then name a binary the app never looks at -- the opposite of
+ * what it exists for.
  */
 export async function resolveConsoleBinary(env: NodeJS.ProcessEnv): Promise<BinaryResolution> {
+  const home = env['HOME']
   return resolveBinary({
     appEnv: env,
     directory: privateWorkingDirectory(),
     target: HANDSHAKE_TARGET,
+    ...(home === undefined || home === '' ? {} : { home }),
   })
 }

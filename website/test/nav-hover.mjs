@@ -1,7 +1,7 @@
 // website/test/nav-hover.mjs — the menu opens on hover, on a pointer that hovers (the owner's
 // brief of 2026-10-18, "Fugaro Website Changes Spec", item 1).
 //
-// The defect this file exists for: the top menu's three groups opened only on a click, which on
+// The defect this file exists for: the top menu's groups opened only on a click, which on
 // a desktop is the one gesture a pointer should not have to make. The change the owner agreed:
 // on a device whose pointer hovers, a group's submenu opens when the pointer arrives at the
 // group and closes a moment after the pointer leaves it; a click still toggles, the keyboard
@@ -156,9 +156,9 @@ class StubEvent {
  * it.
  *
  * The viewport's width is not a parameter: since the owner's brief of 2026-10-19 (item 1) the
- * menu is the same three `<details>` groups at every width — the three labels in the header's
- * row — and the one thing a width decided, whether a panel is drawn behind a toggle, is gone
- * with the toggle.
+ * menu is the same `<details>` groups at every width — the labels in the header's row (two
+ * groups since the owner's feedback of 2026-10-21 dropped the Reference one) — and the one
+ * thing a width decided, whether a panel is drawn behind a toggle, is gone with the toggle.
  */
 function stubPage(html, { hover = true, matchMedia = true, script = SCRIPT_SOURCE } = {}) {
   const root = parse(html)
@@ -632,7 +632,14 @@ function isPointerQuery(query) {
  */
 function hoverScopeFailures(css) {
   const out = []
-  const pointer = mediaBlocks(css).filter((block) => squash(block.query) === squash(`@media ${POINTER_QUERY}{`))
+  // Other controls answer a hovering pointer too since the owner's ruling of 2026-10-23 (the
+  // redesign's motion layer: feedback on every control, behind the same pointer query so a touch
+  // screen keeps no stuck hover). So the rule is about the menu's block: of the blocks at the
+  // pointer's query, exactly one carries the menu's hover states. A stylesheet with no block at
+  // that query at all still reads as zero.
+  const atPointer = mediaBlocks(css).filter((block) => squash(block.query) === squash(`@media ${POINTER_QUERY}{`))
+  const withMenu = atPointer.filter((block) => menuHoverSelectors(block.body).length > 0)
+  const pointer = withMenu.length > 0 ? withMenu : atPointer
   if (pointer.length !== 1) {
     out.push(
       `the stylesheet carries ${pointer.length} blocks at \`@media ${POINTER_QUERY}\`: the menu's hover states are decided by the pointer's capability, and one query is where that is written`,
@@ -680,7 +687,7 @@ test('the menu’s hover states are scoped to a pointer that hovers, and to noth
 
 test('the pointer opens a group when it arrives, and moving into the list keeps it open', () => {
   const page = stubPage(HOME.html)
-  const [product, reference] = page.groups
+  const [product, project] = page.groups
   assert.equal(product.open, false, 'the markup opens a group before the reader has done anything')
 
   page.moveTo(product.querySelector('summary'))
@@ -694,7 +701,7 @@ test('the pointer opens a group when it arrives, and moving into the list keeps 
   assert.equal(product.open, true, 'a pending close fired while the pointer was inside the submenu')
 
   // The group the pointer never went near is untouched.
-  assert.equal(reference.open, false, 'hovering one group opened another')
+  assert.equal(project.open, false, 'hovering one group opened another')
 
   // And leaving the whole menu closes what the pointer left, after the delay and not before.
   page.moveTo(page.find('main')[0])
@@ -813,14 +820,14 @@ test('a click opens a group whose trigger did not already hold the focus', () =>
   // to the trigger it presses on the way to the click, and a group opened by that focus would be
   // closed again by the click that brought it: the press would do nothing at all.
   const page = stubPage(HOME.html)
-  const [product, reference] = page.groups
+  const [product, project] = page.groups
   const summary = product.querySelector('summary')
 
   page.moveTo(summary)
   page.click(summary)
   assert.equal(product.open, false, 'the click did not close the group the pointer had opened')
-  page.focus(reference.querySelector('summary'))
-  assert.equal(reference.open, true, 'the focus arriving at a trigger did not open its group')
+  page.focus(project.querySelector('summary'))
+  assert.equal(project.open, true, 'the focus arriving at a trigger did not open its group')
   assert.equal(product.open, false, 'the group the focus opened did not close its sibling in the same name set')
 
   page.click(summary)
@@ -829,13 +836,13 @@ test('a click opens a group whose trigger did not already hold the focus', () =>
     true,
     'a click on a closed group whose trigger did not hold the focus opened nothing: the focus the press moved opened the group and the click that followed closed it again',
   )
-  assert.equal(reference.open, false, 'the click that opened a group did not close the sibling in its name set')
+  assert.equal(project.open, false, 'the click that opened a group did not close the sibling in its name set')
   assert.ok(page.document.activeElement === summary, 'the click did not move the focus to the trigger it pressed')
 })
 
-test('the three labels are the menu: nothing stands in front of them, and a tap opens one', () => {
+test('the labels are the menu: nothing stands in front of them, and a tap opens one', () => {
   // The owner's brief of 2026-10-19 (item 1) took the single "Menu" toggle away. What is left
-  // in the header's row is the three group labels themselves, so a section is one tap from the
+  // in the header's row is the group labels themselves, so a section is one tap from the
   // first screen rather than two — and the markup that made the second tap necessary is gone
   // rather than merely unstyled.
   const page = stubPage(HOME.html, { hover: false })
@@ -847,7 +854,7 @@ test('the three labels are the menu: nothing stands in front of them, and a tap 
   for (const summary of page.summaries) {
     assert.ok(summary.getClientRects().length, `the label ${JSON.stringify(textOf(summary.node).trim())} is not drawn until something else is opened`)
   }
-  assert.equal(page.find('.site-nav-group ul').length, 3, 'the menu is not three labels each holding its own list')
+  assert.equal(page.find('.site-nav-group ul').length, 2, 'the menu is not two labels each holding its own list')
 
   // A tap is the whole of the mechanism on a touch screen — a device that answers the pointer
   // query no, which is the phone the brief is about: the finger's arrival leaves the group
@@ -948,14 +955,15 @@ test('the keyboard opens a group on a device with no hovering pointer', () => {
 })
 
 test('a group a sibling closes hands the reader’s focus back to its own trigger', () => {
-  // A keyboard reader is standing on a link inside Product when a pointer arrives at Reference:
-  // no key was pressed and the reader moved nothing, but the exclusive set closes Product, the
+  // A keyboard reader is standing on a link inside Product when a pointer arrives at Project
+  // (the second group, now that the Reference group is gone): no key was pressed and the reader
+  // moved nothing, but the exclusive set closes Product, the
   // browser stops drawing the list the focus is in, and the focus goes to `<body>`. Escape and
   // the pointer's own close both hand the focus back; this close is the browser's, and the page
   // hears only the `toggle` — so the focus has to have been remembered as it arrived, because by
   // then `document.activeElement` is no longer it.
   const page = stubPage(HOME.html)
-  const [product, reference] = page.groups
+  const [product, project] = page.groups
   const summary = product.querySelector('summary')
   const link = product.querySelector('a')
 
@@ -963,9 +971,9 @@ test('a group a sibling closes hands the reader’s focus back to its own trigge
   page.focus(link)
   assert.ok(page.document.activeElement === link, 'the stub would not focus a link inside an open group')
 
-  page.moveTo(reference.querySelector('summary'))
+  page.moveTo(project.querySelector('summary'))
   assert.equal(product.open, false, 'the sibling in the same name set did not close the open group')
-  assert.equal(reference.open, true, 'the pointer did not open the group it arrived at')
+  assert.equal(project.open, true, 'the pointer did not open the group it arrived at')
   assert.ok(
     page.document.activeElement === summary,
     'a group closed under the reader’s focus left the focus where the browser dropped it: it belongs back on the trigger, as Escape and the pointer’s own close leave it',
@@ -1132,9 +1140,18 @@ test('a browser with no matchMedia to ask keeps the click, and no width is ever 
   ancient.click(ancient.summaries[0])
   assert.equal(ancient.groups[0].open, true, 'a browser with no matchMedia lost the click as well')
 
-  // And what the script asks is the pointer's capability: one query, and not a width.
+  // And what the script asks is the pointer's capability: one query for the menu, and not a
+  // width. The second query is the slider's: the homepage's "See it" panel renders the site's
+  // shared slider since the 2026-10-21 brief (the console page's own component), and a slider
+  // asks the device for its motion preference — a capability of the device, like the pointer's,
+  // and not a width either. The menu's own query is still asked once and is still the first.
+  const SLIDER_QUERY = '(prefers-reduced-motion: reduce)'
   const page = stubPage(HOME.html)
-  assert.deepEqual(page.queries, [POINTER_QUERY], `the script asked ${JSON.stringify(page.queries)}: the submenu opens on the pointer that hovers, and the one query that says so is asked once`)
+  assert.deepEqual(
+    page.queries,
+    [POINTER_QUERY, SLIDER_QUERY],
+    `the script asked ${JSON.stringify(page.queries)}: the submenu opens on the pointer that hovers and the slider stops for a reader who has asked for less motion, and each query that says so is asked once`,
+  )
   for (const query of page.queries) {
     assert.ok(!/width/.test(query), `the script asked ${query}: screen width is not the question — a tablet is wide and cannot hover, and a phone with a mouse attached can`)
   }
@@ -1231,11 +1248,11 @@ function menuFailures(script) {
   // trigger did not already hold the focus would do nothing either.
   {
     const page = pageOf()
-    const [product, reference] = page.groups
+    const [product, project] = page.groups
     const summary = product.querySelector('summary')
     page.moveTo(summary)
     page.click(summary) // the pointer is still resting on the trigger, so no arrival fires again
-    page.focus(reference.querySelector('summary'))
+    page.focus(project.querySelector('summary'))
     page.click(summary)
     if (!product.open) {
       out.push(
@@ -1262,11 +1279,11 @@ function menuFailures(script) {
   // as it arrived, and it belongs back on the trigger.
   {
     const page = pageOf()
-    const [product, reference] = page.groups
+    const [product, project] = page.groups
     const summary = product.querySelector('summary')
     page.focus(summary)
     page.focus(product.querySelector('a'))
-    page.moveTo(reference.querySelector('summary'))
+    page.moveTo(project.querySelector('summary'))
     if (page.document.activeElement !== summary) {
       out.push('a group the browser closed under the reader’s focus left the focus where it was dropped: it belongs back on the trigger, as Escape and the pointer’s own close leave it')
     }
@@ -1496,7 +1513,9 @@ test('the stylesheet refusals fire on the defect each one names', () => {
 
   // The hover states moved out of the pointer's query into a width one: nothing asks about the
   // pointer any more, and a tablet 1280 px wide is handed a hover it cannot give.
-  const atWidth = css.replace(/@media[^{]*\(\s*hover\s*:\s*hover\s*\)[^{]*\{/, '@media (min-width: 48rem) {')
+  // Every block at the pointer's query is moved, since the menu's is one of several now (the
+  // owner's ruling of 2026-10-23).
+  const atWidth = css.replace(/@media[^{]*\(\s*hover\s*:\s*hover\s*\)[^{]*\{/g, '@media (min-width: 48rem) {')
   assert.notEqual(atWidth, css, 'the planted query change changed nothing, so this fixture proves nothing')
   assert.match(one(hoverScopeFailures(atWidth), 'a menu whose hover states live in a width query'), /carries 0 blocks at `@media \(hover: hover\) and \(pointer: fine\)`/)
 

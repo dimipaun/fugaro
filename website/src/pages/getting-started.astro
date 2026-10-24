@@ -27,12 +27,17 @@
  *      sentence of the band's own precedes its first command: `website/test/fold.mjs` holds
  *      that ordering, and Check 70b is the owner's measurement of the fold itself (D187).
  *   2. **`#setup`: what a real installation needs, in order.** The install command gets the
- *      CLI onto the machine; it does not create a project, a GitHub App or a secret. The five
+ *      CLI onto the machine; it does not create a project, repository access or a secret. The three
  *      steps below are `docs/gcp-setup.md`'s preconditions and its short path, in the order
  *      that document puts them, one line each, and each names the document that carries the
  *      detail rather than repeating it. No secret value is named, and no step is invented.
- *      The two commands the last steps name are rendered from `install.yaml`'s plugin path,
- *      so a rename there moves the steps with it.
+ *      **`fugaro setup` asks, so the page does not list what it asks**: the new GCP project's
+ *      ID, the region and the installation's name are the wizard's own prompts (the three
+ *      questions `internal/cli/setup.go` asks on a first run, with `--gcp-project`, `--region`
+ *      and `--name` as their flags; Fugaro only starts fresh, so it creates the project), and the
+ *      billing link, the API enabling and the secrets are confirmations it takes, not steps a
+ *      reader does first. The two commands the steps name are rendered from `install.yaml`'s
+ *      plugin path, so a rename there moves the steps with it.
  *   3. **`#details`: everything else, where it was.** The paths the cards do not carry —
  *      cosign, `go install`, the plugin — keep their own notes, citations and commands.
  *
@@ -71,7 +76,7 @@
  * Three things this page is written to say, and not to say:
  *
  *   - **The plugin path is a first-class path**, in `#details` rather than in a box: `fugaro
- *     init`, `/fugaro:setup` and `fugaro upgrade --local` are rendered with their own note,
+ *     setup`, `/fugaro:setup` and `fugaro upgrade --local` are rendered with their own note,
  *     and the setup steps above them are where a reader meets the first two as steps
  *     (finding 22).
  *   - **The cosign verification is the archive's own facts, and it is a path in `#details`**
@@ -154,17 +159,17 @@ const cardPaths = new Set(cards.map((card) => card.path.id))
 const otherPaths = install.paths.filter((path) => !cardPaths.has(path.id))
 
 // The two commands the setup steps name, read from the path that owns them rather than typed
-// into a step: `fugaro init` and `/fugaro:setup` are the plugin path's own commands, and a step
+// into a step: `fugaro setup` and `/fugaro:setup` are the plugin path's own commands, and a step
 // that printed its own spelling of either would be the fourth copy of the install instructions
 // this page's header refuses. A file that stopped carrying them stops the build here, where the
 // failure names the file, rather than rendering a step about a command that is not in it.
 const pluginPath = install.paths.find((path) => path.id === 'plugin')
 if (pluginPath === undefined || pluginPath.commands.length < 2) {
   throw new Error(
-    "website/data/install.yaml carries no `plugin` path with its two commands (`fugaro init` and `/fugaro:setup`), which the page's setup steps render",
+    "website/data/install.yaml carries no `plugin` path with its two commands (`fugaro setup` and `/fugaro:setup`), which the page's setup steps render",
   )
 }
-const [initCommand, setupCommand] = pluginPath.commands
+const [installCommand, agentCommand] = pluginPath.commands
 
 // The glyph a box is drawn with, keyed by the platform's own id in `install.yaml`, and one per
 // path in `#details`: a laptop for macOS, a terminal for Linux and a window for Windows, then a
@@ -432,18 +437,21 @@ const doc = (path: string, fragment: string): string =>
   </section>
 
   {/* What the command does not do. A reader who runs `brew install` has a binary and no
-      installation: the project, the credentials, the App and the secrets are theirs to make,
-      and `docs/gcp-setup.md` is the runbook that walks them through it. The five steps below
-      are that runbook's own preconditions and short path in its own order, one line each, and
+      installation: the credentials, the repository access and the secrets are theirs to make, and
+      `docs/gcp-setup.md` is the runbook that walks them through it. The three steps below are
+      that runbook's own preconditions and short path in its own order, one line each, and
       every one of them links to the document that carries it — the page states what to do
-      and the document states how, so the two cannot drift. The two commands the last steps
-      name are rendered from `install.yaml`'s plugin path rather than typed here. No secret is
-      named here, and no value is anywhere on this site. */}
+      and the document states how, so the two cannot drift. **The project, the region and the
+      installation's name are not steps here**, because `fugaro setup` asks for them and
+      confirms the rest: a page that listed them would be a fourth copy of questions the
+      command the step names answers. The two commands the steps name are rendered from
+      `install.yaml`'s plugin path rather than typed here. No secret is named here, and no
+      value is anywhere on this site. */}
   <section id="setup">
     <div class="gs-setup-head">
       <h2 class="display-lg gs-setup-title">Set up your installation</h2>
       <p class="gs-setup-lead">
-        Five steps, once. The install gets you the CLI; these get you an installation.
+        Three steps, once. The install gets you the CLI; these get you an installation.
       </p>
     </div>
 
@@ -455,62 +463,48 @@ const doc = (path: string, fragment: string): string =>
       <li class="card gs-step">
         <span class="gs-step-number" aria-hidden="true">01</span>
         <div class="gs-step-body">
-          <h3 class="gs-step-name">A Google Cloud project, billing linked</h3>
+          <h3 class="gs-step-name">gcloud, Terraform and repository access</h3>
           <p class="gs-step-line">
-            The Service Usage API on.{' '}
-            <a href={doc('docs/gcp-setup.md', 'turning-the-shared-budget-on-m9b')}>A Firebase project</a>, if
-            you want the shared budget.
+            gcloud credentials with a quota project, Terraform 1.9+, and{' '}
+            <a href={doc('docs/git-providers.md', 'credentials')}>repository access</a>: a GitHub
+            App with four repository permissions on GitHub, or a repository access token on
+            Bitbucket.
           </p>
         </div>
         <a class="gs-step-link" href={doc('docs/gcp-setup.md', 'preconditions')}>Preconditions</a>
       </li>
 
-      <li class="card gs-step">
+      <li class="card gs-step" data-state="run">
         <span class="gs-step-number" aria-hidden="true">02</span>
         <div class="gs-step-body">
-          <h3 class="gs-step-name">gcloud and Terraform</h3>
-          <p class="gs-step-line">gcloud credentials with a quota project, and Terraform 1.9+.</p>
-        </div>
-        <a class="gs-step-link" href={doc('docs/gcp-setup.md', 'preconditions')}>Preconditions</a>
-      </li>
-
-      <li class="card gs-step">
-        <span class="gs-step-number" aria-hidden="true">03</span>
-        <div class="gs-step-body">
-          <h3 class="gs-step-name">A GitHub App</h3>
-          <p class="gs-step-line">With four repository permissions.</p>
-        </div>
-        <a class="gs-step-link" href={doc('docs/git-providers.md', 'github')}>GitHub App</a>
-      </li>
-
-      <li class="card gs-step" data-state="run">
-        <span class="gs-step-number" aria-hidden="true">04</span>
-        <div class="gs-step-body">
-          <h3 class="gs-step-name">Run <code>{initCommand}</code></h3>
+          <h3 class="gs-step-name">Run <code>{installCommand}</code></h3>
           <p class="gs-step-line">
-            In your own terminal, at hidden prompts:{' '}
-            <a href={doc('docs/gcp-setup.md', '4-a-repository')}>the secrets the runs mount</a>.
+            In your own terminal. It asks for a new GCP project ID, the region and the name, then
+            creates the project; the rest is a confirmation you type, and secrets come at hidden
+            prompts.{' '}
+            <a href={doc('docs/gcp-setup.md', 'turning-the-shared-budget-on-m9b')}>The shared budget</a>{' '}
+            is optional.
           </p>
         </div>
         <a
           class="gs-step-link"
-          href={doc('docs/gcp-setup.md', 'the-short-path-fugaro-init-then-fugarosetup')}
+          href={doc('docs/gcp-setup.md', 'the-short-path-fugaro-setup-then-fugarosetup')}
         >
           The short path
         </a>
       </li>
 
       <li class="card gs-step" data-state="run">
-        <span class="gs-step-number" aria-hidden="true">05</span>
+        <span class="gs-step-number" aria-hidden="true">03</span>
         <div class="gs-step-body">
-          <h3 class="gs-step-name">Run <code>{setupCommand}</code></h3>
+          <h3 class="gs-step-name">Run <code>{agentCommand}</code></h3>
           <p class="gs-step-line">
-            In your coding agent. Merge, then run <code>{initCommand}</code> again.
+            In your coding agent. Merge the pull request, then run <code>{installCommand}</code> again.
           </p>
         </div>
         <a
           class="gs-step-link"
-          href={doc('docs/gcp-setup.md', 'the-short-path-fugaro-init-then-fugarosetup')}
+          href={doc('docs/gcp-setup.md', 'the-short-path-fugaro-setup-then-fugarosetup')}
         >
           The short path
         </a>
@@ -640,8 +634,7 @@ const doc = (path: string, fragment: string): string =>
       font-family: var(--font-sans);
       font-size: var(--font-size-xl);
       font-weight: var(--weight-black);
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
+      letter-spacing: var(--tracking-tight);
     }
 
     /* The grid of systems: one column on a phone and up to three across on a wide screen,
@@ -667,8 +660,7 @@ const doc = (path: string, fragment: string): string =>
        offer: a dashed edge, nothing to run, and nothing to click. */
     .os-note-card {
       padding: var(--space-lg);
-      border: var(--border-width) dashed var(--border);
-      border-radius: var(--radius-xl);
+      border-radius: var(--radius-lg);
       background: var(--panel);
     }
 
@@ -755,10 +747,11 @@ const doc = (path: string, fragment: string): string =>
       display: inline-flex;
       align-items: center;
       min-height: 44px;
+      max-width: 100%;
       padding: 0 var(--space-sm);
-      border: var(--border-width) solid var(--border);
-      border-radius: var(--radius-lg);
+      border-radius: var(--radius-sm);
       background: var(--panel);
+      overflow-wrap: anywhere;
       color: var(--accent-on-dark);
       font-size: var(--font-size-sm);
       font-weight: var(--weight-semibold);
@@ -830,7 +823,7 @@ const doc = (path: string, fragment: string): string =>
     }
 
     /* The two steps that are a command a reader runs are the green ones — the tone the site
-       uses for "this is the one that finishes it" — and the three before them are the accent. */
+       uses for "this is the one that finishes it" — and the one before them is the accent. */
     .gs-step[data-state='run'] .gs-step-number {
       color: var(--ok);
     }

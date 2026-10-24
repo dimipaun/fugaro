@@ -32,6 +32,22 @@
  *     somewhere else is not answered that way: a press outside the menu forgets where the focus
  *     was, because a click on the page's own text moves it to the body without a `focusin` to
  *     hear, and the focus a reader has just dismissed the menu from stays where they put it.
+ *   - **The console's screenshot slider: the count, the current dot and the autoplay (the
+ *     owner's feedback of 2026-10-21).** The slider itself is the browser's — a snapping
+ *     scroll container whose dots are anchors, all of it in the markup and none of it here.
+ *     What this file adds is what a stylesheet cannot know: the count (`n / N`) and the mark on
+ *     the dot the reader is on, both read from the track's own scroll position, the two arrows
+ *     the markup emits `hidden`, and an advance every six seconds that stops while somebody is
+ *     reading. With no script the bar is never drawn, the four screenshots are the page, and
+ *     the four dots are four links.
+ *   - **The hero's live card (the owner's ruling of 2026-10-23, the redesign's Step 3).** The
+ *     card in the homepage's hero is the static picture of one request with no script; this
+ *     reveals a text field in it and redraws the jobs and pull requests for whatever task the
+ *     reader types. It sends nothing and stores nothing. The homepage's three-panel slider it
+ *     replaced is retired with the slider.
+ *   - **The entrances (the same ruling, the motion layer).** The parts of each home section that
+ *     are below the first screen rise into place once as they enter; with no script, or for a
+ *     reader who asks for less motion, nothing is held back.
  *   - **The consent banner, and the analytics gate behind it (W1.12, W3.2; D93, D106).** The
  *     banner's two buttons write one decision to `localStorage`; this file reveals the banner
  *     when no decision is stored, and — only when that decision is `granted` — loads Google's
@@ -59,8 +75,10 @@
  *
  * Nothing here is load-bearing: the commands are in the markup in full, and every one of
  * them is readable, selectable and copyable by hand without this file ever arriving; the
- * menu is a `<details>` at both levels and needs none of this to work; and with no script the
- * banner is not shown at all, so a reader who runs none is measured by nothing.
+ * menu is a `<details>` at both levels and needs none of this to work; the slider's three
+ * slides are in the markup and the dots that open them are links, so the block works with no
+ * script and only its clock is lost; and with no script the banner is not shown at all, so a
+ * reader who runs none is measured by nothing.
  *
  * It is loaded with `defer` from the base layout, so it runs once the document has been
  * parsed and every block and banner it looks for is in the tree. The only thing it stores is
@@ -79,7 +97,7 @@
   var OPEN_MENUS = '.site-nav details[open]'
 
   // The menu's submenus: one `<details>` per group, whose `<summary>` is the control that
-  // announces the group's state. There are three of them and no other menu control at any
+  // announces the group's state. There are two of them and no other menu control at any
   // width — the labels are the menu on a phone as much as on a wide viewport (the owner's
   // brief of 2026-10-19, item 1) — and each one opens and closes by its own click.
   var GROUP_DETAILS = '.site-nav-group details'
@@ -179,7 +197,7 @@
   // an element that is no longer rendered, so the control that opened it takes the focus
   // back — which is where a keyboard reader expects to be after dismissing a menu. The open
   // menus are read in document order and the first one that holds the focus and is still
-  // drawn takes it; the three groups are siblings and no level sits inside another, so there
+  // drawn takes it; the groups are siblings and no level sits inside another, so there
   // is only ever one open at a time and the search is a formality rather than a choice.
   function closeMenus() {
     var active = document.activeElement
@@ -475,6 +493,252 @@
     decideHover(query)
   }
 
+  // ---- the console's screenshot slider (the owner's feedback of 2026-10-21) --------------
+  //
+  // The console page's slider is a scroll container with snap points, and it works with none
+  // of this: the track scrolls, the dots are anchors into their slides and the first picture is
+  // in the page, so a reader who runs no script still reaches every screenshot (D183, and
+  // `website/test/console-screens.mjs` is the gate for it). Three things are this file's, and
+  // they are the three the owner asked for on 2026-10-21:
+  //
+  //   - the control bar the markup emits `hidden` — a Previous button, the count and a Next
+  //     button — which is revealed here;
+  //   - the count (`n / N`) and the mark on the dot the reader is on, both read from where the
+  //     track actually is, so a reader who swipes with a trackpad sees the same reading as one
+  //     who presses Next;
+  //   - and an advance every `AUTO_MS` that stops while somebody is reading: the pointer over
+  //     the slider, the focus inside it, the tab in the background, or a system that asks for
+  //     less motion at all.
+  //
+  // Nothing here is load-bearing, and the last line of this comment is the reason it is safe to
+  // write any of it: with no script the pictures are all in the document, in order, with their
+  // captions, and the four dots are four links.
+
+  // The four names **both** of the site's sliders are found and driven by, declared once here
+  // because the two blocks are the same two blocks to whoever reads the markup: `[data-slider]`
+  // is the one attribute a page marks a slider with, the two step-control attributes are the two
+  // controls a slider's markup emits `hidden`, and the six seconds and the motion query are what
+  // the owner asked of both. What the two do with them is not shared, and the two sections say
+  // why. (The homepage's three-panel slider that shared them is retired with the redesign's
+  // Step 3, 2026-10-23; the console's screenshot slider is now the site's one slider.)
+  var SLIDER = '[data-slider]'
+  var SLIDER_PREV = '[data-slider-prev]'
+  var SLIDER_NEXT = '[data-slider-next]'
+
+  // How long a slide stands before the next one. Six seconds: long enough to look at a
+  // screenshot the size of a page, short enough that a reader who is watching can see that the
+  // slider is a slider (the owner's "~6s").
+  var AUTO_MS = 6000
+
+  // The query a visitor's system answers when it has asked for less motion. `base.css` is where
+  // the site honours that for the stylesheet's own motion (D105); a carousel is motion no
+  // stylesheet can switch off, so it is honoured here — and watched after load, the way the
+  // menu watches its own query, because a visitor can turn the setting on without reloading.
+  var LESS_MOTION = '(prefers-reduced-motion: reduce)'
+
+  // The console slider's own three, and the two the bar is drawn from: the track it scrolls,
+  // the slides it counts, the dots it marks, the bar itself and the count in it.
+  //
+  // **The interior is `data-slider-*` too, and that is the correction of 2026-10-21** (the
+  // homepage's "See it" panel became a slider that renders the console page's own rows, D246).
+  // These three were `.screens-track`, `.screen` and `.screen-dot` — the console page's class
+  // names — and a second page can only reuse this driver by borrowing the classes of a page it
+  // has nothing to do with. The classes stay, because they are what the stylesheet draws; what
+  // the script reads is the attribute, which is the same shape as the door above it.
+  var SLIDER_BAR = '[data-slider-bar]'
+  var SLIDER_TRACK = '[data-slider-track]'
+  var SLIDER_SLIDE = '[data-slider-slide]'
+  var SLIDER_DOT = '[data-slider-dot]'
+  var SLIDER_COUNT = '[data-slider-counter]'
+
+  /**
+   * The elements of `block`'s OWN slider: everything `selector` matches inside it that belongs
+   * to no nearer slider. The homepage's "See it" panel holds one of these blocks inside the
+   * homepage's own, so a plain `block.querySelectorAll('[data-slider-slide]')` would hand the
+   * outer block the inner one's slides — and the two drivers would count, mark and move each
+   * other's. `closest('[data-slider]')` is what tells them apart, and it answers the block
+   * itself for everything of the block's own: the same expression a browser answers, so the
+   * rule needs no bookkeeping and cannot go stale.
+   */
+  function own(block, selector) {
+    var found = block.querySelectorAll(selector)
+    var kept = []
+    for (var i = 0; i < found.length; i++) {
+      if (found[i].closest(SLIDER) === block) kept.push(found[i])
+    }
+    return kept
+  }
+
+  function slider(section) {
+    var track = own(section, SLIDER_TRACK)[0]
+    if (!track) return
+    var slides = track.querySelectorAll(SLIDER_SLIDE)
+    // One slide is nowhere to go, and the markup renders no bar for it either: this is that
+    // same rule read from the other end, so a slider with one screenshot cannot end up with a
+    // Next button that goes to the slide it is already on.
+    if (slides.length < 2) return
+
+    // Every hook this driver reads is read through `own()`, the single elements as much as the
+    // lists: the homepage's "See it" panel holds a slider of its own inside this page's block,
+    // and its bar, its count and its two arrows carry the same four names this one's do — a
+    // `section.querySelector` would answer with whichever came first in the document, which is
+    // this block's own today and the inner block's the day the two are written the other way
+    // round. The rule is the same one the slides and the dots are read with, and it needs no
+    // document order to be right.
+    var bar = own(section, SLIDER_BAR)[0]
+    var count = own(section, SLIDER_COUNT)[0]
+    var dots = own(section, SLIDER_DOT)
+    var prev = own(section, SLIDER_PREV)[0]
+    var next = own(section, SLIDER_NEXT)[0]
+    var index = 0
+    var timer = null
+    var over = false
+    var inside = false
+
+    // Where the track is, as the slide it is showing. The slides are one track-width each
+    // (`grid-auto-columns: 100%`), so the slide at the left edge is the scroll offset over that
+    // width, rounded to the nearest — which is what a swipe that stopped between two slides
+    // (there is no such stop: the track snaps) comes out as.
+    function shown() {
+      var width = track.clientWidth || 0
+      if (!width) return index
+      var at = Math.round((track.scrollLeft || 0) / width)
+      return at < 0 ? 0 : at > slides.length - 1 ? slides.length - 1 : at
+    }
+
+    // Draw the reading: the count, and the mark on the dot the reader is on. `aria-current` is
+    // written on every dot rather than taken off the others — "false" is a value the attribute
+    // has — so there is no second state (an attribute that is there or not) to keep in step,
+    // and a whitespace-only difference never reaches the DOM.
+    function paint() {
+      if (count) count.textContent = index + 1 + ' / ' + slides.length
+      for (var i = 0; i < dots.length; i++) {
+        var mark = i === index ? 'true' : 'false'
+        if (dots[i].getAttribute('aria-current') !== mark) dots[i].setAttribute('aria-current', mark)
+      }
+    }
+
+    // Go to a slide, wrapping at either end: Next on the last slide is the first one rather
+    // than a control that does nothing, which is what "auto-slide" asks for and what makes the
+    // two arrows the whole of the navigation.
+    //
+    // The move lands where it was asked to land — no animation — and that is deliberate: the
+    // count and the dots are the track's own position, so a move the browser animates would be
+    // a move during which the position is between two slides while the reading had already
+    // moved on, and a jump across several slides would narrate every one it passed. **It is
+    // `'instant'` and not `'auto'`**: CSSOM-View resolves `'auto'` to the box's computed
+    // `scroll-behavior`, which the track declares `smooth` — so `'auto'` is the animation this
+    // is written to avoid, and the count would narrate the slides a move passed through while a
+    // reader pressing Next twice in a row advanced one slide, the second press having read a
+    // position a `scroll` event had already put back. A browser too old to know the word reads
+    // it as a value the dictionary does not have and takes the default, which is what the
+    // reader's own motion gets anyway. That motion stays the stylesheet's — `scroll-behavior:
+    // smooth` on the track, which the base layout's reduced-motion rule neutralises — and so is
+    // a dot's anchor with no script.
+    // A track the page is not laying out cannot be moved, and a move it cannot make is not one
+    // to count: `clientWidth` is zero for a box inside a `display: none` subtree, and the case
+    // on this site is the homepage, where this slider renders inside the "See it" panel and that
+    // panel is drawn only while the reader is on it (D246). The clock keeps its beat there — six
+    // seconds of a panel nobody has opened is no work — and every beat is refused here, so the
+    // count and the mark on the dots stay on the slide the track is showing: the first one, which
+    // is what the reader who opens the panel sees, and where their next move starts from.
+    function show(to) {
+      if (!(track.clientWidth || 0)) return
+      index = (to + slides.length) % slides.length
+      var left = index * (track.clientWidth || 0)
+      if (typeof track.scrollTo === 'function') track.scrollTo({ left: left, behavior: 'instant' })
+      else track.scrollLeft = left
+      paint()
+    }
+
+    function forward() {
+      show(index + 1)
+    }
+
+    // Whether the slider may move on its own right now: nobody is reading it (no pointer over
+    // it, no focus in it), the tab is not in the background, and the system has not asked for
+    // less motion.
+    var query = window.matchMedia ? window.matchMedia(LESS_MOTION) : null
+    function mayAdvance() {
+      return !over && !inside && !document.hidden && !(query && query.matches)
+    }
+
+    function play() {
+      if (timer !== null || !window.setInterval || !mayAdvance()) return
+      timer = window.setInterval(forward, AUTO_MS)
+    }
+
+    function pause() {
+      if (timer === null) return
+      window.clearInterval(timer)
+      timer = null
+    }
+
+    /** What the two states above come to after something changed: running, or stopped. */
+    function settle() {
+      if (mayAdvance()) play()
+      else pause()
+    }
+
+    if (prev) prev.addEventListener('click', function () { show(index - 1) })
+    if (next) next.addEventListener('click', function () { show(index + 1) })
+
+    for (var d = 0; d < dots.length; d++) {
+      ;(function (dot, at) {
+        dot.addEventListener('click', function (event) {
+          // A dot is an anchor into its own slide, which is what a reader with no script gets.
+          // With a script the press is the same move a Next press is, so that the count and the
+          // mark follow it exactly rather than following a jump that is still travelling.
+          if (event && event.preventDefault) event.preventDefault()
+          show(at)
+        })
+      })(dots[d], d)
+    }
+
+    // The track is the source of truth, so a reader's own swipe moves the reading too.
+    track.addEventListener('scroll', function () {
+      var at = shown()
+      if (at !== index) {
+        index = at
+        paint()
+      }
+    })
+
+    // The pointer's arrival and the focus's hold the slider still, and the two are answered
+    // separately because they are different readers: a keyboard reader standing on a dot has no
+    // pointer over anything, and a pointer resting on a screenshot has moved no focus. The
+    // focus is read from the document rather than from this section's own `focusout`, which
+    // fires with the focus already on its way out — and the arriving `focusin` is what says
+    // where it went.
+    section.addEventListener('pointerenter', function () { over = true; settle() })
+    section.addEventListener('pointerleave', function () { over = false; settle() })
+    document.addEventListener('focusin', function (event) {
+      inside = section.contains(event.target)
+      settle()
+    })
+    document.addEventListener('visibilitychange', settle)
+
+    if (query) {
+      if (query.addEventListener) query.addEventListener('change', settle)
+      else if (query.addListener) query.addListener(settle)
+    }
+
+    // The bar the markup emitted `hidden`, revealed now that something drives it — and the
+    // reading drawn before the first frame, so the count is written from the start rather than
+    // empty until the first move.
+    //
+    // The first reading is the track's, like every other one: a page that arrives already
+    // scrolled — a shared `#console-screen-3` deep link, or a scroll position the browser
+    // restored — opens on that slide, and a count hardcoded to the first one would tell that
+    // reader `1 / N` and mark the first dot until the first `scroll` event corrected it.
+    // `shown()` answers `index` when the track reports no width, so a browser that lays nothing
+    // out yet leaves the starting index as it was.
+    if (bar) bar.hidden = false
+    index = shown()
+    paint()
+    settle()
+  }
+
   // ---- the consent banner, and the analytics gate behind it (W1.12, W3.2) ----------------
 
   // The banner's own element id, the status line inside it, and the page's content region.
@@ -698,6 +962,11 @@
 
     function dismiss() {
       banner.hidden = true
+      // The early decision's mark (`consent-early.js`) is what draws the banner in the flow from
+      // the first frame; the decision is made, so the mark goes with the banner.
+      if (document.documentElement && document.documentElement.removeAttribute) {
+        document.documentElement.removeAttribute('data-consent-ask')
+      }
       // Focus goes to the content, not back to the top of the page and not to a control
       // that has just disappeared. `tabindex="-1"` makes <main> a focus target without
       // putting it in the tab order.
@@ -743,9 +1012,222 @@
     analytics(banner)
   }
 
+  // ---- the hero's live card (the owner's ruling of 2026-10-23, the redesign's lever 3) -------
+  //
+  // The card is the request `src/lib/agent-request.mjs` holds, the jobs it launches and the
+  // pull requests they end in. With no script it is the static picture of that one request.
+  // Here it becomes the one live thing on the page: the field is revealed, and whatever task the
+  // reader types is redrawn as the jobs Fugaro would launch for it, in the words `fugaro watch`
+  // prints (`implement`, `review`, `ready for review`). It is an illustration and says so in its
+  // caption; it sends nothing anywhere and stores nothing.
+  //
+  // How many jobs: one per line when the reader writes several lines, else the number the task
+  // names (a figure or a number word, `three bug fixes`), else one. The ceiling is README.md's
+  // `max_parallel` default, which the hero hands over as `data-live-max`.
+  var LIVE = '[data-live-run]'
+  var NUMBER_WORDS = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten',
+    'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen',
+    'nineteen', 'twenty']
+  var LIVE_STAGES = ['implement', 'review', 'ready for review']
+  var LIVE_ROWS = 6
+
+  function jobsIn(text) {
+    var lines = String(text || '').split(/\n/)
+    var named = []
+    for (var i = 0; i < lines.length; i++) if (/\S/.test(lines[i])) named.push(lines[i])
+    if (named.length === 0) return 0
+    if (named.length > 1) return named.length
+    var figure = /(^|[^\w.])(\d{1,4})(?![\w.])/.exec(named[0])
+    if (figure) return parseInt(figure[2], 10)
+    var lower = named[0].toLowerCase()
+    for (var w = NUMBER_WORDS.length - 1; w >= 0; w--) {
+      if (new RegExp('\\b' + NUMBER_WORDS[w] + '\\b').test(lower)) return w + 1
+    }
+    return 1
+  }
+
+  function liveRun() {
+    if (typeof document.querySelector !== 'function') return
+    var card = document.querySelector(LIVE)
+    if (!card) return
+    var ask = card.querySelector('[data-live-ask]')
+    var field = card.querySelector('[data-live-field]')
+    var prompt = card.querySelector('[data-live-prompt]')
+    var status = card.querySelector('[data-live-status-text]')
+    var list = card.querySelector('[data-live-jobs]')
+    if (!ask || !field || !status || !list) return
+    var max = parseInt(card.getAttribute('data-live-max'), 10) || 20
+    // The rows are copies of the first row the page rendered, so they carry every attribute the
+    // build gave it (the scoped style's own among them) and this file writes no markup.
+    var model = list.firstElementChild ? list.firstElementChild.cloneNode(true) : null
+    if (!model || !model.querySelector('.hero-shot-job-name') || !model.querySelector('.hero-shot-stage')) return
+    var quiet = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null
+    // The rows on the card, in order, each with its own timers, and the "and N more" line when
+    // there is one. A pause in typing updates these in place rather than drawing the list again
+    // (the owner-approved motion review of 2026-10-23): a row already on the card keeps its stage
+    // and its clock, only a row that is new arrives, and a row no longer asked for leaves.
+    var rows = []
+    var rest = null
+    var drawn = false
+    var waiting = 0
+
+    function stop(entry) {
+      for (var t = 0; t < entry.timers.length; t++) window.clearTimeout(entry.timers[t])
+      entry.timers = []
+    }
+
+    function row() {
+      var item = model.cloneNode(true)
+      item.removeAttribute('data-arrive')
+      var stage = item.querySelector('.hero-shot-stage')
+      return { item: item, name: item.querySelector('.hero-shot-job-name'), stage: stage, timers: [] }
+    }
+
+    // A step every 400 to 700 ms: quick enough to read as work moving, with a little spread so
+    // the rows do not tick in lockstep.
+    function advance(entry, step, delay) {
+      entry.timers.push(window.setTimeout(function () {
+        entry.stage.textContent = LIVE_STAGES[step]
+        if (step === LIVE_STAGES.length - 1) entry.item.removeAttribute('data-stage')
+        else {
+          entry.item.setAttribute('data-stage', 'working')
+          advance(entry, step + 1, 400 + Math.floor(Math.random() * 300))
+        }
+      }, delay))
+    }
+
+    function draw() {
+      var asked = jobsIn(field.value)
+      var count = Math.min(asked, max)
+      if (count === 0) status.textContent = 'Type a task to launch a job'
+      else
+        status.textContent =
+          'Fugaro: launching ' + count + (count === 1 ? ' job' : ' jobs') +
+          (asked > max ? ' (max_parallel is ' + max + ' by default)' : '')
+      // A long fan-out draws its first rows and one line for the rest, so the card stays the size
+      // of a card.
+      var shown = count > LIVE_ROWS ? LIVE_ROWS - 1 : count
+      // The page's own first row is the static card's (the no-script picture); the first draw
+      // replaces it, and every draw after that reuses what it drew.
+      if (!drawn) while (list.firstChild) list.removeChild(list.firstChild)
+      drawn = true
+      while (rows.length > shown) {
+        var gone = rows.pop()
+        stop(gone)
+        list.removeChild(gone.item)
+      }
+      var kept = rows.length
+      for (var n = 1; n <= shown; n++) {
+        var entry = rows[n - 1]
+        if (!entry) {
+          entry = row()
+          entry.item.setAttribute('data-arrive', '')
+          if (quiet && quiet.matches) {
+            entry.item.removeAttribute('data-stage')
+            entry.stage.textContent = LIVE_STAGES[LIVE_STAGES.length - 1]
+          } else {
+            entry.item.setAttribute('data-stage', 'working')
+            entry.stage.textContent = 'queued'
+            advance(entry, 0, 300 + (n - kept) * 180)
+          }
+          rows.push(entry)
+          list.insertBefore(entry.item, rest ? rest.item : null)
+        }
+        entry.name.textContent = 'Pull request ' + n + ' of ' + count
+      }
+      if (shown < count) {
+        if (!rest) {
+          rest = row()
+          rest.item.removeAttribute('data-stage')
+          rest.stage.textContent = ''
+          rest.item.setAttribute('data-arrive', '')
+          list.appendChild(rest.item)
+        }
+        rest.name.textContent = 'and ' + (count - shown) + ' more pull requests'
+      } else if (rest) {
+        list.removeChild(rest.item)
+        rest = null
+      }
+    }
+
+    ask.hidden = false
+    if (prompt) prompt.hidden = true
+    field.addEventListener('input', function () {
+      window.clearTimeout(waiting)
+      waiting = window.setTimeout(draw, 250)
+    })
+    draw()
+  }
+
+  // ---- entrances (the redesign's motion layer, step 9) ------------------------------------
+  //
+  // The parts of each home section rise into place once, in reading order, as the section
+  // enters the window. Only what is below the first screen when the script runs is held back,
+  // so nothing a reader already sees blinks; with no script, or a reader who asks for less
+  // motion, everything is simply there.
+  function entrances() {
+    if (!('IntersectionObserver' in window) || typeof document.querySelectorAll !== 'function') return
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    var blocks = document.querySelectorAll('[data-reveal-block]')
+    if (blocks.length === 0) return
+    var seen = new IntersectionObserver(function (entries) {
+      for (var e = 0; e < entries.length; e++) {
+        if (!entries[e].isIntersecting) continue
+        entries[e].target.setAttribute('data-revealed', '')
+        seen.unobserve(entries[e].target)
+      }
+    }, { rootMargin: '0px 0px -12% 0px' })
+    // The trigger line is the observer's: the window's bottom less its 12% margin. Anything
+    // already above it when the script runs is in view and is never held back.
+    var fold = (window.innerHeight || 0) * 0.88
+    var held = []
+    for (var b = 0; b < blocks.length; b++) {
+      var parts = blocks[b].querySelectorAll('h2, h3, p, li, figure, pre')
+      for (var p = 0; p < parts.length; p++) {
+        if (parts[p].getBoundingClientRect().top < fold) continue
+        parts[p].setAttribute('data-reveal', '')
+        // The stagger stops at the fourth part, so the last part of a block starts 210 ms after
+        // the first (the owner-approved motion review of 2026-10-23).
+        parts[p].style.transitionDelay = Math.min(p, 3) * 70 + 'ms'
+        seen.observe(parts[p])
+        held.push(parts[p])
+      }
+    }
+    // The failsafe: an observer that never fires (a fast scroll past, a stalled observer, a
+    // print, a screenshot tool) must not leave a part invisible. About two seconds after the
+    // page loads, anything still held back that is above the window's bottom is shown, and so is
+    // everything at once when the page is printed.
+    function release(all) {
+      var bottom = window.innerHeight || 0
+      for (var h = 0; h < held.length; h++) {
+        if (held[h].hasAttribute('data-revealed')) continue
+        if (!all && held[h].getBoundingClientRect().top >= bottom) continue
+        held[h].setAttribute('data-revealed', '')
+        seen.unobserve(held[h])
+      }
+    }
+    function later() {
+      window.setTimeout(function () { release(false) }, 2000)
+    }
+    if (document.readyState === 'complete') later()
+    else window.addEventListener('load', later)
+    window.addEventListener('beforeprint', function () { release(true) })
+  }
+
+
   function start() {
     menu()
     consent()
+    // The sliders first, and unconditionally: a slider's controls are not a convenience the
+    // page can do without (the arrows, the count and the dots are the owner's feedback of
+    // 2026-10-21), so none is behind the clipboard gate the copy controls stand behind below.
+    var sliders = document.querySelectorAll(SLIDER)
+    for (var s = 0; s < sliders.length; s++) {
+      slider(sliders[s])
+    }
+    // The hero's live card and the entrances, before the clipboard gate for the same reason.
+    liveRun()
+    entrances()
     var blocks = document.querySelectorAll('[data-copy]')
     if (blocks.length === 0) return
     if (!canCopy()) return

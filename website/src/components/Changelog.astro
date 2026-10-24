@@ -107,8 +107,9 @@ type Element = { kind: 'list'; items: string[] } | { kind: 'paragraph'; text: st
 
 /**
  * The text of a line, escaped for HTML. The release notes carry `<` in their own prose
- * (`fugaro init --firebase <firebase-project-id>`, `--repo <owner/name>`), which is text
- * to a reader and must not become an element in the page.
+ * (`fugaro image build --repo <owner/name>`, `--base <kind>`), which is text to a reader
+ * and must not become an element in the page. A dated release record that names a retired
+ * command keeps the name it shipped with, and the page prints it as the text it is.
  */
 function escapeHTML(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -285,8 +286,8 @@ function summaryOf(entry: Entry): string {
     box-sizing: border-box;
     min-height: 44px;
     padding: var(--space-xs) var(--space-md);
-    border: var(--border-width) solid var(--accent);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-sm);
+    background: var(--panel);
     color: var(--accent-on-dark);
     font-size: var(--font-size-base);
     font-weight: var(--weight-semibold);

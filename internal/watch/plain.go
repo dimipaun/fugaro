@@ -246,6 +246,12 @@ func flags(r RunRow, warn string) string {
 		return "QUEUED"
 	}
 	var f []string
+	// Waiting leads: it is the reason the run is doing no work at all, and
+	// the one flag that says when it will (D152's "waiting, expected resume
+	// time").
+	if r.Waiting {
+		f = append(f, "waiting for a credential, expected resume "+stampText(r.WaitingUntil))
+	}
 	switch r.Health {
 	case HealthSilent:
 		f = append(f, "SILENT")

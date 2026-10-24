@@ -64,6 +64,13 @@ type budgetIdentity struct {
 	custom string
 	db     *rtdb.Client
 	err    error
+	// tok is the session this read exchanged the launcher's custom token for:
+	// the run's own Firebase identity, which the credentials service verifies
+	// a mint by (C1.10). The read needs it before the budget opens, so it is
+	// kept here for the git path, which fetches its first credential before
+	// the budget session exists (r.runIDToken); once the budget session
+	// exists that one answers instead. It is guarded by r.mu.
+	tok *token.Session
 }
 
 // projectPolicy returns the project's policy, if this run can read one. Its
@@ -90,7 +97,7 @@ func (r *run) projectPolicy(ctx context.Context) (*projectpolicy.Policy, bool, e
 	p.done = true
 	if !r.d.Backend.On() && !r.d.Backend.MalformedEnv && !r.d.Backend.TokenMarked {
 		// No database in the job's environment: no client, no marker, no node.
-		// This is the absence the readiness gate refuses (init --repo) once
+		// This is the absence the readiness gate refuses (fugaro update) once
 		// the project has published a policy; a run cannot invent the
 		// credential it would need to notice one. An environment that named a
 		// backend it could not parse is not that absence (L-b), and neither is
@@ -188,8 +195,9 @@ func (r *run) policyReadError(err error) error {
 // denied read, a node that is not this Fugaro's policy, a read that failed. The
 // run does not start — never on the environment ceiling, which would be less
 // constrained than what the owner published. The message names the node, the
-// one cause that is not tampering (an older CLI's init --firebase redeploys the
-// pre-policy rules and leaves the marker in place), and the fix.
+// one cause that is not tampering (an older CLI's fugaro update
+// --firebase-project redeploys the pre-policy rules and leaves the marker in
+// place), and the fix.
 func (r *run) unreadablePolicy(err error) error {
 	marker := projectpolicy.PathRulesMarker()
 	if errors.Is(err, rtdb.ErrPermission) && !strings.Contains(err.Error(), projectpolicy.PathShared()) {
@@ -204,11 +212,12 @@ func (r *run) unreadablePolicy(err error) error {
 	}
 	if errors.Is(err, rtdb.ErrPermission) {
 		// The node's read was denied, with the marker read: the one cause that
-		// is not tampering is an older CLI's init --firebase, which redeploys
-		// the rules from before the policy nodes while leaving the marker in
-		// place, so a policy that was published becomes unreadable and every
-		// budget-on run of the project stops here (R2-8(b)).
-		return fmt.Errorf("the project's policy at %s could not be read: the deployed rules are older than the marker %s and refuse this run's token for a node that exists, which is what an older fugaro's 'fugaro init --firebase' leaves behind when it redeploys rules that predate that marker and leaves it in place. Run 'fugaro init --firebase' again with an up-to-date fugaro, which deploys the rules generation this runner reads (%d). The run does not start on a ceiling the policy did not set: %s",
+		// is not tampering is an older CLI's fugaro update --firebase-project,
+		// which redeploys the rules from before the policy nodes while leaving
+		// the marker in place, so a policy that was published becomes
+		// unreadable and every budget-on run of the project stops here
+		// (R2-8(b)).
+		return fmt.Errorf("the project's policy at %s could not be read: the deployed rules are older than the marker %s and refuse this run's token for a node that exists, which is what an older fugaro's 'fugaro update --firebase-project' leaves behind when it redeploys rules that predate that marker and leaves it in place. Run 'fugaro update --firebase-project' again with an up-to-date fugaro, which deploys the rules generation this runner reads (%d). The run does not start on a ceiling the policy did not set: %s",
 			projectpolicy.PathShared(), marker, projectpolicy.RulesVersion, r.redact(err.Error()))
 	}
 	var me *projectpolicy.MarkerError
@@ -346,12 +355,12 @@ func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 		// likely cause after an upgrade is the grant — a job not re-applied
 		// since the token moved to tokens/ has none — so the refusal names it
 		// and its cure first. It names no object, and no key.
-		const grant = "this job's service account lacks its read grant on the repository's token objects under tokens/ (a job not re-applied since the upgrade that moved the budget token there: an operator runs fugaro init --repo for this repository in its checkout)"
+		const grant = "this job's service account lacks its read grant on the repository's token objects under tokens/ (a job not re-applied since the upgrade that moved the budget token there: an operator runs fugaro update for this repository in its checkout)"
 		if r.d.Backend.TokenMarked {
 			c.err = fmt.Errorf("the run's budget token could not be read from the runs bucket, though the launcher minted one for this run (FUGARO_BUDGET_TOKEN is set in the job's environment); the run cannot tell a refused read from a missing object. Either %s — then start a new run (fugaro run with the same task): this run has launched, and retrying its run id only reports it — or the object is gone (a launch that failed and was cleaned up, or the bucket's day-long lifecycle rule): launch the run again", grant)
 			return nil, c.err
 		}
-		c.err = fmt.Errorf("the run's budget token could not be read from the runs bucket: the run was not launched with one, or %s — either way, start a new run (fugaro run with the same task): this run has launched, and retrying its run id only reports it — and when the grant is the cause, an operator runs that init first", grant)
+		c.err = fmt.Errorf("the run's budget token could not be read from the runs bucket: the run was not launched with one, or %s — either way, start a new run (fugaro run with the same task): this run has launched, and retrying its run id only reports it — and when the grant is the cause, an operator runs that update first", grant)
 		return nil, c.err
 	default:
 		c.err = err
@@ -497,6 +506,14 @@ func (r *run) exchangeIdentity(ctx context.Context, cfg *budget.Config, custom s
 	if c := tok.Claims(); c.Slug != cfg.Slug || c.Run != cfg.Run {
 		return nil, token.ErrTokenMismatch
 	}
+	// The session the read exchanged is kept on the run: it is the identity
+	// the credentials service verifies a mint by, and the git path asks for
+	// its token before the budget session exists (r.runIDToken). The check
+	// above is the same one budget.Open makes of the second exchange, so this
+	// is the same identity either way.
+	r.mu.Lock()
+	r.ident.tok = tok
+	r.mu.Unlock()
 	var opts []rtdb.Option
 	if cfg.HTTP != nil {
 		opts = append(opts, rtdb.WithHTTPClient(cfg.HTTP))

@@ -3,8 +3,8 @@
 // rule 10, D13, D14; owner ruling C9, 2026-10-18).
 //
 // It is a second preload rather than a second window on the dashboard's, and
-// the reason is the surface: `src/preload/index.ts` exposes **fourteen** rows to
-// the document that draws the dashboard -- the eleven CLI reads, the startup
+// the reason is the surface: `src/preload/index.ts` exposes **fifteen** rows to
+// the document that draws the dashboard -- the twelve CLI reads, the startup
 // handshake's answer, `openExternal`'s handover and `installation.current` -- and
 // the picker has no business with any of them. The two documents are served from the
 // same origin (`app://console`), so the *only* thing that separates their
@@ -15,14 +15,15 @@
 //
 // What this file deliberately does not do:
 //
-//   - **no path crosses this boundary in either direction.** `pickBinary`,
-//     `pickConfig` and `pickCheckout` ask the *main* process to open a native
-//     dialog; the answer is a **pick token**, a single-use capability the main
-//     process issued for a path it chose. `add` sends those tokens back. The
-//     renderer therefore never learns a path it could have invented, and the
-//     main process never accepts one: `validateInstallationArguments` refuses
-//     anything that is not an outstanding token *by shape*, before a handler
-//     runs.
+//   - **no path the console did not itself obtain crosses this boundary.** The
+//     form is gone (owner's ruling of 2026-10-20): there is no `add`, no
+//     `pickBinary`, no `pickConfig` and no `pickCheckout`, and no pick token.
+//     The rows a screen draws are the installations `fugaro config list --json`
+//     printed, a checkout it may set is a directory *that same document* listed
+//     (`checkout`'s argument is checked against the last read by
+//     `src/main/picker.ts`), and the one URL is not an argument at all: the
+//     `openExternal` row takes **no arguments**, so `GETTING_STARTED_URL` never
+//     leaves the main process.
 //   - **no `invoke`, no `send`, no `on`, no channel name.** There is one method
 //     per row of `INSTALLATION_OPERATIONS` and nothing else, for the reason
 //     `src/preload/index.ts` gives at length: a general invoker turns an
@@ -52,13 +53,11 @@ export const INSTALLATION_BRIDGE_VERSION = 1
  */
 export const INSTALLATION_OPERATIONS = Object.freeze([
   ['list', 'list'],
-  ['current', 'current'],
-  ['pickBinary', 'pickBinary'],
-  ['pickConfig', 'pickConfig'],
-  ['pickCheckout', 'pickCheckout'],
-  ['add', 'add'],
   ['choose', 'choose'],
+  ['checkout', 'checkout'],
   ['remove', 'remove'],
+  ['reveal', 'reveal'],
+  ['openExternal', 'openExternal'],
 ] as const) satisfies readonly (readonly [string, string])[]
 
 /** InstallationOperationName is the closed union of channel names. */

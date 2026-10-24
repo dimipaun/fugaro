@@ -447,7 +447,7 @@ func TestInitHelpMentionsFirestoreStep(t *testing.T) {
 	out = strings.Join(strings.Fields(out), " ")
 	for _, want := range []string{"Firestore", "us-east5", "permanent", "type the location"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("init --help lacks %q", want)
+			t.Errorf("fugaro setup --help lacks %q", want)
 		}
 	}
 }

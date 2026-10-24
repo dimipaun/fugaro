@@ -43,7 +43,7 @@
 //      command they run met a sentence about the page first, which is the ordering the plan
 //      asks this part to fix.
 //   3. **Every page that prints a command prints it under a heading.** The page's first `h2`
-//      comes before its first `pre`, on every route that prints one — three of the eleven
+//      comes before its first `pre`, on every route that prints one — three of the thirteen
 //      today — so no page opens with a command that nothing above it names. This is the
 //      general form of the two cases above and the rule a future page keeps: a command block
 //      belongs to a section, and the section's heading is what a reader reads before it.
@@ -144,7 +144,12 @@ export function foldFailures(dist) {
         // — the card is captioned as an illustration and it is not prose the page promises
         // anything with. It is one `figure` the page draws once; the promise, the lead and the
         // links stay in the region and stay the whole of what it may hold.
-        const picture = els.find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-shot'))
+        //
+        // Since the owner's ruling of 2026-10-23 (the redesign's Step 3, levers 2 and 3) the card
+        // and the real `fugaro watch` capture under it are one stage, `div.hero-stage`, and the
+        // stage is the picture taken out; a page with no stage falls back to the card alone.
+        const has = (el, name) => (el.attrs.get('class') ?? '').split(/\s+/).includes(name)
+        const picture = els.find((el) => has(el, 'hero-stage')) ?? els.find((el) => has(el, 'hero-shot'))
         const lead = els
           .slice(h1 + 1, firstH2)
           .filter((el) => !within(el, owner) && (picture === undefined || !within(el, picture)))
@@ -369,7 +374,7 @@ test('the promise, its prompt line and its call to action above the fold are eno
   // a checked rule rather than a description of today's markup.
   const dist = distOf(t, {
     'index.html': page(
-      '<h1>t</h1><p class="hero-prompt"><span class="hero-prompt-mark" aria-hidden="true">&gt;</span> Fan out these three bug fixes.</p><p class="hero-lead">the promise</p><p class="hero-actions"><a class="hero-cta" href="/getting-started/">Get started</a><a class="hero-cta-quiet" href="/how-it-works/">How it works</a></p><section class="home-slider"><ul class="tab-bar"><li><a class="tab" href="#home-panel-easy">Easy to use</a></li></ul><div class="panels"><div class="panel" id="home-panel-easy"><h2 class="panel-title">Easy to use</h2></div></div></section>',
+      '<h1>t</h1><p class="hero-prompt"><span class="hero-prompt-mark" aria-hidden="true">&gt;</span> Fan out these three bug fixes.</p><p class="hero-lead">the promise</p><p class="hero-actions"><a class="hero-cta" href="/getting-started/">Get started</a><a class="hero-cta-quiet" href="/how-it-works/">How it works</a></p><section class="home-slider" data-slider><ul class="slider-dots"><li class="slider-dot-item"><a class="slider-dot" href="#home-panel-easy" aria-label="Slide 1 of 3: Easy to use"></a></li></ul><div class="panels"><div class="panel" id="home-panel-easy"><h2 class="panel-title">Easy to use</h2></div></div></section>',
     ),
   })
   assert.deepEqual(foldFailures(dist), [], 'a homepage that keeps the prompt line, the promise and its call to action as its whole lead region was refused')
@@ -384,7 +389,7 @@ test('the hero’s illustration is taken out of the lead region whole, and only 
   // the exclusion must not hide: a command block beside the promise rather than inside a
   // picture is still a command block in the lead.
   const slider =
-    '<section class="home-slider"><ul class="tab-bar"><li><a class="tab" href="#home-panel-easy">Easy to use</a></li></ul><div class="panels"><div class="panel" id="home-panel-easy"><h2 class="panel-title">Easy to use</h2></div></div></section>'
+    '<section class="home-slider" data-slider><ul class="slider-dots"><li class="slider-dot-item"><a class="slider-dot" href="#home-panel-easy" aria-label="Slide 1 of 3: Easy to use"></a></li></ul><div class="panels"><div class="panel" id="home-panel-easy"><h2 class="panel-title">Easy to use</h2></div></div></section>'
   const hero = (picture) =>
     `<h1>t <span class="gradient-text">coding agents</span></h1><p class="hero-lead">the promise</p><p class="hero-actions"><a class="hero-cta" href="/getting-started/">Get started</a></p>${picture}${slider}`
   const card =

@@ -158,7 +158,15 @@ func NewRootCmd() *cobra.Command {
 		// carry it. cmd/fugaro/main.go instead calls WarnUpdateAvailable
 		// itself, after ExecuteContextC returns, whether or not it errored.
 		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
-			cmd.SetContext(withCheckoutParseCache(cmd.Context()))
+			ctx := cmd.Context()
+			// A command the desktop console spawns as a read changes nothing
+			// on this machine, so it does not write the remembered checkouts
+			// either (see consoleReadPaths in project.go). Marked here, once
+			// per command, from the command's own path.
+			if consoleReadPaths[cmd.CommandPath()] {
+				ctx = withConsoleRead(ctx)
+			}
+			cmd.SetContext(withCheckoutParseCache(ctx))
 			warnStaleSkills(cmd)
 			disabled := updateCheckDisabled(cmd)
 			cmd.SetContext(withUpdateCheckDisabled(cmd.Context(), disabled))
@@ -168,7 +176,13 @@ func NewRootCmd() *cobra.Command {
 	root.SetVersionTemplate(versionTemplate)
 	root.AddCommand(
 		newVersionCmd(), newValidateCmd(), newConfigCmd(), newVerifyCmd(), newExecCmd(), newImageCmd(),
-		newRunCmd(), newRecipesCmd(), newRunsCmd(), newStatsCmd(), newArtifactsCmd(), newLogsCmd(), newDiagnoseCmd(), newCancelCmd(), newSecretsCmd(), newAccountsCmd(), newBackendsCmd(), newSetupCmd(), newUpdateCmd(), newRetiredInitCmd(), newBudgetCmd(), newWatchCmd(), newReportCmd(), newUpdateSkillsCmd(), newUpgradeCmd(), newDoctorCmd(), newProjectCmd(), newCoordinatorCmd(), newAllowDeleteCmd(), newManagedCmd(), newRestoreCmd(), newPlanCmd(),
+		newRunCmd(), newRecipesCmd(), newRunsCmd(), newStatsCmd(), newArtifactsCmd(), newLogsCmd(), newDiagnoseCmd(), newCancelCmd(), newSecretsCmd(), newCredsCmd(), newAccountsCmd(), newBackendsCmd(), newSetupCmd(), newUpdateCmd(), newRetiredInitCmd(), newBudgetCmd(), newWatchCmd(), newReportCmd(), newUpdateSkillsCmd(), newUpgradeCmd(), newDoctorCmd(), newProjectCmd(), newCoordinatorCmd(), newAllowDeleteCmd(), newManagedCmd(), newRestoreCmd(), newPlanCmd(), newReaperCmd(),
+		// The credentials service's own entry point: hidden, and the only
+		// thing the service's image runs (credentials_serve.go, plan task
+		// C1.14). It is registered like every other command so `fugaro
+		// credentials serve` is what the image's CMD names, and hidden so it
+		// is not something an operator is offered.
+		newCredentialsCmd(),
 	)
 	return root
 }

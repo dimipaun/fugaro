@@ -140,7 +140,7 @@ func TestAdoptKeepsTheInstallationsMembers(t *testing.T) {
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"launchers": []string{"group:eng@example.com"}})}
 	r.save(t)
 	n := fakeUser(t, "me@example.com", nil)
-	e := adoptEngine(t, r, &initOptions{yes: true})
+	e := newMachineEngine(t, r, &initOptions{yes: true})
 	runInstallation(t, e)
 	data, err := os.ReadFile(e.path)
 	if err != nil || *n != 0 || !strings.Contains(string(data), "group:eng@example.com") || strings.Contains(string(data), "me@example.com") {
@@ -240,7 +240,7 @@ func TestDefaultUserLookupNeverRunsWithFakeAuth(t *testing.T) {
 	}
 }
 
-// init --firebase on a first run gets the same default (its first apply is
+// update --firebase-project on a first run gets the same default (its first apply is
 // the installation), unless the installation exists.
 func TestFirstFirebaseRunDefaultsMembers(t *testing.T) {
 	r := newFBRig(t)

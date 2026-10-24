@@ -1,0 +1,125 @@
+---
+/**
+ * website/src/components/ZoomLevels.astro — the four levels, as the owner's approved boards.
+ *
+ * The four boards (`website/design-ref/zoom-levels/level1.dc.html` … `level4.dc.html`, 1280x720,
+ * drawn in Claude Design) are shown as the PNGs rendered from them at twice the size
+ * (`public/images/zoom/level1.png` … `level4.png`). Redrawing them as inline SVG looked worse than
+ * the boards and cost more than it was worth (owner, 2026-10-22), so the picture is the board's
+ * own render. A reader who cannot see it is given the `alt` text; the page's `<nav>` of anchors
+ * (`#level-1` … `#level-4`) is the same as ever and needs no script.
+ */
+import { LEVELS } from '../lib/zoom-levels.mjs'
+
+// The four levels' names and alt texts are `src/lib/zoom-levels.mjs`'s, shared with the
+// homepage's run section.
+---
+
+<section class="zoom" aria-labelledby="zoom-title">
+  <h2 class="zoom-title" id="zoom-title">The four levels</h2>
+
+  <p class="zoom-legend">
+    A dashed outline is a part that is planned rather than built.
+  </p>
+
+  <nav class="zoom-nav" aria-label="The four levels">
+    <ul class="zoom-marker-list">
+      {
+        LEVELS.map((entry, index) => (
+          <li>
+            <a class="zoom-marker" href={`#${entry.id}`} aria-label={`Level ${index + 1} — ${entry.name}`}>
+              {index + 1}
+            </a>
+          </li>
+        ))
+      }
+    </ul>
+  </nav>
+
+  {
+    LEVELS.map((entry, index) => (
+      <figure class="zoom-figure" id={entry.id}>
+        <img
+          class="zoom-img"
+          src={`/images/zoom/level${index + 1}.png`}
+          width="2560"
+          height="1440"
+          alt={entry.alt}
+          loading={index === 0 ? 'eager' : 'lazy'}
+          decoding="async"
+        />
+        <figcaption class="zoom-caption">
+          <span class="zoom-level-name">{entry.name}</span>
+        </figcaption>
+      </figure>
+    ))
+  }
+</section>
+
+<style>
+  .zoom {
+    margin-top: var(--space-3xl);
+  }
+
+  .zoom-title {
+    margin: 0 0 var(--space-2xs);
+  }
+
+  .zoom-legend {
+    margin: 0 0 var(--space-md);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .zoom-nav {
+    margin: 0 0 var(--space-md);
+  }
+
+  .zoom-marker-list {
+    display: flex;
+    gap: var(--space-xs);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .zoom-marker {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    border-radius: var(--radius-pill);
+    background: var(--surface);
+    color: var(--text);
+    text-decoration: none;
+  }
+
+  .zoom-marker:focus-visible {
+    background: var(--border);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .zoom-marker:hover {
+      background: var(--border);
+    }
+  }
+
+  .zoom-figure {
+    margin: 0 0 var(--space-xl);
+    scroll-margin-top: var(--space-2xl);
+  }
+
+  .zoom-img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: var(--radius-sm);
+  }
+
+  .zoom-caption {
+    margin-top: var(--space-xs);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+</style>

@@ -120,6 +120,9 @@ func (f *budgetFixture) Checkout(t *testing.T, agentYAML string) {
 type previewStage struct {
 	kind, model string
 	usd         float64
+	// notional is the part of usd a subscription paid (C1.16, P12): a
+	// cascade stage's figure holds both, and only the rest is a real dollar.
+	notional float64
 }
 
 // SeedRuns writes n runs of acme/app into the runs bucket, each with the
@@ -136,19 +139,26 @@ func (f *budgetFixture) SeedRuns(t *testing.T, firstHourAgo, n int, stages []pre
 // SeedRunsBasis is SeedRuns with the run's cost basis (result.json's
 // cost.model_basis): runstore.BasisSubscription is an oauth run, whose
 // model_usd is notional; "" is the record of a run that does not say, which
-// the loader reads as real dollars.
+// the loader reads as real dollars. The run's own cost carries the stages'
+// notional part summed, as the runner records it: a cascade run whose every
+// call the plan served has a whole notional model figure under an api-list
+// basis, which is the row a basis test cannot read (C1.16, P12).
 func (f *budgetFixture) SeedRunsBasis(t *testing.T, firstHourAgo, n int, stages []previewStage, basis string) {
 	t.Helper()
 	now := time.Now().UTC()
 	for i := range n {
 		id := now.Add(-time.Duration(firstHourAgo+i)*time.Hour).Format("20060102-150405") + "-aaaa"
 		var ss []map[string]any
-		var total float64
+		var total, notional float64
 		for _, s := range stages {
 			st := map[string]any{"name": s.kind, "started_at": now.UTC().Format(time.RFC3339), "duration_s": 1.0}
 			if s.usd > 0 {
 				st["model_usd"] = s.usd
 				total += s.usd
+			}
+			if s.notional > 0 {
+				st["model_notional_usd"] = s.notional
+				notional += s.notional
 			}
 			if s.model != "" {
 				st["model"] = s.model
@@ -158,7 +168,11 @@ func (f *budgetFixture) SeedRunsBasis(t *testing.T, firstHourAgo, n int, stages 
 		rec := map[string]any{
 			"version": 1, "run_id": id, "repo": "acme/app", "status": "succeeded", "stages": ss}
 		if basis != "" {
-			rec["cost"] = map[string]any{"model_usd": total, "model_basis": basis}
+			cost := map[string]any{"model_usd": total, "model_basis": basis}
+			if notional > 0 {
+				cost["model_notional_usd"] = notional
+			}
+			rec["cost"] = cost
 		}
 		data, err := json.Marshal(rec)
 		if err != nil {
@@ -367,7 +381,7 @@ func TestBudgetPreviewTypicalExcludesSubscriptionRuns(t *testing.T) {
 	if strings.Contains(out, "typical:") {
 		t.Errorf("notional costs printed a real-dollar typical line:\n%s", out)
 	}
-	const only = "6 of the 6 runs of acme/app in the last 30 days ran on a subscription (agent.auth oauth): their model_usd is notional and is not averaged into a real-dollar figure"
+	const only = "6 of the 6 runs of acme/app in the last 30 days ran on a subscription (agent.auth oauth, or a cascade run the plan served in full): their model_usd is notional and is not averaged into a real-dollar figure"
 	if !strings.Contains(errOut, only) {
 		t.Errorf("the oauth runs are not explained:\n%s", errOut)
 	}
@@ -382,9 +396,70 @@ func TestBudgetPreviewTypicalExcludesSubscriptionRuns(t *testing.T) {
 	if !strings.Contains(out, "typical: $2.40 a run (7 stages, from 5 runs of the last 30 days)") {
 		t.Errorf("the notional runs are mixed into the figure:\n%s", out)
 	}
-	const mixed = "6 of the 11 runs of acme/app in the last 30 days ran on a subscription (agent.auth oauth): their model_usd is notional and is not averaged into a real-dollar figure"
+	const mixed = "6 of the 11 runs of acme/app in the last 30 days ran on a subscription (agent.auth oauth, or a cascade run the plan served in full): their model_usd is notional and is not averaged into a real-dollar figure"
 	if !strings.Contains(errOut, mixed) {
 		t.Errorf("the excluded oauth runs are not counted:\n%s", errOut)
+	}
+}
+
+// TestBudgetPreviewTypicalCountsAMixedStageAtItsMoney (C1.16, P12, D140): the
+// window's runs are cascade ones, whose stage figures hold the calls the
+// subscription paid as well as the billed ones. The mean a real-dollar line is
+// built from is the money part of each stage: counting the notional dollars in
+// it would print a typical run priced mostly by the plan.
+func TestBudgetPreviewTypicalCountsAMixedStageAtItsMoney(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.SetCaps(100, 3, 20, 3)
+	f.SetSpentToday(0)
+	f.Checkout(t, "  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
+	stages := previewRunStages(0.60, 0.10, 0.20, 1.00)
+	for i, n := range []float64{0.50, 0.05, 0, 0.50, 0} {
+		stages[i].notional = n
+	}
+	f.SeedRuns(t, 0, 6, stages)
+	out, _, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Money only: implement $0.10, review_first $0.05, fix $0.20, review
+	// $0.50 -- 1 + 2×$0.05 + 3×$0.20 + $0.50 = $1.30, not the $2.40 the whole
+	// figures would make.
+	if !strings.Contains(out, "typical: $1.30 a run") {
+		t.Errorf("the notional part of the stages is in the figure:\n%s", out)
+	}
+}
+
+// TestBudgetPreviewTypicalCountsAnAllNotionalCascadeRunAsNotional (C1.16, P12,
+// D140): a cascade run the plan served in full is api-list by basis -- the
+// billed part's -- and notional in its whole model figure. The window's note
+// must count it among the notional runs: read off the basis it is a run whose
+// record held no per-stage cost at all, which is a different and false
+// statement about it, and the one a reader takes for "the runner kept none".
+func TestBudgetPreviewTypicalCountsAnAllNotionalCascadeRunAsNotional(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.SetCaps(100, 3, 20, 3)
+	f.SetSpentToday(0)
+	f.Checkout(t, "  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
+	// An all-notional window: every stage's whole figure is the plan's, so
+	// there is no real-dollar line at all, and the note says why.
+	stages := previewRunStages(9.00, 9.00, 9.00, 9.00)
+	for i := range stages {
+		stages[i].notional = stages[i].usd
+	}
+	f.SeedRunsBasis(t, 0, 6, stages, runstore.BasisAPIList)
+	out, errOut, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "typical:") {
+		t.Errorf("a plan-paid cascade window printed a real-dollar typical line:\n%s", out)
+	}
+	const only = "6 of the 6 runs of acme/app in the last 30 days ran on a subscription (agent.auth oauth, or a cascade run the plan served in full): their model_usd is notional and is not averaged into a real-dollar figure"
+	if !strings.Contains(errOut, only) {
+		t.Errorf("the plan-paid cascade runs are not explained:\n%s", errOut)
+	}
+	if strings.Contains(errOut, "recorded no cost for any stage") {
+		t.Errorf("a plan-paid cascade run is reported as a record with no per-stage cost:\n%s", errOut)
 	}
 }
 

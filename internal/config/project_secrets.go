@@ -81,7 +81,7 @@ func ProjectScopeByDefault(name string) bool {
 // (docs/git-providers.md), and the owner ruled on 2026-10-15 that a Bitbucket
 // credential cannot be scoped project-wide: Bitbucket stays per-repository.
 // Sweeping it into project scope -- which is what D2 did before that ruling --
-// made the first repository's token answer for every other one: init --repo
+// made the first repository's token answer for every other one: fugaro update
 // read the name as covered by the project's copy and never prompted for the
 // next repository, whose runs then authenticated with another repository's
 // write token and failed.

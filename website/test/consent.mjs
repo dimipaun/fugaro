@@ -93,6 +93,11 @@ const PRIVACY_PATH = '/privacy/'
 // The site's one script file (D183), which is the gate itself since W3.2 moved the banner's
 // controller and the gated loader out of the markup and into it.
 const SITE_SCRIPT = '/scripts/site.js'
+// The consent banner's early decision (the owner's ruling of 2026-10-23, the redesign's Step 3:
+// JavaScript allowed, same-origin only; the banner must not cover the first screen's content).
+// A page that renders the banner loads it after the site's one script; it is a first-party file
+// the policy admits as script-src 'self', and it reads storage and nothing else.
+const EARLY_SCRIPT = '/scripts/consent-early.js'
 
 // The measurement id, read from `site.yaml` rather than written here: the id lives in exactly
 // one place (W3.2), and a literal in this file would be the second copy the brief forbids.
@@ -128,6 +133,14 @@ const DOCUMENT_SELECTORS = new Map([
   ['[data-copy]', (el) => el.attrs.has('data-copy')],
   ['[data-copy-button]', (el) => el.attrs.has('data-copy-button')],
   ['[data-copy-status]', (el) => el.attrs.has('data-copy-status')],
+  // The site's sliders: one block per page, found by its own attribute and by nothing else —
+  // the console page's screenshot slider and the homepage's. `site.js` asks for this on every
+  // page it starts on, and the pages these cases run are the built ones, which include both.
+  // Nothing below reads a slider — a slider has nothing to do with consent — but the query is
+  // made on every page, and the stub's rule is that a selector is taught here rather than
+  // answered with nothing. What is inside a block is asked of the block, not of the document
+  // (the map below).
+  ['[data-slider]', (el) => el.attrs.has('data-slider')],
   ['.site-nav details[open]', (el) => el.name === 'details' && el.attrs.has('open')],
   // The keyboard's way into a group asks for the groups themselves, whatever the device answers
   // (the pointer's half above asks for the open ones). Every shipped page carries the menu, and
@@ -142,6 +155,21 @@ const DOCUMENT_SELECTORS = new Map([
 const ELEMENT_SELECTORS = new Map([
   ['[data-consent]', (el) => el.attrs.has('data-consent')],
   ['summary', (el) => el.name === 'summary'],
+  // The two sliders' own hooks, read inside the block the script finds each by — both pages'
+  // sliders are one component since 2026-10-21, so both carry the same four: the track the
+  // console side scrolls (and the homepage side reads to know it is not a track), the slides
+  // it counts, the dots it marks, and the bar it reveals. Every one of them is asked for on a
+  // page that carries a slider — the built pages these cases run are the homepage and the
+  // console page, one of each — so every one of them is taught here. The slides and the dots
+  // are asked of the block rather than of the document, which is why they are here and not in
+  // the map above; the two step controls, which both sliders read, are taught below.
+  ['[data-slider-track]', (el) => el.attrs.has('data-slider-track')],
+  ['[data-slider-bar]', (el) => el.attrs.has('data-slider-bar')],
+  ['[data-slider-counter]', (el) => el.attrs.has('data-slider-counter')],
+  ['[data-slider-slide]', (el) => el.attrs.has('data-slider-slide')],
+  ['[data-slider-dot]', (el) => el.attrs.has('data-slider-dot')],
+  ['[data-slider-prev]', (el) => el.attrs.has('data-slider-prev')],
+  ['[data-slider-next]', (el) => el.attrs.has('data-slider-next')],
 ])
 
 // The address a stubbed page is "at", and the page it was reached from: both carry a query
@@ -274,6 +302,7 @@ function stubDOM(html, location = PAGE_LOCATION) {
       hidden: node.attrs.has('hidden'),
       handlers: new Map(),
       children: [],
+      parent: null,
       addEventListener(type, handler) {
         if (!this.handlers.has(type)) this.handlers.set(type, [])
         this.handlers.get(type).push(handler)
@@ -312,6 +341,21 @@ function stubDOM(html, location = PAGE_LOCATION) {
         walkFrom(this)
         return out
       },
+      // The nearest ancestor-or-self matching a selector, which is the rule the sliders are
+      // read by: an element belongs to a block only when `closest('[data-slider]')` is that
+      // block (`site.js`'s `own()`), and that is what keeps one slider's own slides out of the
+      // other's reading since the homepage's "See it" panel became the shared component. A
+      // selector neither map above teaches is refused here for the same reason as everywhere
+      // else in this stub: matching nothing is not the same as answering.
+      closest(selector) {
+        const matches = DOCUMENT_SELECTORS.get(selector) ?? ELEMENT_SELECTORS.get(selector)
+        assert.ok(
+          matches,
+          `a page script asks an element for the closest ${selector}: this stub reads ${[...DOCUMENT_SELECTORS.keys(), ...ELEMENT_SELECTORS.keys()].join(', ')}, so a new one has to be taught here rather than silently matching nothing`,
+        )
+        for (let node = this; node !== null; node = node.parent) if (matches(node)) return node
+        return null
+      },
       querySelector(selector) {
         return this.querySelectorAll(selector)[0] ?? null
       },
@@ -321,7 +365,9 @@ function stubDOM(html, location = PAGE_LOCATION) {
     if (id !== undefined) byId.set(id, el)
     for (const child of node.children ?? []) {
       if (child.name === undefined) continue
-      el.children.push(build(child))
+      const built = build(child)
+      built.parent = el
+      el.children.push(built)
     }
     return el
   }
@@ -646,8 +692,8 @@ test('the shipped site carries the gate: one script file, the banner with its co
     // the deployed policy carry no hash and no `'unsafe-inline'` (W3.2).
     assert.deepEqual(
       scriptSources(page.html),
-      [SITE_SCRIPT],
-      `${page.rel} ships scripts the site does not admit: the site's one script is its own ${SITE_SCRIPT}, and W3.2 moved the banner's controller and the gated loader into it`,
+      [SITE_SCRIPT, EARLY_SCRIPT],
+      `${page.rel} ships scripts the site does not admit: the site's one script is its own ${SITE_SCRIPT}, and W3.2 moved the banner's controller and the gated loader into it; the one other file is the banner's early decision, ${EARLY_SCRIPT} (the owner's ruling of 2026-10-23)`,
     )
 
     const doc = parse(page.html)
@@ -1362,12 +1408,33 @@ test("the privacy defaults the page states are the ones the site's script makes"
 test('the claims the privacy page makes about the site are held to the artifact', () => {
   for (const page of [...SHIPPED]) {
     for (const el of walk(parse(page.html))) {
+      // The one field the site carries: the homepage hero's live card, where a reader types a
+      // task and sees it drawn as jobs (the owner's ruling of 2026-10-23, the redesign's Step 3,
+      // lever 3). It is not a form and submits nothing: it has no `name`, no `<form>` around it,
+      // and the script that reads it sends and stores nothing (held below). Any other field, and
+      // any `<form>`, is still the claim broken.
+      if (el.name === 'textarea' && page.rel === 'index.html' && el.attrs.get('id') === 'hero-task') {
+        assert.ok(!el.attrs.has('name') && !el.attrs.has('form'), `${page.rel}: the hero's task field carries a name or a form, so it is shaped to be submitted`)
+        for (let up = el.parent; up; up = up.parent) assert.notEqual(up.name, 'form', `${page.rel}: the hero's task field sits in a <form>`)
+        continue
+      }
       assert.ok(
         !['form', 'input', 'textarea', 'select'].includes(el.name),
         `${page.rel} carries a <${el.name}>: the privacy page says the site asks for nothing and has no form, and this is that claim held to the built pages`,
       )
     }
   }
+  // The task field's half of the claim: the script the site ships never sends anything a reader
+  // typed. It opens no request of its own at all (the one request it makes is the gated Google
+  // loader, a `<script>` element), and the live card's section reads the field and touches no
+  // storage.
+  const source = readFileSync(path.join(DIST, SITE_SCRIPT.replace(/^\//, '')), 'utf8')
+  for (const sender of ['fetch(', 'XMLHttpRequest', 'sendBeacon', 'WebSocket', 'EventSource']) {
+    assert.ok(!source.includes(sender), `${SITE_SCRIPT} uses ${sender}: the site sends nothing a reader types`)
+  }
+  const live = source.slice(source.indexOf('function liveRun()'), source.indexOf('function entrances()'))
+  assert.ok(live.length > 0, `${SITE_SCRIPT} no longer carries the live card's section this case reads`)
+  assert.ok(!/localStorage|sessionStorage|document\.cookie|indexedDB/.test(live), "the hero's live card touches storage: it keeps nothing a reader types")
 })
 
 // ---- the policy the artifact is served with ---------------------------------------------
@@ -1392,8 +1459,8 @@ test("the deployed policy admits exactly the one origin the gate loads from, and
   for (const page of SHIPPED) {
     assert.deepEqual(
       scriptSources(page.html),
-      [SITE_SCRIPT],
-      `${page.rel} ships a script the policy above does not admit: the site's one script is its own file, and an inline script would need a hash the policy does not carry`,
+      [SITE_SCRIPT, EARLY_SCRIPT],
+      `${page.rel} ships a script the policy above does not admit: the site's scripts are its own files (the one script and the banner's early decision, the owner's ruling of 2026-10-23), and an inline script would need a hash the policy does not carry`,
     )
   }
 })

@@ -287,12 +287,14 @@ func TestPolicyBackoffCapAboveItsEffectiveInitial(t *testing.T) {
 // in UnknownKeys and going on rather than refusing (P8), which is what the
 // plan's "an older runner ignores them" claims.
 //
-// The plan spells this test TestPolicyCredentialsIgnoredByVersion1Reader and
-// says "Version stays 1". On this base the policy version is 3 (it moved at
-// 0.8.0 and 0.9.0), so the number in the test's name and in the node below is
-// 3: what the plan is pinning is that the *number does not move for this
-// task*, and that is what this asserts. See the pull request for the
-// disagreement between the plan's text and the code.
+// The plan spelled this test TestPolicyCredentialsIgnoredByVersion1Reader and
+// said "Version stays 1" (the C1.2 test list named a test that does not exist;
+// the re-review of C1.9/this follow-up corrected the list to this name and
+// TestPlanTestListsNamesOnlyTestsThatExist holds the two together). On this base
+// the policy version is 3 (it moved at 0.8.0 and 0.9.0), so the number in the
+// test's name and in the node below is 3: what the plan is pinning is that the
+// *number does not move for this task*, and that is what this asserts. See the
+// pull request for the disagreement between the plan's text and the code.
 func TestPolicyCredentialsCarryNoVersionBump(t *testing.T) {
 	if Version != 3 {
 		t.Fatalf("the policy Version is %d, and this test's node is written for 3: update both together, deliberately", Version)

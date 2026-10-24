@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -841,3 +842,330 @@ func TestAnArtifactLaunchRefusesACapSetThatCannotFitMemory(t *testing.T) {
 		t.Fatalf("a workflow with room for the set: %v", err)
 	}
 }
+
+// backendNamed is a backend.Backend that answers with one codec and nothing
+// else: launchBackend reads the seam for the backend a launch runs on, and no
+// test can select cloud-batch in this build (internal/localcfg refuses the
+// name until the enable task), so the name a launch would carry is stood in
+// for here. The embedded interface is nil, so any other method called on it
+// panics rather than answering something wrong.
+type backendNamed struct {
+	backend.Backend
+	codec backend.Codec
+}
+
+func (b backendNamed) Codec() backend.Codec { return b.codec }
+
+// TestAnArtifactLaunchIsRefusedOnCloudBatch is the launch's arm of Global
+// Constraint 13: an artifact-producing run is never launched on cloud-batch.
+// `fugaro validate` judges the checkout's own recipe offline, so the arm that
+// covers a launch naming its own recipe -- the one a reviewer found missing --
+// is this gate, which asks the same artifactOnBatchRefusal with the recipe the
+// launch resolves, before anything is written. (A repository recipe resolves
+// from this launcher's working tree, not at the task's ref the runner reads:
+// TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef pins that residual.)
+//
+// Both ways a launch can carry an artifact recipe are here: the task's own
+// (--recipe, a repository recipe the launcher reads from the checkout) and the
+// one this checkout resolves for it (agent.recipe). The cloud-run case is the
+// mutation guard: a boundary that refused every backend would refuse the one
+// backend artifact runs live on (design artifact-runs.md D11).
+//
+// Mutation (drop the gate, or drop its backend comparison): the cloud-batch
+// case stops refusing; the message assertion fails.
+func TestAnArtifactLaunchIsRefusedOnCloudBatch(t *testing.T) {
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\n" +
+		"workflows:\n  svc:\n    commands: { build: sh build.sh, test: sh test.sh, render: sh render.sh }\n" +
+		"    resources: { memory: 8Gi }\n"
+	testutil.WriteFiles(t, dir, map[string]string{
+		"fugaro.yaml":                 yaml,
+		".fugaro/recipes/sizzle.yaml": "version: 1\nname: sizzle\nmode: artifact\noutputs: { globs: [out/*.mp4] }\nsteps:\n  - render: {}\n",
+	})
+	t.Chdir(dir)
+	// agent.recipe is written after the first case, so the checkout-resolved
+	// arm is a separate launch and the task's own recipe is not resolved
+	// through it.
+	spec := func() *task.Spec {
+		return &task.Spec{Version: 1, RunID: "20261020-100000-a1b2", Repo: "acme/other",
+			Workflow: "svc", Task: "Render the sizzle reel",
+			Recipe: &task.Recipe{Name: "sizzle", Source: "repo"}}
+	}
+	env := func(name backend.Codec) *cloudEnv { return &cloudEnv{be: backendNamed{codec: name}} }
+	for _, tc := range []struct {
+		name string
+		be   backend.Codec
+		want bool
+	}{
+		{"cloud-batch", backend.BatchCodec(), true},
+		{"cloud-run", backend.CloudRunCodec(), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkArtifactLaunch(context.Background(), env(tc.be), spec())
+			if tc.want {
+				if err == nil || !strings.Contains(err.Error(), artifactOnBatchMessage) {
+					t.Fatalf("an artifact launch on %s = %v, want the artifact boundary's refusal", tc.name, err)
+				}
+				if ExitCode(err) != ExitUserError {
+					t.Errorf("the refusal is not a user error: %v", err)
+				}
+				return
+			}
+			if err != nil && strings.Contains(err.Error(), artifactOnBatchMessage) {
+				t.Fatalf("an artifact launch on %s carries the artifact boundary's refusal, and that is the backend artifact runs live on: %v", tc.name, err)
+			}
+		})
+	}
+	// The checkout-resolved arm: a first run with no recipe in its task takes
+	// agent.recipe from this checkout, which is the recipe `fugaro validate`
+	// reads too -- and the same refusal follows it.
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": yaml + "agent: { recipe: sizzle }\n"})
+	noRecipe := spec()
+	noRecipe.Recipe = nil
+	err := checkArtifactLaunch(context.Background(), env(backend.BatchCodec()), noRecipe)
+	if err == nil || !strings.Contains(err.Error(), artifactOnBatchMessage) {
+		t.Fatalf("an artifact launch through agent.recipe = %v, want the artifact boundary's refusal", err)
+	}
+}
+
+// TestAnArtifactLaunchIsRefusedOnCloudBatchFromAnotherDirectory is the same
+// boundary asked from a working directory that is not a checkout of the run's
+// repository -- the hole a review found in the first version of the gate, when
+// it resolved the checkout first and returned early when there was none. A task
+// carrying its own recipe text needs no checkout, so that launch reached the
+// backend unrefused.
+//
+// Three cases from the same scratch directory, on each backend:
+//   - a task carrying an artifact recipe's own text: judged on the mode this
+//     launcher can read (the boundary's ordinary refusal);
+//   - a repository recipe: nothing here can read it, so on cloud-batch the
+//     launch is refused fail-closed instead (artifactUnreadOnBatchRefusal),
+//     because the runner resolves that recipe at the task's ref and an
+//     artifact run must not reach a Batch VM by that path;
+//   - a task carrying a non-artifact recipe's own text: refused too, and not on
+//     the text it carries. The text is readable here and says mode: implement,
+//     but the runner reads the repository layer at the task's ref first
+//     (TestRecipeRepoLayerWins), so what the ref holds beside this name is what
+//     runs -- and this directory has no checkout of that repository to ask
+//     (artifactShadowedOnBatchRefusal, and
+//     TestAnArtifactRecipeAtTheRefShadowsTheTasksCarriedTextOnCloudBatch for
+//     the other half). The mutation guard for the fail-closed arms is a launch
+//     whose ref really has no file of that name, which passes on cloud-batch:
+//     see that test's second case. Cloud-run is the guard for the backend gate,
+//     since cloud-run is where artifact runs live (design artifact-runs.md
+//     D11).
+//
+// Mutation (restore the cfg == nil early return, or drop the fail-closed arm):
+// the inline artifact case stops refusing; the repository-recipe case on
+// cloud-batch is passed to the runner.
+func TestAnArtifactLaunchIsRefusedOnCloudBatchFromAnotherDirectory(t *testing.T) {
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	env := func(name backend.Codec) *cloudEnv { return &cloudEnv{be: backendNamed{codec: name}} }
+	inline := func(name, yaml string) *task.Spec {
+		return &task.Spec{Version: 1, RunID: "20261020-100000-a1b2", Repo: "acme/other", Ref: "main",
+			Workflow: "svc", Task: "Render the sizzle reel",
+			Recipe: &task.Recipe{Name: name, Source: string(recipe.SourceProject),
+				SHA256: recipe.Sum([]byte(yaml)), YAML: yaml}}
+	}
+	for _, tc := range []struct {
+		name string
+		spec *task.Spec
+		be   backend.Codec
+		want string // the refusal the launch must carry, "" for none
+	}{
+		{"an artifact recipe's own text on cloud-batch", inline("sizzle", projectSizzle), backend.BatchCodec(), artifactOnBatchMessage},
+		{"a repository recipe on cloud-batch", &task.Spec{Version: 1, RunID: "20261020-100000-a1b2", Repo: "acme/other",
+			Workflow: "svc", Task: "Render the sizzle reel", Recipe: &task.Recipe{Name: "sizzle", Source: string(recipe.SourceRepo)}}, backend.BatchCodec(), artifactUnreadOnBatchRefusal("acme/other")},
+		// The carried name matches the carried text (implementRecipe says
+		// name: impl), as a real launch's always does, so the refusal comes
+		// from the ref read having no checkout to ask -- not from the name
+		// check, which the next case pins on its own.
+		{"an implement recipe's own text on cloud-batch", inline("impl", implementRecipe), backend.BatchCodec(), artifactShadowedOnBatchRefusal("impl", "acme/other", "main")},
+		{"carried text whose name disagrees with the task's on cloud-batch", inline("sizzle", implementRecipe), backend.BatchCodec(), artifactShadowedOnBatchRefusal("sizzle", "acme/other", "main")},
+		{"an artifact recipe's own text on cloud-run", inline("sizzle", projectSizzle), backend.CloudRunCodec(), ""},
+		{"a repository recipe on cloud-run", &task.Spec{Version: 1, RunID: "20261020-100000-a1b2", Repo: "acme/other",
+			Workflow: "svc", Task: "Render the sizzle reel", Recipe: &task.Recipe{Name: "sizzle", Source: string(recipe.SourceRepo)}}, backend.CloudRunCodec(), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkArtifactLaunch(context.Background(), env(tc.be), tc.spec)
+			if tc.want == "" {
+				if err != nil && (strings.Contains(err.Error(), artifactOnBatchMessage) || strings.Contains(err.Error(), artifactUnreadOnBatchRefusal(tc.spec.Repo))) {
+					t.Fatalf("a launch with no artifact boundary to cross was refused by it: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("checkArtifactLaunch from a directory that is not the run's checkout = %v, want the refusal %q", err, tc.want)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("the refusal is not a user error: %v", err)
+			}
+		})
+	}
+}
+
+// TestAnArtifactRecipeAtTheRefShadowsTheTasksCarriedTextOnCloudBatch: the
+// task's own recipe text is not the recipe the runner will run, whatever the
+// task says about where it came from. internal/runner/recipe.go's
+// resolveRecipe reads the repository layer at the task's ref FIRST and only
+// falls back to the task's embedded copy (TestRecipeRepoLayerWins), so a file
+// of the same name at the ref IS the run's recipe, mode included. A launch
+// that carries a project or catalog recipe therefore says nothing about the
+// recipe that runs -- `fugaro run --recipe sizzle` from a working directory
+// whose checkout is not the one that resolved that name, against a base branch
+// whose .fugaro/recipes/sizzle.yaml is mode: artifact, carries the catalog's
+// implement text and would run the ref's artifact recipe on a Batch VM.
+//
+// So the launch's arm asks the ref for a carried recipe's name, exactly as the
+// runner does, and refuses the artifact one it finds there. The second case is
+// the mutation guard: a name the ref has no file for really is judged on the
+// text the task carries, so "refuse every launch that carries text on
+// cloud-batch" fails here; the third is the backend's own guard, since cloud-run
+// is where artifact runs live (design artifact-runs.md D11).
+//
+// Mutation (judge the carried text alone, as this gate did): the first case
+// stops refusing and the artifact recipe at the ref reaches a Batch VM.
+func TestAnArtifactRecipeAtTheRefShadowsTheTasksCarriedTextOnCloudBatch(t *testing.T) {
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q", "-b", "main")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\n" +
+		"workflows:\n  svc:\n    commands: { build: sh build.sh, test: sh test.sh, render: sh render.sh }\n"
+	testutil.WriteFiles(t, dir, map[string]string{
+		"fugaro.yaml":                 yaml,
+		".fugaro/recipes/sizzle.yaml": projectSizzle,
+	})
+	testutil.Git(t, dir, "add", "-A")
+	testutil.Git(t, dir, "commit", "-q", "-m", "an artifact recipe on the base branch")
+	t.Chdir(dir)
+	// The launcher resolved the name sizzle against a checkout that did not
+	// have it (the file is on the ref, not in the tree), so the task carries
+	// the catalog's text for it -- the shape `fugaro run --recipe` produces
+	// from another directory.
+	if err := os.Remove(filepath.Join(dir, ".fugaro", "recipes", "sizzle.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	carried := func(name, text string) *task.Spec {
+		return &task.Spec{Version: 1, RunID: "20261020-100000-a1b2", Repo: "acme/other", Ref: "main",
+			Workflow: "svc", Task: "Render the sizzle reel",
+			Recipe: &task.Recipe{Name: name, Source: string(recipe.SourceCatalog),
+				SHA256: recipe.Sum([]byte(text)), YAML: text}}
+	}
+	env := func(name backend.Codec) *cloudEnv { return &cloudEnv{be: backendNamed{codec: name}} }
+	for _, tc := range []struct {
+		name string
+		spec *task.Spec
+		be   backend.Codec
+		want string
+	}{
+		{"the ref's artifact recipe of that name, carried implement text", carried("sizzle", implementRecipe), backend.BatchCodec(), artifactOnBatchMessage},
+		{"a name the ref has no file for", carried("impl", implementRecipe), backend.BatchCodec(), ""},
+		{"the ref's artifact recipe of that name on cloud-run", carried("sizzle", implementRecipe), backend.CloudRunCodec(), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkArtifactLaunch(context.Background(), env(tc.be), tc.spec)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("checkArtifactLaunch = %v, want no refusal", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("checkArtifactLaunch = %v, want the refusal %q: the runner resolves the repository layer at the ref first, so the task's carried text is not the recipe that runs", err, tc.want)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("the refusal is not a user error: %v", err)
+			}
+		})
+	}
+}
+
+// TestACarriedRecipeTheRefCannotBeReadForIsRefusedOnCloudBatch is the
+// fail-closed half of the same boundary: a launch whose task carries its recipe
+// text says nothing about the ref, and this launcher has no checkout of that
+// repository to ask one of, so nothing on this path can tell whether a file of
+// that name at the ref is mode: artifact. `fugaro run --recipe <a project or
+// catalog name>` from a directory that is not the repository's checkout is
+// exactly that launch, and it is refused rather than passed to a runner that
+// would resolve the ref itself.
+//
+// The carried name matches the carried text's own name, as a real launch's
+// always does, so the name check cannot refuse it first: what refuses it is
+// the ref read finding no checkout here.
+//
+// Mutation (drop the ref read's error arm, or have recipeAtRef answer "not
+// found" when there is no checkout root): the launch is passed, and the ref's
+// artifact recipe runs on a Batch VM.
+func TestACarriedRecipeTheRefCannotBeReadForIsRefusedOnCloudBatch(t *testing.T) {
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	spec := &task.Spec{Version: 1, RunID: "20261020-100000-a1b2", Repo: "acme/other", Ref: "main",
+		Workflow: "svc", Task: "Render the sizzle reel",
+		Recipe: &task.Recipe{Name: "impl", Source: string(recipe.SourceCatalog),
+			SHA256: recipe.Sum([]byte(implementRecipe)), YAML: implementRecipe}}
+
+	err := checkArtifactLaunch(context.Background(), &cloudEnv{be: backendNamed{codec: backend.BatchCodec()}}, spec)
+	if err == nil || !strings.Contains(err.Error(), artifactShadowedOnBatchRefusal("impl", "acme/other", "main")) {
+		t.Fatalf("a carried recipe whose ref cannot be read = %v, want the fail-closed refusal", err)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("the refusal is not a user error: %v", err)
+	}
+}
+
+// TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef pins what the
+// launch's arm of the artifact boundary does NOT cover, so the comments that
+// describe it can say exactly what it enforces: a repository recipe is judged
+// by the file in this launcher's WORKING TREE (recipeForLaunch), while the
+// runner reads the same file at the task's ref -- the repository's base branch
+// unless the launch names another. A working tree whose recipe says
+// mode: implement therefore passes the gate for a ref whose recipe says
+// mode: artifact, and that is the residual the plan's Task 10 records in its
+// step 5 inventory and must close before backend: cloud-batch is selectable
+// (Global Constraint 13). Task 10's fix flips this test to assert the refusal;
+// until then a test that passed here would be a comment claiming more than
+// the code does.
+//
+// The control is the same launch with the working tree matching the ref: the
+// gate refuses it, so what lets the first launch through is the tree/ref
+// difference and nothing else.
+func TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef(t *testing.T) {
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q", "-b", "main")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\n" +
+		"workflows:\n  svc:\n    commands: { build: sh build.sh, test: sh test.sh, render: sh render.sh }\n"
+	testutil.WriteFiles(t, dir, map[string]string{
+		"fugaro.yaml":                 yaml,
+		".fugaro/recipes/sizzle.yaml": projectSizzle,
+	})
+	testutil.Git(t, dir, "add", "-A")
+	testutil.Git(t, dir, "commit", "-q", "-m", "an artifact recipe on the base branch")
+	t.Chdir(dir)
+	spec := &task.Spec{Version: 1, RunID: "20261020-100000-a1b2", Repo: "acme/other", Ref: "main",
+		Workflow: "svc", Task: "Render the sizzle reel",
+		Recipe: &task.Recipe{Name: "sizzle", Source: string(recipe.SourceRepo)}}
+	env := &cloudEnv{be: backendNamed{codec: backend.BatchCodec()}}
+
+	// The control: the working tree is the ref, and the gate refuses.
+	if err := checkArtifactLaunch(context.Background(), env, spec); err == nil || !strings.Contains(err.Error(), artifactOnBatchMessage) {
+		t.Fatalf("an artifact recipe on cloud-batch whose working tree matches the ref = %v, want the artifact boundary's refusal", err)
+	}
+
+	// The residual: the working tree says implement, the ref still says
+	// artifact, and the gate judges the working tree.
+	testutil.WriteFiles(t, dir, map[string]string{".fugaro/recipes/sizzle.yaml": "version: 1\nname: sizzle\nsteps:\n  - review: {}\n"})
+	if err := checkArtifactLaunch(context.Background(), env, spec); err != nil && strings.Contains(err.Error(), artifactOnBatchMessage) {
+		t.Fatalf("the gate refused a launch whose working-tree recipe is not mode: artifact (%v): it now reads the ref the runner reads, which closes the residual the plan's Task 10 step 5 records -- flip this test to assert the refusal and drop the sentence from Task 10's inventory and the comments in validate_batch.go and run.go", err)
+	}
+}
+
+// implementRecipe is a non-artifact recipe's own text, in the shape a project
+// or catalog recipe travels in (no mode: key parses as implement).
+const implementRecipe = "version: 1\nname: impl\nsteps:\n  - review: {}\n"

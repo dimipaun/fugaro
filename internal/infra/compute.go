@@ -21,6 +21,7 @@ import (
 	iam "google.golang.org/api/iam/v1"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
@@ -131,6 +132,20 @@ type ComputeSpec struct {
 	Project       string `json:"project"`
 	ProjectNumber string `json:"project_number"`
 	Region        string `json:"region"`
+
+	// SchedulerRegion is where the module's two Cloud Scheduler jobs live,
+	// which is NOT Region whenever Cloud Scheduler does not serve it: us-east5
+	// -- the sandbox's region and this spec's own testdata -- is a Cloud Run
+	// region Cloud Scheduler does not serve, and a Scheduler job created there
+	// fails the apply, so the reaper's sweep and the preload's rebuild would
+	// simply not exist on such an installation (the module's
+	// scheduler_region, gcp.SchedulerRegions). The caller resolves it the way
+	// the history job and the daily image check already do: the
+	// installation's own scheduler_region when it names one, and
+	// gcp.SchedulerRegion's nearest served location otherwise. The jobs' HTTP
+	// targets name the Cloud Run job's own location, so the split costs
+	// nothing.
+	SchedulerRegion string `json:"scheduler_region"`
 	// Network and Subnetwork are required, and both in full: Batch REFUSES
 	// noExternalIpAddress unless the job's interface names BOTH (measured
 	// 2026-10-15, Check 57a; §1.7, §7.2). The NAT is created on them.
@@ -138,8 +153,12 @@ type ComputeSpec struct {
 	Subnetwork string `json:"subnetwork"`
 
 	Names ComputeNames `json:"names"`
-	// ManageAPIs is false with init --skip-apis: the project's APIs are
-	// managed elsewhere, so this root enables neither Compute nor Batch.
+	// ManageAPIs is false when the plan is built with
+	// tfvars.InstallOptions.SkipAPIs, which says the project's APIs are
+	// managed elsewhere: this root then enables neither Compute nor Batch.
+	// Nothing sets that field today, so every plan the CLI makes manages
+	// them; the Firebase root's own `skip_apis` (FirebaseSpec.SkipAPIs) is a
+	// different variable of a different root.
 	ManageAPIs bool `json:"manage_apis"`
 
 	Launchers []string `json:"launchers"`
@@ -184,6 +203,20 @@ type ComputeSpec struct {
 	// the image needs it. It is the installation's own role, passed by
 	// reference so it cannot drift from the installation that made it.
 	BuildSubmitterRole string `json:"build_submitter_role"`
+
+	// ReaperRefuseProjects are GCP project ids the reaper's SCHEDULED sweep
+	// must never touch, on top of the ones it refuses whatever it is told
+	// (internal/backend/batch's outOfBoundsFloor). They reach the job's
+	// environment as FUGARO_REAPER_REFUSE_PROJECTS (the module's reaper.tf),
+	// which is the variable internal/cli reads for both of its paths -- so the
+	// list an operator declares for `fugaro reaper` is the list the unattended
+	// sweep carries, and neither path can be walked around by being started
+	// the other way.
+	//
+	// It can only ADD: the floor is the engine's and no value here removes an
+	// id from it (outOfBoundsProjects). Empty is the ordinary case and means
+	// the floor alone.
+	ReaperRefuseProjects []string `json:"reaper_refuse_projects"`
 }
 
 // ComputeVars is the compute root's terraform.tfvars.json. It refuses what
@@ -195,6 +228,10 @@ func ComputeVars(spec ComputeSpec) ([]byte, error) {
 	switch {
 	case spec.Project == "" || spec.Region == "":
 		return nil, fmt.Errorf("the compute root needs a project and a region")
+	case spec.SchedulerRegion == "":
+		return nil, fmt.Errorf("the compute root needs the scheduler region: Cloud Scheduler is not offered in every Cloud Run region, so the module's Scheduler jobs live where it is and a job created in the installation's region fails the apply (the module's scheduler_region, resolved by the caller through gcp.SchedulerRegion)")
+	case !computeRegion.MatchString(spec.SchedulerRegion):
+		return nil, fmt.Errorf("the compute root's scheduler region %q is not a region such as us-east4: it is the location the module's Cloud Scheduler jobs are created in, and a value Cloud Scheduler does not serve fails the apply (the module's scheduler_region validation)", spec.SchedulerRegion)
 	case spec.Network == "" || spec.Subnetwork == "":
 		return nil, fmt.Errorf("the compute root needs the network and the subnetwork: Batch refuses noExternalIpAddress unless both are named (design compute-backend §1.7)")
 	case len(spec.RunAccounts) == 0:
@@ -213,6 +250,17 @@ func ComputeVars(spec ComputeSpec) ([]byte, error) {
 			return nil, fmt.Errorf("the compute root's operator %q is not a user:, group: or serviceAccount: member: every operator gets actAs on the preload account, which can act as the run accounts and create instances, so a whole domain or a wildcard is refused (the module's operators validation)", m)
 		}
 	}
+	for _, p := range spec.ReaperRefuseProjects {
+		if !config.GCPProjectRE.MatchString(p) {
+			return nil, fmt.Errorf("the compute root's reaper never-touch list names %q, which is not a GCP project ID: the list is the projects the scheduled sweep must never touch, and an entry it cannot read is one it cannot refuse, so the project the entry was meant to name would be swept as usual (the module's reaper_refuse_projects validation, and the same refusal internal/cli's reaperRefuseProjects makes of the variable the job reads)", p)
+		}
+	}
+	// A nil slice marshals to JSON null, and this variable is a list(string):
+	// the root's own default is the empty list, and the tfvars says so rather
+	// than leaving the value to terraform's null-means-default rule.
+	if spec.ReaperRefuseProjects == nil {
+		spec.ReaperRefuseProjects = []string{}
+	}
 	return sortedJSON(spec)
 }
 
@@ -220,6 +268,12 @@ func ComputeVars(spec ComputeSpec) ([]byte, error) {
 // principal with an address, never a domain: member, allUsers or
 // allAuthenticatedUsers.
 var computeOperator = regexp.MustCompile(`^(user|group|serviceAccount):[^@\s]+@[^@\s]+$`)
+
+// computeRegion is a region name's shape, which is a Cloud Scheduler
+// location's too: the module's own validation for both (its variables.tf),
+// and the same expression internal/localcfg's regionRE and the installation
+// module's history.scheduler_region use.
+var computeRegion = regexp.MustCompile(`^[a-z]+-[a-z]+[0-9]+$`)
 
 // ComputeServiceAgents are the project's Cloud Build and Cloud Scheduler
 // service agents, in that order, as modules/compute/iam.tf derives them from
@@ -296,10 +350,21 @@ type ComputeOutputs struct {
 	ReaperRole            string `json:"reaper_role"`
 	PreloadAccount        string `json:"preload_account"`
 	PreloadScheduler      string `json:"preload_scheduler_job"`
-	Router                string `json:"router"`
-	NAT                   string `json:"nat"`
-	Network               string `json:"network"`
-	Subnetwork            string `json:"subnetwork"`
+	// ReaperJob and ReaperScheduler are the reaper's invocation by name: the
+	// Cloud Run job that runs `fugaro reaper` (as the reaper account above)
+	// and the Scheduler job that starts it every ReapMargin (reaper.tf, design
+	// §8.1 Task 11). The job's name does not start with `fugaro-`, so it is
+	// not a workflow's and `fugaro ls` never counts it; the Scheduler job's
+	// does, as the preload rebuild's does, because nothing counts a schedule's
+	// name. A check that wants to ask Google whether the invocation exists --
+	// `fugaro doctor`'s reaper check is the one that will -- would otherwise
+	// have to re-derive them from the module.
+	ReaperJob       string `json:"reaper_job"`
+	ReaperScheduler string `json:"reaper_scheduler_job"`
+	Router          string `json:"router"`
+	NAT             string `json:"nat"`
+	Network         string `json:"network"`
+	Subnetwork      string `json:"subnetwork"`
 }
 
 // DecodeComputeOutputs reads the compute root's outputs.

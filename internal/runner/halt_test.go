@@ -428,6 +428,22 @@ func TestHaltReportAdvice(t *testing.T) {
 	if strings.Contains(got, "--pr N") || !strings.Contains(got, "start the run again") || !strings.Contains(got, "this run spent $3.50") {
 		t.Fatalf("a bootstrap halt's report:\n%s", got)
 	}
+	// A cascade run's model figure holds both: its basis is api-list for the
+	// whole run, and only the money part of it was spent (C1.16, P12).
+	mixed := runstore.ModelOnlyCost(3.5, runstore.BasisAPIList).WithNotional(2.3)
+	rec.Cost = &mixed
+	got = runner.Report(rec, "runs/x/", nil)
+	if !strings.Contains(got, "this run spent $1.20") {
+		t.Fatalf("a mixed run's report bills its subscription's dollars:\n%s", got)
+	}
+	// And one the plan served in full: api-list by basis too, and its whole
+	// model figure is the plan's, so it spent nothing either.
+	all := runstore.ModelOnlyCost(3.5, runstore.BasisAPIList).WithNotional(3.5)
+	rec.Cost = &all
+	got = runner.Report(rec, "runs/x/", nil)
+	if strings.Contains(got, "this run spent") {
+		t.Fatalf("an all-notional cascade run's report bills the plan's dollars:\n%s", got)
+	}
 	// A subscription run's model figure is notional: never "spent".
 	c := runstore.ModelOnlyCost(3.5, runstore.BasisSubscription)
 	rec.Cost = &c
@@ -480,11 +496,11 @@ func TestHaltAdviceNamesLimitSource(t *testing.T) {
 		want    []string
 		notWant []string
 	}{
-		{"token ceiling", runstore.HaltTokenCap, "max_run_tokens", "ceiling", []string{"project config", "fugaro init --repo", "ignored", "`budget.max_run_tokens`"}, []string{"`agent.max_run_tokens`"}},
-		{"token policy", runstore.HaltTokenCap, "max_run_tokens", "policy", []string{"`budget.max_run_tokens`", "project's policy"}, []string{"`agent.max_run_tokens`", "fugaro init --repo"}},
+		{"token ceiling", runstore.HaltTokenCap, "max_run_tokens", "ceiling", []string{"project config", "fugaro update", "ignored", "`budget.max_run_tokens`"}, []string{"`agent.max_run_tokens`"}},
+		{"token policy", runstore.HaltTokenCap, "max_run_tokens", "policy", []string{"`budget.max_run_tokens`", "project's policy"}, []string{"`agent.max_run_tokens`", "fugaro update"}},
 		{"token default branch", runstore.HaltTokenCap, "max_run_tokens", "default-branch", []string{"default branch", "merge", "ignored", "`agent.max_run_tokens`"}, []string{"`budget.max_run_tokens`"}},
 		{"token branch", runstore.HaltTokenCap, "max_run_tokens", "branch", []string{"`agent.max_run_tokens`", "this run's branch"}, []string{"`budget.max_run_tokens`"}},
-		{"cap ceiling", runstore.HaltRunCap, "per_run_usd", "ceiling", []string{"project config", "fugaro init --repo", "ignored"}, nil},
+		{"cap ceiling", runstore.HaltRunCap, "per_run_usd", "ceiling", []string{"project config", "fugaro update", "ignored"}, nil},
 		{"cap default branch", runstore.HaltRunCap, "per_run_usd", "default-branch", []string{"default branch", "merge", "ignored"}, nil},
 		{"nocap default branch", runstore.HaltNoCap, "per_run_usd", "default-branch", []string{"default branch", "merge"}, nil},
 	}
@@ -503,8 +519,8 @@ func TestHaltAdviceNamesLimitSource(t *testing.T) {
 				t.Errorf("%s: report names %s, the spelling of another layer:\n%s", tc.name, w, got)
 			}
 		}
-		if tc.source != "ceiling" && strings.Contains(got, "fugaro init --repo") {
-			t.Errorf("%s: points at init --repo:\n%s", tc.name, got)
+		if tc.source != "ceiling" && strings.Contains(got, "fugaro update") {
+			t.Errorf("%s: points at fugaro update:\n%s", tc.name, got)
 		}
 	}
 }

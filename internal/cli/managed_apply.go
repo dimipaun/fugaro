@@ -93,7 +93,7 @@ confirmation refusal removed, where what may be applied is decided by a
 deterministic gate over the saved plan rather than by a prompt.
 
 This is not fugaro project (the project's own configuration) and not fugaro
-init (which creates and re-installs an installation): a managed project's
+setup (which creates and re-installs an installation): a managed project's
 agent-authored root is applied by fugaro managed apply.`,
 	}
 	cmd.AddCommand(newManagedApplyCmd(), newManagedFlagCmd())
@@ -154,11 +154,6 @@ the reason printed first. Nothing is halted and nothing is deleted.`,
 // hard return.
 func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 	ctx := cmd.Context()
-	// No deployer to apply as in this release (managedDeployerShipped):
-	// refused before the project is read or the cloud opened.
-	if err := refuseManagedNotShipped(); err != nil {
-		return err
-	}
 	// A credential leak first, before anything opens the cloud: GODEBUG is
 	// read before main runs, so it cannot be unset in time (refuseHTTP2Debug).
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {

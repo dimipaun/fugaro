@@ -910,7 +910,7 @@ func TestInstallationSpec(t *testing.T) {
 // can carry a bucket name gcp.LauncherBucketCondition refuses to widen on;
 // that function panics by design rather than accept it.
 // Installation must turn that into a clean UserError before ever calling
-// it, not let the panic through to fugaro init.
+// it, not let the panic through to fugaro update.
 func TestInstallationRefusesAnInvalidBucketURLCharset(t *testing.T) {
 	lc := parseLC(t, strings.Replace(m4LocalConfig, "runs_bucket: fugaro-runs-proj-1234", "bucket_url: gs://fugaro-runs-Proj1234", 1))
 	if lc.RunsBucketName() != "fugaro-runs-Proj1234" {
@@ -990,7 +990,7 @@ func TestBaseImageWarnings(t *testing.T) {
 }
 
 // The Vertex AI API is enabled when a repository the local config records
-// authenticates its agent through Vertex (init --repo records it), and
+// authenticates its agent through Vertex (fugaro update records it), and
 // only then: the installation root can't read the workflows itself.
 func TestInstallationEnablesVertexFromRepos(t *testing.T) {
 	lc := parseLC(t, m4LocalConfig+m5Additions)
@@ -1010,7 +1010,7 @@ func TestInstallationEnablesVertexFromRepos(t *testing.T) {
 }
 
 // A repository's spec says whether any of its workflows uses Vertex, which
-// init --repo records in the local config.
+// fugaro update records in the local config.
 func TestRepoUsesVertex(t *testing.T) {
 	sandbox, err := Repo(sandboxInputs(t, m5Additions))
 	if err != nil {
@@ -1026,7 +1026,7 @@ func TestRepoUsesVertex(t *testing.T) {
 }
 
 // The runs bucket the specs name is the one image builds record in
-// (localcfg's RunsBucketName), so the first build fugaro init submits,
+// (localcfg's RunsBucketName), so the first build fugaro update submits,
 // readiness and the daily check all agree; with none, it is an error.
 func TestBucketNameIsRunsBucketName(t *testing.T) {
 	for _, c := range []struct{ runs, bucketURL string }{
@@ -1322,7 +1322,7 @@ func TestInitRepoPassesTheBackendToEveryJob(t *testing.T) {
 // M2 of the PR #379 review: FUGARO_BUDGET_TOKEN says "the launch of this run
 // minted it a budget identity", which is a fact about one launch and nothing
 // a job is deployed with. It travels as an execution override
-// (backend.LaunchSpec.Env) and never through init --repo's deploy-time
+// (backend.LaunchSpec.Env) and never through fugaro update's deploy-time
 // environment; a job that carried it from the deploy would look to the
 // runner like a launch that had minted, whatever the launch did. Pinned here
 // because nothing else in this package reads the marker — a change that put
@@ -1943,18 +1943,7 @@ const (
 // covers.
 func repoRootInputs(t *testing.T, agent string) Inputs {
 	t.Helper()
-	lc := parseLC(t, `version: 1
-name: aurora
-gcp_project: proj-1234
-region: us-east5
-runs_bucket: fugaro-runs-proj-1234
-registry_host: us-east5-docker.pkg.dev/proj-1234
-base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc}
-repos:
-  acme/webapp: { provider: github, base_branch: main, workflows: [web], github_app_id: "123456" }
-claude_accounts:
-  bmb: { allow_data_to: [acme/webapp] }
-`)
+	lc := parseLC(t, repoRootLC)
 	out := installationOutputs()
 	out.Launchers = []string{"user:launcher@example.com"}
 	out.Operators = []string{"user:operator@example.com"}
@@ -1969,6 +1958,46 @@ workflows:
       - { name: npm-token, env: NPM_TOKEN }
 `
 	return Inputs{LC: lc, Repo: "acme/webapp", Cfg: parseCfg(t, []byte(cfg)), Installation: out}
+}
+
+// repoRootLC is repoRootInputs' local config, named so that a fixture can
+// build on it (the credentials fixture appends a model provider).
+const repoRootLC = `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+registry_host: us-east5-docker.pkg.dev/proj-1234
+base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc}
+repos:
+  acme/webapp: { provider: github, base_branch: main, workflows: [web], github_app_id: "123456" }
+claude_accounts:
+  bmb: { allow_data_to: [acme/webapp] }
+`
+
+// repoRootAPIKeyLC is repoRootLC with one model provider allowed to send this
+// repository's code to it, so an api-key workflow mounts that provider's key
+// beside the Anthropic one.
+const repoRootAPIKeyLC = repoRootLC + `providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models: ["deepseek/*"]
+    allow_data_to: ["acme/webapp"]
+`
+
+// repoRootCredentialsAPIKeyInputs is the api-key shape of the opt-in fixture:
+// the installation has a credentials service, and the one workflow mounts the
+// Anthropic API key (agent.auth api-key) and a provider's key — the other two
+// clauses of the drop, which the oauth fixture never exercises.
+func repoRootCredentialsAPIKeyInputs(t *testing.T) Inputs {
+	t.Helper()
+	in := repoRootInputs(t, `agent: { auth: api-key }`)
+	in.LC = parseLC(t, repoRootAPIKeyLC)
+	in.Installation.CredentialsService = &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+	return in
 }
 
 // repoRootSpec is the golden fixture's spec for the agent block given.
@@ -2097,19 +2126,62 @@ func TestRepoAddressesVertexIsNotUnderOAuth(t *testing.T) {
 // real root is planned from, and the address list that plan produced.
 const repoRootGoldenDir = "testdata"
 
-// repoRootFixtures are the two fixture specs, keyed by the golden's name.
-// A third is how the guard grows: add the key here with the agent spec it
+// repoRootFixture is one golden fixture: the agent block its spec is planned
+// from, and whether the installation has opted in to the credentials service
+// (D146, D147) — the flag that decides whether the job accounts keep their
+// model-secret accessors and whether each job gains its invoker grant on the
+// service.
+type repoRootFixture struct {
+	agent string
+	// credentialsService sets the fixture's Installation.CredentialsService,
+	// the installation output the repository root reads.
+	credentialsService bool
+}
+
+// repoRootFixtures are the fixture specs, keyed by the golden's name.
+// A fourth is how the guard grows: add the key here with the fixture it
 // plans from, add testdata/<name>.tfvars.json (TestRepoRootFixtureTfvars
 // writes it under -update), then on a machine with terraform run
 // `go test -tags terraform ./internal/infra -run TestRealRepoRootAddresses
 // -update` to write testdata/<name>_addresses.golden. CI (untagged) then
 // compares Addresses() against it on every run. Every address the modules
-// declare is named by Addresses() and by both goldens: #362's
+// declare is named by Addresses() and by every golden: #362's
 // module.repo.google_artifact_registry_repository_iam_member.build_ghcr was
 // the last one the untagged guard caught as missing, and naming it in
 // Addresses() and regenerating the goldens from the real plan is what closed
 // that gap.
-var repoRootFixtures = map[string]string{"repo_root": repoRootOAuthAgent, "repo_root_vertex": repoRootVertexAgent}
+//
+// repo_root_credentials is the opt-in fixture: the same oauth spec with the
+// installation's credentials service set, so the addresses the mirror drops
+// (the job's accessors on the model credentials) and the one it adds (the
+// job's invoker grant on the service) are both compared with a real plan.
+// Before it, google_cloud_run_v2_service_iam_member.credentials was a
+// conditionalResources hole and the drop was pinned by nothing at all
+// (independent security review of the implementation, m2).
+var repoRootFixtures = map[string]repoRootFixture{
+	"repo_root":             {agent: repoRootOAuthAgent},
+	"repo_root_vertex":      {agent: repoRootVertexAgent},
+	"repo_root_credentials": {agent: repoRootOAuthAgent, credentialsService: true},
+}
+
+// repoRootFixtureSpec builds one fixture's spec by name, the opt-in
+// included.
+func repoRootFixtureSpec(t *testing.T, name string) RepoSpec {
+	t.Helper()
+	f, ok := repoRootFixtures[name]
+	if !ok {
+		t.Fatalf("no fixture named %q", name)
+	}
+	in := repoRootInputs(t, f.agent)
+	if f.credentialsService {
+		in.Installation.CredentialsService = &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+	}
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rs
+}
 
 // TestRepoRootFixtureTfvars keeps the committed tfvars fixtures and the Go
 // fixture that plans from them in step: the golden address list belongs to
@@ -2117,8 +2189,8 @@ var repoRootFixtures = map[string]string{"repo_root": repoRootOAuthAgent, "repo_
 // regeneration fails here rather than silently changing what the golden
 // pins.
 func TestRepoRootFixtureTfvars(t *testing.T) {
-	for name, agent := range repoRootFixtures {
-		spec := repoRootSpec(t, agent)
+	for name := range repoRootFixtures {
+		spec := repoRootFixtureSpec(t, name)
 		got, err := RepoRootVars(spec, RepoRootOptions{})
 		if err != nil {
 			t.Fatal(err)
@@ -2161,7 +2233,7 @@ func addressesGolden(t *testing.T, name string) []string {
 // address the real root's plan produces for the fixture spec must be in
 // Addresses, and the other way round.
 func TestRepoAddressesMatchTheRealPlanGolden(t *testing.T) {
-	spec := repoRootSpec(t, repoRootFixtures["repo_root"])
+	spec := repoRootFixtureSpec(t, "repo_root")
 	want := addressesGolden(t, "repo_root")
 	if len(want) == 0 {
 		t.Fatal("the golden is empty")
@@ -2177,7 +2249,7 @@ func TestRepoAddressesMatchTheRealPlanGolden(t *testing.T) {
 // contain, google_project_iam_member.vertex[0], and the named-account
 // variants it does not have.
 func TestRepoAddressesMatchTheVertexGolden(t *testing.T) {
-	spec := repoRootSpec(t, repoRootFixtures["repo_root_vertex"])
+	spec := repoRootFixtureSpec(t, "repo_root_vertex")
 	want := addressesGolden(t, "repo_root_vertex")
 	if len(want) == 0 {
 		t.Fatal("the golden is empty")
@@ -2189,6 +2261,340 @@ func TestRepoAddressesMatchTheVertexGolden(t *testing.T) {
 	}
 }
 
+// The opt-in fixture pins the other two branches of the address set: with the
+// installation's credentials service set, the job accounts keep no accessor on
+// a model credential (the oauth fixture mounts claude-oauth-token twice, once
+// per account) and each gains roles/run.invoker on the service. Both are
+// compared with a real plan of the modules, so a change in modules/workflow
+// that the mirror does not follow fails here (review m2: the invoker grant was
+// a conditionalResources hole and the drop was pinned by nothing).
+func TestRepoAddressesMatchTheCredentialsGolden(t *testing.T) {
+	spec := repoRootFixtureSpec(t, "repo_root_credentials")
+	want := addressesGolden(t, "repo_root_credentials")
+	if len(want) == 0 {
+		t.Fatal("the golden is empty")
+	}
+	got := spec.Addresses()
+	if !slices.Equal(got, want) {
+		t.Errorf("Addresses() differs from repo_root_credentials_addresses.golden:\nmissing: %v\nunexpected: %v",
+			missingFrom(want, got), missingFrom(got, want))
+	}
+}
+
+// TestRepoAddressesDropServiceHeldSecretsWhenTheServiceIsOn is the mirror's
+// own guard, and it needs no golden: it plans the same fixture twice, with the
+// opt-in off and on, and asserts the difference is exactly the two sets
+// modules/workflow/sa.tf moves — the job's accessors on the credentials the
+// service holds, gone, and the job's invoker grant on the service, added — in
+// both shapes the modules distinguish: the oauth token (once per Claude
+// account, the default and the named one) and, for an api-key workflow, the
+// Anthropic key and a provider's key. The build account's own accessor on the
+// App key is not the job's and does not move (D148, F3).
+//
+// The App key's rows are the gated half (review finding F1, 2026-10-21): with
+// the runner still reading the key — this branch, config.ServiceHeldSecretNames
+// empty — the opt-in takes only the model accessors away, because a job whose
+// account lost its accessor on a key its container still mounted is a job Cloud
+// Run refuses to create; and with the name in that list (the state C2.2's
+// release puts the tree in) the App key's accessor goes with them. Both states
+// are asserted against the same Run: the mirror and the module are held to each
+// other by deploy/terraform's TestServiceHeldSecretsMatchTheCredentialsService,
+// so a module that dropped the accessor while the list was empty would be a
+// plan Go's own address list disagrees with.
+//
+// It then runs the same two address lists through Retirements, both
+// directions, because that is what the drop is FOR: the state an installation
+// applied with the service off must be read as exactly those accessors to
+// retire, and the state of one that turns the opt-in off again as exactly the
+// invoker grants — never a job, never a secret container. With the mirror's
+// branch disabled every test stayed green (independent security review of the
+// implementation, m2), which is what this pins.
+func TestRepoAddressesDropServiceHeldSecretsWhenTheServiceIsOn(t *testing.T) {
+	svc := &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+	appKey := func(workflows ...string) []string {
+		var out []string
+		for _, key := range workflows {
+			out = append(out, `module.repo.module.workflow["`+key+`"].google_secret_manager_secret_iam_member.job["github-app-key"]`)
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		name       string
+		in         Inputs
+		wantGone   []string
+		wantAppKey []string
+		wantAdd    []string
+	}{
+		{
+			name: "oauth",
+			in:   repoRootInputs(t, repoRootOAuthAgent),
+			wantGone: []string{
+				`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["claude-oauth-token"]`,
+				`module.repo.module.workflow["web_bmb"].google_secret_manager_secret_iam_member.job["claude-oauth-token-bmb"]`,
+			},
+			wantAppKey: appKey("web", "web_bmb"),
+			wantAdd: []string{
+				`module.repo.module.workflow["web"].google_cloud_run_v2_service_iam_member.credentials[0]`,
+				`module.repo.module.workflow["web_bmb"].google_cloud_run_v2_service_iam_member.credentials[0]`,
+			},
+		},
+		{
+			name: "api-key",
+			in:   repoRootCredentialsAPIKeyInputs(t),
+			wantGone: []string{
+				`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["anthropic-api-key"]`,
+				`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["openrouter-api-key"]`,
+			},
+			wantAppKey: appKey("web"),
+			wantAdd: []string{
+				`module.repo.module.workflow["web"].google_cloud_run_v2_service_iam_member.credentials[0]`,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			off := tc.in
+			off.Installation.CredentialsService = nil
+			offSpec, err := Repo(off)
+			if err != nil {
+				t.Fatal(err)
+			}
+			on := tc.in
+			on.Installation.CredentialsService = svc
+			onSpec, err := Repo(on)
+			if err != nil {
+				t.Fatal(err)
+			}
+			offAddrs := offSpec.Addresses()
+			// The fixture's own premises: the credentials really are mounted
+			// with the service off, or the deltas below would pass vacuously.
+			for _, a := range slices.Concat(tc.wantGone, tc.wantAppKey) {
+				if !slices.Contains(offAddrs, a) {
+					t.Fatalf("the fixture does not produce %s with the service off: the test would be vacuous", a)
+				}
+			}
+
+			// check asserts the delta the opt-in makes in one state of the
+			// service-held list, and both retirement directions over it.
+			check := func(well string, wantGone, wantAdd []string) {
+				t.Helper()
+				onAddrs := onSpec.Addresses()
+				var gone, added []string
+				for _, a := range offAddrs {
+					if !slices.Contains(onAddrs, a) {
+						gone = append(gone, a)
+					}
+				}
+				for _, a := range onAddrs {
+					if !slices.Contains(offAddrs, a) {
+						added = append(added, a)
+					}
+				}
+				wantGone, wantAdd = slices.Clone(wantGone), slices.Clone(wantAdd)
+				slices.Sort(wantGone)
+				slices.Sort(wantAdd)
+				if !slices.Equal(gone, wantGone) {
+					t.Errorf("with the credentials service on (%s), Addresses() drops %v, want exactly %v: the credentials the service holds are its to hold (D145, C2.3), and nothing else moves", well, gone, wantGone)
+				}
+				if !slices.Equal(added, wantAdd) {
+					t.Errorf("with the credentials service on (%s), Addresses() adds %v, want exactly %v: the job's one invoker grant on the service (D135)", well, added, wantAdd)
+				}
+				// The retirement directions: what an installation that applied
+				// with the service off must be told to retire when it turns it
+				// on, and the other way round.
+				rets := Retirements(offAddrs, onSpec)
+				var retAddrs []string
+				for _, r := range rets {
+					retAddrs = append(retAddrs, r.Address)
+				}
+				slices.Sort(retAddrs)
+				if !slices.Equal(retAddrs, wantGone) {
+					t.Errorf("turning the service on (%s) retires %v, want exactly the service-held accessors %v: a retirement the mirror invents is a delete the operator is asked to allow", well, retAddrs, wantGone)
+				}
+				back := Retirements(onAddrs, offSpec)
+				retAddrs = retAddrs[:0]
+				for _, r := range back {
+					retAddrs = append(retAddrs, r.Address)
+				}
+				slices.Sort(retAddrs)
+				if !slices.Equal(retAddrs, wantAdd) {
+					t.Errorf("turning the service off (%s) retires %v, want exactly the invoker grants %v", well, retAddrs, wantAdd)
+				}
+				// And the grants that must never be a retirement candidate: the
+				// job itself and the secret containers.
+				for _, r := range slices.Concat(rets, back) {
+					if strings.Contains(r.Address, "google_cloud_run_v2_job.this") || strings.Contains(r.Address, "google_secret_manager_secret.") {
+						t.Errorf("the drop retires %s, which the service's arrival does not remove", r.Address)
+					}
+				}
+			}
+
+			// This branch: the job reads the App key, so the opt-in takes only
+			// the model accessors away and the App key's stays (F1).
+			check("the job reads the key", tc.wantGone, tc.wantAdd)
+			// C2.2's release: the App key joins the list and its accessor goes
+			// with the model ones, in the same plan.
+			serviceHoldsTheAppKey(t)
+			check("C2.2's release", slices.Concat(tc.wantGone, tc.wantAppKey), tc.wantAdd)
+		})
+	}
+}
+
+// TestNoModelMountsWithService is the mount half of the opt-in
+// (docs/credentials-service, D146, D147; C1.20). The addresses test above pins
+// which IAM records move; this one pins what the JOB is given, which is the
+// half that decides whether a deploy succeeds at all: modules/workflow/sa.tf
+// takes the job account's accessor off each model credential, and Cloud Run
+// checks the mounting account's read access on every secret handed to a job, so
+// a job that still MOUNTED the token would be refused to deploy.
+//
+// The shape of the drop is what the test is really for, in the two forms the
+// installation distinguishes (oauth: the shared subscription token, once per
+// Claude account; api-key: the Anthropic key and a provider's key):
+//
+//   - the MOUNT goes — no SecretEnv entry names a model credential
+//     (config.IsModelSecretEnv), and FUGARO_SECRET_ENVS, which is how the job
+//     knows what to redact from its logs, stops naming them with it;
+//   - the CONTAINER stays — rs.Secrets, the repository root's own
+//     google_secret_manager_secret.this, is the same map before and after. It
+//     carries prevent_destroy and may still hold the value the installation
+//     used before it opted in, so dropping it from the spec would plan its
+//     destruction (which prevent_destroy refuses, failing the whole plan) and
+//     make Retirements report a live container as retired;
+//   - everything that is not a model credential is untouched: the git
+//     credential and the workflow's own secrets stay mounted.
+//
+// The mutation is the dropModelMounts call in repoCtx.workflow: without it the
+// service-on spec mounts the model credentials exactly like the service-off
+// one, and every clause below fails.
+func TestNoModelMountsWithService(t *testing.T) {
+	svc := &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+	for _, tc := range []struct {
+		name string
+		in   Inputs
+	}{
+		{name: "oauth", in: repoRootInputs(t, repoRootOAuthAgent)},
+		{name: "api-key", in: repoRootCredentialsAPIKeyInputs(t)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			off := tc.in
+			off.Installation.CredentialsService = nil
+			offSpec, err := Repo(off)
+			if err != nil {
+				t.Fatal(err)
+			}
+			on := tc.in
+			on.Installation.CredentialsService = svc
+			onSpec, err := Repo(on)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The fixture's premise: with the service off the job really does
+			// mount a model credential, or the assertions below pass vacuously.
+			offWS := offSpec.Workflows["web"]
+			mounted := func(ws WorkflowSpec) []string {
+				var out []string
+				for env, logical := range ws.SecretEnv {
+					if config.IsModelSecretEnv(env) {
+						out = append(out, env+"="+logical)
+					}
+				}
+				slices.Sort(out)
+				return out
+			}
+			if offMounted := mounted(offWS); len(offMounted) == 0 {
+				t.Fatal("the fixture mounts no model credential with the service off: the test would be vacuous")
+			}
+			onWS := onSpec.Workflows["web"]
+			if onMounted := mounted(onWS); len(onMounted) != 0 {
+				t.Errorf("with the credentials service on, the job still mounts %v: the service holds those credentials and the job account has no accessor left on them (D145, D146), so Cloud Run would refuse to deploy the job", onMounted)
+			}
+			// The redaction list follows the mounts: it is built from them, and
+			// a name left in it that is not mounted is a redaction the runner
+			// would apply to nothing.
+			if got, want := onWS.Env[runner.SecretEnvsVar], redactionEnvs(onWS.SecretEnv); got != want {
+				t.Errorf("%s = %q with the service on, want %q, the mounts that remain", runner.SecretEnvsVar, got, want)
+			}
+			for _, env := range config.ModelSecretEnvs {
+				if strings.Contains(onWS.Env[runner.SecretEnvsVar], env) {
+					t.Errorf("%s still redacts %s, which the job no longer mounts", runner.SecretEnvsVar, env)
+				}
+			}
+			// The containers: identical maps, so nothing plans a secret's
+			// destruction and nothing is reported as retired.
+			if !maps.Equal(offSpec.Secrets, onSpec.Secrets) {
+				t.Errorf("the secret containers moved with the mount: with the service off %v, on %v. Only the mount goes: the container carries prevent_destroy and may still hold the value the installation used before it opted in, so dropping it would plan a destruction the root refuses and report a live container as retired", offSpec.Secrets, onSpec.Secrets)
+			}
+			if _, ok := onWS.SecretEnv["NPM_TOKEN"]; !ok {
+				t.Errorf("the workflow's own secret is no longer mounted with the service on: %v", onWS.SecretEnv)
+			}
+			if _, ok := onWS.SecretEnv[config.ReservedSecrets["github-app-key"]]; !ok {
+				t.Errorf("the git credential is no longer mounted with the service on: %v", onWS.SecretEnv)
+			}
+		})
+	}
+}
+
+// TestCascadeMountsNoOAuthToken: a `cascade` workflow mounts no model
+// credential in any case, the service on or off (docs/credentials-service,
+// D143; C1.20). The cascade's first tier is the shared subscription OAuth
+// token, and the whole point of the mode is that the job holds NEITHER tier —
+// the service supplies one at call time through the run's gateway — so the
+// SecretMounts switch has a `cascade` case of its own and maps it to no model
+// mount at all. It is the one auth whose mounts do not depend on whether the
+// installation opted in, which is why it is pinned separately from the drop
+// above.
+//
+// The oauth fixture beside it is the premise: it mounts the same token, so a
+// cascade case that fell through to oauth's would be caught here. The mutation
+// is deleting the `case "cascade":` arm of SecretMounts' switch.
+func TestCascadeMountsNoOAuthToken(t *testing.T) {
+	w := config.Workflow{Secrets: []config.Secret{{Name: "npm-token", Env: "NPM_TOKEN"}}}
+	mounts := func(auth string) []SecretMount {
+		t.Helper()
+		ms, err := SecretMounts("bitbucket-token", &config.Config{Agent: config.Agent{Auth: auth}}, "app", config.DefaultClaudeAccount, w, &localcfg.Config{}, "acme/app")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ms
+	}
+	oauth := mounts("oauth")
+	if !slices.ContainsFunc(oauth, func(m SecretMount) bool { return m.Logical == config.ClaudeAccountSecret(config.DefaultClaudeAccount) }) {
+		t.Fatalf("the oauth mounts %v name no Claude token: the premise of this test is gone", oauth)
+	}
+	cascade := mounts(config.AuthCascade)
+	var want []SecretMount
+	for _, m := range oauth {
+		if config.IsModelSecretEnv(m.Env) {
+			continue
+		}
+		want = append(want, m)
+	}
+	if !slices.Equal(cascade, want) {
+		t.Errorf("a cascade workflow mounts %v, want %v: the cascade's token is the service's, never the job's", cascade, want)
+	}
+	for _, m := range cascade {
+		if config.IsModelSecretEnv(m.Env) {
+			t.Errorf("a cascade workflow mounts %s (%s), a model credential: the cascade decides which credential carries a call and the service supplies it (D143)", m.Env, m.Logical)
+		}
+	}
+	// And through the whole spec, where the job's env and its secret
+	// containers are built from those mounts: the cascade token reaches
+	// neither.
+	rs := repoRootSpec(t, `agent: { auth: `+config.AuthCascade+` }`)
+	ws := rs.Workflows["web"]
+	for env, logical := range ws.SecretEnv {
+		if config.IsModelSecretEnv(env) {
+			t.Errorf("a cascade spec mounts %s=%s", env, logical)
+		}
+	}
+	if _, ok := rs.Secrets[config.ClaudeAccountSecret(config.DefaultClaudeAccount)]; ok {
+		t.Errorf("a cascade spec declares the token's container: %v", rs.Secrets)
+	}
+	if strings.Contains(ws.Env[runner.SecretEnvsVar], "CLAUDE_CODE_OAUTH_TOKEN") {
+		t.Errorf("%s still redacts the token: %q", runner.SecretEnvsVar, ws.Env[runner.SecretEnvsVar])
+	}
+}
+
 // moduleResources are the resource blocks the repository's own modules
 // declare, as "type.name", for the modules a repository root includes.
 //
@@ -2196,7 +2602,7 @@ func TestRepoAddressesMatchTheVertexGolden(t *testing.T) {
 // snapshot a manual -tags terraform -update rewrites: a resource added to a
 // module -- #362's google_artifact_registry_repository_iam_member.build_ghcr,
 // say -- leaves both sides agreeing with each other and both wrong, and
-// every fugaro init --repo would then print a false "This change retires 1
+// every fugaro update would then print a false "This change retires 1
 // address" pointing at a destructive command. This reads the modules
 // themselves, embedded in the binary, so the drift fails a test that CI runs
 // with no terraform, no network and no golden to maintain.
@@ -2206,20 +2612,20 @@ var moduleResources = []string{"gcp/modules/repo", "gcp/modules/workflow"}
 // instance key is not in the declaration: it is for_each's, at apply time.
 var moduleResourceRE = regexp.MustCompile(`(?m)^resource\s+"([^"]+)"\s+"([^"]+)"`)
 
-// conditionalResources are the declared resources Addresses() may legitimately
-// not produce for either fixture, each with the reason it is off. Every entry
-// is a hole in this guard, so it takes a reason: a resource that is merely
-// missing because nobody regenerated the golden does not belong here.
-var conditionalResources = map[string]string{}
-
 // TestAddressesCoversEveryModuleResource is the drift guard the goldens
 // cannot be: every resource the repo and workflow modules declare must show
-// up in the union of the two fixtures' Addresses(), or a retirement would be
+// up in the union of the fixtures' Addresses(), or a retirement would be
 // predicted for something the plan really produces.
+//
+// It has no exemption list. It had one entry —
+// google_cloud_run_v2_service_iam_member.credentials, off in both fixtures
+// because neither opted in — and the opt-in fixture closed it: an exemption
+// is a hole in the guard, and the day a resource is only ever produced under
+// a branch nothing plans, the guard is silent about it.
 func TestAddressesCoversEveryModuleResource(t *testing.T) {
 	var addrs []string
-	for _, agent := range repoRootFixtures {
-		addrs = append(addrs, repoRootSpec(t, agent).Addresses()...)
+	for name := range repoRootFixtures {
+		addrs = append(addrs, repoRootFixtureSpec(t, name).Addresses()...)
 	}
 	if len(addrs) == 0 {
 		t.Fatal("the fixtures produce no address")
@@ -2250,16 +2656,12 @@ func TestAddressesCoversEveryModuleResource(t *testing.T) {
 				if produced(typ, name) {
 					continue
 				}
-				if why, ok := conditionalResources[typ+"."+name]; ok {
-					t.Logf("%s.%s is declared but no fixture produces it: %s", typ, name, why)
-					continue
-				}
 				t.Errorf("%s declares %s.%s, and no fixture's Addresses() has an address for it.\n"+
 					"A retirement is computed as the state minus those addresses, so this resource would be\n"+
-					"retired -- printed as a change that removes it -- on every fugaro init --repo.\n"+
+					"retired -- printed as a change that removes it -- on every fugaro update.\n"+
 					"Add it to Addresses() (internal/infra/spec.go), regenerate the goldens\n"+
 					"(go test -tags terraform ./internal/infra -run TestRealRepoRootAddresses -update),\n"+
-					"or list it in conditionalResources with the reason it is off in both fixtures.",
+					"or add a fixture that turns its branch on (repoRootFixtures, spec_test.go).",
 					file, typ, name)
 			}
 		}

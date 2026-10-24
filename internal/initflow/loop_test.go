@@ -100,11 +100,11 @@ func states(r *Result) map[string]State {
 
 func TestStageOrderMatchesDependencies(t *testing.T) {
 	names := Names()
-	// Ten stages of the installation's own plus the compute backend's
-	// provisioning, which the design puts last (compute-backend §8.1
-	// task 6).
-	if len(names) != 11 {
-		t.Fatalf("the design has eleven stages, got %v", names)
+	// Ten stages of the installation's own plus the credentials service's
+	// owner-run apply (C1.20) and the compute backend's provisioning, which
+	// the design puts last (compute-backend §8.1 task 6).
+	if len(names) != 12 {
+		t.Fatalf("the design has twelve stages, got %v", names)
 	}
 	pos := map[string]int{}
 	for i, n := range names {
@@ -119,7 +119,7 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 		}
 	}
 	// The order the dogfooding run found by hand.
-	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Repository, Compute}
+	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Credentials, Repository, Compute}
 	if !slices.Equal(names, want) {
 		t.Errorf("order = %v, want %v", names, want)
 	}
@@ -376,7 +376,7 @@ func TestNonInteractiveListsAllMissingFlags(t *testing.T) {
 	var log []string
 	stages := fakes(&log, Preflight, Installation, Firebase)
 	stages[1].(*fake).missing = []string{"--gcp-project (the GCP project ID)", "--region"}
-	stages[2].(*fake).missing = []string{"--firebase (the Firebase project)"}
+	stages[2].(*fake).missing = []string{"--firebase-project (the Firebase project)"}
 	_, err := Run(context.Background(), stages, Options{NonInteractive: true, Yes: true, Out: &bytes.Buffer{}})
 	var mi *MissingInputsError
 	if !errors.As(err, &mi) {
@@ -385,7 +385,7 @@ func TestNonInteractiveListsAllMissingFlags(t *testing.T) {
 	if len(mi.Flags) != 3 {
 		t.Errorf("flags %v", mi.Flags)
 	}
-	for _, f := range []string{"--gcp-project", "--region", "--firebase"} {
+	for _, f := range []string{"--gcp-project", "--region", "--firebase-project"} {
 		if !strings.Contains(err.Error(), f) {
 			t.Errorf("%q missing from %q", f, err)
 		}
@@ -507,7 +507,7 @@ func TestPredecessorNeedsYouBlocksApply(t *testing.T) {
 func TestSkippedPredecessorDoesNotBlock(t *testing.T) {
 	var log []string
 	stages := fakes(&log, Preflight, Firebase, Repository)
-	stages[1].(*fake).status = Status{State: Skipped, Detail: "no --firebase given"}
+	stages[1].(*fake).status = Status{State: Skipped, Detail: "no --firebase-project given"}
 	stages[2].(*fake).status = Status{State: Skipped, Detail: "no fugaro.yaml on the default branch"}
 	res, _ := Run(context.Background(), stages, yesOpts())
 	if res.ExitCode() != 0 || states(res)[Repository] != Skipped {
@@ -1190,6 +1190,53 @@ func TestOnPreviewSeesTheStagesOfAnApplyingRunOnly(t *testing.T) {
 		}
 		if got := len(seen) == 1 && seen[0].Name == Installation && seen[0].State == Todo; got == planOnly {
 			t.Errorf("plan-only %v: preview seen %+v", planOnly, seen)
+		}
+	}
+}
+
+// TestBillingPauseLetsLocalStagesFinish: a stage that pauses for billing
+// (BillingPausedError) is not a failure and does not stop the run: it is
+// recorded as billing-pending with its Left, every later stage that needs
+// billing is waiting-for-billing (never applied, never an error), and a stage
+// that needs none (the plugin wiring, a local file) still applies. The result
+// is a step left for you (exit 1, the left-for-you convention), and --json
+// carries the two stable statuses.
+func TestBillingPauseLetsLocalStagesFinish(t *testing.T) {
+	var log []string
+	st := fakes(&log, Preflight, Project, Installation, Images, Secrets, Plugin, Repository)
+	pause := Left{Kind: LeftCommand, Text: "billing is not linked yet", Commands: []string{"gcloud billing projects link p --billing-account=<billing-account-id>"}}
+	st[1].(*fake).applyErr = &BillingPausedError{Left: pause, Detail: "created; billing pending"}
+	st[0].(*fake).status = Status{State: Done}
+	res, err := Run(context.Background(), st, yesOpts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]State{}
+	for _, s := range res.Stages {
+		got[s.Name] = s.State
+	}
+	want := map[string]State{Preflight: Done, Project: BillingPending, Installation: WaitingForBilling, Images: WaitingForBilling,
+		Secrets: WaitingForBilling, Plugin: Changed, Repository: WaitingForBilling}
+	for name, w := range want {
+		if got[name] != w {
+			t.Errorf("%s: %q, want %q (all: %+v)", name, got[name], w, res.Stages)
+		}
+	}
+	for _, name := range []string{Installation, Images, Secrets, Repository} {
+		if slices.Contains(log, "apply "+name) {
+			t.Errorf("%s was applied while billing is pending", name)
+		}
+	}
+	if res.Failed != nil || res.ExitCode() != 1 || len(res.Left) != 1 || res.Left[0].Stage != Project || len(res.Left[0].Commands) != 1 {
+		t.Errorf("failed %+v, exit %d, left %+v", res.Failed, res.ExitCode(), res.Left)
+	}
+	b, err := res.JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{`"billing-pending"`, `"waiting-for-billing"`} {
+		if !strings.Contains(string(b), s) {
+			t.Errorf("--json lacks the status %s:\n%s", s, b)
 		}
 	}
 }

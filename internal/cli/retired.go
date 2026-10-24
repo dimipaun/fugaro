@@ -9,7 +9,7 @@ import (
 // reconciliation's §5, answered by the owner on 2026-10-20 as recommended).
 //
 // The command became two, because it always was two things: `fugaro setup`
-// stands an installation up, or adopts one, and asks the wizard's questions;
+// stands a fresh installation up, and asks the wizard's questions;
 // `fugaro update` re-converges what is already there after a CLI upgrade. An
 // alias is the answer that was not taken: it would have to pick one of those
 // meanings for the user, and the user typing the old name is exactly the user
@@ -18,11 +18,20 @@ import (
 // constructs no client — and it is hidden, because it is not a command this
 // CLI offers any more.
 
-// retirementText is the one sentence the retired `fugaro init` says, whatever
-// came after it on the command line. It is a constant because the tombstone
-// and its test both quote it, and because the plan's census (W0.2) exempts
-// the files that name the command only to retire it.
-const retirementText = "`fugaro init` is now `fugaro setup` (first run) and `fugaro update` (after a CLI upgrade)"
+// retiredInitMessage is the one sentence the retired `fugaro init` says,
+// whatever came after it on the command line. It is a constant because the
+// tombstone and its test both quote it, and because the plan's census (W0.2)
+// exempts the files that name the command only to retire it.
+//
+// It is not named `retirementText`, although that is the phrase this file's
+// own comment uses for it: `retirementText` is the census's
+// (internal/cli/docs_live_init_census_test.go, W0.2), where it is the list of
+// the paths that may name the retired command -- four of them, this file and
+// its test among them. Two package-level declarations of one name do not
+// compile, so the tombstone's sentence and the census's list cannot share it,
+// and the census keeps it because the plan names the exemption class, not this
+// string.
+const retiredInitMessage = "`fugaro init` is now `fugaro setup` (first run) and `fugaro update` (after a CLI upgrade)"
 
 // newRetiredInitCmd is the hidden `init`: one message, two names, exit 1.
 //
@@ -34,16 +43,26 @@ const retirementText = "`fugaro init` is now `fugaro setup` (first run) and `fug
 // old line reaches RunE and reads the same sentence. The exit code is a user
 // error's (1), the same as any other refusal, so a script that ran the old
 // name fails loudly rather than continuing with nothing converged.
+//
+// One consequence is worth naming, because a reader will ask: `fugaro init
+// --json` prints that same plain sentence, not a JSON document. W1.2 gives the
+// tombstone no flags of its own and parses none, so `--json` cannot be read
+// here; and there is nothing to serialize — `--json` on the two doors prints
+// `initflow.Result.JSON()`, and a command that runs no converge has no Result.
+// A caller that needs to branch has the exit code. If the owner ever wants a
+// JSON refusal it is a change to D2's contract, not a bug in this one
+// (retired_test.go's TestRetiredInitRefusalIsPlainText pins today's answer so
+// that the change is deliberate).
 func newRetiredInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:                "init",
 		Short:              "Retired: fugaro setup on a first run, fugaro update after a CLI upgrade",
-		Long:               retirementText + ".\n\nIt applies nothing: it names the two commands that replaced it and exits 1.",
+		Long:               retiredInitMessage + ".\n\nIt applies nothing: it names the two commands that replaced it and exits 1.",
 		Hidden:             true,
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return userErr("%s", retirementText)
+			return userErr("%s", retiredInitMessage)
 		},
 	}
 }

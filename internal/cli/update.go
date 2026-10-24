@@ -28,6 +28,15 @@ exit codes as fugaro setup, for a project that is set up already (or, with
 CLI: it applies what the release changed, and one with nothing to do says
 "No changes" and exits 0.
 
+It is also how a second machine, yours or a teammate's, gets its local config:
+on a machine with no config for the installation, fugaro update --gcp-project
+<id> --region <region> takes the project's name from the installation (at a
+terminal; a run that cannot ask also passes --name <its name>), writes
+the local config from the installation's outputs (its launchers, operators and
+budget backend included) and applies nothing; it then names the roles you may
+lack and the one command an owner runs to grant them. The next fugaro update
+is the ordinary re-converge.
+
 It creates nothing. The flags that do — --create-project, --display-name,
 --parent, --managed, --link-billing and --provision-batch — are fugaro setup's,
 and update refuses each by name rather than ignoring it, so a re-converge
@@ -37,14 +46,24 @@ backend by accident. A first installation is fugaro setup.
 --forget is update's own: it is the rollback, and it turns log isolation and
 registry cleanup off with a guarded apply before it removes every address from
 Terraform's state — in a checkout, the repository's addresses with them —
-destroying nothing else.
+destroying nothing else. An installation that holds the managed deployer's fence
+has no rollback: it is refused there, because the state removal would leave the
+seven scoped roles and their seven conditioned bindings live in the project and
+accounted for by nothing. The fence is the installation's and not a mode of the
+project — every run that rewrites the installation's settings carries the key
+forward — so taking a project out of managed mode does not remove it and does
+not lift the refusal (docs/gcp-setup.md, "Rolling back").
 
 Everything else is setup's help word for word, because it is the same
 converge: the review screen and the one typed project name in a project Fugaro
-owns; the steps that keep their own typed confirmation (a project's creation
-and the billing link are setup's, and here they cannot arise at all, but the
-Firestore database's permanent location, a billable first image build,
-replacing a registry tag, an unlisted repository and the secrets are not); the
+owns; the steps that keep their own typed confirmation — a project's creation
+and the billing link are setup's, and here they cannot arise at all, and a
+secret is a value, typed in a hidden prompt, which --yes cannot supply — against
+the steps --yes covers, which by D12's answer of 2026-10-20 is every ordinary
+step this door owns: the Firestore database's permanent location, a billable
+first image build, replacing a registry tag and onboarding an unlisted
+repository on a provider's own host with an origin git config that does not
+rewrite it (the build, the tag and the repository are covered in setup too); the
 secrets stage's hidden prompts and the one line of fugaro secrets set commands
 it leaves instead; the plugin wiring; --anchor, which writes the checkout's
 gcp_project line and nothing else; --plan-only, --print-vars, --config-only and

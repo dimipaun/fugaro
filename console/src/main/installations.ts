@@ -33,6 +33,11 @@
 //     *whole* file and never rewrites or deletes it: an operator who edited it
 //     by hand gets a console that says so, not one that silently discards their
 //     work.
+//   - **unique in both keys**: an id (which `active` names) and a project name
+//     (which every mutation and every reader of the registry names). Two entries
+//     for one project would make `replace` -- which writes a record over every
+//     entry whose project matches -- put the same id in the file twice, and the
+//     next load would refuse the store outright.
 
 import { randomBytes } from 'node:crypto'
 import {
@@ -48,10 +53,19 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, posix, win32 } from 'node:path'
 
 import { NO_ACTIVE_INSTALLATION } from './ipc'
-import { isSafeInstallationValue, isExecutableFile, planFor, privateWorkingDirectory, probeVersion } from './spawn'
+import {
+  MAX_DISTRO_NAME_LENGTH,
+  isDistroName,
+  isSafeInstallationValue,
+  isWindowsPathSpelling,
+  privateWorkingDirectory,
+  resolveBinary,
+  resolveInstalledBinary,
+  wslUncPath,
+} from './spawn'
 import type { ChildSpawner, SpawnTarget } from './spawn'
 import { createSpawnLog } from './spawnlog'
 import type { SpawnLogWriter } from './spawnlog'
@@ -112,9 +126,28 @@ export const INSTALLATION_ID_PATTERN = /^[0-9a-f]{16}$/
  * INSTALLATION_KEYS the whole of what one entry may hold. Both are checked as
  * *exact* sets: an unknown key refuses the file, because a key this version
  * does not know is either a newer version's field (which this version must not
- * silently drop) or something a person added by hand. */
+ * silently drop) or something a person added by hand.
+ *
+ * **`distro` joined the set in one version step (F15, F46) and it did not move
+ * `INSTALLATION_FILE_VERSION`.** The rule the version step exists for is the one
+ * F46 names: a console that writes a key and then refuses to read its own file
+ * on the next start loses every remembered installation. So a field is added in
+ * the one direction that is safe -- *written* by this version and *read* by it,
+ * with a file that does not carry it still accepted, because an installation
+ * with no `distro` is not an incomplete record: it is a **host** installation,
+ * which is what every record this console wrote before Windows is. The reader
+ * refuses an entry carrying a key it does not know; it never refuses an entry
+ * for the *absence* of one, and that asymmetry is what makes the addition
+ * backward-compatible in the direction that matters. */
 export const INSTALLATION_FILE_KEYS: readonly string[] = Object.freeze(['version', 'active', 'installations'])
-export const INSTALLATION_KEYS: readonly string[] = Object.freeze(['id', 'project', 'binaryPath', 'configPath', 'checkout'])
+export const INSTALLATION_KEYS: readonly string[] = Object.freeze([
+  'id',
+  'project',
+  'binaryPath',
+  'configPath',
+  'checkout',
+  'distro',
+])
 
 /** INSTALLATION_CHANNEL_PREFIX is the picker window's own channel namespace.
  * The dashboard's is `fugaro:console/`; the two are gated separately, so a
@@ -128,25 +161,37 @@ export const INSTALLATION_CHANNEL_PREFIX = 'fugaro:installations/'
  * state and the dashboard's refusal of a read cannot drift apart. */
 export { NO_ACTIVE_INSTALLATION }
 
-/** MAX_OUTSTANDING_PICKS bounds the pick tokens at once. A token is single-use
- * and is dropped when the picker closes; eight is more than the four pickers a
- * screen can have open. */
-export const MAX_OUTSTANDING_PICKS = 8
-
-/** PICK_TOKEN_LENGTH is 32 hex characters: a token is a capability to name one
- * path the *main* process chose, and it must not be guessable by the renderer
- * that redeems it. */
-export const PICK_TOKEN_LENGTH = 32
-const PICK_TOKEN_PATTERN = /^[0-9a-f]{32}$/
-
-/** StoredInstallation is one installation as it is kept. It is the D13 tuple:
- * nothing else is persisted, and in particular no version. */
+/**
+ * StoredInstallation is one installation as it is kept: the project name, and
+ * the console's own choices about it. Nothing else is persisted, and in
+ * particular no version.
+ *
+ * **`binaryPath` is optional, and that is the owner's ruling of 2026-10-20 in
+ * the file's own shape.** The install no longer asks the operator for a binary:
+ * the main process resolves the installed `fugaro` (design section 3.4 rule 4),
+ * and this field is what is left of the older form -- an *override* a store may
+ * already carry, asked first and never asked for. An old entry keeps working
+ * unchanged, no migration is needed, and an entry with no binary is the ordinary
+ * case rather than an incomplete one.
+ *
+ * `configPath` is the same kind of legacy field for the same reason: the console
+ * never asks for a config path either, and this is only ever read. `checkout` is
+ * still written -- it is the one thing the picker may set, from the checkouts
+ * the CLI itself listed for that installation.
+ */
 export interface StoredInstallation {
   readonly id: string
   readonly project: string
-  readonly binaryPath: string
+  readonly binaryPath?: string
   readonly configPath?: string
   readonly checkout?: string
+  /** `distro` is the WSL distribution this installation's CLI runs inside, when
+   * it has one (T-D1, D2(a)). **Absent is the ordinary case** -- a host
+   * installation -- and present means the other three paths are Linux spellings
+   * *inside* that distribution, which the host cannot `stat` (F4, F15) and which
+   * `wsl.exe` answers for. It is read as a **name**: the console runs a shell
+   * in a distribution named here, so the alphabet is `DISTRO_NAME_PATTERN`'s. */
+  readonly distro?: string
 }
 
 /** InstallationFile is the whole of `installations.json`. `active` is an id in
@@ -238,11 +283,71 @@ export const nodeInstallationFs: InstallationFs = Object.freeze<InstallationFs>(
 
 /** isInside reports whether `candidate` is `directory` or sits under it. The
  * comparison is on resolved paths with a separator appended, so `/a/bc` is not
- * inside `/a/b`. */
+ * inside `/a/b` and `C:\a\bc` is not inside `C:\a\b` (F13, T-D5).
+ *
+ * **The separator is the paths' own, and that is the whole of the repair.** The
+ * function used to append a literal `'/'`, which is right on POSIX and wrong on
+ * Windows in the direction that matters: `C:\Users\dimi\AppData\Fugaro Console`
+ * does not start with `C:\Users\dimi\AppData/`, so the test **failed to fire**
+ * and a console whose store sat inside the CLI's configuration would have been
+ * allowed to write there. On Windows the paths this function is given are
+ * Windows paths (Electron's `userData` is `%APPDATA%\…`), so the comparison has
+ * to be Windows' -- and on Linux it has to be POSIX's.
+ *
+ * The rule is stated as "the paths' own separator" rather than "this process's"
+ * (`path.sep`) for two reasons: a console that compared a distribution's POSIX
+ * home against a Windows `userData` would otherwise pick the wrong one for one
+ * of the two, and this repository's tests run on one platform while the paths
+ * they must reason about are the *other* one's -- the F13 case is unprovable on
+ * Linux if the separator is `process.platform`'s. A path is Windows-shaped when
+ * it carries a backslash or a drive letter (`isWindowsPathSpelling`, `spawn.ts`)
+ * and POSIX-shaped otherwise, and the two paths are read with the semantics of
+ * whichever of them is Windows-shaped. */
 export function isInside(directory: string, candidate: string): boolean {
-  const outer = resolve(directory)
-  const inner = resolve(candidate)
-  return inner === outer || inner.startsWith(outer.endsWith('/') ? outer : `${outer}/`)
+  const windows = isWindowsPathSpelling(directory) || isWindowsPathSpelling(candidate)
+  const parts = windows ? win32 : posix
+  const outer = parts.resolve(directory)
+  const inner = parts.resolve(candidate)
+  const separator = windows ? '\\' : '/'
+  return inner === outer || inner.startsWith(outer.endsWith(separator) ? outer : `${outer}${separator}`)
+}
+
+/**
+ * explorerPathFor is the spelling the **file manager** opens for one
+ * installation's checkout, or `undefined` when there is nothing to open (D3(a),
+ * T-D3).
+ *
+ * It is the second half of the rule "the Linux spelling everywhere the console
+ * states or passes; the UNC spelling only where the platform itself opens the
+ * path". A row's `checkout` is the Linux spelling -- what the operator can paste
+ * into a terminal inside the distribution, and what every word the console
+ * passes carries -- while a reveal affordance needs the spelling the *file
+ * manager* understands, which for a path inside a distribution is
+ * `\\wsl.localhost\<distro>\…` (`wslUncPath`), because a drive path does not
+ * exist for `/home/dimi/src`.
+ *
+ * **The UNC form is composed here rather than asked of `wslpath`.** The two are
+ * not the same question: `wslpath -w` answers how *this distribution* spells a
+ * path Windows can open, and a custom mount or an `/etc/wsl.conf` can change it
+ * (D4(b), which is why the translation the console *uses* is a process). The
+ * affordance is a convenience on top of a path the console already holds --
+ * `\\wsl.localhost\` is the documented form Windows accepts for any
+ * distribution -- and it is never what the console passes to the CLI.
+ *
+ * A host row's checkout is **already** the spelling its own file manager opens
+ * -- that is what the host route resolves, and what the operator's own terminal
+ * uses -- so it is handed back unchanged, and this function needs no idea of
+ * which platform it is running on.
+ */
+export function explorerPathFor(entry: {
+  readonly distro?: string | undefined
+  readonly checkout?: string | undefined
+}): string | undefined {
+  const checkout = entry.checkout
+  if (checkout === undefined || checkout === '') return undefined
+  const distro = entry.distro ?? ''
+  if (distro !== '') return wslUncPath(distro, checkout)
+  return checkout
 }
 
 /**
@@ -250,17 +355,36 @@ export function isInside(directory: string, candidate: string): boolean {
  * as far as this console is concerned: `$XDG_CONFIG_HOME/fugaro`,
  * `$FUGARO_CONFIG`'s directory, and `~/.config/fugaro`.
  *
- * The home directory arrives as an argument -- Electron's `app.getPath('home')`
- * -- rather than being read here, which is what keeps `homedir()` out of this
- * module (`test/unit/configread.test.ts` refuses it anywhere outside binary
+ * The home directory arrives as an argument -- the app's own environment's
+ * `HOME`, the home `binDirectories` expands `~` with, and not Electron's
+ * `app.getPath('home')`, which on macOS is `NSHomeDirectory()` and ignores
+ * `HOME` (`installInstallationPicker` says why) -- rather than being read here,
+ * which is what keeps `homedir()` out of this module
+ * (`test/unit/configread.test.ts` refuses it anywhere outside binary
  * resolution) and keeps the function testable for a home it did not have.
  *
  * This is a *path* computation and it touches no file: knowing where the CLI's
  * config would be is not reading it, and refusing to write there is the point.
- */
+ *
+ * **The WSL half, and what the console can honestly say about it** (F17, T-D6).
+ * On the WSL route the CLI's configuration is the **distribution's** own
+ * `~/.config/fugaro`, which is not on this host at all: the host's `$HOME` is a
+ * Windows home and `$XDG_CONFIG_HOME` is a Windows variable, so none of the
+ * three below names the directory the operator's CLI actually reads. The
+ * distribution's home is therefore an *input* -- the caller that knows which
+ * distribution this is hands its home directory in the distribution's own
+ * spelling -- and the answer gains that one directory as a fourth entry.
+ *
+ * **Nothing here asks the distribution.** The home is not computed and not
+ * defaulted: a `~` the console guessed would be a path the CLI does not use,
+ * which is the same failure in the other direction. It arrives from the caller
+ * (Part G's picker, which has the distribution in hand), and the spelling is the
+ * distribution's, so the entry is compared with POSIX semantics -- which is what
+ * `isInside` does by looking at the paths rather than at this process. */
 export function cliConfigDirectories(
   env: Readonly<Record<string, string | undefined>>,
   home: string,
+  distroHome?: string | undefined,
 ): readonly string[] {
   const out: string[] = []
   const xdg = env['XDG_CONFIG_HOME']
@@ -268,6 +392,12 @@ export function cliConfigDirectories(
   const explicit = env['FUGARO_CONFIG']
   if (explicit !== undefined && explicit !== '' && isAbsolute(explicit)) out.push(dirname(explicit))
   out.push(join(home, '.config', CLI_CONFIG_DIR_NAME))
+  // The distribution's own, when the caller knows it. `posix.join` rather than
+  // `join`: this one is a Linux path inside a distribution whatever host the
+  // console is running on, and on Windows `join` would spell it `\home\…`.
+  if (distroHome !== undefined && distroHome !== '') {
+    out.push(posix.join(distroHome, '.config', CLI_CONFIG_DIR_NAME))
+  }
   return Object.freeze(out)
 }
 
@@ -282,6 +412,13 @@ export function installationStorePath(options: {
   readonly env: Readonly<Record<string, string | undefined>>
   readonly home: string
 }): string {
+  // **The host's three, and not the distribution's fourth** (F17, T-D6). The
+  // set this reads is `cliConfigDirectories`', which carries the distribution's
+  // own directory when its caller knows it -- but `userData` here is a **host**
+  // path, and a host path is never inside a Linux home (F13's vacuous case, and
+  // it must stay vacuous rather than become wrong). So no `distroHome` is passed
+  // and none is needed: the refusal is a host-side packaging check, and the
+  // store stays on the host (F14) whatever distribution the installation names.
   const inside = cliConfigDirectories(options.env, options.home).find((directory) =>
     isInside(directory, options.userData),
   )
@@ -320,6 +457,19 @@ export function isProjectName(value: string): boolean {
   return value !== '' && value.length <= MAX_INSTALLATION_PROJECT_LENGTH && isSafeInstallationValue(value) && !/\s/.test(value)
 }
 
+/** MAX_INSTALLATION_DISTRO_LENGTH bounds the distribution's name. It is the
+ * project bound, because both are short single-token names, and a distribution
+ * name longer than a project name is a name `wsl.exe` would not have listed.
+ *
+ * The alphabet itself is `spawn.ts`'s (`DISTRO_NAME_PATTERN`, re-exported here):
+ * a distribution name becomes the value of `wsl.exe`'s `-d`, it comes from a
+ * document (`wsl.exe --list --quiet`, whose lines are data), and the console
+ * then runs a **shell** in whatever it names -- so the rule belongs with the
+ * wrapper that spells it, and the store reads the same one the plan builder
+ * asserts. Two copies of it would be two answers to one question. */
+export const MAX_INSTALLATION_DISTRO_LENGTH = MAX_DISTRO_NAME_LENGTH
+export { isDistroName } from './spawn'
+
 /** isAbsolutePath is the path check every stored path passes: a string, within
  * the length bound, safe to reach an argv, and absolute. A relative path is
  * refused because it would mean whatever directory the child happened to start
@@ -328,8 +478,21 @@ function isAbsolutePath(value: unknown, max: number): value is string {
   return typeof value === 'string' && value !== '' && value.length <= max && isSafeInstallationValue(value) && isAbsolute(value)
 }
 
-/** readInstallationEntry checks one entry, and names the field it refused. */
-function readInstallationEntry(value: unknown, seenIds: Set<string>): StoredInstallation | string {
+/** readInstallationEntry checks one entry, and names the field it refused.
+ *
+ * Two uniqueness checks, one per key this file is addressed by: an id (which
+ * `active` names) and a project name (which **every** mutation and every reader
+ * of the registry names -- `entryOf`, `choose`, `setCheckout`, `remove`,
+ * `remember`). The project one is not decoration: `replace` writes a record over
+ * every entry whose project matches, so two records for one project would make
+ * one mutation write the same id twice and the *next* load refuse the file --
+ * a store the operator cannot repair from any screen, for a state no screen
+ * caused. */
+function readInstallationEntry(
+  value: unknown,
+  seenIds: Set<string>,
+  seenProjects: Set<string>,
+): StoredInstallation | string {
   if (!isPlainObject(value)) return 'an entry is not an object'
   const unknown = Object.keys(value).filter((key) => !INSTALLATION_KEYS.includes(key))
   if (unknown.length > 0) return `an entry carries a key this version does not know (${unknown.join(', ')})`
@@ -341,7 +504,14 @@ function readInstallationEntry(value: unknown, seenIds: Set<string>): StoredInst
   if (typeof project !== 'string' || !isProjectName(project)) {
     return 'an entry has a project name this console will not store'
   }
-  if (!isAbsolutePath(value['binaryPath'], MAX_INSTALLATION_PATH_LENGTH)) {
+  if (seenProjects.has(project)) return `two entries share the project ${project}`
+  seenProjects.add(project)
+  // Optional, and checked only when it is there: an entry written before this
+  // console stopped asking for a binary carries one, and it is an absolute path
+  // or the entry is refused -- but an entry with none at all is the ordinary
+  // shape now.
+  const binaryPath = value['binaryPath']
+  if (binaryPath !== undefined && !isAbsolutePath(binaryPath, MAX_INSTALLATION_PATH_LENGTH)) {
     return 'an entry’s binary path is not an absolute path'
   }
   const configPath = value['configPath']
@@ -352,12 +522,26 @@ function readInstallationEntry(value: unknown, seenIds: Set<string>): StoredInst
   if (checkout !== undefined && !isAbsolutePath(checkout, MAX_INSTALLATION_PATH_LENGTH)) {
     return 'an entry’s checkout is not an absolute path'
   }
+  // The WSL field, and the whole of what makes an installation a WSL one (F15,
+  // T-D1): when it is there, `binaryPath`, `configPath` and `checkout` are Linux
+  // spellings **inside** that distribution and the console reaches the CLI
+  // through `wsl.exe` (D2(a)); when it is absent the entry is a host
+  // installation, which is what every record written before Windows is.
+  //
+  // It is checked by name and against its own narrow alphabet rather than with
+  // the path rule: a distribution name becomes the value of `wsl.exe`'s `-d`,
+  // and the console will then run a **shell** inside whatever it names (T-D3).
+  const distro = value['distro']
+  if (distro !== undefined && (typeof distro !== 'string' || !isDistroName(distro))) {
+    return 'an entry’s distro is not a WSL distribution name'
+  }
   return {
     id,
     project,
-    binaryPath: value['binaryPath'],
+    ...(binaryPath === undefined ? {} : { binaryPath }),
     ...(configPath === undefined ? {} : { configPath }),
     ...(checkout === undefined ? {} : { checkout }),
+    ...(distro === undefined ? {} : { distro }),
   }
 }
 
@@ -388,9 +572,10 @@ export function readInstallationFile(raw: string): InstallationRead {
     return { ok: false, reason: `the file holds more than ${String(MAX_INSTALLATIONS)} installations` }
   }
   const seenIds = new Set<string>()
+  const seenProjects = new Set<string>()
   const installations: StoredInstallation[] = []
   for (const entry of entries) {
-    const read = readInstallationEntry(entry, seenIds)
+    const read = readInstallationEntry(entry, seenIds, seenProjects)
     if (typeof read === 'string') return { ok: false, reason: read }
     installations.push(read)
   }
@@ -512,28 +697,57 @@ export function refusedInstallationStore(path: string, reason: string): Installa
   }
 }
 
-/** ValidationDeps is everything `validateInstallation` needs, all of it handed
- * in. `verify` is the one check that runs the CLI, and it is
- * `verifyCandidate` from `src/source/cli.ts`: the verification logic stays in
- * exactly one place. */
+/** newInstallationId is the app's own identifier for an installation. */
+export function newInstallationId(): string {
+  return randomBytes(INSTALLATION_ID_LENGTH / 2).toString('hex')
+}
+
+/**
+ * ValidationDeps is everything the two checks below need, all of it handed in.
+ * `verify` is the one check that runs a second read, and it is `verifyCandidate`
+ * from `src/source/cli.ts`: the pairing logic stays in exactly one place.
+ */
 export interface ValidationDeps {
   readonly appEnv?: Readonly<Record<string, string | undefined>>
   readonly spawner?: ChildSpawner
   readonly spawnLog?: SpawnLogWriter
   readonly fs?: InstallationFs
+  /** `home` is what rule 4's `~/.local/bin` is resolved against, and `prefixes`
+   * replaces the well-known list for a test that cannot create
+   * `/opt/homebrew/bin` -- exactly as `resolveBinary` takes them. */
+  readonly home?: string
+  readonly prefixes?: readonly string[] | undefined
+  /** verify is the pairing check of rule 7: one allow-listed `doctor --json`
+   * run from the candidate's checkout, with the candidate's project. */
   readonly verify: (candidate: InstallationCandidate) => Promise<void>
   /** workingDirectory is where a probe without a checkout runs: the private
    * directory (design section 3.4 rule 5), never the binary's own directory.
    * It is a dep only so a test can see which one was used. */
   readonly workingDirectory?: () => string
+  /** `wslPath` replaces the `wsl.exe` a WSL candidate's probe runs, so a test
+   * can point the route at the fake (T-A1, T-C6). */
+  readonly wslPath?: string | undefined
 }
 
-/** ValidatedInstallation is an installation that passed every check, with the
- * compatibility the handshake read. `mode` is `ok` or `reduced`: a `refused`
- * CLI is never stored. */
+/** ProbedInstallation is a candidate the handshake answered for: the binary rule
+ * 4 resolved, the version it reported, where it came from, and the compatibility
+ * classified from it. */
+export interface ProbedInstallation {
+  readonly compatibility: CliCompatibility
+  readonly path: string
+  readonly version: string
+  readonly source: 'configured' | 'well-known'
+}
+
+/** ValidatedInstallation is a candidate that passed every check, with the
+ * compatibility the handshake read. `mode` is `ok` or `reduced`: a `refused` CLI
+ * is never stored. `resolved` is the binary rule 4 actually found -- a fact of
+ * this run, which the caller hands to the window it opens and which is **never**
+ * written to the store. */
 export interface ValidatedInstallation {
   readonly installation: StoredInstallation
   readonly compatibility: CliCompatibility
+  readonly resolved: string
 }
 
 /** InstallationValidation is the answer: the installation, or the sentence that
@@ -546,8 +760,8 @@ export type InstallationValidation =
  * withSpawnLog runs one probe with a spawn log: the one the caller handed in, or
  * one this function opens from the operator's `FUGARO_CONSOLE_SPAWN_LOG` and
  * closes when the probe is done -- the same rule `verifyCandidate` and the
- * startup handshake follow, so an add's or a choose's `version` spawn is in the
- * log with the candidate's project (plan 3.4b step 2; review S2).
+ * startup handshake follow, so a choose's or a checkout's `version` spawn is in
+ * the log with the candidate's project (plan 3.4b step 2; review S2).
  */
 async function withSpawnLog<T>(
   env: Readonly<Record<string, string | undefined>>,
@@ -562,48 +776,122 @@ async function withSpawnLog<T>(
   }
 }
 
-/** newInstallationId is the app's own identifier for an installation. */
-export function newInstallationId(): string {
-  return randomBytes(INSTALLATION_ID_LENGTH / 2).toString('hex')
+/**
+ * probeInstallation answers "can this console drive the `fugaro` for this
+ * installation, and which one is it?", and it is the whole of what a **choose**
+ * runs: the binary resolved by rule 4 -- the store's override first when there
+ * is one, then the well-known install locations (`/opt/homebrew/bin`,
+ * `/usr/local/bin`, `~/.local/bin`, `/usr/bin`), and never the app's inherited
+ * `PATH` -- and its `version`, classified. A `refused` CLI is not chosen: the
+ * console shows the sentence it reached rather than binding a source it cannot
+ * drive.
+ *
+ * It does **not** run the pairing check. Choosing is not adding: the pairing was
+ * proved when the installation was given a checkout, and re-running `doctor` on
+ * every choose would be a spawn for a fact that has not changed.
+ *
+ * The version is returned and never stored: a stored version can only go stale,
+ * and this is the read that keeps it current for the run.
+ */
+export async function probeInstallation(
+  candidate: InstallationCandidate,
+  deps: Omit<ValidationDeps, 'verify' | 'fs'>,
+): Promise<{ readonly ok: true; readonly value: ProbedInstallation } | { readonly ok: false; readonly reason: string }> {
+  const project = candidate.project
+  if (typeof project !== 'string' || !isProjectName(project)) {
+    return { ok: false, reason: 'a project name is required: no whitespace, no leading dash, no control character, at most 200 characters' }
+  }
+  const configPath = candidate.configPath
+  const checkout = candidate.checkout
+  const target: SpawnTarget = { project, ...(configPath === undefined ? {} : { configPath }) }
+  const env = deps.appEnv ?? {}
+  // **Which route, and it is the candidate's `distro` that decides.** An
+  // installation with a distribution is a Windows installation whose CLI is a
+  // Linux program inside it (D2(a)): the binary's path is a Linux spelling the
+  // host cannot `stat`, and the question "is it there, and does it run?" is the
+  // distribution's -- asked through the same `version` probe, by
+  // `resolveInstalledBinary`'s WSL branch (T-C5). Without a distro the candidate
+  // is an ordinary host installation and rule 4's walk is the answer (F4).
+  const distro = candidate.distro ?? ''
+  const resolution = await withSpawnLog(env, deps.spawnLog, (log) => {
+    const shared = {
+      appEnv: env,
+      target,
+      ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }),
+      log,
+    }
+    if (distro !== '') {
+      return resolveInstalledBinary({
+        ...shared,
+        binaryPath: candidate.binaryPath ?? '',
+        distro,
+        // The checkout is the CLI's working directory **inside** the
+        // distribution, so it is the wrapper's `--cd`; `wsl.exe` itself is
+        // started in a host directory, which the checkout is not.
+        ...(checkout === undefined ? {} : { wslDirectory: checkout }),
+        ...(deps.wslPath === undefined ? {} : { wslPath: deps.wslPath }),
+        directory: (deps.workingDirectory ?? privateWorkingDirectory)(),
+      })
+    }
+    return resolveBinary({
+      ...shared,
+      // The store's override, when it has one. Absent is the ordinary case: rule
+      // 4 walks the well-known locations, and the console never asks.
+      ...(candidate.binaryPath === undefined || candidate.binaryPath === ''
+        ? {}
+        : { configuredPath: candidate.binaryPath }),
+      ...(deps.home === undefined ? {} : { home: deps.home }),
+      ...(deps.prefixes === undefined ? {} : { prefixes: deps.prefixes }),
+      directory: checkout ?? (deps.workingDirectory ?? privateWorkingDirectory)(),
+    })
+  })
+  if (!resolution.ok) return { ok: false, reason: resolution.reason }
+  const compatibility = classifyCliVersion(resolution.version)
+  if (compatibility.mode === 'refused') {
+    return {
+      ok: false,
+      reason:
+        `this console cannot drive the CLI at ${resolution.path}: ` +
+        `it reports ${compatibility.cliVersion ?? 'no version'}, and this console needs ` +
+        `${compatibility.supported.join(' or ')}.`,
+    }
+  }
+  return {
+    ok: true,
+    value: { compatibility, path: resolution.path, version: resolution.version, source: resolution.source },
+  }
 }
 
 /**
- * validateInstallation runs the checks in the order the plan fixes, and stops
- * at the first refusal:
+ * validateInstallation is the check that runs when an installation is given a
+ * **checkout** -- the one thing the picker may set, from the directories the CLI
+ * itself listed for that installation -- and it stops at the first refusal:
  *
- *   1. the schema: a project name that is safe and bounded, and an id;
- *   2. the binary: absolute, and an existing **executable regular file**;
- *   3. the config path, when given: absolute and an existing file, `stat`ed and
- *      **never opened**;
- *   4. the checkout, when given: absolute and an existing directory;
- *   5. the version handshake: `version` is run and classified, and a `refused`
- *      CLI is not stored (a `reduced` one is, and is marked);
- *   6. `deps.verify` -- one allow-listed `doctor --json` -- whose refusal is the
- *      CLI's own sentence, shown verbatim.
+ *   1. the schema: a project name that is safe and bounded, a config path and a
+ *      checkout that are absolute when they are given;
+ *   2. the checkout, when given **on the host route**: an existing directory,
+ *      because it becomes the child's working directory (rule 5). Under a
+ *      `distro` this check is not run at all -- the checkout is then a Linux
+ *      spelling the host cannot see (F4, T-C6), and the probe below answers for
+ *      it;
+ *   3. `probeInstallation`: rule 4's resolution and the version handshake --
+ *      inside the distribution when the candidate names one (T-C5) -- which is
+ *      where a missing `fugaro` and a CLI this console cannot drive are
+ *      refused;
+ *   4. `deps.verify` -- one allow-listed `doctor --json` from that checkout,
+ *      with that project -- whose refusal is the CLI's own sentence, shown
+ *      verbatim. **It runs only when a checkout is given**: it is rule 7's
+ *      pairing check, and an installation with no checkout has no pairing to
+ *      check.
  *
- * Steps 2 and 4 are about *existence* and step 3 is about *shape*; none of them
- * is a read of the file's contents, and step 6 is the only place a config is
- * read at all -- by the CLI, which is the only thing that names it.
+ * None of these is a read of a config file: step 4 is the only place a config is
+ * read at all, by the CLI, which is the only thing that names it.
  */
 export async function validateInstallation(
   candidate: InstallationCandidate,
   deps: ValidationDeps,
 ): Promise<InstallationValidation> {
   const fs = deps.fs ?? nodeInstallationFs
-  const env = deps.appEnv ?? {}
-
-  // 1. The schema.
-  const project = candidate.project
-  if (typeof project !== 'string' || !isProjectName(project)) {
-    return {
-      ok: false,
-      reason: 'a project name is required: no whitespace, no leading dash, no control character, at most 200 characters',
-    }
-  }
-  const binaryPath = candidate.binaryPath
-  if (!isAbsolutePath(binaryPath, MAX_INSTALLATION_PATH_LENGTH)) {
-    return { ok: false, reason: 'the binary path must be an absolute path' }
-  }
   const configPath = candidate.configPath
   if (configPath !== undefined && !isAbsolutePath(configPath, MAX_INSTALLATION_PATH_LENGTH)) {
     return { ok: false, reason: 'the config path must be an absolute path' }
@@ -612,33 +900,14 @@ export async function validateInstallation(
   if (checkout !== undefined && !isAbsolutePath(checkout, MAX_INSTALLATION_PATH_LENGTH)) {
     return { ok: false, reason: 'the checkout must be an absolute path' }
   }
-
-  // 2. The binary: exists, is a regular file, and is executable. The `stat` and
-  // the executable bit are one check, so a directory that happens to be
-  // searchable is not mistaken for a binary.
-  if (!isExecutableFile(binaryPath)) {
-    return { ok: false, reason: `${binaryPath} is not an executable file` }
-  }
-  if (!fs.stat(binaryPath).isFile()) {
-    return { ok: false, reason: `${binaryPath} is not a regular file` }
-  }
-
-  // 3. The config path: a `stat` and nothing else. This is the check the design
-  // says is allowed -- the console may know that a file exists without knowing
-  // what is in it.
-  if (configPath !== undefined) {
-    let isFile = false
-    try {
-      isFile = fs.stat(configPath).isFile()
-    } catch {
-      isFile = false
-    }
-    if (!isFile) return { ok: false, reason: `${configPath} is not a file` }
-  }
-
-  // 4. The checkout: a directory, because it becomes the child's working
-  // directory (design section 3.4 rule 5).
-  if (checkout !== undefined) {
+  // **The checkout's mode question is asked only on the host route.** Under a
+  // `distro` the checkout is a Linux spelling inside the distribution (F15), and
+  // the host cannot `stat` it -- asking would refuse an installation whose
+  // directory is perfectly good, which is F4's "a path the host cannot see is
+  // not the host's to answer". What answers for it is the probe below, which
+  // starts the CLI *in* that directory (`--cd`, T-C5): a directory that is not
+  // there is then `wsl.exe`'s refusal, in its own words.
+  if (checkout !== undefined && (candidate.distro ?? '') === '') {
     let isDirectory = false
     try {
       isDirectory = fs.stat(checkout).isDirectory()
@@ -648,46 +917,36 @@ export async function validateInstallation(
     if (!isDirectory) return { ok: false, reason: `${checkout} is not a directory` }
   }
 
-  // 5. The handshake, against the binary that was just checked. The target
-  // carries the project and the config, because `version` is the one command
-  // that takes neither -- but `planFor` decides that, and this is the same
-  // target every other spawn from this installation uses.
-  const target: SpawnTarget = { project, ...(configPath === undefined ? {} : { configPath }) }
-  // The checkout, or the private directory -- the same choice `verifyCandidate`
-  // makes for step 6, so one add spawns from one directory (rule 5; review S2).
-  const directory = checkout ?? (deps.workingDirectory ?? privateWorkingDirectory)()
-  const plan = planFor('cli.version', {}, {
-    target,
-    binaryPath,
-    directory,
-    appEnv: env,
-  })
-  const probed = await withSpawnLog(env, deps.spawnLog, (log) =>
-    probeVersion(plan, { ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }), log }),
-  )
+  const probed = await probeInstallation(candidate, deps)
   if (!probed.ok) return { ok: false, reason: probed.reason }
-  const compatibility = classifyCliVersion(probed.version)
-  if (compatibility.mode === 'refused') {
-    return {
-      ok: false,
-      reason:
-        `this console cannot drive the CLI at ${binaryPath}: ` +
-        `it reports ${compatibility.cliVersion ?? 'no version'}, and this console needs ` +
-        `${compatibility.supported.join(' or ')}.`,
-    }
-  }
 
-  // 6. The one allow-listed read that proves the pairing. Its refusal is the
-  // CLI's own sentence, passed through unchanged -- and a refusal is a **value**
-  // here, not a throw: `deps.verify` is `verifyCandidate`, which signals a
-  // refusal by throwing a `SourceRefusal` whose message *is* the CLI's line.
-  // Letting it escape would give the picker an unhandled rejection instead of
-  // the sentence the operator needs to read, and would make the "nothing is
-  // stored" guarantee depend on a caller's `catch` rather than on this step.
-  try {
-    await deps.verify({ project, binaryPath, ...(configPath === undefined ? {} : { configPath }), ...(checkout === undefined ? {} : { checkout }) })
-  } catch (error) {
-    return { ok: false, reason: error instanceof Error ? error.message : 'the pairing check refused this installation' }
+  if (checkout !== undefined) {
+    // The pairing check. Its refusal is the CLI's own sentence, passed through
+    // unchanged -- and a refusal is a **value** here, not a throw:
+    // `deps.verify` is `verifyCandidate`, which signals a refusal by throwing a
+    // `SourceRefusal` whose message *is* the CLI's line. Letting it escape would
+    // give the picker an unhandled rejection instead of the sentence the
+    // operator needs to read, and would make the "nothing is stored" guarantee
+    // depend on a caller's `catch` rather than on this step.
+    //
+    // **`distro` goes with it** (T-D1). For a WSL installation this read is
+    // `doctor --json` **inside the distribution** (T-C5's route, D2(a)): the
+    // checkout is a Linux directory the host cannot see, so a `verify` that did
+    // not know the distribution would start the CLI on the host, in a directory
+    // that does not exist there. What the CLI proves -- that this checkout
+    // belongs to this project -- is a fact about the machine the CLI runs on.
+    const distro = candidate.distro
+    try {
+      await deps.verify({
+        project: candidate.project,
+        binaryPath: probed.value.path,
+        ...(configPath === undefined ? {} : { configPath }),
+        checkout,
+        ...(distro === undefined || distro === '' ? {} : { distro }),
+      })
+    } catch (error) {
+      return { ok: false, reason: error instanceof Error ? error.message : 'the pairing check refused this installation' }
+    }
   }
 
   return {
@@ -695,87 +954,58 @@ export async function validateInstallation(
     value: {
       installation: {
         id: newInstallationId(),
-        project,
-        binaryPath,
+        project: candidate.project,
+        // The candidate's own override, when it had one -- never the resolved
+        // path. What rule 4 found is a fact of this run, and storing it would
+        // pin the console to a binary it did not choose.
+        ...(candidate.binaryPath === undefined || candidate.binaryPath === '' ? {} : { binaryPath: candidate.binaryPath }),
         ...(configPath === undefined ? {} : { configPath }),
         ...(checkout === undefined ? {} : { checkout }),
+        // The WSL field, carried through unchanged (T-D1): it is what makes the
+        // stored record a WSL one on every later read, and dropping it here
+        // would send the next launch to the host route with Linux paths.
+        ...(candidate.distro === undefined || candidate.distro === '' ? {} : { distro: candidate.distro }),
       },
-      compatibility,
+      compatibility: probed.value.compatibility,
+      resolved: probed.value.path,
     },
   }
-}
-
-/**
- * probeInstallation runs **only** the version handshake against a stored
- * installation: `version`, classified, and nothing else. It is what a *choose*
- * runs -- the plan's step 5, "a choose of an installation whose CLI is refused
- * is not a choose" -- and it is deliberately not `validateInstallation`, which
- * would run the pairing check again. Choosing is not adding: the operator has
- * already proved the pairing once, and re-running `doctor` on every choose would
- * be a second spawn for a fact that has not changed.
- *
- * The compatibility is returned so the caller can record it: the version is
- * never stored (a stored version can only go stale), and this is the read that
- * keeps it current for the run.
- */
-export async function probeInstallation(
-  installation: StoredInstallation,
-  deps: {
-    readonly appEnv?: Readonly<Record<string, string | undefined>>
-    readonly spawner?: ChildSpawner
-    readonly spawnLog?: SpawnLogWriter
-    readonly workingDirectory?: () => string
-  },
-): Promise<{ readonly ok: true; readonly compatibility: CliCompatibility } | { readonly ok: false; readonly reason: string }> {
-  const env = deps.appEnv ?? {}
-  const target: SpawnTarget = {
-    project: installation.project,
-    ...(installation.configPath === undefined ? {} : { configPath: installation.configPath }),
-  }
-  const plan = planFor('cli.version', {}, {
-    target,
-    binaryPath: installation.binaryPath,
-    directory: installation.checkout ?? (deps.workingDirectory ?? privateWorkingDirectory)(),
-    appEnv: env,
-  })
-  const probed = await withSpawnLog(env, deps.spawnLog, (log) =>
-    probeVersion(plan, { ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }), log }),
-  )
-  if (!probed.ok) return { ok: false, reason: probed.reason }
-  const compatibility = classifyCliVersion(probed.version)
-  if (compatibility.mode === 'refused') {
-    return {
-      ok: false,
-      reason:
-        `this console cannot drive the CLI at ${installation.binaryPath}: ` +
-        `it reports ${compatibility.cliVersion ?? 'no version'}, and this console needs ` +
-        `${compatibility.supported.join(' or ')}.`,
-    }
-  }
-  return { ok: true, compatibility }
 }
 
 // ---------------------------------------------------------------------------
 // The picker's closed surface
 // ---------------------------------------------------------------------------
 
-/** InstallationOperationName is the eight channels the picker window may use.
- * They are the picker's whole surface: three dialogs that answer tokens, the
- * list, the current row, and the three mutations. */
-export type InstallationOperationName =
-  | 'list'
-  | 'current'
-  | 'pickBinary'
-  | 'pickConfig'
-  | 'pickCheckout'
-  | 'add'
-  | 'choose'
-  | 'remove'
+/**
+ * InstallationOperationName is the picker window's whole surface, and it is five
+ * channels: the list, one click that opens an installation, the checkout an
+ * installation is used from, the removal of the console's own record, and the
+ * website link the onboarding screens offer.
+ *
+ * The add-an-installation form is **gone** (owner's ruling of 2026-10-20): there
+ * is no `add`, no `pickBinary`, no `pickConfig` and no `pickCheckout`, because
+ * the console asks the operator for no binary and no config. What is left is a
+ * list the CLI printed, one button per row, and the two onboarding screens --
+ * so a renderer cannot name a path this process did not itself obtain.
+ */
+export type InstallationOperationName = 'list' | 'choose' | 'checkout' | 'remove' | 'reveal' | 'openExternal'
 
-/** InstallationArgumentKind is the closed set of shapes one argument may take.
- * `installationToken` is the one that matters: it is a token this process
- * issued, and a literal path -- however well-formed -- is not one. */
-export type InstallationArgumentKind = 'installationName' | 'installationId' | 'installationToken'
+/**
+ * InstallationArgumentKind is the closed set of shapes one argument may take.
+ *
+ * `installationName` is a project name -- the handle a discovered row is opened
+ * by, which is the CLI's own name for the installation. `installationCheckout`
+ * is a directory the CLI *itself* listed for that installation; the shape is
+ * checked here and membership of that list is checked by the picker, so a
+ * renderer cannot name a directory the CLI never offered.
+ *
+ * There is deliberately no `externalUrl` kind: the picker's one link row takes
+ * **no arguments at all**, so the URL is the main process's own constant and
+ * never crosses the boundary. The console's external-link rule still applies to
+ * it -- it is applied where the URL is opened, `openExternalValidated` in
+ * `src/main/window.ts`, which is the one place `shell.openExternal` is called.
+ */
+export type InstallationArgumentKind = 'installationName' | 'installationCheckout'
 
 /** InstallationArgument is one argument of one operation. */
 export interface InstallationArgument {
@@ -793,30 +1023,38 @@ export interface InstallationOperation {
 
 /**
  * INSTALLATION_OPERATIONS is the picker's allow-list, and it is the *whole* of
- * it. There is no row that takes a path, a command, a URL or a free-form
- * string: `add` names its three paths by **pick token**, which is a capability
- * the main process issued for a path the main process chose in a native dialog.
- * A renderer that sends a path -- even the path it was just shown -- has sent
- * something no row accepts, and it is refused by name.
+ * it. Every row names its subject by the things the CLI itself printed -- a
+ * project name, or a directory out of that installation's own `checkouts` list
+ * -- and the one URL row is the console's validated external-link path. There is
+ * no row that takes a binary path, a config path, a command or a free-form
+ * string: a renderer that sends one has sent something no row accepts, and it is
+ * refused by name.
  */
 export const INSTALLATION_OPERATIONS: readonly InstallationOperation[] = Object.freeze(([
   { name: 'list', method: 'list', args: [] },
-  { name: 'current', method: 'current', args: [] },
-  { name: 'pickBinary', method: 'pickBinary', args: [] },
-  { name: 'pickConfig', method: 'pickConfig', args: [] },
-  { name: 'pickCheckout', method: 'pickCheckout', args: [] },
+  { name: 'choose', method: 'choose', args: [{ key: 'project', kind: 'installationName', required: true }] },
   {
-    name: 'add',
-    method: 'add',
+    name: 'checkout',
+    method: 'checkout',
     args: [
       { key: 'project', kind: 'installationName', required: true },
-      { key: 'binary', kind: 'installationToken', required: true },
-      { key: 'config', kind: 'installationToken', required: false },
-      { key: 'checkout', kind: 'installationToken', required: false },
+      // Optional, and absent means "no checkout": the installation works
+      // without one (design section 3.4 rule 5), and clearing one an operator
+      // set is how they get back to that state.
+      { key: 'checkout', kind: 'installationCheckout', required: false },
     ],
   },
-  { name: 'choose', method: 'choose', args: [{ key: 'id', kind: 'installationId', required: true }] },
-  { name: 'remove', method: 'remove', args: [{ key: 'id', kind: 'installationId', required: true }] },
+  { name: 'remove', method: 'remove', args: [{ key: 'project', kind: 'installationName', required: true }] },
+  // `reveal` takes a **project name** and no path: the path the file manager is
+  // handed is computed in this process from its own record (`explorerPathFor`,
+  // T-D3), so a renderer cannot name a directory for Explorer to open -- the
+  // same rule the checkout row keeps by checking membership of the CLI's own
+  // list.
+  { name: 'reveal', method: 'reveal', args: [{ key: 'project', kind: 'installationName', required: true }] },
+  // No arguments at all: `GETTING_STARTED_URL` is this process's constant, and
+  // the one path that opens it is `openExternalValidated`. A renderer that sends
+  // a URL has sent a key no row declares, and it is refused by name.
+  { name: 'openExternal', method: 'openExternal', args: [] },
 ] satisfies readonly InstallationOperation[]).map(
   (row): InstallationOperation => Object.freeze({ ...row, args: Object.freeze(row.args.map((arg) => Object.freeze(arg))) }),
 ))
@@ -852,13 +1090,14 @@ export type InstallationArguments = Readonly<Record<string, string>>
  * checked values rather than the payload: a key the row does not declare never
  * reaches a handler, and neither does a value of the wrong shape.
  *
- * `redeem` is how a token is checked. It is called here, at validation time,
- * and it consumes the token: a token that is redeemed twice is refused the
- * second time, because the first redemption removed it. */
+ * There is no token to redeem (the add-an-installation form, and with it
+ * `createPickTokens` and `MAX_OUTSTANDING_PICKS`, is gone): what a row's subject
+ * is checked against is the table's own declaration, and a `checkout`'s
+ * membership of the list the CLI printed is the picker's check, against the
+ * document it last read. */
 export function validateInstallationArguments(
   operation: InstallationOperation,
   payload: unknown,
-  redeem: (kind: 'binary' | 'config' | 'checkout', token: string) => string | null,
 ): { readonly ok: true; readonly args: InstallationArguments } | { readonly ok: false; readonly reason: string } {
   const given: Record<string, unknown> = payload === undefined || payload === null ? {} : (payload as Record<string, unknown>)
   if (typeof given !== 'object' || Array.isArray(given)) return { ok: false, reason: 'the arguments are not an object' }
@@ -882,76 +1121,20 @@ export function validateInstallationArguments(
       case 'installationName':
         if (!isProjectName(value)) return { ok: false, reason: `${arg.key} is not a project name` }
         break
-      case 'installationId':
-        if (!INSTALLATION_ID_PATTERN.test(value)) return { ok: false, reason: `${arg.key} is not an installation id` }
+      case 'installationCheckout':
+        // A shape check and nothing more: it must be an absolute directory path
+        // this console will hand to a child as its `cwd`. Whether the CLI
+        // actually listed it is the picker's check, against the document it
+        // last read -- this one cannot know it, and a validator that guessed
+        // would be the place a made-up path got through.
+        if (!isAbsolutePath(value, MAX_INSTALLATION_PATH_LENGTH)) {
+          return { ok: false, reason: `${arg.key} is not an absolute directory path` }
+        }
         break
-      case 'installationToken': {
-        // The one check the whole picker turns on: the value must be an
-        // outstanding token this process issued for this kind of path. A
-        // literal path is refused here, by shape, before any redemption.
-        if (!PICK_TOKEN_PATTERN.test(value)) return { ok: false, reason: `${arg.key} is not a path this console offered` }
-        const path = redeem(arg.key as 'binary' | 'config' | 'checkout', value)
-        if (path === null) return { ok: false, reason: `${arg.key} is not an outstanding choice` }
-        args[arg.key] = path
-        continue
-      }
     }
     args[arg.key] = value
   }
   return { ok: true, args: Object.freeze(args) }
-}
-
-/** PickKind is the three dialogs, and the argument each answers for. */
-export type PickKind = 'binary' | 'config' | 'checkout'
-
-/** PickTokens is the pick-token register. */
-export interface PickTokens {
-  issue(kind: PickKind, path: string): string
-  redeem(kind: PickKind, token: string): string | null
-  dropAll(): void
-  readonly outstanding: number
-}
-
-/**
- * createPickTokens returns the register.
- *
- * A token is **single-use** (redeeming removes it, so a replay answers
- * `null`), it is bound to the kind of path it was issued for (a token issued
- * for a checkout cannot arrive as a binary), it is **dropped when the picker
- * closes** (`dropAll`), and at most `MAX_OUTSTANDING_PICKS` are outstanding --
- * issuing past the bound drops the oldest, so a renderer that opens dialogs in
- * a loop cannot grow this map without limit.
- *
- * Nothing here is a path the renderer can read back: the tokens are the only
- * thing the renderer ever sees, and they are what makes "the renderer never
- * names a path" a property of the surface rather than a rule the renderer is
- * asked to follow.
- */
-export function createPickTokens(): PickTokens {
-  const issued = new Map<string, { readonly kind: PickKind; readonly path: string }>()
-  return {
-    issue(kind: PickKind, path: string): string {
-      if (issued.size >= MAX_OUTSTANDING_PICKS) {
-        const oldest = issued.keys().next()
-        if (!oldest.done) issued.delete(oldest.value)
-      }
-      const token = randomBytes(PICK_TOKEN_LENGTH / 2).toString('hex')
-      issued.set(token, { kind, path })
-      return token
-    },
-    redeem(kind: PickKind, token: string): string | null {
-      const held = issued.get(token)
-      if (held === undefined || held.kind !== kind) return null
-      issued.delete(token)
-      return held.path
-    },
-    dropAll(): void {
-      issued.clear()
-    },
-    get outstanding(): number {
-      return issued.size
-    },
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -963,16 +1146,36 @@ export function createPickTokens(): PickTokens {
  * nobody probed is never reported `ok` (review S1). */
 export type InstallationMode = CliCompatibility['mode'] | 'unknown'
 
-/** InstallationRow is one row as a screen sees it. `active` is a boolean and
- * `mode` is the compatibility the handshake last read for it: the picker draws
- * a reduced installation differently, and the *reason* is the console's, not
- * the row's. */
+/** InstallationRow is one **stored** record as a screen sees it: a project the
+ * console has chosen, or been told something about, and whether it is active.
+ *
+ * The picker's rows are not these -- they are the CLI's own list, drawn as it
+ * printed it, with these records merged in -- and the difference matters: a
+ * store row is something the console decided, a discovered row is a fact of the
+ * machine. `binary` is the legacy override when the record still carries one,
+ * and `mode` is the compatibility the handshake last read for it in this run
+ * (`unknown` when nothing has read it, review S1).
+ */
 export interface InstallationRow {
   readonly id: string
   readonly project: string
-  readonly binary: string
+  readonly binary?: string
   readonly config?: string
   readonly checkout?: string
+  /** `distro` is the WSL distribution this row's CLI runs inside, when it has
+   * one (T-D1). A screen that draws a path for this row states the **Linux**
+   * spelling (`checkout`) and never the UNC one, which is Windows' and lives on
+   * `explorerPath` below (D3(a)). */
+  readonly distro?: string
+  /** `explorerPath` is the spelling **Windows opens** for this row's checkout,
+   * and it is the only field a reveal affordance reads (D3(a), T-D3). It is the
+   * UNC form (`\\wsl.localhost\<distro>\…`) for a WSL row and the checkout
+   * itself for a host row on Windows, and it is **absent** when there is
+   * nothing for Windows to open -- no checkout, or a platform that has no
+   * Explorer for this console's paths. It is never what a screen draws as "the
+   * installation's path": that line is `checkout`, the Linux spelling, which is
+   * the one the operator can paste into a terminal inside the distribution. */
+  readonly explorerPath?: string
   readonly active: boolean
   readonly mode: InstallationMode
 }
@@ -983,7 +1186,10 @@ export interface InstallationRow {
  * refused, so the dashboard can say so in a sentence naming the path (plan 3.4b
  * step 1). With one, it carries the handshake's version and mode for it (plan
  * step 6), or `cliVersion: null` and `mode: 'unknown'` when nothing has read it
- * in this run. */
+ * in this run. `binary` is the store's optional override: **absent is the
+ * ordinary case**, because the console resolves the installed `fugaro` itself
+ * (owner's ruling of 2026-10-20) and never stores the path it found.
+ */
 export type ActiveInstallation =
   | {
       readonly chosen: false
@@ -995,32 +1201,73 @@ export type ActiveInstallation =
       readonly chosen: true
       readonly id: string
       readonly project: string
-      readonly binary: string
+      readonly binary?: string
       readonly config?: string
       readonly checkout?: string
+      /** `distro` is present exactly when the active installation is a WSL one
+       * (T-D1): the header and the environment view say which side of the
+       * boundary the CLI and its credentials are on (F21). */
+      readonly distro?: string
       readonly cliVersion: string | null
       readonly mode: InstallationMode
     }
 
-/** InstallationRegistry is the store as the rest of the app uses it. */
+/**
+ * withResolvedBinary joins a stored record with the binary rule 4 resolved for
+ * it **in this run** (`resolved`), and it is the header's answer: the file the
+ * console is actually driving.
+ *
+ * The resolution wins over the store's field, and that direction is the whole
+ * point. A record's `binaryPath` is an **optional override** that rule 4 merely
+ * *asks first* (owner's ruling of 2026-10-20): a console that read the store
+ * alone would name a path it is not running the moment that file goes away and
+ * the walk carries on to `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`
+ * and `/usr/bin`. For a record this console wrote itself there is nothing to
+ * read at all -- `choose` stores an id and a project and no path -- so the
+ * header would have no binary to draw while the console is driving one.
+ *
+ * `resolved` is `undefined` in exactly two cases, and both are answered by the
+ * store: nothing has resolved a binary for this installation in this run yet,
+ * and the file's own field is then the best answer there is (a legacy record,
+ * before any read).
+ *
+ * A `chosen: false` answer carries no binary at all and is returned unchanged:
+ * it is D13's sentence and the store's refusal, and neither names a file.
+ */
+export function withResolvedBinary(active: ActiveInstallation, resolved: string | undefined): ActiveInstallation {
+  if (!active.chosen) return active
+  const binary = resolved === undefined || resolved === '' ? active.binary : resolved
+  return binary === undefined || binary === '' ? active : { ...active, binary }
+}
+
+/** InstallationRegistry is the store as the rest of the app uses it.
+ *
+ * Every method but `load` names an installation by its **project name**, which
+ * is the handle the CLI's own list gives: the console's rows come from that
+ * document, so a name it printed is what a screen has to send back.
+ */
 export interface InstallationRegistry {
   /** load reads the file once. It is called at startup, before any window. */
   load(): InstallationRead
   rows(): readonly InstallationRow[]
+  /** entry is the stored record for a project, or null. */
+  entry(project: string): StoredInstallation | null
   active(): StoredInstallation | null
   activeCompatibility(): CliCompatibility | null
   current(): ActiveInstallation
-  /** add validates the candidate and persists it. Nothing is written on the
-   * refusing path. */
-  add(candidate: InstallationCandidate): Promise<InstallationValidation>
-  /** choose binds the installation and persists `active`. */
-  choose(id: string): InstallationFile
-  /** remove drops the installation; removing the active one leaves none
-   * active. */
-  remove(id: string): InstallationFile
-  /** remember records the compatibility the handshake read for one
-   * installation, so a row can say `reduced` without re-running `version`. */
-  remember(id: string, compatibility: CliCompatibility): void
+  /** choose records the project as this console's installation and persists
+   * `active`. A project with no record gets one: it is the operator's choice,
+   * and that choice is the only thing the store holds. */
+  choose(project: string): InstallationFile
+  /** setCheckout records the directory the installation is used from, or
+   * removes it when `checkout` is undefined. */
+  setCheckout(project: string, checkout: string | undefined): InstallationFile
+  /** remove drops the console's record for that project; removing the active
+   * one leaves none active. */
+  remove(project: string): InstallationFile
+  /** remember records the compatibility the handshake read for one project, so
+   * a row can say `reduced` without re-running `version`. */
+  remember(project: string, compatibility: CliCompatibility): void
   readonly path: string
 }
 
@@ -1035,7 +1282,6 @@ export interface InstallationRegistry {
  */
 export function createInstallationRegistry(options: {
   readonly store: InstallationFileStore
-  readonly validate: (candidate: InstallationCandidate) => Promise<InstallationValidation>
 }): InstallationRegistry & { readonly refusal: string | null } {
   let file: InstallationFile = EMPTY_INSTALLATION_FILE
   let refusal: string | null = null
@@ -1052,6 +1298,42 @@ export function createInstallationRegistry(options: {
   const activeOf = (): StoredInstallation | null => {
     if (file.active === null) return null
     return file.installations.find((installation) => installation.id === file.active) ?? null
+  }
+
+  const entryOf = (project: string): StoredInstallation | null =>
+    file.installations.find((installation) => installation.project === project) ?? null
+
+  /**
+   * recordOf is `entryOf`, or a fresh record for a project the CLI listed and
+   * the console has nothing about. Creating one is how a **choose** of a
+   * discovered installation is written down: the row existed before the console
+   * touched it, and what the store holds is the operator's choice of it.
+   */
+  const recordOf = (project: string): StoredInstallation => {
+    const held = entryOf(project)
+    if (held !== null) return held
+    // The bound is the store's, and it is checked before a record is created:
+    // a machine with more installations than this console keeps is a machine
+    // whose list the picker still draws in full, with the ones it cannot
+    // remember marked rather than hidden.
+    if (file.installations.length >= MAX_INSTALLATIONS) {
+      throw new Error(`the console keeps at most ${String(MAX_INSTALLATIONS)} installations`)
+    }
+    return { id: newInstallationId(), project }
+  }
+
+  /** replace writes one record into the file, in the place the record it
+   * replaces held -- or at the end, when it is new. The order is the file's own
+   * and a write never reshuffles it. */
+  const replace = (record: StoredInstallation, active: string | null): InstallationFile => {
+    const held = file.installations.some((installation) => installation.project === record.project)
+    if (!held && file.installations.length >= MAX_INSTALLATIONS) {
+      throw new Error(`the console keeps at most ${String(MAX_INSTALLATIONS)} installations`)
+    }
+    const installations = held
+      ? file.installations.map((installation) => (installation.project === record.project ? record : installation))
+      : [...file.installations, record]
+    return persist({ version: INSTALLATION_FILE_VERSION, active, installations })
   }
 
   return {
@@ -1076,17 +1358,20 @@ export function createInstallationRegistry(options: {
       return file.installations.map((installation) => ({
         id: installation.id,
         project: installation.project,
-        binary: installation.binaryPath,
+        ...(installation.binaryPath === undefined ? {} : { binary: installation.binaryPath }),
         ...(installation.configPath === undefined ? {} : { config: installation.configPath }),
         ...(installation.checkout === undefined ? {} : { checkout: installation.checkout }),
+        ...(installation.distro === undefined ? {} : { distro: installation.distro }),
+        ...(explorerPathFor(installation) === undefined ? {} : { explorerPath: explorerPathFor(installation) }),
         active: installation.id === file.active,
-        mode: compatibility.get(installation.id)?.mode ?? 'unknown',
+        mode: compatibility.get(installation.project)?.mode ?? 'unknown',
       }))
     },
+    entry: entryOf,
     active: activeOf,
     activeCompatibility(): CliCompatibility | null {
-      const active = file.active
-      return active === null ? null : (compatibility.get(active) ?? null)
+      const active = activeOf()
+      return active === null ? null : (compatibility.get(active.project) ?? null)
     },
     current(): ActiveInstallation {
       const active = activeOf()
@@ -1097,61 +1382,63 @@ export function createInstallationRegistry(options: {
           ...(refusal === null ? {} : { refusal, path: options.store.path }),
         }
       }
-      const read = compatibility.get(active.id)
+      const read = compatibility.get(active.project)
       return {
         chosen: true,
         id: active.id,
         project: active.project,
-        binary: active.binaryPath,
+        ...(active.binaryPath === undefined ? {} : { binary: active.binaryPath }),
         ...(active.configPath === undefined ? {} : { config: active.configPath }),
         ...(active.checkout === undefined ? {} : { checkout: active.checkout }),
+        ...(active.distro === undefined ? {} : { distro: active.distro }),
         cliVersion: read?.cliVersion ?? null,
         mode: read?.mode ?? 'unknown',
       }
     },
-    async add(candidate: InstallationCandidate): Promise<InstallationValidation> {
+    choose(project: string): InstallationFile {
       if (refusal !== null) {
-        return { ok: false, reason: `the console will not add an installation while ${options.store.path} is unreadable (${refusal})` }
+        throw new Error(`the console keeps no installations while ${options.store.path} is unreadable (${refusal})`)
       }
-      if (file.installations.length >= MAX_INSTALLATIONS) {
-        return { ok: false, reason: `the console keeps at most ${String(MAX_INSTALLATIONS)} installations` }
-      }
-      const validated = await options.validate(candidate)
-      if (!validated.ok) return validated
-      // The bound is checked again *after* the await: validation runs a child
-      // process, so two adds can be in flight at once, and a check made only
-      // before it would let a seventeenth entry through. There is no `await`
-      // between this check and the persist, which is what makes it hold.
-      if (file.installations.length >= MAX_INSTALLATIONS) {
-        return { ok: false, reason: `the console keeps at most ${String(MAX_INSTALLATIONS)} installations` }
-      }
-      compatibility.set(validated.value.installation.id, validated.value.compatibility)
-      persist({
-        version: INSTALLATION_FILE_VERSION,
-        active: file.active,
-        installations: [...file.installations, validated.value.installation],
-      })
-      return validated
+      const record = recordOf(project)
+      return replace(record, record.id)
     },
-    choose(id: string): InstallationFile {
-      if (!file.installations.some((installation) => installation.id === id)) {
-        throw new Error(`no installation with id ${id}`)
+    setCheckout(project: string, checkout: string | undefined): InstallationFile {
+      if (refusal !== null) {
+        throw new Error(`the console keeps no installations while ${options.store.path} is unreadable (${refusal})`)
       }
-      return persist({ version: INSTALLATION_FILE_VERSION, active: id, installations: file.installations })
+      const held = recordOf(project)
+      // Rebuilt field by field rather than spread with an `undefined`: clearing
+      // a checkout must remove the key, so the in-memory record and the file it
+      // is written to cannot disagree about whether this installation has one.
+      const record: StoredInstallation = {
+        id: held.id,
+        project: held.project,
+        ...(held.binaryPath === undefined ? {} : { binaryPath: held.binaryPath }),
+        ...(held.configPath === undefined ? {} : { configPath: held.configPath }),
+        ...(checkout === undefined ? {} : { checkout }),
+        // **The route survives a checkout change** (T-D1). This record is
+        // rebuilt field by field rather than spread, so a field left out here is
+        // a field *deleted* from the file -- and a `distro` dropped by a
+        // checkout would turn a WSL installation into a host one with Linux
+        // paths in it, silently, on the next launch.
+        ...(held.distro === undefined ? {} : { distro: held.distro }),
+      }
+      return replace(record, file.active)
     },
-    remember(id: string, value: CliCompatibility): void {
-      compatibility.set(id, value)
+    remember(project: string, value: CliCompatibility): void {
+      compatibility.set(project, value)
     },
-    remove(id: string): InstallationFile {
-      const remaining = file.installations.filter((installation) => installation.id !== id)
-      compatibility.delete(id)
+    remove(project: string): InstallationFile {
+      const held = entryOf(project)
+      if (held === null) throw new Error(`no installation named ${project}`)
+      compatibility.delete(project)
       // Removing the active installation leaves **none** active: there is no
       // "next one" the console may pick for the operator, and D13's no-guess
       // rule is the same rule here.
       return persist({
         version: INSTALLATION_FILE_VERSION,
-        active: file.active === id ? null : file.active,
-        installations: remaining,
+        active: file.active === held.id ? null : file.active,
+        installations: file.installations.filter((installation) => installation.id !== held.id),
       })
     },
   }

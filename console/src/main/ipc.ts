@@ -2,9 +2,13 @@
 // section 5.1 rule 5).
 //
 // The console has no IPC bridge. It has a fixed table of named operations --
-// one per read the console performs, twelve of them for the eleven documents of
-// design section 2.1 plus the one validated link -- and three prohibitions that
-// are the whole of the rule:
+// one per read the console performs, thirteen of them for the twelve documents
+// the dashboard draws out of design section 2.1 plus the one validated link
+// (that section's list holds a thirteenth row, the picker's own `fugaro config
+// list --json`; it belongs to the installations picker window and is not an
+// operation of this table -- `src/preload/installations.ts` is its surface) --
+// and three
+// prohibitions that are the whole of the rule:
 //
 //   - **no `invoke(channel, ...)`**: nothing anywhere in the console takes a
 //     channel from a caller. `channelForOperation` derives a channel from a name
@@ -281,22 +285,27 @@ export interface ConsoleOperation {
 }
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Fourteen operations, and the table is
+ * CONSOLE_OPERATIONS is the whole surface. Fifteen operations, and the table is
  * the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
- * The eleven CLI commands are design section 2.1's list (which is
- * `docs/json-contract.md`'s list, read off the cobra commands), and the twelfth
- * is the startup handshake's answer (`startup.compatibility`, the console's own
- * state, which no CLI command can be asked for); the thirteenth is the one path
- * that is not a command: `openExternal`, whose URL argument goes
- * through `validateExternalUrl` -- `https:` only, no credentials, no port, host
- * on `ALLOWED_EXTERNAL_HOSTS` -- so the renderer's only way out of the console
- * is a link the console would have opened anyway. The fourteenth
- * (`installation.current`) is the dashboard's read of the installation the
- * operator chose in the picker window, or D13's no-installation state; its
- * handler is `handlersFor`'s **optional** `installation` dep, so a build without
- * a picker answers it with that state rather than failing to register.
+ * The twelve CLI commands are the dashboard's half of design section 2.1's list
+ * -- its thirteenth row, the picker's own `fugaro config list --json`, is the
+ * installations picker's read and is not an operation of this table -- and that
+ * half is `docs/json-contract.md`'s list, read off the cobra commands. The
+ * twelfth of those commands is `runs.stats` (console L5b, the Spend screen's
+ * by-person view), which the table narrowed to this task's own argument: see its
+ * comment below. The thirteenth operation is the startup handshake's answer
+ * (`startup.compatibility`, the console's own state, which no CLI command can be
+ * asked for); the fourteenth is the one path that is not a command:
+ * `openExternal`, whose URL argument goes through `validateExternalUrl` --
+ * `https:` only, no credentials, no port, host on `ALLOWED_EXTERNAL_HOSTS` -- so
+ * the renderer's only way out of the console is a link the console would have
+ * opened anyway. The fifteenth (`installation.current`) is the dashboard's read
+ * of the installation the operator chose in the picker window, or D13's
+ * no-installation state; its handler is `handlersFor`'s **optional**
+ * `installation` dep, so a build without a picker answers it with that state
+ * rather than failing to register.
  *
  * Two operations share one command and differ by their flags, deliberately:
  * `run.logs` is `logs RUN --json` and `run.logLink` is `logs RUN --url`. They
@@ -426,6 +435,46 @@ export const CONSOLE_OPERATIONS = [
       },
     ],
   },
+  // The Spend screen's by-person view (console L5b). It is the twelfth command
+  // the console spawns and it is the one read whose *rows the CLI scopes to the
+  // caller*, so its schema is the narrowest thing that command can be asked for
+  // from here: **`since` and nothing else**.
+  //
+  // What is deliberately absent is the point. `--all-users` is a flag of
+  // `newRunsStatsCmd` that shows every user's row, and it is not a key of this
+  // schema: the command resolves the view itself -- an operator of the
+  // installation (the identity named in the local config's `user:`/git, listed
+  // in its `terraform.operators`) sees every user's rows, and everyone else sees
+  // their own row alone (`internal/cli/runs_stats.go`, `userStatsViewOwn`) --
+  // and a console that could pass the flag could widen a private view to
+  // everyone's with one click. `--by` is fixed to `user` by the command's own
+  // default, `--max-runs` is its own bound (5000, and the document says when it
+  // truncated), and `--repo`/`--all` narrow a read this screen draws for the
+  // whole project. A payload carrying one of them is refused by name here,
+  // before a child exists, and `test/unit/ipc.test.ts` fails a test per hostile
+  // payload rather than passing a review.
+  //
+  // `since` is `runs stats`'s own grammar and not `report`'s (`runSince`, the
+  // `parseSince` kind `runs.list` declares): `7d`, `36h`, `90m`, `0`, and never
+  // a UTC day or `12w`. The screen translates the range picker's window into it
+  // rather than passing the picker's word through -- `src/renderer/screens/
+  // spend.ts`'s `personSince` -- so a word this command would refuse is a word
+  // that never reaches the schema at all.
+  {
+    name: 'runs.stats',
+    method: 'statsRuns',
+    command: 'runs stats',
+    flags: ['--json'],
+    summary: 'what each person started in a window, and what those runs cost',
+    args: [
+      {
+        key: 'since',
+        kind: 'runSince',
+        required: false,
+        why: 'the design allow-list admits `--since` on this command, in `runs stats`’s own forms (parseSince): 7d, 36h, 90m or 0 — never a date, and never `report`’s `12w`.',
+      },
+    ],
+  },
   {
     name: 'run.diagnose',
     method: 'diagnoseRun',
@@ -532,7 +581,7 @@ export const CONSOLE_OPERATIONS = [
     summary: 'the handshake’s answer: this console’s mode, and the views it withholds',
     args: [],
   },
-  // The fourteenth operation (Task 3.4b) is the second read of the console's own
+  // The fifteenth operation (Task 3.4b) is the second read of the console's own
   // state, and it is the one the header needs: **which installation is active**.
   // It is not a read of the CLI -- the store holds it -- and it takes no argument
   // at all, so a renderer cannot ask about an installation other than the one
@@ -1988,9 +2037,14 @@ export const NO_ACTIVE_INSTALLATION = 'no installation has been chosen'
  *
  * The mapping is derived from the operation table rather than from the screens:
  * a screen is written in the renderer and names no channel, so the only thing
- * that can say which operation reads spend is this table. Two consequences a
+ * that can say which operation reads spend is this table. Three consequences a
  * reviewer should check:
  *
+ *   - **`spend` names both of the Spend screen's reads.** `runs.stats` (the
+ *     by-person panel, console L5b) publishes per-person `counted_usd` and
+ *     `notional_usd` -- the same spend figures the reduced mode withholds (D7),
+ *     under another name -- so withholding `spend.report` while answering it
+ *     would put the withheld dollars on screen through the by-person panel;
  *   - **`kill` is empty, and that is the answer rather than a gap.** There is no
  *     kill-switch operation in the surface: the controls live in the live feed's
  *     own fields (design C10, and `src/shared/version.ts`'s `HIDDEN_VIEW_WORDS`
@@ -2006,7 +2060,7 @@ export const NO_ACTIVE_INSTALLATION = 'no installation has been chosen'
  */
 export const REDUCED_VIEW_OPERATIONS: Readonly<Record<ReducedView, readonly OperationName[]>> =
   Object.freeze({
-    spend: Object.freeze(['spend.report'] as const),
+    spend: Object.freeze(['spend.report', 'runs.stats'] as const),
     caps: Object.freeze(['budget.show'] as const),
     kill: Object.freeze([] as const),
   })

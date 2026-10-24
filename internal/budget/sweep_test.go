@@ -168,6 +168,74 @@ func TestSweepDoesNotTrustRunWrittenTimes(t *testing.T) {
 	}
 }
 
+// A run's own heartbeat may not date the outcome the sweeper writes. The entry
+// is run-written (the rules' AMOUNT && RBOK allows any non-negative number), so
+// a hostile run can set updatedAt before its launch day and land its outcome on
+// a day a liveness scan never reads — the run then stays admitted until its fx,
+// which is the W2 hole reached through the sweeper. The launch day is the run
+// id's, which no run token writes.
+func TestSweepDatesTheOutcomeNoEarlierThanTheLaunchDay(t *testing.T) {
+	e := newSweepEnv(t)
+	e.entry(runA, 3*24*time.Hour) // heartbeat three days before the run id's day
+	e.sweep()
+	if !e.has(outcomePath(runA)) {
+		t.Fatalf("no outcome on the run's launch day (%d) for %s: the sweeper dated it from the run's own heartbeat",
+			budget.Day(sweepNow), runA)
+	}
+	hbDay := budget.Day(sweepNow.Add(-3 * 24 * time.Hour))
+	if e.has(fmt.Sprintf("outcomes/%d/%s/%s", hbDay, sweepSlug, runA)) {
+		t.Errorf("the outcome was dated %d, from the run's own heartbeat, before the run launched", hbDay)
+	}
+}
+
+// The launch day is a bound on how *early* the outcome may be dated, never on
+// how late: a run id dated ahead of the sweeper's clock is this clock being
+// behind, and the day it names is one no liveness scan reads (the rules' DAYOK
+// allows today or yesterday), so an outcome dated there would keep the run
+// admitted until its fx — the same hole from the other side.
+//
+// The heartbeat here is days old on purpose: with a fresh one the day is today
+// with or without the clamp, and the test would pass against a sweeper that
+// had no launch-day rule at all (review finding). This is the branch where the
+// launch day is not reachable, so what the outcome must not do is fall back to
+// the run-written heartbeat's own, older day.
+func TestSweepDoesNotDateTheOutcomeAheadOfToday(t *testing.T) {
+	e := newSweepEnv(t)
+	future := sweepNow.AddDate(0, 0, 3).Format("20060102-150405") + "-aaaa"
+	e.entry(future, 72*time.Hour)
+	e.sweep()
+
+	today := budget.Day(sweepNow)
+	if !e.has(fmt.Sprintf("outcomes/%d/%s/%s", today, sweepSlug, future)) {
+		t.Fatalf("no outcome on today's node (%d) for %s: the sweeper dated it from the run id",
+			today, future)
+	}
+	hbDay := budget.Day(sweepNow.Add(-72 * time.Hour))
+	if e.has(fmt.Sprintf("outcomes/%d/%s/%s", hbDay, sweepSlug, future)) {
+		t.Errorf("the outcome was dated %d, the run's own heartbeat's day: no liveness scan reads it", hbDay)
+	}
+}
+
+// The heartbeat dates the outcome only when it is plausible for a run that
+// has just died; past the window the day falls back to today. This is the
+// bound that holds when the run id is not a launch id at all, where the
+// launch-day clamp above has nothing to say — otherwise a stale entry could
+// date its outcome onto a day no liveness scan reads too.
+func TestSweepDoesNotDateTheOutcomeFromAStaleHeartbeat(t *testing.T) {
+	e := newSweepEnv(t)
+	old := sweepNow.AddDate(0, 0, -30).Format("20060102-150405") + "-aaaa"
+	e.entry(old, 10*24*time.Hour)
+	e.sweep()
+
+	stale := budget.Day(sweepNow.Add(-10 * 24 * time.Hour))
+	if e.has(fmt.Sprintf("outcomes/%d/%s/%s", stale, sweepSlug, old)) {
+		t.Errorf("the outcome was dated %d, from a heartbeat ten days old: no liveness scan reads it", stale)
+	}
+	if !e.has(outcomePath(old)) {
+		t.Errorf("no outcome on today (%d) for %s", budget.Day(sweepNow), old)
+	}
+}
+
 func TestSweepMarksCrashedKeepsCounted(t *testing.T) {
 	e := newSweepEnv(t)
 	day := budget.Day(sweepNow)

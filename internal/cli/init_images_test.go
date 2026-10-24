@@ -248,15 +248,15 @@ func (r *imagesRig) pinnedBase(kind, ver string) string {
 	return "us-east5-docker.pkg.dev/" + initProject + "/" + infra.GhcrRegistry + "/dimipaun/fugaro-" + kind + ":" + ver + "@" + r.basePin
 }
 
-// A development build copies nothing and says what to do, and init
-// --firebase behaves as it did: the history job waits for its image.
+// A development build copies nothing and says what to do, and fugaro update
+// --firebase-project behaves as it did: the history job waits for its image.
 func TestDevBuildHasNoSilentFallback(t *testing.T) {
 	r := newImagesRig(t, "dev")
 	newMirror = func(context.Context, *localcfg.Config, []string) (*mirror.Mirror, error) {
 		t.Fatal("a development build tried to copy an image")
 		return nil, nil
 	}
-	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase", fpID, "--yes")
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -275,7 +275,7 @@ func TestDevBuildHasNoSilentFallback(t *testing.T) {
 
 func TestHistoryJobAppliedAfterMirror(t *testing.T) {
 	r := newImagesRig(t, "1.2.3")
-	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase", fpID, "--yes", "--json")
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes", "--json")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -307,7 +307,7 @@ func TestHistoryJobAppliedAfterMirror(t *testing.T) {
 	}
 	// A rerun copies nothing.
 	puts := r.dst.puts
-	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase", fpID, "--yes"); err != nil || r.dst.puts != puts {
+	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil || r.dst.puts != puts {
 		t.Fatalf("rerun: %v, %d writes\n%s", err, r.dst.puts-puts, out)
 	}
 }
@@ -326,7 +326,7 @@ func TestBaseImagesRecordedInConfig(t *testing.T) {
 		t.Errorf("fugaro-base was copied: %v", r.dst.tags)
 	}
 	if r.dst.tags[initProject+"/fugaro-base/history:latest"] != "" {
-		t.Error("the history image is copied without --firebase")
+		t.Error("the history image is copied without --firebase-project")
 	}
 	// Idempotent: the entry is already this release's pin, so the rerun
 	// resolves nothing and writes nothing.
@@ -364,7 +364,7 @@ func TestInitBasePinsTheRemoteRepositoryAtTheVerifiedDigest(t *testing.T) {
 }
 
 // A release with no signed "-pinned" tag published yet (#318's release
-// side, a later task): fugaro init on a checkout whose workflow has no
+// side, a later task): the converge on a checkout whose workflow has no
 // base: (the implicit Fugaro base) must refuse with a clear error naming
 // the missing image, write NOTHING to the local config, and pin nothing.
 //
@@ -477,7 +477,7 @@ func TestManifestOnlyCopyIsAChange(t *testing.T) {
 	for d, b := range r.src.blobs {
 		r.dst.blobs[d] = b
 	}
-	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase", fpID, "--yes", "--json")
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes", "--json")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -510,7 +510,7 @@ func TestHistoryLatestNeedsReplaceImage(t *testing.T) {
 	other := cdg([]byte("hand pushed history"))
 	r.dst.mans[other], r.dst.types[other] = []byte("x"), "application/vnd.oci.image.manifest.v1+json"
 	r.dst.tags[initProject+"/fugaro-base/history:latest"] = other
-	_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase", fpID, "--yes")
+	_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
 	if err == nil || !strings.Contains(err.Error(), other) || !strings.Contains(err.Error(), "--replace-image") {
 		t.Fatalf("err = %v", err)
 	}
@@ -518,7 +518,7 @@ func TestHistoryLatestNeedsReplaceImage(t *testing.T) {
 		t.Fatal("history:latest was replaced")
 	}
 	// The database exists by now (the run above made it): only the replacement is typed.
-	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--firebase", fpID, "--yes", "--replace-image", "history")
+	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--firebase-project", fpID, "--yes", "--replace-image", "history")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -527,27 +527,32 @@ func TestHistoryLatestNeedsReplaceImage(t *testing.T) {
 	}
 }
 
-// --replace-image names the intent only: a run that cannot take a typed
-// confirmation (--yes, --non-interactive, --json, a pipe, a coding agent)
-// leaves the replacement to the user with the one-line typed route, and moves
-// nothing. The real rule is in force here.
+// TestReplaceImageIsCoveredByYesInBothDoors: --replace-image names the intent
+// only, and D12's answer of 2026-10-20 makes replacing a registry tag an
+// ordinary covered row of both front doors — so `setup --yes` replaces the tag
+// with no typed confirmation, and the same call site in `update` does too
+// (update_test.go's TestUpdateAppliesTheFourStepsItOwns). A run that can take
+// neither --yes nor a typed confirmation (a pipe, --json, a coding agent's
+// session) leaves the replacement to the user with the one-line typed route and
+// moves nothing. The real rule is in force here.
 //
 // The kind it drives is history: a base kind is not copied anywhere any
 // more, so --replace-image names nothing for one (TestReplaceImageRefusesBase
 // is the refusal, and the base kind's own "never silently replaced" case is
 // gone with the copy).
-func TestReplaceImageIsNeverConfirmedByYes(t *testing.T) {
+func TestReplaceImageIsCoveredByYesInBothDoors(t *testing.T) {
 	const history = initProject + "/fugaro-base/history:latest"
 	for name, tc := range map[string]struct {
-		args  []string
-		env   string
-		stdin string
+		args    []string
+		env     string
+		stdin   string
+		covered bool
 	}{
-		"--yes":                    {[]string{"--yes"}, "", initProjectName + "\n"},
-		"--yes --non-interactive":  {[]string{"--yes", "--non-interactive"}, "", ""},
-		"--yes --json":             {[]string{"--yes", "--json"}, "", initProjectName + "\n"},
-		"a pipe, no flags":         {nil, "", initProjectName + "\n"},
-		"a coding agent, with yes": {[]string{"--yes"}, "CLAUDECODE", initProjectName + "\n"},
+		"--yes":                    {[]string{"--yes"}, "", "", true},
+		"--yes --non-interactive":  {[]string{"--yes", "--non-interactive"}, "", "", true},
+		"--yes --json":             {[]string{"--yes", "--json"}, "", "", true},
+		"a pipe, no flags":         {nil, "", initProjectName + "\n", false},
+		"a coding agent, with yes": {[]string{"--yes"}, "CLAUDECODE", initProjectName + "\n", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newImagesRig(t, "1.2.3")
@@ -557,7 +562,7 @@ func TestReplaceImageIsNeverConfirmedByYes(t *testing.T) {
 			// The installation and the Firebase backend are converged first,
 			// so a subtest without --yes reaches the images stage instead of
 			// stopping at the backend's own typed confirmation.
-			if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase", fpID, "--yes"); err != nil {
+			if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
 				t.Fatal(err)
 			}
 			puts := r.dst.puts                    // the converged run's own copy, not this one's
@@ -568,8 +573,19 @@ func TestReplaceImageIsNeverConfirmedByYes(t *testing.T) {
 			if tc.env != "" {
 				t.Setenv(tc.env, "1")
 			}
-			out, errOut, err := executeStdin(t, tc.stdin, append([]string{"setup", "--firebase", fpID, "--replace-image", "history"}, tc.args...)...)
+			out, errOut, err := executeStdin(t, tc.stdin, append([]string{"setup", "--firebase-project", fpID, "--replace-image", "history"}, tc.args...)...)
 			out += errOut // --json sends the account to stderr
+			if tc.covered {
+				// The covered row: the run's own confirmation replaced it,
+				// with nothing typed and nothing left for the user.
+				if err != nil || r.dst.tags[history] == other || r.dst.puts == puts {
+					t.Fatalf("--yes did not replace the tag: %v\n%s", err, out)
+				}
+				if !strings.Contains(out, "confirmed by --yes") {
+					t.Errorf("the covered replacement does not say how it was confirmed:\n%s", out)
+				}
+				return
+			}
 			if r.dst.tags[history] != other || r.dst.puts != puts {
 				t.Fatalf("the tag moved: %v\n%s", err, out)
 			}
@@ -586,7 +602,7 @@ func TestReplaceImageIsNeverConfirmedByYes(t *testing.T) {
 	r.stateBucket()
 	r.script["plan"] = map[string]any{"exit": 0}
 	r.save(t)
-	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase", fpID, "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
 		t.Fatal(err)
 	}
 	canConfirmTyped = initflow.CanConfirm
@@ -595,7 +611,7 @@ func TestReplaceImageIsNeverConfirmedByYes(t *testing.T) {
 	r.dst.mans[other], r.dst.types[other] = []byte("x"), "application/vnd.oci.image.manifest.v1+json"
 	r.dst.tags[history] = other
 	// the replacement's confirmation and the copy's
-	if out, _, err := executeStdin(t, names(2), "setup", "--firebase", fpID, "--replace-image", "history"); err != nil || r.dst.tags[history] == other {
+	if out, _, err := executeStdin(t, names(2), "setup", "--firebase-project", fpID, "--replace-image", "history"); err != nil || r.dst.tags[history] == other {
 		t.Fatalf("typed at a terminal: %v\n%s", err, out)
 	}
 }
@@ -630,7 +646,7 @@ func TestExpectDigestUnusedAndUnpinnedListed(t *testing.T) {
 	if r.dst.puts != 0 {
 		t.Fatal("copied with an unused pin")
 	}
-	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase", fpID, "--yes", "--base", "base")
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes", "--base", "base")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -657,7 +673,7 @@ func TestExpectDigestUnusedAndUnpinnedListed(t *testing.T) {
 func TestInitBaseRefusesWhenTheRemoteRepositoryCannotServeTheDigest(t *testing.T) {
 	r := newImagesRig(t, "1.2.3")
 	delete(r.src.mans, r.basePin) // the upstream cannot serve the digest the tag names
-	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase", fpID, "--yes", "--base", "base")
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes", "--base", "base")
 	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "cannot serve") {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
@@ -676,7 +692,7 @@ func TestDestinationMovedAtStageLevel(t *testing.T) {
 	other := cdg([]byte("someone else"))
 	r.dst.mans[other], r.dst.types[other] = []byte("x"), "application/vnd.oci.image.manifest.v1+json"
 	r.dst.onBlob = func() { r.dst.tags[initProject+"/fugaro-base/history:latest"] = other }
-	_, _, err := executeStdin(t, "us-east5\n"+names(2), "setup", "--yes", "--firebase", fpID, "--replace-image", "history")
+	_, _, err := executeStdin(t, "us-east5\n"+names(2), "setup", "--yes", "--firebase-project", fpID, "--replace-image", "history")
 	if err == nil || !strings.Contains(err.Error(), "changed while") {
 		t.Fatalf("err = %v", err)
 	}
@@ -727,7 +743,7 @@ func TestOlderCLIDoesNotDowngradeBase(t *testing.T) {
 func TestPlanOnlyCopiesNothing(t *testing.T) {
 	r := newImagesRig(t, "1.2.3")
 	r.stateBucket()
-	if _, _, err := executeStdin(t, "", "setup", "--firebase", fpID, "--plan-only"); err != nil {
+	if _, _, err := executeStdin(t, "", "setup", "--firebase-project", fpID, "--plan-only"); err != nil {
 		t.Fatal(err)
 	}
 	if r.dst.puts != 0 || len(r.applies(t)) != 0 {
@@ -784,7 +800,7 @@ func TestReplaceImageUnusedKindIsAnError(t *testing.T) {
 	}
 }
 
-// init --base republishes the shared config after recording the base
+// update --base republishes the shared config after recording the base
 // images, like the other init paths, and not under --plan-only.
 func TestInitBaseRepublishesSharedConfig(t *testing.T) {
 	newImagesRig(t, "v1.2.3")
@@ -809,7 +825,7 @@ func TestInitBaseRepublishesSharedConfig(t *testing.T) {
 	// images exist) and exactly one from the images stage's record of them:
 	// the base-image write adds one republish, not a second.
 	if publishes != 2 {
-		t.Errorf("init --base published %d times, want 2 (installation stage, then images stage)", publishes)
+		t.Errorf("update --base published %d times, want 2 (installation stage, then images stage)", publishes)
 	}
 	data, err := os.ReadFile(sharedObjectPath(dir))
 	if err != nil {
@@ -879,7 +895,7 @@ func TestRefuseANonGhcrSourceForABaseKind(t *testing.T) {
 	// a source on another host is not refused here, it is read (and fails
 	// only because the rig's registry has no such image).
 	r = newImagesRig(t, "1.2.3")
-	_, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase", fpID, "--yes", "--image-source", "quay.io/acme")
+	_, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes", "--image-source", "quay.io/acme")
 	if err != nil && strings.Contains(err.Error(), "whose upstream is https://ghcr.io") {
 		t.Fatalf("the history copy refused a foreign source: %v", err)
 	}
@@ -891,7 +907,7 @@ func TestRefuseANonGhcrSourceForABaseKind(t *testing.T) {
 // keeps the copy sentence and its "not a signature" caveat (design §3.2).
 func TestImagesStageConfirmationSaysTheBaseIsNotCopied(t *testing.T) {
 	newImagesRig(t, "1.2.3")
-	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase", fpID, "--yes", "--base", "base")
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes", "--base", "base")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -976,7 +992,7 @@ func TestImagesOutcomeSaysOnlyWhatItDid(t *testing.T) {
 	)
 	// Base and history together: both clauses.
 	newImagesRig(t, "1.2.3")
-	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase", fpID, "--yes", "--base", "base")
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes", "--base", "base")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -1047,7 +1063,7 @@ func TestNoMessageOffersARemovedBaseCommand(t *testing.T) {
 		all = append(all, out)
 	}
 	newImagesRig(t, "1.2.3")
-	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase", fpID, "--yes", "--base", "base")
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes", "--base", "base")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -1061,7 +1077,7 @@ func TestNoMessageOffersARemovedBaseCommand(t *testing.T) {
 	}
 	// The refusal for the flag itself names the working alternative.
 	newImagesRig(t, "1.2.3")
-	out, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase", fpID, "--yes", "--replace-image", "base")
+	out, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes", "--replace-image", "base")
 	if ExitCode(err) != ExitUserError || !strings.Contains(out, "--base-image base=IMAGE") || !strings.Contains(out, "there is nothing to replace") {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}

@@ -223,7 +223,7 @@ func TestAppIDAskedOnceAndStored(t *testing.T) {
 	s.engineStage.run = func(context.Context) error { t.Error("the engine ran without the App ID"); return nil }
 	_, err := s.Apply(t.Context(), initflow.Env{})
 	var ny *initflow.NeedsYouError
-	if !errors.As(err, &ny) || !strings.Contains(ny.Left.Text, "init --github-app-id <id>") || strings.Contains(out.String(), "GitHub App ID") {
+	if !errors.As(err, &ny) || !strings.Contains(ny.Left.Text, "setup --github-app-id <id>") || strings.Contains(out.String(), "GitHub App ID") {
 		t.Errorf("err %v\n%s", err, out.String())
 	}
 	if m := s.Missing(); len(m) != 1 || !strings.Contains(m[0], "--github-app-id") {
@@ -263,7 +263,7 @@ func TestAppIDAskedOnceAndStored(t *testing.T) {
 	}
 }
 
-// init --repo is the engine unchanged: its flag checks, its --print-vars
+// update --repo is the engine unchanged: its flag checks, its --print-vars
 // output (the variables alone on stdout, no result), and the embedded run's
 // refusal of an installation of another project, with the same words.
 func TestInitRepoUnchanged(t *testing.T) {
@@ -293,7 +293,7 @@ func TestInitRepoUnchanged(t *testing.T) {
 	// The installation's flags are still refused for --repo, and the
 	// repository's still refused without it.
 	for _, tc := range [][]string{
-		{"setup", "--repo", "--firebase", "fb-proj-1234", root},
+		{"setup", "--repo", "--firebase-project", "fb-proj-1234", root},
 		{"setup", "--repo", "--launcher", "user:a@b.c", root},
 		{"setup", "--no-build"},
 		{"setup", "--allow-job-delete"},
@@ -318,7 +318,7 @@ func TestInitRepoUnchanged(t *testing.T) {
 	}
 }
 
-// The repository stage runs the same engine as init --repo: against the
+// The repository stage runs the same engine as update --repo: against the
 // rig, an installation of another project is refused with the engine's words,
 // as the stage's failure, in the converge's result and with the engine's exit
 // code.
@@ -513,7 +513,7 @@ func TestRepoEngineBuildsOnAProjectWideGitCredential(t *testing.T) {
 	// repository's own copy). The bare claude-oauth-token is the other name of
 	// agent.auth: oauth's mounts that is not project-scope-eligible
 	// (person-owned), so it is seeded as the repository's own copy, which is
-	// what init --repo's prompt stores for it.
+	// what update --repo's prompt stores for it.
 	projectID := gcp.ProjectSecretID(initProjectName, "bitbucket-token")
 	r.sm.Seed(projectID, projectLabels(initProjectName, "bitbucket-token"), []byte("tok"))
 	slug := mustSlug("bitbucket", "acme/sandbox")
@@ -723,7 +723,7 @@ func TestRepoEngineBuildsKeylessProviderOnly(t *testing.T) {
 	}
 }
 
-// rigEngine is an engine over the rig's local config, as fugaro init builds
+// rigEngine is an engine over the rig's local config, as the converge builds
 // it: no new config to write (old is the file's content).
 func rigEngine(t *testing.T, r *initRig, o *initOptions) *initEngine {
 	t.Helper()
@@ -763,21 +763,25 @@ func TestNonInteractiveNamesAppIDFromTheStage(t *testing.T) {
 	}
 }
 
-// A run that adopted an installation is told so before it is asked anything:
+// A run that wrote a new machine's config from an installation is told so
+// before it is asked anything:
 // an unlisted repository's typed opt-in would be a prompt for a step that is
 // then refused.
-func TestRepoStageAdoptRefusalComesBeforeTheTypedPrompt(t *testing.T) {
+func TestRepoStageNewMachineRefusalComesBeforeTheTypedPrompt(t *testing.T) {
 	dir := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", ""))
 	t.Chdir(dir)
 	fakeTerminal(t)
 	e, out := stageEngine(t, "acme/app\n", nil)
 	e.lc.Repos = nil // not listed: it would ask for owner/name
-	e.adopted = "adopted"
+	e.newMachine = "wrote this machine's local config"
 	s := newRepositoryStage(e)
-	s.engineStage.run = func(context.Context) error { t.Error("the engine ran after an adopt"); return nil }
+	s.engineStage.run = func(context.Context) error {
+		t.Error("the engine ran after a new machine's config was written")
+		return nil
+	}
 	_, err := s.Apply(t.Context(), initflow.Env{Interactive: true})
 	var ny *initflow.NeedsYouError
-	if !errors.As(err, &ny) || !strings.Contains(ny.Left.Text, "adopted") {
+	if !errors.As(err, &ny) || !strings.Contains(ny.Left.Text, "this machine's local config") {
 		t.Fatalf("err %v\n%s", err, out.String())
 	}
 	if strings.Contains(out.String(), "Type") || strings.Contains(out.String(), "CONFIRM") {

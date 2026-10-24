@@ -25,7 +25,7 @@ import (
 // The images stage (stage 5, design m11-setup-and-skills.md §3.3) puts this
 // release's images where the installation can read them, as the person
 // running init: the history image is COPIED into the project's own registry
-// (with --firebase, which is what deploys its job), and each base kind that
+// (with --firebase-project, which is what deploys its job), and each base kind that
 // is asked for (--base) or that the checkout's fugaro.yaml names is PINNED
 // by digest through the project's remote (pull-through) repository, with
 // nothing copied (design registry-remote-repository.md §3.1-§3.2). The copy
@@ -191,7 +191,7 @@ type imagesStage struct {
 	// image refresh's workflows'): --base and the checkout's kinds are not
 	// added.
 	// Nil means the default kinds; non-nil but empty means NO base kinds.
-	// It limits base kinds only: the history image (--firebase) is unaffected.
+	// It limits base kinds only: the history image (--firebase-project) is unaffected.
 	// Kinds are de-duplicated and unknown ones (not in config.Bases) dropped.
 	only []string
 }
@@ -202,7 +202,7 @@ func (s *imagesStage) Name() string                 { return initflow.Images }
 func (s *imagesStage) SelfConfirming()              {}
 func (s *imagesStage) Verify(context.Context) error { return nil }
 func (s *imagesStage) Left() initflow.Left {
-	return promptLeft(initflow.Images, "type the project's name to pin this release's base images and copy the release images", "init")
+	return promptLeft(initflow.Images, "type the project's name to pin this release's base images and copy the release images", s.e.r.o.doorName())
 }
 
 // baseSourceHost is the only host a base kind's source may be on: the
@@ -223,7 +223,7 @@ func releaseVersion() string {
 // else the one the local config records, else the built-in default.
 //
 // The record is the fallback because the flag is installation-only (a
-// `fugaro init --repo` run refuses it, and every refresh runs without it):
+// `fugaro update --repo` run refuses it, and every refresh runs without it):
 // with the flag alone, a fork's own recorded pin could not even be resolved
 // on the run that re-pins it, and every reader would fall back to the
 // default owner's images (design §3.6).
@@ -321,7 +321,7 @@ func foreignProxyRef(ref, host, kind, owner string) bool {
 // foreignProxyRefusal is that refusal, in one wording for every caller:
 // what the reference is, the shape that was wanted, and the two repairs.
 func foreignProxyRefusal(what, ref, host, kind, owner string) error {
-	return userErr("%s, %s, is under this installation's remote repository but is not a pin this tool wrote for it (want %s/%s/%s/fugaro-%s:<version>@sha256:<digest>): the proxy serves all of %s, so a path there is not your own image — every job would pull whatever its owner publishes. Remove the entry (fugaro init --base %s writes the pin), or point the kind at an image of your own with --base-image %s=IMAGE",
+	return userErr("%s, %s, is under this installation's remote repository but is not a pin this tool wrote for it (want %s/%s/%s/fugaro-%s:<version>@sha256:<digest>): the proxy serves all of %s, so a path there is not your own image — every job would pull whatever its owner publishes. Remove the entry (fugaro update --base %s writes the pin), or point the kind at an image of your own with --base-image %s=IMAGE",
 		what, pluginwire.Printable(ref), host, infra.GhcrRegistry, owner, kind, baseSourceHost, kind, kind)
 }
 
@@ -487,9 +487,9 @@ func (s *imagesStage) Check(ctx context.Context) (initflow.Status, error) {
 		// image-refresh.md's step 2); the notes say which kind and why.
 		return initflow.Status{State: initflow.Skipped, Detail: "No changes: " + strings.Join(notes, "; ")}, nil
 	case len(items) == 0:
-		return initflow.Status{State: initflow.Skipped, Detail: "no image to pin or copy: the history image goes with --firebase, a base image with --base KIND or a checkout whose fugaro.yaml names it"}, nil
+		return initflow.Status{State: initflow.Skipped, Detail: "no image to pin or copy: the history image goes with --firebase-project, a base image with --base KIND or a checkout whose fugaro.yaml names it"}, nil
 	case releaseVersion() == "":
-		return initflow.Status{State: initflow.Skipped, Detail: "development build, no published images to pin or copy: build one from a checkout (sh images/build-base.sh <kind> <tag> and docker push <tag>), then fugaro init --base-image KIND=<tag>"}, nil
+		return initflow.Status{State: initflow.Skipped, Detail: "development build, no published images to pin or copy: build one from a checkout (sh images/build-base.sh <kind> <tag> and docker push <tag>), then fugaro update --base-image KIND=<tag>"}, nil
 	}
 	return initflow.Status{State: initflow.Todo, Detail: "pins this release's base images by digest and copies the release images your registry lacks"}, nil
 }
@@ -723,7 +723,7 @@ func applyDetail(copied bool, base int) string {
 }
 
 func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
-	if err := s.e.adoptGuard(initflow.Images); err != nil {
+	if err := s.e.newMachineGuard(initflow.Images); err != nil {
 		return initflow.Outcome{}, err
 	}
 	r := s.e.r
@@ -828,12 +828,13 @@ func (s *imagesStage) confirmText(pl []planned, n int, bytes int64, unpinned []s
 	return strings.Join(parts, " — and it ") + " (as you, with your own credentials)"
 }
 
-// confirmReplace is the typed-only confirmation (initflow.Typed) of moving a
-// tag in the registry that names another image, a release tag or
-// history:latest. --replace-image KIND names the intent; the project's name
-// typed at a real terminal confirms it, and --yes, --non-interactive, --json,
-// a pipe and a coding agent never do. It is asked before anything is copied
-// or pinned.
+// confirmReplace is the confirmation of moving a tag in the registry that
+// names another image, a release tag or history:latest. --replace-image KIND
+// names the intent; the project's name typed at a real terminal confirms it,
+// or --yes, and --non-interactive, --json, a pipe and a coding agent never do.
+// --yes is the answer in BOTH front doors (askCovered): D12's answer of
+// 2026-10-20 keeps only three steps typed, and this is not one of them. It is
+// asked before anything is copied or pinned.
 func (s *imagesStage) confirmReplace(pl []planned) error {
 	var kinds, lines []string
 	for _, p := range pl {
@@ -846,14 +847,14 @@ func (s *imagesStage) confirmReplace(pl []planned) error {
 		return nil
 	}
 	r := s.e.r
-	ok, reachable, err := r.askTyped("REPLACES " + strings.Join(lines, "; ") + " in your registry: whatever uses those tags (jobs, builds) then runs the new image, and the old digest is no longer named by the tag")
+	ok, reachable, err := r.askCovered("REPLACES " + strings.Join(lines, "; ") + " in your registry: whatever uses those tags (jobs, builds) then runs the new image, and the old digest is no longer named by the tag")
 	if err != nil {
 		return err
 	}
 	if !reachable {
-		args := []string{"init"}
+		args := []string{r.o.doorName()}
 		if r.o.firebase != "" {
-			args = append(args, "--firebase", quoteWord(r.o.firebase))
+			args = append(args, "--firebase-project", quoteWord(r.o.firebaseProject()))
 		}
 		for _, k := range kinds {
 			if k != "history" {
@@ -916,7 +917,7 @@ func (s *imagesStage) record(ctx context.Context, pl []planned) error {
 	// The trusted owner the pin is checked against is recorded with the pin
 	// (design §3.6): --image-source sets it on the run that pins, and every
 	// later reader takes it from here rather than from the flag, which an
-	// init --repo run does not even accept.
+	// update --repo run does not even accept.
 	next.ImageSource = s.allow()[0]
 	// The stage's own confirmation covered the copy; the config line it
 	// records is shown as a diff like every config write.
@@ -997,7 +998,7 @@ func (s *imagesStage) sourceLine(ctx context.Context) string {
 		parts = append(parts, fmt.Sprintf("the base image(s) %s are signature-verified at %s's -pinned tag and pinned by digest through the remote repository", strings.Join(verified, ", "), src))
 	}
 	// The copy clause belongs to a run that copies, exactly as applyDetail's
-	// does: a base-only run (fugaro init --base base, no --firebase) pins a
+	// does: a base-only run (fugaro update --base base, no --firebase-project) pins a
 	// base and copies nothing, so "every image copied is pinned with
 	// --expect-digest" would claim a copy that did not happen — and a copy
 	// is the only thing --expect-digest has anything to do with.

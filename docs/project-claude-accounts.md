@@ -1,6 +1,6 @@
 # Project Claude accounts: one OAuth token per (profile, account)
 
-Status: **0.9.0, released.** The released Fugaro is 0.9.5, and 0.9.0 is the first release any of this page works on:
+Status: **0.9.0, released.** The released Fugaro is 0.10.4, and 0.9.0 is the first release any of this page works on:
 the `claude_accounts` field inside a profile, the `accounts` block in the published policy and the
 jobs they name all ship in 0.9.0 (policy version 3,
 [`internal/projectpolicy/version.go`](../internal/projectpolicy/version.go)), and a 0.8.x binary
@@ -17,7 +17,7 @@ machines with different files:
   `fugaro secrets set … --project-wide`). An owner's machine, usually; a teammate's machine holds
   the same file but not the rights.
 - **per repository checkout** — inside a checkout of the repository, in your own terminal
-  (`fugaro init --repo .`, `fugaro run --token …`, `fugaro image refresh`).
+  (`fugaro update --repo .`, `fugaro run --token …`, `fugaro image refresh`).
 
 Neither is the agent's: `fugaro secrets set` reads a value only from stdin or a hidden prompt, and
 never from an argument, a flag or the environment.
@@ -41,7 +41,7 @@ A named account is:
 - **a secret**, `claude-oauth-token-<name>`, **stored project-wide** — one copy for the whole
   Fugaro project, in the project's own Secret Manager. That is the copy a shared job can mount;
   a repository's own copy does not reach it (§2).
-- **a job**: `fugaro init` deploys one Cloud Run job and one job service account per
+- **a job**: `fugaro setup` deploys one Cloud Run job and one job service account per
   `(profile, provider, account)`. The profile's no-account job — the job every profile keeps — holds
   the `default` account's token exactly when the profile lists `default`; every named account gets a
   job of its own.
@@ -169,18 +169,18 @@ profiles:
 ```
 
 `profiles.<p>.claude_accounts` is a new field inside a profile entry, and it is the whole of how a
-profile states accounts: `fugaro init` deploys one job per entry (plus the profile's no-account
+profile states accounts: `fugaro setup` deploys one job per entry (plus the profile's no-account
 job), and a Claude OAuth token in a profile's `secrets:` is still refused — that field is not how a
 profile mounts a token. The profile's `allow_repos` is the repositories that profile admits, and
 **every account it lists has to cover every one of them** (§4): the example above is valid because
 both `default` and `acme-team` carry both repositories, and a profile that admits a repository one
 of its accounts does not carry is refused at publish rather than deployed.
 
-## 4. The rules `publish` and `fugaro init` enforce
+## 4. The rules `publish` and `fugaro setup` enforce
 
 Neither the `accounts` block nor the profile field is written by hand into the policy: both are
-derived and checked by `fugaro project policy publish` (per installation) and by `fugaro init`
-(per installation, and `fugaro init --repo .` per repository checkout), which validate the profiles
+derived and checked by `fugaro project policy publish` (per installation) and by `fugaro setup`
+(per installation, and `fugaro update --repo .` per repository checkout), which validate the profiles
 they are about to deploy against the same block. The rules, and what a refusal says:
 
 - **Every listed account is a defined account.** An account named by a profile but missing from
@@ -206,9 +206,9 @@ repository in one and not the other: the repair is the account's `allow_data_to`
 repository there and publish again) or the profile's `allow_repos`, and the operator meets that
 decision where they make it rather than at a run.
 
-## 5. What `fugaro init` deploys, and the version-3 rollout
+## 5. What `fugaro setup` deploys, and the version-3 rollout
 
-**Per installation** (and per repository checkout for `fugaro init --repo .`), `fugaro init` deploys
+**Per installation** (and per repository checkout for `fugaro update --repo .`), `fugaro setup` deploys
 one Cloud Run job and one job service account per `(profile, provider, Claude account)`. The account
 is the last segment of the job's name (`gcp.ProjectJobName`), and the job's service account holds
 `secretAccessor` on its own account's secret and on no other account's — that is the whole of who
@@ -232,7 +232,7 @@ The published policy carries the account axis in a node the previous release can
    ```
 
    `--delete` puts the project back on the ceiling its jobs' environments carry, so make it a
-   step of its own and not a repair. A re-run of `fugaro init --firebase` is deliberately **not**
+   step of its own and not a repair. A re-run of `fugaro update --firebase-project` is deliberately **not**
    the remedy: it deploys the rules template and marker and never writes `config/policy/shared`.
 
    **Read the list out first: the publish that follows rebuilds it.** With no node to replace,
@@ -268,7 +268,7 @@ The published policy carries the account axis in a node the previous release can
    step 3 ran:
 
    ```bash
-   fugaro init --firebase <gcp-project>
+   fugaro update --firebase-project <gcp-project-id>
    ```
 
    `fugaro image refresh` re-pins `base_images` and moves each repository's own jobs, but never a
@@ -477,7 +477,7 @@ radius (§1), and `accounts.<name>.allow_repos` plus the two gates are what boun
   by `projectJobGitHubAppID` ([`internal/infra/projectjobs.go`](../internal/infra/projectjobs.go),
   owner ruling of 2026-10-17, plan task 3.5 step 4) — and the key is the profile's project-wide
   `github-app-key` mount, so the provider the run opens has both halves of the credential it is
-  built from; `fugaro init` refuses a config that records no App ID, or two different ones, rather
+  built from; `fugaro setup` refuses a config that records no App ID, or two different ones, rather
   than deploy a job whose runs would halt. `checkout: clone` is **shipped in 0.9.0** (`cloneShipped`,
   [`internal/cli/recipes_skew.go`](../internal/cli/recipes_skew.go)) and was not in the released
   0.8.x, where a clone launch is refused — so on the released CLI no clone run reaches a shared job

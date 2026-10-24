@@ -48,7 +48,7 @@ func TestRunTokenRefusesWhenAuthIsNotOAuth(t *testing.T) {
 // TestRunRefusesAnAgentAuthTheRepositoryDoesNotDefine: the account gate both
 // decides on agent.auth and prints it, and the two documents that value can
 // come from are not read alike. The checkout's own config is validated
-// (config.Validate: agent.auth is one of vertex, api-key, oauth), but the
+// (config.Validate: agent.auth is one of config.AgentAuths), but the
 // fugaro.yaml at the ref the run checks out is read by config.AgentOf, which
 // decodes strictly and validates nothing — so a repository can commit an
 // agent.auth of its own spelling and have it reach the gate. Printed raw into

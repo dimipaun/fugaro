@@ -7,6 +7,15 @@
 // It never rewrites a body, never buffers a stream, never retries, and
 // never logs a header or a body. Money is integer micro-dollars throughout.
 //
+// The retry is the gateway's and not the forwarder's: the helpers this
+// package exports (export.go) are reused by the credentials service
+// (internal/credsvc), which forwards a run's calls to one of several
+// credentials and retries a call on the next one when a credential answers a
+// usage limit -- once per credential, and only before the first byte of the
+// answer has reached the client, so nothing a client has already seen is
+// replayed. The in-runner gateway itself still never retries: the service's
+// retry happens inside the one client request the gateway reserved for.
+//
 // A halt's Detail (a Refusal's, or HaltExternal's) is shown to the agent in
 // the 403 every later call gets, as one line clipped to 300 bytes. The
 // gateway does not redact it: callers must keep it free of secrets.
@@ -48,18 +57,27 @@ const (
 
 // Upstream is where calls go and with what credential.
 type Upstream struct {
-	Kind string // "anthropic" or "vertex"
+	Kind string // "anthropic", "vertex", KindOAuth (tier A, oauth.go) or KindService (C1.15, service.go)
 	// BaseURL overrides the real API's base for tests: "" is
 	// https://api.anthropic.com, or the Vertex host of each call's
-	// location. It must be https, or http on a loopback address.
+	// location. KindService requires it: it is the credentials service's own
+	// URL, which has no default. It must be https, or http on a loopback
+	// address.
 	BaseURL string
-	APIKey  string             // anthropic: the real key
+	APIKey  string             // anthropic: the real key; KindOAuth: the subscription token, sent as its bearer token and only to Anthropic's own endpoint
 	Token   oauth2.TokenSource // vertex: called per request (it caches)
 	// VertexProject is the only GCP project a Vertex path may name.
 	VertexProject string
 	// VertexLocations are the locations a Vertex path may name:
 	// CLOUD_ML_REGION plus every VERTEX_REGION_* value.
 	VertexLocations []string
+	// Service, with KindService, is how this job identifies itself to the
+	// credentials service (C1.15, service.go). It is required for that kind
+	// and must be nil for every other: the credential a service run's calls
+	// are made with is the service's own, never one of the job's, and
+	// validate refuses a service upstream that carries an in-job credential
+	// (D143).
+	Service *Service
 }
 
 // Options configure a gateway.
@@ -84,6 +102,18 @@ type Options struct {
 	// EndStageWait bounds how long EndStage waits for a stage's calls in
 	// flight; 0 is 30 s. Tests shorten it.
 	EndStageWait time.Duration
+	// OnServiceAnswer, when set, is called once for every answer the
+	// credentials service gives (KindService, C1.15): the tier a Messages
+	// call settles by (C1.16's ledger hook), the credential's name a run
+	// records (C1.19) and the switch it logs, and the typed exhausted answer
+	// the runner waits on (C1.17).
+	//
+	// It is called from concurrent calls, with no lock of this package's
+	// held, so it must be safe for that; it is never called for an answer
+	// from another upstream kind. A call it is not told about is the
+	// answer's own fault (an answer this gateway could not read halts the
+	// run instead) — never the hook's.
+	OnServiceAnswer func(ServiceAnswer)
 }
 
 // DefaultGeos are the usage.inference_geo values a default request is
@@ -108,8 +138,25 @@ type Stage struct {
 // StageReport is what a stage's calls cost and what they tried that the
 // gateway refused.
 type StageReport struct {
-	Calls         int                       // calls sent upstream
-	Used          pricing.Micros            // settled this stage
+	Calls int // calls sent upstream
+	// Used is the money this stage's calls settled: tiers B and C, and
+	// every call of a run with no cascade, which has no tier at all.
+	Used pricing.Micros
+	// Notional is what tier-A calls settled this stage: the run's
+	// subscription usage, which is reported for visibility and counted
+	// against no cap (C1.16, D140). It is disjoint from Used, and the
+	// stage's whole model figure is their sum.
+	Notional pricing.Micros
+	// ByTier is the settled money by credential tier (C1.16, D140): the
+	// per-call split the by-tier counters are written from. Its keys are the
+	// tiers as the service spells them -- TierB and TierC, "B" and "C", what
+	// charge.tier carries off the answer -- and not the database rules' own
+	// spelling, which is lower case (`b`, `c`): internal/budget maps the one
+	// to the other as it writes the leaves, so a reader of this report sees
+	// the spelling the service sent. A tier-A call is Notional and is in no
+	// key here, and a call that did not go through the service is in none
+	// either: it is real money but no tier.
+	ByTier        map[string]pricing.Micros
 	ByModel       map[string]pricing.Micros // by serving model
 	ByRoute       map[string]pricing.Micros // by provider route (Claude calls have none)
 	Reported      pricing.Micros            // what providers said their calls cost: for comparison, never charged
@@ -132,7 +179,14 @@ type Halt struct {
 
 // Ledger is the run's money: what the cap grants, what settled calls
 // used, and what calls in flight hold in reserve.
-type Ledger struct{ Granted, Used, Reserved pricing.Micros }
+//
+// Used is the money a mixed run paid — tiers B and C — and Notional is the
+// tier-A part of what its model calls cost, which is what the run's
+// subscription spent rather than the run (C1.16, D140). They are disjoint:
+// a reader that wants the run's whole model figure adds them, and one that
+// wants what it owes reads Used. A run with no cascade has no tiers, so its
+// Notional is zero and Used is exactly what it always was.
+type Ledger struct{ Granted, Used, Notional, Reserved pricing.Micros }
 
 // Server is a running gateway.
 type Server struct {
@@ -167,17 +221,30 @@ type Server struct {
 	countSlots chan struct{} // bounds the token counts in flight
 
 	// mu guards everything below: one mutex, one ledger.
-	mu          sync.Mutex
-	used        pricing.Micros
-	reserved    pricing.Micros
-	overrun     pricing.Micros // all calls', for the invariant check
-	halt        *Halt
-	haltMsg     string
-	wouldHalted bool           // observe: enforce would have halted by now
-	granted     pricing.Micros // lease: the sum of what the lease granted, less what was released
-	flight      *topUp         // lease: the top-up in flight, if any
-	stage       *stageState
-	onLedger    func(Ledger, pricing.Micros) // tests: called after every ledger change
+	mu       sync.Mutex
+	used     pricing.Micros
+	reserved pricing.Micros
+	overrun  pricing.Micros // all calls', for the invariant check
+	// notional is what tier-A calls settled this run: the subscription's
+	// own usage, kept apart from used because it is not money and no cap
+	// counts it (C1.16, D140).
+	notional pricing.Micros
+	// lastCacheRead, lastCacheKnown and lastModel are the last settled
+	// call's cache-read tokens, whether its usage was read at all, and its
+	// serving model: what the next answer's switch is estimated from
+	// (F24). A call whose usage could not be read leaves lastCacheKnown
+	// false, so the estimate that follows says "unmeasured" rather than
+	// zero.
+	lastCacheRead  int64
+	lastModel      string
+	lastCacheKnown bool
+	halt           *Halt
+	haltMsg        string
+	wouldHalted    bool           // observe: enforce would have halted by now
+	granted        pricing.Micros // lease: the sum of what the lease granted, less what was released
+	flight         *topUp         // lease: the top-up in flight, if any
+	stage          *stageState
+	onLedger       func(Ledger, pricing.Micros) // tests: called after every ledger change
 }
 
 // stageState is a running stage; its calls hold it until they settle.
@@ -216,6 +283,22 @@ func Start(ctx context.Context, o Options) (*Server, error) {
 	}
 	if s.log == nil {
 		s.log = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	if o.Upstream.Kind == KindOAuth {
+		// Tier A (oauth.go): the read timeout a subscription call is held to.
+		s.client = oauthUpstreamClient(s.client)
+	}
+	if o.Upstream.Kind == KindService {
+		// C1.15 (service.go): the wait for the service's response headers is
+		// bounded, and nothing else is. The client's own timeout stays as it
+		// is -- none: the call is cancelled by the client that asked for it,
+		// by the stage's deadline and by Close, and the service may stream a
+		// model answer for minutes -- and a service that is not reachable at
+		// all fails the connection instead (D143's halt). What is left
+		// unbounded without this is a connection that never answers and
+		// never fails either, which would hang the call until the stage's
+		// deadline instead of halting the run.
+		s.client = serviceUpstreamClient(s.client)
 	}
 	s.base, s.cancelBase = context.WithCancel(context.WithoutCancel(ctx))
 	s.hctx, s.hstop = context.WithCancel(s.base)
@@ -259,6 +342,44 @@ func (o Options) validate() error {
 		// a key is refused by name (missingAnthropicKey) rather than at
 		// startup. A stored key is mounted whenever the secret has a
 		// version, so this is a fact about data, not about routing.
+	case KindOAuth:
+		// Tier A (oauth.go). The credential is not optional here, as the
+		// Anthropic key is: this kind exists only to attach one, so a
+		// gateway without it is a mistake, refused at start rather than at
+		// every call. The base must be Anthropic's own endpoint (D133).
+		if err := checkOAuthBaseURL(u.BaseURL); err != nil {
+			return err
+		}
+		if u.APIKey == "" {
+			return errors.New("gateway: the OAuth upstream has no credential")
+		}
+	case KindService:
+		// C1.15 (service.go). The destination is required and has no
+		// default: it is the installation's own credentials service.
+		if u.BaseURL == "" {
+			return errors.New("gateway: the service upstream has no base URL")
+		}
+		// D143, structurally: a service run's calls are made with the
+		// credential the service attaches, and an in-job credential beside
+		// it is a fallback waiting to happen -- the one thing the ruling
+		// refuses. There is nothing to fall back with here, so a gateway
+		// built with one is a mistake, refused at start rather than the
+		// first time the service is unreachable.
+		if u.APIKey != "" || u.Token != nil {
+			return errors.New("gateway: the service upstream carries a credential of the job's own: a cascade run's calls are made with the credential the service attaches, and never with one the job holds (D143)")
+		}
+		if u.Service == nil {
+			return errors.New("gateway: the service upstream has no identity")
+		}
+		if u.Service.IDToken == nil {
+			return errors.New("gateway: the service upstream has no job identity (the ID token Cloud Run IAM admits)")
+		}
+		if u.Service.RunIDToken == nil {
+			return errors.New("gateway: the service upstream has no run identity")
+		}
+		if !validJobName(u.Service.Job) {
+			return errors.New("gateway: the service upstream reports no Cloud Run job name")
+		}
 	case "vertex":
 		if u.Token == nil {
 			return errors.New("gateway: the vertex upstream has no token source")
@@ -338,13 +459,13 @@ func (s *Server) Ledger() Ledger {
 
 func (s *Server) ledgerLocked() Ledger {
 	if s.o.Lease != nil {
-		return Ledger{Granted: s.granted, Used: s.used, Reserved: s.reserved}
+		return Ledger{Granted: s.granted, Used: s.used, Notional: s.notional, Reserved: s.reserved}
 	}
 	g := pricing.Micros(math.MaxInt64)
 	if s.o.Mode == Enforce {
 		g = s.o.Cap
 	}
-	return Ledger{Granted: g, Used: s.used, Reserved: s.reserved}
+	return Ledger{Granted: g, Used: s.used, Notional: s.notional, Reserved: s.reserved}
 }
 
 // BeginStage starts allowing st's models. A stage still running is ended
@@ -352,7 +473,11 @@ func (s *Server) ledgerLocked() Ledger {
 func (s *Server) BeginStage(st Stage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.stage = &stageState{st: st, rep: StageReport{ByModel: map[string]pricing.Micros{}, ByRoute: map[string]pricing.Micros{}}}
+	s.stage = &stageState{st: st, rep: StageReport{
+		ByTier:  map[string]pricing.Micros{},
+		ByModel: map[string]pricing.Micros{},
+		ByRoute: map[string]pricing.Micros{},
+	}}
 }
 
 // EndStage stops allowing calls, waits (at most 30 s) for the stage's
@@ -364,7 +489,7 @@ func (s *Server) EndStage() StageReport {
 	s.stage = nil
 	s.mu.Unlock()
 	if st == nil {
-		return StageReport{ByModel: map[string]pricing.Micros{}, ByRoute: map[string]pricing.Micros{}}
+		return StageReport{ByTier: map[string]pricing.Micros{}, ByModel: map[string]pricing.Micros{}, ByRoute: map[string]pricing.Micros{}}
 	}
 	done := make(chan struct{})
 	go func() { st.calls.Wait(); close(done) }()
@@ -388,6 +513,10 @@ func (s *Server) stageReport(st *stageState) StageReport {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rep := st.rep
+	rep.ByTier = make(map[string]pricing.Micros, len(st.rep.ByTier))
+	for k, v := range st.rep.ByTier {
+		rep.ByTier[k] = v
+	}
 	rep.ByModel = make(map[string]pricing.Micros, len(st.rep.ByModel))
 	for k, v := range st.rep.ByModel {
 		rep.ByModel[k] = v
@@ -485,7 +614,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	var rt route
 	switch s.o.Upstream.Kind {
-	case "anthropic":
+	case "anthropic", KindOAuth, KindService:
+		// Tier A (oauth.go) and the credentials service (C1.15, service.go)
+		// serve the same paths, with the same gateway token, as the
+		// Anthropic upstream: only the destination and the credential
+		// differ. A service upstream's base URL is required and is the
+		// service's own, so anthropicBase is the service's base for it --
+		// the function is "the base this upstream sends to" and nothing
+		// about Anthropic's host is assumed below.
 		p := r.URL.Path
 		if r.Method != http.MethodPost || (p != "/v1/messages" && p != "/v1/messages/count_tokens") {
 			writeError(w, http.StatusNotFound, "not_found_error", "fugaro: the budget gateway doesn't serve "+r.Method+" "+logValue(p))

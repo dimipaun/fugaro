@@ -21,7 +21,28 @@ import (
 const (
 	ReasonBudgetUnavailable  Reason = "budget_unavailable"
 	ReasonBudgetTokenExpired Reason = "budget_token_expired"
+	// ReasonCredsRulesDenied is the rules downgrade C1.3's marker cannot
+	// catch: the deployed document predates the credentials cascade's
+	// children, so the run's own write of `credential` or `waiting_until`
+	// (or, for C1.16 and C1.19, of a by-tier counter) is refused. The run
+	// halts rather than dropping the write silently (C1.17). It must equal
+	// runstore.HaltCredsRulesDenied: the runner maps a session halt to a run
+	// record by the reason string alone (runner's onBudgetHalt), and
+	// TestDeniedCascadeWriteHaltsNamed pins the two together.
+	ReasonCredsRulesDenied Reason = "creds_rules_denied"
 )
+
+// credsRulesDeniedDetail is what an operator is told when the deployed rules
+// refuse the cascade's children: the redeploy that fixes it, named with the
+// release that writes them (C1.17). It holds no credential and no value from
+// any answer — a credential *name* is all a cascade run ever writes.
+const credsRulesDeniedDetail = "the database's rules refused this run's credential state: they predate the credentials cascade's fields, and the write is not retried. Re-run 'fugaro update --firebase-project <gcp-project-id>' with this release to deploy the rules that carry them"
+
+// byTierDeniedDetail is the same refusal for the by-tier counters (C1.16):
+// the same fix, named for the write that was refused. The split is not
+// retried and the run's totals are unaffected -- what it loses is the tier a
+// settled call was paid by.
+const byTierDeniedDetail = "the database's rules refused this run's by-tier spend counters: they predate the credentials cascade's fields, and the split is not retried. Re-run 'fugaro update --firebase-project <gcp-project-id>' with this release to deploy the rules that carry them"
 
 // Halt is a cause to stop the run that the session found by itself: a kill
 // switch, the grace running out, a revoked identity. Detail is shown to
@@ -115,20 +136,26 @@ type Session struct {
 
 	newKeysChecked bool // checkNewKeys has probed action/tokens once
 	newKeysRefused bool // the rules refused action/tokens; both are dropped
-	haltOnce       sync.Once
-	halted         bool
-	used           func() Micros
-	leased         map[int64]bool // days this run holds a lease on
-	granted        Micros         // everything the leases granted
-	released       Micros         // everything released
-	unrel          Micros         // a release that failed, to try again at Finish
-	pend           pending
-	started        bool
-	stopped        bool
-	exp            bool // exp written
-	cancel         context.CancelFunc
-	wg             sync.WaitGroup
-	caps           Caps // the last config read, for the heartbeat's limits
+	// credsKeysProbed is checkCascadeKeys's own once: the probe has a
+	// definite answer — the entry without the cascade's children was refused
+	// too — so it need not run again. An outage, a transient success or any
+	// other inconclusive result leaves it false, and the next refused
+	// heartbeat probes again.
+	credsKeysProbed bool
+	haltOnce        sync.Once
+	halted          bool
+	used            func() Micros
+	leased          map[int64]bool // days this run holds a lease on
+	granted         Micros         // everything the leases granted
+	released        Micros         // everything released
+	unrel           Micros         // a release that failed, to try again at Finish
+	pend            pending
+	started         bool
+	stopped         bool
+	exp             bool // exp written
+	cancel          context.CancelFunc
+	wg              sync.WaitGroup
+	caps            Caps // the last config read, for the heartbeat's limits
 
 	advised       map[Reason]bool // observe-mode advisories already logged
 	notionalTotal Micros          // an oauth run's notional so far
@@ -455,8 +482,10 @@ func (s *Session) readState(ctx context.Context, day int64) (State, error) {
 
 // AdmitOptions say what the run needs from the backend.
 type AdmitOptions struct {
-	// Gateway: the run's model calls are leased (api-key and vertex). An
-	// oauth run has no lease and is checked for kill switches only.
+	// Gateway: the run's model calls are leased (api-key, vertex and the
+	// cascade, whose calls the credentials service's upstream carries,
+	// C1.19). An oauth run has no lease and is checked for kill switches
+	// only.
 	Gateway bool
 	// LocalEnforce: the run's merged mode is enforce, whatever the project's.
 	LocalEnforce bool
@@ -486,7 +515,7 @@ func (s *Session) Admit(ctx context.Context, o AdmitOptions) (*Halt, error) {
 	// every auth, oauth included.
 	if _, ok := sn.Caps.MaxReserve(); !ok {
 		return &Halt{Reason: ReasonNoCap, Scope: ScopeGlobal,
-			Detail: "limits.maxReserveMicros is not set in the budget database, so nothing can be leased or reported (an operator runs fugaro init --firebase again)"}, nil
+			Detail: "limits.maxReserveMicros is not set in the budget database, so nothing can be leased or reported (an operator runs fugaro update --firebase-project again)"}, nil
 	}
 	if !o.Gateway {
 		return nil, nil
@@ -585,6 +614,20 @@ func (s *Session) SetUsage(used func() Micros) {
 
 // Lease is the gateway's budget source for this run.
 func (s *Session) Lease() gateway.Lease { return &leaseSource{s: s} }
+
+// IDToken is the run's own Firebase ID token, as a function because the
+// session's token changes under it (token.Session.Token returns the current
+// one and never blocks on the network). It is the identity the launcher
+// minted and this session exchanged, and it is what a reader that has to
+// present the run -- rather than act as it -- asks for: the credentials
+// service verifies a run by it (C1.10's X-Fugaro-Run-Identity), which the
+// gateway attaches to every service call (C1.15).
+//
+// It is the same token this session sends the database as ?auth=, and it is
+// handed on as the function the reader calls per request rather than as a
+// value: a caller that took one now would keep presenting a token the
+// session has since refreshed.
+func (s *Session) IDToken() func() string { return s.tok.Token }
 
 // GrantedMicros and ReleasedMicros are what the leases granted and gave back
 // so far, for the run record.

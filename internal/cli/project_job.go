@@ -250,8 +250,8 @@ func (e *cloudEnv) repoProvider(repo string, co *config.Config) string {
 //     function the deployer built the deployed jobs with and the runner
 //     recomputes the names it matches against with: a launch can therefore
 //     only ever target a job those two know, which is what keeps a run from
-//     being started on a name nothing deployed (a 404 that would blame `fugaro
-//     init` for a job it was never asked for) or on a job the runner would
+//     being started on a name nothing deployed (a 404 that would blame the
+//     converge for a job it was never asked for) or on a job the runner would
 //     refuse to place.
 //   - the job's container holds one account's token — or none — and that
 //     account's own policy list must cover this repository

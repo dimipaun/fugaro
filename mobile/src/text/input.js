@@ -51,25 +51,44 @@
 // types the fixed phrase. The typed half of D169's rule is the phrase, and the
 // phrase is typed here.
 //
-// ## The one thing a confirmed action does NOT do yet, named
+// ## The one thing a confirmed action does NOT do yet, and who now owns it
 //
 // `propose` → typed "Fugaro, confirm" produces P6.3's **action record** (the
-// machine builds it), and the record is **returned, not written**: every
-// `confirmed` answer carries `delivered: false` and `code: 'no-action-write'`.
+// machine builds it), and the record is **returned by this module, not
+// written**: every `confirmed` answer carries `delivered: false` and `code:
+// 'no-action-write'`. That is still true, and the code keeps its meaning -- the
+// record is not in the database and the consumer has not seen it.
 //
-// The reason is a fact about the merged tree, not a choice made here. The
-// phone's one write path is `mobile/src/mailbox/client.js`, and the client it
-// ships has exactly one send -- `send(text)` -- which writes `{ id, sender,
-// text, at, mac }`; it has no way to carry a `kind` and an `action`. Sending a
-// destructive command as its own text would be precisely what D169 forbids
-// ("typed action records … not text to the agent", and the consumer refuses
-// destructive free text it recognises), so this module writes nothing rather
-// than writing the wrong thing. `mobile/src/mailbox/` is P3.6's and P6.10's
-// file (the plan's shared-files table gives it to those two tasks, and this one
-// is forbidden to fork it); P6.10's own verification -- "an action record is
-// never queued" -- is the clause that needs the send this client does not have.
-// Until it lands, a confirmed action is a value the app holds and can act on,
-// and the text screen shows it as confirmed with the reason it was not sent.
+// **What has changed is the reason, and this header used to state the old one.**
+// It said the client "has exactly one send -- `send(text)`" and "has no way to
+// carry a `kind` and an `action`". That was true of P3.6's client and is **not
+// true of the merged tree any more**: P6.10 added exactly that write,
+// `client.send(text, { action })`, which writes P6.3's action record (`kind:
+// 'action'`, the resolved target, the confirmation record) and keeps it out of
+// the retry queue on purpose -- D167's "a destructive action record is never
+// queued at all", which is the clause of P6.10's verification this send exists
+// for. So the capability a confirmed action needs is in the tree; what is
+// missing is the **wiring**.
+//
+// **Who owns the wiring.** Nothing in this module calls that send, and adding
+// the call here would be a decision about the screens, not about this file:
+// what the owner is shown when the gate refuses the record (it is then DROPPED
+// -- an action is never queued, so there is no retry to offer) and that the
+// confirmation is spent either way. Those belong to the screens that own a
+// confirm path: **P6.9's own remaining half** for this text path, and **P6.12**
+// (the spoken confirmation in the voice screen, approved 2026-10-18 and not yet
+// built) for the other. Neither plan line names the delivery explicitly -- both
+// are written about the confirmation machine rather than about the write that
+// follows it -- so this is a gap the plan has and not a task the plan assigns;
+// the pull request that added `send(text, { action })` says so in its body
+// rather than quietly leaving this file claiming the capability is absent.
+//
+// What does NOT change: sending a destructive command as its own text would be
+// precisely what D169 forbids ("typed action records … not text to the agent",
+// and the consumer refuses destructive free text it recognises), so this module
+// writes nothing rather than writing the wrong thing. Until the wiring lands, a
+// confirmed action is a value the app holds and can act on, and the text screen
+// shows it as confirmed with the reason it was not sent.
 //
 // Nothing here reads a clock, a file, the network, a random source or a
 // credential: `now` and `newId` are injected, exactly as they are into
@@ -125,10 +144,11 @@ export const INPUT_CODES = Object.freeze({
   /** The router answered a route that is not one of its three. */
   UNKNOWN_ROUTE: 'unknown-route',
   /**
-   * A confirmed action's record could not be delivered: the merged mailbox
-   * client writes text messages only (see the header). Not a failure of the
-   * confirmation -- the machine did its work -- but the record is not in the
-   * database and the consumer has not seen it.
+   * A confirmed action's record was not delivered: **nothing here sends it**
+   * (see the header -- the client has carried an action write since P6.10, and
+   * the call belongs to the screens, P6.9's remaining half and P6.12). Not a
+   * failure of the confirmation -- the machine did its work -- but the record is
+   * not in the database and the consumer has not seen it.
    */
   NO_ACTION_WRITE: 'no-action-write',
 });
@@ -369,8 +389,9 @@ export function createTypedInput(options = {}) {
       confirmationId: stepped.confirmationId,
       confirmedAt: stepped.confirmedAt,
       record: stepped.record,
-      // See the header: the merged client has no action write, and a
-      // destructive command is never sent as text.
+      // See the header: nothing in this module sends the record (the client's
+      // action write landed with P6.10 and the call is the screens'), and a
+      // destructive command is never sent as its own text either.
       delivered: false,
       code: INPUT_CODES.NO_ACTION_WRITE,
     });

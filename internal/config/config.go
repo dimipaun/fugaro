@@ -121,6 +121,11 @@ func (p PRSettings) CheckpointsOn() bool { return p.Checkpoints == nil || *p.Che
 
 // Agent configures the Claude Code agent.
 type Agent struct {
+	// Auth is where the run's model calls are authenticated: vertex (the
+	// default), api-key, oauth, or cascade — which asks for the project's
+	// credentials cascade and is enabled only by the project policy's switch
+	// (docs/credentials-service, D133, O2; config.AgentAuths is the list, and
+	// CheckCascadeGateway is the budget it needs).
 	Auth         string  `yaml:"auth"`
 	Model        string  `yaml:"model"`
 	ReviewRounds int     `yaml:"review_rounds"`
@@ -471,9 +476,9 @@ const AnthropicSecret = "anthropic-api-key"
 // (the budget is off: there is no gateway, and every call goes to Anthropic).
 // One text, so
 // the two cannot say different things, and both name the fix that actually
-// works: store a key and rerun `fugaro init --repo` (the mount is planned at
+// works: store a key and rerun `fugaro update` (the mount is planned at
 // deploy), or route the model through a provider.
-const MissingAnthropicKey = "no Anthropic API key is stored, so this call cannot go to Anthropic: store one with `fugaro secrets set anthropic-api-key` and rerun fugaro init --repo, or route the model through a provider"
+const MissingAnthropicKey = "no Anthropic API key is stored, so this call cannot go to Anthropic: store one with `fugaro secrets set anthropic-api-key` and rerun fugaro update, or route the model through a provider"
 
 // BitbucketSecret is the logical secret that holds a Bitbucket credential: a
 // repository access token, issued for one repository and unusable for any
@@ -488,10 +493,10 @@ const BitbucketSecret = "bitbucket-token"
 // mapped to the variable each one becomes. A workflow's secrets may not
 // reuse them (design §5.1, §6.1).
 var ReservedSecrets = map[string]string{
-	BitbucketSecret:  "FUGARO_BITBUCKET_TOKEN",
-	"github-app-key": "FUGARO_GITHUB_APP_PRIVATE_KEY",
-	ClaudeOAuthToken: "CLAUDE_CODE_OAUTH_TOKEN",
-	AnthropicSecret:  "ANTHROPIC_API_KEY",
+	BitbucketSecret:    "FUGARO_BITBUCKET_TOKEN",
+	GitHubAppKeySecret: "FUGARO_GITHUB_APP_PRIVATE_KEY",
+	ClaudeOAuthToken:   "CLAUDE_CODE_OAUTH_TOKEN",
+	AnthropicSecret:    "ANTHROPIC_API_KEY",
 }
 
 // CodexOAuthToken is reserved for the Codex harness's OAuth credential but is
@@ -559,7 +564,7 @@ type JobProfile struct {
 	// that is the account's own allow_data_to in the local config, and the
 	// policy's accounts.<name>.allow_repos derived from it. A profile that
 	// names an account admits only repositories that account covers, which
-	// publish and `fugaro init` refuse to violate (§4.1's subset rule).
+	// publish and `fugaro update` refuse to violate (§4.1's subset rule).
 	ClaudeAccounts []string `yaml:"claude_accounts,omitempty" json:"claude_accounts,omitempty"`
 	// allowReposWritten records that the document gave allow_repos at all. It
 	// exists because a key written with nothing under it (`allow_repos:`, or

@@ -447,8 +447,7 @@ const ALT =
      cannot compute. */
   .run-diagram {
     background: var(--panel);
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-xl);
+    border-radius: var(--radius-lg);
     padding-block: var(--space-sm);
     overflow: hidden;
     margin: 0;
@@ -623,9 +622,7 @@ const ALT =
     flex-direction: column;
     gap: var(--space-2xs);
     padding: var(--space-lg);
-    border: var(--border-width) solid var(--border);
-    border-top: 3px solid var(--accent);
-    border-radius: var(--radius-xl);
+    border-radius: var(--radius-lg);
     background: var(--surface);
   }
 
@@ -634,8 +631,6 @@ const ALT =
      asked to pay attention, which is what a spend cap is. */
   .run-fact:last-child {
     grid-column: 1 / -1;
-    border-top-color: var(--border);
-    border-left: 4px solid var(--warn);
   }
 
   /* The step's number, as the board draws it: the largest thing in the card after the name, in
@@ -670,22 +665,44 @@ const ALT =
   }
 
   /* The facts the picture does not carry: the board's panel list — the panel, the hairline and
-     the larger radius, with a hairline between two rows and none under the last. */
+     the larger radius, with a hairline between two rows and none under the last.
+
+     **Every item carries a bullet a reader can see** (the owner's feedback of 2026-10-21: "can
+     we have a bullet point for each of the items?", and again on 2026-10-22: the bullets were
+     not there to read). The board draws a mark of its own per row and this page draws none, so
+     the five facts read as one run-on paragraph; the marker is the list's own and the row's
+     typography is the board's, unchanged. Its colour is the quieter tone `base.css` gives every
+     marker on the site.
+
+     **The room is the list's own, and it is what the first fix left out.** The marker is drawn
+     outside the row's box and in the *list's* inline padding — which is why the browser's own
+     stylesheet gives every list 40 px of it — and this list had none: its padding was `0`, so
+     its markers were drawn to the left of its own padding box, where the panel's
+     `overflow: hidden` (the clip the rounded corners need) took them away. The rows were list
+     items with `list-style: disc` and not a bullet on any of them, which is what the owner read
+     on 2026-10-22 and what settles where the marker is drawn: the row's own start padding
+     (`--space-lg`, 32 px) is not the room it is drawn in. So the inset below is the one
+     `base.css` gives every list on the site (`:where(ul, ol) { padding-left: var(--space-md) }`),
+     the rows keep their own padding, and the bullet is drawn in the list's — pinned by
+     `website/test/how-it-works.mjs`, which refuses a marker drawn outside the list with no room
+     for it, and refuses a list drawn with no marker at all. */
   .run-also {
     max-width: none;
     margin: 0;
     padding: 0;
-    list-style: none;
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-xl);
+    /* The room the markers are drawn in: the same inset `base.css` gives every list on the
+       site. Without it the panel's clip takes them away, and the rows of this list read as the
+       run-on paragraph the owner read twice. */
+    padding-inline-start: var(--space-md);
+    list-style: disc;
+    border-radius: var(--radius-lg);
     background: var(--panel);
     overflow: hidden;
   }
 
   .run-also-item {
-    padding: var(--space-md) var(--space-lg);
-    border-bottom: var(--border-width) solid var(--border);
-    color: var(--text-muted);
+    padding: var(--space-xs) var(--space-lg);
+    color: var(--text);
     font-size: var(--font-size-lg);
     line-height: var(--leading-normal);
   }

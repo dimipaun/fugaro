@@ -29,22 +29,24 @@ func TestDocsGCPManagedLabelSaysItsClaims(t *testing.T) {
 		// The writer a project that already exists has, which is not the
 		// creating run: the flag writes both marks in the same command.
 		"the flag writes both marks": "`fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC` for one that already exists",
-		// 0.8.5's managed path is not this one: the mode is off from 0.8.6 on
-		// and 0.9.0 still ships with it off, which is what makes a project
-		// marked then a project of another mode (owner's ruling, round-2
-		// review; the redesign moved to 0.9.5 by the owner's ruling of
-		// 2026-10-19, and to 0.9.6 by the owner's ruling of 2026-10-20).
-		"the managed path is off from 0.8.6 on": "managed mode is turned off from 0.8.6 on, and 0.9.0 still ships with it off",
+		// 0.8.5's managed path is not this one: the mode was off from 0.8.6
+		// on, and 0.9.0 and 0.9.5 shipped with it off, which is what makes a
+		// project marked then a project of another mode (owner's ruling,
+		// round-2 review; the redesign moved to 0.9.5 by the owner's ruling of
+		// 2026-10-19, and to 0.10.0 by the owner's ruling of 2026-10-20, which
+		// is the release the owner's ruling of 2026-10-22 ships it in).
+		"the managed path is off from 0.8.6 on": "managed mode was turned off from 0.8.6 on, and 0.9.0 and 0.9.5 shipped with it off",
 		// And the release the redesigned path does ship in, which is
-		// neither 0.9.0 nor 0.9.5: the owner's ruling of 2026-10-20 moved it to 0.9.6.
-		"the redesign ships in 0.9.6": "the owner's ruling of 2026-10-20 moved to **0.9.6**",
-		"all four ways in refuse":     "`fugaro init --create-project --managed`, `fugaro managed flag`, `fugaro managed apply` and `fugaro restore`, each before it reads or writes anything",
-		// The flag ships in the 0.9.0 binary and refuses there (review M2).
-		"the flag refuses in 0.9.0": "the 0.9.0 binary carries that command, and it refuses with `managed projects are disabled in this release` until then",
+		// neither 0.9.0 nor 0.9.5: the owner's ruling of 2026-10-20 moved it to 0.10.0.
+		"the redesign ships in 0.10.0": "the ruling of 2026-10-20 to 0.9.6 and then renumbered to **0.10.0**",
+		"all four ways in refused":     "the creating run with `--create-project --managed`, `fugaro managed flag`, `fugaro managed apply` and `fugaro restore`, each before it read or wrote anything",
+		// The flag ships in the 0.9.0 binary and refused there (review M2);
+		// 0.10.0 is the release whose binary carries it live.
+		"the flag refuses in 0.9.0": "the 0.9.0 binary carries that command and refuses with `managed projects are disabled in this release`",
 		// A creation without --managed writes the label too, on purpose —
 		// once managed mode is on; in 0.9.0 it writes the fact alone (m1).
-		"a plain creation labels the project": "A plain `fugaro init --create-project` (no `--managed`) writes the label as well once a release turns managed mode on",
-		"a plain creation in 0.9.0":           "**In 0.9.0, with managed mode off, a plain `fugaro init --create-project` writes the creation fact alone and no label**",
+		"a plain creation labels the project": "A plain first run of `fugaro setup` (no `--managed`) writes the label as well once a release turns managed mode on",
+		"a plain creation with the mode off":  "**In a release with managed mode off (0.8.6 through 0.9.5), a plain creation (`--create-project`, no `--managed`) wrote the creation fact alone and no label**",
 		// And the backfill a project marked before the label needs, still
 		// marked as unverified live.
 		"the backfill line": "gcloud projects update <gcp-project> --update-labels fugaro_managed=true",

@@ -101,9 +101,19 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
   },
   'live.ts': {
     'flag.name': 'a RunFlag is built only from live.ts\'s own flag table (`runFlags`); an unknown health or deadline is the console\'s "unknown ..." flag, never the document\'s word',
+    '`#${String(row.prNumber)}`':
+      'a ready run\'s pull request number, filtered by `prNumberAt` to a positive integer (`schema.ts`\'s `optionalInt` guarantees a finite number and not a whole one) -- the same rule and the same entry `run.ts` keeps for `#${String(model.number)}`, and the review inbox draws the fact the same way: as text, this screen\'s own mark in front of a number the document carried',
+    '`${LIVE_REVIEW_TITLE} (${formatReading(measured(model.reviewCount), \'count\')})`':
+      'the review inbox\'s heading, and the interpolation is the count and nothing else: `LIVE_REVIEW_TITLE` is a console constant (the CLI\'s own words, `readyForReview` in `internal/watch/render.go`) and `reviewCount` is a number this console counted off the frame (`buildLiveModel`: `review.length`), drawn through `formatReading`, the only formatter, as `measured` because a frame that carried no `ready` list at all is refused by `schema.ts` before a screen sees it -- so no document *string* reaches the sink, which is why the heading is one text run rather than four slots (spend.ts\'s `note` is the same shape: a console sentence with a count the console computed)',
   },
   'spend.ts': {
     'entry.dimension': 'the switch is `SPEND_DIMENSIONS.map(...)`: the seven words are the console\'s table, and an unknown document dimension is drawn as "an unknown breakdown"',
+    'people.viewName': '`peopleViewOf` maps the document\'s `view` through `PEOPLE_VIEW_NAMES` and draws `UNKNOWN_PEOPLE_VIEW` for a word it does not know, so the document\'s own word is never drawn',
+    'people.reason ?? NO_PEOPLE_READ': 'the console\'s own sentence for a by-person panel with no document: `peopleOf`\'s or `readSpend`\'s reason, each a console constant or the window sentence, or the CLI\'s refusal **through `sanitizeRefusal`** (`refusalSentence`), the treatment `degraded.ts` gives a refusal',
+    sentence: {
+      within: 'peoplePanel',
+      reason: '`people.sentences` holds only sentences `peopleOf` composed from this file\'s own constants plus counts it read; the document\'s own `notes` take the `putText` branch instead',
+    },
     'series.title': '`ACCOUNT_TITLES[account]`, the console\'s headings',
     'scope.name': '`scopeOf` maps the wire word through `SCOPES` and draws `UNKNOWN_SCOPE_NAME` for a word it does not know',
     note: 'model.notes holds only the console\'s own sentences (`buildSpendModel`), the one interpolation being a count the console computed',
@@ -349,6 +359,8 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     "formatReading(none, 'percent')": '`formatReading` of a Reading: the console\'s own number formatting or its unavailable mark',
     'drawnKey(name)': 'read back from a cell `putText` wrote, so it is the sanitized text',
     "scope.known ? scope.source : 'unknown'": 'a known scope\'s word is on the console\'s `SCOPES` table; an unknown one is drawn as `unknown`',
+    'people.view': '`PeopleView`, the closed three words `peopleViewOf` resolves (`all`, `own`, and `unknown` for a word this build does not know)',
+    'drawnKey(currency)': 'read back from a cell `putText` wrote, so it is the sanitized text',
     theme: { within: 'renderSpend', reason: 'a `SpendTheme`, the closed theme tuple' },
   },
 })
@@ -733,6 +745,7 @@ describe('a screen writes only its own vocabulary through literal', () => {
   it('reads the shared modules as well, so a drawer outside the screens is scanned', () => {
     expect([...SHARED_FILES]).toEqual([
       '../../shared/availability.ts',
+      '../../shared/launcher.ts',
       '../../shared/replay.ts',
       '../../shared/sanitize.ts',
       '../../shared/schema.ts',

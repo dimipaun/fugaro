@@ -432,6 +432,28 @@ function declaredFor(css, klass, property) {
   return found
 }
 
+/**
+ * The inline-start padding a class's rules leave in force, as the value the cascade leaves:
+ * `padding`, `padding-left` and `padding-inline-start` are one answer written three ways, so
+ * they are read in the stylesheet's own order and the last one wins. That order is the whole
+ * point of reading them together — the built `.run-also` declares `padding: 0` and then the
+ * logical longhand that gives the list its room back, and a reading that stopped at the
+ * shorthand would see no room at all. `null` when nothing declares one, which is the browser's
+ * own `0`; a value this check cannot turn into pixels is left for the caller to refuse.
+ */
+function inlineStartPadding(css, klass) {
+  let found = null
+  for (const rule of cssRules(css)) {
+    if (!new RegExp(`\\.${klass}(?![\\w-])`).test(rule.selector ?? '')) continue
+    for (const [property, value] of cssDeclarations(rule.body ?? '')) {
+      const parts = value.trim().split(/\s+/)
+      if (property === 'padding') found = parts.length === 1 ? parts[0] : parts[1]
+      else if (property === 'padding-left' || property === 'padding-inline-start') found = parts[0]
+    }
+  }
+  return found
+}
+
 /** Every declaration of the diagram's classes, as `{ selector, conditions, property, value }`. */
 function diagramDeclarations(css) {
   const out = []
@@ -658,6 +680,110 @@ export function runDiagramFailures(html, css, docs = sources()) {
   }
   if (diagram.words.also.length === 0) {
     out.push('the page carries no second list, and the facts the picture does not carry — how a run starts, when the draft appears, what a run syncs, what outlives the container, where the boundary is — are what that list is for (the owner\'s draft of 2026-10-19)')
+  }
+
+  // And that list is a bulleted list, one bullet to an item (the owner's feedback of
+  // 2026-10-21). The owner read the five facts as one run-on paragraph, because the panel drew
+  // the rows the board draws and every one of them was set with `list-style: none` — a list whose
+  // items carry no marker is a list a reader meets as prose.
+  //
+  // What a reader sees is the **marker the browser generates**, so this reads the two
+  // declarations that decide it — `list-style` and `list-style-type` — **together and in the
+  // stylesheet's own order**, because the shorthand and the longhand are one answer in the
+  // cascade rather than two: `list-style: none inside` and `list-style: outside none` both leave
+  // the browser nothing to draw, and a `list-style-type: none` written after a shorthand takes
+  // the marker away again. So the reading walks the rules for the class and keeps the **type** in
+  // force: the shorthand's own half about the marker (its two position words, `inside` and
+  // `outside`, and a `url(...)` image say nothing about it) replaces the type, `none` being the
+  // one word in it that is about the marker and taking it away, and a shorthand naming no type
+  // leaves the initial `disc` in place — which is the shape this page is built in, `list-style:
+  // disc` being what the minifier writes as `list-style: outside`. `declaredFor` above reads one
+  // property's last declaration, which is one answer out of the two and the bug this reading was
+  // written for.
+  //
+  // A list drawn with no marker at all is the other half, and it is not a declaration: a marker
+  // is generated for a **list item**, so the rows have to still be the list's items where they
+  // are laid out. The board this panel came from draws those rows as flex rows, and a flex row is
+  // not a list item — `display: flex` on the item blockifies it and the marker goes with it,
+  // whatever the list's own `list-style` reads — so both the list and its items are read for a
+  // `display` that takes the marker away.
+  //
+  // `base.css` gives every marker on the site its colour (`:where(li)::marker`), so the marker's
+  // tone is the site's and not this page's, and it is not a declaration to read here. Its place
+  // is a declaration, and the room that place needs is read below.
+  const POSITION_WORDS = new Set(['inside', 'outside'])
+  let markerType = null
+  let markerPosition = null
+  const markerReadings = []
+  for (const rule of cssRules(css)) {
+    if (!new RegExp(`\\.run-also(?![\\w-])`).test(rule.selector ?? '')) continue
+    for (const [property, value] of cssDeclarations(rule.body ?? '')) {
+      if (property !== 'list-style' && property !== 'list-style-type' && property !== 'list-style-position') continue
+      markerReadings.push(`${property}: ${value}`)
+      if (property === 'list-style-type') {
+        markerType = value.trim()
+        continue
+      }
+      const words = value.trim().split(/\s+/)
+      if (property === 'list-style-position') {
+        markerPosition = words[0]
+        continue
+      }
+      const place = words.find((word) => POSITION_WORDS.has(word.toLowerCase()))
+      if (place) markerPosition = place.toLowerCase()
+      const about = words.filter((word) => !POSITION_WORDS.has(word.toLowerCase()) && !/^url\(/i.test(word))
+      markerType = about.includes('none') ? 'none' : (about[0] ?? 'disc')
+    }
+  }
+  if (markerType === null) {
+    out.push('the list of the facts beside the picture declares no `list-style` and no `list-style-type`, and the page draws no bullet of its own: the items of that list carry a bullet point each (the owner\'s feedback of 2026-10-21), so the marker is the stylesheet\'s to name and a list nothing declares one for falls back to the browser\'s own, which is a marker the page has not chosen')
+  } else if (markerType === 'none') {
+    out.push(`the list of the facts beside the picture is drawn with no marker on its items (${markerReadings.join(', ')}, which leaves \`list-style-type: none\` in force), and the owner's feedback of 2026-10-21 asks for a bullet point on each of its items: a list with no marker is the run-on paragraph the owner read — the rows the board draws, with nothing in front of them`)
+  }
+  const ITEM_DISPLAY = /^(flex|inline-flex|grid|inline-grid)$/
+  const listDisplay = declaredFor(css, 'run-also', 'display')
+  const itemDisplay = declaredFor(css, 'run-also-item', 'display')
+  if (listDisplay !== undefined && ITEM_DISPLAY.test(listDisplay.value.trim())) {
+    out.push(`the list of the facts beside the picture is \`display: ${listDisplay.value.trim()}\`, and the items of that list carry a bullet point each (the owner's feedback of 2026-10-21): a flex or grid container lays its children out as its own boxes, and a child that is not laid out as a list item is a child the browser draws no marker for, which is the run-on paragraph the owner read whatever the list's own \`list-style\` says`)
+  } else if (itemDisplay !== undefined && itemDisplay.value.trim() !== 'list-item') {
+    out.push(`the rows of the list beside the picture are \`display: ${itemDisplay.value.trim()}\`, and the items of that list carry a bullet point each (the owner's feedback of 2026-10-21): a marker is generated for a list item, so a row laid out as a block, a flex row or a grid cell is a row the browser draws no marker for — the board draws these rows as rows, and the marker is what a reader sees`)
+  }
+
+  // A marker the stylesheet names is not yet a marker a reader sees, and that is the whole of the
+  // owner's second reading of this section (their feedback of 2026-10-22: "can we add a bullet
+  // point in front of each point in this section?" — asked of a page whose list already declared
+  // `list-style: disc`, with every gate above passing).
+  //
+  // An outside marker is drawn **in the list's own inline padding**, not in the row's: the
+  // browser's stylesheet gives every list 40 px of it for exactly that reason, and a list whose
+  // own inset is `0` has its markers drawn left of its own padding box — outside the box this
+  // panel's `overflow: hidden` clips at, which is the clip its rounded corners need. What the
+  // owner read settles the question the declarations above cannot answer: the rows of this list
+  // hold 32 px of start padding each and the markers were still not there to read.
+  //
+  // So the room is read where it is drawn — the list's own inline-start padding, with `--space-md`
+  // (the inset `base.css` gives every list on the site) as the floor, because a bullet needs the
+  // room a bullet needs and a page that holds less than the site's own inset for its markers is a
+  // page whose markers sit under its own text. `list-style-position: inside` is the one shape that
+  // needs none of this: a marker drawn inside the row's content box is one the clip cannot reach,
+  // so that list is let through.
+  if ((markerPosition ?? 'outside') !== 'inside') {
+    const room = inlineStartPadding(css, 'run-also')
+    const px = room === null ? 0 : lengthInPx(room, css)
+    const listInset = lengthInPx('var(--space-md)', css)
+    const clips = ['overflow', 'overflow-x', 'overflow-y']
+      .map((property) => declaredFor(css, 'run-also', property))
+      .filter((declaration) => declaration !== undefined)
+      .map((declaration) => declaration.value.trim())
+      .filter((value) => value !== 'visible')
+    const clipping = clips.length === 0
+      ? 'and a marker drawn outside the list is a marker drawn outside the panel it belongs to'
+      : `where the panel's \`overflow: ${clips.join(' ')}\` takes it away`
+    if (Number.isNaN(px)) {
+      out.push(`the list of the facts beside the picture declares \`padding-inline-start: ${room}\`, which this check cannot turn into pixels, and the room a list holds for its markers is the room this reading is about (the owner's feedback of 2026-10-22): a length nothing here can measure is a room nothing has checked, so it is refused rather than read as enough`)
+    } else if (px < listInset) {
+      out.push(`the list of the facts beside the picture holds ${px} px of inline-start padding for the markers of its items (${room === null ? 'nothing declared, which is the browser\'s own 0' : `\`${room}\``}), and the owner's feedback of 2026-10-22 asks for a bullet point in front of each of them: a marker drawn outside its item is drawn in the list's own inline padding, so a list holding less than the site's own inset for it draws its bullets outside its padding box, ${clipping} — the rows were left as the run-on paragraph the owner read`)
+    }
   }
 
   // The drawings scale to the column and never scroll sideways.
@@ -954,16 +1080,21 @@ function different(values) {
 
 /** The SVG shapes a drawing paints, and the properties a colour may arrive on. A `<text>` is
  *  filled and a `<line>` has no fill at all, so each of those is painted by its one property;
- *  a `<rect>` and a `<path>` are painted by either — the cards and the arrowheads by their
- *  fill, the loop's own line by its stroke, with `fill: none` declared over it. */
-const PAINT_PROPERTIES = { text: ['fill'], line: ['stroke'], rect: ['fill', 'stroke'], path: ['fill', 'stroke'] }
+ *  a `<rect>`, a `<circle>` and a `<path>` are painted by either — the cards and the arrowheads
+ *  by their fill, the loop's own line by its stroke, with `fill: none` declared over it. */
+const PAINT_PROPERTIES = { text: ['fill'], line: ['stroke'], rect: ['fill', 'stroke'], path: ['fill', 'stroke'], circle: ['fill', 'stroke'] }
 
 /** What a drawing holds besides the shapes it paints: the two `<svg>` roots, the groups the
- *  geometry is nested in, and the words a screen reader reads. An element of any other name is
- *  refused rather than skipped — a `<polygon>`, a `<circle>` or a `<marker>` added to the drawing
- *  is a shape this reading does not know how to resolve the paint of, and a shape it cannot read
- *  is exactly where an unpainted one would hide. */
-const DRAWING_CONTAINERS = new Set(['svg', 'g', 'title', 'desc', 'defs'])
+ *  geometry is nested in, the words a screen reader reads, and — for the zoom levels — the one
+ *  `<defs>` that holds the shared `<symbol>`s and the `<use>` references that draw them. A
+ *  `<symbol>` needs no paint of its own (it is never rendered where it stands) and a `<use>` is
+ *  painted by the shapes of the `<symbol>` it names, which this reading reads where they are. A
+ *  `<marker>` is the same kind of thing as a `<defs>`: it is never rendered where it stands, and
+ *  the `<path>` inside it — which is what an arrowhead is — is read where that stands.
+ *  An element of any other name is refused rather than skipped — a `<polygon>`, an `<ellipse>`
+ *  or an `<image>` added to a drawing is a shape this reading does not know how to resolve the
+ *  paint of, and a shape it cannot read is exactly where an unpainted one would hide (ZF42). */
+const DRAWING_CONTAINERS = new Set(['svg', 'g', 'title', 'desc', 'defs', 'symbol', 'use', 'marker'])
 
 /** WCAG 2.1 AA for body text: the ratio every label of the drawing is held to. The labels are
  *  12 px and up (the floor `runDiagramFailures` holds the drawings to), which is not "large
@@ -1107,6 +1238,85 @@ const named = (colour) => (colour.token === null ? colour.value ?? '' : `\`${col
  * Pure, over the page's markup and its stylesheet, so the built page is checked with it and the
  * refusals below are proved with it.
  */
+/**
+ * Every way one shape of a drawing is left unpainted or painted with something the palette does
+ * not hold, as the lines a reader of the failure gets. One reading serves every drawing of the
+ * site — the run's picture and the four zoom levels — so that two drawings cannot be held to two
+ * different rules about what a colour is.
+ *
+ * A shape kind the reading has not been taught is refused by name: a drawing that grows an
+ * element is a drawing whose paint no check holds until the reading knows how that element takes
+ * its colour (ZF42, the gap the defect of 2026-10-21 came through).
+ */
+function paintRefusals(shape, css, palette, values) {
+  const lines = []
+  const properties = PAINT_PROPERTIES[shape.name]
+  if (properties === undefined) {
+    if (!DRAWING_CONTAINERS.has(shape.name)) {
+      lines.push(
+        `it is a \`<${shape.name}>\`, and this reading knows how a drawing's \`<rect>\`, \`<circle>\`, \`<path>\`, \`<line>\` and \`<text>\` are painted and nothing else. A shape it cannot read is a shape whose paint no check holds, which is the gap the defect of 2026-10-21 came through: teach this reading the element and how it takes its colour`,
+      )
+    }
+    return lines
+  }
+  const readings = properties.map((property) => ({ property, ...(paintInForce(css, shape, property) ?? { value: null, from: null }) }))
+  const declared = readings.filter((reading) => reading.value !== null)
+
+  for (const reading of declared) {
+    // `var()` is CSS's own syntax and an SVG presentation attribute is not CSS: an invalid
+    // attribute is dropped, and the shape falls back to SVG's initial value — black for
+    // `fill`, none for `stroke`. This is the trap a fix written in the markup falls into,
+    // and it is refused whatever token it names, because the token is not read there at all.
+    if (reading.source === 'attribute' && tokenOf(reading.value) !== null) {
+      lines.push(
+        `its \`${reading.property}\` is ${reading.value} (from ${reading.from}), and \`var()\` is not a colour in an SVG presentation attribute: it is CSS's own syntax, an invalid attribute is dropped, and the shape falls back to SVG's initial value, which for \`fill\` is black and for \`stroke\` is none. The colour belongs in a class in the page's stylesheet, where the token resolves`,
+      )
+      continue
+    }
+    // A colour of the palette, and nothing at all, are the two values there is nothing to
+    // say about: the first is the shape painted the way the site paints, and the second is
+    // one property of a shape another property may still paint.
+    if (painted(reading, palette, values) !== null || reading.value === 'none') continue
+    // A token the palette does not hold is a colour nothing in force decides, and the one
+    // reading that could say what the shape is painted would be a second palette.
+    const token = tokenOf(reading.value)
+    if (token !== null) {
+      lines.push(
+        `its \`${reading.property}\` is ${reading.value} (from ${reading.from}), and the palette in force declares no \`${token}\` (${[...palette.keys()].map((name) => `--${name}`).join(', ')}): a shape painted with a token that is not there resolves to nothing, and SVG's initial value takes over — a black fill, no stroke`,
+      )
+      continue
+    }
+    // A colour the palette does not hold is still a colour: the shape is visible, and the
+    // refusal is about where the value came from rather than about a reader seeing nothing.
+    if (rgbOf(reading.value) !== null) {
+      lines.push(
+        `its \`${reading.property}\` is ${reading.value} (from ${reading.from}), which is not one of the palette's own colours (${[...new Set(palette.values())].join(', ')}): every colour the site paints comes from the palette in force, so that it is one value to change and one pair the contrast check can read`,
+      )
+      continue
+    }
+    lines.push(
+      `its \`${reading.property}\` is ${reading.value} (from ${reading.from}), which this reading cannot turn into a colour: a colour function, a named colour or a \`currentColor\` is a value no contrast check can compute, and the palette in force holds opaque hex literals`,
+    )
+  }
+
+  const isPainted = declared.some((reading) => painted(reading, palette, values) !== null)
+  if (!isPainted && declared.length === 0) {
+    lines.push(
+      `no rule of the page's stylesheet can reach it and it declares no \`fill\` or \`stroke\` of its own: SVG's initial values are a black fill and no stroke at all, so the shape is painted black — the drawing's cards and its labels are rectangles of black — or, where it is stroke alone, not drawn at all. The shapes of this drawing arrive through \`set:html\`, which Astro's scope attribute never reaches: a scoped \`.run-…[data-astro-cid-…]\` rule cannot match them, and the paint rules need \`:global()\` around the shape's own compound (the owner's reading of the preview, 2026-10-21)`,
+    )
+  } else if (!isPainted && declared.every((reading) => reading.value === 'none')) {
+    // Every paint the shape declares is `none`, so it is drawn as nothing — the other half
+    // of the defect, and the half a reader sees as an absent arrow rather than a black card.
+    // `none` is the one declared value no refusal above speaks for, so this is where it is
+    // said; a shape whose paint is a colour this reading refuses has that line already, and
+    // this one would only repeat it.
+    lines.push(
+      `it declares ${declared.map((reading) => `\`${reading.property}: ${reading.value}\``).join(' and ')} and no colour at all, so it is drawn as nothing: a stroke-only shape is not drawn without a stroke and a card is not drawn without a fill, which is the same defect as the black rectangles read the other way round — a rule that paints the shape is what has to declare the colour (the owner's reading of the preview, 2026-10-21)`,
+    )
+  }
+  return lines
+}
+
 export function runPaintFailures(html, css, palette = paletteTokensInForce()) {
   const out = []
   const values = new Set([...palette.values()].map((value) => value.toLowerCase()))
@@ -1131,79 +1341,8 @@ export function runPaintFailures(html, css, palette = paletteTokensInForce()) {
       }
 
       for (const shape of walk(svg)) {
-        const properties = PAINT_PROPERTIES[shape.name]
-        if (properties === undefined) {
-          if (!DRAWING_CONTAINERS.has(shape.name)) {
-            note(
-              shape,
-              `it is a \`<${shape.name}>\`, and this reading knows how a drawing's \`<rect>\`, \`<path>\`, \`<line>\` and \`<text>\` are painted and nothing else. A shape it cannot read is a shape whose paint no check holds, which is the gap the defect of 2026-10-21 came through: teach this reading the element and how it takes its colour`,
-            )
-          }
-          continue
-        }
-        const readings = properties.map((property) => ({ property, ...(paintInForce(css, shape, property) ?? { value: null, from: null }) }))
-        const declared = readings.filter((reading) => reading.value !== null)
-
-        for (const reading of declared) {
-          // `var()` is CSS's own syntax and an SVG presentation attribute is not CSS: an invalid
-          // attribute is dropped, and the shape falls back to SVG's initial value — black for
-          // `fill`, none for `stroke`. This is the trap a fix written in the markup falls into,
-          // and it is refused whatever token it names, because the token is not read there at all.
-          if (reading.source === 'attribute' && tokenOf(reading.value) !== null) {
-            note(
-              shape,
-              `its \`${reading.property}\` is ${reading.value} (from ${reading.from}), and \`var()\` is not a colour in an SVG presentation attribute: it is CSS's own syntax, an invalid attribute is dropped, and the shape falls back to SVG's initial value, which for \`fill\` is black and for \`stroke\` is none. The colour belongs in a class in the page's stylesheet, where the token resolves`,
-            )
-            continue
-          }
-          // A colour of the palette, and nothing at all, are the two values there is nothing to
-          // say about: the first is the shape painted the way the site paints, and the second is
-          // one property of a shape another property may still paint.
-          if (painted(reading, palette, values) !== null || reading.value === 'none') continue
-          // A token the palette does not hold is a colour nothing in force decides, and the one
-          // reading that could say what the shape is painted would be a second palette.
-          const token = tokenOf(reading.value)
-          if (token !== null) {
-            note(
-              shape,
-              `its \`${reading.property}\` is ${reading.value} (from ${reading.from}), and the palette in force declares no \`${token}\` (${[...palette.keys()].map((name) => `--${name}`).join(', ')}): a shape painted with a token that is not there resolves to nothing, and SVG's initial value takes over — a black fill, no stroke`,
-            )
-            continue
-          }
-          // A colour the palette does not hold is still a colour: the shape is visible, and the
-          // refusal is about where the value came from rather than about a reader seeing nothing.
-          if (rgbOf(reading.value) !== null) {
-            note(
-              shape,
-              `its \`${reading.property}\` is ${reading.value} (from ${reading.from}), which is not one of the palette's own colours (${[...new Set(palette.values())].join(', ')}): every colour the site paints comes from the palette in force, so that it is one value to change and one pair the contrast check can read`,
-            )
-            continue
-          }
-          note(
-            shape,
-            `its \`${reading.property}\` is ${reading.value} (from ${reading.from}), which this reading cannot turn into a colour: a colour function, a named colour or a \`currentColor\` is a value no contrast check can compute, and the palette in force holds opaque hex literals`,
-          )
-        }
-
-        const isPainted = declared.some((reading) => painted(reading, palette, values) !== null)
-        if (!isPainted && declared.length === 0) {
-          note(
-            shape,
-            `no rule of the page's stylesheet can reach it and it declares no \`fill\` or \`stroke\` of its own: SVG's initial values are a black fill and no stroke at all, so the shape is painted black — the drawing's cards and its labels are rectangles of black — or, where it is stroke alone, not drawn at all. The shapes of this drawing arrive through \`set:html\`, which Astro's scope attribute never reaches: a scoped \`.run-…[data-astro-cid-…]\` rule cannot match them, and the paint rules need \`:global()\` around the shape's own compound (the owner's reading of the preview, 2026-10-21)`,
-          )
-        } else if (!isPainted && declared.every((reading) => reading.value === 'none')) {
-          // Every paint the shape declares is `none`, so it is drawn as nothing — the other half
-          // of the defect, and the half a reader sees as an absent arrow rather than a black card.
-          // `none` is the one declared value no refusal above speaks for, so this is where it is
-          // said; a shape whose paint is a colour this reading refuses has that line already, and
-          // this one would only repeat it.
-          note(
-            shape,
-            `it declares ${declared.map((reading) => `\`${reading.property}: ${reading.value}\``).join(' and ')} and no colour at all, so it is drawn as nothing: a stroke-only shape is not drawn without a stroke and a card is not drawn without a fill, which is the same defect as the black rectangles read the other way round — a rule that paints the shape is what has to declare the colour (the owner's reading of the preview, 2026-10-21)`,
-          )
-        }
+        for (const line of paintRefusals(shape, css, palette, values)) note(shape, line)
       }
-
       // And the labels: what each one is filled with, and what it is drawn on.
       for (const text of [...walk(svg)].filter((el) => el.name === 'text')) {
         const fill = painted(paintInForce(css, text, 'fill'), palette, values)
@@ -1811,6 +1950,67 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
       rewrite('run-tall', 'max-width:22.5rem;', ''),
       /declares `max-width: \(nothing\)`.*declares no ceiling at all/,
     ],
+    // The list of facts beside the picture, drawn with no marker on its items: the run-on
+    // paragraph the owner read (their feedback of 2026-10-21), and the defect every gate in
+    // this file passed over while the list was the page's own `<ul>` with `list-style: none`.
+    [
+      'a list of facts with no bullet on its items',
+      // The declaration is **added** to the page's own rule rather than swapped into it: the
+      // build's CSS minifier rewrites the shorthand it was written as (`list-style: disc` is
+      // built as `list-style: outside`, since `disc` is `list-style-type`'s initial value), so
+      // a fixture that typed the source's own value in would stop landing the moment the
+      // minifier changed its mind. The added declaration is the last one in the rule's body,
+      // which is the one in force.
+      declare('run-also', 'list-style:none'),
+      /asks for a bullet point on each of its items/,
+    ],
+    // The same defect written the long way: the marker is taken away by the longhand rather than
+    // by the shorthand, which is the pair the reading above has to hold together — a shorthand
+    // that names a marker and a `list-style-type: none` after it leave the browser nothing to
+    // draw, and a reading that stopped at the shorthand would call that list bulleted.
+    [
+      'a list of facts whose marker the longhand takes away',
+      declare('run-also', 'list-style-type:none'),
+      /leaves `list-style-type: none` in force/,
+    ],
+    // And the same defect again, with the marker named on the list and the rows laid out as
+    // something that is not a list item: the board draws these rows as rows, and a row the
+    // browser blockifies is a row with no marker, whatever the list's own `list-style` reads.
+    [
+      'rows of the list laid out as flex rows',
+      declare('run-also-item', 'display:flex'),
+      /rows of the list beside the picture are `display: flex`/,
+    ],
+    [
+      'a list of facts laid out as a flex row itself',
+      declare('run-also', 'display:flex'),
+      /the list of the facts beside the picture is `display: flex`/,
+    ],
+    // And the marker named, on a list that holds no room for it: the defect the owner read twice
+    // (their feedback of 2026-10-22) — every gate above passes over it, because the list does
+    // declare a marker and its rows are still list items. This is the page as it was built before
+    // this fix, and the room is taken back the way the built stylesheet writes it: the logical
+    // longhand added after the `padding: 0` that is already there.
+    [
+      'a list of facts with no room for its bullets',
+      declare('run-also', 'padding-inline-start:0'),
+      /holds 0 px of inline-start padding for the markers of its items/,
+    ],
+    // The same defect in the other direction: room held, and not the room a bullet needs. The
+    // floor is the site's own list inset, so a list that holds less than the site's lists do is
+    // refused rather than measured against a number this check invented.
+    [
+      'a list of facts holding less room than the site\'s own lists',
+      declare('run-also', 'padding-inline-start:0.25rem'),
+      /holds 4 px of inline-start padding for the markers of its items/,
+    ],
+    // And a room nothing can measure: a length this check cannot turn into pixels is a room no
+    // check has read, which is refused rather than read as enough.
+    [
+      'a list of facts whose room cannot be measured',
+      declare('run-also', 'padding-inline-start:1em'),
+      /cannot turn into pixels/,
+    ],
     // A ceiling under the phone's own column: the drawing is scaled down rather than up, and
     // the phone's label size is taken in that box.
     [
@@ -1865,6 +2065,16 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
       `${what}: the refusal did not fire, and this is what it said instead:\n${lines.join('\n')}`,
     )
   }
+
+  // The one shape a list needs no room of its own for: a marker drawn *inside* the row's content
+  // box is a marker the panel's clip cannot reach, so a list that takes that shape is let through
+  // — a reading that refused it would be a reading refusing a shape the page is free to take, and
+  // the room below is read because an outside marker is drawn outside its item.
+  assert.deepEqual(
+    verdict(page, declare('run-also', 'list-style-position:inside')).filter((line) => /inline-start padding|cannot turn into pixels/.test(line)),
+    [],
+    'a list whose marker is drawn inside its items holds no inline-start padding for one, and this reading refuses it anyway: the room is read because an outside marker is drawn outside the row, and a marker drawn inside the row is one the panel\'s clip cannot reach',
+  )
 
   // And the repository's own half: a stage name no document carries is refused as a stage of
   // the run, wherever the drawing got it from.
@@ -2012,4 +2222,23 @@ test('the stages the page draws are the stages the repository names', () => {
   assert.deepEqual(drawnOrder, chainOrder, 'the diagram draws the run\'s stages in an order the design document\'s chain does not: the picture is the run that document describes (docs/design/v1.md §4)')
   assert.ok(names.includes(LOOP), `the loop the diagram draws is not a stage of the chain docs/design/v1.md draws (${JSON.stringify(line)})`)
   assert.ok(new RegExp('`verify`').test(loggedStages()), 'plugin/skills/working/reference/logs.md no longer names `verify` among the stages a run reaches, and that list is where the page\'s fifth stage comes from')
+})
+
+// ---- the four levels (the owner's boards, shown as the PNGs rendered from them) ----------
+
+test('the four levels are four figures with the boards\' pictures, in order, named, and with no script', () => {
+  const page = builtPages().find((entry) => entry.rel === 'how-it-works/index.html')
+  assert.ok(page, 'the built site has no How It Works page, and the four levels are a section of it (D237)')
+  const section = findAll(parse(page.html), (el) => el.name === 'section' && has(el, 'zoom'))
+  assert.equal(section.length, 1, `the page carries ${section.length} zoom sections, and it carries one`)
+  assert.equal(findAll(section[0], (el) => el.name === 'script').length, 0, 'the zoom section carries a <script>, and the four levels are stills')
+  const figures = findAll(section[0], (el) => el.name === 'figure')
+  assert.deepEqual(figures.map((figure) => figure.attrs.get('id')), ['level-1', 'level-2', 'level-3', 'level-4'], 'the levels are not the four anchors `#level-1` … `#level-4`, in order (D245)')
+  figures.forEach((figure, index) => {
+    const images = findAll(figure, (el) => el.name === 'img')
+    assert.equal(images.length, 1, `level ${index + 1} carries ${images.length} pictures, and a level is one picture`)
+    assert.equal(images[0].attrs.get('src'), `/images/zoom/level${index + 1}.png`, `level ${index + 1} does not show the board's render`)
+    assert.ok((images[0].attrs.get('alt') || '').length > 40, `level ${index + 1}'s picture has no real alt text: a reader who cannot see it is told nothing`)
+    assert.ok(images[0].attrs.get('width') && images[0].attrs.get('height'), `level ${index + 1}'s picture carries no width and height: the page would jump as it loads`)
+  })
 })

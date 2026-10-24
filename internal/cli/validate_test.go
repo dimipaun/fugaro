@@ -632,7 +632,7 @@ func TestValidateAllowListProblemLabelsLayers(t *testing.T) {
 // The committed day cap is client-enforced: validate says so, and that an
 // RTDB cap lower than it wins. A file without one says nothing about it.
 func TestValidateWarnsPerDayIsClientEnforced(t *testing.T) {
-	const want = "warning: budget.per_day_usd: per_day_usd is enforced by the runner against this repository's day counter only while the project has the shared budget (init --firebase, mode observe or enforce); on a project without it nothing enforces it. A lower RTDB cap wins"
+	const want = "warning: budget.per_day_usd: per_day_usd is enforced by the runner against this repository's day counter only while the project has the shared budget (update --firebase-project, mode observe or enforce); on a project without it nothing enforces it. A lower RTDB cap wins"
 	path := fileWithBudget(t, "budget: { mode: observe }\n", "budget: { per_day_usd: 10 }\n", pinnedAgent)
 	out, errOut, err := execute(t, "validate", path)
 	if err != nil || !strings.Contains(out, "is valid") || !strings.Contains(errOut, want) {
@@ -1571,7 +1571,7 @@ func TestValidateJudgesTheSwitchOverTheModelsItNames(t *testing.T) {
 // entry that claims the model for *other* repositories is not in that table at
 // all, and the rule cannot tell that state from a model nobody claims. The
 // operator reading the first sentence goes and writes a route entry that already
-// exists; the fix is one word in its allow_data_to (and then init --repo, since
+// exists; the fix is one word in its allow_data_to (and then update --repo, since
 // the list a run reads is built into its job at deploy time).
 //
 // config.CheckRouting judges one table and cannot know which of the two it is
@@ -1609,7 +1609,7 @@ func TestValidatePointsAtAllowDataToWhenTheEntryIsThere(t *testing.T) {
 	if !strings.Contains(out, "no provider entry claims it") {
 		t.Fatalf("the rule's own sentence is gone:\n%s", out)
 	}
-	for _, want := range []string{"openrouter", "allow_data_to", `"acme/sandbox"`, "acme/app", "fugaro init --repo"} {
+	for _, want := range []string{"openrouter", "allow_data_to", `"acme/sandbox"`, "acme/app", "fugaro update --repo"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the line does not name %q, so the operator is sent to write an entry that is there:\n%s", want, out)
 		}

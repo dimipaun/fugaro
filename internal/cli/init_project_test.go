@@ -2,13 +2,18 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
@@ -16,6 +21,16 @@ import (
 const (
 	newProj    = "fugaro-new-1234"
 	billingAcc = "0123AB-4567CD-89EF01"
+)
+
+// The three patterns TestTheBillingListIsNarrow reads the tree with: the one
+// call site that lists a caller's billing accounts, and the predicate that
+// bounds it. They are written on the call and not on the callee's own name so
+// that an aliased import is caught too.
+var (
+	billingListCallRE = regexp.MustCompile(`\.ListWithFallback\(`)
+	canTypeReadRE     = regexp.MustCompile(`\br\.canType\(\)`)
+	canTypeGuardRE    = regexp.MustCompile(`if !r\.canType\(\) \{`)
 )
 
 // projectRig is the init rig with the Firebase Management and Cloud
@@ -56,15 +71,25 @@ func newProjectRig(t *testing.T) *projectRig {
 	return &projectRig{initRig: r, fb: fb, bill: bill}
 }
 
-// existing makes the project exist with Firebase, and billing as given.
+// existing makes the project exist with Firebase, and billing as given: a
+// project an earlier run of fugaro setup created, so it carries the creation
+// label (infra.CreatedLabelKey) a rerun resumes it by.
 func (r *projectRig) existing(billing bool) {
+	r.foreign(billing)
+	r.crm.SetLabels(newProj, map[string]string{infra.CreatedLabelKey: infra.CreatedLabelValue})
+}
+
+// foreign makes the project exist, readable, with Firebase and billing as
+// given, and without the creation label: a project no run of fugaro setup
+// created, which a run refuses.
+func (r *projectRig) foreign(billing bool) {
 	r.crm.AddProject(newProj, 424242)
 	r.gcs.AddProject(newProj, 424242)
 	r.fb.AddFirebase(newProj)
 	r.bill.SetBilling(newProj, billing)
 }
 
-// run is fugaro init with the flags and the stdin; terminal says whether
+// run is the converge with the flags and the stdin; terminal says whether
 // stdin is a terminal.
 func (r *projectRig) run(t *testing.T, terminal bool, stdin string, args ...string) (string, string, error) {
 	t.Helper()
@@ -103,7 +128,7 @@ func (r *projectRig) posts(t *testing.T) int {
 type projectJSON struct {
 	Created string `json:"created_project"`
 	Stages  []struct{ Name, State, Detail string }
-	Left    []map[string]string `json:"left_for_you"`
+	Left    []map[string]any `json:"left_for_you"`
 }
 
 func parseProjectJSON(t *testing.T, out string) projectJSON {
@@ -274,26 +299,77 @@ func TestProjectAndBillingInConfirmationText(t *testing.T) {
 	r.nothingDone(t, "a declined creation")
 }
 
-// A project that exists and the caller can read is adopted: no create, no
+// A project an earlier run of fugaro setup created and finished (Firebase and
+// billing are there) is the resume with nothing left to do: no create, no
 // Firebase, no link, whatever the flags.
-func TestCreateAdoptsOwnProject(t *testing.T) {
+func TestCreateResumesItsOwnProject(t *testing.T) {
 	r := newProjectRig(t)
 	r.existing(true)
 	r.bill.AddAccount(billingAcc, true)
 	out, _, _ := r.run(t, true, newProj+"\n"+billingAcc+"\n", "--create-project", "--link-billing", billingAcc, "--plan-only")
-	r.nothingDone(t, "an adopted project (plan)")
+	r.nothingDone(t, "a resumed project (plan)")
 	if !strings.Contains(out, "[done]") || !strings.Contains(out, "billing is already linked") {
 		t.Errorf("the project stage is not reported done, with billing left as it is:\n%s", out)
 	}
 	_, _, _ = r.run(t, true, newProj+"\n"+billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
-	r.nothingDone(t, "an adopted project")
+	r.nothingDone(t, "a resumed project")
 }
 
-// An interrupted run: the project exists without Firebase; the rerun adds
-// Firebase behind a typed ID, and never creates a second project.
+// TestCreateRefusesAnExistingProjectItDidNotCreate: Fugaro only starts fresh
+// (the owner's ruling of 2026-10-23). A project that already exists, that the
+// caller can read, and that no run of fugaro setup created (it carries no
+// creation label) is refused with the one line that says so, before anything is
+// created, added, linked or applied — whatever billing it has, and in the plan
+// as in the apply.
+func TestCreateRefusesAnExistingProjectItDidNotCreate(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		billing bool
+		args    []string
+	}{
+		{"billing linked", true, nil},
+		{"no billing, --link-billing", false, []string{"--link-billing", billingAcc}},
+		{"--plan-only", false, []string{"--plan-only"}},
+		{"--yes", true, []string{"--yes"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newProjectRig(t)
+			r.foreign(tc.billing)
+			r.bill.AddAccount(billingAcc, true)
+			out, _, err := r.run(t, true, newProj+"\n"+billingAcc+"\n", append([]string{"--create-project"}, tc.args...)...)
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("exit %d (%v), want a user error\n%s", ExitCode(err), err, out)
+			}
+			if want := "Fugaro only starts fresh: " + newProj + " already exists; pick another id"; !strings.Contains(out+errString(err), want) {
+				t.Errorf("the refusal does not say %q:\n%s\n%v", want, out, err)
+			}
+			r.nothingDone(t, "an existing project setup did not create")
+			if n := len(r.ran(t, "apply")); n != 0 {
+				t.Errorf("an installation was applied into a project setup did not create: %q", r.calls(t))
+			}
+		})
+	}
+}
+
+// TestCreatedProjectCarriesTheCreationLabel: the label a rerun resumes by is
+// on the project from its creation — sent in the create request itself, so no
+// window exists in which the project is there and unlabelled.
+func TestCreatedProjectCarriesTheCreationLabel(t *testing.T) {
+	r := newProjectRig(t)
+	_, _, _ = r.run(t, true, newProj+"\n", "--create-project")
+	cs := r.crm.Creates()
+	if len(cs) != 1 || cs[0].Labels[infra.CreatedLabelKey] != infra.CreatedLabelValue {
+		t.Fatalf("creates = %+v, want one carrying %s=%s", cs, infra.CreatedLabelKey, infra.CreatedLabelValue)
+	}
+}
+
+// An interrupted run: the project an earlier run created exists without
+// Firebase; the rerun adds Firebase behind a typed ID, and never creates a
+// second project.
 func TestCreateRerunAddsFirebaseOnly(t *testing.T) {
 	r := newProjectRig(t)
 	r.crm.AddProject(newProj, 424242)
+	r.crm.SetLabels(newProj, map[string]string{infra.CreatedLabelKey: infra.CreatedLabelValue})
 	r.gcs.AddProject(newProj, 424242)
 	r.bill.SetBilling(newProj, true)
 	_, _, _ = r.run(t, true, newProj+"\n", "--create-project")
@@ -346,8 +422,10 @@ func TestIDCollisionSuggestsAlternative(t *testing.T) {
 	}
 }
 
-// Without --link-billing the stage creates the project, links nothing,
-// lists nothing, and leaves the one gcloud line, exiting 1.
+// Without --link-billing the stage creates the project, links nothing, lists
+// nothing itself — the wizard's billing question (W4.3) is the one place in a
+// run that lists the caller's accounts, and this stage never asks for one —
+// and leaves the one gcloud line, exiting 1.
 func TestBillingGuidedByDefault(t *testing.T) {
 	r := newProjectRig(t)
 	out, _, err := r.run(t, true, newProj+"\n", "--create-project")
@@ -357,13 +435,13 @@ func TestBillingGuidedByDefault(t *testing.T) {
 	if len(r.crm.Creates()) != 1 || len(r.bill.Links()) != 0 {
 		t.Fatalf("creates %d links %v", len(r.crm.Creates()), r.bill.Links())
 	}
-	want := "gcloud billing projects link " + newProj + " --billing-account=BILLING_ACCOUNT_ID"
+	want := "gcloud billing projects link " + newProj + " --billing-account=<billing-account-id>"
 	if !strings.Contains(out, want) {
 		t.Errorf("the guided command is missing:\n%s", out)
 	}
 	for _, q := range r.bill.Requests() {
 		if !strings.HasSuffix(q.Path, "/billingInfo") || q.Method != "GET" {
-			t.Errorf("billing call %s %s: only the project's own billing is read, never the accounts", q.Method, q.Path)
+			t.Errorf("billing call %s %s: the project stage reads only the project's own billing, never the accounts (the wizard's billing question is the one place a run lists them, W4.3)", q.Method, q.Path)
 		}
 	}
 	// A rerun with the project there reads, changes nothing, and says the same.
@@ -382,7 +460,13 @@ func TestBillingGuidedJSON(t *testing.T) {
 		t.Fatalf("exit %d (%v)", ExitCode(err), err)
 	}
 	j := parseProjectJSON(t, out)
-	if j.state("project") != "needs-you" || len(j.Left) != 1 || !strings.HasPrefix(j.Left[0]["text"], "gcloud billing projects link "+newProj) {
+	if len(j.Left) != 1 {
+		t.Fatalf("%+v", j)
+	}
+	text, _ := j.Left[0]["text"].(string)
+	cmds, _ := j.Left[0]["commands"].([]any)
+	if len(j.Left) != 1 || j.state("project") != "billing-pending" || !strings.Contains(text, "whoever administers billing") ||
+		len(cmds) != 2 || cmds[0] != "gcloud billing projects link "+newProj+" --billing-account=<billing-account-id>" {
 		t.Errorf("%+v", j)
 	}
 	r.nothingDone(t, "a guided billing")
@@ -432,26 +516,292 @@ func TestProjectFlagsRefusedBeforeAnyCall(t *testing.T) {
 	r.nothingDone(t, "flag refusals")
 }
 
+// A refusal's text is the service's, verbatim, with the likely cause — and,
+// since the owner's ruling of 2026-10-23, under the one helpful line that says
+// what to ask the organization for (refusedCreate, refusedLink). The line
+// leads, so a reader who stops at the first line still knows what to do; the
+// service's own words are still there under it, which is what this test has
+// always pinned.
 func TestOrgPolicyErrorVerbatim(t *testing.T) {
 	r := newProjectRig(t)
+	stubSelfCommand(t)
 	const msg = "Constraint constraints/gcp.restrictProjectCreation violated for the organization"
 	r.crm.FailCreates(403, "PERMISSION_DENIED", msg)
 	_, _, err := r.run(t, true, newProj+"\n", "--create-project")
 	if err == nil || !strings.Contains(err.Error(), msg) || !strings.Contains(err.Error(), "organization policy") {
 		t.Errorf("err = %v: want the service's text and the likely cause", err)
 	}
+	if !strings.HasPrefix(err.Error(), "Fugaro could not create the project "+newProj+":") {
+		t.Errorf("err = %v: want the helpful line first", err)
+	}
 	if len(r.fb.Adds()) != 0 {
 		t.Error("Firebase was added after a refused creation")
 	}
 
-	// Billing refusals too: the text is the service's, with the likely cause.
+	// Billing refusals too: the text is the service's, with the likely cause,
+	// printed above the pause's block (a refused link pauses setup, exit 1),
+	// whose first line is the helpful one.
 	r = newProjectRig(t)
+	stubSelfCommand(t)
 	r.existing(false)
 	r.bill.FailLinks(403, "PERMISSION_DENIED", "The caller does not have permission to link")
-	_, _, err = r.run(t, true, billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
-	if err == nil || !strings.Contains(err.Error(), "The caller does not have permission to link") || !strings.Contains(err.Error(), "billing.resourceAssociations.create") {
-		t.Errorf("err = %v", err)
+	out, errOut, err := r.run(t, true, billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
+	all := refusalText(out, errOut, err)
+	if ExitCode(err) != ExitUserError || !strings.Contains(all, "The caller does not have permission to link") || !strings.Contains(all, "billing.resourceAssociations.create") {
+		t.Errorf("exit %d, err %v:\n%s", ExitCode(err), err, all)
 	}
+	if !strings.Contains(all, "Fugaro could not link billing account "+billingAcc+" to project "+newProj+":") {
+		t.Errorf("the pause does not carry the helpful line:\n%s", all)
+	}
+}
+
+// stubSelfCommand makes selfCommand answer "fugaro", so a test can assert the
+// whole of a message that names the binary and the door (refusedLink).
+func stubSelfCommand(t *testing.T) {
+	t.Helper()
+	old := selfCommand
+	selfCommand = func() string { return "fugaro" }
+	t.Cleanup(func() { selfCommand = old })
+}
+
+// stageLine is what the loop keeps of a failure for the stage's own result:
+// the first line of it (initflow's oneLine, loop.go, which cuts at the first
+// newline), so a test can assert what a reader of the result sees without
+// reaching into the loop for it.
+func stageLine(s string) string {
+	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
+		s = s[:i]
+	}
+	return strings.TrimSpace(s)
+}
+
+// The owner's ruling of 2026-10-23: a person who is not allowed to create the
+// project gets one plain line naming what to ask the organization for, the
+// service's own text under it, and the run stops with exit 1 — not a raw API
+// error. A bare permission refusal and an organization-policy constraint are
+// the same line: from where the reader stands they are the same problem, and
+// the fix (a role, or someone else creating the project) is the same one.
+func TestRefusedProjectCreationIsOneHelpfulLine(t *testing.T) {
+	const want = "Fugaro could not create the project " + newProj + ": your Google account is not allowed to create projects in your organization. " +
+		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder: Fugaro only starts fresh, so it creates the project itself. " +
+		"See docs/gcp-setup.md#not-an-owner."
+	// The three shapes the same refusal takes: a 403, a 400 whose own text says
+	// what it is (the only thing that can tell a refusal from the other 400s
+	// these APIs answer with -- infra's refusalWords), and a constraint. Each
+	// has to reach the line; the 400 is the one the word list is for.
+	for name, c := range map[string]struct {
+		code   int
+		status string
+		msg    string
+	}{
+		"a bare permission refusal":  {403, "PERMISSION_DENIED", "The caller does not have permission"},
+		"an organization policy":     {403, "PERMISSION_DENIED", "Constraint constraints/gcp.resourceLocations violated for the organization"},
+		"the role named in the text": {403, "PERMISSION_DENIED", "Caller is not a project creator on the organization"},
+		"a 400 that names a permission": {400, "FAILED_PRECONDITION",
+			"The caller does not have permission to create projects"},
+		"a 400 that names a constraint": {400, "FAILED_PRECONDITION",
+			"Constraint constraints/gcp.resourceLocations violated for the organization"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newProjectRig(t)
+			stubSelfCommand(t)
+			r.crm.FailCreates(c.code, c.status, c.msg)
+			_, _, err := r.run(t, true, newProj+"\n", "--create-project")
+			if err == nil {
+				t.Fatal("a refused creation exited 0")
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("exit %d (%v), want 1: a refusal is the reader's to act on, not a remote failure", ExitCode(err), err)
+			}
+			if !strings.HasPrefix(err.Error(), want+"\n") {
+				t.Errorf("err = %q,\nwant the helpful line %q, then the service's text under it", err.Error(), want)
+			}
+			if strings.Count(err.Error(), "\n") != 1 || !strings.Contains(err.Error(), c.msg) {
+				t.Errorf("err = %q: want the service's own text as the one line under the helpful one", err.Error())
+			}
+			// The stage's result carries the helpful line alone: the loop keeps
+			// the first line of a failure for the stage (initflow's oneLine,
+			// loop.go), so what a reader of the result sees is the line, never
+			// the API's words and never a stack trace.
+			if got := stageLine(err.Error()); got != want {
+				t.Errorf("the stage's one line = %q, want %q", got, want)
+			}
+			r.nothingDone(t, "a refused creation")
+		})
+	}
+}
+
+// The same refusal can arrive asynchronously: the create is accepted and the
+// operation completes with an error (an organization policy, say). It is the
+// same case and gets the same line; a quota that comes back this way is not,
+// and keeps its own message and exit code.
+func TestRefusedCreationArrivingOnTheOperation(t *testing.T) {
+	const want = "Fugaro could not create the project " + newProj + ": your Google account is not allowed to create projects in your organization. " +
+		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder: Fugaro only starts fresh, so it creates the project itself. " +
+		"See docs/gcp-setup.md#not-an-owner."
+
+	// PERMISSION_DENIED and FAILED_PRECONDITION are the two codes a refusal
+	// arrives under (infra's refusedOperation); the second is how an
+	// organization policy answers, and its message is what says so.
+	for name, c := range map[string]struct {
+		code int64
+		msg  string
+	}{
+		"permission denied": {7, "The caller does not have permission"},
+		"a constraint":      {9, "Constraint constraints/gcp.resourceLocations violated for the organization"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newProjectRig(t)
+			stubSelfCommand(t)
+			r.crm.FailOperation(c.code, c.msg)
+			_, _, err := r.run(t, true, newProj+"\n", "--create-project")
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("exit %d (%v), want 1", ExitCode(err), err)
+			}
+			if !strings.HasPrefix(err.Error(), want+"\n") {
+				t.Errorf("err = %q,\nwant the helpful line %q first", err.Error(), want)
+			}
+			if !strings.Contains(err.Error(), c.msg) {
+				t.Errorf("err = %q: the service's own text is gone", err.Error())
+			}
+			if got := stageLine(err.Error()); got != want {
+				t.Errorf("the stage's one line = %q, want %q", got, want)
+			}
+			// The project the create recorded does not exist: the operation
+			// ended in an error, and the real API leaves nothing behind.
+			if r.crm.Has(newProj) {
+				t.Error("the project exists after an operation that ended in an error")
+			}
+			r.nothingDone(t, "a refused creation")
+		})
+	}
+
+	t.Run("a quota", func(t *testing.T) {
+		r := newProjectRig(t)
+		r.crm.FailOperation(8, "Project quota exceeded")
+		_, _, err := r.run(t, true, newProj+"\n", "--create-project")
+		if err == nil || ExitCode(err) != ExitRemoteError {
+			t.Fatalf("exit %d (%v), want 2: a quota keeps the exit code it had", ExitCode(err), err)
+		}
+		if strings.Contains(err.Error(), "Fugaro could not") {
+			t.Errorf("err = %q: a quota is not a missing role", err.Error())
+		}
+		if r.crm.Has(newProj) {
+			t.Error("the project exists after an operation that ended in an error")
+		}
+	})
+}
+
+// The billing half: a refused link is a pause, not a failure (the owner's
+// ruling of 2026-10-23). The service's own text is printed, and the run ends
+// with the block for whoever administers billing: why the link was refused
+// (both roles, since the 403 names neither, and the two non-role causes), the
+// link line for the real project with the account's id to supply, and the
+// rerun. The exit code is the left-for-you one, 1.
+func TestRefusedBillingLinkPausesWithTheBlock(t *testing.T) {
+	r := newProjectRig(t)
+	stubSelfCommand(t)
+	r.existing(false)
+	r.bill.FailLinks(403, "PERMISSION_DENIED", "The caller does not have permission")
+	out, errOut, err := r.run(t, true, billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
+	all := refusalText(out, errOut, err)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d (%v), want 1\n%s", ExitCode(err), err, all)
+	}
+	for _, want := range []string{
+		"Fugaro could not link billing account " + billingAcc + " to project " + newProj + ": your account is missing a role the link needs (Billing Account User on the account, and Owner or Project Billing Manager on the project)",
+		"The caller does not have permission",
+		"[billing pending]",
+		"whoever administers billing in your organization",
+		"gcloud billing projects link " + newProj + " --billing-account=<billing-account-id>",
+		"fugaro setup --name " + initProjectName + " --gcp-project " + newProj,
+	} {
+		if !strings.Contains(all, want) {
+			t.Errorf("the paused run does not say %q:\n%s", want, all)
+		}
+	}
+	if n := r.bill.Attempts(); n != 1 {
+		t.Errorf("%d write(s) attempted, want 1 (the link that was refused)", n)
+	}
+	r.nothingDone(t, "a refused link")
+}
+
+// The two cases the ruling leaves alone. A quota and a failure nothing
+// recognises keep the message they always had: no helpful line is invented for
+// them, their text is not swallowed, and their exit code does not change. A
+// closed billing account is the third: it is a 400, not a missing role, and a
+// helpful line about Billing Account User would be false of it.
+func TestProjectQuotaAndUnknownFailuresKeepTheirOwnMessages(t *testing.T) {
+	t.Run("a quota", func(t *testing.T) {
+		r := newProjectRig(t)
+		r.crm.FailCreates(429, "RESOURCE_EXHAUSTED", "Project quota exceeded")
+		_, _, err := r.run(t, true, newProj+"\n", "--create-project")
+		if err == nil || ExitCode(err) != ExitRemoteError {
+			t.Fatalf("exit %d (%v), want 2: a quota keeps the exit code it had", ExitCode(err), err)
+		}
+		if !strings.Contains(err.Error(), "Project quota exceeded") || strings.Contains(err.Error(), "Fugaro could not") {
+			t.Errorf("err = %q: a quota keeps its own message", err.Error())
+		}
+	})
+
+	// The 400 guard (infra's refusalWords): a message that names a quota is
+	// not a refusal even when it also holds a refusal word, so the word in it
+	// is what the guard is for.
+	t.Run("a 400 that names a quota", func(t *testing.T) {
+		r := newProjectRig(t)
+		const msg = "Project quota exceeded: you do not have permission to create more projects until the quota is raised"
+		r.crm.FailCreates(400, "FAILED_PRECONDITION", msg)
+		_, _, err := r.run(t, true, newProj+"\n", "--create-project")
+		if err == nil || ExitCode(err) != ExitRemoteError {
+			t.Fatalf("exit %d (%v), want 2: a quota keeps the exit code it had", ExitCode(err), err)
+		}
+		if !strings.Contains(err.Error(), msg) || strings.Contains(err.Error(), "Fugaro could not") {
+			t.Errorf("err = %q: a quota keeps its own message", err.Error())
+		}
+	})
+
+	// The operation guard (infra's refusedOperation): a FAILED_PRECONDITION
+	// is a refusal only when its message reads like one.
+	t.Run("an operation's FAILED_PRECONDITION that is not a refusal", func(t *testing.T) {
+		r := newProjectRig(t)
+		const msg = "Precondition check failed: the parent resource is being deleted"
+		r.crm.FailOperation(9, msg)
+		_, _, err := r.run(t, true, newProj+"\n", "--create-project")
+		if err == nil || ExitCode(err) != ExitRemoteError {
+			t.Fatalf("exit %d (%v), want 2", ExitCode(err), err)
+		}
+		if !strings.Contains(err.Error(), msg) || strings.Contains(err.Error(), "Fugaro could not") {
+			t.Errorf("err = %q: a failed precondition that is not a refusal keeps its own message", err.Error())
+		}
+	})
+
+	t.Run("an unrecognised failure", func(t *testing.T) {
+		r := newProjectRig(t)
+		r.crm.FailCreates(500, "INTERNAL", "the backend went away")
+		_, _, err := r.run(t, true, newProj+"\n", "--create-project")
+		if err == nil || ExitCode(err) != ExitRemoteError {
+			t.Fatalf("exit %d (%v), want 2", ExitCode(err), err)
+		}
+		if !strings.HasPrefix(err.Error(), "creating project "+newProj+": ") || !strings.Contains(err.Error(), "the backend went away") {
+			t.Errorf("err = %q: an unrecognised failure is unchanged", err.Error())
+		}
+		if strings.Contains(err.Error(), "Fugaro could not") || strings.Contains(err.Error(), "\n") {
+			t.Errorf("err = %q: nothing was prepended to it", err.Error())
+		}
+	})
+
+	t.Run("a closed billing account", func(t *testing.T) {
+		r := newProjectRig(t)
+		r.existing(false)
+		r.bill.AddAccount(billingAcc, false)
+		_, _, err := r.run(t, true, billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
+		if err == nil || !strings.Contains(err.Error(), "closed") {
+			t.Fatalf("err = %v: want the service's own text about the closed account", err)
+		}
+		if strings.Contains(err.Error(), "Fugaro could not link billing account") {
+			t.Errorf("err = %q: a closed account is not a missing role, and must not be told it is", err.Error())
+		}
+	})
 }
 
 // The project is read by its ID alone: the gcloud default project (and the
@@ -537,21 +887,22 @@ func TestRelinkNeverHappens(t *testing.T) {
 	}
 }
 
-// A foreign, readable project is adopted only with every change said to be
-// to an EXISTING project, each behind its own typed confirmation.
-func TestExistingProjectBannersSayExisting(t *testing.T) {
+// A project an earlier run created and did not finish is resumed with every
+// change said to be to that project, each behind its own typed confirmation.
+func TestResumedProjectBannersSayResuming(t *testing.T) {
 	r := newProjectRig(t)
 	r.crm.AddProject(newProj, 424242)
+	r.crm.SetLabels(newProj, map[string]string{infra.CreatedLabelKey: infra.CreatedLabelValue})
 	r.gcs.AddProject(newProj, 424242)
 	r.bill.SetBilling(newProj, false)
 	out, _, _ := r.run(t, true, "", "--create-project", "--link-billing", billingAcc, "--plan-only")
-	if !strings.Contains(out, "adopting an EXISTING project "+newProj) {
-		t.Errorf("the plan does not say the project exists:\n%s", out)
+	if !strings.Contains(out, "resuming project "+newProj) {
+		t.Errorf("the plan does not say the project is resumed:\n%s", out)
 	}
 	r.nothingDone(t, "the plan")
 
 	out, _, _ = r.run(t, true, newProj+"\n"+billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
-	if n := strings.Count(out, "⚠ CONFIRM: adopting an EXISTING project"); n != 2 {
+	if n := strings.Count(out, "⚠ CONFIRM: resuming project"); n != 2 {
 		t.Errorf("%d confirmations say existing, want 2 (Firebase, billing):\n%s", n, out)
 	}
 	if len(r.crm.Creates()) != 0 || len(r.fb.Adds()) != 1 || len(r.bill.Links()) != 1 {
@@ -561,21 +912,11 @@ func TestExistingProjectBannersSayExisting(t *testing.T) {
 	// The ID alone is not enough for billing; and nothing typed does nothing.
 	r = newProjectRig(t)
 	r.crm.AddProject(newProj, 424242)
+	r.crm.SetLabels(newProj, map[string]string{infra.CreatedLabelKey: infra.CreatedLabelValue})
 	r.gcs.AddProject(newProj, 424242)
 	r.bill.SetBilling(newProj, false)
 	_, _, _ = r.run(t, true, "", "--create-project", "--link-billing", billingAcc)
 	r.nothingDone(t, "no typed confirmation")
-}
-
-func TestCreateWithOtherFirebaseRefused(t *testing.T) {
-	r := newProjectRig(t)
-	_, _, err := r.run(t, true, newProj+"\n", "--create-project", "--firebase", "other-fp-1234")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "other-fp-1234") {
-		t.Errorf("err = %v", err)
-	}
-	if n := len(r.crm.Requests()); n != 0 {
-		t.Errorf("%d calls", n)
-	}
 }
 
 // A create that times out says what to wait for, and a taken ID's text
@@ -711,5 +1052,345 @@ func TestBillingLinkedWhileConfirmingIsNotReplaced(t *testing.T) {
 	}
 	if ExitCode(err) != ExitUserError || !strings.Contains(out.String(), "never replaces a link") {
 		t.Errorf("exit %d (%v)\n%s", ExitCode(err), err, out.String())
+	}
+}
+
+// The project stage's "nothing further was done" refusal tells the reader which
+// door to rerun, and the two doors are not interchangeable: `fugaro setup`
+// creates, `fugaro update` re-converges. The reader who typed the wrong name is
+// exactly the one who cannot tell them apart, so a run reached through update
+// must not be sent back to setup by the line that says nothing was done (task
+// W2.1).
+func TestTheDeclinedProjectPromptNamesTheDoorTheReaderIsAt(t *testing.T) {
+	for _, door := range []string{"setup", "update"} {
+		s := &projectStage{e: &initEngine{r: &initRun{o: &initOptions{door: door}}}}
+		var ny *initflow.NeedsYouError
+		if err := s.declined("the project's ID"); !asNeedsYou(err, &ny) {
+			t.Fatalf("%s: %v", door, err)
+		}
+		if !strings.Contains(ny.Left.Text, "rerun "+selfCommand()+" "+door+" in your own terminal window") {
+			t.Errorf("%s: the refusal does not name the door the reader is at: %q", door, ny.Left.Text)
+		}
+	}
+}
+
+// TestFirebaseProjectPairingRuleIsUnchanged: a project this run creates is its
+// own Firebase project, and --firebase-project is the one way to say it is
+// another one — which is refused, naming both ids, before anything is created
+// (D7, F4). It is the case that was TestCreateWithOtherFirebaseRefused, ported
+// onto the new name rather than kept beside it: the rule is the one --firebase
+// had, and the port is the point, because a rename that quietly dropped the
+// pairing rule would leave the creation building a budget backend in a project
+// it does not create.
+func TestFirebaseProjectPairingRuleIsUnchanged(t *testing.T) {
+	r := newProjectRig(t)
+	_, _, err := r.run(t, true, newProj+"\n", "--create-project", "--firebase-project", "other-fp-1234")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "other-fp-1234") {
+		t.Errorf("err = %v", err)
+	}
+	if n := len(r.crm.Requests()); n != 0 {
+		t.Errorf("%d calls", n)
+	}
+	// The other half of the same rule, on the flags alone: naming the project
+	// this run creates is what the default says, and is not refused.
+	o := &initOptions{door: setupDoor.name, createProject: true, cloud: cloudOptions{gcpProject: newProj}, firebase: newProj}
+	if err := o.check(); err != nil {
+		t.Errorf("--create-project --firebase-project %s (the project it creates) was refused: %v", newProj, err)
+	}
+}
+
+// TestFirebaseProjectIsAlwaysTheInstallations pins the pairing refusal from
+// both sides: it fires for a run that creates the project and for one that
+// creates nothing. Fugaro only starts fresh (the owner's ruling of
+// 2026-10-23), so a Firebase project other than the installation's own is no
+// layout at all any more: check() refuses it wherever both ids are on the
+// command line, and runInit does where the GCP project comes from the config.
+func TestFirebaseProjectIsAlwaysTheInstallations(t *testing.T) {
+	// A creation whose Firebase project is another one: refused, naming the
+	// flag and the project.
+	with := &initOptions{door: setupDoor.name, createProject: true, cloud: cloudOptions{gcpProject: newProj}, firebase: fpID}
+	err := with.check()
+	if err == nil || !strings.Contains(err.Error(), fpID) || !strings.Contains(err.Error(), "--firebase-project") {
+		t.Errorf("--create-project with --firebase-project %s: err = %v, want a refusal naming the flag and the project", fpID, err)
+	}
+	// The same flags with no creation: refused too, in both doors.
+	for _, door := range []string{setupDoor.name, updateDoor.name} {
+		without := &initOptions{door: door, cloud: cloudOptions{gcpProject: newProj}, firebase: fpID}
+		if err := without.check(); err == nil || !strings.Contains(err.Error(), fpID) {
+			t.Errorf("%s --firebase-project %s with no creation: %v, want a refusal", door, fpID, err)
+		}
+	}
+	// Its own project is the one id that passes.
+	same := &initOptions{door: updateDoor.name, cloud: cloudOptions{gcpProject: newProj}, firebase: newProj}
+	if err := same.check(); err != nil {
+		t.Errorf("--firebase-project %s (the installation's own): %v", newProj, err)
+	}
+	if err := checkFirebaseProject(fpID, newProj); err == nil {
+		t.Error("checkFirebaseProject accepted another project")
+	}
+}
+
+// TestTheBillingListIsNarrow pins the two halves of the rule W4.5 leaves
+// behind (docs/setup-wizard/implementation-plan.md, task W4.5). The project
+// stage's rule had two clauses: init never lists the caller's billing
+// accounts, and it never prints the account a project is already linked to.
+// W4.3 made the first false for exactly one call site — the wizard's billing
+// question, at a real terminal — so what this test pins is how narrow that
+// reversal is: the account list is asked for from one place in the whole tree,
+// in a file that reads canType() only to refuse. And the second clause is
+// untouched, in the stage and in the question both: a run over a project that
+// IS linked to an account never prints that account.
+func TestTheBillingListIsNarrow(t *testing.T) {
+	// The reversal is one call site in the tree, and it is the question's.
+	var callers []string
+	root := filepath.Join("..", "..")
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if name := d.Name(); name == "node_modules" || (name != "." && name != ".." && strings.HasPrefix(name, ".")) {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if billingListCallRE.Match(b) {
+			callers = append(callers, filepath.ToSlash(path))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.ToSlash(filepath.Join(root, "internal", "cli", "billing_prompt.go")); len(callers) != 1 || callers[0] != want {
+		t.Errorf("the caller's billing accounts are listed from %v, want only %s: a second call site is a wider reversal than the owner answered (D6)", callers, want)
+	}
+	// That file reads canType() only to refuse, so the one list call cannot be
+	// reached on a path that skipped it (Global Constraint 8).
+	b, err := os.ReadFile("billing_prompt.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads, guards := len(canTypeReadRE.FindAll(b, -1)), len(canTypeGuardRE.FindAll(b, -1))
+	if reads == 0 || reads != guards {
+		t.Errorf("billing_prompt.go reads canType() %d time(s), %d of them as a refusal: the account list may be asked for only where canType() says yes", reads, guards)
+	}
+	// And the call is inside askBilling, after the asksBilling() guard that
+	// reads it: the two halves of the condition, in one function, in order.
+	body := funcBody(t, string(b), "func (r *initRun) askBilling(")
+	guard, call := strings.Index(body, "if !r.asksBilling() {"), billingListCallRE.FindStringIndex(body)
+	if guard < 0 || call == nil || call[0] < guard {
+		t.Errorf("askBilling does not reach the account list through its asksBilling() guard (the guard at %d, the call at %v): the question's condition is askedBilling, and the list may be asked for only past it", guard, call)
+	}
+
+	// The half of the old rule that survives. The project is linked to an
+	// account that is not enabled, which is the one state the stage reports
+	// and never replaces — and the run is at a terminal, with a source that
+	// would answer, so nothing but the rule keeps the account out of the
+	// output.
+	r := newProjectRig(t)
+	linked := pickerAccountID(t, "linked")
+	offered := pickerAccountID(t, "offered")
+	r.crm.AddProject(newProj, 424242)
+	r.crm.SetLabels(newProj, map[string]string{infra.CreatedLabelKey: infra.CreatedLabelValue})
+	r.gcs.AddProject(newProj, 424242)
+	r.fb.AddFirebase(newProj)
+	r.bill.SetSuspended(newProj, linked)
+	f := gcpfake.NewBilling(t)
+	f.AddAccountNamed(offered, "an account this run could link", true)
+	pickerSources(t, f) // after newProjectRig, which stubs the sources out
+	out, _, err := r.run(t, true, newProj+"\n"+linked+"\n", "--create-project", "--link-billing", linked)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d (%v), want 1: the link a project already has is the user's to change\n%s", ExitCode(err), err, out)
+	}
+	if !strings.Contains(out, "never replaces an existing link") {
+		t.Errorf("the run does not report the link it found, so this is not the path that knows about it:\n%s", out)
+	}
+	for _, leak := range []string{linked, offered, "billingAccounts/"} {
+		if strings.Contains(out, leak) {
+			t.Errorf("the account a project is already linked to reached the output (%q):\n%s", leak, out)
+		}
+	}
+	if n, m := billingListCalls(f), billingListCalls(r.bill); n != 0 || m != 0 {
+		t.Errorf("the accounts were listed: %d call(s) from the question's source, %d from the stage's", n, m)
+	}
+	if len(r.bill.Links()) != 0 || r.bill.Attempts() != 0 {
+		t.Errorf("the link the project already had was written: %d link(s), %d attempt(s)", len(r.bill.Links()), r.bill.Attempts())
+	}
+}
+
+// TestBillingLeftForTheAdminAndTheRerunResumes is a teammate's first setup
+// (2026-10-23): the project is created, billing is not linked (the person may
+// not link it: whoever administers billing in the organization does), and the
+// run stops there. What it leaves is one plain block — who to ask, the exact
+// link line with the real project ID and the billing account's ID explained,
+// and the exact rerun — never the BILLING_ACCOUNT_ID placeholder, and the
+// managed warning says in plain words that the mark comes with the rerun. Once
+// billing is linked, the rerun resumes the project it created (the creation
+// label: never "already exists") and completes, the managed mark included.
+func TestBillingLeftForTheAdminAndTheRerunResumes(t *testing.T) {
+	r := newProjectRig(t)
+	out, errOut, err := r.run(t, true, newProj+"\n", "--create-project")
+	all := refusalText(out, errOut, err)
+	if ExitCode(err) != ExitUserError || len(r.crm.Creates()) != 1 {
+		t.Fatalf("exit %d, creates %d: want the creation and a stop at billing\n%s", ExitCode(err), len(r.crm.Creates()), all)
+	}
+	for _, want := range []string{
+		"whoever administers billing in your organization",
+		"gcloud billing projects link " + newProj + " --billing-account=<billing-account-id>",
+		"gcloud billing accounts list",
+		selfCommand() + " setup --name " + initProjectName + " --gcp-project " + newProj,
+		"#not-an-owner",
+		"marked automatically when you rerun",
+	} {
+		if !strings.Contains(all, want) {
+			t.Errorf("the stop at billing does not say %q:\n%s", want, all)
+		}
+	}
+	for _, no := range []string{"BILLING_ACCOUNT_ID", "no Google client was built"} {
+		if strings.Contains(all, no) {
+			t.Errorf("the stop at billing still says %q:\n%s", no, all)
+		}
+	}
+
+	// The billing administrator links it; the project's runs bucket is the one
+	// the installation's apply makes.
+	number := uint64(r.crm.Creates()[0].Number)
+	bucket := "fugaro-runs-" + newProj
+	r.bill.SetBilling(newProj, true)
+	r.gcs.AddProject(newProj, number)
+	r.gcs.AddBucket(bucket, number, managedBucketLabels)
+	roles := map[string]string{}
+	for _, role := range []string{"launcher", "job_runner", "build_submitter", "tag_mover"} {
+		roles[role] = "projects/" + newProj + "/roles/fugaro" + strings.ToUpper(role[:1]) + role[1:]
+	}
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"runs_bucket":               bucket,
+		"registry_host":             "us-east5-docker.pkg.dev/" + newProj,
+		"scheduler_service_account": "fugaro-scheduler@" + newProj + ".iam.gserviceaccount.com",
+		"role_ids":                  roles,
+	})}
+	r.save(t)
+	// The rerun is what the block says to run: the config the paused run left
+	// (setup_pending: billing) makes it resume the creation, with no flag.
+	cfg, rerr := os.ReadFile(r.cfg)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if !strings.Contains(string(cfg), "setup_pending") {
+		if err := os.WriteFile(r.cfg, append(cfg, []byte("setup_pending: billing\n")...), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, errOut, err = r.run(t, true, initProjectName+"\n"+initProjectName+"\n"+newProj+"\n", "--launcher", "user:dev@example.com", "--operator", "user:dev@example.com")
+	all = refusalText(out, errOut, err)
+	if err != nil || strings.Contains(all, "already exists") {
+		t.Fatalf("the rerun after billing was linked did not complete: %v\n%s", err, all)
+	}
+	if n := len(r.crm.Creates()); n != 1 {
+		t.Errorf("%d project(s) created over the two runs, want the one", n)
+	}
+	if got, ok := markerAt(t, r.gcs, bucket); !ok || !strings.Contains(got, `"gcp_project":"`+newProj+`"`) {
+		t.Errorf("the resumed run did not mark the project managed: %q (present %v)\n%s", got, ok, all)
+	}
+	if v := r.crm.Labels(newProj)[managed.ProjectLabelKey]; v != managed.ProjectLabelValue {
+		t.Errorf("the resumed project is not labelled %s=%s (got %q)", managed.ProjectLabelKey, managed.ProjectLabelValue, v)
+	}
+	if cfg, _ := os.ReadFile(r.cfg); strings.Contains(string(cfg), "setup_pending") {
+		t.Errorf("the completed setup left setup_pending in the config:\n%s", cfg)
+	}
+}
+
+// TestBillingPendingIsAStatusInJSON: a run whose project has no billing yet
+// pauses: --json reports the project stage as billing-pending and every stage
+// that needs billing as waiting-for-billing (stable statuses), nothing that
+// needs billing is planned or applied, and the exit code is the left-for-you
+// one (1), with the block for whoever administers billing as the step left.
+func TestBillingPendingIsAStatusInJSON(t *testing.T) {
+	r := newProjectRig(t)
+	r.existing(false)
+	out, _, err := r.run(t, false, "", "--create-project", "--json", "--yes")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d (%v), want 1\n%s", ExitCode(err), err, out)
+	}
+	var res convergeJSON
+	if jerr := json.Unmarshal([]byte(out), &res); jerr != nil {
+		t.Fatalf("%v:\n%s", jerr, out)
+	}
+	if got := res.state(initflow.Project); got != string(initflow.BillingPending) {
+		t.Errorf("project: %q, want %q\n%s", got, initflow.BillingPending, out)
+	}
+	if got := res.state(initflow.Installation); got != string(initflow.WaitingForBilling) {
+		t.Errorf("installation: %q, want %q\n%s", got, initflow.WaitingForBilling, out)
+	}
+	if len(r.ran(t, "plan"))+len(r.ran(t, "apply")) != 0 {
+		t.Errorf("planned or applied while billing is pending: %q", r.calls(t))
+	}
+	if len(res.Left) != 1 || !strings.Contains(res.Left[0]["text"], "whoever administers billing") {
+		t.Errorf("left %+v", res.Left)
+	}
+}
+
+// TestAPausedFirstRunWritesItsConfig: the first run that pauses for billing
+// writes the local config, marked setup_pending: billing, so a rerun resumes
+// exactly there; a run with a config already writes nothing here.
+func TestAPausedFirstRunWritesItsConfig(t *testing.T) {
+	r := newProjectRig(t)
+	e := rigEngine(t, r.initRig, &initOptions{door: setupDoor.name, createProject: true})
+	e.old = nil
+	e.path = filepath.Join(t.TempDir(), "projects", initProjectName+".yaml")
+	s := newProjectStage(e)
+	err := s.pause([]string{"created project " + newProj})
+	var bp *initflow.BillingPausedError
+	if !errors.As(err, &bp) || !strings.Contains(bp.Detail, "billing pending") {
+		t.Fatalf("pause: %v", err)
+	}
+	data, rerr := os.ReadFile(e.path)
+	if rerr != nil || !strings.Contains(string(data), "setup_pending: billing") || !strings.Contains(string(data), "gcp_project: "+newProj) {
+		t.Fatalf("the paused run's config (%v):\n%s", rerr, data)
+	}
+	lc, perr := localcfg.Parse(data)
+	if perr != nil {
+		t.Fatal(perr)
+	}
+	pe := &initEngine{r: e.r, lc: lc, old: data}
+	if !pe.firstRun() {
+		t.Error("a config marked setup_pending is not resumed as a first run")
+	}
+	if (&initEngine{lc: &localcfg.Config{}, old: data}).firstRun() {
+		t.Error("a config with no setup_pending is a first run")
+	}
+}
+
+// TestHeadsUpBeforeCreatingWhenNoBillingAccountWasListed: when the billing
+// question listed no account (the list could not be read, or was empty) and
+// none was given, the creation is preceded by one heads-up line, and goes on.
+func TestHeadsUpBeforeCreatingWhenNoBillingAccountWasListed(t *testing.T) {
+	r := newProjectRig(t)
+	e := rigEngine(t, r.initRig, &initOptions{door: setupDoor.name, createProject: true})
+	var out strings.Builder
+	e.r.w = &out
+	s := newProjectStage(e)
+	s.billingHeadsUp()
+	if out.Len() != 0 {
+		t.Errorf("a heads-up with accounts listed:\n%s", out.String())
+	}
+	e.r.billingUnlisted = true
+	s.billingHeadsUp()
+	if !strings.Contains(out.String(), "you may not be able to link billing; setup will create the project and pause at billing") {
+		t.Errorf("no heads-up:\n%s", out.String())
+	}
+	out.Reset()
+	e.r.o.linkBilling = billingAcc
+	s.billingHeadsUp()
+	if out.Len() != 0 {
+		t.Errorf("a heads-up with --link-billing given:\n%s", out.String())
 	}
 }

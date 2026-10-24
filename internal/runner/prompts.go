@@ -71,11 +71,73 @@ func SystemPrompt(d PromptData, instructions string) string {
 
 const defaultReview = "You are reviewing a pull request written by another engineer. Look for correctness bugs, missing or weak tests, security problems, and deviations from this repository's conventions (see CLAUDE.md if present). Ignore pure style preferences."
 
+// DiffSize is how large a diff is: the files it changes and the lines it
+// adds or removes, a binary file counting as a file and no lines
+// (diffbase.go's diffSize, built on `git diff --numstat`).
+type DiffSize struct {
+	Files int
+	Lines int
+}
+
+// hugeDiffFiles and hugeDiffLines are the diff under review past which the review prompt says so,
+// up front, and tells the reviewer to stay on the pull request's own
+// files. Both numbers are generous, and either one alone is enough: a
+// change of 100 files or 8,000 lines is not one reviewer's read in one
+// pass, and a review stage that fans sub-agents out over a diff that size
+// spends a run's whole cap before it reaches the change under review.
+const (
+	hugeDiffFiles = 100
+	hugeDiffLines = 8000
+)
+
+// Huge reports whether d is past the huge-diff thresholds in either dimension.
+func (d DiffSize) Huge() bool { return d.Files > hugeDiffFiles || d.Lines > hugeDiffLines }
+
+// String is the size as the review prompt quotes it.
+func (d DiffSize) String() string {
+	return fmt.Sprintf("%d file(s) and %d changed line(s)", d.Files, d.Lines)
+}
+
+// baseUnreadNote is the one line the review prompt carries when the pull
+// request's base branch could not be read from the provider.
+func baseUnreadNote(base string) string {
+	return fmt.Sprintf("The pull request's base branch could not be read, so origin/%s below is only a fallback and may be far larger than this pull request's own change: "+
+		"restrict yourself to the commits listed by `git log origin/%s..HEAD` and the files they touch.", base, base)
+}
+
+// hugeDiffNote is what the review prompt says before anything else when the
+// branch's diff against the base is huge. It names the base explicitly, so
+// the reviewer's own reads are of the same range the prompt was built over,
+// and it says what to do instead: review the files the pull request's own
+// commits touch, and do not fan out sub-agents across the base.
+func hugeDiffNote(base string, size DiffSize) string {
+	return fmt.Sprintf("The diff under review is huge: this branch changes %s against origin/%s. "+
+		"That is far more than this pull request's own change, so review only what this pull request's own commits touch: "+
+		"`git log --name-only origin/%s..HEAD` lists those commits and their files, and `git diff origin/%s..HEAD -- <path>` reads one of them. "+
+		"Do NOT fan out sub-agents across the rest of the base branch, and do not review the base's own history: "+
+		"reading it is what spends a run's whole budget before the change under review is reached.",
+		size, base, base, base)
+}
+
 // ReviewPrompt builds the review stage prompt. review is the configured
 // agent.review: a skill (starting with "/") or empty; promptFile is the
-// content of a configured review prompt file.
-func ReviewPrompt(review, promptFile, base string) string {
+// content of a configured review prompt file. base is the branch the
+// changes are reviewed against — the run's own base of work, never assumed
+// to be the repository's default branch (diffbase.go, diffBase) — and size
+// is how large that diff is, which only decides whether the prompt warns
+// about it first (hugeDiffNote).
+//
+// baseUnread says the pull request's own base could not be read (baseUnreadable),
+// so base is a fallback and the reviewer must restrict itself to the branch's
+// own commits.
+func ReviewPrompt(review, promptFile, base string, size DiffSize, baseUnread bool) string {
 	scope := fmt.Sprintf("Review the changes on this branch against origin/%s (see `git diff origin/%s...HEAD`). Do not modify any files.", base, base)
+	if size.Huge() {
+		scope = hugeDiffNote(base, size) + "\n\n" + scope
+	}
+	if baseUnread {
+		scope = baseUnreadNote(base) + "\n\n" + scope
+	}
 	tail := "\n\nWhen you are done, give your verdict: \"ship\" if nothing must change before this is merged, otherwise \"changes\" with one finding per issue that must be fixed."
 	switch {
 	case strings.HasPrefix(review, "/"):

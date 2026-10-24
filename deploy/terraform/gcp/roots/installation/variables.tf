@@ -132,10 +132,16 @@ variable "enable_budget" {
 }
 
 variable "managed_deployer_scoped" {
-  # The managed deployer's scoped role and its conditioned binding: off by
-  # default, and fugaro update never sets it in 0.8.6 (the module's variable
-  # says why). An installation that does not name it plans exactly as before
-  # minus those two resources.
+  # The managed deployer's seven scoped roles and their seven conditioned
+  # bindings — the 0.10.0 redesign of the fence. Before 0.10.0 this flag created
+  # one scoped role under one condition, and that condition could not be
+  # expressed as a GCP IAM condition at all. Off by default, and set by fugaro
+  # for an installation that uses managed projects (the project's own creation
+  # fact is what decides it): managed projects ship in 0.10.0, and the fence's
+  # live measurement (Check 68) follows that release. An installation that does
+  # not name it plans exactly as before, minus those fourteen resources. The
+  # module's own variable (../../modules/installation/variables.tf) says why
+  # there are seven, and what the redesign changed.
   type     = bool
   default  = false
   nullable = false
@@ -152,6 +158,40 @@ variable "history" {
     firebase_project = optional(string)
     rtdb_url         = optional(string)
   })
+  default = null
+}
+
+variable "credentials_service" {
+  type = object({
+    account_id       = string
+    service          = string
+    image            = string
+    bundle_secret    = string
+    firebase_project = string
+    rtdb_url         = string
+    job_accounts = list(object({
+      provider = string
+      repo     = string
+      workflow = string
+    }))
+    url = optional(string)
+  })
+  # The credentials service (D146, D147), OFF by default: fugaro update's
+  # credentials stage (C1.20) is the only writer, and only when the owner runs
+  # it. Absent, the module creates nothing and every job keeps its
+  # model-secret accessors. bundle_secret is the one container the service
+  # reads — the project-wide container of the logical name "creds-bundle"
+  # (internal/backend/gcp's ProjectSecretID), which that stage fills so this
+  # variable and the loader's own derivation (C1.11) name one secret.
+  # firebase_project, rtdb_url and job_accounts are the rest of the service's
+  # environment (C1.14: the Firebase project, the database, and the jobs whose
+  # accounts may call it), and url is the service's own URL — the audience its
+  # callers' tokens are minted for — which Cloud Run assigns, so the module
+  # carries its unassigned placeholder until the apply after the one that
+  # creates the service (the module's own output reads the URL back, and the
+  # stage that fills this variable applies again in the same run; the type is
+  # the module's, and its validations are the ones that hold these four to
+  # their shape).
   default = null
 }
 

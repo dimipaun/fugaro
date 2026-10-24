@@ -25,7 +25,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import { SPAWN_COMMANDS } from '../../src/main/spawn'
+import { PICKER_COMMANDS, SPAWN_COMMANDS } from '../../src/main/spawn'
 
 /** StubAnswer is what one command does when the stub is asked for it. */
 export interface StubAnswer {
@@ -50,6 +50,12 @@ export interface StubAnswer {
   /** `split` writes `stdout` in two chunks with a `delayMs` gap, so a test can
    * assert that a document split across two reads is still one document. */
   readonly split?: boolean
+  /** `splitBytes` writes `stdout` as **bytes**, cut at this offset -- which is
+   * the split a `StringDecoder` exists for (T-F3): the two halves are two
+   * chunks on the pipe, and a cut inside a multi-byte character is a valid byte
+   * string whose halves are not valid text on their own. `split` cuts the
+   * *string* in half, which cannot land inside a character; this can. */
+  readonly splitBytes?: number
 }
 
 /** StubScenario keys answers by the command the stub was asked for: the command
@@ -234,7 +240,12 @@ async function main() {
     }
   }
   if (typeof answer.stdout === 'string' && answer.stdout !== '') {
-    if (answer.split) {
+    if (typeof answer.splitBytes === 'number') {
+      const bytes = Buffer.from(answer.stdout, 'utf8')
+      process.stdout.write(bytes.subarray(0, answer.splitBytes))
+      await sleep(answer.delayMs || 20)
+      process.stdout.write(bytes.subarray(answer.splitBytes))
+    } else if (answer.split) {
       const half = Math.floor(answer.stdout.length / 2)
       process.stdout.write(answer.stdout.slice(0, half))
       await sleep(answer.delayMs || 20)
@@ -284,15 +295,17 @@ export function commandKey(argv: readonly string[]): string {
 
 /**
  * STUB_COMMAND_KEYS is every key a scenario may use: the console's own spawn
- * table (`src/main/spawn.ts`'s `SPAWN_COMMANDS`), read through `commandKey`, so
- * a new operation in the table is a key the stub answers without this file
- * changing and without a second list to keep in step.
+ * tables -- `src/main/spawn.ts`'s `SPAWN_COMMANDS` (the dashboard's fifteen
+ * operations) **and** `PICKER_COMMANDS` (the picker's one read, `config list
+ * --json`) -- read through `commandKey`, so a new operation in either table is a
+ * key the stub answers without this file changing and without a second list to
+ * keep in step.
  *
  * It is exported so a test can hold it, and so `installStub` can refuse a key the
  * stub can never be asked for (see `refuseUnknownCommands`).
  */
 export const STUB_COMMAND_KEYS: readonly string[] = Object.freeze(
-  SPAWN_COMMANDS.map((row) => commandKey([...row.words])),
+  [...SPAWN_COMMANDS, ...PICKER_COMMANDS].map((row) => commandKey([...row.words])),
 )
 
 /**

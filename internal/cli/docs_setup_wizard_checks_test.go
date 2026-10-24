@@ -533,3 +533,136 @@ func TestDocsCheck111AssertModeRefusesAModeWithNoCapture(t *testing.T) {
 		t.Errorf("Check 111's assert_mode greps for account ids outside the may-list test's else branch (guard %d, else %d, id greps %d and %d): mode 2(a) lists the accounts by design, ids included", guarded, unlisted, idGrep, idsGrep)
 	}
 }
+
+// TestDocsCheck111EveryModeCarriesCreateProject: every mode's command line
+// carries --create-project, and the section says why in terms of what the
+// wizard does.
+//
+// There is no create/adopt question any more: Fugaro only starts fresh (the
+// owner's ruling of 2026-10-23). `P` has a local config (its installation has
+// converged), and a run with a project config registers the project stage only
+// when --create-project says so; with it, the stage reads `P` — which must be a
+// project `fugaro setup` created, carrying fugaro_created=true, or it is refused —
+// and resumes it, so the guided line has a path to the owner: the stage's own
+// left-for-you, which it prints only for a `P` that exists, is ACTIVE, has
+// Firebase and has no billing link. The section states that state as the
+// precondition every mode runs on, and mode 2(a) — the one mode whose picker
+// does list — tells the owner to answer its prompt `none`.
+func TestDocsCheck111EveryModeCarriesCreateProject(t *testing.T) {
+	c111 := check111(t, readDoc(t, setupWizardChecklist))
+	code := codeLines(c111)
+	flat := flattenDoc(c111)
+
+	// Every run of the wizard in this section, flag and all. The six are the
+	// seven modes' commands (2(b) is 2(a)'s line again, with the fallback
+	// maimed first, and the two --yes reruns are their own line with --yes).
+	runs := regexp.MustCompile(`(?m)^\s*(?:capture \S+|plain \S+|)\s*fugaro setup [^\n]*`).FindAllString(code, -1)
+	if len(runs) < 6 {
+		t.Fatalf("Check 111 has %d `fugaro setup` command line(s), want at least 6 — one per mode: %q", len(runs), runs)
+	}
+	for _, line := range runs {
+		if !strings.Contains(line, "--create-project") {
+			t.Errorf("Check 111 runs %q without --create-project: P has a local config, so without the flag the run registers no project stage and the guided line it asserts would not print", strings.TrimSpace(line))
+		}
+		if !strings.Contains(line, `--gcp-project "${P:?}"`) {
+			t.Errorf("Check 111 runs %q without --gcp-project: the run would converge on the id the wizard offers, fugaro-fugaro, and not on P", strings.TrimSpace(line))
+		}
+	}
+
+	// The paragraph the mode commands contradicted: it claimed the picker was
+	// not on this tree at all, which was true when W0.3 wrote it and is not
+	// now. What must not come back is the claim itself.
+	for _, gone := range []string{
+		"there is **no picker**",
+		"no `setup` and no `update`",
+		"the picker has not run at all — not against fakes and not against a service",
+	} {
+		if strings.Contains(flat, gone) {
+			t.Errorf("Check 111 still claims %q: the picker is on this tree (W4.3) and setup and update are registered (W1.2–W1.3), so the sentence describing a tree without them is a false premise for the whole section", gone)
+		}
+	}
+	if !strings.Contains(flat, "no mode of it has ever been run") {
+		t.Errorf("Check 111 no longer says what is still true — that no mode has been run — which is the reason the section is NOT RUN")
+	}
+
+	// The reasons the flag is there, as the code gives them: a run with a
+	// project config registers the project stage only on the flag, the stage
+	// resumes a `P` that fugaro setup created and refuses any other, and the
+	// guided line's own home is the project stage's left-for-you, which needs
+	// all four of these to be true of `P`.
+	for _, want := range []string{
+		"a run with a project config registers the project stage only when that flag says so",
+		"one that **`fugaro setup` created**, so it carries the label `fugaro_created=true`",
+		"the stage prints it as its **left-for-you** line only when `P` **exists**, is **`ACTIVE`**, **has Firebase** and has **no billing link**",
+		"**A fresh project is not the easy one**",
+		// mode 2(a) is the one mode whose picker lists, so it is the one mode
+		// that has to say what to answer at its prompt
+		"**At the picker's prompt, answer `none` — not a number.**",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("Check 111 no longer says %q: the flag's reason and the guided line's home are what make the modes mean what they assert", want)
+		}
+	}
+	for _, gone := range []string{
+		"the answer would be **adoption**",
+		"create/adopt question",
+		"the run takes **adoption**",
+		"a fresh throwaway project is the easy one",
+		"Check 27's project is the easy one",
+		"asks for the typed confirmation a run with no terminal cannot give (it is not there yet)",
+	} {
+		if strings.Contains(flat, gone) {
+			t.Errorf("Check 111 still claims %q, which is not what the code does: there is no create/adopt question (Fugaro only starts fresh), and the guided line's left-for-you needs `P` to exist, be ACTIVE, have Firebase and have no billing link", gone)
+		}
+	}
+}
+
+// Two sentences in Check 27's subtree are *about* the rename rather than
+// rewritten by it: the register row's parenthetical, which lists what the
+// rewrite renames (the retired command's own name → `fugaro setup`, the
+// converge-again steps → `fugaro update`, `--firebase` → `--firebase-project`),
+// and step 4's "the same one the old text made of `init` run a second time".
+//
+// The row describes the retired command rather than spelling it, which is that
+// section's own convention: it heads the recorded run with "the retired
+// command's own name, its creating flags and `--firebase`", calls the table
+// below "the record of the retired command's spellings", and the row's own next
+// clause points there ("the run recorded under Check 27 was made with the
+// **old** command lines"). It has to: the register is live text, and the census
+// reads a live file as naming the retired command nowhere, so a row that spelled
+// it would be the one mention of the retired verb no pattern here can see. Step
+// 4 is inside the section whose subject IS the old text, so its bare `init`
+// stays.
+//
+// The guard above cannot see either: it forbids the retired spelling in
+// rewritten text, and a mechanical rename that overwrote the left of the first
+// arrow writes the *new* spelling, leaving the row asserting that `fugaro setup`
+// was renamed to `fugaro setup`. This test holds the two sides of that arrow
+// apart, holds the row's left side to the register's own words rather than to
+// the bare `init` the census' pattern cannot see (a left side that named no
+// program would not say which command was renamed), and holds step 4's clause.
+//
+// Mutation (run, restore): put `fugaro setup` back on the left of the first
+// arrow — the self-mapping check fails. Spell that left side `init` again — the
+// first want and the bare-spelling check fail. Rewrite step 4's clause to name
+// the new door — the last want fails.
+func TestDocsCheck27NamesTheRetiredCommandWhereItSpeaksOfIt(t *testing.T) {
+	flat := flattenDoc(readDoc(t, setupWizardChecklist))
+
+	if strings.Contains(flat, "`fugaro setup` → `fugaro setup`") {
+		t.Errorf("the register's rename parenthetical maps `fugaro setup` to itself: its left side is what the rewrite renames, so the retired command's name belongs there, not the door it became")
+	}
+	if strings.Contains(flat, "(`init` → `fugaro setup`") {
+		t.Errorf("the register's rename parenthetical spells the retired command as bare `init`: the register is live text, so the row describes the old name the way its own section does and leaves the spelling to the dated record below")
+	}
+	for _, want := range []string{
+		"**Kept, with their commands renamed** (the retired command's own name → `fugaro setup`",
+		"the converge-again steps → `fugaro update`",
+		"`--firebase` → `--firebase-project`",
+		"the same one the old text made of `init` run a second time",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("Check 27 no longer says %q: the row and step 4 are about what the rewrite renamed, so they name the retired command on the side that describes the old text", want)
+		}
+	}
+}

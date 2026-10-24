@@ -47,6 +47,14 @@ variable "installation" {
     })
     launchers = list(string)
     operators = list(string)
+    # The installation's credentials service (D146, D147), absent while it has
+    # not opted in: its Cloud Run service name and region, which the workflow
+    # module turns into each job account's roles/run.invoker grant and into the
+    # drop of that job's model-secret accessors.
+    credentials_service = optional(object({
+      name   = string
+      region = string
+    }))
   })
 
   validation {

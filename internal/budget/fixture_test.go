@@ -31,8 +31,8 @@ var noon = time.Now().UTC().Truncate(24 * time.Hour).Add(12 * time.Hour)
 
 func today() int64 { return budget.Day(noon) }
 
-// fixture is a run's whole backend: a database seeded as `fugaro init
-// --firebase` leaves it, and the Firebase Auth fakes.
+// fixture is a run's whole backend: a database seeded as `fugaro update
+// --firebase-project` leaves it, and the Firebase Auth fakes.
 type fixture struct {
 	t     *testing.T
 	db    *gcpfake.RTDB

@@ -11,7 +11,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
-// fugaro init --anchor: the checkout's gcp_project: line alone, with no
+// fugaro update --anchor: the checkout's gcp_project: line alone, with no
 // Terraform, no discovery, no publish and no image copy. It reads the local
 // config and the build records in the runs bucket, checks that the line is
 // safe to merge (gcpProjectProblems) before it writes anything, and then
@@ -35,7 +35,7 @@ func (r *initRun) runAnchor(ctx context.Context) error {
 	r.res.Anchor = res
 	root, err := gitRead(ctx, ".", "rev-parse", "--show-toplevel")
 	if err != nil {
-		return userErr("fugaro init --anchor writes the gcp_project line of a repository's fugaro.yaml, and this directory is not in a git checkout: run it in the repository's checkout")
+		return userErr("%s --anchor writes the gcp_project line of a repository's fugaro.yaml, and this directory is not in a git checkout: run it in the repository's checkout", r.o.doorProgram())
 	}
 	co, err := checkoutProject(ctx, "")
 	if err != nil {
@@ -46,7 +46,7 @@ func (r *initRun) runAnchor(ctx context.Context) error {
 		return err
 	}
 	if lc == nil {
-		return userErr("there is no local config for this project: run fugaro init first")
+		return userErr("there is no local config for this project: run fugaro setup first")
 	}
 	if err := refuseSharedWrite(sel); err != nil {
 		return err
@@ -85,7 +85,7 @@ func (r *initRun) runAnchor(ctx context.Context) error {
 	}
 	repo := pluginwire.Printable(oi.Repo)
 	if !repoKnown(lc, oi) {
-		return userErr("%s is not one of project %s's repositories in the local config: run fugaro init in this checkout to onboard it (it also writes the gcp_project line)", repo, lc.Name)
+		return userErr("%s is not one of project %s's repositories in the local config: run %s --repo in this checkout to onboard it (it also writes the gcp_project line)", repo, lc.Name, r.o.doorProgram())
 	}
 	var listed []string // the workflows the local config records
 	for name, rr := range lc.Repos {
@@ -130,7 +130,7 @@ func (r *initRun) runAnchor(ctx context.Context) error {
 	case n > 0 && res.State == "present":
 		return fail(fmt.Errorf("%s already has gcp_project, but %d check(s) above failed: runs and the daily image check refuse the file while they do; fix them before you merge it", path, n))
 	case n > 0:
-		return fail(fmt.Errorf("the gcp_project line is not written: %d check(s) above failed; fix them, then rerun fugaro init --anchor", n))
+		return fail(fmt.Errorf("the gcp_project line is not written: %d check(s) above failed; fix them, then rerun fugaro update --anchor", n))
 	case res.State == "by_hand":
 		return userErr("fugaro.yaml is not edited: add the line by hand (above)")
 	case res.State == "present":
@@ -143,14 +143,14 @@ func (r *initRun) runAnchor(ctx context.Context) error {
 		return err
 	}
 	if !written {
-		return userErr("nothing was written: add the line by hand, or rerun fugaro init --anchor at a terminal or with --yes")
+		return userErr("nothing was written: add the line by hand, or rerun fugaro update --anchor at a terminal or with --yes")
 	}
 	res.State = "written"
 	return r.printResult()
 }
 
 // anchorHintText points at --anchor where a checkout lacks the line.
-const anchorHintText = "to let teammates use this installation without setup, run fugaro init --anchor in this checkout (it checks the images first)"
+const anchorHintText = "to let teammates use this installation without setup, run fugaro update --anchor in this checkout (it checks the images first)"
 
 // needsAnchorHint reports whether co, a checkout of a repository lc lists,
 // has no gcp_project: line although lc's installation could take one (a
@@ -165,7 +165,7 @@ func needsAnchorHint(ctx context.Context, co *localcfg.Checkout, lc *localcfg.Co
 }
 
 // noteAnchor prints anchorHintText once per run when the checkout at root
-// needs it (init --repo's last line; a note, so stderr under --json).
+// needs it (update --repo's last line; a note, so stderr under --json).
 func (r *initRun) noteAnchor(ctx context.Context, root string, lc *localcfg.Config) {
 	if r.anchorNoted {
 		return

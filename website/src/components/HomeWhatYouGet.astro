@@ -1,59 +1,55 @@
 ---
 /**
- * website/src/components/HomeWhatYouGet.astro — what a run leaves behind (the owner's approved
- * board `website/design-ref/HomeV3.dc.html`, 2026-10-20; redesign part P1).
+ * website/src/components/HomeWhatYouGet.astro: what a run leaves behind, and where you watch it
+ * (the owner's rulings of 2026-10-23, the redesign's Step 3, levers 1, 4 and 8).
  *
- * **Five cards, and every line under a card is a line of this repository.** The board draws the
- * grid and its five names; the sentences under them are `README.md`'s — the pull request the
- * run opens, the diff, the report and the logs that come with it, where the logs live, what the
- * spend caps do, and where the agent runs — quoted through `src/lib/repo-quote.mjs`, which
- * stops the build naming the file when a line is not in the document it cites. The five names
- * are the board's own words and are listed in the pull request for the owner to veto; the
- * sentences are not written here at all.
+ * **Three things a run leaves, every line a line of this repository.** The pull request, the
+ * diff and the report with it, and the logs: the sentences are `README.md`'s, quoted through
+ * `src/lib/repo-quote.mjs`, which stops the build naming the file when a line is not in the
+ * document it cites. The cost and where the agent runs, which this block carried before, moved
+ * to the cost section and the "Why Fugaro?" section.
  *
- * Each card's line carries the document it is quoted from in `data-source`, which is the
- * mechanism the rest of the site's quoted prose uses, and `website/test/home.mjs` reads the
- * built page and holds each one to its document from the outside as well as here.
+ * **Where you watch them**: the console's real screenshots (`website/data/home-screens.yaml`,
+ * the rows other than the `fugaro watch` capture, which the hero shows), the `fugaro watch`
+ * command with its copy control, and links to the console and the phone app pages. Lever 8 lets
+ * the home page surface Console and Mobile in its content without touching the navigation. The
+ * console link is rendered only while `site.yaml`'s `features.console_downloads` is on.
  */
-import { holdLabels, section, wholeFile } from '../lib/repo-quote.mjs'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { REPO_ROOT, loadHomeScreens, loadSite } from '../content.ts'
+import { copyControlHTML } from '../lib/copy-control.mjs'
+import { holdLabels, section } from '../lib/repo-quote.mjs'
+import ScreenshotSlider from './ScreenshotSlider.astro'
 
-const README = 'README.md'
 const README_WHY = 'README.md#Why Fugaro'
 const README_HOW = 'README.md#How it works'
 const README_SAFETY = 'README.md#Safety and cost controls'
 const GCP_RUN = 'docs/gcp-setup.md#Run, watch, diagnose'
 
 const SOURCES = {
-  [README_WHY]: section(README, 'Why Fugaro'),
-  [README_HOW]: section(README, 'How it works'),
-  [README_SAFETY]: section(README, 'Safety and cost controls'),
+  [README_WHY]: section('README.md', 'Why Fugaro'),
+  [README_HOW]: section('README.md', 'How it works'),
+  [README_SAFETY]: section('README.md', 'Safety and cost controls'),
   [GCP_RUN]: section('docs/gcp-setup.md', 'Run, watch, diagnose'),
 }
 
-/** The line under the heading: the promise the five cards are the detail of. */
 const LEAD = {
   text: 'Every run that pushed ends in a pull request, a draft one if it failed.',
   source: GCP_RUN,
 }
 
-/**
- * The five cards: the board's name, the repository's line, and the glyph the board draws. The
- * glyphs are the board's own paths, drawn in the accent and hidden from a reader who cannot see
- * them — the name and the line say everything the picture says.
- */
-const CARDS = [
+const ITEMS = [
   {
     name: 'A pull request per task',
     line: {
       text: 'a draft opens at the first push (marked not verified), and it is marked ready only when the run passes',
       source: README_HOW,
     },
-    glyph: 'pull-request',
   },
   {
     name: 'The diff and the report',
     line: { text: 'with the diff, the report and the logs', source: README_WHY },
-    glyph: 'document',
   },
   {
     name: 'The logs',
@@ -61,164 +57,198 @@ const CARDS = [
       text: "Run logs carry agent output, so by default they go to Fugaro's own log bucket, which only launchers and operators (and the project's owners and editors) can read.",
       source: README_SAFETY,
     },
-    glyph: 'log-lines',
-  },
-  {
-    name: 'The cost',
-    line: {
-      text: 'Spend caps, on by default: every stage passes Claude Code a dollar limit (`agent.max_budget_usd`, default 25)',
-      source: README_SAFETY,
-    },
-    glyph: 'cost',
-  },
-  {
-    name: 'Your cloud, your laptop free',
-    line: {
-      text: "Your laptop runs the `fugaro` CLI, Terraform and `gcloud` (during `init`) and your own agent; the run's agent is in a Cloud Run container.",
-      source: README_SAFETY,
-    },
-    glyph: 'laptop',
   },
 ]
 
-/** The board's glyphs, as the one path list each one is drawn from. */
-const GLYPHS: { [name: string]: string[] } = {
-  'pull-request': ['M6 6m-2.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0', 'M6 18m-2.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0', 'M18 18m-2.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0', 'M6 8.5 V15.5', 'M18 15.5 V10 A3 3 0 0 0 15 7 H11'],
-  document: ['M14 3 H6 V21 H18 V7 Z', 'M14 3 V7 H18', 'M9 12 H15', 'M9 16 H15'],
-  'log-lines': ['M4 6 H20', 'M4 12 H20', 'M4 18 H14'],
-  cost: ['M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0', 'M15 9 C14.5 8 13.4 7.5 12 7.5 C10.2 7.5 9 8.4 9 9.7 C9 12.7 15 11.3 15 14.3 C15 15.6 13.8 16.5 12 16.5 C10.6 16.5 9.5 16 9 15', 'M12 6 V7.5', 'M12 16.5 V18'],
-  laptop: ['M4 5 H20 V16 H4 Z', 'M2 19 H22'],
-}
+holdLabels({ lead: LEAD, ...Object.fromEntries(ITEMS.map((item) => [item.name, item.line])) }, SOURCES, 'website/src/components/HomeWhatYouGet.astro')
 
-holdLabels({ lead: LEAD, ...Object.fromEntries(CARDS.map((card) => [card.name, card.line])) }, SOURCES, 'website/src/components/HomeWhatYouGet.astro')
+/** The console's screens: the home page's data file, less the terminal capture the hero shows. */
+const SCREENS = loadHomeScreens().screens.filter((screen) => !screen.src.endsWith('/fugaro-watch.png'))
+
+const consoleExists = loadSite().facts.features.consoleDownloads
+
+/** The command and the plugin skill's own line about it (held to the skill below). */
+const WATCH = 'fugaro watch'
+const WATCH_TAIL = 'is the live screen of spend, repositories and running agents.'
+{
+  const skill = readFileSync(path.join(REPO_ROOT, 'plugin/skills/working/SKILL.md'), 'utf8').replace(/[`*]/g, '').replace(/\s+/g, ' ')
+  if (!skill.includes(`${WATCH} ${WATCH_TAIL}`)) {
+    throw new Error(
+      `website/src/components/HomeWhatYouGet.astro: plugin/skills/working/SKILL.md no longer says "${WATCH} ${WATCH_TAIL}", and the line under the command is that skill's own (Global Constraint 6).`,
+    )
+  }
+}
 ---
 
-<section class="home-get" aria-labelledby="home-get-title">
+<section class="home-get" data-reveal-block aria-labelledby="home-get-title">
   <div class="home-get-head">
-    {/* The board's eyebrow and headline, listed in the pull request for the owner to veto. */}
-    <p class="eyebrow">What you get</p>
     <h2 class="home-get-title display-lg" id="home-get-title">Pull requests, not promises</h2>
     <p class="home-get-lead" data-source={LEAD.source}>{LEAD.text}</p>
   </div>
 
-  {/* The grid: one card per thing a run leaves behind, each with the repository's own line. */}
-  <ul class="home-get-cards">
+  <ul class="home-get-items">
     {
-      CARDS.map((card, index) => (
-        <li class="card home-get-card" data-lead={index === 0 ? '' : undefined}>
-          <svg class="home-get-icon" aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            {GLYPHS[card.glyph].map((d) => (
-              <path d={d} />
-            ))}
-          </svg>
-          <h3 class="home-get-name">{card.name}</h3>
-          <p class="home-get-line" data-source={card.line.source}>
-            {card.line.text}
+      ITEMS.map((item) => (
+        <li class="home-get-item">
+          <h3 class="home-get-name">{item.name}</h3>
+          <p class="home-get-line" data-source={item.line.source}>
+            {item.line.text}
           </p>
         </li>
       ))
     }
   </ul>
+
+  {/* The console's real screens, in the slider the console page uses: a track that scrolls
+      sideways with snap points and dots that are anchors, so it works with no script. */}
+  <div class="home-get-show">
+  <div class="watch-shot" data-slot="watch-screenshot">
+    <ScreenshotSlider
+      screens={SCREENS}
+      heading="Watch every run"
+      slot="home-screens"
+      idPrefix="home-screen"
+      label="Screenshots of the Fugaro desktop console. Scroll sideways to see the rest."
+    />
+  </div>
+
+  <div class="home-get-watch">
+    <div class="watch-block command-block" data-copy>
+      <Fragment set:html={copyControlHTML('Copy the command')} />
+      <pre class="watch-command"><code>{WATCH}</code></pre>
+    </div>
+    <p class="watch-note">
+      <code>{WATCH}</code> {WATCH_TAIL}
+    </p>
+    <p class="home-get-more">
+      {consoleExists && <a class="home-get-link" href="/console/">The desktop console</a>}
+      <a class="home-get-link" href="/mobile/">The phone app, in progress</a>
+    </p>
+  </div>
+  </div>
 </section>
 
 <style>
-  /* The block: the gutter and the room below it, and no top padding — the band above carries
-     the gap between them (`website/test/base-styles.mjs`'s `homeRhythmFailures`). */
+  /* Tokens only (W1.2). The section carries its gutter and its room below, and no top padding
+     (`website/test/base-styles.mjs`'s `homeRhythmFailures`). */
   .home-get {
-    max-width: var(--page-max);
-    margin: 0 auto;
-    padding: 0 var(--space-md) var(--space-3xl);
-  }
-
-  .home-get-head {
-    display: flex;
-    flex-direction: column;
-    margin-bottom: var(--space-xl);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-xl) var(--space-2xl);
+    padding: 0 var(--frame-gutter) var(--space-4xl);
   }
 
   .home-get-title {
-    margin: var(--space-2xs) 0 var(--space-sm);
+    margin: 0 0 var(--space-md);
+    max-width: 14ch;
   }
 
   .home-get-lead {
     margin: 0;
-    max-width: var(--measure);
-    color: var(--text-muted);
-    font-size: var(--font-size-lg);
-    line-height: var(--leading-normal);
+    max-width: 30ch;
+    color: var(--text);
+    font-size: var(--font-size-xl);
+    line-height: var(--leading-snug);
   }
 
-  /* Five cards: two columns on a desktop, one on a phone, with the first card taking the room
-     the board gives it — the one that carries the promise the other four detail. */
-  .home-get-cards {
+  .home-get-items {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
-    gap: var(--space-md);
+    gap: var(--space-lg);
     margin: 0;
     padding: 0;
     list-style: none;
   }
 
-  @media (min-width: 60rem) {
-    .home-get-cards {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
-
-    .home-get-card[data-lead] {
-      grid-column: span 2;
-      grid-row: span 2;
-      justify-content: center;
-    }
-
-    .home-get-card[data-lead] .home-get-name {
-      font-size: var(--font-size-3xl);
-    }
-  }
-
-  /* The card is `base.css`'s `.card` — the padding, the hairline, the radius and the surface
-     tone, written once for the site; what is the grid's own is the stack its contents are
-     laid in. */
-  .home-get-card {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2xs);
-  }
-
-  /* The card the board tints: the accent's hairline and a wash of the accent at the top of the
-     card. The wash is a gradient of palette tokens in `background-image` — a colour function
-     would be a literal no palette holds, and `background` would make the contrast check read a
-     gradient as the one colour the text sits on. */
-  .home-get-card[data-lead] {
-    border-color: var(--accent);
-    background-image: linear-gradient(180deg, var(--panel) 0%, var(--surface) 55%);
-  }
-
-  .home-get-icon {
-    width: 28px;
-    height: 28px;
-    margin-bottom: var(--space-3xs);
-    color: var(--accent-on-dark);
-    stroke: currentColor;
-  }
-
-  .home-get-card[data-lead] .home-get-icon {
-    width: 40px;
-    height: 40px;
-  }
-
   .home-get-name {
-    margin: 0;
-    font-family: var(--font-sans);
+    margin: 0 0 var(--space-3xs);
+    color: var(--text);
     font-size: var(--font-size-xl);
     font-weight: var(--weight-black);
     letter-spacing: var(--tracking-tight);
-    color: var(--text);
+    line-height: var(--leading-tight);
   }
 
   .home-get-line {
     margin: 0;
-    color: var(--text-muted);
-    font-size: var(--font-size-base);
+    max-width: 52ch;
+    color: var(--text);
+    font-size: var(--font-size-lg);
     line-height: var(--leading-normal);
+  }
+
+  .home-get-show {
+    display: grid;
+    gap: var(--space-xl);
+  }
+
+  /* The slot the screenshots are in: it draws no box of its own, and while it is empty it is
+     not in the page at all (`website/test/base-styles.mjs`'s `watchSlotFailures`). */
+  .watch-shot:empty {
+    display: none;
+  }
+
+  .watch-shot > :global(.screens) {
+    margin: 0;
+  }
+
+  .home-get-watch {
+    display: grid;
+    gap: var(--space-sm);
+    align-content: start;
+  }
+
+  .watch-block {
+    max-width: 24rem;
+  }
+
+  .watch-command {
+    margin: 0;
+    padding: var(--space-2xs) var(--space-sm);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--accent-on-dark);
+    font-family: var(--font-mono); /* taste-skill-ignore: a real command in <pre><code> */
+    font-size: var(--font-size-base);
+  }
+
+  .watch-note {
+    margin: 0;
+    max-width: 40ch;
+    color: var(--text);
+    font-size: var(--font-size-base);
+  }
+
+  .home-get-more {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 var(--space-lg);
+    margin: 0;
+  }
+
+  .home-get-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    color: var(--accent-on-dark);
+    font-size: var(--font-size-lg);
+    font-weight: var(--weight-semibold);
+  }
+
+  /* The wide composition: the heading and the lead on the left, the three things a run leaves
+     on the right; then the console's screens across eight columns with the terminal command
+     and the two links beside them. */
+  @media (min-width: 64rem) {
+    .home-get {
+      grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    }
+
+    .home-get-show {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: minmax(0, 8fr) minmax(0, 4fr);
+      gap: var(--space-2xl);
+      align-items: end;
+    }
   }
 </style>

@@ -3,7 +3,7 @@
  * website/src/pages/faq.astro — the FAQ (website plan, Task W1.10; findings 50-52, decisions
  * D102 and D103).
  *
- * The page renders `website/data/faq.yaml` and nothing else: the six answers and the file
+ * The page renders `website/data/faq.yaml` and nothing else: the seven answers and the file
  * each one is traceable to. It is the site's rule in one file — **a page renders a fact; it
  * never restates one** (Global Constraint 6) — so there is no question and no answer written
  * in this template, and the page's own prose is limited to the headings, the lede and the
@@ -291,9 +291,9 @@ function loadFaq(): Faq {
       moreHref,
     }
   })
-  if (questions.length < 6) {
+  if (questions.length < 7) {
     throw new Error(
-      `${FAQ_FILE}: carries ${questions.length} questions, and the FAQ answers the six things W1.10 step 1 fixes — what Fugaro is, where the code runs, what a run costs and what stops it, what a failed run leaves behind, what a run can never change, and what the security model does not promise.`,
+      `${FAQ_FILE}: carries ${questions.length} questions, and the FAQ answers the seven things its readers ask — what Fugaro is, where the code runs, whether a reader has to be on GCP at all, what a run costs and what stops it, what a failed run leaves behind, what a run can never change, and what the security model does not promise.`,
     )
   }
   for (const question of questions) {
@@ -385,7 +385,7 @@ const sourceHref = (file: string): string => `${facts.repository}/blob/${branch}
       </h1>
 
       <p class="faq-lede">
-        Six answers, each naming the document it comes from.
+        Seven answers, each naming the document it comes from.
       </p>
     </div>
 
@@ -454,8 +454,8 @@ const sourceHref = (file: string): string => `${facts.repository}/blob/${branch}
   }
 
   /* The answers: one card each, two to a row once there is room for two. The grid rather
-     than a plain list is what makes the six read as one block of the page — they are six
-     answers to six questions, and a reader scanning for their own question sees a set rather
+     than a plain list is what makes the seven read as one block of the page — they are seven
+     answers to seven questions, and a reader scanning for their own question sees a set rather
      than a document.
 
      **The track's minimum yields to the column, and that is what the `min()` is for.** A bare
@@ -490,9 +490,9 @@ const sourceHref = (file: string): string => `${facts.repository}/blob/${branch}
   }
 
   /* The question is the card's heading and the loudest line in it: the card's own step of the
-     type scale in the display weight and tracking, so a reader scans the six headings rather
-     than reading the answers to find theirs. It is smaller than a section's heading
-     (`base.css`'s `.display-*`), because six of these are read at once and each is a
+     type scale in the display weight and tracking, so a reader scans the seven headings
+     rather than reading the answers to find theirs. It is smaller than a section's heading
+     (`base.css`'s `.display-*`), because seven of these are read at once and each is a
      question rather than a section of the page. */
   .question-title {
     margin: 0;
@@ -517,7 +517,6 @@ const sourceHref = (file: string): string => `${facts.repository}/blob/${branch}
   .source {
     margin: auto 0 0;
     padding-block-start: var(--space-xs);
-    border-top: var(--border-width) solid var(--border);
     color: var(--text-muted);
     font-size: var(--font-size-sm);
   }

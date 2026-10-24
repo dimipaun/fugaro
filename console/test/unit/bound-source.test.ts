@@ -160,6 +160,51 @@ describe('the source bound to the active installation', () => {
     ])
   })
 
+  it('rebuilds when the directory the installation runs in changes, so the next read runs there', async () => {
+    // A checkout is a field of the record that decides **where the child runs**
+    // (`options.checkout ?? privateWorkingDirectory()`), and it is the one field
+    // the picker changes on a record it already holds: `setCheckout` deliberately
+    // preserves the record's `id` (`console/src/main/installations.ts` -- the id is
+    // *which* installation this is, not where it runs). A source cached by that id
+    // alone therefore kept the build made for the **previous** directory: the
+    // picker ran rule 7's `doctor` from the new one and the row and the header
+    // reported it, while every read still spawned with the old cwd -- the
+    // dashboard reading the wrong repository, or refused by the CLI's own pairing
+    // sentence, under a screen that said the new checkout was in use.
+    let installation: BoundInstallation = { id: 'a1', project: 'acme', checkout: '/src/one' }
+    const built: (string | undefined)[] = []
+    const closed: string[] = []
+    const source = createBoundSource({
+      installation: () => installation,
+      create: async (each) => {
+        built.push(each.checkout)
+        return aSource(closed, each.checkout ?? 'the private working directory')
+      },
+    })
+
+    expect((await source.version()).text).toBe('/src/one')
+    installation = { ...installation, checkout: '/src/two' }
+    // The read after the change is the whole claim: it is answered by a source
+    // built from the new checkout, and the source built for the previous one was
+    // closed first -- its `watch` child is running in the old directory.
+    expect((await source.version()).text, 'the read after a checkout change ran in the previous directory').toBe(
+      '/src/two',
+    )
+    expect(closed, 'the source built for the previous checkout was left running').toEqual(['/src/one'])
+    // No churn while the binding is unchanged, which is what makes this a key and
+    // not a rebuild-on-everything: the same read twice builds once.
+    await source.version()
+    expect(built).toEqual(['/src/one', '/src/two'])
+    // A clear is a change too: rule 5's ordinary case is an installation with no
+    // checkout, and its child runs in the console's own private directory.
+    installation = { id: 'a1', project: 'acme' }
+    expect((await source.version()).text).toBe('the private working directory')
+    expect(built).toEqual(['/src/one', '/src/two', undefined])
+    // The ref a screen draws is still read from the binding at call time, so the
+    // header and the child never disagree about which directory is in use.
+    expect(source.installation?.checkout, 'the ref still names the previous checkout').toBeUndefined()
+  })
+
   it('refuses a read for an installation the console stopped showing, and says so', async () => {
     let installation: BoundInstallation | null = FIRST
     const closed: string[] = []
@@ -257,5 +302,34 @@ describe('the source bound to the active installation', () => {
       'the poll after the feed ended was answered by the dead stream',
     ).toEqual({ child: 2 })
     expect(started).toBe(2)
+  })
+
+  it('says `configured` only for a record that carries an override, and `well-known` otherwise', () => {
+    // `InstallationRef.source` is the one word that says *how* the binary was
+    // chosen (design section 3.4 rule 4), and the ordinary case -- a record this
+    // console wrote, which carries a project and no path, because it never
+    // stores the path it resolves -- must not be drawn as the operator's own
+    // choice. The binding is where that is decided: it carries the record's
+    // **optional override** and nothing else, so an empty `binaryPath` is rule
+    // 4's walk and the word says so.
+    //
+    // Read at call time, which is also asserted here: the ref is asked of
+    // `deps.installation` on every read rather than captured when the source was
+    // built, so the operator's next choose is what the next read answers. No
+    // source is built and none is needed -- the ref is answered from the binding
+    // alone, which is exactly the state a console is in before its first read.
+    let installation: BoundInstallation = { id: FIRST.id, project: FIRST.project }
+    const source = createBoundSource({ installation: () => installation })
+    expect(source.installation, 'the ordinary record was not named as one rule 4 resolves').toMatchObject({
+      binaryPath: '',
+      source: 'well-known',
+      project: FIRST.project,
+    })
+
+    installation = { id: FIRST.id, project: FIRST.project, binaryPath: '/opt/fugaro/bin/fugaro' }
+    expect(source.installation, 'a record that carries an override was not named as the configured one').toMatchObject({
+      binaryPath: '/opt/fugaro/bin/fugaro',
+      source: 'configured',
+    })
   })
 })

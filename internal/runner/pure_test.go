@@ -69,13 +69,13 @@ func TestPrompts(t *testing.T) {
 			t.Errorf("system prompt lacks %q", want)
 		}
 	}
-	if got := ReviewPrompt("/review", "", "main"); !strings.HasPrefix(got, "/review ") || !strings.Contains(got, "origin/main") {
+	if got := ReviewPrompt("/review", "", "main", DiffSize{}, false); !strings.HasPrefix(got, "/review ") || !strings.Contains(got, "origin/main") {
 		t.Errorf("skill review prompt = %q", got)
 	}
-	if got := ReviewPrompt("", "Check the SQL.", "develop"); !strings.HasPrefix(got, "Check the SQL.") || !strings.Contains(got, "origin/develop") {
+	if got := ReviewPrompt("", "Check the SQL.", "develop", DiffSize{}, false); !strings.HasPrefix(got, "Check the SQL.") || !strings.Contains(got, "origin/develop") {
 		t.Errorf("file review prompt = %q", got)
 	}
-	if got := ReviewPrompt("", "", "main"); !strings.Contains(got, "correctness bugs") {
+	if got := ReviewPrompt("", "", "main", DiffSize{}, false); !strings.Contains(got, "correctness bugs") {
 		t.Errorf("default review prompt = %q", got)
 	}
 	fix := FixPrompt(Verdict{Verdict: "changes", Findings: []Finding{{Severity: "major", File: "a.go", Summary: "nil deref"}, {Summary: "add a test"}}})
@@ -152,6 +152,21 @@ func TestCostLine(t *testing.T) {
 		"**Cost:** ≈ $4.12 (model $4.12 + compute $0.00, estimate)": runstore.NewCost(4.12, 0, runstore.BasisAPIList),
 	}
 	for want, c := range cases {
+		if got := CostLine(c); got != want {
+			t.Errorf("CostLine(%+v) = %q, want %q", c, got, want)
+		}
+	}
+	// The notional clause, and the split that decides which sentence is drawn
+	// (C1.16, P12, D140): a mixed cascade run's notional dollars are said
+	// beside the money, and a run whose whole model figure the plan paid is the
+	// notional sentence whatever its basis says -- api-list, for a cascade run
+	// the plan served in full, exactly as for a mixed one.
+	for want, c := range map[string]runstore.Cost{
+		"**Cost:** ≈ $2.50 (model $2.12 + compute $0.38, estimate); model $2.00 notional, counted against the Claude subscription": runstore.NewCost(4.12, 0.38, runstore.BasisAPIList).WithNotional(2.00),
+		"**Cost:** model $2.12 (compute not estimated); model $2.00 notional, counted against the Claude subscription":             runstore.ModelOnlyCost(4.12, runstore.BasisAPIList).WithNotional(2.00),
+		"**Cost:** ≈ $0.38 compute (estimate); model $4.12 notional, counted against the Claude subscription":                      runstore.NewCost(4.12, 0.38, runstore.BasisAPIList).WithNotional(4.12),
+		"**Cost:** model $4.12 notional, counted against the Claude subscription (compute not estimated)":                          runstore.ModelOnlyCost(4.12, runstore.BasisAPIList).WithNotional(4.12),
+	} {
 		if got := CostLine(c); got != want {
 			t.Errorf("CostLine(%+v) = %q, want %q", c, got, want)
 		}

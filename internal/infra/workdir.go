@@ -68,7 +68,7 @@ func cacheDir(getenv func(string) string) (string, error) {
 	return d, nil
 }
 
-// InstallationWorkdir is where fugaro init plans the installation of
+// InstallationWorkdir is where fugaro update plans the installation of
 // project: $XDG_STATE_HOME/fugaro/terraform/<project>/installation, by
 // default under ~/.local/state (%LOCALAPPDATA% on Windows).
 func InstallationWorkdir(getenv func(string) string, project string) (string, error) {
@@ -82,7 +82,7 @@ func InstallationWorkdir(getenv func(string) string, project string) (string, er
 	return filepath.Join(state, "fugaro", "terraform", project, "installation"), nil
 }
 
-// FirebaseWorkdir is where fugaro init --firebase plans the Firebase root of
+// FirebaseWorkdir is where fugaro update --firebase-project plans the Firebase root of
 // project: $XDG_STATE_HOME/fugaro/terraform/<project>/firebase. It is a
 // workdir of its own, so the installation's tfvars and saved plan are never
 // overwritten by the Firebase root's.
@@ -94,7 +94,7 @@ func FirebaseWorkdir(getenv func(string) string, project string) (string, error)
 	return filepath.Join(filepath.Dir(dir), "firebase"), nil
 }
 
-// InstallationOutputsWorkdir is where fugaro init --repo reads the
+// InstallationOutputsWorkdir is where fugaro update reads the
 // installation's outputs: a workdir of its own inside the installation's
 // (which keeps only its gcp tree and terraform's data directory), so the
 // installation's tfvars, imports and saved plan are never rewritten by a
@@ -137,6 +137,59 @@ func ManagedWorkdir(getenv func(string) string, project string) (string, error) 
 // CLI config and terraform's data directory, Root the root's files.
 type Workdir struct {
 	Dir, Root string
+	// PrevVars is the root's terraform.tfvars.json as the workdir held it
+	// BEFORE this one was prepared, or nil when it held none (a first run).
+	//
+	// PrepareWorkdir rebuilds the tree afresh, so by the time a caller runs
+	// the file is gone — and a caller that has to carry ONE key of it forward
+	// (infra.CarriedCredentialsService, the credentials stage's opt-in) has
+	// only this copy. Reading it after the rebuild is the bug this field
+	// exists to prevent: the read answers "there is no tfvars", the key is
+	// dropped from the rewritten document, and the next plan is the service's
+	// destruction — which the bundle container's prevent_destroy refuses, so
+	// the run fails rather than applies anything.
+	PrevVars []byte
+}
+
+// WorkdirVarsPath is where the root's tfvars live inside a workdir dir.
+func WorkdirVarsPath(dir, root string) string {
+	return filepath.Join(dir, "gcp", "roots", root, VarsFile)
+}
+
+// ReadWorkdirVars reads the tfvars a workdir dir holds for root: nil when it
+// holds none, and an error when one is there and cannot be read — a tfvars
+// this program cannot read is not permission to carry nothing forward.
+func ReadWorkdirVars(dir, root string) ([]byte, error) {
+	return readVarsFile(WorkdirVarsPath(dir, root))
+}
+
+// Vars reads the tfvars this workdir holds for its own root RIGHT NOW, or nil
+// when it holds none: the document as some stage of the run has left it, which
+// is not the same as Workdir.PrevVars — the snapshot PrepareWorkdir took
+// before it rebuilt the tree.
+//
+// The difference is the whole reason this exists: the credentials stage writes
+// its opt-in into these tfvars in the middle of a run, and a LATER stage that
+// rebuilds the document from its spec (prepare, called by the compute stage's
+// read of the installation's outputs) has to carry that key forward from the
+// document as it stands, not from the run's opening snapshot.
+func (w *Workdir) Vars() ([]byte, error) {
+	return readVarsFile(filepath.Join(w.Root, VarsFile))
+}
+
+// readVarsFile is the one read both of the above are: a missing file is
+// "nothing there" (nil, no error), and any other failure is returned, because
+// a tfvars this program cannot read is not permission to carry nothing
+// forward.
+func readVarsFile(path string) ([]byte, error) {
+	b, err := os.ReadFile(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("reading the workdir's %s: %w", VarsFile, err)
+	}
+	return b, nil
 }
 
 // PrepareWorkdir makes dir (mode 0700) and writes the embedded tree into
@@ -157,11 +210,19 @@ func PrepareWorkdir(dir, root string) (*Workdir, error) {
 	if err := os.Chmod(dir, 0o700); err != nil {
 		return nil, err
 	}
+	// The root's tfvars of the run before this one, read BEFORE the tree is
+	// rebuilt: os.RemoveAll below deletes them with everything else, and a
+	// caller that has to carry a key forward (CarriedCredentialsService) can
+	// only do that from this copy (Workdir.PrevVars).
+	prev, err := ReadWorkdirVars(dir, root)
+	if err != nil {
+		return nil, err
+	}
 	tree := filepath.Join(dir, "gcp")
 	if err := os.RemoveAll(tree); err != nil {
 		return nil, err
 	}
-	err := fs.WalkDir(terraform.FS, "gcp", func(p string, d fs.DirEntry, err error) error {
+	err = fs.WalkDir(terraform.FS, "gcp", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -178,7 +239,7 @@ func PrepareWorkdir(dir, root string) (*Workdir, error) {
 	if err != nil {
 		return nil, fmt.Errorf("writing the Terraform tree into %s: %w", dir, err)
 	}
-	return &Workdir{Dir: dir, Root: filepath.Join(tree, "roots", root)}, nil
+	return &Workdir{Dir: dir, Root: filepath.Join(tree, "roots", root), PrevVars: prev}, nil
 }
 
 // WriteVars writes the root's terraform.tfvars.json.

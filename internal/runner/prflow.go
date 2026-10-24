@@ -453,13 +453,17 @@ func (r *run) costPart() string {
 	if c == nil {
 		return ""
 	}
-	if c.ModelBasis == runstore.BasisSubscription {
-		return fmt.Sprintf("notional $%.2f (not billed)", c.ModelUSD)
+	if c.AllNotional() {
+		return fmt.Sprintf("notional $%.2f (not billed)", c.ModelSubscriptionUSD())
 	}
+	// The cap is enforced on money, so the figure beside it is the money part
+	// of the model spend: a cascade run's tier-A dollars are the
+	// subscription's and are in no cap (C1.16, P12, D140).
+	money := c.ModelMoneyUSD()
 	if r.spend.Cap > 0 {
-		return fmt.Sprintf("model cost $%.2f of $%s cap", c.ModelUSD, trimUSD(r.spend.Cap.USD()))
+		return fmt.Sprintf("model cost $%.2f of $%s cap", money, trimUSD(r.spend.Cap.USD()))
 	}
-	return fmt.Sprintf("model cost $%.2f", c.ModelUSD)
+	return fmt.Sprintf("model cost $%.2f", money)
 }
 
 func trimUSD(v float64) string {

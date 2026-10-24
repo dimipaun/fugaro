@@ -396,10 +396,12 @@ func TestCatalogRangeSizesTheUndercharge(t *testing.T) {
 		t.Errorf("CatalogRange() = %q, want %q", got, want)
 	}
 	// The multiple is the figure the docs quote, so it is rounded to the one
-	// decimal they state: the shipped deepseek row's zdr tier is 37.878...x
-	// on input and 13.333...x on output, printed as 37.9x and 13.3x (design
-	// §2, P11), and a raw float64 would put "37.878787878787875x" on the
-	// operator's screen beside a document saying 37.9x.
+	// decimal they state: the shipped deepseek row's zdr tier is 8.571...x
+	// on input and 13.333...x on output, printed as 8.6x and 13.3x (design
+	// §2, P11), and a raw float64 would put "8.571428571428571x" on the
+	// operator's screen beside a document saying 8.6x. The fixture below
+	// keeps the 2026-10-14 row (0.01584 charged) that the figure was first
+	// written for, so the rounding it pins is the harsher one: 37.878...x.
 	rounded := catalogFile("2026-10-14", catalog.Entry{
 		ContextTokens: 1000, MaxOutputTokens: 100, Endpoints: 3, ZDREndpoints: 2,
 		All: map[string]catalog.Bound{

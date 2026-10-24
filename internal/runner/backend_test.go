@@ -28,7 +28,7 @@ const (
 )
 
 // bk is a run against the budget backend's fakes: a database seeded as
-// fugaro init --firebase leaves it, Firebase Auth, and the run's token waiting
+// fugaro update --firebase-project leaves it, Firebase Auth, and the run's token waiting
 // in the bucket where the launcher put it.
 type bk struct {
 	*gw

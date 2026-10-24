@@ -17,6 +17,7 @@ import (
 	"google.golang.org/api/googleapi"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -56,7 +57,7 @@ import (
 //
 // It runs before the repository stage, so the repository's containers do
 // not exist yet: the store call creates the secret with the same labels
-// init --repo's Terraform adopts (the roots import an existing secret), so
+// update --repo's Terraform adopts (the roots import an existing secret), so
 // the first image build finds its secrets stored.
 
 // maxHeldSecrets is the redaction slots the engine keeps for values a stage
@@ -129,20 +130,19 @@ func (e *initEngine) hold(value []byte) (release func(), err error) {
 // by the Claude Code IDE extension in the integrated terminals of VS Code and
 // JetBrains, so a person's own IDE terminal can be refused: only for that
 // marker the refusal tells the person (not the agent) what to do about it.
-var agentMarkers = []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CLAUDE_CODE_REMOTE", "CURSOR_AGENT", "AI_AGENT"}
+//
+// The list lives in internal/agentenv because the owner-run live
+// credentials-rules check in internal/e2e refuses on it too
+// (credentials-service plan F33), and one list cannot drift from the other.
+var agentMarkers = agentenv.Markers
 
 // agentMarker is the first marker getenv shows set, or "" with none: a coding
 // agent's session.
-func agentMarker(getenv func(string) string) string {
-	for _, k := range agentMarkers {
-		if getenv(k) != "" {
-			return k
-		}
-	}
-	return ""
-}
+func agentMarker(getenv func(string) string) string { return agentenv.Marker(getenv) }
 
-// agentEnv reports whether getenv shows a coding agent's session.
+// agentEnv reports whether getenv shows a coding agent's session. It is
+// agentMarker, so that a caller that only wants the yes/no cannot drift from
+// the caller that names the variable to unset.
 func agentEnv(getenv func(string) string) bool { return agentMarker(getenv) != "" }
 
 // writerIsTerminal reports whether w is a terminal. Tests replace it.
@@ -264,7 +264,7 @@ func (s *secretsStage) resolve(ctx context.Context) {
 	root, err := gitRead(ctx, ".", "rev-parse", "--show-toplevel")
 	oi, ok := readOrigin(ctx, root)
 	if err != nil || !ok {
-		s.skip = "not in a checkout of a repository: run fugaro init there to take its secrets"
+		s.skip = "not in a checkout of a repository: run " + s.e.r.o.doorProgram() + " there to take its secrets"
 		return
 	}
 	repo := oi.Repo
@@ -323,7 +323,7 @@ func (s *secretsStage) resolve(ctx context.Context) {
 		// calls Anthropic, so init does not prompt for a value and does not
 		// store one (design docs/design/project-centric.md §6.1). The rule is
 		// needsAnthropicKey (config.AnthropicKeyNeeded over the effective
-		// mode), the one validate and init --repo ask too.
+		// mode), the one validate and update --repo ask too.
 		needsKey := needsAnthropicKey(lc, cfg, repo)
 		for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
 			// The default account only: Task 5 extends this to every name
@@ -385,15 +385,23 @@ func (s *secretsStage) authorize(env initflow.Env) error {
 	switch a, err := s.e.authState(s.origin); {
 	case err != nil:
 		return err
+	case a == authNeeded && !s.e.r.o.enrolling():
+		// A door that does not enrol a repository by asking: one line naming
+		// the door that does, and never --onboard-repo, which is not this
+		// run's to offer (D5). Without this arm the secrets stage would offer
+		// the flag for a step its door does not ask about, while the plugin
+		// and repository stages of the same run name `fugaro setup` for the
+		// same repository (W5.1).
+		return &initflow.NeedsYouError{Left: enrolLeft(s.e.r.o.doorName())}
 	case a == authNeeded || (a == authAsk && !env.Interactive):
-		return &initflow.NeedsYouError{Left: onboardLeft(s.origin)}
+		return &initflow.NeedsYouError{Left: onboardLeft(s.origin, s.e.r.o.doorName())}
 	case a == authAsk:
 		ok, err := s.e.confirmRepo(s.root, s.origin)
 		if err != nil {
 			return err
 		}
 		if !ok {
-			return &initflow.NeedsYouError{Left: onboardLeft(s.origin)}
+			return &initflow.NeedsYouError{Left: onboardLeft(s.origin, s.e.r.o.doorName())}
 		}
 	}
 	return nil
@@ -485,9 +493,14 @@ func (s *secretsStage) Check(ctx context.Context) (initflow.Status, error) {
 	switch a, err := s.e.authState(s.origin); {
 	case err != nil:
 		return initflow.Status{}, err
+	case a == authNeeded && !s.e.r.o.enrolling():
+		// As authorize: the door that does not ask names the door that does,
+		// with the same line the plugin and repository stages leave (W5.1).
+		lf := enrolLeft(s.e.r.o.doorName())
+		return initflow.Status{State: initflow.NeedsYou, Detail: unknownDetailNotEnrolled(s.e.lc.Name, s.origin, s.e.r.o.doorName()), Left: &lf}, nil
 	case a == authNeeded:
-		lf := onboardLeft(s.origin)
-		return initflow.Status{State: initflow.NeedsYou, Detail: unknownDetail(s.e.lc.Name, s.origin), Left: &lf}, nil
+		lf := onboardLeft(s.origin, s.e.r.o.doorName())
+		return initflow.Status{State: initflow.NeedsYou, Detail: unknownDetail(s.e.lc.Name, s.origin, convergeOptIn(s.e.lc, s.origin)), Left: &lf}, nil
 	case a == authAsk:
 		s.checked = false
 		return initflow.Status{State: initflow.Todo, Detail: "which secrets are stored is read after you confirm the repository " + pluginwire.Printable(s.origin.typed())}, nil
@@ -538,7 +551,7 @@ func (s *secretsStage) Plan(ctx context.Context, _ initflow.Env) (initflow.Plan,
 // prompt, or the PEM is redirected from a file the user names.
 func (s *secretsStage) Left() initflow.Left {
 	if s.tg == nil {
-		return initflow.Left{Stage: initflow.Secrets, Kind: initflow.LeftCommand, Text: "in a checkout of the repository, in your own terminal window, run", Commands: []string{selfCommand() + " init"}}
+		return initflow.Left{Stage: initflow.Secrets, Kind: initflow.LeftCommand, Text: "in a checkout of the repository, in your own terminal window, run", Commands: []string{selfCommand() + " " + s.e.r.o.doorName()}}
 	}
 	needs := s.missing
 	if !s.checked {
@@ -588,9 +601,9 @@ func (s *secretsStage) smProblem(err error) *initflow.NeedsYouError {
 	if !errors.As(err, &ae) || ae.Code != 403 {
 		return nil
 	}
-	text := "Secret Manager refused: you need roles/secretmanager.viewer to list, secretmanager.secrets.create to create a secret's container (roles/secretmanager.admin or a custom role) and roles/secretmanager.secretVersionAdder to store a value, on the project's secrets (ask the project owner), then rerun " + selfCommand() + " init"
+	text := "Secret Manager refused: you need roles/secretmanager.viewer to list, secretmanager.secrets.create to create a secret's container (roles/secretmanager.admin or a custom role) and roles/secretmanager.secretVersionAdder to store a value, on the project's secrets (ask the project owner), then rerun " + selfCommand() + " " + s.e.r.o.doorName() + ""
 	if m := strings.ToLower(ae.Message); strings.Contains(m, "has not been used") || strings.Contains(m, "is disabled") || strings.Contains(m, "service_disabled") {
-		text = "the Secret Manager API (secretmanager.googleapis.com) is not enabled on the project: enable it (the owner's fugaro init does), then rerun " + selfCommand() + " init"
+		text = "the Secret Manager API (secretmanager.googleapis.com) is not enabled on the project: enable it (the owner's fugaro setup does), then rerun " + selfCommand() + " " + s.e.r.o.doorName() + ""
 	}
 	return &initflow.NeedsYouError{Left: initflow.Left{Stage: initflow.Secrets, Kind: initflow.LeftConsole, Text: text}}
 }
@@ -604,7 +617,7 @@ func (s *secretsStage) apiErr(err error) error {
 
 func (s *secretsStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
 	s.resolve(ctx)
-	if err := s.e.adoptGuard(initflow.Secrets); err != nil {
+	if err := s.e.newMachineGuard(initflow.Secrets); err != nil {
 		return initflow.Outcome{}, err
 	}
 	f := s.terminal()
@@ -671,7 +684,7 @@ func (s *secretsStage) take(ctx context.Context, st secretStore, f *os.File, w i
 	// project-wide -- D2's default for `secrets set <name>` with no flag.
 	//
 	// The way out names a command, never a flag of this one (code review,
-	// low): the stage has no --repo, `fugaro init --repo` never runs it, and
+	// low): the stage has no --repo, `fugaro update --repo` never runs it, and
 	// the command Left() hands the user for the same name is the bare one.
 	// `secrets set <name> --repo <owner/name>` is the command that stores this
 	// repository's own copy, and it is run in the user's own terminal like

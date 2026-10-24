@@ -130,7 +130,7 @@ func TestWrongNameAtTheRunPromptAppliesNothing(t *testing.T) {
 	if !asNeedsYou(err, &ny) || *screens != 1 {
 		t.Fatalf("err %v, screens %d", err, *screens)
 	}
-	if !strings.Contains(strings.Join(ny.Left.Commands, " "), "init") || !strings.Contains(ny.Left.Text, "type the project's name") || strings.Contains(ny.Left.Text+out.String(), "--yes") {
+	if !strings.Contains(strings.Join(ny.Left.Commands, " "), "setup") || !strings.Contains(ny.Left.Text, "type the project's name") || strings.Contains(ny.Left.Text+out.String(), "--yes") {
 		t.Errorf("left %+v\n%s", ny.Left, out)
 	}
 	if ok, err := r.askOrdinary("applies B", ""); ok || !asNeedsYou(err, &ny) {
@@ -282,6 +282,26 @@ func TestRunConfirmationCallSites(t *testing.T) {
 		b, _ := os.ReadFile(f)
 		if strings.Contains(string(b), "Ordinary") || strings.Contains(string(b), "runCovers") {
 			t.Errorf("%s uses the run confirmation", f)
+		}
+	}
+	// Nor do they read the run's review to find out whether it was taken: the
+	// review's answer covers the installation's ordinary steps, and the steps
+	// above are not among them — an unlisted repository's identity is not on
+	// the screen the person answered, so reading its state there would take a
+	// confirmation for something it never named (W5.1's repository gate was
+	// the one call site that did). Only init_review.go, which owns the review,
+	// may read it.
+	readReview := regexp.MustCompile(`\br\.review\.`)
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") || f == "init_review.go" {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if readReview.Match(b) {
+			t.Errorf("%s reads r.review: the run's one confirmation is init_review.go's to read", f)
 		}
 	}
 }
@@ -489,7 +509,7 @@ func TestReviewScreenGolden(t *testing.T) {
 	}
 }
 
-// The whole first-run shape of init --firebase with the images: in a project
+// The whole first-run shape of update --firebase-project with the images: in a project
 // marked as Fugaro's, one typed project name covers the installation apply,
 // the Viewer-read removal, the Firebase apply, the Firestore writes, the image
 // copy, the history job's apply and the local config; the Firestore database's
@@ -505,7 +525,7 @@ func TestFirebaseRunTakesOnePromptPlusTheLocation(t *testing.T) {
 			r.markedRuns(t, "", "")
 		}
 		fakeTerminal(t)
-		out, errOut, err := executeStdin(t, stdin, "setup", "--firebase", fp, "--base", "base")
+		out, errOut, err := executeStdin(t, stdin, "setup", "--firebase-project", fp, "--base", "base")
 		return out + errOut, err, r
 	}
 	// One project for everything (the Firebase project is the installation's).
@@ -549,16 +569,14 @@ func TestFirebaseRunTakesOnePromptPlusTheLocation(t *testing.T) {
 	if _, err, r2 := run(t, initProject, true, initProjectName+"\n"+initProjectName+"\n"); err == nil || len(r2.dst.tags) != 0 {
 		t.Errorf("the project's name confirmed the Firestore location (err %v, copied %v)", err, r2.dst.tags)
 	}
-	// Another project for Firebase, not verified as Fugaro's: its root and its
-	// database writes each take their own typed name; the installation's steps
-	// stay under the one confirmation.
-	out, err, r = run(t, fpID, true, initProjectName+"\n"+names(1)+names(1)+infra.FirestoreLocation+"\n")
-	if err != nil {
+	// Another project for Firebase is no layout any more (Fugaro only starts
+	// fresh): it is refused before anything is asked or applied.
+	out, err, r = run(t, "aurora-fp", true, initProjectName+"\n"+names(1)+names(1)+infra.FirestoreLocation+"\n")
+	if ExitCode(err) != ExitUserError || !strings.Contains(errString(err), "is not the installation's GCP project") {
 		t.Fatalf("separate Firebase project: %v\n%s", err, out)
 	}
-	runP, stepP = prompts(out)
-	if runP != 1 || stepP != 2 || !strings.Contains(out, "NOT verified as Fugaro's") || !strings.Contains(out, "the Firebase project is NOT verified") {
-		t.Fatalf("%d run prompt(s), %d per-step\n%s", runP, stepP, out)
+	if runP, stepP := prompts(out); runP != 0 || stepP != 0 || len(r.dst.tags) != 0 {
+		t.Fatalf("a refused separate Firebase project asked %d run and %d per-step prompt(s), copied %v\n%s", runP, stepP, r.dst.tags, out)
 	}
 	// Unmarked: a name per step, and the count is what it was.
 	out, err, _ = run(t, initProject, false, names(4)+infra.FirestoreLocation+"\n"+names(8))
@@ -751,8 +769,12 @@ func TestReviewScreenPrintsOnlySafeText(t *testing.T) {
 	}
 }
 
-// The first Cloud Build's confirmation is never on the covered path: the
-// function that offers it uses askTyped and never the run confirmation.
+// The first Cloud Build's confirmation is never on the ordinary covered path:
+// the function that offers it uses the confirmation of the step it is
+// (askCovered, which W5.1 makes YesOrTyped: D12's answer of 2026-10-20 covers a
+// billable first image build in BOTH front doors, and in neither of them does
+// the run's own --yes/terminal decision stand in for it), and never the run
+// confirmation.
 func TestCloudBuildConfirmationStaysOutsideTheCoveredPath(t *testing.T) {
 	b, err := os.ReadFile("init.go")
 	if err != nil {
@@ -771,11 +793,14 @@ func TestCloudBuildConfirmationStaysOutsideTheCoveredPath(t *testing.T) {
 		return body
 	}
 	body := funcBody("func (r *initRun) buildImages(")
-	if !strings.Contains(body, "r.askTyped(") {
-		t.Error("buildImages no longer asks the typed confirmation")
+	if !strings.Contains(body, "r.askCovered(") {
+		t.Error("buildImages no longer asks the step's own confirmation")
 	}
-	if a, s := strings.Index(body, "r.askTyped("), strings.Index(body, "r.submitAndWait("); a < 0 || s < 0 || a > s {
-		t.Errorf("buildImages must ask the typed confirmation (at %d) before r.submitAndWait( (at %d)", a, s)
+	if a, s := strings.Index(body, "r.askCovered("), strings.Index(body, "r.submitAndWait("); a < 0 || s < 0 || a > s {
+		t.Errorf("buildImages must ask the step's confirmation (at %d) before r.submitAndWait( (at %d)", a, s)
+	}
+	if strings.Contains(body, "r.askTyped(") {
+		t.Error("buildImages asks the Typed confirmation: the billable build is covered in both doors (D12)")
 	}
 	for _, bad := range []string{"confirmOrdinary", "askOrdinary", "runCovers", "r.confirm(", "r.ask("} {
 		if strings.Contains(body, bad) {
@@ -1002,7 +1027,7 @@ func TestSubmitAndWaitSpecCarriesMachineBucketBase(t *testing.T) {
 
 // TestInitRepoAcceptsAForkPinWithTheRecordedOwner is why the owner is
 // recorded in the local config at all (design §3.6, the row after the site
-// table). `fugaro init --repo` — the command that renders every job image
+// table). `fugaro update --repo` — the command that renders every job image
 // and the check spec — CANNOT take --image-source (it is installation-only),
 // so with the flag as the only source the owner would be "" there, an empty
 // owner refuses every remote path, and a fork's own legitimate pin would be

@@ -51,11 +51,17 @@
 // the same pixels on every run.
 //
 // They are compared, never written by a run: `playwright.config.ts` sets
-// `updateSnapshots: 'none'`, so a missing baseline FAILS. They are recorded by
-// an owner, on the platform the comparison runs on (macOS and Linux pixels
-// differ), with
+// `updateSnapshots: 'none'`, so a missing baseline FAILS a comparison run. They
+// are recorded by an owner, on the platform the comparison runs on (macOS and
+// Linux pixels differ), with
 //
-//   npx playwright test spend.spec.ts --update-snapshots
+//   cd console && npm run build && npx playwright test spend.spec.ts --update-snapshots
+//
+// — the build is in the line because the specs read `dist/` and
+// `npx playwright test` does not build, and on Linux it takes
+// `xvfb-run --auto-servernum` (Electron needs a display);
+// `test/support/goldens.ts`'s `recordCommand` is that line, per spec and per
+// platform, and it is what a failed golden's message prints
 //
 // (owner-run, on the comparison's platform; commit `__screenshots__/spend/`
 // afterwards) and until they are committed the golden tests fail on purpose. The
@@ -75,6 +81,7 @@ import { SPEND_DEFAULT_CONTROLS, SPEND_THEMES, personView } from '../../src/rend
 import type { SpendControls } from '../../src/renderer/screens/spend'
 import { inRangeCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
+import { expectGolden, expectGrounded } from '../support/goldens'
 import { launchConsole } from '../support/launch'
 
 // The console's own directory, from this file's location: `test/e2e/x.spec.ts`
@@ -97,6 +104,10 @@ const THE_MOUNT = '#spend-mount'
  * recorded: `FUGARO_CONSOLE_GOLDENS=skip`. Anything else, including unset, means
  * the golden tests run and a missing baseline fails them. */
 const SKIP_GOLDENS = process.env['FUGARO_CONSOLE_GOLDENS'] === 'skip'
+
+/** SPEC is this file's own name: what a re-record command has to name, and what
+ * every golden failure here quotes back to the reader. */
+const SPEC = 'spend.spec.ts'
 
 /** The compiled modules the screen is made of, in dependency order: the screen,
  * the writers in `renderer/app.js`, and the two shared modules those writers
@@ -211,23 +222,43 @@ return { mounted: true, accounts: model.series.map(function (series) { return se
  * allow-listed operation -- with the source replaced by an object in this file,
  * so what the window proves is the screen's half: the arguments it builds, the
  * one read it makes, and what it draws from what came back.
+ *
+ * `people` is the by-person document (console L5b), and it is optional: a case
+ * that passes none gets the **no reader** state `readSpend` is written for --
+ * the panel says this console made no by-person read -- rather than a rejection
+ * dressed up as a CLI refusal.
  */
-function drawWired(controls: SpendControls, documents: Record<string, JSONDoc>, theme: string): string {
+function drawWired(
+  controls: SpendControls,
+  documents: Record<string, JSONDoc>,
+  theme: string,
+  people: JSONDoc | null = null,
+): string {
   return `(function () {
 ${LOADER}${MODULES.map(moduleSource).join('\n')}${FACTORY}
 var spend = load('/renderer/screens/spend.js');
 var factory = domFactory();
 var documents = ${JSON.stringify(documents)};
 var controls = ${JSON.stringify(controls)};
+var peopleDocument = ${JSON.stringify(people)};
 var asked = [];
+var askedPeople = [];
 var read = function (args) {
   asked.push(args);
   var document = documents[args.since];
   if (!document) return Promise.reject(new Error('no document for ' + args.since));
   return Promise.resolve(document);
 };
-return spend.readSpend(read, controls, ${JSON.stringify(BUDGET)}).then(function (outcome) {
-  if (!outcome.ok) return { ok: false, reason: outcome.reason, asked: asked };
+// A fixture with a "refusal" key is the CLI turning the read down: the
+// reader rejects the way the app's own does, with the child's sentence, which
+// is the panel's reason and never the screen's.
+var readPeople = peopleDocument === null ? null : function (args) {
+  askedPeople.push(args);
+  if (peopleDocument.refusal) return Promise.reject({ sentence: peopleDocument.refusal });
+  return Promise.resolve(peopleDocument);
+};
+return spend.readSpend(read, controls, ${JSON.stringify(BUDGET)}, readPeople).then(function (outcome) {
+  if (!outcome.ok) return { ok: false, reason: outcome.reason, asked: asked, askedPeople: askedPeople };
   var tree = spend.renderSpend(factory, outcome.model, ${JSON.stringify(theme)}, controls);
   var previous = document.getElementById('spend-mount');
   if (previous) previous.remove();
@@ -235,7 +266,13 @@ return spend.readSpend(read, controls, ${JSON.stringify(BUDGET)}).then(function 
   host.id = 'spend-mount';
   host.appendChild(tree.node);
   document.body.appendChild(host);
-  return { ok: true, asked: asked, args: outcome.args, rows: outcome.model.rows.length };
+  return {
+    ok: true,
+    asked: asked,
+    askedPeople: askedPeople,
+    args: outcome.args,
+    rows: outcome.model.rows.length,
+  };
 });
 })()`
 }
@@ -261,6 +298,21 @@ interface Screen {
   readonly currentWindows: readonly string[]
   readonly personsEnabled: string | null
   readonly personState: string | null
+  /** the by-person panel (console L5b): whether it is there, the view the CLI
+   * resolved, the rows it drew and the total it always draws */
+  readonly peoplePanel: number
+  readonly peopleAvailable: string | null
+  readonly peopleView: string | null
+  readonly peopleRows: number
+  readonly peopleTotals: number
+  readonly peopleReason: string | null
+  readonly peopleYou: string | null
+  /** the by-person panel's money column, per drawn line: the count, the two
+   * accounts (the notional one marked) and the average with its sample */
+  readonly peopleMoney: readonly string[]
+  readonly peopleNotional: readonly string[]
+  readonly peopleAverages: readonly string[]
+  readonly peopleSamples: readonly string[]
   readonly points: number
   readonly seriesValues: readonly string[]
   readonly text: string
@@ -311,6 +363,20 @@ function screen(page: Page): Promise<Screen> {
         .map((window) => window.textContent ?? ''),
       personsEnabled: scope.querySelector('.spend-persons')?.getAttribute('data-enabled') ?? null,
       personState: scope.querySelector('.spend-persons-state')?.textContent ?? null,
+      peoplePanel: all('.spend-people').length,
+      peopleAvailable: scope.querySelector('.spend-people')?.getAttribute('data-available') ?? null,
+      peopleView: scope.querySelector('.spend-people')?.getAttribute('data-view') ?? null,
+      peopleRows: all('.spend-people-rows .spend-person').length,
+      peopleTotals: all('.spend-people-totals .spend-person').length,
+      peopleReason: scope.querySelector('.spend-people-reason')?.textContent ?? null,
+      peopleYou: scope.querySelector('.spend-people-you')?.textContent ?? null,
+      // The panel's money path, per drawn line: the model figure, the notional
+      // one (with its mark), the average and the sample it is over. Read from
+      // the panel's own classes so the report's columns cannot satisfy them.
+      peopleMoney: texts('.spend-people .spend-person-counted'),
+      peopleNotional: texts('.spend-people .spend-person-notional'),
+      peopleAverages: texts('.spend-people .spend-person-average'),
+      peopleSamples: texts('.spend-people .spend-person-counted-runs'),
       points: all('.spend-account')
         .find((block) => block.getAttribute('data-account') === 'model')
         ?.querySelectorAll('.spend-point').length ?? 0,
@@ -482,6 +548,102 @@ const BUDGET: JSONDoc = {
 }
 
 /**
+ * The by-person document: what `runs stats --json` answers (contract section
+ * 6.10, console L5b). Two launchers and the CLI's own unattributed bucket, plus
+ * the read's own account of itself -- the view it resolved, who it resolved it
+ * for, and the bound it stopped at. The console adds no figure of its own to
+ * this, so a number on the panel that is not here is a bug.
+ */
+const STATS_DOCUMENT: JSONDoc = {
+  project: '<project>',
+  by: 'user',
+  view: 'all',
+  you: 'ada@example.com',
+  operator: true,
+  since: '2026-10-12',
+  until: '2026-10-15',
+  max_runs: 5000,
+  truncated: false,
+  unlaunched: 2,
+  rows: [
+    {
+      user: 'ada@example.com',
+      currency: 'USD',
+      runs: 3,
+      succeeded: 2,
+      failed: 1,
+      halted: 0,
+      infra_error: 0,
+      other: 0,
+      no_record: 0,
+      // The three money fields are JSON **numbers** on the wire, and all three
+      // are always present: contract section 6.10 declares `counted_usd`,
+      // `notional_usd` and `avg_counted_usd` `float64` with no `omitempty`, and
+      // notional `0` means zero rather than absent. A string here would be a
+      // document no CLI writes, and `readNumber` refuses a numeric string -- so
+      // a fixture that typed them as strings would draw `n/a` in every money
+      // cell and still pass.
+      counted_usd: 1.5,
+      notional_usd: 0.4,
+      counted_runs: 3,
+      avg_counted_usd: 0.5,
+    },
+    {
+      user: 'bob@example.com',
+      currency: 'USD',
+      runs: 1,
+      succeeded: 1,
+      failed: 0,
+      halted: 0,
+      infra_error: 0,
+      other: 0,
+      no_record: 0,
+      counted_usd: 0.65,
+      notional_usd: 0,
+      counted_runs: 1,
+      avg_counted_usd: 0.65,
+    },
+    {
+      user: 'unknown',
+      currency: 'USD',
+      runs: 1,
+      succeeded: 0,
+      failed: 0,
+      halted: 0,
+      infra_error: 0,
+      other: 0,
+      no_record: 1,
+      counted_usd: 0,
+      notional_usd: 0,
+      counted_runs: 0,
+      // `counted_runs` 0 with an average of 0 is the CLI's "no run to average":
+      // the console draws `n/a`, never `$0.00` (contract section 6.10).
+      avg_counted_usd: 0,
+    },
+  ],
+  totals: [
+    {
+      user: '',
+      currency: 'USD',
+      runs: 5,
+      succeeded: 3,
+      failed: 1,
+      halted: 0,
+      infra_error: 0,
+      other: 0,
+      no_record: 1,
+      counted_usd: 2.15,
+      notional_usd: 0.4,
+      counted_runs: 4,
+      // The CLI rounds every published figure to the cent (`userstats.cents`),
+      // so the total's average is $0.54 and not 0.5375.
+      avg_counted_usd: 0.54,
+    },
+  ],
+  notes: ['these are every launcher of this project in the window'],
+}
+
+/**
  * The person report: two requesters, one an address and one the CLI's own
  * `unknown` bucket (`budget.UnknownPerson`) for the runs with no requester.
  * Nothing in this document is drawn until the view is asked for.
@@ -578,23 +740,31 @@ test.describe('the Spend screen', () => {
     controls: SpendControls,
     documents: Record<string, JSONDoc>,
     theme = 'light',
-  ): Promise<{ readonly asked: readonly Record<string, string>[] }> {
+    people: JSONDoc | null = null,
+  ): Promise<{
+    readonly asked: readonly Record<string, string>[]
+    readonly askedPeople: readonly Record<string, string>[]
+  }> {
     const result = (await app.evaluate(async ({ BrowserWindow }, source) => {
       const window = BrowserWindow.getAllWindows()[0]
-      if (window === undefined) return { ok: false, reason: 'the console has no window', asked: [] }
+      if (window === undefined) {
+        return { ok: false, reason: 'the console has no window', asked: [], askedPeople: [] }
+      }
       return (await window.webContents.executeJavaScript(source, true)) as {
         ok: boolean
         reason?: string
         asked: readonly Record<string, string>[]
+        askedPeople: readonly Record<string, string>[]
       }
-    }, drawWired(controls, documents, theme))) as {
+    }, drawWired(controls, documents, theme, people))) as {
       readonly ok: boolean
       readonly reason?: string
       readonly asked: readonly Record<string, string>[]
+      readonly askedPeople: readonly Record<string, string>[]
     }
     expect(result.reason).toBeUndefined()
     expect(result.ok).toBe(true)
-    return { asked: result.asked }
+    return { asked: result.asked, askedPeople: result.askedPeople }
   }
 
   test('renders the three accounts as three separate series', async () => {
@@ -749,18 +919,112 @@ test.describe('the Spend screen', () => {
     expect(shown.text).not.toContain('ada')
   })
 
-  test('draws the spend screen', async () => {
-    test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
-    await mount(REPORT, BUDGET, 'light')
-    await expect(page.locator(THE_MOUNT)).toHaveScreenshot(GOLDEN_NAMES.light)
+  // -------------------------------------------------------------------------
+  // The by-person view (console L5b).
+  // -------------------------------------------------------------------------
+
+  test('draws the by-person panel from its own read, and keeps the addresses out of it', async () => {
+    // The knob on is a *second* read, through a second allow-listed operation
+    // (`runs stats --json`), with the window translated from the picker's own
+    // (`spend.ts`'s `PERSON_WINDOW_DAYS`: `30d` is `30d` in both grammars, and
+    // the week form is the one that is not).
+    const wired = await mountWired(
+      personView(SPEND_DEFAULT_CONTROLS, true),
+      { '30d': REPORT },
+      'light',
+      STATS_DOCUMENT,
+    )
+    const drawn = await screen(page)
+
+    expect(wired.asked).toEqual([{ by: 'person', since: '30d' }])
+    expect(wired.askedPeople).toEqual([{ since: '30d' }])
+    expect(drawn.peoplePanel).toBe(1)
+    expect(drawn.peopleAvailable).toBe('true')
+    expect(drawn.peopleView).toBe('all')
+    expect(drawn.peopleRows).toBe(3)
+    expect(drawn.peopleTotals).toBe(1)
+    expect(drawn.peopleReason).toBeNull()
+    // The identity the read was resolved for, through the `person` class: the
+    // console's marker, never the address, and the login nowhere on the mount.
+    expect(drawn.peopleYou).toBe('redacted@example.invalid')
+    expect(drawn.text).toContain('these are every launcher of this project in the window')
+    expect(drawn.text).not.toContain('ada')
+
+    // The money path, end to end: the document's three `float64`s reach the
+    // cells as dollars, the notional one carries its mark, and the average
+    // without a sample is `n/a` rather than `$0.00`. Three rows plus the total
+    // line, and the total is the CLI's own sum of the rows above it ($1.50 +
+    // $0.65 + $0.00) and never a sum this screen computed.
+    expect(drawn.peopleMoney).toEqual(['$1.50', '$0.65', '$0.00', '$2.15'])
+    expect(drawn.peopleNotional).toEqual([
+      `NOTIONAL~$0.40`,
+      `NOTIONAL~$0.00`,
+      `NOTIONAL~$0.00`,
+      `NOTIONAL~$0.40`,
+    ])
+    expect(drawn.peopleAverages).toEqual(['$0.50', '$0.65', 'n/a', '$0.54'])
+    expect(drawn.peopleSamples).toEqual(['3', '1', '0', '4'])
+
+    // The knob off is one read and no panel at all -- not an empty one.
+    const off = await mountWired(SPEND_DEFAULT_CONTROLS, { '30d': REPORT }, 'light', STATS_DOCUMENT)
+    const hidden = await screen(page)
+
+    expect(off.askedPeople).toEqual([])
+    expect(hidden.peoplePanel).toBe(0)
+    expect(hidden.text).not.toContain('ada')
   })
 
-  test('draws the spend screen in the dark theme', async () => {
+  test('draws the by-person read’s refusal beside the report, and not as the screen’s', async () => {
+    // A second read that fails is a panel with the CLI's sentence in it, and
+    // the report -- a different read, which answered -- is still drawn from
+    // its own document. The refusal is the child's text, so it reaches the
+    // screen through `sanitizeRefusal` like every other refusal.
+    const refused = await mountWired(
+      personView(SPEND_DEFAULT_CONTROLS, true),
+      { '30d': REPORT },
+      'light',
+      { refusal: 'runs stats: you are not an operator of this project' },
+    )
+    const drawn = await screen(page)
+
+    expect(refused.asked).toEqual([{ by: 'person', since: '30d' }])
+    expect(drawn.peoplePanel).toBe(1)
+    expect(drawn.peopleAvailable).toBe('false')
+    expect(drawn.peopleReason).toBe('runs stats: you are not an operator of this project')
+    expect(drawn.peopleRows).toBe(0)
+    expect(drawn.points).toBeGreaterThan(0)
+  })
+
+  test('is painted from the design tokens, not from the browser defaults', async () => {
+    // Design section 6.2's computed-ground assertion, and the one case in this
+    // file that is red when the stylesheet stops being linked: the theme travels
+    // as a `data-theme` attribute the renderer stamps, so every read above passes
+    // on a tree nothing paints. `test/support/goldens.ts` holds the app's ground
+    // and the screen's text colour to the shipped palette, once per theme.
+    //
+    // NOT a golden test, deliberately: `FUGARO_CONSOLE_GOLDENS=skip` does not skip
+    // it. Nothing here reads a PNG, so an unstyled tree is red on its own account
+    // rather than recorded as a fresh baseline nobody compared.
+    await expectGrounded(page, (theme) => mount(REPORT, BUDGET, theme), {
+      themes: SPEND_THEMES,
+      mount: THE_MOUNT,
+      text: 'h1.spend-project',
+      screen: 'the Spend screen',
+    })
+  })
+
+  test('draws the spend screen', async ({}, testInfo) => {
+    test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
+    await mount(REPORT, BUDGET, 'light')
+    await expectGolden(page.locator(THE_MOUNT), GOLDEN_NAMES.light, { spec: SPEC, consoleDir, testInfo })
+  })
+
+  test('draws the spend screen in the dark theme', async ({}, testInfo) => {
     await mount(REPORT, BUDGET, 'dark')
     const drawn = await screen(page)
     expect(drawn.theme).toBe('dark')
     test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
-    await expect(page.locator(THE_MOUNT)).toHaveScreenshot(GOLDEN_NAMES.dark)
+    await expectGolden(page.locator(THE_MOUNT), GOLDEN_NAMES.dark, { spec: SPEC, consoleDir, testInfo })
   })
 
   test('resolves the golden names under the spend directory', ({}, testInfo) => {

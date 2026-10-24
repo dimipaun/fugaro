@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 )
 
@@ -122,9 +123,9 @@ func TestManagedBudgetIsRequiredAtCreation(t *testing.T) {
 		noMarker(t, r.gcs, bucket)
 	})
 
-	// --managed is about the project this run creates: an existing project is
-	// flagged by the owner's own command instead, never by init (D58, Task
-	// 6.1), and init --firebase adds Firebase to such a project, which is
+	// --managed is about the project this run creates: a project setup
+	// created earlier gets its budget from the owner's own command instead,
+	// never from init (D58, Task 6.1), and update --firebase-project adds Firebase to such a project, which is
 	// never what makes one managed (D73).
 	t.Run("--managed without --create-project", func(t *testing.T) {
 		r := newProjectRig(t)
@@ -137,7 +138,7 @@ func TestManagedBudgetIsRequiredAtCreation(t *testing.T) {
 		if code := ExitCode(err); code != ExitUserError {
 			t.Errorf("exit %d, want %d:\n%s", code, ExitUserError, s)
 		}
-		if !strings.Contains(s, "--create-project") {
+		if !strings.Contains(s, "first run of fugaro setup") {
 			t.Errorf("the refusal does not say what --managed goes with:\n%s", s)
 		}
 		r.nothingDone(t, "--managed without --create-project")
@@ -225,10 +226,10 @@ func TestManagedCreationRecordsTheAmount(t *testing.T) {
 func TestManagedBudgetHasNoDefault(t *testing.T) {
 	f := newSetupCmd().Flags().Lookup("budget")
 	if f == nil {
-		t.Fatal("fugaro init has no --budget flag")
+		t.Fatal("fugaro setup has no --budget flag")
 	}
 	if f.DefValue != "0" {
-		t.Errorf("fugaro init --budget defaults to %q, want 0: a managed creation has no amount to fall back on (D64), and 0 is what an absent flag means", f.DefValue)
+		t.Errorf("fugaro setup --budget defaults to %q, want 0: a managed creation has no amount to fall back on (D64), and 0 is what an absent flag means", f.DefValue)
 	}
 
 	r, bucket := newManagedCreateRig(t)
@@ -273,18 +274,23 @@ func TestManagedBudgetHasNoDefault(t *testing.T) {
 	})
 }
 
-// --create-project --managed on a project that already exists: the project
-// stage adopts it and creates nothing, so there is no creation to record and
-// markCreated writes no fact. The owner asked for a managed project, and
+// --create-project --managed on a project an earlier run of fugaro setup
+// created (it carries the creation label fugaro_created=true, which only the
+// creating run's create request writes): the project stage resumes it and
+// creates nothing in this run, and the project is still Fugaro's creation, so
+// markCreated records the fact — the object with the budget this run was
+// given, and the fugaro_managed label — exactly as the creating run would have
+// (the owner's ruling of 2026-10-23: a resumed setup is managed by default). The owner asked for a managed project, and
 // getting an unmarked one with no word about it is the failure this pins:
 // the run must say --managed was not applied and that no fact was written.
 // The bucket is seeded as the managed creation's is, so the absence of the
 // fact is about the gate and not about an unwritable bucket.
-func TestManagedOnAnExistingProjectSaysItWasNotApplied(t *testing.T) {
+func TestAResumedCreationIsMarkedManaged(t *testing.T) {
 	r := newProjectRig(t)
 	const number = 424242
 	bucket := "fugaro-runs-" + newProj
 	r.crm.AddProject(newProj, number)
+	r.crm.SetLabels(newProj, map[string]string{infra.CreatedLabelKey: infra.CreatedLabelValue})
 	r.gcs.AddProject(newProj, number)
 	r.bill.SetBilling(newProj, true)
 	r.bill.AddAccount(billingAcc, true)
@@ -300,32 +306,35 @@ func TestManagedOnAnExistingProjectSaysItWasNotApplied(t *testing.T) {
 		"role_ids":                  roles,
 	})}
 	r.save(t)
-	out, errOut, err := r.run(t, true, newProj+"\n"+initProjectName+"\n"+initProjectName+"\n",
+	out, errOut, err := r.run(t, true, newProj+"\n"+initProjectName+"\n"+initProjectName+"\n"+newProj+"\n",
 		"--create-project", "--managed", "--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc)
 	all := refusalText(out, errOut, err)
 	if err != nil {
-		t.Fatalf("the run failed, so the warning would be about a failure rather than about adoption: %v\n%s", err, all)
+		t.Fatalf("the run failed, so the warning would be about a failure rather than about the resume: %v\n%s", err, all)
+	}
+	if !strings.Contains(all, "this MARKS project "+newProj+" as Fugaro-managed") || !strings.Contains(all, "this run resumed the creation of project "+newProj) {
+		t.Errorf("the mark was not behind the typed ID, or not said to be a resume:\n%s", all)
 	}
 	if n := len(r.crm.Creates()); n != 0 {
 		t.Fatalf("%d project(s) created: the project already existed:\n%s", n, all)
 	}
-	noMarker(t, r.gcs, bucket)
-	if !strings.Contains(all, "--managed was not applied") {
-		t.Errorf("the run adopted an existing project with --managed and did not say --managed was not applied:\n%s", all)
+	got, ok := markerAt(t, r.gcs, bucket)
+	if !ok {
+		t.Fatalf("a resumed creation wrote no gs://%s/%s:\n%s", bucket, managed.MarkerObject, all)
 	}
-	if !strings.Contains(all, "no creation fact was written") {
-		t.Errorf("the run did not say that no creation fact was written:\n%s", all)
+	if want := `{"version":2,"gcp_project":"` + newProj + `","budget":{"amount":7,"currency":"USD"}}`; got != want {
+		t.Errorf("gs://%s/%s = %s, want %s", bucket, managed.MarkerObject, got, want)
 	}
-	// And the owner is not left with "not managed" as the end of it: since
-	// Task 6.1 there is a command for exactly this project, so the warning
-	// names it with the project ID the owner would type.
-	if want := "fugaro managed flag " + newProj; !strings.Contains(all, want) {
-		t.Errorf("the run did not say how such a project becomes managed (want %q):\n%s", want, all)
+	if v := r.crm.Labels(newProj)[managed.ProjectLabelKey]; v != managed.ProjectLabelValue {
+		t.Errorf("a resumed creation is not labelled %s=%s (got %q):\n%s", managed.ProjectLabelKey, managed.ProjectLabelValue, v, all)
+	}
+	if strings.Contains(all, "--managed was not applied") {
+		t.Errorf("the run said --managed was not applied, and it marked the resumed creation:\n%s", all)
 	}
 }
 
 // The other half of that warning, and the reason it is two: an empty
-// r.res.Created is what adoption leaves behind and also what every other way
+// r.res.Created is what a resumed creation leaves behind and also what every other way
 // a --managed run creates nothing leaves behind, so the message may only say
 // "already existed" when the project stage actually read a project that was
 // already there. Here it does not exist and the typed confirmation is
@@ -436,5 +445,53 @@ func TestManagedFactIsNotWrittenWhenTheInstallationApplyFails(t *testing.T) {
 	noMarker(t, r.gcs, bucket)
 	if s := refusalText(out, errOut, err); !strings.Contains(s, "not marked") {
 		t.Errorf("the run does not say the created project is not marked:\n%s", s)
+	}
+}
+
+// TestAResumedCreationIsNeverMarkedWithoutATypedID: fugaro_created=true is a
+// label anyone with resourcemanager.projects.update can set, so it alone never
+// marks a project managed. A resumed creation is marked only after its ID is
+// typed at the person's own terminal (the bar fugaro managed flag keeps): under
+// --yes --non-interactive, or in a coding agent's session, nothing is written —
+// neither the object nor the fugaro_managed label — and the run says how to
+// mark it.
+func TestAResumedCreationIsNeverMarkedWithoutATypedID(t *testing.T) {
+	for name, agent := range map[string]bool{"--yes --non-interactive": false, "a coding agent's session": true} {
+		t.Run(name, func(t *testing.T) {
+			r := newProjectRig(t)
+			const number = 424242
+			bucket := "fugaro-runs-" + newProj
+			r.crm.AddProject(newProj, number)
+			r.crm.SetLabels(newProj, map[string]string{infra.CreatedLabelKey: infra.CreatedLabelValue})
+			r.gcs.AddProject(newProj, number)
+			r.fb.AddFirebase(newProj)
+			r.bill.SetBilling(newProj, true)
+			r.gcs.AddBucket(bucket, number, managedBucketLabels)
+			roles := map[string]string{}
+			for _, role := range []string{"launcher", "job_runner", "build_submitter", "tag_mover"} {
+				roles[role] = "projects/" + newProj + "/roles/fugaro" + strings.ToUpper(role[:1]) + role[1:]
+			}
+			r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+				"runs_bucket":               bucket,
+				"registry_host":             "us-east5-docker.pkg.dev/" + newProj,
+				"scheduler_service_account": "fugaro-scheduler@" + newProj + ".iam.gserviceaccount.com",
+				"role_ids":                  roles,
+			})}
+			r.save(t)
+			if agent {
+				t.Setenv("CLAUDECODE", "1")
+			}
+			out, errOut, err := r.run(t, true, newProj+"\n", "--create-project", "--yes", "--non-interactive")
+			all := refusalText(out, errOut, err)
+			if got, ok := markerAt(t, r.gcs, bucket); ok {
+				t.Errorf("a resumed creation was marked with no typed ID: gs://%s/%s = %s\n%s", bucket, managed.MarkerObject, got, all)
+			}
+			if v := r.crm.Labels(newProj)[managed.ProjectLabelKey]; v != "" {
+				t.Errorf("a resumed creation was labelled %s=%s with no typed ID\n%s", managed.ProjectLabelKey, v, all)
+			}
+			if !agent && !strings.Contains(all, "fugaro managed flag "+newProj) {
+				t.Errorf("the run does not say how to mark it:\n%s", all)
+			}
+		})
 	}
 }
