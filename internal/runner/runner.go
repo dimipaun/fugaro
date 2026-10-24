@@ -2828,8 +2828,9 @@ func openFindings(rs []runstore.ReviewSummary) *runstore.ReviewSummary {
 // were filed from, so the filing dirties nothing a reviewer was not already
 // reading (D9) — and their ids are recorded beside the round they came from.
 //
-// Whether a run files at all is D30's per-mode table, read from internal/rigor
-// (T4.6): a mode whose row files nothing of its own leaves the branch exactly
+// Whether a run files at all is first the repository's opt-in — a rigor:
+// block, or a project-layer rigor default (rigor.Config.Configured) — and then
+// D30's per-mode table, read from internal/rigor (T4.6): a mode whose row files nothing of its own leaves the branch exactly
 // as it was, so a Critical run's tree and pull request body are the ones main
 // produces. The table is asked rather than compared here, so a mode that files
 // differently is a row in that package and not a branch in this one.
@@ -2860,6 +2861,12 @@ func (r *run) fileOpenItems(ctx context.Context) bool {
 	// A halted or cancelled run was stopped mid-loop: its last round is not
 	// one it finished acting on, and its push needs the time a filing spends.
 	if r.haltValue() != nil || r.isCancelled() {
+		return false
+	}
+	// Filing is opt-in: a repository that configures no rigor resolves Pro
+	// for its budget (D19) and files nothing, so its tree, pull request body
+	// and record are the ones it had before modes existed.
+	if !r.rigorCfg.Configured() {
 		return false
 	}
 	files := rigor.Files(r.reachedRigor())

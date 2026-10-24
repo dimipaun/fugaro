@@ -67,6 +67,20 @@ type Config struct {
 	Repo Mode
 	// RepoAreas is fugaro.yaml's rigor.areas; nil sets none.
 	RepoAreas []Area
+	// RepoBlock is whether fugaro.yaml wrote a rigor: block at all, even
+	// one that sets nothing: the block is a repository's opt-in, which
+	// Configured reads.
+	RepoBlock bool
+}
+
+// Configured reports whether a repository opted in to rigor modes: its
+// fugaro.yaml has a rigor: block, or the project layer sets a rigor default
+// or area. An unconfigured repository still resolves Default (D19), which the
+// budget fraction reads, but it files no backlog item (the owner's ruling of
+// 2026-10-24): filing is opt-in, so a repository that never named a mode
+// gains no docs/backlog/ it did not ask for.
+func (c Config) Configured() bool {
+	return c.RepoBlock || c.Repo != "" || len(c.RepoAreas) > 0 || c.Project != "" || len(c.ProjectAreas) > 0
 }
 
 // Areas is every rule in effect, the project layer's first. The order

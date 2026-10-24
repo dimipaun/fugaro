@@ -108,3 +108,34 @@ func TestProjectRigorIsTheLayersHalfAlone(t *testing.T) {
 		t.Errorf("the project layer's half lost its own: %+v", got)
 	}
 }
+
+// TestRigorConfigSaysWhetherTheRepositoryOptedIn: backlog filing is opt-in
+// (the owner's ruling of 2026-10-24), and the opt-in is a rigor: block in the
+// repository's own file — even one that sets nothing — or a rigor default in
+// the project layer. A file with neither is unconfigured, and resolves the
+// built-in default without filing.
+func TestRigorConfigSaysWhetherTheRepositoryOptedIn(t *testing.T) {
+	layer := mustLayer(t, testLayer)
+	for _, tc := range []struct {
+		name string
+		file string
+		want bool
+	}{
+		{"no block", minimalRepo, false},
+		{"an empty block", minimalRepo + "rigor: {}\n", true},
+		{"a default", minimalRepo + "rigor: { default: pro }\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _, ps := Resolve([]byte(tc.file), layer)
+			if len(ps) > 0 {
+				t.Fatal(ps)
+			}
+			if got := c.RigorConfig().Configured(); got != tc.want {
+				t.Errorf("Configured() = %v; want %v", got, tc.want)
+			}
+		})
+	}
+	if !(&Config{Layer: mustLayer(t, rigorLayer)}).RigorConfig().Configured() {
+		t.Error("a project layer that sets defaults.rigor did not opt its repositories in")
+	}
+}

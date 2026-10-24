@@ -15,6 +15,10 @@ package rigor
 // what it is given and reads no mode; this table is read only where a run
 // decides whether to file its own, which is why no mode can suppress an item
 // the owner filed by hand.
+//
+// The table is read only for a repository that opted in (Config.Configured):
+// an unconfigured repository resolves Default for its budget and files
+// nothing, whatever Default's row says (the owner's ruling of 2026-10-24).
 
 // Filing is what one mode files of its own: one row of D30's table.
 type Filing struct {

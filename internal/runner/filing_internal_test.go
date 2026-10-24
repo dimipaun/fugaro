@@ -9,7 +9,8 @@ package runner
 // the pull request body a Critical run produces are the ones main produces —
 // while the modes whose row files one file the round they left open, and
 // Hotfix files its follow-up whatever it left open. An item the owner filed by
-// hand is never touched, whatever mode the run is at.
+// hand is never touched, whatever mode the run is at, and a repository that
+// configures no rigor files nothing at all.
 //
 // Nothing here reaches a network, a cloud project or a clock: the day is
 // injected (filedRunAt).
@@ -180,19 +181,50 @@ func TestStartupAndProFileTheRoundTheyLeftOpen(t *testing.T) {
 	}
 }
 
-// TestUnconfiguredRunFilesAsPro: D19's answer is that a repository which
-// configures nothing runs at Pro, and this is that answer at the filing step —
-// the unconfigured case adds no row of its own, so it files what a Pro run
-// files, and the item records the mode the run actually resolved rather than
-// `none` (D27). Filing rather than dropping is also the fail-closed direction:
-// the finding the run left open is carried somewhere a reader can cite it.
-func TestUnconfiguredRunFilesAsPro(t *testing.T) {
-	r, _ := modeRun(t, "", openRound)
+// TestUnconfiguredRunFilesNothing: filing is opt-in per repository (the
+// owner's ruling of 2026-10-24, R1). A repository whose fugaro.yaml has no
+// rigor: block, under no project-layer rigor default, still resolves Pro —
+// D19's default, which is what its budget fraction reads (T6.1) — but its run
+// files nothing: no item, no commit, no docs/backlog/ in the tree it pushes, no
+// id on the record and no backlog part in the pull request body.
+func TestUnconfiguredRunFilesNothing(t *testing.T) {
+	r, remote := modeRun(t, "", openRound)
 	if got := r.reachedRigor(); got != rigor.Default {
 		t.Fatalf("a repository with no rigor: block resolved %q; want the default %q (D19)", got, rigor.Default)
 	}
+	before := testutil.Git(t, r.repo.Dir, "rev-parse", "HEAD")
+
+	if r.fileOpenItems(context.Background()) {
+		t.Fatal("an unconfigured repository's run filed an item: filing starts only when a repository opts in with a rigor block")
+	}
+	if len(r.rec.Backlog) != 0 {
+		t.Errorf("the record carries ids for items an unconfigured run did not file: %v", r.rec.Backlog)
+	}
+	if after := testutil.Git(t, r.repo.Dir, "rev-parse", "HEAD"); after != before {
+		t.Errorf("HEAD moved from %s to %s for a run that filed nothing", before, after)
+	}
+	if err := r.repo.Push(context.Background(), r.rec.Branch); err != nil {
+		t.Fatal(err)
+	}
+	if tree := testutil.Git(t, remote, "ls-tree", "-r", "--name-only", "fugaro/x"); strings.Contains(tree, backlog.Dir+"/") {
+		t.Errorf("the pushed tree holds %s:\n%s", backlog.Dir, tree)
+	}
+	if section := r.finalSection(false, "review round 2 still has 3 findings", nil); strings.Contains(section, "filed ") {
+		t.Errorf("an unconfigured run's status section names an item it did not file:\n%s", section)
+	}
+}
+
+// TestAnEmptyRigorBlockOptsIn: the opt-in is the block itself, so a
+// repository that writes `rigor: {}` — a block that sets no mode and no area —
+// resolves the same Pro as one that writes nothing, and files as Pro does.
+func TestAnEmptyRigorBlockOptsIn(t *testing.T) {
+	remote := modeBase(t, "rigor: {}\n")
+	r := filedRunAt(t, remote, "fugaro/x", "20261024-120000-abcd", openRound)
+	if got := r.reachedRigor(); got != rigor.Default {
+		t.Fatalf("an empty rigor: block resolved %q; want the default %q (D19)", got, rigor.Default)
+	}
 	if !r.fileOpenItems(context.Background()) {
-		t.Fatal("an unconfigured run that left a round open filed nothing: D19 makes it Pro, whose row files")
+		t.Fatal("a repository that wrote a rigor: block filed nothing for the round it left open")
 	}
 	if !reflect.DeepEqual(r.rec.Backlog, []string{"20261024-01"}) {
 		t.Errorf("the record's items = %v; want the id of the file it wrote", r.rec.Backlog)

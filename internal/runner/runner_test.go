@@ -403,6 +403,9 @@ func TestFilingDoesNotSpendTheFinalizeReserveOnTheSuite(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "slow")
 	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "test: sh test.sh", "test: sh slow.sh", 1)
 	cfg = strings.Replace(cfg, "finalize_reserve: 30s", "finalize_reserve: 3s", 1)
+	// Filing is opt-in: the repository writes a rigor: block, or its run
+	// files nothing and the case has no filing commit to measure.
+	cfg = strings.Replace(cfg, "agent:\n", "rigor:\n  default: pro\nagent:\n", 1)
 	slow := "#!/bin/sh\nif [ -f '" + marker + "' ]; then sleep 10; fi\nexec sh test.sh \"$@\"\n"
 	h := newHarnessFiles(t, cfg, nil, map[string]string{"slow.sh": slow})
 	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
