@@ -2,6 +2,7 @@ package gcpfake
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -54,6 +55,8 @@ type CRM struct {
 type CreatedProject struct {
 	ID, DisplayName, Parent string
 	Number                  int64
+	// Labels are the labels the create request carried.
+	Labels map[string]string
 }
 
 type crmOp struct {
@@ -291,15 +294,20 @@ func (f *CRM) visible(id string) bool {
 }
 
 type v3Project struct {
-	Name        string `json:"name"`
-	ProjectID   string `json:"projectId"`
-	DisplayName string `json:"displayName,omitempty"`
-	State       string `json:"state"`
-	Parent      string `json:"parent,omitempty"`
+	Name        string            `json:"name"`
+	ProjectID   string            `json:"projectId"`
+	DisplayName string            `json:"displayName,omitempty"`
+	State       string            `json:"state"`
+	Parent      string            `json:"parent,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
 }
 
 func (f *CRM) v3Project(id string) v3Project {
-	return v3Project{Name: "projects/" + strconv.FormatInt(f.projects[id], 10), ProjectID: id, DisplayName: id, State: cmpOr(f.states[id], "ACTIVE")}
+	p := v3Project{Name: "projects/" + strconv.FormatInt(f.projects[id], 10), ProjectID: id, DisplayName: id, State: cmpOr(f.states[id], "ACTIVE")}
+	if ls := f.labels[id]; len(ls) > 0 {
+		p.Labels = maps.Clone(ls)
+	}
+	return p
 }
 
 // handleV3 serves projects.create, its operation and projects.get.
@@ -307,9 +315,10 @@ func (f *CRM) handleV3(w http.ResponseWriter, r *http.Request, body []byte) bool
 	switch {
 	case r.URL.Path == "/v3/projects" && r.Method == http.MethodPost:
 		var in struct {
-			ProjectID   string `json:"projectId"`
-			DisplayName string `json:"displayName"`
-			Parent      string `json:"parent"`
+			ProjectID   string            `json:"projectId"`
+			DisplayName string            `json:"displayName"`
+			Parent      string            `json:"parent"`
+			Labels      map[string]string `json:"labels"`
 		}
 		if err := json.Unmarshal(body, &in); err != nil || in.ProjectID == "" {
 			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "a project ID is required")
@@ -325,8 +334,11 @@ func (f *CRM) handleV3(w http.ResponseWriter, r *http.Request, body []byte) bool
 		}
 		f.nextProj++
 		f.nextOp++
-		p := CreatedProject{ID: in.ProjectID, DisplayName: in.DisplayName, Parent: in.Parent, Number: f.nextProj}
+		p := CreatedProject{ID: in.ProjectID, DisplayName: in.DisplayName, Parent: in.Parent, Number: f.nextProj, Labels: maps.Clone(in.Labels)}
 		f.projects[p.ID] = p.Number
+		if len(in.Labels) > 0 {
+			f.labels[p.ID] = maps.Clone(in.Labels)
+		}
 		f.hide[p.ID] = f.PropagationReads
 		f.creates = append(f.creates, p)
 		name := "operations/cp." + strconv.Itoa(f.nextOp)

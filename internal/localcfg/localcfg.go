@@ -52,6 +52,12 @@ type Config struct {
 	// RegistryHost is <region>-docker.pkg.dev/<gcp_project>, the prefix of
 	// every image registry of the installation.
 	RegistryHost string `yaml:"registry_host,omitempty"`
+	// SetupPending is "billing" in the config a first run of fugaro setup
+	// writes when it created the GCP project and paused because billing is
+	// not linked yet: the rerun resumes that setup (the project stage runs
+	// again, as on a first run). The config the installation's apply writes
+	// clears it.
+	SetupPending string `yaml:"setup_pending,omitempty"`
 	// BaseImages are the base images the image builds and the daily image
 	// check start from, by base kind (config.Bases). A workflow builds from
 	// the image of its base kind, so a project needs an entry for each kind

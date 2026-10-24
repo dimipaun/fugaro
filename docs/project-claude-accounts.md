@@ -268,7 +268,7 @@ The published policy carries the account axis in a node the previous release can
    step 3 ran:
 
    ```bash
-   fugaro update --firebase-project <gcp-project>
+   fugaro update --firebase-project <gcp-project-id>
    ```
 
    `fugaro image refresh` re-pins `base_images` and moves each repository's own jobs, but never a

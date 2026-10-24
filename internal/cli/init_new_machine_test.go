@@ -29,9 +29,9 @@ func (r *initRig) installationState(t *testing.T) {
 	}
 }
 
-// adoptEngine is the engine of a run on a machine with no local config for
+// newMachineEngine is the engine of a run on a machine with no local config for
 // an installation that exists: the file to write is new (old is nil).
-func adoptEngine(t *testing.T, r *initRig, o *initOptions) *initEngine {
+func newMachineEngine(t *testing.T, r *initRig, o *initOptions) *initEngine {
 	t.Helper()
 	e := rigEngine(t, r, o)
 	e.old = nil
@@ -49,7 +49,7 @@ func TestAdoptModeWritesConfigOnly(t *testing.T) {
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"launchers": []string{"group:eng@example.com"}, "operators": []string{"user:ann@example.com"}})}
 	r.save(t)
-	e := adoptEngine(t, r, &initOptions{yes: true})
+	e := newMachineEngine(t, r, &initOptions{yes: true})
 	res, err := initflow.Run(t.Context(), []initflow.Stage{&preflightStage{e}, newInstallationStage(e)}, e.options())
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +79,7 @@ func TestAdoptModeWritesConfigOnly(t *testing.T) {
 		t.Fatalf("rerun: %v %+v", err, res.Stages)
 	}
 	// --plan-only adopts nothing either: it says what it would do.
-	e = adoptEngine(t, r, &initOptions{planOnly: true})
+	e = newMachineEngine(t, r, &initOptions{planOnly: true})
 	e.path = filepath.Join(r.dir, "projects", "other.yaml")
 	if _, err = initflow.Run(t.Context(), []initflow.Stage{&preflightStage{e}, newInstallationStage(e)}, e.options()); err != nil {
 		t.Fatal(err)
@@ -98,7 +98,7 @@ func TestAdoptModeNamesMissingRole(t *testing.T) {
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"launchers": []string{"group:eng@example.com"}, "operators": []string{}})}
 	r.save(t)
-	e := adoptEngine(t, r, &initOptions{yes: true})
+	e := newMachineEngine(t, r, &initOptions{yes: true})
 	var out strings.Builder
 	e.r.w = &out
 	old := selfCommand
@@ -117,7 +117,7 @@ func TestAdoptModeNamesMissingRole(t *testing.T) {
 			t.Errorf("the output lacks %q:\n%s", want, out.String())
 		}
 	}
-	for _, line := range adoptNotes(infra.InstallationOutputs{}, "setup") {
+	for _, line := range newMachineNotes(infra.InstallationOutputs{}, "setup") {
 		if strings.Contains(line, "\n") || strings.Contains(line, "\\") {
 			t.Errorf("not one line: %q", line)
 		}
@@ -174,7 +174,7 @@ func TestNothingIsAppliedAfterAnAdoptInTheSameRun(t *testing.T) {
 	r.installationState(t)
 	r.script["output"] = map[string]any{"stdout": outputsJSON(t)}
 	r.save(t)
-	e := adoptEngine(t, r, &initOptions{yes: true})
+	e := newMachineEngine(t, r, &initOptions{yes: true})
 	ran := false
 	// An engine stage that would apply (the Firebase root, say).
 	later := &engineStage{e: e, name: initflow.Firebase, skip: func() string { return "" },
@@ -193,20 +193,20 @@ func TestNothingIsAppliedAfterAnAdoptInTheSameRun(t *testing.T) {
 	if n := len(r.ran(t, "apply")); n != 0 {
 		t.Errorf("applied after an adopt: %q", r.calls(t))
 	}
-	if len(res.Left) != 1 || !strings.Contains(res.Left[0].Text, "adopted") || res.ExitCode() != 1 {
+	if len(res.Left) != 1 || !strings.Contains(res.Left[0].Text, "this machine's local config") || res.ExitCode() != 1 {
 		t.Errorf("left %+v", res.Left)
 	}
 	// Each guarded stage refuses on its own, too.
 	for _, name := range []string{initflow.Installation2, initflow.Images, initflow.Secrets, initflow.Repository} {
-		if err := e.adoptGuard(name); err == nil {
+		if err := e.newMachineGuard(name); err == nil {
 			t.Errorf("%s: not refused after an adopt", name)
 		}
 	}
-	if err := e.adoptGuard(initflow.Plugin); err != nil {
+	if err := e.newMachineGuard(initflow.Plugin); err != nil {
 		t.Errorf("the plugin wiring changes no cloud resource: %v", err)
 	}
-	e.adopted = ""
-	if err := e.adoptGuard(initflow.Installation2); err != nil {
+	e.newMachine = ""
+	if err := e.newMachineGuard(initflow.Installation2); err != nil {
 		t.Errorf("a rerun is the ordinary converge: %v", err)
 	}
 }
@@ -229,14 +229,14 @@ func (r *initRig) firebaseState(t *testing.T) {
 
 // adoptRun adopts the rig's installation (which has the budget backend's
 // history account) and returns the config it wrote and the run's output.
-func adoptRun(t *testing.T, r *initRig, firebaseOutput string) (cfg, out string) {
+func newMachineRun(t *testing.T, r *initRig, firebaseOutput string) (cfg, out string) {
 	t.Helper()
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"history_service_account": historyAccount, "history_job": nil})}
 	if firebaseOutput != "" {
 		r.script["output@firebase"] = map[string]any{"stdout": firebaseOutput}
 	}
 	r.save(t)
-	e := adoptEngine(t, r, &initOptions{yes: true})
+	e := newMachineEngine(t, r, &initOptions{yes: true})
 	var buf strings.Builder
 	e.r.w = &buf
 	if _, err := initflow.Run(t.Context(), []initflow.Stage{&preflightStage{e}, newInstallationStage(e)}, e.options()); err != nil {
@@ -256,7 +256,7 @@ func TestAdoptFillsTheBudgetSectionFromTheFirebaseOutputs(t *testing.T) {
 	r := newFBRig(t)
 	r.installationState(t)
 	r.firebaseState(t)
-	cfg, out := adoptRun(t, r.initRig, "")
+	cfg, out := newMachineRun(t, r.initRig, "")
 	for _, want := range []string{"rtdb_url: " + r.db.URL, "firebase_project: " + fpID, "firebase_api_key: " + fpAPIKey, "token_signer: fugaro-token-signer@" + fpID + ".iam.gserviceaccount.com"} {
 		if !strings.Contains(cfg, want) {
 			t.Errorf("the local config lacks %q:\n%s", want, cfg)
@@ -282,7 +282,7 @@ func TestAdoptFillsTheBudgetSectionFromTheFirebaseOutputs(t *testing.T) {
 func TestAdoptWithoutFirebaseOutputs(t *testing.T) {
 	r := newFBRig(t)
 	r.installationState(t)
-	cfg, _ := adoptRun(t, r.initRig, "")
+	cfg, _ := newMachineRun(t, r.initRig, "")
 	if strings.Contains(cfg, "rtdb_url") || strings.Contains(cfg, "firebase_api_key") {
 		t.Errorf("a budget section without a Firebase state:\n%s", cfg)
 	}
@@ -290,7 +290,7 @@ func TestAdoptWithoutFirebaseOutputs(t *testing.T) {
 	r2 := newFBRig(t)
 	r2.installationState(t)
 	r2.firebaseState(t)
-	cfg, out := adoptRun(t, r2.initRig, `{"rtdb_url":{"value":"not a url","type":"string"}}`)
+	cfg, out := newMachineRun(t, r2.initRig, `{"rtdb_url":{"value":"not a url","type":"string"}}`)
 	if strings.Contains(cfg, "rtdb_url") || !strings.Contains(out, "budget") {
 		t.Errorf("unusable outputs:\n%s\n%s", cfg, out)
 	}
@@ -316,7 +316,7 @@ func TestAdoptRefusesForeignFirebaseOutputs(t *testing.T) {
 			r := newFBRig(t)
 			r.installationState(t)
 			r.firebaseState(t)
-			cfg, out := adoptRun(t, r.initRig, o)
+			cfg, out := newMachineRun(t, r.initRig, o)
 			for _, no := range []string{"rtdb_url", "firebase_api_key", "token_signer", "attacker", "other-fp"} {
 				if strings.Contains(cfg, no) {
 					t.Errorf("the config holds %q:\n%s", no, cfg)

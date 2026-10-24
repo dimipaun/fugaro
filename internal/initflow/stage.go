@@ -31,7 +31,25 @@ const (
 	Skipped  State = "skipped"   // does not apply to this run (Detail says why)
 	Failed   State = "failed"    // the stage's apply, verify or check failed
 	Todo     State = "will-do"   // something to apply
+	// BillingPending is a stage that did its part and stopped at the billing
+	// link, which the person running setup may not be allowed to make: not a
+	// failure, a pause (BillingPausedError). WaitingForBilling is every later
+	// stage that needs billing (NeedsBilling), which waits for it rather than
+	// failing; a stage that needs none still runs.
+	BillingPending    State = "billing-pending"
+	WaitingForBilling State = "waiting-for-billing"
 )
+
+// NeedsBilling is whether a stage needs the GCP project to have billing: every
+// stage but the ones before the project's own and the plugin wiring, which
+// writes a local file only.
+func NeedsBilling(name string) bool {
+	switch name {
+	case Preflight, Project, Plugin:
+		return false
+	}
+	return true
+}
 
 // Names of the stages, in the order the design runs them (§3.1). A stage
 // is registered under exactly one of them.
@@ -280,6 +298,17 @@ func (e *StageError) Unwrap() error { return e.Err }
 type NeedsYouError struct{ Left Left }
 
 func (e *NeedsYouError) Error() string { return e.Left.Text }
+
+// BillingPausedError is returned by Apply (or wrapped by Check's status, see
+// BillingPending) when the stage's own work is done but the project has no
+// billing yet: the loop records it as BillingPending with Left, lets the
+// stages that need no billing run, and marks the rest WaitingForBilling.
+type BillingPausedError struct {
+	Left   Left
+	Detail string
+}
+
+func (e *BillingPausedError) Error() string { return e.Left.Text }
 
 // MissingInputsError is --non-interactive's single refusal, listing every
 // flag every stage still needs.

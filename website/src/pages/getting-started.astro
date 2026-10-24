@@ -31,10 +31,10 @@
  *      steps below are `docs/gcp-setup.md`'s preconditions and its short path, in the order
  *      that document puts them, one line each, and each names the document that carries the
  *      detail rather than repeating it. No secret value is named, and no step is invented.
- *      **`fugaro setup` asks, so the page does not list what it asks**: the GCP project, the
- *      region, whether to create it or adopt one and the installation's name are the wizard's
- *      own prompts (the four questions `internal/cli/setup.go` asks on a first run, with
- *      `--gcp-project`, `--region`, `--create-project` and `--name` as their flags), and the
+ *      **`fugaro setup` asks, so the page does not list what it asks**: the new GCP project's
+ *      ID, the region and the installation's name are the wizard's own prompts (the three
+ *      questions `internal/cli/setup.go` asks on a first run, with `--gcp-project`, `--region`
+ *      and `--name` as their flags; Fugaro only starts fresh, so it creates the project), and the
  *      billing link, the API enabling and the secrets are confirmations it takes, not steps a
  *      reader does first. The two commands the steps name are rendered from `install.yaml`'s
  *      plugin path, so a rename there moves the steps with it.
@@ -479,9 +479,9 @@ const doc = (path: string, fragment: string): string =>
         <div class="gs-step-body">
           <h3 class="gs-step-name">Run <code>{installCommand}</code></h3>
           <p class="gs-step-line">
-            In your own terminal. It asks for the GCP project, the region, whether to create it or
-            adopt one, and the name; the rest is a confirmation you type, and secrets come at
-            hidden prompts.{' '}
+            In your own terminal. It asks for a new GCP project ID, the region and the name, then
+            creates the project; the rest is a confirmation you type, and secrets come at hidden
+            prompts.{' '}
             <a href={doc('docs/gcp-setup.md', 'turning-the-shared-budget-on-m9b')}>The shared budget</a>{' '}
             is optional.
           </p>

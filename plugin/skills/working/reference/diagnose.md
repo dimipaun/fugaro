@@ -81,7 +81,7 @@ fugaro budget set --global --per-run <usd>
 fugaro budget set --global --daily <usd>
 fugaro budget set --global --max-reserve <usd>
 fugaro budget resume
-fugaro update --firebase-project <firebase-project-id>
+fugaro update --firebase-project <gcp-project-id>   # the installation's own GCP project id
 ```
 
 Don't edit the project's config or `fugaro.yaml` to get around a halt.

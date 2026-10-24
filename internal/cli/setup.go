@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -17,7 +16,7 @@ import (
 // setup and update are two commands over one engine — init.go's
 // newInitCmdWith, which is the constructor both are built by — because they
 // are two moments with different answers, not two spellings of one: setup
-// stands an installation up or adopts one and may create a GCP project, a
+// stands a fresh installation up and creates its GCP project, may create a
 // billing link and a Batch backend, and update re-converges what is already
 // there after a CLI upgrade and creates nothing. The flag sets are where that
 // shows: every flag is declared on both doors (so a converge is driven the
@@ -30,7 +29,7 @@ import (
 // wizard's questions into it.
 const setupLong = `setup plans the installation's shared resources (the runs bucket, registries,
 custom roles, the scheduler account, log isolation, an optional budget) with
-Terraform, adopting what the bootstrap already made, and applies the plan it
+Terraform, importing what the bootstrap already made, and applies the plan it
 showed once you confirm by typing the project's name (or pass --yes). It
 then writes the project config from the installation's outputs. With no
 project config yet, --name, --gcp-project and --region say what to create:
@@ -48,38 +47,34 @@ refused unless --allow-delete names the address.
 A new project config grants the launcher and operator roles to you, the
 authenticated user (user:<your email> from the Application Default
 Credentials), so that fugaro run works; --launcher or --operator replaces that,
-an existing or adopted config is never changed by it, and with a service
+an existing config is never changed by it, and with a service
 account's credentials it stops and names the two flags.
 
-On a first run it asks its questions once, in this order, each with a
-suggestion Enter takes, and writes the local config, so later runs ask
-nothing: the GCP project's ID (--gcp-project; a new project named after this
-one, fugaro-<name>, which Enter takes — and, offered second when it differs, the
-project GOOGLE_CLOUD_PROJECT or the credentials' quota project names, the one
-you are already working in; never gcloud's default project), the region
-(--region; us-east5), whether to create the GCP project
-or adopt one that already exists (--create-project; "create", what Enter
-takes, is a new fugaro-<name> project, and "adopt" leaves one that is already
-there exactly as it is), and the project's name (--name; from the
-repository's owner, else this directory's). Every question has its flag, so
-only the confirmations below need a terminal at all: without one, or with
+Fugaro only starts fresh: a first run creates the GCP project the installation
+lives in, and that project is Fugaro's, and managed, from its creation. On a
+first run it asks its questions once, in this order, each with a suggestion
+Enter takes, and writes the local config, so later runs ask nothing: the new
+GCP project's ID (--gcp-project; a project named after this one,
+fugaro-<name>, which Enter takes; never gcloud's default project), the region
+(--region; us-east5) and the project's name (--name; from the repository's
+owner, else this directory's). Every question has its flag, so only the
+confirmations below need a terminal at all: without one, or with
 --non-interactive, --yes or --json, the run names every missing flag in one
-error — every one but the project question, whose answer it does not need. A
-run nobody can ask does not create a project (it adopts, the answer that
-changes nothing in the cloud), and --create-project is how a scripted run
-says otherwise. Where the installation already exists and this machine has no
-local config for it, setup keeps it rather than offering a second one: it
-writes the config from the installation and applies nothing, says which roles
-to ask an owner for, and says in one line that the installation is already
-set up and that it converges as fugaro update does. Its name is the
-installation's own (from the runs bucket's marker), not the directory's, and
-there is nothing left to ask. The budget section
-(rtdb_url, firebase_project, firebase_api_key, token_signer: none a secret) is
-filled from the Firebase root's outputs, read only. A --name given for an
+error. An ID that already exists is refused before anything is asked or
+changed ("Fugaro only starts fresh: <id> already exists; pick another id"),
+and so is one that already holds a Fugaro installation, with the command that
+uses that installation from this machine instead: fugaro update --gcp-project
+<id> --region <region>, which writes the local config from the installation
+and applies nothing. The one taken ID a first run goes on with is a project an
+earlier run of fugaro setup created and did not finish (it carries the label
+fugaro_created=true from its creation): the rerun resumes it. The budget
+section of a local config written from an installation (rtdb_url,
+firebase_project, firebase_api_key, token_signer: none a secret) is filled
+from the Firebase root's outputs, read only. A --name given for an
 installation that already exists must be the installation's own name. With
-several project configs, --name of a project that
-has none is a first run of that name, and a checkout whose origin repository
-exactly one project lists selects that project.
+several project configs, --name of a project that has none is a first run of
+that name, and a checkout whose origin repository exactly one project lists
+selects that project.
 
 Before the first billable image build of a GitHub repository, setup asks GitHub
 (as the App, with the App's key read from Secret Manager into memory only)
@@ -92,14 +87,19 @@ first, at the start, before any plan.
 setup runs as a converge of stages (preflight, installation, with
 --firebase-project the Firebase backend and the images, the secrets, the
 plugin wiring and the repository, and on a first run the project — the one
-stage that may create the GCP project, and it does that only when the first
-question's answer was to create: an answer of "adopt" reads nothing and
-creates nothing), each with its own confirmation, in order, and stops at the
+stage that creates the GCP project, and the one that refuses an ID that
+already exists), each with its own confirmation, in order, and stops at the
 first that fails or needs you; a rerun resumes, and one with nothing to do
 says "No changes" and exits 0. Exit codes: 0 done (or only planned), 1 a
 refusal, or a step left for you (see left_for_you in --json), 2 a cloud
 failure; --json prints the stages, left_for_you and the failed stage on every
-outcome.
+outcome. Billing not linked is a pause, not a failure: the project stage is
+billing-pending, the stages that need billing are waiting-for-billing (the
+plugin wiring still runs), the local config is written with setup_pending:
+billing, the run exits 1 with one block to forward to whoever administers
+billing (the gcloud billing projects link line for the new project, the
+billing account's id theirs to supply, and the rerun line), and the rerun
+resumes the project it created.
 
 setup --anchor, run in the checkout of a repository the project lists, writes
 only the gcp_project: line of its fugaro.yaml (the line teammates find the
@@ -128,15 +128,14 @@ and safe, 1 a check failed or nothing was written, 2 a build record could not
 be read from the cloud (missing credentials included). A coding agent's
 session may run it, --yes included: it edits only a local file.
 
-setup --firebase-project <firebase-project-id> builds the budget backend in a
-Firebase project you created and linked to billing, and it is the advanced
-case: the run's Firebase project is the installation's own --gcp-project by
-default (one id for both, D7), so this flag is for a project of its own — and
-it is also what adds the backend to the run, so a setup without it builds
-none. It creates nothing and links nothing (a project is created or billing
-linked only with --create-project and --link-billing, and it refuses one that
-is missing, has no billing, or whose database holds data and no Fugaro mark).
-It runs three applies, each
+setup --firebase-project <gcp-project-id> turns the shared budget on: it
+builds the budget backend in the installation's own GCP project. The value is
+the installation's own GCP project id (the default; the flag is only needed to
+turn the shared budget on), and any other id is refused. A setup without it
+builds no backend. It creates nothing and links nothing
+itself (the project and its billing link are the first run's), and it refuses
+a project that has no billing, or whose database holds data and no Fugaro
+mark. It runs three applies, each
 with its own plan and confirmation: the installation (the history account),
 the Firebase root (the database, a restricted sign-in key, the token signer,
 and the budget admins: the GCP project's owners and editors who are users or
@@ -149,14 +148,13 @@ config. The same step creates the Firestore database for the spend history
 (chosen once, never changed or deleted by Fugaro), so setup asks you to type
 the location to confirm it, at a real terminal (--yes, --non-interactive,
 --json and a pipe never confirm it: the step is then left for you), and it
-refuses to adopt a
-database that holds data or is in another location; it also deploys
+refuses a database that holds data or is in another location; it also deploys
 deny-everything Firestore rules and the Fugaro mark. --plan-only stops after the installation's plan. Each repository then
 needs fugaro setup --repo to pick up the jobs' environment.
 
 setup --repo [PATH] onboards the repository of the checkout at PATH (default:
 the current directory), whose fugaro.yaml says what it needs, into the
-installation fugaro setup applied. It adopts what the bootstrap made for it
+installation fugaro setup applied. It imports what the bootstrap made for it
 (checking each resource's marks and live grants first), creates the rest,
 and deploys each workflow's job once its secrets are stored and its image is
 built. It offers each workflow's first image build (billable: --yes covers it, and
@@ -167,7 +165,7 @@ takes the same opt-in as the converge's stages (below): its owner/name typed at
 your own terminal, or --onboard-repo.
 
 One confirmation per run, in a project Fugaro owns. A project is Fugaro's own
-when this run created it (--create-project) or its runs bucket carries Fugaro's
+when this run created it (a first run) or its runs bucket carries Fugaro's
 mark (fugaro/project.json naming this project and this GCP project, in a bucket
 named fugaro-runs-<gcp project> that belongs to that project; read-only check:
 a custom runs bucket never qualifies). There, at a terminal, the ordinary steps (the Terraform applies of the
@@ -193,8 +191,9 @@ this project, logs to this project, private buckets), and a Firebase project
 other than the installation's is covered only if verified as Fugaro's; any other
 plan (a destroy or replace, an IAM binding or policy, an unlisted member, a
 widened role) stops that step, which asks its own typed name. A wrong name applies nothing.
-The confirmation is per run and never stored. Any other project (adopted,
-unmarked, or a mark that fails to read) keeps a typed name at each step;
+The confirmation is per run and never stored. Any other project (one an
+earlier run created and this one resumed, unmarked, or a mark that fails to
+read) keeps a typed name at each step;
 --yes covers the ordinary steps as ever and takes no review; --non-interactive,
 --json, a pipe and a coding agent never take it; --plan-only shows the review
 and applies nothing.
@@ -215,10 +214,11 @@ CLAUDE_CODE_SSE_PORT, CLAUDE_CODE_REMOTE, CURSOR_AGENT or AI_AGENT is set) setup
 applies nothing, --yes included, and says to run it in your own terminal
 window; --plan-only and the read-only checks still work, and so does setup
 --anchor (with --yes), which edits only the checkout's fugaro.yaml. That is a mitigation,
-not a barrier: an agent can unset its own environment. A run that adopted an
-existing installation changes nothing in the cloud in the same run (the local
-config and, in a checkout, the plugin wiring in .claude/settings.json are the
-only files it writes).
+not a barrier: an agent can unset its own environment. A run that writes this
+machine's local config from an installation that already exists (fugaro
+update on a new machine) changes nothing in the cloud in the same run (the
+local config and, in a checkout, the plugin wiring in .claude/settings.json
+are the only files it writes).
 
 In a checkout of a repository of this project, the converge's secrets stage
 asks, at hidden prompts, for the secrets its jobs mount (the git credential,
@@ -232,21 +232,27 @@ and the like; CLAUDE_CODE_SSE_PORT is also set by the Claude Code IDE
 extension in VS Code and JetBrains terminals, so a person's own IDE terminal
 can be refused: its refusal tells you what to do about it). A pasted private key may have at most 120 lines. It creates each
 secret's container, before the repository stage, with the labels
-setup --repo's Terraform adopts (fugaro, fugaro_repo, fugaro_secret).
+setup --repo's Terraform imports (fugaro, fugaro_repo, fugaro_secret).
 
---create-project is the flag that answers the wizard's first question, and the
-only way to answer it without a terminal (a run with no terminal takes the
-other answer, adoption); the question itself decides nothing more than which
-of the two the project stage acts on. --create-project --gcp-project <id>
-creates that GCP project and adds Firebase
-to it, as you, after you type its ID at a terminal; --link-billing <account>
-then links that billing account (it may incur charges), after you type the
-account's ID. Each is its own typed confirmation, never given by --yes,
---non-interactive or --json, and the ID is never the gcloud default project.
-Without --link-billing, setup prints the one gcloud command that links billing
-and stops. An existing project you can read is adopted; one that is held by
-someone else, or pending deletion, is refused; its existing billing link is
-never changed.
+A first run creates its GCP project; --create-project says so explicitly and
+changes nothing else. --gcp-project <id> is the new project's ID: the run
+creates it and adds Firebase to it, as you, after you type its ID at a
+terminal; --link-billing <account> then links that billing account (it may
+incur charges), after you type the account's ID. Each is its own typed
+confirmation, never given by --yes, --non-interactive or --json, and the ID is
+never the gcloud default project. Without a billing link, setup pauses at
+billing (above) and the rerun resumes the project it created. The project is labelled fugaro_created=true at its creation, and the
+run that created it marks it Fugaro-managed (its runs bucket's
+fugaro/managed.json and the label fugaro_managed=true) once it has applied the
+installation; --managed with --budget, --budget-currency and --billing-account
+also records the monthly budget the managed apply needs. A creation that a
+later run finished is marked by that run only after you type the project's ID
+at your own terminal: the fugaro_created=true label anyone may set says which
+project to ask about, and never marks one by itself (--yes, --json,
+--non-interactive and a coding agent's session leave it for fugaro managed
+flag). Marking any other project the owner runs an installation in is fugaro
+managed flag's. An ID that already exists and was not created by fugaro
+setup, or that is pending deletion, is refused.
 
 The plugin-wiring stage merges the Fugaro marketplace and plugin into the
 checkout's .claude/settings.json, pinned to this release's tag, after showing
@@ -282,7 +288,7 @@ same gate.`
 var setupDoor = convergeDoor{
 	name:  "setup",
 	use:   "setup [--repo [PATH]]",
-	short: "Stand up or adopt the installation's, or a repository's, cloud resources through Terraform",
+	short: "Create a fresh GCP project and stand up its installation, or a repository's cloud resources, through Terraform",
 	long:  setupLong,
 	// --forget is the rollback: it unwinds log isolation and registry cleanup
 	// and takes every address out of Terraform's state. A first run has
@@ -312,28 +318,13 @@ func newSetupCmdWith(o *initOptions) *cobra.Command { return newInitCmdWith(o, s
 // what the retired command's ambiguity was (D11).
 const setupAlreadySetUp = "this installation is already set up"
 
-// setupAskProject is the wizard's first question. It is a question and not a
-// sentence about one: the answer decides whether this run may create the GCP
-// project, which is the one thing about a run that cannot be undone.
-const setupAskProject = "GCP project: create a new one, or adopt an existing one"
-
-// The two answers the question takes. Creation is the default Enter takes
-// (D11, answered 2026-10-20 as recommended): setup is the first-time wizard,
-// and the first-time user is the one with no project to adopt.
-const (
-	setupAnswerCreate = "create"
-	setupAnswerAdopt  = "adopt"
-)
-
 // wizardQuestion is one question the wizard asks, in the order it asks it: the
 // flag that answers the same question without a terminal — so a scripted run
 // needs no terminal for anything but the typed confirmations — and the name
 // `--non-interactive` prints when the run cannot proceed without an answer.
 //
-// missing is "" for a question whose answer a run that cannot ask simply
-// takes. There is exactly one, and it is the first: nobody can be asked
-// whether to create a project, so the run does not create one (see
-// askProjectAnswer). A run that wants creation says so with the flag.
+// missing is what a run that cannot ask is refused with when nothing else
+// answers the question.
 type wizardQuestion struct {
 	what    string // the question, in one line
 	label   string // the label the prompt shows (a prefix, where the label is built from the run)
@@ -371,14 +362,6 @@ var setupQuestions = []wizardQuestion{
 		label:   "Region",
 		flag:    "--region",
 		missing: "--region <region>",
-	},
-	{
-		what:  "whether this run creates the GCP project or adopts one that already exists",
-		label: setupAskProject,
-		flag:  "--create-project",
-		// No missing name: the answer a run that cannot ask takes is the one
-		// that creates nothing (adoption), so there is nothing to demand of it
-		// — and nothing it can do by accident.
 	},
 	{
 		what:    "the Fugaro project's name",
@@ -420,66 +403,31 @@ func wizardStages(ctx context.Context, r *initRun) []initflow.Stage {
 	return []initflow.Stage{newWizardStage(ctx, r)}
 }
 
-// asksProjectAnswer is the whole of the question's own condition: the door this
-// run is can act on the answer, the answer is not already on the command line,
-// and the run can be asked one at all. It is split out because gatherInputs
-// needs the same answer to decide whether it is about to prompt for anything:
-// the project's is the one question the table in setupQuestions cannot name as
-// missing, so a run whose other inputs all came from flags has nothing in
-// `missing` and still has this question to ask.
-func (r *initRun) asksProjectAnswer() bool {
-	o := r.o
-	return o.door != updateDoor.name && !o.configOnly && !o.createProject && r.canAsk()
-}
-
-// askProjectAnswer asks the wizard's first question and records the answer
-// where the rest of the run reads it: --create-project's own field, so a person
-// at a terminal and a scripted run answer one question, and the project stage
-// (init_project.go) is the one place that acts on it.
+// settleCreation records what this run does about the GCP project, where the
+// rest of the run reads it: --create-project's own field. Fugaro only starts
+// fresh (the owner's ruling of 2026-10-23), so there is no question to ask: a
+// first run of fugaro setup creates its project (the project stage,
+// init_project.go, refuses an ID that already exists before anything is
+// changed), and the flag only says so explicitly.
 //
-// The flag short-circuits the question, and so does a run that cannot ask one:
-// with no terminal, or with --yes, --json or --non-interactive (a run no person
-// is answering the prompts of), the answer taken is adoption. Creation is the
-// one answer a run must never take on nobody's behalf — the project it makes is
-// permanent, its ID is global and unusable by anyone afterwards, and everything
-// that would make it billable arrives with the billing link — and the answer a
-// scripted run gives is `--create-project`, explicitly.
-//
-// A run that cannot act on the answer is not asked: `fugaro update` creates
+// A run that cannot act on a creation does not get one: `fugaro update` creates
 // nothing (its stage set has no project stage at all, init_stages.go), and
-// --config-only writes the local config from an installation that is already
-// there and touches no cloud. In both, the question would be asked and then
-// ignored, and an ignored question about the one irreversible thing in this
-// door is worse than no question. No production run is door-less (every run is
-// built by newInitCmdWith, which names its door); a hand-built options value
-// with no door is a test's, and asks — the question list's contract
-// (TestEveryWizardQuestionHasAFlag) is checked on one.
+// --config-only and --print-vars write or print from an installation that is
+// already there and touch no project. firstRun is whether this run selected no
+// project config (wizardStage.creating): a run with one was created already.
 //
-// The answer that does create goes through the flag's own checks
-// (checkCreateProject): init.go's check() ran before the question was asked, so
-// this is where the ID's rules — Google's restricted words among them, which
-// the prompt's own check does not know — and the --firebase-project mismatch are
-// applied to what the person typed. The answer is the flag, so it is held to
-// what the flag is held to.
-func (r *initRun) askProjectAnswer() error {
-	if !r.asksProjectAnswer() {
-		return nil
-	}
+// Either way the flags that only a creation takes are checked here
+// (checkCreateProject): init.go's check() validated them only where
+// --create-project was explicit, because whether a run without it creates was
+// not known until its project config was looked for. A run that creates is held
+// to the creation's rules (the ID's, Google's restricted words among them, and
+// the --firebase-project pairing); one that does not refuses --link-billing,
+// --managed, --parent and --display-name by name.
+func (r *initRun) settleCreation(firstRun bool) error {
 	o := r.o
-	v, err := r.prompt(setupAskProject, setupAnswerCreate, func(s string) error {
-		if s != setupAnswerCreate && s != setupAnswerAdopt {
-			return errors.New("answer " + setupAnswerAdopt + " to install into a project that already exists, or " + setupAnswerCreate + " to create a new one")
-		}
-		return nil
-	})
-	if err != nil {
-		return err
+	if firstRun && o.door != updateDoor.name && !o.configOnly && !o.printVars && !o.forget {
+		o.createProject = true
 	}
-	if v != setupAnswerCreate {
-		o.createProject = false
-		return nil
-	}
-	o.createProject = true
 	return o.checkCreateProject()
 }
 
@@ -494,11 +442,18 @@ func (r *initRun) askProjectAnswer() error {
 // transcript; the fact is in the result either way.
 func (e *initEngine) announceAlreadySetUp() {
 	r, o := e.r, e.r.o
-	if o.door != setupDoor.name || e.old == nil || o.asJSON || o.printVars {
+	if o.door != setupDoor.name || e.firstRun() || o.asJSON || o.printVars {
 		return
 	}
 	fmt.Fprintf(r.w, "%s%s: keeping project %s, and converging as %s does\n",
 		o.programPrefix(), setupAlreadySetUp, pluginwire.Printable(e.lc.Name), "fugaro "+updateDoor.name)
+}
+
+// firstRun is whether this converge is a first run: no project config yet,
+// or the one a first run of setup wrote when it paused for billing
+// (localcfg.Config.SetupPending), which the rerun resumes as a first run.
+func (e *initEngine) firstRun() bool {
+	return e.old == nil || e.lc.SetupPending != ""
 }
 
 // programPrefix is the line's own "fugaro setup: ", or "" for a hand-built

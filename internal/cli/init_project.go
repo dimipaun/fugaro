@@ -15,10 +15,16 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
-// The project stage (stage 1, M11 task 16): init may create the GCP
-// project, add Firebase to it and link billing, only when asked.
+// The project stage (stage 1, M11 task 16): a first run of fugaro setup
+// creates the GCP project, adds Firebase to it and links billing. Fugaro only
+// starts fresh (the owner's ruling of 2026-10-23): the ID must not exist, and
+// one that does is refused before anything is asked or changed — except the
+// project an earlier run of fugaro setup created itself, which carries
+// infra.CreatedLabelKey from its creation on, and which a rerun resumes (a run
+// that stopped for billing, or before its installation was applied).
 //
 // What it never does:
 //   - create a project, add Firebase or link billing under --yes,
@@ -31,8 +37,8 @@ import (
 //   - create more than one project in a run;
 //   - link billing without --link-billing and its own typed confirmation (the
 //     account's ID), or to a project that already has billing (an existing
-//     link is never changed), or without --create-project (a project this
-//     run did not ask to create or adopt is never billed);
+//     link is never changed), or on a run that creates no project (a project
+//     config's installation was created already, and is never billed here);
 //   - print the account a project is linked to: the project's own billing is
 //     read (infra.ReadProject), and the account that read names is
 //     deliberately not carried out of it (infra.ProjectInfo has no field for
@@ -52,11 +58,11 @@ func (o *initOptions) checkCreateProject() error {
 	if !o.createProject {
 		switch {
 		case o.managed:
-			return userErr("--managed goes with --create-project: it is what a project this run creates is, and only a creation can be one — an existing project is made managed by the owner's own command instead (never by update --firebase-project, which adds Firebase to a project someone else made). To create a managed project: fugaro setup --create-project --gcp-project <id> --managed --budget <amount> --budget-currency <code> --billing-account <id>; to flag one that already exists: fugaro managed flag <id> --budget <amount> --budget-currency <code>, before a person, who types its ID")
+			return userErr("--managed is for a first run of fugaro setup, which creates the project and marks it: this run creates no project. To create a managed project: fugaro setup --gcp-project <new id> --managed --budget <amount> --budget-currency <code> --billing-account <id>; to flag a project that already exists (one you own and run an installation in) as managed: fugaro managed flag <id> --budget <amount> --budget-currency <code>, before a person, who types its ID")
 		case o.linkBilling != "":
-			return userErr("--link-billing goes with --create-project (both flags, explicitly: fugaro setup links billing only to a project it was asked to create or adopt). To link billing yourself: gcloud billing projects link <project> --billing-account=<account>")
+			return userErr("--link-billing is for a first run of fugaro setup, which creates the project: this run creates no project, and fugaro links billing only to the project it creates. To link billing yourself: gcloud billing projects link <project> --billing-account=<account>")
 		case o.parent != "" || o.displayName != "":
-			return userErr("--parent and --display-name are for --create-project")
+			return userErr("--parent and --display-name are for a first run of fugaro setup, which creates the project: this run creates no project")
 		}
 		return nil
 	}
@@ -83,15 +89,13 @@ func (o *initOptions) checkCreateProject() error {
 	case o.forget || o.configOnly || o.printVars:
 		return userErr("--create-project creates a project; it excludes --forget, --config-only and --print-vars")
 	case o.cloud.gcpProject == "":
-		return userErr("--create-project needs --gcp-project <id>: the ID to create (fugaro setup never uses the gcloud default project)")
+		return userErr("fugaro setup creates a new GCP project and needs --gcp-project <id>: the new ID (fugaro setup never uses the gcloud default project)")
 	}
-	// The pairing rule, read through the default (firebaseProject, D7): a
-	// project this run creates is its own Firebase project, which is the
-	// default path, and the only way it is another one is --firebase-project
-	// saying so — refused, because fugaro setup creates one project and only
-	// the project that holds the installation.
-	if fp := o.firebaseProject(); fp != o.cloud.gcpProject {
-		return userErr("--create-project creates --gcp-project %s, and --firebase-project %s is another project: fugaro setup creates only one, and only the project that holds the installation; create %s yourself, or pass --firebase-project %s", o.cloud.gcpProject, fp, fp, o.cloud.gcpProject)
+	// The pairing rule, read through the default (firebaseProject, D7): the
+	// project this run creates is its own Firebase project, and Fugaro uses no
+	// other (checkFirebaseProject).
+	if err := checkFirebaseProject(o.firebaseProject(), o.cloud.gcpProject); err != nil {
+		return err
 	}
 	if err := infra.ValidateNewProjectID(o.cloud.gcpProject); err != nil {
 		return userErr("--gcp-project: %v", err)
@@ -114,7 +118,7 @@ func (o *initOptions) checkCreateProject() error {
 	return nil
 }
 
-// projectStage is stage 1 with --create-project.
+// projectStage is stage 1: the creation of the GCP project on a first run.
 type projectStage struct {
 	e  *initEngine
 	id string
@@ -137,20 +141,41 @@ func (s *projectStage) Name() string { return initflow.Project }
 
 func (s *projectStage) o() *initOptions { return s.e.r.o }
 
-// answer is what this run said about the project: create one, or adopt one that
-// already exists. It is the wizard's first question's answer (setup.go's
-// askProjectAnswer) or --create-project, which is the same field, because it is
-// the same question — a scripted run answers it with the flag instead of at a
-// terminal. Nothing here reads the flag: the stage acts on the answer, so that
-// a run whose answer was adoption creates nothing however it came to run.
-//
-// adoptDetail is what the stage says when the answer was adoption. It is a
-// skip and not a check: whether the project is there is the installation's own
-// question, and it is asked by the run that applies into it (a GCP project
-// that is missing fails there, with the message that has always said so).
-const adoptDetail = "not creating: this run's answer was to adopt an existing GCP project"
+// freshOnly is the one refusal of a project that already exists and that no
+// run of fugaro setup created (infra.ProjectInfo.CreatedByFugaro): Fugaro only
+// starts fresh (the owner's ruling of 2026-10-23), so nothing is created,
+// linked or applied in it, and the run says which ID to change.
+func freshOnly(id string) error {
+	return userErr("Fugaro only starts fresh: %s already exists; pick another id (--gcp-project): nothing was created or applied", id)
+}
 
-func (s *projectStage) answer() bool { return s.o().createProject }
+// freshOnlyInstalled is freshOnly for an ID that already holds a Fugaro
+// installation, which the wizard finds before it asks for the name: the same
+// refusal, and the one command that uses that installation from this machine
+// instead (fugaro update writes the local config from it and applies nothing).
+func freshOnlyInstalled(id, name, region string) error {
+	return userErr("Fugaro only starts fresh: %s already exists; pick another id (--gcp-project). It holds the Fugaro project %s: to use it from this machine, run fugaro update --gcp-project %s --region %s, which writes this machine's local config from it and applies nothing", id, pluginwire.Printable(name), id, region)
+}
+
+// refuseExisting is freshOnly for the project this stage read: a project that
+// is there, that this run did not create, and that carries no creation label.
+// The project an earlier run of fugaro setup created is the resume, not a
+// refusal: it carries the label from its creation on.
+//
+// fugaro restore's child (strictCreate) resumes nothing: its project is new
+// or the restore is refused, whatever the project carries.
+func (s *projectStage) refuseExisting() error {
+	if !s.info.Exists || s.e.r.res.Created == s.id {
+		return nil
+	}
+	if s.o().strictCreate {
+		return userErr("GCP project %s already exists, and this creation must make a new one (fugaro restore always creates its project): nothing was created or applied", s.id)
+	}
+	if !s.info.CreatedByFugaro {
+		return freshOnly(s.id)
+	}
+	return nil
+}
 
 func (s *projectStage) clients(ctx context.Context) error {
 	if s.pc != nil {
@@ -172,8 +197,33 @@ func (s *projectStage) clients(ctx context.Context) error {
 // one line, and a rewording of it cannot leave the two disagreeing.
 func (s *projectStage) guided() string { return billing.Guided(s.id) }
 
-func billingHelp() string {
-	return "find the account's ID with gcloud billing accounts list, or in https://console.cloud.google.com/billing; then run the command, or rerun " + selfCommand() + " setup with --create-project --link-billing BILLING_ACCOUNT_ID to type its confirmation here"
+// billingForAdmin is what the stage leaves when billing is not linked: one
+// plain block, in #992's style, instead of the placeholder line. The person
+// running setup may not be allowed to link billing (it takes Billing Account
+// User on the account), so it says who to ask, gives the exact link line with
+// the real project ID and the account's ID explained, and the exact rerun,
+// which resumes the project this run created (it carries the creation label).
+func (s *projectStage) billingForAdmin() initflow.Left { return s.billingForAdminBecause("") }
+
+// billingForAdminBecause is billingForAdmin with why in front: what refused
+// the link, where a link was tried.
+func (s *projectStage) billingForAdminBecause(why string) initflow.Left {
+	name := s.e.lc.Name
+	if name == "" {
+		name = s.o().name
+	}
+	if why != "" {
+		why += " "
+	}
+	return initflow.Left{Stage: initflow.Project, Kind: initflow.LeftCommand,
+		Text: why + "Billing is not linked to " + s.id + " yet, so setup paused here: the project and Firebase exist, and what needs billing (Cloud Run, Cloud Build, Artifact Registry, Secret Manager, the buckets) waits for it. " +
+			"If you cannot link it yourself, forward this to whoever administers billing in your organization: they run the first line below with their billing account's id " +
+			"(theirs to supply; they find it with gcloud billing accounts list; see docs/gcp-setup.md#not-an-owner). " +
+			"Then run the second line at your own terminal: it resumes " + s.id + " and finishes the setup, and marks the project managed once you type its ID",
+		Commands: []string{
+			billing.GcloudBin + " billing projects link " + quoteWord(s.id) + " --billing-account=<billing-account-id>",
+			selfCommand() + " setup --name " + quoteWord(name) + " --gcp-project " + quoteWord(s.id),
+		}}
 }
 
 // problem maps a refusal by the project APIs to a stage failure with its
@@ -201,18 +251,22 @@ func (s *projectStage) read(ctx context.Context) error {
 	s.info = info
 	// The fact markCreated's --managed warning needs, recorded where it is
 	// read: whether the project this run installs into was already there.
-	// r.res.Created alone cannot tell a run that adopted an existing project
-	// from one that never reached the creation at all (see
+	// r.res.Created alone cannot tell a run that resumed a project an earlier
+	// run created from one that never reached the creation at all (see
 	// initRun.projectExisted).
 	s.e.r.projectExisted = info.Exists
-	// fugaro restore's child: a project that is already there is refused,
-	// never adopted (an adopted project gets no creation fact, and the
-	// installation would be applied into someone else's or a stale project).
-	// The project this run created itself is the one exception: the stage
-	// reads it again after the creation.
-	if info.Exists && s.o().strictCreate && s.e.r.res.Created != s.id {
-		return userErr("GCP project %s already exists, and this creation must make a new one (fugaro restore never adopts a project): nothing was created or applied", s.id)
+	// A project that is already there and that no run of fugaro setup created
+	// is refused, here and before anything else is read of it: it gets no
+	// creation fact, and the installation would be applied into someone
+	// else's or a stale project. The project this run created itself is
+	// read again after the creation, and the one an earlier run created
+	// carries the label: both go on.
+	if err := s.refuseExisting(); err != nil {
+		return err
 	}
+	// A project that is there and passed the refusal is an earlier setup's
+	// creation, resumed (restore's strict child never gets here with one).
+	s.e.r.resumedCreation = info.Exists && info.CreatedByFugaro && s.e.r.res.Created != s.id
 	s.create, s.addFirebase, s.link, s.guide = false, false, false, false
 	if !info.Exists {
 		s.create = true
@@ -244,12 +298,6 @@ func (s *projectStage) read(ctx context.Context) error {
 }
 
 func (s *projectStage) Check(ctx context.Context) (initflow.Status, error) {
-	if !s.answer() {
-		// Adoption: nothing to create, and nothing to read either. The answer
-		// is the stage's whole input, so a run that answered "adopt" reaches no
-		// project API at all.
-		return initflow.Status{State: initflow.Skipped, Detail: adoptDetail}, nil
-	}
 	if err := s.read(ctx); err != nil {
 		return s.problem(err)
 	}
@@ -266,12 +314,12 @@ func (s *projectStage) Check(ctx context.Context) (initflow.Status, error) {
 		return initflow.Status{State: initflow.Todo, Detail: s.describe() + note}, nil
 	}
 	if s.guide {
-		lf := initflow.Left{Stage: initflow.Project, Kind: initflow.LeftCommand, Text: s.guided()}
+		lf := s.billingForAdmin()
 		why := ""
 		if s.whyGuide != "" {
 			why = s.whyGuide + ". "
 		}
-		return initflow.Status{State: initflow.NeedsYou, Detail: "project " + s.id + " has no billing (or it cannot be read): " + why + billingHelp(), Left: &lf}, nil
+		return initflow.Status{State: initflow.BillingPending, Detail: "project " + s.id + " has no billing yet (or it cannot be read): " + why + "billing pending", Left: &lf}, nil
 	}
 	return initflow.Status{State: initflow.Done, Detail: "project " + s.id + " exists, has Firebase and billing" + note}, nil
 }
@@ -280,7 +328,7 @@ func (s *projectStage) Check(ctx context.Context) (initflow.Status, error) {
 func (s *projectStage) describe() string {
 	var parts []string
 	if !s.create && s.info.Exists {
-		parts = append(parts, existingNote(s.id)+":")
+		parts = append(parts, resumeNote(s.id)+":")
 	}
 	if s.create {
 		p := "create project " + s.id
@@ -303,9 +351,6 @@ func (s *projectStage) describe() string {
 }
 
 func (s *projectStage) Plan(ctx context.Context, _ initflow.Env) (initflow.Plan, error) {
-	if !s.answer() {
-		return initflow.Plan{NothingToDo: true, Detail: adoptDetail}, nil
-	}
 	if err := s.read(ctx); err != nil {
 		return initflow.Plan{}, err
 	}
@@ -317,7 +362,7 @@ func (s *projectStage) Plan(ctx context.Context, _ initflow.Env) (initflow.Plan,
 
 func (s *projectStage) Left() initflow.Left {
 	if s.create || s.addFirebase || s.link {
-		args := []string{s.o().doorName(), "--create-project", "--gcp-project", quoteWord(s.id)}
+		args := []string{s.o().doorName(), "--gcp-project", quoteWord(s.id)}
 		if p := s.o().parent; p != "" {
 			args = append(args, "--parent", quoteWord(p))
 		}
@@ -326,7 +371,7 @@ func (s *projectStage) Left() initflow.Left {
 		}
 		return promptLeft(initflow.Project, "type the ID(s) it asks for", args...)
 	}
-	return initflow.Left{Stage: initflow.Project, Kind: initflow.LeftCommand, Text: s.guided()}
+	return s.billingForAdmin()
 }
 
 // canType is whether this run may show a typed confirmation: a terminal on
@@ -362,11 +407,12 @@ func (s *projectStage) typed(banner, want, prompt string) (bool, error) {
 	return strings.TrimSpace(line) == want, nil
 }
 
-// existingNote is what every confirmation and the plan say about a project
-// that was there before this run: it was not created by it, and it may not
-// be the user's own.
-func existingNote(id string) string {
-	return "adopting an EXISTING project " + id + " (not created by this run; fugaro setup cannot tell whether it is yours or empty)"
+// resumeNote is what every confirmation and the plan say about a project
+// that was there before this run: an earlier run of fugaro setup created it
+// (it carries the creation label; any other existing project is refused before
+// this is said), and this run finishes what that one started.
+func resumeNote(id string) string {
+	return "resuming project " + id + ", which carries the creation label " + infra.CreatedLabelKey + "=" + infra.CreatedLabelValue + " (the label fugaro setup puts on the projects it creates)"
 }
 
 var safeIDRE = regexp.MustCompile(`[^a-zA-Z0-9._:-]`)
@@ -452,12 +498,6 @@ func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 		// answer was, and it is the stage's own, not the run's.
 		return initflow.Outcome{}, errors.New("fugaro setup creates at most one project per run: it has already acted in this run")
 	}
-	if !s.answer() {
-		// Adoption creates nothing, and asks nothing: a run that answered
-		// "adopt" has no typed confirmation to leave for anyone, whatever its
-		// terminal is.
-		return initflow.Outcome{Detail: adoptDetail}, nil
-	}
 	if !env.Interactive || !s.canType() {
 		return initflow.Outcome{}, &initflow.NeedsYouError{Left: s.Left()}
 	}
@@ -480,6 +520,7 @@ func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 		if name == "" {
 			name = s.id
 		}
+		s.billingHeadsUp()
 		ok, err := s.typed(fmt.Sprintf("this CREATES the Google Cloud project %q (display name %q) with %s, and adds Firebase to it, %s. "+
 			"The ID is global and permanent: nobody can reuse it, even after the project is deleted. It will be used for everything Fugaro runs. "+
 			"Billing is linked separately: this confirmation does not link it.",
@@ -505,7 +546,7 @@ func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 		fmt.Fprintf(r.w, "created project %s\n", s.id)
 		s.addFirebase = true
 	} else if s.addFirebase {
-		ok, err := s.typed(fmt.Sprintf("%s: it has no Firebase, and this ADDS Firebase to it (free; Firebase is how Fugaro keeps its budget and dashboard data), %s. Nothing else about the project changes.", existingNote(s.id), s.credentialNote()), s.id, "to add Firebase to the existing project")
+		ok, err := s.typed(fmt.Sprintf("%s: it has no Firebase, and this ADDS Firebase to it (free; Firebase is how Fugaro keeps its budget and dashboard data), %s. Nothing else about the project changes.", resumeNote(s.id), s.credentialNote()), s.id, "to add Firebase to it")
 		if err != nil {
 			return initflow.Outcome{}, err
 		}
@@ -528,7 +569,7 @@ func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 		acct := o.linkBilling
 		lead := ""
 		if !created {
-			lead = existingNote(s.id) + ": "
+			lead = resumeNote(s.id) + ": "
 		}
 		ok, err := s.typed(fmt.Sprintf("%sthis LINKS billing account %s to project %s. Everything Fugaro runs in the project (Cloud Run jobs, builds, storage, Firestore, Vertex AI calls) may incur charges on that account. "+
 			"It is not undone by deleting resources; unlink it with gcloud billing projects unlink %s.", lead, acct, s.id, quoteWord(s.id)), acct, "to link it")
@@ -542,9 +583,17 @@ func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 			var pe *infra.ProjectError
 			if errors.As(err, &pe) && pe.Kind == infra.ProjectLinkGuard {
 				fmt.Fprintln(r.w, pe.Error())
-				return initflow.Outcome{}, &initflow.NeedsYouError{Left: initflow.Left{Stage: initflow.Project, Kind: initflow.LeftCommand, Text: s.guided()}}
+				return initflow.Outcome{}, s.pause(did)
 			}
-			return initflow.Outcome{}, s.failLink(err, acct)
+			if errors.As(err, &pe) && pe.Refused {
+				// The link was refused (a missing role, a closed account): not
+				// a failure of the setup, a pause until whoever administers
+				// billing links it. The service's own text is printed above
+				// the block, so nothing it said is hidden.
+				fmt.Fprintln(r.w, err.Error())
+				return initflow.Outcome{}, s.pauseBecause(did, s.refusedLinkWhy(acct))
+			}
+			return initflow.Outcome{}, s.fail(err)
 		}
 		if err := infra.VerifyBilling(ctx, s.pc, s.id); err != nil {
 			return initflow.Outcome{}, s.fail(err)
@@ -552,10 +601,50 @@ func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 		did = append(did, "linked billing")
 		fmt.Fprintf(r.w, "linked billing account %s to project %s\n", acct, s.id)
 	case s.guide || s.create:
-		// What was done is on the account above; billing is the user's.
-		return initflow.Outcome{}, &initflow.NeedsYouError{Left: initflow.Left{Stage: initflow.Project, Kind: initflow.LeftCommand, Text: s.guided()}}
+		// What was done is on the account above; billing is whoever
+		// administers it.
+		return initflow.Outcome{}, s.pause(did)
 	}
 	return initflow.Outcome{Changed: len(did) > 0, Detail: strings.Join(did, ", ")}, nil
+}
+
+// billingHeadsUp is the one line said before the creation's confirmation
+// when the billing question found no account this run could link (the list
+// could not be read, or was empty) and none was given: the person may not be
+// able to link billing. It never blocks the creation (the owner's ruling of
+// 2026-10-23): setup creates the project and pauses at billing.
+func (s *projectStage) billingHeadsUp() {
+	if !s.e.r.billingUnlisted || s.o().linkBilling != "" {
+		return
+	}
+	fmt.Fprintf(s.e.r.w, "heads-up: you may not be able to link billing; setup will create the project and pause at billing, and say what to forward to whoever administers billing in your organization (docs/gcp-setup.md#not-an-owner)\n")
+}
+
+// pause is what Apply returns when the project's own steps are done and
+// billing is not linked: a BillingPausedError, which the loop records as
+// billing-pending (not a failure) while the stages that need billing wait. A
+// first run writes its local config here, marked as a setup paused for billing
+// (localcfg.Config.SetupPending), so the rerun resumes exactly here.
+func (s *projectStage) pause(did []string) error { return s.pauseBecause(did, "") }
+
+func (s *projectStage) pauseBecause(did []string, why string) error {
+	if s.e.old == nil && s.e.path != "" {
+		next := *s.e.lc
+		next.SetupPending = "billing"
+		if err := s.e.r.writeLocalConfig(&next, s.e.path, nil, true); err != nil {
+			return err
+		}
+	}
+	detail := "billing pending"
+	if len(did) > 0 {
+		detail = strings.Join(did, ", ") + "; billing pending"
+	}
+	return &initflow.BillingPausedError{Left: s.billingForAdminBecause(why), Detail: detail}
+}
+
+// refusedLinkWhy is the refused link in one sentence, for the pause's block.
+func (s *projectStage) refusedLinkWhy(account string) string {
+	return "Fugaro could not link billing account " + account + " to project " + s.id + ": your account is missing a role the link needs (Billing Account User on the account, and Owner or Project Billing Manager on the project), or the account is closed or at its limit of linked projects."
 }
 
 // fail keeps the services' own text (verbatim) and the fix, and exit codes.
@@ -575,7 +664,7 @@ func (s *projectStage) fail(err error) error {
 // Manager's create and Cloud Billing's link -- are the two a person may be
 // refused. Where they are, the API's own answer is not an answer: it names a
 // permission or a constraint and neither what to ask for nor whom to ask.
-// refusedCreate and refusedLink say that; infra.ProjectError.Refused says when
+// refusedCreate says that for the creation, and a refused link pauses the run with refusedLinkWhy (pauseBecause); infra.ProjectError.Refused says when
 // a failure is that case and nothing else does. Every other failure -- a
 // quota, an ID someone else holds, an API that is off -- keeps the message it
 // always had (fail), and the message here carries the service's own text under
@@ -585,38 +674,14 @@ func (s *projectStage) fail(err error) error {
 // ask the organization for.
 func (s *projectStage) refusedCreate() string {
 	return "Fugaro could not create the project " + s.id + ": your Google account is not allowed to create projects in your organization. " +
-		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder, or ask them to create the project and make you its Owner. " +
+		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder: Fugaro only starts fresh, so it creates the project itself. " +
 		"See docs/gcp-setup.md#not-an-owner."
 }
 
-// refusedLink is what a refused billing link says. The link needs a role on
-// the billing account *and* one on the project (infra.LinkBilling's hint), and
-// the 403 that comes back names neither, so both are here: naming only the
-// billing one would send a reader who holds it -- the one adopting an existing
-// project they are not an Owner of -- to the billing administrator for a role
-// they already have, and the loop keeps only this first line for the stage
-// (initflow's oneLine), so the hint under it is not a place to put them. The
-// two non-role causes the same 403 can have (a closed account, an account at
-// its limit of linked projects) are here too, or a reader holding both roles
-// would be told to ask for roles they have. The one line that links it, and
-// the door the reader is at (setup creates a project, update re-converges
-// one), are the last of it: whoever acts for them runs the line, and the
-// reader runs the door again.
-func (s *projectStage) refusedLink(account string) string {
-	return "Fugaro could not link billing account " + account + " to project " + s.id + ": your account is missing a role the link needs. " +
-		"Ask whoever administers " + account + " for the Billing Account User role on it, and whoever owns " + s.id + " for the Owner or Project Billing Manager role on it; " +
-		"either of them can link it for you instead, with the one line `gcloud billing projects link " + s.id + " --billing-account=" + account + "`. " +
-		"Then run `" + selfCommand() + " " + s.o().doorName() + "` again. If you hold both roles already, the billing account may be closed, or at its limit of linked projects."
-}
-
-// failCreate and failLink are fail for those two calls: a recognised refusal
+// failCreate is fail for the creation: a recognised refusal
 // is a user error (exit 1, the reader's to act on) whose message is the
 // helpful line with the service's own text under it.
 func (s *projectStage) failCreate(err error) error { return s.failRefused(err, s.refusedCreate()) }
-
-func (s *projectStage) failLink(err error, account string) error {
-	return s.failRefused(err, s.refusedLink(account))
-}
 
 func (s *projectStage) failRefused(err error, help string) error {
 	var pe *infra.ProjectError
@@ -629,9 +694,6 @@ func (s *projectStage) failRefused(err error, help string) error {
 // Verify re-reads the project: Apply verified each step it took; this is
 // the closing check that nothing is left half done.
 func (s *projectStage) Verify(ctx context.Context) error {
-	if !s.answer() {
-		return nil // an adopted project is not this stage's to check
-	}
 	if err := s.read(ctx); err != nil {
 		return s.fail(err)
 	}
