@@ -37,7 +37,7 @@ It reads and changes nothing: the environment, Terraform, billing and the projec
 ## If it fails
 
 - **`Fugaro could not create the project <id>: your Google account is not allowed to create projects in your organization.`** Your organization restricts project creation. Your IT admin grants you Project Creator (`roles/resourcemanager.projectCreator`) on the organization or on a folder, and you rerun `fugaro setup --parent folders/<n>` (or `organizations/<n>`) if they name one.
-- **The billing picker lists no account, or the link is refused.** Your account is missing a role the link needs. Forward the block `fugaro setup` printed: whoever administers billing runs the `gcloud billing projects link` line with their account's id (`gcloud billing accounts list` shows it), you run the rerun line after them.
+- **The billing picker lists no account, or the link is refused.** Your account is missing **Billing Account User** (`roles/billing.user`) on the billing account the link needs. Forward the block `fugaro setup` printed: whoever administers billing runs the `gcloud billing projects link` line with their account's id (`gcloud billing accounts list` shows it), you run the rerun line after them.
 - **`terraform` is missing, or outside 1.9 to 2.0.** Install a supported version and rerun.
 - **`gcloud` is missing, or its credentials are not found.** Install it, then run `gcloud auth application-default login` in the environment that runs `fugaro` (a Windows `gcloud` and a WSL one write two different files: [windows-cli/wsl.md](windows-cli/wsl.md)).
 - **`GOOGLE_IMPERSONATE_SERVICE_ACCOUNT is set`, or a `GOOGLE_PROJECT` variable names another project.** Unset it and rerun (`Remove-Item Env:GOOGLE_PROJECT` on PowerShell, `set GOOGLE_PROJECT=` in `cmd.exe`).

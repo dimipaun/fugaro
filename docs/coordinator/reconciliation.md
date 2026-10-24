@@ -155,11 +155,10 @@ decision, not a reuse. → **Q2**.
 
 **#5 — Offboarding a person is manual and incomplete, so a "no extra permission model" v1 would have no way to remove a departed developer. — Gap.**
 `README.md:201` still carries the unchecked roadmap item *"One-command offboarding of a
-repository"*, and `docs/gcp-setup.md:638-640` says *"There is no offboarding command. **Only
-step 1 is implemented.**"* Removing a **person** means editing the launcher/operator lists
-and re-running `init` with `--allow-delete`, or a hand-run
-`gcloud iam service-accounts remove-iam-policy-binding`
-(`docs/gcp-setup.md:86,115`). There is no expiry and no per-person audit trail. (The phone's
+repository"*, and no page states an offboarding remedy any more: the runbook that carried one,
+`docs/gcp-setup.md`, is the short setup page now. Removing a **person** means editing the
+launcher/operator lists and re-running `init` with `--allow-delete`, or a hand-run
+`gcloud iam service-accounts remove-iam-policy-binding`. There is no expiry and no per-person audit trail. (The phone's
 identity is the one exception: deleting the Firebase Auth user revokes it,
 `internal/budget/token/token.go:57-59 ErrRevoked`.)
 *Consequence:* every new reachable surface inherits an offboarding story that is a

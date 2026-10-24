@@ -370,3 +370,25 @@ func TestDesignRefusalsCiteTheExactMigrationDocAndItsSections(t *testing.T) {
 		}
 	}
 }
+
+// TestBaseImageDocNamesRealKinds: the base-image page's examples name the real
+// base kind (config.BaseKind, "base"), not a stale or typo'd one -- this is what
+// would have caught the reviewed-away "--base nonexist" class of mistake, which
+// a flag-name Lookup alone does not: --base is a real flag either way, only its
+// example VALUE would be wrong. The section these examples lived in was
+// docs/gcp-setup.md's step 3, on the page that is the short setup path now;
+// docs/base-image.md is where an operator reads them.
+func TestBaseImageDocNamesRealKinds(t *testing.T) {
+	doc := readDoc(t, "docs/base-image.md")
+	if !slices.Contains(config.Bases, config.BaseKind) {
+		t.Fatalf("config.BaseKind %q is not in config.Bases %v", config.BaseKind, config.Bases)
+	}
+	for _, want := range []string{
+		"`fugaro update --base " + config.BaseKind + "`",
+		"`fugaro update --base-image " + config.BaseKind + "=<image>`",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/base-image.md lacks %q (config.BaseKind is %q)", want, config.BaseKind)
+		}
+	}
+}

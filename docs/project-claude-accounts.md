@@ -506,5 +506,5 @@ radius (§1), and `accounts.<name>.allow_repos` plus the two gates are what boun
 - [design/named-oauth-tokens.md](design/named-oauth-tokens.md) — the repository-level feature this
   one carries to the project job.
 - [project-layer.md](project-layer.md) — profiles, `job_profile` and the project layer.
-- [gcp-setup.md](gcp-setup.md) — the cloud runbook, and where the version-3 rollout is a step.
+- [gcp-setup.md](gcp-setup.md) — the page that creates the GCP project a shared job runs in.
 - [SECURITY.md](../SECURITY.md) — what a project job holds, stated as this feature's cost.

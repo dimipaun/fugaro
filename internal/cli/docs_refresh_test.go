@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -110,4 +109,3 @@ func TestDocsNameImageRefresh(t *testing.T) {
 		}
 	}
 }
-
