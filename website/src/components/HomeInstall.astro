@@ -33,7 +33,7 @@
  * or a release page's — is the choice the draft takes off this page.
  */
 import { loadSite } from '../content.ts'
-import { copyControlHTML } from '../lib/copy-control.mjs'
+import { commandPieces, copyControlHTML } from '../lib/copy-control.mjs'
 
 const site = loadSite()
 const install = site.install
@@ -68,7 +68,7 @@ const command = path_.commands[0]
       <p class="home-install-label">In a terminal</p>
       <div class="command-block" data-copy>
         <Fragment set:html={copyControlHTML('Copy the install command')} />
-        <pre class="home-install-command"><code>{command}</code></pre>
+        <pre class="home-install-command"><code>{commandPieces(command).map((piece, i) => (i === 0 ? piece : <><wbr />{piece}</>))}</code></pre>
       </div>
       <p class="home-install-cta">
         <a class="home-install-button" href="/getting-started/">Get started</a>
