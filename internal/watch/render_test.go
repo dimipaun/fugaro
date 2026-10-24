@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/budget"
 )
@@ -105,7 +104,7 @@ func TestFrameMediumEntryWidth(t *testing.T) { golden(t, "medium_70", frame(fixt
 // The run table's row is complete at the width its cells add up to, and the
 // BY column (owner spec 2026-10-22, item 2) is bought out of those cells, not
 // out of the screen: a row that does not fit is cut off at the screen's edge
-// by rend.line, which takes the flags — and, at tier 3, the models — with it.
+// by rend.line, which takes the flags with it.
 // So at the widths the table is drawn whole at, every run row must end before
 // the edge: 70 columns and up for tier 2, 120 and up for tier 3 (the width
 // the widest golden draws). colsOf does the arithmetic; this pins it.
@@ -298,7 +297,6 @@ func TestWideRunesClipByWidth(t *testing.T) {
 	v.Repos[0].Name = "東京/リポジトリ🚀"
 	v.Repos[0].Runs[0].Title = long
 	v.Repos[0].Runs[0].Stage = "コーディング中です"
-	v.Repos[0].Runs[1].Models = long
 	for _, w := range []int{120, 100, 80, 70, 50, 40} {
 		for _, color := range []bool{false, true} {
 			got := frame(v, w, 0, func(o *RenderOptions) { o.Color = color })
@@ -420,32 +418,68 @@ func TestFrameShortTerminalPinsStatusAndBanner(t *testing.T) {
 	}
 }
 
-func TestFrameShowsRecipe(t *testing.T) {
-	v := fixture()
-	v.Repos[0].Runs[0].Recipe = "claude-solo"
-	if out := frame(v, 140, 0); !strings.Contains(out, "opus / sonnet · claude-solo") {
-		t.Fatalf("frame:\n%s", out)
+// The table has no VERIFY and no MODELS column (owner request 2026-10-24):
+// the header names neither at any width the table is drawn at.
+func TestTableNamesNoVerifyOrModelsColumn(t *testing.T) {
+	for _, w := range []int{70, 80, 100, 120, 140} {
+		got := frame(fixture(), w, 0)
+		for _, col := range []string{"VERIFY", "MODELS"} {
+			if strings.Contains(got, col) {
+				t.Fatalf("width %d: the table still names the dropped %s column:\n%s", w, col, got)
+			}
+		}
 	}
 }
 
-func TestFrameRecipeMixedRowsAligned(t *testing.T) {
+// Verify and the models with the recipe are in the run's expanded detail,
+// which is the only place watch shows them now that the table's two trailing
+// columns are gone (owner request 2026-10-24). The recipe name is whole here,
+// not clipped to a column (it was 24 columns wide in the table).
+func TestDetailCarriesVerifyAndModels(t *testing.T) {
 	v := fixture()
-	v.Repos[0].Runs[0].Recipe = "claude-solo"
-	out := frame(v, 140, 0)
-	var a, b string
-	for _, l := range strings.Split(out, "\n") {
-		switch {
-		case strings.Contains(l, shortRun("r-aaaa11")):
-			a = l
-		case strings.Contains(l, shortRun("r-bbbb22")):
-			b = l
+	long := strings.Repeat("abcdefghij", 3)
+	v.Repos[0].Runs[0].Recipe = long
+	sel := Cursor{Slug: v.Repos[0].Slug, Run: v.Repos[0].Runs[0].Run}
+	got := frame(v, 120, 0, func(o *RenderOptions) {
+		o.Selected, o.Expanded = sel, map[Cursor]bool{sel: true}
+	})
+	for _, want := range []string{"verify", "unit", "models", "opus / sonnet · " + long} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("the detail must carry %q:\n%s", want, got)
 		}
 	}
-	if a == "" || b == "" || !strings.Contains(a, "claude-solo") || strings.Contains(b, "claude") {
-		t.Fatalf("frame:\n%s", out)
+	if strings.Contains(got, "VERIFY") || strings.Contains(got, "MODELS") {
+		t.Fatalf("the header still names a dropped column:\n%s", got)
 	}
-	if ia, ib := utf8.RuneCountInString(a[:strings.Index(a, "unit")]), utf8.RuneCountInString(b[:strings.Index(b, "unit")]); ia != ib {
-		t.Fatalf("verify column at %d and %d:\n%s", ia, ib, out)
+}
+
+// A finished row's RUN cell is the table's short form (shortRun), the same
+// one every other row shows, not the whole id (owner request 2026-10-24). The
+// whole id stays in the run's detail and in --json, which is the form
+// `fugaro logs RUN` wants.
+func TestFinishedRowShowsTheShortRunID(t *testing.T) {
+	v := fixture()
+	full := "20261023-021512-abcd"
+	v = MergeFinished(v, Config{}, []FinishedRun{
+		{Run: full, Slug: "acme__app", Title: "Fix the login bug", Status: "succeeded",
+			Outcome: "draft", PRURL: "https://github.com/acme/app/pull/101", PRNumber: 101,
+			FinishedAt: t0.Add(-30 * time.Minute)},
+	}, t0)
+	got := frame(v, 100, 0)
+	var row string
+	for _, l := range strings.Split(got, "\n") {
+		if strings.Contains(l, "Fix the login bug") && strings.Contains(l, "passed review") {
+			row = l
+		}
+	}
+	if row == "" {
+		t.Fatalf("no finished row was drawn:\n%s", got)
+	}
+	if !strings.Contains(row, shortRun(full)) {
+		t.Fatalf("the finished row does not show the short id %q: %q", shortRun(full), row)
+	}
+	if strings.Contains(got, full) || strings.Contains(got, "20261023") {
+		t.Fatalf("the finished row shows more than the id's tail:\n%s", got)
 	}
 }
 
@@ -611,11 +645,11 @@ func TestFooterNamesTheView(t *testing.T) {
 func TestReadyForReviewSection(t *testing.T) {
 	v := fixture()
 	v = MergeFinished(v, Config{}, []FinishedRun{
-		{Run: "r-ready1", Slug: "acme__app", Title: "Fix the login bug", Status: "succeeded", Outcome: "ready",
+		{Run: "20261023-021512-abcd", Slug: "acme__app", Title: "Fix the login bug", Status: "succeeded", Outcome: "ready",
 			PRURL: "https://github.com/acme/app/pull/101", PRNumber: 101, FinishedAt: t0.Add(-30 * time.Minute)},
-		{Run: "r-ready2", Slug: "acme__lib", Title: "Speed up the parser", Status: "succeeded", Outcome: "ready",
+		{Run: "20261023-021512-ef01", Slug: "acme__lib", Title: "Speed up the parser", Status: "succeeded", Outcome: "ready",
 			PRURL: "https://github.com/acme/lib/pull/55", PRNumber: 55, FinishedAt: t0.Add(-5 * time.Minute)},
-		{Run: "r-draft1", Slug: "acme__app", Title: "Half-done refactor", Status: "failed", Outcome: "draft",
+		{Run: "20261023-021512-1122", Slug: "acme__app", Title: "Half-done refactor", Status: "failed", Outcome: "draft",
 			PRURL: "https://github.com/acme/app/pull/102", PRNumber: 102, FinishedAt: t0.Add(-10 * time.Minute)},
 	}, t0)
 	got := frame(v, 100, 0, func(o *RenderOptions) { o.Ready = ReadyRowsOf(v) })
@@ -632,14 +666,4 @@ func TestReadyForReviewSection(t *testing.T) {
 		t.Fatalf("the draft outcome must not be listed in the review section:\n%s", section)
 	}
 	golden(t, "ready_for_review_100", got)
-}
-
-func TestFrameRecipeLongNameClipped(t *testing.T) {
-	v := fixture()
-	long := strings.Repeat("abcdefghij", 3)
-	v.Repos[0].Runs[0].Recipe = long
-	out := frame(v, 160, 0)
-	if strings.Contains(out, long) || !strings.Contains(out, long[:20]) {
-		t.Fatalf("frame:\n%s", out)
-	}
 }

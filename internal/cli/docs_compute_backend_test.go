@@ -1500,7 +1500,11 @@ func TestDocsComputeBackendZeroNineZeroSurfacesAreAllListed(t *testing.T) {
 // places), and the rest are released notes and design and plan text no task in
 // this plan rewrites — of which docs/design/compute-backend.md is this work's
 // own design and docs/releases/v0.9.0.md is the note that recorded the work as a
-// known limit of the release it did not return in.
+// known limit of the release it did not return in. docs/gcp-live-checklist.md
+// joined the set with Check 124, this work's own live check: its row for the
+// number says the `--provision-batch` flag shipped in 0.9.5, which places this
+// work in that release in prose just as the documents above it do, and the walk
+// below is what made that a document this list has to name.
 var computeBackendReleaseProse = []string{
 	"docs/release.md",
 	"docs/releases/v0.8.6.md",
@@ -1515,6 +1519,7 @@ var computeBackendReleaseProse = []string{
 	"docs/plans/2026-10-16-voice.md",
 	"docs/design/project-named-oauth-tokens.md",
 	"docs/design/named-oauth-tokens.md",
+	"docs/gcp-live-checklist.md",
 }
 
 // computeBackendReleaseWords are the names this work goes by in prose. A
