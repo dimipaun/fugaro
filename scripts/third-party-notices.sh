@@ -11,7 +11,13 @@
 # target of the build matrix and not another, so the file is the union of the
 # four targets .goreleaser.yaml builds. The main module is left out (it carries
 # no version), and its own LICENSE ships in the archive separately.
-set -eu
+#
+# `pipefail` because that enumeration is a pipeline into sort: without it a
+# `go list` that fails for one target reports sort's status, this hook exits 0,
+# and the release ships an archive whose notices are silently missing that
+# target's modules. The hook is the only place the file is produced for real, so
+# the failure has to stop the release here.
+set -euo pipefail
 
 repo_root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$repo_root"

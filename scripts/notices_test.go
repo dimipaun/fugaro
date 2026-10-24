@@ -1,6 +1,7 @@
 package scripts_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -100,18 +101,8 @@ func TestThirdPartyNoticesUnionsTheBuildMatrix(t *testing.T) {
 	root := testutil.ModuleRoot()
 	bin := t.TempDir()
 	modules := t.TempDir()
-	for _, m := range []struct{ name, file, text string }{
-		{"everywhere", "LICENSE", "the everywhere module's licence text\n"},
-		{"darwinonly", "LICENSE.txt", "the darwin-only module's licence text\n"},
-	} {
-		dir := filepath.Join(modules, m.name)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, m.file), []byte(m.text), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
+	writeModuleDir(t, modules, "everywhere", "LICENSE", "the everywhere module's licence text\n")
+	writeModuleDir(t, modules, "darwinonly", "LICENSE.txt", "the darwin-only module's licence text\n")
 	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(fakeGo), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -133,14 +124,54 @@ func TestThirdPartyNoticesUnionsTheBuildMatrix(t *testing.T) {
 	}
 }
 
-// fakeGo stands in for the toolchain in TestThirdPartyNoticesUnionsTheBuildMatrix.
-// The notices script may ask the toolchain for the module list and nothing
-// else, so every other call fails loudly; the darwin/arm64 answer carries a
-// module no other target links, which only a per-target enumeration can find.
+// TestThirdPartyNoticesFailsWhenATargetFails: the before hook is the only place
+// the file is produced for real, and an archive whose notices are missing one
+// target's modules is exactly the gap this task closes, so a target go list
+// cannot answer for has to stop the release. The enumeration is a pipeline into
+// sort, and sort's is the status a shell reports without pipefail -- so this
+// holds the script to a non-zero exit and to no output file at all, the partial
+// one being worse than none because the archive ships whatever is at that path.
+func TestThirdPartyNoticesFailsWhenATargetFails(t *testing.T) {
+	root := testutil.ModuleRoot()
+	bin := t.TempDir()
+	modules := t.TempDir()
+	writeModuleDir(t, modules, "everywhere", "LICENSE", "the everywhere module's licence text\n")
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(fakeGo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	out := filepath.Join(t.TempDir(), noticesFile)
+	cmd := noticesCommand(root, out, []string{
+		"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"FAKE_MODULE_DIR=" + modules,
+		// The first target of the build matrix, which is where a swallowed
+		// failure leaves the other three's modules and no sign of the gap.
+		"FAKE_FAIL_TARGET=darwin/amd64",
+	})
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err == nil {
+		t.Errorf("the script exited 0 although go list cannot answer for darwin/amd64, so the release would ship a notices file missing that target's modules\nstderr:\n%s", stderr.String())
+	}
+	if _, err := os.Stat(out); err == nil {
+		t.Errorf("the script wrote %s although a target's go list failed: the archive ships whatever is at that path, so a partial notices file is worse than none", out)
+	}
+}
+
+// fakeGo stands in for the toolchain in TestThirdPartyNoticesUnionsTheBuildMatrix
+// and TestThirdPartyNoticesFailsWhenATargetFails. The notices script may ask the
+// toolchain for the module list and nothing else, so every other call fails
+// loudly; the darwin/arm64 answer carries a module no other target links, which
+// only a per-target enumeration can find; and FAKE_FAIL_TARGET names a target it
+// cannot answer for, which is the release-time failure the script has to stop on.
 const fakeGo = `#!/usr/bin/env bash
 set -eu
 if [ "${1:-}" != "list" ]; then
   echo "fake go: the notices script called 'go $*'; it may only call 'go list'" >&2
+  exit 1
+fi
+if [ -n "${FAKE_FAIL_TARGET:-}" ] && [ "$GOOS/$GOARCH" = "$FAKE_FAIL_TARGET" ]; then
+  echo "fake go: cannot list $GOOS/$GOARCH" >&2
   exit 1
 fi
 printf 'example.com/everywhere\tv1.0.0\t%s/everywhere\n' "$FAKE_MODULE_DIR"
@@ -148,6 +179,19 @@ if [ "$GOOS" = darwin ] && [ "$GOARCH" = arm64 ]; then
   printf 'example.com/darwinonly\tv1.0.0\t%s/darwinonly\n' "$FAKE_MODULE_DIR"
 fi
 `
+
+// writeModuleDir plants a module directory holding one licence file, which is
+// the shape the script reads a module's notices from.
+func writeModuleDir(t *testing.T, root, name, file, text string) {
+	t.Helper()
+	dir := filepath.Join(root, name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, file), []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // TestGoreleaserArchivesShipNotices: the archive carries the notices file the
 // before hook generates. The hook names the path it writes and the archive
@@ -724,14 +768,21 @@ func noticesHookOutput(t *testing.T, cfg goreleaserConfig) string {
 	return ""
 }
 
-// runNoticesScript runs the script into out, with extraEnv added to this
-// process's environment (the fake-go test replaces PATH with it).
-func runNoticesScript(t *testing.T, root, out string, extraEnv []string) {
-	t.Helper()
+// noticesCommand is the script invoked the way the before hook invokes it, with
+// extraEnv added to this process's environment (the fake-go tests replace PATH
+// with it).
+func noticesCommand(root, out string, extraEnv []string) *exec.Cmd {
 	cmd := exec.Command("bash", filepath.Join(root, "scripts", noticesScript), out)
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), extraEnv...)
-	if got, err := cmd.CombinedOutput(); err != nil {
+	return cmd
+}
+
+// runNoticesScript runs the script into out, failing the test when it does not
+// exit 0: a release whose hook fails ships nothing.
+func runNoticesScript(t *testing.T, root, out string, extraEnv []string) {
+	t.Helper()
+	if got, err := noticesCommand(root, out, extraEnv).CombinedOutput(); err != nil {
 		t.Fatalf("scripts/%s %s: %v\n%s", noticesScript, out, err, got)
 	}
 }
