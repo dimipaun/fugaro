@@ -47,9 +47,13 @@ func rigorRunOn(t *testing.T, remote string, cfg *config.Config, spec *task.Spec
 	if spec == nil {
 		spec = &task.Spec{}
 	}
+	// A project, because that is what a job has and what these tests are about:
+	// with none, checkProject and resolvePolicy skip the default-branch read and
+	// so does the mode's (readBaseRigor), which is the local run's path. A test
+	// that wants that path clears r.d.Project.
 	r := &run{
 		repo: repo, cfg: cfg, spec: spec, rec: &runstore.Record{},
-		d: Deps{Log: slog.New(slog.DiscardHandler)},
+		d: Deps{Log: slog.New(slog.DiscardHandler), Project: "aurora"},
 	}
 	return r, repo
 }
@@ -125,24 +129,7 @@ workflows:
 // can choose. The test above hard-codes a base that agrees with the default
 // branch, so it never sees this; this one disagrees on purpose.
 func TestBootstrapRigorReadsTheDefaultBranchNotTheCheckoutsBase(t *testing.T) {
-	base := `version: 1
-project: aurora
-git: { provider: github, base_branch: main }
-rigor: { default: critical }
-` + workflowsYAML
-	own := strings.NewReplacer("base_branch: main", "base_branch: feature-x", "default: critical", "default: poc").Replace(base)
-	if own == base {
-		t.Fatal("the fixture does not carry the strings this test rewrites")
-	}
-	testutil.IsolateGit(t)
-	remote := testutil.NewRemote(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": base})
-	other := filepath.Join(t.TempDir(), "other")
-	testutil.Git(t, filepath.Dir(other), "clone", "--quiet", remote, other)
-	testutil.Git(t, other, "checkout", "--quiet", "-b", "feature-x")
-	testutil.WriteFiles(t, other, map[string]string{"fugaro.yaml": own})
-	testutil.Git(t, other, "commit", "--quiet", "-am", "the branch under review asks for poc")
-	testutil.Git(t, other, "push", "--quiet", "origin", "HEAD:refs/heads/feature-x")
-
+	remote := selfNamingBranchRemote(t)
 	// r.cfg is the file in the checkout: the branch under review's own, naming
 	// itself as its base, exactly as bootstrap resolves it for a first run.
 	cfg := &config.Config{Git: config.Git{BaseBranch: "feature-x"}, RepoRigor: &config.Rigor{Default: rigor.POC}}
@@ -162,6 +149,58 @@ rigor: { default: critical }
 	if rg := r.rec.Rigor; rg == nil || rg.Mode != rigor.Critical || rg.From != rigor.FromRepo || rg.Revision != "origin/main" {
 		t.Errorf("the block = %+v, want critical read from origin/main", rg)
 	}
+}
+
+// TestBootstrapRigorLocalRunReadsTheCheckoutsBaseRef: a local run has no
+// project, so checkProject and resolvePolicy both skip the default-branch read
+// there, and the mode's read skips it the same way rather than reaching the
+// network for a branch it does not need (readBaseRigor). Nothing is at stake
+// the way it is in a job: the checkout is the developer's own branch, not one
+// under review, so it keeps reading the ref its own config names.
+func TestBootstrapRigorLocalRunReadsTheCheckoutsBaseRef(t *testing.T) {
+	remote := selfNamingBranchRemote(t)
+	cfg := &config.Config{Git: config.Git{BaseBranch: "feature-x"}, RepoRigor: &config.Rigor{Default: rigor.POC}}
+	r, repo := rigorRunOn(t, remote, cfg, nil)
+	r.d.Project = "" // FUGARO_PROJECT unset: a local run
+	if err := repo.FetchBase(context.Background(), "feature-x"); err != nil {
+		t.Fatal(err)
+	}
+
+	r.bootstrapRigor(context.Background())
+
+	if r.rigorCfg.Repo != rigor.POC {
+		t.Errorf("the mode = %q, want the ref the local config names", r.rigorCfg.Repo)
+	}
+	if r.rigorRev != "origin/feature-x" {
+		t.Errorf("the revision = %q, want the ref the local config names", r.rigorRev)
+	}
+}
+
+// selfNamingBranchRemote is a remote whose default branch main asks for
+// critical and whose feature-x asks for poc *and* names itself as its
+// git.base_branch: the shape a branch under review is in when it writes its own
+// base, which is what makes "the base branch" and "the checkout" two different
+// answers.
+func selfNamingBranchRemote(t *testing.T) string {
+	t.Helper()
+	testutil.IsolateGit(t)
+	base := `version: 1
+project: aurora
+git: { provider: github, base_branch: main }
+rigor: { default: critical }
+` + workflowsYAML
+	own := strings.NewReplacer("base_branch: main", "base_branch: feature-x", "default: critical", "default: poc").Replace(base)
+	if own == base {
+		t.Fatal("the fixture does not carry the strings this test rewrites")
+	}
+	remote := testutil.NewRemote(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": base})
+	other := filepath.Join(t.TempDir(), "other")
+	testutil.Git(t, filepath.Dir(other), "clone", "--quiet", remote, other)
+	testutil.Git(t, other, "checkout", "--quiet", "-b", "feature-x")
+	testutil.WriteFiles(t, other, map[string]string{"fugaro.yaml": own})
+	testutil.Git(t, other, "commit", "--quiet", "-am", "the branch under review asks for poc")
+	testutil.Git(t, other, "push", "--quiet", "origin", "HEAD:refs/heads/feature-x")
+	return remote
 }
 
 // TestBootstrapRigorForAFollowUpReadsNoBranch: a follow-up and a review run

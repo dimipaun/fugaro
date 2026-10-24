@@ -16,12 +16,15 @@ import (
 // rule, so a repository that configures POC is reviewed exactly as it was —
 // the stricter direction — while its record says what it asked for. That is
 // what lets this land alone. The one part that is real is the read: the mode's
-// configuration comes from the base branch (D25) and never from the branch
-// under review, which is the ground everything a later slice makes the mode do
-// will stand on.
+// configuration comes from the base branch (D25), read as the repository's
+// default branch — the revision no file in the checkout can name, which is what
+// makes it the base rather than the branch under review's own answer — and
+// never from the branch under review, which is the ground everything a later
+// slice makes the mode do will stand on.
 
-// bootstrapRigor resolves the run's mode from the base branch and records it at
-// D22's first moment, bootstrap.
+// bootstrapRigor resolves the run's mode from the base branch — for a run whose
+// checkout is the branch under review's, the repository's default branch — and
+// records it at D22's first moment, bootstrap.
 //
 // It never fails the run. The mode acts on nothing yet, so a base read that
 // cannot be made is a warning and a mode resolved from what the run does know —
@@ -88,18 +91,19 @@ func (r *run) changedPaths() []string {
 // A follow-up and a review run have already read that file: readBaseConfig
 // fetched origin/<ref> and resolved fugaro.yaml from it, so the configuration
 // the run is running on *is* the base's, and only the mode's half of it is
-// taken from it.
+// taken from it. Neither reads a second time.
 //
 // A first run reads its other keys from the checked-out ref (bootstrap's own
 // os.ReadFile), and the mode is the one key that must not come from there: the
 // checkout is cut from the ref the run will push, so a branch that names itself
 // as git.base_branch would be reading its own file as "the base branch's" —
 // a branch that could set its own mode could set it to POC in the same pull
-// request it wants merged (D25). The read is therefore the one checkProject and
-// resolvePolicy already make (defaultBranchFile): the repository's default
-// branch, which no file in the checkout can choose. A repository whose
-// git.base_branch is not its default branch resolves the mode from the default
-// branch's file nonetheless, and D24's revision is what the record says it read.
+// request it wants merged (D25). D25's base branch is therefore read as the
+// repository's default branch, through the read checkProject and resolvePolicy
+// already make (defaultBranchFile): the file no file in the checkout can
+// choose. A repository whose git.base_branch is not its default branch resolves
+// the mode from the default branch's file nonetheless, and D24's revision is
+// what the record says it read.
 //
 // A base that cannot be read, or whose fugaro.yaml does not resolve, falls back
 // to the project layer alone — the layer came with the task and is no branch's
@@ -109,13 +113,12 @@ func (r *run) baseRigor(ctx context.Context) (rigor.Config, string) {
 	if r.follow != nil || r.review {
 		return r.cfg.RigorConfig(), "origin/" + r.cfg.Git.BaseBranch
 	}
-	data, def, err := r.defaultBranchFile(ctx)
+	rev, data, err := r.readBaseRigor(ctx)
 	if err != nil {
-		r.d.Log.Warn("the default branch's fugaro.yaml could not be read; the run resolves its rigor from the project layer alone",
-			"err", r.redact(err.Error()))
+		r.d.Log.Warn("the base branch's fugaro.yaml could not be read; the run resolves its rigor from the project layer alone",
+			"revision", rev, "err", r.redact(err.Error()))
 		return r.cfg.ProjectRigor(), ""
 	}
-	rev := "origin/" + def
 	out := ResolveConfig(data, r.spec.ProjectLayer, r.d.Project)
 	switch {
 	case out.LayerErr != nil:
@@ -124,9 +127,32 @@ func (r *run) baseRigor(ctx context.Context) (rigor.Config, string) {
 		err = fmt.Errorf("fugaro.yaml is invalid: %s", problemsText(out.Problems))
 	}
 	if err != nil {
-		r.d.Log.Warn("the default branch's fugaro.yaml does not resolve; the run resolves its rigor from the project layer alone",
+		r.d.Log.Warn("the base branch's fugaro.yaml does not resolve; the run resolves its rigor from the project layer alone",
 			"revision", rev, "err", r.redact(err.Error()))
 		return r.cfg.ProjectRigor(), ""
 	}
 	return out.Cfg.RigorConfig(), rev
+}
+
+// readBaseRigor is the file the mode is read from and the revision it was read
+// at. A run with a project reads the repository's default branch: the checkout
+// is the branch under review, and the base it names for itself is its own to
+// choose. A local run reads the checkout's own base ref, as it did before the
+// default-branch read arrived: it has no project, so checkProject and
+// resolvePolicy both skip that read there, and it has no branch under review
+// for the mode to be protected from — the checkout is the developer's own.
+//
+// The revision is "" when the repository never named a default branch, which is
+// the only case where the read has no revision to report.
+func (r *run) readBaseRigor(ctx context.Context) (rev string, data []byte, err error) {
+	if r.d.Project == "" {
+		rev = "origin/" + r.cfg.Git.BaseBranch
+		data, err = r.repo.ShowFile(ctx, rev, "fugaro.yaml")
+		return rev, data, err
+	}
+	data, def, err := r.defaultBranchFile(ctx)
+	if def != "" {
+		rev = "origin/" + def
+	}
+	return rev, data, err
 }
