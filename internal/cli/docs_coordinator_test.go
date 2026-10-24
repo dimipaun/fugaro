@@ -540,11 +540,11 @@ const coordinatorBase = "1e0953b7"
 // coordinatorReadmeStatus is the index's status line after P3 landed on the
 // `coordinator` branch. It replaces the "approved to build ... no code is
 // implemented yet" status this package pinned while the plan was all there was,
-// and it is pinned whole: what a reader has to take from it is that the work is
-// APPROVED TO BUILD, on which branch, for which release, and HOW FAR IT HAS
-// GOTTEN -- which parts are in the tree and which are not -- and a rewrap that
-// keeps the branch and drops the release, or drops the parts, is exactly the
-// edit this catches.
+// and the P1 one before this, and it is pinned whole: what a reader has to take
+// from it is that the work is APPROVED TO BUILD, on which branch, for which
+// release, and HOW FAR IT HAS GOTTEN -- which parts are in the tree and which
+// are not -- and a rewrap that keeps the branch and drops the release, or drops
+// the parts, is exactly the edit this catches.
 //
 // The move is the repository's convention, not a preference: a status line moves
 // in the commit that lands a part (docs/mobile/README.md, "partly implemented --
@@ -553,11 +553,11 @@ const coordinatorBase = "1e0953b7"
 // documents say no code exists while the code is on the branch, with a test
 // pinning the false sentence.
 //
-// It has moved three times: with the owner's answers, with P1, and -- on a later
-// day, so the date moves with it -- with P3. P3 is the part that made the
-// index's "no Terraform, no rules change" sentence false, and the two are edited
-// together for that reason: a grant and a read are what it lands.
-const coordinatorReadmeStatus = "**Status (2026-10-24): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0, P1 and P3 are on `coordinator`, and P2 and P4–P8 are not started.**"
+// It has moved four times: with the owner's answers, with P1, with P2 and -- on
+// the same day -- with P3. P3 is the part that made the index's "no Terraform, no
+// rules change" sentence false, and the two are edited together for that reason:
+// a grant and a read are what it lands.
+const coordinatorReadmeStatus = "**Status (2026-10-24): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0, P1, P2 and P3 are on `coordinator`, and P4–P8 are not started.**"
 
 // coordinatorReadmeDecisionsAnswered is the index's own sentence about the
 // decisions the planning found, after the owner answered them on 2026-10-21.
@@ -590,20 +590,21 @@ const coordinatorPlanGateColumns = "| Decision | What it blocks | The recommenda
 
 // coordinatorPlanStatus is the plan's own status line, the same statement the
 // index makes, held separately because the plan is the document a builder reads
-// first and it must not be able to say something else. It has moved three times:
+// first and it must not be able to say something else. It has moved four times:
 // with the index when the owner answered D193-D197, again with the index when P1
-// landed, and again with it when P3 did -- a plan whose parts are being built
-// while its own status still says none is the mismatch this pair of pins exists
-// to catch, and so is one that says a part is built while the part's own section
-// says otherwise (see coordinatorPlanBuiltStatus).
-const coordinatorPlanStatus = "**Status (2026-10-24): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0, P1 and P3 are on `coordinator`, and P2 and P4–P8 are not started.**"
+// landed, again when P2 did, and again when P3 did -- a plan whose parts are
+// being built while its own status still says none is the mismatch this pair of
+// pins exists to catch, and so is one that says a part is built while the
+// part's own section says otherwise (see coordinatorPlanBuiltStatus).
+const coordinatorPlanStatus = "**Status (2026-10-24): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0, P1, P2 and P3 are on `coordinator`, and P4–P8 are not started.**"
 
 // coordinatorPlanBuiltStatus is a part's own status line in its section, in the
 // shape P0's carries ("**Status: written.**"): the status line above says how far
 // the plan has got, and each part says whether THAT part is in the tree, so that
-// the count in the status line and the parts it counts cannot drift apart. P1 and
-// P3 are the parts this pair of pins moved for, and it is pinned whole for the
-// same reason the two above are.
+// the count in the status line and the parts it counts cannot drift apart. P1, P2
+// and P3 are the parts this pair of pins moved for -- P0's own line reads
+// "**Status: written.**", and the constant holds the built shape the others
+// carry -- and it is pinned whole for the same reason the two above are.
 const coordinatorPlanBuiltStatus = "**Status: built.**"
 
 // coordinatorPlanParts are the plan's parts in order, as their headings are

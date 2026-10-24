@@ -1,13 +1,17 @@
 // Package coordinator holds the coordinator's deterministic half: the
 // project view, computed, with no store, no service, no MCP front door and
-// no model (docs/coordinator/implementation-plan.md, part P1; reconciliation
-// Q13, answered (A) on 2026-10-19). It is what a coordinator *shows*, as
-// data.
+// no model (docs/coordinator/implementation-plan.md, parts P1 and P2;
+// reconciliation Q13 and Q12, answered (A) on 2026-10-19). It is what a
+// coordinator *shows*, as data.
 //
-// Join is a pure function: the two readers that feed it — a gitprov.Provider
-// and the runs bucket — are opened by the CLI command that renders the view
-// (internal/cli/coordinator.go), which is where the plan puts them, and the
-// view they produce is the only thing this file knows how to build.
+// Join is a pure function over the records it is handed, and Project (part
+// P2) is the read that feeds it: one repository's pull requests, through a
+// provider the caller opened on the coordinator's own read-only installation
+// token — minted per repository and cached for the token's life (D193's
+// answer). The readers behind both — a gitprov.Provider and the runs bucket —
+// are opened by the CLI command that renders the view
+// (internal/cli/coordinator.go), which is where the plan puts them, so the
+// view opens nothing itself.
 //
 // The one thing here that writes is state.go, the subtree D195 names and the
 // ETag CAS every write of the coordinator's state goes through (P3); it is

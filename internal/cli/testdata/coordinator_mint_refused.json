@@ -1,0 +1,4 @@
+[
+  {"method": "GET", "path": "/repos/acme/app/installation", "status": 404,
+   "response": {"message": "Not Found"}}
+]

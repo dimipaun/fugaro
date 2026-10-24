@@ -1137,32 +1137,45 @@ Flags:
 
 Subcommands:
 
-- `fugaro coordinator status` -- Show one repository's work in flight, and where it collides
+- `fugaro coordinator status` -- Show the work in flight, and where it collides
 
 ## `fugaro coordinator status`
 
-Show one repository's work in flight, and where it collides
+Show the work in flight, and where it collides
 
-Join one repository's pull requests with its run records and print the view:
+Join a repository's pull requests with its run records and print the view:
 each pull request, the runs behind it, the branch and target release it declares,
 the files and services those runs touched, and every pair of work still in
 flight that touches the same file or service.
 
-The pull requests listed are the ones this repository's runs name, and that is
-the whole of the list this reader can produce: gitprov reads one pull request
-by number and has no call that lists a repository's (finding #10), so a pull
-request no run names is never asked for. The rule the join is written to — a
-pull request no run names is listed as having none, because it is work
-somebody has open and dropping it is the one thing this view must not do — is
-not reached by this command today, and P2 is the part that reads widely
-enough to reach it.
+One repository by default, every repository the local config lists with --all,
+which prints a view per repository and compares nothing across them: a service
+is a path's shape in one tree, so two repositories' paths say nothing about
+each other.
+
+The pull requests listed are the ones the runs name, and that is the whole of
+the list this reader can produce: gitprov reads one pull request by number and
+has no call that lists a repository's (finding #10), so a pull request no run
+names is never asked for. The rule the join is written to — a pull request no
+run names is listed as having none, because it is work somebody has open and
+dropping it is the one thing this view must not do — is not reached by this
+command today.
+
+Every repository is read through the coordinator's own credential: an
+installation token for that repository, minted from the GitHub App the
+environment holds and carrying a named read-only permission set — contents,
+issues, metadata and pull requests, all read (Q3 answered (A)) — and cached
+for the token's life, so a second read of the same repository mints nothing.
+The coordinator reads github only: a bitbucket repository is refused, and the
+refusal names the reason, because its credential is one repository's access
+token and cannot be widened to a project (reconciliation Q12 (A), finding #30).
 
 The launcher of a run is printed as what it is — the string the run's own launch
 record wrote about itself — and never as an identity.
 
-This command reads and writes nothing: no store of the coordinator's own, no
-service, no credential of its own. It is the per-repository read the CLI already
-performs with the repository's own provider credential, and the runs bucket.
+This command reads and writes nothing of its own: no store of the coordinator's
+own, no service, no model credential. It is the read the CLI already performs,
+the runs bucket and a pull request read that can only read.
 
 Usage: `fugaro coordinator status`
 
@@ -1170,6 +1183,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--all` | bool | `false` | no | read every repository the local config lists, one view each |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for status |
