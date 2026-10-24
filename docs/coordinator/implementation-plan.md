@@ -1,6 +1,6 @@
 # The coordinator — the implementation plan
 
-**Status (2026-10-24): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0, P1, P2, P3 and P4 are on `coordinator`, and P5–P8 are not started.** Each part carries its own **Status** line below, and this one moves with them: the status line and the pins that hold it change in the commit that lands a part, which is what the P0 section says of itself and what every earlier plan in this repository did (`docs/mobile/README.md`, `docs/setup-wizard/README.md`). This plan follows from
+**Status (2026-10-24): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0, P1, P2, P3, P4 and P5 are on `coordinator`, and P6–P8 are not started.** Each part carries its own **Status** line below, and this one moves with them: the status line and the pins that hold it change in the commit that lands a part, which is what the P0 section says of itself and what every earlier plan in this repository did (`docs/mobile/README.md`, `docs/setup-wizard/README.md`). This plan follows from
 [reconciliation.md](reconciliation.md), which wins wherever it disagrees with
 [spec.md](spec.md). Every path and symbol below was re-read against `main` at `1e0953b7`
 (`docs(central-orchestrator): spec, reconciliation and plan for central orchestrators (#775)`)
@@ -404,8 +404,9 @@ things are worth a reader's attention here rather than in the diff. The first is
 account is **named, not created, and not yet granted**: the installation root creates it in
 **P5**, as it creates the history account's, and IAM refuses a grant to a member that does not
 exist, so the Firebase root's `coordinator_account` defaults to empty and the grant
-(`google_project_iam_member.coordinator_database`) has a count of 0 until P5 sets it — the golden
-plans hold no such row, and the module's own `terraform test` runs cover it on and off. The
+(`google_project_iam_member.coordinator_database`) has a count of 0 until **P5** sets it — which P5
+now does, so the golden plans hold that row and the module's own `terraform test` runs cover it on
+and off. The
 second is that the writer bypasses the rules, so `internal/coordinator`'s `Store` refuses every
 path outside `coordinator/` itself: that check, not IAM and not the rules, is the fence (D194).
 The third is the rules generation: `RulesVersion` moves from 3 to 4, and once an installation has
@@ -540,6 +541,45 @@ the database-wide writer account, so the review must confirm what it may write (
 read-only set, and that its schedule and timeout carry no unbounded retry.
 
 **Commit.** `coordinator: the aggregation job and the drift reconciliation`
+
+**Status: built.** Lands on the long-lived `coordinator` branch when its pull request merges, in
+this plan's own commit message, and the plan's status line above moves with it. The sweep is
+`internal/coordinator/sweep.go` (the recompute, the `stale` marker, the write set, and the
+pruning P4's review asked for) and `internal/coordinator/view.go`; `fugaro coordinator sweep` is
+the manual invocation the owner's live check runs, in `internal/cli/coordinator.go`; the job, its
+account, the runs-bucket reader, the App-key grant and the schedule are
+`deploy/terraform/gcp/modules/installation/coordinator.tf`, wired through the root's variables and
+outputs and the `Coordinator` spec in `internal/infra/firebase.go`, with the golden plans
+regenerated. The job's environment is the whole of its configuration
+(`FUGARO_PROJECT`, `FUGARO_FIREBASE_PROJECT`, `FUGARO_RTDB_URL`, `FUGARO_RUNS_BUCKET`,
+`FUGARO_COORDINATOR_REPOS`, `FUGARO_GITHUB_APP_ID`, and the App key as a `secret_key_ref`, so no
+plan, no `terraform show` and no job describe carries the credential), it runs as
+`fugaro-coordinator` with `max_retries = 0` and a 600s timeout under an 8-minute in-code bound, and
+its schedule is `*/15 * * * *` with `retry_count = 0` — a failed sweep logs its failure and the next
+tick is the retry.
+
+**Two deviations from the section above, and the follow-up it carries.** The **Files** line names
+"a new entry point under `cmd/fugaro` and its package"; `cmd/fugaro` is only `main` in this tree,
+so the sweep lives in `internal/coordinator` with its command in `internal/cli`, beside every
+other coordinator subcommand. And the job's image is `HistoryImage` — the history job's own
+`fugaro-base/history:latest` — rather than a new one, because the sweep is the same binary the CLI
+is and a second image would be a second thing to build, pin and publish for no difference in what
+runs. On
+the review P4's pull request left for this part: the sweep **prunes** the
+oldest intent records of a repository, keeping the newest 200 (D197's bound, `DefaultIntents`), each
+removal through the store's compare-and-set on the record's own ETag so a record that changed
+between the read and the removal is left alone; and the report path **refuses a declaration larger
+than a record** (`ErrIntentTooLarge`: 512 characters in one name, 100 names in one list, 8192
+characters of text in all), because the caller writes all of it and the ID that makes a report
+idempotent would not collide with anything.
+
+**What this part does not do.** Nothing here is a live action: the job, the account and the
+schedule are declared in Terraform and applied by the owner's own `fugaro update`, and the account's
+`roles/firebasedatabase.admin` on the Firebase project is granted by the Firebase root in that same
+run — the grant P3 gated off, turned on by this part because the account it names now exists. What
+the account may write is still not IAM's to say (D194): the fence is `internal/coordinator`'s own
+subtree check and the deployed rules' floor, which is the one respect the section above calls
+security-sensitive.
 
 ---
 
