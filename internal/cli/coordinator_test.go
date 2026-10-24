@@ -32,10 +32,11 @@ import (
 // taken and a second flag.Bool of one name panics.
 var updateCoordinatorGolden = flag.Bool("update-coordinator", false, "rewrite testdata/coordinator_status.golden")
 
-// The command is the per-repository read the CLI already performs — the runs
-// bucket plus a gitprov.Provider opened exactly as exec.go's providerOptions
-// opens one — and these tests drive it end to end through the fixture bucket
-// and a fake host. What each of them is for:
+// The command is the read the CLI already performs — the runs bucket plus a
+// gitprov.Provider opened exactly as exec.go's providerOptions opens one — with
+// P2's credential on it (the coordinator's own read-only installation token,
+// minted per repository), and these tests drive it end to end through the
+// fixture bucket and fake hosts. What each of them is for:
 //
 //   - TestCoordinatorStatusJSON: the joined view, read as data, over real run
 //     objects and a real (fake) provider — the records, the collision rule
@@ -48,14 +49,26 @@ var updateCoordinatorGolden = flag.Bool("update-coordinator", false, "rewrite te
 //     accepted.
 //   - TestCoordinatorStatusWritesNothing: the plan's sentence for P1, held by
 //     a test — the runs bucket is unchanged and the host's write log is empty.
-//   - TestCoordinatorStatusReadsOnlyThePullRequestsTheRunsName: P1's reader,
-//     pinned as the limitation it is (finding #10), so that P2 replacing it is
-//     a deliberate change and not a surprise.
+//   - TestCoordinatorStatusReadsOnlyThePullRequestsTheRunsName: the reader's
+//     one documented limit (finding #10), pinned as the limitation it is so
+//     that widening it is a change somebody makes on purpose.
 //   - TestCoordinatorStatusRefusesAnUnnamedRepository: one repository's view
-//     is asked for by name.
+//     is asked for by name, and --all with --repo is refused rather than
+//     resolved.
+//   - TestCoordinatorStatusAllReadsEveryRepository: --all is the project-wide
+//     read — one view per repository, each read through a token of its own
+//     (D193), and nothing compared across repositories.
+//   - TestCoordinatorStatusMintsAReadOnlyTokenPerRepository: the credential
+//     itself, held to the mint's own request body — one repository per token,
+//     and no permission above read (Q3 answered (A)).
+//   - TestCoordinatorStatusRefusesABitbucketProject: the project this read
+//     does not serve is refused, naming the reason and not the repository
+//     (Q12 answered (A), finding #30).
 //   - TestCoordinatorStatusNeverPrintsACredential: the one security rule this
 //     path owns — the provider's own credential values never reach an error
 //     this command prints, from opening the provider or from a read.
+//   - TestCoordinatorStatusNeverPrintsTheAppKey: the same rule on the half of
+//     this command that holds the App's private key.
 //   - TestCoordinatorStatusWithNoRuns: an empty bucket is a view with nothing
 //     in it, not a failure.
 //   - TestCoordinatorStatusWindow: the window is runs ls's, measured back from
@@ -456,12 +469,12 @@ func coordinatorTree(t *testing.T, dir string) []string {
 	return out
 }
 
-// P1's reader is the runs bucket's own declarations: gitprov has no call that
-// lists a repository's pull requests (reconciliation finding #10), so the
-// numbers the runs name are the ones read, and a pull request no run names is
-// not in the view. This is the part's documented limit, and P2's reader is
-// what widens it; the assertion is here so that widening it is a change
-// somebody makes on purpose.
+// The reader's pull requests are the runs bucket's own declarations: gitprov has
+// no call that lists a repository's pull requests (reconciliation finding #10),
+// so the numbers the runs name are the ones read, and a pull request no run
+// names is not in the view. P2's project-wide credential widens what the read
+// reaches and not what it asks for — it is still one number at a time, and this
+// assertion is here so that changing that is a change somebody makes on purpose.
 func TestCoordinatorStatusReadsOnlyThePullRequestsTheRunsName(t *testing.T) {
 	f := newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
 	out, _, err := execute(t, "coordinator", "status", "--json", "--since", "0")
