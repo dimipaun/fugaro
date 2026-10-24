@@ -1,6 +1,6 @@
 # The coordinator agent
 
-**Status (2026-10-21, later): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0 and P1 are on `coordinator`, and P2–P8 are not started.** P1 is `fugaro coordinator status` over the view in `internal/coordinator/`: the one-repository read, and the first part of this work that produces something a person can look at. This directory holds the owner's spec for a **coordinator agent**, the
+**Status (2026-10-24): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0, P1 and P2 are on `coordinator`, and P3–P8 are not started.** P1 is `fugaro coordinator status` over the view in `internal/coordinator/`: the one-repository read, and the first part of this work that produces something a person can look at; P2 is that command's `--all` and the credential behind it — one read-only installation token per repository, minted by the coordinator and cached for the token's life, never the run's own two-write one. This directory holds the owner's spec for a **coordinator agent**, the
 reconciliation of that spec against the code at `origin/main` `c6009b5f` (`release:
 v0.8.6 (#637)`), the questions the reconciliation could not answer on its own, the
 owner's answers to them, and the plan that turns those answers into ordered parts. No

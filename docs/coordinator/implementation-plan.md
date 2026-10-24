@@ -1,6 +1,6 @@
 # The coordinator — the implementation plan
 
-**Status (2026-10-21, later): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0 and P1 are on `coordinator`, and P2–P8 are not started.** Each part carries its own **Status** line below, and this one moves with them: the status line and the pins that hold it change in the commit that lands a part, which is what the P0 section says of itself and what every earlier plan in this repository did (`docs/mobile/README.md`, `docs/setup-wizard/README.md`). This plan follows from
+**Status (2026-10-24): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0, P1 and P2 are on `coordinator`, and P3–P8 are not started.** Each part carries its own **Status** line below, and this one moves with them: the status line and the pins that hold it change in the commit that lands a part, which is what the P0 section says of itself and what every earlier plan in this repository did (`docs/mobile/README.md`, `docs/setup-wizard/README.md`). This plan follows from
 [reconciliation.md](reconciliation.md), which wins wherever it disagrees with
 [spec.md](spec.md). Every path and symbol below was re-read against `main` at `1e0953b7`
 (`docs(central-orchestrator): spec, reconciliation and plan for central orchestrators (#775)`)
@@ -332,6 +332,16 @@ whether the token is per repository or project-wide, and D193's answer; the cach
 lifetime; and what a coordinator whose token leaked can read.
 
 **Commit.** `coordinator: the project-wide read, and the read-only GitHub credential`
+
+**Status: built.** On the long-lived `coordinator` branch, in this plan's own commit message. The
+permission set and its exported accessor (`internal/gitprov/github/apptoken.go`), the project-wide
+reader with its per-repository token cache and its Bitbucket refusal (`internal/coordinator/`), the
+opener and the mint that install the read-only token source on it, and the command's `--all`
+(`internal/cli/coordinator.go`) are in the tree, with the permission set held to the mint's request
+body by a golden; the plan's status line above moved with them. The one thing this part does NOT do
+is stated where a reader meets it rather than here: D193's answer is **one read-only installation
+token per repository**, so there is no single project-wide credential to steal, and whether an
+installation token may omit `repositories` at all is **U3**, still an owner check.
 
 ---
 
