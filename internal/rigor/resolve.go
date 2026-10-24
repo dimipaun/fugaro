@@ -24,8 +24,9 @@ const (
 	FromRepo Layer = "repo"
 	// FromArea is a rigor.areas rule the run's paths matched.
 	FromArea Layer = "area"
-	// FromRequest is the run's own request (fugaro run --mode), which may
-	// raise and never lower (D6).
+	// FromRequest is the run's own request, which may raise and never lower
+	// (D6). No launcher sends one yet: fugaro run --mode is plan T1.6, not
+	// built, so the runner resolves with no Request.Mode and no record says it.
 	FromRequest Layer = "request"
 	// FromReached is the mode this run had already reached at an earlier
 	// moment, kept because a mode never falls within a run (D22). It is not
