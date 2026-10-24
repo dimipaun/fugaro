@@ -567,23 +567,46 @@ a.skip-link:focus {
   gap: var(--space-2xs);
 }
 
-/* Deliberately no `display` here. The `hidden` attribute is the whole mechanism that keeps
- * the control out of a reader's way until the script has revealed it, and an author `display`
- * would win over the user agent's `[hidden]` rule and put the button back on the page. */
+/* The `display` is set only on a button that is not `hidden`. The `hidden` attribute is the
+ * whole mechanism that keeps the control out of a reader's way until the script has revealed
+ * it, and an author `display` on the plain class would win over the user agent's `[hidden]`
+ * rule and put the button back on the page. */
 .copy-button {
-  padding: var(--space-3xs) var(--space-2xs);
+  /* An icon button (the owner's feedback of 2026-10-24): an 18px glyph in a 44px target, so it
+     is small to the eye and easy to the finger. The two glyphs share one cell; the clipboard
+     shows until a copy lands, then the checkmark for `COPIED_MS` (site.js). */
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  place-items: center;
   border: 0;
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--accent-on-dark);
-  font-family: var(--font-sans);
-  font-size: var(--font-size-sm);
-  font-weight: var(--weight-semibold);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
   cursor: pointer;
-  /* Wide enough for "Copied", which is drawn over it, so the confirmation never changes the
-     row's widths. */
-  min-width: 4.5rem;
-  transition: background-color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
+  transition: background-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
+}
+
+.copy-button:not([hidden]) {
+  display: grid;
+}
+
+.copy-icon {
+  grid-area: 1 / 1;
+  transition:
+    opacity var(--duration-enter) var(--ease-out),
+    transform var(--duration-enter) var(--ease-out);
+}
+
+.copy-button .copy-icon-check,
+.copy-button[data-copied='true'] .copy-icon-clipboard {
+  opacity: 0;
+  transform: scale(0.8);
+}
+
+.copy-button[data-copied='true'] .copy-icon-check {
+  opacity: 1;
+  transform: none;
 }
 
 .copy-button:active {
@@ -591,24 +614,30 @@ a.skip-link:focus {
 }
 
 /* The ring hugs the button rather than standing off it: still the accent at the token's width,
-   and lighter on a small filled control than the site's offset ring. */
+   and lighter on a small control than the site's offset ring. */
 .copy-button:focus-visible {
   outline-offset: 0;
+  color: var(--text);
 }
 
 @media (hover: hover) and (pointer: fine) {
   .copy-button:hover {
-    background: var(--border);
+    background: var(--surface);
+    color: var(--text);
   }
 }
 
-/* What the control says: the live region the markup carries, and the visible half of the
- * "copied" state. It is drawn over the button, out of the flow (owner's preview feedback on
- * #1003, 2026-10-24): a confirmation in the row took width from the command, wrapped above the
- * button and moved the block. Over the button, "Copy" and "Copied" are two stacked labels and
- * the script's fade on this one is the crossfade between them. A longer message (a refused
- * copy) grows leftwards from the button's right edge on one line. Empty, it is transparent, so
- * the button shows through; it stays in the accessibility tree so the live region is announced. */
+/* The checkmark is the success tone whatever else is true of the button (focused, hovered). */
+.copy-button[data-copied='true'],
+.copy-button[data-copied='true']:focus-visible,
+.copy-button[data-copied='true']:hover {
+  color: var(--ok);
+}
+
+/* What the control says: the live region the markup carries. "Copied" is for a screen reader
+ * only — the checkmark is what a sighted reader sees — so in that tone it is visually hidden and
+ * still in the accessibility tree. A refused copy is said to everyone: drawn over the button, out
+ * of the flow, growing leftwards from its right edge on one line, so it never moves the block. */
 .copy-status {
   position: absolute;
   top: 0;
@@ -632,6 +661,15 @@ a.skip-link:focus {
 
 .copy-status:empty {
   opacity: 0;
+}
+
+.copy-status[data-tone='ok'] {
+  width: 1px;
+  min-width: 0;
+  height: 1px; /* taste-skill-ignore: the visually-hidden pattern, not a drawn rule */
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
 }
 
 /* ---- 2c. the bold look (redesign part P1) ------------------------------------------------
@@ -786,29 +824,30 @@ a.skip-link:focus {
 }
 
 /* The inner pages' header (the owner's question of 2026-10-24, "same easing animation as the
- * Home page on the rest of the pages"): the title and the line under it arrive once as the page
- * loads, the way the home page's live card rows do: 8 px of rise and a fade on the site's
- * `--ease-out`, the line 60 ms after the title. CSS only (`@starting-style`, the first frame the
- * header is drawn in) and never scroll-triggered, so a page with no script, or a browser without
- * `@starting-style`, shows the header as it is. Nothing for a
- * reader who asked for less motion. The home page's own headline is not one of these. */
+ * Home page on the rest of the pages", then "too fast to see"): the title rises 18px and fades
+ * in over 550ms on the site's `--ease-out` as the page loads, and the line under it follows
+ * 100ms later. It is a marketing entrance a reader is meant to see, so it is longer than the
+ * site's UI motion. CSS only (`@starting-style`, the first frame the header is drawn in) and
+ * never scroll-triggered, so a page with no script, or a browser without `@starting-style`,
+ * shows the header as it is. A reader who asked for less motion gets no movement: the layout's
+ * reduce rule makes any transition 1ms. The home page's own headline is not one of these. */
 @media (prefers-reduced-motion: no-preference) {
   main h1.display-xl:not(.hero-tagline),
   main h1.display-xl:not(.hero-tagline) + p {
     transition:
-      opacity var(--duration-enter) var(--ease-out),
-      transform var(--duration-enter) var(--ease-out);
+      opacity var(--duration-entrance) var(--ease-out),
+      transform var(--duration-entrance) var(--ease-out);
   }
 
   main h1.display-xl:not(.hero-tagline) + p {
-    transition-delay: 60ms;
+    transition-delay: 100ms;
   }
 
   @starting-style {
     main h1.display-xl:not(.hero-tagline),
     main h1.display-xl:not(.hero-tagline) + p {
       opacity: 0;
-      transform: translateY(8px);
+      transform: translateY(18px);
     }
   }
 }

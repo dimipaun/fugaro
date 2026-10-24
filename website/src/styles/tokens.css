@@ -159,6 +159,10 @@
   /* A block collapsing or expanding in the flow (the consent bar, a changelog entry's notes). */
   --duration-collapse: 200ms;
   --duration-base: 240ms;
+  /* Marketing entrances a reader is meant to notice (the owner's feedback of 2026-10-24): an
+     inner page's header arriving, and the run picture's steps arriving one after another. */
+  --duration-entrance: 550ms;
+  --duration-reveal: 750ms;
   --duration-slow: 600ms;
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 }
