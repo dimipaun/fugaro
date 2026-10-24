@@ -216,7 +216,33 @@ const PolicyRulesVersion = 1
 //
 // It is not Version: the policy schema and the rules that guard it move
 // independently.
-const RulesVersion = 3
+//
+// Generation 4 is the coordinator (coordinator plan task P3, decisions D194
+// and D195, both answered 2026-10-21): the new top-level `coordinator/`
+// subtree, granted to the signed-in reader and to nobody else. It bumps where
+// the credentials children deliberately did not, and the difference is what
+// each change does to a client. The credentials children are optional fields
+// of nodes a run already writes and only a `cascade` run writes them, so an
+// installation that has not opted in behaves identically — which is why that
+// change took a marker of its own instead (rules.CredsRulesVersion). The
+// coordinator's node is a *grant*: it is what lets a signed-in reader see the
+// project's state at all, and a reader under an older document is refused
+// every read of `coordinator/` rather than shown a degraded one. A generation
+// that only adds a deny, or a node no client may reach, would not need the
+// bump either; one that opens a family to a client does, because the marker
+// is the only thing that tells an installation its deployed document is not
+// the one this binary reads under.
+//
+// What the bump does to an existing installation, plainly: `fugaro doctor`
+// reports policy-rules-skew and prescribes `fugaro update --firebase-project`
+// until the owner deploys, and `fugaro update --firebase-project` refuses to
+// deploy this binary's document over a marker *above* it, so an older CLI
+// cannot take the coordinator's grant away behind a newer one's back. Runs
+// and the project policy are untouched (they are gated on PolicyRulesVersion,
+// which stays 1). Nothing reads the coordinator's subtree yet: the write path
+// is P4's and the sweep is P5's, so what a person sees before those land is
+// the grant alone, with no document under it.
+const RulesVersion = 4
 
 // VersionError is the refusal of a node written in a version this Fugaro does
 // not understand. It carries both versions, so each side prints its own
