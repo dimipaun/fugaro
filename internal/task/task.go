@@ -336,13 +336,18 @@ func InputNameProblem(name string) string {
 // off must not read alike.
 const MaxPlanTaskBytes = 128
 
-// planTaskElemRE is the form of one "/"-separated element of a plan task
+// PlanTaskElemRE is the form of one "/"-separated element of a plan task
 // id: letters, digits, '.', '_' and '-', starting with a letter or a digit.
 // An allow-list rather than a list of refusals, because the id is shown as
 // text in the console and matched against plan ids and task ids that came
 // out of file names; anything outside this set (a space, a quote, a
 // control, a Unicode look-alike) is not one.
-var planTaskElemRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+//
+// Exported the way config.ClaudeAccountNameRE is: schemas/task.schema.json
+// carries the same shape as a pattern, and the test that holds the two
+// together (TestTaskSchemaPlanTaskMatchesTheGoRule, schemas/schemas_test.go)
+// derives the schema's whole-id pattern from this one.
+var PlanTaskElemRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 // PlanTaskProblem reports what is wrong with a plan task id t — "" when
 // nothing is — for the two places one is accepted: the launcher, at fugaro
@@ -355,7 +360,7 @@ var planTaskElemRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 // The rules are: not empty, at most MaxPlanTaskBytes bytes, at least two
 // "/"-separated elements (a plan and a task), no NUL or newline, no
 // absolute path, no "." or ".." element, no control character, and nothing
-// outside planTaskElemRE in any element. It is a shape check and nothing
+// outside PlanTaskElemRE in any element. It is a shape check and nothing
 // more: the id is a display-only join hint (Spec.PlanTask), so this does
 // not check that the plan or the task exists — nothing may act on the
 // answer — and the id is never joined into a path.
@@ -385,7 +390,7 @@ func PlanTaskProblem(t string) string {
 			return "has an empty path element"
 		case elem == "." || elem == "..":
 			return fmt.Sprintf("has a %q path element", elem)
-		case !planTaskElemRE.MatchString(elem):
+		case !PlanTaskElemRE.MatchString(elem):
 			return fmt.Sprintf("has %q, where letters, digits, '.', '_' and '-' are allowed", elem)
 		}
 	}

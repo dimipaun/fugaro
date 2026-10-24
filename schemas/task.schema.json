@@ -13,6 +13,19 @@
     "ref": { "type": "string", "minLength": 1 },
     "workflow": { "type": "string" },
     "task": { "type": "string" },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "pattern": "^[^\\x00-\\x1F\\x7F-\\x9F\\x{2028}\\x{2029}]+$",
+      "description": "The run's own job title (fugaro run --title, task.Spec.Title): the one line every surface that names the run shows (task.TitleLine). Absent for every launch that gave none, which is where the title is the task prompt's own first line. It is refused unless it is one non-empty line of at most 100 runes with no control character (task.TitleProblem, applied by the launcher and by task.Parse), which is what the pattern and maxLength here carry apart from the whitespace-only case. Needs a 0.8.5 runner, which is why a launch that sets it is gated at launch (internal/cli/recipes_skew.go's titlesSince): task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running the task without it. This property was missing until the console dependency graph's GV1.2 added its sibling: schemas/task.schema.json is additionalProperties: false, so every launch with --title wrote a task.json this schema rejected."
+    },
+    "plan_task": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+$",
+      "maxLength": 128,
+      "description": "The plan task this run works on (fugaro run --plan-task; console dependency graph plan GV1.2, decision GD5): <plan>/<task>, the id the plan's own dependency graph spells a node with. Absent for every launch that named none, which is the common case and every spec written before the field. The shape here is task.PlanTaskProblem's, applied by the launcher on write and by task.Parse on read: two or more '/'-separated elements, each starting with a letter or a digit and otherwise letters, digits, '.', '_' and '-', at most 128 bytes. Two rules of that one the pattern cannot carry are that a '.' or '..' element and a control character are refused. It is a display-only join hint: nothing authorises, admits or budgets anything by it. Needs a 0.11.0 runner, which is why a launch that sets it is gated at launch (internal/cli/recipes_skew.go's planTaskSince): task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running the task without it."
+    },
     "branch": { "type": "string", "pattern": "^fugaro/[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
     "pr": { "type": "integer", "minimum": 1 },
     "previous_run": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },

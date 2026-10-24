@@ -1200,6 +1200,7 @@ func launchRecordOf(t *testing.T, f *cloudFixture, id string) *runstore.Launch {
 // it, and the assertions here fail.
 func TestLaunchCarriesPlanTask(t *testing.T) {
 	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", release0110)
 	id := time.Now().UTC().Format("20060102") + "-120000-abcd"
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", id, "--plan-task", "setup-wizard/W1.3", "Add a feature"); err != nil {
 		t.Fatal(err)
@@ -1311,6 +1312,7 @@ func TestRecoveredLaunchKeepsPlanTask(t *testing.T) {
 // retried run loses its node while its task keeps the id.
 func TestRetryKeepsPlanTask(t *testing.T) {
 	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", release0110)
 	t.Chdir(t.TempDir())
 	ctx := context.Background()
 	b, _ := blob.OpenBucket(ctx, f.bucket)
@@ -1326,5 +1328,141 @@ func TestRetryKeepsPlanTask(t *testing.T) {
 	}
 	if got := launchRecordOf(t, f, spec.RunID).PlanTask; got != "setup-wizard/W1.3" {
 		t.Fatalf("retried launch plan_task = %q, want the stored task's", got)
+	}
+}
+
+// release0110 is the first job image whose runner reads a task's plan task
+// id (planTaskSince) — the release this branch belongs to.
+const release0110 = "ghcr.io/dimipaun/fugaro-base:0.11.0"
+
+// A launch carrying a plan task is gated on the image that can read it:
+// task.Parse decodes with DisallowUnknownFields, so a runner older than
+// planTaskSince does not ignore the field, it refuses the whole task at
+// bootstrap — after the job has started and the operator has been told
+// nothing. The gate turns that into one sentence before anything is
+// started, the same way the title, the artifact mode and the named token
+// are gated.
+//
+// Mutation (drop the spec.PlanTask block from finishLaunch's built-image
+// branch): the launch goes through on the 0.8.0 image and fails at
+// bootstrap instead, and this test fails.
+func TestRunPlanTaskGatesOnTheImageThatKnowsIt(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", release080)
+	wantRefused(t, f, "a plan task (--plan-task) needs a job image whose runner knows the plan task (fugaro "+planTaskSince+" or later)",
+		"run", "--repo", "acme/app", "--plan-task", "setup-wizard/W1.3", "Add a feature")
+	// The same image, a launch with no plan task: not gated, because the
+	// spec has no such field in it.
+	writeBuildRecord(t, f, appSlug, "web", release080)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261024-120000-abcd", "Add a feature"); err != nil {
+		t.Fatalf("a launch with no --plan-task must not be gated: %v", err)
+	}
+	// And the release that ships the reader accepts it.
+	writeBuildRecord(t, f, appSlug, "web", release0110)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261024-130000-abcd", "--plan-task", "setup-wizard/W1.3", "Add a feature"); err != nil {
+		t.Fatalf("a launch at "+planTaskSince+" must be accepted: %v", err)
+	}
+}
+
+// A checkout: clone workflow has no build record to judge, so the plan
+// task's floor is judged against base_images.base itself: 0.7.5 is
+// cloneSince, so the clone floor passes and the plan task's floor (0.11.0)
+// is what refuses.
+//
+// Mutation (drop the spec.PlanTask block from finishLaunch's clone branch):
+// the launch goes through on an image whose runner refuses the whole task
+// at bootstrap.
+func TestRunPlanTaskGatesOnACloneWorkflow(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, "base_images: {base: ghcr.io/dimipaun/fugaro-base:0.7.5}\n")
+	testutil.IsolateGit(t)
+	other := mustSlug("github", "acme/other")
+	f.run.AddJob(gcp.JobName(other, "svc"), "2", "4Gi")
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nworkflows:\n" +
+		"  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n"})
+	t.Chdir(dir)
+	_, _, err := execute(t, "run", "--run-id", "20261024-100000-abcd", "--plan-task", "setup-wizard/W1.3", "A task")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "a plan task (--plan-task) needs a job image whose runner knows the plan task (fugaro "+planTaskSince+" or later)") ||
+		!strings.Contains(err.Error(), "ghcr.io/dimipaun/fugaro-base:0.7.5, release 0.7.5") {
+		t.Fatalf("err = %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
+
+// A follow-up carries its own --plan-task and never the followed run's: the
+// run it continues holds the node, and a chain that re-claimed the task with
+// every follow-up would say the task is running again each time. The join to
+// the graph a follow-up has is its pull request number.
+//
+// Mutation (inherit the run's plan task, the way Title is inherited): the
+// follow-up stores a node it was not given, and this test fails.
+func TestFollowUpDoesNotInheritThePlanTask(t *testing.T) {
+	f := newCloudFixture(t)
+	root := firstRunSpec(rootID)
+	root.PlanTask = "setup-wizard/W1.3"
+	seedSpec(t, f, root, false)
+	rec := prRecord(rootID, "", 7, 1)
+	rec.StartedAt = time.Now().Add(-72 * time.Hour)
+	writeRecord(t, f, rootID, rec)
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "also rename x"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSpec(t, f, fuID).PlanTask; got != "" {
+		t.Fatalf("follow-up plan_task = %q, want none: the run it follows holds the node", got)
+	}
+}
+
+// An explicit --plan-task on a follow-up claims one for that run itself, and
+// the flag's id is the one stored — not the followed run's.
+func TestFollowUpCarriesItsOwnPlanTask(t *testing.T) {
+	f := newCloudFixture(t)
+	root := firstRunSpec(rootID)
+	root.PlanTask = "setup-wizard/W1.3"
+	seedSpec(t, f, root, false)
+	rec := prRecord(rootID, "", 7, 1)
+	rec.StartedAt = time.Now().Add(-72 * time.Hour)
+	writeRecord(t, f, rootID, rec)
+
+	writeBuildRecord(t, f, appSlug, "web", release0110)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--plan-task", "setup-wizard/W2.1", "also rename x"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSpec(t, f, fuID).PlanTask; got != "setup-wizard/W2.1" {
+		t.Fatalf("follow-up plan_task = %q, want the flag's", got)
+	}
+}
+
+// A repeated --run-id names a stored task, and a plan task is part of that
+// task: asking for the same run id with a different one is a different task,
+// refused like any other difference.
+//
+// Mutation (drop the plan task from storedFollowUp's comparison): the second
+// launch reports the first as if it were the same task, silently keeping the
+// old node.
+func TestStoredFollowUpRefusesADifferentPlanTask(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+	writeBuildRecord(t, f, appSlug, "web", release0110)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--plan-task", "setup-wizard/W1.3", "also rename x"); err != nil {
+		t.Fatal(err)
+	}
+	// wantRefused is not used here: this fixture has already launched the
+	// run, so its "no execution started" half would fail for the wrong
+	// reason.
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--plan-task", "setup-wizard/W9.9", "also rename x")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "already holds a different task") {
+		t.Fatalf("err = %v, want the different task refusal", err)
+	}
+	// The same plan task is the same task: the repeated launch reports the
+	// existing one instead of starting another.
+	out, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--plan-task", "setup-wizard/W1.3", "also rename x")
+	if err != nil || !strings.Contains(out, "already launched") {
+		t.Fatalf("out = %q, err = %v", out, err)
 	}
 }

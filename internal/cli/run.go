@@ -519,6 +519,12 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 					return launchResult{}, err
 				}
 			}
+			if spec.PlanTask != "" {
+				if err := checkCloneImageSince(env.lc, spec, planTaskSince,
+					"a plan task (--plan-task)", "the plan task", "", warn); err != nil {
+					return launchResult{}, err
+				}
+			}
 		} else {
 			if needsRecipeImage(spec, agentRecipe) {
 				if err := checkRecipeImage(ctx, env, slug, spec, kind, warn); err != nil {
@@ -545,6 +551,20 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			if spec.Title != "" {
 				if err := checkImageSince(ctx, env, slug, spec, kind, titlesSince,
 					"a job title (--title, kept by --pr follow-ups and --retry)", "the job title", "", warn); err != nil {
+					return launchResult{}, err
+				}
+			}
+			// The plan task's own gate, for the same reason as the three
+			// above: task.Parse decodes with DisallowUnknownFields, so a
+			// runner older than planTaskSince refuses a task carrying one
+			// outright, and the run would die at bootstrap over a field that
+			// changes nothing about what it does. A launch with no
+			// --plan-task carries no such field (the spec is byte-identical
+			// to what the previous release wrote) and is never gated: the
+			// check is the field's, not the flag's.
+			if spec.PlanTask != "" {
+				if err := checkImageSince(ctx, env, slug, spec, kind, planTaskSince,
+					"a plan task (--plan-task)", "the plan task", "", warn); err != nil {
 					return launchResult{}, err
 				}
 			}
