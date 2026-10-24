@@ -126,18 +126,6 @@ const WATCH = loadHomeScreens().screens.find((screen) => screen.src.endsWith('/f
 
 <section class="hero" aria-labelledby="hero-tagline">
   <div class="hero-copy">
-    {/* The latest releases, above the headline so the page's lead (between the h1 and the first
-        h2) stays the promise. The quiet tone at the smallest step: a note about the project. */}
-    <p class="hero-release">
-      Latest release: <a href="/changelog/">{latestCli.tag}</a>
-      {latestConsole && (
-        <>
-          {' · '}
-          <a href={consoleReleaseHref} rel="noopener">Console {latestConsole.version}</a>
-        </>
-      )}
-    </p>
-
     <h1 class="hero-tagline display-xl" id="hero-tagline">{tagline}</h1>
 
     <p class="hero-lead" data-source="README.md">{LEAD}</p>
@@ -146,6 +134,19 @@ const WATCH = loadHomeScreens().screens.find((screen) => screen.src.endsWith('/f
         the page that means "this is the action". */}
     <p class="hero-actions">
       <a class="hero-cta" href="/getting-started/">Get started</a>
+    </p>
+
+    {/* The latest releases, under the call to action (the owner's ruling of 2026-10-24: above
+        the headline it read as a kicker label). The quiet tone at the smallest step: a note about
+        the project, after the promise and its one action. */}
+    <p class="hero-release">
+      Latest release: <a class="hero-release-link" href="/changelog/">{latestCli.tag}</a>
+      {latestConsole && (
+        <>
+          {' · '}
+          <a class="hero-release-link" href={consoleReleaseHref} rel="noopener">Console {latestConsole.version}</a>
+        </>
+      )}
     </p>
   </div>
 

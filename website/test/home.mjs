@@ -2498,7 +2498,8 @@ test('the hero names the newest published CLI release and console release, each 
     assert.equal(textOf(links[1]).trim(), `Console ${consoleVersion}`, `the hero names ${textOf(links[1]).trim()} and the newest published console is ${consoleVersion}`)
     assert.match(links[1].attrs.get('href') ?? '', new RegExp(`/releases/tag/console-v${consoleVersion.replace(/\./g, '\\.')}$`), 'the console release does not link its own release page')
   }
-  // Above the h1, so it is not part of the lead.
-  const order = html.indexOf('class="hero-release"') < html.indexOf('id="hero-tagline"')
-  assert.ok(order, 'the latest-release line is not above the headline')
+  // Under the call to action (the owner's ruling of 2026-10-24), so the headline is the first
+  // thing in the hero and the action comes before the note.
+  const order = html.indexOf('class="hero-cta"') < html.indexOf('class="hero-release"')
+  assert.ok(order, 'the latest-release line is not under the call to action')
 })
