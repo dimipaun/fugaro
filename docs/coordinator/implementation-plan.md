@@ -397,17 +397,26 @@ generation bump and what a client with an older marker sees; and the amended cla
 
 **Commit.** `coordinator: the project record, its writer identity and the read grant`
 
-**Status: built.** On the long-lived `coordinator` branch, in this plan's own commit message, and
-the plan's status line above moved with it. The subtree, the deterministic IDs, the ETag CAS, the
-writer's account and the read grant are in the tree. Two things are worth a reader's attention
-here rather than in the diff. The first is that the writer account is **named and granted, not
-created**: the installation root creates it in **P5**, as it creates the history account's, so
-until that part lands the grant is inert — a member that does not exist holds a role on the
-Firebase project. The second is that `terraform validate` and the golden plans could not be
-regenerated offline (no provider cache, no network), so the golden plans under
-`internal/infra/tf/testdata/golden/` carry the new grant as the one row a real plan would emit for
-it, added by hand and read diff by diff; the owner's next `fugaro update` run on a real
-installation is what confirms it.
+**Status: built.** Lands on the long-lived `coordinator` branch when its pull request merges, in
+this plan's own commit message, and the plan's status line above moves with it. The subtree, the
+deterministic IDs, the ETag CAS, the read grant and the writer's grant are in the tree. Three
+things are worth a reader's attention here rather than in the diff. The first is that the writer
+account is **named, not created, and not yet granted**: the installation root creates it in
+**P5**, as it creates the history account's, and IAM refuses a grant to a member that does not
+exist, so the Firebase root's `coordinator_account` defaults to empty and the grant
+(`google_project_iam_member.coordinator_database`) has a count of 0 until P5 sets it — the golden
+plans hold no such row, and the module's own `terraform test` runs cover it on and off. The
+second is that the writer bypasses the rules, so `internal/coordinator`'s `Store` refuses every
+path outside `coordinator/` itself: that check, not IAM and not the rules, is the fence (D194).
+The third is the rules generation: `RulesVersion` moves from 3 to 4, and once an installation has
+deployed generation 4, an older Fugaro's `fugaro update --firebase-project` is refused rather than
+deploying its older document over it.
+
+**For operators.** When this part ships, the release notes' `### For operators` section carries
+one step, per installation: run `fugaro update --firebase-project` from the new CLI to deploy the
+generation-4 rules (until then `fugaro doctor` reports `policy-rules-skew` and a signed-in reader
+is refused every read of `coordinator/`); runs, the project policy and the mobile app are
+unaffected either way. Nothing is needed per repository.
 
 ---
 

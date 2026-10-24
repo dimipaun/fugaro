@@ -20,8 +20,9 @@ import (
 //   - no run token reads it, which is finding #25's fence — no run identity
 //     reaches a node it has no business in.
 //
-// The emulator suite proves the same three against a real rules engine; these
-// run in the job that has no emulator, which is where a rules change is read.
+// emulator_coordinator_test.go (build tag firebase) proves the same three
+// against a real rules engine; these run in the job that has no emulator,
+// which is where a rules change is read.
 //
 // Hand mutation each fails on: dropping the /coordinator node (the state has
 // no grant at all), widening the read to TOKEN or to the root's own grant (a

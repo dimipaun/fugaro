@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/rtdb"
@@ -80,6 +82,23 @@ func DocumentID(parts ...string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// ErrOutsideSubtree is Store's refusal of a path that is not under PathRoot.
+// The writer holds roles/firebasedatabase.admin and bypasses the rules, so
+// this check, and not the rules or IAM, is what keeps it to its own subtree
+// (D194).
+var ErrOutsideSubtree = errors.New("coordinator: the path is outside the coordinator's subtree")
+
+// inSubtree refuses a path outside PathRoot. It trims the one leading or
+// trailing slash internal/rtdb tolerates, and rtdb itself refuses the empty
+// and dotted segments that could otherwise climb out.
+func inSubtree(path string) error {
+	p := strings.Trim(path, "/")
+	if p == PathRoot || strings.HasPrefix(p, PathRoot+"/") {
+		return nil
+	}
+	return fmt.Errorf("%w: /%s", ErrOutsideSubtree, p)
+}
+
 // writeAttempts bounds Store.Write's read-then-CAS loop. It is the count
 // internal/budget's SetKill uses (finding #17), and it is deliberately small:
 // every attempt lost is another writer holding the same document, and a
@@ -105,6 +124,9 @@ func NewStore(c *rtdb.Client) *Store { return &Store{c: c, attempts: writeAttemp
 // node leaves out untouched: "no document" is an answer, and a zero value would
 // make it indistinguishable from a document of zeroes.
 func (s *Store) Read(ctx context.Context, path string, out any) (etag string, found bool, err error) {
+	if err := inSubtree(path); err != nil {
+		return "", false, err
+	}
 	return s.c.GetETag(ctx, path, out)
 }
 
@@ -113,22 +135,34 @@ func (s *Store) Read(ctx context.Context, path string, out any) (etag string, fo
 // so this is the single-document write; a caller that must change several
 // documents uses one Put per document and decides what a partial failure means.
 func (s *Store) Put(ctx context.Context, path, etag string, v any) error {
+	if err := inSubtree(path); err != nil {
+		return err
+	}
 	return s.c.PutIfMatch(ctx, path, etag, v)
 }
 
 // Write reads path and puts v under the ETag it read, retrying while another
 // writer wins the race, and refusing with the last error once the attempts are
-// spent. Every write of the coordinator's state goes through it, so no caller
-// can write a document without having read its ETag first.
+// spent. Only a lost race (rtdb.ErrPrecondition) is retried: a refusal or an
+// outage is returned at once, since another attempt would meet the same
+// answer. Every write of the coordinator's state goes through it, so no
+// caller can write a document without having read its ETag first.
 func (s *Store) Write(ctx context.Context, path string, v any) error {
+	if err := inSubtree(path); err != nil {
+		return err
+	}
 	var err error
 	for attempt := 0; attempt < s.attempts; attempt++ {
 		var etag string
 		if etag, _, err = s.Read(ctx, path, nil); err != nil {
 			return err
 		}
-		if err = s.Put(ctx, path, etag, v); err == nil {
+		err = s.Put(ctx, path, etag, v)
+		if err == nil {
 			return nil
+		}
+		if !errors.Is(err, rtdb.ErrPrecondition) {
+			return err
 		}
 	}
 	return fmt.Errorf("coordinator: writing /%s: %d attempts lost the ETag race: %w", path, s.attempts, err)

@@ -3,7 +3,10 @@ package coordinator
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -167,5 +170,83 @@ func TestAnAbsentReadLeavesTheTargetAlone(t *testing.T) {
 	}
 	if kept, _ := got["kept"].(bool); !kept {
 		t.Errorf("an absent read wrote into the target: %v", got)
+	}
+}
+
+// TestStoreRefusesEveryPathOutsideTheSubtree: the writer holds the FP's
+// database admin and bypasses the rules (D194), so Store's own check is the
+// only fence between it and config/, the ledgers and the mailbox. A refused
+// path never reaches the database: the node it names is untouched.
+//
+// Hand mutation this fails on: dropping the check from any one of Read, Put
+// or Write.
+func TestStoreRefusesEveryPathOutsideTheSubtree(t *testing.T) {
+	f := gcpfake.NewRTDB(t)
+	c, err := rtdb.New(f.URL, rtdb.Auth{IDToken: func() string { return "idtok" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := NewStore(c)
+	ctx := testCtx(t)
+	f.Set("config/limits/policyRules", 4)
+
+	for _, path := range []string{"", "/", "config/limits/policyRules", "coordinatorx", "coordinatorx/y", "mailbox/a/inbox/m", "x/coordinator"} {
+		if _, _, err := s.Read(ctx, path, nil); !errors.Is(err, ErrOutsideSubtree) {
+			t.Errorf("Read(%q) = %v, want ErrOutsideSubtree", path, err)
+		}
+		if err := s.Put(ctx, path, "etag", map[string]any{"x": 1}); !errors.Is(err, ErrOutsideSubtree) {
+			t.Errorf("Put(%q) = %v, want ErrOutsideSubtree", path, err)
+		}
+		if err := s.Write(ctx, path, map[string]any{"x": 1}); !errors.Is(err, ErrOutsideSubtree) {
+			t.Errorf("Write(%q) = %v, want ErrOutsideSubtree", path, err)
+		}
+	}
+	var marker int
+	if found, err := c.Get(ctx, "config/limits/policyRules", &marker); err != nil || !found || marker != 4 {
+		t.Errorf("the refused writes moved config/limits/policyRules: %d found=%v err=%v", marker, found, err)
+	}
+
+	for _, path := range []string{PathRoot, "/" + PathProjectDocument("a"), PathRepoDocument("acme-webapp", "b") + "/"} {
+		if _, _, err := s.Read(ctx, path, nil); err != nil {
+			t.Errorf("Read(%q) inside the subtree = %v", path, err)
+		}
+	}
+}
+
+// TestWriteRetriesOnlyALostRace: a refusal or an outage is not a race, and a
+// second attempt meets the same answer, so Write returns it after one put.
+//
+// Hand mutation this fails on: retrying on every Put error.
+func TestWriteRetriesOnlyALostRace(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		want   error
+	}{
+		{http.StatusUnauthorized, rtdb.ErrPermission},
+		{http.StatusBadRequest, nil},
+	} {
+		var puts atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPut {
+				puts.Add(1)
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(`{"error":"refused"}`))
+				return
+			}
+			w.Header().Set("ETag", "e1")
+			_, _ = w.Write([]byte("null"))
+		}))
+		c, err := rtdb.New(srv.URL, rtdb.Auth{IDToken: func() string { return "idtok" }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = NewStore(c).Write(testCtx(t), PathProjectDocument("a"), map[string]any{"x": 1})
+		srv.Close()
+		if err == nil || (tc.want != nil && !errors.Is(err, tc.want)) {
+			t.Errorf("status %d: Write = %v, want %v", tc.status, err, tc.want)
+		}
+		if n := puts.Load(); n != 1 {
+			t.Errorf("status %d: Write put %d times, want 1: only rtdb.ErrPrecondition is a lost race", tc.status, n)
+		}
 	}
 }

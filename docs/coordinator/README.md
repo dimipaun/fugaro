@@ -5,7 +5,7 @@ reconciliation of that spec against the code at `origin/main` `c6009b5f` (`relea
 v0.8.6 (#637)`), the questions the reconciliation could not answer on its own, the
 owner's answers to them, and the plan that turns those answers into ordered parts. What
 follows from these documents is the Go above, the Terraform grant that gives the
-coordinator's writer its one role, and the database rules change that admits the
+coordinator's writer its one role (off until P5 creates the account), and the database rules change that admits the
 signed-in reader — and no TypeScript and no live action: what is here lands on the
 long-lived branch and not on `main`, and the owner deploys the grant and the rules. **Owner: Dimi Paun. Date: 2026-10-19.** The plan's own date is **2026-10-21**,
 written against `main` at `1e0953b7` (`docs(central-orchestrator): spec, reconciliation and plan

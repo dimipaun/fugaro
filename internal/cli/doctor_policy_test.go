@@ -12,6 +12,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/coordinator"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -582,6 +583,39 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		// publish refusal above is the other state's.
 		if c.Problem != rulesMarkerOlderText(projectpolicy.PolicyRulesVersion) {
 			t.Errorf("the between-generations body is not rulesMarkerOlderText:\n got %q\nwant %q", c.Problem, rulesMarkerOlderText(projectpolicy.PolicyRulesVersion))
+		}
+	})
+
+	t.Run("a marker of the device generation, below the coordinator's", func(t *testing.T) {
+		// Generation 3 already carries the mailbox and the device binding, so
+		// the sentence for it must not send the operator off to mint device
+		// nodes before a deploy that changes nothing about them: what 4 adds is
+		// the coordinator's read grant, and that is what it names.
+		if rulesDeviceGeneration >= projectpolicy.RulesVersion {
+			t.Fatalf("rulesDeviceGeneration = %d and RulesVersion = %d: this case is about a marker between them", rulesDeviceGeneration, projectpolicy.RulesVersion)
+		}
+		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+		db.Set(projectpolicy.PathRulesMarker(), rulesDeviceGeneration)
+		db.SetRules([]byte(`{"rules":{".read":false,".write":false}}`))
+		c, ok := doctorChecksByID(t)["policy-rules-skew"]
+		if !ok || c.Severity != "warning" {
+			t.Fatalf("policy-rules-skew = %+v (present %v), want a warning", c, ok)
+		}
+		if c.Problem != rulesMarkerOlderText(rulesDeviceGeneration) {
+			t.Errorf("the body is not rulesMarkerOlderText:\n got %q\nwant %q", c.Problem, rulesMarkerOlderText(rulesDeviceGeneration))
+		}
+		for _, want := range []string{fmt.Sprintf("generation %d", rulesDeviceGeneration), coordinator.PathRoot + "/", fmt.Sprintf("generation %d or newer", projectpolicy.RulesVersion)} {
+			if !strings.Contains(c.Problem, want) {
+				t.Errorf("the body does not carry %q: %q", want, c.Problem)
+			}
+		}
+		for _, bad := range []string{"fugaro pair", "by hand", "no run reads a published policy"} {
+			if strings.Contains(c.Problem, bad) {
+				t.Errorf("the body for a generation-%d marker carries %q, which is about rules it already has: %q", rulesDeviceGeneration, bad, c.Problem)
+			}
+		}
+		if !strings.Contains(c.Fix, "fugaro update --firebase-project") {
+			t.Errorf("the check does not name the owner's fix: %+v", c)
 		}
 	})
 

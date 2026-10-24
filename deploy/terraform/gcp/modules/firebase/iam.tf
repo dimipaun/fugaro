@@ -1,7 +1,7 @@
 # Every grant is a member resource, never a binding or policy, so nothing
 # here takes away access someone else granted. Run job accounts get nothing in
 # the FP: a run holds a Firebase ID token, which isn't an IAM identity. The one
-# account granted here that is a job's is the coordinator's writer, below.
+# job's account that can be granted here is the coordinator's writer, below.
 
 # The key that signs the runs' custom tokens. It is granted NO roles, in the
 # FP or anywhere: signing goes through IAM signJwt as this account, and
@@ -74,9 +74,9 @@ resource "google_project_iam_member" "datastore_viewer" {
 # ledgers, and deletes the Auth users of expired runs. It is the most
 # privileged new identity (firebasedatabase.admin could lift caps; its code
 # never writes /config, which IAM can't enforce). Trivy flags a privileged
-# role on a service account: accepted by design §11. Two accounts hold
-# firebasedatabase.admin on the FP, this one and the coordinator's writer
-# below; no other does.
+# role on a service account: accepted by design §11. No other service
+# account holds firebasedatabase.admin on the FP except the coordinator's
+# writer below, once coordinator_account is set (coordinator plan P5).
 #trivy:ignore:AVD-GCP-0007
 resource "google_project_iam_member" "history_database" {
   project = var.project
