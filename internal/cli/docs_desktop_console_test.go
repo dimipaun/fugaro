@@ -7885,3 +7885,407 @@ func consoleSpawnList(t *testing.T, src, constant, field string) []string {
 	}
 	return out
 }
+
+// --- Check 59a and 59b: the console's owner-run live checks (plan Task 4.3) ---
+//
+// The four tests below pin the two checklist sections Task 4.3 writes. They are
+// named TestCheck59… rather than TestChecklist… on purpose: the package's
+// TestChecklist… functions are enumerated by name in the compute-backend plan's
+// open item 9 and held to the tree in both directions by
+// TestDocsComputeBackendNamesEveryChecklistTest, and that enumeration also
+// records that the guard test the project-centric design names,
+// TestChecklistChecksAreGuarded, is NOT in this tree. These four are this task's
+// own, so they wear the check's number instead.
+
+// check59Path is the live checklist, the only document Task 4.3 writes.
+const check59Path = "docs/gcp-live-checklist.md"
+
+// check59SectionAt is the one place the two headings are spelled, so a rename
+// of either fails here rather than in four places at once.
+const (
+	check59aHeading = "## Check 59a:"
+	check59bHeading = "## Check 59b:"
+)
+
+// check59Sections reads both halves of the number. A section that has gone
+// missing fails in docSection with the heading that could not be found.
+func check59Sections(t *testing.T) (doc, a, b string) {
+	t.Helper()
+	doc = readDoc(t, check59Path)
+	return doc,
+		docSection(t, check59Path, doc, check59aHeading),
+		docSection(t, check59Path, doc, check59bHeading)
+}
+
+// check59FactLines returns a section's FACT lines: the lines that carry the word
+// FACT, a command in backticks and the `→` that names what that command must
+// print. The shape is the assertion rather than the decoration — round 2 of the
+// plan found assertion (4) written as a bare sentence with nothing under it, so
+// a line without a command and an expected output is deliberately not a FACT
+// line at all here.
+func check59FactLines(section string) []string {
+	var out []string
+	for _, line := range strings.Split(section, "\n") {
+		if strings.Contains(line, "FACT:") && strings.Contains(line, "→") {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// check59FactLine returns the one FACT line naming cmd, and fails the test when
+// there is none: a command the assertion rests on and no FACT line for it is
+// exactly the defect TestCheck59AssertionFourIsFactLined exists to catch.
+func check59FactLine(t *testing.T, facts []string, cmd string) string {
+	t.Helper()
+	for _, line := range facts {
+		if strings.Contains(line, cmd) {
+			return line
+		}
+	}
+	t.Fatalf("Check 59a's assertion (4) carries no FACT line naming `%s`: a safety property with no command and no expected output under it is the thing the plan's round 2 found", cmd)
+	return ""
+}
+
+// check59RestoreBlock returns the fenced bash block of section that is its
+// restore step: the block whose own header line names it — `# === Check 59a:
+// Restore.` — and not merely a block that mentions the word. Every other block
+// is a step, and a restore step that is not a block of its own cannot be held to
+// the one rule it exists under.
+//
+// "Mentions Restore" is not enough, and that was this helper's first version's
+// bug: the setup block comes first and its own header says "RE-RUN THIS WHOLE
+// BLOCK at the start of every step (1, 2, 3, 4, 5, Restore)", so the setup
+// block was returned for both sections and
+// TestCheck59RestoreStepSparesPreexistingIdentities never scanned either real
+// Restore block — a `security delete-identity` inserted into one left the test
+// green, which is the exact mutation it exists to fail. The header's own first
+// line is the fact to read, so it is read.
+func check59RestoreBlock(t *testing.T, heading, section string) []string {
+	t.Helper()
+	label := strings.TrimSuffix(strings.TrimPrefix(heading, "## "), ":")
+	want := "# === " + label + ": Restore."
+	for _, block := range bashBlocks(section) {
+		for _, line := range block {
+			if strings.HasPrefix(strings.TrimSpace(line), want) {
+				return block
+			}
+		}
+	}
+	t.Fatalf("%s has no fenced bash block whose own header line names its Restore step (`%s`), so nothing holds the restore to sparing what it did not create", heading, want)
+	return nil
+}
+
+// TestCheck59IsSplitIntoAAndB asserts the number is written as two sections, as
+// design D12 rules and the plan's Task 4.3 requires: `## Check 59a` and
+// `## Check 59b`, one number with two sections, the way Check 43 carries 43a to
+// 43f. The split is not tidiness — the two halves cannot run at the same moment,
+// because 59b needs a published update feed and 59a does not — so a later edit
+// that folds them back into one section that cannot run fails a named test
+// rather than shipping a check nobody can execute.
+func TestCheck59IsSplitIntoAAndB(t *testing.T) {
+	doc, a, b := check59Sections(t)
+
+	// The single section the split replaces, in either of its spellings.
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "## Check 59:") || line == "## Check 59" {
+			t.Errorf("%s carries %q: Check 59 is one number with TWO sections (59a and 59b), and a single section is the version that cannot run", check59Path, line)
+		}
+	}
+	if strings.Contains(doc, "## Check 59 ") {
+		t.Error("the checklist carries a `## Check 59 ` heading: 59 is written as 59a and 59b and never as a bare section")
+	}
+
+	// 59a is the first signed build and the safety assertion, and it says so.
+	for _, want := range []string{
+		"No agent performs any step",
+		"NOT RUN",
+		"run by you",
+		"never `belong`",
+	} {
+		if !strings.Contains(a, want) {
+			t.Errorf("Check 59a does not say %q", want)
+		}
+	}
+
+	// 59b's FIRST LINES say the two things that make it unrunnable today: it
+	// needs a published update feed, and it runs after the first tag that
+	// publishes one. Both facts are the reason the two halves are two sections,
+	// so they belong where a reader meets the section, not at its end.
+	head := b
+	if len(head) > 1200 {
+		head = head[:1200]
+	}
+	for _, want := range []string{
+		"NOT RUNNABLE",
+		"published feed",
+		"Task 4.4",
+		"0.111.0",
+		"second",
+		"console-v0.110.0",
+	} {
+		if !strings.Contains(head, want) {
+			t.Errorf("Check 59b's first lines do not say %q: the section's opening is where the two preconditions that stop it running today have to be read", want)
+		}
+	}
+
+	// Both rows of the summary table, each saying whose check it is.
+	rows := map[string]string{}
+	for _, line := range strings.Split(doc, "\n") {
+		for _, n := range []string{"| 59a |", "| 59b |"} {
+			if strings.HasPrefix(line, n) {
+				rows[n] = line
+			}
+		}
+	}
+	if len(rows) != 2 {
+		t.Fatalf("the checklist's summary table carries %d of Check 59's two rows (%v): the split is one number and two rows", len(rows), rows)
+	}
+	for _, n := range []string{"| 59a |", "| 59b |"} {
+		for _, want := range []string{"run by you", "NOT RUN", "never `belong`"} {
+			if !strings.Contains(rows[n], want) {
+				t.Errorf("the `%s` row does not carry %q", n, want)
+			}
+		}
+	}
+	if !strings.Contains(rows["| 59a |"], "0.110.0") {
+		t.Error("the `| 59a |` row does not name the published release 59a runs against, which is the fact that makes it runnable today")
+	}
+	if !strings.Contains(rows["| 59b |"], "0.111.0") {
+		t.Error("the `| 59b |` row does not name the release that has to publish the feed before 59b can run")
+	}
+}
+
+// TestCheck59AssertionFourIsFactLined is the test that makes assertion (4) an
+// assertion rather than a sentence: the safety claim — that with the console
+// pointed at the sandbox installation it spawned nothing for `belong` — is only
+// as good as the commands under it, and each of those commands has to carry the
+// output it must produce.
+//
+// The three jq keys are the ones Task 1.3's spawnlog.test.ts pins the schema to
+// (`ts`, `argv`, `cwd`, `project`), so the check and the writer cannot drift; and
+// the keys that are NOT fields of anything — `.gcp_project` (D13's installation
+// tuple is a project name, a config path, a binary path and a directory),
+// `.spawns` and `.repository` — must not be read, because a jq over a key the
+// schema does not define prints null for every line and proves nothing.
+func TestCheck59AssertionFourIsFactLined(t *testing.T) {
+	_, a, _ := check59Sections(t)
+	facts := check59FactLines(a)
+
+	// Step 1 and step 4: the same commands, opposite expected outputs. The
+	// mutation control is what makes the zeroes mean something.
+	for _, req := range []struct{ cmd, want string }{
+		{`test -s "${SPAWNLOG}"`, "`0`"},
+		{`grep -c belong "${SPAWNLOG}"`, "`0`"},
+		{`grep -c edgeappinc "${SPAWNLOG}"`, "`0`"},
+	} {
+		line := check59FactLine(t, facts, req.cmd)
+		if !strings.Contains(line, req.want) {
+			t.Errorf("Check 59a's FACT line for `%s` does not name %s as its expected output:\n  %s", req.cmd, req.want, line)
+		}
+	}
+
+	// Step 2 and step 3: every spawned argv resolves to the sandbox
+	// installation, from the sandbox checkout, for the sandbox project.
+	for _, cmd := range []string{
+		`jq -r '.argv[0]' "${SPAWNLOG}"`,
+		`jq -r '.project' "${SPAWNLOG}"`,
+		`jq -r '.cwd' "${SPAWNLOG}"`,
+	} {
+		if !strings.Contains(check59FactLine(t, facts, cmd), "→") {
+			t.Errorf("Check 59a's FACT line for `%s` carries no expected output", cmd)
+		}
+	}
+
+	// The mutation control, whose expected output is 1 for the same two greps
+	// that must say 0 above.
+	control := check59FactLine(t, facts, `grep -c belong "${SPAWNLOG}.test"`)
+	if !strings.Contains(control, "`1`") {
+		t.Errorf("Check 59a's mutation control does not name `1` as its expected output, so it cannot show that the command which must say 0 says 1 when the thing it looks for is there:\n  %s", control)
+	}
+	if !strings.Contains(a, `printf`) || !strings.Contains(a, "${SPAWNLOG}.test") {
+		t.Error("Check 59a has no step that appends a `belong` record to a COPY of the log: the mutation control is what makes the three zeroes evidence")
+	}
+
+	// The launch: assertion (4) is unrunnable without the variable, and a Finder
+	// or Dock launch inherits launchd's environment rather than the shell's, so
+	// the app is started from the terminal with the variable already exported.
+	launch := "export FUGARO_CONSOLE_SPAWN_LOG=\"${SPAWNLOG}\"\n" +
+		"\"/Applications/Fugaro Console.app/Contents/MacOS/Fugaro Console\" &"
+	if !strings.Contains(a, launch) {
+		t.Error("Check 59a does not export FUGARO_CONSOLE_SPAWN_LOG and start the built bundle by its executable path on the two adjacent lines: without the export the log does not exist, and a Finder or Dock launch never sees the variable")
+	}
+	if strings.Contains(a, "open \"/Applications/Fugaro Console.app\" &") {
+		t.Error("Check 59a starts the logged run with `open`, which does not forward the shell's environment to the launched app")
+	}
+
+	// The bundle and the executable are the names Task 4.1's builder
+	// configuration pins, read out of it rather than typed here.
+	productName := consoleProductName(t)
+	if want := "/Applications/" + productName + ".app/Contents/MacOS/" + productName; !strings.Contains(a, want) {
+		t.Errorf("Check 59a does not launch %q, the executable name console/package.json's build.productName pins", want)
+	}
+
+	// And no jq over a key no shape defines.
+	for _, line := range strings.Split(a, "\n") {
+		if !strings.Contains(line, "jq") {
+			continue
+		}
+		for _, key := range []string{".gcp_project", ".spawns", ".repository"} {
+			if strings.Contains(line, key) {
+				t.Errorf("Check 59a reads `%s` with jq: no shape has that key, so the read prints null for every line and proves nothing\n  %s", key, line)
+			}
+		}
+	}
+}
+
+// TestCheck59NeverNamesBelongAsATarget is the machine-checkable half of Global
+// Constraint 6 for these sections: the string `belong` is never an argument to a
+// command the check runs, so a later edit cannot "verify" the negative the
+// forbidden way — `fugaro --project belong budget show` is red here, and that is
+// the mistake this test exists to catch.
+//
+// The reconciliation round 3 asked for is in the permitted set. Round 2's
+// version allowed only a prose prohibition and the `grep -c belong` FACT line,
+// which forbids the one line the mutation control must write: step 4 appends a
+// record whose project is `belong` to a COPY of the log. So exactly three
+// shapes are permitted, and nothing else:
+//
+//  1. prose outside a fenced block, stating the prohibition (which is why every
+//     such line has to carry the word "never");
+//  2. a comment inside a bash block — the string in a line that runs nothing;
+//  3. the step-1 grep line, and the single mutation-control `printf` whose
+//     output is redirected into `${SPAWNLOG}.test`.
+//
+// Everything else fails, most importantly any other command line naming it and
+// any `--project belong` at all.
+func TestCheck59NeverNamesBelongAsATarget(t *testing.T) {
+	_, a, _ := check59Sections(t)
+
+	// Which lines are inside a fenced block, and which are prose. A ```bash
+	// block is the only kind this section may use for a command, which is what
+	// makes "inside a block" a fact the test can read: a line between an opening
+	// and a closing fence is a command or a comment about one.
+	sectionLines := strings.Split(a, "\n")
+	inBlock := make([]bool, len(sectionLines))
+	fenced := false
+	for i, line := range sectionLines {
+		if isFence(line) {
+			fenced = !fenced
+			continue
+		}
+		inBlock[i] = fenced
+	}
+
+	for i, line := range sectionLines {
+		if !strings.Contains(line, "belong") {
+			continue
+		}
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case inBlock[i]:
+			// A command line inside a block. Only three are permitted: a
+			// comment (which runs nothing), the step-1 grep, and the mutation
+			// control.
+			if strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			if strings.Contains(line, `grep -c belong "${SPAWNLOG}"`) {
+				continue
+			}
+			if strings.Contains(line, "printf") && strings.Contains(line, "${SPAWNLOG}.test") {
+				continue
+			}
+			t.Errorf("Check 59a's bash line %d names `belong` and runs something:\n  %s\nthe only command lines that may name it are the step-1 grep and the mutation control's printf into a copy", i+1, trimmed)
+		default:
+			// Prose. Every such line states the prohibition, and the word
+			// "never" is what makes that a claim this test can read rather
+			// than a sentence it hopes is one.
+			if !strings.Contains(line, "never") {
+				t.Errorf("Check 59a's prose line %d names `belong` without stating the prohibition:\n  %s", i+1, trimmed)
+			}
+		}
+	}
+
+	if strings.Contains(a, "--project belong") {
+		t.Error("Check 59a carries `--project belong`, which is the forbidden way to verify this negative")
+	}
+	for _, bad := range []string{"belong/", "/belong"} {
+		if strings.Contains(a, bad) {
+			t.Errorf("Check 59a carries %q: the scratch copy is `${SPAWNLOG}.test`, so no path, URL or file name needs the name in it at all", bad)
+		}
+	}
+	if !strings.Contains(a, "no step of this check touches `belong`") {
+		if !strings.Contains(a, "never touches `belong`") {
+			t.Error("Check 59a does not state the prohibition in its own text: the permitted prose shape is a sentence saying no step touches that installation")
+		}
+	}
+}
+
+// TestCheck59RestoreStepSparesPreexistingIdentities is the mutation-proof half
+// of the restore rule: a restore step that "removes the keychain item it was
+// signed with" would delete the owner's own signing certificate — the identity
+// the whole pipeline depends on, which predates the check by design. So neither
+// section's restore step may invoke `security delete-identity`,
+// `security delete-certificate` or `security delete-keychain`, and both have to
+// record what existed before they started so the rule is enforceable rather than
+// remembered.
+func TestCheck59RestoreStepSparesPreexistingIdentities(t *testing.T) {
+	_, a, b := check59Sections(t)
+
+	for _, section := range []struct{ heading, text string }{
+		{check59aHeading, a},
+		{check59bHeading, b},
+	} {
+		label := strings.TrimSuffix(section.heading, ":")
+		restore := check59RestoreBlock(t, section.heading, section.text)
+		for _, line := range restore {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			for _, banned := range []string{"security delete-identity", "security delete-certificate", "security delete-keychain"} {
+				if strings.Contains(line, banned) {
+					t.Errorf("%s's Restore invokes `%s`:\n  %s\nthe identity the check did not create is not the check's to remove", label, banned, trimmed)
+				}
+			}
+		}
+		// The pre-check record, which is what makes "only what it created" a
+		// rule rather than an intention.
+		if !strings.Contains(section.text, "security find-identity -v -p codesigning") {
+			t.Errorf("%s does not FACT-line `security find-identity -v -p codesigning`, so nothing records which identities predated it", label)
+		}
+		if !strings.Contains(section.text, "never deleted") {
+			t.Errorf("%s does not say a signing identity present before the check is never deleted", label)
+		}
+	}
+
+	// 59a's own record is a FACT line, so a restore that could not tell the two
+	// apart is caught by the section rather than by a reader.
+	facts := check59FactLines(a)
+	if check59FactLine(t, facts, "security find-identity -v -p codesigning") == "" {
+		t.Error("Check 59a records the identities it found as a FACT line, not just as a command")
+	}
+}
+
+// consoleProductName reads the app's product name out of the builder
+// configuration: `build.productName` in console/package.json. It is the name
+// the packaged bundle and its executable carry, so a check that names
+// `/Applications/<productName>.app/Contents/MacOS/<productName>` is pinned to
+// the packer rather than to a remembered string. This file is the one Go file
+// Task 0.3's boundary test allows to mention a console/ path.
+func consoleProductName(t *testing.T) string {
+	t.Helper()
+	var pkg struct {
+		Build struct {
+			ProductName string `json:"productName"`
+		} `json:"build"`
+	}
+	if err := json.Unmarshal([]byte(readDoc(t, "console/package.json")), &pkg); err != nil {
+		t.Fatalf("console/package.json does not decode: %v", err)
+	}
+	if pkg.Build.ProductName == "" {
+		t.Fatal("console/package.json's build.productName is empty, and a packaged bundle with no product name has no bundle path for Check 59a to launch")
+	}
+	return pkg.Build.ProductName
+}
