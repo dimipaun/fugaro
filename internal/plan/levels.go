@@ -78,23 +78,11 @@ func Downstream(doc Document) map[string]int {
 // It is nil for a document the read refuses, and an empty chain for a graph
 // with no tasks.
 func CriticalPathTasks(doc Document) []string {
-	// STUB, the red step: the raw count of waiting tasks decides, which is the
-	// ranking D26 keeps *beside* the critical path and not the ranking of the
-	// work. TestHubIsNotTheBottleneck is the test that refuses this.
-	counts := Downstream(doc)
-	if counts == nil {
+	g, ok := readAnswers(doc)
+	if !ok {
 		return nil
 	}
-	head, most := "", -1
-	for id, n := range counts {
-		if n > most || (n == most && id < head) {
-			head, most = id, n
-		}
-	}
-	if head == "" {
-		return nil
-	}
-	return []string{head}
+	return g.CriticalPath.Tasks
 }
 
 // readAnswers is the one call the three functions above make: the read's own
