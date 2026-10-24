@@ -1,7 +1,7 @@
 // website/test/faq-community.mjs — the FAQ and the community page (website plan, W1.10).
 //
 // The two pages this file checks are the site's document pages, and the rules they answer to
-// are about what a page may *say* — and, for the community page, how it is *set*. Eight of them
+// are about what a page may *say* — and, for the community page, how it is *set*. Nine of them
 // are checked here, and each one reads its source rather than the page's own copy of it
 // (Review Focus: "the test must read the source, not the generator's own output"):
 //
@@ -59,6 +59,13 @@
 //      stops the build, naming the row, for a source that is not in the tree, an unknown key,
 //      an empty field, a date that is not a date or a fifth point. The sentence the page has
 //      to carry, and the phrases it may not be made of, are `wording.mjs`'s (D249).
+//   9. **Both of the community page's licence elements state the core/`ee/` split** (F7; R2 as
+//      amended by O2). The Licence card and the `#licence` band each link `LICENSING.md` beside
+//      `LICENSE`, say the licence is the core's and which parts of the repository it does not
+//      cover, and the band names the reserved `ee/` directory among them. The sentence that
+//      `LICENSE` is "the only text that governs" is gone: it stopped being true the day one
+//      file outside it was under another licence, which is what the reserved directory is.
+//      Each refusal has a plant, on the element the defect sits in.
 //
 // How it reads a page: `npm run check` builds the site before it runs anything here, so the
 // real pages are read from `website/dist/` — the artifact a reader gets, not a rendering of
