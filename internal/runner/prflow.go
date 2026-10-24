@@ -445,6 +445,21 @@ func reviewsPart(rs []runstore.ReviewSummary) string {
 	return fmt.Sprintf("%sreview round %d: %s", who, last.Round, Plural(last.Findings, "finding"))
 }
 
+// backlogPart is the section's account of the items the run filed: the ids
+// beside the review line that says what it left open, so a reader of the
+// pull request can cite an item without opening the tree (D9, D26, D27).
+// "" for a run that filed none, which is most of them.
+func (r *run) backlogPart() string {
+	if len(r.rec.Backlog) == 0 {
+		return ""
+	}
+	ids := make([]string, 0, len(r.rec.Backlog))
+	for _, id := range r.rec.Backlog {
+		ids = append(ids, "`"+inlineText(id)+"`")
+	}
+	return "filed " + strings.Join(ids, ", ")
+}
+
 // costPart is the model cost for the section: dollars for api-key and
 // Vertex runs (against the run's cap when it has one), notional for oauth.
 func (r *run) costPart() string {
@@ -546,7 +561,7 @@ func (r *run) finalSection(ready bool, reason string, records []verify.Record) s
 	case r.rec.Status == runstore.StatusCancelled:
 		head = "**Cancelled**"
 	}
-	return r.sectionLines(head, why, verifyPart(records), reviewsPart(r.rec.Reviews), r.costPart(), r.updated("finished"))
+	return r.sectionLines(head, why, verifyPart(records), reviewsPart(r.rec.Reviews), r.backlogPart(), r.costPart(), r.updated("finished"))
 }
 
 // ---- finalize ----

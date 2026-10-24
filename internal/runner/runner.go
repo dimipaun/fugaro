@@ -25,6 +25,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/backlog"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
@@ -2607,6 +2608,17 @@ func (r *run) finalize(ctx context.Context) error {
 	// value a later slice's rules act on is the one the run's whole diff
 	// answered (rigor.go).
 	r.finalizeRigor()
+	// What the run left open is filed before the readiness rule reads the
+	// commit, so the branch a reviewer reads and the pull request carry the
+	// items (D9). Filing commits, which moves HEAD, so the rule's own test
+	// record has to be made on the commit it moved to — the same re-verify a
+	// fixed gate's autofix commit gets (gate.go).
+	if r.fileOpenItems(ctx) {
+		r.verifyOnce(ctx, verify.KindTest)
+		if sha, err = r.repo.HeadSHA(ctx); err != nil {
+			return fmt.Errorf("reading head sha after filing: %w", err)
+		}
+	}
 	records, err := verify.Records(r.d.StateDir)
 	if err != nil {
 		return fmt.Errorf("reading verify records: %w", err)
@@ -2780,6 +2792,134 @@ func (r *run) finalize(ctx context.Context) error {
 	}
 	r.storeReport(ctx, report, fu)
 	return nil
+}
+
+// openFindings is what this run left open: the last senior review, when it
+// did not ship and its findings stand. A round that shipped left nothing, a
+// run with no senior review at all — one that died before review, or ended
+// after its first line — has nothing to file either, and a "none" verdict is
+// a skipped review rather than a review with findings.
+//
+// One round's worth, not one per round: the fix loop answers an earlier
+// round's findings, and only the last round's are what the run hands over.
+func openFindings(rs []runstore.ReviewSummary) *runstore.ReviewSummary {
+	last := seniorReview(rs)
+	if last == nil || last.Findings == 0 || last.Verdict != "changes" {
+		return nil
+	}
+	return last
+}
+
+// fileOpenItems files the backlog item for what this run left open and says
+// whether it filed one (docs/rigor-modes/implementation-plan.md T4.5, D9,
+// D26, D27). The item goes into this run's own checkout and its own commit —
+// the same branch and the same pull request as the change it was filed from,
+// so the filing dirties nothing a reviewer was not already reading (D9) —
+// and its id is recorded beside the review round it came from.
+//
+// The item is written before the run's diff is what a reviewer reads and
+// after the record's own ChangedFiles was measured, so the item file is
+// deliberately not part of "the paths this run changed" (D22's third moment
+// reads that field, and an item about the run must not move the mode the run
+// resolved).
+//
+// Nothing here decides *whether* a mode files: D30's per-mode table is T4.6's
+// (it lands beside the policy, in internal/rigor/), so this files for every
+// mode that reaches here with a round that did not ship, and T4.6 narrows it.
+//
+// A filing that cannot be made is a warning, never the run's outcome: the
+// pull request, the report and the record are what the run is for, and an
+// item that could not be written costs a follow-up, not the run.
+func (r *run) fileOpenItems(ctx context.Context) bool {
+	open := openFindings(r.rec.Reviews)
+	if open == nil {
+		return false
+	}
+	item, err := backlog.Write(filepath.Join(r.repo.Dir, backlog.Dir), backlog.New{
+		Title:   fmt.Sprintf("Review round %d left %s open", open.Round, Plural(open.Findings, "finding")),
+		Mode:    r.filedMode(),
+		Area:    r.filedArea(),
+		FiledBy: r.filedBy(),
+		FiledIn: "run:" + r.rec.RunID,
+		Date:    r.d.Now().UTC().Format("2006-01-02"),
+		Body:    r.filedBody(open),
+	})
+	if err != nil {
+		r.d.Log.Warn("filing the run's open items failed", "err", r.redact(err.Error()))
+		return false
+	}
+	msg := fmt.Sprintf("fugaro: file %s, what review round %d left open", item.ID, open.Round)
+	if _, err := r.repo.CommitAll(ctx, msg); err != nil {
+		r.d.Log.Warn("committing the filed item failed", "err", r.redact(err.Error()))
+		return false
+	}
+	r.rec.Backlog = append(r.rec.Backlog, item.ID)
+	return true
+}
+
+// filedMode is the mode the item records: the one the run resolved (D27), or
+// `none` when the record carries no rigor block at all, which is the value a
+// run that resolved nothing leaves — never a mode nobody chose.
+func (r *run) filedMode() string {
+	if r.rec.Rigor == nil || !rigor.Known(r.rec.Rigor.Mode) {
+		return "none"
+	}
+	return string(r.rec.Rigor.Mode)
+}
+
+// filedArea is the area the item records: the names of the rules the run's
+// paths matched, strictest first as the record carries them, or the layer
+// that decided the mode when no rule matched — `project` for the project
+// layer and `repo` for everything below it, since an item about no rule in
+// particular is an item about the whole repository (D27).
+func (r *run) filedArea() string {
+	rg := r.rec.Rigor
+	if rg == nil {
+		return "repo"
+	}
+	if len(rg.Areas) > 0 {
+		names := make([]string, 0, len(rg.Areas))
+		for _, a := range rg.Areas {
+			names = append(names, a.Name)
+		}
+		return strings.Join(names, ",")
+	}
+	if rg.From == rigor.FromProject {
+		return "project"
+	}
+	return "repo"
+}
+
+// filedBy is the item's launcher: the identity the task was requested by,
+// which is who asked for the run. A task that names nobody — a hand-built
+// one, or one an older launcher wrote — records Fugaro itself rather than an
+// empty field D27's format refuses.
+func (r *run) filedBy() string {
+	if by := strings.TrimSpace(r.spec.RequestedBy); by != "" {
+		return by
+	}
+	return "fugaro"
+}
+
+// filedBody is the item's body: what the round left open, why it is filed
+// rather than fixed here, and what closes it (D27). The findings' own text is
+// not carried yet — a round's findings are a count on the record and their
+// text is in the run's transcript (T3.4 owns persisting them) — so the item
+// says which round and how many, and links the run it came from.
+func (r *run) filedBody(open *runstore.ReviewSummary) string {
+	who := "senior review"
+	if open.Tier == runstore.TierFirst {
+		who = "first-line review"
+	}
+	what := fmt.Sprintf("Round %d's %s ended `%s` with %s: the run did not ship them, so they are carried here rather than fixed in this pull request.",
+		open.Round, who, open.Verdict, Plural(open.Findings, "finding"))
+	why := "The run left them open: they are not what this pull request's outcome was decided on, and an item filed here is a record a later reader can cite, which a finding in a transcript is not (D9)."
+	done := "The pull request that addresses them closes this item (D31)."
+	links := []string{fmt.Sprintf("run `%s`", r.rec.RunID)}
+	if r.rec.PR != nil && r.rec.PR.Number != 0 {
+		links = append(links, fmt.Sprintf("pull request #%d", r.rec.PR.Number))
+	}
+	return backlog.Body(what, why, done, links)
 }
 
 // closedWord says "merged" when the provider can tell the PR was merged,

@@ -515,6 +515,9 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			},
 			At:       runstore.RigorAtFinalize,
 			Revision: "origin/main"},
+		// And the items the run filed (docs/rigor-modes T4.5, D9): ids of
+		// the files a reviewer finds under docs/backlog/ on the branch.
+		Backlog: []string{"20261024-01", "20261024-02"},
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {
@@ -603,6 +606,45 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		if err := sch.Validate(bad); err == nil {
 			t.Errorf("schema accepts %s: %s", tc.name, repl)
 		}
+	}
+	// The filed items (docs/rigor-modes T4.5, D9): an id is the day and the
+	// day's sequence, so a record carrying anything else names no file. The
+	// field is additive — a record from before it existed, which is most of
+	// them, decodes exactly as it did — which is what D9's note about the
+	// version staying 1 means.
+	for _, tc := range []struct{ name, old, new string }{
+		{"an id that is not one", `["20261024-01","20261024-02"]`, `["20261024-1"]`},
+		{"an id with no day", `"20261024-01"`, `"not-an-id"`},
+		{"an id that is not text", `"20261024-01"`, `20261024`},
+		{"a filing the record cannot name", `["20261024-01","20261024-02"]`, `{"20261024-01":1}`},
+	} {
+		old, repl := []byte(tc.old), []byte(tc.new)
+		if !bytes.Contains(data, old) {
+			t.Fatalf("fixture lacks the literal this test replaces (%s): %s", tc.name, data)
+		}
+		bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, old, repl, 1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(bad); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, repl)
+		}
+	}
+	without := rec
+	without.Backlog = nil
+	bare, err := json.Marshal(without)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(bare, []byte(`"backlog"`)) {
+		t.Fatalf("a run that filed nothing still writes the field: %s", bare)
+	}
+	inst, err = jsonschema.UnmarshalJSON(bytes.NewReader(bare))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a record that filed nothing: %v\n%s", err, bare)
 	}
 }
 
