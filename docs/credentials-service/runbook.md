@@ -83,12 +83,12 @@ Nothing here is a switch of account: the cascade picks the credential, and the a
 
 ```bash
 fugaro accounts clear NAME            # add --yes to skip the typed confirmation
-fugaro update --firebase-project <firebase-project-id>   # only for creds_rules_denied
+fugaro update --firebase-project <gcp-project-id>   # only for creds_rules_denied
 ```
 
 `fugaro accounts clear NAME` is the only thing that ends a `broken` mark, and it also clears `exhausted`. It writes one node — `creds/marks/NAME` — conditionally on the value it read, so a mark the service changed while you were reading is not lost. Replace the token **first**: the service marks it broken again if the token is still refused.
 
-`creds_rules_denied` is the other kind of wrong state, and it is not a mark: the database's deployed rules predate the fields the cascade writes, so the run cannot record its own credential state. The remedy is the owner-run `fugaro update --firebase-project <firebase-project-id>` with a current release, which deploys the rules the cascade's fields need; the halt's own report names that command. Until it runs, every `cascade` run halts there.
+`creds_rules_denied` is the other kind of wrong state, and it is not a mark: the database's deployed rules predate the fields the cascade writes, so the run cannot record its own credential state. The remedy is the owner-run `fugaro update --firebase-project <gcp-project-id>` with a current release, which deploys the rules the cascade's fields need; the halt's own report names that command. Until it runs, every `cascade` run halts there.
 
 ## 6. Rotating the bundle
 

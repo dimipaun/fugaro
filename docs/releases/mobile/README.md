@@ -46,15 +46,16 @@ lands the notes, on `main` before the tag:
   one sentence.
 
 **The name comes first.** The app's releases are named after birds, spent in
-order: the **first is Falcon** (`mobile-v0.1.0`), then **Pelican**, then
-**Robin**. The name belongs in the first bullet of the notes, in the summary
+order: the **first is Falcon** (`mobile-v0.200.0`), then **Pelican**
+(`mobile-v0.201.0`), then **Robin** (`mobile-v0.202.0`). The name belongs in the first bullet of the notes, in the summary
 line's own phrasing where it fits, and in the store listing's "what's new" text:
 this stream creates no GitHub release to title.
 
-**The first release is `mobile-v0.1.0`, "Falcon".** `mobile/app.json` carries
+**The first release is `mobile-v0.200.0`, "Falcon".** `mobile/app.json` carries
 `expo.version` `0.0.0` today, which is a placeholder rather than a version
-anybody released: the release that cuts `mobile-v0.1.0` sets it to `0.1.0` on
-`main` first. If the config carries another version when you read it, **that**
+anybody released: the release that cuts `mobile-v0.200.0` sets it to `0.200.0` on
+`main` first (the stream starts at `0.200.0` so that an app version is never
+mistaken for a CLI or console one: the owner's ruling of 2026-10-24). If the config carries another version when you read it, **that**
 line is the release being cut and the tag is `mobile-v<that line>`: the config is
 the authority and the tag follows it.
 

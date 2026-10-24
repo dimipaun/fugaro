@@ -617,7 +617,7 @@ func (s *secretsStage) apiErr(err error) error {
 
 func (s *secretsStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
 	s.resolve(ctx)
-	if err := s.e.adoptGuard(initflow.Secrets); err != nil {
+	if err := s.e.newMachineGuard(initflow.Secrets); err != nil {
 		return initflow.Outcome{}, err
 	}
 	f := s.terminal()

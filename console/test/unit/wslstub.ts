@@ -2,8 +2,8 @@
 // received (docs/console-windows/implementation-plan.md Part A, decision D11).
 //
 // **The claim that matters is the second hop's, and only an out-of-band channel
-// can state it.** On Windows the console runs `wsl.exe -d <distro> --cd <dir> --
-// fugaro …`, so every question about the WSL route -- which distribution, which
+// can state it.** On Windows the console runs `wsl.exe -d <distro> --cd <dir> -e
+// sh -c '… exec fugaro …'`, so every question about the WSL route -- which distribution, which
 // directory, which environment, which exit status -- is a question about what
 // the *distribution* got rather than about what the console thinks it passed.
 // `installWslStub` therefore installs a real executable named `wsl.exe` (the
@@ -181,6 +181,29 @@ export interface WslStubOptions {
   /** `distroPath` replaces the distribution's `PATH`, for a test that wants its
    * own. */
   readonly distroPath?: string
+  /** `lingersAfterChild` keeps the fake `wsl.exe` **alive after the child
+   * inside the distribution has exited**, holding its own stdout open. It is
+   * T-F5's case (F25): a pipe that outlives the process that wrote to it, which
+   * is why `runToCompletion` settles on `close` and keeps the read deadline as
+   * the backstop. Two more ways for that to happen arrive with the wrapper --
+   * the WSL relay and the distribution's session -- so the backstop is
+   * load-bearing on this route rather than theoretical. */
+  readonly lingersAfterChild?: boolean
+  /** `holdsOnTerm` makes the fake `wsl.exe` **ignore `SIGTERM`**, which is the
+   * state T-F4 is built for: killing the Windows-side `wsl.exe` is not
+   * documented to kill the Linux process it started (F24, U5), and the console
+   * may not even get as far as `wsl.exe` dying. A fake that always died on
+   * `SIGTERM` would let a console that only ever killed `wsl.exe` pass every
+   * test, which is exactly the bug. */
+  readonly holdsOnTerm?: boolean
+  /** `preamble` is what the fake `wsl.exe` prints on **stderr before it runs
+   * the distribution's command**, which is what the real one does: its relay
+   * notices and warnings arrive on the same pipe, before the wrapper's own
+   * line. A reader that looked for the wrapper's line only at the start of
+   * stderr would fail here, so this option is how T-F1's "a shell did start"
+   * and T-F4's pid are asserted against the real ordering rather than the
+   * convenient one. */
+  readonly preamble?: string
 }
 
 /** WslStub is an installed fake `wsl.exe` and the stub `fugaro` behind it. */
@@ -232,6 +255,9 @@ export function installWslStub(directory: string, options: WslStubOptions): WslS
       status: options.distros.status,
       encoding: options.distros.encoding ?? 'utf8',
       queryFailure: options.distros.queryFailure ?? null,
+      holdsOnTerm: options.holdsOnTerm ?? false,
+      lingersAfterChild: options.lingersAfterChild ?? false,
+      preamble: options.preamble ?? null,
     }),
   )
   // The shim is `stub.ts`'s own arrangement, for its reasons: Node is named by
@@ -296,11 +322,13 @@ function shellQuote(value: string): string {
 
 /**
  * parseWslArgv reads the fake's own argv: the distribution, the `--cd`, and the
- * child's argv after the `--`. It answers a refusal sentence instead of a
+ * child's argv after the `-e` (`--exec`). It answers a refusal sentence instead of a
  * partial parse, so an invocation the double does not model is loud rather than
  * quietly reinterpreted -- `-d` is required because the console always names the
  * distribution it resolved (D2(a)), and a shape it does not know is refused
- * rather than skipped.
+ * rather than skipped. `--` is one of those: on a real `wsl.exe` it hands the
+ * rest of the line to the distribution's **login shell**, which would re-read
+ * every word, so a console that sent it is refused here by name (T-F4).
  *
  * It is exported, and its own source is what the generated child runs (see
  * `wslScript`), so the parser a test can hold and the parser the double runs are
@@ -317,8 +345,14 @@ export function parseWslArgv(argv: readonly string[]):
   let distro: string | null = null
   let cd: string | null = null
   let index = 0
-  while (index < argv.length && argv[index] !== '--') {
+  while (index < argv.length && argv[index] !== '-e' && argv[index] !== '--exec') {
     const flag = argv[index]
+    if (flag === '--') {
+      return {
+        ok: false,
+        reason: '`--` hands the command to the distribution’s login shell: the console runs its program with `-e`',
+      }
+    }
     if (flag === '-d' || flag === '--distribution') {
       const value = argv[index + 1]
       if (value === undefined || value === '') {
@@ -339,18 +373,18 @@ export function parseWslArgv(argv: readonly string[]):
     }
     return {
       ok: false,
-      reason: `this double knows \`-d\`, \`--cd\` and \`--\`, and was asked for ${JSON.stringify(flag)}`,
+      reason: `this double knows \`-d\`, \`--cd\` and \`-e\`, and was asked for ${JSON.stringify(flag)}`,
     }
   }
   if (index >= argv.length) {
-    return { ok: false, reason: 'there is no `--`: the double starts a child only after the separator' }
+    return { ok: false, reason: 'there is no `-e`: the double starts a child only after it' }
   }
   if (distro === null) {
     return { ok: false, reason: 'no `-d`: the console always names the distribution it resolved' }
   }
   const child = argv.slice(index + 1)
   if (child.length === 0) {
-    return { ok: false, reason: 'nothing follows the `--`: there is no child to start' }
+    return { ok: false, reason: 'nothing follows the `-e`: there is no child to start' }
   }
   return { ok: true, distro, cd, child }
 }
@@ -472,6 +506,9 @@ function wslScript(options: {
   readonly status: string
   readonly encoding: 'utf8' | 'utf16le'
   readonly queryFailure: { readonly status: number; readonly stderr: string } | null
+  readonly holdsOnTerm: boolean
+  readonly lingersAfterChild: boolean
+  readonly preamble: string | null
 }): string {
   return `// Generated by console/test/unit/wslstub.ts. Do not edit.
 import { appendFileSync } from 'node:fs'
@@ -486,6 +523,14 @@ const TRANSLATIONS = ${JSON.stringify(options.translations)}
 const LIST = ${JSON.stringify(options.list)}
 const STATUS = ${JSON.stringify(options.status)}
 const ENCODING = ${JSON.stringify(options.encoding)}
+const HOLDS_ON_TERM = ${JSON.stringify(options.holdsOnTerm)}
+const LINGERS_AFTER_CHILD = ${JSON.stringify(options.lingersAfterChild)}
+const PREAMBLE = ${JSON.stringify(options.preamble)}
+// A Windows-side \`wsl.exe\` that will not go: the console's \`SIGTERM\` does not
+// end it, so the Linux process behind it outlives every Windows-side signal
+// (F24, U5). Installing a listener is what replaces Node's default behaviour of
+// terminating on \`SIGTERM\`.
+if (HOLDS_ON_TERM) process.on('SIGTERM', () => {})
 const QUERY_FAILURE = ${JSON.stringify(options.queryFailure)}
 
 // The wrapper's \`PATH\`: the distribution's own, with the directory the double
@@ -626,10 +671,16 @@ record('spawn', {
   childEnv: env,
 })
 
+// \`wsl.exe\`'s own stderr, before the distribution's command runs: its relay
+// notices and warnings arrive on the same pipe as the wrapper's line, and
+// earlier (T-F1). A reader that looked only at the first bytes of stderr would
+// fail on this and only on this.
+if (PREAMBLE !== null) process.stderr.write(PREAMBLE)
+
 // The wrapper is run by the distribution's own shell, at \`/bin/sh\` -- the path
-// \`sh\` resolves to on the \`PATH\` above -- so \`echo $$ > <file>\` writes the pid
-// of the process that \`exec\`s the CLI, which is the pid the console has to kill
-// (T-F4, D6(a)).
+// \`sh\` resolves to on the \`PATH\` above -- so the shell prints its own pid in
+// the line it writes before it \`exec\`s the CLI, which is the pid the console
+// has to kill (T-F4, D6(a)).
 const child = isWrapper
   ? spawn('/bin/sh', ['-c', parsed.child[2]], { cwd, env, stdio: 'inherit' })
   : spawn(CHILD, parsed.child.slice(1), { cwd, env, stdio: 'inherit' })
@@ -641,6 +692,16 @@ child.on('error', (error) => {
 // code, which is what T-F1 asserts, and a signal is mirrored so a killed child
 // is a killed \`wsl.exe\` rather than a successful one.
 child.on('exit', (code, signal) => {
+  // A \`wsl.exe\` that outlives the process it started, with its stdout still
+  // open: the console's reader sees no \`close\`, and only its deadline can
+  // settle the read (T-F5, F25).
+  // A held handle as well as the early return: Node exits when the event loop
+  // is empty, and a fake with no child left and no handle would leave the loop
+  // and close its stdout -- which is the opposite of what this case models.
+  if (LINGERS_AFTER_CHILD) {
+    setInterval(() => {}, 60_000)
+    return
+  }
   if (signal !== null) process.kill(process.pid, signal)
   process.exit(code === null ? 1 : code)
 })

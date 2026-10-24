@@ -1,3 +1,21 @@
+# What the console's npm entry is, and what it deliberately is not:
+#
+#   - It watches the console's npm dependencies, weekly, at the console's own
+#     lockfile (`console/package-lock.json`, committed, `npm ci`-installed).
+#     `console/package.json` pins every dependency to an EXACT version and
+#     `test/unit/pinning.test.ts` enforces that, so a Dependabot pull request
+#     is a reviewable exact-then-exact bump and never a range.
+#   - It is **grouped**: minor and patch bumps arrive as one pull request a
+#     week rather than one per dependency, which is what keeps a second
+#     Dependabot stream from being a stream of approvals. **A major bump is
+#     deliberately NOT in the group**, so the Electron major -- the one bump
+#     the console's own toolchain task makes on purpose, and the one whose
+#     binary is not an ordinary npm dependency at all (design section 5.2) --
+#     arrives on its own for a deliberate look.
+#   - The `github-actions` entry keeps the SHA-pinned actions current, and
+#     `images/cloudbuild_test.go` asserts a weekly `github-actions` update is in
+#     this file.
+#
 # Dependabot keeps the SHA-pinned GitHub Actions current, updating both the
 # pin and its "# vX.Y.Z" comment. Two pins it can't see are bumped by hand
 # monthly, alongside the base refreshes: the Trivy digest in images/scan.sh
@@ -9,3 +27,25 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  # The console's own dependencies (desktop-console plan Task 1.0; design
+  # section 5.2 and this plan's open item 5). `directory` is the console's own
+  # package directory, and the reason is that it is the one Dependabot is being
+  # asked to watch: this repository ships several npm packages -- `shared/`,
+  # `website/`, `mobile/`, `deploy/sandbox/` and the two test harnesses under
+  # `images/base/harnesses/` and `internal/budget/rules/emulator/`, each with a
+  # committed lockfile installed by `npm ci` -- and the owner's ruling extends
+  # Dependabot's scope to the console and to no other. `/console` names it;
+  # `directory: /` would name the repository root, which is not a package at
+  # all, so the field is the scope decision and not an incidentally correct
+  # path.
+  - package-ecosystem: npm
+    directory: /console
+    schedule:
+      interval: weekly
+    groups:
+      console:
+        patterns:
+          - '*'
+        update-types:
+          - minor
+          - patch

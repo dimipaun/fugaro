@@ -36,13 +36,13 @@ const (
 // refuse the cascade's children: the redeploy that fixes it, named with the
 // release that writes them (C1.17). It holds no credential and no value from
 // any answer — a credential *name* is all a cascade run ever writes.
-const credsRulesDeniedDetail = "the database's rules refused this run's credential state: they predate the credentials cascade's fields, and the write is not retried. Re-run 'fugaro update --firebase-project <firebase-project-id>' with this release to deploy the rules that carry them"
+const credsRulesDeniedDetail = "the database's rules refused this run's credential state: they predate the credentials cascade's fields, and the write is not retried. Re-run 'fugaro update --firebase-project <gcp-project-id>' with this release to deploy the rules that carry them"
 
 // byTierDeniedDetail is the same refusal for the by-tier counters (C1.16):
 // the same fix, named for the write that was refused. The split is not
 // retried and the run's totals are unaffected -- what it loses is the tier a
 // settled call was paid by.
-const byTierDeniedDetail = "the database's rules refused this run's by-tier spend counters: they predate the credentials cascade's fields, and the split is not retried. Re-run 'fugaro update --firebase-project <firebase-project-id>' with this release to deploy the rules that carry them"
+const byTierDeniedDetail = "the database's rules refused this run's by-tier spend counters: they predate the credentials cascade's fields, and the split is not retried. Re-run 'fugaro update --firebase-project <gcp-project-id>' with this release to deploy the rules that carry them"
 
 // Halt is a cause to stop the run that the session found by itself: a kill
 // switch, the grace running out, a revoked identity. Detail is shown to

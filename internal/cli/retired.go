@@ -9,7 +9,7 @@ import (
 // reconciliation's §5, answered by the owner on 2026-10-20 as recommended).
 //
 // The command became two, because it always was two things: `fugaro setup`
-// stands an installation up, or adopts one, and asks the wizard's questions;
+// stands a fresh installation up, and asks the wizard's questions;
 // `fugaro update` re-converges what is already there after a CLI upgrade. An
 // alias is the answer that was not taken: it would have to pick one of those
 // meanings for the user, and the user typing the old name is exactly the user

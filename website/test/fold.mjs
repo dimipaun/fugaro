@@ -144,7 +144,12 @@ export function foldFailures(dist) {
         // — the card is captioned as an illustration and it is not prose the page promises
         // anything with. It is one `figure` the page draws once; the promise, the lead and the
         // links stay in the region and stay the whole of what it may hold.
-        const picture = els.find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-shot'))
+        //
+        // Since the owner's ruling of 2026-10-23 (the redesign's Step 3, levers 2 and 3) the card
+        // and the real `fugaro watch` capture under it are one stage, `div.hero-stage`, and the
+        // stage is the picture taken out; a page with no stage falls back to the card alone.
+        const has = (el, name) => (el.attrs.get('class') ?? '').split(/\s+/).includes(name)
+        const picture = els.find((el) => has(el, 'hero-stage')) ?? els.find((el) => has(el, 'hero-shot'))
         const lead = els
           .slice(h1 + 1, firstH2)
           .filter((el) => !within(el, owner) && (picture === undefined || !within(el, picture)))

@@ -632,7 +632,14 @@ function isPointerQuery(query) {
  */
 function hoverScopeFailures(css) {
   const out = []
-  const pointer = mediaBlocks(css).filter((block) => squash(block.query) === squash(`@media ${POINTER_QUERY}{`))
+  // Other controls answer a hovering pointer too since the owner's ruling of 2026-10-23 (the
+  // redesign's motion layer: feedback on every control, behind the same pointer query so a touch
+  // screen keeps no stuck hover). So the rule is about the menu's block: of the blocks at the
+  // pointer's query, exactly one carries the menu's hover states. A stylesheet with no block at
+  // that query at all still reads as zero.
+  const atPointer = mediaBlocks(css).filter((block) => squash(block.query) === squash(`@media ${POINTER_QUERY}{`))
+  const withMenu = atPointer.filter((block) => menuHoverSelectors(block.body).length > 0)
+  const pointer = withMenu.length > 0 ? withMenu : atPointer
   if (pointer.length !== 1) {
     out.push(
       `the stylesheet carries ${pointer.length} blocks at \`@media ${POINTER_QUERY}\`: the menu's hover states are decided by the pointer's capability, and one query is where that is written`,
@@ -1506,7 +1513,9 @@ test('the stylesheet refusals fire on the defect each one names', () => {
 
   // The hover states moved out of the pointer's query into a width one: nothing asks about the
   // pointer any more, and a tablet 1280 px wide is handed a hover it cannot give.
-  const atWidth = css.replace(/@media[^{]*\(\s*hover\s*:\s*hover\s*\)[^{]*\{/, '@media (min-width: 48rem) {')
+  // Every block at the pointer's query is moved, since the menu's is one of several now (the
+  // owner's ruling of 2026-10-23).
+  const atWidth = css.replace(/@media[^{]*\(\s*hover\s*:\s*hover\s*\)[^{]*\{/g, '@media (min-width: 48rem) {')
   assert.notEqual(atWidth, css, 'the planted query change changed nothing, so this fixture proves nothing')
   assert.match(one(hoverScopeFailures(atWidth), 'a menu whose hover states live in a width query'), /carries 0 blocks at `@media \(hover: hover\) and \(pointer: fine\)`/)
 

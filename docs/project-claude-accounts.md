@@ -1,6 +1,6 @@
 # Project Claude accounts: one OAuth token per (profile, account)
 
-Status: **0.9.0, released.** The released Fugaro is 0.10.1, and 0.9.0 is the first release any of this page works on:
+Status: **0.9.0, released.** The released Fugaro is 0.10.4, and 0.9.0 is the first release any of this page works on:
 the `claude_accounts` field inside a profile, the `accounts` block in the published policy and the
 jobs they name all ship in 0.9.0 (policy version 3,
 [`internal/projectpolicy/version.go`](../internal/projectpolicy/version.go)), and a 0.8.x binary
@@ -268,7 +268,7 @@ The published policy carries the account axis in a node the previous release can
    step 3 ran:
 
    ```bash
-   fugaro update --firebase-project <gcp-project>
+   fugaro update --firebase-project <gcp-project-id>
    ```
 
    `fugaro image refresh` re-pins `base_images` and moves each repository's own jobs, but never a

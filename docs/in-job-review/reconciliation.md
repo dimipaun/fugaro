@@ -20,9 +20,9 @@ This section describes **the spec**, not the plan. Where the owner's answers of 
 
 These are corrections to the brief's own framing, stated first so the findings below can rely on them.
 
-### 1.1 There is no `.claude/rules` directory, and no `CLAUDE.md`
+### 1.1 `.claude/rules` and `CLAUDE.md` came later, and both are short
 
-The brief says to read `CLAUDE.md` and "the `.claude/rules` files your area triggers". This repository has neither: `.claude/` holds only `skills/new-release/SKILL.md`, and there is no root `CLAUDE.md`. The **Rule** class below therefore means a conflict with **`SECURITY.md`**, a **design or plan document**, or a rule the code enforces, and each Rule finding names which.
+The brief says to read `CLAUDE.md` and "the `.claude/rules` files your area triggers". This repository had neither when this was written: `.claude/` holds only `skills/new-release/SKILL.md`, and there was no root `CLAUDE.md`. A root `CLAUDE.md` was added on 2026-10-23: a short guide to the commands, the architecture and the traps, not a rules file. `.claude/rules` was added the same day: short path-scoped rule files (terraform, console, mobile, website, credentials service) that load when an agent touches matching files. The **Rule** class below therefore means a conflict with **`SECURITY.md`**, **`CLAUDE.md`**, a **`.claude/rules` file**, a **design or plan document**, or a rule the code enforces, and each Rule finding names which.
 
 ### 1.2 "Agents never force-push" is not what the repository says
 

@@ -723,7 +723,7 @@ func applyDetail(copied bool, base int) string {
 }
 
 func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
-	if err := s.e.adoptGuard(initflow.Images); err != nil {
+	if err := s.e.newMachineGuard(initflow.Images); err != nil {
 		return initflow.Outcome{}, err
 	}
 	r := s.e.r

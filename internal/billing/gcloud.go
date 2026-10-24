@@ -154,7 +154,7 @@ func (e *ErrNoSource) Unwrap() error { return e.Cause }
 // equal). It is here because *ErrNoSource hands it back, and because it is the
 // one thing the fallback can still say when it cannot list anything.
 func Guided(project string) string {
-	return GcloudBin + " billing projects link " + shellword.Quote(project) + " --billing-account=BILLING_ACCOUNT_ID"
+	return GcloudBin + " billing projects link " + shellword.Quote(project) + " --billing-account=<billing-account-id>"
 }
 
 // gcloudListArgs is the one command the fallback runs: the list command, with

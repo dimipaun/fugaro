@@ -1494,20 +1494,20 @@ func cascadeLaunchRefusal(ctx context.Context, env *cloudEnv, spec *task.Spec) e
 		return dbErr(env.lc, fmt.Errorf("reading the credentials rules marker at %s: %w", marker, err), false)
 	}
 	if !foundMarker {
-		return userErr("agent.auth: cascade cannot run here: the installation's database carries no credentials rules marker at %s, so its deployed rules predate the credentials service and the first credential this run records would be refused — the run would halt instead of running (C1.17). Re-run 'fugaro update --firebase-project <firebase-project-id>' in your own terminal from a Fugaro that carries the credentials rules (%s), then launch again",
+		return userErr("agent.auth: cascade cannot run here: the installation's database carries no credentials rules marker at %s, so its deployed rules predate the credentials service and the first credential this run records would be refused — the run would halt instead of running (C1.17). Re-run 'fugaro update --firebase-project <gcp-project-id>' in your own terminal from a Fugaro that carries the credentials rules (%s), then launch again",
 			marker, credsServiceSince)
 	}
 	var gen int
 	if err := json.Unmarshal(raw, &gen); err != nil || projectpolicy.MarkerHandEdited(gen) {
-		return userErr("agent.auth: cascade cannot run here: the credentials rules marker at %s is %s, which is not a generation number; fix it with 'fugaro update --firebase-project <firebase-project-id>'",
+		return userErr("agent.auth: cascade cannot run here: the credentials rules marker at %s is %s, which is not a generation number; fix it with 'fugaro update --firebase-project <gcp-project-id>'",
 			marker, oneLineCLI(string(raw)))
 	}
 	switch {
 	case gen < rules.CredsRulesVersion:
-		return userErr("agent.auth: cascade cannot run here: the credentials rules marker at %s records generation %d, below the generation %d this Fugaro's credentials rules carry, so the deployed document predates the credentials family and the first credential this run records would be refused (C1.17); re-run 'fugaro update --firebase-project <firebase-project-id>' in your own terminal from this Fugaro (%s), then launch again",
+		return userErr("agent.auth: cascade cannot run here: the credentials rules marker at %s records generation %d, below the generation %d this Fugaro's credentials rules carry, so the deployed document predates the credentials family and the first credential this run records would be refused (C1.17); re-run 'fugaro update --firebase-project <gcp-project-id>' in your own terminal from this Fugaro (%s), then launch again",
 			marker, gen, rules.CredsRulesVersion, credsServiceSince)
 	case gen > rules.CredsRulesVersion:
-		return userErr("agent.auth: cascade cannot run here: the credentials rules marker at %s records generation %d, above the generation %d this Fugaro's credentials rules carry, so a newer Fugaro deployed them and this release refuses to deploy its own rules over a newer marker; upgrade Fugaro first ('fugaro upgrade') and re-run 'fugaro update --firebase-project <firebase-project-id>' with the newer binary, then launch again",
+		return userErr("agent.auth: cascade cannot run here: the credentials rules marker at %s records generation %d, above the generation %d this Fugaro's credentials rules carry, so a newer Fugaro deployed them and this release refuses to deploy its own rules over a newer marker; upgrade Fugaro first ('fugaro upgrade') and re-run 'fugaro update --firebase-project <gcp-project-id>' with the newer binary, then launch again",
 			marker, gen, rules.CredsRulesVersion)
 	}
 	return nil

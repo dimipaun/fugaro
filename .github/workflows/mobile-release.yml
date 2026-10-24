@@ -323,6 +323,15 @@ jobs:
       # `## mobile-release.yml` section says how.
       - name: install eas-cli
         run: npm install --global eas-cli@25.3.0 --ignore-scripts --no-audit --no-fund
+      # `eas-cli` resolves `mobile/app.config.js` and its plugins (expo-secure-store,
+      # expo-splash-screen) locally, so the app's own packages must be installed
+      # before the first `eas` command: without them `env:exec` fails with "Failed
+      # to resolve plugin ... Do you have node modules installed?" (found by the
+      # first dry runs, 2026-10-23). Lockfile-exact (`npm ci`), no install scripts,
+      # and no token bound on this step.
+      - name: install the app's dependencies
+        working-directory: mobile
+        run: npm ci --ignore-scripts --no-audit --no-fund
       # **Before any `eas` command that resolves the app's config.** `eas build`
       # and `eas submit` both resolve `mobile/app.config.js` locally, and this
       # repository is public: a bundle identifier that reaches a job log is
@@ -539,6 +548,15 @@ jobs:
           node-version-file: mobile/package.json
       - name: install eas-cli
         run: npm install --global eas-cli@25.3.0 --ignore-scripts --no-audit --no-fund
+      # `eas-cli` resolves `mobile/app.config.js` and its plugins (expo-secure-store,
+      # expo-splash-screen) locally, so the app's own packages must be installed
+      # before the first `eas` command: without them `env:exec` fails with "Failed
+      # to resolve plugin ... Do you have node modules installed?" (found by the
+      # first dry runs, 2026-10-23). Lockfile-exact (`npm ci`), no install scripts,
+      # and no token bound on this step.
+      - name: install the app's dependencies
+        working-directory: mobile
+        run: npm ci --ignore-scripts --no-audit --no-fund
       # The same mask step as the iOS job's, and for the same reason: either
       # build resolves `app.config.js`, which reads both identities. It stops the
       # job on a read that fails or comes back empty, before the build below,

@@ -4,7 +4,7 @@
 document. The twelve decisions in §4 are answered** — the owner answered all twelve on 2026-10-20,
 and the table at the head of §4 records each one with its why — **and answering a decision is not
 approving the build — the two are separate: the answers are 2026-10-20, and the plan's OWNER APPROVAL
-GATE was passed on 2026-10-22, for the target release 0.11.0; pull requests target `main`.**
+GATE was passed on 2026-10-22, for the target release 0.110.0 (the console's own stream, approved as 0.11.0 and renumbered by the owner's ruling of 2026-10-24); pull requests target `main`.**
 It reads the tree at
 `ccc406b2` and every path and symbol in it was read at that commit. Where it disagrees with the brief
 in §0, **this document wins** and says so.
@@ -223,7 +223,7 @@ path that exists and is unused.
 Each is a real fork with a recommendation first, the alternative and what it costs. **The owner
 answered all twelve on 2026-10-20**, and the table below is the record: the option taken and the
 reason in one line. **Answering a decision is not approving the build** — the plan's OWNER APPROVAL
-GATE is where approval happens, and it **passed on 2026-10-22** (target release 0.11.0; pull
+GATE is where approval happens, and it **passed on 2026-10-22** (target release 0.110.0, the console's; pull
 requests target `main`). The namespaces are local: **D1–D12 are
 this folder's**, they are unrelated to
 [docs/design/desktop-console.md](../design/desktop-console.md)'s D1–D20 and to
@@ -350,17 +350,20 @@ should a secret ever have to cross (F19).
 `fugaro` holding a lease, a lock or a run's worth of spend inside the distribution with nothing on
 screen to say so. **The residual window, stated rather than implied**: between the `SIGTERM` to
 `wsl.exe` and the `kill` inside the distribution there is a window in which the Windows-side process
-is gone and the Linux-side one is not yet — and if the `wsl.exe` that runs the pid-writing shell
-exits before that file is written, the window is the whole of the cancellation. Part F's cancellation
-task measures what a runner can measure of it and **U6 asks a Windows machine to settle the race**;
-until then the screen says the read was cancelled and the operator's remedy is `ps aux` inside the
-distribution, which is what the manual checklist's step 9 looks at.
+is gone and the Linux-side one is not yet — and if the wrapper has not reported its pid by the time
+the grace runs out, the window is the whole of the cancellation. Part F's cancellation task measures
+what a runner can measure of it and **U6 asks a Windows machine to settle it**; until then the screen
+says the read was cancelled and the operator's remedy is `ps aux` inside the distribution, which is
+what the manual checklist's step 9 looks at.
 
 **(a) Recommended: capture the Linux-side pid and kill it inside the distribution.** The wrapper
-runs the CLI under a shell that writes its own pid to a file the console can read through the same
-`wsl.exe`, and cancellation is `SIGTERM` to `wsl.exe` **and** a `kill` inside the distribution after
-the existing `SHUTDOWN_GRACE_MS`. **Cost:** one more `wsl.exe` per cancellation, a pid file whose
-lifecycle the plan must state, and a residual window that must be written down rather than implied.
+runs the CLI under a shell that prints its own pid on **stderr** — the channel the console already
+reads — on a line the shell writes before it `exec`s the CLI, so the number is the CLI's by the time
+it is killed (Part F's T-F4 states why a pid file cannot work across the two sides); cancellation is
+`SIGTERM` to `wsl.exe` **and** a `kill` inside the distribution after the existing
+`SHUTDOWN_GRACE_MS`, sent whatever `wsl.exe` itself did, because on Windows the `SIGTERM` ends it at
+once and its exit says nothing about the Linux process. **Cost:** one more `wsl.exe` per cancellation,
+and a residual window that must be written down rather than implied.
 
 **(b) `wsl.exe --terminate <distro>`.** Kills everything in the distribution, including the
 operator's own shells and any other `fugaro` — a console that can terminate a distribution is a
@@ -558,7 +561,7 @@ run by the owner, and so that no sentence in the docs depends on the answer befo
 | **U3** | Whether `npm run test:unit` passes on `windows-latest` once Part C lands — `vitest run --dir test/unit` covers 57 `.ts` files there (54 of them `*.test.ts`; `find console/test/unit -name '*.ts' \| wc -l`), and only some are platform-neutral | The same run's `npm run test:unit` step |
 | **U4** | The exact behaviour of `wsl.exe` when `WSLENV` is **absent** rather than empty | A Windows machine, or the WSL documentation read at the version the runner has |
 | **U5** | Whether killing the Windows-side `wsl.exe` kills the Linux process it started | A Windows machine: start `sleep 300` through `wsl.exe`, kill the Windows side, look inside the distribution |
-| **U6** | Whether the pid-capture design of D6(a) survives a `wsl.exe` that exits before the pid file is written | The same machine, with the race run deliberately |
+| **U6** | Whether D6(a)'s capture really reaches the Linux process on a Windows host: that the pid on the wrapper's stderr line is the CLI's, and that the `kill` inside the distribution lands even though `wsl.exe` is gone by the time it is sent | The same machine: cancel a read the console started and look inside the distribution (`ps aux`) for a `fugaro` still holding it — the race run deliberately, rather than inferred from the fake |
 | **U7** | Whether `wsl.exe` propagates the Linux child's exit status unchanged | A Windows machine: `wsl.exe -d <d> -- sh -c 'exit 7'`; read the status |
 | **U8** | What `wsl.exe` returns when the distribution does not exist, and when it exists but will not start | The same machine, both cases |
 | **U9** | The encoding of `wsl.exe --list --quiet` on the runner's Windows build (UTF-16LE or UTF-8), and whether `WSL_UTF8=1` is honoured | The same run, or a Windows machine |

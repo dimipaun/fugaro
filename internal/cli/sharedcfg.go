@@ -404,7 +404,7 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 		// checks below. An installation with a separate Firebase project
 		// can't be anchored by the checkout, so it is never used from here.
 		if b.FirebaseProject != a.GCPProject {
-			return nil, fmt.Errorf("the shared config's budget.firebase_project %q is not gcp_project %s: this installation uses a separate Firebase project, so the shared config cannot be used automatically; run fugaro update (adopt) to configure it", b.FirebaseProject, a.GCPProject)
+			return nil, fmt.Errorf("the shared config's budget.firebase_project %q is not gcp_project %s: this installation uses a separate Firebase project, so the shared config cannot be used automatically; Fugaro now keeps the budget backend in the installation's own project, so rebuild it there with fugaro update --firebase-project %s", b.FirebaseProject, a.GCPProject, a.GCPProject)
 		}
 		o := infra.FirebaseOutputs{RTDBURL: b.RTDBURL, FirebaseAPIKey: b.FirebaseAPIKey, TokenSigner: b.TokenSigner, FirebaseProject: b.FirebaseProject}
 		if err := infra.CheckFirebaseOutputsFor(o, "", false); err != nil {
