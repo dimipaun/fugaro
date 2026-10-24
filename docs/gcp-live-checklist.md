@@ -632,6 +632,8 @@ probe account carries predefined grants only).
 | 52 | The UNVERIFIED questions phase 3 depends on, written and **RUN 2026-10-16** (the results are at the end of the section): they had to be answered **before any phase 3 code was written**, and all three were (design `project-centric.md` §13 and §4.5; plan `2026-10-14-project-centric.md` Task 3.0): **U2** whether a Cloud Run secret **reference** works inside a container env override (the API type has a `ValueSource`) and whether an execution's overrides are visible to the container — **accepted, the reference works**; **U3** whether a Secret Manager IAM condition on a name prefix is honoured for `secretmanager.versions.access` — **yes, the condition is honoured** (answered on a rerun; the first U3 run was invalid, a bug in the check's own script rather than the API's answer); **U4** the sandbox project's service-account count against Google's default quota and the runs bucket's IAM policy binding count (the ceilings the design's §13 names) — **no service-account quota** (10 accounts held; `ServiceAccountsPerProject` reported `-1`); and **U1**, which is **no longer a probe** — the owner ruled on 2026-10-15 that a Bitbucket credential cannot be scoped to one project's repositories, so Bitbucket credentials stay per repository and phase 3's shared jobs are GitHub's, with D5 amended to record the ruling (plan Task 0.5) | See "Check 52" below; **you** run it, on installation `fugaro` (never `belong`) — every step acts only on the sandbox's **own** job, service account, bucket and secrets in project `fugaro-dev`, and **no Bitbucket credential, project or repository is created, read or written at all** (U1 is answered by ruling, not by a probe), never anything under `edgeappinc`. | A few `gcloud` reads, **three** override executions on the sandbox job (the secret-reference call in (a), the plain-literal comparison in (c), and the length-only run when the container's command is a shell — (b) is a template-level `--update-secrets` update, and the bare `gcloud run jobs execute` carries no override at all, so neither is one of the three), the check's own probe service account `fugaro-chk52-probe` and its two throwaway secrets (`fugaro-probe-in`, inside the condition's prefix, and `fugaro-other-probe`, outside it), and **nothing on the Bitbucket side**. **USER-RUN, RUN 2026-10-16: U2 accepted, U3 honoured, U4 no quota.** |
 | 57 | The compute-instance Docker backend (design `compute-backend.md` §7). **57a, the pre-build probe, needs no Fugaro change and is the go/no-go:** a Docker-capable run on Compute Engine VMs from a committed job JSON (`gcloud` only), the cold start with a plain pull, image streaming and a preloaded boot image, `docker run` and a small Postgres container inside a run, the cost of one run, the socket's permission path in four committed variants (no `options`, `--group-add <gid>`, `--user 0`, `--privileged`, each running `docker version` and a real container against the host socket), teardown on success/failure/cancel/a crashed runner, the raw IAM bindings, and the raw log entry's job label. **57b, the post-build acceptance run, needs the backend enabled — except its step 7 (the preload image *family*'s rebuild), which needs only the compute root:** `fugaro run`/`logs`/`cancel` on `cloud-batch`, the reaper, the recorded cost against the bill, the fail-closed marker, and **the largest `computeResource` a task can ask for on `e2-standard-4` and still leave `QUEUED`** (the built shares are Check 57a's own 2000m/4096MiB submission, a floor known to work rather than a measured maximum — the built-in headroom for the OS, the Batch agent and the Docker daemon is what that step pins), and — step 1 and step 7 — the two UNVERIFIEDs the compute module ships with (whether a run's VM reports to the Batch agent under the module's deny-all ingress rule, and whether the family handover leaves the runs' boot reference serving while the delete of a superseded generation is refused or accepted). | See "Check 57" in `docs/design/compute-backend.md` §7.2; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs a Check-43-shaped hard-coded project guard (`P` hard-coded, `${P:?}` on gcloud, `--project fugaro --gcp-project "$P"` on fugaro, `fugaro doctor` and the checkout's git origin as hard stops). Its Restore deletes only what the check created — the `fugaro-chk57` account (and its IAM bindings first, since deleting an account leaves them behind), the probe jobs carrying `fugaro_chk=57`, the 57b runs **by the job names 57b recorded** (a 57b job is created by the launcher and Batch v1 cannot add a label to it afterwards, and a filter on the installation's own labels would also match runs this check never started) **and their VMs by the `fugaro_run` label values it read back off those jobs** (a job's name never reaches its VMs, and the label value cannot be derived from the name), the preload image (the check's own 57a-3b artefact, `${SA}-preload`; the compute module's preload **family** is the installation's and is never this check's to delete), the `${SA}-*` router and NAT it created only if the project had none **on the probe's own network and region covering the subnet** (a NAT on another network, one whose rules cannot be read, or one that lists its subnets by name, is not borrowed — the check makes its own pair instead of editing the project's), and the `containerfilesystem.googleapis.com` API only if it was this check that enabled it; never the installation's account — and ends in an assertion whose every line must read `0` (counts, not an empty-looking line, and the probe account's leftover IAM bindings are one of them, since deleting an account does not remove them). It is the successor of the dropped gen-2 Docker probe (generic-tool Task 26, which the plan numbered Check 31 — a number already taken by `fugaro upgrade` here). | A handful of sandbox Batch runs (minutes of VM time each), one small custom boot image, and a NAT/registry round trip. **57a RUN 2026-10-15: see the RESULTS block above; 57b USER-RUN, NOT RUN.** |
 | 58 | Artifact runs (design `artifact-runs.md` §3–§9 and §11; plan `2026-10-15-artifact-runs.md`): a `mode: artifact` recipe rendered on a real image (ffmpeg through `image.apt`, one Cloud Build), three attached PNGs in and a video out, the `render` record and the model-against-compute counters, **no branch pushed and no pull request opened**, the probe's verdict through `commands.probe` beside an independent local `ffprobe`, the recorded content type against the object's own (U5), retrieval with a sha256 match and the upload's wall clock inside `finalize_reserve` — at the set's own size, and in 6b for two files written at exactly `outputs.max_bytes` (U6) — and the failure direction in three halves — a probe that demands an impossible duration and must fail the run with nothing uploaded, a set over `outputs.max_total_bytes` that must refuse with the cap named and the container alive, and a render driven past the job's memory, whose FACT is what was seen (U3) | See "Check 58" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs one hard-coded project guard (`P` hard-coded and never read from `gcloud`, `${VAR:?}` on every argument, the three hard stops, the workflow name checked against the checkout), every launch is guarded per step and records its run id, its commit and the image and base HEAD step 1 found in a per-attempt record file (`/tmp/chk58-records/<batch>.env`), and the Restore reverts only the commits that record holds and that are not already reverted — it refuses to guess at one it does not. | One Cloud Build (the image that carries ffmpeg) and five tiny sandbox runs — two of them carrying the same three attached PNGs (step 2 and 7a; 7b may too), one render-only and therefore at model $0, and one driven past its memory limit. **USER-RUN, NOT RUN.** |
+| 59a | The console's first signed build: the signing material exists and only you can reach it, and the published macOS bundle is signed, notarised and stapled — `codesign --verify --deep --strict`, `spctl --assess --type execute` on a machine that has never seen it, `xcrun stapler validate` on the bundle and the disk image — plus **the safety assertion**, read out of the app's own spawn log: with the console pointed at the sandbox installation it spawned nothing for `belong`, every spawn record names the sandbox installation's `fugaro`, the sandbox project and the sandbox checkout, and none mentions `belong` or `edgeappinc` (design `desktop-console.md` §5.1 rule 10, §7.2, D8, D12, D20; plan `2026-10-15-desktop-console.md` Task 4.3; released as `console-v0.110.0` "Cherry") | See "Check 59a" below; run by you, on your own Mac, on installation `fugaro` (never `belong`) and the sandbox checkout only — and every step re-runs the one guarded setup block, which hard-stops unless the project is `fugaro-dev` and the checkout is the sandbox. It runs against the **published** `console-v0.110.0` assets, so nothing has to be built first. **No agent performs any step of it.** | One download of the published release, one install into `/Applications` (`/Applications/Fugaro Console.app` must not already exist — check step 2), one app launch. No cloud spend, no write to any installation: the console is read-only, and the only file it is asked to write is the spawn log, in this check's own temporary directory. **USER-RUN, NOT RUN.** |
+| 59b | The console's update round trip: an installed older build sees the new console release and installs a bundle the OS verifies, over the console's own signed feed — the manifest `electron-updater` reads (`latest-mac.yml`), the update refused when its signature does not verify, no downgrade and no telemetry (design `desktop-console.md` §7.3, §7.4, D5, D12; plan `2026-10-15-desktop-console.md` Tasks 4.3 and 4.4) | See "Check 59b" below; run by you, on your own Mac, on installation `fugaro` (never `belong`). **NOT RUNNABLE TODAY, and the section says so in its own first lines**: it needs Task 4.4's auto-update in a shipped build **and** a **second** published console release (`console-v0.111.0`) carrying the feed. `console-v0.110.0` is the first release and carries no feed, so there is nothing for an older build to update to yet. **No agent performs any step of it.** | Two published console releases, one install into `/Applications`, one update. No cloud spend. **USER-RUN, NOT RUN — and not runnable until both preconditions exist.** |
 | 60 | The sealed budget token (design `budget-token-channel.md` §7 and "The check outline"): a sealed run works end to end; the `tokens/` object is ciphertext with no claim readable and nothing is left under `runs/`; where the key is and is not (the job's environment, the execution record — U2 as found — and the RunJob audit entry, recorded by length, never by value); a wrong key, a plaintext object and a sideways copy all refuse; a peer job account cannot delete a queued token; the launchers' widened `runs/`+`tokens/` condition and the job's read-only `tokens/<slug>/` grant read off the live policy | See "Check 60" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only, with Check 43's guard block re-run at every step; Restore puts back the two objects the check overwrote, removes its probe file and scratch dir, and diffs the bucket policy against step 8's. | Three or four tiny sandbox runs and executions. **USER-RUN, NOT RUN.** |
 | 68 | The managed deployer's fenced prefix, measured live (design `managed-deployer-fence.md`; the 0.10.0 redesign of D75's deployer, `deploy/terraform/gcp/modules/installation/deployer.tf`): whether GCP **accepts** the seven conditioned bindings the redesign writes — one role per service, one binding each, three logical operators at the most (Cloud Storage's two clauses and the `||` between them) where the 0.8.6 shape had 17 and a `resource.name.contains()` IAM does not support (F1, C1) — whether `resource.name` is **honoured per type** for an IAM service account, an API key, an Artifact Registry repository, a Cloud Run job and a Cloud Scheduler job (C3, UNVERIFIED in the design, and it covers those **five**), and — a **sixth** service measured for a different fact — whether the Secret Manager name form the design's `extract` reads is honoured (C6/C7, not C3), against a prefixed `fmgd-chk68-*` resource (expect the action) and against a resource **the check creates itself** under a name the fence does not admit — `chk68-neg-*`, expect a denial that names the condition, not the role; the runs bucket is the one the check does not create, and it is read rather than written — plus a near miss that contains the prefix without starting with it. **C7 (does a name that misses an `extract` template fail closed) is NOT this check's question, and no step of this check can answer it**: the reading is that it fails closed — a name the template does not match extracts the empty string, and `"".startsWith("fmgd-")` is false — and no live step can construct the non-match, so what the check adds is the one direction a live read can add, the near miss, which tests the prefix and not the template. **The reading's status is not marked here**: it is marked once, in the section's own C7 paragraph, which cites its evidence and the design of record's one labelled row for it (§3's C7). | See "Check 68" below; **you** run it, on a **sandbox project only** — and the sandbox is pinned: **installation `fugaro` in project `fugaro-dev` and nowhere else** (never `belong`, EdgeWeb's and EdgeServer's, and never a production project: both are refused by name), with `P` typed by you and never read from `gcloud`'s ambient configuration, `${VAR:?}` on every argument, twelve hard stops, the config's own `gcp_project` required to be `$P`, the region, the Scheduler region and the runs bucket read out of that config rather than the environment, an owner-typed `CHK68_OWNER_RUN=yes` required before anything is read, every `gcloud` command carrying `--project="${P:?}"`, and every action taken **as the deployer account** (`--impersonate-service-account`) because a denial for your own identity would prove nothing. **Check 67 — the transitive-reach half — is the managed-projects plan's Task 5.3 and is not written here.** | One owner-run `terraform apply` of the sandbox installation's root with `managed_deployer_scoped = true` (seven roles, seven conditioned bindings), sixteen throwaway resources named `fmgd-chk68-*`, `xfmgd-chk68-*` and `chk68-neg-*` — the seven per-service probes of step 4, the three near misses and the six negative probes of step 5 — a guard trap that deletes them when the run ends — the final step, a stop, or a Ctrl-C, and **never between steps**, since the whole check is one script — and the Restore that deletes them again and closes the gate. **Nothing here is run by an agent** (`agentMarker` refuses a live apply inside one), **no credential or secret value is created or read** (the check's secret carries a throwaway string), and **no gate hangs on the result any more**: 0.10.0 ships this shape (the flip's own notes are in the section below), so a failure here is not a reason the fence stays unbuilt — it is a defect of the fence as shipped, fixed by dropping or falling back that service's role in a later release, and until then the prefix condition is not a boundary (design §9). **USER-RUN, NOT RUN.** |
 | 69a | The site is live and honest (website plan `docs/website/implementation-plan.md`, Task W2.2; D92, D108's fourth gate): the canonical origin in `website/data/site.yaml` answers over **HTTPS** with a certificate for that host, the deployed HTML is the artifact `npm run build` produced from the commit that is checked out, and the page a stranger lands on names no unshipped feature — no player for the video, which does not exist (`features.video` is false), and every console download it offers resolving to an asset of the release its own facts name (`features.console_downloads` is true, and the console moved to `console-v0.9.0`) | See "Check 69a" below; run by you, in a browser and a terminal, against the site's own Firebase project only (never an installation's, and no `fugaro` command runs at all). The canonical origin is read out of `website/data/site.yaml` by the guard block, so it is not typed from memory, and it is the only host this check fetches: there is no second domain (owner ruling 2026-10-17), so no step here observes one. **No agent runs any step of it** | HTTPS 200 from the canonical origin with `ssl_verify_result` 0 and a certificate whose subject is that host; the deployed home page's sha256 equal to the local build's; the greps for a player printing nothing; and every console download URL the pages carry answering 200 (or a redirect to the release's own storage) with the checksum the page printed beside it. **USER-RUN, NOT RUN.** |
@@ -4238,6 +4240,343 @@ The loop prints **which commits it reverted and which were already reverted** (`
 **If a step fails, what it lands in.** A failure here is a fact about the substrate or about a default, never a fault of the check, and where the fix belongs is what decides which release carries it. **Patch-safe, so it lands in 0.8.0.x:** a wording or an expectation this check falsifies — a sentence in `docs/artifact-runs.md`, `docs/recipes.md`, `docs/base-image.md` or `SECURITY.md`, a refusal message, the routing skill's own text; a **cap default** the measurement shows is wrong (`outputs.max_bytes`'s 256 MiB, `outputs.max_total_bytes`'s 2 GiB, `outputs.max_files`'s 8, or the three `inputs` caps), because a default is a number and the code that reads it already ships; and the arithmetic when a change only makes it **stricter** than what the substrate allows (the §5.2 memory rule, and `outputs.max_total_bytes ≥ max_bytes` when `max_files` is 1). **Not patch-safe — it needs its own design decision and waits for 0.9.0:** anything about **upload integrity** (a recorded `sha256` that does not match the bytes the bucket holds, an object under `artifacts/` the record does not list, a set uploaded although the probe failed, a `get` that accepts a mismatch) — the fix changes what a run promises, and a promise is not a patch's business; anything that changes **who can read an artifact** or the per-run prefix boundary (D10, D11); a change to `mode: artifact`'s own contract (a new key, a different step order, a probe that runs per artifact); and anything that would make a recipe legal today **illegal**, or the reverse — an installation is running the recipes it already wrote. Either way the FACT goes into this section and into the row, not only into the pull request.
 
 **Paste back:** every `FACT` line above — the job's image reference and the digest it resolves to, **before and after** the build, and the job they belong to, `task.json`'s inputs against `sha256sum`, the `render` record and the counters, both halves of the probe's verdict, the recorded and the object's own content type, the retrieved files' hashes and the upload's wall clock **at both sizes** (step 6's set, and step 6b's near-cap pair with `finalize_reserve_s` beside it), and 7a, 7b and 7c's reason lines — **and never a secret value or the contents of an attached file**. Until this check runs, `docs/design/artifact-runs.md` §12's **U3, U5 and U6** stay open, and **U2's mise half stays open however this check turns out** — only its `image.apt` half is settled here — and that is the honest state of the design's claims rather than a fault list. Never run any step of this check against `belong`; no agent runs any step of it — every command is yours.
+
+## Check 59a: the console's first signed build, its Gatekeeper verification and the safety assertion (installation `fugaro`, sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**No agent performs any step of this check.** Every command below is yours, in your own terminal, on your own Mac: the check downloads a published release, verifies the bytes and the signature it carries, installs the app into `/Applications`, launches it, and reads one log it asked the app to write. No agent runs any part of it, and no agent may.
+
+**One number, two sections.** Check 59 is written as **59a** and **59b**, the way Check 43 carries 43a to 43f (design [D12](design/desktop-console.md)). The assertion numbers are the ones the plan's rounds kept, so a reader can follow where each went: **59a is (1), (2) and (4)** — the signing material, a signed, notarised and stapled build that Gatekeeper accepts on a machine that has never seen it, and the safety assertion — and **59b is (3)**, the update round trip. They are two sections rather than one because they cannot run at the same moment: 59b needs a published update feed, so it runs after a second console release has published one, while 59a runs now.
+
+**What 59a runs against, and why it can run today.** The console's first release is published: **`console-v0.110.0` "Cherry"**, on the console's own release stream (`docs/release.md`, "Console releases" and "Verifying the console's release"). It carries `Fugaro.Console-0.110.0-universal.dmg`, `Fugaro.Console-0.110.0-universal-mac.zip`, the two unsigned Linux artifacts, `console-sha256sums.txt` and `console-sha256sums.txt.sigstore.json`, plus `console-verification.txt`. So 59a verifies **that** release — the signed and notarised macOS pair — rather than a build you produce by hand, and it needs nothing built first. What it proves is the same thing either way: that the packaging pipeline's output is signed, notarised, stapled, accepted by Gatekeeper on a machine that has never seen it, and safe in the one way that only a running build can show.
+
+⚠ **This is a deviation from the two documents this section is written from, and it is recorded here rather than left for a reader to find.** Design **D12** says "59a runs on the first signed build, **before any tag**", and the plan's Task 4.3 says "It runs **before any tag**, on the first build the packaging pipeline produces" — both written when no signed build existed, so the only build 59a could read was one the owner produced by hand. That is no longer true: the owner's ruling of 2026-10-24 renumbered the console stream, and the first signed build **is** the published `console-v0.110.0` — the first build the pipeline produced and the first published release are the same object, so verifying the published one is the stricter reading rather than a relaxation: the bytes are the ones that shipped, not ones that resemble them. **A re-run after a packaging change does not prove the new build.** `entitlements.mac.plist` and design §12 item 4 both point at this section for a signed build's entitlement set, and re-run as written it re-verifies `console-v0.110.0`, whatever version `V` names. After a change to the packing configuration, run this section against a **new published release** — the next console tag, with `V` and the asset names moved with it — or against a build of your own; and if you do the latter, say which build it was in the FACT lines, because a hand-built bundle and a published one are not the same evidence and only one of them is the artifact. It also does not **submit** anything: the task's assertion (2) is about a build the pipeline produced, and 59a verifies the ticket that build carries — `xcrun stapler validate` on the bundle and on the disk image — rather than producing one. For the published release the submission is the release workflow's own step (`console/scripts/notarize-and-staple.sh`, whose `xcrun notarytool submit --wait` is the submission and whose exit status is read as the answer, `.github/workflows/console-release.yml`), so what this section reads is that step's result. A build of your own would need that script, or `xcrun notarytool submit --wait` by hand, before the same validations mean anything. D12's cell carries the dated note that records this; the plan's Task 4.3 is left as the plan's own record, and this paragraph is where the two are reconciled.
+
+**`belong` is never touched** (EdgeWeb's and EdgeServer's): no step of this check touches `belong`, reads anything of it, writes in it or runs a command against it. The installation the console is pointed at is the sandbox's `fugaro` and the checkout is the sandbox's, and the only place the other installation's name appears at all is step 4's scratch copy — one line appended to a **copy** of the app's own log, inside this check's own temporary directory. That copy is the only way to prove this negative without performing the forbidden thing, and no step of this check contacts, reads or writes that installation.
+
+**Method.** Everything happens on your Mac and in the sandbox checkout you are already in. `gh`, `cosign`, `codesign`, `spctl`, `xcrun stapler`, `security`, `jq` and `shasum` are the tools; all of them are read-only except where a step says otherwise. The check's own directory is `/tmp/chk59a`, created by the steps below and removed by the Restore at the end.
+
+⚠ **Set these, and pass the three hard stops, by running ONE block — and re-run that whole block at the start of every later step.** The block is self-contained and idempotent. `P` is the installation's *project* (the installation itself is named `fugaro`), `V` is the release under test, `CHK` is everything this check writes, `SPAWNLOG` is the file the console is asked to write, `IDENTITIES` is the record of the signing identities that predate the check — written in step 1's block, before anything is downloaded or installed, and read again in step 5 and in the Restore — and `CO` is the sandbox checkout the shell is in. `P` is asserted rather than assumed for the reason every check here does it: without `--project`, `fugaro` would resolve its installation from wherever the shell happened to be, and this check is the one that points a **running app** at an installation.
+
+```bash
+# === Check 59a: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
+# step (1, 2, 3, 4, 5, Restore). It is idempotent, and nothing below the three
+# hard stops runs unless all three pass. ===
+P=fugaro-dev                 # HARD-CODED, and never read from gcloud
+V=0.110.0                    # the published console release this check verifies: console-v0.110.0 "Cherry"
+CHK=/tmp/chk59a              # this check's own directory: the downloads, the mount point, the spawn log and the record below
+SPAWNLOG="${CHK}/spawn-log/spawn.jsonl"     # what the console is told to write, via FUGARO_CONSOLE_SPAWN_LOG
+IDENTITIES="${CHK}/identities-before.txt"   # the signing identities that existed BEFORE the check: the Restore reads this and removes nothing older
+CO=$(git rev-parse --show-toplevel)         # the sandbox checkout: the working directory every fugaro command the console drives must have
+
+# ${VAR:?} everywhere: an empty variable is a hard error, never an empty
+# argument a command would resolve from its ambient configuration.
+[ "$P" = fugaro-dev ] && [ -n "$V" ] && [ -n "$CHK" ] && [ -n "$SPAWNLOG" ] && [ -n "$IDENTITIES" ] && [ -n "$CO" ] \
+  || { echo "Check 59a stopped: re-run the whole setup block (P=$P must be fugaro-dev; V=$V CHK=$CHK SPAWNLOG=$SPAWNLOG IDENTITIES=$IDENTITIES CO=$CO must not be empty)" >&2; exit 1; }
+fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+  || { echo "Check 59a stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
+git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
+  || { echo "Check 59a stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
+```
+
+**Why the guard is one block, and why it is re-run.** The first stop asserts the block itself ran — `P` is exactly `fugaro-dev` and the other five are non-empty — so a skipped, partially pasted or hand-edited block stops here rather than reaching `gh` or `security` with an empty argument. The second is `fugaro doctor`'s own `project:` line (`internal/cli/doctor.go`, the local config's own project, no cloud call); a `doctor` that could not select an installation returns before printing one — it exits non-zero with its own message — and on a foreign checkout `doctor` refuses, so the `grep` fails either way. The third is the checkout's origin, which is what makes `CO` — the directory the console is told to use — the sandbox's and not another repository's. This check runs **no `gcloud` command at all**, so the rule that gives every `gcloud` command `--project="${P:?}"` has nothing to bind here; it is stated because the block is Check 43's and a reader comparing the two should not have to work out why one line is missing.
+
+**Every `fugaro` command that takes `--project` gets `--project fugaro`** (the installation's *name*: the project is `fugaro-dev`), and the one command the rule does not reach is `fugaro version`, which takes no flags at all (`internal/cli/root.go`'s `newVersionCmd`, `Args: cobra.NoArgs`, no `Flags()`) and makes no cloud call. `--project` disagreeing with the checkout's `project:` is **refused**, never silently resolved (`this checkout belongs to project <x>; --project says fugaro`, `internal/localcfg/select.go`) — that refusal is the fourth hard stop, and it is what protects the `fugaro` half of the check. **And the sandbox checkout is the working directory for every `fugaro` command the console drives**: the console gives a child the installation's checkout when it has one and a private `0700` directory otherwise, so step 4's preparation sets the checkout in the app's own picker and step 4's FACT lines are what check it happened (design §3.4 rule 5).
+
+In a terminal, `exit 1` closes that terminal window — the intended outcome, since nothing after it runs. Run the whole check in a `bash` sub-shell or from a script file if you would rather keep the window. **Paste the block into a file, not straight into an interactive zsh**: every block here carries `#` comments, and an interactive zsh does not honour them unless `setopt interactive_comments` is set first.
+
+---
+
+**(1) The signing material exists, and only you can reach it.**
+
+This is the assertion the whole pipeline stands on, and it is a statement about your machine rather than about the release: a Developer ID Application certificate in a keychain only you can unlock, and an App Store Connect API key (the `.p8`), stored where only you can read it. The release workflow never sees either except as a repository secret read into a protected environment (`.github/workflows/console-release.yml`, the `console-release` environment), so what this step confirms is that the material you feed it is yours and is not lying around.
+
+```bash
+mkdir -p "${CHK:?}"
+[ -e "${IDENTITIES:?}" ] || security find-identity -v -p codesigning > "${IDENTITIES:?}"
+security find-identity -v -p codesigning
+# The keychains in the user's search list, so "the check created no keychain and
+# removed none" is a comparison rather than a claim.
+security list-keychains -d user
+# The App Store Connect key: its own directory, and nothing group- or world-readable.
+ls -l "$HOME/.appstoreconnect/private_keys/" 2>/dev/null || ls -l "$HOME/.private_keys/" 2>/dev/null
+```
+
+**FACT:** `security find-identity -v -p codesigning` → at least one `"Developer ID Application: …"` line, and the identity's SHA-1 fingerprint; the same output is written once into `${IDENTITIES}` here — **before anything is downloaded or installed**, so the record is of what predated the check, and a re-run cannot overwrite it with a later list. **FACT:** `security list-keychains -d user` → the keychains in the search list, quoted one per line — record them beside the identities, because they are the other half of what this check must leave exactly as it found it (the Restore removes no keychain: the check creates none, and a keychain that was there before it is not its to delete). **FACT:** what the `.p8`'s directory and file modes are — the file owner-only (`-rw-------`, or `600`), not group- or world-readable. **FACT:** whether the certificate's expiry gives the next release room; a certificate that expires inside the next few months is a release that will fail at the packaging step, and this is where that is worth noticing rather than at the tag. Nothing in this step writes, imports, exports or unlocks anything.
+
+---
+
+**(2) The signed, notarised and stapled build, and Gatekeeper on a machine that has never seen it.**
+
+The bytes come from the published release, so what is verified is what shipped. `docs/release.md`'s "Verifying the console's release" is the same procedure for the Linux artifacts; here it is for the macOS pair, which carry a real signature and a real ticket and are therefore the only assets `codesign`, `spctl` and `stapler` can say anything about.
+
+```bash
+mkdir -p "${CHK:?}"
+gh release download "console-v${V:?}" -R dimipaun/fugaro -D "${CHK:?}" \
+  -p "Fugaro.Console-${V:?}-universal.dmg" -p "Fugaro.Console-${V:?}-universal-mac.zip" \
+  -p console-sha256sums.txt -p console-sha256sums.txt.sigstore.json -p console-verification.txt
+
+# The one sums file covers every asset of the release, macOS and Linux alike, and
+# the console workflow signed it keyless on that tag. The identity's ref segment
+# is the CONSOLE tag: console-vX.Y.Z, never vX.Y.Z.
+cosign verify-blob "${CHK:?}/console-sha256sums.txt" \
+  --bundle "${CHK:?}/console-sha256sums.txt.sigstore.json" \
+  --certificate-identity "https://github.com/dimipaun/fugaro/.github/workflows/console-release.yml@refs/tags/console-v${V:?}" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+**FACT:** `cosign verify-blob`'s `Verified OK`, with the certificate identity's workflow path and tag printed — `console-release.yml@refs/tags/console-v0.110.0`, never the CLI's `v0.110.0` and never `release.yml`. **FACT:** the four asset names as `gh` printed them.
+
+⚠ **GitHub serves the two macOS assets with the space in their names replaced by a dot, and the release's own sums file carries the names the packer wrote — with the space.** `console-sha256sums.txt` holds `Fugaro Console-0.110.0-universal.dmg`; the released asset is `Fugaro.Console-0.110.0-universal.dmg`. So the download and the sums file spell the same file two ways, and the two lines are renamed back before the check reads them: a `shasum -c` against the dotted names reports every macOS line as unreadable and verifies nothing.
+
+```bash
+mv "${CHK:?}/Fugaro.Console-${V:?}-universal.dmg"     "${CHK:?}/Fugaro Console-${V:?}-universal.dmg"
+mv "${CHK:?}/Fugaro.Console-${V:?}-universal-mac.zip" "${CHK:?}/Fugaro Console-${V:?}-universal-mac.zip"
+sed -n '/^[0-9a-f]\{64\}  Fugaro Console-/p' "${CHK:?}/console-sha256sums.txt" | (cd "${CHK:?}" && shasum -a 256 -c -)
+```
+
+**FACT:** `shasum -c` prints `OK` for exactly the two lines it read and no `FAILED open or read` for any line — and prints **two** lines: the `sed` is what keeps the macOS half of the file (the `Fugaro.Console-…-linux-…` lines are the Linux artifacts, which step 2 does not download), and a `shasum -c` over an empty list exits 0 having verified nothing, which is why the count is a FACT rather than an assumption.
+
+```bash
+DMG="${CHK:?}/Fugaro Console-${V:?}-universal.dmg"
+MOUNT="${CHK:?}/dmg-mount"; mkdir -p "$MOUNT"
+hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MOUNT"
+APP="${MOUNT}/Fugaro Console.app"
+codesign --verify --deep --strict --verbose=2 "$APP"
+codesign -dv --verbose=4 "$APP"
+codesign -d --entitlements - "$APP"
+spctl --assess --type execute --verbose=4 "$APP"
+xcrun stapler validate "$APP"
+xcrun stapler validate "$DMG"
+spctl --assess --type open --context context:primary-signature -v "$DMG"
+hdiutil detach "$MOUNT"
+```
+
+**FACT:** `codesign --verify --deep --strict` says `valid on disk` and `satisfies its Designated Requirement` and exits 0 — the **`--deep` and `--strict`** are the design's own form, and a bundle that only verifies without them is not what was asked for. **FACT:** the entitlements print the hardened runtime's minimum and nothing else — `com.apple.security.cs.allow-jit` (`console/entitlements.mac.plist`; the file is the authority, and `get-task-allow` must not appear, which is the entitlement a debug build would add). **FACT:** `codesign -dv --verbose=4` prints the bundle's `CDHash`, its `Authority=Developer ID Application: …` chain and its `TeamIdentifier` — record the `CDHash` (step 2's install block compares the installed copy against it) and the TeamIdentifier, which is the team the certificate was issued to. **FACT:** `spctl --assess --type execute` prints `accepted` with `source=Notarized Developer ID` — **this is assertion (2)**. **FACT:** both `stapler validate` calls print `The validate action worked!` and exit 0; the disk image's staple is a different ticket from the bundle's, which is why both are run. **FACT:** `spctl --assess --type open --context context:primary-signature -v` accepts the `.dmg` as itself, which is what Gatekeeper assesses when the download is opened.
+
+**And then the launch a person actually makes, which is the half `spctl` cannot show.** The download above is a `gh` fetch, so macOS has set no quarantine attribute on it and a first launch would prove nothing. This step installs the bundle and sets exactly the attribute a browser download sets, then opens it as a user would — the app must start, and it must not be blocked.
+
+```bash
+INSTALLED="/Applications/Fugaro Console.app"
+[ ! -e "$INSTALLED" ] || { echo "Check 59a stopped: $INSTALLED already exists. Remove it yourself and re-run: this check installs one build and never deletes an app it did not install" >&2; exit 1; }
+ditto -x -k "${CHK:?}/Fugaro Console-${V:?}-universal-mac.zip" "${CHK:?}/unzipped"
+ditto "${CHK:?}/unzipped/Fugaro Console.app" "$INSTALLED"
+printf '%s\n' "$INSTALLED" > "${CHK:?}/installed-by-this-check.txt"
+xattr -w com.apple.quarantine "0083;$(printf '%x' "$(date +%s)");Safari;" "$INSTALLED"
+codesign -dv --verbose=4 "$INSTALLED"
+spctl --assess --type execute --verbose=4 "$INSTALLED"
+open "$INSTALLED"
+```
+
+**FACT:** the installed copy is the same build — the `CDHash` its own `codesign -dv --verbose=4` prints is the one the mounted copy printed, and `defaults read "${INSTALLED:?}/Contents/Info.plist" CFBundleShortVersionString` prints `0.110.0`. **FACT:** the first launch shows no block and no "cannot be opened because the developer cannot be verified": either Gatekeeper's ordinary first-launch prompt appears (its Open button is clicked and the window opens) or, if your Security settings already allow it, the window opens with no prompt at all. Either is a pass; a refusal is not, and the refusal's own text is the FACT to paste back. **FACT:** the dashboard's own installation line names the sandbox installation and the CLI version the handshake read for it, so the app that launched is the released one and it is driving the installation this check pinned. **Quit the app** (⌘Q) before the next step.
+
+**The `printf` is this check's own receipt.** It writes the installed path under `${CHK}` — after the `ditto`, and only on the run that `ditto` succeeded on — and the Restore reads that stamp before it removes anything at `/Applications/Fugaro Console.app`. The app half of "it restores only what it created" is therefore recorded before the run touches `/Applications`, exactly as the identity half is recorded in step 1 before anything is installed: both are read back at the end rather than remembered, which is what the install guard above and the Restore's own condition are for.
+
+---
+
+**(4) The safety assertion: with the console pointed at the sandbox installation it never spawns anything for `belong`.**
+
+The claim is exactly this, and it is worded as what the lines below prove rather than as what a reader might wish they proved: **with the console pointed at the sandbox installation it spawned nothing for `belong` — every spawn record names the sandbox installation's `fugaro`, the sandbox project and the sandbox checkout, and none mentions `belong` or `edgeappinc`.** It is a claim about **spawns**, because the console's only egress is a spawn of one allow-listed argv (design §3.4 rule 1). It is not a claim about what the console "can reach": this check never tests a reachability, and an earlier revision that said "nothing it can reach belongs to `belong`" was asserting something no command under it could show.
+
+**The evidence is the app's own log of what it ran**, which is why the app has to be told to write one. `console/src/main/spawnlog.ts` writes nothing unless **`FUGARO_CONSOLE_SPAWN_LOG` names a path**; when it does, the main process appends one JSON object per line with **exactly four keys** — `ts` (RFC 3339 UTC), `argv` (the array as spawned, the binary's absolute path first), `cwd` (absolute) and `project` (the installation's project name, the value passed as `--project`, so the bare `version` handshake still records which installation it was for). It holds no command output, no environment, no credential and nothing a job wrote; the app never reads it back, never rotates it and never deletes it. **Without that variable the file does not exist and not one of the commands below can run.**
+
+**Preparation, and it is done with the log off.** The console gives a child its installation's **checkout** when the installation has one and a private `0700` directory otherwise (design §3.4 rule 5), so the checkout is set first, in the app's own picker, and this half of the run writes no log at all:
+
+1. Open `/Applications/Fugaro Console.app` and choose **Installations…** from the app menu (the picker is its own window; the app's menu is the only way in).
+2. Choose the sandbox installation — its project is `fugaro`, the one `fugaro config list --json` lists for this installation — and set its checkout to the sandbox checkout this shell is in (`$CO`), which is one of the directories the CLI itself printed for that installation.
+3. Quit the app.
+
+**Then the logged run, launched from this terminal by the executable's path.** A Finder or Dock launch inherits launchd's environment and **not** this shell's, so an app opened that way never sees the variable and writes no log — the check would then fail at its first FACT line with the right conclusion for the wrong reason. `open` is deliberately **not** used here for the same reason: it does not forward the shell's environment to the launched app.
+
+```bash
+mkdir -p "${CHK:?}/spawn-log"
+test ! -e "${SPAWNLOG:?}" || { echo "Check 59a stopped: ${SPAWNLOG} already exists. Delete it and re-run: a log that was not written by this run cannot be read as this run's evidence" >&2; exit 1; }
+export FUGARO_CONSOLE_SPAWN_LOG="${SPAWNLOG}"
+"/Applications/Fugaro Console.app/Contents/MacOS/Fugaro Console" &
+```
+
+Leave the app open long enough for its startup handshake and at least one read — the dashboard draws which installation it is showing (the handshake: its project, its binary and the CLI version that read returned) and a screen draws its rows (the read). Which screens you visit does not change what step 1 asks: every row of the console's spawn table is one allow-listed argv whose installation argument is `--project fugaro` (`console/src/main/spawn.ts`'s `SPAWN_COMMANDS`), the `version` handshake is the one row that carries no `--project` at all, and no row takes an installation *name* as a value anywhere. Then quit it with ⌘Q, and only then read the log: the app never reads it back, and it is the operator's file. The loop below is only a wait — the first spawn usually lands the file before you have finished reading this sentence — and every block after it is a read of that file.
+
+```bash
+for _ in $(seq 1 60); do [ -s "${SPAWNLOG:?}" ] && break; sleep 1; done
+```
+
+**Step 1 — the console's own record of what it ran.**
+
+```bash
+test -s "${SPAWNLOG}"; echo "exit $?"
+grep -c belong "${SPAWNLOG}"
+grep -c edgeappinc "${SPAWNLOG}"
+```
+
+**FACT:** `test -s "${SPAWNLOG}"` → exit `0` (the log exists and is non-empty). **FACT:** `grep -c belong "${SPAWNLOG}"` → `0`. **FACT:** `grep -c edgeappinc "${SPAWNLOG}"` → `0`. The unit is a **line**, not a byte: one JSON object per line, so a count of zero means *no spawn record mentions it*, which is the statement being proved. (`grep -c` **prints** `0` and **exits 1** when there is no match: the FACT is the printed number, and an exit status of 1 here is the pass, not the failure: `grep -c belong` is never a failure of this step for its exit status.)
+
+**Step 2 — every spawned argv resolves to the sandbox installation.** One binary, and it is the sandbox's.
+
+```bash
+jq -r '.argv[0]' "${SPAWNLOG}" | sort -u
+```
+
+**FACT:** `jq -r '.argv[0]' "${SPAWNLOG}" | sort -u` → **one line**, the sandbox installation's own resolved `fugaro` path (the console resolves it from the platform's well-known prefixes — `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `/usr/bin` on macOS — and never from the app's inherited `PATH`), and **never** the `belong` installation's own binary path. Two lines mean the console is driving two binaries, which is the failure this step exists to catch: the whole design rests on *one* spawned binary, resolved explicitly.
+
+**Step 3 — every spawn was for the sandbox installation, from the sandbox checkout.**
+
+```bash
+jq -r '.project' "${SPAWNLOG}" | sort -u
+jq -r '.cwd' "${SPAWNLOG}" | sort -u
+```
+
+**FACT:** `jq -r '.project' "${SPAWNLOG}" | sort -u` → **one line**, `fugaro` — the guard block's own installation name, which is the value passed as `--project`. One line and not two is also what proves the bare `version` handshake recorded its installation: the schema gives every line a `project`, the handshake's included, and a second value here is a spawn for another installation. **FACT:** `jq -r '.cwd' "${SPAWNLOG}" | sort -u` → **one line**, the sandbox checkout's absolute path as the CLI itself printed it — the directory you chose in the preparation above, and not the private `0700` directory the console falls back to for an installation with no checkout. Two lines mean at least one spawn ran somewhere else, which is design §3.4 rule 5 checked rather than assumed.
+
+**Step 4 — the mutation control, and this is the step that makes the other three mean something.** With the console closed, one line naming the other installation is appended to a **copy** of the log, and step 1's greps are re-run against the copy. The command that must print `0` prints `1` when the thing it looks for is there.
+
+```bash
+wc -l "${SPAWNLOG}"                      # the baseline, before the copy is made: the count to read the copy against
+cp "${SPAWNLOG}" "${SPAWNLOG}.test"
+printf '{"ts":"2026-01-01T00:00:00Z","argv":["%s","budget","show","--project"],"cwd":"%s","project":"belong"}\n' >> "${SPAWNLOG}.test" \
+  "$(jq -r '.argv[0]' "${SPAWNLOG}" | head -1)" "${CO:?}"
+# The name is written once, inside the printf above, and read back out of the
+# copy for the greps below: no command line here takes it as an argument.
+OTHER=$(jq -r '.project' "${SPAWNLOG}.test" | tail -1)
+wc -l "${SPAWNLOG}.test"                 # the baseline plus the one line the printf appended
+grep -c "$OTHER" "${SPAWNLOG}.test"
+grep -c edgeappinc "${SPAWNLOG}.test"
+```
+
+**FACT:** `wc -l "${SPAWNLOG}"` → the log's line count **N** before the copy was made, and `wc -l "${SPAWNLOG}.test"` → **N + 1**: the copy holds exactly one line more than the log did, and that extra line is the control record the `printf` wrote — the two counts are what prove it, so read them off rather than assuming a copy plus one append is one line longer; with `$OTHER` expanded the first grep reads `grep -c belong "${SPAWNLOG}.test"` → `1`. **FACT:** `grep -c edgeappinc "${SPAWNLOG}.test"` → `0` — the control line names one of the two strings, and the other stays at zero, which is what shows the two greps are two questions and not one. **No step of this check contacts, reads or writes the `belong` installation, and no step of it ever passes that name to a command**: the name appears only inside the `printf` above, writing into a scratch copy, and it never reaches a path, an option or an argument of anything. Then:
+
+```bash
+rm -f "${SPAWNLOG}.test"
+wc -l "${SPAWNLOG}"
+grep -c belong "${SPAWNLOG}"
+```
+
+**FACT:** the copy is gone and the mutation never touched the real log: `grep -c belong "${SPAWNLOG}"` → `0` again, and `wc -l "${SPAWNLOG}"` → the same **N** the baseline printed before the copy was made, so the log is the log and not the copy under the log's name.
+
+**Step 5 — the console left no key material behind.** The same read as (1)'s, taken at the other end of a running build:
+
+```bash
+diff "${IDENTITIES:?}" <(security find-identity -v -p codesigning) && echo 'identical'
+```
+
+**FACT:** `diff` prints nothing and `identical` is printed — the two outputs are **identical**, so the console neither added an identity nor removed one. **FACT:** the second read is compared against the record step 1 wrote before anything was installed, not against a remembered list.
+
+**Paste back:** every `FACT` line above — the identity and its fingerprint, the `.p8`'s modes, the asset names `gh` printed, `cosign`'s verified identity, the two `shasum -c` lines, the `codesign`/`spctl`/`stapler` lines with their `CDHash` and TeamIdentifier, the first launch's outcome, the full output of steps 1 to 5, and the identity diff.
+
+**If a step fails, what it lands in.** A `spctl` refusal on the mounted bundle is a finding about the packaging pipeline, not about your machine — paste the refusal's text into the PR and do not work around it. A second line from step 2 or step 3 is a finding about the console's spawn contract, never a pass, and its log lines go in the PR beside it. A run that finds the log empty after the app clearly spawned is a finding about `spawnlog.ts` or about how the app was launched (a Finder launch records nothing, by design), and the launch line is the first thing to re-read.
+
+---
+
+**Restore.** It restores **only what this check created**, and that is a hard rule of the check rather than a courtesy. A restore step that "removes the keychain item it was signed with" would delete **your own signing certificate** — the identity the whole pipeline depends on, which predates the check by design and is not the check's to destroy. **A signing identity that was present before the check is never deleted, never re-imported and never locked.** This check creates no keychain and imports nothing, so its Restore has no business naming an identity at all; the record it took in step 1 (and read again in step 5) is what makes that checkable instead of remembered. **The same rule holds for the app the check installs, and it is held the same way**: step 2 writes a stamp for `/Applications/Fugaro Console.app` only after it has installed it, so an operator whose own copy was already there — the one step 2's guard stops — gets a Restore that leaves it alone rather than one that removes it because something is at that path.
+
+```bash
+# === Check 59a: Restore. Re-run the setup block first. It removes ONLY what
+# this check created, and nothing it found. ===
+INSTALLED="/Applications/Fugaro Console.app"
+# Both records are read BEFORE ${CHK} is removed, which is the only order in
+# which they can be read at all.
+diff "${IDENTITIES:?}" <(security find-identity -v -p codesigning) && echo 'identical: no identity was added or removed'
+if [ -f "${CHK:?}/installed-by-this-check.txt" ] && [ "$(cat "${CHK:?}/installed-by-this-check.txt")" = "$INSTALLED" ]; then
+  rm -rf "$INSTALLED"; echo "removed $INSTALLED: this check's own stamp says it installed it"
+else
+  echo "kept $INSTALLED: no stamp of this check says it installed it, so it is not this check's to remove"
+fi
+hdiutil detach "${CHK:?}/dmg-mount" 2>/dev/null || true
+rm -rf "${CHK:?}"
+git status --short
+```
+
+**FACT:** `diff` prints nothing and `identical: no identity was added or removed` is printed — the identities now are the identities the record holds, so nothing this check did added one or removed one, and the read is taken **before** `${CHK}` is removed because that is the only order in which the record can still be read. **FACT:** the removal runs only when step 2's own stamp is there and names that path, so the app is removed **only on a run that installed it**: `echo` prints either `removed /Applications/Fugaro Console.app: this check's own stamp says it installed it` or `kept /Applications/Fugaro Console.app: no stamp of this check says it installed it…` — **the second line is the pass for a run that stopped at step 2's guard**, and pasting it back is what shows the Restore spared an app this check never installed. **FACT:** `git status --short` is clean: this check commits nothing and changes no tracked file in the checkout. Nothing here touches a keychain, an identity or a certificate, and nothing here deletes a file this check did not write under `/tmp/chk59a`.
+
+## Check 59b: the update round trip (installation `fugaro`, sandbox repository only, never `belong`; run by you; NOT RUNNABLE YET — and NOT RUN)
+
+**No agent performs any step of this check. It is NOT RUNNABLE today, and its first lines are where that is read rather than at the end:** it needs **two** things that do not both exist — the auto-update feature of **Task 4.4** of `docs/plans/2026-10-15-desktop-console.md`, which is what puts an updater and a **published feed** into a shipped build, and a **second** published console release carrying that feed, which is `console-v0.111.0` "Mango". The first release, **`console-v0.110.0` "Cherry"**, is published and carries no feed at all: it was built before Task 4.4, and a build with no updater cannot be updated and cannot update. So there is nothing for an older build to update to, and no build that would look. **Until both exist, this section is written and cannot be run, and an unrun step is not a pass.**
+
+**What it asserts, and it is assertion (3) of the one number:** an installed **older** console build sees the newer release over the console's own signed feed and installs a bundle whose signature the OS verifies — over `electron-updater`, the `electron-builder` companion that supplies the feed client and the `latest-mac.yml` manifest (that manifest format is electron-updater's, not Squirrel's), on top of Electron's own `autoUpdater` (Squirrel.Mac). Design §7.3 and §7.4 and D5 are the rules it checks: an update whose signature does not verify is **refused, never installed**; a **downgrade** is refused; the check happens on launch and then on a long interval; nothing is installed silently without telling the user; the toggle is visible and switching it off stops the check; and **no telemetry of any kind** — the only outbound requests are the CLI's own and this one update check.
+
+**Never `belong`**: no step of this check touches `belong` either, and the installation it updates is the sandbox's `fugaro`.
+
+**The two preconditions, in detail.**
+
+1. **Task 4.4 ships.** A console release whose bundle carries `electron-updater`, the update check, the opt-out (`FUGARO_NO_UPDATE_CHECK=1`, a local `update_check: false`), the refusal of a mis-signed or downgrade update, and no identifier in any request. `console-v0.110.0` does not: its `package.json` declares no runtime dependencies at all, and the runtime allow-list in `console/test/unit/pinning.test.ts` — whose own message says the update client arrives with Task 4.4 — is what keeps it that way.
+2. **A second console release publishes the feed.** `console-v0.111.0` "Mango" must be tagged and published with the feed's own files on it — the `latest-mac.yml` electron-updater reads, and the `.dmg`/`.zip` it names — so that an installed `0.110.0`, which by then must itself be an updater build, can see a newer version. The console's releases are separate from the CLI's (`console-vX.Y.Z`; `docs/release.md`, "Console releases"), and the version line never goes backwards, so the second release is `0.111.0` and never a re-cut of `0.110.0`.
+
+**Method, when both exist.** Everything happens on your Mac, in the sandbox checkout. The guard block is 59a's with its one release variable replaced by the two this section needs (`OLD` and `NEW`), and it is re-run at the start of every step — the same three hard stops, `--project fugaro` on every `fugaro` command that takes flags, and the sandbox checkout as the working directory for every `fugaro` command the console drives. This section's Restore is its own: it installs a build into `/Applications` too, and 59a's Restore never runs for it.
+
+```bash
+# === Check 59b: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
+# step (1, 2, 3, Restore). It is idempotent, and nothing below the three hard
+# stops runs unless all three pass. ===
+P=fugaro-dev                 # HARD-CODED, and never read from gcloud
+CHK=/tmp/chk59b              # this check's own directory: the downloads, the mount point and the record below
+OLD=0.110.0                  # the installed build that is being updated AWAY from
+NEW=0.111.0                  # the release whose feed the installed build must see
+IDENTITIES="${CHK}/identities-before.txt"   # the signing identities that existed BEFORE the check: the Restore removes nothing older
+CO=$(git rev-parse --show-toplevel)         # the sandbox checkout
+
+[ "$P" = fugaro-dev ] && [ -n "$CHK" ] && [ -n "$OLD" ] && [ -n "$NEW" ] && [ -n "$IDENTITIES" ] && [ -n "$CO" ] \
+  || { echo "Check 59b stopped: re-run the whole setup block (P=$P must be fugaro-dev; CHK=$CHK OLD=$OLD NEW=$NEW IDENTITIES=$IDENTITIES CO=$CO must not be empty)" >&2; exit 1; }
+fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+  || { echo "Check 59b stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
+git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
+  || { echo "Check 59b stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
+```
+
+**Step 1 — the feed exists, and 59b stops here if it does not.** Before anything is installed, read the release's assets. This is the step written for the day the second release is cut, and it is the step that fails closed today: the release `console-v${NEW}` does not exist, so `gh` refuses, and the section stops rather than proceeding into steps that would install a build nothing can update.
+
+```bash
+gh release view "console-v${NEW:?}" -R dimipaun/fugaro --json assets --jq '.assets[].name' | sort
+```
+
+**FACT:** the asset list carries the update feed's own files — the `latest-mac.yml` manifest and the `.dmg`/`.zip` it names — beside `console-sha256sums.txt` and its Sigstore bundle. **FACT:** nothing in that list is named for the CLI's release. **If `gh` refuses because `console-v${NEW}` does not exist, the check stops here**: that is today's outcome, and it is a precondition rather than a finding.
+
+**Step 2 — an older, updater-carrying build is installed, and it sees the new release.** The identities that predate the check are recorded **first**, before anything is installed, so the Restore can tell what the check did from what it found; then download `console-v${OLD}`, verify it exactly as 59a's step 2 does (the sums file, its Sigstore bundle, `shasum -c`, `codesign --verify --deep --strict`, `spctl --assess --type execute`, `xcrun stapler validate`, the quarantine attribute, the first launch), install it into `/Applications`, and set its update check to on. Then read what the updater saw.
+
+```bash
+mkdir -p "${CHK:?}"
+[ -e "${IDENTITIES:?}" ] || security find-identity -v -p codesigning > "${IDENTITIES:?}"
+INSTALLED="/Applications/Fugaro Console.app"
+[ ! -e "$INSTALLED" ] || { echo "Check 59b stopped: $INSTALLED already exists. Remove it yourself and re-run: this check installs one build and never deletes an app it did not install" >&2; exit 1; }
+```
+
+**FACT:** the record is written once, before the install (`[ -e ... ] ||` is what keeps a re-run from overwriting it with a post-install list, which would make the Restore's diff say nothing about what the check did). **FACT:** the install guard is 59a's with this section's number in its message, and it stops **before** anything is downloaded or installed: an operator who already has a console at that path removes it themselves and re-runs, and the check never takes the place of — and never later removes — an app it did not install.
+
+**And the same receipt 59a's step 2 writes**, after the install and before the version is read, so this section's Restore can tell its own install from one that was there first:
+
+```bash
+printf '%s\n' "$INSTALLED" > "${CHK:?}/installed-by-this-check.txt"
+defaults read "$INSTALLED/Contents/Info.plist" CFBundleShortVersionString
+```
+
+**FACT:** `defaults read "$INSTALLED/Contents/Info.plist" CFBundleShortVersionString` prints `0.110.0` for the installed build, and its updater reports the newer version available — **one** version, named, with the release's own tag; **FACT:** the request it made went to the console's own release and carried **no identifier of any kind** — no machine id, no user, no run, no installation name (design §7.4; the assertion is on the request the feed receives, which is Task 4.4's unit test taken live).
+
+**Step 3 — the update installs, and the OS verifies what it installed.** Let the update install, relaunch, and verify the new bundle the way 59a's step 2 verifies a downloaded one: `codesign --verify --deep --strict`, `spctl --assess --type execute`, `xcrun stapler validate` and the version line.
+
+**FACT:** that same `CFBundleShortVersionString` read prints `0.111.0` after the update, and the bundle that replaced the old one passes `codesign --verify --deep --strict` and `spctl --assess --type execute` — **this is assertion (3)**: the OS verified the new bundle's signature before it was installed, and an update it could not verify was never installed. **FACT:** the old bundle is gone from `/Applications` as an application, and nothing was left beside it. **FACT:** the switch is visible in the app, and with the opt-out set (`FUGARO_NO_UPDATE_CHECK=1`, and again with a local `update_check: false`) a launch makes no update request at all — Task 4.4's three-way opt-out, taken live. **FACT:** a **downgrade** is refused: an installed `0.111.0` offered `0.110.0` stays where it is, and the refusal is recorded rather than silently ignored.
+
+**Paste back:** every `FACT` line above — step 1's asset list, the installed build's version and what its updater saw, the request's contents as far as the feed records them, the post-update `codesign`/`spctl`/`stapler` lines and version line, and the three opt-out outcomes.
+
+---
+
+**Restore.** As 59a's, and its own: it restores only what this check created, and it removes **only what is not in the record it took before it started** — the downloads under `/tmp/chk59b`, the mount point, and any file it wrote under a temporary directory — plus the one build it installed into `/Applications`, which it removes only when **step 2's own stamp names that path**; step 2's guard is what makes a stamped install the only kind this check performs. **A signing identity that was present before the check is never deleted, never re-imported and never locked**: this check creates no keychain and imports nothing, so its Restore names no identity either.
+
+```bash
+# === Check 59b: Restore. Re-run the setup block first. It removes ONLY what
+# this check created, and nothing it found. ===
+INSTALLED="/Applications/Fugaro Console.app"
+# Both records are read BEFORE ${CHK} is removed, which is the only order in
+# which they can be read at all.
+diff "${IDENTITIES:?}" <(security find-identity -v -p codesigning) && echo 'identical: no identity was added or removed'
+if [ -f "${CHK:?}/installed-by-this-check.txt" ] && [ "$(cat "${CHK:?}/installed-by-this-check.txt")" = "$INSTALLED" ]; then
+  rm -rf "$INSTALLED"; echo "removed $INSTALLED: this check's own stamp says it installed it"
+else
+  echo "kept $INSTALLED: no stamp of this check says it installed it, so it is not this check's to remove"
+fi
+hdiutil detach "${CHK:?}/dmg-mount" 2>/dev/null || true
+rm -rf "${CHK:?}"
+git status --short
+```
+
+**FACT:** `diff` prints nothing and `identical: no identity was added or removed` is printed — the identities now are the ones step 2's record holds, read before `${CHK}` is removed. **FACT:** the app is removed only when step 2's own stamp is there and names that path, so a run that stopped at step 2's guard has its app kept and prints the `kept …` line instead. **FACT:** `git status --short` is clean.
 
 ## Check 60: the sealed budget token — a run's token is worthless without its own execution's key (installation `fugaro`, sandbox repository only, never `belong`; run by you; NOT RUN)
 
