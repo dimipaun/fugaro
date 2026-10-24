@@ -286,19 +286,19 @@ async function runWslQuery(options: {
     // here is the CLI's bare name rather than the program being run: the
     // environment this builds is the one the *distribution* will see, and the
     // distribution resolves `fugaro` itself.
-    env: {
-      ...childEnvironment({
-        target: { project: options.project },
-        binaryPath: FUGARO_BINARY_NAME,
-        appEnv: options.appEnv,
-        platform: 'win32',
-      }),
-      // T-F2's one addition, and it is this module's own word: ask WSL to answer
-      // in UTF-8. The answer is decoded from bytes either way (`decodeWslAnswer`),
-      // because the switch is not honoured on every machine -- but a machine that
-      // honours it hands the console the encoding it reads most simply.
-      [WSL_UTF8_VAR]: WSL_UTF8_VALUE,
-    },
+    env: childEnvironment({
+      target: { project: options.project },
+      binaryPath: FUGARO_BINARY_NAME,
+      appEnv: options.appEnv,
+      platform: 'win32',
+      // Ask WSL to answer in UTF-8 (T-F2). The answer is decoded from bytes
+      // either way (`decodeWslAnswer`), because the switch is not honoured on
+      // every machine -- but a machine that honours it hands the console the
+      // encoding it reads most simply. The CLI plans ask for it too
+      // (`planFor`'s `wslUtf8`), so **every `wsl.exe` call this console makes**
+      // carries it; see `WSL_UTF8_VAR`.
+      wslUtf8: true,
+    }),
     project: options.project,
     backoff: DEFAULT_BACKOFF,
   })
@@ -351,11 +351,20 @@ async function runWslQuery(options: {
  * this one).
  *
  * **It is the console's own constant, not a value carried in from outside.** It
- * is set on the *query* plans and nowhere else -- it is `wsl.exe`'s switch and
- * not the CLI's -- and it is written here rather than read from the app's
- * environment, so the credential boundary is unchanged: the console adds one
- * word of its own to a child's environment and takes nothing from the operator's
- * (`childEnvironment`'s allow-list still decides everything else). */
+ * is `wsl.exe`'s switch and not the CLI's, and it is written here and in
+ * `planFor` (`spawn.ts`) rather than read from the app's environment, so the
+ * credential boundary is unchanged: the console adds one word of its own to a
+ * child's environment and takes nothing from the operator's
+ * (`childEnvironment`'s allow-list still decides everything else).
+ *
+ * **Every `wsl.exe` call this console makes sets it: the queries and the CLI
+ * plans** (review of `#981`). It used to be the queries only, and that was the
+ * gap the wrapper-marker defect arrived through -- a CLI plan's `wsl.exe`
+ * prints its own relay warnings on the very stderr the wrapper's line arrives
+ * on, and on a build that ignores this switch those warnings are UTF-16LE. It is
+ * **not a boundary key**: it is not one of `CHILD_ENV_KEYS`, it carries nothing
+ * from the operator, and `WSLENV` (stated empty on the WSL route, T-E2) is what
+ * keeps it on the far side of the distribution. */
 export const WSL_UTF8_VAR = 'WSL_UTF8'
 
 /** WSL_UTF8_VALUE is what `WSL_UTF8_VAR` is set to: `1` is the spelling WSL

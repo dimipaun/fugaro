@@ -19,7 +19,11 @@ paths:
 - WSL route (`docs/console-windows/`):
   - refuse any word with shell metacharacters (`distroShellUnsafe`); never escape it,
   - a distro name must match `DISTRO_NAME_PATTERN`,
-  - the env is the same 11 keys plus an empty `WSLENV`.
+  - the env is the same 11 keys plus the console's own empty `WSLENV` and `WSL_UTF8=1` (`WSL_UTF8=1`
+    goes on every `wsl.exe` call, the CLI's plan as well as the queries),
+  - the wrapper's stderr marker carries a fresh random nonce per spawn (`WslWrapper.marker`): match
+    that marker, never the fixed prefix, and remove U+0000 and a leading U+FEFF before reading —
+    `wsl.exe` prints its own warnings in UTF-16LE on the builds that ignore `WSL_UTF8`.
 - CI skips the screenshot goldens (`FUGARO_CONSOLE_GOLDENS: skip`). Never re-record them without the owner. On the owner's Mac that is `npx playwright test <spec> --update-snapshots`.
 - Go docs tests pin `docs/design/desktop-console.md` and `console/docs/json-contract.md` (`internal/cli/docs_desktop_console_test.go`, `docs_console_boundary_test.go`). After changing either, run `go test ./internal/cli/ -run Docs`.
 - No Go file outside the boundary test's allow-list may import or name `console/` paths (`docs_console_boundary_test.go`).
