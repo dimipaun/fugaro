@@ -42,7 +42,11 @@ func check111(t *testing.T, doc string) string {
 	if i < 0 {
 		t.Fatalf("%s has no %q: the billing picker's check is gone", setupWizardChecklist, check111Heading)
 	}
-	return doc[i:]
+	rest := doc[i:]
+	if j := strings.Index(rest[1:], "\n## "); j >= 0 {
+		rest = rest[:j+1]
+	}
+	return rest
 }
 
 // TestDocsChecklistPlanStatusCitationsNameTheStatusLine: both rewritten
