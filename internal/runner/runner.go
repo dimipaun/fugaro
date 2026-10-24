@@ -2869,21 +2869,21 @@ func (r *run) fileOpenItems(ctx context.Context) bool {
 	open := openFindings(r.rec.Reviews)
 	// The deferral leads: it is the mode's own substance rather than a
 	// review's residue, so it takes the day's first id.
-	var news []backlog.New
+	var owed []backlog.New
 	var what []string
 	if files.Deferred {
-		news = append(news, r.filedItem(nil))
+		owed = append(owed, r.filedItem(nil))
 		what = append(what, "the follow-up this hotfix deferred")
 	}
 	if open != nil && files.Tolerated {
-		news = append(news, r.filedItem(open))
+		owed = append(owed, r.filedItem(open))
 		what = append(what, fmt.Sprintf("what review round %d left open", open.Round))
 	}
-	if len(news) == 0 {
+	if len(owed) == 0 {
 		return false
 	}
-	ids := make([]string, 0, len(news))
-	for _, n := range news {
+	ids := make([]string, 0, len(owed))
+	for _, n := range owed {
 		item, err := backlog.Write(filepath.Join(r.repo.Dir, backlog.Dir), n)
 		if err != nil {
 			r.d.Log.Warn("filing the run's open items failed", "err", r.redact(err.Error()))
