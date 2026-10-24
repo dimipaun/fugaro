@@ -354,6 +354,43 @@ func TestReviewRoundsExhausted(t *testing.T) {
 	}
 }
 
+// TestFilingDoesNotSpendTheFinalizeReserveOnTheSuite: a run that left a
+// round open files its item at finalize, on finalize's context, which the
+// finalize reserve bounds. Filing only ever follows a round that did not ship,
+// so the run cannot be ready whatever the suite says on the filing commit:
+// running the suite again there buys nothing and, on a suite slower than the
+// reserve, spends the context the push needs. The suite here sleeps past the
+// reserve once the last review has run; the branch, the item and the review's
+// own reason must still reach the remote.
+func TestFilingDoesNotSpendTheFinalizeReserveOnTheSuite(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "slow")
+	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "test: sh test.sh", "test: sh slow.sh", 1)
+	cfg = strings.Replace(cfg, "finalize_reserve: 30s", "finalize_reserve: 3s", 1)
+	slow := "#!/bin/sh\nif [ -f '" + marker + "' ]; then sleep 10; fi\nexec sh test.sh \"$@\"\n"
+	h := newHarnessFiles(t, cfg, nil, map[string]string{"slow.sh": slow})
+	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo more >> feature.txt && git commit -qam 'Try again'")
+		verifyTest(t, ctx, req)
+		return agent.Result{}, nil
+	}
+	lastReview := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if err := os.WriteFile(marker, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return review("changes", 1)(t, ctx, req)
+	}
+	rec, err := h.run(t, implement("feature"), review("changes", 1), fix, lastReview)
+	if err != nil {
+		t.Fatalf("finalize lost the run's push: %v", err)
+	}
+	if rec.Outcome != runstore.OutcomeDraft || rec.Reason != "review round 2 still has 1 finding" || len(rec.Backlog) != 1 {
+		t.Fatalf("record = %+v", rec)
+	}
+	if got := testutil.Git(t, h.remote, "rev-parse", "refs/heads/fugaro/"+runID); got != rec.HeadSHA {
+		t.Fatalf("remote branch %s != record head %s: the filing commit was not pushed", got, rec.HeadSHA)
+	}
+}
+
 func TestUncommittedWorkIsCommittedButNotVerified(t *testing.T) {
 	h := newHarness(t, "", nil)
 	leaveDirty := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {

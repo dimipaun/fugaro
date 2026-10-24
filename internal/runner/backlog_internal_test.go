@@ -208,6 +208,35 @@ func TestRunFilesNoItemWhenItsRoundShipped(t *testing.T) {
 	}
 }
 
+// TestHaltedOrCancelledRunFilesNothing: a halted or cancelled run ends where
+// it was stopped, so it files nothing: its last round is not a verdict the run
+// finished acting on, and the commit would spend the time a stopped run has
+// left for its push.
+func TestHaltedOrCancelledRunFilesNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		stop func(r *run)
+	}{
+		{"halted", func(r *run) { r.haltNow(runstore.Halt{Reason: runstore.HaltRunCap}) }},
+		{"cancelled", func(r *run) { r.markCancelled() }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _ := filedRun(t, runstore.ReviewSummary{Round: 2, Tier: runstore.TierSenior, Verdict: "changes", Findings: 3})
+			tc.stop(r)
+			before := testutil.Git(t, r.repo.Dir, "rev-parse", "HEAD")
+			if r.fileOpenItems(context.Background()) {
+				t.Fatal("a stopped run filed an item")
+			}
+			if len(r.rec.Backlog) != 0 {
+				t.Errorf("the record carries ids for items it did not file: %v", r.rec.Backlog)
+			}
+			if after := testutil.Git(t, r.repo.Dir, "rev-parse", "HEAD"); after != before {
+				t.Errorf("HEAD moved from %s to %s for a stopped run", before, after)
+			}
+		})
+	}
+}
+
 // TestFilingRefusesAnItemTheFolderAlreadyHolds: the filing is a warning path —
 // an item that cannot be written costs a follow-up, never the run — so a
 // filing the folder refuses leaves the branch and the record exactly as they

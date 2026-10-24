@@ -2608,13 +2608,15 @@ func (r *run) finalize(ctx context.Context) error {
 	// value a later slice's rules act on is the one the run's whole diff
 	// answered (rigor.go).
 	r.finalizeRigor()
-	// What the run left open is filed before the readiness rule reads the
-	// commit, so the branch a reviewer reads and the pull request carry the
-	// items (D9). Filing commits, which moves HEAD, so the rule's own test
-	// record has to be made on the commit it moved to — the same re-verify a
-	// fixed gate's autofix commit gets (gate.go).
+	// What the run left open is filed so the branch a reviewer reads and the
+	// pull request carry the items (D9). Filing commits, which moves HEAD, and
+	// the suite is not run again on that commit: filing follows only a round
+	// that did not ship, so the run cannot be ready whatever the suite says,
+	// and a suite slower than the finalize reserve would spend the context
+	// the push needs. The readiness rule reads the commit the suite last ran
+	// on, which differs from the filing commit only by the item.
+	decided := sha
 	if r.fileOpenItems(ctx) {
-		r.verifyOnce(ctx, verify.KindTest)
 		if sha, err = r.repo.HeadSHA(ctx); err != nil {
 			return fmt.Errorf("reading head sha after filing: %w", err)
 		}
@@ -2628,7 +2630,7 @@ func (r *run) finalize(ctx context.Context) error {
 	r.rec.HeadSHA, r.rec.Verify = sha, records
 	r.uploadVerifyRecords(ctx, records)
 
-	ready, reason := Decide(records, sha, seniorReview(r.rec.Reviews))
+	ready, reason := Decide(records, decided, seniorReview(r.rec.Reviews))
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"
 	}
@@ -2837,6 +2839,11 @@ func openFindings(rs []runstore.ReviewSummary) *runstore.ReviewSummary {
 // and one file name, and merging both branches would be a conflict over one
 // path rather than a union of two.
 func (r *run) fileOpenItems(ctx context.Context) bool {
+	// A halted or cancelled run was stopped mid-loop: its last round is not
+	// one it finished acting on, and its push needs the time a filing spends.
+	if r.haltValue() != nil || r.isCancelled() {
+		return false
+	}
 	open := openFindings(r.rec.Reviews)
 	if open == nil {
 		return false
