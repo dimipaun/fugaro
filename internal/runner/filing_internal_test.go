@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -206,16 +207,21 @@ func TestUnconfiguredRunFilesAsPro(t *testing.T) {
 // hotfix deferred", because the fix it ships is the expedient one and the
 // proper one is owed whatever the review round did (D30, D15). The item names
 // the round when there was one, and the deferral itself when there was not.
+//
+// A hotfix that also left a round open owes both — the deferral is not the
+// round's residue, and a run that could not satisfy its review is the one with
+// least to show for itself — so it files the two, in one commit, and the
+// record carries both ids.
 func TestHotfixFilesItsFollowUpItemAlways(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {
 		name    string
 		reviews []runstore.ReviewSummary
-		title   string
+		want    []string
 	}{
-		{"it left a round open", []runstore.ReviewSummary{openRound}, "review round 2 left 3 findings open"},
-		{"it tolerated nothing", []runstore.ReviewSummary{{Round: 2, Tier: runstore.TierSenior, Verdict: "ship", Findings: 3}}, "revisit this hotfix"},
-		{"it was never reviewed", nil, "revisit this hotfix"},
+		{"it left a round open", []runstore.ReviewSummary{openRound}, []string{"revisit this hotfix", "review round 2 left 3 findings open"}},
+		{"it tolerated nothing", []runstore.ReviewSummary{{Round: 2, Tier: runstore.TierSenior, Verdict: "ship", Findings: 3}}, []string{"revisit this hotfix"}},
+		{"it was never reviewed", nil, []string{"revisit this hotfix"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, remote := modeRun(t, "hotfix", tc.reviews...)
@@ -229,22 +235,43 @@ func TestHotfixFilesItsFollowUpItemAlways(t *testing.T) {
 				t.Fatal(err)
 			}
 			names := filedItemNames(t, remote, "fugaro/x")
-			if len(names) != 1 {
-				t.Fatalf("the pushed branch holds %v; want the one follow-up item", names)
+			if len(names) != len(tc.want) {
+				t.Fatalf("the pushed branch holds %v; want %d item(s): %v", names, len(tc.want), tc.want)
 			}
-			doc := testutil.Git(t, remote, "show", "fugaro/x:"+filepath.Join(backlog.Dir, names[0]))
-			item, err := backlog.Parse(filepath.Join(backlog.Dir, names[0]), []byte(doc))
-			if err != nil {
-				t.Fatalf("what the run pushed is not an item the folder accepts: %v\n%s", err, doc)
+			// The filing is one commit, whatever it holds: the branch a
+			// reviewer reads gained one commit, not one per item.
+			if ahead := testutil.Git(t, r.repo.Dir, "rev-list", "--count", "main.."+r.rec.Branch); strings.TrimSpace(ahead) != "2" {
+				t.Errorf("the branch is %s commits ahead of its base; want the run's work and one filing commit", ahead)
 			}
-			if item.Mode != "hotfix" {
-				t.Errorf("mode = %q; want hotfix (D27)", item.Mode)
+			if len(r.rec.Backlog) != len(tc.want) {
+				t.Errorf("the record's items = %v; want one id per item filed", r.rec.Backlog)
 			}
-			if !strings.Contains(item.Title, tc.title) {
-				t.Errorf("title = %q; want it to name %q", item.Title, tc.title)
+			titles := make([]string, 0, len(names))
+			for _, name := range names {
+				doc := testutil.Git(t, remote, "show", "fugaro/x:"+filepath.Join(backlog.Dir, name))
+				item, err := backlog.Parse(filepath.Join(backlog.Dir, name), []byte(doc))
+				if err != nil {
+					t.Fatalf("what the run pushed is not an item the folder accepts: %v\n%s", err, doc)
+				}
+				if item.Mode != "hotfix" {
+					t.Errorf("mode = %q; want hotfix (D27)", item.Mode)
+				}
+				if !strings.Contains(item.Title, r.rec.RunID) {
+					t.Errorf("title = %q; want the run's own id in it, so two runs compose two names (D26)", item.Title)
+				}
+				if !slices.Contains(r.rec.Backlog, item.ID) {
+					t.Errorf("the record does not carry the id of the item it filed: %v, %s", r.rec.Backlog, item.ID)
+				}
+				titles = append(titles, item.Title)
 			}
-			if !strings.Contains(item.Title, r.rec.RunID) {
-				t.Errorf("title = %q; want the run's own id in it, so two runs compose two names (D26)", item.Title)
+			for _, want := range tc.want {
+				found := false
+				for _, got := range titles {
+					found = found || strings.Contains(got, want)
+				}
+				if !found {
+					t.Errorf("the items the run filed %v; want one naming %q", titles, want)
+				}
 			}
 		})
 	}

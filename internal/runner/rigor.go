@@ -9,18 +9,21 @@ import (
 )
 
 // The run's rigor mode: where it is read from, when it is resolved, and how
-// the record gets it (docs/rigor-modes/implementation-plan.md T1.2, D22, D24,
-// D25).
+// the record gets it (docs/rigor-modes/implementation-plan.md T1.2, T1.4, D22,
+// D24, D25).
 //
-// Nothing acts on the mode in this slice. Decide still decides by today's
-// rule, so a repository that configures POC is reviewed exactly as it was —
-// the stricter direction — while its record says what it asked for. That is
-// what lets this land alone. The one part that is real is the read: the mode's
-// configuration comes from the base branch (D25), read as the repository's
-// default branch — the revision no file in the checkout can name, which is what
-// makes it the base rather than the branch under review's own answer — and
-// never from the branch under review, which is the ground everything a later
-// slice makes the mode do will stand on.
+// D22's three moments are the three call sites below: bootstrap, after a fix
+// that changed the tree, and finalize. Decide still decides by today's rule, so
+// a repository that configures POC is reviewed exactly as it was — the stricter
+// direction — while its record says what it asked for. The mode does have
+// readers, and none of them is here: the per-mode budget defaults (T6.1) and
+// the per-mode filing (T4.6) ask the mode the run has reached, which is what
+// makes the moments the one place that answer comes from. The read is this
+// file's own part: the mode's configuration comes from the base branch (D25),
+// read as the repository's default branch — the revision no file in the
+// checkout can name, which is what makes it the base rather than the branch
+// under review's own answer — and never from the branch under review, which is
+// the ground everything a later slice makes the mode do stands on.
 
 // bootstrapRigor resolves the run's mode from the base branch — for a run whose
 // checkout is the branch under review's, the repository's default branch — and
@@ -41,6 +44,26 @@ func (r *run) bootstrapRigor(ctx context.Context) {
 // rules act on the answer the run's whole diff gave.
 func (r *run) finalizeRigor() {
 	r.recordRigor(runstore.RigorAtFinalize, r.changedPaths())
+}
+
+// roundRigor resolves the run's mode again after a fix that changed the tree —
+// D22's second moment, "after a round that changed the tree"
+// (docs/rigor-modes/implementation-plan.md T1.4) — and folds it in. It reads
+// the run's own diff, the same read finalize makes, so the mode the remaining
+// rounds are spent at is the one the diff had reached by then. Without it a run
+// whose diff first matches a Critical area in round 2 buys nothing from the
+// area until finalize, which is the cost D22 names when it rejects a
+// two-moment reading.
+//
+// It never fails the run: a read that cannot be made is a warning and the mode
+// stays where it is, as bootstrap's unreadable base leaves it (D25).
+func (r *run) roundRigor(ctx context.Context) {
+	paths, err := r.repo.ChangedFiles(ctx, r.workBase())
+	if err != nil {
+		r.d.Log.Warn("reading the run's changed paths after a round failed; the mode stays where it is", "err", r.redact(err.Error()))
+		return
+	}
+	r.recordRigor(runstore.RigorAtRound, paths)
 }
 
 // recordRigor is D22's fold at the runner: one resolution, at one moment,

@@ -2082,6 +2082,11 @@ func (r *run) fix(ctx context.Context, v Verdict, sys, sessionID string) (string
 		return req.SessionID, false
 	}
 	r.afterStage(ctx, "fix")
+	// D22's second moment: the fix just changed the tree, so the run resolves
+	// its mode again from the diff it now carries — before the next round is
+	// asked for, so a mode the run's own work reached is the one the rounds it
+	// has left are spent at (rigor.go).
+	r.roundRigor(ctx)
 	return req.SessionID, !r.pr.gone
 }
 
@@ -2612,11 +2617,13 @@ func (r *run) finalize(ctx context.Context) error {
 	r.finalizeRigor()
 	// What the run left open is filed so the branch a reviewer reads and the
 	// pull request carry the items (D9). Filing commits, which moves HEAD, and
-	// the suite is not run again on that commit: filing follows only a round
-	// that did not ship, so the run cannot be ready whatever the suite says,
-	// and a suite slower than the finalize reserve would spend the context
-	// the push needs. The readiness rule reads the commit the suite last ran
-	// on, which differs from the filing commit only by the item.
+	// the suite is not run again on that commit: an item is Markdown rather
+	// than code, so it cannot change the verdict the suite already gave, and a
+	// suite slower than the finalize reserve would spend the context the push
+	// needs. The readiness rule reads the commit the suite last ran on
+	// (decided), which differs from the head this run pushes only by the items
+	// — including when the filing follows a round that shipped, which is
+	// Hotfix's deferral (D30, D15) and the ordinary case for that row.
 	decided := sha
 	if r.fileOpenItems(ctx) {
 		if sha, err = r.repo.HeadSHA(ctx); err != nil {
@@ -2814,18 +2821,25 @@ func openFindings(rs []runstore.ReviewSummary) *runstore.ReviewSummary {
 	return last
 }
 
-// fileOpenItems files the backlog item for what this run left open and says
-// whether it filed one (docs/rigor-modes/implementation-plan.md T4.5, T4.6,
-// D9, D26, D27, D30). The item goes into this run's own checkout and its own
-// commit — the same branch and the same pull request as the change it was
-// filed from, so the filing dirties nothing a reviewer was not already reading
-// (D9) — and its id is recorded beside the review round it came from.
+// fileOpenItems files the backlog items for what this run left open and says
+// whether it filed any (docs/rigor-modes/implementation-plan.md T4.5, T4.6,
+// D9, D26, D27, D30). They go into this run's own checkout and one commit of
+// their own — the same branch and the same pull request as the change they
+// were filed from, so the filing dirties nothing a reviewer was not already
+// reading (D9) — and their ids are recorded beside the round they came from.
 //
 // Whether a run files at all is D30's per-mode table, read from internal/rigor
 // (T4.6): a mode whose row files nothing of its own leaves the branch exactly
 // as it was, so a Critical run's tree and pull request body are the ones main
 // produces. The table is asked rather than compared here, so a mode that files
 // differently is a row in that package and not a branch in this one.
+//
+// A row carries two independent things a run can owe — the findings it
+// tolerated and, for Hotfix alone, the fix it deferred (D30, D15) — and a run
+// that owes both files both, in one commit: a hotfix that also could not
+// satisfy its review owes the proper fix *and* the round, and writing one of
+// them would drop the other exactly where the run has least to show for
+// itself.
 //
 // The item is written before the run's diff is what a reviewer reads and
 // after the record's own ChangedFiles was measured, so the item file is
@@ -2853,30 +2867,43 @@ func (r *run) fileOpenItems(ctx context.Context) bool {
 		return false
 	}
 	open := openFindings(r.rec.Reviews)
-	if open == nil && !files.Deferred {
+	// The deferral leads: it is the mode's own substance rather than a
+	// review's residue, so it takes the day's first id.
+	var news []backlog.New
+	var what []string
+	if files.Deferred {
+		news = append(news, r.filedItem(nil))
+		what = append(what, "the follow-up this hotfix deferred")
+	}
+	if open != nil && files.Tolerated {
+		news = append(news, r.filedItem(open))
+		what = append(what, fmt.Sprintf("what review round %d left open", open.Round))
+	}
+	if len(news) == 0 {
 		return false
 	}
-	item, err := backlog.Write(filepath.Join(r.repo.Dir, backlog.Dir), r.filedItem(open))
-	if err != nil {
-		r.d.Log.Warn("filing the run's open items failed", "err", r.redact(err.Error()))
-		return false
+	ids := make([]string, 0, len(news))
+	for _, n := range news {
+		item, err := backlog.Write(filepath.Join(r.repo.Dir, backlog.Dir), n)
+		if err != nil {
+			r.d.Log.Warn("filing the run's open items failed", "err", r.redact(err.Error()))
+			return false
+		}
+		ids = append(ids, item.ID)
 	}
-	msg := fmt.Sprintf("fugaro: file %s, the follow-up this hotfix deferred", item.ID)
-	if open != nil {
-		msg = fmt.Sprintf("fugaro: file %s, what review round %d left open", item.ID, open.Round)
-	}
+	msg := fmt.Sprintf("fugaro: file %s, %s", strings.Join(ids, " and "), strings.Join(what, " and "))
 	if _, err := r.repo.CommitAll(ctx, msg); err != nil {
-		r.d.Log.Warn("committing the filed item failed", "err", r.redact(err.Error()))
+		r.d.Log.Warn("committing the filed items failed", "err", r.redact(err.Error()))
 		return false
 	}
-	r.rec.Backlog = append(r.rec.Backlog, item.ID)
+	r.rec.Backlog = append(r.rec.Backlog, ids...)
 	return true
 }
 
-// filedItem is the item this run files: the round it left open when the mode's
-// row files what it tolerated, and otherwise the deferral Hotfix's row files
-// whether or not a round was left open (D30). open is nil only in that second
-// case, which is why the deferral's own text is what the item then carries.
+// filedItem is one item this run files: the round it left open when the mode's
+// row files what it tolerated, and the deferral Hotfix's row files whether or
+// not a round was left open (D30). open is nil only in that second case, which
+// is why the deferral's own text is what the item then carries.
 func (r *run) filedItem(open *runstore.ReviewSummary) backlog.New {
 	n := backlog.New{
 		Mode:    r.filedMode(),
@@ -2974,10 +3001,10 @@ func (r *run) filedBody(open *runstore.ReviewSummary) string {
 	return backlog.Body(what, why, done, links)
 }
 
-// deferredTitle is the title of the item a hotfix files when it left no round
-// open: its own deferral, which is the proper fix, because the one it shipped
-// is the expedient one (spec.md, D15, D30). It opens with the run's id for the
-// same reason filedTitle does (D26).
+// deferredTitle is the title of the item a hotfix files for its own deferral,
+// which is the proper fix, because the one it shipped is the expedient one
+// (spec.md, D15, D30). It opens with the run's id for the same reason
+// filedTitle does (D26).
 func (r *run) deferredTitle() string {
 	return fmt.Sprintf("Run %s: revisit this hotfix in the area's normal mode", r.rec.RunID)
 }
