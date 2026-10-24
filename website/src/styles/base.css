@@ -300,6 +300,34 @@ a.skip-link:focus {
    * a menu hanging over the page is a thing laid on the page, and the step between the ground
    * and the surface is what says so. */
   background: var(--surface);
+  transform-origin: top;
+}
+
+/* An opened group's panel grows out of its trigger (owner-approved motion opportunities
+ * 2026-10-23): enter only, and nothing for a reader who asked for less motion. A closed group's
+ * panel is not drawn at all, so the close is instant whatever its values do. The panel's resting
+ * values while closed and `@starting-style` are the same small, transparent frame: the first is
+ * the transition's start when the browser has already styled the hidden panel, the second when
+ * it has not. The phone's drawer hangs across the header and grows from its top edge; the wide
+ * block below moves the origin to the label's corner the dropdown hangs from. */
+@media (prefers-reduced-motion: no-preference) {
+  .site-nav-group > details > ul {
+    transition:
+      opacity var(--duration-enter) var(--ease-out),
+      transform var(--duration-enter) var(--ease-out);
+  }
+
+  .site-nav-group > details:not([open]) > ul {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+
+  @starting-style {
+    .site-nav-group > details[open] > ul {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+  }
 }
 
 .site-nav-group > details > summary:focus-visible {
@@ -380,6 +408,7 @@ a.skip-link:focus {
     min-width: max-content;
     padding: var(--space-2xs);
     border-radius: var(--radius-md);
+    transform-origin: top right;
   }
 }
 
@@ -530,6 +559,7 @@ a.skip-link:focus {
  * of the reversed row above, so its `justify-content` only settles where a confirmation sits
  * within the box it shares with the button. */
 .command-controls {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -550,11 +580,20 @@ a.skip-link:focus {
   font-size: var(--font-size-sm);
   font-weight: var(--weight-semibold);
   cursor: pointer;
+  /* Wide enough for "Copied", which is drawn over it, so the confirmation never changes the
+     row's widths. */
+  min-width: 4.5rem;
   transition: background-color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 
 .copy-button:active {
   transform: scale(0.96);
+}
+
+/* The ring hugs the button rather than standing off it: still the accent at the token's width,
+   and lighter on a small filled control than the site's offset ring. */
+.copy-button:focus-visible {
+  outline-offset: 0;
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -564,10 +603,35 @@ a.skip-link:focus {
 }
 
 /* What the control says: the live region the markup carries, and the visible half of the
- * "copied" state. It is empty until the script writes into it, so it takes no space. */
+ * "copied" state. It is drawn over the button, out of the flow (owner's preview feedback on
+ * #1003, 2026-10-24): a confirmation in the row took width from the command, wrapped above the
+ * button and moved the block. Over the button, "Copy" and "Copied" are two stacked labels and
+ * the script's fade on this one is the crossfade between them. A longer message (a refused
+ * copy) grows leftwards from the button's right edge on one line. Empty, it is transparent, so
+ * the button shows through; it stays in the accessibility tree so the live region is announced. */
 .copy-status {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 100%;
+  padding-inline: var(--space-2xs);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.copy-status:empty {
+  opacity: 0;
 }
 
 /* ---- 2c. the bold look (redesign part P1) ------------------------------------------------
@@ -719,6 +783,34 @@ a.skip-link:focus {
 [data-reveal]:not([data-revealed]) {
   opacity: 0;
   transform: translateY(12px);
+}
+
+/* The inner pages' header (the owner's question of 2026-10-24, "same easing animation as the
+ * Home page on the rest of the pages"): the title and the line under it arrive once as the page
+ * loads, the way the home page's live card rows do: 8 px of rise and a fade on the site's
+ * `--ease-out`, the line 60 ms after the title. CSS only (`@starting-style`, the first frame the
+ * header is drawn in) and never scroll-triggered, so a page with no script, or a browser without
+ * `@starting-style`, shows the header as it is. Nothing for a
+ * reader who asked for less motion. The home page's own headline is not one of these. */
+@media (prefers-reduced-motion: no-preference) {
+  main h1.display-xl:not(.hero-tagline),
+  main h1.display-xl:not(.hero-tagline) + p {
+    transition:
+      opacity var(--duration-enter) var(--ease-out),
+      transform var(--duration-enter) var(--ease-out);
+  }
+
+  main h1.display-xl:not(.hero-tagline) + p {
+    transition-delay: 60ms;
+  }
+
+  @starting-style {
+    main h1.display-xl:not(.hero-tagline),
+    main h1.display-xl:not(.hero-tagline) + p {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+  }
 }
 
 /* A printed page shows every part, whether or not it was scrolled to (the failsafe the
