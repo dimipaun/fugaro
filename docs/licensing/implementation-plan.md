@@ -9,19 +9,29 @@ wins where they differ. Base: `origin/main` at `e924481cd`, 2026-10-24.
 owner's explicit go; answering a decision approved none of them.
 
 The owner's answers of 2026-10-24 that shape it:
-- **D300** the core stays MIT; **D301** `LICENSE` keeps line 1 `MIT License` and gains a short scope
-  statement before the copyright line; **D302** the console, mobile, coordinator and central
+- **D300** the core stays MIT; **D301, amended 2026-10-24 by the owner's O2 answer (not the
+  recommendation):** `LICENSE` is not touched at all, and the scope statement goes in a new root
+  `LICENSING.md`; **D302** the console, mobile, coordinator and central
   orchestrators stay core, and only net-new organisation features go to `ee/`.
 - **D303** ee code reaches users through a separate `main` under `ee/`, a separate artifact; the
   released `fugaro` stays core-only, so `plugin/.claude-plugin/plugin.json` and the Homebrew cask
   keep `MIT` and no task touches them.
 - **D304** a CLA through a hosted app, bots allow-listed, before the first outside PR is merged.
 - **D305 (not the recommendation)** adopt a published source-available text as is, names filled
-  in; **open tension T1** (no reuse grant in the texts; a terms document and seat count Fugaro
-  lacks) gates task L1.2.
-- **D306** the skeleton ships with CLI 0.11.0, with `ee/` marked reserved if the licence text is not
-  approved by the tag; **D307** notices in the CLI archive and the packed console; **D308** the key
+  in; **T1 ruled 2026-10-24 as choice (iii):** 0.11.0 ships `ee/` **reserved, with no licence
+  file**, and `ee/LICENSE` lands only when counsel's text is approved (task L4.1, after 0.11.0 or
+  whenever counsel finishes).
+- **D306** the skeleton ships with CLI 0.11.0, with `ee/` reserved (T1); **D307** notices in the CLI archive and the packed console; **D308** the key
   is design only; **D309** a Go-only boundary plus a staged workflow; **D310** a trademark paragraph.
+
+**Re-sliced 2026-10-24 for the T1 and O2 rulings.** What changed: L1.2 is now the reserved `ee/`
+(no dependency on counsel); L1.3 writes `LICENSING.md` and leaves `LICENSE` byte for byte as it
+is; L1.5 links `LICENSING.md`; Check 130 only verifies that GitHub still reports MIT and that
+`LICENSING.md` renders; the licence file moves to a new task, **L4.1**, in a new slice after
+counsel. Considered and declined: keeping the licence copy as L1.2 behind a gate (it would sit in
+the 0.11.0 slice while being, by ruling, not a 0.11.0 deliverable). No task id was reused for a
+different purpose except L1.2, whose earlier content (copying the approved `ee/LICENSE`) moved,
+unchanged, to the new L4.1.
 
 Out of scope here (R7): the spec's Task 3 (extension points) and Task 4 (workspaces), and the
 D303 `ee/` main, belong to the workspaces plan, which takes D302, D303, D308 and D309 as inputs.
@@ -46,23 +56,24 @@ D303 `ee/` main, belong to the workspaces plan, which takes D302, D303, D308 and
   written into the repository, a doc, a test or a run.
 - **No real people or organisations** in files, commits or PR bodies beyond what a licence text
   itself must name (the licensor line is the owner's to fill, L0.1).
-- Legal text is the owner's and counsel's: no task writes or edits licence terms. L1.2 copies an
-  approved text; L1.3 writes a scope statement whose words the owner approves in review.
+- Legal text is the owner's and counsel's: no task writes or edits licence terms. L4.1 copies an
+  approved text; L1.3 writes a scope statement (`LICENSING.md`) whose words the owner approves in
+  review. **`LICENSE` is never edited by any task.**
 
 ## Global constraints and review focus
 
 | Constraint | Pinned by |
 | --- | --- |
-| `LICENSE` line 1 stays `MIT License` (the website's `licenceIdentifier()` reads it) | L1.3 `TestDocsLicensingRootLicence`; L1.5 `faq-community.mjs` |
-| The MIT permission text below the statement is byte-identical to today's | L1.3 `TestDocsLicensingRootLicence` |
+| `LICENSE` is byte-identical to today's (O2: GitHub keeps reporting MIT; the website's `licenceIdentifier()` keeps reading `MIT License`) | L1.3 `TestDocsLicensingRootLicenceUnchanged`; L1.5 `faq-community.mjs` |
+| `LICENSING.md` states the split (`ee/` excluded and reserved, `.agents/` third-party, trademark pointer) and is linked from README and the website card | L1.3 `TestDocsLicensingStatement`; L1.5 |
 | No non-`ee/` Go file of any build tag imports `github.com/dimipaun/fugaro/ee`, and no `//go:embed` reaches into `ee/` | L1.1 `TestCoreNeverImportsEE`, `TestCoreNeverEmbedsEE` |
-| Every `ee/` source file starts with the two-line notice (R3) | L1.1 `TestEEFilesCarryTheNotice` |
+| Every `ee/` source file (any file but `README.md` and `LICENSE`) starts with the two-line notice, and `ee/LICENSE` exists whenever one source file does (R3, amended) | L1.1 `TestEEFilesCarryTheNotice`, `TestEESourceNeedsTheLicence` |
 | The core builds and tests with `ee/` deleted | L1.7 staged workflow, run after L1.8 |
-| The website card states the split and links `LICENSE` and `ee/README.md` | L1.5 |
-| `ee/README.md` exists in both D306 states and says which one holds | L1.3 creates it (reserved), L1.2 switches it |
+| The website card states the split and links `LICENSE` and `LICENSING.md` | L1.5 |
+| `ee/README.md` says the folder is reserved and carries no licence yet, until L4.1 | L1.2 creates it, L4.1 switches it |
 | The CLI archive carries a notice for every linked third-party module | L2.1 `TestThirdPartyNoticesCoverEveryLinkedModule` |
 | The packed console carries `LICENSE` and its notices | L2.2 `packaging-licence.test.ts` |
-| Released versions stay MIT, said once in README and in the 0.11.0 notes | L1.3, L1.9 |
+| Released versions stay MIT, said in `LICENSING.md` and the 0.11.0 notes | L1.3, L1.9 |
 
 **Attacker's view.** The boundary tests are the only guard between commercial and MIT code in this
 repository; a build-tagged core file importing `ee/` is the case `go list -deps` misses, so L1.1
@@ -76,10 +87,9 @@ test is caught by review, not by the test: L1.6's rule file names it.
 #### L0.1 — Counsel review and the licence decision (OWNER-RUN)
 - **What:** settle T1 (reconciliation §Open tensions): choice (i), (ii) or (iii); the licensor line
   (F27 fact 4); the CLA text for the hosted app (D304); F3 (a) and (b); D307's notice format.
-- **Produces:** either an approved `ee/LICENSE` text with the licensor filled in, handed to L1.2,
-  or "not approved by the tag", which means L1.2 does not run before 0.11.0 and `ee/` ships
-  reserved.
-- **Depends on:** nothing. **Blocks:** L1.2.
+- **Produces:** an approved `ee/LICENSE` text with the licensor filled in, handed to L4.1.
+- **Depends on:** nothing. **Blocks:** L4.1 and L0.2. **Not on the 0.11.0 critical path** (T1
+  ruling, 2026-10-24).
 
 #### L0.2 — Install the hosted CLA app (OWNER-RUN)
 - **What:** install a hosted CLA app on the repository, give it the CLA text from L0.1, allow-list
@@ -99,60 +109,60 @@ test is caught by review, not by the test: L1.6's rule file names it.
 - **Tests:** `TestCoreNeverImportsEE` (parses imports with `go/parser`, every `.go` outside `ee/`,
   `.agents/`, `node_modules/` and `testdata/`, all build tags); `TestCoreNeverEmbedsEE` (no
   `//go:embed` pattern resolves under `ee/`); `TestEEFilesCarryTheNotice` (every `.go`, `.ts`,
-  `.tsx`, `.js`, `.mjs`, `.tf`, `.sh` under `ee/` starts with
-  `SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise` and a line naming `ee/LICENSE`; passes
-  with no such file); `TestEEBoundaryScanCatchesPlantedViolations` (a `t.TempDir()` tree with a
-  `//go:build ee` core file importing the ee path, an embed into `ee/`, and an `ee/` file without
-  the notice: the scan reports all three).
-- **Command:** `go test ./internal/eeboundary/ -run 'TestCoreNeverImportsEE|TestCoreNeverEmbedsEE|TestEEFilesCarryTheNotice|TestEEBoundaryScanCatchesPlantedViolations' -count=1`
+  `.tsx`, `.js`, `.mjs`, `.tf`, `.sh` or other file under `ee/` except `ee/README.md` and
+  `ee/LICENSE` starts with `SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise` and a line
+  naming `ee/LICENSE`); `TestEESourceNeedsTheLicence` (if any such source file exists,
+  `ee/LICENSE` exists); both pass for an absent `ee/` and for a reserved `ee/` holding only
+  `README.md` (R3, amended); `TestEEBoundaryScanCatchesPlantedViolations` (a `t.TempDir()` tree
+  with a `//go:build ee` core file importing the ee path, an embed into `ee/`, an `ee/` source
+  file without the notice, and an `ee/` source file with the notice but no `ee/LICENSE`: the scan
+  reports all four; a reserved tree with only `ee/README.md` reports none).
+- **Command:** `go test ./internal/eeboundary/ -run 'TestCoreNeverImportsEE|TestCoreNeverEmbedsEE|TestEEFilesCarryTheNotice|TestEESourceNeedsTheLicence|TestEEBoundaryScanCatchesPlantedViolations' -count=1`
 - **Red step:** write `TestEEBoundaryScanCatchesPlantedViolations` first against a scan stub that
-  returns nothing; it fails on all three plants.
+  returns nothing; it fails on all four plants.
 - **Depends on:** nothing. **Reviewer tier:** standard. **OWNER-RUN:** no.
 - **Commit:** `eeboundary: core never imports or embeds ee/, and every ee/ file carries its notice`
 
-#### L1.2 — `ee/LICENSE` from the approved text
-- **Files:** `ee/LICENSE` (new), `ee/README.md` (switched from "reserved" to "licensed under
-  `ee/LICENSE`"), `internal/cli/docs_ee_licence_test.go` (new).
-- **Interfaces:** consumes L0.1's approved text verbatim and L1.3's `ee/README.md`.
-- **Tests:** `TestDocsEELicenceIsTheApprovedText` (the file's SHA-256 equals the one recorded in
-  this task's commit body by the owner's approval, so a later edit is a visible decision);
-  `TestDocsEEReadmeNamesItsLicence` (`ee/README.md` links `LICENSE` in its own directory and no
-  longer says "reserved").
-- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDocsEELicence|TestDocsEEReadme|Docs' -count=1 -timeout 900s`
-- **Red step:** the two tests before the files change: no `ee/LICENSE`, README says reserved.
-- **Depends on:** L0.1 (approved text), L1.3 (`ee/README.md` exists). **Reviewer tier:** opus +
-  mandatory independent review (legal text; the reviewer diffs it against L0.1's approved copy).
-  **OWNER-RUN:** the approval itself; the copy is an agent's.
-- **Commit:** `ee: the enterprise licence, as approved`
+#### L1.2 — The reserved `ee/` (re-sliced 2026-10-24)
+- **Files:** `ee/README.md` (new: the folder is reserved for net-new organisation features under
+  their own licence; it carries **no licence yet** and no code; `ee/LICENSE` arrives only when
+  counsel's text is approved; core never imports `ee/`; each future file carries the R3 notice);
+  `internal/cli/docs_ee_reserved_test.go` (new).
+- **Interfaces:** produces the file L1.3's `LICENSING.md` and L1.5's card point at.
+- **Tests:** `TestDocsEEReserved` (`ee/README.md` exists, says reserved and that no licence file
+  exists yet; `ee/` holds no other file; `ee/LICENSE` is absent). L1.1's tests pass on it.
+- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDocsEEReserved|Docs' -count=1 -timeout 900s`
+- **Red step:** `TestDocsEEReserved` before `ee/README.md` exists.
+- **Depends on:** nothing. **Reviewer tier:** standard. **OWNER-RUN:** no.
+- **Commit:** `ee: the folder is reserved and carries no licence yet`
 
-#### L1.3 — Root statement, README Licensing section, `.agents/` notice, reserved `ee/README.md`
-- **Files:** `LICENSE` (scope statement between line 1 and the copyright line, MIT text unchanged);
-  `README.md` (`## License` becomes `## Licensing`: two or three sentences on the split, one that
-  every release before 0.11.0 is MIT (R4), the trademark paragraph (D310), links to `LICENSE` and
-  `ee/README.md`); `.agents/LICENSE` (new: the vendored project's upstream licence text, fetched
-  from its repository by the run, the upstream commit named in the commit body); `ee/README.md`
-  (new: what `ee/` is for, that it is reserved and holds no code yet, that core never imports it,
-  that each file carries the R3 notice); `internal/cli/docs_licensing_test.go` (new).
-- **Statement wording (the owner approves in review):** everything in this repository is under the
-  MIT licence below except (1) the `ee/` directory, covered as `ee/README.md` describes, and (2)
-  third-party code under `.agents/`, under its own licence in `.agents/LICENSE`.
-- **Tests:** `TestDocsLicensingRootLicence` (line 1 is `MIT License`; the statement names `ee/` and
-  `.agents/`; the text from the copyright line down equals today's MIT text with today's copyright
-  line); `TestDocsLicensingReadmeSection` (the section exists, links both files, carries the
-  earlier-releases sentence and the trademark paragraph); `TestDocsLicensingVendoredNotice`
-  (`.agents/LICENSE` exists and carries an MIT permission notice); `TestDocsLicensingEEReadme`
-  (`ee/README.md` exists and is linked from `README.md`; its content is L1.2's business).
-- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDocsLicensing|Docs' -count=1 -timeout 900s`,
-  then `cd website && npm run check` (the card's derivation reads `LICENSE`).
-- **Red step:** the four tests against today's tree: no statement, `## License` only, no
-  `.agents/LICENSE`, no `ee/`.
-- **Depends on:** nothing. **Reviewer tier:** standard, plus the owner reads the statement.
-- **Commit:** `licensing: the root scope statement, README Licensing section, the vendored skills' licence and a reserved ee/`
+#### L1.3 — `LICENSING.md`, the README Licensing section and the `.agents/` notice (re-sliced 2026-10-24)
+- **Files:** `LICENSING.md` (new, root: the core is under the MIT licence in `LICENSE`; `ee/` is
+  excluded and reserved, as `ee/README.md` says; `.agents/` is third-party code under its own
+  licence in `.agents/LICENSE`; every release before 0.11.0 is MIT (R4); a pointer to the
+  README's trademark paragraph); `README.md` (`## License` becomes `## Licensing`: two or three
+  sentences, links to `LICENSE` and `LICENSING.md`, the trademark paragraph (D310));
+  `.agents/LICENSE` (new: the vendored project's upstream licence text, fetched from its
+  repository by the run, the upstream commit named in the commit body);
+  `internal/cli/docs_licensing_test.go` (new). **`LICENSE` is not edited (O2).**
+- **Tests:** `TestDocsLicensingRootLicenceUnchanged` (`LICENSE`'s SHA-256 equals today's at
+  `e924481cd`); `TestDocsLicensingStatement` (`LICENSING.md` names `ee/` as excluded and reserved,
+  `.agents/` as third-party, the earlier-releases sentence, and links `LICENSE`, `ee/README.md`,
+  `.agents/LICENSE` and the README's trademark paragraph); `TestDocsLicensingReadmeSection` (the
+  section links `LICENSE` and `LICENSING.md` and carries the trademark paragraph);
+  `TestDocsLicensingVendoredNotice` (`.agents/LICENSE` exists and carries an MIT permission
+  notice).
+- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDocsLicensing|Docs' -count=1 -timeout 900s`
+- **Red step:** the three new-file tests against today's tree (`TestDocsLicensingRootLicenceUnchanged`
+  passes from the start: it is the guard).
+- **Depends on:** L1.2 (`LICENSING.md` links `ee/README.md`). **Reviewer tier:** standard, plus
+  the owner reads `LICENSING.md`'s wording.
+- **Commit:** `licensing: LICENSING.md states the split, the README Licensing section, the vendored skills' licence`
 
 #### L1.4 — Contribution terms
 - **Files:** `CONTRIBUTING.md` (a new `## Licensing of contributions` section: outside pull
   requests are merged only after the author signs the Contributor License Agreement, which a bot
-  asks for on the first one; contributions to `ee/` fall under `ee/`'s terms);
+  asks for on the first one; `ee/` takes no contributions while it is reserved);
   `.github/pull_request_template.md` (one checklist line about the CLA; not a workflow file);
   `internal/cli/docs_contributing_cla_test.go` (new).
 - **Tests:** `TestDocsContributingCLA` (the section exists, names the CLA, and the pinned sentences
@@ -164,14 +174,14 @@ test is caught by review, not by the test: L1.6's rule file names it.
 
 #### L1.5 — The website Community card
 - **Files:** `website/src/pages/community.astro` (the Licence card: "Fugaro's core is released
-  under the {licence} licence; the `ee/` directory is not, as its README says", links `LICENSE` and
-  `ee/README.md`; the "only text that governs" sentence goes; `licenceIdentifier()` unchanged);
-  `website/test/faq-community.mjs` (the pinned facts move with the copy: the identifier test stays,
-  a new assertion that the card links `ee/README.md`, and the `LICENSE`-link spacing test still
-  holds).
+  under the {licence} licence; `LICENSING.md` says which parts are not", links `LICENSE` and
+  `LICENSING.md`; the "only text that governs" sentence goes; `licenceIdentifier()` unchanged, and
+  still reads `MIT License` because `LICENSE` is untouched); `website/test/faq-community.mjs` (the
+  pinned facts move with the copy: the identifier test stays, a new assertion that the card links
+  `LICENSING.md`, and the link-spacing test still holds).
 - **Command:** `cd website && npm run check`, then `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1 -timeout 900s`
-- **Red step:** the new `ee/README.md` link assertion against today's page.
-- **Depends on:** L1.3 (`ee/README.md` and the statement exist). **Reviewer tier:** standard.
+- **Red step:** the new `LICENSING.md` link assertion against today's page.
+- **Depends on:** L1.3 (`LICENSING.md` exists). **Reviewer tier:** standard.
   Deploying the site is a separate, authorised step (`.claude/rules/website.md`).
 - **Commit:** `website: the community card states the core/ee split`
 
@@ -214,15 +224,15 @@ test is caught by review, not by the test: L1.6's rule file names it.
 - **Files:** none in this plan. The 0.11.0 release PR (`/new-release 0.11.0`) adds one Highlights
   bullet to `docs/releases/v0.11.0.md` and folds the same fact into the version's line in
   `website/data/release-summaries.yaml` (no backticks): *Fugaro's core stays MIT, and the
-  repository now reserves an `ee/` directory for organisation features under their own licence;
-  every earlier release stays MIT.* If L1.2 has landed, "reserves" becomes "carries". No
-  `### For operators` entry (R5).
-- **Depends on:** L1.3, L1.5 merged (and L1.2 if it landed). **Done by:** the release PR.
+  repository now reserves an `ee/` directory for future organisation features under their own
+  licence, described in LICENSING.md; every earlier release stays MIT.* No `### For operators`
+  entry (R5).
+- **Depends on:** L1.2, L1.3, L1.5 merged. **Done by:** the release PR.
 
-#### L1.10 — Write Check 130
-- **Files:** `docs/gcp-live-checklist.md` (a `## Check 130` section and its register row: after the
-  skeleton merges, the owner opens the repository page and `https://pkg.go.dev/github.com/dimipaun/fugaro`
-  and records what each reports for the licence; expected per O2: GitHub most likely `Other`).
+#### L1.10 — Write Check 130 (amended 2026-10-24: GitHub's MIT reading and `LICENSING.md` only)
+- **Files:** `docs/gcp-live-checklist.md` (a `## Check 130` section and its register row: after
+  L1.3 merges, the owner opens the repository page and confirms GitHub still reports **MIT**, then
+  opens `LICENSING.md` on GitHub and confirms it renders with working links; as amended by O2).
 - **Tests:** the checklist's own docs tests.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1 -timeout 900s`
 - **Red step:** none beyond the register's tests, which fail if the row and section disagree.
@@ -230,8 +240,9 @@ test is caught by review, not by the test: L1.6's rule file names it.
 - **Commit:** `checklist: Check 130, the licence detectors after the open-core skeleton`
 
 #### L1.11 — Run Check 130 (OWNER-RUN)
-- **What:** after L1.3 merges, look at the two pages and write the result into the Check 130
-  section. If GitHub reports `Other`, the owner rules on O2 (accept, or take D301's alternative).
+- **What:** after L1.3 merges, look at the repository's licence badge and at `LICENSING.md`, and
+  write the result into the Check 130 section. A reading other than MIT is a finding against O2's
+  premise and goes back to the owner.
 - **Depends on:** L1.3 merged, L1.10 merged.
 
 ### Slice L2 — third-party notices (D307)
@@ -279,40 +290,59 @@ test is caught by review, not by the test: L1.6's rule file names it.
   boundary, even on paper).
 - **Commit:** `docs(licensing): the licence-key design (D308), not built`
 
+### Slice L4 — the enterprise licence, after counsel (not in 0.11.0)
+
+#### L4.1 — `ee/LICENSE` from the approved text (new 2026-10-24)
+- **Files:** `ee/LICENSE` (new), `ee/README.md` (from "reserved, no licence yet" to "licensed
+  under `ee/LICENSE`"), `LICENSING.md` (the `ee/` line names `ee/LICENSE`),
+  `internal/cli/docs_ee_reserved_test.go` (its reserved assertions become licensed ones),
+  `internal/cli/docs_licensing_test.go` (the statement test follows).
+- **Interfaces:** consumes L0.1's approved text verbatim.
+- **Tests:** `TestDocsEELicenceIsTheApprovedText` (the file's SHA-256 equals the one the owner's
+  approval records in the commit body); `TestDocsEEReserved` renamed `TestDocsEELicensed`;
+  `TestDocsLicensingStatement` updated.
+- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDocsEE|TestDocsLicensing|Docs' -count=1 -timeout 900s`
+- **Red step:** `TestDocsEELicenceIsTheApprovedText` before the file exists.
+- **Depends on:** L0.1, L1.2, L1.3. **Reviewer tier:** opus + mandatory independent review (legal
+  text; the reviewer diffs it against L0.1's approved copy). **OWNER-RUN:** the approval itself.
+- **Commit:** `ee: the enterprise licence, as approved`
+
 ## Parallel execution
 
-**Edges** (from the Depends-on lines): L0.1 → L0.2; L0.1 → L1.2; L1.3 → L1.2; L1.3 → L1.5;
-L1.1 → L1.6; L1.1, L1.7 → L1.8; L1.3, L1.5 (and L1.2 if landed) → L1.9; L1.3, L1.10 → L1.11.
+**Edges** (from the Depends-on lines): L0.1 → L0.2; L1.2 → L1.3; L1.3 → L1.5; L1.1 → L1.6;
+L1.1, L1.7 → L1.8; L1.2, L1.3, L1.5 → L1.9; L1.3, L1.10 → L1.11; L0.1, L1.2, L1.3 → L4.1.
 
 | Level | Tasks (run concurrently) |
 | --- | --- |
-| 0 | L0.1 (owner), L1.1, L1.3, L1.4, L1.7, L1.10, L2.1, L2.2, L3.1 |
-| 1 | L0.2 (owner), L1.2 (after counsel), L1.5, L1.6, L1.8 (owner) |
-| 2 | L1.9 (the release PR), L1.11 (owner) |
+| 0 | L0.1 (owner), L1.1, L1.2, L1.4, L1.7, L1.10, L2.1, L2.2, L3.1 |
+| 1 | L0.2 (owner), L1.3, L1.6, L1.8 (owner) |
+| 2 | L1.5, L1.11 (owner), L4.1 (after counsel) |
+| 3 | L1.9 (the release PR) |
 
-**Critical path to the 0.11.0 tag (agent work):** L1.3 → L1.5 → L1.9; the website check (~7
-minutes) is the longest single step. **With the licence:** L0.1 (counsel, external, no estimate)
-→ L1.2 → L1.9. If L0.1 is not done by the tag, L1.2 waits and `ee/` ships reserved (D306); nothing
-else waits on it.
+**Critical path to the 0.11.0 tag:** L1.2 → L1.3 → L1.5 → L1.9; the website check (~7 minutes)
+is the longest single step. Counsel (L0.1) and the licence file (L4.1) are off it by the T1
+ruling: 0.11.0 ships `ee/` reserved.
 
-**What must be sequential and why:** L1.2 after L1.3 (both write `ee/README.md`); L1.5 after L1.3
-(the card links a file L1.3 creates and reads the statement L1.3 writes); L1.6 after L1.1 (it
-names L1.1's tests); L1.8 after L1.7 and L1.1 (it copies L1.7's file, which runs L1.1's tests).
+**What must be sequential and why:** L1.3 after L1.2 (`LICENSING.md` links `ee/README.md`); L1.5
+after L1.3 (the card links `LICENSING.md`); L1.6 after L1.1 (it names L1.1's tests); L1.8 after
+L1.7 and L1.1 (it copies L1.7's file, which runs L1.1's tests); L4.1 after L1.2 and L1.3 (it
+edits both tasks' files) and after counsel.
 
 ### Shared-files table (no level has two writers of one file)
 
 | File | Writers (level) |
 | --- | --- |
-| `LICENSE` | L1.3 (0) |
-| `README.md` | L1.3 (0) |
-| `.agents/LICENSE` | L1.3 (0) |
-| `ee/README.md` | L1.3 (0), L1.2 (1) |
-| `ee/LICENSE` | L1.2 (1) |
-| `internal/cli/docs_licensing_test.go` | L1.3 (0) |
-| `internal/cli/docs_ee_licence_test.go` | L1.2 (1) |
+| `LICENSE` | none (O2: never edited) |
+| `LICENSING.md` | L1.3 (1), L4.1 (2) |
+| `README.md` | L1.3 (1) |
+| `.agents/LICENSE` | L1.3 (1) |
+| `ee/README.md` | L1.2 (0), L4.1 (2) |
+| `ee/LICENSE` | L4.1 (2) |
+| `internal/cli/docs_ee_reserved_test.go` | L1.2 (0), L4.1 (2) |
+| `internal/cli/docs_licensing_test.go` | L1.3 (1), L4.1 (2) |
 | `internal/eeboundary/boundary_test.go` | L1.1 (0) |
 | `CONTRIBUTING.md`, `.github/pull_request_template.md`, `internal/cli/docs_contributing_cla_test.go` | L1.4 (0) |
-| `website/src/pages/community.astro`, `website/test/faq-community.mjs` | L1.5 (1) |
+| `website/src/pages/community.astro`, `website/test/faq-community.mjs` | L1.5 (2) |
 | `.claude/rules/ee.md`, `CLAUDE.md` | L1.6 (1) |
 | `docs/pending-workflows/core-without-ee.yml`, `docs/pending-workflows/README.md`, `internal/cli/docs_core_without_ee_workflow_test.go` | L1.7 (0); the owner's copy-in L1.8 (1) |
 | `.github/workflows/core-without-ee.yml` | L1.8 (1, owner) |
@@ -320,7 +350,7 @@ names L1.1's tests); L1.8 after L1.7 and L1.1 (it copies L1.7's file, which runs
 | `scripts/third-party-notices.sh`, `scripts/notices_test.go`, `.goreleaser.yaml`, `docs/release.md` | L2.1 (0) |
 | `console/package.json`, `console/scripts/notices.mjs`, `console/test/unit/packaging-licence.test.ts` | L2.2 (0) |
 | `docs/licensing/licence-key.md` | L3.1 (0) |
-| `docs/releases/v0.11.0.md`, `website/data/release-summaries.yaml` | the 0.11.0 release PR (2) |
+| `docs/releases/v0.11.0.md`, `website/data/release-summaries.yaml` | the 0.11.0 release PR (3) |
 
 `docs/pending-workflows/README.md` and `docs/gcp-live-checklist.md` are also written by other
 plans; whichever PR merges second rebases and keeps both entries (the check register's own rule:
@@ -329,10 +359,10 @@ the second claim renumbers, and Check 130 is this plan's reserved number).
 ## Checks this plan takes
 
 From the reserved block **130–134**: **Check 130** only (L1.10 writes it, L1.11 is the owner's run):
-GitHub's and pkg.go.dev's licence reading after the skeleton merges. **131–134** stay reserved and
+as amended by O2, that GitHub still reports MIT and that `LICENSING.md` renders. **131–134** stay reserved and
 unused. No check touches a cloud project.
 
 ## After deploy
 
 Nothing runs after a deploy (R5): no backfill, config or secret. The only owner steps are L0.1,
-L0.2, L1.8 and L1.11, none of which is a rollout step.
+L0.2, L1.8, L1.11 and the approval inside L4.1, none of which is a rollout step.
