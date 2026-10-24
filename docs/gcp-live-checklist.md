@@ -479,12 +479,18 @@ number** (the licensing plan [licensing/implementation-plan.md](licensing/implem
 "Checks this plan takes" and its task **L1.10**; the block **130–134** is that work's, and only
 **130** is written — **131–134** stay reserved and unused). The reading is the same shape as the
 three above and is taken the same way: the highest **written** `## Check N` section in this file,
-read at **`c4d04bd6`** — the commit this change is based on — was **113**, 119 and 123 are claimed
-by the console-windows and console dependency-graph plans, open PR #1022 takes **124**, and **130**
-was free either way, so the section is **written below**. Its subject is the **licence detectors**:
-that GitHub still reports MIT for the repository once the open-core skeleton has put a root
-`LICENSING.md` beside an untouched `LICENSE`, and that `LICENSING.md` renders on GitHub with its
-links working. It reads GitHub and nothing else — no cloud project, no installation, no credential
+read at **`c4d04bd6`** — the commit this change is based on — was **113**; **119 is proposed by two
+works and claimed by nobody** — proposed by the console-windows work for its owner's manual
+checklist, which claims nothing by that work's own **D12(a)**
+(`docs/console-windows/implementation-plan.md` §4, "proposed, not claimed"), and proposed
+separately by the rigor-modes work ("this plan proposes Check 119",
+`docs/rigor-modes/implementation-plan.md` §3), so 119 is free whichever way that collision falls;
+**123** is claimed by the console dependency-graph work
+(`docs/console-dependency-graph/README.md`, "Numbers this work holds"); open PR #1022 takes
+**124**; and **130** was free either way, so the section is **written below**. Its subject is the
+**licence detectors**: that GitHub still reports MIT for the repository once the open-core skeleton
+has put a root `LICENSING.md` beside an untouched `LICENSE`, and that `LICENSING.md` renders on
+GitHub with its links working. It reads GitHub and nothing else — no cloud project, no installation, no credential
 and no write of any kind — it is owner-run, and it is **NOT RUN**: its third step reads a file task
 **L1.3** writes, so it is run in full by task **L1.11**, after L1.3 has merged.
 
@@ -8791,11 +8797,15 @@ yet, that step 6's second half was not run. Until it has been, this row stays **
 ## Check 130: the licence detectors after the open-core skeleton — GitHub still reports MIT and `LICENSING.md` renders (the public repository on GitHub, read-only; no cloud project, no installation, never `belong`; run by you; NOT RUN)
 
 **NOT RUN.** Written by **task L1.10** of the licensing plan
-([licensing/implementation-plan.md](licensing/implementation-plan.md), its Check 130; decisions
-**D300** and **D301** as amended by the owner's **O2** answer of 2026-10-24). The file is written
-now and **run later**: its guard refuses to start until task **L1.3**'s `LICENSING.md` is in the
-tree, so the run is task **L1.11**'s, after L1.3 merges. Nothing in it writes anything anywhere, so
-it is safe to run at any time — and running it twice costs nothing but a few more anonymous reads.
+([licensing/implementation-plan.md](licensing/implementation-plan.md), its Check 130; decision
+**D300**'s MIT premise, and decision **D301 as amended by the owner's O2 answer** of 2026-10-24 —
+**O2** is the amendment of D301 alone, and it is the root `LICENSE` that stays pure MIT with the
+scope statement in a new `LICENSING.md`; **D303** was amended the same day, separately and not the
+recommendation, and what it settles is the release labels' `ee` tag, which this check is not). The
+file is written now and **run later**: its guard refuses to start until task **L1.3**'s
+`LICENSING.md` is in the tree, so the run is task **L1.11**'s, after L1.3 merges. Nothing in it
+writes anything anywhere, so it is safe to run at any time — and running it twice costs nothing but
+a few more anonymous reads.
 
 **Why the check exists.** GitHub classifies a repository's licence from the **text** of the file it
 finds. The reconciliation's F27 reads a published repository whose root `LICENSE` carries a scope
