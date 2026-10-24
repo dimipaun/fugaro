@@ -873,3 +873,77 @@ func TestJoinReboundsTheRecordedChangedFiles(t *testing.T) {
 			len(row.ChangedFiles.Paths), row.ChangedFiles.Truncated)
 	}
 }
+
+// TestJoinPlanTaskIsTheLaunchRecordsOwn: the plan task id is what the run's
+// own launch.json recorded, sanitised, and nothing at all for a run whose
+// launch record has none — never a value invented from the task (which
+// carries the same id for the recovery path and --retry, not for display).
+//
+// It is a display-only join hint: the console joins a run to a node of the
+// plan's graph by it, and nothing decides anything by it (console
+// dependency graph plan, constraint C3).
+//
+// Mutation caught: leaving PlanTask out of Join, or filling it from
+// in.Task.PlanTask.
+func TestJoinPlanTaskIsTheLaunchRecordsOwn(t *testing.T) {
+	l := *launch
+	l.PlanTask = "setup-wizard/W1.3"
+	row := Join(Input{Task: spec, Launch: &l, Record: rec(runstore.StatusSucceeded, nil), Exec: exec(backend.StateSucceeded)}, prices, now)
+	if row.PlanTask != "setup-wizard/W1.3" {
+		t.Errorf("PlanTask = %q, want the launch.json's own value", row.PlanTask)
+	}
+	// A launch.json with no plan_task (one written by hand, or by a
+	// launcher older than the field): absent, not the task's.
+	tasked := *spec
+	tasked.PlanTask = "setup-wizard/W1.3"
+	row = Join(Input{Task: &tasked, Launch: launch, Record: rec(runstore.StatusSucceeded, nil)}, prices, now)
+	if row.PlanTask != "" {
+		t.Errorf("PlanTask = %q for a launch.json with none, want \"\"", row.PlanTask)
+	}
+	// No launch.json at all: an unlaunched run carries none.
+	if row := Join(Input{Task: &tasked}, prices, now); row.PlanTask != "" {
+		t.Errorf("unlaunched row carries PlanTask %q", row.PlanTask)
+	}
+}
+
+// TestJoinPlanTaskIsSanitisedAndOmittedWhenAbsent: the id is text a
+// launcher wrote, so what reaches the JSON (and so the console) carries no
+// escape sequence, no control, no bidi override and no newline; and a run
+// whose launch.json recorded none emits no key at all, never "".
+//
+// Mutation caught: assigning in.Launch.PlanTask raw, or dropping omitempty
+// from the row's json tag.
+func TestJoinPlanTaskIsSanitisedAndOmittedWhenAbsent(t *testing.T) {
+	l := *launch
+	l.PlanTask = "setup-wizard/\x1b[2JW1.3" + string(rune(0x202e)) + "\nsetup-wizard/W9.9"
+	row := Join(Input{Task: spec, Launch: &l}, prices, now)
+	if strings.ContainsAny(row.PlanTask, "\x1b\n\r\t\x00\x07") {
+		t.Errorf("hostile control survived: %q", row.PlanTask)
+	}
+	for _, r := range row.PlanTask {
+		if r == 0x202e || r == 0x2028 || r == 0x2029 {
+			t.Errorf("hostile rune %U survived: %q", r, row.PlanTask)
+		}
+	}
+	if !strings.Contains(row.PlanTask, "setup-wizard") {
+		t.Errorf("the value was destroyed rather than sanitised: %q", row.PlanTask)
+	}
+	data, err := json.Marshal(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["plan_task"] != row.PlanTask {
+		t.Errorf("plan_task = %v, want %q", m["plan_task"], row.PlanTask)
+	}
+	empty, err := json.Marshal(Join(Input{Task: spec, Launch: launch}, prices, now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(empty), "plan_task") {
+		t.Errorf("an absent plan task still emitted the key: %s", empty)
+	}
+}

@@ -152,6 +152,18 @@ type RunRow struct {
 	// like every other bucket-derived string; the renderers only shorten it
 	// (LauncherShort). Nothing decides anything by it.
 	LaunchedBy string
+	// PlanTask is the plan task the run's launch.json recorded (task.Spec's
+	// PlanTask, at fugaro run --plan-task): the display-only join hint the
+	// console matches a run to a node of a plan's graph by (console
+	// dependency graph plan, decision GD5). It comes from the same read as
+	// LaunchedBy (MergeFacts), and like it is "" for a run the reader has no
+	// launch.json for and for one whose launch.json recorded none. An
+	// absent value means "not recorded", never "joined to nothing".
+	//
+	// It is untrusted text a launcher wrote, sanitised by MergeFacts like
+	// every other bucket-derived string; nothing decides anything by it, and
+	// it is never joined into a path.
+	PlanTask string
 
 	// Credential is the name — never the value — of the credential the run's
 	// cascade is spending on, as the run itself reported it

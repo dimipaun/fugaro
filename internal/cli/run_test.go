@@ -1169,3 +1169,162 @@ func TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef(t *testing.T) {
 // implementRecipe is a non-artifact recipe's own text, in the shape a project
 // or catalog recipe travels in (no mode: key parses as implement).
 const implementRecipe = "version: 1\nname: impl\nsteps:\n  - review: {}\n"
+
+// launchRecordOf is run id's stored launch.json.
+func launchRecordOf(t *testing.T, f *cloudFixture, id string) *runstore.Launch {
+	t.Helper()
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	l, err := runstore.Open(b, appSlug, id).ReadLaunch(ctx)
+	if err != nil {
+		t.Fatalf("launch.json of %s: %v", id, err)
+	}
+	return l
+}
+
+// A launch records the optional plan task id it was given (--plan-task) in
+// both of its own records: the task (which --retry replays as it is, and
+// which the recovery path backfills a launch from) and launch.json (which
+// runs ls, watch and the console read). It is a display-only join hint the
+// console matches a run to a node of a plan graph by (console dependency
+// graph plan, task GV1.2, decision GD5).
+//
+// A launch with no --plan-task writes no such field anywhere, so its records
+// are byte-identical to what the previous release wrote and a console older
+// than the field loses a join, never a row (version skew: the field is
+// additive and optional).
+//
+// Mutation (drop PlanTask from buildAttemptSpec's spec literal): task.json
+// carries none, the round trip through --retry and the recovery path loses
+// it, and the assertions here fail.
+func TestLaunchCarriesPlanTask(t *testing.T) {
+	f := newCloudFixture(t)
+	id := time.Now().UTC().Format("20060102") + "-120000-abcd"
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", id, "--plan-task", "setup-wizard/W1.3", "Add a feature"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSpec(t, f, id).PlanTask; got != "setup-wizard/W1.3" {
+		t.Fatalf("task plan_task = %q, want the flag's", got)
+	}
+	if got := launchRecordOf(t, f, id).PlanTask; got != "setup-wizard/W1.3" {
+		t.Fatalf("launch plan_task = %q, want the flag's", got)
+	}
+	if wire := taskJSON(t, f, id); !strings.Contains(wire, `"plan_task": "setup-wizard/W1.3"`) {
+		t.Fatalf("task.json does not carry the join hint:\n%s", wire)
+	}
+	// runs ls --json is the document the console reads: the row carries it.
+	got, _ := lsJSON(t)
+	joined := map[string]string{}
+	for _, r := range got.Runs {
+		joined[r.RunID] = r.PlanTask
+	}
+	if joined[id] != "setup-wizard/W1.3" {
+		t.Fatalf("runs ls plan_task = %q, want the launch.json's", joined[id])
+	}
+
+	// A launch without the flag carries none of it.
+	plain := time.Now().UTC().Format("20060102") + "-130000-abcd"
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", plain, "Add a feature"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSpec(t, f, plain).PlanTask; got != "" {
+		t.Fatalf("task plan_task = %q without the flag", got)
+	}
+	if got := launchRecordOf(t, f, plain).PlanTask; got != "" {
+		t.Fatalf("launch plan_task = %q without the flag", got)
+	}
+	if wire := taskJSON(t, f, plain); strings.Contains(wire, "plan_task") {
+		t.Fatalf("a task with no join hint carries the field:\n%s", wire)
+	}
+}
+
+// --plan-task refuses a value that is not a plan task id before anything is
+// written or started: the id is shown as text in the console, so it is one
+// plan and one task, never a path, never control characters, never an
+// unbounded string. The launcher and the runner apply the same list
+// (task.PlanTaskProblem), so a launch this accepts is not one the run then
+// refuses at bootstrap.
+func TestRunPlanTaskValidation(t *testing.T) {
+	for _, tc := range []struct{ name, id, want string }{
+		{"empty", "", "is empty"},
+		{"no task", "setup-wizard", "must name a task in a plan"},
+		{"absolute", "/setup-wizard/W1.3", "is an absolute path"},
+		{"a .. element", "setup-wizard/../W1.3", `has a ".." path element`},
+		{"a control character", "setup-wizard/W1.3\x1b", "holds a control character"},
+		{"too long", "setup-wizard/" + strings.Repeat("x", task.MaxPlanTaskBytes), "longer than 128 bytes"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			wantRefused(t, f, tc.want, "run", "--repo", "acme/app", "--run-id", "20261024-120000-abcd", "--plan-task", tc.id, "Add a feature")
+		})
+	}
+}
+
+// The launch record is not the only place the join hint lives: when the CLI
+// that launched died before writing launch.json, existingLaunch backfills
+// one from result.json, and the plan task id must survive that — the console
+// reads launch.json, so a backfilled launch that dropped it would silently
+// unjoin a run that has one. The spec is the only thing the recovery path
+// has left to read it from, which is why the id is stored in task.json too
+// (finding F32).
+//
+// Mutation (build the backfilled Launch without spec.PlanTask): the run
+// keeps working and loses its node, and this test fails.
+func TestRecoveredLaunchKeepsPlanTask(t *testing.T) {
+	f := newCloudFixture(t)
+	env := memEnv(t, f)
+	ctx := context.Background()
+	spec := raceSpec(t, env)
+	spec.PlanTask = "setup-wizard/W1.3"
+	s := runstore.Open(env.bucket.Bucket, appSlug, spec.RunID)
+	// The record's own execution, as Cloud Run's environment named it.
+	job := gcp.JobName(appSlug, "web")
+	recorded, err := backend.CloudRunCodec().FromEnv(func(k string) string {
+		return map[string]string{"CLOUD_RUN_EXECUTION": job + "-x7k2p", "CLOUD_RUN_JOB": job, "FUGARO_GCP_PROJECT": "proj-1234", "FUGARO_PROJECT": "aurora", "FUGARO_REGION": "us-east5"}[k]
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: spec.RunID, Execution: recorded, Status: runstore.StatusRunning, Stage: "implement", Outcome: runstore.OutcomeNone})
+	res, err := launchRun(ctx, env, appSlug, spec, time.Now())
+	if err != nil || res.Status != "already-launched" || len(f.run.Executions()) != 0 {
+		t.Fatalf("res = %+v, err = %v, executions = %v", res, err, f.run.Executions())
+	}
+	l, err := s.ReadLaunch(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Execution != recorded {
+		t.Fatalf("backfilled execution = %q, want the record's", l.Execution)
+	}
+	if l.PlanTask != "setup-wizard/W1.3" {
+		t.Fatalf("backfilled launch plan_task = %q, want the task's", l.PlanTask)
+	}
+}
+
+// --retry replays a run's stored task as it is — that is why it takes no
+// --plan-task — so the join hint has to come from the stored task into the
+// launch.json the retry writes, or the run comes back with no node.
+//
+// Mutation (drop spec.PlanTask from launchRun's own Launch literal): a
+// retried run loses its node while its task keeps the id.
+func TestRetryKeepsPlanTask(t *testing.T) {
+	f := newCloudFixture(t)
+	t.Chdir(t.TempDir())
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	spec := &task.Spec{Version: 1, RunID: "20261024-120000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web",
+		Task: "x", PlanTask: "setup-wizard/W1.3"}
+	if err := runstore.Open(b, appSlug, spec.RunID).CreateTask(ctx, spec); err != nil {
+		t.Fatal(err)
+	}
+	wantRefused(t, f, "it takes no --plan-task", "run", "--retry", spec.RunID, "--plan-task", "setup-wizard/W9.9")
+	if _, _, err := execute(t, "run", "--retry", spec.RunID); err != nil {
+		t.Fatal(err)
+	}
+	if got := launchRecordOf(t, f, spec.RunID).PlanTask; got != "setup-wizard/W1.3" {
+		t.Fatalf("retried launch plan_task = %q, want the stored task's", got)
+	}
+}

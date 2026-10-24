@@ -18,6 +18,22 @@ type Launch struct {
 	LogURL     string    `json:"log_url,omitempty"`
 	LaunchedBy string    `json:"launched_by,omitempty"`
 	LaunchedAt time.Time `json:"launched_at"`
+	// PlanTask is the plan task the launch recorded (task.Spec.PlanTask,
+	// fugaro run --plan-task): the display-only join hint the console
+	// matches a run to a node of a plan's dependency graph by (console
+	// dependency graph plan, decision GD5). It is written by the launching
+	// CLI from the task it also stored, so fugaro run --retry and the
+	// recovery path below (which rebuilds a launch from the run's own
+	// record when the CLI died before writing one) keep it.
+	//
+	// Additive and optional, and Version stays 1: this file's readers
+	// decode with json.Unmarshal and ignore a field they do not know, so a
+	// launch.json carrying one is read by a CLI older than the field, and
+	// every launch.json written before it reads back with none. Untrusted
+	// display text a launcher wrote — the run's service account can write
+	// this object — shape-checked at both ends (task.PlanTaskProblem) and
+	// never an authorization input (the plan's constraint C3).
+	PlanTask string `json:"plan_task,omitempty"`
 }
 
 // WriteLaunch stores launch.json once; a second write returns ErrExists.
