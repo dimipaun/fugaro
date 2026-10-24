@@ -34,6 +34,7 @@ Subcommands:
 - `fugaro cancel` -- Cancel a run, letting the runner open a draft PR first
 - `fugaro completion` -- Generate the autocompletion script for the specified shell
 - `fugaro config` -- Work with fugaro.yaml
+- `fugaro coordinator` -- The coordinator's project view: what is in flight, and what collides
 - `fugaro creds` -- Set and list the credentials service's one bundle secret (the owner)
 - `fugaro diagnose` -- Explain how a run went: status, tests, review findings, the agent's last word, logs
 - `fugaro doctor` -- Check that Fugaro is set up and ready, without changing anything
@@ -1258,6 +1259,140 @@ Flags:
 | `--offline` | bool | `false` | no | never read the runs bucket: resolve against the cached project layer, if any |
 | `--project-layer` | string | "" | no | resolve against this project layer file instead of the published one |
 | `--workflow` | string | "" | no | show only this workflow's keys besides the top-level ones |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator`
+
+The coordinator's project view: what is in flight, and what collides
+
+The coordinator's deterministic half (docs/coordinator/implementation-plan.md).
+Nothing here holds a model credential, a service of its own or a store of its
+own: these commands read what fugaro already reads.
+
+Advisory, never authoritative: a collision is reported and never blocks,
+reorders or refuses a merge (spec §3).
+
+Usage: `fugaro coordinator`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for coordinator |
+
+Subcommands:
+
+- `fugaro coordinator report` -- Declare the work you are about to start
+- `fugaro coordinator status` -- Show the work in flight, and where it collides
+
+## `fugaro coordinator report`
+
+Declare the work you are about to start
+
+Write one intent record for this project's repository: the branch and the
+target release the caller declares, and the files and services it is about
+to touch, so that work still in flight can be seen before code exists
+(spec §6).
+
+The record's ID is derived from the caller and the declaration, and from
+nothing else: reporting the same declaration twice writes ONE document, and
+the second report replaces the first rather than adding to it.
+
+The caller is who the local config names (user:), else git config
+user.email, and a report nobody can be named for is refused: every record
+is somebody's declaration, and one nobody can be named for is not one. That
+name is a declaration too — nothing verifies it, and nothing authorises
+anything by it (finding #11).
+
+This command writes and reads nothing back: it prints the record it wrote
+and issues no advice, which is the coordinator's whole posture in v1
+(spec §3, advisory and never authoritative).
+
+The write goes through the caller's own credentials, on the project's
+budget.rtdb_url database. The rules grant /coordinator a read and no write
+to anyone, so the write is admitted by the database role its caller holds
+(roles/firebasedatabase.admin, which terraform.budget_admins have); a
+launcher who is not an admin reports through the coordinator's front door
+once it is deployed.
+
+Usage: `fugaro coordinator report`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--branch` | string | "" | no | the branch you are about to work on |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--file` | stringArray | `[]` | no | a path you are about to touch (repeatable) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for report |
+| `--json` | bool | `false` | no | print the record as it was written |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--release` | string | "" | no | the target release (default: the one the branch names, e.g. release/v0.11.0) |
+| `--repo` | string | "" | no | the repository this report is about (owner/name; default: the local config's, when it lists one) |
+| `--service` | stringArray | `[]` | no | a service you are about to touch (repeatable) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator status`
+
+Show the work in flight, and where it collides
+
+Join a repository's pull requests with its run records and print the view:
+each pull request, the runs behind it, the branch and target release it declares,
+the files and services those runs touched, and every pair of work still in
+flight that touches the same file or service.
+
+One repository by default, every repository the local config lists with --all,
+which prints a view per repository and compares nothing across them: a service
+is a path's shape in one tree, so two repositories' paths say nothing about
+each other.
+
+The pull requests listed are the ones the runs name, and that is the whole of
+the list this reader can produce: gitprov reads one pull request by number and
+has no call that lists a repository's (finding #10), so a pull request no run
+names is never asked for. The rule the join is written to — a pull request no
+run names is listed as having none, because it is work somebody has open and
+dropping it is the one thing this view must not do — is not reached by this
+command today.
+
+Every repository is read through the coordinator's own credential: an
+installation token for that repository, minted from the GitHub App the
+environment holds and carrying a named read-only permission set — contents,
+issues, metadata and pull requests, all read (Q3 answered (A)) — and cached
+for the token's life, so a second read of the same repository mints nothing.
+The coordinator reads github only: a bitbucket repository is refused, and the
+refusal names the reason, because its credential is one repository's access
+token and cannot be widened to a project (reconciliation Q12 (A), finding #30).
+
+The launcher of a run is printed as what it is — the string the run's own launch
+record wrote about itself — and never as an identity.
+
+This command reads and writes nothing of its own: no store of the coordinator's
+own, no service, no model credential. It is the read the CLI already performs,
+the runs bucket and a pull request read that can only read.
+
+Usage: `fugaro coordinator status`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--all` | bool | `false` | no | read every repository the local config lists, one view each |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for status |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | the repository to read (owner/name; default: the local config's, when it lists one) |
+| `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
 
 Subcommands:
 
