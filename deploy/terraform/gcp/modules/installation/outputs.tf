@@ -82,8 +82,8 @@ output "history_job" {
 }
 
 output "coordinator_service_account" {
-  description = "The coordinator's writer account email (D194), or null without enable_budget. fugaro update passes it to the Firebase root, which grants it the FP's database admin — the one role that lets it write the coordinator's subtree."
-  value       = var.enable_budget ? google_service_account.coordinator[0].email : null
+  description = "The coordinator's writer account email (D194), or null on a run that records no coordinator. fugaro update passes it to the Firebase root, which grants it the FP's database admin — the one role that lets it write the coordinator's subtree."
+  value       = local.coordinator_on ? google_service_account.coordinator[0].email : null
 }
 
 output "coordinator_job" {

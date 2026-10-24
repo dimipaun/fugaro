@@ -19,22 +19,25 @@
 # container, and the job_runner role on this job alone.
 
 locals {
-  deploy_coordinator = var.enable_budget && try(var.coordinator.deploy_job, false)
+  # coordinator is what the run records, and it is the whole switch: an
+  # installation that records none — every installation before 0.11.0, and the
+  # credentials fixture — plans exactly what it planned before, and the
+  # Firebase root's own gate is the same fact (its coordinator_account is
+  # empty). The history job hangs off enable_budget instead because nothing
+  # else ever carries a history block; a run that has a budget backend always
+  # writes both, and it is internal/cli's coordinatorJob that refuses the one
+  # combination this cannot see (a recorded Firebase project with no account
+  # in the installation's outputs).
+  coordinator_on     = var.enable_budget && var.coordinator != null
+  deploy_coordinator = local.coordinator_on && try(var.coordinator.deploy_job, false)
 }
 
 resource "google_service_account" "coordinator" {
-  count = var.enable_budget ? 1 : 0
+  count = local.coordinator_on ? 1 : 0
 
   project      = var.project
   account_id   = var.coordinator.account_id
   display_name = "Fugaro coordinator"
-
-  lifecycle {
-    precondition {
-      condition     = var.coordinator != null
-      error_message = "enable_budget needs coordinator"
-    }
-  }
 
   depends_on = [google_project_service.this]
 }
@@ -51,7 +54,7 @@ resource "google_service_account" "coordinator" {
 # account's grant): the coordinator writes no object. Granted whenever the
 # account exists, like the account itself.
 resource "google_storage_bucket_iam_member" "coordinator_runs_reader" {
-  count = var.enable_budget ? 1 : 0
+  count = local.coordinator_on ? 1 : 0
 
   bucket = google_storage_bucket.runs.name
   role   = "roles/storage.objectViewer"
@@ -67,6 +70,7 @@ resource "google_storage_bucket_iam_member" "coordinator_runs_reader" {
 resource "google_secret_manager_secret_iam_member" "coordinator_app_key" {
   count = local.deploy_coordinator ? 1 : 0
 
+  project   = var.project
   secret_id = var.project_secrets[var.coordinator.app_key_secret]
   role      = "roles/secretmanager.secretAccessor"
   member    = google_service_account.coordinator[0].member

@@ -171,9 +171,15 @@ var grantRules = map[string]map[string]who{
 		DeployerTokenCreatorRole: toPeople,
 	},
 	"google_storage_bucket_iam_member": {
-		"roles/storage.objectAdmin":  toPeople,
-		"roles/storage.objectUser":   toPeople | toAccounts, // people only under the launchers' condition (bucketCondition)
-		"roles/storage.objectViewer": toPeople | toAccounts,
+		"roles/storage.objectAdmin": toPeople,
+		// objectUser is people only under the launchers' condition
+		// (bucketCondition). objectViewer's toCoordinator is the aggregation
+		// job's reader on the runs bucket (coordinator plan P5): the account is
+		// its own kind, so the row says on purpose that the writer may read the
+		// run records its view is computed from — and nothing else of the
+		// bucket, which is what makes this the row's only coordinator bit.
+		"roles/storage.objectUser":   toPeople | toAccounts,
+		"roles/storage.objectViewer": toPeople | toAccounts | toCoordinator,
 	},
 	"google_artifact_registry_repository_iam_member": {
 		customKey + "fugaroTagMover":    toAccounts,
@@ -184,8 +190,11 @@ var grantRules = map[string]map[string]who{
 		// The credentials service's bundle is read by its own account
 		// (credentials.tf, the Q6 ruling), so this one row accepts the service
 		// account beside the jobs: it is the account's only Secret Manager
-		// reach, and it is on one container.
-		"roles/secretmanager.secretAccessor":     toAccounts | toCredentials,
+		// reach, and it is on one container. The coordinator's writer is here
+		// for the same shape (coordinator plan P5): the GitHub App's key, on the
+		// one secret its job mounts, is the reader credential P2 defines and
+		// nothing more.
+		"roles/secretmanager.secretAccessor":     toAccounts | toCredentials | toCoordinator,
 		"roles/secretmanager.secretVersionAdder": toPeople,
 		"roles/secretmanager.viewer":             toPeople,
 	},
@@ -754,10 +763,12 @@ var RolePermissions = map[string][]string{
 
 // knownCommands are the container command and args the modules set: none for a
 // workflow's job and for the credentials service (whose image's own entrypoint
-// is the service, credentials.tf), the history sweep and the image check.
+// is the service, credentials.tf), the history sweep, the coordinator's
+// aggregation sweep and the image check.
 var knownCommands = [][2][]string{
 	{nil, nil},
 	{{"/usr/local/bin/fugaro"}, {"budget", "history", "--sweep"}},
+	{{"/usr/local/bin/fugaro"}, {"coordinator", "sweep"}},
 	{{"fugaro"}, {"image", "check", "--job"}},
 }
 

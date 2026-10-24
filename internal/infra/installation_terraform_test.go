@@ -30,6 +30,13 @@ func TestInstallationVarsPlan(t *testing.T) {
 		{"budget_backend", false, false, true, false}, {"budget_backend_with_job", false, false, true, true}} {
 		t.Run(c.name, func(t *testing.T) {
 			spec := installationSpec(t)
+			if c.budget {
+				// The coordinator's job mounts the GitHub App's key, a project
+				// secret the config declares, so the budget cases plan the
+				// config that records one — the shape the
+				// installation-budget-job golden fixture carries.
+				spec = budgetInstallationSpec(t)
+			}
 			spec.AdoptLegacyRegistry = c.adopt
 			spec.Launchers = []string{"user:launcher@example.com"}
 			spec.Operators = []string{"user:operator@example.com"}
@@ -37,7 +44,8 @@ func TestInstallationVarsPlan(t *testing.T) {
 			spec.AlertEmail = &email
 			if c.budget {
 				h := History0(t, c.deployHistoryJob)
-				spec.EnableBudget, spec.History = true, &h
+				cs := Coordinator0(t, c.deployHistoryJob)
+				spec.EnableBudget, spec.History, spec.Coordinator = true, &h, &cs
 			}
 			if c.forget {
 				spec = ForgetSpec(spec)
@@ -112,6 +120,18 @@ func varsTest(t *testing.T, data []byte, adopt, logIsolation, budget bool) strin
 	return b.String()
 }
 
+// budgetInstallationSpec is the installation spec the budget cases plan: the
+// config that records a GitHub App ID and the App key's project secret, which
+// is the one the coordinator's job mounts (Coordinator0).
+func budgetInstallationSpec(t *testing.T) InstallationSpec {
+	t.Helper()
+	s, err := Installation(parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectProfilesLCBlock), InstallOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
 // History0 is the history job's spec the tests use, with or without the job.
 func History0(t *testing.T, deploy bool) HistorySpec {
 	t.Helper()
@@ -124,6 +144,25 @@ func History0(t *testing.T, deploy bool) HistorySpec {
 		h.DeployJob, h.FirebaseProject, h.RTDBURL = true, "aurora-fp", "https://aurora-fp-default-rtdb.firebaseio.com"
 	}
 	return h
+}
+
+// Coordinator0 is the coordinator's spec the tests use, with or without the
+// job. Its config is the one that records a GitHub App ID and the App key's
+// project secret: the coordinator mints its own read-only installation token
+// from that App's key, so a config with no App ID is a run whose coordinator
+// carries no job (internal/cli's coordinatorJob), and the account is all that
+// is left to plan.
+func Coordinator0(t *testing.T, deploy bool) CoordinatorSpec {
+	t.Helper()
+	lc := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectProfilesLCBlock)
+	c, err := Coordinator(lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deploy {
+		c.DeployJob, c.FirebaseProject, c.RTDBURL = true, "aurora-fp", "https://aurora-fp-default-rtdb.firebaseio.com"
+	}
+	return c
 }
 
 // TestFirebaseVarsPlan plans the Firebase root with the tfvars fugaro update

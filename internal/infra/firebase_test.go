@@ -50,9 +50,10 @@ func TestFirebaseTfvarsGolden(t *testing.T) {
 	inst.Launchers = []string{"user:launcher@example.com"}
 	inst.Operators = []string{"user:operator@example.com", "user:launcher@example.com"}
 	fs, err := Firebase(inst, FirebaseInputs{FP: "aurora-fp",
-		Admins:         []string{"user:owner@example.com", "group:editors@example.com", "user:owner@example.com"},
-		BudgetAdmins:   []string{"user:extra@example.com"},
-		HistoryAccount: "fugaro-history@proj-1234.iam.gserviceaccount.com"})
+		Admins:             []string{"user:owner@example.com", "group:editors@example.com", "user:owner@example.com"},
+		BudgetAdmins:       []string{"user:extra@example.com"},
+		HistoryAccount:     "fugaro-history@proj-1234.iam.gserviceaccount.com",
+		CoordinatorAccount: "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,6 +69,11 @@ func TestFirebaseTfvarsGolden(t *testing.T) {
 	// job and one job service account per (profile, provider, account), and
 	// no repository ever reaches this root.
 	//
+	// Each also carries the coordinator's block (coordinator plan P5), which is
+	// what the Firebase root's own coordinator_account names: the account is
+	// the installation's, the job is the history image's and the repositories
+	// are the ones the config records a provider for.
+	//
 	// The third is the account axis's (plan task 2): one profile serving a
 	// named Claude account beside the default one, so the fixture and its
 	// golden plan hold an account job whose token is a secret mount. It is a
@@ -77,21 +83,28 @@ func TestFirebaseTfvarsGolden(t *testing.T) {
 	for _, c := range []struct {
 		name   string
 		deploy bool
+		lc     string
 		spec   func(*testing.T) InstallationSpec
 	}{
-		{"installation-budget.tfvars.json", false, projectJobSpec},
-		{"installation-budget-job.tfvars.json", true, projectJobSpec},
-		{"installation-accounts.tfvars.json", true, projectAccountJobSpec},
+		{"installation-budget.tfvars.json", false, m4LocalConfig + projectJobRepoLC + m5Additions + projectProfilesLCBlock, projectJobSpec},
+		{"installation-budget-job.tfvars.json", true, m4LocalConfig + projectJobRepoLC + m5Additions + projectProfilesLCBlock, projectJobSpec},
+		{"installation-accounts.tfvars.json", true, m4LocalConfig + projectJobRepoLC + m5Additions + projectAccountAxisLC, projectAccountJobSpec},
 	} {
 		spec := c.spec(t)
-		h, err := History(parseLC(t, m4LocalConfig+m5Additions))
+		lc := parseLC(t, c.lc)
+		h, err := History(lc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cs, err := Coordinator(lc)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if c.deploy {
 			h.DeployJob, h.FirebaseProject, h.RTDBURL = true, "aurora-fp", "https://aurora-fp-default-rtdb.firebaseio.com"
+			cs.DeployJob, cs.FirebaseProject, cs.RTDBURL = true, "aurora-fp", "https://aurora-fp-default-rtdb.firebaseio.com"
 		}
-		spec.EnableBudget, spec.History = true, &h
+		spec.EnableBudget, spec.History, spec.Coordinator = true, &h, &cs
 		data, err := InstallationVars(spec)
 		if err != nil {
 			t.Fatal(err)
