@@ -80,6 +80,7 @@ func TestGrantRulesMatrix(t *testing.T) {
 	// and every other cell of the table refuses it (the ledger finding #903 —
 	// while it was one of FugaroAccounts, every account row accepted it).
 	const credentials = "serviceAccount:" + CredentialsAccountID + "@proj-1.iam.gserviceaccount.com"
+	const coordinator = "serviceAccount:" + CoordinatorAccountID + "@proj-1.iam.gserviceaccount.com"
 	all := map[string]bool{}
 	for _, row := range grantRules {
 		for k := range row {
@@ -92,7 +93,7 @@ func TestGrantRulesMatrix(t *testing.T) {
 	for typ, row := range grantRules {
 		for key := range all {
 			role := grantRoleString(key)
-			for kind, member := range map[who]string{toPeople: person, toAccounts: account, toDeployer: "serviceAccount:" + DeployerAccount("proj-1"), toCredentials: credentials} {
+			for kind, member := range map[who]string{toPeople: person, toAccounts: account, toDeployer: "serviceAccount:" + DeployerAccount("proj-1"), toCredentials: credentials, toCoordinator: coordinator} {
 				want := row[key]&kind != 0
 				after := map[string]any{"member": member, "role": role, "bucket": "fugaro-runs-proj-1"}
 				if acct := deployerGrantAccountFor(typ, role); acct != "" {
@@ -190,7 +191,7 @@ func TestGrantRulesNameOnlyKnownTypesAndRoles(t *testing.T) {
 			t.Errorf("%s has no roles", typ)
 		}
 		for key, w := range row {
-			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials) != 0 {
+			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials|toCoordinator) != 0 {
 				t.Errorf("%s %s: bad principal kinds %d", typ, key, w)
 			}
 			if id, ok := strings.CutPrefix(key, customKey); ok {
@@ -690,6 +691,77 @@ func TestCredentialsAccountIsItsOwnPrincipalKind(t *testing.T) {
 		ch := rc("google_project_iam_member", after, map[string]any{}, "create")
 		if got := listed.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); (len(got) == 0) != tc.covered {
 			t.Errorf("listed on the review screen: %s to the credentials account: NotCovered = %q, covered want %v", tc.role, got, tc.covered)
+		}
+	}
+}
+
+// The coordinator's writer account (coordinator plan P3) is its own kind of
+// principal for the credentials account's reason (ledger #903): as one of
+// FugaroAccounts it would pass every toAccounts row, so one confirmation would
+// cover granting the account that writes under the rules' floor a job runner's
+// or the history account's roles. It may hold the FP's database admin and
+// nothing else.
+func TestCoordinatorAccountIsItsOwnPrincipalKind(t *testing.T) {
+	const coordinator = "serviceAccount:" + CoordinatorAccountID + "@proj-1.iam.gserviceaccount.com"
+
+	if slices.Contains(FugaroAccounts, CoordinatorAccountID) {
+		t.Errorf("the coordinator's writer is one of FugaroAccounts, so every toAccounts row accepts it")
+	}
+	allowed := map[string]map[string]bool{
+		"google_project_iam_member": {"roles/firebasedatabase.admin": true},
+	}
+	for typ, row := range grantRules {
+		for key, w := range row {
+			if (w&toCoordinator != 0) != allowed[typ][key] {
+				t.Errorf("%s %s: toCoordinator is %v, want %v — the writer holds the FP's database admin and no other role", typ, key, w&toCoordinator != 0, allowed[typ][key])
+			}
+		}
+	}
+
+	roles := map[string][]string{}
+	for typ, row := range grantRules {
+		for key := range row {
+			roles[typ] = append(roles[typ], grantRoleString(key))
+		}
+	}
+	roles["google_project_iam_member"] = append(roles["google_project_iam_member"], "roles/owner", "roles/editor", "projects/proj-1/roles/fugaroEverything")
+	for typ, list := range roles {
+		for _, role := range slices.Sorted(slices.Values(list)) {
+			after := map[string]any{"member": coordinator, "role": role, "bucket": "fugaro-runs-proj-1"}
+			withCondFor(after, typ, role, false)
+			ch := rc(typ, after, map[string]any{}, "create")
+			got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
+			want := allowed[typ][mustRoleKey(t, role)]
+			if (len(got) == 0) != want {
+				t.Errorf("%s: %s to the coordinator's writer: NotCovered = %q, covered want %v", typ, role, got, want)
+			}
+		}
+	}
+
+	// The account is the installation's: a lookalike in another project is
+	// nobody Fugaro creates.
+	for _, member := range []string{
+		"serviceAccount:" + CoordinatorAccountID + "@fp-2.iam.gserviceaccount.com",
+	} {
+		ch := rc("google_project_iam_member", map[string]any{"member": member, "role": "roles/firebasedatabase.admin", "bucket": "fugaro-runs-proj-1"}, map[string]any{}, "create")
+		if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
+			t.Errorf("%s: the database admin is covered: the writer is %s@proj-1 and nothing else", member, CoordinatorAccountID)
+		}
+	}
+
+	// Listed on the review screen by mistake, it is still not a person.
+	listed := Cover{Projects: testCover.Projects, Listed: []string{coordinator}, Region: testCover.Region, Buckets: testCover.Buckets}
+	for _, tc := range []struct {
+		role    string
+		covered bool
+	}{
+		{"roles/firebasedatabase.admin", true},
+		{"roles/firebasedatabase.viewer", false},
+		{"roles/datastore.user", false},
+	} {
+		ch := rc("google_project_iam_member", map[string]any{"member": coordinator, "role": tc.role, "bucket": "fugaro-runs-proj-1"}, map[string]any{}, "create")
+		if got := listed.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); (len(got) == 0) != tc.covered {
+			t.Errorf("listed on the review screen: %s to the coordinator's writer: NotCovered = %q, covered want %v", tc.role, got, tc.covered)
 		}
 	}
 }

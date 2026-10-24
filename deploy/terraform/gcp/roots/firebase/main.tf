@@ -51,4 +51,3 @@ module "firebase" {
   history_account     = var.history_account
   coordinator_account = var.coordinator_account
 }
-

@@ -128,11 +128,12 @@ resource "google_project_iam_member" "history_usage" {
 # the rules' floor, and the rules grant the coordinator's subtree to the
 # signed-in reader alone. The role bypasses the rules, so the writer's code is
 # what keeps it to that subtree — IAM cannot, and this account can write the
-# whole database, /config included. The account is the installation root's to
-# create, as the history account's is, so this root grants a name; until that
-# job lands, it names an account that does not exist yet.
+# whole database, /config included. The installation root creates the account
+# in P5, as it creates the history account's; IAM refuses a member that does
+# not exist, so until then coordinator_account is empty and nothing is granted.
 #trivy:ignore:AVD-GCP-0007
 resource "google_project_iam_member" "coordinator_database" {
+  count   = var.coordinator_account == "" ? 0 : 1
   project = var.project
   role    = "roles/firebasedatabase.admin"
   member  = "serviceAccount:${var.coordinator_account}"

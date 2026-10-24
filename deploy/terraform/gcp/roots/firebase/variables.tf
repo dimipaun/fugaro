@@ -59,5 +59,6 @@ variable "history_account" {
 }
 
 variable "coordinator_account" {
-  type = string
+  type    = string
+  default = ""
 }

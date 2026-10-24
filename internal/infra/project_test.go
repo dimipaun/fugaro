@@ -258,10 +258,13 @@ func TestCoverNamesAreTheCodes(t *testing.T) {
 			t.Errorf("role %s is not in tf.FugaroRoles", r)
 		}
 	}
-	for _, a := range []string{SchedulerServiceAccountID, HistoryAccountID, SignerAccountID, CoordinatorAccountID} {
+	for _, a := range []string{SchedulerServiceAccountID, HistoryAccountID, SignerAccountID} {
 		if !has(tf.FugaroAccounts, a) {
 			t.Errorf("account %s is not in tf.FugaroAccounts", a)
 		}
+	}
+	if CoordinatorAccountID != tf.CoordinatorAccountID || has(tf.FugaroAccounts, CoordinatorAccountID) {
+		t.Errorf("the coordinator's writer %s must be tf.CoordinatorAccountID (%s), its own kind, and not one of tf.FugaroAccounts", CoordinatorAccountID, tf.CoordinatorAccountID)
 	}
 	c := tf.Cover{Projects: []string{"proj-1"}}
 	for _, id := range []string{gcp.ServiceAccountID("acme-web", "web"), gcp.BuildServiceAccountID("acme-web")} {

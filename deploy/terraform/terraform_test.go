@@ -526,8 +526,9 @@ func TestCredentialsServiceOptOutIsTwoSteps(t *testing.T) {
 
 // The token signer holds no roles, and no run's job or build account is
 // granted anything on the Firebase project — the one account of a job's that
-// is, the coordinator's writer, holds the FP's database admin and is granted
-// it by name (coordinator plan task P3). The plan assertions check the values;
+// is, the coordinator's writer, is granted the FP's database admin by name,
+// and only once coordinator_account is set (coordinator plan task P3; the
+// account is created in P5). The plan assertions check the values;
 // this text check catches a grant written to either by reference, which no
 // input could ever reveal.
 func TestFirebaseModuleGrantsNothingToSignerOrJobs(t *testing.T) {
