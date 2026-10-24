@@ -1367,6 +1367,14 @@ export function parseVersionLine(text: string):
  * closed, rather than relying on a default whose exact behaviour is unverified
  * (U4). See `WSLENV_KEY`.
  *
+ * **`wslUtf8` adds the other** (T-F2): `WSL_UTF8=1`, which asks `wsl.exe` for
+ * UTF-8. It is set on every call that starts `wsl.exe` -- the queries
+ * (`src/main/wsl.ts`) and the CLI's own plan alike (review of `#981`, which
+ * found the CLI plan the one call whose stderr carries both `wsl.exe`'s own
+ * warnings and the wrapper's line) -- and it is this console's constant rather
+ * than anything read from the app's environment, so the allow-list above still
+ * decides everything that came from outside.
+ *
  * **It is an explicit option and not `platform === 'win32'`**, because the two
  * questions are different ones: the row a platform selects is the `PATH` a child
  * on that platform can use (`WIN32_LOCATIONS`' child prefixes are Linux's, F5),
@@ -1387,6 +1395,14 @@ export function childEnvironment(options: {
    * route's own plans and false everywhere else, including the `wsl.exe`
    * queries. */
   readonly wsl?: boolean | undefined
+  /** `wslUtf8` states `WSL_UTF8=1`, asking `wsl.exe` to answer in UTF-8 rather
+   * than in the machine's console encoding (T-F2; `WSL_UTF8_VAR`). It is true
+   * for **every** call that starts `wsl.exe` -- the machine's queries and the
+   * CLI's own plan alike (review of `#981`) -- and false for a child that has
+   * no `wsl.exe` in front of it. It is not a boundary key: it is this console's
+   * own constant, and `wsl`'s empty share list is what keeps it out of the
+   * distribution. */
+  readonly wslUtf8?: boolean | undefined
 }): Readonly<Record<string, string>> {
   const env: Record<string, string> = Object.create(null) as Record<string, string>
   for (const key of CHILD_ENV_KEYS) {
@@ -1400,6 +1416,7 @@ export function childEnvironment(options: {
   // `WSLENV` is the operator's business and not this console's, and a value
   // carried over from it would be a share list the console did not choose.
   if (options.wsl === true) env[WSLENV_KEY] = ''
+  if (options.wslUtf8 === true) env[WSL_UTF8_VAR] = WSL_UTF8_VALUE
   return Object.freeze(env)
 }
 
@@ -2348,27 +2365,21 @@ export function planFor(
       // route, so a name and a stored path agree about which file runs; `''`
       // (the ordinary case: no path of its own) puts nothing in front of the
       // distribution's tool list.
-      env: Object.freeze({
-        ...childEnvironment({
-          target: context.target,
-          binaryPath: context.binaryPath,
-          appEnv: context.appEnv,
-          platform: 'win32',
-          // The WSL route is the one plan that starts a distribution process, so
-          // it is the one environment that states `WSLENV` empty (T-E2, D5(a)).
-          wsl: true,
-        }),
-        // **`WSL_UTF8=1` on every `wsl.exe` call, this one included** (T-F2,
-        // U9; review of `#981`). It was on the queries only, and that was the
-        // gap the marker defect arrived through: a CLI plan's `wsl.exe` prints
-        // its own relay warnings on the same stderr the wrapper's line travels
-        // on, and on a build that ignores this switch those warnings are
-        // UTF-16LE -- which is what left a NUL in front of the wrapper's line.
-        // The switch is the console's own constant and not a boundary key: it
-        // is `wsl.exe`'s own reading of its own output, it carries nothing from
-        // the operator's environment, and `WSLENV` -- stated empty just above
-        // -- is what decides that the distribution never sees it.
-        [WSL_UTF8_VAR]: WSL_UTF8_VALUE,
+      env: childEnvironment({
+        target: context.target,
+        binaryPath: context.binaryPath,
+        appEnv: context.appEnv,
+        platform: 'win32',
+        // The WSL route is the one plan that starts a distribution process, so
+        // it is the one environment that states `WSLENV` empty (T-E2, D5(a)).
+        wsl: true,
+        // **`WSL_UTF8=1` on the CLI's own plan too** (T-F2, U9; review of
+        // `#981`). It was on the queries only, and that was the gap the marker
+        // defect arrived through: a CLI plan's `wsl.exe` prints its own relay
+        // warnings on the same stderr the wrapper's line travels on, and on a
+        // build that ignores this switch those warnings are UTF-16LE -- which
+        // is what left a NUL in front of the wrapper's line.
+        wslUtf8: true,
       }),
       project: context.target.project,
       backoff: context.backoff ?? DEFAULT_BACKOFF,

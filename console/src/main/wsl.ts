@@ -286,21 +286,19 @@ async function runWslQuery(options: {
     // here is the CLI's bare name rather than the program being run: the
     // environment this builds is the one the *distribution* will see, and the
     // distribution resolves `fugaro` itself.
-    env: {
-      ...childEnvironment({
-        target: { project: options.project },
-        binaryPath: FUGARO_BINARY_NAME,
-        appEnv: options.appEnv,
-        platform: 'win32',
-      }),
-      // T-F2's one addition, and it is this module's own word: ask WSL to answer
-      // in UTF-8. The answer is decoded from bytes either way (`decodeWslAnswer`),
-      // because the switch is not honoured on every machine -- but a machine that
-      // honours it hands the console the encoding it reads most simply. The CLI
-      // plans set the same key (`planFor`), so **every `wsl.exe` call this
-      // console makes** asks for it; see `WSL_UTF8_VAR`.
-      [WSL_UTF8_VAR]: WSL_UTF8_VALUE,
-    },
+    env: childEnvironment({
+      target: { project: options.project },
+      binaryPath: FUGARO_BINARY_NAME,
+      appEnv: options.appEnv,
+      platform: 'win32',
+      // Ask WSL to answer in UTF-8 (T-F2). The answer is decoded from bytes
+      // either way (`decodeWslAnswer`), because the switch is not honoured on
+      // every machine -- but a machine that honours it hands the console the
+      // encoding it reads most simply. The CLI plans ask for it too
+      // (`planFor`'s `wslUtf8`), so **every `wsl.exe` call this console makes**
+      // carries it; see `WSL_UTF8_VAR`.
+      wslUtf8: true,
+    }),
     project: options.project,
     backoff: DEFAULT_BACKOFF,
   })
