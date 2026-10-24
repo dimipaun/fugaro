@@ -133,7 +133,7 @@ func TestPolicyPricesBuildOnTheRunsOwnTable(t *testing.T) {
 	// read through the same call the run's bootstrap makes.
 	priced := func(id string, p projectpolicy.Price) *pricing.Table {
 		t.Helper()
-		_, spend, _, err := r.policyCeiling(&projectpolicy.Policy{Prices: map[string]projectpolicy.Price{id: p}}, envCeiling(Spend{}, ""), Spend{}, "")
+		_, spend, _, err := r.policyCeiling(&projectpolicy.Policy{Prices: map[string]projectpolicy.Price{id: p}}, envCeiling(Spend{}, ""), Spend{})
 		if err != nil {
 			t.Fatalf("the policy's model_prices was refused: %v", err)
 		}

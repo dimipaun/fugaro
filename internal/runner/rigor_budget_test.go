@@ -48,3 +48,41 @@ func TestPolicyRigorModeCannotRaiseALowerCap(t *testing.T) {
 		t.Fatalf("the record's per-run cap = %+v, want the file's 0.05", rec.Policy)
 	}
 }
+
+// TestPolicyRigorModeLeavesThePublishedCapAlone: D16's fraction is the default
+// a run gets where no layer sets a cap, never a multiplier over one that is
+// set. A published policy's per_run_usd is the owner saying a number, so the
+// run gets exactly it — under any mode — and the record still says the value
+// came from the node (H1: a figure the node never wrote must not appear in
+// result.json under the node's name).
+func TestPolicyRigorModeLeavesThePublishedCapAlone(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		rig  string
+	}{
+		{"poc", "rigor:\n  default: poc\n"},
+		{"critical", "rigor:\n  default: critical\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// The job carries $0.20 and this mode's share of it; the node says
+			// enforce with $0.09. Each call costs $0.04, so the node's cap is
+			// what refuses the third one.
+			b := policyRun(t, gwConfig(t, tc.rig), "off", "0.20",
+				`{"version":3,"budget":{"mode":"enforce","per_run_usd":0.09}}`, capScript(3)...)
+			var st []int
+			rec, err := b.run(t, calling(&st, implement("feature"), call{sonnet, 4000}, call{sonnet, 4000}, call{sonnet, 4000}))
+			if err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if len(st) != 3 || st[0] != 200 || st[1] != 200 || st[2] != 403 {
+				t.Fatalf("statuses = %v: the node's $0.09 cap must refuse the third call", st)
+			}
+			if rec.Policy == nil || rec.Policy.Effective.PerRunUSD != 0.09 {
+				t.Fatalf("the record's per-run cap = %+v, want the node's 0.09", rec.Policy)
+			}
+			if s := sourceOf(t, rec, "per_run_usd"); s != "policy" {
+				t.Errorf("per_run_usd source = %q, want policy", s)
+			}
+		})
+	}
+}

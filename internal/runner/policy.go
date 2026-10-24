@@ -66,10 +66,10 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	c := r.d.Spend
 	// The mode this run resolved at bootstrap is the per-run default under
 	// the ceiling (D16, plan T6.1): a fraction of the owner's cap, and never
-	// above it. It is read once, here, with the rest of the policy — the
-	// mode a run has reached later in the run only ever rises, and a policy
-	// a run's own stages could move would not be the ceiling it is.
-	mode := r.rigorMode()
+	// above it. It is read once, here, with the rest of the policy — the mode
+	// a run has reached later in the run only ever rises, and a policy a
+	// run's own stages could move would not be the ceiling it is.
+	mode := r.reachedRigor()
 	// The ceiling is the job environment's copy of the owner's config, and
 	// sets no output limits (the project config has none).
 	ceiling := envCeiling(c, mode)
@@ -89,7 +89,7 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	}
 	var fromPolicy map[string]bool
 	if found {
-		if ceiling, c, fromPolicy, err = r.policyCeiling(pp, ceiling, c, mode); err != nil {
+		if ceiling, c, fromPolicy, err = r.policyCeiling(pp, ceiling, c); err != nil {
 			return err
 		}
 	}
@@ -128,9 +128,13 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 		s.Mode = policy.ModeOff
 	}
 	if e.PerRunUSD > 0 {
-		if src := e.Sources[policy.KeyPerRunUSD]; src == policy.SourceCeiling || src == policy.SourcePolicy {
+		if src := e.Sources[policy.KeyPerRunUSD]; src == policy.SourceCeiling {
 			// The ceiling's own cap, scaled by the run's mode and not by a
-			// float round trip through the layer's dollar figure (D16).
+			// float round trip through the layer's dollar figure (D16). A cap
+			// some other layer wrote is that layer's own number and is taken
+			// as it is: the mode's fraction is the default a run gets where
+			// nothing says otherwise, never a multiplier over a number the
+			// owner, the team or the branch set.
 			s.Cap = config.RigorBudgetCap(mode, c.Cap)
 		} else {
 			var err error
@@ -228,7 +232,7 @@ func envCeiling(c Spend, mode rigor.Mode) policy.Layer {
 // and an override over a catalog row would come back with no token limits. The
 // node replaces the owner's price OVERRIDES; the routes and the catalog
 // underneath them are the job's, exactly as they are with no node at all.
-func (r *run) policyCeiling(pp *projectpolicy.Policy, env policy.Layer, c Spend, mode rigor.Mode) (policy.Layer, Spend, map[string]bool, error) {
+func (r *run) policyCeiling(pp *projectpolicy.Policy, env policy.Layer, c Spend) (policy.Layer, Spend, map[string]bool, error) {
 	ceiling, set := env, map[string]bool{}
 	if m := pp.Budget.Mode; m != "" {
 		ceiling.Mode, set[policy.KeyMode] = m, true
@@ -238,10 +242,14 @@ func (r *run) policyCeiling(pp *projectpolicy.Policy, env policy.Layer, c Spend,
 		if c.Cap, err = pricing.FromUSD(v); err != nil || c.Cap < 1 {
 			return env, c, nil, fmt.Errorf("%s: budget.per_run_usd %v: not a usable cap: %v", projectpolicy.PathShared(), v, err)
 		}
-		// The node's cap is the owner's word about the ceiling, and the run's
-		// mode is what it is a ceiling *of*: the same fraction envCeiling
-		// applies applies here, so one rule governs both ceilings (D16).
-		ceiling.PerRunUSD, set[policy.KeyPerRunUSD] = config.RigorBudgetCap(mode, c.Cap).USD(), true
+		// The node's cap is the owner's word about the ceiling, and it is
+		// taken exactly as it stands: the run's rigor mode is the default a
+		// run gets where no layer says otherwise (D16), and multiplying a
+		// number the owner published by it would put a figure in result.json
+		// the node never wrote — the very thing the source labels exist to
+		// prevent (H1). The ceiling's own cap is the one the mode scales, and
+		// it has no node to speak for it.
+		ceiling.PerRunUSD, set[policy.KeyPerRunUSD] = v, true
 	}
 	if v := pp.Budget.MaxRunTokens; v > 0 {
 		ceiling.MaxRunTokens, set[policy.KeyMaxRunTokens] = v, true

@@ -48,7 +48,7 @@ func TestRunnerReadsPolicyWhenTheNodeExists(t *testing.T) {
 	// The job's environment says off with no cap; the policy says enforce with
 	// $0.09. Each call on sonnet costs $0.04, and the third is refused before
 	// it is made: what is left of the cap does not cover it.
-	b := policyRun(t, gwConfig(t, critRigor), "off", "",
+	b := policyRun(t, gwConfig(t, ""), "off", "",
 		`{"version":3,"budget":{"mode":"enforce","per_run_usd":0.09}}`, capScript(3)...)
 	var st []int
 	rec, err := b.run(t, calling(&st, implement("feature"), call{sonnet, 4000}, call{sonnet, 4000}, call{sonnet, 4000}), review("ship", 0))
@@ -830,7 +830,7 @@ func TestTokenIsTakenOnce(t *testing.T) {
 // tightens: the default branch's $1000 does not lift the policy's $0.05, and
 // the record says the policy set the value and that the other was ignored.
 func TestPolicyCannotLoosenTheBranchLayer(t *testing.T) {
-	b := policyRun(t, gwConfig(t, critRigor)+"budget:\n  per_run_usd: 1000\n", "enforce", "50",
+	b := policyRun(t, gwConfig(t, "")+"budget:\n  per_run_usd: 1000\n", "enforce", "50",
 		`{"version":3,"budget":{"mode":"enforce","per_run_usd":0.05}}`, capScript(3)...)
 	b.deps.Project = "aurora"
 	var st []int

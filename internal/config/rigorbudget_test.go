@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/pricing"
-	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
@@ -92,11 +91,19 @@ func TestRigorBudgetDefaultsAreOrdered(t *testing.T) {
 // produces nothing (D16), so every default is at least the floor a stage
 // needs — the gateway's own lease floor for each model stage the smallest run
 // the catalog ships can start — at every deployed cap the tree's own examples
-// use. The arithmetic is recipe.StageBound's, the same bound the cost preview
-// quotes.
+// use.
+//
+// The stage count is written out rather than recomputed: the run it counts is
+// the catalog's smallest (plan T6.2's smoke check, which F17 says the cost
+// preview quotes through recipe.StageBound), and today that run starts one
+// model stage. A catalog that grows a smaller or a larger smallest run has to
+// be read here, which is the point — a count worked out the same way the
+// production one is would move with it and assert nothing.
 func TestRigorBudgetDefaultsFinishTheSmokeCheck(t *testing.T) {
-	if got, want := RigorBudgetFloorUSD, RigorBudgetStageFloorUSD*float64(smallestRunStages()); got != want {
-		t.Fatalf("RigorBudgetFloorUSD = %v; the stage-bound arithmetic says %v", got, want)
+	const smallestRunStages = 1
+	if got, want := RigorBudgetFloorUSD, RigorBudgetStageFloorUSD*smallestRunStages; got != want {
+		t.Fatalf("RigorBudgetFloorUSD = %v; the smallest run the catalog ships starts %d stage(s), so the floor is %v",
+			got, smallestRunStages, want)
 	}
 	if RigorBudgetFloorUSD < RigorBudgetStageFloorUSD {
 		t.Fatalf("RigorBudgetFloorUSD = %v, under one stage's floor", RigorBudgetFloorUSD)
@@ -112,29 +119,6 @@ func TestRigorBudgetDefaultsFinishTheSmokeCheck(t *testing.T) {
 			}
 		}
 	}
-}
-
-// smallestRunStages is the model stages the smallest run the built-in recipe
-// catalog ships can start, at the knobs' defaults: the smallest
-// recipe.StageBound over the catalog, worked out here rather than read back
-// out of the function that computes the floor, so a catalog that grows a
-// smaller recipe moves the floor and fails the assertion above.
-func smallestRunStages() int {
-	smallest := 0
-	for _, name := range recipe.CatalogNames() {
-		text, ok := recipe.CatalogText(name)
-		if !ok {
-			continue
-		}
-		r, ps := recipe.Parse(text)
-		if len(ps) > 0 {
-			continue
-		}
-		if n := recipe.StageBound(r, DefaultFirstLineRounds, DefaultReviewRounds); smallest == 0 || n < smallest {
-			smallest = n
-		}
-	}
-	return smallest
 }
 
 // TestRigorBudgetStageFloorIsTheLeaseFloor: the per-stage floor is the budget

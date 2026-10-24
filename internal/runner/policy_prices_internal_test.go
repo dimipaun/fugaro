@@ -75,7 +75,7 @@ func TestPolicyCeilingKeepsTheJobsRoutesAndCatalog(t *testing.T) {
 		t.Fatalf("Decode = (found=%v, err=%v)", found, err)
 	}
 	r := &run{d: Deps{Providers: routedProviders()}}
-	_, spend, _, err := r.policyCeiling(pp, envCeiling(Spend{}, ""), Spend{}, "")
+	_, spend, _, err := r.policyCeiling(pp, envCeiling(Spend{}, ""), Spend{})
 	if err != nil {
 		t.Fatalf("policyCeiling: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestPolicyCeilingKeepsTheJobsRoutesAndCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, spend2, _, err := r.policyCeiling(p2, envCeiling(Spend{}, ""), Spend{}, "")
+	_, spend2, _, err := r.policyCeiling(p2, envCeiling(Spend{}, ""), Spend{})
 	if err != nil {
 		t.Fatalf("policyCeiling: %v", err)
 	}
