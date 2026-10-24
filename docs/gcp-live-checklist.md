@@ -8921,7 +8921,8 @@ fugaro setup --provision-batch --project fugaro
 
 **FACT:** the two plans and the confirmation, in order. **expected output:** the installation root's
 plan and its own ordinary confirmations first (nothing about them is this check's business), and
-then, from the compute stage:
+then, from the compute stage (whose summary prints in its plan pass and again in its apply, so it
+appears twice):
 
 ```
 Plan: 0 to import, N to create, 0 to update, 0 to forget
@@ -8929,8 +8930,8 @@ Other changes:
   create module.compute.google_project_service.this["compute.googleapis.com"]
   create module.compute.google_project_service.this["batch.googleapis.com"]
   …
-⚠ CONFIRM (project fugaro, GCP project fugaro-dev): provisions the Batch compute backend in GCP project fugaro-dev: the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router (billable while they exist), and a preloaded boot image built by a scheduled Cloud Build (N to create, 0 to update, 0 to forget)
-Type fugaro to confirm: 
+⚠ CONFIRM (project fugaro, GCP project fugaro-dev): provisions the Batch compute backend in GCP project fugaro-dev: the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router (billable while they exist), and a preloaded boot image built by a scheduled Cloud Build (0 imports, N creates, 0 updates)
+Type fugaro to confirm:  
 ```
 
 **Nothing is applied before that prompt**, and `--yes` does not cover the step: the stage's
@@ -9071,8 +9072,9 @@ the name from *known* into *selectable*.
 
 **FACT:** `fugaro backends ls --project fugaro` and the `backend:` line of the sandbox's **expected output:**
 `fugaro.yaml`, `cloud-run` and `cloud-batch` listed, with `cloud-batch` marked
-as the selected one, and the same name in the file. **FACT:** `fugaro validate` in the sandbox
-checkout, expected output `<path> is valid` — the offline checks are what say the machine type, the
+by the `fugaro's backend` the command appends to the selected one, and the same name in the
+file. **FACT:** `fugaro validate` in the sandbox
+checkout, **expected output:** `<path> is valid` — the offline checks are what say the machine type, the
 timeout and the artifact boundary are satisfied before a run is launched at all.
 
 **(124b-2) Launch one ordinary task.** The task is an ordinary sandbox task — the same one the
