@@ -66,8 +66,9 @@ refused.
 
 `## Closed by` is D31's, and only a `closed` item carries it. It is listed here
 because the body's headings are a closed set — the parser accepts it and refuses
-anything else — while *requiring* it of a `closed` item is the closing sweep's
-rule (plan T4.7), not this format's.
+anything else. Requiring it of a `closed` item is the closing rule below, and the
+folder's pin is what refuses an item that breaks it: the parser holds a file, the
+pin holds a status.
 
 ## Closing an item
 
@@ -77,17 +78,21 @@ commit (D31). The regenerate-and-compare pin is what makes that a rule the tree
 holds rather than a sentence here: an item flipped without the index being
 regenerated is red.
 
+Two rules the folder's pin holds, because both are about a status rather than
+about a file — the parser accepts either item and the pin refuses it:
+
 - A closed item's file is **never deleted**. Its id stays resolvable forever,
-  because older pull requests cite it, and it carries a `## Closed by` line —
-  the fifth heading above — naming the pull request that closed it. Nothing in
-  the tree requires that line of a `closed` item yet: the closing sweep
-  (plan T4.7) is the task that makes a `closed` item without one red. The
-  parser accepts the heading today so that the closing D31 describes is
-  representable at all.
-- An item that is dropped rather than fixed sets `status: dropped` and records
-  its reason in the body.
-- A run may not close an item it did not fix. That is a review rule rather than
-  a rule a test can hold, stated here so a reviewer can ask.
+  because older pull requests cite it, and its `## Closed by` section names the
+  pull request that closed it — `#<number>`, or the pull request's URL. The
+  folder's pin refuses a `closed` item with no such section, and one whose
+  section names no pull request.
+- A `dropped` item states its reason under `## Why`, the heading the format
+  names for it. The folder's pin refuses a `dropped` item whose `## Why` is
+  empty: a status that says "not doing this" with nothing after it is the one
+  thing a reader cannot act on.
+
+A run may not close an item it did not fix. That is a review rule rather than a
+rule a test can hold, stated here so a reviewer can ask.
 
 ## The index
 
