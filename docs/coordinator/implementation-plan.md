@@ -338,7 +338,14 @@ permission set and its exported accessor (`internal/gitprov/github/apptoken.go`)
 reader with its per-repository token cache and its Bitbucket refusal (`internal/coordinator/`), the
 opener and the mint that install the read-only token source on it, and the command's `--all`
 (`internal/cli/coordinator.go`) are in the tree, with the permission set held to the mint's request
-body by a golden; the plan's status line above moved with them. The one thing this part does NOT do
+body by a golden and the read itself held to the token it was minted — the fixture's own
+`Authorization` header is the read-only one; the plan's status line above moved with them. The
+reader reads a repository's pull requests a few at a time, the width P1's review asked for and the
+reader it replaced carried. One thing in the tree is not in this part's own Files line, and it is
+recorded here rather than left to be found: `internal/gitprov/providers/providers.go` gains one
+exported name, `AppKey`, because the mint and the opener must not disagree about where the App's key
+is (`EnvGitHubAppKey`, else `EnvGitHubAppKeyFile`); what `FromEnv` did with the environment moved
+into an unexported `envVars`, unchanged. The one thing this part does NOT do
 is stated where a reader meets it rather than here: D193's answer is **one read-only installation
 token per repository**, so there is no single project-wide credential to steal, and whether an
 installation token may omit `repositories` at all is **U3**, still an owner check.

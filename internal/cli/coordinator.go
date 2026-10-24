@@ -409,17 +409,31 @@ var openCoordinatorProvider = func(env []string, warn func(string)) (coordinator
 		if err != nil {
 			return nil, secrets, err
 		}
-		setter, ok := p.(gitprov.ServiceTokenSetter)
-		if !ok {
-			// A provider that cannot be handed a source is a refusal and never
-			// a fallback: this one would mint the run's set on its first call,
-			// and the whole point of P2's credential is that this read cannot
-			// reach a permission it does not need (Q3 answered (A)).
-			return nil, secrets, fmt.Errorf("a %s provider cannot be given the coordinator's read-only token source", gitprov.KindGitHub)
+		if err := installCoordinatorSource(p, src); err != nil {
+			return nil, secrets, err
 		}
-		setter.UseServiceTokens(src)
 		return p, secrets, nil
 	}, nil
+}
+
+// installCoordinatorSource hands src to p as the source of every installation
+// token it uses. It is the whole of P2's credential decision at the point where
+// it is enforced: from here on every call this provider makes is authenticated
+// with the coordinator's own read-only token and never with the run's set,
+// which holds two writes.
+//
+// A provider that cannot be handed a source is a refusal and never a fallback:
+// such a provider would mint the run's set on its first call, and the point of
+// the credential is that this read cannot reach a permission it does not need
+// (Q3 answered (A)). It is a function of its own so that both halves are
+// testable where they live: the install, and the refusal.
+func installCoordinatorSource(p gitprov.Provider, src gitprov.TokenSource) error {
+	setter, ok := p.(gitprov.ServiceTokenSetter)
+	if !ok {
+		return fmt.Errorf("a %s provider cannot be given the coordinator's read-only token source", gitprov.KindGitHub)
+	}
+	setter.UseServiceTokens(src)
+	return nil
 }
 
 // coordinatorMint mints the coordinator's installation token for one

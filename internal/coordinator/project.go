@@ -126,8 +126,10 @@ func (p *Project) now() time.Time {
 //   - A read that fails fails the whole call. The pull requests a repository's
 //     runs name are the preset of one view, and a view missing the ones the
 //     host would not answer for is a partial view presented as a whole one.
-//     The reads are one after another, so the failure is the first number that
-//     failed.
+//     Each answer is written to its own slot and the failures are read back in
+//     number order, so the failure is the first number that failed whatever
+//     finished first, and the slice is in the order asked for however the
+//     goroutines interleave (P1's own rule, kept here: pullWorkers at a time).
 //   - Nothing this returns names a credential: the provider's own error text
 //     goes through Redact with the values its Opener held.
 //
@@ -148,23 +150,53 @@ func (p *Project) PullRequests(ctx context.Context, kind, repo string, numbers [
 		return nil, redactedError{err: err, text: p.Redact(err.Error(), secrets)}
 	}
 	out := make([]PullRequest, len(numbers))
+	errs := make([]error, len(numbers))
+	sem := make(chan struct{}, min(pullWorkers, len(numbers)))
+	var wg sync.WaitGroup
 	for i, n := range numbers {
-		info, err := prov.PullRequest(ctx, n)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			info, err := prov.PullRequest(ctx, n)
+			if err != nil {
+				errs[i] = redactedError{err: err,
+					text: fmt.Sprintf("reading pull request %d of %s: %s", n, repo, p.Redact(err.Error(), secrets))}
+				return
+			}
+			out[i] = PullRequest{
+				Number: info.Number,
+				URL:    info.URL,
+				Title:  info.Title,
+				Branch: info.SourceBranch,
+				Draft:  info.Draft,
+				State:  string(info.State),
+			}
+		}()
+	}
+	wg.Wait()
+	for _, err := range errs {
 		if err != nil {
-			return nil, redactedError{err: err,
-				text: fmt.Sprintf("reading pull request %d of %s: %s", n, repo, p.Redact(err.Error(), secrets))}
-		}
-		out[i] = PullRequest{
-			Number: info.Number,
-			URL:    info.URL,
-			Title:  info.Title,
-			Branch: info.SourceBranch,
-			Draft:  info.Draft,
-			State:  string(info.State),
+			return nil, err
 		}
 	}
 	return out, nil
 }
+
+// pullWorkers bounds the pull-request reads of one repository that are in
+// flight at once. The reader this one replaced read them at this width — P1's
+// own review asked for it, and P1's built note records it
+// (docs/coordinator/implementation-plan.md) — and the reason is the same here.
+// The numbers are a handful and each read is one round trip, so the bound is
+// about what the host and the installation token will take rather than about
+// this process: it is small because the same App credential mints the token
+// behind every one of them.
+//
+// Both adapters are safe to call this way: the GitHub one serialises its token
+// and identity lookups and the Bitbucket one its identity lookup, and both read
+// through one http.Client.
+const pullWorkers = 4
 
 // sourceFor is the token source of one repository, which Open installs: every
 // call through it is served from the cache while that repository's token is

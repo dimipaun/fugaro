@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/coordinator"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
+	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/gitprov/httpfixture"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -605,11 +606,111 @@ func TestCoordinatorStatusMintsAReadOnlyTokenPerRepository(t *testing.T) {
 	}
 
 	// The App's ID and key are the mint's whole input, and a missing one is a
-	// refusal naming the variable rather than a read that reaches GitHub.
+	// refusal naming the variable rather than a read that reaches GitHub. The
+	// assertion is on the mint itself, because on the command's real wiring the
+	// provider opener refuses a missing App ID first and this read's mint is
+	// never reached (TestCoordinatorStatusReadsWithTheReadOnlyToken pins that
+	// failure); only this fixture's replaced opener makes the mint the one that
+	// reports.
 	t.Setenv(providers.EnvGitHubAppID, "")
-	if _, _, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--since", "0"); ExitCode(err) != ExitUserError ||
+	if _, _, err := coordinatorMint(context.Background(), "acme/app"); ExitCode(err) != ExitUserError ||
 		!strings.Contains(err.Error(), providers.EnvGitHubAppID) {
 		t.Errorf("no App ID: exit %d, %v", ExitCode(err), err)
+	}
+}
+
+// TestCoordinatorStatusReadsWithTheReadOnlyToken drives the command's own
+// wiring — no opener replaced and no mint replaced — against a hermetic host,
+// and holds the read to the credential P2 mints for it.
+//
+// The fixture is the whole assertion: the mint's request body is the four-read
+// set, and the pull-request read that follows carries that token's own
+// Authorization header. A read authenticated with the run's set — what the
+// provider's own mint asks for, two writes among them — fails here on the
+// fixture's Authorization check, so the install on the provider is verified by
+// the token the provider actually used and not by the code path that installed
+// it.
+func TestCoordinatorStatusReadsWithTheReadOnlyToken(t *testing.T) {
+	srv := httpfixture.Serve(t, filepath.Join("testdata", "coordinator_read_token.json"))
+	realOpen := openCoordinatorProvider
+	t.Setenv(providers.EnvGitHubAppID, "12345")
+	t.Setenv(providers.EnvGitHubAppKey, appKeyPEM(t))
+	t.Setenv(providers.EnvGitHubAPIURL, srv.URL)
+	// Opened on the App's own credential rather than keyless through the
+	// credentials service: what is under test here is what the coordinator
+	// mints.
+	t.Setenv(providers.EnvCredentialsServiceURL, "")
+
+	newCoordinatorFixture(t, []coordinatorRunSeed{{
+		id: "20261013-100000-aaaa", pr: 12, prev: "20261012-090000-1111",
+		branch: "fugaro/20261013-100000-aaaa", who: "someone@example.com",
+		status: runstore.StatusSucceeded, prRef: 12, base: "main",
+		files: []string{"internal/cli/exec.go"},
+	}})
+	// The fixture above put a fake host in the opener's place; this test is
+	// about the command's own opener, so it goes back.
+	setCoordinatorHost(t, realOpen)
+
+	out, _, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--json", "--since", "0")
+	if err != nil {
+		t.Fatalf("the read through the coordinator's own credential: %v", err)
+	}
+	if !strings.Contains(out, "Add search") {
+		t.Errorf("the view does not carry the pull request the host answered with:\n%s", out)
+	}
+
+	// With no App credential at all the provider opener refuses before this
+	// read's own mint is reached, so what a person sees is the opener's line —
+	// which names the variable — reported as a remote failure. That class is
+	// the command's own (coordinatorViewOf; providers.FromEnv reports a missing
+	// variable as a plain error and this command reads a failure through the
+	// host as remote), and it is pinned here because it is what really happens;
+	// the reachable mint refusal (exit 1) is asserted in
+	// TestCoordinatorStatusMintsAReadOnlyTokenPerRepository.
+	t.Setenv(providers.EnvGitHubAppID, "")
+	if _, _, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--since", "0"); err == nil ||
+		!strings.Contains(err.Error(), providers.EnvGitHubAppID) {
+		t.Errorf("no App ID: %v, want a failure naming %s", err, providers.EnvGitHubAppID)
+	} else if ExitCode(err) != ExitRemoteError {
+		t.Errorf("no App ID: exit %d, want %d: the opener refuses first and the command reports that failure as a remote one",
+			ExitCode(err), ExitRemoteError)
+	}
+}
+
+// coordinatorSource is a TokenSource whose answer a test decides.
+type coordinatorSource struct{ token string }
+
+func (s coordinatorSource) Token(context.Context, time.Duration) (string, time.Time, error) {
+	return s.token, time.Now().Add(time.Hour), nil
+}
+
+// installCoordinatorSource is where P2's credential is enforced on a provider:
+// a provider that can be handed the coordinator's read-only source is, and one
+// that cannot is refused rather than left to mint the run's own set. The
+// refusal is the half a hermetic read cannot reach — providers.FromEnv only
+// ever opens a provider that takes a source — so it is asserted here.
+func TestCoordinatorInstallsItsOwnSourceOnTheProvider(t *testing.T) {
+	src := coordinatorSource{token: "ghs_fixture_read_only"}
+	// The gitprov fake cannot be handed a source: a provider like it would mint
+	// its own token on first use, and that token asks for the run's set (Q3's
+	// answer, which this read may not reach).
+	if err := installCoordinatorSource(&fake.Provider{}, src); err == nil ||
+		!strings.Contains(err.Error(), "read-only token source") {
+		t.Errorf("a provider that cannot be handed a source: err = %v, want a refusal", err)
+	}
+	p, err := github.New(github.Options{Owner: "acme", Repo: "app", AppID: "12345", ServiceHeldKey: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := installCoordinatorSource(p, src); err != nil {
+		t.Fatalf("installing the coordinator's read-only source: %v", err)
+	}
+	a, err := p.GitAuth(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("GitAuth with the source installed: %v", err)
+	}
+	if a.Token != src.token || a.Env["GH_TOKEN"] != src.token {
+		t.Errorf("the provider authenticated with %+v, want the installed read-only token", a)
 	}
 }
 
