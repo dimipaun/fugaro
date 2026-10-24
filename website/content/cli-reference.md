@@ -533,7 +533,8 @@ requires (D27). The index is regenerated in the same command, so the
 commit that files an item is the commit that regenerates the index.
 
 --title and --why are required, and so is --filed-by: an item is not a
-title with no text, and who filed it is one of the eight fields. --what
+title with no text, and who filed it is one of the eight fields. An item
+is committed, so a --filed-by with an @ in it records `unknown`. --what
 defaults to the title, and --done and --link are written when given.
 
 An item filed by hand records `mode: none` — no run chose a mode for it.

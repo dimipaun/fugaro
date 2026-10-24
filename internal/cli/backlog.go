@@ -98,7 +98,8 @@ func newBacklogAddCmd() *cobra.Command {
 			"requires (D27). The index is regenerated in the same command, so the\n" +
 			"commit that files an item is the commit that regenerates the index.\n\n" +
 			"--title and --why are required, and so is --filed-by: an item is not a\n" +
-			"title with no text, and who filed it is one of the eight fields. --what\n" +
+			"title with no text, and who filed it is one of the eight fields. An item\n" +
+			"is committed, so a --filed-by with an @ in it records `unknown`. --what\n" +
 			"defaults to the title, and --done and --link are written when given.\n\n" +
 			"An item filed by hand records `mode: none` — no run chose a mode for it.\n" +
 			"--mode names the mode a run resolved when the item is about one, and\n" +
@@ -134,8 +135,16 @@ func runBacklogAdd(cmd *cobra.Command, o *backlogAddOptions) error {
 	if strings.TrimSpace(what) == "" {
 		what = o.title
 	}
+	filedBy := o.filedBy
+	if strings.Contains(filedBy, "@") {
+		// An item is committed into the repository, so it never carries an
+		// email address (the owner's ruling of 2026-10-24): the same rewrite
+		// a run's own filing makes, rather than a guessed login.
+		filedBy = "unknown"
+		fmt.Fprintln(cmd.ErrOrStderr(), "note: --filed-by looks like an email address, which an item never records; it records unknown")
+	}
 	item, err := backlog.Write(o.dir, backlog.New{
-		Title: o.title, Mode: o.mode, Area: o.area, FiledBy: o.filedBy, FiledIn: o.filedIn,
+		Title: o.title, Mode: o.mode, Area: o.area, FiledBy: filedBy, FiledIn: o.filedIn,
 		Date: o.date, Body: backlog.Body(what, o.why, o.done, o.links),
 	})
 	if err != nil {
