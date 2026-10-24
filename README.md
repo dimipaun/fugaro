@@ -104,7 +104,7 @@ A run halts when its next call's worst case would pass the cap.
 - **Log isolation.** Run logs carry agent output, so by default they go to Fugaro's own log bucket, which only launchers and operators (and the project's owners and editors) can read.
 - **Pinned releases.** Release checksums are signed with cosign; `fugaro setup` resolves the base image's release tag on ghcr.io, verifies the cosign signature the release attached to that exact digest, and pins the digest through the installation's own Artifact Registry remote repository — nothing is copied and nothing is pushed; `--expect-digest` cross-checks the verified digest. It pins the plugin to the binary's release.
 
-The full model, with its residual risks: [design §6](docs/design/v1.md#6-security-model). Budget setup: [design/m9-budget-and-dashboard.md](docs/design/m9-budget-and-dashboard.md).
+The full model, with its residual risks: [design §6](docs/design/v1.md#6-security-model). Budget setup: `fugaro update --firebase-project <gcp-project-id> --budget-mode observe` turns it on counting-only, `fugaro budget set` writes the caps, `--budget-mode enforce` is what refuses a call, and `off` turns it back off; the model and its residual risks are in [design/m9-budget-and-dashboard.md](docs/design/m9-budget-and-dashboard.md).
 
 ## Per-repository configuration
 
