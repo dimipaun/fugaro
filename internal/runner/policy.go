@@ -11,6 +11,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -63,9 +64,15 @@ func (r *run) defaultBranchFile(ctx context.Context) ([]byte, string, error) {
 // project (a local run) the default branch is not read, as in checkProject.
 func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	c := r.d.Spend
+	// The mode this run resolved at bootstrap is the per-run default under
+	// the ceiling (D16, plan T6.1): a fraction of the owner's cap, and never
+	// above it. It is read once, here, with the rest of the policy — the
+	// mode a run has reached later in the run only ever rises, and a policy
+	// a run's own stages could move would not be the ceiling it is.
+	mode := r.rigorMode()
 	// The ceiling is the job environment's copy of the owner's config, and
 	// sets no output limits (the project config has none).
-	ceiling := envCeiling(c)
+	ceiling := envCeiling(c, mode)
 	// The project's own policy, when it has published one, *is* the ceiling
 	// for the keys it sets: the node is what the owner says now, where the
 	// copy is what he said when the job was deployed (design §5, plan task
@@ -82,7 +89,7 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	}
 	var fromPolicy map[string]bool
 	if found {
-		if ceiling, c, fromPolicy, err = r.policyCeiling(pp, ceiling, c); err != nil {
+		if ceiling, c, fromPolicy, err = r.policyCeiling(pp, ceiling, c, mode); err != nil {
 			return err
 		}
 	}
@@ -122,7 +129,9 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	}
 	if e.PerRunUSD > 0 {
 		if src := e.Sources[policy.KeyPerRunUSD]; src == policy.SourceCeiling || src == policy.SourcePolicy {
-			s.Cap = c.Cap // exactly the owner's, not a float round trip
+			// The ceiling's own cap, scaled by the run's mode and not by a
+			// float round trip through the layer's dollar figure (D16).
+			s.Cap = config.RigorBudgetCap(mode, c.Cap)
 		} else {
 			var err error
 			if s.Cap, err = pricing.FromUSD(e.PerRunUSD); err != nil || s.Cap < 1 {
@@ -171,13 +180,20 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 // unset — it is the absence of a mode, not a ceiling that says nothing may be
 // accounted — and a mode that is not one of the three is refused by
 // SpendFromEnv long before this.
-func envCeiling(c Spend) policy.Layer {
+//
+// The cap comes through the run's rigor mode (D16, plan T6.1): the ceiling is
+// the ceiling and a mode's per-run default is a fraction of it, so what the
+// layer carries is the owner's cap scaled by the mode, and every later layer
+// still only tightens it. A run whose mode contributes no default — Critical,
+// which is today's behaviour, or one no resolution recorded — carries the
+// owner's cap exactly.
+func envCeiling(c Spend, mode rigor.Mode) policy.Layer {
 	l := policy.Layer{MaxRunTokens: c.MaxRunTokens, AllowedModels: c.AllowedModels}
 	if c.Mode != "" && c.Mode != policy.ModeOff {
 		l.Mode = c.Mode
 	}
 	if c.Cap > 0 {
-		l.PerRunUSD = c.Cap.USD()
+		l.PerRunUSD = config.RigorBudgetCap(mode, c.Cap).USD()
 	}
 	return l
 }
@@ -212,17 +228,20 @@ func envCeiling(c Spend) policy.Layer {
 // and an override over a catalog row would come back with no token limits. The
 // node replaces the owner's price OVERRIDES; the routes and the catalog
 // underneath them are the job's, exactly as they are with no node at all.
-func (r *run) policyCeiling(pp *projectpolicy.Policy, env policy.Layer, c Spend) (policy.Layer, Spend, map[string]bool, error) {
+func (r *run) policyCeiling(pp *projectpolicy.Policy, env policy.Layer, c Spend, mode rigor.Mode) (policy.Layer, Spend, map[string]bool, error) {
 	ceiling, set := env, map[string]bool{}
 	if m := pp.Budget.Mode; m != "" {
 		ceiling.Mode, set[policy.KeyMode] = m, true
 	}
 	if v := pp.Budget.PerRunUSD; v > 0 {
-		ceiling.PerRunUSD, set[policy.KeyPerRunUSD] = v, true
 		var err error
 		if c.Cap, err = pricing.FromUSD(v); err != nil || c.Cap < 1 {
 			return env, c, nil, fmt.Errorf("%s: budget.per_run_usd %v: not a usable cap: %v", projectpolicy.PathShared(), v, err)
 		}
+		// The node's cap is the owner's word about the ceiling, and the run's
+		// mode is what it is a ceiling *of*: the same fraction envCeiling
+		// applies applies here, so one rule governs both ceilings (D16).
+		ceiling.PerRunUSD, set[policy.KeyPerRunUSD] = config.RigorBudgetCap(mode, c.Cap).USD(), true
 	}
 	if v := pp.Budget.MaxRunTokens; v > 0 {
 		ceiling.MaxRunTokens, set[policy.KeyMaxRunTokens] = v, true
