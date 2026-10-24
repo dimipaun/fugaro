@@ -143,6 +143,7 @@ import { DIST, REPO, SITE, cssDeclarations, cssRules, findAll, parse, verbatimTe
 // refusals are the build's and a refusal nobody has seen fire is a refusal nobody knows the
 // shape of.
 import { buildCopy } from './lib/build.mjs'
+import { contrastRatio, paletteTokensInForce, parseColour } from './lib/colour.mjs'
 // The page's own slug rule, imported rather than re-implemented: `security.astro` resolves its
 // cross-references with this module and this file resolves them again, so the two have to be
 // the same rule rather than two approximations of it (the note in `docs.astro`).
@@ -2599,4 +2600,21 @@ test('the page points at no file the build does not produce', () => {
         : "the built page points at a sitemap the build does not produce: astro.config.mjs's integration list carries none, and a hint that 404s is the download-link defect in a smaller size (Global Constraint 9)",
     )
   })
+})
+
+// The key phrases under the drawing are marked, not only bolded (the owner's feedback of
+// 2026-10-24: bold alone was hard to see): an accent underline the reader can find, at a
+// contrast a non-text mark needs on the card's surface.
+test('the key phrases under the drawing are bold and underlined in the accent, at a visible contrast', () => {
+  const html = readFileSync(path.join(DIST, 'security', 'index.html'), 'utf8')
+  const strong = (html.match(/<li>[^]*?<\/li>|<p class="boundary-limit"[^>]*>[^]*?<\/p>/g) ?? []).join('').match(/<strong>/g) ?? []
+  assert.ok(strong.length >= 5, `the lines under the drawing carry ${strong.length} bold key phrases, and the page marks a handful`)
+  const css = [...html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n')
+  const rules = cssRules(css).filter((rule) => /data-security-diagram/.test(rule.selector || '') && /strong/.test(rule.selector || ''))
+  const decl = Object.fromEntries(rules.flatMap((rule) => cssDeclarations(rule.body)))
+  assert.match(decl['text-decoration'] ?? decl['text-decoration-line'] ?? '', /underline/, 'the key phrases carry no underline')
+  assert.equal(decl['text-decoration-color'], 'var(--accent)', 'the key phrases\' underline is not the accent')
+  const palette = paletteTokensInForce()
+  const ratio = contrastRatio(parseColour(palette.get('--accent') ?? palette.get('accent'), '--accent'), parseColour(palette.get('--surface') ?? palette.get('surface'), '--surface'))
+  assert.ok(ratio >= 3, `the accent underline is ${ratio.toFixed(2)}:1 on the card's surface, under the 3:1 a non-text mark needs`)
 })

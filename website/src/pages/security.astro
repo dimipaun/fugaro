@@ -969,6 +969,18 @@ if (unboldened.length > 0) {
     line-height: var(--leading-normal);
   }
 
+  /* The key ideas under the drawing: bold and underlined in the accent, so they read as marked
+     rather than as slightly heavier text (the owner's feedback of 2026-10-24). The accent on the
+     card's surface is 6.5:1, well over the 3:1 a non-text mark needs; the site has one, dark,
+     theme. */
+  [data-security-diagram] li :global(strong),
+  [data-security-diagram] .boundary-limit :global(strong) {
+    text-decoration: underline;
+    text-decoration-color: var(--accent);
+    text-decoration-thickness: 2px;
+    text-underline-offset: 3px;
+  }
+
   [data-security-summary] {
     margin: 0;
   }

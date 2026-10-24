@@ -93,6 +93,9 @@
   // one a reader cannot tell from a fresh one.
   var CLEARS_AFTER_MS = 4000
 
+  // How long the copy button shows its checkmark before it is a clipboard again.
+  var COPIED_MS = 1600
+
   // A short line that changes its words (the copy confirmation, the hero card's stages)
   // crossfades instead of snapping (owner-approved motion opportunities 2026-10-23): the old
   // words fade out and the new ones in, 120 ms in all (`--duration-fast`), on the site's
@@ -177,9 +180,12 @@
   // previous message's timer is not cancelled but guarded instead: a second copy replaces
   // the text, and the older timer no longer matches it, so the newer message keeps its own
   // full time on screen.
-  function say(block, message) {
+  function say(block, message, tone) {
     var status = block.querySelector('[data-copy-status]')
     if (!status) return
+    // `ok` is said to a screen reader only (the checkmark is the sighted reader's); anything
+    // else, a refused copy, is shown as well.
+    status.setAttribute('data-tone', tone || 'error')
     swapText(status, message)
     window.setTimeout(function () {
       if (status.textContent === message) swapText(status, '')
@@ -191,7 +197,18 @@
     if (!source) return
     navigator.clipboard.writeText(source.textContent || '').then(
       function () {
-        say(block, 'Copied')
+        say(block, 'Copied', 'ok')
+        // The clipboard icon becomes a checkmark for a moment; the status line is what a screen
+        // reader is told. A newer copy restarts the moment rather than being cut short by an
+        // older timer.
+        var button = block.querySelector('[data-copy-button]')
+        if (!button) return
+        var turn = (button.fugaroCopied || 0) + 1
+        button.fugaroCopied = turn
+        button.setAttribute('data-copied', 'true')
+        window.setTimeout(function () {
+          if (button.fugaroCopied === turn) button.setAttribute('data-copied', 'false')
+        }, COPIED_MS)
       },
       function () {
         // A browser that refuses the write — an unfocused document, a permission the reader
@@ -1403,6 +1420,44 @@
     setPlaying(playing)
   }
 
+  // ---- the run picture on How it works: its four steps arrive once, in view -----------------
+  //
+  // The stylesheet plays the steps left to right when the picture is marked `play`, and hides
+  // them only while it is marked `wait`. This marks `wait` only where the play can follow: the
+  // reader has not asked for less motion, the browser can observe the picture, and the picture
+  // is below the window's bottom when the page loads (a picture already in view is left as it
+  // is, so nothing on the first screen blinks). It plays once, and the same two-second failsafe
+  // and print rule as the entrances below hand the picture back if the observer never fires.
+  function runReveal() {
+    if (!('IntersectionObserver' in window) || typeof document.querySelector !== 'function') return
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    var figure = document.querySelector('.run-diagram')
+    if (!figure || typeof figure.getBoundingClientRect !== 'function') return
+    if (figure.getBoundingClientRect().top < (window.innerHeight || 0) * 0.88) return
+    figure.setAttribute('data-run-reveal', 'wait')
+    var seen = new IntersectionObserver(function (entries) {
+      for (var e = 0; e < entries.length; e++) {
+        if (!entries[e].isIntersecting) continue
+        figure.setAttribute('data-run-reveal', 'play')
+        seen.disconnect()
+      }
+    }, { threshold: 0.35 })
+    seen.observe(figure)
+    function release() {
+      if (figure.getAttribute('data-run-reveal') !== 'wait') return
+      if (figure.getBoundingClientRect().top >= (window.innerHeight || 0)) return
+      figure.setAttribute('data-run-reveal', 'play')
+      seen.disconnect()
+    }
+    window.setTimeout(release, 2000)
+    window.addEventListener('scroll', function () {
+      window.setTimeout(release, 2000)
+    }, { passive: true, once: true })
+    window.addEventListener('beforeprint', function () {
+      figure.setAttribute('data-run-reveal', 'play')
+    })
+  }
+
   // ---- entrances (the redesign's motion layer, step 9) ------------------------------------
   //
   // The parts of each home section rise into place once, in reading order, as the section
@@ -1472,6 +1527,7 @@
     // The hero's live card and the entrances, before the clipboard gate for the same reason.
     liveRun()
     levels()
+    runReveal()
     entrances()
     var blocks = document.querySelectorAll('[data-copy]')
     if (blocks.length === 0) return

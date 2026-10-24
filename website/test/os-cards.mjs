@@ -108,8 +108,12 @@ function referenceOf(svg) {
  */
 function iconsOf(card) {
   const out = []
+  // The copy button's own glyphs (a clipboard and a checkmark, the owner's feedback of
+  // 2026-10-24) are the control's, not the system's, and are not counted.
+  const inCopyButton = new Set()
+  for (const el of walk(card)) if (el.attrs?.has?.('data-copy-button')) for (const inner of walk(el)) inCopyButton.add(inner)
   for (const el of walk(card)) {
-    if (el.name !== 'svg') continue
+    if (el.name !== 'svg' || inCopyButton.has(el)) continue
     out.push({
       drawing: drawingOf(el),
       hidden: el.attrs.get('aria-hidden') === 'true',

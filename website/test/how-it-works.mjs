@@ -2305,3 +2305,22 @@ test('the levels slider advances by itself, pauses for a reader, and starts paus
   quietRoot.querySelector('[data-levels-toggle]').dispatch('click')
   assert.equal(still.running().filter((timer) => timer.ms === 4000).length, 1, 'Play does not start the slider')
 })
+
+// The run picture's steps arrive once in view, on a timer (the owner's feedback of 2026-10-24):
+// a step is hidden only under the `wait` mark the script writes, so the picture is whole with no
+// script, and the reveal is gated on the reader's no-preference.
+test('the run picture hides a step only while the script holds it back for its reveal', () => {
+  const html = builtPages().find((entry) => entry.rel === 'how-it-works/index.html').html
+  assert.ok(!findAll(parse(html), (el) => el.attrs.has('data-run-reveal')).length, 'the built page already carries the reveal state, so a reader with no script would see no steps')
+  const css = [...html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n')
+  const steps = cssRules(css).filter((rule) => /\.run-step/.test(rule.selector || ''))
+  const hiding = steps.filter((rule) => cssDeclarations(rule.body).some(([p, v]) => p === 'opacity' && v.trim() === '0'))
+  assert.ok(hiding.length > 0, 'the picture has no held-back state, so the reveal has nothing to play from')
+  for (const rule of hiding) assert.match(rule.selector, /\[data-run-reveal=["']?wait/, `${rule.selector} hides a step without the script's wait mark`)
+  const playing = steps.filter((rule) => cssDeclarations(rule.body).some(([p]) => p === 'animation' || p === 'animation-name'))
+  assert.ok(playing.length > 0, 'the picture carries no reveal')
+  for (const rule of [...hiding, ...playing]) {
+    assert.ok(rule.conditions.some((c) => /prefers-reduced-motion\s*:\s*no-preference/.test(c)), `${rule.selector} moves or hides a step for a reader who asked for less motion`)
+  }
+  assert.ok(!steps.some((rule) => cssDeclarations(rule.body).some(([p]) => p === 'animation-timeline')), 'the reveal is tied to the scroll, and it plays once on a timer')
+})
