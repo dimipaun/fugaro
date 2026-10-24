@@ -564,8 +564,7 @@ so the sweep lives in `internal/coordinator` with its command in `internal/cli`,
 other coordinator subcommand. And the job's image is `HistoryImage` — the history job's own
 `fugaro-base/history:latest` — rather than a new one, because the sweep is the same binary the CLI
 is and a second image would be a second thing to build, pin and publish for no difference in what
-runs. On
-the review P4's pull request left for this part: the sweep **prunes** the
+runs. On the review P4's pull request left for this part: the sweep **prunes** the
 oldest intent records of a repository, keeping the newest 200 (D197's bound, `DefaultIntents`), each
 removal through the store's compare-and-set on the record's own ETag so a record that changed
 between the read and the removal is left alone; and the report path **refuses a declaration larger
