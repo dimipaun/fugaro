@@ -470,7 +470,12 @@ the join is P1's. The declaration is **advisory in the launch as it is everywher
 with no database is skipped, a task that names no requester is not declared (the report path's own
 refusal is right when a person asks and pointless when nobody did), a failure is a warning on
 stderr and never a failed launch, and the whole thing is bounded at 15 seconds so a database that
-does not answer cannot eat the time the launch needs.
+does not answer cannot eat the time the launch needs. The declaration also **follows the launch's
+own database switch**: `budget.mode: off`, a project with no `budget.rtdb_url`, and
+`--no-budget-check` all declare nothing, because the coordinator's state lives in the database the
+budget uses and a launch that was told not to use it may not be the one call that reaches it —
+beyond the policy read a launch always makes. Nothing is lost by it: the declaration is advisory,
+and the view P1 renders reads the runs bucket, where the launch's own record lands either way.
 
 **What this part does not do, and the one tension it leaves.** The record is written through the
 **caller's own credentials**, on the project's `budget.rtdb_url` database, because there is no

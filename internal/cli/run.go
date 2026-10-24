@@ -2390,11 +2390,18 @@ const claimRounds = 3
 // they are what the run's own record holds once it has worked, and the join
 // (P1) is where the two meet.
 //
-// Three rules, and each is a decision rather than a detail:
+// Four rules, and each is a decision rather than a detail:
 //
-//   - A project with no database is not an error: budget.rtdb_url unset is a
-//     project that never deployed one, and every launch of it would otherwise
-//     carry a warning about a service it does not have.
+//   - The declaration follows the launch's own database switch. The coordinator
+//     keeps its state in the same database the budget uses, and a launch that
+//     was told not to use it declares nothing: budget.mode: off and a project
+//     with no budget.rtdb_url are that switch in the config, and
+//     --no-budget-check is the operator saying it for this launch. So a launch
+//     that turned the budget off touches no part of that database beyond the
+//     policy read it always makes, which is what TestBudgetOffSkipsEverything
+//     and TestNoBudgetCheckSkipsOnlyPrecheck hold. Nothing is lost by it: the
+//     declaration is advisory, and the view P1 renders reads the runs bucket,
+//     where the launch's own record lands whatever happens here.
 //   - A task that names no requester declares nothing the coordinator could
 //     attribute, and the report path refuses an unnamed caller
 //     (coordinator.ErrUnnamedCaller). That refusal is right when a person asks
@@ -2407,7 +2414,8 @@ const claimRounds = 3
 // A package variable, so a test replaces exactly the one thing that would
 // reach a database and reads the declaration it was handed.
 var reportLaunchIntent = func(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) error {
-	if env.lc.Budget == nil || env.lc.Budget.RTDBURL == "" || spec.RequestedBy == "" {
+	if env.lc.BudgetMode() == localcfg.BudgetOff || env.lc.Budget == nil || env.lc.Budget.RTDBURL == "" ||
+		env.noBudgetCheck || spec.RequestedBy == "" {
 		return nil
 	}
 	// The launch's own bound, well inside the claim's hold: a database that

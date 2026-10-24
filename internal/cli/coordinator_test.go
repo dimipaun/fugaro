@@ -1382,3 +1382,27 @@ func TestAFailedReportDoesNotFailTheLaunch(t *testing.T) {
 		t.Errorf("the failure was silent: %q", warned.String())
 	}
 }
+
+// TestALaunchThatSkipsTheBudgetIsNotDeclared: the declaration follows the
+// launch's own database switch rather than sitting beside it. The coordinator
+// keeps its state in the same database the budget uses, and a launch told not
+// to use that database declares nothing: --no-budget-check here, budget.mode:
+// off and a project with no rtdb_url in the config (the same skip, taken from
+// the config, which TestBudgetOffSkipsEverything drives end to end). Nothing
+// is lost by it — the declaration is advisory, and P1's view reads the runs
+// bucket, where the launch's own record lands either way — and what is kept is
+// the property those two tests hold: a launch whose budget is off touches no
+// part of that database beyond the policy read it always makes.
+func TestALaunchThatSkipsTheBudgetIsNotDeclared(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	env := memEnv(t, f.cloudFixture)
+	env.noBudgetCheck = true
+	spec := raceSpec(t, env)
+	spec.RequestedBy = "someone@example.com"
+	if _, err := launchRun(context.Background(), env, appSlug, spec, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := f.db.Value(coordinator.PathIntents(appSlug)).(map[string]any); len(m) != 0 {
+		t.Fatalf("a launch that skipped the budget declared %v", m)
+	}
+}
