@@ -269,6 +269,45 @@ func TestCoordinatorRedactsTheCredentialsAnOpenerHolds(t *testing.T) {
 	}
 }
 
+// tokenHost fails every read of a pull request with an error that quotes the
+// installation token its source handed it, which is what a host that echoes
+// the Authorization header back does.
+type tokenHost struct {
+	*fake.Provider
+	src gitprov.TokenSource
+}
+
+func (h tokenHost) PullRequest(ctx context.Context, n int) (gitprov.PRInfo, error) {
+	tok, _, err := h.src.Token(ctx, time.Minute)
+	if err != nil {
+		return gitprov.PRInfo{}, err
+	}
+	return gitprov.PRInfo{}, fmt.Errorf("GET /repos/acme/web/pulls/%d: 401: bad credentials (Authorization: token %s)", n, tok)
+}
+
+// The coordinator's own minted token is a credential too: the opener does not
+// hold it (the source mints it on the provider's first call), so the opener's
+// secrets alone would let a host's echo of it through.
+func TestCoordinatorRedactsItsMintedToken(t *testing.T) {
+	const minted = "ghs_minted0123456789abcdef"
+	p := &Project{
+		Mint: func(context.Context, string) (string, time.Time, error) {
+			return minted, time.Now().Add(time.Hour), nil
+		},
+		Open: func(_ context.Context, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
+			return tokenHost{Provider: &fake.Provider{Repo: repo, SelfID: "1"}, src: src}, nil, nil
+		},
+		Redact: agent.Redact,
+	}
+	_, err := p.PullRequests(context.Background(), gitprov.KindGitHub, "acme/web", []int{12})
+	if err == nil {
+		t.Fatal("the read failed and PullRequests succeeded")
+	}
+	if strings.Contains(err.Error(), minted) {
+		t.Errorf("the minted token reached the failure: %v", err)
+	}
+}
+
 // A reader with no redactor panics rather than reading: a forgotten one would
 // ship the provider's own text, which is where a credential would arrive
 // (internal/followup's rule for the same reason).
