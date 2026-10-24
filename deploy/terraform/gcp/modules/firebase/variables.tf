@@ -122,3 +122,13 @@ variable "history_account" {
     error_message = "history_account must be a service account email, <id>@<project>.iam.gserviceaccount.com."
   }
 }
+
+variable "coordinator_account" {
+  description = "The email of the coordinator's writer account (D194): the aggregation job's own, which the installation root creates as it creates the history account's. It writes the coordinator's subtree under the rules' floor, and is granted roles/firebasedatabase.admin here."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\\.iam\\.gserviceaccount\\.com$", var.coordinator_account))
+    error_message = "coordinator_account must be a service account email, <id>@<project>.iam.gserviceaccount.com."
+  }
+}

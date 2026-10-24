@@ -29,6 +29,11 @@ const (
 	APIKeyID        = "fugaro-web"
 
 	HistoryAccountID = "fugaro-history"
+	// CoordinatorAccountID is the coordinator's writer account (D194): the
+	// aggregation job's own, created in the installation as the history
+	// account's is, and granted roles/firebasedatabase.admin on the FP so it
+	// can write the coordinator's subtree under the rules' floor.
+	CoordinatorAccountID = "fugaro-coordinator"
 	// HistoryJob must not start with fugaro-: ls and max_parallel count
 	// every fugaro-* job as a workflow's.
 	HistoryJob          = "fugarohist"
@@ -113,12 +118,14 @@ type FirebaseSpec struct {
 	ManageAPIs    bool          `json:"manage_apis"`
 	// Launchers and Operators mint run tokens and read the database;
 	// Admins (the GCP project's owners and editors) and BudgetAdmins write
-	// it. The history account is the sweeper's, which holds its own roles.
-	Launchers      []string `json:"launchers"`
-	Operators      []string `json:"operators"`
-	Admins         []string `json:"admins"`
-	BudgetAdmins   []string `json:"budget_admins"`
-	HistoryAccount string   `json:"history_account"`
+	// it. The history account is the sweeper's, which holds its own roles,
+	// and the coordinator account the aggregation job's (D194).
+	Launchers          []string `json:"launchers"`
+	Operators          []string `json:"operators"`
+	Admins             []string `json:"admins"`
+	BudgetAdmins       []string `json:"budget_admins"`
+	HistoryAccount     string   `json:"history_account"`
+	CoordinatorAccount string   `json:"coordinator_account"`
 	// SkipAPIs are the APIs the Firebase root leaves to the installation
 	// root: set (to SharedAPIs) only when the Firebase project is the
 	// installation's own project, and left out of the tfvars otherwise.
@@ -164,15 +171,16 @@ func Firebase(inst InstallationSpec, in FirebaseInputs) (FirebaseSpec, error) {
 		history = serviceAccountEmail(HistoryAccountID, inst.Project)
 	}
 	s := FirebaseSpec{
-		Project:        in.FP,
-		FugaroProject:  inst.FugaroProject,
-		Names:          FirebaseNames{SignerAccountID: SignerAccountID, MinterRoleID: MinterRoleID, APIKey: APIKeyID},
-		ManageAPIs:     inst.ManageAPIs,
-		Launchers:      members(inst.Launchers, nil),
-		Operators:      members(inst.Operators, nil),
-		Admins:         sortedUnique(in.Admins),
-		BudgetAdmins:   sortedUnique(in.BudgetAdmins),
-		HistoryAccount: history,
+		Project:            in.FP,
+		FugaroProject:      inst.FugaroProject,
+		Names:              FirebaseNames{SignerAccountID: SignerAccountID, MinterRoleID: MinterRoleID, APIKey: APIKeyID},
+		ManageAPIs:         inst.ManageAPIs,
+		Launchers:          members(inst.Launchers, nil),
+		Operators:          members(inst.Operators, nil),
+		Admins:             sortedUnique(in.Admins),
+		BudgetAdmins:       sortedUnique(in.BudgetAdmins),
+		HistoryAccount:     history,
+		CoordinatorAccount: serviceAccountEmail(CoordinatorAccountID, inst.Project),
 	}
 	if in.FP == inst.Project {
 		// One project holds the installation and the Firebase backend (design

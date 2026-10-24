@@ -4,11 +4,15 @@
 // Q13, answered (A) on 2026-10-19). It is what a coordinator *shows*, as
 // data.
 //
-// Nothing in this package writes. Join is a pure function: the two readers
-// that feed it — a gitprov.Provider and the runs bucket — are opened by the
-// CLI command that renders the view (internal/cli/coordinator.go), which is
-// where the plan puts them, and the view they produce is the only thing this
-// package knows how to build.
+// Join is a pure function: the two readers that feed it — a gitprov.Provider
+// and the runs bucket — are opened by the CLI command that renders the view
+// (internal/cli/coordinator.go), which is where the plan puts them, and the
+// view they produce is the only thing this file knows how to build.
+//
+// The one thing here that writes is state.go, the subtree D195 names and the
+// ETag CAS every write of the coordinator's state goes through (P3); it is
+// separate from the view because the view is computed and never stored, and a
+// reader of one is not a reader of the other.
 //
 // What the view is about is *declarations*, never identities: the launcher a
 // run records is the string it wrote about itself (reconciliation finding

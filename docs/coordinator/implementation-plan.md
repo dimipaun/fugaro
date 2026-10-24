@@ -1,6 +1,6 @@
 # The coordinator — the implementation plan
 
-**Status (2026-10-21, later): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0 and P1 are on `coordinator`, and P2–P8 are not started.** Each part carries its own **Status** line below, and this one moves with them: the status line and the pins that hold it change in the commit that lands a part, which is what the P0 section says of itself and what every earlier plan in this repository did (`docs/mobile/README.md`, `docs/setup-wizard/README.md`). This plan follows from
+**Status (2026-10-24): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0, P1 and P3 are on `coordinator`, and P2 and P4–P8 are not started.** Each part carries its own **Status** line below, and this one moves with them: the status line and the pins that hold it change in the commit that lands a part, which is what the P0 section says of itself and what every earlier plan in this repository did (`docs/mobile/README.md`, `docs/setup-wizard/README.md`). This plan follows from
 [reconciliation.md](reconciliation.md), which wins wherever it disagrees with
 [spec.md](spec.md). Every path and symbol below was re-read against `main` at `1e0953b7`
 (`docs(central-orchestrator): spec, reconciliation and plan for central orchestrators (#775)`)
@@ -379,6 +379,18 @@ can reach (it can write the whole database, `config/` included, and IAM cannot s
 generation bump and what a client with an older marker sees; and the amended claim in `deploy/terraform/gcp/modules/firebase/iam.tf`.
 
 **Commit.** `coordinator: the project record, its writer identity and the read grant`
+
+**Status: built.** On the long-lived `coordinator` branch, in this plan's own commit message, and
+the plan's status line above moved with it. The subtree, the deterministic IDs, the ETag CAS, the
+writer's account and the read grant are in the tree. Two things are worth a reader's attention
+here rather than in the diff. The first is that the writer account is **named and granted, not
+created**: the installation root creates it in **P5**, as it creates the history account's, so
+until that part lands the grant is inert — a member that does not exist holds a role on the
+Firebase project. The second is that `terraform validate` and the golden plans could not be
+regenerated offline (no provider cache, no network), so the golden plans under
+`internal/infra/tf/testdata/golden/` carry the new grant as the one row a real plan would emit for
+it, added by hand and read diff by diff; the owner's next `fugaro update` run on a real
+installation is what confirms it.
 
 ---
 

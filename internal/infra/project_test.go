@@ -258,7 +258,7 @@ func TestCoverNamesAreTheCodes(t *testing.T) {
 			t.Errorf("role %s is not in tf.FugaroRoles", r)
 		}
 	}
-	for _, a := range []string{SchedulerServiceAccountID, HistoryAccountID, SignerAccountID} {
+	for _, a := range []string{SchedulerServiceAccountID, HistoryAccountID, SignerAccountID, CoordinatorAccountID} {
 		if !has(tf.FugaroAccounts, a) {
 			t.Errorf("account %s is not in tf.FugaroAccounts", a)
 		}
