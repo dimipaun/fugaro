@@ -1612,7 +1612,7 @@ func TestRestoreAHalfMarkedCreationKeepsTheConfigAndItsWayToFinish(t *testing.T)
 	}
 	// The way out is named, and it is not a command in the refusal: the
 	// label's writer is the owner's, in their own terminal (Task 3.0 §5).
-	for _, want := range []string{"docs/gcp-setup.md", "fugaro managed apply", "gcloud projects delete"} {
+	for _, want := range []string{"docs/design/managed-projects.md", "fugaro managed apply", "gcloud projects delete"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %s: %v", want, err)
 		}
@@ -1823,7 +1823,7 @@ func TestRestoreStopsWhenTheNewProjectsMarkerHasNoValidBudget(t *testing.T) {
 			// #588: a budget CAN be added to an existing project, with
 			// managed flag, and the refusal must say so. Telling the owner it
 			// cannot, and to delete the project, is false and destructive (the
-			// ID stays reserved ~30 days); docs/gcp-setup.md says the same.
+			// ID stays reserved ~30 days); docs/design/managed-projects.md says the same.
 			if want := "fugaro managed flag " + newProj + " --budget N --budget-currency CCC"; !strings.Contains(err.Error(), want) {
 				t.Errorf("the refusal does not give the way to add a budget %q:\n%v", want, err)
 			}

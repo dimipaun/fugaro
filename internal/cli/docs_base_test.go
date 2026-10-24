@@ -165,37 +165,6 @@ var commandFlagExceptions = map[string]map[string]map[string]bool{
 		// boundary regex to reopen on.
 		"fugaro image build": {"yes": true, "json": true, "plan-only": true},
 	},
-	"docs/gcp-setup.md": {
-		// "Upgrading: fugaro upgrade. ... then runs the cloud step... The
-		// cloud step is `fugaro image refresh` for that repository. `--yes`
-		// confirms every cloud step...; `--local` skips the cloud step;
-		// `--check` writes nothing..." -- yes/local/check here are
-		// fugaro upgrade's own flags (it names fugaro image refresh only
-		// to say what its cloud step runs); no "fugaro upgrade" mention
-		// recurs before them. yes is real on refresh too, so only the two
-		// that are not need the exception.
-		"fugaro image refresh": {"local": true, "check": true,
-			// "Moving a repository... (2) The base step copies this
-			// release's base image of each selected workflow's kind as
-			// `update --base` does..." -- update's own flag, named without
-			// repeating "fugaro" (already established at the top of the
-			// same bullet).
-			"base": true},
-		// "without them nobody holds the launcher or token-minter role and
-		// the first `fugaro run` fails with ... Passing `--launcher` or
-		// `--operator` replaces that default entirely ... and `fugaro setup`
-		// stops with the one line naming `--launcher` and `--operator`." --
-		// launcher/operator here are fugaro setup's own flags, but they sit
-		// in the flag window the `fugaro run` mention opens: the boundary
-		// regex does reopen on the `fugaro setup` later in the sentence, and
-		// that mention comes after every one of them.
-		"fugaro run": {"launcher": true, "operator": true,
-			// "fugaro run \"add a --verbose flag to the export command\"" --
-			// the flag is inside a QUOTED TASK TEXT, which is a sentence for
-			// the agent and not a command line: no fugaro command has
-			// --verbose, and none should.
-			"verbose": true},
-	},
 	"README.md": {
 		// The same quoted example task as docs/gcp-setup.md's above:
 		// `fugaro run "add a --verbose flag to the export command"`.
@@ -217,7 +186,7 @@ var commandFlagExceptions = map[string]map[string]map[string]bool{
 // is checked against the command that actually has it.
 func TestBaseImageDocCommandFlagsAreReal(t *testing.T) {
 	for _, path := range []string{
-		"docs/base-image.md", "docs/base-image-migration.md", "docs/gcp-setup.md",
+		"docs/base-image.md", "docs/base-image-migration.md",
 		"docs/release.md", "docs/dogfooding.md", "README.md", "docs/artifact-runs.md",
 	} {
 		doc := readDoc(t, path)
@@ -257,34 +226,6 @@ func TestBaseImageDocCommandFlagsAreReal(t *testing.T) {
 					}
 				}
 			}
-		}
-	}
-}
-
-// TestGCPSetupBaseImageSectionNamesRealKinds: the three worked command
-// examples in gcp-setup.md's base-image section name the real base kind
-// (config.BaseKind, "base"), not a stale or typo'd one -- this is what
-// would have caught the reviewed-away "--base nonexist" class of mistake,
-// which a flag-name Lookup alone does not: --base is a real flag either
-// way, only its example VALUE would be wrong.
-func TestGCPSetupBaseImageSectionNamesRealKinds(t *testing.T) {
-	doc := readDoc(t, "docs/gcp-setup.md")
-	start := strings.Index(doc, "### 3. The base image")
-	end := strings.Index(doc, "### 4. A repository")
-	if start < 0 || end < 0 || end <= start {
-		t.Fatal("docs/gcp-setup.md's base-image section (### 3 ... ### 4) was renamed or reordered; update this test's markers")
-	}
-	section := doc[start:end]
-	if !slices.Contains(config.Bases, config.BaseKind) {
-		t.Fatalf("config.BaseKind %q is not in config.Bases %v", config.BaseKind, config.Bases)
-	}
-	for _, want := range []string{
-		"`fugaro update --base " + config.BaseKind + "`",
-		"`--expect-digest " + config.BaseKind + "=sha256:<hex>`",
-		"`--base-image " + config.BaseKind + "=IMAGE`",
-	} {
-		if !strings.Contains(section, want) {
-			t.Errorf("docs/gcp-setup.md's base-image section lacks %q (config.BaseKind is %q)", want, config.BaseKind)
 		}
 	}
 }

@@ -520,7 +520,7 @@ func TestDocsProjectClaudeAccountsNoSecretShapes(t *testing.T) {
 // installation" step from the section — this fails naming it. The same holds
 // for the profile field's sentence and the project-wide storage step.
 func TestDocsProjectClaudeAccountsGcpSetupRollout(t *testing.T) {
-	doc := readDoc(t, "docs/gcp-setup.md")
+	doc := readDoc(t, "docs/project-claude-accounts.md")
 	// The section says the feature is in the released CLI: that must be true
 	// of the tree's own release, or the page describes a CLI nobody has.
 	releasedAtLeast(t, releasedFugaroVersion(t), "0.9.0")

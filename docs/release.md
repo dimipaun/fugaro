@@ -255,7 +255,7 @@ Also check on the release page: it is not a draft; for 0.4.0 and later it is not
 
 `fugaro version` prints `X.Y.Z` (no `v`); a `go install` build prints `dev` because the version is injected only by GoReleaser's `-ldflags`. SBOMs are the `*.sbom.json` assets (SPDX/syft JSON, one per archive).
 
-**Update checks.** Once a day, any command asks this same releases API (`/repos/dimipaun/fugaro/releases/latest`, which only ever returns a non-draft, non-prerelease release) whether a newer one exists, and nags once a day at most when it does ([gcp-setup.md](gcp-setup.md#staying-up-to-date) has the switches and `fugaro doctor`'s own check). Nothing in this repository's test suite or CI ever makes that call for real: it is exercised only against fake HTTP servers, never verified here against a live lookup.
+**Update checks.** Once a day, any command asks this same releases API (`/repos/dimipaun/fugaro/releases/latest`, which only ever returns a non-draft, non-prerelease release) whether a newer one exists, and nags once a day at most when it does (the switches are `FUGARO_NO_UPDATE_CHECK=1` and a project config's `update_check: false`, and `fugaro doctor` reports the comparison itself, as its `cli-version` check). Nothing in this repository's test suite or CI ever makes that call for real: it is exercised only against fake HTTP servers, never verified here against a live lookup.
 
 ### Verifying the console's release
 
