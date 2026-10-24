@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -351,6 +352,42 @@ func TestReviewRoundsExhausted(t *testing.T) {
 	}
 	if rec.Outcome != runstore.OutcomeDraft || rec.Reason != "review round 2 still has 1 finding" {
 		t.Fatalf("record = %+v", rec)
+	}
+}
+
+// TestRigorRoundMomentRaisesTheModeFromTheRunsOwnDiff: D22's second moment, at
+// the loop. The repository starts the run at its own default, and the fix in
+// round 1 writes the one file the Critical area rule matches — so the mode the
+// run has reached is Critical from round 1 on, and the round is the moment that
+// decided it. The block's own moment is what proves the call site exists:
+// finalize resolves the same mode from the same diff and, answering the same
+// thing, leaves the block as the round left it.
+func TestRigorRoundMomentRaisesTheModeFromTheRunsOwnDiff(t *testing.T) {
+	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "agent:\n",
+		"rigor:\n  default: startup\n  areas:\n    - { name: app, match: \"feature.txt\", mode: critical }\nagent:\n", 1)
+	h := newHarness(t, cfg, nil)
+	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
+		verifyTest(t, ctx, req)
+		return agent.Result{}, nil
+	}
+	rec, err := h.run(t, implement("feature"), review("changes", 1), fix, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rg := rec.Rigor
+	if rg == nil {
+		t.Fatal("the record carries no rigor block")
+	}
+	if rg.Mode != rigor.Critical || rg.From != rigor.FromArea {
+		t.Fatalf("the mode = %q from %q; want critical from the area the run's own file matched", rg.Mode, rg.From)
+	}
+	if rg.At != runstore.RigorAtRound {
+		t.Errorf("the block was decided at %q; want %q — a mode a run's own diff reached must not wait for finalize (D22)", rg.At, runstore.RigorAtRound)
+	}
+	want := []runstore.RigorArea{{Name: "app", Mode: rigor.Critical, At: runstore.RigorAtRound}}
+	if !slices.Equal(rg.Areas, want) {
+		t.Errorf("the areas = %+v; want %+v", rg.Areas, want)
 	}
 }
 

@@ -63,7 +63,13 @@ func filedRunAt(t *testing.T, remote, branch, runID string, reviews ...runstore.
 	if err := repo.CheckoutNewBranch(ctx, "main", branch); err != nil {
 		t.Fatal(err)
 	}
-	testutil.WriteFiles(t, repo.Dir, map[string]string{"internal/payments/charge.go": "package payments\n"})
+	// The run's own work, under the area rule the fixture's fugaro.yaml
+	// declares. It is named after the run so that a run cut from a base that
+	// already carries another run's work — which is what the second half of
+	// the same-day cases builds — still has a diff of its own: a run with no
+	// work is a run the loop fails, and it would resolve its mode from no path
+	// at all (D22's third moment), which is not what those cases are about.
+	testutil.WriteFiles(t, repo.Dir, map[string]string{filepath.Join("internal/payments", runID+".go"): "package payments\n"})
 	if _, err := repo.CommitAll(ctx, "the run's work"); err != nil {
 		t.Fatal(err)
 	}

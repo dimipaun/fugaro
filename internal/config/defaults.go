@@ -79,11 +79,17 @@ var RigorBudgetFractions = map[rigor.Mode]float64{
 	rigor.Pro:     0.85,
 }
 
-// RigorBudgetFloorUSD is the least a mode's per-run default may be: one
-// stage's floor for each model stage the smallest run the built-in recipe
-// catalog ships can start, which is the smoke check a run has to be able to
-// finish. The arithmetic is recipe.StageBound's, the same bound the cost
-// preview quotes.
+// RigorBudgetFloorUSD is the least a mode's per-run default may be where the
+// deployed cap can carry it: one stage's floor for each model stage the
+// smallest run the built-in recipe catalog ships can start, which is the smoke
+// check a run has to be able to finish. The arithmetic is recipe.StageBound's,
+// the same bound the cost preview quotes, and RigorBudgetCap is where it is
+// applied — a floor that is only asserted is a floor a mode's fraction can go
+// under (D16, plan T6.1).
+//
+// A deployed cap below the floor is the one case it cannot answer for: the
+// ceiling is the ceiling, so a run there gets the whole cap, and a deployment
+// that low is under one stage's lease whatever mode a run is at.
 var RigorBudgetFloorUSD = RigorBudgetStageFloorUSD * float64(smokeStages())
 
 // smokeStages is the model stages the smallest run the built-in recipe
@@ -120,21 +126,33 @@ func RigorBudgetFraction(m rigor.Mode) float64 {
 }
 
 // RigorBudgetCap is the per-run cap a run of mode m gets from the deployed
-// cap: the deployed cap scaled by RigorBudgetFraction. It is a clamp in the
-// one direction that matters — the ceiling is the ceiling, and a mode lowers
-// it and never raises it (F15, D16) — and it never answers with a cap that
-// rounds to nothing, which reads as no cap at all (the trap SpendFromEnv
-// guards against at the other end).
+// cap: the deployed cap scaled by RigorBudgetFraction and floored at
+// RigorBudgetFloorUSD. It is a clamp in both directions that matter — the
+// ceiling is the ceiling, and a mode lowers it and never raises it (F15, D16),
+// while a mode's fraction must not put a run under one stage's lease floor,
+// where the gateway grants the stage nothing and the run dies on the cap
+// having produced nothing (D16, T6.1). The floor is bounded by the deployed
+// cap, so it never lifts a cap: a deployment whose whole cap is under the
+// floor gives a run all of it, which is the best that ceiling can do.
+//
+// It never answers with a cap that rounds to nothing, which reads as no cap at
+// all (the trap SpendFromEnv guards against at the other end).
 func RigorBudgetCap(m rigor.Mode, deployed pricing.Micros) pricing.Micros {
 	if deployed <= 0 {
 		return deployed
 	}
-	if f := RigorBudgetFraction(m); f < 1 {
-		if scaled, err := pricing.FromUSD(deployed.USD() * f); err == nil && scaled > 0 {
-			return min(scaled, deployed)
-		}
+	f := RigorBudgetFraction(m)
+	if f >= 1 {
+		return deployed
 	}
-	return deployed
+	scaled, err := pricing.FromUSD(deployed.USD() * f)
+	if err != nil || scaled <= 0 {
+		return deployed
+	}
+	if floor, err := pricing.FromUSD(RigorBudgetFloorUSD); err == nil {
+		scaled = max(scaled, floor)
+	}
+	return min(scaled, deployed)
 }
 
 // AgentAuths are the values agent.auth may take: validate's check and every

@@ -91,7 +91,10 @@ func TestRigorBudgetDefaultsAreOrdered(t *testing.T) {
 // produces nothing (D16), so every default is at least the floor a stage
 // needs — the gateway's own lease floor for each model stage the smallest run
 // the catalog ships can start — at every deployed cap the tree's own examples
-// use.
+// use, and at a cap low enough that a mode's fraction alone would go under it.
+// The floor is applied and not merely asserted: $0.30 is where Hotfix's
+// fraction (0.4) is $0.12 without the clamp, which is a cap the gateway can
+// grant nothing against.
 //
 // The stage count is written out rather than recomputed: the run it counts is
 // the catalog's smallest (plan T6.2's smoke check, which F17 says the cost
@@ -108,7 +111,7 @@ func TestRigorBudgetDefaultsFinishTheSmokeCheck(t *testing.T) {
 	if RigorBudgetFloorUSD < RigorBudgetStageFloorUSD {
 		t.Fatalf("RigorBudgetFloorUSD = %v, under one stage's floor", RigorBudgetFloorUSD)
 	}
-	for _, usd := range []float64{2, 5, 20, 50} {
+	for _, usd := range []float64{0.30, 2, 5, 20, 50} {
 		deployed, err := pricing.FromUSD(usd)
 		if err != nil {
 			t.Fatal(err)
@@ -116,6 +119,21 @@ func TestRigorBudgetDefaultsFinishTheSmokeCheck(t *testing.T) {
 		for _, m := range rigor.Modes {
 			if got := RigorBudgetCap(m, deployed).USD(); got < RigorBudgetFloorUSD {
 				t.Errorf("RigorBudgetCap(%s, $%v) = $%v, under the floor $%v a stage needs: a run at this cap can be granted nothing", m, usd, got, RigorBudgetFloorUSD)
+			}
+		}
+	}
+	// A deployed cap under the floor is the one case the floor cannot answer
+	// for, and it must not be answered by raising the cap: the ceiling is the
+	// ceiling, so the run gets all of it. The mode's fraction is still what
+	// lowers a cap above the floor; below it there is nothing to lower.
+	for _, usd := range []float64{0.05, 0.20} {
+		deployed, err := pricing.FromUSD(usd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range rigor.Modes {
+			if got := RigorBudgetCap(m, deployed); got != deployed {
+				t.Errorf("RigorBudgetCap(%s, $%v) = %v; want the whole deployed cap, which is the most the ceiling can give", m, usd, got)
 			}
 		}
 	}
