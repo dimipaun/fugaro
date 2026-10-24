@@ -60,6 +60,10 @@ The plugin's skills are in `plugin/skills` (`setup`, `working`, `routing`, `para
 - Titles are short and say what changed, often prefixed by the area or milestone, for example `rtdb: conditional PUT must not carry print=silent` or `M9c: fugaro watch, the live terminal dashboard`. Explain the why in the body.
 - Fill in the PR template: tests, docs, no secrets.
 
+## Licensing of contributions
+
+Contributions to the core are accepted under the MIT licence in [LICENSE](LICENSE), and an outside pull request is merged only after its author signs the Contributor License Agreement, which a bot asks for on the first one. Signing is what keeps the copyright relicensable; a pull request that has not signed waits rather than merges. `ee/` is reserved, so it takes no contributions while it is reserved: it opens to outside work only once it carries its own licence and terms.
+
 ## Adding a backend for another cloud
 
 A cloud is a backend behind the interface in [`internal/backend`](internal/backend/backend.go); the runner, the agent loop and the git providers must not know which cloud they run on. [`internal/backend/gcp`](internal/backend/gcp) is the reference implementation, and its provisioning is a Terraform module set driven by `fugaro setup` (`deploy/terraform/`). Please open an issue first (see "Other clouds" in the [README](README.md#other-clouds-help-wanted)), even if you can only review or test.
