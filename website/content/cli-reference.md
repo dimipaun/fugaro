@@ -29,7 +29,7 @@ Subcommands:
 - `fugaro allow-delete` -- Record the objects a run may delete or replace, by address (the project's owner)
 - `fugaro artifacts` -- List and download what an artifact run delivered
 - `fugaro backends` -- List the compute backends an installation can run its jobs on
-- `fugaro backlog` -- Read the repository's backlog and regenerate its index
+- `fugaro backlog` -- File a backlog item, read the backlog, regenerate its index
 - `fugaro budget` -- Show and change the project's model-spend caps and kill switches
 - `fugaro cancel` -- Cancel a run, letting the runner open a draft PR first
 - `fugaro completion` -- Generate the autocompletion script for the specified shell
@@ -486,18 +486,23 @@ This command has no subcommands.
 
 ## `fugaro backlog`
 
-Read the repository's backlog and regenerate its index
+File a backlog item, read the backlog, regenerate its index
 
-Read the backlog in docs/backlog/ and regenerate its index.
+Read the backlog in docs/backlog/, file an item into it, and regenerate
+its index.
 
 The backlog is one Markdown file per item, named `<id>-<slug>.md`, beside
 the generated index README.md and the hand-written format FORMAT.md. The
 naming rule is what lets two pull requests file an item at once: they write
 two differently named files, and the merge is a union of disjoint files
-rather than a conflict (D26). The index is derived state — regenerated,
+rather than a conflict (D26). `add` writes one item under that rule and
+refuses the one the folder already holds — the same title filed twice on
+the same day. The index is derived state — regenerated,
 never merged by hand — so two branches that regenerated it at once are
 reconciled by re-running `fugaro backlog index`, and never by merging the
-file (D28).
+file (D28). `add` regenerates it in the same commit that files the item;
+`index` regenerates it alone; `list` writes nothing and prints what the
+index would say.
 
 Nothing here reaches a network, a credential or an installation: the items
 and the index are files in this checkout.

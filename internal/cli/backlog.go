@@ -42,16 +42,21 @@ type backlogOptions struct {
 func newBacklogCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "backlog",
-		Short: "Read the repository's backlog and regenerate its index",
-		Long: "Read the backlog in docs/backlog/ and regenerate its index.\n\n" +
+		Short: "File a backlog item, read the backlog, regenerate its index",
+		Long: "Read the backlog in docs/backlog/, file an item into it, and regenerate\n" +
+			"its index.\n\n" +
 			"The backlog is one Markdown file per item, named `<id>-<slug>.md`, beside\n" +
 			"the generated index README.md and the hand-written format FORMAT.md. The\n" +
 			"naming rule is what lets two pull requests file an item at once: they write\n" +
 			"two differently named files, and the merge is a union of disjoint files\n" +
-			"rather than a conflict (D26). The index is derived state — regenerated,\n" +
+			"rather than a conflict (D26). `add` writes one item under that rule and\n" +
+			"refuses the one the folder already holds — the same title filed twice on\n" +
+			"the same day. The index is derived state — regenerated,\n" +
 			"never merged by hand — so two branches that regenerated it at once are\n" +
 			"reconciled by re-running `fugaro backlog index`, and never by merging the\n" +
-			"file (D28).\n\n" +
+			"file (D28). `add` regenerates it in the same commit that files the item;\n" +
+			"`index` regenerates it alone; `list` writes nothing and prints what the\n" +
+			"index would say.\n\n" +
 			"Nothing here reaches a network, a credential or an installation: the items\n" +
 			"and the index are files in this checkout.",
 	}
