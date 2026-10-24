@@ -538,17 +538,20 @@ func TestOrgPolicyErrorVerbatim(t *testing.T) {
 		t.Error("Firebase was added after a refused creation")
 	}
 
-	// Billing refusals too: the text is the service's, with the likely cause.
+	// Billing refusals too: the text is the service's, with the likely cause,
+	// printed above the pause's block (a refused link pauses setup, exit 1),
+	// whose first line is the helpful one.
 	r = newProjectRig(t)
 	stubSelfCommand(t)
 	r.existing(false)
 	r.bill.FailLinks(403, "PERMISSION_DENIED", "The caller does not have permission to link")
-	_, _, err = r.run(t, true, billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
-	if err == nil || !strings.Contains(err.Error(), "The caller does not have permission to link") || !strings.Contains(err.Error(), "billing.resourceAssociations.create") {
-		t.Errorf("err = %v", err)
+	out, errOut, err := r.run(t, true, billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
+	all := refusalText(out, errOut, err)
+	if ExitCode(err) != ExitUserError || !strings.Contains(all, "The caller does not have permission to link") || !strings.Contains(all, "billing.resourceAssociations.create") {
+		t.Errorf("exit %d, err %v:\n%s", ExitCode(err), err, all)
 	}
-	if !strings.HasPrefix(err.Error(), "Fugaro could not link billing account "+billingAcc+" to project "+newProj+":") {
-		t.Errorf("err = %v: want the helpful line first", err)
+	if !strings.Contains(all, "Fugaro could not link billing account "+billingAcc+" to project "+newProj+":") {
+		t.Errorf("the pause does not carry the helpful line:\n%s", all)
 	}
 }
 
