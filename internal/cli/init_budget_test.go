@@ -306,11 +306,14 @@ func TestAResumedCreationIsMarkedManaged(t *testing.T) {
 		"role_ids":                  roles,
 	})}
 	r.save(t)
-	out, errOut, err := r.run(t, true, newProj+"\n"+initProjectName+"\n"+initProjectName+"\n",
+	out, errOut, err := r.run(t, true, newProj+"\n"+initProjectName+"\n"+initProjectName+"\n"+newProj+"\n",
 		"--create-project", "--managed", "--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc)
 	all := refusalText(out, errOut, err)
 	if err != nil {
 		t.Fatalf("the run failed, so the warning would be about a failure rather than about the resume: %v\n%s", err, all)
+	}
+	if !strings.Contains(all, "this MARKS project "+newProj+" as Fugaro-managed") || !strings.Contains(all, "this run resumed the creation of project "+newProj) {
+		t.Errorf("the mark was not behind the typed ID, or not said to be a resume:\n%s", all)
 	}
 	if n := len(r.crm.Creates()); n != 0 {
 		t.Fatalf("%d project(s) created: the project already existed:\n%s", n, all)
@@ -442,5 +445,53 @@ func TestManagedFactIsNotWrittenWhenTheInstallationApplyFails(t *testing.T) {
 	noMarker(t, r.gcs, bucket)
 	if s := refusalText(out, errOut, err); !strings.Contains(s, "not marked") {
 		t.Errorf("the run does not say the created project is not marked:\n%s", s)
+	}
+}
+
+// TestAResumedCreationIsNeverMarkedWithoutATypedID: fugaro_created=true is a
+// label anyone with resourcemanager.projects.update can set, so it alone never
+// marks a project managed. A resumed creation is marked only after its ID is
+// typed at the person's own terminal (the bar fugaro managed flag keeps): under
+// --yes --non-interactive, or in a coding agent's session, nothing is written —
+// neither the object nor the fugaro_managed label — and the run says how to
+// mark it.
+func TestAResumedCreationIsNeverMarkedWithoutATypedID(t *testing.T) {
+	for name, agent := range map[string]bool{"--yes --non-interactive": false, "a coding agent's session": true} {
+		t.Run(name, func(t *testing.T) {
+			r := newProjectRig(t)
+			const number = 424242
+			bucket := "fugaro-runs-" + newProj
+			r.crm.AddProject(newProj, number)
+			r.crm.SetLabels(newProj, map[string]string{infra.CreatedLabelKey: infra.CreatedLabelValue})
+			r.gcs.AddProject(newProj, number)
+			r.fb.AddFirebase(newProj)
+			r.bill.SetBilling(newProj, true)
+			r.gcs.AddBucket(bucket, number, managedBucketLabels)
+			roles := map[string]string{}
+			for _, role := range []string{"launcher", "job_runner", "build_submitter", "tag_mover"} {
+				roles[role] = "projects/" + newProj + "/roles/fugaro" + strings.ToUpper(role[:1]) + role[1:]
+			}
+			r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+				"runs_bucket":               bucket,
+				"registry_host":             "us-east5-docker.pkg.dev/" + newProj,
+				"scheduler_service_account": "fugaro-scheduler@" + newProj + ".iam.gserviceaccount.com",
+				"role_ids":                  roles,
+			})}
+			r.save(t)
+			if agent {
+				t.Setenv("CLAUDECODE", "1")
+			}
+			out, errOut, err := r.run(t, true, newProj+"\n", "--create-project", "--yes", "--non-interactive")
+			all := refusalText(out, errOut, err)
+			if got, ok := markerAt(t, r.gcs, bucket); ok {
+				t.Errorf("a resumed creation was marked with no typed ID: gs://%s/%s = %s\n%s", bucket, managed.MarkerObject, got, all)
+			}
+			if v := r.crm.Labels(newProj)[managed.ProjectLabelKey]; v != "" {
+				t.Errorf("a resumed creation was labelled %s=%s with no typed ID\n%s", managed.ProjectLabelKey, v, all)
+			}
+			if !agent && !strings.Contains(all, "fugaro managed flag "+newProj) {
+				t.Errorf("the run does not say how to mark it:\n%s", all)
+			}
+		})
 	}
 }

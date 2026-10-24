@@ -1286,7 +1286,7 @@ func TestBillingLeftForTheAdminAndTheRerunResumes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	out, errOut, err = r.run(t, true, initProjectName+"\n"+initProjectName+"\n", "--launcher", "user:dev@example.com", "--operator", "user:dev@example.com")
+	out, errOut, err = r.run(t, true, initProjectName+"\n"+initProjectName+"\n"+newProj+"\n", "--launcher", "user:dev@example.com", "--operator", "user:dev@example.com")
 	all = refusalText(out, errOut, err)
 	if err != nil || strings.Contains(all, "already exists") {
 		t.Fatalf("the rerun after billing was linked did not complete: %v\n%s", err, all)

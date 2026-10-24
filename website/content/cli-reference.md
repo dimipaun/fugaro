@@ -2974,9 +2974,12 @@ run that created it marks it Fugaro-managed (its runs bucket's
 fugaro/managed.json and the label fugaro_managed=true) once it has applied the
 installation; --managed with --budget, --budget-currency and --billing-account
 also records the monthly budget the managed apply needs. A creation that a
-later run finished is marked the same way by that run: the fugaro_created=true
-label the creating run wrote proves the creation (and nothing else). Marking
-any other project the owner runs an installation in is fugaro managed flag's. An ID that already exists and was not created by fugaro
+later run finished is marked by that run only after you type the project's ID
+at your own terminal: the fugaro_created=true label anyone may set says which
+project to ask about, and never marks one by itself (--yes, --json,
+--non-interactive and a coding agent's session leave it for fugaro managed
+flag). Marking any other project the owner runs an installation in is fugaro
+managed flag's. An ID that already exists and was not created by fugaro
 setup, or that is pending deletion, is refused.
 
 The plugin-wiring stage merges the Fugaro marketplace and plugin into the

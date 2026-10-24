@@ -43,9 +43,12 @@ package infra
 // moment, and a later run of fugaro setup that finds the ID taken tells its own
 // earlier creation (a run that stopped for billing, or before its installation
 // was applied: the resume) from a project someone else made, which it refuses.
-// The label is a statement about the project's origin and not a privilege: a
-// managed project still needs the creation fact in its runs bucket, which only
-// the creating run writes (internal/infra/managed).
+// The label is a statement about the project's origin and not a privilege:
+// anyone who may update the project can set it. A managed project still needs
+// the creation fact in its runs bucket, which the creating run writes, or, for
+// a resumed creation, the resuming run only after the person types the
+// project's ID at their own terminal (internal/cli's confirmResumedMark): the
+// label alone never marks a project.
 //
 // UNVERIFIED against the real services (the design's §14 items 3 and 6;
 // the fakes in internal/gcpfake encode what the documentation says, not

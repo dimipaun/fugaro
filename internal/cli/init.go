@@ -476,6 +476,10 @@ type initRun struct {
 	// (projectStage.read). markCreated marks it as it marks a creation.
 	resumedCreation bool
 
+	// resumeConfirmed is whether the person typed the resumed project's ID to
+	// have it marked managed (confirmResumedMark).
+	resumeConfirmed bool
+
 	// billingUnlisted is whether the wizard's billing question found no
 	// account to offer: the list could not be read (the API off on the quota
 	// project, a missing permission) or it was empty. The project stage says
@@ -738,16 +742,46 @@ func runInit(r *initRun) error {
 	return r.printResult()
 }
 
-// creation is the project this run created, or the one it resumed
-// (resumedCreation): the project markCreated marks. "" when it did neither.
+// creation is the project this run created, or the one it resumed and whose
+// mark the person confirmed by typing its ID (resumeConfirmed): the project
+// markCreated marks. "" when it did neither.
 func (r *initRun) creation() string {
 	if r.res.Created != "" {
 		return r.res.Created
 	}
-	if r.resumedCreation {
+	if r.resumedCreation && r.resumeConfirmed {
 		return r.gcpProject
 	}
 	return ""
+}
+
+// confirmResumedMark is the typed confirmation a resumed creation is marked
+// managed behind. fugaro_created=true says an earlier run of fugaro setup
+// created the project, but it is a label anyone with
+// resourcemanager.projects.update can set, so it is never enough on its own:
+// the person running setup types the project's ID at their own terminal, the
+// bar fugaro managed flag keeps (canType: a real terminal, no --json, no
+// --non-interactive, no coding agent's session; --yes never stands in for it).
+// Where it cannot be asked, or is not typed, nothing is marked and the run
+// says how to mark it.
+func (r *initRun) confirmResumedMark() bool {
+	id := r.gcpProject
+	later := fmt.Sprintf("project %s carries %s=%s (an earlier run of fugaro setup created it) and this run finished its setup, but it is not marked as managed: marking it takes its ID typed at your own terminal. Rerun fugaro setup there, or run fugaro managed flag %s --budget N --budget-currency CCC",
+		id, infra.CreatedLabelKey, infra.CreatedLabelValue, id)
+	if !r.canType() {
+		r.warn(later)
+		return false
+	}
+	fmt.Fprintf(r.w, "⚠ CONFIRM: this MARKS project %s as Fugaro-managed (gs://fugaro-runs-%s/%s and the label %s=%s): its applies then stop asking for the typed confirmation, and the deterministic gate, the inventory and the owner's delete list stand in for it. It carries %s=%s, which says fugaro setup created it.\n",
+		id, id, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, infra.CreatedLabelKey, infra.CreatedLabelValue)
+	fmt.Fprintf(r.w, "Type %s to mark it: ", id)
+	line, err := r.in.ReadString('\n')
+	fmt.Fprintln(r.w)
+	if (err != nil && !errors.Is(err, io.EOF)) || strings.TrimSpace(line) != id {
+		r.warn(later)
+		return false
+	}
+	return true
 }
 
 // markCreated records the creation fact in the runs bucket of a project
@@ -808,19 +842,22 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	}
 	// created is the project this converge marks, and it is one of two
 	// things. Created is set by the project stage alone, inside its create
-	// branch (projectStage.Apply in init_project.go). resumedCreation is the
-	// other: the project stage read a project that an earlier run of fugaro
-	// setup created — it carries the label fugaro_created=true, which only the
-	// creating run's own create request writes (infra.CreateProject) — and this
-	// run finished that creation (the owner's ruling of 2026-10-23: a setup
-	// resumed by a later run is managed by default). The label proves the
-	// creation and nothing else: it is not input that widens any other gate,
-	// and the marker is still written by the person running setup, on their
-	// own credentials, at a real terminal, which is the owner. "" means this
-	// run neither created nor resumed a project, whatever else it did, and
-	// then there is no fact to record: every ordinary run of an existing
-	// installation — fugaro's own, belong, the owner's — comes through here
-	// with it empty.
+	// branch (projectStage.Apply in init_project.go). The other is a resumed
+	// creation (the owner's ruling of 2026-10-23: a setup resumed by a later
+	// run is managed by default): the project stage read a project carrying
+	// fugaro_created=true, the label the creating run's create request writes
+	// (infra.CreateProject). That label is forgeable by anyone who may update
+	// the project, so it only says which project to ask about: the mark is
+	// written after its ID is typed at the person's own terminal
+	// (confirmResumedMark), and never under --yes, --non-interactive, --json or
+	// in a coding agent's session. It is asked only once the installation's
+	// runs bucket is known, since that is where the mark goes. "" means this
+	// run neither created nor confirmed a resumed project, and then there is no
+	// fact to record: every ordinary run of an existing installation —
+	// fugaro's own, belong, the owner's — comes through here with it empty.
+	if r.res.Created == "" && r.resumedCreation && !r.resumeConfirmed && e.c != nil && r.res.Outputs != nil && r.res.Outputs.RunsBucket != "" {
+		r.resumeConfirmed = r.confirmResumedMark()
+	}
 	created := r.creation()
 	if created == "" {
 		// --managed asked for a managed creation and this run created no
@@ -915,7 +952,11 @@ func (e *initEngine) markCreated(ctx context.Context) {
 		if c := r.o.created; c != nil {
 			c.Marked = true
 		}
-		fmt.Fprintf(r.w, "recorded that this run created project %s: it is Fugaro-managed (gs://%s/%s, labelled %s=%s)\n", created, bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue)
+		how := "this run created"
+		if r.res.Created == "" {
+			how = "this run resumed the creation of"
+		}
+		fmt.Fprintf(r.w, "recorded that %s project %s: it is Fugaro-managed (gs://%s/%s, labelled %s=%s)\n", how, created, bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue)
 	case fact:
 		// The half-written mark: the object landed and the label did not.
 		// What completes it is an owner's own command, and which one depends

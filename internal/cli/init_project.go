@@ -219,7 +219,7 @@ func (s *projectStage) billingForAdminBecause(why string) initflow.Left {
 		Text: why + "Billing is not linked to " + s.id + " yet, so setup paused here: the project and Firebase exist, and what needs billing (Cloud Run, Cloud Build, Artifact Registry, Secret Manager, the buckets) waits for it. " +
 			"If you cannot link it yourself, forward this to whoever administers billing in your organization: they run the first line below with their billing account's id " +
 			"(theirs to supply; they find it with gcloud billing accounts list; see docs/gcp-setup.md#not-an-owner). " +
-			"Then run the second line: it resumes " + s.id + " and finishes the setup, marking the project managed",
+			"Then run the second line at your own terminal: it resumes " + s.id + " and finishes the setup, and marks the project managed once you type its ID",
 		Commands: []string{
 			billing.GcloudBin + " billing projects link " + quoteWord(s.id) + " --billing-account=<billing-account-id>",
 			selfCommand() + " setup --name " + quoteWord(name) + " --gcp-project " + quoteWord(s.id),
@@ -412,7 +412,7 @@ func (s *projectStage) typed(banner, want, prompt string) (bool, error) {
 // (it carries the creation label; any other existing project is refused before
 // this is said), and this run finishes what that one started.
 func resumeNote(id string) string {
-	return "resuming project " + id + ", which an earlier run of fugaro setup created (it carries the label " + infra.CreatedLabelKey + "=" + infra.CreatedLabelValue + ")"
+	return "resuming project " + id + ", which carries the creation label " + infra.CreatedLabelKey + "=" + infra.CreatedLabelValue + " (the label fugaro setup puts on the projects it creates)"
 }
 
 var safeIDRE = regexp.MustCompile(`[^a-zA-Z0-9._:-]`)

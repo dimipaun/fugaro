@@ -479,8 +479,8 @@ const doc = (path: string, fragment: string): string =>
         <div class="gs-step-body">
           <h3 class="gs-step-name">Run <code>{installCommand}</code></h3>
           <p class="gs-step-line">
-            In your own terminal. It creates a fresh GCP project and asks for its ID, the region
-            and the name; the rest is a confirmation you type, and secrets come at hidden
+            In your own terminal. It asks for a new GCP project ID, the region and the name, then
+            creates the project; the rest is a confirmation you type, and secrets come at hidden
             prompts.{' '}
             <a href={doc('docs/gcp-setup.md', 'turning-the-shared-budget-on-m9b')}>The shared budget</a>{' '}
             is optional.
