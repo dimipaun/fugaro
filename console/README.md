@@ -4384,7 +4384,7 @@ this file's say unsigned rather than leaving it to be deduced.
 | | |
 |---|---|
 | Targets | `AppImage` and `deb`, **x64**, pinned in `build.linux.target` rather than passed on a command line |
-| Artifact names | `Fugaro.Console-<version>-linux-x64.AppImage` and `…-linux-x64.deb` — `build.linux.artifactName` is `Fugaro.Console-${version}-linux-${arch}.${ext}`, so the name comes from the tag's X.Y.Z and never from a file name typed into a workflow |
+| Artifact names | `Fugaro.Console-<version>-linux-x86_64.AppImage` and `Fugaro.Console-<version>-linux-amd64.deb` — `build.linux.artifactName` is `Fugaro.Console-${version}-linux-${arch}.${ext}`, so the name comes from the tag's X.Y.Z and never from a file name typed into a workflow. **The packer writes the target's own word for the architecture and not the build's `x64`**: the AppImage is `x86_64` and the `.deb` is `amd64`, and those two spellings are what the release serves and what its `console-sha256sums.txt` lists — a page or a command that looks for `linux-x64` matches neither (this file, `docs/release.md`'s "Verifying the console's release" and `docs/design/desktop-console.md` §7.6's artifact sentence said `linux-x64` until 2026-10-24, which is what a published release corrected; **the workflow comments still say it**, in three places — `console-release.yml`'s staged and applied copies and `console-linux.yml` — and are not corrected here, because no agent run may edit `.github/workflows/`: `docs/pending-workflows/README.md` is where the owner reads what to correct, and when) |
 | Icon | `console/build/icon.png` — **the same file `build.mac.icon` names**, so the two platforms cannot show different marks |
 | Desktop entry | `executableName: fugaro-console`, `category: "Development;Monitor"`, a `synopsis` and a `description`; the deb's `maintainer` is required rather than decorative — this `package.json` has no `author` with an email, so without it the deb leg fails at pack time |
 | Command | `npm run package:linux` — `electron-builder --linux --publish never`, the pinned local packer, never `npx`, and never publishing |
@@ -4497,19 +4497,34 @@ release tag, and that is the owner's call. `docs/pending-workflows/README.md`'s
 `## console-linux.yml` section carries the three edits it would take, and the
 copy-in commands for both files.
 
-### The website says nothing about Linux yet, and that is deliberate
+### The website offers the Linux pair, and says they are unsigned (2026-10-24)
 
-`website/content/downloads.json` may carry an optional per-platform block, and
-the reader that validates it (`website/src/lib/console-downloads.mjs`) holds it
-to the file's own assets: the block names the ids of the downloads it links, and
-every id must resolve to an entry of the file's `downloads` list — which is
-itself held to the release's published names and its sums file. So **a download
-link can only exist for an asset the data file names**, and **the block renders
-only when it is there** (`Downloads.astro` draws nothing for it otherwise: no
-heading, no sentence, no link, not even a word saying which platform is
-missing). The shipped file carries **no** Linux block, so both pages still say
-macOS only, exactly as they did before this ruling — the entry lands when a
-release actually carries a Linux asset, and not before.
+**The site shipped macOS only until the release that carried a Linux asset, and
+that is what the ruling waited for.** `website/content/downloads.json` carries an
+optional per-platform block, and the reader that validates it
+(`website/src/lib/console-downloads.mjs`) holds it to the file's own assets: the
+block names the ids of the downloads it links, and every id must resolve to an
+entry of the file's `downloads` list — which is itself held to the release's
+published names and to the checksum its own `console-sha256sums.txt` records. So
+**a download link can only exist for an asset the data file names**, and **the
+block renders only when it is there** (`Downloads.astro` draws nothing for it
+otherwise: no heading, no sentence, no link, not even a word saying which
+platform is missing).
+
+`console-v0.110.0` publishes `Fugaro.Console-0.110.0-linux-x86_64.AppImage` and
+`Fugaro.Console-0.110.0-linux-amd64.deb`, so the file carries the block: the
+sentence a Linux reader is owed (**the build is not signed at all** — an AppImage
+is not code-signed, this project has no Linux signing key, and neither file has a
+signature of its own), the steps that stand behind an unsigned download (the
+release's own `console-sha256sums.txt`, verified against its Sigstore bundle with
+`cosign verify-blob`, then the Linux entries checked against it — the commands
+`docs/release.md`'s "Verifying the console's release" gives) and the two ids. The
+console page's Downloads section renders the block — the sentence, the steps and
+the two rows — and Getting Started's console option renders the same sentence and
+the same two rows from the same reader, without the steps, as it renders a macOS
+link without its checksum. The data file's `linux.verify` is the one place those
+commands are written, and the version in them is the same `{version}` placeholder
+the asset names carry, so a bump moves them together.
 
 ### What was verified here, and what was not
 
@@ -4526,9 +4541,12 @@ release actually carries a Linux asset, and not before.
 - **Not verified here, and not verifiable in this container**: no
   `electron-builder` run at all — this task's own rule is that the packaging is
   unit-tested as a configuration rather than executed, and a real Linux pack
-  needs a Linux runner with a display-less AppImage toolchain. So **nothing in
-  this repository has yet produced an AppImage or a `.deb`**; the first one is
-  the staged `console-linux.yml` job's, and the first that ships is the tag's.
+  needs a Linux runner with a display-less AppImage toolchain. **Nothing in this
+  container has produced an AppImage or a `.deb`**, and every claim above about
+  what the packer writes is a claim about its configuration. The pair the website
+  now links came off the Linux job of the release that published them: both names
+  and both checksums in `website/data/console-sha256sums.txt` are that release's
+  own, and the `x86_64`/`amd64` spellings above are what it served.
 
 ### What is not here
 

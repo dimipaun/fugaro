@@ -131,7 +131,8 @@ func (p *Project) now() time.Time {
 //     finished first, and the slice is in the order asked for however the
 //     goroutines interleave (P1's own rule, kept here: pullWorkers at a time).
 //   - Nothing this returns names a credential: the provider's own error text
-//     goes through Redact with the values its Opener held.
+//     goes through Redact with the values its Opener held and the token this
+//     reader minted for the repository.
 //
 // What it reports also keeps the kind of the failure it rewrote (redactedError):
 // the text is this reader's, but whether a failure is the configuration's or the
@@ -161,8 +162,7 @@ func (p *Project) PullRequests(ctx context.Context, kind, repo string, numbers [
 			defer func() { <-sem }()
 			info, err := prov.PullRequest(ctx, n)
 			if err != nil {
-				errs[i] = redactedError{err: err,
-					text: fmt.Sprintf("reading pull request %d of %s: %s", n, repo, p.Redact(err.Error(), secrets))}
+				errs[i] = err
 				return
 			}
 			out[i] = PullRequest{
@@ -176,12 +176,27 @@ func (p *Project) PullRequests(ctx context.Context, kind, repo string, numbers [
 		}()
 	}
 	wg.Wait()
-	for _, err := range errs {
+	for i, err := range errs {
 		if err != nil {
-			return nil, err
+			secrets = append(secrets, p.minted(repo)...)
+			return nil, redactedError{err: err,
+				text: fmt.Sprintf("reading pull request %d of %s: %s", numbers[i], repo, p.Redact(err.Error(), secrets))}
 		}
 	}
 	return out, nil
+}
+
+// minted is the installation token this reader holds for repo, if any. The
+// opener's secrets do not include it — the source mints it on the provider's
+// first call, after Open returned — and a host that echoes its credential back
+// in a failure would otherwise put it in front of whoever reads the failure.
+func (p *Project) minted(repo string) []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if t, ok := p.tokens[repo]; ok {
+		return []string{t.value}
+	}
+	return nil
 }
 
 // pullWorkers bounds the pull-request reads of one repository that are in

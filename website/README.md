@@ -1695,8 +1695,12 @@ file under `website/` may carry a download URL** (Global Constraint 9, finding 2
 file therefore carries the release's *published names* rather than a URL: `release.tag_prefix`,
 `release.version`, and one `file` per asset with `{version}` where the version goes.
 `src/lib/console-downloads.mjs` composes each URL at build time from those, from the tag
-(`console-vX.Y.Z`, cut from the CLI's own `vX.Y.Z` tag) and from `site.yaml`'s `repository` —
-that module is the one reader of the file, and each page renders what it returns.
+(`console-vX.Y.Z`) and from `site.yaml`'s `repository` — that module is the one reader of the
+file, and each page renders what it returns. **The version is the console's own**, not the CLI's
+tag the 0.9.0 release happened to share: the console releases on its own stream since 2026-10-23
+(`docs/release.md`, "Console releases"), so `release.version` is `console/package.json`'s
+`version`, bumped on `main` before the `console-vX.Y.Z` tag, and the release's notes are
+`docs/releases/console/vX.Y.Z.md`.
 
 Three places offer the console from those facts: the console page's own Downloads section
 (W1.6), Getting Started's console option inside the macOS install card (the owner's changes spec
@@ -1722,17 +1726,20 @@ has not stops the build, naming both files: they are one fact.
 
 **The flip, in the site's own data, is four values:** `site.yaml`'s
 `features.console_downloads: true`, `downloads.json`'s `available: true`, `release.version`
-bumped to the CLI tag the console was built from, and each entry's `sha256` set to the value the
-release's own sums file records for its published name. The download list itself does not change —
-it already carries the release's published names — so no URL is typed anywhere and every button,
-label and URL follows from those.
+bumped to the version the console's own release carries, and each entry's `sha256` set to the
+value the release's own sums file records for its published name. The download list itself does
+not change — it already carries the release's published names — so no URL is typed anywhere and
+every button, label and URL follows from those.
 
-**A later console release moves two of those four again, and it has happened once:** on
+**A later console release moves those values again, and it has happened twice:** on
 2026-10-19 the console's own release moved to `console-v0.9.0` (the owner's ruling that
 the site's console downloads follow the console's own release), so `release.version` and both
 `sha256` values moved with it and `data/console-sha256sums.txt` was replaced by the published
-`console-v0.9.0` asset, byte for byte. Nothing else about the section changed: the same two
-artifacts, the same signing and notarisation, and the same derived URLs.
+`console-v0.9.0` asset, byte for byte — nothing else about the section changed: the same two
+artifacts, the same signing and notarisation, and the same derived URLs. **And on 2026-10-24 it
+moved again, to `console-v0.110.0`, which is the release the console's own stream published:**
+`release.version`, the four `sha256` values and the sums file moved as before, and the Linux pair
+came with them, so the section grew the block below.
 
 **The tag's prefix is checked in the build, not only in the gates.** `src/lib/console-downloads.mjs`
 reads `CONSOLE_TAG="<prefix>$VERSION"` out of `.github/workflows/console-release.yml` and refuses a
@@ -1773,20 +1780,36 @@ than to a URL the test composed the way the build does. What the commit *did* ad
 is the release's sums file, because a checksum is the one fact the release's names cannot imply.
 
 **The section's look is the owner's feedback of 2026-10-21, and one thing came out of it.** The
-three cards the board draws — macOS, which the release ships for, and the Windows and Linux ones
-it does not — stand in **one row** on a desktop, equal in height, and the `sha256` under a link
-wraps inside its line (`word-break`, in the mono face at the caption's size) rather than running
-out of the card; a narrow screen is the only thing that wraps the row, and `test/console.mjs`
-reads the built rules for all three of those, rule by rule, with plants. **And the verification command is
-gone**: the section used to print `shasum -a 256 Fugaro.Console-*` under the checksums and the owner
-struck it, so `src/lib/console-downloads.mjs` no longer accepts a `verify` key at all — its
-`released` block is the sentence a page renders and the source of it, and a key beyond those two
-stops the build. The checksums themselves stay: they are the release's own values and
+cards the board draws — macOS, which the release ships for, Linux, whose unsigned pair it carries,
+and Windows, which it does not — stand in **one row** on a desktop, equal in height, and the
+`sha256` under a link wraps inside its line (`word-break`, in the mono face at the caption's
+size) rather than running out of the card; a narrow screen is the only thing that wraps the row,
+and `test/console.mjs` reads the built rules for all three of those, rule by rule, with plants.
+**And the verification command is gone from the macOS card**: the section used to print
+`shasum -a 256 Fugaro.Console-*` under the checksums and the owner struck it, so the `released`
+block is the sentence a page renders and the source of it, and a key beyond those two stops the
+build. The checksums themselves stay: they are the release's own values and
 `data/console-sha256sums.txt` is still what they are held to.
 
-The console is built for macOS and nothing else (`console/README.md`,
-`.github/workflows/console-release.yml`: one universal `.dmg` and one `.zip`), which is why the
-platform, and not an invented second one, is the word each button carries. Its release is a
+**The Linux card is the one place the section prints steps rather than a checksum**, and that is
+the block D10's ruling of 2026-10-20 asks for: an unsigned artifact carries no signature of its
+own, so `downloads.json` may carry an optional `linux` block — the sentence a Linux reader is
+owed (the build is not signed at all, and why), the ids of the two assets it links, the steps that
+prove those bytes instead (the release's own `console-sha256sums.txt`, verified against its
+Sigstore bundle, then the file's Linux lines checked against it), each written once with
+`{version}`, and the `source` the sentence came from. The ids are held to the file's own
+`downloads` entries, so a Linux link can appear only once the release's name, its checksum and the
+release's own line for it are all in the data; `Downloads.astro` renders the steps as the site's
+own command blocks, one copy control each (`src/lib/copy-control.mjs`), and Getting Started's
+console option renders the same sentence and the same two rows without the steps, as it renders a
+macOS link without its checksum. The block renders only while the data file carries it, so a
+checkout without one draws the "Not offered" card the earlier state drew, and `test/console.mjs`
+holds that state, the block's shape and its refusals, and the built page to it.
+
+The console is built for macOS and for the Linux pair, and for nothing else
+(`console/README.md`, `.github/workflows/console-release.yml`: one universal `.dmg`, one `.zip`,
+one AppImage and one `.deb`), which is why the platform, and not an invented one, is the word each
+button carries — and why Windows is the only card still drawn as "Not offered". Its release is a
 **draft until the owner publishes it** (the workflow creates `console-vX.Y.Z` with `--draft`),
 so the buttons land with the published release and not with the draft.
 

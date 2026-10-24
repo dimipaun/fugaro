@@ -1105,6 +1105,10 @@ func recordLabel(r coordinatorRecord) string {
 //     writer, so a launch declares itself without a second command.
 //   - TestAFailedReportDoesNotFailTheLaunch: the coordinator is advisory, so
 //     its failure is a warning and never a failed run.
+//   - TestARefusedReportIsQuiet: a write the rules refuse, which is what a
+//     launcher who is not a budget admin gets, prints nothing.
+//   - TestAFailedReportWarnsOnOneSafeLine: any other failure is one warning
+//     line, with the remote text's controls removed.
 //   - TestALaunchThatSkipsTheBudgetIsNotDeclared: the declaration follows the
 //     launch's own database switch, so a launch told not to use the budget's
 //     database is not the one call that reaches it.
@@ -1396,6 +1400,65 @@ func TestAFailedReportDoesNotFailTheLaunch(t *testing.T) {
 	}
 	if !strings.Contains(warned.String(), "not reported to the coordinator") {
 		t.Errorf("the failure was silent: %q", warned.String())
+	}
+}
+
+// TestARefusedReportIsQuiet: a launcher who is not a budget admin cannot write
+// the coordinator's record, and that is the expected case for most people who
+// launch rather than a fault to tell them about on every run (owner ruling
+// 2026-10-24). The launch still starts, nothing is declared and nothing is
+// printed; `coordinator report`, which a person asks for, keeps its explicit
+// refusal (TestCoordinatorReportRefusesAWriteTheRulesDeny).
+func TestARefusedReportIsQuiet(t *testing.T) {
+	f := newLaunchBudget(t, "observe")
+	f.db.Deny(coordinator.PathRoot)
+	env := memEnv(t, f.cloudFixture)
+	var warned strings.Builder
+	prevWarn := launchWarn
+	launchWarn = &warned
+	t.Cleanup(func() { launchWarn = prevWarn })
+
+	spec := raceSpec(t, env)
+	spec.RequestedBy = "someone@example.com"
+	if _, err := launchRun(context.Background(), env, appSlug, spec, time.Now()); err != nil {
+		t.Fatalf("a refused report failed the launch: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want 1", n)
+	}
+	if m, _ := f.db.Value(coordinator.PathIntents(appSlug)).(map[string]any); len(m) != 0 {
+		t.Errorf("a refused write declared %d records", len(m))
+	}
+	if warned.Len() != 0 {
+		t.Errorf("a refused report printed %q, want nothing", warned.String())
+	}
+}
+
+// TestAFailedReportWarnsOnOneSafeLine: any failure other than a refusal is
+// still one warning line, and the error's text, which can quote what a remote
+// database answered, reaches the terminal without its control sequences.
+func TestAFailedReportWarnsOnOneSafeLine(t *testing.T) {
+	f := newCloudFixture(t)
+	env := memEnv(t, f)
+	prev := reportLaunchIntent
+	reportLaunchIntent = func(context.Context, *cloudEnv, string, *task.Spec) error {
+		return errors.New("the database answered \x1b]52;c;cGF3bmVk\x07 503")
+	}
+	t.Cleanup(func() { reportLaunchIntent = prev })
+	var warned strings.Builder
+	prevWarn := launchWarn
+	launchWarn = &warned
+	t.Cleanup(func() { launchWarn = prevWarn })
+
+	if _, err := launchRun(context.Background(), env, appSlug, raceSpec(t, env), time.Now()); err != nil {
+		t.Fatalf("a failed report failed the launch: %v", err)
+	}
+	got := warned.String()
+	if strings.Count(got, "\n") != 1 || !strings.HasPrefix(got, "warning: the launch was not reported to the coordinator") {
+		t.Errorf("the warning = %q, want one line", got)
+	}
+	if strings.ContainsRune(got, '\x1b') || strings.ContainsRune(got, '\x07') {
+		t.Errorf("the warning carries the remote text's controls: %q", got)
 	}
 }
 
