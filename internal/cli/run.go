@@ -21,11 +21,13 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/coordinator"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -2196,6 +2198,21 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		rcancel()
 		return res, userErr("run %s was cancelled; start a new one", res.Run)
 	}
+	// The launch declares itself to the coordinator's record (P4), beside the
+	// claim it just won: the caller the task already names, the branch the run
+	// is about to work on and the release that branch targets. It is a
+	// declaration to an ADVISORY service, so nothing here can fail the launch
+	// — a project with no database to declare to is skipped, and a report that
+	// fails is a warning on stderr — and it is bounded well inside the hold,
+	// because the launch's own work must not wait on it (spec §3: the
+	// coordinator never blocks anything). A write the rules refuse is quiet:
+	// only budget admins may write the record, so a refusal is what most
+	// launchers get on every run, and a warning each time would be noise about
+	// something they cannot change (owner ruling 2026-10-24). The error text can
+	// quote what the database answered, so it goes through oneLine.
+	if err := reportLaunchIntent(hctx, env, slug, spec); err != nil && !errors.Is(err, rtdb.ErrPermission) {
+		fmt.Fprintf(launchWarn, "warning: the launch was not reported to the coordinator: %s\n", oneLine(err.Error()))
+	}
 	// The run's budget identity: minted, sealed under a key drawn for this
 	// launch and left in the bucket before the execution can start, by the
 	// one CLI that holds the claim. A failure here means nothing started, so
@@ -2367,6 +2384,78 @@ var errClaimReleased = errors.New("launch claim released")
 
 // claimRounds bounds how often launchRun goes back for a released claim.
 const claimRounds = 3
+
+// reportLaunchIntent declares one launch to the coordinator's record
+// (docs/coordinator/implementation-plan.md, part P4). It is the same writer
+// `fugaro coordinator report` uses — internal/coordinator's Reporter, over the
+// coordinator's own subtree — so a launch declares itself without a second
+// command, and it declares what a launch can know before any code exists: the
+// caller the task already names, the branch the run is about to work on, and
+// the release that branch targets. The files and the services are not here:
+// they are what the run's own record holds once it has worked, and the join
+// (P1) is where the two meet.
+//
+// Three rules, and each is a decision rather than a detail:
+//
+//   - The declaration follows the launch's own database switch. The coordinator
+//     keeps its state in the same database the budget uses, and a launch that
+//     was told not to use it declares nothing: budget.mode: off and a project
+//     with no budget.rtdb_url are that switch in the config, and
+//     --no-budget-check is the operator saying it for this launch. So a launch
+//     that turned the budget off touches no part of that database beyond the
+//     policy read it always makes, which is what TestBudgetOffSkipsEverything
+//     and TestNoBudgetCheckSkipsOnlyPrecheck hold. Nothing is lost by it: the
+//     declaration is advisory, and the view P1 renders reads the runs bucket,
+//     where the launch's own record lands whatever happens here.
+//   - A task that names no requester declares nothing the coordinator could
+//     attribute, and the report path refuses an unnamed caller
+//     (coordinator.ErrUnnamedCaller). That refusal is right when a person asks
+//     for a report and pointless here, where nobody asked, so the launch is
+//     simply not declared.
+//   - Nothing else can fail the launch: the caller turns a failure into a
+//     warning, because the coordinator is advisory and a run must not wait on
+//     it (spec §3), and drops a refusal of the write (rtdb.ErrPermission)
+//     without one, because a launcher who is not a budget admin is refused on
+//     every launch.
+//
+// A package variable, so a test replaces exactly the one thing that would
+// reach a database and reads the declaration it was handed.
+var reportLaunchIntent = func(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) error {
+	if env.lc.BudgetMode() == localcfg.BudgetOff || env.lc.Budget == nil || env.lc.Budget.RTDBURL == "" ||
+		env.noBudgetCheck || spec.RequestedBy == "" {
+		return nil
+	}
+	// The launch's own bound, well inside the claim's hold: a database that
+	// does not answer must not eat the time the launch itself needs.
+	ctx, cancel := context.WithTimeout(ctx, reportIntentTimeout)
+	defer cancel()
+	store, err := openCoordinatorStore(ctx, env.lc)
+	if err != nil {
+		return err
+	}
+	branch := spec.Branch
+	if branch == "" {
+		// launchRun's own rule for the branch it reports and creates: the run's
+		// own name, so the declaration and the run name the same thing.
+		branch = "fugaro/" + spec.RunID
+	}
+	_, _, err = (&coordinator.Reporter{Store: store}).Report(ctx, slug, coordinator.Intent{
+		DeclaredBy: spec.RequestedBy,
+		Branch:     branch,
+	})
+	return err
+}
+
+// launchWarn is where a launch's warnings go, os.Stderr in production. A
+// variable so that a test reads the warning a failed declaration prints
+// rather than leaking it into the test's own output, the same seam
+// reportLaunchIntent is.
+var launchWarn io.Writer = os.Stderr
+
+// reportIntentTimeout bounds one launch's declaration. It is short on purpose:
+// the declaration is advisory, and a database that is slow or unreachable must
+// cost the launch a few seconds rather than the hold it is working inside.
+const reportIntentTimeout = 15 * time.Second
 
 // takeClaim tries to take the run's launch claim. won is true when we hold
 // it; otherwise other is the claim someone else holds, to wait on.

@@ -524,8 +524,11 @@ func TestCredentialsServiceOptOutIsTwoSteps(t *testing.T) {
 	}
 }
 
-// The token signer holds no roles, and no job or build account is granted
-// anything on the Firebase project. The plan assertions check the values;
+// The token signer holds no roles, and no run's job or build account is
+// granted anything on the Firebase project — the one account of a job's that
+// is, the coordinator's writer, is granted the FP's database admin by name,
+// and only once coordinator_account is set (coordinator plan task P3; the
+// account is created in P5). The plan assertions check the values;
 // this text check catches a grant written to either by reference, which no
 // input could ever reveal.
 func TestFirebaseModuleGrantsNothingToSignerOrJobs(t *testing.T) {
@@ -539,7 +542,7 @@ func TestFirebaseModuleGrantsNothingToSignerOrJobs(t *testing.T) {
 		for _, typ := range []string{"google_project_iam_member", "google_service_account_iam_member", "google_project_iam_custom_role"} {
 			for _, blk := range resourceBlocks(t, path, b, typ) {
 				for _, bad := range []string{"google_service_account.signer.member", "google_service_account.signer.email", "serviceAccount:", "roles/storage", "roles/run."} {
-					if strings.Contains(blk.body, bad) && !(strings.Contains(blk.name, "history_") && bad == "serviceAccount:") {
+					if strings.Contains(blk.body, bad) && !(bad == "serviceAccount:" && (strings.Contains(blk.name, "history_") || strings.Contains(blk.name, "coordinator_"))) {
 						t.Errorf("%s: %s mentions %s", path, blk.name, bad)
 					}
 				}
@@ -1264,8 +1267,11 @@ var (
 	allowedRoleExprs = regexp.MustCompile(`^(each\.value(\.role)?|var\.job_runner_role|var\.installation\.role_ids\.(tag_mover|build_submitter)|var\.build_submitter_role|google_project_iam_custom_role\.(launcher|build_submitter|token_minter|job_runner|reaper|preload_builder)\.name|google_project_iam_custom_role\.history\[0\]\.name)$`)
 	// The member expressions an IAM member may use. google_service_account
 	// .credentials[0] is the credentials service's own account (C1.18): the
-	// one member its bundle's secretAccessor grant names.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials)\[0\]\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|installation\.scheduler_service_account)\}")$`)
+	// one member its bundle's secretAccessor grant names. var.coordinator_account
+	// is the coordinator's writer (P3): the aggregation job's account, which the
+	// installation root creates and the Firebase root grants the FP's database
+	// admin to, as it grants var.history_account's.
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials)\[0\]\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|installation\.scheduler_service_account)\}")$`)
 
 	// A custom role of one of this run's projects, spelled as the literal path
 	// "projects/${var.<project>}/roles/<id>" rather than read from the role

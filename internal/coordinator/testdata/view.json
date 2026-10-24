@@ -1,0 +1,120 @@
+{
+  "repo": "acme/app",
+  "pull_requests": [
+    {
+      "number": 12,
+      "url": "https://github.com/acme/app/pull/12",
+      "title": "Add search to the catalogue",
+      "branch": "fugaro/20261010-101500-aaaa",
+      "state": "open"
+    },
+    {
+      "number": 14,
+      "url": "https://github.com/acme/app/pull/14",
+      "title": "Index the catalogue nightly",
+      "branch": "fugaro/20261011-090000-bbbb",
+      "draft": true,
+      "state": "open"
+    },
+    {
+      "number": 15,
+      "url": "https://github.com/acme/app/pull/15",
+      "title": "Release 0.11.0",
+      "branch": "release/v0.11.0",
+      "state": "open"
+    },
+    {
+      "number": 16,
+      "url": "https://github.com/acme/app/pull/16",
+      "title": "Tidy the docs",
+      "branch": "fugaro/20261012-120000-cccc",
+      "state": "merged"
+    },
+    {
+      "number": 17,
+      "url": "https://github.com/acme/app/pull/17",
+      "title": "Hand-written change no run opened",
+      "branch": "topic/hand-written",
+      "state": "open"
+    },
+    {
+      "number": 18,
+      "url": "https://github.com/acme/app/pull/18",
+      "title": "Mint the read-only token per repository",
+      "branch": "fugaro/20261014-100000-gggg",
+      "state": "open"
+    }
+  ],
+  "runs": [
+    {
+      "id": "20261009-090000-ffff",
+      "status": "succeeded",
+      "outcome": "none",
+      "terminal": true
+    },
+    {
+      "id": "20261010-101500-aaaa",
+      "pr": 12,
+      "status": "succeeded",
+      "outcome": "ready",
+      "terminal": true,
+      "branch": "fugaro/20261010-101500-aaaa",
+      "base_branch": "main",
+      "declared_by": "someone@example.com",
+      "files": ["internal/cli/exec.go", "internal/coordinator/view.go"]
+    },
+    {
+      "id": "20261011-090000-bbbb",
+      "pr": 14,
+      "status": "succeeded",
+      "outcome": "ready",
+      "terminal": true,
+      "branch": "fugaro/20261011-090000-bbbb",
+      "base_branch": "main",
+      "declared_by": "other@example.com",
+      "files": [
+        "internal/cli/exec.go",
+        "internal/coordinator/view.go",
+        "schemas/result.schema.json"
+      ]
+    },
+    {
+      "id": "20261012-120000-cccc",
+      "pr": 16,
+      "status": "succeeded",
+      "outcome": "ready",
+      "terminal": true,
+      "branch": "fugaro/20261012-120000-cccc",
+      "base_branch": "main",
+      "declared_by": "someone@example.com",
+      "files": ["internal/coordinator/view.go"]
+    },
+    {
+      "id": "20261013-130000-dddd",
+      "pr": 15,
+      "status": "running",
+      "terminal": false,
+      "branch": "release/v0.11.0",
+      "declared_by": "release-bot"
+    },
+    {
+      "id": "20261013-140000-eeee",
+      "status": "running",
+      "terminal": false,
+      "branch": "fugaro/20261013-140000-eeee",
+      "base_branch": "main",
+      "declared_by": "someone@example.com",
+      "files": ["internal/cli/exec.go"]
+    },
+    {
+      "id": "20261014-100000-gggg",
+      "pr": 18,
+      "status": "running",
+      "terminal": false,
+      "branch": "fugaro/20261014-100000-gggg",
+      "base_branch": "release/v0.12.0",
+      "declared_by": "other@example.com",
+      "files": ["internal/gitprov/github/apptoken.go"]
+    }
+  ]
+}

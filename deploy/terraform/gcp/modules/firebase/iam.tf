@@ -1,6 +1,7 @@
 # Every grant is a member resource, never a binding or policy, so nothing
-# here takes away access someone else granted. Job accounts get nothing in
-# the FP: a run holds a Firebase ID token, which isn't an IAM identity.
+# here takes away access someone else granted. Run job accounts get nothing in
+# the FP: a run holds a Firebase ID token, which isn't an IAM identity. The one
+# job's account that can be granted here is the coordinator's writer, below.
 
 # The key that signs the runs' custom tokens. It is granted NO roles, in the
 # FP or anywhere: signing goes through IAM signJwt as this account, and
@@ -73,8 +74,9 @@ resource "google_project_iam_member" "datastore_viewer" {
 # ledgers, and deletes the Auth users of expired runs. It is the most
 # privileged new identity (firebasedatabase.admin could lift caps; its code
 # never writes /config, which IAM can't enforce). Trivy flags a privileged
-# role on a service account: accepted by design §11, and only this account
-# (and no job account) holds one on the FP.
+# role on a service account: accepted by design §11. No other service
+# account holds firebasedatabase.admin on the FP except the coordinator's
+# writer below, once coordinator_account is set (coordinator plan P5).
 #trivy:ignore:AVD-GCP-0007
 resource "google_project_iam_member" "history_database" {
   project = var.project
@@ -116,4 +118,23 @@ resource "google_project_iam_member" "history_usage" {
   project = var.project
   role    = "roles/serviceusage.serviceUsageConsumer"
   member  = "serviceAccount:${var.history_account}"
+}
+
+# The coordinator's writer: the account the aggregation job runs as, and the
+# only identity that writes the coordinator's state (D194,
+# docs/coordinator/implementation-plan.md P3). It holds
+# roles/firebasedatabase.admin beside the history account's above, for the
+# reason that account holds it: the coordinator's records are written under
+# the rules' floor, and the rules grant the coordinator's subtree to the
+# signed-in reader alone. The role bypasses the rules, so the writer's code is
+# what keeps it to that subtree — IAM cannot, and this account can write the
+# whole database, /config included. The installation root creates the account
+# in P5, as it creates the history account's; IAM refuses a member that does
+# not exist, so until then coordinator_account is empty and nothing is granted.
+#trivy:ignore:AVD-GCP-0007
+resource "google_project_iam_member" "coordinator_database" {
+  count   = var.coordinator_account == "" ? 0 : 1
+  project = var.project
+  role    = "roles/firebasedatabase.admin"
+  member  = "serviceAccount:${var.coordinator_account}"
 }

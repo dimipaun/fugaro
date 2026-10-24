@@ -39,14 +39,15 @@ provider "google-beta" {
 module "firebase" {
   source = "../../modules/firebase"
 
-  project         = var.project
-  fugaro_project  = var.fugaro_project
-  names           = var.names
-  manage_apis     = var.manage_apis
-  skip_apis       = var.skip_apis
-  launchers       = var.launchers
-  operators       = var.operators
-  admins          = var.admins
-  budget_admins   = var.budget_admins
-  history_account = var.history_account
+  project             = var.project
+  fugaro_project      = var.fugaro_project
+  names               = var.names
+  manage_apis         = var.manage_apis
+  skip_apis           = var.skip_apis
+  launchers           = var.launchers
+  operators           = var.operators
+  admins              = var.admins
+  budget_admins       = var.budget_admins
+  history_account     = var.history_account
+  coordinator_account = var.coordinator_account
 }
