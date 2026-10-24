@@ -56,7 +56,7 @@ func TestThirdPartyNoticesCoverEveryLinkedModule(t *testing.T) {
 		t.Fatalf("%s does not open with a heading: it is not the notices file\n%s", out, firstLines(notices, 5))
 	}
 
-	modules := linkedModules(t, root, nil)
+	modules := linkedModules(t, root)
 	if len(modules) < 20 {
 		t.Fatalf("go list -deps named %d modules for ./cmd/fugaro; the enumeration in this test is broken, not the script", len(modules))
 	}
@@ -739,14 +739,13 @@ func runNoticesScript(t *testing.T, root, out string, extraEnv []string) {
 // linkedModules runs go list -deps once per target of the build matrix, the way
 // the script does, and returns "path version" -> module directory for every
 // module other than this one.
-func linkedModules(t *testing.T, root string, extraEnv []string) map[string]string {
+func linkedModules(t *testing.T, root string) map[string]string {
 	t.Helper()
 	modules := map[string]string{}
 	for _, target := range noticesTargets {
 		cmd := exec.Command("go", "list", "-deps", "-f", moduleLine, "./cmd/fugaro")
 		cmd.Dir = root
-		cmd.Env = append(os.Environ(), extraEnv...)
-		cmd.Env = append(cmd.Env, "GOOS="+target.goos, "GOARCH="+target.goarch, "CGO_ENABLED=0")
+		cmd.Env = append(os.Environ(), "GOOS="+target.goos, "GOARCH="+target.goarch, "CGO_ENABLED=0")
 		out, err := cmd.Output()
 		if err != nil {
 			t.Fatalf("go list -deps for %s/%s: %v", target.goos, target.goarch, err)
