@@ -381,6 +381,12 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(plan.NodeState{}),
 		reflect.TypeOf(plan.CriticalPath{}),
 		reflect.TypeOf(runstore.ChangedFiles{}),
+		// The rigor block and the rule inside it (docs/rigor-modes D24).
+		reflect.TypeOf(runstore.RigorRecord{}),
+		reflect.TypeOf(runstore.RigorArea{}),
+		// §6.11, the backlog index's rows (CLI 0.11.0).
+		reflect.TypeOf(backlogListDoc{}),
+		reflect.TypeOf(backlogRow{}),
 	}
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
 		if !strings.Contains(doc, "`"+name+"`") {
@@ -536,10 +542,15 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(plan.Graph{}), reflect.TypeOf(plan.NodeState{}),
 		reflect.TypeOf(plan.CriticalPath{}),
 		reflect.TypeOf(runstore.ChangedFiles{}),
+		// The rigor block and the rule inside it (docs/rigor-modes D24).
+		reflect.TypeOf(runstore.RigorRecord{}), reflect.TypeOf(runstore.RigorArea{}),
 		// §6.10, the same three shapes as the test above (CLI 0.9.0).
 		reflect.TypeOf(userStatsDoc{}),
 		reflect.TypeOf(userstats.Row{}),
 		reflect.TypeOf(userstats.Counts{}),
+		// §6.11, the backlog index's rows (CLI 0.11.0).
+		reflect.TypeOf(backlogListDoc{}),
+		reflect.TypeOf(backlogRow{}),
 	}
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
 		real[name] = true
@@ -798,6 +809,11 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	"version":        newVersionCmd,
 	"config list":    newConfigListCmd,
 	"plan graph":     newPlanGraphCmd,
+	// §6.11 documents the backlog index's rows (CLI 0.11.0). Like §6.10, the
+	// console does not spawn it yet -- the backlog screen is the task that
+	// follows -- but the document describes its flags, so they are checked
+	// against this constructor like any other command's.
+	"backlog list": newBacklogListCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document

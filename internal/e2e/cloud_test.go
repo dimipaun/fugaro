@@ -1095,6 +1095,26 @@ func gatewayRig(upstream, mode, capUSD string) rigOption {
 	}
 }
 
+// criticalRigor pins the rig's repository to Critical with a commit on
+// main. An unconfigured repository resolves Pro, which scales the deployed
+// cap; Critical keeps the ceiling exactly the deployed cap, as the runner's
+// twin tests do with critRigor (docs/rigor-modes D16, plan T6.1).
+func criticalRigor(r *cloudRig) {
+	r.t.Helper()
+	clone := filepath.Join(r.t.TempDir(), "clone")
+	testutil.Git(r.t, filepath.Dir(clone), "clone", "--quiet", "--branch", "main", r.remote, clone)
+	path := filepath.Join(clone, "fugaro.yaml")
+	cfg, err := os.ReadFile(path)
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(cfg, []byte("rigor:\n  default: critical\n")...), 0o644); err != nil {
+		r.t.Fatal(err)
+	}
+	testutil.Git(r.t, clone, "commit", "--quiet", "-am", "Pin the rigor mode")
+	testutil.Git(r.t, clone, "push", "--quiet", "origin", "HEAD:refs/heads/main")
+}
+
 // implementCalling is implementOK's work, then n model calls of sonnet.
 func implementCalling(t *testing.T, n int) string {
 	t.Helper()
@@ -1228,7 +1248,7 @@ func TestCloudBranchRaisesCapIsClamped(t *testing.T) {
 		return anthropicfake.MessageOK("claude-sonnet-5-5", pricing.Usage{Output: 600000}) // $6
 	}
 	script := `{"calls":[` + implementCalling(t, 2) + `,` + reviewShip + `]}`
-	r := newCloudRig(t, script, 100*time.Millisecond, gatewayRig(srv.URL, "enforce", "5"), fixedWorkdir)
+	r := newCloudRig(t, script, 100*time.Millisecond, gatewayRig(srv.URL, "enforce", "5"), criticalRigor, fixedWorkdir)
 	r.pushBranch("feature", "budget:\n  per_run_usd: 500\n")
 	id := newRunID(t)
 	if out, err := r.cli("run", "--repo", "acme/app", "--ref", "feature", "--run-id", id, "--json", "Add a feature"); err != nil {

@@ -815,7 +815,7 @@ func capScript(n int) []anthropicfake.Reply {
 }
 
 func TestRunCapHaltOpensDraft(t *testing.T) {
-	g := newGW(t, gwConfig(t, ""), "enforce", "0.10", capScript(3)...)
+	g := newGW(t, gwConfig(t, critRigor), "enforce", "0.10", capScript(3)...)
 	var st []int
 	rec, err := g.run(t, calling(&st, implement("feature"), call{sonnet, 4000}, call{sonnet, 4000}, call{sonnet, 4000}))
 	if err != nil {
@@ -898,7 +898,7 @@ func TestHaltGraceThenKill(t *testing.T) {
 func TestInFlightCallsFinishAfterHalt(t *testing.T) {
 	slow := anthropicfake.StreamOK(sonnet, pricing.Usage{Output: 4000})
 	slow.EventDelay = 60 * time.Millisecond
-	g := newGW(t, gwConfig(t, ""), "enforce", "0.10", slow, out4k())
+	g := newGW(t, gwConfig(t, critRigor), "enforce", "0.10", slow, out4k())
 	var slowStatus int
 	var slowBody string
 	step := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {

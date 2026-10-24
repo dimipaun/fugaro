@@ -2,12 +2,14 @@ package runner
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -21,6 +23,10 @@ func TestParseVerdict(t *testing.T) {
 	fenced := agent.Result{Text: "Looks good.\n```json\n{\"verdict\":\"ship\",\"findings\":[]}\n```\n"}
 	if v := ParseVerdict(fenced); v.Verdict != "ship" {
 		t.Errorf("fenced = %+v", v)
+	}
+	scored := agent.Result{Structured: json.RawMessage(`{"verdict":"changes","findings":[{"severity":"low","summary":"x","likelihood":5,"impact":1,"fix_cost":2,"class":"cosmetic"}]}`)}
+	if f := ParseVerdict(scored).Findings[0]; f.Likelihood != 5 || f.Impact != 1 || f.FixCost != 2 || f.Class != "cosmetic" {
+		t.Errorf("scored = %+v, want the score read alongside the summary", f)
 	}
 	for _, bad := range []agent.Result{{Text: "no verdict here"}, {Structured: json.RawMessage(`{"verdict":"maybe"}`)}} {
 		v := ParseVerdict(bad)
@@ -223,6 +229,85 @@ func TestPromptNeverWaitRule(t *testing.T) {
 				t.Errorf("the prompt %+v lacks %q", d, want)
 			}
 		}
+	}
+}
+
+// The reviewer's scoring contract: D1's five anchored values on each of the
+// three axes, and D2's five labels. Every anchor word is written once, in the
+// review prompt alone — a meaning stated twice is a meaning that can drift,
+// and a coder handed the scoring instruction would be grading its own work.
+var promptScoringAxes = []struct {
+	axis    string
+	anchors []string
+}{
+	{"likelihood", []string{"rare", "uncommon", "occasional", "common", "certain"}},
+	{"impact", []string{"cosmetic", "minor", "degrading", "severe", "catastrophic"}},
+	{"fix_cost", []string{"trivial", "small", "moderate", "large", "rewrite"}},
+}
+
+var promptScoringLabels = []string{"blocker", "high", "medium", "low", "nit"}
+
+// countWord counts whole-word occurrences, so an anchor is not found inside a
+// longer word: "common" is not "uncommon", and "low" is not "follow".
+func countWord(s, word string) int {
+	return len(regexp.MustCompile(`\b`+regexp.QuoteMeta(word)+`\b`).FindAllString(s, -1))
+}
+
+func TestPromptScoringAnchors(t *testing.T) {
+	for name, p := range map[string]string{
+		"the default review prompt": ReviewPrompt("", "", "main", DiffSize{}, false),
+		"a skill review prompt":     ReviewPrompt("/review", "", "main", DiffSize{}, false),
+		"a prompt-file review":      ReviewPrompt("", "Check the SQL.", "main", DiffSize{}, false),
+		"a pick prompt":             PickPrompt("", "", []int{9, 7}, []string{"/review/9", "/review/7"}),
+	} {
+		for _, ax := range promptScoringAxes {
+			if !strings.Contains(p, ax.axis) {
+				t.Errorf("%s does not name the %s axis: %s", name, ax.axis, p)
+			}
+			for i, anchor := range ax.anchors {
+				// "cosmetic" is both impact's first anchor and a class, so
+				// the class line is its second, deliberate, occurrence.
+				want := 1
+				if rigor.KnownClass(rigor.Class(anchor)) {
+					want = 2
+				}
+				if got := countWord(p, anchor); got != want {
+					t.Errorf("%s writes %q (%s %d) %d times, want %d: %s", name, anchor, ax.axis, i+1, got, want, p)
+				}
+			}
+		}
+		// A finding without a known class is unscored and blocks in every
+		// mode (D4), so the prompt asks for one and names every class the
+		// schema admits.
+		if !strings.Contains(p, "- class,") {
+			t.Errorf("%s does not ask the reviewer to set class: %s", name, p)
+		}
+		for _, c := range rigor.Classes {
+			if countWord(p, string(c)) == 0 {
+				t.Errorf("%s does not name the class %q: %s", name, c, p)
+			}
+		}
+		for _, label := range promptScoringLabels {
+			if got := countWord(p, label); got != 1 {
+				t.Errorf("%s writes the label %q %d times, want once: %s", name, label, got, p)
+			}
+		}
+		if !strings.Contains(p, "an integer from 1 to 5") {
+			t.Errorf("%s does not state the scale the axes are scored on: %s", name, p)
+		}
+	}
+}
+
+func TestPromptScoringIsTheReviewersAlone(t *testing.T) {
+	implement := SystemPrompt(PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s"}, "")
+	words := append(append([]string{}, promptScoringLabels...), "likelihood", "impact", "fix_cost")
+	for _, word := range words {
+		if got := countWord(implement, word); got != 0 {
+			t.Errorf("the implement prompt carries the reviewer's scoring word %q %d times: %s", word, got, implement)
+		}
+	}
+	if strings.Contains(implement, "an integer from 1 to 5") {
+		t.Errorf("the implement prompt carries the scoring instruction: %s", implement)
 	}
 }
 
