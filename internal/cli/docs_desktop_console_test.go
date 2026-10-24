@@ -7948,18 +7948,31 @@ func check59FactLine(t *testing.T, facts []string, cmd string) string {
 }
 
 // check59RestoreBlock returns the fenced bash block of section that is its
-// restore step: the block whose own comment header says Restore. Every other
-// block is a step, and a restore step that is not a block of its own cannot be
-// held to the one rule it exists under.
+// restore step: the block whose own header line names it — `# === Check 59a:
+// Restore.` — and not merely a block that mentions the word. Every other block
+// is a step, and a restore step that is not a block of its own cannot be held to
+// the one rule it exists under.
+//
+// "Mentions Restore" is not enough, and that was this helper's first version's
+// bug: the setup block comes first and its own header says "RE-RUN THIS WHOLE
+// BLOCK at the start of every step (1, 2, 3, 4, 5, Restore)", so the setup
+// block was returned for both sections and
+// TestCheck59RestoreStepSparesPreexistingIdentities never scanned either real
+// Restore block — a `security delete-identity` inserted into one left the test
+// green, which is the exact mutation it exists to fail. The header's own first
+// line is the fact to read, so it is read.
 func check59RestoreBlock(t *testing.T, heading, section string) []string {
 	t.Helper()
+	label := strings.TrimSuffix(strings.TrimPrefix(heading, "## "), ":")
+	want := "# === " + label + ": Restore."
 	for _, block := range bashBlocks(section) {
-		joined := strings.Join(block, "\n")
-		if strings.Contains(joined, "Restore") {
-			return block
+		for _, line := range block {
+			if strings.HasPrefix(strings.TrimSpace(line), want) {
+				return block
+			}
 		}
 	}
-	t.Fatalf("%s has no fenced bash block whose header names its Restore step, so nothing holds the restore to sparing what it did not create", heading)
+	t.Fatalf("%s has no fenced bash block whose own header line names its Restore step (`%s`), so nothing holds the restore to sparing what it did not create", heading, want)
 	return nil
 }
 
@@ -8224,6 +8237,7 @@ func TestCheck59RestoreStepSparesPreexistingIdentities(t *testing.T) {
 		{check59aHeading, a},
 		{check59bHeading, b},
 	} {
+		label := strings.TrimSuffix(section.heading, ":")
 		restore := check59RestoreBlock(t, section.heading, section.text)
 		for _, line := range restore {
 			trimmed := strings.TrimSpace(line)
@@ -8232,17 +8246,17 @@ func TestCheck59RestoreStepSparesPreexistingIdentities(t *testing.T) {
 			}
 			for _, banned := range []string{"security delete-identity", "security delete-certificate", "security delete-keychain"} {
 				if strings.Contains(line, banned) {
-					t.Errorf("%s's Restore invokes `%s`:\n  %s\nthe identity the check did not create is not the check's to remove", section.heading, banned, trimmed)
+					t.Errorf("%s's Restore invokes `%s`:\n  %s\nthe identity the check did not create is not the check's to remove", label, banned, trimmed)
 				}
 			}
 		}
 		// The pre-check record, which is what makes "only what it created" a
 		// rule rather than an intention.
 		if !strings.Contains(section.text, "security find-identity -v -p codesigning") {
-			t.Errorf("%s does not FACT-line `security find-identity -v -p codesigning`, so nothing records which identities predated it", section.heading)
+			t.Errorf("%s does not FACT-line `security find-identity -v -p codesigning`, so nothing records which identities predated it", label)
 		}
 		if !strings.Contains(section.text, "never deleted") {
-			t.Errorf("%s does not say a signing identity present before the check is never deleted", section.heading)
+			t.Errorf("%s does not say a signing identity present before the check is never deleted", label)
 		}
 	}
 

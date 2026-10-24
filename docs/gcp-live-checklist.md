@@ -4249,6 +4249,8 @@ The loop prints **which commits it reverted and which were already reverted** (`
 
 **What 59a runs against, and why it can run today.** The console's first release is published: **`console-v0.110.0` "Cherry"**, on the console's own release stream (`docs/release.md`, "Console releases" and "Verifying the console's release"). It carries `Fugaro.Console-0.110.0-universal.dmg`, `Fugaro.Console-0.110.0-universal-mac.zip`, the two unsigned Linux artifacts, `console-sha256sums.txt` and `console-sha256sums.txt.sigstore.json`, plus `console-verification.txt`. So 59a verifies **that** release — the signed and notarised macOS pair — rather than a build you produce by hand, and it needs nothing built first. What it proves is the same thing either way: that the packaging pipeline's output is signed, notarised, stapled, accepted by Gatekeeper on a machine that has never seen it, and safe in the one way that only a running build can show.
 
+⚠ **This is a deviation from the two documents this section is written from, and it is recorded here rather than left for a reader to find.** Design **D12** says "59a runs on the first signed build, **before any tag**", and the plan's Task 4.3 says "It runs **before any tag**, on the first build the packaging pipeline produces" — both written when no signed build existed, so the only build 59a could read was one the owner produced by hand. That is no longer true: the owner's ruling of 2026-10-24 renumbered the console stream, and the first signed build **is** the published `console-v0.110.0` — the first build the pipeline produced and the first published release are the same object, so verifying the published one is the stricter reading rather than a relaxation: the bytes are the ones that shipped, not ones that resemble them. **A re-run after a packaging change does not prove the new build.** `entitlements.mac.plist` and design §12 item 4 both point at this section for a signed build's entitlement set, and re-run as written it re-verifies `console-v0.110.0`, whatever version `V` names. After a change to the packing configuration, run this section against a **new published release** — the next console tag, with `V` and the asset names moved with it — or against a build of your own; and if you do the latter, say which build it was in the FACT lines, because a hand-built bundle and a published one are not the same evidence and only one of them is the artifact. D12's cell carries the dated note that records this; the plan's Task 4.3 is left as the plan's own record, and this paragraph is where the two are reconciled.
+
 **`belong` is never touched** (EdgeWeb's and EdgeServer's): no step of this check touches `belong`, reads anything of it, writes in it or runs a command against it. The installation the console is pointed at is the sandbox's `fugaro` and the checkout is the sandbox's, and the only place the other installation's name appears at all is step 4's scratch copy — one line appended to a **copy** of the app's own log, inside this check's own temporary directory. That copy is the only way to prove this negative without performing the forbidden thing, and no step of this check contacts, reads or writes that installation.
 
 **Method.** Everything happens on your Mac and in the sandbox checkout you are already in. `gh`, `cosign`, `codesign`, `spctl`, `xcrun stapler`, `security`, `jq` and `shasum` are the tools; all of them are read-only except where a step says otherwise. The check's own directory is `/tmp/chk59a`, created by the steps below and removed by the Restore at the end.
@@ -4335,6 +4337,7 @@ MOUNT="${CHK:?}/dmg-mount"; mkdir -p "$MOUNT"
 hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MOUNT"
 APP="${MOUNT}/Fugaro Console.app"
 codesign --verify --deep --strict --verbose=2 "$APP"
+codesign -dv --verbose=4 "$APP"
 codesign -d --entitlements - "$APP"
 spctl --assess --type execute --verbose=4 "$APP"
 xcrun stapler validate "$APP"
@@ -4343,7 +4346,7 @@ spctl --assess --type open --context context:primary-signature -v "$DMG"
 hdiutil detach "$MOUNT"
 ```
 
-**FACT:** `codesign --verify --deep --strict` says `valid on disk` and `satisfies its Designated Requirement` and exits 0 — the **`--deep` and `--strict`** are the design's own form, and a bundle that only verifies without them is not what was asked for. **FACT:** the entitlements print the hardened runtime's minimum and nothing else — `com.apple.security.cs.allow-jit` (`console/entitlements.mac.plist`; the file is the authority, and `get-task-allow` must not appear, which is the entitlement a debug build would add). **FACT:** the TeamIdentifier `codesign -d` prints is the team the certificate was issued to, and it is the same team for the bundle and the disk image. **FACT:** `spctl --assess --type execute` prints `accepted` with `source=Notarized Developer ID` — **this is assertion (2)**. **FACT:** both `stapler validate` calls print `The validate action worked!` and exit 0; the disk image's staple is a different ticket from the bundle's, which is why both are run. **FACT:** `spctl --assess --type open --context context:primary-signature -v` accepts the `.dmg` as itself, which is what Gatekeeper assesses when the download is opened.
+**FACT:** `codesign --verify --deep --strict` says `valid on disk` and `satisfies its Designated Requirement` and exits 0 — the **`--deep` and `--strict`** are the design's own form, and a bundle that only verifies without them is not what was asked for. **FACT:** the entitlements print the hardened runtime's minimum and nothing else — `com.apple.security.cs.allow-jit` (`console/entitlements.mac.plist`; the file is the authority, and `get-task-allow` must not appear, which is the entitlement a debug build would add). **FACT:** `codesign -dv --verbose=4` prints the bundle's `CDHash`, its `Authority=Developer ID Application: …` chain and its `TeamIdentifier` — record the `CDHash` (step 2's install block compares the installed copy against it) and the TeamIdentifier, which is the team the certificate was issued to. **FACT:** `spctl --assess --type execute` prints `accepted` with `source=Notarized Developer ID` — **this is assertion (2)**. **FACT:** both `stapler validate` calls print `The validate action worked!` and exit 0; the disk image's staple is a different ticket from the bundle's, which is why both are run. **FACT:** `spctl --assess --type open --context context:primary-signature -v` accepts the `.dmg` as itself, which is what Gatekeeper assesses when the download is opened.
 
 **And then the launch a person actually makes, which is the half `spctl` cannot show.** The download above is a `gh` fetch, so macOS has set no quarantine attribute on it and a first launch would prove nothing. This step installs the bundle and sets exactly the attribute a browser download sets, then opens it as a user would — the app must start, and it must not be blocked.
 
@@ -4353,11 +4356,12 @@ INSTALLED="/Applications/Fugaro Console.app"
 ditto -x -k "${CHK:?}/Fugaro Console-${V:?}-universal-mac.zip" "${CHK:?}/unzipped"
 ditto "${CHK:?}/unzipped/Fugaro Console.app" "$INSTALLED"
 xattr -w com.apple.quarantine "0083;$(printf '%x' "$(date +%s)");Safari;" "$INSTALLED"
+codesign -dv --verbose=4 "$INSTALLED"
 spctl --assess --type execute --verbose=4 "$INSTALLED"
 open "$INSTALLED"
 ```
 
-**FACT:** the installed copy is the same build — its `codesign -dv` `CDHash` is the one the mounted copy printed, and `defaults read "${INSTALLED:?}/Contents/Info.plist" CFBundleShortVersionString` prints `0.110.0`. **FACT:** the first launch shows no block and no "cannot be opened because the developer cannot be verified": either Gatekeeper's ordinary first-launch prompt appears (its Open button is clicked and the window opens) or, if your Security settings already allow it, the window opens with no prompt at all. Either is a pass; a refusal is not, and the refusal's own text is the FACT to paste back. **FACT:** the dashboard's own installation line names the sandbox installation and the CLI version the handshake read for it, so the app that launched is the released one and it is driving the installation this check pinned. **Quit the app** (⌘Q) before the next step.
+**FACT:** the installed copy is the same build — the `CDHash` its own `codesign -dv --verbose=4` prints is the one the mounted copy printed, and `defaults read "${INSTALLED:?}/Contents/Info.plist" CFBundleShortVersionString` prints `0.110.0`. **FACT:** the first launch shows no block and no "cannot be opened because the developer cannot be verified": either Gatekeeper's ordinary first-launch prompt appears (its Open button is clicked and the window opens) or, if your Security settings already allow it, the window opens with no prompt at all. Either is a pass; a refusal is not, and the refusal's own text is the FACT to paste back. **FACT:** the dashboard's own installation line names the sandbox installation and the CLI version the handshake read for it, so the app that launched is the released one and it is driving the installation this check pinned. **Quit the app** (⌘Q) before the next step.
 
 ---
 
@@ -4433,6 +4437,7 @@ grep -c edgeappinc "${SPAWNLOG}.test"
 
 ```bash
 rm -f "${SPAWNLOG}.test"
+wc -l "${SPAWNLOG}"
 grep -c belong "${SPAWNLOG}"
 ```
 
