@@ -1422,40 +1422,31 @@
 
   // ---- the run picture on How it works: its four steps arrive once, in view -----------------
   //
-  // The stylesheet plays the steps left to right when the picture is marked `play`, and hides
-  // them only while it is marked `wait`. This marks `wait` only where the play can follow: the
-  // reader has not asked for less motion, the browser can observe the picture, and the picture
-  // is below the window's bottom when the page loads (a picture already in view is left as it
-  // is, so nothing on the first screen blinks). It plays once, and the same two-second failsafe
-  // and print rule as the entrances below hand the picture back if the observer never fires.
+  // The stylesheet holds the steps at their first frame from the first paint (paused, filling
+  // backwards) wherever scripts run and motion is welcome; this only starts them, by marking the
+  // picture `play` once it is in view. A picture already in view starts at once (the observer
+  // reports it on its first callback), and a browser with no IntersectionObserver starts at once
+  // too. A print shows the picture whole.
   function runReveal() {
-    if (!('IntersectionObserver' in window) || typeof document.querySelector !== 'function') return
-    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    if (typeof document.querySelector !== 'function') return
     var figure = document.querySelector('.run-diagram')
-    if (!figure || typeof figure.getBoundingClientRect !== 'function') return
-    if (figure.getBoundingClientRect().top < (window.innerHeight || 0) * 0.88) return
-    figure.setAttribute('data-run-reveal', 'wait')
+    if (!figure) return
+    function play() {
+      figure.setAttribute('data-run-reveal', 'play')
+    }
+    window.addEventListener('beforeprint', play)
+    if (!('IntersectionObserver' in window)) {
+      play()
+      return
+    }
     var seen = new IntersectionObserver(function (entries) {
       for (var e = 0; e < entries.length; e++) {
         if (!entries[e].isIntersecting) continue
-        figure.setAttribute('data-run-reveal', 'play')
+        play()
         seen.disconnect()
       }
     }, { threshold: 0.35 })
     seen.observe(figure)
-    function release() {
-      if (figure.getAttribute('data-run-reveal') !== 'wait') return
-      if (figure.getBoundingClientRect().top >= (window.innerHeight || 0)) return
-      figure.setAttribute('data-run-reveal', 'play')
-      seen.disconnect()
-    }
-    window.setTimeout(release, 2000)
-    window.addEventListener('scroll', function () {
-      window.setTimeout(release, 2000)
-    }, { passive: true, once: true })
-    window.addEventListener('beforeprint', function () {
-      figure.setAttribute('data-run-reveal', 'play')
-    })
   }
 
   // ---- entrances (the redesign's motion layer, step 9) ------------------------------------
