@@ -272,10 +272,10 @@ func Credentials(lc *localcfg.Config, image string) (CredentialsServiceSpec, err
 	}
 	b := lc.Budget
 	if b == nil || b.FirebaseProject == "" || b.RTDBURL == "" {
-		return CredentialsServiceSpec{}, userErr("the credentials service reads the installation's Firebase database, and project %s's config names no Firebase project and database (budget.firebase_project and budget.rtdb_url): run 'fugaro update --firebase-project <firebase-project-id>' first, which writes both from the Firebase root's outputs", lc.Name)
+		return CredentialsServiceSpec{}, userErr("the credentials service reads the installation's Firebase database, and project %s's config names no Firebase project and database (budget.firebase_project and budget.rtdb_url): run 'fugaro update --firebase-project <gcp-project-id>' first, which writes both from the Firebase root's outputs", lc.Name)
 	}
 	if err := rtdb.ValidateURL(b.RTDBURL, true); err != nil {
-		return CredentialsServiceSpec{}, userErr("budget.rtdb_url is not a Firebase Realtime Database URL: it must be https://<database>.firebaseio.com or https://<database>.<region>.firebasedatabase.app, with no credentials, path, query or fragment (a loopback address, which is the emulator, is admitted here). Run 'fugaro update --firebase-project <firebase-project-id>' to write it from the Firebase root's outputs")
+		return CredentialsServiceSpec{}, userErr("budget.rtdb_url is not a Firebase Realtime Database URL: it must be https://<database>.firebaseio.com or https://<database>.<region>.firebasedatabase.app, with no credentials, path, query or fragment (a loopback address, which is the emulator, is admitted here). Run 'fugaro update --firebase-project <gcp-project-id>' to write it from the Firebase root's outputs")
 	}
 	jobs, err := CredentialsJobAccounts(lc)
 	if err != nil {
@@ -463,32 +463,67 @@ func CarriedCredentialsService(vars, prev []byte) ([]byte, error) {
 	return sortedJSON(doc)
 }
 
+// ManagedDeployerScopedKey is the module's own variable name for the deployer's
+// scope, which is what creates the fence: the key these functions read and
+// carry, and the one the installation's document is asked about.
+const ManagedDeployerScopedKey = "managed_deployer_scoped"
+
+// ManagedDeployerScopedRecorded is whether the installation's tfvars document
+// vars records the deployer's scope: the key present and true.
+//
+// It is the installation's own record of the fence, and it is read where the
+// question is what the INSTALLATION holds rather than what the project is now —
+// `fugaro update --forget` refuses an installation that holds the fence
+// (internal/cli's managedForgetRefusal), and the live creation fact alone does
+// not answer that: the marks can come off the project (docs/gcp-setup.md, "What
+// makes a project managed") while the fourteen stay live and this document goes
+// on recording them, because the carry below never drops the key.
+//
+// nil is a workdir that holds no document and answers false; a document that
+// cannot be read is an error, the same way CarriedManagedDeployerScoped treats
+// one, because a tfvars this program cannot read is not evidence that the
+// installation has no fence.
+func ManagedDeployerScopedRecorded(vars []byte) (bool, error) {
+	if vars == nil {
+		return false, nil
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return false, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	scoped, _ := doc[ManagedDeployerScopedKey].(bool)
+	return scoped, nil
+}
+
 // CarriedManagedDeployerScoped returns vars with the managed_deployer_scoped
 // entry that the document prev carried, when vars carry none of their own.
 //
 // prev is the same pair of documents CarriedCredentialsService takes — the
 // workdir's snapshot from before the run and the tfvars it holds now — and nil
 // when neither holds any. vars carry a value of their own only when the caller
-// decided it from the project's own creation fact (installRoot and --forget
-// read managed.IsManaged), which is the authority: this never overwrites one.
+// decided it from the project's own creation fact (installRoot reads
+// managed.IsManaged), which is the authority: this never overwrites one.
 //
 // The variable is what creates the managed deployer's seven scoped roles and
 // their seven conditioned bindings, and every path that serializes the
 // installation root's tfvars rebuilds them from a spec that does not carry it
 // (the spec is built from the options, and only the fact read sets the field).
 // Carried forward as it is found, present or absent, an installation that has
-// them keeps them across any such rewrite — `fugaro update --forget` above
-// all, whose plan would otherwise delete all fourteen and be refused by the
-// guard, and `--config-only`, the compute stage's read of the installation's
-// outputs and `--print-vars`, whose document is a reading of the installation
-// the owner has to be able to trust. An installation that never used managed
-// projects carries no key and is unchanged.
+// them keeps them across any such rewrite — `--config-only`, the compute
+// stage's read of the installation's outputs and `--print-vars`, whose
+// document is a reading of the installation the owner has to be able to
+// trust. (`fugaro update --forget` rewrites the same document too, and would
+// otherwise delete all fourteen; it is refused an installation that records
+// them before it gets here, so it no longer reaches this.) An installation that
+// never used managed projects carries no key and is unchanged.
 //
-// The creation fact is one-way — nothing in this tree removes the marker
-// object or the project label — so an entry found here is not a stale opt-in
-// for a project that stopped being managed: it is the state of a project that
-// still is. The day something un-manages a project, this carry is one of the
-// places that has to learn about it.
+// What an entry found here means is the INSTALLATION's fence, not the project's
+// mode, and that is the reading the rollback's refusal is built on
+// (ManagedDeployerScopedRecorded): this carry puts the key back into every
+// rewrite, so a project whose two marks have come off still has a document that
+// records the fourteen, and the fourteen are still live in it. The creation fact
+// is one-way — nothing in this tree removes the marker object or the project
+// label — and so is this entry.
 func CarriedManagedDeployerScoped(vars, prev []byte) ([]byte, error) {
 	if prev == nil {
 		return vars, nil // no document held one: nothing to carry
@@ -499,7 +534,7 @@ func CarriedManagedDeployerScoped(vars, prev []byte) ([]byte, error) {
 		// that drops the fence: fail rather than carry nothing forward.
 		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
 	}
-	scoped, ok := previous["managed_deployer_scoped"]
+	scoped, ok := previous[ManagedDeployerScopedKey]
 	if !ok || scoped == nil {
 		return vars, nil
 	}
@@ -507,10 +542,10 @@ func CarriedManagedDeployerScoped(vars, prev []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
 	}
-	if _, own := doc["managed_deployer_scoped"]; own {
+	if _, own := doc[ManagedDeployerScopedKey]; own {
 		return vars, nil // the caller's own decision stands
 	}
-	doc["managed_deployer_scoped"] = scoped
+	doc[ManagedDeployerScopedKey] = scoped
 	return sortedJSON(doc)
 }
 

@@ -379,6 +379,20 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"refused at the gateway rather than answered from the job's own token",
 		// The stop flag.
 		"fugaro budget kill --all",
+		// The database role's reach, said plainly rather than left to be
+		// inferred from the operations named beside it (the 0.10.1 reviews):
+		// Realtime Database IAM has no path-level scope, so the two permissions
+		// the role is made of are the whole installation database's — the
+		// service could in principle write the stop switch and the policy it is
+		// checked against, and the same identity already holds every model
+		// credential. Pinned as sentences, because "no path-level scope" alone
+		// states the fence and not what it does not cover.
+		"can read and write the whole installation database",
+		"`config/kill/*`, including the switch that is supposed to stop it",
+		"`config/policy/*`, including the allow-list that holds a call to a model",
+		"turn off its own stop switch or widen the policy it is checked against",
+		"the same identity already holds every model credential a call can be given",
+		"The fence is the service's own behaviour",
 		// The revocation, stated exactly: write-once outcome, and fx as the
 		// only bound until it exists.
 		"the write-once outcome",
@@ -435,20 +449,26 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 		// The launch-side allow-list check is the service's, not the
 		// launcher's.
 		"the launcher makes no account allow-list check of its own",
-		// The service ships DORMANT on this release: the opt-in deploys it,
-		// but nothing gives a job its address, so no run can call it and the
-		// opt-in must not be taken until the release that wires it. Without
-		// this the section's mechanism sentences — the calls going
-		// job → gateway → service → upstream, and the service attaching the
-		// credential — read as facts about this release (independent review
-		// of C1.22, M1).
-		"the service ships DORMANT in 0.10.0",
-		"nothing wires it end to end on this release",
-		"no job is ever given the service's address",
+		// The dormancy limit is GONE and replaced, deliberately: the release
+		// that wires the service is this one. The bullet it used to carry
+		// said the opt-in gave a job no address and that no installation
+		// should opt in — both false once internal/cli/run.go sets
+		// FUGARO_CREDENTIALS_SERVICE_URL on a repository job's execution.
+		// What is stated instead is the half that is still not wired (every
+		// other agent.auth mode, and the shared project jobs), so the
+		// section cannot be read as "the service now serves everything".
+		"the service is wired as of 0.10.1",
+		"the half it does not carry is the other auth modes'",
 		"FUGARO_CREDENTIALS_SERVICE_URL",
-		"fails at bootstrap",
-		"no pull request is opened",
-		"Opt in only in the release that wires it (0.10.1)",
+		"the mount drop is auth-blind",
+		"no model credential of their own and nothing yet to replace it",
+		"agent.auth: cascade",
+		"A shared project job is not wired either",
+		"an installation that has not opted in is byte for byte what it was",
+		// And the App key's own limit stays: the mount and the grant are
+		// still there, the runner just no longer reads the key.
+		"the release after the owner's live Check 96 proves the deployed service mints",
+		"no longer reads the key and mints at the service instead",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("the `### The credentials service` section does not state the known limit %q: a limit that is not stated is read as a guarantee", want)

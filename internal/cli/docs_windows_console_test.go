@@ -13,12 +13,14 @@ package cli
 //
 // Each pin is a claim that can silently go false:
 //
-//   - **The twelve decisions are answered, and answering is not approving.**
-//     The owner answered D1-D12 on 2026-10-20, D7 against the recommendation
-//     (the pack runs at release time only). A document still saying "none is
-//     answered" would describe a plan nobody may start; a plan whose OWNER
-//     APPROVAL GATE had quietly become "passed" would be a plan that starts
-//     without the owner saying so.
+//   - **The twelve decisions are answered, the build is approved, and the two
+//     are separate dates.** The owner answered D1-D12 on 2026-10-20, D7 against
+//     the recommendation (the pack runs at release time only), and approved the
+//     build itself on 2026-10-22 for 0.110.0, its pull requests targeting main. A document
+//     still saying "none is answered" would describe a plan nobody may start; a
+//     gate that had quietly gone back to "not passed" would stop work the owner
+//     has authorised; and a status line that lost the release would leave the
+//     parts with no target.
 //   - **The staged job runs at release time and nowhere else.** The ruling is
 //     negative -- never on a pull request, not even path-filtered -- and a
 //     trigger block is exactly what an edit adds back without noticing.
@@ -73,7 +75,7 @@ func TestDocsWindowsConsoleReconciliationRecordsTheOwnerAnswers(t *testing.T) {
 		t.Fatalf("%s has no answers table under %q: the owner answered D1-D12 on 2026-10-20, and the record has to be a table a reader can check a decision against", path, header)
 	}
 	if !strings.Contains(flattenDoc(doc), "Answering a decision is not approving") {
-		t.Errorf("%s no longer says that answering a decision is not approving the build: the answers are answers, and the plan's OWNER APPROVAL GATE is a separate thing that is still not passed", path)
+		t.Errorf("%s no longer says that answering a decision is not approving the build: the answers are answers, and the plan's OWNER APPROVAL GATE is a separate, dated thing -- passed on 2026-10-22", path)
 	}
 
 	rows := docTableAfter(t, path, doc, header)
@@ -152,10 +154,11 @@ func TestDocsWindowsConsoleReconciliationRecordsTheOwnerAnswers(t *testing.T) {
 	for _, want := range []string{
 		"The twelve decisions in §4 are answered",
 		"answering a decision is not approving the build",
-		"OWNER APPROVAL GATE is still not passed",
+		"OWNER APPROVAL GATE was passed on 2026-10-22",
+		"0.110.0",
 	} {
 		if !strings.Contains(status, want) {
-			t.Errorf("%s's status line no longer carries %q: §4 answers all twelve decisions, and the summary has to say so and say that an answer is not an approval", path, want)
+			t.Errorf("%s's status line no longer carries %q: §4 answers all twelve decisions, the plan's gate was passed on 2026-10-22 for 0.110.0, and the summary has to say both -- an answer is not an approval, and the approval is a separate, dated thing", path, want)
 		}
 	}
 	if strings.Contains(status, "no decision in §4 is answered") {
@@ -164,26 +167,32 @@ func TestDocsWindowsConsoleReconciliationRecordsTheOwnerAnswers(t *testing.T) {
 }
 
 // TestDocsWindowsConsolePlanIsReleaseTimeOnly pins the plan's half of the D7
-// ruling: the status line says the decisions are answered and the gate is not
-// passed, the pack is a release-time job, the accepted risk is written down,
-// and the OWNER APPROVAL GATE still refuses to start anything.
+// ruling: the status line says the decisions are answered and the build is
+// approved for a named release, the pack is a release-time
+// job, the accepted risk is written down, and the OWNER APPROVAL GATE records
+// the approval and what it does *not* cover.
 //
-// The mutations that prove it: change the status line's "not passed" to
-// "passed", and delete the accepted-risk sentence. Each fails here.
+// The mutations that prove it: put "Not passed" back in the gate, change the
+// approval's date, drop the release from the status line, and
+// delete the accepted-risk sentence. Each fails here.
 func TestDocsWindowsConsolePlanIsReleaseTimeOnly(t *testing.T) {
 	const path = "docs/console-windows/implementation-plan.md"
 	doc := readDoc(t, path)
 	flat := flattenDoc(doc)
 
 	for _, want := range []string{
-		// The status line: answered, not approved.
+		// The status line: the decisions are answered, and the build is approved
+		// for a named release. A status line that said only "approved" would
+		// leave a reader unable to say what for.
 		"the twelve decisions are answered",
-		"the OWNER APPROVAL GATE is still not passed",
-		// Answering is not approving.
-		"Answering a decision is not approving the build",
+		"approved to build on 2026-10-22",
+		"0.110.0",
+		// Answering was not approving, and the two dates are separate: the
+		// answers are 2026-10-20 and the approval is 2026-10-22.
+		"Answering a decision was not approving the build",
 	} {
 		if !strings.Contains(flat, want) {
-			t.Errorf("%s no longer carries %q: the D7 ruling of 2026-10-20 is what the plan is re-cut around, and the plan has to say what it is, what it costs, and that it is not an approval", path, want)
+			t.Errorf("%s no longer carries %q: the D7 ruling of 2026-10-20 is what the plan is re-cut around, the owner approved the build on 2026-10-22 for 0.110.0, and the plan has to say both", path, want)
 		}
 	}
 
@@ -226,12 +235,21 @@ func TestDocsWindowsConsolePlanIsReleaseTimeOnly(t *testing.T) {
 		t.Errorf("%s's Part H row is %q: Part H is the part the D7 ruling moved, and its row has to say the job is a release-time one", path, strings.TrimSpace(partH))
 	}
 
-	// The gate, whole: it says it is not passed, it records every answer, and it
-	// says in those words that an answer is not an approval.
+	// The gate, whole: it records the approval, with its date and its target, it
+	// records every answer, and it still says what the approval does not cover --
+	// because the one way this section can mislead a reader is by being read as
+	// permission for the copy-in, the register row or website/data/install.yaml,
+	// none of which the owner approved.
 	gate := windowsConsoleBlock(t, path, doc, "## 5. OWNER APPROVAL GATE", "")
 	gateFlat := flattenDoc(gate)
-	if !strings.Contains(gateFlat, "Not passed") {
-		t.Errorf("%s's OWNER APPROVAL GATE no longer says it is not passed: the owner's answers are answers to decisions, not an approval of eight parts, a staged workflow and an owner checklist", path)
+	if !strings.Contains(gateFlat, "Passed on 2026-10-22") {
+		t.Errorf("%s's OWNER APPROVAL GATE no longer records the owner's approval of 2026-10-22: the plan is approved to build, and a gate still reading \"not passed\" would stop work the owner has authorised", path)
+	}
+	if strings.Contains(gateFlat, "Not passed") {
+		t.Errorf("%s's OWNER APPROVAL GATE says it is not passed again: the owner approved the build on 2026-10-22, and this section is where a reader checks that", path)
+	}
+	if !strings.Contains(gateFlat, "still needs the owner") {
+		t.Errorf("%s's OWNER APPROVAL GATE no longer says what the approval does *not* cover: copying the staged workflow in, the Check 119 row and website/data/install.yaml are the owner's, and an approval read as covering them is the mistake this section can cause", path)
 	}
 	for i := 1; i <= 12; i++ {
 		if !strings.Contains(gateFlat, "D"+strconv.Itoa(i)) {
@@ -248,9 +266,9 @@ func TestDocsWindowsConsolePlanIsReleaseTimeOnly(t *testing.T) {
 	// shell, a longer timeout, the two steps that are its second subject, and its
 	// own artifact name and retention.
 	unit := flattenDoc(windowsConsoleBlock(t, path, doc, "**`[unit]`**", "\n  - **`[types]`**"))
-	for _, want := range []string{"55", "53", "test/unit"} {
+	for _, want := range []string{"57", "54", "test/unit"} {
 		if !strings.Contains(unit, want) {
-			t.Errorf("%s's `[unit]` abbreviation no longer carries %q: the suite is `vitest run --dir test/unit`, and a figure with the command beside it is the only kind this repository trusts", path, want)
+			t.Errorf("%s's `[unit]` abbreviation no longer carries %q: the suite is `vitest run --dir test/unit`, and a figure with the command beside it is the only kind this repository trusts -- Part A's two new files moved it to 57 and 54", path, want)
 		}
 	}
 	if strings.Contains(unit, "75 files") {
@@ -273,6 +291,60 @@ func TestDocsWindowsConsolePlanIsReleaseTimeOnly(t *testing.T) {
 	th3 := flattenDoc(windowsConsoleBlock(t, path, doc, "**T-H3 — ", "\n**T-H4 — "))
 	if !strings.Contains(th3, "already written") {
 		t.Errorf("%s's T-H3 no longer says the release document's note is already written: docs/release.md carries it today, and a task that rewrote it from scratch would undo the dated note it has", path)
+	}
+}
+
+// TestDocsWindowsConsoleReadmeRecordsTheApproval pins the folder's front door.
+// The index's status line is the sentence a reader meets before any document,
+// and the same brief that asked for the plan's gate to record the approval asked
+// for this line to carry it too: a front door still saying the build is
+// unapproved, or one that lost the release, sends the reader to
+// the plan to check a claim the index has already got wrong.
+//
+// The status line is read as its own paragraph, so the plan row in the table
+// below cannot satisfy it: that row is a summary of the plan, and this is the
+// folder's status. **The rest of the index is read whole**, because the same
+// claim is made twice in a document this size and the second one is the one a
+// reader arrives at from the plan: a review found line 120 still saying "the
+// plan is not approved" under a status line that records the approval, which a
+// status-paragraph-only check cannot see.
+//
+// The mutations that prove it: take the approval's date off the status line,
+// change 0.110.0 to the 0.10.0 the earlier ruling named, and put
+// the present-tense "the plan is not approved" back anywhere in the file. Each
+// fails by naming what went missing or what came back.
+func TestDocsWindowsConsoleReadmeRecordsTheApproval(t *testing.T) {
+	const path = "docs/console-windows/README.md"
+	doc := readDoc(t, path)
+	status := flattenDoc(windowsConsoleBlock(t, path, doc, "**Status:", "\n\n"))
+	for _, want := range []string{
+		"approved to build on 2026-10-22",
+		"0.110.0",
+	} {
+		if !strings.Contains(status, want) {
+			t.Errorf("%s's status line no longer carries %q: the owner approved the build on 2026-10-22 for 0.110.0, and the index is where a reader checks that before reading any document in this folder", path, want)
+		}
+	}
+	if strings.Contains(status, "not approved") {
+		t.Errorf("%s's status line says the build is not approved again: the owner passed the plan's OWNER APPROVAL GATE on 2026-10-22, and the index contradicting the plan is what this test is for", path)
+	}
+
+	// The whole index, not only the status paragraph: every sentence in it that
+	// describes this folder's plan is a claim about the same approval, and the
+	// present tense is what makes one false. The phrases are the exact ones a
+	// document reverts to -- "not approved", "no task is approved", "still not
+	// passed" -- rather than the bare word "approved", so a sentence about what
+	// the approval does *not* cover stays legal.
+	whole := flattenDoc(doc)
+	for _, forbidden := range []string{
+		"the plan is not approved",
+		"no task is approved",
+		"GATE is not passed",
+		"is still not passed",
+	} {
+		if strings.Contains(whole, forbidden) {
+			t.Errorf("%s says %q: the owner approved the build on 2026-10-22 for 0.110.0, and a document that says the plan is unapproved somewhere below a status line recording the approval is a claim that is false on main", path, forbidden)
+		}
 	}
 }
 
@@ -656,18 +728,22 @@ func TestDocsWindowsConsoleClaimsAboutOtherFilesAreTrue(t *testing.T) {
 		t.Errorf("docs/pending-workflows/README.md's `console-windows.yml` section says its copy-in leaves the state the `console-linux.yml` section \"already describes\" again: those sentences name console-windows.yml, which this copy-in deletes, and omit console-linux.yml, which it leaves staged -- following them leaves website/test/readme.mjs red on main")
 	}
 
-	// 5. The release document: a plan, not a shipped build.
+	// 5. The release document: a plan, not a shipped build -- and the approved
+	// plan's own status, which the release text carries because a reader who
+	// wants to know whether a Windows installer is coming reads it there.
 	release := flattenDoc(readDoc(t, "docs/release.md"))
 	for _, want := range []string{
 		"planned and staged, not shipped",
 		"nothing on Windows has been built",
+		"OWNER APPROVAL GATE was passed on 2026-10-22",
+		"target release 0.110.0",
 	} {
 		if !strings.Contains(release, want) {
-			t.Errorf("docs/release.md no longer carries %q: the Windows build is the plan's Part H work and nothing has been built, so the release document must not read as if 0.10.0 had one", want)
+			t.Errorf("docs/release.md no longer carries %q: the Windows build is the plan's Part H work and nothing has been built, the plan is approved to build for 0.110.0, and the release document must say both rather than read as if 0.10.0 had a Windows build", want)
 		}
 	}
 	if strings.Contains(release, "the console has a Windows build") {
-		t.Errorf("docs/release.md says the console has a Windows build again: the plan is not approved, the pack is red until its Parts B and C land, and docs/design/desktop-console.md and the console's own README still say Windows stays out")
+		t.Errorf("docs/release.md says the console has a Windows build again: the plan is approved but unbuilt, the pack is red until its Parts B and C land, and docs/design/desktop-console.md and the console's own README still say Windows stays out")
 	}
 
 	// 6. And the figure the suite's size is given as, in the two other places it
@@ -676,11 +752,11 @@ func TestDocsWindowsConsoleClaimsAboutOtherFilesAreTrue(t *testing.T) {
 	// console boundary allow-list is what stops a Go file in it reading the
 	// console tree, which is why the command travels beside the figure.)
 	text, wfPath := consoleWorkflowText(t, windowsConsoleWorkflowPath, appliedConsoleWindowsPath)
-	if !strings.Contains(text, "55 `.ts` files") || !strings.Contains(text, "53") {
-		t.Errorf("%s no longer gives the unit suite's size as 55 `.ts` files, 53 of them `*.test.ts`: 75 is every `.ts` file under `test/`, e2e and fixtures included, and it is the figure a reader will otherwise carry", wfPath)
+	if !strings.Contains(text, "57 `.ts` files") || !strings.Contains(text, "54") {
+		t.Errorf("%s no longer gives the unit suite's size as 57 `.ts` files, 54 of them `*.test.ts`: 75 is every `.ts` file under `test/`, e2e and fixtures included, and it is the figure a reader will otherwise carry", wfPath)
 	}
-	if !strings.Contains(recon, "55 `.ts` files") {
-		t.Errorf("docs/console-windows/reconciliation.md's U3 no longer gives the unit suite's size as 55 `.ts` files: the census rule is that a figure travels with the command that returns it, and this is the figure U3 is about")
+	if !strings.Contains(recon, "57 `.ts` files") {
+		t.Errorf("docs/console-windows/reconciliation.md's U3 no longer gives the unit suite's size as 57 `.ts` files: the census rule is that a figure travels with the command that returns it, and this is the figure U3 is about")
 	}
 }
 

@@ -447,8 +447,7 @@ const ALT =
      cannot compute. */
   .run-diagram {
     background: var(--panel);
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-xl);
+    border-radius: var(--radius-lg);
     padding-block: var(--space-sm);
     overflow: hidden;
     margin: 0;
@@ -623,9 +622,7 @@ const ALT =
     flex-direction: column;
     gap: var(--space-2xs);
     padding: var(--space-lg);
-    border: var(--border-width) solid var(--border);
-    border-top: 3px solid var(--accent);
-    border-radius: var(--radius-xl);
+    border-radius: var(--radius-lg);
     background: var(--surface);
   }
 
@@ -634,8 +631,6 @@ const ALT =
      asked to pay attention, which is what a spend cap is. */
   .run-fact:last-child {
     grid-column: 1 / -1;
-    border-top-color: var(--border);
-    border-left: 4px solid var(--warn);
   }
 
   /* The step's number, as the board draws it: the largest thing in the card after the name, in
@@ -700,16 +695,14 @@ const ALT =
        run-on paragraph the owner read twice. */
     padding-inline-start: var(--space-md);
     list-style: disc;
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-xl);
+    border-radius: var(--radius-lg);
     background: var(--panel);
     overflow: hidden;
   }
 
   .run-also-item {
-    padding: var(--space-md) var(--space-lg);
-    border-bottom: var(--border-width) solid var(--border);
-    color: var(--text-muted);
+    padding: var(--space-xs) var(--space-lg);
+    color: var(--text);
     font-size: var(--font-size-lg);
     line-height: var(--leading-normal);
   }

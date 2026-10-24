@@ -82,7 +82,7 @@ import { sanitizeRefusal } from '../shared/sanitize'
 import { LIVE_STALE_AFTER_SECONDS, BurnHistory, buildLiveModel, renderLive } from './screens/live'
 import type { FeedHealth, LiveModel } from './screens/live'
 import { SPEND_DEFAULT_CONTROLS, personView, readSpend, renderSpend } from './screens/spend'
-import type { SpendControls, SpendReader } from './screens/spend'
+import type { PeopleReader, SpendControls, SpendReader } from './screens/spend'
 import { buildProjectsModel, renderProjects } from './screens/projects'
 import { buildRunModel, renderRun } from './screens/run'
 import { refusedState, renderUnavailable } from './screens/degraded'
@@ -294,7 +294,8 @@ function methodOf(fugaro: unknown, name: string): ((args: unknown) => unknown) |
 }
 
 /**
- * ReadBridge is the seven reads the screens make (Task 3.4c), named one by one
+ * ReadBridge is the eight reads the screens make (Task 3.4c; console L5b added
+ * `statsRuns`), named one by one
  * for the reason `CompatibilityBridge` names one: this file should reach for
  * exactly the operations it draws, and a reader should be able to see which
  * those are without reading the preload.
@@ -309,12 +310,13 @@ export interface ReadBridge {
   showBudget(args: Readonly<Record<string, unknown>>): Promise<unknown>
   runReport(args: Readonly<Record<string, unknown>>): Promise<unknown>
   listRuns(args: Readonly<Record<string, unknown>>): Promise<unknown>
+  statsRuns(args: Readonly<Record<string, unknown>>): Promise<unknown>
   diagnoseRun(args: Readonly<Record<string, unknown>>): Promise<unknown>
   readRunLogs(args: Readonly<Record<string, unknown>>): Promise<unknown>
   runLogLink(args: Readonly<Record<string, unknown>>): Promise<unknown>
 }
 
-/** readBridgeFrom is the seven reads over the structural bridge. A missing
+/** readBridgeFrom is the eight reads over the structural bridge. A missing
  * member answers `null` rather than rejecting, and so does a member that fails
  * to answer -- by throwing before it returns, or by returning a promise that
  * rejects, which is what `invoke` does on a channel with nothing behind it.
@@ -339,6 +341,7 @@ export function readBridgeFrom(fugaro: unknown): ReadBridge {
     showBudget: (args) => ask('showBudget', args),
     runReport: (args) => ask('runReport', args),
     listRuns: (args) => ask('listRuns', args),
+    statsRuns: (args) => ask('statsRuns', args),
     diagnoseRun: (args) => ask('diagnoseRun', args),
     readRunLogs: (args) => ask('readRunLogs', args),
     runLogLink: (args) => ask('runLogLink', args),
@@ -817,7 +820,7 @@ export interface RailView {
  * **The foot row is drawn and not wired.** "+ Add installation" is the design's
  * control, and the flow it opens is the picker window, which this document
  * cannot open: the picker is reached from the application menu's `Installations…`
- * item (ruling C9), the dashboard's fourteen-operation bridge has no operation
+ * item (ruling C9), the dashboard's fifteen-operation bridge has no operation
  * that opens a window, and both the design (section 11: no Phase-6 task owns the
  * preload or the IPC allow-list) and this task's Files keep it that way. So the
  * control is drawn where the design draws it, with the label the design gives
@@ -1483,18 +1486,30 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * unavailable mark and matches no run in the model -- and a row whose id
    * cannot be drawn is a row with nothing to ask about, rather than one that
    * asks about whatever the mark happens to be.
+   *
+   * **The review inbox's rows are the same door** (v2 plan Task V2.7.1):
+   * `live-review-run-id` is a run id drawn the same way, and `model.review` is
+   * where it is checked. A finished run is a run -- `fugaro diagnose RUN` reads
+   * it from the runs bucket precisely because its registry entry is gone -- so
+   * a ready row that could not be opened would be the one run row on this
+   * screen with nothing behind it.
    */
   const wireRuns = (drawn: Drawn, model: LiveModel): void => {
     const known = new Set<string>()
     for (const repo of model.repos) for (const row of repo.runs) known.add(row.run)
     for (const row of model.orphans) known.add(row.run)
-    for (const row of classed(drawn, 'live-run')) {
-      const id = classed(row, 'live-run-id')[0]?.textContent ?? ''
-      if (!known.has(id)) continue
-      surface.nodeOf(row).addEventListener('click', () => {
-        void showRun(id)
-      })
+    for (const row of model.review) known.add(row.run)
+    const door = (rowClass: string, idClass: string): void => {
+      for (const row of classed(drawn, rowClass)) {
+        const id = classed(row, idClass)[0]?.textContent ?? ''
+        if (!known.has(id)) continue
+        surface.nodeOf(row).addEventListener('click', () => {
+          void showRun(id)
+        })
+      }
     }
+    door('live-run', 'live-run-id')
+    door('live-review-row', 'live-review-run-id')
   }
 
   // ---- Spend ------------------------------------------------------------
@@ -1503,7 +1518,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * showSpend reads the caps once and the report on every control change, which
    * is `readSpend`'s own division: the budget document is the caller's, because
    * it is a different operation and a control change is not a reason to re-read
-   * it.
+   * it. The by-person panel is the screen's second read (`statsRuns`, console
+   * L5b) and `readSpend` makes it only while the operator's knob is on, so the
+   * wiring here hands over the reader and decides nothing about when it runs.
    */
   const showSpend = async (): Promise<void> => {
     const mine = claim()
@@ -1530,6 +1547,15 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       return answer.data
     }
 
+    // The by-person read is the same shape over `statsRuns`, and its refusal is
+    // the panel's alone: `readSpend` turns a throw here into the panel's own
+    // sentence and draws the rest of the screen from the report.
+    const peopleReader: PeopleReader = async (args) => {
+      const answer = documentOf(await bridge.statsRuns(args))
+      if (!answer.ok) throw { sentence: answer.sentence }
+      return answer.data
+    }
+
     // asked is which report is the latest one asked for. Two control changes in
     // a row are two reports in flight, and the first can answer last: drawn, it
     // would put the earlier range's figures under a picker that marks the later
@@ -1539,7 +1565,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     const draw = async (): Promise<void> => {
       const ticket = (asked += 1)
       const readWith = controls
-      const outcome = await readSpend(reader, readWith, caps)
+      const outcome = await readSpend(reader, readWith, caps, peopleReader)
       // The report was read for a view that is no longer the one on screen (the
       // operator left Spend), or for controls the operator has changed again.
       if (stale(mine) || ticket !== asked) return

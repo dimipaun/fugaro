@@ -65,6 +65,40 @@ func TestCostNotionalHalves(t *testing.T) {
 	}
 }
 
+// TestCostAllNotional (P12, D140): the same split asked as yes or no, which is
+// how a reader that wants "was anything here billed" asks it. The two rows the
+// basis cannot answer are the ones the field is for -- a mixed cascade run and
+// one the plan served in full are both api-list, and only one of them billed
+// nothing -- and the two rows the field cannot answer are the fallback's: a
+// record written before C1.16, with a figure and with none.
+func TestCostAllNotional(t *testing.T) {
+	for name, tc := range map[string]struct {
+		cost Cost
+		want bool
+	}{
+		"api-key":                             {NewCost(3, 0.5, BasisAPIList), false},
+		"api-key, no model figure":            {NewCost(0, 0.5, BasisAPIList), false},
+		"a pre-C1.16 oauth record":            {NewCost(3, 0.5, BasisSubscription), true},
+		"a pre-C1.16 oauth record, no figure": {NewCost(0, 0.5, BasisSubscription), true},
+		"oauth as C1.16 writes it":            {NewCost(3, 0.5, BasisSubscription).WithNotional(3), true},
+		"a mixed cascade run":                 {NewCost(3, 0.5, BasisAPIList).WithNotional(2), false},
+		"a cascade run the plan paid in full": {NewCost(3, 0.5, BasisAPIList).WithNotional(3), true},
+		"the same, no compute estimate":       {ModelOnlyCost(3, BasisAPIList).WithNotional(3), true},
+		"a zero figure on both sides":         {NewCost(0, 0.5, BasisAPIList).WithNotional(0), false},
+	} {
+		if got := tc.cost.AllNotional(); got != tc.want {
+			t.Errorf("%s = %+v: AllNotional() = %v, want %v (money %v, notional %v)",
+				name, tc.cost, got, tc.want, tc.cost.ModelMoneyUSD(), tc.cost.ModelSubscriptionUSD())
+		}
+	}
+	// A hand-written record whose notional part is larger than its model figure
+	// is a bug in whatever wrote it; of the two answers, the one that bills
+	// nothing is the safe direction, exactly as WithNotional's clamp is.
+	if c := (Cost{ModelUSD: 1, ModelBasis: BasisAPIList, ModelNotionalUSD: 5}); !c.AllNotional() {
+		t.Errorf("a record claiming more notional than model dollars = %+v, and AllNotional() says it billed", c)
+	}
+}
+
 func TestCostModelFieldsRoundTrip(t *testing.T) {
 	c := NewCost(4.12, 0.38, BasisAPIList)
 	c.ModelSource = "gateway"

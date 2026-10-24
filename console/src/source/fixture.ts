@@ -544,6 +544,10 @@ export class FixtureSource implements FugaroSource {
     return this.#document('runs.list', args)
   }
 
+  statsRuns(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#document('runs.stats', args)
+  }
+
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot> {
     return this.#document('run.diagnose', args)
   }

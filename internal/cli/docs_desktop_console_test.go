@@ -374,6 +374,12 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(plan.Node{}),
 		reflect.TypeOf(plan.Edge{}),
 		reflect.TypeOf(plan.Footprint{}),
+		// The read's own document (V2.2.3): every key of what `plan graph
+		// --json` prints, so a computed field the contract does not name fails
+		// here too, not only the artifact's own.
+		reflect.TypeOf(plan.Graph{}),
+		reflect.TypeOf(plan.NodeState{}),
+		reflect.TypeOf(plan.CriticalPath{}),
 		reflect.TypeOf(runstore.ChangedFiles{}),
 	}
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
@@ -525,6 +531,10 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(configListCheckout{}),
 		reflect.TypeOf(plan.Document{}), reflect.TypeOf(plan.Node{}),
 		reflect.TypeOf(plan.Edge{}), reflect.TypeOf(plan.Footprint{}),
+		// The read's own document (V2.2.3): the artifact's shape plus what is
+		// computed where the graph is read.
+		reflect.TypeOf(plan.Graph{}), reflect.TypeOf(plan.NodeState{}),
+		reflect.TypeOf(plan.CriticalPath{}),
 		reflect.TypeOf(runstore.ChangedFiles{}),
 		// §6.10, the same three shapes as the test above (CLI 0.9.0).
 		reflect.TypeOf(userStatsDoc{}),
@@ -722,6 +732,10 @@ func TestDocsDesktopConsoleContractNamesTheFlagInventory(t *testing.T) {
 		"budget show": newBudgetShowCmd,
 		"report":      newReportCmd,
 		"runs ls":     newLsCmd,
+		// The Spend screen's by-person view (console L5b, design §5.1 rule 6):
+		// the console spawns it with --since, so it carries --project and
+		// --config like every other dashboard read.
+		"runs stats":  newRunsStatsCmd,
 		"diagnose":    newDiagnoseCmd,
 		"logs":        newLogsCmd,
 		"secrets ls":  newSecretsLsCmd,
@@ -736,6 +750,13 @@ func TestDocsDesktopConsoleContractNamesTheFlagInventory(t *testing.T) {
 		}
 		if !strings.Contains(doc, "`"+name+"`") {
 			t.Errorf("%s never names the spawned command %q", path, name)
+		}
+		// And it must be a row of the section-8 table itself, not merely a
+		// mention somewhere in the file: a command that reached the console's
+		// set while the inventory quietly went on listing the older ones would
+		// pass the check above (§6.10's own heading names this command anyway).
+		if !strings.Contains(doc, "| `"+name+"`") {
+			t.Errorf("%s's flag inventory table has no row for the spawned command %q", path, name)
 		}
 	}
 	if cmd := newVersionCmd(); cmd.Flags().HasFlags() {
@@ -756,11 +777,11 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	"budget show": newBudgetShowCmd,
 	"report":      newReportCmd,
 	"runs ls":     newLsCmd,
-	// §6.10 documents the by-person aggregate (CLI 0.9.0). It is not on the
-	// design's spawn allow-list yet -- the Spend screen's by-person view is
-	// the task that follows -- but the document describes its flags, so the
-	// flags written there are checked against this constructor like any
-	// other's.
+	// §6.10 documents the by-person aggregate (CLI 0.9.0), and it is now on
+	// the design's spawn allow-list too (console L5b, §5.1 rule 6): the Spend
+	// screen's by-person view spawns it with --since. The document describes
+	// its flags either way, so the flags written there are checked against
+	// this constructor like any other's.
 	"runs stats":  newRunsStatsCmd,
 	"diagnose":    newDiagnoseCmd,
 	"logs":        newLogsCmd,
@@ -1048,6 +1069,10 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		"budget show --json",
 		"report --json",
 		"runs ls --json",
+		// The Spend screen's by-person view (console L5b): the one read whose
+		// rows the CLI scopes to the caller, and the one argv here the console
+		// may not widen with --all-users.
+		"runs stats --json",
 		"diagnose RUN --json",
 		"logs RUN --json",
 		"logs RUN --url",
@@ -1146,10 +1171,10 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Eleven commands: the ten dashboard reads (logs has two argvs) and the
+	// Twelve commands: the eleven dashboard reads (logs has two argvs) and the
 	// picker's `config list --json` (D13's amendment of 2026-10-20).
-	if len(allowed) != 11 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 11 (logs has two argvs)", path, argvs, len(allowed))
+	if len(allowed) != 12 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 12 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the one read the design names for the console and §5.1 has not
@@ -2096,6 +2121,18 @@ const (
 	// is where the owner copies it (plan Task 4.5).
 	consoleReleaseWorkflowPath = "docs/pending-workflows/console-release.yml"
 	appliedConsoleReleasePath  = ".github/workflows/console-release.yml"
+
+	// consoleReleaseTagWorkflowPath is the staged supersede file that moves the
+	// console onto its own `console-vX.Y.Z` tag stream: the console no longer
+	// releases from the CLI's `v*` tag, it has its own version line, its own
+	// notes file and its own release. While it is staged it is the file's
+	// *effective* text -- it is what the owner's copy-in writes over both copies
+	// of console-release.yml -- so these tests read it through
+	// consoleReleaseEffectiveText rather than reading console-release.yml, which
+	// is still the file that runs until that copy-in happens. The byte-identity
+	// clause between console-release.yml's two homes is unchanged and still
+	// asserted: this file supersedes it, and does not touch it.
+	consoleReleaseTagWorkflowPath = "docs/pending-workflows/console-release-tag.yml"
 )
 
 // consoleReleaseSecrets is the exact set of secrets the signing job reads, and
@@ -2182,9 +2219,18 @@ type consoleReleaseStep struct {
 // readConsoleReleaseWorkflow is the staged signing file's text, parsed both
 // ways: into the typed shape above, and into raw mappings of the trigger block
 // and of each job, where a key this test does not model is still visible.
+// It reads the file's *effective* text -- consoleReleaseEffectiveText: the
+// staged supersede file while it is staged, the applied copy afterwards -- so
+// the same suite is green on both sides of the owner's copy-in.
+//
+// The failure messages below name consoleReleaseWorkflowPath, and while the
+// supersede file is staged that is the file the change *supersedes* rather than
+// the text just read: it is kept staged, byte-identical to the copy that runs,
+// and its header names the supersede file and the copy-in -- the file a reader
+// is being pointed on to anyway (docs/pending-workflows/README.md).
 func readConsoleReleaseWorkflow(t *testing.T) (string, consoleReleaseWorkflow, map[string]any, map[string]map[string]any) {
 	t.Helper()
-	text := readDoc(t, consoleReleaseWorkflowPath)
+	text, _ := consoleReleaseEffectiveText(t)
 	var wf consoleReleaseWorkflow
 	if err := yaml.Unmarshal([]byte(text), &wf); err != nil {
 		t.Fatalf("%s is not valid YAML: %v", consoleReleaseWorkflowPath, err)
@@ -2265,8 +2311,14 @@ func TestDocsConsoleReleaseWorkflowHoldsNoPullRequestTrigger(t *testing.T) {
 	if !slices.Equal(keys, []string{"push"}) {
 		t.Errorf("%s triggers on %v, want exactly [push]: it is the tag-only signing job (plan Task 4.2's table)", consoleReleaseWorkflowPath, keys)
 	}
-	if !slices.Equal(wf.On.Push.Tags, []string{"v[0-9]+.[0-9]+.[0-9]+"}) {
-		t.Errorf("%s's push trigger tags = %v, want the strict release tag pattern release.yml and images.yml use: a loose `v*` would start a signing run for a tag the release gate refuses", consoleReleaseWorkflowPath, wf.On.Push.Tags)
+	// The console's own tag, and only the console's: `console-vX.Y.Z`. The CLI's
+	// `v*` tag releases the CLI (release.yml) and must not start a console
+	// signing run any more -- three release streams, each with its own tag
+	// (owner addendum 2026-10-22: CLI = animals, Console = fruits, Mobile =
+	// birds). A loose `console-v*` would start a signing run for a tag the
+	// version check below refuses.
+	if !slices.Equal(wf.On.Push.Tags, []string{"console-v[0-9]+.[0-9]+.[0-9]+"}) {
+		t.Errorf("%s's push trigger tags = %v, want exactly [console-v[0-9]+.[0-9]+.[0-9]+]: the console releases from its own console-vX.Y.Z tag, and a `v*` tag here would put the console back on the CLI's release stream", consoleReleaseWorkflowPath, wf.On.Push.Tags)
 	}
 	if len(wf.On.Push.Branches) != 0 {
 		t.Errorf("%s's push trigger carries branches %v: the signing job runs on a tag and never on a branch", consoleReleaseWorkflowPath, wf.On.Push.Branches)
@@ -2319,7 +2371,14 @@ const consoleNotarizeScriptPath = "console/scripts/notarize-and-staple.sh"
 // tests below run under bash with a faked `gh`.
 const (
 	consoleReleasePublishStep = "Publish the console's own release"
-	consoleReleaseTagStep     = "The tag is a strict vX.Y.Z, and its version is the app's"
+	// consoleReleaseTagStep shapes the tag, consoleReleaseVersionStep holds the
+	// tag's X.Y.Z to console/package.json's own version line, and
+	// consoleReleaseNotesStep holds it to the console's notes file for that
+	// version. All three run before anything is built, and each refuses on its
+	// own; the behavioural tests below run the first two.
+	consoleReleaseTagStep     = "The tag is a strict console-vX.Y.Z"
+	consoleReleaseVersionStep = "The tag's version is console/package.json's"
+	consoleReleaseNotesStep   = "The console's notes for this version exist"
 )
 
 // consoleArtifactPins are the upload/download-artifact pins this repository's
@@ -2770,15 +2829,48 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		ancestry+2 >= len(onMain) || !strings.HasPrefix(onMain[ancestry+1], `echo "::error::`) || onMain[ancestry+2] != "exit 1" {
 		t.Errorf("%s's first run step (%q) does not fetch main and refuse a tagged commit that is not its ancestor", consoleReleaseWorkflowPath, job.Steps[runSteps[0]].Name)
 	}
+	// The four checks before the gate: the commit is on main, the tag is a
+	// strict `console-vX.Y.Z`, its version is console/package.json's, and the
+	// console's notes for that version exist. Every one of them refuses before
+	// the 90 minutes of packing, signing and notarising that follow, and none of
+	// them holds a secret.
 	tagIdx, tag := stepNamed(consoleReleaseTagStep)
-	if tagIdx != runSteps[1] || gateIdx != runSteps[2] {
-		t.Errorf("%s's run steps begin %v, want the ancestry check, then the tag shape (%d), then the gate (%d)", consoleReleaseWorkflowPath, runSteps[:3], tagIdx, gateIdx)
+	versionIdx, version := stepNamed(consoleReleaseVersionStep)
+	notesIdx, notes := stepNamed(consoleReleaseNotesStep)
+	if tagIdx != runSteps[1] || versionIdx != runSteps[2] || notesIdx != runSteps[3] || gateIdx != runSteps[4] {
+		t.Errorf("%s's run steps begin %v, want the ancestry check, then the tag shape (%d), console/package.json's version (%d), the notes file (%d), then the gate (%d)",
+			consoleReleaseWorkflowPath, runSteps[:5], tagIdx, versionIdx, notesIdx, gateIdx)
 	}
 	if tag.Id != "tag" || tag.Env["TAG"] != "${{ github.ref_name }}" {
 		t.Errorf("%s's tag step must have id `tag` and read TAG from github.ref_name", consoleReleaseWorkflowPath)
 	}
-	if !slices.Contains(consoleRunLines(gate.Run), `scripts/release-gate.sh "$TAG"`) || gate.Env["TAG"] != "${{ github.ref_name }}" {
-		t.Errorf("%s's gate step (%q) does not run the release gate with the tag", consoleReleaseWorkflowPath, gate.Name)
+	// The version and notes steps read the tag step's output (`steps.tag.outputs.version`),
+	// not the raw ref: the prefix is stripped in exactly one place, so a second
+	// spelling of it cannot drift.
+	if version.Env["VERSION"] != "${{ steps.tag.outputs.version }}" || notes.Env["VERSION"] != "${{ steps.tag.outputs.version }}" {
+		t.Errorf("%s's version step env = %v and notes step env = %v, want both to read ${{ steps.tag.outputs.version }}", consoleReleaseWorkflowPath, version.Env, notes.Env)
+	}
+	// The prefix is stripped with `${TAG#console-v}` and never `${TAG#v}`: a
+	// leading `v` is not the console tag's, so `${TAG#v}` would leave
+	// `console-vX.Y.Z` as the version and stamp the app with it.
+	if !strings.Contains(tag.Run, `echo "version=${TAG#console-v}" >> "$GITHUB_OUTPUT"`) || strings.Contains(tag.Run, `"${TAG#v}"`) {
+		t.Errorf("%s's tag step (%q) does not strip the `console-v` prefix: %v", consoleReleaseWorkflowPath, tag.Name, tag.Run)
+	}
+	if !slices.Contains(consoleRunLines(version.Run), `declared="$(jq -r .version console/package.json)"`) {
+		t.Errorf("%s's version step (%q) does not read console/package.json's version with jq, the way release.yml reads the plugin's: %v", consoleReleaseWorkflowPath, version.Name, version.Run)
+	}
+	if !strings.Contains(version.Run, `[ "$declared" != "$VERSION" ]`) {
+		t.Errorf("%s's version step (%q) does not compare console/package.json's version with the tag's: %v", consoleReleaseWorkflowPath, version.Name, version.Run)
+	}
+	if !strings.Contains(notes.Run, `docs/releases/console/v$VERSION.md`) {
+		t.Errorf("%s's notes step (%q) does not look for the console's own notes file docs/releases/console/v$VERSION.md", consoleReleaseWorkflowPath, notes.Name)
+	}
+	// The gate is the CLI's script, unchanged and CLI-only: it is handed `v` +
+	// the version, never the console tag, and the token it needs to read the
+	// commit's check-runs.
+	if !slices.Contains(consoleRunLines(gate.Run), `scripts/release-gate.sh "v$VERSION"`) ||
+		gate.Env["VERSION"] != "${{ steps.tag.outputs.version }}" || gate.Env["GH_TOKEN"] != "${{ github.token }}" {
+		t.Errorf("%s's gate step (%q) does not run the CLI's release gate as `v` + the tag's version, with the check-runs token: env %v", consoleReleaseWorkflowPath, gate.Name, gate.Env)
 	}
 	installIdx, install := stepNamed("Install the pinned toolchain")
 	if install.Run != "npm ci --ignore-scripts --no-audit --no-fund" || install.WorkingDirectory != "console" {
@@ -3271,14 +3363,45 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	plines := consoleRunLines(publish.Run)
 	for _, want := range []string{
 		`CONSOLE_TAG="console-v$VERSION"`,
-		`VERSION="${TAG#v}"`,
+		`VERSION="${TAG#console-v}"`,
 		`gh release create "$CONSOLE_TAG" --repo "$GITHUB_REPOSITORY" --draft --latest=false \`,
-		`--target "$GITHUB_SHA" \`,
+		// The release's body is the console's OWN notes for this version -- the
+		// file the release job refused to build without -- read from the tagged
+		// tree, because `publish` has no checkout. A release body built from a
+		// string in this file is what the console had while it rode the CLI's
+		// tag, and the notes are the console's own end-user summary.
+		`--notes-file "$BODY" \`,
 		`gh release edit "$CONSOLE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false`,
 	} {
 		if !slices.Contains(plines, want) {
 			t.Errorf("%s's publish step does not run %q", consoleReleaseWorkflowPath, want)
 		}
+	}
+	// The tag is the owner's, not this job's: the `console-vX.Y.Z` push is what
+	// started this run, so the job never creates, moves or reuses it, and no
+	// `--target` (the CLI era's way of making the tag itself at $GITHUB_SHA)
+	// belongs here. What the job does is resolve the tag to a commit and refuse
+	// when that commit is not the one this run built -- publishing under a tag
+	// that has moved would put artifacts from one commit under a tag naming
+	// another. Reading it through `commits/` rather than `git/ref/tags/`, which
+	// returns the tag *object* for an annotated tag.
+	if !strings.Contains(publish.Run, `gh api "repos/$GITHUB_REPOSITORY/commits/$CONSOLE_TAG" --jq .sha`) ||
+		!strings.Contains(publish.Run, `if [ "$tag_sha" != "$GITHUB_SHA" ]`) {
+		t.Errorf("%s's publish step does not resolve the tag it publishes under to this run's commit: %v", consoleReleaseWorkflowPath, plines)
+	}
+	if strings.Contains(publish.Run, `--target "$GITHUB_SHA"`) {
+		t.Errorf("%s's publish step passes --target to `gh release create`: the tag already exists (it is this run's own tag), so the job creates nothing -- the flag is a leftover from when this workflow ran on the CLI's tag", consoleReleaseWorkflowPath)
+	}
+	// The notes are the console's own file, and they are read at the tagged
+	// commit: read at whatever the default branch holds now, a release could
+	// carry notes that disagree with the artifacts beside them.
+	if !strings.Contains(publish.Run, `NOTES_PATH="docs/releases/console/v$VERSION.md"`) ||
+		!strings.Contains(publish.Run, `?ref=$GITHUB_SHA"`) ||
+		!strings.Contains(publish.Run, `cat "$NOTES"`) {
+		t.Errorf("%s's publish step does not read the console's notes from docs/releases/console/v$VERSION.md at the tagged commit: %v", consoleReleaseWorkflowPath, plines)
+	}
+	if strings.Contains(publish.Run, `--notes "`) {
+		t.Errorf("%s's publish step still passes an inline --notes body: the console's body is its own notes file", consoleReleaseWorkflowPath)
 	}
 	// The assets it attaches: the macOS pair, the record and the sums in both
 	// states, and -- once the Linux change is applied -- the AppImage, the .deb,
@@ -3310,14 +3433,12 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 			t.Errorf("%s's publish step touches the CLI's release (%q)", consoleReleaseWorkflowPath, line)
 		}
 	}
-	// The never-clobber shape: in each `case`, the only branch that lets the
-	// job go on is the "absent" one ("" for the release list, a 404 for the
-	// tag), and the default branch `*)` errors and exits 1. The behaviour is
-	// pinned again, against a faked gh, in
-	// TestDocsConsoleReleasePublishRefusesToClobber.
+	// The never-clobber shape: in the `case` over the release list, the only
+	// branch that lets the job go on is the "absent" one (""), and the default
+	// branch `*)` errors and exits 1. The behaviour is pinned again, against a
+	// faked gh, in TestDocsConsoleReleasePublishRefusesToClobber.
 	for _, c := range []struct{ subject, pass string }{
 		{`case "$existing" in`, `"") ;;`},
-		{`case "$answer" in`, `*"(HTTP 404)"*) ;;`},
 	} {
 		i := consoleLineIndex(plines, c.subject, false)
 		if i < 0 || i+1 >= len(plines) || plines[i+1] != c.pass {
@@ -3330,8 +3451,12 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 			t.Errorf("%s's publish step: %q's default branch does not refuse", consoleReleaseWorkflowPath, c.subject)
 		}
 	}
-	if i := consoleLineIndex(plines, `if answer="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$CONSOLE_TAG" 2>&1)"; then`, false); i < 0 || plines[i+2] != "exit 1" {
-		t.Errorf("%s's publish step does not refuse an existing console tag", consoleReleaseWorkflowPath)
+	// And the tag probe is not the CLI era's: `git/ref/tags/` (which reads the
+	// tag as "does it exist", the question the job asked when *it* created the
+	// tag) is replaced by "which commit does it name", because under a
+	// tag-push trigger the tag exists on every run by construction.
+	if i := consoleLineIndex(plines, `tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$CONSOLE_TAG" --jq .sha)"`, true); i < 0 || i+2 >= len(plines) || !strings.HasPrefix(plines[i+1], `echo "::error::`) || plines[i+2] != "exit 1" {
+		t.Errorf("%s's publish step does not resolve the console tag to a commit and stop when the lookup fails", consoleReleaseWorkflowPath)
 	}
 
 	// The Node version is console/package.json's engines.node, and no cache:
@@ -3375,12 +3500,23 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	// scripts/release-gate.sh requires a check run named `test`, so every tag
 	// is refused -- the CLI's releases included -- until the owner copies the
 	// staged file in. Stop the merge, do not delete the assertion.
+	//
+	// What it compares is the two copies of console-release.yml, never the
+	// text these tests read: while the console-vX.Y.Z change is staged, the
+	// effective text is the supersede file, which is *meant* to differ from the
+	// file it supersedes -- comparing that would make this clause red for the
+	// one change it is not about. The supersede file is copied over both copies,
+	// so the clause is untouched by it and still holds the line it always held.
 	if _, statErr := os.Stat(filepath.Join("..", "..", appliedConsoleReleasePath)); statErr == nil {
 		applied, err := os.ReadFile(filepath.Join("..", "..", appliedConsoleReleasePath))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if string(applied) != text {
+		stagedCopy, err := os.ReadFile(filepath.Join("..", "..", consoleReleaseWorkflowPath))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(applied) != string(stagedCopy) {
 			t.Errorf("%s differs from the staged %s: the staged file has a change the owner has not copied in yet. Do not merge before running `cp %s %s` and committing it -- until then main's `test` job is red and scripts/release-gate.sh refuses every tag, the CLI's included (docs/pending-workflows/README.md, %q)",
 				appliedConsoleReleasePath, consoleReleaseWorkflowPath, consoleReleaseWorkflowPath, appliedConsoleReleasePath, "## `console-release.yml`")
 		}
@@ -3454,12 +3590,26 @@ func consoleRunScript(t *testing.T, script string, env []string) (bool, string, 
 echo "gh $*" >> "$FAKE_LOG"
 case "$*" in
   *"/releases --jq"*) printf '%s' "$FAKE_RELEASES"; exit "${FAKE_RELEASES_EXIT:-0}" ;;
-  *"git/ref/tags/"*)
+  # The tag this run was triggered by, resolved to a commit (the step asks for
+  # the sha field). The job does not create that tag -- the owner pushes it, and that
+  # push is what started this run -- so the only question here is whether it
+  # still names the commit this run built. FAKE_TAG=at-sha answers with
+  # $GITHUB_SHA (the tag has not moved), FAKE_TAG=moved with another commit, and
+  # anything else is the lookup failing: which is NOT "no such tag", because the
+  # tag exists by construction, and it must stop the job too.
+  *"/commits/"*)
     case "$FAKE_TAG" in
-      exists) echo '{"ref":"refs/tags/x"}'; exit 0 ;;
-      404) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+      at-sha) printf '%s' "$GITHUB_SHA"; exit 0 ;;
+      moved) printf '%s' "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"; exit 0 ;;
       *) echo "gh: Server Error (HTTP 502)" >&2; exit 1 ;;
     esac ;;
+  # The console's own notes, read from the tagged tree: FAKE_NOTES_EXIT=1 is a
+  # 404 (the file is not on that commit), FAKE_NOTES_B64 is the base64 content
+  # the step pipes through base64 -d, and both spellings of "the read failed"
+  # are refused by the publish step rather than published as an empty body.
+  *"/contents/"*)
+    if [ "${FAKE_NOTES_EXIT:-0}" != 0 ]; then echo "gh: Not Found (HTTP 404)" >&2; exit "${FAKE_NOTES_EXIT}"; fi
+    printf '%s' "${FAKE_NOTES_B64-eA==}"; exit 0 ;;
   "release create"*|"release edit"*) exit 0 ;;
 esac
 echo "fake gh: unexpected call: $*" >&2
@@ -3468,7 +3618,10 @@ exit 3
 	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(fake), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	work := filepath.Join(dir, "work")
+	// RUNNER_TEMP/console-release, which is both the step's working directory
+	// and where it writes the console's notes and the release body it composes
+	// them into (the workflow sets `working-directory: ${{ runner.temp }}/console-release`).
+	work := filepath.Join(dir, "console-release")
 	if err := os.MkdirAll(work, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -3509,10 +3662,20 @@ exit 3
 }
 
 // TestDocsConsoleReleasePublishRefusesToClobber runs the staged publish step
-// against a faked gh. It publishes only when no console release exists and the
-// tag lookup is a clean 404; a published release, a leftover draft, an existing
-// tag, a tag lookup that failed any other way (a 5xx must not read as "absent")
-// and a failed release listing all stop it before `gh release create`.
+// against a faked gh, in the world the new trigger actually produces: the
+// console tag exists and is the tag whose push started the run ($GITHUB_REF_NAME
+// / $TAG), so the tag lookup answers "present at the commit this run built".
+//
+// The `publishes` case is that world, and it is what keeps the step honest: an
+// earlier version of this step probed the tag with `git/ref/tags/` and refused
+// when it existed, which under a tag-push trigger means refusing *every* console
+// release after the full build -- a suite that only modelled "tag absent:
+// publishes" stayed green over it. So the tag-lookup cases are the two states
+// that can really happen (present at this commit, or moved off it), plus a
+// lookup that fails, which is not "no such tag" and must stop the job as well.
+//
+// A published release, a leftover draft and a failed release listing all stop it
+// before `gh release create`.
 func TestDocsConsoleReleasePublishRefusesToClobber(t *testing.T) {
 	_, wf, _, _ := readConsoleReleaseWorkflow(t)
 	_, step := consoleStepNamed(t, wf.Jobs["publish"], "publish", consoleReleasePublishStep)
@@ -3521,24 +3684,43 @@ func TestDocsConsoleReleasePublishRefusesToClobber(t *testing.T) {
 		releases    string
 		releasesErr string
 		tag         string
+		notesErr    string
+		notes       string
 		publishes   bool
 	}{
-		{"nothing there: publishes", "", "0", "404", true},
-		{"published release", "published", "0", "404", false},
-		{"draft left by an earlier attempt", "draft", "0", "404", false},
-		{"tag exists without a release", "", "0", "exists", false},
-		{"tag lookup fails with a 5xx", "", "0", "502", false},
-		{"release listing fails", "", "1", "404", false},
+		{"tag present at the tagged commit: publishes", "", "0", "at-sha", "0", "ok", true},
+		{"published release", "published", "0", "at-sha", "0", "ok", false},
+		{"draft left by an earlier attempt", "draft", "0", "at-sha", "0", "ok", false},
+		// The tag is the owner's and cannot be absent here, but it can have been
+		// moved (a force-push, a re-tag) after this run started: publishing then
+		// would put assets built from one commit under a tag naming another.
+		{"the tag has moved off this run's commit", "", "0", "moved", "0", "ok", false},
+		{"tag lookup fails", "", "0", "502", "0", "ok", false},
+		{"release listing fails", "", "1", "at-sha", "0", "ok", false},
+		// The console's notes are the release body: a version whose notes file
+		// is not on the tagged commit, or is there and empty, is not a release
+		// this job may publish -- an empty body is what the console had while it
+		// rode the CLI's tag, and the file is what replaced it.
+		{"notes missing on the tagged commit", "", "0", "at-sha", "1", "ok", false},
+		{"notes empty on the tagged commit", "", "0", "at-sha", "0", "empty", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			notesB64 := "eA=="
+			if c.notes == "empty" {
+				notesB64 = ""
+			}
 			ok, calls, _ := consoleRunScript(t, step.Run, []string{
-				"TAG=v1.2.3", "GH_TOKEN=fake",
+				"TAG=console-v1.2.3", "GH_TOKEN=fake",
 				"FAKE_RELEASES=" + c.releases, "FAKE_RELEASES_EXIT=" + c.releasesErr, "FAKE_TAG=" + c.tag,
+				"FAKE_NOTES_EXIT=" + c.notesErr, "FAKE_NOTES_B64=" + notesB64,
 			})
 			created := strings.Contains(calls, "gh release create console-v1.2.3")
 			published := strings.Contains(calls, "gh release edit console-v1.2.3 --repo dimipaun/fugaro --draft=false --latest=false")
 			if c.publishes && (!ok || !created || !published) {
 				t.Errorf("the publish step did not create and publish console-v1.2.3 (ok=%v); gh saw:\n%s", ok, calls)
+			}
+			if c.publishes && !strings.Contains(calls, "gh api repos/dimipaun/fugaro/commits/console-v1.2.3") {
+				t.Errorf("the publish step published without resolving the tag it is publishing under to a commit; gh saw:\n%s", calls)
 			}
 			if !c.publishes && (ok || created || published) {
 				t.Errorf("the publish step went on (ok=%v, created=%v) when it must refuse; gh saw:\n%s", ok, created, calls)
@@ -3551,26 +3733,38 @@ func TestDocsConsoleReleasePublishRefusesToClobber(t *testing.T) {
 }
 
 // TestDocsConsoleReleaseTagStepStampsOnlyStrictVersions runs the staged tag
-// step: a strict vX.Y.Z yields version=X.Y.Z (the value every pack is stamped
-// with); anything else fails before a pack can run.
+// step: a strict console-vX.Y.Z yields version=X.Y.Z (the value every pack is
+// stamped with); anything else fails before a pack can run.
+//
+// The CLI's own `vX.Y.Z` tag is in the refusal list on purpose, and it is the
+// point of the change: `v1.2.3` used to start this workflow, and it releases
+// the CLI (release.yml) and nothing else now -- three release streams, each with
+// its own tag (owner addendum 2026-10-22). The mutation that proves it:
+// `^console-v` dropped from the pattern makes the two CLI-shaped cases publish a
+// console for the CLI's release.
 func TestDocsConsoleReleaseTagStepStampsOnlyStrictVersions(t *testing.T) {
 	_, wf, _, _ := readConsoleReleaseWorkflow(t)
 	_, step := consoleStepNamed(t, wf.Jobs["release"], "release", consoleReleaseTagStep)
 	for _, c := range []struct {
 		tag, version string
 	}{
-		{"v1.2.3", "1.2.3"},
-		{"v0.10.0", "0.10.0"},
-		{"v1.2", ""},
-		{"v1.2.3-rc1", ""},
-		{"v01.2.3", ""},
+		{"console-v1.2.3", "1.2.3"},
+		{"console-v0.10.0", "0.10.0"},
+		{"console-v0.11.0", "0.11.0"},
+		{"v1.2.3", ""},
+		{"v0.11.0", ""},
+		{"console-v1.2", ""},
+		{"console-v1.2.3-rc1", ""},
+		{"console-v01.2.3", ""},
+		{"console-1.2.3", ""},
 		{"1.2.3", ""},
-		{"v1.2.3\nversion=9.9.9", ""},
+		{"console-v", ""},
+		{"console-v1.2.3\nversion=9.9.9", ""},
 	} {
 		ok, _, out := consoleRunScript(t, step.Run, []string{"TAG=" + c.tag})
 		if c.version == "" {
 			if ok || out != "" {
-				t.Errorf("tag %q: the tag step passed (output %q); it must refuse anything but a strict vX.Y.Z", c.tag, out)
+				t.Errorf("tag %q: the tag step passed (output %q); it must refuse anything but a strict console-vX.Y.Z", c.tag, out)
 			}
 			continue
 		}
@@ -3578,6 +3772,83 @@ func TestDocsConsoleReleaseTagStepStampsOnlyStrictVersions(t *testing.T) {
 			t.Errorf("tag %q: ok=%v output %q, want version=%s", c.tag, ok, out, c.version)
 		}
 	}
+}
+
+// TestDocsConsoleReleaseVersionStepRefusesATagItsOwnVersionLineDisagreesWith
+// runs the staged version step, in both jobs that carry it, against a
+// console/package.json written for the occasion: the tag's X.Y.Z has to be the
+// file's own `version` (the same call release.yml makes for the plugin's
+// version, one file over).
+//
+// The mutation that proves it: dropping the comparison (`[ "$declared" !=
+// "$VERSION" ]`) publishes a console whose own version line, its update feed
+// and its file names disagree with the tag printed on the release -- and,
+// because Task 4.4's updater refuses a downgrade, a console stamped *below*
+// what console/package.json says would refuse every update it was offered
+// afterwards (docs/release.md, "Console releases").
+func TestDocsConsoleReleaseVersionStepRefusesATagItsOwnVersionLineDisagreesWith(t *testing.T) {
+	_, wf, _, _ := readConsoleReleaseWorkflow(t)
+	for _, job := range []string{"release", "linux"} {
+		jobName := job
+		t.Run(jobName, func(t *testing.T) {
+			_, step := consoleStepNamed(t, wf.Jobs[jobName], jobName, consoleReleaseVersionStep)
+			for _, c := range []struct {
+				name, version, declared string
+				ok                      bool
+			}{
+				{"the tag and the version line agree", "0.11.0", "0.11.0", true},
+				{"another release", "1.2.3", "1.2.3", true},
+				{"the version line is behind the tag", "0.11.0", "0.10.0", false},
+				{"the version line is ahead of the tag", "0.10.0", "0.11.0", false},
+				{"the version line is absent", "0.11.0", "", false},
+				{"the version line is an empty string", "0.11.0", "null", false},
+			} {
+				t.Run(c.name, func(t *testing.T) {
+					ok, _ := consoleRunVersionStep(t, step.Run, c.version, c.declared)
+					if ok != c.ok {
+						t.Errorf("console/package.json version %q and tag version %q: ok=%v, want %v", c.declared, c.version, ok, c.ok)
+					}
+				})
+			}
+		})
+	}
+}
+
+// consoleRunVersionStep runs the version step's `run:` script under bash in a
+// directory that holds one file, console/package.json, with declared as its
+// version (or with no `version` field at all when declared is ""). It returns
+// whether the step succeeded. The step reads the file with jq, the way
+// release.yml reads the plugin's, so this skips -- rather than passing -- on a
+// machine without jq.
+func consoleRunVersionStep(t *testing.T, script, version, declared string) (bool, string) {
+	t.Helper()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH")
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq is not on PATH")
+	}
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "console"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"name":"fugaro-console","version":"` + declared + `"}`
+	if declared == "" {
+		manifest = `{"name":"fugaro-console"}`
+	} else if declared == "null" {
+		manifest = `{"name":"fugaro-console","version":null}`
+	}
+	if err := os.WriteFile(filepath.Join(dir, "console", "package.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "github_output")
+	cmd := exec.Command(bash, "-e", "-c", script)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GITHUB_OUTPUT="+out, "VERSION="+version)
+	runErr := cmd.Run()
+	output, _ := os.ReadFile(out)
+	return runErr == nil, string(output)
 }
 
 // TestDocsConsoleReleaseRetryHelperIsBounded runs the Apple-network retry
@@ -6018,6 +6289,27 @@ func consoleReplacementText(t *testing.T, staged, applied string) (string, strin
 	return readDoc(t, applied), applied
 }
 
+// consoleReleaseEffectiveText is the console signing workflow's text as the
+// repository is *heading*: the staged supersede file
+// (consoleReleaseTagWorkflowPath) while it is staged, and console-release.yml
+// once the owner's copy-in has written it over both copies of that file and
+// removed the supersede file. It is what every test about the console's release
+// stream reads, so the same suite is green before and after a copy-in only a
+// human performs.
+//
+// The byte-identity clause stays live in every state: consoleWorkflowText is
+// called first, so the two copies of console-release.yml are still held to be
+// byte-identical while the supersede file is staged, and the supersede file is
+// not a licence to edit either of them.
+func consoleReleaseEffectiveText(t *testing.T) (string, string) {
+	t.Helper()
+	file, stagedPath := consoleWorkflowText(t, consoleReleaseWorkflowPath, appliedConsoleReleasePath)
+	if docExists(t, consoleReleaseTagWorkflowPath) {
+		return readDoc(t, consoleReleaseTagWorkflowPath), consoleReleaseTagWorkflowPath
+	}
+	return file, stagedPath
+}
+
 // parseConsoleWorkflow is readConsoleTestsWorkflow's parsing half: the typed
 // shape (steps, permissions, matrix) and the raw mappings of the trigger block
 // and of each job, where a key this file does not model (`needs:`,
@@ -6356,12 +6648,27 @@ func TestConsoleReleaseLinuxAddsTheLinuxLegAndMovesNothingElse(t *testing.T) {
 		}
 	}
 
+	// Which release stream this text is on. Once console-release-tag.yml has
+	// been copied in, the applied file -- the one read here after both
+	// supersede files are gone -- triggers on the console's own
+	// `console-vX.Y.Z` tag, hands the gate `v` + the version rather than the
+	// tag, and resolves the tag the owner pushed rather than asking whether it
+	// exists. Those two lines are pinned for the tag stream by
+	// TestDocsConsoleReleaseWorkflowIsStagedAndPinned; here they are only read
+	// in the form the stream this tree is on carries.
+	gateCall := `scripts/release-gate.sh "$TAG"`
+	tagRefusal := "could not tell whether the tag $CONSOLE_TAG exists"
+	if strings.Contains(text, `tags: ["console-v[0-9]+.[0-9]+.[0-9]+"]`) {
+		gateCall = `scripts/release-gate.sh "v$VERSION"`
+		tagRefusal = "could not resolve the tag $CONSOLE_TAG to a commit"
+	}
+
 	// What the linux job does: the same gate, the same pack, and -- added for
 	// Linux because an unsigned artifact has no other claim -- the shipped bytes
 	// opened and read.
 	linuxRuns := strings.Join(stepStrings(wf, "linux"), "\n")
 	for _, want := range []string{
-		`scripts/release-gate.sh "$TAG"`,
+		gateCall,
 		"npm run package:linux",
 		`sha256sum "$(basename "$APPIMAGE")" "$(basename "$DEB")"`,
 		"dpkg-deb --info",
@@ -6433,7 +6740,7 @@ func TestConsoleReleaseLinuxAddsTheLinuxLegAndMovesNothingElse(t *testing.T) {
 		// The refusals a re-run must still meet, verbatim from the old file.
 		"the release $CONSOLE_TAG is already published",
 		"delete it (gh release delete",
-		"could not tell whether the tag $CONSOLE_TAG exists",
+		tagRefusal,
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("%s lacks %q", path, want)

@@ -115,6 +115,11 @@ const CONSENT_KEY = 'fugaro:analytics-consent'
 const ANALYTICS_ID_ATTR = 'data-analytics-id'
 const ANALYTICS_ORIGIN_ATTR = 'data-analytics-origin'
 const SITE_SCRIPT = '/scripts/site.js'
+// The consent banner's early decision (the owner's ruling of 2026-10-23, the redesign's Step 3:
+// JavaScript allowed, same-origin only; the banner must not cover the first screen's content).
+// A page that renders the banner loads it after the site's one script; it is a first-party file
+// the policy admits as script-src 'self', and it reads storage and nothing else.
+const EARLY_SCRIPT = '/scripts/consent-early.js'
 const BANNER_ID = 'consent-banner'
 
 // `link` relations that make the browser fetch, and the ones that are only a reference.
@@ -529,8 +534,8 @@ test('with analytics on, the one admitted origin is the banner configuration, an
     )
     assert.deepEqual(
       scripts.filter((t) => t.attrs.has('src')).map((t) => t.attrs.get('src')),
-      [SITE_SCRIPT],
-      `${page.rel}: the site's one script file is ${SITE_SCRIPT}, loaded once (D183)`,
+      [SITE_SCRIPT, EARLY_SCRIPT],
+      `${page.rel}: the site's one script file is ${SITE_SCRIPT}, loaded once (D183), and the banner's early decision is ${EARLY_SCRIPT} (the owner's ruling of 2026-10-23)`,
     )
     assert.ok(!/<script[^>]*\bsrc=["']?https:\/\/www\.googletagmanager/i.test(page.html), `${page.rel}: emits the Google script as markup, which loads before any consent`)
 

@@ -187,7 +187,7 @@ func CostLine(c runstore.Cost) string {
 // adds up -- TotalUSD holds no notional dollar (C1.16, P12) -- and a mixed
 // run's notional part is said beside it rather than counted into it.
 func costLine(c runstore.Cost) string {
-	sub := c.ModelBasis == runstore.BasisSubscription
+	sub := c.AllNotional()
 	notional := ""
 	if !sub && c.ModelSubscriptionUSD() > 0 {
 		notional = fmt.Sprintf("; model $%.2f notional, counted against the Claude subscription", c.ModelSubscriptionUSD())

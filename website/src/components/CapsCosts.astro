@@ -456,7 +456,6 @@ const MODES = [
      `base.css`'s, written once for the site; what is this page's own is the layout. */
   .caps-band {
     padding-block: var(--space-2xl);
-    border-top: var(--border-width) solid var(--border);
   }
 
   .caps-band-head {
@@ -590,7 +589,7 @@ const MODES = [
 
   .caps-mode[data-mode='enforce'] {
     border-color: var(--warn);
-    background-image: linear-gradient(135deg, var(--panel) 0%, var(--surface) 70%);
+    background: var(--panel); /* flat since the owner's polish round of 2026-10-23 (no gradients) */
   }
 
   /* The glyph's box: the panel, one step under the card it is drawn on. It is decoration and
@@ -602,7 +601,6 @@ const MODES = [
     justify-content: center;
     width: var(--space-xl);
     height: var(--space-xl);
-    border: var(--border-width) solid var(--border);
     border-radius: var(--radius-md);
     background: var(--panel);
     color: var(--accent-on-dark);
@@ -688,9 +686,7 @@ const MODES = [
   .caps-job-median-label {
     color: var(--text-muted);
     font-size: var(--font-size-sm);
-    font-weight: var(--weight-black);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-weight: var(--weight-semibold);
   }
 
   /* The median is the figure a reader came for, and the accent's legible form is what says
@@ -858,7 +854,7 @@ const MODES = [
     gap: var(--space-sm);
     margin: 0;
     border-color: var(--warn);
-    background-image: linear-gradient(135deg, var(--panel) 0%, var(--surface) 70%);
+    background: var(--panel); /* flat since the owner's polish round of 2026-10-23 (no gradients) */
   }
 
   .caps-cap-glyph {
@@ -921,12 +917,12 @@ const MODES = [
      check read a gradient as the one colour the text sits on. */
   .caps-command[data-guide='fugaro budget set'] {
     border-color: var(--accent);
-    background-image: linear-gradient(135deg, var(--panel) 0%, var(--surface) 70%);
+    background: var(--panel); /* flat since the owner's polish round of 2026-10-23 (no gradients) */
   }
 
   .caps-command[data-guide='fugaro budget kill'] {
     border-color: var(--warn);
-    background-image: linear-gradient(135deg, var(--panel) 0%, var(--surface) 70%);
+    background: var(--panel); /* flat since the owner's polish round of 2026-10-23 (no gradients) */
   }
 
   .caps-command-name {
@@ -941,7 +937,6 @@ const MODES = [
      the site's script. */
   .caps-command .command-block {
     padding: var(--space-xs) var(--space-sm);
-    border: var(--border-width) solid var(--border);
     border-radius: var(--radius-md);
     background: var(--ground);
     margin-top: auto;

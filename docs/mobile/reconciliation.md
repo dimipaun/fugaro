@@ -74,11 +74,11 @@ The brief's reading of D1 ("CLI sidecar (option A) … direct RTDB/Firestore acc
 
 **Consequence.** The job list is a **consumer of that contract**, not a new database reader. This is the single most consequential "Exists" in this document, because it is what makes D112's recommendation cheap: the data the spec wants already leaves the CLI as JSON, on a documented schedule, with documented reader rules.
 
-#### F2 — Hide-old-completed is a *view* rule with a local acknowledgement store. **Exists.**
+#### F2 — Hide-old-completed is a *view* rule with a local dismissal store. **Exists.**
 
-**Evidence.** `internal/watch/filter.go`'s `Filter` (`Keep`, `KeepCount`, `FailedKeep` — 24h, "not a flag") and `Apply`; `internal/watch/acks.go`'s `AckPath` (the acknowledgements file under `$XDG_STATE_HOME`); `plugin/skills/working/reference/status.md`; `internal/cli/watch.go`'s `watchOptions.Keep`/`KeepCount`.
+**Evidence.** `internal/watch/filter.go`'s `Filter` (`Keep`, `KeepCount`, `FailedKeep` — a floor under a failed row's window, `FinishedKeep`, three minutes; `--keep` moves a failure's window with a success's and never shorter, since the owner spec of 2026-10-22 and its 0.10.2 fix of #950) and `Apply`; `internal/watch/acks.go`'s `AckPath` (the dismissals file under `$XDG_STATE_HOME`); `plugin/skills/working/reference/status.md`; `internal/cli/watch.go`'s `watchOptions.Keep`/`KeepCount`.
 
-**Consequence.** Two things the plan must get right. First, `--json` is **always unfiltered** — "hide old completed jobs by default" is the app's **own** filter over an unfiltered feed, not a flag it can lean on. Second, the acknowledgements live in a **local file on the machine running the CLI**, which a phone cannot share, so the app's "show all" toggle is a toggle over the unfiltered feed and its own (or no) ack state. The app must not promise the desktop's ack semantics.
+**Consequence.** Two things the plan must get right. First, `--json` is **always unfiltered** — "hide old completed jobs by default" is the app's **own** filter over an unfiltered feed, not a flag it can lean on. Second, the dismissals live in a **local file on the machine running the CLI**, which a phone cannot share, so the app's "show all" toggle is a toggle over the unfiltered feed and its own (or no) dismissal state. The record is one per viewer, and since the owner spec of 2026-10-22 (item 4) the `x` key dismisses **any** finished run, not only a failure: an ack means "I have seen this one", and the app must not promise the desktop's dismissal semantics.
 
 #### F3 — The severity inputs a digest needs are already fields, and the tree's only alert is a *rate*. **Exists.**
 

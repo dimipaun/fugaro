@@ -115,7 +115,7 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 	return true, false, nil
 }
 
-// initFirebase is fugaro update --firebase-project <fp>: it adopts the project's own
+// initFirebase is fugaro update --firebase-project <gcp-project-id>: it adopts the project's own
 // Firebase project and builds the budget backend in it.
 //
 //  0. checks, before anything is applied: the Firebase project exists, is
@@ -157,7 +157,7 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 		r.warn("not a budget admin (owners and editors who are users or groups are; a service account can be added with --budget-admin): " + s)
 	}
 	if fp == lc.GCPProject && len(risks) > 0 {
-		r.warn(fmt.Sprintf("the Firebase project is the installation's own project, and its default service account(s) hold a primitive role: %s. Anything that runs as one of them (a Cloud Build build submitted without a serviceAccount, a job or function deployed without one) can reach the database, Firestore and Identity Toolkit, which a project of its own would keep out of reach. Remove the role (gcloud projects remove-iam-policy-binding %s --member=serviceAccount:<account> --role=roles/editor) and set the organization policy iam.automaticIamGrantsForDefaultServiceAccounts, or use a Firebase project of its own. The converge changes nothing here", strings.Join(risks, ", "), lc.GCPProject))
+		r.warn(fmt.Sprintf("the Firebase project is the installation's own project, and its default service account(s) hold a primitive role: %s. Anything that runs as one of them (a Cloud Build build submitted without a serviceAccount, a job or function deployed without one) can reach the database, Firestore and Identity Toolkit, which nothing else in the project should reach. Remove the role (gcloud projects remove-iam-policy-binding %s --member=serviceAccount:<account> --role=roles/editor) and set the organization policy iam.automaticIamGrantsForDefaultServiceAccounts. The converge changes nothing here", strings.Join(risks, ", "), lc.GCPProject))
 	}
 	if len(admins) == 0 && len(r.budgetAdmins(lc)) == 0 {
 		return userErr("project %s has no user or group with roles/owner or roles/editor, and no --budget-admin: nobody could change a cap or a kill switch", lc.GCPProject)

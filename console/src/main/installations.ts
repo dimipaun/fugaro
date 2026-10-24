@@ -53,10 +53,19 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, posix, win32 } from 'node:path'
 
 import { NO_ACTIVE_INSTALLATION } from './ipc'
-import { isSafeInstallationValue, privateWorkingDirectory, resolveBinary } from './spawn'
+import {
+  MAX_DISTRO_NAME_LENGTH,
+  isDistroName,
+  isSafeInstallationValue,
+  isWindowsPathSpelling,
+  privateWorkingDirectory,
+  resolveBinary,
+  resolveInstalledBinary,
+  wslUncPath,
+} from './spawn'
 import type { ChildSpawner, SpawnTarget } from './spawn'
 import { createSpawnLog } from './spawnlog'
 import type { SpawnLogWriter } from './spawnlog'
@@ -117,9 +126,28 @@ export const INSTALLATION_ID_PATTERN = /^[0-9a-f]{16}$/
  * INSTALLATION_KEYS the whole of what one entry may hold. Both are checked as
  * *exact* sets: an unknown key refuses the file, because a key this version
  * does not know is either a newer version's field (which this version must not
- * silently drop) or something a person added by hand. */
+ * silently drop) or something a person added by hand.
+ *
+ * **`distro` joined the set in one version step (F15, F46) and it did not move
+ * `INSTALLATION_FILE_VERSION`.** The rule the version step exists for is the one
+ * F46 names: a console that writes a key and then refuses to read its own file
+ * on the next start loses every remembered installation. So a field is added in
+ * the one direction that is safe -- *written* by this version and *read* by it,
+ * with a file that does not carry it still accepted, because an installation
+ * with no `distro` is not an incomplete record: it is a **host** installation,
+ * which is what every record this console wrote before Windows is. The reader
+ * refuses an entry carrying a key it does not know; it never refuses an entry
+ * for the *absence* of one, and that asymmetry is what makes the addition
+ * backward-compatible in the direction that matters. */
 export const INSTALLATION_FILE_KEYS: readonly string[] = Object.freeze(['version', 'active', 'installations'])
-export const INSTALLATION_KEYS: readonly string[] = Object.freeze(['id', 'project', 'binaryPath', 'configPath', 'checkout'])
+export const INSTALLATION_KEYS: readonly string[] = Object.freeze([
+  'id',
+  'project',
+  'binaryPath',
+  'configPath',
+  'checkout',
+  'distro',
+])
 
 /** INSTALLATION_CHANNEL_PREFIX is the picker window's own channel namespace.
  * The dashboard's is `fugaro:console/`; the two are gated separately, so a
@@ -157,6 +185,13 @@ export interface StoredInstallation {
   readonly binaryPath?: string
   readonly configPath?: string
   readonly checkout?: string
+  /** `distro` is the WSL distribution this installation's CLI runs inside, when
+   * it has one (T-D1, D2(a)). **Absent is the ordinary case** -- a host
+   * installation -- and present means the other three paths are Linux spellings
+   * *inside* that distribution, which the host cannot `stat` (F4, F15) and which
+   * `wsl.exe` answers for. It is read as a **name**: the console runs a shell
+   * in a distribution named here, so the alphabet is `DISTRO_NAME_PATTERN`'s. */
+  readonly distro?: string
 }
 
 /** InstallationFile is the whole of `installations.json`. `active` is an id in
@@ -248,11 +283,71 @@ export const nodeInstallationFs: InstallationFs = Object.freeze<InstallationFs>(
 
 /** isInside reports whether `candidate` is `directory` or sits under it. The
  * comparison is on resolved paths with a separator appended, so `/a/bc` is not
- * inside `/a/b`. */
+ * inside `/a/b` and `C:\a\bc` is not inside `C:\a\b` (F13, T-D5).
+ *
+ * **The separator is the paths' own, and that is the whole of the repair.** The
+ * function used to append a literal `'/'`, which is right on POSIX and wrong on
+ * Windows in the direction that matters: `C:\Users\dimi\AppData\Fugaro Console`
+ * does not start with `C:\Users\dimi\AppData/`, so the test **failed to fire**
+ * and a console whose store sat inside the CLI's configuration would have been
+ * allowed to write there. On Windows the paths this function is given are
+ * Windows paths (Electron's `userData` is `%APPDATA%\…`), so the comparison has
+ * to be Windows' -- and on Linux it has to be POSIX's.
+ *
+ * The rule is stated as "the paths' own separator" rather than "this process's"
+ * (`path.sep`) for two reasons: a console that compared a distribution's POSIX
+ * home against a Windows `userData` would otherwise pick the wrong one for one
+ * of the two, and this repository's tests run on one platform while the paths
+ * they must reason about are the *other* one's -- the F13 case is unprovable on
+ * Linux if the separator is `process.platform`'s. A path is Windows-shaped when
+ * it carries a backslash or a drive letter (`isWindowsPathSpelling`, `spawn.ts`)
+ * and POSIX-shaped otherwise, and the two paths are read with the semantics of
+ * whichever of them is Windows-shaped. */
 export function isInside(directory: string, candidate: string): boolean {
-  const outer = resolve(directory)
-  const inner = resolve(candidate)
-  return inner === outer || inner.startsWith(outer.endsWith('/') ? outer : `${outer}/`)
+  const windows = isWindowsPathSpelling(directory) || isWindowsPathSpelling(candidate)
+  const parts = windows ? win32 : posix
+  const outer = parts.resolve(directory)
+  const inner = parts.resolve(candidate)
+  const separator = windows ? '\\' : '/'
+  return inner === outer || inner.startsWith(outer.endsWith(separator) ? outer : `${outer}${separator}`)
+}
+
+/**
+ * explorerPathFor is the spelling the **file manager** opens for one
+ * installation's checkout, or `undefined` when there is nothing to open (D3(a),
+ * T-D3).
+ *
+ * It is the second half of the rule "the Linux spelling everywhere the console
+ * states or passes; the UNC spelling only where the platform itself opens the
+ * path". A row's `checkout` is the Linux spelling -- what the operator can paste
+ * into a terminal inside the distribution, and what every word the console
+ * passes carries -- while a reveal affordance needs the spelling the *file
+ * manager* understands, which for a path inside a distribution is
+ * `\\wsl.localhost\<distro>\…` (`wslUncPath`), because a drive path does not
+ * exist for `/home/dimi/src`.
+ *
+ * **The UNC form is composed here rather than asked of `wslpath`.** The two are
+ * not the same question: `wslpath -w` answers how *this distribution* spells a
+ * path Windows can open, and a custom mount or an `/etc/wsl.conf` can change it
+ * (D4(b), which is why the translation the console *uses* is a process). The
+ * affordance is a convenience on top of a path the console already holds --
+ * `\\wsl.localhost\` is the documented form Windows accepts for any
+ * distribution -- and it is never what the console passes to the CLI.
+ *
+ * A host row's checkout is **already** the spelling its own file manager opens
+ * -- that is what the host route resolves, and what the operator's own terminal
+ * uses -- so it is handed back unchanged, and this function needs no idea of
+ * which platform it is running on.
+ */
+export function explorerPathFor(entry: {
+  readonly distro?: string | undefined
+  readonly checkout?: string | undefined
+}): string | undefined {
+  const checkout = entry.checkout
+  if (checkout === undefined || checkout === '') return undefined
+  const distro = entry.distro ?? ''
+  if (distro !== '') return wslUncPath(distro, checkout)
+  return checkout
 }
 
 /**
@@ -260,17 +355,36 @@ export function isInside(directory: string, candidate: string): boolean {
  * as far as this console is concerned: `$XDG_CONFIG_HOME/fugaro`,
  * `$FUGARO_CONFIG`'s directory, and `~/.config/fugaro`.
  *
- * The home directory arrives as an argument -- Electron's `app.getPath('home')`
- * -- rather than being read here, which is what keeps `homedir()` out of this
- * module (`test/unit/configread.test.ts` refuses it anywhere outside binary
+ * The home directory arrives as an argument -- the app's own environment's
+ * `HOME`, the home `binDirectories` expands `~` with, and not Electron's
+ * `app.getPath('home')`, which on macOS is `NSHomeDirectory()` and ignores
+ * `HOME` (`installInstallationPicker` says why) -- rather than being read here,
+ * which is what keeps `homedir()` out of this module
+ * (`test/unit/configread.test.ts` refuses it anywhere outside binary
  * resolution) and keeps the function testable for a home it did not have.
  *
  * This is a *path* computation and it touches no file: knowing where the CLI's
  * config would be is not reading it, and refusing to write there is the point.
- */
+ *
+ * **The WSL half, and what the console can honestly say about it** (F17, T-D6).
+ * On the WSL route the CLI's configuration is the **distribution's** own
+ * `~/.config/fugaro`, which is not on this host at all: the host's `$HOME` is a
+ * Windows home and `$XDG_CONFIG_HOME` is a Windows variable, so none of the
+ * three below names the directory the operator's CLI actually reads. The
+ * distribution's home is therefore an *input* -- the caller that knows which
+ * distribution this is hands its home directory in the distribution's own
+ * spelling -- and the answer gains that one directory as a fourth entry.
+ *
+ * **Nothing here asks the distribution.** The home is not computed and not
+ * defaulted: a `~` the console guessed would be a path the CLI does not use,
+ * which is the same failure in the other direction. It arrives from the caller
+ * (Part G's picker, which has the distribution in hand), and the spelling is the
+ * distribution's, so the entry is compared with POSIX semantics -- which is what
+ * `isInside` does by looking at the paths rather than at this process. */
 export function cliConfigDirectories(
   env: Readonly<Record<string, string | undefined>>,
   home: string,
+  distroHome?: string | undefined,
 ): readonly string[] {
   const out: string[] = []
   const xdg = env['XDG_CONFIG_HOME']
@@ -278,6 +392,12 @@ export function cliConfigDirectories(
   const explicit = env['FUGARO_CONFIG']
   if (explicit !== undefined && explicit !== '' && isAbsolute(explicit)) out.push(dirname(explicit))
   out.push(join(home, '.config', CLI_CONFIG_DIR_NAME))
+  // The distribution's own, when the caller knows it. `posix.join` rather than
+  // `join`: this one is a Linux path inside a distribution whatever host the
+  // console is running on, and on Windows `join` would spell it `\home\…`.
+  if (distroHome !== undefined && distroHome !== '') {
+    out.push(posix.join(distroHome, '.config', CLI_CONFIG_DIR_NAME))
+  }
   return Object.freeze(out)
 }
 
@@ -292,6 +412,13 @@ export function installationStorePath(options: {
   readonly env: Readonly<Record<string, string | undefined>>
   readonly home: string
 }): string {
+  // **The host's three, and not the distribution's fourth** (F17, T-D6). The
+  // set this reads is `cliConfigDirectories`', which carries the distribution's
+  // own directory when its caller knows it -- but `userData` here is a **host**
+  // path, and a host path is never inside a Linux home (F13's vacuous case, and
+  // it must stay vacuous rather than become wrong). So no `distroHome` is passed
+  // and none is needed: the refusal is a host-side packaging check, and the
+  // store stays on the host (F14) whatever distribution the installation names.
   const inside = cliConfigDirectories(options.env, options.home).find((directory) =>
     isInside(directory, options.userData),
   )
@@ -329,6 +456,19 @@ function hasExactlyKeys(value: Record<string, unknown>, keys: readonly string[])
 export function isProjectName(value: string): boolean {
   return value !== '' && value.length <= MAX_INSTALLATION_PROJECT_LENGTH && isSafeInstallationValue(value) && !/\s/.test(value)
 }
+
+/** MAX_INSTALLATION_DISTRO_LENGTH bounds the distribution's name. It is the
+ * project bound, because both are short single-token names, and a distribution
+ * name longer than a project name is a name `wsl.exe` would not have listed.
+ *
+ * The alphabet itself is `spawn.ts`'s (`DISTRO_NAME_PATTERN`, re-exported here):
+ * a distribution name becomes the value of `wsl.exe`'s `-d`, it comes from a
+ * document (`wsl.exe --list --quiet`, whose lines are data), and the console
+ * then runs a **shell** in whatever it names -- so the rule belongs with the
+ * wrapper that spells it, and the store reads the same one the plan builder
+ * asserts. Two copies of it would be two answers to one question. */
+export const MAX_INSTALLATION_DISTRO_LENGTH = MAX_DISTRO_NAME_LENGTH
+export { isDistroName } from './spawn'
 
 /** isAbsolutePath is the path check every stored path passes: a string, within
  * the length bound, safe to reach an argv, and absolute. A relative path is
@@ -382,12 +522,26 @@ function readInstallationEntry(
   if (checkout !== undefined && !isAbsolutePath(checkout, MAX_INSTALLATION_PATH_LENGTH)) {
     return 'an entry’s checkout is not an absolute path'
   }
+  // The WSL field, and the whole of what makes an installation a WSL one (F15,
+  // T-D1): when it is there, `binaryPath`, `configPath` and `checkout` are Linux
+  // spellings **inside** that distribution and the console reaches the CLI
+  // through `wsl.exe` (D2(a)); when it is absent the entry is a host
+  // installation, which is what every record written before Windows is.
+  //
+  // It is checked by name and against its own narrow alphabet rather than with
+  // the path rule: a distribution name becomes the value of `wsl.exe`'s `-d`,
+  // and the console will then run a **shell** inside whatever it names (T-D3).
+  const distro = value['distro']
+  if (distro !== undefined && (typeof distro !== 'string' || !isDistroName(distro))) {
+    return 'an entry’s distro is not a WSL distribution name'
+  }
   return {
     id,
     project,
     ...(binaryPath === undefined ? {} : { binaryPath }),
     ...(configPath === undefined ? {} : { configPath }),
     ...(checkout === undefined ? {} : { checkout }),
+    ...(distro === undefined ? {} : { distro }),
   }
 }
 
@@ -570,6 +724,9 @@ export interface ValidationDeps {
    * directory (design section 3.4 rule 5), never the binary's own directory.
    * It is a dep only so a test can see which one was used. */
   readonly workingDirectory?: () => string
+  /** `wslPath` replaces the `wsl.exe` a WSL candidate's probe runs, so a test
+   * can point the route at the fake (T-A1, T-C6). */
+  readonly wslPath?: string | undefined
 }
 
 /** ProbedInstallation is a candidate the handshake answered for: the binary rule
@@ -648,23 +805,46 @@ export async function probeInstallation(
   const checkout = candidate.checkout
   const target: SpawnTarget = { project, ...(configPath === undefined ? {} : { configPath }) }
   const env = deps.appEnv ?? {}
-  const resolution = await withSpawnLog(env, deps.spawnLog, (log) =>
-    resolveBinary({
+  // **Which route, and it is the candidate's `distro` that decides.** An
+  // installation with a distribution is a Windows installation whose CLI is a
+  // Linux program inside it (D2(a)): the binary's path is a Linux spelling the
+  // host cannot `stat`, and the question "is it there, and does it run?" is the
+  // distribution's -- asked through the same `version` probe, by
+  // `resolveInstalledBinary`'s WSL branch (T-C5). Without a distro the candidate
+  // is an ordinary host installation and rule 4's walk is the answer (F4).
+  const distro = candidate.distro ?? ''
+  const resolution = await withSpawnLog(env, deps.spawnLog, (log) => {
+    const shared = {
+      appEnv: env,
+      target,
+      ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }),
+      log,
+    }
+    if (distro !== '') {
+      return resolveInstalledBinary({
+        ...shared,
+        binaryPath: candidate.binaryPath ?? '',
+        distro,
+        // The checkout is the CLI's working directory **inside** the
+        // distribution, so it is the wrapper's `--cd`; `wsl.exe` itself is
+        // started in a host directory, which the checkout is not.
+        ...(checkout === undefined ? {} : { wslDirectory: checkout }),
+        ...(deps.wslPath === undefined ? {} : { wslPath: deps.wslPath }),
+        directory: (deps.workingDirectory ?? privateWorkingDirectory)(),
+      })
+    }
+    return resolveBinary({
+      ...shared,
       // The store's override, when it has one. Absent is the ordinary case: rule
       // 4 walks the well-known locations, and the console never asks.
       ...(candidate.binaryPath === undefined || candidate.binaryPath === ''
         ? {}
         : { configuredPath: candidate.binaryPath }),
-      appEnv: env,
       ...(deps.home === undefined ? {} : { home: deps.home }),
       ...(deps.prefixes === undefined ? {} : { prefixes: deps.prefixes }),
       directory: checkout ?? (deps.workingDirectory ?? privateWorkingDirectory)(),
-
-      target,
-      ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }),
-      log,
-    }),
-  )
+    })
+  })
   if (!resolution.ok) return { ok: false, reason: resolution.reason }
   const compatibility = classifyCliVersion(resolution.version)
   if (compatibility.mode === 'refused') {
@@ -689,10 +869,14 @@ export async function probeInstallation(
  *
  *   1. the schema: a project name that is safe and bounded, a config path and a
  *      checkout that are absolute when they are given;
- *   2. the checkout, when given: an existing directory, because it becomes the
- *      child's working directory (rule 5);
- *   3. `probeInstallation`: rule 4's resolution and the version handshake, which
- *      is where a missing `fugaro` and a CLI this console cannot drive are
+ *   2. the checkout, when given **on the host route**: an existing directory,
+ *      because it becomes the child's working directory (rule 5). Under a
+ *      `distro` this check is not run at all -- the checkout is then a Linux
+ *      spelling the host cannot see (F4, T-C6), and the probe below answers for
+ *      it;
+ *   3. `probeInstallation`: rule 4's resolution and the version handshake --
+ *      inside the distribution when the candidate names one (T-C5) -- which is
+ *      where a missing `fugaro` and a CLI this console cannot drive are
  *      refused;
  *   4. `deps.verify` -- one allow-listed `doctor --json` from that checkout,
  *      with that project -- whose refusal is the CLI's own sentence, shown
@@ -716,7 +900,14 @@ export async function validateInstallation(
   if (checkout !== undefined && !isAbsolutePath(checkout, MAX_INSTALLATION_PATH_LENGTH)) {
     return { ok: false, reason: 'the checkout must be an absolute path' }
   }
-  if (checkout !== undefined) {
+  // **The checkout's mode question is asked only on the host route.** Under a
+  // `distro` the checkout is a Linux spelling inside the distribution (F15), and
+  // the host cannot `stat` it -- asking would refuse an installation whose
+  // directory is perfectly good, which is F4's "a path the host cannot see is
+  // not the host's to answer". What answers for it is the probe below, which
+  // starts the CLI *in* that directory (`--cd`, T-C5): a directory that is not
+  // there is then `wsl.exe`'s refusal, in its own words.
+  if (checkout !== undefined && (candidate.distro ?? '') === '') {
     let isDirectory = false
     try {
       isDirectory = fs.stat(checkout).isDirectory()
@@ -737,12 +928,21 @@ export async function validateInstallation(
     // give the picker an unhandled rejection instead of the sentence the
     // operator needs to read, and would make the "nothing is stored" guarantee
     // depend on a caller's `catch` rather than on this step.
+    //
+    // **`distro` goes with it** (T-D1). For a WSL installation this read is
+    // `doctor --json` **inside the distribution** (T-C5's route, D2(a)): the
+    // checkout is a Linux directory the host cannot see, so a `verify` that did
+    // not know the distribution would start the CLI on the host, in a directory
+    // that does not exist there. What the CLI proves -- that this checkout
+    // belongs to this project -- is a fact about the machine the CLI runs on.
+    const distro = candidate.distro
     try {
       await deps.verify({
         project: candidate.project,
         binaryPath: probed.value.path,
         ...(configPath === undefined ? {} : { configPath }),
         checkout,
+        ...(distro === undefined || distro === '' ? {} : { distro }),
       })
     } catch (error) {
       return { ok: false, reason: error instanceof Error ? error.message : 'the pairing check refused this installation' }
@@ -761,6 +961,10 @@ export async function validateInstallation(
         ...(candidate.binaryPath === undefined || candidate.binaryPath === '' ? {} : { binaryPath: candidate.binaryPath }),
         ...(configPath === undefined ? {} : { configPath }),
         ...(checkout === undefined ? {} : { checkout }),
+        // The WSL field, carried through unchanged (T-D1): it is what makes the
+        // stored record a WSL one on every later read, and dropping it here
+        // would send the next launch to the host route with Linux paths.
+        ...(candidate.distro === undefined || candidate.distro === '' ? {} : { distro: candidate.distro }),
       },
       compatibility: probed.value.compatibility,
       resolved: probed.value.path,
@@ -784,7 +988,7 @@ export async function validateInstallation(
  * list the CLI printed, one button per row, and the two onboarding screens --
  * so a renderer cannot name a path this process did not itself obtain.
  */
-export type InstallationOperationName = 'list' | 'choose' | 'checkout' | 'remove' | 'openExternal'
+export type InstallationOperationName = 'list' | 'choose' | 'checkout' | 'remove' | 'reveal' | 'openExternal'
 
 /**
  * InstallationArgumentKind is the closed set of shapes one argument may take.
@@ -841,6 +1045,12 @@ export const INSTALLATION_OPERATIONS: readonly InstallationOperation[] = Object.
     ],
   },
   { name: 'remove', method: 'remove', args: [{ key: 'project', kind: 'installationName', required: true }] },
+  // `reveal` takes a **project name** and no path: the path the file manager is
+  // handed is computed in this process from its own record (`explorerPathFor`,
+  // T-D3), so a renderer cannot name a directory for Explorer to open -- the
+  // same rule the checkout row keeps by checking membership of the CLI's own
+  // list.
+  { name: 'reveal', method: 'reveal', args: [{ key: 'project', kind: 'installationName', required: true }] },
   // No arguments at all: `GETTING_STARTED_URL` is this process's constant, and
   // the one path that opens it is `openExternalValidated`. A renderer that sends
   // a URL has sent a key no row declares, and it is refused by name.
@@ -952,6 +1162,20 @@ export interface InstallationRow {
   readonly binary?: string
   readonly config?: string
   readonly checkout?: string
+  /** `distro` is the WSL distribution this row's CLI runs inside, when it has
+   * one (T-D1). A screen that draws a path for this row states the **Linux**
+   * spelling (`checkout`) and never the UNC one, which is Windows' and lives on
+   * `explorerPath` below (D3(a)). */
+  readonly distro?: string
+  /** `explorerPath` is the spelling **Windows opens** for this row's checkout,
+   * and it is the only field a reveal affordance reads (D3(a), T-D3). It is the
+   * UNC form (`\\wsl.localhost\<distro>\…`) for a WSL row and the checkout
+   * itself for a host row on Windows, and it is **absent** when there is
+   * nothing for Windows to open -- no checkout, or a platform that has no
+   * Explorer for this console's paths. It is never what a screen draws as "the
+   * installation's path": that line is `checkout`, the Linux spelling, which is
+   * the one the operator can paste into a terminal inside the distribution. */
+  readonly explorerPath?: string
   readonly active: boolean
   readonly mode: InstallationMode
 }
@@ -980,6 +1204,10 @@ export type ActiveInstallation =
       readonly binary?: string
       readonly config?: string
       readonly checkout?: string
+      /** `distro` is present exactly when the active installation is a WSL one
+       * (T-D1): the header and the environment view say which side of the
+       * boundary the CLI and its credentials are on (F21). */
+      readonly distro?: string
       readonly cliVersion: string | null
       readonly mode: InstallationMode
     }
@@ -1133,6 +1361,8 @@ export function createInstallationRegistry(options: {
         ...(installation.binaryPath === undefined ? {} : { binary: installation.binaryPath }),
         ...(installation.configPath === undefined ? {} : { config: installation.configPath }),
         ...(installation.checkout === undefined ? {} : { checkout: installation.checkout }),
+        ...(installation.distro === undefined ? {} : { distro: installation.distro }),
+        ...(explorerPathFor(installation) === undefined ? {} : { explorerPath: explorerPathFor(installation) }),
         active: installation.id === file.active,
         mode: compatibility.get(installation.project)?.mode ?? 'unknown',
       }))
@@ -1160,6 +1390,7 @@ export function createInstallationRegistry(options: {
         ...(active.binaryPath === undefined ? {} : { binary: active.binaryPath }),
         ...(active.configPath === undefined ? {} : { config: active.configPath }),
         ...(active.checkout === undefined ? {} : { checkout: active.checkout }),
+        ...(active.distro === undefined ? {} : { distro: active.distro }),
         cliVersion: read?.cliVersion ?? null,
         mode: read?.mode ?? 'unknown',
       }
@@ -1185,6 +1416,12 @@ export function createInstallationRegistry(options: {
         ...(held.binaryPath === undefined ? {} : { binaryPath: held.binaryPath }),
         ...(held.configPath === undefined ? {} : { configPath: held.configPath }),
         ...(checkout === undefined ? {} : { checkout }),
+        // **The route survives a checkout change** (T-D1). This record is
+        // rebuilt field by field rather than spread, so a field left out here is
+        // a field *deleted* from the file -- and a `distro` dropped by a
+        // checkout would turn a WSL installation into a host one with Linux
+        // paths in it, silently, on the next launch.
+        ...(held.distro === undefined ? {} : { distro: held.distro }),
       }
       return replace(record, file.active)
     },

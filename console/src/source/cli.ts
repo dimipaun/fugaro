@@ -47,6 +47,7 @@ import {
   planFor,
   privateWorkingDirectory,
   resolveBinary,
+  resolveInstalledBinary,
   runToCompletion,
   startSidecar,
 } from '../main/spawn'
@@ -248,7 +249,7 @@ export interface CliSourceOptions {
 
 /**
  * CliSource is a `FugaroSource` and a little more: `installation` is the resolved
- * header, and `close` stops the feeds. The eleven reads are one-liners over
+ * header, and `close` stops the feeds. The twelve reads are one-liners over
  * `readDocument` and `readText`.
  */
 export class CliSource implements FugaroSource {
@@ -448,6 +449,13 @@ export class CliSource implements FugaroSource {
 
   listRuns(args: ValidatedArguments): Promise<Snapshot> {
     return this.#readDocument('runs.list', args)
+  }
+
+  /** statsRuns reads `runs stats --json`: one indented document, like every
+   * other one-shot read (`console/docs/json-contract.md` section 9.2 -- the two
+   * line-delimited ones are `watch --json` and `logs RUN --json`). */
+  statsRuns(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('runs.stats', args)
   }
 
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot> {
@@ -893,6 +901,7 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     showBudget: (args) => read('budget.show', (source) => source.showBudget(args)),
     runReport: (args) => read('spend.report', (source) => source.runReport(args)),
     listRuns: (args) => read('runs.list', (source) => source.listRuns(args)),
+    statsRuns: (args) => read('runs.stats', (source) => source.statsRuns(args)),
     diagnoseRun: (args) => read('run.diagnose', (source) => source.diagnoseRun(args)),
     readRunLogs: (args) => read('run.logs', (source) => source.readRunLogs(args)),
     runLogLink: (args) => read('run.logLink', (source) => source.runLogLink(args)),
@@ -1217,12 +1226,19 @@ class LiveStream implements LiveFeed {
  * project name, the config path when it is not the ambient one, the binary when
  * they chose one, and the checkout when they picked a directory. It is the D13
  * tuple minus the binary path and version the source resolves itself.
+ *
+ * **`distro` is the WSL one, and it is what puts the candidate on that route**
+ * (D2(a)): with it, `binaryPath` and `checkout` are Linux spellings *inside* the
+ * distribution and the CLI is reached through `wsl.exe`; without it -- the
+ * ordinary case, and every record this console wrote before Windows -- the
+ * installation is a host installation and the fields are host paths.
  */
 export interface InstallationCandidate {
   readonly project: string
   readonly configPath?: string | undefined
   readonly binaryPath?: string | undefined
   readonly checkout?: string | undefined
+  readonly distro?: string | undefined
 }
 
 /** InstallationStore is the in-memory list the app holds for one run. */
@@ -1311,10 +1327,20 @@ export async function verifyCandidate(
     readonly spawner?: ChildSpawner
     readonly spawnLog?: SpawnLogWriter
     readonly home?: string
+    /** `wslPath` replaces the `wsl.exe` a WSL candidate's check runs, so a test
+     * can point the route at the fake (T-A1, T-D1). */
+    readonly wslPath?: string | undefined
   },
 ): Promise<void> {
   const env = deps.appEnv ?? {}
-  const directory = candidate.checkout ?? privateWorkingDirectory()
+  // **A WSL installation is never verified from the host's checkout path.** When
+  // the candidate names a distribution its `checkout` is a Linux directory
+  // inside it (F15), which is not this process's to start a child in: the host
+  // directory is the private one, and the CLI's own directory travels as the
+  // wrapper's `--cd` (D2(a), D3(a)).
+  const distro = candidate.distro ?? ''
+  const directory =
+    distro === '' ? candidate.checkout ?? privateWorkingDirectory() : privateWorkingDirectory()
   // A log this function opened is this function's to close; one it was handed
   // is the caller's. Without the `finally`, each installation added held one
   // descriptor until the process exited (review round 2 of PR 478).
@@ -1326,19 +1352,67 @@ export async function verifyCandidate(
   }
 }
 
-/** verifyWith is `verifyCandidate`'s body, with the log already chosen. */
+/** verifyWith is `verifyCandidate`'s body, with the log already chosen.
+ *
+ * **It runs on the installation's own route** (T-D1, D2(a)): a candidate with a
+ * `distro` is checked *inside* that distribution -- the resolution and the
+ * `doctor --json` read both go through `wsl.exe`, exactly as the app's own reads
+ * do (T-C5) -- and a candidate without one is checked on the host, unchanged.
+ * The property the pairing check exists for is the CLI's own statement about the
+ * checkout it was started in, so the read has to happen where the checkout is. */
 async function verifyWith(
   candidate: InstallationCandidate,
-  deps: { readonly spawner?: ChildSpawner; readonly home?: string },
+  deps: { readonly spawner?: ChildSpawner; readonly home?: string; readonly wslPath?: string | undefined },
   env: Readonly<Record<string, string | undefined>>,
   directory: string,
   log: SpawnLogWriter,
 ): Promise<void> {
+  const target: SpawnTarget = {
+    project: candidate.project,
+    ...(candidate.configPath === undefined ? {} : { configPath: candidate.configPath }),
+  }
+  const distro = candidate.distro ?? ''
+  if (distro !== '') {
+    const resolution = await resolveInstalledBinary({
+      binaryPath: candidate.binaryPath ?? '',
+      distro,
+      appEnv: env,
+      directory,
+      target,
+      ...(candidate.checkout === undefined ? {} : { wslDirectory: candidate.checkout }),
+      ...(deps.wslPath === undefined ? {} : { wslPath: deps.wslPath }),
+      ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }),
+      log,
+    })
+    if (!resolution.ok) throw new SourceRefusal(resolution.reason)
+    const plan = planFor('environment.report', {}, {
+      target,
+      binaryPath: resolution.path,
+      directory,
+      appEnv: env,
+      wsl: {
+        distro,
+        ...(candidate.checkout === undefined ? {} : { directory: candidate.checkout }),
+        ...(deps.wslPath === undefined ? {} : { executable: deps.wslPath }),
+      },
+    })
+    const result = await runToCompletion(plan, {
+      log,
+      ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }),
+    })
+    if (result.code !== 0) {
+      throw refusalFrom('doctor', cliSentence(result.stderr))
+    }
+    if (parseStdout(result.stdout).document === null) {
+      throw refusalFrom('doctor', cliSentence(result.stderr) ?? 'doctor printed no JSON document')
+    }
+    return
+  }
   const resolution = await resolveBinary({
     ...(candidate.binaryPath === undefined ? {} : { configuredPath: candidate.binaryPath }),
     appEnv: env,
     directory,
-    target: { project: candidate.project, ...(candidate.configPath === undefined ? {} : { configPath: candidate.configPath }) },
+    target,
     ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }),
     ...(deps.home === undefined ? {} : { home: deps.home }),
     log,
@@ -1346,10 +1420,7 @@ async function verifyWith(
   if (!resolution.ok) throw new SourceRefusal(resolution.reason)
 
   const plan = planFor('environment.report', {}, {
-    target: {
-      project: candidate.project,
-      ...(candidate.configPath === undefined ? {} : { configPath: candidate.configPath }),
-    },
+    target,
     binaryPath: resolution.path,
     directory,
     appEnv: env,

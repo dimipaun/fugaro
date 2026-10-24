@@ -21,7 +21,7 @@
 //     three of them on every platform the console ships on.
 
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, readdirSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -39,6 +39,7 @@ import {
   MAX_INSTALLATION_FILE_BYTES,
   cliConfigDirectories,
   createInstallationFileStore,
+  explorerPathFor,
   createInstallationRegistry,
   installationStorePath,
   isInside,
@@ -57,11 +58,21 @@ import type { InstallationFs, StoredInstallation } from '../../src/main/installa
 // that returns the sentence it is asserting.
 import { verifyCandidate } from '../../src/source/cli'
 import { installStub } from './stub'
+import { installWslStub } from './wslstub'
 import { classifyCliVersion } from '../../src/shared/version'
 import { privateWorkingDirectory } from '../../src/main/spawn'
 import { SPAWN_LOG_ENV } from '../../src/main/spawnlog'
 
 const HOME = '/Users/owner'
+
+/** only is the one entry a list is expected to hold, so "the fake recorded
+ * nothing" fails here rather than making every later assertion vacuous. */
+function only<T>(entries: readonly T[]): T {
+  expect(entries).toHaveLength(1)
+  const [entry] = entries
+  if (entry === undefined) throw new Error('the fake recorded nothing')
+  return entry
+}
 
 function freshDirectory(): string {
   return mkdtempSync(join(tmpdir(), 'fugaro-installations-'))
@@ -157,12 +168,60 @@ describe('the file’s schema', () => {
     expect(Object.keys(read.file)).toEqual(['version', 'active', 'installations'])
   })
 
-  it('accepts exactly the five keys of an entry, and the plan’s tuple', () => {
-    expect(INSTALLATION_KEYS).toEqual(['id', 'project', 'binaryPath', 'configPath', 'checkout'])
+  it('accepts exactly the six keys of an entry, and the plan’s tuple', () => {
+    // T-D1 added `distro` to the closed set (F15). It is the sixth key and the
+    // only one of them that names **where** the other paths are: with it the
+    // record is a WSL installation and its paths are Linux spellings inside that
+    // distribution; without it the record is a host installation, which is what
+    // every record written before Windows is.
+    expect(INSTALLATION_KEYS).toEqual(['id', 'project', 'binaryPath', 'configPath', 'checkout', 'distro'])
     const read = readInstallationFile(
-      fileText([{ id: '0123456789abcdef', project: 'fugaro', binaryPath: '/b', configPath: '/c', checkout: '/d' }]),
+      fileText([
+        { id: '0123456789abcdef', project: 'fugaro', binaryPath: '/b', configPath: '/c', checkout: '/d', distro: 'Ubuntu' },
+      ]),
     )
     expect(read.ok).toBe(true)
+  })
+
+  it('reads a file written before `distro` existed, and it is a host installation', () => {
+    // **The version step, which matters more than the field** (F46). An entry
+    // with no `distro` is not an incomplete record: it is a host installation,
+    // which is what this console wrote for every release before Windows. A
+    // reader that refused the absence would lose every remembered installation
+    // on the first launch after an upgrade -- the failure the one-directional
+    // rule (refuse an unknown key, accept a missing one) exists to prevent.
+    const read = readInstallationFile(fileText([installation()], '0123456789abcdef'))
+    expect(read.ok).toBe(true)
+    if (!read.ok) return
+    expect(read.file.installations[0]?.distro).toBeUndefined()
+    expect(Object.keys(read.file.installations[0] ?? {})).toEqual(['id', 'project', 'binaryPath'])
+  })
+
+  it('carries `distro` through a read, a write and a second read', () => {
+    const one = installation({ distro: 'Ubuntu', checkout: '/home/dimi/src/fugaro' })
+    const read = readInstallationFile(fileText([one], one.id))
+    expect(read.ok).toBe(true)
+    if (!read.ok) return
+    expect(read.file.installations[0]?.distro).toBe('Ubuntu')
+    // The writer's own round trip: a console that wrote the new key and could
+    // not read its own file would lose the installation on the next start.
+    const again = readInstallationFile(serializeInstallationFile(read.file))
+    expect(again.ok).toBe(true)
+    if (again.ok) expect(again.file.installations[0]?.distro).toBe('Ubuntu')
+  })
+
+  it.each([
+    ['a distro that is not a name', 'Ubuntu; touch /tmp/x', 'distro'],
+    ['a distro with a space', 'two words', 'distro'],
+    ['a distro that is not a string', 7, 'distro'],
+    ['a misspelled distro key', undefined, 'distro'],
+  ])('refuses %s by name', (_why, value, fragment) => {
+    const entry: Record<string, unknown> = { ...installation() }
+    if (value === undefined) entry['distroName'] = 'Ubuntu'
+    else entry['distro'] = value
+    const read = readInstallationFile(fileText([entry]))
+    expect(read.ok).toBe(false)
+    if (!read.ok) expect(read.reason).toContain(fragment)
   })
 
   it('refuses a planted token field, and the checker is not vacuous', () => {
@@ -568,6 +627,88 @@ describe('validation', () => {
       ['version', 'acme', privateDirectory],
       ['version', 'acme', privateDirectory],
     ])
+  })
+
+  it('accepts a CLI that is inside a distribution, and never asks the host about it', async () => {
+    // T-C6 of docs/console-windows/implementation-plan.md, and F4's other half.
+    // Under a `distro` the installation's `binaryPath` and `checkout` are Linux
+    // spellings **inside** the distribution: the host cannot `stat` either of
+    // them, so asking would refuse an installation that is perfectly good. What
+    // answers instead is the distribution, through the same `version` probe
+    // (T-C5) -- and the recording filesystem below proves the host was not asked.
+    const root = freshDirectory()
+    const host = join(root, 'windows')
+    const wsl = installWslStub(host, {
+      distros: { list: 'Ubuntu\r\n', status: 'Default Distribution: Ubuntu\r\n' },
+      scenario: { commands: { version: { stdout: '1.4.2\n' } } },
+    })
+    const linuxBinary = '/home/dimi/.local/bin/fugaro'
+    // A directory that exists, because the *distribution* starts the CLI in it
+    // (the fake models that with a real child). What matters for this case is
+    // that the host never asks about it, not that it is unreachable from here.
+    const linuxCheckout = join(freshDirectory(), 'src')
+    mkdirSync(linuxCheckout, { recursive: true })
+    const fs = recordingFs()
+    const result = await validateInstallation(
+      { project: 'fugaro', distro: 'Ubuntu', binaryPath: linuxBinary, checkout: linuxCheckout },
+      { appEnv: {}, fs, wslPath: wsl.binary, verify },
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // The Linux spellings are carried through as they were given, and the
+    // version came from inside the distribution.
+    expect(result.value.installation.binaryPath).toBe(linuxBinary)
+    expect(result.value.installation.checkout).toBe(linuxCheckout)
+    expect(result.value.compatibility.cliVersion).toBe('1.4.2')
+    // No `stat`, no `lstat`, no read: the host was never asked about a path it
+    // cannot see. This is the assertion the mutation -- one `fs.stat(checkout)`
+    // put back for every route -- fails.
+    expect(fs.calls).toEqual([])
+    // And the CLI really did run inside the distribution, in the directory the
+    // checkout names: `--cd` is the Linux spelling, which the fake refuses to
+    // see spelled the Windows way.
+    const spawn = only(wsl.reports().filter((report) => report.kind === 'spawn'))
+    expect(spawn.distro).toBe('Ubuntu')
+    expect(spawn.cd).toBe(linuxCheckout)
+    // `wsl.exe`'s own words, then the shell that carries the CLI (T-F4): the
+    // CLI's argv is inside the script, because the shell is what records the pid
+    // a cancellation has to name.
+    expect(spawn.argv.slice(0, 5)).toEqual(['-d', 'Ubuntu', '--cd', linuxCheckout, '-e'])
+    expect(spawn.argv.slice(5, 7)).toEqual(['sh', '-c'])
+    expect(spawn.wrapper).toContain(`exec 'fugaro' 'version'`)
+    // `wsl.exe` itself was started in a **host** directory, which the checkout
+    // (a Linux path) is not.
+    expect(spawn.cwd).toBe(privateWorkingDirectory())
+
+    // And a checkout that is *not* there is the distribution's refusal, in
+    // `wsl.exe`'s own words -- never the host's "is not a directory", because
+    // the host never looked.
+    const gone = await validateInstallation(
+      { project: 'fugaro', distro: 'Ubuntu', binaryPath: linuxBinary, checkout: '/home/dimi/src/gone' },
+      { appEnv: {}, fs, wslPath: wsl.binary, verify },
+    )
+    expect(gone.ok).toBe(false)
+    if (!gone.ok) {
+      expect(gone.reason).not.toContain('is not a directory')
+      expect(gone.reason).toContain('could not start the child')
+    }
+    expect(fs.calls).toEqual([])
+  })
+
+  it('still refuses that same path when the installation names no distribution', async () => {
+    // The other half of T-C6's red step, and the half that must keep passing: on
+    // the host route a path that cannot be `stat`ed is not a binary, and rule 4
+    // carries on to the well-known locations. With those emptied -- what a
+    // machine with no `fugaro` looks like -- the refusal names every candidate.
+    const result = await validateInstallation(
+      { project: 'fugaro', binaryPath: '/home/dimi/.local/bin/fugaro' },
+      { verify, prefixes: [] },
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.reason).toContain('/home/dimi/.local/bin/fugaro')
+      expect(result.reason).toContain('no fugaro')
+    }
   })
 
   it('stores a reduced-band CLI and marks it reduced', async () => {
@@ -987,5 +1128,219 @@ describe('the picker’s argument schema', () => {
     // "clears the checkout" expressible at all.
     const cleared = validateInstallationArguments(installationOperationFor('checkout'), { project: 'fugaro' })
     expect(cleared.ok && cleared.args).toEqual({ project: 'fugaro' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Part D: the distribution on a stored installation, and the two path rules
+// ---------------------------------------------------------------------------
+
+describe('a stored installation’s distribution', () => {
+  /** fakeWsl is Part A's fake `wsl.exe` (`test/unit/wslstub.ts`), and the only
+   * `wsl.exe` these tests ever reach: Windows cannot be run in this suite, so
+   * the WSL route is driven through the double or not at all. The distribution
+   * it holds answers the `version` handshake the probe runs (T-C5). */
+  function fakeWsl(): string {
+    return installWslStub(freshDirectory(), {
+      distros: {
+        list: 'Ubuntu\r\n',
+        status: 'Default Distribution: Ubuntu\r\nDefault Version: 2\r\n\r\nWSL version: 2.6.1.0\r\n',
+      },
+      scenario: { commands: { version: { stdout: '1.4.2\n' } } },
+    }).binary
+  }
+
+  /** hostBinary is the stub `fugaro` of `stub.ts`, for the host-route half of
+   * a test: the same double the console's own host route is driven with. */
+  function hostBinary(): string {
+    return installStub(freshDirectory(), { commands: { version: { stdout: '1.4.2\n' } } }).binary
+  }
+
+  /** registryWith is a registry over one file this test owns, with the
+   * installations given already written. */
+  function registryWith(entries: readonly StoredInstallation[]): ReturnType<typeof createInstallationRegistry> {
+    const directory = freshDirectory()
+    const store = createInstallationFileStore({ path: join(directory, INSTALLATIONS_FILE_NAME) })
+    store.save({ version: INSTALLATION_FILE_VERSION, active: null, installations: entries })
+    const registry = createInstallationRegistry({ store })
+    registry.load()
+    return registry
+  }
+
+  it('goes into the file when an installation is validated', async () => {
+    // T-D1's carry-through: the candidate named a distribution, the record
+    // written for it names the same one. A record that lost it would be read as
+    // a **host** installation on the next launch, with Linux paths in it -- the
+    // silent move to the wrong route this field exists to prevent.
+    const wsl = fakeWsl()
+    const result = await validateInstallation(
+      { project: 'fugaro', distro: 'Ubuntu', binaryPath: '/home/dimi/.local/bin/fugaro' },
+      { appEnv: {}, wslPath: wsl, verify: async () => undefined },
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.installation.distro).toBe('Ubuntu')
+    // The host route carries no `distro` key at all: absent is the ordinary
+    // case, and a key present and empty would be a third state nobody reads.
+    const host = await validateInstallation(
+      { project: 'fugaro', binaryPath: hostBinary() },
+      { appEnv: {}, verify: async () => undefined },
+    )
+    expect(host.ok).toBe(true)
+    if (host.ok) expect(Object.keys(host.value.installation)).not.toContain('distro')
+  })
+
+  it('is handed to `deps.verify`, so the pairing check runs inside the distribution', async () => {
+    // The brief's carry-over: `doctor --json` is the CLI's statement about the
+    // checkout it was started in, so a WSL installation's pairing check has to
+    // run **where the checkout is** (T-D1). `verify` is handed the distro, and a
+    // `verify` that does not pass it on starts the CLI on the host, in a Linux
+    // directory that does not exist there.
+    const checkout = join(freshDirectory(), 'src')
+    mkdirSync(checkout, { recursive: true })
+    const seen: { readonly distro?: string }[] = []
+    const result = await validateInstallation(
+      { project: 'fugaro', distro: 'Ubuntu', checkout },
+      {
+        appEnv: {},
+        wslPath: fakeWsl(),
+        verify: async (candidate) => {
+          seen.push({ ...(candidate.distro === undefined ? {} : { distro: candidate.distro }) })
+        },
+      },
+    )
+    expect(result.ok).toBe(true)
+    expect(seen).toEqual([{ distro: 'Ubuntu' }])
+    // ...and the host route hands over no distro, exactly as it did before.
+    const hostCheckout = join(freshDirectory(), 'src')
+    mkdirSync(hostCheckout, { recursive: true })
+    const hostSeen: { readonly distro?: string }[] = []
+    await validateInstallation(
+      { project: 'fugaro', checkout: hostCheckout, binaryPath: hostBinary() },
+      {
+        appEnv: {},
+        verify: async (candidate) => {
+          hostSeen.push({ ...(candidate.distro === undefined ? {} : { distro: candidate.distro }) })
+        },
+      },
+    )
+    expect(hostSeen).toEqual([{}])
+  })
+
+  it('survives a checkout change, and the row and the header carry it', () => {
+    // The registry rebuilds a record field by field, so a field left out is a
+    // field deleted: a `setCheckout` that dropped `distro` would move the
+    // installation to the host route and keep its Linux paths.
+    const registry = registryWith([installation({ distro: 'Ubuntu', checkout: '/home/dimi/src/one' })])
+    registry.setCheckout('fugaro', '/home/dimi/src/two')
+    expect(registry.entry('fugaro')?.distro).toBe('Ubuntu')
+    expect(registry.rows()[0]?.distro).toBe('Ubuntu')
+    registry.choose('fugaro')
+    const current = registry.current()
+    expect(current.chosen && current.distro).toBe('Ubuntu')
+    // Clearing the checkout keeps the route too.
+    registry.setCheckout('fugaro', undefined)
+    expect(registry.entry('fugaro')?.distro).toBe('Ubuntu')
+    expect(registry.entry('fugaro')?.checkout).toBeUndefined()
+  })
+})
+
+describe('the two path rules of Part D', () => {
+  it('compares Windows paths with Windows’ own separator (F13)', () => {
+    // The defect: the check appended a literal `'/'`, so on Windows a path that
+    // **is** inside was not reported inside -- the prefix test failed to fire in
+    // the one direction the store's safety depends on (`C:\Users\dimi\AppData\Fugaro Console`
+    // does not start with `C:\Users\dimi\AppData/`). The sibling case is the
+    // other half: a name that merely starts with the outer one's is not inside it.
+    expect(isInside('C:\\Users\\dimi\\AppData', 'C:\\Users\\dimi\\AppData2')).toBe(false)
+    expect(isInside('C:\\Users\\dimi\\AppData', 'C:\\Users\\dimi\\AppData\\Fugaro Console')).toBe(true)
+    expect(isInside('C:\\Users\\dimi\\AppData', 'C:\\Users\\dimi\\AppData')).toBe(true)
+    expect(isInside('C:\\Users\\dimi\\AppData', 'C:\\Users\\dimi\\Other')).toBe(false)
+    // ...and the POSIX cases are unchanged, including the sibling one.
+    expect(isInside('/a/fugaro', '/a/fugaro-console')).toBe(false)
+    expect(isInside('/a/fugaro', '/a/fugaro/x')).toBe(true)
+  })
+
+  it('names the distribution’s own config directory when the caller knows it (F17)', () => {
+    // The three below are the host's, and on Windows none of them is the
+    // directory the operator's CLI reads: that one is `~/.config/fugaro`
+    // **inside the distribution**, spelled the way the distribution spells it.
+    // The home arrives from the caller rather than being guessed -- a `~` this
+    // file invented would be a path the CLI does not use.
+    const host = cliConfigDirectories({}, HOME)
+    expect(host).toEqual([join(HOME, '.config', 'fugaro')])
+    const withDistro = cliConfigDirectories({}, 'C:\\Users\\dimi', '/home/dimi')
+    expect(withDistro).toEqual([
+      join('C:\\Users\\dimi', '.config', 'fugaro'),
+      '/home/dimi/.config/fugaro',
+    ])
+    // The store's own path is still refused inside a host config directory and
+    // is **not** refused by the distribution's: the console's store is on the
+    // host, and no host path is inside a Linux home (F13's "vacuous, and it must
+    // stay vacuous rather than become wrong").
+    expect(isInside('/home/dimi/.config/fugaro', 'C:\\Users\\dimi\\AppData\\Fugaro Console')).toBe(false)
+  })
+
+  it('composes the spelling the file manager opens, and only where there is one (T-D3)', () => {
+    // The second half of D3(a): a row's `checkout` is the Linux spelling and it
+    // stays the one the console states and passes; the file manager is handed
+    // this instead. The UNC form is **composed**, not asked of `wslpath`: the
+    // translation the console *uses* is a process (D4(b)), and this is a
+    // convenience over a path the record already holds.
+    expect(explorerPathFor({ checkout: '/home/dimi/src/acme', distro: 'Ubuntu' })).toBe(
+      '\\\\wsl.localhost\\Ubuntu\\home\\dimi\\src\\acme',
+    )
+    // A host row's checkout is already the spelling its own file manager opens,
+    // so it is handed back unchanged and no UNC form is invented for it.
+    expect(explorerPathFor({ checkout: '/home/dimi/src/acme' })).toBe('/home/dimi/src/acme')
+    expect(explorerPathFor({ checkout: 'C:\\Users\\dimi\\src' })).toBe('C:\\Users\\dimi\\src')
+    // Nothing to open: no checkout at all (rule 5's ordinary case), and the
+    // empty string, which the schema refuses to store but a spread would carry.
+    expect(explorerPathFor({})).toBeUndefined()
+    expect(explorerPathFor({ checkout: '', distro: 'Ubuntu' })).toBeUndefined()
+  })
+
+  it('carries both spellings on the row, each with one reader', () => {
+    // A stored WSL installation: the row draws `checkout` (the Linux spelling,
+    // `rowText` in the picker's view) and the reveal affordance reads
+    // `explorerPath` (the UNC one). The two are different fields on purpose --
+    // one row cannot have a single path that is right for both.
+    const rowsOf = (entries: readonly StoredInstallation[]): ReturnType<ReturnType<typeof createInstallationRegistry>['rows']> => {
+      const store = createInstallationFileStore({ path: join(freshDirectory(), INSTALLATIONS_FILE_NAME) })
+      store.save({ version: INSTALLATION_FILE_VERSION, active: null, installations: entries })
+      const registry = createInstallationRegistry({ store })
+      registry.load()
+      return registry.rows()
+    }
+    const rows = rowsOf([
+      { id: '0123456789abcdef', project: 'acme', checkout: '/home/dimi/src/acme', distro: 'Ubuntu' },
+    ])
+    expect(rows).toEqual([
+      expect.objectContaining({
+        project: 'acme',
+        checkout: '/home/dimi/src/acme',
+        explorerPath: '\\\\wsl.localhost\\Ubuntu\\home\\dimi\\src\\acme',
+      }),
+    ])
+    // A host record has no distro, so its one path is the same on both fields.
+    const host = rowsOf([{ id: '0123456789abcdef', project: 'acme', checkout: '/home/dimi/src/acme' }])
+    expect(host).toEqual([expect.objectContaining({ checkout: '/home/dimi/src/acme', explorerPath: '/home/dimi/src/acme' })])
+    // ...and a record with no checkout carries the field on neither, rather than
+    // an empty one a reader would have to test for emptiness.
+    const bare = rowsOf([{ id: '0123456789abcdef', project: 'acme' }])
+    expect(bare).toEqual([expect.objectContaining({ project: 'acme' })])
+    expect(bare[0]).not.toHaveProperty('explorerPath')
+    expect(bare[0]).not.toHaveProperty('checkout')
+  })
+
+  it('keeps the store on the host', () => {
+    // The Rule half of T-D5, written down so the next reader does not take the
+    // temptation: putting the store inside the distribution so that both sides
+    // spell one path would put the console's own file where the operator's CLI
+    // reads (F13, F14).
+    const userData = 'C:\\Users\\dimi\\AppData\\Roaming\\fugaro-console'
+    expect(installationStorePath({ userData, env: {}, home: 'C:\\Users\\dimi' })).toBe(
+      join(userData, INSTALLATIONS_FILE_NAME),
+    )
   })
 })

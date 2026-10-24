@@ -6,8 +6,8 @@ type Cursor struct{ Slug, Run string }
 // Rows lists the selectable rows of v in screen order, honouring folds: a
 // repository's header, then each of its running and queued runs, then its
 // finished runs (design generic-tool §10.3's ordering), unless the
-// repository is collapsed. A finished run is selectable so `x` can
-// acknowledge the one the cursor names.
+// repository is collapsed. A finished run is selectable so `x` can dismiss
+// the one the cursor names (any finished run, not only a failure).
 func Rows(v View, collapsed map[string]bool) []Cursor {
 	var rows []Cursor
 	for _, b := range v.Repos {

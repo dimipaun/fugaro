@@ -496,8 +496,11 @@ func recordOfRun(r runview.Row) budget.DayRecord {
 	// The by-model split of a run with a notional part is of its whole model
 	// figure and cannot be told apart per model, so it is left out rather
 	// than counted as money (a subscription run always had none of it here).
+	// The split is asked of the notional part, never of the basis (P12,
+	// D140): a cascade run the plan served in full is api-list and billed
+	// nothing.
 	for name, usd := range r.Cost.ModelBy {
-		if r.Cost.ModelBasis == runstore.BasisSubscription || notional > 0 {
+		if r.Cost.AllNotional() || notional > 0 {
 			continue
 		}
 		rec.ByModel[budget.Key(name)] = budget.ModelTotals{Micros: microsOfUSD(usd)}

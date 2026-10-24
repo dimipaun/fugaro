@@ -220,6 +220,9 @@ export const BASE_PAIRS = [
   ['--text', '--panel', BODY_TEXT],
   ['--text-muted', '--panel', BODY_TEXT],
   ['--accent-on-dark', '--panel', BODY_TEXT],
+  // The pill is a filled shape on the surface since the owner's ruling of 2026-10-23 (lever 5:
+  // outlined boxes become tone steps), so its quieter label is read on the surface.
+  ['--text-muted', '--surface', BODY_TEXT],
   // The success tone as a step's fill, with the ground as its label.
   ['--ground', '--ok', BODY_TEXT],
 ]
@@ -932,10 +935,21 @@ test('the slider is an ordered list a screen reader reads in order, and the run 
     const steps = sliderStepsOf(page.html)
     const failures = pictureA11yFailures(page.html)
     assert.deepEqual(failures, [], `${page.rel}: the slider and the run's picture are not readable in order:\n  ${failures.join('\n  ')}`)
+    // The homepage's slider is retired by the owner's ruling of 2026-10-23 (the redesign's Step 3,
+    // lever 1: the run is ONE section, an ordered list of its four steps, each with a heading and
+    // its line and its picture inside the item, held just below). No page carries the
+    // slider's steps any more; the reading above stays for any page that brings them back.
+    assert.equal(steps.length, 0, `${page.rel} carries the retired slider's steps (the owner's ruling of 2026-10-23)`)
     if (page.rel === 'index.html') {
-      assert.equal(steps.length, 3, `${page.rel} carries ${steps.length} slider steps, and the owner's approved draft of 2026-10-19 is three: you tell your agent, Fugaro runs it in your cloud, you get a draft pull request`)
-    } else {
-      assert.equal(steps.length, 0, `${page.rel} carries the slider's steps, and the slider is the homepage's own block (the owner's approved draft of 2026-10-19)`)
+      const run = parse(page.html)
+      const lists = findAll(run, (el) => el.name === 'ol' && (el.attrs.get('class') ?? '').split(/\s+/).includes('home-run-steps'))
+      assert.equal(lists.length, 1, `${page.rel} carries ${lists.length} run lists; the run is one section, one ordered list (the owner's ruling of 2026-10-23)`)
+      const items = lists[0].children.filter((el) => el.name === 'li')
+      assert.equal(items.length, 4, `${page.rel}'s run list carries ${items.length} steps, and the run is four`)
+      for (const item of items) {
+        assert.equal(findAll(item, (el) => el.name === 'h3').length, 1, `${page.rel}: a run step has no heading of its own inside its item`)
+        assert.ok(findAll(item, (el) => el.name === 'img' && (el.attrs.get('alt') ?? '').trim() !== '').length === 1, `${page.rel}: a run step's picture has no alt text`)
+      }
     }
     if (page.rel === 'how-it-works/index.html') {
       assert.equal(runDrawingsOf(page.html).length, 2, `${page.rel} draws the run ${runDrawingsOf(page.html).length} times, and it draws it twice — the wide drawing and the phone one (the owner's draft of 2026-10-19)`)

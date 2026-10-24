@@ -193,7 +193,7 @@ func haltLines(rec *runstore.Record) string {
 		fmt.Fprintf(&b, " (%s)", h.Detail)
 	}
 	fmt.Fprintf(&b, " at %s", h.At.UTC().Format("2006-01-02 15:04:05 UTC"))
-	if rec.Cost == nil || rec.Cost.ModelBasis != runstore.BasisSubscription {
+	if rec.Cost == nil || !rec.Cost.AllNotional() {
 		// The money the run spent: rec.CostUSD is the whole model figure, and
 		// a cascade run's tier-A dollars are the subscription's, not the
 		// run's (C1.16, P12). Without a breakdown (a record from before it)
@@ -230,7 +230,7 @@ func haltLines(rec *runstore.Record) string {
 	case runstore.HaltNoCredential:
 		fmt.Fprintf(&b, "To continue: %s once a credential is usable again (`fugaro accounts ls` shows each admitted account's state; the project policy's `credentials` decides whether another tier may be used meanwhile).\n\n", again)
 	case runstore.HaltCredsRulesDenied:
-		fmt.Fprintf(&b, "To continue: an operator re-runs `fugaro update --firebase-project <firebase-project-id>` with this release, which deploys the rules the cascade's fields need, then %s.\n\n", again)
+		fmt.Fprintf(&b, "To continue: an operator re-runs `fugaro update --firebase-project <gcp-project-id>` with this release, which deploys the rules the cascade's fields need, then %s.\n\n", again)
 	case runstore.HaltRunCap, runstore.HaltNoCap:
 		if rec.Budget != nil && h.Reason == runstore.HaltNoCap {
 			fmt.Fprintf(&b, "To continue: an admin sets the missing cap with `fugaro budget set`, then %s.\n\n", again)

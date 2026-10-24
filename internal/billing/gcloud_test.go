@@ -281,7 +281,7 @@ func TestGcloudFallbackAbsentSaysWhichLineToRun(t *testing.T) {
 	if !errors.As(err, &e) {
 		t.Fatalf("neither source answering: %v, want *ErrNoSource", err)
 	}
-	if want := "gcloud billing projects link fugaro-demo --billing-account=BILLING_ACCOUNT_ID"; e.Guided != want {
+	if want := "gcloud billing projects link fugaro-demo --billing-account=<billing-account-id>"; e.Guided != want {
 		t.Errorf("the guided line: %q, want %q", e.Guided, want)
 	}
 	if !strings.Contains(err.Error(), e.Guided) {
@@ -304,7 +304,7 @@ func TestGcloudFallbackAbsentSaysWhichLineToRun(t *testing.T) {
 // through shellword, exactly as internal/cli's guided() prints it.
 func TestGcloudFallbackGuidedLineQuotesTheProject(t *testing.T) {
 	e := &ErrNoSource{Guided: Guided("a project with spaces")}
-	if want := "gcloud billing projects link 'a project with spaces' --billing-account=BILLING_ACCOUNT_ID"; e.Guided != want {
+	if want := "gcloud billing projects link 'a project with spaces' --billing-account=<billing-account-id>"; e.Guided != want {
 		t.Errorf("the guided line: %q, want %q", e.Guided, want)
 	}
 }

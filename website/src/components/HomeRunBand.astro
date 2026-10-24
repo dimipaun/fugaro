@@ -1,162 +1,195 @@
 ---
 /**
- * website/src/components/HomeRunBand.astro — the run, as four steps on the homepage (the
- * owner's approved board `website/design-ref/HomeV3.dc.html`, 2026-10-20; redesign part P1).
+ * website/src/components/HomeRunBand.astro: the run, as the homepage's one section about it
+ * (the owner's rulings of 2026-10-23, the redesign's Step 3, lever 1: "the run as ONE section
+ * instead of the three overlapping explainers").
  *
- * **What it is.** The board's band under the slider: an eyebrow, the line "How a task becomes
- * a pull request", the run's four steps as numbered cards, and one link to the page that draws
- * the whole thing. It is not the picture of the run — that is `/how-it-works/`'s
- * `RunDiagram.astro`, and `website/test/home.mjs` refuses a `figure.run-diagram` on this page
- * on purpose — it is the four names a reader needs before the slider's panels make sense.
+ * **What it is.** The heading "How a task becomes a pull request", the run's four steps, and a
+ * real picture beside each step: the zoom diagrams `/how-it-works/` draws in full, from the
+ * developer's view down to the inside of one job, and the console's run screen for the pull
+ * request a run ends in. On a wide screen each step is a row, its words beside its picture; on a
+ * phone each step is followed by its picture. A picture's name is its own title, drawn in it, and
+ * its alt text, so it carries no caption.
  *
  * **Every word of it is already held to a document.** The four step names and the line under
- * each one are `RunDiagram.astro`'s own — its `BOXES` names and four of its `LABELS` — and that
- * component holds every label to the document it cites at build time, in the same file the
- * line is written in. So this component imports them rather than writing them again: a second
- * copy of a label is a copy that drifts from the README, and a second copy of the guard is two
- * guards that can disagree about what "the same line" means. `website/test/home.mjs` reads the
- * built page and holds the four lines to their documents from the outside, the way it does for
- * the picture on the page that carries it.
+ * each one are `RunDiagram.astro`'s own (its `BOXES` names and four of its `LABELS`), held to the
+ * documents they cite at build time in `src/lib/run-labels.mjs`. The zoom diagrams' names and alt
+ * texts are `src/lib/zoom-levels.mjs`'s, the same ones `/how-it-works/` uses; the console
+ * screen's are `website/data/console-screens.yaml`'s.
  *
- * **The two headings the board adds are the board's.** "The run" and "How a task becomes a
- * pull request" are the approved board's own words — the second is also the aria-label the
- * how-it-works picture carries — and they are listed in the pull request for the owner to veto,
- * because no document of this repository writes them.
- *
- * The band is drawn as the board draws it: a panel strip the width of the page, a hairline
- * above and below, and the cards on the surface tone. Its top padding is on the inner block
- * and not on the section, because every top-level block of the homepage pads the gap below
- * itself once (`website/test/base-styles.mjs`'s `homeRhythmFailures`).
+ * The section pads below itself and not above, because every top-level block of the homepage
+ * pads the gap below itself once (`website/test/base-styles.mjs`'s `homeRhythmFailures`).
  */
+import { loadConsoleScreens } from '../content.ts'
 import { BOXES, LABELS } from '../lib/run-labels.mjs'
+import { LEVELS } from '../lib/zoom-levels.mjs'
 
-/** The four steps, in the run's order: the diagram's own box names, and the line the diagram
- *  prints for each of them where it prints one. The last step is the run's result, which is
- *  why its badge is the green one (`base.css`'s `.step-badge[data-state='done']`). */
+// The console's run screen, when the console's data file lists it; a build whose file does not
+// (the gates build such copies of the site) shows the whole-project zoom diagram there instead.
+const RUN_SCREEN = loadConsoleScreens().screens.find((screen) => screen.src.endsWith('/console-run.webp'))
+
+const level = (id: string) => {
+  const found = LEVELS.find((entry) => entry.id === id)
+  if (!found) throw new Error(`website/src/components/HomeRunBand.astro: src/lib/zoom-levels.mjs has no ${id}.`)
+  return { src: found.src, alt: found.alt, width: 2560, height: 1440 }
+}
+
 const STEPS = [
-  { name: BOXES[0].name, line: LABELS.howItStarts, done: false },
-  { name: BOXES[1].name, line: LABELS.yourCredential, done: false },
-  { name: BOXES[2].name, line: LABELS.oneExecution, done: false },
-  { name: BOXES[3].name, line: LABELS.checkpoint, done: true },
+  { name: BOXES[0].name, line: LABELS.howItStarts, done: false, picture: level('level-3') },
+  { name: BOXES[1].name, line: LABELS.yourCredential, done: false, picture: level('level-2') },
+  { name: BOXES[2].name, line: LABELS.oneExecution, done: false, picture: level('level-1') },
+  {
+    name: BOXES[3].name,
+    line: LABELS.checkpoint,
+    done: true,
+    picture: RUN_SCREEN
+      ? { src: RUN_SCREEN.src, alt: RUN_SCREEN.alt, width: RUN_SCREEN.width, height: RUN_SCREEN.height }
+      : level('level-4'),
+  },
 ]
 ---
 
-<section class="home-run" aria-labelledby="home-run-title">
-  <div class="home-run-inner">
-    {/* The board's eyebrow and headline, and the one line of the block that is not a document's
-        own: both are listed in the pull request for the owner to veto. */}
-    <p class="eyebrow">The run</p>
-    <h2 class="home-run-title display-lg" id="home-run-title">How a task becomes a pull request</h2>
+<section class="home-run" data-reveal-block aria-labelledby="home-run-title">
+  <h2 class="home-run-title display-lg" id="home-run-title">How a task becomes a pull request</h2>
 
-    {/* The run's four steps, numbered, each with the repository's own line under it. An `ol`
-        because it is a sequence, and the badge is `aria-hidden` because the position is what
-        the list already says. */}
-    <ol class="home-run-steps">
-      {
-        STEPS.map((step, index) => (
-          <li class="card home-run-step">
-            <span class="step-badge" data-state={step.done ? 'done' : undefined} aria-hidden="true">
-              {index + 1}
-            </span>
+  {/* The run's four steps, in order: an `ol` because it is a sequence, and the order is shown
+      by position rather than by a printed number. */}
+  <ol class="home-run-steps">
+    {
+      STEPS.map((step) => (
+        <li class="home-run-step" data-state={step.done ? 'done' : undefined}>
+          <div class="home-run-words">
             <h3 class="home-run-step-name">{step.name}</h3>
             <p class="home-run-step-line" data-source={step.line.source}>
               {step.line.text}
             </p>
-          </li>
-        ))
-      }
-    </ol>
+          </div>
+          <figure class="home-run-figure">
+            <img
+              class="home-run-image"
+              src={step.picture.src}
+              alt={step.picture.alt}
+              width={step.picture.width}
+              height={step.picture.height}
+              loading="lazy"
+              decoding="async"
+            />
+          </figure>
+        </li>
+      ))
+    }
+  </ol>
 
-    {/* The board's link to the page that draws the run. It is a control a reader taps, so it
-        carries the 44 px minimum the owner's brief measures every control against
-        (`website/test/home.mjs`'s `controlTargetFailures`). */}
-    <p class="home-run-more">
-      <a class="home-run-link" href="/how-it-works/">See the whole run on How it works</a>
-    </p>
-  </div>
+  {/* The link to the page that draws the run whole. It is a control a reader taps, so it carries
+      the 44 px minimum the owner's brief measures every control against
+      (`website/test/home.mjs`'s `controlTargetFailures`). */}
+  <p class="home-run-more">
+    <a class="home-run-link" href="/how-it-works/">See the whole run on How it works</a>
+  </p>
 </section>
 
 <style>
-  /* The band: the panel tone, the hairline above and below, and the room below the block —
-     and **no top padding**, because the block above already carries the gap between them. The
-     room inside the band, above its first line, is the inner block's. */
+  /* Tokens only (W1.2). The band is a field one tone step above the ground, the width of the
+     page, with no rule above or below it (lever 5: hairlines become tone steps). */
   .home-run {
+    padding: var(--space-3xl) var(--frame-gutter) var(--space-2xl);
+    margin-bottom: var(--space-4xl);
     background: var(--panel);
-    border-block: var(--border-width) solid var(--border);
-    padding: 0 var(--space-md) var(--space-3xl);
-  }
-
-  .home-run-inner {
-    display: flex;
-    flex-direction: column;
-    max-width: var(--page-max);
-    margin-inline: auto;
-    padding-top: var(--space-3xl);
   }
 
   .home-run-title {
-    margin: var(--space-2xs) 0 var(--space-xl);
+    margin: 0 0 var(--space-2xl);
+    max-width: 16ch;
   }
 
-  /* The four steps: a row on a desktop, two by two on a tablet and one under the other on a
-     phone, by the same `auto-fit` the site's other grids use. Every card is the same height,
-     because a row of four cards of four heights reads as four things rather than one run. */
   .home-run-steps {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-    gap: var(--space-md);
-    margin: 0 0 var(--space-lg);
+    max-width: none;
+    gap: var(--space-2xl);
+    margin: 0 0 var(--space-xl);
     padding: 0;
     list-style: none;
   }
 
-  /* The card is `base.css`'s `.card`, with one thing this block changes: the band's four steps
-     are smaller boxes than the grid's cards, so they take the control's radius rather than the
-     card's. The stack the contents are laid in is this block's own. */
   .home-run-step {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2xs);
-    border-radius: var(--radius-lg);
-  }
-
-  /* The last step is the run's result, so it is the card the board marks: the green border and
-     the green badge, which is the one accent the site uses for "finished". */
-  .home-run-step:last-child {
-    border-color: var(--ok);
+    display: grid;
+    gap: var(--space-md);
   }
 
   .home-run-step-name {
-    margin: var(--space-2xs) 0 0;
-    font-family: var(--font-sans);
-    font-size: var(--font-size-lg);
+    margin: 0 0 var(--space-xs);
+    color: var(--text);
+    font-size: var(--font-size-2xl);
     font-weight: var(--weight-black);
     letter-spacing: var(--tracking-tight);
-    color: var(--text);
+    line-height: var(--leading-tight);
+  }
+
+  /* The last step is the one that finished: its name is the green that means "finished". */
+  .home-run-step[data-state='done'] .home-run-step-name {
+    color: var(--ok);
   }
 
   .home-run-step-line {
     margin: 0;
-    color: var(--text-muted);
-    font-size: var(--font-size-base);
+    max-width: 36ch;
+    color: var(--text);
+    font-size: var(--font-size-lg);
     line-height: var(--leading-normal);
+  }
+
+  .home-run-figure {
+    margin: 0;
+    min-width: 0;
+  }
+
+  .home-run-image {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    object-position: left top;
+    border-radius: var(--radius-sm);
+    background: var(--ground);
   }
 
   .home-run-more {
     margin: 0;
   }
 
-  /* A quiet link rather than a button: it is the way to the page that draws the run, and the
-     page's own call to action is the hero's. The minimum is what makes it a target a reader
-     can tap, and it is declared outside any media query because the minimum holds at every
-     width. */
   .home-run-link {
     display: inline-flex;
     align-items: center;
     min-height: 44px;
     color: var(--accent-on-dark);
-    font-family: var(--font-sans);
     font-size: var(--font-size-lg);
     font-weight: var(--weight-semibold);
+  }
+
+  /* The wide composition: each step is a row of two parts on a 5/7 split, the words on the left
+     and the picture on the right. */
+  @media (min-width: 64rem) {
+    .home-run-steps {
+      gap: var(--space-2xl);
+    }
+
+    .home-run-step {
+      grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+      align-items: center;
+      gap: var(--space-2xl);
+    }
+
+    /* The inside of one job is the run's centre, so its row changes shape: the words over the
+       picture, and the picture across the whole width, which keeps four steps from reading as
+       four copies of one row. */
+    .home-run-step:nth-child(3) {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-md);
+    }
+
+    .home-run-step:nth-child(3) .home-run-figure {
+      max-width: 56rem;
+    }
   }
 </style>

@@ -175,20 +175,24 @@ func isPlanPath(p string) bool {
 // directory they make) has been built, so its three entries left this map and
 // are checked like every other cited path, and T2's two (`mac.go`, the verify
 // half of the tag and the inbound gate, and `internal/mailbox/keychain`, the
-// item-name reader) and T3's two (`lease.go` and `shared/lease/parity.test.js`)
-// left it the same way. The remaining entries are the tasks still unbuilt —
-// T2a's `mac_sign_test.go` and the signing half of `mac.go`, T4's ledger, T5's
-// command, T6's runner, T7's sweeper and T8's corpus — and each of them must
-// stay absent until its own task lands.
+// item-name reader), T3's two (`lease.go` and `shared/lease/parity.test.js`),
+// T2a's `mac_sign_test.go` and T4's (`internal/mailbox/ledger.go`; its
+// `ledger_test.go` was written bare in the plan's T4 Files line, which
+// `planPathRE` could never collect — a citation with no directory prefix is not
+// a path — so the plan now spells it `internal/mailbox/ledger_test.go` and it is
+// checked like any other cited path) left it the same way. T2a also filled in
+// the signing half of `mac.go`, which was already in the tree as T2's file: the
+// entry that leaves this map is the test file, and the file it sits beside is
+// checked like every other cited path. The remaining entries are the tasks still
+// unbuilt — T5's command, T6's runner, T7's sweeper and T8's corpus — and each of
+// them must stay absent until its own task lands.
 var planWillCreate = map[string]string{
 	"internal/cli/mailbox.go":                 "T5's command surface",
 	"internal/cli/mailbox_test.go":            "T5, T6",
 	"internal/cli/mailbox_sweep_test.go":      "T7",
-	"internal/mailbox/ledger.go":              "T4",
 	"internal/mailbox/expiry.go":              "T7 (the hidden sweeper; the plan names it there, not under T3 or T4)",
 	"internal/mailbox/action.go":              "T6",
 	"internal/mailbox/parity_test.go":         "T8 (replays shared/mailbox/parity.test.js's corpus)",
-	"internal/mailbox/mac_sign_test.go":       "T2a",
 	"internal/mailbox/testdata/parity.json":   "T8 generates it; the Go side only reads it",
 	"docs/mobile/mailbox-review-checklist.md": "T8",
 	// The parity corpora the shared modules' own test files will write; the

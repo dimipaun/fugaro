@@ -228,8 +228,7 @@ const slideId = (index: number) => `${idPrefix}-${index + 1}`
      drawing on top of it is a shape the page does not need. */
   .screens-frame {
     padding: var(--space-sm);
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-xl);
+    border-radius: var(--radius-lg);
     background: var(--panel);
   }
 
@@ -270,13 +269,15 @@ const slideId = (index: number) => `${idPrefix}-${index + 1}`
     display: block;
     width: 100%;
     height: auto;
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-sm);
     background: var(--surface);
   }
 
+  /* The caption's box is its own words' width, set at the picture's right edge: the next slide,
+     clipped just past the track's edge, then holds no words near the window's edge either. */
   .screen-caption {
-    margin: var(--space-2xs) 0 0;
+    width: fit-content;
+    margin: var(--space-2xs) 0 0 auto;
     color: var(--text-muted);
     font-size: var(--font-size-sm);
   }
@@ -304,7 +305,7 @@ const slideId = (index: number) => `${idPrefix}-${index + 1}`
     width: 44px;
     min-height: 44px;
     padding: 0;
-    border: var(--border-width) solid var(--border);
+    border: 0;
     border-radius: var(--radius-pill);
     background: var(--surface);
     color: var(--text);
@@ -328,13 +329,15 @@ const slideId = (index: number) => `${idPrefix}-${index + 1}`
     transform: rotate(-45deg);
   }
 
-  .screen-arrow:hover {
-    border-color: var(--accent);
-    color: var(--accent-on-dark);
+  @media (hover: hover) and (pointer: fine) {
+    .screen-arrow:hover {
+      background: var(--border);
+      color: var(--accent-on-dark);
+    }
   }
 
-  .screen-arrow:focus-visible {
-    border-color: var(--accent);
+  .screen-arrow:active {
+    transform: scale(0.94);
   }
 
   /* The count: `n / N`, written by the script. Tabular figures, so the line does not jog
@@ -356,6 +359,8 @@ const slideId = (index: number) => `${idPrefix}-${index + 1}`
     display: flex;
     flex-wrap: wrap;
     align-items: center;
+    /* Centred under the frame, on the same axis as the arrows' bar above them. */
+    justify-content: center;
     gap: var(--space-2xs);
     margin: var(--space-sm) 0 0;
     padding: 0;
@@ -389,13 +394,14 @@ const slideId = (index: number) => `${idPrefix}-${index + 1}`
     display: block;
     width: var(--space-xs);
     height: var(--space-xs);
-    border: var(--border-width) solid var(--border);
     border-radius: var(--radius-pill);
-    background: var(--surface);
+    background: var(--border);
   }
 
-  .screen-dot:hover::before {
-    border-color: var(--accent);
+  @media (hover: hover) and (pointer: fine) {
+    .screen-dot:hover::before {
+      background: var(--text-muted);
+    }
   }
 
   /* The slide the reader is on: the script writes `aria-current="true"` on its own dot, and
@@ -404,12 +410,10 @@ const slideId = (index: number) => `${idPrefix}-${index + 1}`
      mark. A stylesheet cannot read a scroll position, which is why the attribute is the
      script's; what the attribute *paints* is this rule's. */
   .screen-dot[aria-current='true']::before {
-    border-color: var(--accent);
     background: var(--accent);
   }
 
   .screen-dot:focus-visible::before {
-    border-color: var(--accent);
     background: var(--accent);
   }
 </style>

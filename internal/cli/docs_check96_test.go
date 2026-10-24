@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
 // pipeIntoPythonHeredocRE matches a pipe into `python3` on a line that opens a
@@ -38,7 +40,8 @@ var pipeIntoPythonHeredocRE = regexp.MustCompile(`\|\s*python3?\s[^\n]*<<`)
 // and that the things which are NOT true on this tree are stated in the check
 // itself:
 //
-//   - C2.2's release has not landed: internal/config/providers.go's
+//   - C2.3's drop is HELD (the owner's ruling: the flip waits on this check's
+//     own live result, #907): internal/config/providers.go's
 //     ServiceHeldSecretNames is still empty, so the job keeps its accessor and
 //     its container keeps the mount. A check that claimed the drop had happened
 //     would be false, and one that stayed silent about it would let a reader
@@ -46,21 +49,37 @@ var pipeIntoPythonHeredocRE = regexp.MustCompile(`\|\s*python3?\s[^\n]*<<`)
 //   - The keyless path is switched on by the job's environment naming the
 //     service, not by the opt-in: internal/gitprov/providers/providers.go opens
 //     the keyless provider only when FUGARO_CREDENTIALS_SERVICE_URL is set, and
-//     no job's environment on this tree carries that name — the one place the
-//     name is written at all is the credentials service's own container, as that
-//     service's audience (deploy/terraform/gcp/modules/installation/
-//     credentials.tf, from the installation field credentials_service.url) — so
-//     an opted-in runner still reads the App key and mints in the job today. A
-//     check that read "the mint is the service's" as the state of this tree
-//     would be false, and this is the check the owner runs after that release.
-//   - The service refuses every call on this tree: its deployment configures it
-//     now — the seven names credentials.tf sets are what C1.14's builder reads,
-//     so a revision starts and serves — and its account holds exactly one grant,
-//     the bundle's accessor (Q6), and no role on the installation's database, so
-//     the first read a call makes (the operator's stop switches) is denied and
-//     the call is answered `state_unavailable` rather than served. The check has
-//     to say so, and it has to keep saying so for exactly as long as
-//     credentials.tf grants that account no `firebasedatabase` role.
+//     **the launch is what sets it now** (0.10.1) —
+//     internal/cli/run.go's credentialsServiceLaunchEnv puts it on an opted-in
+//     installation's per-repository execution and on no other, from the URL the
+//     credentials stage recorded in the project's config. So the check has to
+//     say what to expect per job: the variable present on a repository job's
+//     execution and the key not read in-job, absent on a shared project job and
+//     on every job of an installation that has not opted in. The sentence it
+//     used to carry ("nothing on this tree sets it", the variable expected
+//     absent, the key still read in-job) is now false and is banned below.
+//   - The service reads the installation's database on this tree: its
+//     deployment configures it — the seven names credentials.tf sets are what
+//     C1.14's builder reads, so a revision starts — and since 0.10.1 its account
+//     holds its OWN database role, the custom role fugaroCredentialsDatabase
+//     (firebasedatabase.instances.get and .update, on the Firebase project the
+//     database lives in, and no instance lifecycle), bound to that account and
+//     no other. Every database read a call makes is therefore admitted, and the
+//     first of them is NOT the operator's stop switches: it is the identity
+//     verification's own read of the run's write-once outcome (auth.go's
+//     checkLive, reached from Auth.Verify), which the stop switches, the policy
+//     and the bundle all come after. So step 4's pairing refusal (a) IS
+//     observable — the pairing question is asked only after Auth.Verify returned
+//     a whole identity, and that verification now completes — and so is step 4's
+//     other half, (b), a caller that is no job account: verifyJob refuses that
+//     caller out of the account table the container was configured with, before
+//     any database read, so the service answers `403` `unverified_job_identity`
+//     there, exactly as it does on the release the check is written for. What
+//     the check has to keep saying for exactly as long as credentials.tf grants
+//     that account a `firebasedatabase` role is that the reads are allowed — and,
+//     with the launch setting FUGARO_CREDENTIALS_SERVICE_URL on a repository
+//     job (the bullet above), that a mint reaches the bundle, which no
+//     Terraform writes: an unfilled bundle is the refusal the check now meets.
 //
 // One more thing is held to the code rather than to the prose: step 4's pass
 // condition. The pairing refusal is made in ServeHTTP after Auth.Verify returned
@@ -80,12 +99,13 @@ var pipeIntoPythonHeredocRE = regexp.MustCompile(`\|\s*python3?\s[^\n]*<<`)
 // read as carried out); "**on this tree that list is empty**" rewritten to
 // "**this list is populated**" while ServiceHeldSecretNames is still empty →
 // FAIL (the check would claim the job holds no key); "**The service is
-// configured from its own deployment now, and refuses every call.**" flattened
-// while credentials.tf grants the service's account no database role → FAIL
-// (the check would leave a reader taking step 3's mint as one this tree can
-// make); a `roles/firebasedatabase.*` grant added to credentials.tf while the
-// check still says every call is refused → FAIL in the other direction (the
-// service can serve and the check did not notice); a repository field added to
+// configured from its own deployment now, and reads the installation's
+// database.**" flattened while credentials.tf grants the service's account its
+// database role → FAIL (the check would leave a reader taking the service's
+// database reach as a gap that is still open); the two resources of that role
+// deleted from credentials.tf while the check still says the reads are admitted
+// → FAIL in the other direction (the service cannot read the database and the
+// check did not notice); a repository field added to
 // credsvc.MintRequest → FAIL (the check's strongest claim is that the
 // repository is the service's to decide, and that is exactly this absent
 // field); the pairing clause in credsvc's admission changed from
@@ -93,15 +113,41 @@ var pipeIntoPythonHeredocRE = regexp.MustCompile(`\|\s*python3?\s[^\n]*<<`)
 // pairing refusal as the reason a run identity for X cannot mint for Y, and
 // that clause is the mechanism); the `# 0` read-back on the Restore's scratch
 // line deleted → FAIL (the check's final assertion is that nothing survives
-// it); the known-limit bullet on the URL gate deleted whole → FAIL (the check
-// would leave a reader taking the keyless path as the state of this tree);
-// step 4's "**exactly `1` audit line** for the pairing refusal's run id" put
+// it); the per-job URL paragraph rewritten back to "nothing on this tree sets
+// it", the variable expected absent and the key still read in-job → FAIL, on
+// the ban and on the pin both, because internal/cli/run.go's
+// credentialsServiceLaunchEnv sets the variable on a repository job and
+// internal/cli/run.go is read for the helper's existence; step 4's
+// "**exactly `1` audit line** for the pairing refusal's run id" put
 // back to "**`0` audit lines**" → FAIL (the check would fail a correct release,
 // whose refusal is recorded by refuseCall); the pairing refusal's line moved
 // out of server.go's refuseCall and into refuse → FAIL in the other direction
 // (the check's expectation is held to refuseCall's body and to auditCall's
-// being written before the answer); and a mint's own refusals moved off
-// refuseMint/auditMint → FAIL (the check states those as audited too).
+// being written before the answer); a mint's own refusals moved off
+// refuseMint/auditMint → FAIL (the check states those as audited too); the
+// check's "the first read a call makes — **not** the stop switches, but the
+// identity verification's own read of the run's write-once outcome" put back to
+// the draft's "the first read a call makes, the operator's stop switches, is
+// denied" → FAIL (that order is not the code's: auth.go's checkLive is reached
+// from Auth.Verify, and Kills.Stop is asked only after it — and the check's
+// account of `state_unavailable`, and of why step 4's pairing refusal cannot
+// be reached on this tree, rest on that order); that paragraph's "**nor can
+// step 4's pairing refusal (a) be observed**" deleted → FAIL (the check would
+// claim a deployed service answers the pairing refusal on a tree where the
+// denied database read is the verification's own); and its "(b) is observable"
+// — or the `verifyJob` sentence beside it — deleted, or the two halves put back
+// together as "answers both (a) and (b) `state_unavailable`" → FAIL (verifyJob
+// is the first thing Auth.Verify does and it reads the account table out of the
+// configuration, so a caller that is no job account is refused 403
+// unverified_job_identity here, before any database read); the check's "that refusal **is**
+// audited" put back to the draft's "a refusal taken before the mint is reached
+// is NOT audited on this tree" → FAIL (the pairing refusal is made after
+// Auth.Verify returned a whole identity, so refuseCall records it — a check
+// that said otherwise would fail a correct release and contradict its own step
+// 4); and the register's row 99's "**The service's issuance audit line on the
+// answer path IS wired** (#902)" put back to "nothing on the forward path calls
+// `audit.Write`" → FAIL (cascade.go's answer writes that line, so the row would
+// send a reader looking for a missing line that is not missing).
 func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	check := check96Section(t)
 
@@ -137,11 +183,16 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 		// stdin, so the `printf … | python3 - <<'PY'` this step first used handed python the
 		// script and an empty stdin, and the step printed none of its facts.
 		"python3 - \"$W/job.json\" <<'PY'",
-		// The known limit of this release, which the check has to carry: the keyless path is
-		// switched on by the job's environment naming the service, and nothing on this tree
-		// puts that name there, so an opted-in runner still reads the key and mints in-job.
-		"the expected answer today is `false`",
-		"**What to expect today is therefore `FUGARO_CREDENTIALS_SERVICE_URL` absent from the job's environment and the key still read in-job**",
+		// The wiring, which the check has to state per job: the launch sets the
+		// variable on an opted-in installation's per-repository job and on no
+		// other, so the expected answer is true there and false on a shared
+		// project job and on every job of an installation that has not opted in.
+		"the expected answer on an opted-in installation's repository job is `true`",
+		"On a **shared project job** the expected answer is `false`",
+		"**What to expect on an opted-in installation is therefore `FUGARO_CREDENTIALS_SERVICE_URL` present on a per-repository job's execution and the App key not read in-job",
+		"**The launch is what puts it there, as of 0.10.1**",
+		"credentialsServiceLaunchEnv",
+		"held until the live result of this check proves the deployed service mints",
 		// And the audit expectation of step 4, which is the truth of the answer path: the
 		// pairing refusal is made after the identity was verified, so refuseCall records it —
 		// exactly one line, the route's purpose and credential, no tier, the refusal's own
@@ -159,6 +210,31 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	}
 	if !strings.Contains(check, "# 0") {
 		t.Errorf("docs/gcp-live-checklist.md's Check 96 no longer reads its own scratch directory back to 0: the Restore's final assertion is that no file the check wrote survives it")
+	}
+
+	// The register's row 96 carries two of the same claims, and two reviews found
+	// both of them false the same way the section's were: the pairing refusal is
+	// recorded (it is made after Auth.Verify returned a whole identity), and the
+	// first database read of a call is the identity verification's own read of
+	// the run's outcome, not the operator's stop switches. The row is where a
+	// reader meets the check first, so it is held to the same two facts.
+	row := registerRow(t, whole, "96")
+	for _, want := range []string{
+		"that refusal **is** audited",
+		"the first read a call makes — **not** the stop switches, but the identity verification's own read of the run's write-once outcome",
+	} {
+		if !strings.Contains(row, want) {
+			t.Errorf("docs/gcp-live-checklist.md's row 96 does not say %q: the row is where the check's three claims are read first, and this is one of the two a review found it stating falsely", want)
+		}
+	}
+	for _, notWant := range []string{
+		"a refusal taken before the mint is reached is NOT audited",
+		"the first read a call makes, the operator's stop switches, is denied",
+		"nothing on the forward path calls `audit.Write`",
+	} {
+		if strings.Contains(row, notWant) {
+			t.Errorf("docs/gcp-live-checklist.md's row 96 still states %q: that reading is not the code's — auth.go's checkLive is the first database read, the pairing refusal is audited through refuseCall, and cascade.go's answer writes the issuance line — and a row that keeps it contradicts the section below it", notWant)
+		}
 	}
 
 	// The code each claim is read out of, so that a rename or a widening on
@@ -218,23 +294,38 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 		t.Errorf("internal/credsvc/github.go's `refuseMint` no longer audits the mint it refuses (%q): Check 96 states that a refused mint is recorded like an issued one", strings.TrimSpace(body))
 	}
 
-	// The second thing that is not true on this tree, held to the code as well:
-	// the keyless provider is opened only when the job's environment names the
-	// service, and the check has to carry that limit rather than read the mint as
-	// the service's on this tree.
+	// The wiring, held to the code as well: the keyless provider is opened only
+	// when the job's environment names the service, and the launch is what puts
+	// that name on a repository job — so the check's expected answers are read
+	// from the gate and from the launcher both.
 	providers := readDoc(t, "internal/gitprov/providers/providers.go")
 	if !strings.Contains(providers, "if vars[EnvCredentialsServiceURL] != \"\"") {
-		t.Errorf("internal/gitprov/providers/providers.go no longer gates the keyless github provider on `EnvCredentialsServiceURL`: Check 96 states that gate as the reason an opted-in runner still reads the App key and mints in the job on this tree, and that is the switch it names")
+		t.Errorf("internal/gitprov/providers/providers.go no longer gates the keyless github provider on `EnvCredentialsServiceURL`: Check 96 states that gate as the switch the launch sets, and that is the name it carries")
 	}
-	if !strings.Contains(check, "**What to expect today is therefore `FUGARO_CREDENTIALS_SERVICE_URL` absent from the job's environment and the key still read in-job**") {
-		t.Errorf("Check 96 does not state what to expect today about the URL gate: the keyless path needs FUGARO_CREDENTIALS_SERVICE_URL and nothing on this tree sets it, so the check the owner runs must say the variable is expected absent and the key still read in-job")
+	run := readDoc(t, "internal/cli/run.go")
+	if !strings.Contains(run, "func credentialsServiceLaunchEnv(") {
+		t.Errorf("internal/cli/run.go no longer has `credentialsServiceLaunchEnv`: Check 96 states the launch as what puts `FUGARO_CREDENTIALS_SERVICE_URL` on a repository job's execution, and that helper is the mechanism")
+	}
+	if !strings.Contains(check, "**What to expect on an opted-in installation is therefore `FUGARO_CREDENTIALS_SERVICE_URL` present on a per-repository job's execution and the App key not read in-job; on a shared project job, or on any job of an installation that has not opted in, the variable is absent**") {
+		t.Errorf("Check 96 does not state what to expect about the URL gate: the keyless path needs FUGARO_CREDENTIALS_SERVICE_URL, the launch sets it on a repository job, and the check the owner runs must say so per job — present there, absent on a shared project job and on an installation that has not opted in")
+	}
+	// And the retired half of that sentence, which said no job ever carried the
+	// name: banned rather than merely unpinned.
+	for _, stale := range []string{
+		"Nothing on this tree puts that variable in a job's environment",
+		"the expected answer today is `false`",
+		"the wiring that puts the name on a job is the release after this one",
+	} {
+		if strings.Contains(check, stale) {
+			t.Errorf("Check 96 still says %q: internal/cli/run.go's credentialsServiceLaunchEnv sets `FUGARO_CREDENTIALS_SERVICE_URL` on an opted-in installation's repository job as of this release, so the variable is expected present there and the check would mislead the owner about the state it is reading", stale)
+		}
 	}
 
 	// The first thing that is not true on this tree, held to the code: while the
 	// held-secrets list is empty the job keeps the key, and the check has to say
 	// so; the day the list names it, the same sentence is the one that has to go.
 	const notLanded = "**on this tree that list is empty**"
-	const stillHolds = "would be answered **yes, it still does**"
+	const stillHolds = "is answered **yes, it still does**"
 	if heldSecretsListNamesTheAppKey(t) {
 		if strings.Contains(check, notLanded) || strings.Contains(check, stillHolds) {
 			t.Errorf("internal/config/providers.go's ServiceHeldSecretNames now names the App key — C2.3's drop landed — and Check 96 still says the job holds it: the release landed and this check did not")
@@ -248,25 +339,96 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	// The third, likewise held to the code, and in the direction the fact moved:
 	// the deployment DOES configure the service now — the seven names
 	// credentials.tf sets are exactly what C1.14's builder reads, and
-	// TestCredentialsServiceEnvIsTheDeploymentsOwn is what holds that pair — and
-	// what still stops it serving is that its account holds no role on the
-	// installation's database. The first read a call makes is the operator's stop
-	// switches, so the call is refused `state_unavailable` rather than served, and
-	// the check has to say that instead of the refusal that was lifted.
+	// TestCredentialsServiceEnvIsTheDeploymentsOwn is what holds that pair — and,
+	// since 0.10.1, its account holds ITS OWN database role: the custom role
+	// fugaroCredentialsDatabase, the database's two data permissions, bound on
+	// the Firebase project the database lives in. So every database read a call
+	// makes is admitted — the first of them the identity verification's own read
+	// of the run's write-once outcome (auth.go's checkLive, reached from
+	// Auth.Verify), not the operator's stop switches — and the check has to say
+	// that instead of the refusal that was lifted.
 	//
-	// The claim is read against the module's own role lines, so the day the
-	// credentials account is granted a database role the sentence is the one that
-	// has to go. It reads credentials.tf, the file that creates the account and
-	// its one grant; a database role added to the account from another module
-	// would not be seen by this line, and that is a review question rather than
-	// something a string match can answer.
-	const cannotServe = "**The service is configured from its own deployment now, and refuses every call.**"
-	if credentialsDatabaseRoleRE.MatchString(readDoc(t, "deploy/terraform/gcp/modules/installation/credentials.tf")) {
-		if strings.Contains(check, cannotServe) {
-			t.Errorf("deploy/terraform/gcp/modules/installation/credentials.tf now grants a database role to the credentials service's account — the service can serve — and Check 96 still says every call is refused: the gap was closed and this check did not notice")
+	// The claim is read against the module's own role lines, in both directions:
+	// the day the credentials account is granted a database role the refusal
+	// sentence is the one that has to go, and the day the role is removed the
+	// sentence that says the reads are admitted is the one that has to. It reads
+	// credentials.tf, the file that creates the account and its grants; a
+	// database role added to the account from another module would not be seen
+	// by this line, and that is a review question rather than something a string
+	// match can answer.
+	const refusedEveryCall = "**The service is configured from its own deployment now, and refuses every call.**"
+	const readsTheDatabase = "**The service is configured from its own deployment now, and reads the installation's database.**"
+	hasRole := credentialsDatabaseRoleRE.MatchString(
+		stripLineComments(readDoc(t, "deploy/terraform/gcp/modules/installation/credentials.tf")))
+	if hasRole {
+		if strings.Contains(check, refusedEveryCall) {
+			t.Errorf("deploy/terraform/gcp/modules/installation/credentials.tf grants the credentials service's account a database role (%s) — every database read a call makes is admitted — and Check 96 still says every call is refused: the gap was closed and this check did not notice", tf.CredentialsDatabaseRole)
 		}
-	} else if !strings.Contains(check, cannotServe) {
-		t.Errorf("deploy/terraform/gcp/modules/installation/credentials.tf grants the credentials service's account no role on the installation's database (its one grant is the bundle's accessor, Q6), so the first read a call makes — the operator's stop switches — is denied and the call is refused `state_unavailable` rather than served, and Check 96 does not say so: that is what decides whether the mint of step 3 can be made at all")
+		if !strings.Contains(check, readsTheDatabase) {
+			t.Errorf("deploy/terraform/gcp/modules/installation/credentials.tf grants the credentials service's account its own database role (%s, the two data permissions) now, so every database read a call makes — the run's outcome first among them — is admitted and step 4's pairing refusal (a) is observable, and Check 96 does not say so", tf.CredentialsDatabaseRole)
+		}
+	} else {
+		if !strings.Contains(check, refusedEveryCall) {
+			t.Errorf("deploy/terraform/gcp/modules/installation/credentials.tf grants the credentials service's account no role on the installation's database, so the first read a call makes — the identity verification's own read of the run's outcome (auth.go's checkLive) — is denied and the call is refused `state_unavailable` rather than served, and Check 96 does not say so: that is what decides whether the mint of step 3 can be made at all")
+		}
+		if strings.Contains(check, readsTheDatabase) {
+			t.Errorf("deploy/terraform/gcp/modules/installation/credentials.tf grants the credentials service's account no database role and Check 96 says it reads the installation's database: a reader would take step 3's mint — and step 4's pairing refusal — as calls this tree can make")
+		}
+	}
+
+	// And the order that sentence rests on, in both directions: the check has to
+	// name the identity verification's read as the first database read of a call
+	// and must not put the stop switches there. Three reviews of this section
+	// found the stop switches named as the first read; the code has never read it
+	// that way — auth.go's checkLive is what Auth.Verify reaches, and
+	// server.go's Kills.Stop is asked after ServeHTTP has a whole identity in
+	// hand — so a check that put them first would have reported a mechanism no
+	// release has.
+	if !strings.Contains(check, "the first one is **not** the stop switches but the identity verification's own read of the run's write-once outcome") {
+		t.Errorf("Check 96 no longer states the first database read of a call as the identity verification's own read of the run's outcome: that order is what the check's account of `state_unavailable` rests on, and it is read out of internal/credsvc/auth.go's checkLive")
+	}
+	// Step 4's two halves do not stand or fall together, and the check has to
+	// say which is which. (a) is the pairing refusal: it is asked only after
+	// Auth.Verify returned a whole identity, and on this tree that verification
+	// is stopped by the denied database read, so a deployed service never
+	// reaches it. (b) is the caller that is no job account: auth.go's verifyJob
+	// refuses it out of the account table the container was configured with,
+	// before any database read, so this tree answers it 403
+	// unverified_job_identity exactly as the target release does. The section
+	// said both were `state_unavailable`; with the account holding its own
+	// database role, the identity verification completes and it says both are
+	// observable — which half is refused where is still the point, so the
+	// sentence that names the mechanism stays pinned either way.
+	if !strings.Contains(check, "**(a) and (b) are both observable**") {
+		t.Errorf("Check 96 no longer says step 4's two halves are both observable on this tree: the pairing question is asked only after Auth.Verify returned a whole identity, and credentials.tf grants the service's account its own database role, so that verification completes and the pairing refusal is answered rather than stopped by a denied database read")
+	}
+	if !strings.Contains(check, "verifyJob` refuses a caller that is no job account out of the account table") {
+		t.Errorf("Check 96 no longer says why step 4's (b) is observable, which is what the code does: verifyJob reads the account table out of the configuration (internal/credsvc/auth.go, the first thing Auth.Verify does) and refuses a caller that is no job account before any database read, so the refusal the check's step 4 (b) looks for is produced here")
+	}
+	for _, notWant := range []string{
+		"step 4's two refusals be observed",
+		"answers both (a) and (b) `state_unavailable`",
+		"step 4's two refusals are unreachable",
+		"nor can step 4's pairing refusal (a) be observed",
+		"and of step 4's two refusals",
+	} {
+		if strings.Contains(check, notWant) {
+			t.Errorf("Check 96 still carries %q: the two halves of step 4 do not fail together — (a) needs a verified identity, and this tree's service verifies one now that its account holds a database role, while (b) is refused out of the configured account table before any read — so a sentence that lumps them or denies (a) is false about one of them", notWant)
+		}
+	}
+	if body := check96FuncBody(t, readDoc(t, "internal/credsvc/server.go"), "func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request)"); !strings.Contains(body, "id, err := s.cfg.Auth.Verify(ctx, req)") || !strings.Contains(body, "s.cfg.Kills.Stop(ctx, id.Slug)") {
+		t.Errorf("internal/credsvc/server.go's ServeHTTP no longer verifies the identities before it reads the stop switches (%q): Check 96 states that order — the identity verification's own database read comes first — and that is what it is read out of", strings.TrimSpace(body))
+	} else if strings.Index(body, "s.cfg.Auth.Verify(ctx, req)") > strings.Index(body, "s.cfg.Kills.Stop(ctx, id.Slug)") {
+		t.Errorf("internal/credsvc/server.go's ServeHTTP now reads the stop switches before it verifies the identities: Check 96 states the opposite order (the identity verification's database read is the first read of a call), so the check and the code have moved apart")
+	}
+	// The same order inside the verifier: checkLive's outcome read is what
+	// Auth.Verify reaches, and it is a database read (RTDBOutcomes.OutcomeExists).
+	authSrc := readDoc(t, "internal/credsvc/auth.go")
+	if !strings.Contains(authSrc, "if err := a.checkLive(ctx, slug, run, now); err != nil {") {
+		t.Errorf("internal/credsvc/auth.go's verifyRun no longer calls checkLive: Check 96 states the identity verification's own database read as the first read of a call, and that call is the read")
+	}
+	if !strings.Contains(authSrc, "a.cfg.Outcomes.OutcomeExists(ctx, day, slug, run)") {
+		t.Errorf("internal/credsvc/auth.go's checkLive no longer reads the run's outcome through Outcomes.OutcomeExists: Check 96 states that read as the first database read a call makes")
 	}
 	// And the half of the same sentence that names the configuration: the check
 	// states it as the deployment's own seven names, so the list it names has to
@@ -276,9 +438,37 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	}
 }
 
-// credentialsDatabaseRoleRE matches a role grant of the installation's database
-// in a Terraform module: the shape the guard above reads credentials.tf for.
-var credentialsDatabaseRoleRE = regexp.MustCompile(`role\s+= "roles/firebasedatabase`)
+// credentialsDatabaseRoleRE matches the credentials service's database role in
+// credentials.tf: the shape the guard above reads. Two spellings, because there
+// are two ways to give that account a database role.
+//
+//   - the custom role 0.10.1 adds: role_id = "fugaroCredentialsDatabase" (the
+//     ID is read from internal/infra/tf's own constant, so a rename cannot
+//     leave this guard watching a name nothing writes any more), declared in
+//     the installation module and bound to the service's own account;
+//   - a predefined database role granted directly (role = "roles/firebasedatabase..."),
+//     which is what this guard saw first and all it saw: that line alone is the
+//     narrower role this release deliberately did not take (viewer cannot
+//     write; admin adds the instance lifecycle), and it would still mean the
+//     account holds a database reach.
+//
+// The old regex was the second spelling alone, and its own comment said a
+// database role added to the account from another shape "would not be seen by
+// this line, and that is a review question". 0.10.1 answered it: the custom
+// role is what the tree writes now, so the guard reads it.
+//
+// The match is made on the file with its comments stripped
+// (stripLineComments, this package's own), and not on the raw text: every
+// spelling this regexp knows is one the file's own prose discusses at length —
+// the header names `fugaroCredentialsDatabase` and the long comment above the
+// role names both predefined RTDB roles and why they were refused — so a match
+// over the raw bytes would flip this guard to "the service reads the database"
+// with no grant in the file at all. That is the vacuous pass the stripped read
+// removes, and the same shape the other guards in this package avoid.
+// Mutation (run, restore): delete the two resources from credentials.tf and
+// leave their comments, and this guard fails on the missing grant rather than
+// passing on the prose.
+var credentialsDatabaseRoleRE = regexp.MustCompile(`role_id\s*=\s*"` + regexp.QuoteMeta(tf.CredentialsDatabaseRole) + `"|role\s+= "roles/firebasedatabase`)
 
 // check96FuncBody returns one function's body out of a source file the test
 // already read: from the signature to the next top-level `func `, so a call

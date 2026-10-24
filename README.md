@@ -26,7 +26,7 @@ Four reasons, in the order most people decide on them.
 
 ## Getting started
 
-You need Claude Code, a Google Cloud project with billing (or a billing account and `--create-project`), `gcloud` signed in with Application Default Credentials, Terraform 1.9 or newer, and a GitHub or Bitbucket Cloud repository; for GitHub, create the GitHub App first ([docs/git-providers.md](docs/git-providers.md#github); the full list is in [Requirements](#requirements)). Install the CLI:
+You need Claude Code, a billing account (setup creates a fresh Google Cloud project for Fugaro; it never uses one that already exists), `gcloud` signed in with Application Default Credentials, Terraform 1.9 or newer, and a GitHub or Bitbucket Cloud repository; for GitHub, create the GitHub App first ([docs/git-providers.md](docs/git-providers.md#github); the full list is in [Requirements](#requirements)). Install the CLI:
 
 ```sh
 brew install dimipaun/tap/fugaro                      # Homebrew cask (tested on macOS)
@@ -178,7 +178,7 @@ A run's coder can be a non-Anthropic model served by OpenRouter — one key for 
 
 ## Requirements
 
-- For the GCP backend, the only one today: a Google Cloud project with billing enabled and `serviceusage.googleapis.com` on; `fugaro setup` enables the other APIs it needs. Setting up the installation needs the Owner role ([precondition 7](docs/gcp-setup.md#preconditions)).
+- For the GCP backend, the only one today: a Google account that may create a GCP project and link billing to it. `fugaro setup` creates the project, as you, so you are its Owner, and enables the APIs it needs ([preconditions](docs/gcp-setup.md#preconditions); if your organization restricts either: [what to ask IT](docs/gcp-setup.md#not-an-owner)).
 - `gcloud` signed in with Application Default Credentials, and Terraform 1.9 or newer (before 2.0) on `PATH`.
 - A GitHub or Bitbucket Cloud repository, and a GitHub App or a Bitbucket repository access token for it.
 - A Claude credential: a subscription token (`claude setup-token`), an Anthropic API key, or Vertex AI.

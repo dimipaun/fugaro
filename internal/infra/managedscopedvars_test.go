@@ -2,6 +2,7 @@ package infra
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -84,6 +85,56 @@ func TestCarriedManagedDeployerScopedRefusesUnreadablePreviousVars(t *testing.T)
 	for _, prev := range [][]byte{[]byte("not json"), []byte(""), []byte("[1,2]")} {
 		if _, err := CarriedManagedDeployerScoped(fresh, prev); err == nil {
 			t.Errorf("CarriedManagedDeployerScoped(fresh, %q) = nil error, want a refusal", prev)
+		}
+	}
+}
+
+// ManagedDeployerScopedRecorded is the read of the same key, and it is the
+// installation's own record of the fence rather than the project's: what
+// `fugaro update --forget` refuses an installation by when the project's marks
+// no longer admit to it (internal/cli's installationFenceRecorded). True is the
+// key present and true, which is the shape the plan writes (present) and the
+// carry keeps; a key absent, a value that is not a bool, and a workdir with no
+// document at all (nil: a first run) are all "the fence is not recorded", and
+// the write direction is what would put the key there.
+//
+// A document this program cannot read is an error and not a "no": a tfvars it
+// cannot parse is not evidence that the installation has no fence, and reading
+// it as one would let the rollback past the refusal. The sentence names the
+// file, because that is what the operator has to look at.
+//
+// Mutation (verified, run and restored): return false, nil on a decode failure
+// (the git-history shape of a read that answers "not recorded" whenever it
+// cannot tell): the last case below fails.
+func TestManagedDeployerScopedRecordedReadsTheKeyAndRefusesAnUnreadableDocument(t *testing.T) {
+	for name, tc := range map[string]struct {
+		vars []byte
+		want bool
+	}{
+		"the key true":            {[]byte(`{"project": "proj-1234", "managed_deployer_scoped": true}`), true},
+		"the key false":           {[]byte(`{"project": "proj-1234", "managed_deployer_scoped": false}`), false},
+		"no key":                  {[]byte(`{"project": "proj-1234", "region": "us-east5"}`), false},
+		"the key is not a bool":   {[]byte(`{"managed_deployer_scoped": "true"}`), false},
+		"the key is null":         {[]byte(`{"managed_deployer_scoped": null}`), false},
+		"no document at all":      {nil, false},
+		"a document with nothing": {[]byte(`{}`), false},
+	} {
+		got, err := ManagedDeployerScopedRecorded(tc.vars)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got != tc.want {
+			t.Errorf("%s: ManagedDeployerScopedRecorded(%s) = %v, want %v", name, tc.vars, got, tc.want)
+		}
+	}
+	for _, vars := range [][]byte{[]byte("not json"), []byte(""), []byte("[1,2]"), []byte(`{"managed_deployer_scoped": true`)} {
+		got, err := ManagedDeployerScopedRecorded(vars)
+		if err == nil {
+			t.Errorf("ManagedDeployerScopedRecorded(%q) = %v, nil error, want a refusal: a document this program cannot read is not one without a fence", vars, got)
+			continue
+		}
+		if !strings.Contains(err.Error(), VarsFile) {
+			t.Errorf("ManagedDeployerScopedRecorded(%q) refused with %q, want the file named (%s)", vars, err, VarsFile)
 		}
 	}
 }

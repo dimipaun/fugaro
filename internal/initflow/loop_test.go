@@ -1193,3 +1193,50 @@ func TestOnPreviewSeesTheStagesOfAnApplyingRunOnly(t *testing.T) {
 		}
 	}
 }
+
+// TestBillingPauseLetsLocalStagesFinish: a stage that pauses for billing
+// (BillingPausedError) is not a failure and does not stop the run: it is
+// recorded as billing-pending with its Left, every later stage that needs
+// billing is waiting-for-billing (never applied, never an error), and a stage
+// that needs none (the plugin wiring, a local file) still applies. The result
+// is a step left for you (exit 1, the left-for-you convention), and --json
+// carries the two stable statuses.
+func TestBillingPauseLetsLocalStagesFinish(t *testing.T) {
+	var log []string
+	st := fakes(&log, Preflight, Project, Installation, Images, Secrets, Plugin, Repository)
+	pause := Left{Kind: LeftCommand, Text: "billing is not linked yet", Commands: []string{"gcloud billing projects link p --billing-account=<billing-account-id>"}}
+	st[1].(*fake).applyErr = &BillingPausedError{Left: pause, Detail: "created; billing pending"}
+	st[0].(*fake).status = Status{State: Done}
+	res, err := Run(context.Background(), st, yesOpts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]State{}
+	for _, s := range res.Stages {
+		got[s.Name] = s.State
+	}
+	want := map[string]State{Preflight: Done, Project: BillingPending, Installation: WaitingForBilling, Images: WaitingForBilling,
+		Secrets: WaitingForBilling, Plugin: Changed, Repository: WaitingForBilling}
+	for name, w := range want {
+		if got[name] != w {
+			t.Errorf("%s: %q, want %q (all: %+v)", name, got[name], w, res.Stages)
+		}
+	}
+	for _, name := range []string{Installation, Images, Secrets, Repository} {
+		if slices.Contains(log, "apply "+name) {
+			t.Errorf("%s was applied while billing is pending", name)
+		}
+	}
+	if res.Failed != nil || res.ExitCode() != 1 || len(res.Left) != 1 || res.Left[0].Stage != Project || len(res.Left[0].Commands) != 1 {
+		t.Errorf("failed %+v, exit %d, left %+v", res.Failed, res.ExitCode(), res.Left)
+	}
+	b, err := res.JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{`"billing-pending"`, `"waiting-for-billing"`} {
+		if !strings.Contains(string(b), s) {
+			t.Errorf("--json lacks the status %s:\n%s", s, b)
+		}
+	}
+}

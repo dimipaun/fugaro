@@ -12,7 +12,7 @@
 //
 // The picker is a *separate window* (C9) and not a panel in the dashboard's
 // header, and the reason is the surface rather than the layout: the dashboard's
-// document is exposed to fourteen operations -- the CLI reads, the handshake,
+// document is exposed to fifteen operations -- the CLI reads, the handshake,
 // the link handover and `installation.current` -- and the picker's job is to
 // write a file. Two documents, two preloads, two channel prefixes, and a sender
 // gate narrowed to one document each (`isSenderOnDocument` in `src/main/ipc.ts`) --
@@ -117,6 +117,19 @@ export const PICKER_WINDOW_SIZE = Object.freeze({ width: 720, height: 520 })
  */
 export const OPEN_EXTERNAL_FAILED = 'the console could not open the link in the browser'
 
+/**
+ * REVEAL_FAILED is what the reveal affordance answers when nothing was opened,
+ * for the reason OPEN_EXTERNAL_FAILED is a sentence: the renderer draws the
+ * main process's `reason` and nothing else. The ways to get here -- a project
+ * this console does not have, a record with no checkout, a handover the platform
+ * declined, and a caller that handed in no reveal at all -- are deliberately one
+ * sentence, because from the operator's seat they are one fact. It names no
+ * directory: for a WSL row the path the file manager was handed is a Windows
+ * spelling, and this console keeps that spelling out of the renderer's reach
+ * (D3(a)).
+ */
+export const REVEAL_FAILED = 'the console could not open the installation’s directory'
+
 /** MenuLike is the slice of Electron's `Menu` this file uses. */
 export interface MenuLike {
   buildFromTemplate(template: readonly unknown[]): unknown
@@ -135,8 +148,28 @@ export interface InstallationPickerDeps {
    * Node. The operation that calls it takes **no arguments**, so the URL is this
    * process's own constant and a renderer cannot name one. */
   readonly openExternal: (url: string) => Promise<boolean>
-  /** The app's own directories. `userData` is where the store lives, and
-   * `home` is passed to the path refusal -- this file never calls `homedir()`. */
+  /** reveal opens one directory in the platform's file manager -- Electron's
+   * `shell.showItemInFolder`, handed in for the same reason `openExternal` is:
+   * the unit test drives it under plain Node. Like `openExternal` and unlike
+   * every other operation here, **the operation takes no path**. The renderer
+   * names a project; the path handed to the file manager is computed in this
+   * process from its own record (`explorerPathFor`, T-D3), so a frame on the
+   * picker's document cannot ask Windows to open a directory of its choosing.
+   * It answers whether anything was opened, for the same reason
+   * `openExternalValidated` does: a screen told "opened" for a handover the
+   * platform declined would draw nothing while the operator waits. Optional
+   * because a caller that never shows a reveal affordance (a headless test of
+   * the rest of the picker) need not hand one in. */
+  readonly reveal?: ((path: string) => Promise<boolean> | boolean) | undefined
+  /** The app's own directories. `userData` is where the store lives, and `home`
+   * is the operator's home as this app's own environment names it: it is what
+   * rule 4's `~` expands to (`binDirectories`' own `home` argument, which
+   * defaults to `homedir()`) and what the path refusal is asked about. Nothing in
+   * this module calls `homedir()`: `installInstallationPicker`, at the foot of
+   * this file, is the one place that decides this value
+   * (`options.appEnv['HOME']`, falling back to `app.getPath('home')` when the key
+   * is missing or blank), and its own comment says there why the environment's
+   * answer and not Electron's. */
   readonly userData: string
   readonly home: string
   /** The app's root, from which `pickerPreloadPath` derives the preload. */
@@ -287,7 +320,7 @@ export function pickerPreloadPath(appPath: string): string {
 export function createInstallationPicker(deps: InstallationPickerDeps): InstallationPicker {
   // The spawn surface is asserted here as well as in the dashboard, and the
   // picker's own table is the second argument: `installation.list` is a row the
-  // dashboard's fourteen operations do not have, and `assertSpawnSurface` holds
+  // dashboard's fifteen operations do not have, and `assertSpawnSurface` holds
   // it to the picker's one command (`config list --json`, no `--project`, no
   // `--dir`, no declared arguments). A row that grew an argument, or a name
   // outside `INSTALLATION_OPERATION_NAMES`, is refused before a window exists.
@@ -732,6 +765,24 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         return serially(() => setInstallationCheckout(args['project'] ?? '', args['checkout']))
       case 'remove':
         return serially(async () => removeInstallation(args['project'] ?? ''))
+      case 'reveal':
+        // The renderer names a project and nothing else. The path the file
+        // manager is handed is this process's own `explorerPath` for that record
+        // -- the UNC spelling for a WSL installation, the checkout itself for a
+        // host row (D3(a), T-D3) -- so the row is looked up here and its field
+        // is the whole input. A project this console does not have and a record
+        // with no checkout are the same refusal, because they are the same fact:
+        // there is nothing to open.
+        const row = rows().find((candidate) => candidate.project === (args['project'] ?? ''))
+        const explorerPath = row?.explorerPath
+        if (explorerPath === undefined) return { ok: false, reason: REVEAL_FAILED }
+        const revealed = await deps.reveal?.(explorerPath)
+        if (revealed !== true) return { ok: false, reason: REVEAL_FAILED }
+        // The answer names no path: the renderer drew the button from the
+        // row's own checkout, and a reply that echoed the spelling the file
+        // manager got back across the boundary would put the one spelling this
+        // window keeps to itself on the IPC surface for no reader.
+        return { ok: true, data: { revealed: true } }
       case 'openExternal': {
         // The URL is this process's own constant and the operation takes **no
         // arguments at all** (requirement 4): `GETTING_STARTED_URL` never
@@ -830,9 +881,11 @@ export function installInstallationPicker(options: {
     readonly session: Session
     readonly ipcMain: IpcMainLike
     readonly Menu: MenuLike
-    /** shell is Electron's `shell`, and it is handed to
-     * `openExternalValidated` -- the console's one external-link path -- rather
-     * than used here: this module never calls `shell.openExternal` itself. */
+    /** shell is Electron's `shell`. `openExternalValidated` -- the console's
+     * one external-link path -- is given it rather than this module calling
+     * `shell.openExternal` itself; `showItemInFolder` is the one method used
+     * here, and it is used through the `reveal` dep below so a test can hold
+     * it. */
     readonly shell: Shell
     readonly app: {
       getPath(name: string): string
@@ -848,6 +901,37 @@ export function installInstallationPicker(options: {
   readonly onRemoved?: InstallationPickerDeps['onRemoved']
 }): InstallationPicker {
   const { electron } = options
+  // **The home is this app's own environment's, and not `app.getPath('home')`.**
+  // On Linux the two agree -- both read `HOME`. On macOS they do not: Electron
+  // answers `home` with Chromium's `base::GetHomeDir()`, whose Apple
+  // implementation is Foundation's `NSHomeDirectory()`, which reads the user
+  // *record* and ignores `HOME` -- while `homedir()` (libuv) answers with
+  // `HOME` first. So a launch whose `HOME` is not the account's (`test/e2e`'s
+  // stub does exactly that: `test/support/cliStub`) had this picker resolve
+  // `/Users/<owner>/.local/bin` while the same process's own `homedir()` -- and
+  // the `HOME` every child is handed (`childEnvironment`) -- was the redirected
+  // one.
+  //
+  // The picker is the wrong place to be the only exception: the startup
+  // handshake resolves the *same* CLI with `homedir()` (`src/main/index.ts`
+  // passes `resolveHandshakeBinary` no home, so `binDirectories` falls back to
+  // it), so a picker that disagreed with the handshake about where the CLI is
+  // would draw "install the CLI first" over a console that is already running
+  // one, and would ask the operator to install it where it already is. The store
+  // path refusal (`installationStorePath`) reads this same home, and it is the
+  // right one there too: the two other config directories it checks
+  // (`$XDG_CONFIG_HOME`, `$FUGARO_CONFIG`) come from this environment, so the
+  // `~/.config/fugaro` beside them must be the one this environment's CLI would
+  // use.
+  //
+  // **This is not a change to rule 4.** The order -- the store's override first,
+  // then the platform's well-known prefixes -- and the list itself are
+  // untouched, and no search list is read out of the environment: the app's
+  // `PATH` is still never walked. This only says which directory `~` is, and it
+  // says the same thing the rest of the process does. An empty `HOME` is not a
+  // home, so Electron's answer stands in when the key is missing or blank.
+  const envHome = options.appEnv['HOME']
+  const home = envHome === undefined || envHome === '' ? electron.app.getPath('home') : envHome
   return createInstallationPicker({
     BrowserWindow: electron.BrowserWindow,
     session: electron.session,
@@ -858,8 +942,18 @@ export function installInstallationPicker(options: {
     // credentials, its port) and its host against `ALLOWED_EXTERNAL_HOSTS`
     // before Electron is asked to open anything.
     openExternal: (url: string) => openExternalValidated(electron.shell, url),
+    // The reveal affordance's one handover (T-D3). **It answers `true` for the
+    // call, not for the platform**: `showItemInFolder` returns nothing and
+    // reports no failure, so the console cannot know whether a file manager
+    // appeared -- what it *can* refuse, and does, is being asked to reveal a
+    // row with no directory. A `false` here would be a claim this process
+    // cannot make.
+    reveal: (path: string) => {
+      electron.shell.showItemInFolder(path)
+      return true
+    },
     userData: electron.app.getPath('userData'),
-    home: electron.app.getPath('home'),
+    home,
     appPath: electron.app.getAppPath(),
     appEnv: options.appEnv,
     ...(options.spawner === undefined ? {} : { spawner: options.spawner }),

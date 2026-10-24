@@ -33,10 +33,11 @@ type initEngine struct {
 	envErr error // the environment check's refusal, kept as the error init always returned
 	envRan bool
 
-	ready bool
-	c     *infra.Clients
-	t     *tf.TF
-	wd    *infra.Workdir
+	ready   bool
+	rmReady bool // the Resource Manager readiness, done once (setupCloud)
+	c       *infra.Clients
+	t       *tf.TF
+	wd      *infra.Workdir
 
 	authorized map[string]bool // repositories the user typed in this run (see init_repo_gate.go)
 	declined   map[string]bool // repositories the user was asked about and did not type
@@ -44,7 +45,7 @@ type initEngine struct {
 	adminsRead bool
 	fpChecked  string // "", "yes" or "no": the Firebase project's verification, once
 	defaulted  string // the member a new config's launchers and operators defaulted to (init_members.go)
-	adopted    string // set when the installation stage adopted an existing installation instead of applying
+	newMachine string // set when the installation stage wrote a new machine's config from an existing installation instead of applying
 
 	// The one confirmation's review screen is built from the preview's stages
 	// and the two stages it asks about (init_review.go).
@@ -66,7 +67,8 @@ func (e *initEngine) environment() error {
 }
 
 // setup is the workdir, the clients and the Resource Manager readiness
-// every installation engine needs, done once.
+// every installation engine needs, done once. The cloud half is setupCloud,
+// which the rollback's refusal takes on its own before the workdir exists.
 func (e *initEngine) setup(ctx context.Context) error {
 	if e.ready {
 		return nil
@@ -83,13 +85,39 @@ func (e *initEngine) setup(ctx context.Context) error {
 		return err
 	}
 	e.r.res.Workdir = e.wd.Dir
-	if e.c, err = newInitClients(ctx, e.lc); err != nil {
+	if err := e.setupCloud(ctx); err != nil {
 		return err
+	}
+	e.ready = true
+	return nil
+}
+
+// setupCloud is the half of setup that reaches the cloud and touches no
+// workdir: the environment, the clients, and the Resource Manager readiness
+// every read of the project is made after. setup calls it, and so does the
+// rollback's own refusal, which is decided before the workdir is prepared (see
+// runInit's --forget door: the preparation rebuilds the tree, so a refused run
+// may not reach it). Both callers share it so the work is done once:
+// the engine's fields are the guard, and the environment's check prints its
+// warnings once for the same reason.
+func (e *initEngine) setupCloud(ctx context.Context) error {
+	if err := e.environment(); err != nil {
+		return err
+	}
+	if e.c == nil {
+		c, err := newInitClients(ctx, e.lc)
+		if err != nil {
+			return err
+		}
+		e.c = c
+	}
+	if e.rmReady {
+		return nil
 	}
 	if err := e.r.resourceManager(ctx, e.c); err != nil {
 		return err
 	}
-	e.ready = true
+	e.rmReady = true
 	return nil
 }
 
@@ -151,15 +179,14 @@ func initStages(e *initEngine) []initflow.Stage {
 		stages = append(stages, newComputeStage(e))
 	}
 	// The project stage, which is the one stage that may create the GCP
-	// project. `setup` registers it on a first run whether or not
-	// --create-project was given: the wizard's first question is whether to
-	// create the project or adopt one, and the answer (recorded on the same
-	// field the flag sets, askProjectAnswer) is what the stage acts on — a run
-	// whose answer was adoption has nothing to create. `update` never
-	// registers it, and neither does a `setup` whose installation is already
-	// there: e.old is the project config's file, and a run that has one
-	// converges as update does (D11, reconciliation F24).
-	if e.r.o.createProject || (e.r.o.door == setupDoor.name && e.old == nil) {
+	// project. `setup` registers it on every first run: Fugaro only starts
+	// fresh, so a first run creates its project (settleCreation sets the
+	// field the flag sets), and the stage refuses an ID that already exists
+	// unless an earlier run of setup created it. `update` never registers it,
+	// and neither does a `setup` whose installation is already there: e.old is
+	// the project config's file, and a run that has one converges as update
+	// does (D11, reconciliation F24).
+	if e.r.o.createProject || (e.r.o.door == setupDoor.name && e.firstRun()) {
 		stages = append(stages, newProjectStage(e))
 	}
 	return stages
@@ -287,7 +314,7 @@ type engineStage struct {
 	// The run's result still accumulates both.
 	isolate bool
 	// did, when set, is what the engine did besides applying Terraform (the
-	// installation stage's adoption writes the local config and applies
+	// installation stage's new-machine run writes the local config and applies
 	// nothing): a non-empty line makes the stage "changed".
 	did     func() string
 	applied bool
@@ -339,7 +366,7 @@ func (s *engineStage) Plan(ctx context.Context, env initflow.Env) (initflow.Plan
 }
 
 func (s *engineStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
-	if err := s.e.adoptGuard(s.name); err != nil {
+	if err := s.e.newMachineGuard(s.name); err != nil {
 		return initflow.Outcome{}, err
 	}
 	if err := s.with(ctx, env, false); err != nil {
@@ -360,7 +387,7 @@ func (s *engineStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 // --firebase-project the installation is the Firebase engine's first apply, so the
 // stage is skipped.
 func newInstallationStage(e *initEngine) *engineStage {
-	return &engineStage{e: e, name: initflow.Installation, did: func() string { return e.adopted },
+	return &engineStage{e: e, name: initflow.Installation, did: func() string { return e.newMachine },
 		skip: func() string {
 			if e.r.o.firebase != "" {
 				return "applied as the first step of the firebase backend"
@@ -371,12 +398,12 @@ func newInstallationStage(e *initEngine) *engineStage {
 			if err := e.setup(ctx); err != nil {
 				return err
 			}
-			if e.old == nil { // no local config yet: is this an installation someone else made?
+			if e.firstRun() { // no local config yet (or one a paused setup wrote): is the installation already there (a new machine's update)?
 				switch ok, err := e.r.installationExists(ctx, e.c, e.spec); {
 				case err != nil:
 					return err
 				case ok:
-					return e.r.adopt(ctx, e)
+					return e.r.newMachineConfig(ctx, e)
 				}
 				if err := e.defaultMembers(ctx); err != nil {
 					return err
@@ -386,6 +413,15 @@ func newInstallationStage(e *initEngine) *engineStage {
 		},
 		left: promptLeft(initflow.Installation, "type the project's name to apply", e.r.o.doorName()),
 	}
+}
+
+// firebaseProjectWord is --firebase-project's value in a printed command: the
+// installation's own GCP project id, the only value it takes.
+func (e *initEngine) firebaseProjectWord() string {
+	if e.lc != nil && e.lc.GCPProject != "" {
+		return quoteWord(e.lc.GCPProject)
+	}
+	return "<gcp-project-id>"
 }
 
 // newFirebaseStage is stage 4: update --firebase-project's engine, which is two
@@ -404,7 +440,7 @@ func newFirebaseStage(e *initEngine) *engineStage {
 			if err := e.setup(ctx); err != nil {
 				return err
 			}
-			if e.old == nil { // a first run with --firebase-project: the same default, unless the installation exists
+			if e.firstRun() { // a first run with --firebase-project: the same default, unless the installation exists
 				if ok, err := e.r.installationExists(ctx, e.c, e.spec); err != nil {
 					return err
 				} else if !ok {
@@ -415,7 +451,7 @@ func newFirebaseStage(e *initEngine) *engineStage {
 			}
 			return e.r.initFirebase(ctx, e.c, e.t, e.wd, e.bin, e.lc, e.spec, e.path, e.old)
 		},
-		left: promptLeft(initflow.Firebase, "type the project's name at each apply", e.r.o.doorName(), "--firebase-project", "<firebase-project-id>"),
+		left: promptLeft(initflow.Firebase, "type the project's name at each apply", e.r.o.doorName(), "--firebase-project", e.firebaseProjectWord()),
 	}
 }
 
@@ -437,6 +473,6 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 			}
 			return e.r.firebaseHistory(ctx, e.c, e.t, e.wd, e.lc, e.spec)
 		},
-		left: promptLeft(initflow.Installation2, "type the project's name to apply the history job", e.r.o.doorName(), "--firebase-project", "<firebase-project-id>"),
+		left: promptLeft(initflow.Installation2, "type the project's name to apply the history job", e.r.o.doorName(), "--firebase-project", e.firebaseProjectWord()),
 	}
 }

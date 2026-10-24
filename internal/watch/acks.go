@@ -23,9 +23,9 @@ const ackPrune = 7 * 24 * time.Hour
 // corrupt file: the empty set.
 const ackMaxBytes = 1 << 20 // 1 MiB
 
-// Acks is a viewer's local acknowledgements of failed finished runs (design
-// generic-tool §10.3): best effort, per machine, never shared. Losing the
-// file only shows those failures again.
+// Acks is a viewer's local dismissals of finished runs (design generic-tool
+// §10.3, owner spec 2026-10-22, item 4): best effort, per machine, never
+// shared. Losing the file only shows those runs again.
 type Acks struct {
 	path string
 	at   map[string]time.Time
@@ -60,13 +60,13 @@ func LoadAcks(path string) *Acks {
 	return a
 }
 
-// Has reports whether slug/run is acknowledged.
+// Has reports whether slug/run is dismissed.
 func (a *Acks) Has(slug, run string) bool {
 	_, ok := a.at[ackKey(slug, run)]
 	return ok
 }
 
-// Ack records slug/run as acknowledged as of now, prunes entries older than
+// Ack records slug/run as dismissed as of now, prunes entries older than
 // ackPrune, and persists the set atomically (temp file plus rename), mode
 // 0600.
 func (a *Acks) Ack(slug, run string, now time.Time) error {

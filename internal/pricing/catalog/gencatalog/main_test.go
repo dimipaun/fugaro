@@ -101,6 +101,13 @@ func (s *snapshots) genFile(ids ...string) *catalog.File {
 	return &f
 }
 
+// snapshotDate is the date testdata/openrouter was read, and the checked_at
+// the checked-in catalog.json carries. Both tests below regenerate with it, so
+// refreshing the snapshots is one edit here rather than two that could drift
+// apart, and the date a reader of a failure message is told to pass to the
+// script is the same one.
+const snapshotDate = "2026-10-23"
+
 // TestGeneratedFileMatchesSnapshots regenerates the checked-in catalog.json
 // from testdata/openrouter and compares the bytes: the file is generated,
 // so the generator and the file cannot drift, and the generation is
@@ -114,7 +121,7 @@ func TestGeneratedFileMatchesSnapshots(t *testing.T) {
 	o := options{
 		from:  filepath.Join("..", "testdata", "openrouter"),
 		allow: filepath.Join(tmp, "allow.txt"),
-		date:  "2026-10-20",
+		date:  snapshotDate,
 		out:   filepath.Join(tmp, "catalog.json"),
 	}
 	if err := os.WriteFile(o.allow, []byte(strings.Join(allowlist(), "\n")+"\n"), 0o644); err != nil {
@@ -125,7 +132,7 @@ func TestGeneratedFileMatchesSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(got) != string(want) {
-		t.Errorf("the checked-in catalog.json is not what the generator produces from testdata/openrouter:\nregenerate it with scripts/gen-price-catalog.sh -from internal/pricing/catalog/testdata/openrouter -date 2026-10-20")
+		t.Errorf("the checked-in catalog.json is not what the generator produces from testdata/openrouter:\nregenerate it with scripts/gen-price-catalog.sh -from internal/pricing/catalog/testdata/openrouter -date " + snapshotDate)
 	}
 	again, err := generate(o)
 	if err != nil {
@@ -215,7 +222,7 @@ func TestSnapshotsAreTrimmedToTheDocumentedFields(t *testing.T) {
 	if err := os.WriteFile(allow, []byte(strings.Join(allowlist(), "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := generate(options{from: dir, allow: allow, date: "2026-10-20", out: filepath.Join(dir, "catalog.json")})
+	got, err := generate(options{from: dir, allow: allow, date: snapshotDate, out: filepath.Join(dir, "catalog.json")})
 	if err != nil {
 		t.Fatal(err)
 	}

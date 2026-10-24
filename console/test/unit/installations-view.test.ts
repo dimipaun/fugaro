@@ -182,6 +182,7 @@ interface Recording {
   readonly choose: Readonly<Record<string, string>>[]
   readonly checkout: Readonly<Record<string, string>>[]
   readonly remove: Readonly<Record<string, string>>[]
+  readonly reveal: Readonly<Record<string, string>>[]
   readonly calls: string[]
   readonly openExternal: unknown[][]
 }
@@ -196,9 +197,18 @@ function fakeBridge(options: {
   readonly warnings?: readonly string[]
   readonly onboard?: OnboardingState
   readonly refusal?: string
-  readonly answer?: Partial<Record<'list' | 'choose' | 'checkout' | 'remove' | 'openExternal', InstallationReply>>
+  readonly answer?: Partial<
+    Record<'list' | 'choose' | 'checkout' | 'remove' | 'reveal' | 'openExternal', InstallationReply>
+  >
 } = {}): { readonly bridge: PickerBridge; readonly recording: Recording } {
-  const recording: Recording = { choose: [], checkout: [], remove: [], calls: [], openExternal: [] }
+  const recording: Recording = {
+    choose: [],
+    checkout: [],
+    remove: [],
+    reveal: [],
+    calls: [],
+    openExternal: [],
+  }
   const listAnswer = (): InstallationReply =>
     options.answer?.list ??
     ({
@@ -232,6 +242,11 @@ function fakeBridge(options: {
       recording.calls.push('remove')
       recording.remove.push(args)
       return options.answer?.remove ?? ok
+    },
+    reveal: async (args) => {
+      recording.calls.push('reveal')
+      recording.reveal.push(args)
+      return options.answer?.reveal ?? ok
     },
     // The operation takes no arguments, and this fake takes none either: a view
     // that tried to send a URL would not compile against `PickerBridge`.
@@ -428,7 +443,17 @@ describe('the picker’s document and its view', () => {
     })
     const inUse = using.element('picker-list').children[0] as FakeElement
     const labels = inUse.children.map((child) => child.textContent)
-    expect(labels).toEqual(['Choose', 'Use /home/owner/src/fugaro-work', 'Stop using this checkout', 'Remove'])
+    // ...and the reveal affordance, drawn on the row that has a checkout
+    // (D3(a), T-D3). It is **drawn on the checkout and not on the spelling the
+    // file manager will get**: the view names no path, so a WSL row offers the
+    // same button a host row does.
+    expect(labels).toEqual([
+      'Choose',
+      'Use /home/owner/src/fugaro-work',
+      'Stop using this checkout',
+      'Open the checkout folder',
+      'Remove',
+    ])
     await inUse.button('Stop using this checkout').fire('click')
     expect(using.recording.checkout).toEqual([{ project: 'fugaro' }])
 
@@ -439,6 +464,36 @@ describe('the picker’s document and its view', () => {
       'Choose',
       'Remove',
     ])
+  })
+
+  it('opens the row’s directory without ever being handed one (D3(a), T-D3)', async () => {
+    // The half of the rule that keeps Windows spellings out of the view: the
+    // button sends the **project** and nothing else -- no path, and so no UNC
+    // spelling, which is the form a WSL checkout is opened by. What is opened is
+    // the main process's own record for that project.
+    const listed = row({ checkout: '/home/owner/src/fugaro' })
+    const { element, recording } = await mount({ rows: [listed] })
+    const item = element('picker-list').children[0] as FakeElement
+    await item.button('Open the checkout folder').fire('click')
+    expect(recording.reveal).toEqual([{ project: 'fugaro' }])
+    // The main process's refusal is drawn, and only it: a row whose directory
+    // could not be opened says so, rather than looking like a click that
+    // worked.
+    const refused = await mount({
+      rows: [listed],
+      answer: { reveal: { ok: false, reason: 'the console could not open the installation’s directory' } },
+    })
+    const refusedItem = refused.element('picker-list').children[0] as FakeElement
+    await refusedItem.button('Open the checkout folder').fire('click')
+    expect(refused.element('picker-status').textContent).toBe(
+      'the console could not open the installation’s directory',
+    )
+    // ...and a row with no checkout (rule 5's ordinary case) offers no button at
+    // all: there is nothing to open, and the view knows that without asking.
+    const none = await mount({ rows: [row()] })
+    expect(
+      (none.element('picker-list').children[0] as FakeElement).children.map((child) => child.textContent),
+    ).toEqual(['Choose', 'Remove'])
   })
 
   it('renders the absent-binary screen, with the resolution’s own sentence, the command and the places it looked', async () => {

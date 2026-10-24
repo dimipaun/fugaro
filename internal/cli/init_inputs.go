@@ -27,12 +27,13 @@ import (
 // with every flag still missing named in one message. Once the local config
 // exists nothing is asked.
 //
-// The GCP project's ID is the one question with two suggestions (D4): the
-// default is a project to create, named after this one — `fugaro-<name>`,
-// defaultGCPProject — and, when it differs, the project this machine is
-// already working in (suggestGCPProject: GOOGLE_CLOUD_PROJECT or the quota
-// project of the application default credentials) is offered second, with the
-// one line saying why. That second suggestion never comes from gcloud's
+// The GCP project's ID (D4): `fugaro setup`'s suggestion is a project to
+// create, named after this one — `fugaro-<name>`, defaultGCPProject — and
+// nothing else, because Fugaro only starts fresh. `fugaro update` on a new
+// machine asks for an installation that already exists, so it also offers the
+// project this machine is already working in (suggestGCPProject:
+// GOOGLE_CLOUD_PROJECT or the quota project of the application default
+// credentials) second, with the one line saying why. That suggestion never comes from gcloud's
 // configured default project (the standing rule: a default project is how a
 // command lands in the wrong project), so neither gcloud's properties file nor
 // CLOUDSDK_CORE_PROJECT is read here.
@@ -129,8 +130,9 @@ func adcQuotaProject() string {
 
 // suggestGCPProject is the GCP project ID the credentials name — the project
 // this machine is already working in — or "": never gcloud's configured
-// default project. It is the wizard's **second** suggestion for the ID (D4),
-// offered after the one below.
+// default project. It is `fugaro update`'s **second** suggestion for the ID
+// (D4) on a new machine, offered after the one below; `fugaro setup` never
+// offers it, since the project it names exists.
 func suggestGCPProject() string {
 	if v := os.Getenv("GOOGLE_CLOUD_PROJECT"); infra.ValidProjectID(v) {
 		return v
@@ -141,8 +143,7 @@ func suggestGCPProject() string {
 // defaultGCPProject is the ID a first run suggests for a new GCP project: the
 // Fugaro project's own name, prefixed (reconciliation F3, D4, answered
 // 2026-10-20 as recommended). The wizard's default is therefore a name to
-// *create* — fugaro-<name> — where the suggestion it used to make was a
-// project to adopt.
+// *create* — fugaro-<name>.
 //
 // The prefix is not negotiable and the name is sanitised and cut to what an ID
 // holds (6 to 30 characters, infra.ValidProjectID), so Enter is always a legal
@@ -151,8 +152,8 @@ func suggestGCPProject() string {
 // project that takes this default runs in fugaro-runs-fugaro-<name>: the
 // double prefix is accepted, and nothing about bucket naming moves (D4).
 //
-// It is never suggestGCPProject(): a project this machine already works in is
-// a project to adopt, and the wizard offers it as the second suggestion.
+// It is never suggestGCPProject(): a project this machine already works in
+// exists, and fugaro setup only creates.
 func defaultGCPProject(name string) string {
 	n := sanitiseName(name)
 	if n == "" {
@@ -170,21 +171,22 @@ func defaultGCPProject(name string) string {
 
 // projectIDSuggestions is what the ID question offers: the default this run
 // would create — fugaro- plus the name this run would itself suggest (--name,
-// the selected config's name, else suggestName) — and, when the credentials
-// name a different project, that one second, with the line saying why.
+// the selected config's name, else suggestName) — and, for fugaro update only
+// (existing), when the credentials name a different project, that one second,
+// with the line saying why.
 //
 // A checkout's fugaro.yaml naming a project does **not** become the ID's
 // default, for the reason the name question has none from it either (a cloned
 // repository's file can say anything): the name is then typed, and so is the
 // ID built from it.
-func projectIDSuggestions(ctx context.Context, name, fromCheckout string) (def, alt, why string) {
+func projectIDSuggestions(ctx context.Context, name, fromCheckout string, existing bool) (def, alt, why string) {
 	switch {
 	case name != "":
 		def = defaultGCPProject(name)
 	case fromCheckout == "":
 		def = defaultGCPProject(suggestName(ctx))
 	}
-	if c := suggestGCPProject(); c != "" && c != def {
+	if c := suggestGCPProject(); existing && c != "" && c != def {
 		return def, c, "you are already working in " + pluginwire.Printable(c)
 	}
 	return def, "", ""
@@ -230,6 +232,18 @@ func (r *initRun) firstRunMissing(ctx context.Context) (name, fromCheckout strin
 		missing = append(missing, missingInput{"--region <region>", "the GCP region, such as " + defaultRegion})
 	}
 	return name, fromCheckout, missing, true
+}
+
+// selectedPending is whether the project config this run selects is the one a
+// first run of fugaro setup wrote when it paused for billing
+// (localcfg.Config.SetupPending).
+func (r *initRun) selectedPending(ctx context.Context) bool {
+	co, err := checkoutProject(ctx, "")
+	if err != nil {
+		return false
+	}
+	_, lc, err := selectNamed(r.o.cloud, co, true, r.o.name)
+	return err == nil && lc != nil && lc.SetupPending != ""
 }
 
 // canAsk is whether the run may show a prompt for an input: a terminal on

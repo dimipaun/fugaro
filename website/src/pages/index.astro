@@ -1,47 +1,40 @@
 ---
-// website/src/pages/index.astro — the site's front page (website plan, Task W1.4; redesign
-// parts P1, P5 and P8; the owner's approved board `website/design-ref/HomeV3.dc.html`,
-// 2026-10-20, which supersedes the draft "Home, draft 2 (slider)", 2026-10-19).
+// website/src/pages/index.astro: the site's front page (website plan, Task W1.4; the owner's
+// redesign Step 3, rulings of 2026-10-23).
 //
-// **The page is five blocks, and the board says which five**: the hero — the title, the prompt
-// line and the one-line promise, with the call to action the site has always had — then the
-// slider whose three tabs are how it is to use, why it is worth it and what it looks like
-// running, then the run's four steps as a band, then the grid of what a run leaves behind, then
-// the closing call to action with the install command. The page before the board was three
-// blocks: the hero, the slider and the button. The board splits the run out of the slider's
-// first panel into a band of its own and gives the page a grid of what a run leaves behind, so
-// this file renders `Hero`, `HomeSlider`, `HomeRunBand`, `HomeWhatYouGet` and `HomeInstall`.
+// **The page is one argument, in six blocks** (lever 1): what Fugaro is, with the one live
+// thing and the real `fugaro watch` capture (`Hero`); why it is worth it, README.md's four
+// reasons under its sentence about what a run is (`Benefits`); the run, as ONE section with the
+// zoom diagrams beside its steps (`HomeRunBand`), where the page used to explain it three times
+// over (the slider's first panel, the run band and the grid); what a run leaves behind and where
+// you watch it, with the console's real screens and the console and phone app pages surfaced in
+// the content rather than in the navigation (`HomeWhatYouGet`, lever 8); what a run costs and
+// what stops it, moved here from `/caps-and-costs/` (`HomeCost`); and the install command with
+// the closing call to action (`HomeInstall`).
 //
-// **What left the page, and where it went.** The chat's illustration is the slider's first
-// panel — the three steps a reader takes, each with a line of the README under it — so
-// `AgentChat.astro` is gone rather than hidden: a component no page renders is a component
-// whose build-time guards no longer run. The four-step flow left the site with the owner's
-// ruling of 2026-10-20, which retires `ArchitectureDiagram.astro`: the run is
-// `/how-it-works/`'s own drawing, and the band above the grid is the homepage's summary of it —
-// four names and four lines, not the picture, which `website/test/home.mjs` refuses here on
-// purpose. The benefits are still `Benefits.astro`, rendered by the slider's second panel; and
-// the two install cards are the button above the one command most readers run, with every path
-// still laid out on `/getting-started/`.
+// The slider (`HomeSlider.astro`) is retired with this page: its three panels were the run's
+// first explanation, the benefits and the screenshots, and each now has its own section.
 //
 // Every block reads what it renders through the content pipeline (W1.3) and holds it to the
 // repository; this page holds no fact of its own.
 import Base from '../layouts/Base.astro'
 import Hero from '../components/Hero.astro'
-import HomeSlider from '../components/HomeSlider.astro'
+import Benefits from '../components/Benefits.astro'
 import HomeRunBand from '../components/HomeRunBand.astro'
 import HomeWhatYouGet from '../components/HomeWhatYouGet.astro'
+import HomeCost from '../components/HomeCost.astro'
 import HomeInstall from '../components/HomeInstall.astro'
 ---
 
 <Base title="Fugaro">
-  {/* Five top-level blocks, each carrying its own gutter and its own room below: `main:has(>
+  {/* Six top-level blocks, each carrying its own gutter and its own room below: `main:has(>
       .hero)` drops `main`'s padding on this page, so no block adds a top padding on top of the
       block above's bottom one, and the gap between two of them is one padding rather than two
-      (`website/test/base-styles.mjs`'s `homeRhythmFailures` reads the five at 1280, 768 and
-      375 px). */}
+      (`website/test/base-styles.mjs`'s `homeRhythmFailures`). */}
   <Hero />
-  <HomeSlider />
+  <Benefits />
   <HomeRunBand />
   <HomeWhatYouGet />
+  <HomeCost />
   <HomeInstall />
 </Base>
