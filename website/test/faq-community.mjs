@@ -508,8 +508,9 @@ test("the community page links the repository's own community files, and each on
     assert.ok(existsSync(path.join(REPO, file)), `the community page links ${file}, which this repository does not have`)
   }
 
-  // The three documents the page is for, named as the paths they are.
-  for (const file of ['CONTRIBUTING.md', 'CODE_OF_CONDUCT.md', 'LICENSE']) {
+  // The three documents the page is for, the licence and the scope statement that goes with
+  // it, named as the paths they are.
+  for (const file of ['CONTRIBUTING.md', 'CODE_OF_CONDUCT.md', 'LICENSE', 'LICENSING.md']) {
     assert.ok(
       links.some(([, , , linked]) => linked === file),
       `the community page does not link ${file}: D101's answer is link, and do not restate`,
@@ -746,6 +747,144 @@ test('the licence is named, and it is the identifier LICENSE carries', () => {
     new RegExp(`\\b${identifier}\\b`),
     `the community page does not name the licence ${identifier} that LICENSE carries: D101's answer is that the licence is stated inline`,
   )
+})
+
+// ---- the two elements that state the licence (F7, R2 as amended by O2) --------------------
+
+/** The page's two licence elements, as the markup the build wrote for each: the **Licence
+ *  card** — the documents grid's entry whose link is `LICENSE` — and the **`#licence` band**.
+ *  F7 names exactly these two, and the band's old sentence ("it is the only text that governs
+ *  what you may do with the code") is the one that stopped being true the day anything outside
+ *  `LICENSE` governed part of the repository (R2). */
+function licenceElements(html) {
+  const branch = ciTriggers().branches[0]
+  const cards = [...html.matchAll(/<li\b[^>]*>[\s\S]*?<\/li>/g)]
+    .map(([li]) => li)
+    .filter((li) => li.includes(`/blob/${branch}/LICENSE"`))
+  assert.equal(
+    cards.length,
+    1,
+    `the community page draws ${cards.length} cards linking LICENSE: the Licence card is one entry of the community grid, and it is one of the two elements that state the licence (F7)`,
+  )
+  const band = bands(html).find((one) => one.id === 'licence')
+  assert.ok(band, 'the community page has no `#licence` band, and it is the second element that states the licence (F7)')
+  return [
+    { what: 'the Licence card', html: cards[0] },
+    { what: 'the `#licence` band', html: band.body },
+  ]
+}
+
+/** The built page with one licence element edited, the way a later edit would write it. */
+function editLicenceElement(html, what, edit) {
+  const one = licenceElements(html).find((element) => element.what === what)
+  const edited = edit(one.html)
+  assert.notEqual(edited, one.html, `${what}: the plant changed nothing, so the case below would prove nothing`)
+  return html.replace(one.html, edited)
+}
+
+/**
+ * The rules the two licence elements answer to, as the failure lines a reader sees (L1.5 of
+ * `docs/licensing/implementation-plan.md`; F7, R2 as amended by O2). Each element links
+ * `LICENSING.md` beside the licence itself and says what the split is: the core is what
+ * `LICENSE` licenses, `.agents/` and the reserved `ee/` directory are not. The band names the
+ * reserved directory, and the sentence the split retired — that `LICENSE` is "the only text
+ * that governs" — is gone from the page, because it is false from the day one file outside it
+ * is under another licence. A licence note that drifts is a claim about the source that the
+ * source no longer makes, which is why every failure line names the element it sits in.
+ */
+function licenceSplitFailures(html) {
+  const out = []
+  const branch = ciTriggers().branches[0]
+  const links = (markup, file) => markup.includes(`/blob/${branch}/${file}"`)
+  const elements = licenceElements(html)
+
+  for (const { what, html: element } of elements) {
+    const text = pageText(element)
+    if (!links(element, 'LICENSING.md')) {
+      out.push(`${what} does not link LICENSING.md: the element states the licence, and LICENSING.md is the file that says which parts of the repository the licence does not cover`)
+    }
+    if (!/\bcore\b/.test(text)) {
+      out.push(`${what} does not say the licence is the core's (${JSON.stringify(text.slice(0, 90))}): the split is that the core stays MIT and two parts of the repository stand outside it`)
+    }
+    if (!/\bparts\b[^.]*\bnot\b/.test(text)) {
+      out.push(`${what} does not say which parts of the repository the licence does not cover: a licence stated without its scope is the claim the split retired`)
+    }
+  }
+
+  const band = pageText(elements.find((element) => element.what === 'the `#licence` band').html)
+  if (!/\breserved\b/.test(band) || !/\bee\b/.test(band)) {
+    out.push('the `#licence` band does not name the reserved ee/ directory among the parts of the repository the licence does not cover: the reserved directory is the part a reader of this page is most likely to meet')
+  }
+  if (/only text that governs/.test(pageText(html))) {
+    out.push('the community page still says the licence is "the only text that governs" what a reader may do with the code: that sentence stopped being true when ee/ was reserved outside LICENSE (F7, R2)')
+  }
+
+  return out
+}
+
+test('both elements that state the licence carry the core/ee split', () => {
+  const page = builtPage('community')
+  assert.deepEqual(
+    licenceSplitFailures(page),
+    [],
+    `the community page's licence elements do not state the split (L1.5):\n  ${licenceSplitFailures(page).join('\n  ')}`,
+  )
+})
+
+test('every licence-element refusal fires on the defect it names', () => {
+  const page = builtPage('community')
+  assert.deepEqual(
+    licenceSplitFailures(page),
+    [],
+    'the split rule fails on the built page, so the cases below are not proving what they name',
+  )
+
+  const CARD = 'the Licence card'
+  const BAND = 'the `#licence` band'
+  const LICENSING_LINK = /<a href="[^"]*\/LICENSING\.md"[^>]*>LICENSING\.md<\/a>/
+
+  // Each case is one edit to one element of the built page — the defect as a later edit would
+  // write it — and the refusal it names.
+  const cases = [
+    {
+      what: `${CARD} without the LICENSING.md link`,
+      plant: (html) => editLicenceElement(html, CARD, (one) => one.replace(LICENSING_LINK, 'LICENSING.md')),
+      expected: /the Licence card does not link LICENSING\.md/,
+    },
+    {
+      what: `${BAND} without the LICENSING.md link`,
+      plant: (html) => editLicenceElement(html, BAND, (one) => one.replace(LICENSING_LINK, 'LICENSING.md')),
+      expected: /the `#licence` band does not link LICENSING\.md/,
+    },
+    {
+      what: `${CARD} saying nothing about the core`,
+      plant: (html) => editLicenceElement(html, CARD, (one) => one.replace(/\bcore\b/, 'project')),
+      expected: /the Licence card does not say the licence is the core's/,
+    },
+    {
+      what: `${CARD} saying nothing about what the licence leaves out`,
+      plant: (html) => editLicenceElement(html, CARD, (one) => one.replace(/\bnot\b/, 'as well')),
+      expected: /the Licence card does not say which parts of the repository the licence does not cover/,
+    },
+    {
+      what: `${BAND} no longer naming the reserved ee/ directory`,
+      plant: (html) => editLicenceElement(html, BAND, (one) => one.replace(/\breserved\b/, 'planned')),
+      expected: /the `#licence` band does not name the reserved ee\/ directory/,
+    },
+    {
+      what: 'the retired sentence back in the band',
+      plant: (html) => editLicenceElement(html, BAND, (one) => one.replace(/<\/p>/, ' It is the only text that governs what you may do with the code.</p>')),
+      expected: /still says the licence is "the only text that governs"/,
+    },
+  ]
+
+  for (const { what, plant, expected } of cases) {
+    const failures = licenceSplitFailures(plant(page))
+    assert.ok(
+      failures.some((line) => expected.test(line)),
+      `${what} was not refused (${expected}); the rule said:\n  ${failures.join('\n  ') || '(nothing)'}`,
+    )
+  }
 })
 
 // ---- neither page restates a document -----------------------------------------------------
