@@ -406,18 +406,18 @@ const DIAGRAM_LABEL = quoted(
 )
 
 /**
- * The key ideas of the lines under the drawing, set in bold so a reader skimming the list
- * lands on them (the owner's preview feedback on #1003, 2026-10-24). They are phrases of the
- * lines themselves, a handful and never a whole line; one a line no longer carries fails the
- * build rather than silently losing its bold.
+ * The lead phrase of each line under the drawing, set in bold and underlined so a reader
+ * skimming the list lands on what each line is about (the owner's feedback of 2026-10-24). One
+ * per line, from its start (the third line is all lead); a phrase a line no longer carries fails
+ * the build rather than silently losing its mark.
  */
 const KEY_IDEAS = [
-  'you trust the repository and the source of the task',
-  'permission prompts turned off',
-  'their own service accounts',
-  "the real model key sits in the agent's environment",
-  'network egress is unrestricted',
-  'set a credit limit on every key you give Fugaro',
+  'The design assumes you trust the repository and the source of the task',
+  'Fugaro runs a coding agent with its permission prompts turned off',
+  "Each repository's jobs and builds run as their own service accounts",
+  'What is not on by default: the budget gateway',
+  'What limits the blast radius today',
+  'What no boundary stops',
 ]
 
 const boldened = new Set<string>()
@@ -967,6 +967,19 @@ if (unboldened.length > 0) {
     max-width: var(--measure);
     margin: var(--space-sm) 0 0;
     line-height: var(--leading-normal);
+  }
+
+  /* The key ideas under the drawing: bold and underlined in the accent, so they read as marked
+     rather than as slightly heavier text (the owner's feedback of 2026-10-24). The accent on the
+     card's surface is 6.5:1, well over the 3:1 a non-text mark needs; the site has one, dark,
+     theme. This stylesheet is global, so the selector is plain: a `:global()` here is kept as
+     written and matches nothing, which is how the first version of this rule drew no line. */
+  [data-security-diagram] .boundary-facts > li > strong,
+  [data-security-diagram] .boundary-limit > strong {
+    text-decoration: underline;
+    text-decoration-color: var(--accent);
+    text-decoration-thickness: 2px;
+    text-underline-offset: 3px;
   }
 
   [data-security-summary] {

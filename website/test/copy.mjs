@@ -502,3 +502,26 @@ test('Escape and a click outside close the menu, and the focus goes back to a to
     'the focus was handed to a trigger that is not drawn, so the reader has been moved to a control they cannot see',
   )
 })
+
+// The button is an icon that becomes a checkmark for a moment (the owner's feedback of
+// 2026-10-24); "Copied" is still announced, to a screen reader only.
+test('a copy turns the clipboard into a checkmark for a moment and announces Copied', async () => {
+  const html = builtPages(DIST).find((p) => p.rel === 'index.html').html
+  const page = fakeDOM(html)
+  const block = page.find('[data-copy]')[0]
+  const button = block.querySelector('[data-copy-button]')
+  assert.equal(button.textContent.trim(), '', 'the copy button shows a word, and it is an icon')
+  assert.equal(button.querySelectorAll('svg').length, 2, 'the copy button does not carry its clipboard and its checkmark')
+  assert.ok((button.getAttribute('title') || '').length > 0, 'the icon button has no tooltip')
+  assert.equal(button.getAttribute('data-copied'), 'false', 'the button starts as a checkmark')
+  button.dispatch('click')
+  await flush()
+  assert.equal(button.getAttribute('data-copied'), 'true', 'a copy did not turn the button into a checkmark')
+  const status = block.querySelector('[data-copy-status]')
+  assert.equal(status.textContent, 'Copied', 'a copy was not announced')
+  assert.equal(status.getAttribute('data-tone'), 'ok', 'the announcement of a copy is drawn as well as the checkmark')
+  const back = page.timers.find((timer) => timer.ms === 1600)
+  assert.ok(back, 'the checkmark sets no timer to turn back')
+  back.fn()
+  assert.equal(button.getAttribute('data-copied'), 'false', 'the checkmark did not turn back into a clipboard')
+})
