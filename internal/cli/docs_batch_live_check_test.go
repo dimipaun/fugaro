@@ -135,12 +135,19 @@ func check124FactParagraphs(section string) []string {
 // TestDocsCheck124IsWrittenAsFourPartsWithItsRow: the number is one check
 // written as four sections (the 43a-43f and 59a/59b convention), each part
 // owner-run and NOT RUN, and the register carries the summary row a reader
-// finds it from.
+// finds it from. It also pins the allocation: 57 is this backend's reserved
+// number — its section is the compute-backend plan's Task 12 — so 124 has to
+// name the overlap and the plan's pins rather than be a second live check for
+// one backend that nobody stated.
 //
 // Mutation (verified, run and restored): the `| 124 |` register row deleted →
 // FAIL (a section with no row is a check no reader of the table finds);
 // `## Check 124c:` folded into `## Check 124b:` → FAIL (124c is the part whose
-// restore is different: the job is preempted and the VM is deleted by hand).
+// restore is different: the job is preempted and the VM is deleted by hand);
+// the allocation paragraph's opening rewritten so it no longer reads as
+// "**Check 57 is this backend's own number, and 124 is a second one" → FAIL
+// (that paragraph is the only place the two numbers for one backend are told
+// apart).
 func TestDocsCheck124IsWrittenAsFourPartsWithItsRow(t *testing.T) {
 	register := readDoc(t, liveChecksDoc)
 	if !strings.Contains(register, "\n| 124 |") {
@@ -186,6 +193,31 @@ func TestDocsCheck124IsWrittenAsFourPartsWithItsRow(t *testing.T) {
 	} {
 		if !strings.Contains(claimText, want) {
 			t.Errorf("124's claim paragraph does not name %q: the reading has to be re-checkable from the paragraph alone, and \"the next free number\" cannot be read off `main`'s headings", want)
+		}
+	}
+
+	// The overlap with Check 57, which is this backend's own number: a second
+	// number for one backend is what the register's rule allows only if the
+	// allocation is stated, and the plan's pins are what a reader checks it
+	// against.
+	alloc := "**Check 57 is this backend's own number, and 124 is a second one"
+	if !strings.Contains(register, alloc) {
+		t.Errorf("%s does not state 124's relation to Check 57: 57 is the compute backend's reserved number and its section is the plan's Task 12, so a 124 written beside it has to say which number is which rather than let a reader find two live checks for one backend", liveChecksDoc)
+	}
+	_, allocAfter, ok := strings.Cut(register, alloc)
+	if !ok {
+		t.Fatal("the allocation paragraph's opening is gone")
+	}
+	allocText, _, _ := strings.Cut(allocAfter, "\n\n")
+	for _, want := range []string{
+		"Check numbers this plan takes",
+		"TestDocsComputeBackendPlanReservesNoCheckNumber",
+		"never reused or",
+		"Task 12",
+		"overlap",
+	} {
+		if !strings.Contains(allocText, want) {
+			t.Errorf("124's allocation paragraph does not name %q: the paragraph exists to state the overlap with 57 and the pins that hold the plan's side of it, and one without those is a disclosure a reader cannot check", want)
 		}
 	}
 
@@ -251,18 +283,26 @@ func TestDocsCheck124EverySectionCarriesTheGuard(t *testing.T) {
 //     the enable task's business — docs/plans/2026-10-19-compute-backend.md's
 //     Task 10, whose coverage table says "to build". So 124b, 124c and 124d
 //     are written and cannot be run yet, the same way Check 57b is.
-//   - `fugaro doctor`'s Batch half is warnings today, deliberately
+//   - `fugaro doctor`'s Batch half is warning-shaped today, deliberately
 //     (internal/cli/doctor_batch.go: "All of them are WARNINGS, never
-//     failures: nothing in this build can select backend: cloud-batch"), so a
-//     doctor that printed `fugaro doctor: everything checked is ok` with a
-//     batch block on the installation is not the reading this build gives.
-//     A warning suppresses that summary line (internal/cli/doctor.go's
-//     printDoctorChecks), so the FACT has to say which lines appear and which
-//     line does not.
+//     failures: nothing in this build can select backend: cloud-batch"), and
+//     the reading that follows from it is the opposite of the obvious one:
+//     printDoctorChecks skips an OK check with no severity
+//     (internal/cli/doctor.go), so the seven read checks print nothing at all
+//     on a correctly provisioned installation, and the one line that always
+//     prints is the `info batch-artifact-boundary` one — Severity "info", which
+//     "does not fail doctor, with or without --strict … must not suppress the
+//     summary line either". So the pass is that info line plus
+//     `fugaro doctor: everything checked is ok`, and a `warning batch-` line is
+//     the finding. The FACT has to say which line appears and which do not, and
+//     a section that had it the other way round would have an owner record a
+//     defect on a healthy installation.
 //
 // Mutation (verified, run and restored): "**124b, 124c and 124d are written and
 // cannot be run yet**" rewritten to say the backend can be selected today →
-// FAIL (a reader would run a part that cannot pass).
+// FAIL (a reader would run a part that cannot pass); the doctor FACT's expected
+// exit of 0 rewritten to 1 → FAIL (the exit code is the half of the reading
+// that says a warning is what a non-zero exit means on this setup).
 func TestDocsCheck124SaysWhatCannotRunYet(t *testing.T) {
 	flat := flattenDoc(check124Section(t, "a"))
 	for _, want := range []string{
@@ -270,12 +310,17 @@ func TestDocsCheck124SaysWhatCannotRunYet(t *testing.T) {
 		"docs/plans/2026-10-19-compute-backend.md",
 		"the enable task",
 		"124b, 124c and 124d are written and cannot be run yet",
-		"error while a batch block is on the installation",
-		"never **failures** while nothing in this build can select",
+		"WARNINGS, never failures: nothing in this build can select",
+		// The healthy reading, in the direction the tree gives it: the one
+		// always-printed info line, the summary line that stays, and the
+		// non-zero-exit reading a warning is.
+		"info batch-artifact-boundary",
 		"fugaro doctor: everything checked is ok",
+		"exit: 0",
+		"warning batch-",
 	} {
 		if !strings.Contains(flat, want) {
-			t.Errorf("Check 124a does not say %q: the parts that cannot run yet have to say why in their own text, and the doctor reading has to name the lines that appear and the line that does not", want)
+			t.Errorf("Check 124a does not say %q: the parts that cannot run yet have to say why in their own text, and the doctor reading has to name the line doctor always prints, the summary line that stays and the line that is the finding", want)
 		}
 	}
 
