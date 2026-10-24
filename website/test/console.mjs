@@ -665,8 +665,16 @@ test('a card layout the owner did not ask for is refused, rule by rule', async (
       /no minimum-width block lays the download cards out as one row/,
     ],
     [
+      // The plant edits the cards' own block rather than the file's first
+      // `grid-auto-flow: column`: the page ships every component's rules as one stylesheet and
+      // the console's screenshot track declares the same one-row property, so a plant that took
+      // the first occurrence would edit the track's rule and the reading would rightly refuse
+      // nothing.
       'the one-row block keeping the base rule\'s auto-fit grid',
-      css.replace('grid-auto-flow:column', 'grid-template-columns:repeat(auto-fit,minmax(17rem,1fr))'),
+      css.replace(
+        /(@media[^{]*\{\s*\.download-cards[^{}]*\{[^}]*?)grid-template-columns:none/,
+        '$1grid-template-columns:repeat(auto-fit,minmax(17rem,1fr))',
+      ),
       /a minimum-width block keeps the auto-fit grid/,
     ],
     [
@@ -1371,8 +1379,9 @@ test('with no Linux block in the data file, no built page carries one', async (t
   // is "renders only when present", and it is a fixture rather than the shipped state: this
   // checkout carries the block (the release publishes the pair), so the copy below takes it, the
   // two Linux entries and their sums lines back out.
+  let fixtureData = null
   const built = buildWith(t, (copy) => {
-    editData(copy, (data) => {
+    fixtureData = editData(copy, (data) => {
       assert.ok(
         data.linux,
         `${DOWNLOADS_JSON} carries no linux block, and this case's fixture is the state it is taken out of`,
@@ -1407,7 +1416,6 @@ test('with no Linux block in the data file, no built page carries one', async (t
     })
   })
   const page = decode(builtPage(built))
-  const data = downloadsData()
 
   const section = downloadsSection(page)
   assert.equal(
@@ -1421,14 +1429,17 @@ test('with no Linux block in the data file, no built page carries one', async (t
   // has always held ("the page makes no claim about a platform no document of this repository
   // speaks about") is read off the cards the page actually draws rather than as a ban on a list
   // of words: whatever platform name a card carries has to be a word of the data file's own
-  // sentences. It is the same rule from the other end, and it is the end that holds a platform
-  // nobody here thought to write down.
+  // sentences. The file is the fixture's, the one this page was built from: the shipped sentence
+  // names Linux in the block this fixture takes out, so the two sentences below are the ones the
+  // copy carries — the release this state links, which ships for macOS and for no other system.
+  // It is the same rule from the other end, and it is the end that holds a platform nobody here
+  // thought to write down.
   const cards = [...walk(parse(page))].filter((el) => hasClass(el, 'download-card-platform'))
   assert.ok(
     cards.length >= 3,
     `the section draws ${cards.length} platform card(s), and this case is about the three the fixture's state makes: the platform the release ships for and the two it does not`,
   )
-  const claims = [data.released.text, data.not_released.text]
+  const claims = [fixtureData.released.text, fixtureData.not_released.text]
   for (const card of cards) {
     const platform = textOf(card).trim()
     assert.ok(
@@ -1604,8 +1615,8 @@ test('the Linux block the data file carries is rendered with its own assets and 
 test('a Linux block that is not a claim naming the file’s own assets fails the build', async (t) => {
   // The block's own shape, in the six states the review of it would look for: a key nothing
   // renders, no assets at all, a sentence with no source, one asset named twice, no
-  // verification step, and a step with the release's version typed into it rather than
-  // substituted. Each is a build of its own — the reader refuses the first thing it finds and
+  // verification step, and a step that spells the release's version rather than leaving it to
+  // the file's placeholder. Each is a build of its own — the reader refuses the first thing it finds and
   // no build can fail twice — and each is the same rule from a different side: the block is
   // the sentence a page renders, the assets it links, the steps that prove those bytes and
   // where the sentence came from, and nothing else.
@@ -1641,14 +1652,17 @@ test('a Linux block that is not a claim naming the file’s own assets fails the
       names: [/linux\.verify is not a non-empty list/],
     },
     {
-      what: 'a step with the version typed into it',
+      what: 'a step that spells the release’s version',
       block: {
         text: 'Linux, unsigned.',
         assets: ['macos-dmg'],
-        verify: ['cosign verify-blob console-sha256sums.txt --bundle console-sha256sums.txt.sigstore.json'],
+        // The defect is the version written into the command rather than left to the file's
+        // one placeholder: the plant spells the version this checkout's data file carries, so
+        // what it plants is the stale step a later bump would leave behind.
+        verify: [`gh release download ${consoleTag()} -R dimipaun/fugaro -p console-sha256sums.txt`],
         source: 'docs/design/desktop-console.md D10',
       },
-      names: [/linux\.verify\[0\].*carries no \{version\}/],
+      names: [/linux\.verify\[0\].*spells the release's version/],
     },
   ]
 

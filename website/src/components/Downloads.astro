@@ -212,7 +212,7 @@ if (available) {
  */
 type Card =
   | { platform: string; kind: 'offered'; downloads: DownloadFacts[] }
-  | { platform: string; kind: 'block'; text: string; downloads: DownloadFacts[] }
+  | { platform: string; kind: 'block'; text: string; downloads: DownloadFacts[]; verify: string[] }
   | { platform: string; kind: 'not-offered' }
 
 // The board's own order while the release carries one platform: the platform it ships for,
@@ -224,7 +224,17 @@ const cards: Card[] = [
     kind: 'offered' as const,
     downloads: listedAbove.filter((download) => download.platform === platform),
   })),
-  ...(linux ? [{ platform: 'Linux', kind: 'block' as const, text: linux.text, downloads: linux.downloads }] : []),
+  ...(linux
+    ? [
+        {
+          platform: 'Linux',
+          kind: 'block' as const,
+          text: linux.text,
+          downloads: linux.downloads,
+          verify: linux.verify,
+        },
+      ]
+    : []),
   ...missing.map((platform) => ({ platform, kind: 'not-offered' as const })),
 ]
 ---

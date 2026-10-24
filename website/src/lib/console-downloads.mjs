@@ -546,9 +546,14 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
     // unsigned artifact is the one download on this page with nothing to check it for, so the
     // commands that prove its bytes are the whole of what the block is for beside the sentence
     // that says it is unsigned. They are commands and not prose — a reader runs them — so each
-    // is a non-empty string, and each carries the version placeholder wherever the release's
-    // version goes, substituted here the same way an asset's `file` name is: the version is
-    // written in one place, and a version bump moves the commands with it.
+    // is a non-empty string.
+    //
+    // **And no step spells the version itself.** A step that names the release puts
+    // `{version}` where the version goes, and this reader substitutes it the same way it
+    // substitutes an asset's `file` name, so the version is written once in this file and a
+    // bump moves the commands with it. A step that names no version is left as it is — a
+    // command with no version in it cannot drift — and a step that spells one is refused,
+    // because that is the step the next release leaves naming the last one.
     if (!Array.isArray(map.verify) || map.verify.length === 0) {
       refuse(
         "linux.verify is not a non-empty list, and an unsigned build is the one download here with no signature to check: the steps that prove these bytes are what a Linux reader does instead (docs/release.md, \"Verifying the console's release\")",
@@ -557,9 +562,9 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
     }
     const verify = map.verify.map((value, index) => {
       const command = asText(value, `linux.verify[${index}]`)
-      if (!command.includes(VERSION_PLACEHOLDER)) {
+      if (command.includes(release.version)) {
         refuse(
-          `linux.verify[${index}] is ${JSON.stringify(command)} and carries no ${VERSION_PLACEHOLDER}: these steps name the release's own tag, and a command with the version typed into it is one the next release leaves naming the last one`,
+          `linux.verify[${index}] is ${JSON.stringify(command)} and spells the release's version ${JSON.stringify(release.version)} rather than ${VERSION_PLACEHOLDER}: the version is written once in this file, and a step that carries it is one the next release leaves naming the last one`,
           'D10',
         )
       }
