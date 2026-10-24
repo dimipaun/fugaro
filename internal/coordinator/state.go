@@ -58,6 +58,16 @@ func PathProjectDocument(id string) string { return PathProject + "/" + id }
 // PathRepoDocument is one repository's document, under that repository.
 func PathRepoDocument(slug, id string) string { return PathRepo(slug) + "/" + id }
 
+// PathIntents is one repository's intent records — P4's report path writes
+// there and nothing else does — and PathIntent one of them, keyed by
+// IntentID. The node is named and not derived: a reader of the tree has to be
+// able to tell the declarations from whatever the sweep (P5) keeps beside
+// them under the same repository.
+func PathIntents(slug string) string { return PathRepo(slug) + "/intents" }
+
+// PathIntent is one intent record.
+func PathIntent(slug, id string) string { return PathIntents(slug) + "/" + id }
+
 // DocumentID is the database key of one coordinator document, derived from the
 // parts that describe the thing it is about — the caller and the declaration
 // for an intent report, the repository and the sweep's own inputs for a view —

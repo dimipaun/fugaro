@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -17,6 +18,7 @@ import (
 	"gocloud.dev/blob"
 
 	"github.com/dimipaun/fugaro/internal/coordinator"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
@@ -25,6 +27,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // updateCoordinatorGolden rewrites testdata/coordinator_status.golden, the way
@@ -1059,4 +1062,323 @@ func recordLabel(r coordinatorRecord) string {
 		return r.Runs[0].ID
 	}
 	return "-"
+}
+
+// The report path, as P4 builds it: `fugaro coordinator report` writes one
+// intent record under the repository's node, through the caller's own
+// credentials and the coordinator's own store, and prints it. These tests
+// drive it through a real (fake) database, and they are the plan's red steps
+// at the command's own level:
+//
+//   - TestCoordinatorReportWritesTheIntent: the record, the path it is written
+//     to and the document itself, read back out of the database.
+//   - TestCoordinatorReportIsIdempotent: one declaration, reported twice, is
+//     ONE document — the mutation being an ID with the wall clock in it.
+//   - TestCoordinatorReportRefusesACallerTheProjectCannotName: the refusal,
+//     and that it leaves no document behind.
+//   - TestCoordinatorReportRefusesADeclarationThatDeclaresNothing: the other
+//     refusal.
+//   - TestCoordinatorReportPrintsNoAdvice: the part's third red step at the
+//     command — the output is the record and nothing else. The half of it that
+//     is about reading nothing back is the writer's own dependency list
+//     (internal/coordinator's TestReportReadsNothingBack), because a command
+//     cannot read back through a writer that has no read.
+//   - TestCoordinatorReportRefusesAWriteTheRulesDeny: a database that refuses
+//     the write is the caller's error and not an outage, and it says what the
+//     write needs.
+//   - TestCoordinatorReportNeedsADatabase: a project with none is refused
+//     naming the command that deploys one.
+//   - TestRunDeclaresItselfToTheCoordinator: the launch path calls the same
+//     writer, so a launch declares itself without a second command.
+//   - TestAFailedReportDoesNotFailTheLaunch: the coordinator is advisory, so
+//     its failure is a warning and never a failed run.
+
+// coordinatorReportFixture is a cloud fixture whose project has the
+// coordinator's database: an RTDB fake, reached the way the budget commands
+// reach theirs (budget.rtdb_url, and no credentials in a test).
+type coordinatorReportFixture struct {
+	*cloudFixture
+	db *gcpfake.RTDB
+}
+
+func newCoordinatorReportFixture(t *testing.T) *coordinatorReportFixture {
+	t.Helper()
+	f := &coordinatorReportFixture{cloudFixture: newCloudFixture(t), db: gcpfake.NewRTDB(t)}
+	f.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, rtdb_url: "+f.db.URL+" }\n")
+	return f
+}
+
+// intents is the intent node's children of the fixture's repository, as the
+// fake database holds them: the record count the idempotency test is about.
+func (f *coordinatorReportFixture) intents() map[string]any {
+	m, _ := f.db.Value(coordinator.PathIntents(appSlug)).(map[string]any)
+	return m
+}
+
+// oneIntent is the single record the node holds, failing the test when there
+// is not exactly one.
+func (f *coordinatorReportFixture) oneIntent(t *testing.T) coordinator.Intent {
+	t.Helper()
+	m := f.intents()
+	if len(m) != 1 {
+		t.Fatalf("the intent node holds %d documents, want 1: %v", len(m), m)
+	}
+	var rec coordinator.Intent
+	for _, v := range m {
+		data, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(data, &rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return rec
+}
+
+func TestCoordinatorReportWritesTheIntent(t *testing.T) {
+	f := newCoordinatorReportFixture(t)
+	out, _, err := execute(t, "coordinator", "report", "--repo", "acme/app",
+		"--branch", "release/v0.11.0",
+		"--file", "internal/cli/run.go", "--file", "internal/coordinator/intent.go",
+		"--service", "internal/cli", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rec coordinator.Intent
+	if err := json.Unmarshal([]byte(out), &rec); err != nil {
+		t.Fatalf("the document does not parse: %v (%s)", err, out)
+	}
+	// The caller is the local config's user:, and the release is the one the
+	// branch names rather than a second flag.
+	if rec.DeclaredBy != "someone@example.com" || rec.Branch != "release/v0.11.0" || rec.Release != "0.11.0" {
+		t.Errorf("the record = %+v, want the caller and the branch's release", rec)
+	}
+	if rec.At.IsZero() {
+		t.Error("the record carries no clock: when a declaration was made is part of it")
+	}
+	if !slices.Equal(rec.Files, []string{"internal/cli/run.go", "internal/coordinator/intent.go"}) ||
+		!slices.Equal(rec.Services, []string{"internal/cli"}) {
+		t.Errorf("the record's declaration = %v / %v", rec.Files, rec.Services)
+	}
+	// The document is the record, at the path D195 puts it under.
+	if got := f.oneIntent(t); got.DeclaredBy != rec.DeclaredBy || !got.At.Equal(rec.At) {
+		t.Errorf("the stored record = %+v, want the one printed (%+v)", got, rec)
+	}
+	if want := coordinator.PathIntent(appSlug, coordinator.IntentID(rec)); f.db.Value(want) == nil {
+		t.Errorf("nothing was written at %q", want)
+	}
+}
+
+func TestCoordinatorReportText(t *testing.T) {
+	f := newCoordinatorReportFixture(t)
+	out, _, err := execute(t, "coordinator", "report", "--repo", "acme/app",
+		"--branch", "release/v0.11.0", "--file", "internal/cli/run.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := f.oneIntent(t)
+	path := coordinator.PathIntent(appSlug, coordinator.IntentID(rec))
+	for _, want := range []string{
+		"reported /" + path,
+		"declared by someone@example.com at " + rec.At.Format(time.RFC3339),
+		"branch release/v0.11.0",
+		"release 0.11.0",
+		"files internal/cli/run.go",
+		"services none",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the output lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestCoordinatorReportIsIdempotent is the plan's idempotency red step at the
+// command: the same declaration from the same caller twice writes one
+// document. The two runs carry different clocks — that is the mutation this is
+// written for (an ID with the wall clock in it writes two) — and the second
+// spells its paths in another order, because the order is not part of what was
+// declared.
+func TestCoordinatorReportIsIdempotent(t *testing.T) {
+	f := newCoordinatorReportFixture(t)
+	args := []string{"coordinator", "report", "--repo", "acme/app", "--branch", "release/v0.11.0",
+		"--file", "internal/cli/run.go", "--file", "internal/coordinator/intent.go"}
+	if _, _, err := execute(t, args...); err != nil {
+		t.Fatal(err)
+	}
+	first := f.oneIntent(t)
+	args[7], args[9] = args[9], args[7]
+	if _, _, err := execute(t, args...); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(f.intents()); n != 1 {
+		t.Fatalf("two reports of one declaration wrote %d documents, want 1", n)
+	}
+	second := f.oneIntent(t)
+	if !second.At.After(first.At) && !second.At.Equal(first.At) {
+		t.Errorf("the second report kept the first clock (%v then %v): the record was not rewritten", first.At, second.At)
+	}
+	// A different declaration is a second document: the ID is a function of
+	// the declaration, not of the caller alone.
+	if _, _, err := execute(t, "coordinator", "report", "--repo", "acme/app", "--branch", "release/v0.11.0"); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(f.intents()); n != 2 {
+		t.Fatalf("a second declaration wrote %d documents in total, want 2", n)
+	}
+}
+
+// TestCoordinatorReportRefusesACallerTheProjectCannotName: the refusal, and
+// that it is a refusal rather than a document nobody can be named for. The
+// identity is neither the config's nor git's — the config's user: is gone and
+// an empty GIT_DIR is not a repository — so the command cannot tell who is
+// declaring.
+func TestCoordinatorReportRefusesACallerTheProjectCannotName(t *testing.T) {
+	f := newCoordinatorReportFixture(t)
+	userStatsPlace(t, f.cloudFixture, "", nil, nil)
+	testutil.IsolateGit(t)
+	t.Setenv("GIT_DIR", t.TempDir())
+	_, _, err := execute(t, "coordinator", "report", "--repo", "acme/app", "--branch", "fugaro/x")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("a report from an unnamed caller = %v (exit %d), want a user error", err, ExitCode(err))
+	}
+	for _, want := range []string{"user in the local config", "git config user.email"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not say what is missing (%q)", err, want)
+		}
+	}
+	if n := len(f.intents()); n != 0 {
+		t.Errorf("the refused report wrote %d documents", n)
+	}
+}
+
+// TestCoordinatorReportRefusesADeclarationThatDeclaresNothing: the second
+// refusal, and it names what the caller has to give it.
+func TestCoordinatorReportRefusesADeclarationThatDeclaresNothing(t *testing.T) {
+	f := newCoordinatorReportFixture(t)
+	_, _, err := execute(t, "coordinator", "report", "--repo", "acme/app")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "declare something") {
+		t.Fatalf("an empty declaration = %v (exit %d)", err, ExitCode(err))
+	}
+	if n := len(f.intents()); n != 0 {
+		t.Errorf("the refused report wrote %d documents", n)
+	}
+}
+
+// TestCoordinatorReportPrintsNoAdvice: the plan's third red step at the
+// command. The output is the record and nothing else — no collision, no
+// suggestion, no summary of what is already in flight — because the report
+// path takes nothing back and a command that advised from what it wrote would
+// be advising from nothing. The reading half of the same rule is
+// internal/coordinator's TestReportReadsNothingBack, asserted against the
+// writer's own dependency list.
+//
+// Hand mutation this fails on: printing a collision summary under the record.
+func TestCoordinatorReportPrintsNoAdvice(t *testing.T) {
+	newCoordinatorReportFixture(t)
+	out, errOut, err := execute(t, "coordinator", "report", "--repo", "acme/app",
+		"--branch", "release/v0.11.0", "--file", "internal/coordinator/view.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for what, text := range map[string]string{"stdout": out, "stderr": errOut} {
+		for _, word := range []string{"advice", "advise", "suggest", "collision", "collides", "conflict", "should", "consider", "warning"} {
+			if strings.Contains(strings.ToLower(text), word) {
+				t.Errorf("%s carries %q, and the report path issues no advice:\n%s", what, word, text)
+			}
+		}
+	}
+}
+
+// TestCoordinatorReportRefusesAWriteTheRulesDeny: /coordinator is readable by
+// a signed-in reader and writable by nobody through the rules (Q15 A, P3), so
+// what admits a report is the database role its caller holds. A database that
+// refuses the write is the caller's error — naming the role, and not the
+// host's outage — and no document is written.
+func TestCoordinatorReportRefusesAWriteTheRulesDeny(t *testing.T) {
+	f := newCoordinatorReportFixture(t)
+	f.db.Deny(coordinator.PathRoot)
+	_, _, err := execute(t, "coordinator", "report", "--repo", "acme/app", "--branch", "release/v0.11.0")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("a refused write = %v (exit %d), want a user error", err, ExitCode(err))
+	}
+	for _, want := range []string{"roles/firebasedatabase.admin", "budget_admins"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not name what the write needs (%q)", err, want)
+		}
+	}
+}
+
+// TestCoordinatorReportNeedsADatabase: a project that never deployed a
+// database has nothing to report to, and the refusal names the command that
+// deploys one rather than failing on an empty address.
+func TestCoordinatorReportNeedsADatabase(t *testing.T) {
+	newCloudFixture(t)
+	_, _, err := execute(t, "coordinator", "report", "--repo", "acme/app", "--branch", "release/v0.11.0")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "update --firebase-project") {
+		t.Fatalf("a project with no database = %v (exit %d)", err, ExitCode(err))
+	}
+}
+
+// TestRunDeclaresItselfToTheCoordinator: launchRun calls the same writer, so a
+// launch declares itself without a second command. What a launch can declare
+// before any code exists is who asked for it and the branch it is about to
+// work on — the run's own branch, launchRun's own rule — and the release that
+// branch names.
+func TestRunDeclaresItselfToTheCoordinator(t *testing.T) {
+	f := newLaunchBudget(t, "observe")
+	env := memEnv(t, f.cloudFixture)
+	spec := raceSpec(t, env)
+	spec.RequestedBy = "someone@example.com"
+	spec.Branch = "release/v0.11.0"
+	if _, err := launchRun(context.Background(), env, appSlug, spec, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := f.db.Value(coordinator.PathIntents(appSlug)).(map[string]any)
+	if len(m) != 1 {
+		t.Fatalf("the launch declared %d records, want 1: %v", len(m), m)
+	}
+	for _, v := range m {
+		data, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rec coordinator.Intent
+		if err := json.Unmarshal(data, &rec); err != nil {
+			t.Fatal(err)
+		}
+		if rec.DeclaredBy != "someone@example.com" || rec.Branch != "release/v0.11.0" || rec.Release != "0.11.0" {
+			t.Errorf("the launch's declaration = %+v", rec)
+		}
+	}
+}
+
+// TestAFailedReportDoesNotFailTheLaunch: the coordinator is advisory (spec
+// §3), so a declaration that cannot be written is a warning on stderr and
+// never a failed launch — a run must not wait on a service that may not be
+// deployed. It is the seam's own test: reportLaunchIntent is what would reach
+// a database, and the launch is asserted to start anyway.
+func TestAFailedReportDoesNotFailTheLaunch(t *testing.T) {
+	f := newCloudFixture(t)
+	env := memEnv(t, f)
+	prev := reportLaunchIntent
+	reportLaunchIntent = func(context.Context, *cloudEnv, string, *task.Spec) error {
+		return errors.New("the database is unreachable")
+	}
+	t.Cleanup(func() { reportLaunchIntent = prev })
+	var warned strings.Builder
+	prevWarn := launchWarn
+	launchWarn = &warned
+	t.Cleanup(func() { launchWarn = prevWarn })
+
+	spec := raceSpec(t, env)
+	if _, err := launchRun(context.Background(), env, appSlug, spec, time.Now()); err != nil {
+		t.Fatalf("a failed report failed the launch: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want 1", n)
+	}
+	if !strings.Contains(warned.String(), "not reported to the coordinator") {
+		t.Errorf("the failure was silent: %q", warned.String())
+	}
 }
