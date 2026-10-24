@@ -474,6 +474,25 @@ wrong in a way no byte and no link is — it can promise a date, it can state a 
 tense, or it can ask a reader for something the project has nowhere to keep. The check is
 owner-run and it is **NOT RUN**.
 
+**Check 124 is the Cloud Batch backend's own, and it is the next number free above 123** (the
+compute-backend plan `docs/plans/2026-10-19-compute-backend.md`, whose design is
+`docs/design/compute-backend.md`; the subject is the **opt-in Cloud Batch backend** — the
+`--provision-batch` half of setup, shipped in **0.9.5** as `fugaro init --provision-batch` and
+named `setup` since — whose live check was never written: 57a
+measured it in hand-made scripts and 57b is written inside that plan, not here). The reading is the
+same shape as the three above and is taken the same way: the highest **written** `## Check N` section
+in this file, read at **`a9500ef3`** — the commit this change is based on — was **113**; **114-118**
+are the mobile voice-session work's, numbered and reserved and unwritten; **119** is proposed by two
+plans and unwritten; **120, 121 and 122 are claimed by an open pull request** (#922); and **123** is
+claimed on `main` by the console-dependency-graph plan's merged text, which is why it is not free
+either. Above the highest written section a claim is settled at its merge, and by the rule above
+whichever of two open claims merges second **renumbers** itself — so **124 is the next free number**,
+and this work takes it: its row and its four sections are written below. There are four because each
+is run — and restored — on its own: **124a** the plan, the apply and the two read-backs (the only part
+runnable on this tree), **124b** one ordinary sandbox task to its pull request, **124c** a forced
+preemption and the reaper, and **124d** the check's own cost and its cleanup. The check is owner-run
+and it is **NOT RUN**.
+
 **That is the end of the register.** The paragraph below is not another
 reservation: it introduces the check that owns 57, whose row is in the table
 below.
@@ -653,6 +672,7 @@ probe account carries predefined grants only).
 | 111 | The billing picker's failure modes (setup-wizard plan Task W0.3; D3 and D6): the Cloud Billing API disabled on the quota project — in D3's two cases, the quota project **being** the project set up and the quota project being **another** one — a caller without `billing.accounts.list` on a project whose API **is** enabled (so the API answers **403** rather than the disabled-API refusal), and the three sessions that never list anything at all (no TTY, `--json`, an agent session) — each asserting the guided `gcloud billing projects link` line, that **nothing was enabled**, and that **no account list appears in any output** (the one run where a list *is* expected is the `gcloud` fallback answering an API that refused) | See "Check 111" below; **you** run it at your own terminal, on installation `fugaro` (never `belong`), and **no agent runs any step of it** (an agent session is one of the five modes it observes). | Three throwaway projects of your own — `P` (the installation's), `Q` (API off) and `S` (API on) — and the ADC quota project is repointed by three of the runs. Every step is a refusal, and nothing is created, enabled or linked by the check itself. **NOT RUN.** |
 | 112 | The four zoom levels, drawn once and drawn as stills (zoom-diagrams plan §3, Part 4; D237, D244, D245, D247): the section sits on `/how-it-works/`, **under "The run, end to end" and its diagram** (D237); the four levels are four `<figure>`s in the owner's boards' order, each named by its own `<figcaption>`; **every entity is one `<symbol>` of one `<defs>`, drawn through `<use>`** (D244) — seventeen of them, the job tile, the orchestrator, the developer and its planned form, the person and its planned form, the plain, accent and planned cards, the laptop, the phone, the project, the loop, the draft pull request, the Firebase card, the cloud and the level's own box — so a job tile is the same tile at every level, and no level draws its own copy of one; every label of every level is a string of the board it is drawn from, held word for word in both directions; the four markers are one `<nav>` of anchors with accessible names (D245), each jumping to its own level by keyboard and by pointer; the four levels and every label are in the document **with JavaScript off** (the section ships no script of its own); and the drawings are legible — labels at the palette's own contrast, nothing clipped, nothing drawn as an empty box — on a desktop and at 360, 390 x 844 and 320 (ZU4) | See "Check 112" below; **you** run it, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the live site — read-only, no account, no cloud project touched, no `fugaro` command, and **No agent runs any step of it**. The pinned scroll-driven zoom is **Part 5** and is not in this tree: that step of the section is written and cannot be run yet, and an unrun step is not a pass | One browser, a hard reload, one look at the section with script on and one with it off, and one narrow viewport. Nothing is created, enabled, linked or written. **USER-RUN, NOT RUN.** |
 | 113 | The phone app's page, and every claim on it marked shipped or planned (zoom-diagrams plan §3, Part 3; D239, D240, D241, D242): `/mobile/` is the app's own page and it is a **"coming soon"** page, so it carries a **preview badge** over its headline reading "Coming soon" (D240's third condition) and **no date anywhere** — no year, no month, no season, in the page's text, its title or its description (D240's first condition) — and **every bullet is marked**: the claims of `website/data/mobile-claims.yaml` render as two lists under two headings, *What the app does today* and *What is still to come*, each card carrying its own word, **Shipped** or **Planned**, so the mark is a word and not a colour alone (D240's second condition, D241's answer: shipped is status and spend, planned is the roster, switching by name, the wake word, QR pairing and the three roles); the **wake word's bullet says the listening and the recognition happen on the phone** and the page names no speech service and no cloud (D242); **nothing asks a reader for anything** — no form, no field, no button, no `mailto:`, no third party, no waitlist (D239) — and the page shows **no empty frame**: with no row in `website/data/mobile-screens.yaml` there is no slider, no heading and no picture-shaped hole, and when your captures land the slider appears with this page's own slot and ids (D251); and the page reads at a phone's width, with the marks and the badge legible at 360, 390 x 844 and 320 | See "Check 113" below; **you** run it, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the live site — read-only, no account, no cloud project touched, no `fugaro` command, and **No agent runs any step of it**. The pictures are yours and are **not** in this tree: step 6's second half is written and cannot be run until they land, and an unrun step is not a pass | One browser, a hard reload, one look at the page, one look at the menu, and one narrow viewport. Nothing is created, enabled, linked or written, and no address is entered anywhere. **USER-RUN, NOT RUN.** |
+| 124 | The Cloud Batch backend's own live check (compute-backend plan `docs/plans/2026-10-19-compute-backend.md`, its Task 12; design `docs/design/compute-backend.md`; the opt-in `--provision-batch` backend, shipped in 0.9.5 as `fugaro init --provision-batch`, whose live check was never written — 57a measured it in hand-made scripts and 57b lives inside that plan): **four owner-run parts.** **124a** — `fugaro setup --provision-batch --project fugaro`: the plan the compute root prints (the two APIs, the run accounts' IAM, the reaper's and the preload's accounts and their two custom roles, the Cloud NAT and its router, the preload's scheduled rebuild, the reaper's job), the typed confirmation nothing is applied before, the apply's `provisioned; the preloaded boot image …` line, the second run's `No changes: the compute backend's provisioning matches the plan.`, and the two read-backs — `fugaro doctor`'s eight `batch-…` lines, which are **warnings** while nothing in this build can select the name (so the summary line is absent, and its presence would be the finding), and `fugaro validate`'s refusal, which is the pass today and `<path> is valid` after **the enable task**. **This part is the only one runnable now**: `internal/localcfg` refuses `backend: cloud-batch` (`backend "cloud-batch" is not enabled yet (this build runs cloud-run)`) until the plan's Task 10, so **124b, 124c and 124d are written and cannot be run yet**. **124b** — one ordinary sandbox task through a Batch job to its **draft pull request**, then declined and its branch deleted (Bitbucket, the sandbox's own repository). **124c** — a forced preemption: the run's own VM, selected by the label value the **job itself** records (`fugaro_run=<slug>-<run-id>`, never a typed name, and the step refuses a VM whose label is not its own job's), deleted by hand; the job must end `FAILED` with the task's exit code equal to the value read out of the tree (`grep -n 'preemptExitCode =' internal/backend/batch/run.go` — the number has one home and is written nowhere under `docs/`), and `fugaro runs ls` must read `failed (preempted)` — a **derived** reading, because nothing writes a preempted run's record; the reaper then reports what it would reap and what it reaped. **no Fugaro run is Spot today**, so this is a **simulated** reclaim and the design's §7.2 step 7 stays unrun. **124d** — the check's own cost and the cleanup: the runs' dollars, the budget lease released, and `gcloud batch jobs list` / `gcloud compute instances list` diffed against the before-state the check recorded, with the installation's own provisioning — **the installation's own, never deleted**: the preload image family, the reaper's and the preload's service accounts, **the two custom roles**, the Cloud NAT and its router, the preload rebuild's and the reaper sweep's scheduler jobs, the reaper job — named as what no restore here may touch | See "Check 124a"–"Check 124d" below; **you** run it, on installation `fugaro` (GCP project `fugaro-dev`, never `belong`), a sandbox checkout only, at your own terminal, with the guard block re-run before every part; the apply's confirmation and `fugaro setup` are refused a coding agent's session, and **no agent performs any step of the check** | 124a: one installation-root apply and the compute root's, one Cloud Build for the preload image and the scheduled rebuilds after it, and nothing else; 124b and 124c: **two** small sandbox runs on Batch (one ordinary, one preempted by hand), the check's own dollars recorded in 124d, with the batch jobs' own records kept. Nothing in the register is deleted by the check except 124b's declined pull request and its branch, and **the installation's own provisioning is never deleted**. **USER-RUN, NOT RUN — and 124b, 124c and 124d are written and cannot be run yet**, for the reason the sections record in as many words: `backend: cloud-batch` is refused by `internal/localcfg` until the enable task (the plan's Task 10, "to build"). |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -8772,3 +8792,633 @@ yet, that step 6's second half was not run. Until it has been, this row stays **
 - **Never touch `belong`, EdgeWeb or EdgeServer**: no step here reads or writes a project at all,
   and the only host this check fetches is the built artifact on localhost or the canonical origin
   the site's own `site.yaml` names.
+## Check 124a: the plan, the two read-backs, and the two refusals an owner meets today (installation `fugaro`, the sandbox checkout only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written for the **opt-in Cloud Batch backend** — `fugaro setup --provision-batch`,
+shipped in 0.10.0 — whose design (`docs/design/compute-backend.md`) measured the backend in
+hand-made scripts (**Check 57a**, run 2026-10-15) and wrote the post-build acceptance run (**57b**)
+inside a design document, never in this register. This part is the half an owner can run **today**:
+the plan, the apply, and the two read-backs. **No agent performs any step of it**: every command
+below is run by you, at your terminal, in a shell whose `gcloud` identity is the operator's.
+
+**What this part can be run against, and what it cannot.** The provisioning itself is shipped:
+`--provision-batch` no longer refuses, `internal/cli/init_compute.go` is the stage behind it, and
+`deploy/terraform/gcp/roots/compute` is the root it applies. The **backend name** is not selectable
+in this build: `internal/localcfg` refuses `backend: cloud-batch` with
+`backend "cloud-batch" is not enabled yet (this build runs cloud-run)`, until **the enable task** —
+`docs/plans/2026-10-19-compute-backend.md`'s Task 10, whose coverage table says *to build*. So this
+part is runnable end to end, and **124b, 124c and 124d are written and cannot be run yet**: they
+need a run on this backend, and a run needs the name.
+
+**The doctor reading, and why the summary line is not it.** `fugaro doctor`'s Batch half is
+deliberately **warnings** today — `internal/cli/doctor_batch.go` says so in the term: *"All of them
+are WARNINGS, never failures: nothing in this build can select `backend: cloud-batch`"*, so an
+installation's `batch:` block is a fact about work in progress rather than a broken installation.
+They are therefore warnings, never **failures** while nothing in this build can select the name, and
+a warning suppresses doctor's summary line (`internal/cli/doctor.go`'s `printDoctorChecks`). So a
+doctor run with a batch block on the installation prints the `batch-…` lines and **no**
+`fugaro doctor: everything checked is ok`; the summary line's presence is the finding — it would be
+an error while a batch block is on the installation, not a pass. After the enable task the same
+reading turns into the gate it was written to be, and `internal/cli/init_compute.go`'s own comment
+says who decides which of the checks a project must satisfy.
+
+**Never `belong` as a target, and no step of this check names it as an argument.** Every command
+that names a project names the sandbox's (`--project="${P:?}"`, which is `fugaro-dev`) or the
+installation (`--project fugaro`), and this check has no reason to go anywhere else: the
+installation, the sandbox repository and one hand-made task are its whole subject. It is a
+prohibition and not a task, and no agent performs it either.
+
+**The guard block — re-run it from a fresh shell before this part and before each of the other
+three.** It is Check 43's three hard stops, with this check's number in the messages; every check
+from 48 onward carries them (the rule is the project-centric plan's, and Check 59's sections say it
+again). Read it as three assertions rather than three prints: `P` is exactly `fugaro-dev` **and**
+`L`, `R` and `U` are non-empty, so a skipped, partially pasted or hand-edited block stops here
+instead of reaching `gcloud` with an empty argument; `fugaro doctor`'s `project:` line is the
+checkout's own installation; and this checkout's origin is the sandbox.
+
+```bash
+# Save this to a file and run it with `bash` — an interactive zsh does not
+# honour the `#` comments unless `setopt interactive_comments` is set first.
+: "${CHK124_OWNER_RUN:?export CHK124_OWNER_RUN=yes first: this check is owner-run, and no agent performs any step of it}"
+P=fugaro-dev
+L=us-east5
+R=fugaro-ghcr
+U=dimipaun/fugaro-base
+W=/tmp/chk124; mkdir -p "$W"
+
+[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$R" ] && [ -n "$U" ] \
+  || { echo "Check 124 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R U=$U must not be empty)" >&2; exit 1; }
+fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+  || { echo "Check 124 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
+git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
+  || { echo "Check 124 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
+```
+
+`R` and `U` are Check 43's registry variables and this check reads no image out of them: they are in
+the block because the first stop asserts the **block itself** ran, and a variable that is not there
+is a flag someone edited. `V` (`fugaro version`) is not needed here — nothing in this check
+interpolates an image tag. Of the commands this check runs, **`fugaro version` and
+`fugaro validate` are the two that take no `--project` flag at all** (`fugaro version --help`,
+`fugaro validate --help`; `validate` resolves the project from the checkout, the way `doctor` does
+without the flag — the register's own note under Check 43's rule says the same), which is why the
+block below has no `V` and why the step that runs `validate` runs it bare.
+
+**Every `fugaro` command below carries `--project fugaro`** (the installation's *name*: its GCP
+project is `fugaro-dev`), and every `gcloud` command carries `--project="${P:?}"`. Which command
+takes what, and why it is not optional:
+
+- **`--project` disagreeing with the checkout's `project:` is refused, not resolved**
+  (the checkout's own project is named in the refusal message, `internal/localcfg/select.go`).
+  That refusal is a fourth hard stop and it is what makes the `fugaro` half of the guard hold: a
+  `fugaro` command run from the wrong checkout cannot quietly change the wrong installation.
+- **`gcloud` reads its project from the operator's ambient configuration** when no `--project=`
+  is given, and the owner's default is a `*-prod` project. Every `gcloud` line in this check names
+  it, and `${P:?}` makes an empty one a hard error rather than an empty argument.
+- **`fugaro doctor`, `fugaro runs ls`, `fugaro budget show`, `fugaro validate` and `fugaro reaper`**
+  are the ones this check drives, in every part.
+
+**(124a-1) Record what is in the project before you touch it.** The cleanup in 124d is "nothing was
+left behind", and that is only a fact against a before-state; the restore is only *safe* against
+one, because the lists below are also what says which jobs and VMs were there before the check and
+are therefore not the check's to delete. This installation's own provisioning is not litter: the
+`fugaro-preload` image family, the reaper job and the scheduler jobs are here before you start and
+stay after you finish (and no **instance template** is: see the FACT below).
+
+```bash
+gcloud batch jobs list --project="${P:?}" --location="${L:?}" \
+  --filter="labels.fugaro=managed" --format='value(name,status.state)' | sort > "$W/jobs-before.txt"
+gcloud compute instances list --project="${P:?}" \
+  --filter="labels.fugaro=managed" --format='value(name)' | sort > "$W/instances-before.txt"
+gcloud compute instance-templates list --project="${P:?}" \
+  --format='value(name)' | sort > "$W/templates-before.txt"
+wc -l "$W/jobs-before.txt" "$W/instances-before.txt" "$W/templates-before.txt"
+```
+
+**FACT:** the three `wc -l` numbers, and the three files' contents, cat'd back.
+**expected output:** on a sandbox whose Batch backend has never run a job, `0` jobs, `0` instances and `0` templates: the
+installation provisions **no** instance template at all (what the preload builds is an **image
+family**, `projects/<project>/global/images/family/fugaro-preload-<8 hex>`, and a run's VM comes from
+the Batch job's own spec, not from a template), so a template here is something a person made by
+hand. A non-empty jobs or instances list means a run of this backend is still in flight or was left
+behind, and it is **not** the check's to delete — write down what it is before going on.
+
+**(124a-2) The plan-only form, and what it does not show.** FACT first, because this is the step
+that surprises an owner, and it is a fact about the tree rather than a defect of the flags.
+
+```bash
+fugaro setup --plan-only --provision-batch --project fugaro
+```
+
+**FACT:** the whole output. **expected output:** the **installation root's** plan — its own
+`Plan: N to import, N to create, N to update, N to forget` line, `Other changes:` and its
+`create …` lines — and then `--plan-only: nothing applied; the plan is <path>`, and **no
+`module.compute.` address anywhere in it**. The plan-only stop is `installRoot`'s
+(`internal/cli/init.go`), reached inside the installation stage, and the compute stage is registered
+*after* the repository stage (`internal/cli/init_stages.go`) — so **this form cannot show the Batch
+plan**: an owner who reads it as "the Batch resources are not planned" has read a stop as a result.
+The Batch plan is printed by the apply itself, in the next step, before it asks for anything.
+
+**(124a-3) The real plan, and the typed confirmation.** This is the step the check is named for:
+nothing is created until the plan is on the screen and you have typed the installation's name.
+
+```bash
+fugaro setup --provision-batch --project fugaro
+```
+
+**FACT:** the two plans and the confirmation, in order. **expected output:** the installation root's
+plan and its own ordinary confirmations first (nothing about them is this check's business), and
+then, from the compute stage — **once**: a `Plan` pass runs only under `--plan-only`
+(`internal/initflow`'s `preview` calls `Plan` there and nowhere else), so an applying run prints the
+compute root's summary from its `Apply` alone:
+
+```
+Plan: 0 to import, N to create, 0 to update, 0 to forget
+Other changes:
+  create module.compute.google_project_service.this["compute.googleapis.com"]
+  create module.compute.google_project_service.this["batch.googleapis.com"]
+  …
+⚠ CONFIRM (project fugaro, GCP project fugaro-dev): provisions the Batch compute backend in GCP project fugaro-dev: the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router (billable while they exist), and a preloaded boot image built by a scheduled Cloud Build (0 imports, N creates, 0 updates)
+Type fugaro to confirm: 
+```
+
+**Nothing is applied before that prompt**, and `--yes` does not cover the step: the stage's
+confirmation is `Typed` in both front doors (`internal/cli/init_compute.go`, `askTyped`), so
+`--yes`, `--non-interactive`, `--json`, a pipe and a coding agent's session never confirm it.
+
+The addresses the plan must carry, and why each is the design's (§8.1 task 6; the module's own
+files are the authority and this list is the reading of it): the **two APIs**
+(`module.compute.google_project_service.this`), the **run accounts' IAM**
+(`module.compute.google_project_iam_member`,
+`module.compute.google_artifact_registry_repository_iam_member`, and the launcher's conditioned
+`module.compute.google_project_iam_member`), the **reaper's** account, custom role and binding
+(`module.compute.google_service_account.reaper`,
+`module.compute.google_project_iam_custom_role.reaper`), the **preload's** account and custom role
+(`module.compute.google_service_account.preload`,
+`module.compute.google_project_iam_custom_role.preload_builder`), the **jobs' network**
+(`module.compute.google_compute_firewall`, `module.compute.google_compute_router.this`,
+`module.compute.google_compute_router_nat.this`), the **reaper's invocation**
+(`module.compute.google_cloud_run_v2_job.reaper` and its two scheduler-facing bindings), and the
+**preload's rebuild** (`module.compute.google_cloud_scheduler_job.preload_rebuild`). **FACT:** whether the plan holds anything else, and
+whether any address of a pre-existing installation's root appears at all — a create of the
+installation root's own resources in this plan is a finding, because the compute root has a state of
+its own (`deploy/terraform/gcp/roots/compute`).
+
+**(124a-4) Type the name, and read what it applied.** After the confirmation the apply runs, and
+this installation's preload image starts building now rather than at the next schedule.
+
+**FACT:** the lines the stage printed after the apply. **expected output:** exactly
+
+```
+provisioned; the preloaded boot image fugaro-preload-<the pin's first eight hex> is being built now (Cloud Build, about two minutes), and rebuilt on its schedule; each generation records the socket's gid under its socket-gid label, read off the builder VM
+```
+
+(`internal/cli/init_compute.go`; the family name is `infra.PreloadedImage`, held to the module's own
+derivation by that package's test, and the label name is the module's `socket_gid_label`). **FACT:**
+the Cloud Build run it started — its build id, that it succeeded, and roughly how long it took.
+**FACT:** a second run of the same command. **expected output:** exactly `No changes: the compute
+backend's provisioning matches the plan.` — the stage re-plans and reports nothing to do, which is
+also the reading that says the apply finished whole.
+
+**(124a-5) `fugaro doctor` for the Batch setup.** The read-back, and the step whose reading is not
+the one an owner expects (see the note above): the Batch half is warning-shaped while nothing in this
+build can select the name.
+
+```bash
+fugaro doctor --project fugaro
+fugaro doctor --strict --project fugaro; echo "exit: $?"
+```
+
+**FACT:** every line whose id begins `batch-`: `batch-apis`, `batch-job-definition`,
+`batch-image-family`, `batch-network`, `batch-subnetwork`, `batch-log-sink`, `batch-launcher-iam`
+and the informational `batch-artifact-boundary`, each with its severity word, its problem and its
+fix. **expected output:** the checks that pass print nothing at all, the ones that do not print
+`warning batch-…: …`, and **the summary line `fugaro doctor: everything checked is ok` does not
+appear**; `--strict` exits non-zero while any of them is a warning. **FACT:** whether all eight lines
+appear at all — `doctorBatchChecks` returns nothing for an installation with no `batch:` block
+(`internal/cli/doctor_batch.go`, `if lc.Batch == nil`), and the block reaches a machine through the
+project layer's shared config (`internal/projectpolicy`, `MergeShared`), so **an installation that
+prints no `batch-` line at all has no `batch:` block to read** and that is the first thing to fix —
+the rest of this step says nothing about it.
+
+**(124a-6) `fugaro validate` for the Batch setup.** The offline half of the same reading, and the
+one an owner can run in ten seconds.
+
+```bash
+fugaro validate
+```
+
+**FACT:** the whole output and the exit code. **expected output:** today the refusal
+`backend "cloud-batch" is not enabled yet (this build runs cloud-run)`, and **not**
+`<path> is valid` — the name is refused before any of the offline checks
+(`internal/cli/validate_batch.go`) is reached. **After the enable task** the same command on the same
+file must print `<path> is valid`, and that is the second half of this step: the machine type priced
+from the price table, `batch.task_timeout` under Batch's own `RUNNING` ceiling, and the artifact
+boundary are what it is judging. A run that prints the refusal is a **pass for this step today**,
+and a run that prints `<path> is valid` today is the finding — it would mean the name was enabled
+without the enable task's doctor gate.
+
+**Restore (124a) — nothing to undo, and one list never to delete.** This part creates the
+installation's own Batch provisioning, deliberately and permanently: it is **what the check
+proves**, not the check's litter, and the check leaves it in place. Nothing here is restored, because
+nothing here is the check's.
+
+- **Never deleted by this check, by its restore, or by anyone tidying up after it**: the two APIs do
+  not go back off, the run accounts' IAM stays, the reaper's and the preload's service accounts and
+  their two custom roles stay, the Cloud NAT and its router stay, the preload rebuild's and the
+  reaper sweep's scheduler jobs stay, and the reaper job stays. A full teardown of
+  `deploy/terraform/gcp/roots/compute` is **not** this check's restore step: it would take the
+  installation's backend apart, and the two custom roles would keep counting against the project's
+  custom-role limit for seven days after it.
+- **The only thing to put back** is what you typed: if you edited the sandbox's shared config for
+  the step, put it back with `fugaro project policy publish --project fugaro` and record that you
+  did.
+- **Never `belong`, EdgeWeb or EdgeServer**: no step above reads or writes anything outside the
+  sandbox installation, and the name appears in this section only as this sentence.
+
+## Check 124b: one ordinary sandbox task on Batch, to its pull request (installation `fugaro`, the sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** It cannot be run yet: this part needs a run **on this backend**, and this build
+refuses the name: `internal/localcfg` answers `backend: cloud-batch` with
+`backend "cloud-batch" is not enabled yet (this build runs cloud-run)` until **the enable task**
+(`docs/plans/2026-10-19-compute-backend.md`'s Task 10, *to build*). It is written now, the way Check
+57b is, so that the day the name is enabled the acceptance run is on the shelf rather than to be
+invented. **No agent performs any step of it**: you run it, and the point of it is that a real task
+reaches a real pull request through a job on Batch.
+
+**The guard block — re-run it from a fresh shell before this part.** It is 124a's, verbatim: the
+three hard stops and the two pinning rules, `--project fugaro` on every `fugaro` command and
+`--project="${P:?}"` on every `gcloud` command. Never `belong`: no step below names it as an
+argument, and the only repository this part touches is the sandbox's.
+
+```bash
+: "${CHK124_OWNER_RUN:?export CHK124_OWNER_RUN=yes first: this check is owner-run, and no agent performs any step of it}"
+P=fugaro-dev
+L=us-east5
+R=fugaro-ghcr
+U=dimipaun/fugaro-base
+W=/tmp/chk124; mkdir -p "$W"
+
+[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$R" ] && [ -n "$U" ] \
+  || { echo "Check 124 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R U=$U must not be empty)" >&2; exit 1; }
+fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+  || { echo "Check 124 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
+git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
+  || { echo "Check 124 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
+```
+
+The methods block and the alternative method, in full, are the design's: `docs/design/compute-backend.md`
+§7.2 is where a hand-made submission is written (`check57/job.json`, the socket recipe, the explicit
+network and subnetwork), and this part deliberately does **not** repeat it. What this part adds is
+the one thing no hand-made job can show: Fugaro's own launcher, runner, gateway, git provider and
+finalize, on this backend, end to end.
+
+**(124b-1) The installation selects the backend.** `backend:` is the **project config's** key
+(`internal/localcfg`'s `BackendName`, `$XDG_CONFIG_HOME/fugaro/projects/<name>.yaml`), not a key of a
+repository's `fugaro.yaml` — that file's decoder refuses unknown fields, so a `backend:` written
+there is a config error rather than a selection. The sandbox installation's project config names
+`backend: cloud-batch`, and after the enable task that is accepted: `internal/cli/backends.go` lists
+`cloud-batch` among the names `fugaro backends ls` reports, and the config validation is what turns
+the name from *known* into *selectable*.
+
+**FACT:** `fugaro backends ls --project fugaro` and the `backend:` line of that project config,
+**expected output:** `cloud-run` and `cloud-batch` listed, with `cloud-batch` marked by the
+`fugaro's backend` the command appends to the selected one, and the same name in the project config —
+and **no `backend:` key in the sandbox checkout's `fugaro.yaml`**, since the repository decoder
+refuses it. **FACT:** `fugaro validate` in the sandbox
+checkout, **expected output:** `<path> is valid` — the offline checks are what say the machine type, the
+timeout and the artifact boundary are satisfied before a run is launched at all.
+
+**(124b-2) Launch one ordinary task.** The task is an ordinary sandbox task — the same one the
+register's other run checks use — and nothing about it is Batch-specific: that is the point, because
+a task written for the backend would test the task.
+
+```bash
+fugaro run --json --project fugaro --title "check 124b: one task on the Batch backend" \
+  "Add one sentence to README.md saying which check last ran against this repository, and commit it."
+```
+
+**FACT:** the launch's JSON, and the job it created. **expected output:** a `run_id`, and a Batch job
+whose name is the run's job id (`internal/backend/batch/names.go`'s `JobID`) — check it with
+`gcloud batch jobs list --project="${P:?}" --location="${L:?}" --format='value(name,labels)'`, whose
+labels are `fugaro=managed`, `fugaro_repo`, `fugaro_workflow` and `fugaro_run=<slug>-<run-id>` — read
+the run's own back with `--format='value(name,labels.fugaro_run)'`, which is the value 124c-2 and
+124d-2 select by.
+**FACT:** the job's `AllocationPolicy`, read out of `gcloud batch jobs describe`: the preloaded boot
+image family from 124a's apply, the explicit network and subnetwork, and its `provisioningModel`.
+**expected output:** the family name 124a printed, the network and subnetwork 124a's plan created,
+and **no Spot provisioning model anywhere in it** (nothing in this check runs Spot: see 124c).
+
+**(124b-3) The draft pull request, and the run's end.** A Fugaro run opens its pull request as a
+draft at its first checkpoint push and flips it at finalize, so the draft is read in flight and the
+end is read after it.
+
+```bash
+fugaro runs ls --project fugaro
+gcloud batch jobs describe <job> --project="${P:?}" --location="${L:?}" --format='value(status.state)'
+```
+
+**FACT:** the row while the run is in flight, and again after it ends. **expected output:** the row
+shows the run with `#<id> <url> (draft)` while it is running, the `pull request` is the sandbox
+repository's own on its host (the sandbox is on Bitbucket: `edgeappinc/fugarosandbox`), and at the
+end the run reads `succeeded` with the pull request ready; the job's state is `SUCCEEDED`. **FACT:**
+the pull request's number, its URL, and whether it ended a draft or ready — the register's own checks
+record both readings rather than assuming the flip. **FACT:** the run's own record says which backend
+it ran on, and its log lines came through the installation's log sink rather than `_Default`
+(`internal/backend/batch`'s logging destination, design §1.5) — read one task line out of Cloud
+Logging and record where it lives.
+
+**(124b-4) One hand-made job, only if you want the platform's own words.** The design's §7.2 methods
+block already submits a job by hand; a submission *here* is not required by this part, and this check
+does not repeat it. What is worth recording once, if you do it: the job's service account, its
+labels, and the fact that its VM is in the subnetwork the block names — the three readings the design
+asks for at a hand-made submission.
+
+**Restore (124b) — the check's own litter, and only that.** The pull request and the branch are the
+check's; the run record and the job's own history are not restored (a run's record is history —
+`internal/backend/batch/reap.go` says so — and a `FAILED` or `SUCCEEDED` job keeps its record while
+Batch deletes the VM itself). Decline the pull request with the sandbox token, never your own, and
+delete the branch, exactly as the register's older checks do:
+
+```bash
+# The repository is spelled out (edgeappinc/fugarosandbox, the sandbox): a URL
+# built from a variable is one empty or edited value away from naming another
+# workspace, and these two calls are destructive. <token-file> is a path you
+# substitute here: it holds the sandbox token, and `printf` is a builtin, so the
+# token stays out of every process's command line. Never merge a sandbox pull
+# request.
+curl -fsS --config <(printf 'header = "Authorization: Bearer %s"\n' "$(cat <token-file>)") -X POST \
+  "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/<id>/decline"
+curl -fsS --config <(printf 'header = "Authorization: Bearer %s"\n' "$(cat <token-file>)") -X DELETE \
+  "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/refs/branches/fugaro/<run-id>"
+```
+
+**FACT:** both calls, and the read-back. **expected output:** the decline's JSON with
+`"state": "DECLINED"`, the branch delete's `204`, and `fugaro runs ls --project fugaro` still
+showing the run's history. **Not restored, deliberately**: the run's record, the job's record, and
+the installation's own provisioning (124a's list). **Never `belong`, EdgeWeb or EdgeServer**: no step
+of this part reads or writes anything but the sandbox repository and the sandbox installation, and
+the name appears in this section only as this sentence.
+
+## Check 124c: a forced preemption, the exit code the tree carries, and what the reaper does and does not do (installation `fugaro`, the sandbox only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** It cannot be run yet — the same refusal as 124b (`backend "cloud-batch" is not
+enabled yet (this build runs cloud-run)`, **the enable task** being
+`docs/plans/2026-10-19-compute-backend.md`'s Task 10). **No agent performs any step of it.**
+
+This is the part the read side's preemption derivation was written for and never measured. Design
+§1.3 derives a run whose machine the platform reclaimed as **`failed (preempted)`**, on either of two
+readings: a job whose task-level status event **says the VM was preempted**, or a job whose task's
+exit code is the **reserved code** Cloud Batch reports for a reclaimed Spot VM. That number has
+**one home on this tree** — `internal/backend/batch/run.go`'s `preemptExitCode` — and it is written
+deliberately **nowhere under `docs/`**: `internal/cli/docs_compute_backend_test.go` walks `docs/` and
+fails if the literal appears outside the compute-backend plan. So this part reads the constant out of
+the file it lives in and asserts the job's report carries **that** value, rather than typing a digit
+that would be a second home for it and a second thing to update.
+
+**The guard block — re-run it from a fresh shell before this part.** It is 124a's, verbatim. This is
+the part that deletes something, so the guard matters most here: every `gcloud` command carries
+`--project="${P:?}"`, and the VM it deletes is selected from **its own job's** recorded label rather
+than from a name anyone typed. Never `belong`: no step below names it as an argument.
+
+```bash
+: "${CHK124_OWNER_RUN:?export CHK124_OWNER_RUN=yes first: this check is owner-run, and no agent performs any step of it}"
+P=fugaro-dev
+L=us-east5
+R=fugaro-ghcr
+U=dimipaun/fugaro-base
+W=/tmp/chk124; mkdir -p "$W"
+
+[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$R" ] && [ -n "$U" ] \
+  || { echo "Check 124 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R U=$U must not be empty)" >&2; exit 1; }
+fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+  || { echo "Check 124 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
+git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
+  || { echo "Check 124 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
+```
+
+**(124c-0) Read the number out of the tree before anything else.** This is a FACT and not a step:
+the assertion below is about the tree's own constant, so it is read rather than remembered.
+
+```bash
+grep -n 'preemptExitCode =' internal/backend/batch/run.go
+```
+
+**FACT:** the line and its value on this checkout's commit. **expected output:** the declaration, and
+the value on its right-hand side — record both verbatim, and record the `git rev-parse HEAD` they
+were read at. It is not written into this document on purpose.
+
+**(124c-1) Launch the run the preemption lands on, and catch it in flight.** One ordinary sandbox
+task, long enough to be caught: the check needs the job `RUNNING` with its VM alive.
+
+```bash
+fugaro run --json --project fugaro --title "check 124c: the preemption" \
+  "Add one sentence to README.md saying which check last ran against this repository, and commit it."
+```
+
+**FACT:** the launch's `run_id`, and the job's state. **expected output:** a job in `SCHEDULED` then
+`RUNNING` (`gcloud batch jobs describe <job> --project="${P:?}" --location="${L:?}"`), and a VM with
+that job's labels. Note what is **not** the case: no Fugaro run is Spot on this tree — there is no
+config key that asks for a Spot provisioning model — so this job's VM is an ordinary one, and the
+preemption below is **simulated**: the check takes the VM away by hand, which is what a Spot reclaim
+does to the run, and the design's own method (a hand-submitted **Spot** job, `docs/design/compute-backend.md`
+§7.2 step 7) is a different measurement, still unrun.
+
+**(124c-2) Take the run's own VM away, and refuse anything that is not its own.** The VM is selected
+by the label value the **job itself** records — `fugaro_run=<slug>-<run-id>` — read back off the job,
+never by a name typed into this check. The guard refuses to delete a VM whose label does not carry
+exactly that value, and it refuses a VM whose `fugaro=managed` label is absent, because a VM without
+it is not this installation's at all.
+
+```bash
+# The job, then its own label value, then the VM that carries it: every step is
+# a read, and only the last command deletes anything.
+JOB=$(gcloud batch jobs list --project="${P:?}" --location="${L:?}" \
+  --filter="labels.fugaro_run=<slug>-<run-id>" --format='value(name)' | head -1)
+LABEL=$(gcloud batch jobs describe "${JOB:?}" --project="${P:?}" --location="${L:?}" \
+  --format='value(labels.fugaro_run)')
+mapfile -t VMS < <(gcloud compute instances list --project="${P:?}" \
+  --filter="labels.fugaro_run=${LABEL:?} AND labels.fugaro=managed" \
+  --format='value(name,zone.basename())')
+[ "${#VMS[@]}" = 1 ] || { echo "Check 124c stopped: ${#VMS[@]} VM(s) carry this job's own label (${LABEL}), want exactly one; nothing was deleted" >&2; exit 1; }
+read -r VM ZONE <<<"${VMS[0]}"
+[ -n "${VM:-}" ] && [ -n "${ZONE:-}" ] || { echo "Check 124c stopped: no VM carries this job's own label (${LABEL}); nothing was deleted" >&2; exit 1; }
+gcloud compute instances delete "${VM:?}" --project="${P:?}" --zone="${ZONE:?}" --quiet
+```
+
+**FACT:** the four reads and the delete. **expected output:** one job name, its label value, the
+one VM's name and zone, and the delete's
+`Deleted [https://www.googleapis.com/compute/v1/projects/fugaro-dev/zones/<zone>/instances/<name>]`.
+**FACT:** that the count of VMs carrying the label was **1** and not more. **expected output:** the
+`mapfile` array holds one line — a second one means the selection is not the check's job's, and the
+step must stop (it refuses to delete a VM whose label does not carry the job's own `fugaro_run`
+value, and the filter's `labels.fugaro=managed` half refuses a VM that is not the installation's).
+
+**(124c-3) The run ends `FAILED`, and the report's exit code is the assertion.** This is the reading
+the whole part exists for.
+
+```bash
+gcloud batch jobs describe "${JOB:?}" --project="${P:?}" --location="${L:?}" \
+  --format='value(status.state)'                       # expected: FAILED
+gcloud batch jobs describe "${JOB:?}" --project="${P:?}" --location="${L:?}" \
+  --format='json(status)' | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d, indent=2))'
+fugaro runs ls --project fugaro
+```
+
+**FACT:** the job's terminal state, the task-level `exitCode` its own `status` carries, the text of
+the status events, and the run's row. **expected output:** the job is `FAILED` (not `CANCELLED`, and
+not a retry: its `taskGroups[0].taskSpec.maxRetryCount` must be **present and `0`**, which is what
+keeps Batch from attempting the task again, and the field is written with `ForceSendFields` for
+exactly that reason — an int64 with `omitempty` drops a zero, `internal/backend/batch/run.go`); the
+task's exit code
+equals the value **124c-0 read out of the tree**; and `fugaro runs ls --project fugaro` shows the run
+`failed (preempted)` — the read side's `DerivedPreempted` and its reason
+(`the Batch job was preempted: its Spot VM was reclaimed before the run finalized`,
+`internal/runview/runview.go`). **FACT, and this one is a finding when it happens:** if the report
+carries a **different** exit code and no status event says the VM was preempted, then the derivation's
+exit-code arm does **not** cover a hand-deleted VM, the job reads only through its description, and
+that is exactly the fact this step was written to settle — record it, do not adjust the check to it.
+The design says the same thing in its own words (§7.2 step 7: *the code the platform actually reports
+is what says which of the two is the one to trust*), and it is why this document refuses to name a
+number.
+
+**(124c-4) What finalises the run's record: nothing does, and this is the read side's derivation.**
+The reaper is a sweeper of billing and of leaked machines, not a finaliser. On this tree nothing
+writes a preempted run's record — the owner's ruling of 2026-10-21, design §1.3 and the
+compute-backend plan's open item — so the record stays unfinished and **the reading is derived**:
+`fugaro runs ls` and `fugaro diagnose` read the execution's own report and decorate the row. The
+reaper's business is the VM and the job, and its report says what it did and what it refused.
+
+```bash
+fugaro reaper --dry-run --project fugaro
+fugaro reaper --project fugaro
+```
+
+**FACT:** both reports, whole. **expected output:** a headline naming the sweep —
+`would reap projects/fugaro-dev/locations/us-east5: queue deadline <d>, run budget <d>, max age <d>`
+for the dry run and `reaped projects/fugaro-dev/locations/us-east5: …` for the real pass — then one
+line per action and one `refused <target>: <reason>` line per refusal
+(`internal/backend/batch/reap.go`'s `Report.Lines`). **FACT:** that the preempted run's VM is
+**not** a line in either report — it is already gone — and that nothing in either report names the
+run's record: the reaper never touches one. **FACT:** a job or a VM the pass refused, with its
+reason verbatim if there is one: a VM whose job is still running is refused, which is exactly what a
+second, still-flying run of this backend would produce, and it is **not** the check's to delete.
+
+**(124c-5) What this part does NOT show, stated so a reader does not read it as covered.** The first
+of them is that **no Fugaro run is Spot today** — there is no config key for a provisioning model —
+so nothing above is
+the **platform's** reclaim: it is a hand-delete that leaves the same evidence a reclaim does, and
+the design's own method (a hand-submitted Spot job and the platform's own preemption,
+`docs/design/compute-backend.md` §7.2 step 7) remains **unrun**, as do §7.2's step 11 (the quota
+question) and §7.2's step 8 cancel path on this backend. So this part does not show: what Batch
+reports when **it** reclaims a Spot VM (the number above is read; the platform's own words are not
+observed), whether the 120-second preemption notice reaches the runner, whether `finalize` runs, or
+how long the VM's death takes after the notice. **What it does show** is the two things the read
+side is built on and no unit test can see: the job really ends `FAILED` with the task's own exit code
+in its report, and a row read after that says `failed (preempted)` while the record itself stays
+unfinished.
+
+**Restore (124c).** The VM is already gone (that was the step), the job keeps its record, and the
+run's record stays unfinished on purpose — it is the evidence. **Never deleted**: everything in
+124a's list, and any VM or job that does not carry this run's own `fugaro_run` value. **Never `belong`,
+EdgeWeb or EdgeServer**: the delete above is scoped to the sandbox project
+(`--project="${P:?}"`, `fugaro-dev`) and to one VM carrying this run's own label; the name appears in
+this section only as this sentence.
+
+## Check 124d: the check's own spend, and a cleanup that spares the installation (installation `fugaro`, the sandbox only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** It cannot be run yet: it reads back the runs 124b and 124c made, and this build
+refuses `backend: cloud-batch` (`backend "cloud-batch" is not enabled yet (this build runs
+cloud-run)`) until **the enable task** (`docs/plans/2026-10-19-compute-backend.md`'s Task 10).
+**No agent performs any step of it.**
+
+**The guard block — re-run it from a fresh shell before this part.** It is 124a's, verbatim: the
+three hard stops and the two pinning rules. Never `belong`: no step below names it as an argument.
+
+```bash
+: "${CHK124_OWNER_RUN:?export CHK124_OWNER_RUN=yes first: this check is owner-run, and no agent performs any step of it}"
+P=fugaro-dev
+L=us-east5
+R=fugaro-ghcr
+U=dimipaun/fugaro-base
+W=/tmp/chk124; mkdir -p "$W"
+
+[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$R" ] && [ -n "$U" ] \
+  || { echo "Check 124 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R U=$U must not be empty)" >&2; exit 1; }
+fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+  || { echo "Check 124 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
+git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
+  || { echo "Check 124 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
+```
+
+**(124d-1) What the check spent, and where the lease went.** The cost is a FACT per run and a FACT
+for the whole check, and the budget lease is the second half of it: a run that never settled would
+leave a reservation behind, and a Batch run whose VM is taken away by hand is exactly the run that
+might.
+
+```bash
+fugaro runs ls --project fugaro --json
+fugaro budget show --project fugaro
+```
+
+**FACT:** each run's cost out of its row (`cost`), the two runs' total, and the budget node's
+reading. **expected output:** both runs listed with their own dollar amounts, and `fugaro budget
+show --project fugaro` showing **no run in flight** and **no reserve** for either of them once both
+have ended — a reserve that outlives the run is the finding, and its fix is the reaper's queue
+deadline or the budget node's own sweep. **FACT:** the number this sandbox task costs on this
+backend, stated as dollars, with the window it was measured over (the design's own 57a-5 measured a
+143-second `e2-standard-4` window at about a cent, and this check's number is its own). **FACT, and
+it is the one an owner should not have to guess:** whether the check's own spend was inside the
+installation's per-run ceiling (`budget.per_run_usd`) and whether the preempted run was billed at all
+— a preempted Spot VM is not billed past its end, and this run's VM was not Spot, so **what the
+preemption costs is not this check's measurement** (see 124c-5).
+
+**(124d-2) Nothing orphaned: the before-state, diffed.** This is where 124a's three files earn their
+keep. A job, a VM or a template that is there now and was not there before is the check's litter, and
+the whole point of recording the before-state is that the diff is a fact rather than a memory.
+
+```bash
+diff <(sort "$W/jobs-before.txt") <(gcloud batch jobs list --project="${P:?}" --location="${L:?}" \
+  --filter="labels.fugaro=managed" --format='value(name,status.state)' | sort)
+diff <(sort "$W/instances-before.txt") <(gcloud compute instances list --project="${P:?}" \
+  --filter="labels.fugaro=managed" --format='value(name)' | sort)
+diff <(sort "$W/templates-before.txt") <(gcloud compute instance-templates list --project="${P:?}" \
+  --format='value(name)' | sort)
+```
+
+**FACT:** the jobs' own label values, one per run
+(`gcloud batch jobs list --project="${P:?}" --location="${L:?}" --format='value(name,labels.fugaro_run)'`),
+so the VMs above are attributable to the runs that made them rather than to the installation.
+**expected output:** each job's own `labels.fugaro_run` value, one line per run.
+**FACT:** the three diffs, whole. **expected output:** **empty** diffs for the instances and the
+templates — Batch deletes a finished job's VM itself (the design's §3.4 and 57a-8's measured
+teardown), and neither the installation nor a run creates an instance template. For the jobs, the diff must hold the
+runs' own job names and nothing else: a terminal job keeps its record deliberately
+(`internal/backend/batch/reap.go`: *"It never deletes a finished job's record"*), so the two jobs are
+**expected** to remain and are named; a **third** job, or a job still in `QUEUED` or `RUNNING`, is the
+finding. **FACT:** `gcloud compute instances list --project="${P:?}" --filter="labels.fugaro=managed"`
+and `gcloud batch jobs list --project="${P:?}" --location="${L:?}"` printed whole, so a reader sees
+the counts and not only the diff.
+
+**(124d-3) The restore, and the one list it never touches.** The check's own litter is 124b's declined
+pull request and deleted branch (that part's restore) and nothing else; there is no VM to delete here
+because Batch deleted it, and no job to delete because a terminal job's record is history. **What the
+restore — and anyone tidying up after it — must never delete** is **the installation's own, never
+deleted**: **the preload image family** and every generation in it, **the reaper's and the preload's
+service accounts**, **the two custom roles** they hold, **the Cloud NAT and its router**, **the
+preload rebuild's and the reaper sweep's scheduler jobs**, **the reaper job**, and the two APIs the
+apply turned on. Each of those is what 124a applied and the reason this check exists; a teardown of
+`deploy/terraform/gcp/roots/compute`, or a hand `delete` of any of them, is not a restore step and
+would take the installation's backend apart (and the two custom roles would
+keep counting against the project's custom-role limit for seven days after it — the note under the
+compute root's own teardown).
+
+**FACT:** the read-back that the installation is whole. **expected output:** the same `batch-` lines
+124a-5 printed and no summary line (for the reason 124a gives), plus
+`gcloud compute images list --project="${P:?}" --filter='name~^fugaro-preload-'` still listing the
+family's generation 124a's build produced — the read that says the preload half of the installation
+is intact. **FACT:** that nothing was torn down anywhere in this check — record it as a sentence,
+because the absence of a command is not visible in an output.
+
+**Never `belong`, EdgeWeb or EdgeServer**: every command above carries `--project fugaro` or
+`--project="${P:?}"`, and this check has no command that names any other installation. The name
+appears in this section only as this sentence.
