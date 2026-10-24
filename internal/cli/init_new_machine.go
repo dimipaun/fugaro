@@ -13,14 +13,18 @@ import (
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
-// Adopt mode (design §3.1, "A new team member"): the installation exists
-// (its Terraform state is in the state bucket) and this machine has no local
-// config for it. The installation stage then does what update --config-only
-// does, writing the config from the installation's outputs after its own
-// confirmation, and applies nothing: the installation is the owner's, made
-// by their init, and a plan from this person's empty defaults would try to
-// undo it. Once the config exists the next stages and every rerun see the
-// installation as it is (No changes).
+// A new machine (design §3.1, "A new team member", and the owner's own second
+// machine): the installation exists (its Terraform state is in the state
+// bucket) and this machine has no local config for it. That is `fugaro
+// update`'s case. `fugaro setup` only starts fresh: it refuses a project that
+// no run of setup created before it gets here (init_project.go), so the one
+// setup run that reaches this is the creator's own resume, after an earlier
+// run applied the installation and stopped before writing its config. The installation
+// stage then does what update --config-only does, writing the config from the
+// installation's outputs after its own confirmation, and applies nothing: the
+// installation was made by its owner's fugaro setup, and a plan from this
+// machine's empty defaults would try to undo it. Once the config exists the
+// next stages and every rerun see the installation as it is (No changes).
 
 // installationExists reports whether the state bucket holds the installation's
 // state. Read-only.
@@ -33,15 +37,15 @@ func (r *initRun) installationExists(ctx context.Context, c *infra.Clients, spec
 	return has, initErr(err)
 }
 
-// adopt writes the local config from the existing installation and says
-// what the person may lack, with the one-line command an owner runs.
-func (r *initRun) adopt(ctx context.Context, e *initEngine) error {
-	fmt.Fprintf(r.w, "adopt mode: the installation of GCP project %s already exists (its Terraform state is in gs://%s) and this machine has no local config for it: the converge writes the local config from it and applies nothing.\n", e.spec.Project, e.spec.StateBucket)
+// newMachineConfig writes the local config from the existing installation and
+// says what the person may lack, with the one-line command an owner runs.
+func (r *initRun) newMachineConfig(ctx context.Context, e *initEngine) error {
+	fmt.Fprintf(r.w, "new machine: the installation of GCP project %s already exists (its Terraform state is in gs://%s) and this machine has no local config for it: this run writes the local config from it and applies nothing.\n", e.spec.Project, e.spec.StateBucket)
 	if r.o.planOnly {
 		return nil
 	}
 	if _, err := os.Lstat(e.path); err == nil {
-		return userErr("%s already exists: adopt mode writes only a new local config and never overwrites one; use fugaro update --config-only to update it", e.path)
+		return userErr("%s already exists: a new machine's run writes only a new local config and never overwrites one; use fugaro update --config-only to update it", e.path)
 	}
 	outs, err := r.readOutputs(ctx, e.c, e.t, e.wd, e.spec)
 	if err != nil {
@@ -66,37 +70,37 @@ func (r *initRun) adopt(ctx context.Context, e *initEngine) error {
 	if !r.o.operatorsChanged && len(next.Terraform.Operators) == 0 {
 		next.Terraform.Operators = slices.Clone(outs.Operators)
 	}
-	r.adoptBudget(ctx, e, outs, &next)
+	r.newMachineBudget(ctx, e, outs, &next)
 	if err := r.configOnly(ctx, e.c, e.t, e.wd, &next, e.spec, e.path, e.old); err != nil {
 		return err
 	}
 	r.res.Applied = false
-	for _, line := range adoptNotes(outs, r.o.doorName()) {
+	for _, line := range newMachineNotes(outs, r.o.doorName()) {
 		fmt.Fprintln(r.w, line)
 	}
-	e.adopted = "adopted the existing installation: wrote the local config, applied nothing"
+	e.newMachine = "wrote this machine's local config from the existing installation, applied nothing"
 	return nil
 }
 
-// adoptGuard refuses, for a stage that would change the cloud, to apply in the
-// run that adopted an installation: adopt mode is for a teammate's machine,
-// whose plan from empty defaults must not be applied (adoptNotes says so). The
-// owner applies; a rerun here, with the config in place, is the ordinary
-// converge. The plugin wiring writes a local file only (.claude/settings.json) and is not
-// guarded: an adopting run still wires the plugin, with its own confirmation.
-func (e *initEngine) adoptGuard(stage string) error {
-	if e.adopted == "" || stage == initflow.Installation || stage == initflow.Plugin {
+// newMachineGuard refuses, for a stage that would change the cloud, to apply in
+// the run that wrote a new machine's config: that run's plan from empty
+// defaults must not be applied (newMachineNotes says so). The owner applies; a
+// rerun here, with the config in place, is the ordinary converge. The plugin
+// wiring writes a local file only (.claude/settings.json) and is not guarded:
+// the run still wires the plugin, with its own confirmation.
+func (e *initEngine) newMachineGuard(stage string) error {
+	if e.newMachine == "" || stage == initflow.Installation || stage == initflow.Plugin {
 		return nil
 	}
 	return &initflow.NeedsYouError{Left: initflow.Left{Stage: stage, Kind: initflow.LeftConsole,
-		Text:     "this run adopted an existing installation and changed nothing in the cloud; it changes nothing more there from here (only the plugin wiring still writes a local .claude/settings.json): an owner applies changes (the notes above say how), then rerun this once your roles are granted",
+		Text:     "this run wrote this machine's local config from an existing installation and changed nothing in the cloud; it changes nothing more there from here (only the plugin wiring still writes a local .claude/settings.json): an owner applies changes (the notes above say how), then rerun this once your roles are granted",
 		Commands: []string{selfCommand() + " " + e.r.o.doorName()}}}
 }
 
-// adoptNotes is what the person is told after adopting: that the config is a
+// newMachineNotes is what the person is told after the config is written: that it is a
 // copy of what the outputs expose, which flags the owner passes for what they
 // do not, that a plan from here must not be applied, and the roles.
-func adoptNotes(outs infra.InstallationOutputs, door string) []string {
+func newMachineNotes(outs infra.InstallationOutputs, door string) []string {
 	lines := []string{
 		"the local config was copied from the installation's outputs: launchers, operators, registry cleanup (on, or dry-run when the outputs say a dry run), log isolation and the budget backend's history account; they do not carry the alert email, the scheduler region, whether cleanup is dry-run or off, or the Firebase project,",
 		"so a plan from this machine can differ from what the owner applied and look noisy: do not apply an installation plan from here; ask an owner to run fugaro update, passing --alert-email, --scheduler-region, --registry-cleanup and --firebase-project as they did",
@@ -127,7 +131,7 @@ func roleNotes(outs infra.InstallationOutputs, door string) []string {
 	}
 }
 
-// adoptBudget fills next's budget section from the Firebase root's outputs
+// newMachineBudget fills next's budget section from the Firebase root's outputs
 // (the realtime database's URL, the Firebase project, its restricted web API
 // key and the token signer), so a teammate's watch and runs find the budget
 // backend without an owner's update --firebase-project. Read only: terraform init and
@@ -136,13 +140,13 @@ func roleNotes(outs infra.InstallationOutputs, door string) []string {
 // nothing the outputs do not hold is written: not the mode, not the caps. An
 // installation with no budget backend, no Firebase state, or outputs that can't
 // be read or fail validation leaves the section as it is, saying why; the
-// adoption itself goes on.
-func (r *initRun) adoptBudget(ctx context.Context, e *initEngine, outs infra.InstallationOutputs, next *localcfg.Config) {
+// config is still written.
+func (r *initRun) newMachineBudget(ctx context.Context, e *initEngine, outs infra.InstallationOutputs, next *localcfg.Config) {
 	if outs.HistoryServiceAccount == "" {
 		return // no budget backend: nothing to find
 	}
 	skip := func(why string) {
-		fmt.Fprintf(r.w, "the budget section of the local config was left empty (%s); watch and the budget commands need it: an owner's fugaro update --firebase-project <project> fills it, or rerun this once the Firebase root's state can be read\n", why)
+		fmt.Fprintf(r.w, "the budget section of the local config was left empty (%s); watch and the budget commands need it: an owner's fugaro update --firebase-project %s fills it, or rerun this once the Firebase root's state can be read\n", why, e.spec.Project)
 	}
 	switch ok, err := infra.StateExists(ctx, e.c, e.spec.StateBucket, infra.StatePrefixFirebase); {
 	case err != nil:

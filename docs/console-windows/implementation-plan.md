@@ -1,6 +1,6 @@
 # The console on Windows — the implementation plan
 
-**Status: approved to build on 2026-10-22 — target release 0.11.0, pull requests target `main`; the
+**Status: approved to build on 2026-10-22 — target release 0.110.0 (the console's own stream, approved as 0.11.0 and renumbered by the owner's ruling of 2026-10-24), pull requests target `main`; the
 twelve decisions are answered and the OWNER APPROVAL GATE in §5 is passed.** Parts land in the order
 §3 gives, and each merges alone. **Part A is built** (T-A1 to T-A3, the fake `wsl.exe`): it touches no
 production behaviour, which is why it is first and why it is safe first.
@@ -847,11 +847,11 @@ before it, which is the risk the ruling accepts and the dry run above is there t
 
 ## 5. OWNER APPROVAL GATE
 
-**Passed on 2026-10-22: approved to build — target release 0.11.0, pull requests target `main`.**
+**Passed on 2026-10-22: approved to build — target release 0.110.0 (the console's own stream, approved as 0.11.0 and renumbered by the owner's ruling of 2026-10-24), pull requests target `main`.**
 The owner approved **this plan**: the eight parts, the order in §3, the staged workflow in
 `docs/pending-workflows/console-windows.yml`, the owner-run checklist in §4, and the risk the D7
 ruling accepts (a packaging break shows at release time and is fixed then). Parts land in §3's order,
-each merging alone into main, for 0.11.0.
+each merging alone into main, for the console's 0.110.0.
 
 **Answering a decision was not approving the build, and the two dates are separate.** The five
 conditions this gate used to list were the twelve decisions, and **the owner answered all twelve on

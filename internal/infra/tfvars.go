@@ -272,10 +272,10 @@ func Credentials(lc *localcfg.Config, image string) (CredentialsServiceSpec, err
 	}
 	b := lc.Budget
 	if b == nil || b.FirebaseProject == "" || b.RTDBURL == "" {
-		return CredentialsServiceSpec{}, userErr("the credentials service reads the installation's Firebase database, and project %s's config names no Firebase project and database (budget.firebase_project and budget.rtdb_url): run 'fugaro update --firebase-project <firebase-project-id>' first, which writes both from the Firebase root's outputs", lc.Name)
+		return CredentialsServiceSpec{}, userErr("the credentials service reads the installation's Firebase database, and project %s's config names no Firebase project and database (budget.firebase_project and budget.rtdb_url): run 'fugaro update --firebase-project <gcp-project-id>' first, which writes both from the Firebase root's outputs", lc.Name)
 	}
 	if err := rtdb.ValidateURL(b.RTDBURL, true); err != nil {
-		return CredentialsServiceSpec{}, userErr("budget.rtdb_url is not a Firebase Realtime Database URL: it must be https://<database>.firebaseio.com or https://<database>.<region>.firebasedatabase.app, with no credentials, path, query or fragment (a loopback address, which is the emulator, is admitted here). Run 'fugaro update --firebase-project <firebase-project-id>' to write it from the Firebase root's outputs")
+		return CredentialsServiceSpec{}, userErr("budget.rtdb_url is not a Firebase Realtime Database URL: it must be https://<database>.firebaseio.com or https://<database>.<region>.firebasedatabase.app, with no credentials, path, query or fragment (a loopback address, which is the emulator, is admitted here). Run 'fugaro update --firebase-project <gcp-project-id>' to write it from the Firebase root's outputs")
 	}
 	jobs, err := CredentialsJobAccounts(lc)
 	if err != nil {

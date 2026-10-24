@@ -37,12 +37,18 @@ package infra
 // linked to: this file reads that link for its presence and never for its
 // name (ProjectInfo carries no account field), and no run prints one.
 //
-// Adopting an existing project is "readable", not "ours or empty":
-// there is no cheap, read-only emptiness or Fugaro-mark check at this stage
-// (the marks live in the runs bucket, the database and Firestore, which an
-// installation that does not exist yet has not made), so every change to a
-// pre-existing project says so in its own typed confirmation, and billing is
-// linked to one only when it has no link at all.
+// Fugaro only starts fresh: the project an installation lives in is one
+// fugaro setup created. CreateProject labels it CreatedLabelKey=CreatedLabelValue
+// in the create request itself, so the label is there from the project's first
+// moment, and a later run of fugaro setup that finds the ID taken tells its own
+// earlier creation (a run that stopped for billing, or before its installation
+// was applied: the resume) from a project someone else made, which it refuses.
+// The label is a statement about the project's origin and not a privilege:
+// anyone who may update the project can set it. A managed project still needs
+// the creation fact in its runs bucket, which the creating run writes, or, for
+// a resumed creation, the resuming run only after the person types the
+// project's ID at their own terminal (internal/cli's confirmResumedMark): the
+// label alone never marks a project.
 //
 // UNVERIFIED against the real services (the design's §14 items 3 and 6;
 // the fakes in internal/gcpfake encode what the documentation says, not
@@ -229,9 +235,12 @@ type ProjectInfo struct {
 	// not exist and one the caller may not read look the same (Google
 	// answers 403 for both), which is why a create's own refusal, not this,
 	// says "taken".
-	Exists   bool
-	State    string // ACTIVE, DELETE_REQUESTED, ...
-	Firebase bool
+	Exists bool
+	State  string // ACTIVE, DELETE_REQUESTED, ...
+	// CreatedByFugaro is whether the project carries the label CreateProject
+	// puts on every project it creates (CreatedLabelKey=CreatedLabelValue).
+	CreatedByFugaro bool
+	Firebase        bool
 	// BillingKnown is false when the caller cannot read the project's
 	// billing; BillingEnabled is meaningful only when it is true. The
 	// account the project is linked to is deliberately not read out.
@@ -254,6 +263,7 @@ func ReadProject(ctx context.Context, pc *ProjectClients, id string) (ProjectInf
 		return info, classify(err, "reading project "+id)
 	}
 	info.Exists, info.State = true, p.State
+	info.CreatedByFugaro = p.Labels[CreatedLabelKey] == CreatedLabelValue
 	if p.State != "" && p.State != "ACTIVE" {
 		return info, nil
 	}
@@ -406,6 +416,15 @@ func refusedOperation(code int64, message string) bool {
 }
 
 // CreateSpec is what the user confirmed.
+// CreatedLabelKey=CreatedLabelValue is the label every project fugaro setup
+// creates carries from its creation on (CreateProject sends it in the create
+// request): what a later run reads to tell a project it created, and may
+// resume, from one it did not, which it refuses.
+const (
+	CreatedLabelKey   = "fugaro_created"
+	CreatedLabelValue = "true"
+)
+
 type CreateSpec struct {
 	ID, DisplayName string
 	// Parent is organizations/N or folders/N; empty means no parent (the
@@ -471,7 +490,7 @@ func CreateProject(ctx context.Context, pc *ProjectClients, s CreateSpec) error 
 			return err
 		}
 	}
-	op, err := pc.CRM.Projects.Create(&crm3.Project{ProjectId: s.ID, DisplayName: s.DisplayName, Parent: s.Parent}).Context(ctx).Do()
+	op, err := pc.CRM.Projects.Create(&crm3.Project{ProjectId: s.ID, DisplayName: s.DisplayName, Parent: s.Parent, Labels: map[string]string{CreatedLabelKey: CreatedLabelValue}}).Context(ctx).Do()
 	var ge *googleapi.Error
 	if errors.As(err, &ge) && ge.Code == http.StatusConflict {
 		return &ProjectError{Kind: ProjectTaken, Err: fmt.Errorf("creating project %s: %w", s.ID, err),
@@ -487,7 +506,7 @@ func CreateProject(ctx context.Context, pc *ProjectClients, s CreateSpec) error 
 	for i := 0; !op.Done; i++ {
 		if i >= Wait.Tries {
 			return &ProjectError{Kind: ProjectOther, Err: fmt.Errorf("creating project %s: the operation %s is not done yet", s.ID, op.Name),
-				Fix: "rerun fugaro setup to continue once it is: it adopts the project when it exists"}
+				Fix: "rerun fugaro setup with the same ID to continue once it is: it resumes a project it created"}
 		}
 		if err := sleep(ctx); err != nil {
 			return err
@@ -537,7 +556,7 @@ func WaitReadable(ctx context.Context, pc *ProjectClients, id string) error {
 			return classify(err, "reading project "+id)
 		case i >= Wait.Tries:
 			return &ProjectError{Kind: ProjectOther, Err: fmt.Errorf("project %s was created but cannot be read yet: %w", id, err),
-				Fix: "rerun fugaro setup in a few minutes: it adopts the project once it can be read"}
+				Fix: "rerun fugaro setup with the same ID in a few minutes: it resumes the project it created once it can be read"}
 		}
 		if err := sleep(ctx); err != nil {
 			return err

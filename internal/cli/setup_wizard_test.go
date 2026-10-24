@@ -13,16 +13,16 @@ import (
 )
 
 // setup_wizard_test.go pins the wizard task W1.3 of
-// docs/setup-wizard/implementation-plan.md gives `fugaro setup`: its first
-// question is the project, and the answer to it — create one, or adopt one that
-// already exists — is what the project stage (init_project.go) acts on
-// (reconciliation F24, D11, and D12's half of it: creation is never covered by
-// --yes, on either answer).
+// docs/setup-wizard/implementation-plan.md gives `fugaro setup`, as the owner's
+// ruling of 2026-10-23 reshaped it: Fugaro only starts fresh, so there is no
+// question about the project — a first run creates it, the project stage
+// (init_project.go) refuses an ID that already exists, and the creation is
+// never covered by --yes (D12).
 //
 // The question list itself is setup.go's `setupQuestions`, and
 // TestEveryWizardQuestionHasAFlag is the contract on it: every question has a
 // flag, so a scripted run never needs a terminal for anything but the typed
-// confirmations. The rest of the file is what the two answers mean.
+// confirmations.
 
 // wizardRun is the wizard on the harness init_inputs_test.go already has: a
 // first run (no project config anywhere), a working directory outside any
@@ -49,10 +49,9 @@ func wizardRun(t *testing.T, stdin string, o *initOptions) (*initRun, *strings.B
 // what keeps these runs at an id of the test's own choosing rather than one
 // built from the temporary directory's name.
 var wizardAnswers = map[string]string{
-	"--create-project": "\n",
-	"--gcp-project":    "proj-1234\n",
-	"--region":         "\n",
-	"--name":           "\n",
+	"--gcp-project": "proj-1234\n",
+	"--region":      "\n",
+	"--name":        "\n",
 }
 
 // stdinFor builds the stdin that answers every question but the one a test
@@ -71,8 +70,6 @@ func stdinFor(flag string) string {
 func optionsFor(flag string) *initOptions {
 	o := &initOptions{door: setupDoor.name}
 	switch flag {
-	case "--create-project":
-		o.createProject = true
 	case "--gcp-project":
 		o.cloud.gcpProject = "proj-1234"
 	case "--region":
@@ -95,7 +92,7 @@ func optionsFor(flag string) *initOptions {
 //
 // The last column is the one --non-interactive prints, and it is read off the
 // product too: a run with no terminal names every question it cannot answer,
-// and a row whose answer a run that cannot ask simply takes names nothing.
+// and every row is one it cannot answer for itself.
 func TestEveryWizardQuestionHasAFlag(t *testing.T) {
 	if len(setupQuestions) == 0 {
 		t.Fatal("setupQuestions is empty: the wizard asks something, and every question has a flag")
@@ -173,104 +170,82 @@ func TestEveryWizardQuestionHasAFlag(t *testing.T) {
 				t.Errorf("%s: the refusal does not name %q: %v", q.what, q.missing, err)
 			}
 		}
-		// One error, and the answer it did not need is the one that creates
-		// nothing: no project may be made by a run nobody answered.
+		// One error, before anything: a run refused for its inputs has not
+		// reached the creation at all.
 		if r.o.createProject {
-			t.Error("a run with no terminal and no flag answered its first question with creation")
+			t.Error("a run with no terminal and no flag was set to create a project")
 		}
 	})
 }
 
-// TestSetupTakesNoAnswerNobodyGave: the question is not asked of a run that
-// cannot be asked one, and the answer such a run takes is adoption — the one
-// that creates nothing. Creation is the answer a person at a terminal gives,
-// or the one a scripted run names with --create-project; never one a run takes
-// by reading a pipe's stdin or by being handed --yes (D12: --yes covers
-// everything the re-converge owns, and never creating the project).
-//
-// The stdin below says "create" on purpose: a run that reads it has answered a
-// question nobody was asked.
-func TestSetupTakesNoAnswerNobodyGave(t *testing.T) {
+// TestSetupAsksNoCreateOrAdoptQuestion: Fugaro only starts fresh, so a first
+// run of `setup` asks for the new project's ID, the region and the name, and
+// nothing about whether to create the project or use another: the answer is
+// creation, recorded on --create-project's own field without a question, and
+// the project stage is registered for every first run.
+func TestSetupAsksNoCreateOrAdoptQuestion(t *testing.T) {
+	r, out := wizardRun(t, stdinFor(""), nil)
+	if err := r.gatherInputs(t.Context()); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, no := range []string{"adopt", "an existing one", "create a new one"} {
+		if strings.Contains(out.String(), no) {
+			t.Errorf("the wizard still offers a choice about the project (%q):\n%s", no, out)
+		}
+	}
+	if !r.o.createProject {
+		t.Error("a first run of setup did not record that it creates its project")
+	}
+	first := initStages(&initEngine{r: &initRun{o: &initOptions{door: setupDoor.name}}, lc: &localcfg.Config{}})
+	if _, ok := stageNamed(first, initflow.Project); !ok {
+		t.Errorf("setup's first run does not register the project stage: %v", namesOf(first))
+	}
+	up := initStages(&initEngine{r: &initRun{o: &initOptions{door: updateDoor.name}}, lc: &localcfg.Config{}})
+	if _, ok := stageNamed(up, initflow.Project); ok {
+		t.Errorf("update registers the project stage: %v", namesOf(up))
+	}
+}
+
+// TestFirstRunImpliesCreationOnlyWhereItCanAct: settleCreation sets the
+// creation for a first run of `setup` and for nothing else — not `update`,
+// which creates nothing, not --config-only or --print-vars, which touch no
+// project, and not a run with a project config. A scripted first run is
+// creating too (its inputs are flags); what it cannot do is type the creation's
+// confirmation, which TestSetupCreatesOnlyWithTheTypedConfirmation pins.
+func TestFirstRunImpliesCreationOnlyWhereItCanAct(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
-		terminal bool
 		o        *initOptions
+		firstRun bool
+		want     bool
 	}{
-		{"no terminal", false, &initOptions{door: setupDoor.name}},
-		{"--yes at a terminal", true, &initOptions{door: setupDoor.name, yes: true}},
-		{"--json at a terminal", true, &initOptions{door: setupDoor.name, asJSON: true}},
-		{"--non-interactive at a terminal", true, &initOptions{door: setupDoor.name, nonInteractive: true}},
+		{"setup, first run", &initOptions{door: setupDoor.name, cloud: cloudOptions{gcpProject: "proj-1234"}}, true, true},
+		{"setup, first run, --yes", &initOptions{door: setupDoor.name, yes: true, cloud: cloudOptions{gcpProject: "proj-1234"}}, true, true},
+		{"setup with a project config", &initOptions{door: setupDoor.name, cloud: cloudOptions{gcpProject: "proj-1234"}}, false, false},
+		{"update, no project config", &initOptions{door: updateDoor.name, cloud: cloudOptions{gcpProject: "proj-1234"}}, true, false},
+		{"setup --config-only", &initOptions{door: setupDoor.name, configOnly: true, cloud: cloudOptions{gcpProject: "proj-1234"}}, true, false},
+		{"setup --print-vars", &initOptions{door: setupDoor.name, printVars: true, cloud: cloudOptions{gcpProject: "proj-1234"}}, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			firstRunEnv(t)
-			if tc.terminal {
-				fakeTerminal(t)
+			r := &initRun{o: tc.o, w: &strings.Builder{}, in: bufio.NewReader(strings.NewReader("")), cmd: NewRootCmd()}
+			if err := r.settleCreation(tc.firstRun); err != nil {
+				t.Fatal(err)
 			}
-			out := &strings.Builder{}
-			r := &initRun{o: tc.o, w: out, in: bufio.NewReader(strings.NewReader(setupAnswerCreate + "\n")), cmd: NewRootCmd()}
-			if err := r.askProjectAnswer(); err != nil {
-				t.Fatalf("%v\n%s", err, out)
-			}
-			if r.o.createProject {
-				t.Errorf("the run took the answer %q with nobody to ask:\n%s", setupAnswerCreate, out)
-			}
-			if out.Len() != 0 {
-				t.Errorf("the question was asked of a run that cannot be asked one:\n%s", out)
+			if r.o.createProject != tc.want {
+				t.Errorf("create = %v, want %v", r.o.createProject, tc.want)
 			}
 		})
 	}
 }
 
-// TestTheQuestionIsAskedOnlyWhereItCanBeActedOn: a run that would ignore the
-// answer is not asked. `fugaro update` creates nothing — there is no project
-// stage in its set at all (init_stages.go) — and `setup --config-only` writes
-// the local config from an installation that is already there, touching no
-// cloud. Both reach this function (gatherInputs is the same for both doors), so
-// both are pinned here: the question is not printed, and the stdin that answers
-// it is left unread, because a person who answers a question about creation in
-// a run that cannot create has been asked something that is not true.
-func TestTheQuestionIsAskedOnlyWhereItCanBeActedOn(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		o    *initOptions
-	}{
-		{"the update door", &initOptions{door: updateDoor.name}},
-		{"setup --config-only", &initOptions{door: setupDoor.name, configOnly: true}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			firstRunEnv(t)
-			fakeTerminal(t)
-			// The stdin is held on to: what is left of it says whether the run
-			// read an answer at all, which the printed transcript alone cannot
-			// (a prompt written somewhere else would look the same).
-			src := strings.NewReader(setupAnswerCreate + "\n")
-			out := &strings.Builder{}
-			r := &initRun{o: tc.o, w: out, in: bufio.NewReader(src), cmd: NewRootCmd()}
-			if err := r.askProjectAnswer(); err != nil {
-				t.Fatalf("%v\n%s", err, out)
-			}
-			if strings.Contains(out.String(), setupAskProject) {
-				t.Errorf("the run asked whether to create the project, and it creates nothing whatever the answer is:\n%s", out)
-			}
-			if r.o.createProject {
-				t.Errorf("the run recorded the answer %q, and it has no project stage to act on it:\n%s", setupAnswerCreate, out)
-			}
-			if src.Len() == 0 {
-				t.Error("the answer was read out of stdin: the question was asked, this run just did not print it")
-			}
-		})
-	}
-}
-
-// TestTheCreateAnswerIsHeldToTheFlagsChecks: the answer is the flag, so what
-// the flag is held to holds for it too. check() runs before the question is
-// asked (init.go), so the checks for a create-project run have to be applied to
-// the typed answer here — and one of them is a rule the prompt cannot know: a
-// project ID may not contain Google's restricted words (infra.ValidateNewProjectID),
-// which the prompt's own check accepts. Without this, "create" typed at a
-// terminal would reach Google with an ID Google refuses, or create a project
-// that is not the one --firebase-project names.
-func TestTheCreateAnswerIsHeldToTheFlagsChecks(t *testing.T) {
+// TestTheCreationIsHeldToTheFlagsChecks: the implied creation is held to what
+// --create-project is held to. check() validates the creation's flags only
+// where --create-project is explicit (init.go), so the rules have to be applied
+// where a first run's creation is settled — and one of them is a rule the
+// prompt cannot know: a project ID may not contain Google's restricted words
+// (infra.ValidateNewProjectID). The other is the Firebase pairing: Fugaro uses
+// no Firebase project but the installation's own.
+func TestTheCreationIsHeldToTheFlagsChecks(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		o    *initOptions
@@ -288,180 +263,47 @@ func TestTheCreateAnswerIsHeldToTheFlagsChecks(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			firstRunEnv(t)
-			fakeTerminal(t)
-			out := &strings.Builder{}
-			r := &initRun{o: tc.o, w: out, in: bufio.NewReader(strings.NewReader(setupAnswerCreate + "\n")), cmd: NewRootCmd()}
-			err := r.askProjectAnswer()
+			r := &initRun{o: tc.o, w: &strings.Builder{}, in: bufio.NewReader(strings.NewReader("")), cmd: NewRootCmd()}
+			err := r.settleCreation(true)
 			if err == nil {
-				t.Fatalf("the answer %q was taken for %s, and the flag that says the same thing is refused:\n%s", setupAnswerCreate, tc.name, out)
+				t.Fatalf("%s was taken for a creation", tc.name)
 			}
 			if !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("the refusal does not say what is wrong (%q): %v", tc.want, err)
 			}
-			// The other answer is still open to the same run: adoption of an
-			// ID Google restricts is the installation's business, not this
-			// run's (adoptDetail). The refused answer left the field saying
-			// create — the run it refused returns on the error, so nothing
-			// reads it, and the second leg is a fresh run over the same flags.
-			tc.o.createProject = false
-			out.Reset()
-			r = &initRun{o: tc.o, w: out, in: bufio.NewReader(strings.NewReader(setupAnswerAdopt + "\n")), cmd: NewRootCmd()}
-			if err := r.askProjectAnswer(); err != nil {
-				t.Fatalf("the answer %q was refused too, and it creates nothing: %v", setupAnswerAdopt, err)
-			}
-			if r.o.createProject {
-				t.Errorf("the answer %q recorded creation", setupAnswerAdopt)
-			}
 		})
 	}
 }
 
-// TestSetupAsksCreateOrAdoptWithCreateDefault: the wizard's first question is
-// the project, and creation — `fugaro-<name>` (new) — is the answer Enter
-// takes (D11, answered 2026-10-20 as recommended). What the answer is recorded
-// as is --create-project's own field, so the person at the terminal and the
-// scripted run answer one question, and the project stage is registered for
-// either of them: it is the stage that acts on the answer, never the flag.
-func TestSetupAsksCreateOrAdoptWithCreateDefault(t *testing.T) {
-	r, out := wizardRun(t, stdinFor(""), nil)
-	if err := r.gatherInputs(t.Context()); err != nil {
-		t.Fatalf("%v\n%s", err, out)
-	}
-	if !strings.Contains(out.String(), setupAskProject) {
-		t.Errorf("the wizard does not ask whether to create the project:\n%s", out)
-	}
-	if !strings.Contains(out.String(), "["+setupAnswerCreate+"]") {
-		t.Errorf("creation is not the default answer:\n%s", out)
-	}
-	if !strings.Contains(out.String(), setupAnswerAdopt) {
-		t.Errorf("the question does not offer the second answer:\n%s", out)
-	}
-	if !r.o.createProject {
-		t.Error("the default answer did not record creation")
-	}
-
-	// The stage set follows the answer: a first run in `setup` registers the
-	// project stage whether or not --create-project was given (D11), so the
-	// question has something to decide.
-	first := initStages(&initEngine{r: &initRun{o: &initOptions{door: setupDoor.name}}, lc: &localcfg.Config{}})
-	if _, ok := stageNamed(first, initflow.Project); !ok {
-		t.Errorf("setup's first run does not register the project stage: %v", namesOf(first))
-	}
-	// And `update` never does: it creates nothing.
-	up := initStages(&initEngine{r: &initRun{o: &initOptions{door: updateDoor.name}}, lc: &localcfg.Config{}})
-	if _, ok := stageNamed(up, initflow.Project); ok {
-		t.Errorf("update registers the project stage: %v", namesOf(up))
-	}
-}
-
-// TestSetupAsksTheProjectQuestionWhenEveryOtherInputIsAFlag: the wizard's
-// questions are answered by flags, so a run whose --gcp-project, --region and
-// --name all came from the command line has an empty `missing` — and the
-// project's question is not a row `missing` can hold, because the answer a run
-// that cannot ask takes creates nothing (setup.go's askProjectAnswer). It is
-// still a first run at a terminal, and the question is the wizard's first
-// (D11): it is asked, and answered, rather than taken on the user's behalf.
-//
-// Without this the run adopted silently, and the plan view then printed
-// "[skipped] project not creating: this run's answer was to adopt an existing
-// GCP project" — a statement about an answer nobody gave.
-func TestSetupAsksTheProjectQuestionWhenEveryOtherInputIsAFlag(t *testing.T) {
+// TestCreationFlagsNeedACreation: a run that creates no project (one with a
+// project config) refuses the flags only a creation takes, by name, rather
+// than ignoring them: --link-billing would otherwise link nothing, and
+// --managed would mark nothing.
+func TestCreationFlagsNeedACreation(t *testing.T) {
 	for _, tc := range []struct {
-		answer string
-		want   bool
-	}{
-		{setupAnswerAdopt, false},
-		{setupAnswerCreate, true},
-	} {
-		t.Run(tc.answer, func(t *testing.T) {
-			o := &initOptions{cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}, name: "aurora"}
-			r, out := wizardRun(t, tc.answer+"\n", o)
-			if err := r.gatherInputs(t.Context()); err != nil {
-				t.Fatalf("%v\n%s", err, out)
-			}
-			if !strings.Contains(out.String(), setupAskProject) {
-				t.Errorf("--gcp-project, --region and --name answered every other question, and the run did not ask the one left:\n%s", out)
-			}
-			if r.o.createProject != tc.want {
-				t.Errorf("the answer %q recorded create=%v, want %v:\n%s", tc.answer, r.o.createProject, tc.want, out)
-			}
-		})
-	}
-
-	// The one question left is asked even when nothing else is: a run that
-	// cannot be asked still takes adoption, and a scripted run still says
-	// --create-project (D12), so neither is held to answering it.
-	for _, tc := range []struct {
-		name string
+		flag string
 		o    *initOptions
 	}{
-		{"--yes", &initOptions{cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}, name: "aurora", yes: true}},
-		{"--json", &initOptions{cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}, name: "aurora", asJSON: true}},
-		{"--create-project", &initOptions{cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}, name: "aurora", createProject: true}},
+		{"--link-billing", &initOptions{door: setupDoor.name, linkBilling: "0123AB-4567CD-89EF01"}},
+		{"--managed", &initOptions{door: setupDoor.name, managed: true}},
+		{"--parent", &initOptions{door: setupDoor.name, parent: "organizations/123"}},
+		{"--display-name", &initOptions{door: setupDoor.name, displayName: "Mine"}},
 	} {
-		t.Run(tc.name+" is not asked", func(t *testing.T) {
-			r, out := wizardRun(t, setupAnswerCreate+"\n", tc.o)
-			if err := r.gatherInputs(t.Context()); err != nil {
-				t.Fatalf("%v\n%s", err, out)
-			}
-			if strings.Contains(out.String(), setupAskProject) {
-				t.Errorf("%s: the run asked a question it cannot act on or has already answered:\n%s", tc.name, out)
+		t.Run(tc.flag, func(t *testing.T) {
+			r := &initRun{o: tc.o, w: &strings.Builder{}, in: bufio.NewReader(strings.NewReader("")), cmd: NewRootCmd()}
+			err := r.settleCreation(false)
+			if err == nil || !strings.Contains(err.Error(), tc.flag) || ExitCode(err) != ExitUserError {
+				t.Errorf("%s on a run that creates nothing: %v", tc.flag, err)
 			}
 		})
 	}
 }
 
-// TestSetupAdoptsWhenTheUserTypesAnExistingID: the second answer is adoption,
-// and it is the answer that reads nothing and creates nothing. The stage is
-// registered (it is `setup` on a first run) and it has nothing to do: an
-// adopted project that is not there is the installation's own error, and a
-// project that is there is left exactly as it is.
-func TestSetupAdoptsWhenTheUserTypesAnExistingID(t *testing.T) {
-	r, out := wizardRun(t, "proj-1234\n"+"\n"+setupAnswerAdopt+"\n"+"\n", nil)
-	if err := r.gatherInputs(t.Context()); err != nil {
-		t.Fatalf("%v\n%s", err, out)
-	}
-	if r.o.createProject {
-		t.Errorf("the answer %q did not record adoption:\n%s", setupAnswerAdopt, out)
-	}
-	if r.o.cloud.gcpProject != "proj-1234" {
-		t.Errorf("gcp project %q, want the id the user typed", r.o.cloud.gcpProject)
-	}
-
-	// The stage, on an engine with no clients at all: adoption is decided from
-	// the answer before anything is read, so this cannot reach a cloud (a read
-	// would fail on the missing endpoints and say so here).
-	e := &initEngine{r: &initRun{o: &initOptions{door: setupDoor.name}, w: &strings.Builder{}, in: bufio.NewReader(strings.NewReader(""))}, lc: &localcfg.Config{}}
-	s := newProjectStage(e)
-	st, err := s.Check(t.Context())
-	if err != nil {
-		t.Fatalf("the adopt answer read something: %v", err)
-	}
-	if st.State != initflow.Skipped {
-		t.Errorf("state %q, want skipped: the answer was to adopt, so there is nothing to create", st.State)
-	}
-	if _, err := s.Apply(t.Context(), initflow.Env{Interactive: true}); err != nil {
-		t.Errorf("the adopt answer refused a run that cannot type a confirmation: %v", err)
-	}
-	if s.started || s.create || s.addFirebase || s.link {
-		t.Errorf("the adopt answer acted: started %v create %v firebase %v link %v", s.started, s.create, s.addFirebase, s.link)
-	}
-	if pl, err := s.Plan(t.Context(), initflow.Env{}); err != nil || !pl.NothingToDo {
-		t.Errorf("plan %+v, %v: want nothing to do", pl, err)
-	}
-	if err := s.Verify(t.Context()); err != nil {
-		t.Errorf("the adopt answer failed its own verify: %v", err)
-	}
-}
-
-// TestSetupCreatesOnlyWithTheTypedConfirmation: the answer is not the
-// confirmation. With it — --create-project here, which is the field the
-// wizard's first question records, so this is the same answer — the project is
-// created only by the ID typed at a real terminal, and --yes, --json, a pipe
-// and --non-interactive each leave it for you (D12: creating the project is
-// `setup`'s, and `--yes` never covers it). This is the row W0.1's matrix gains
-// for the door that creates.
+// TestSetupCreatesOnlyWithTheTypedConfirmation: the creation is not its own
+// confirmation. A first run's project is created only by the ID typed at a real
+// terminal, and --yes, --json, a pipe and --non-interactive each leave it for
+// you (D12: creating the project is `setup`'s, and `--yes` never covers it).
+// This is the row W0.1's matrix gains for the door that creates.
 func TestSetupCreatesOnlyWithTheTypedConfirmation(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -495,102 +337,79 @@ func TestSetupCreatesOnlyWithTheTypedConfirmation(t *testing.T) {
 	}
 }
 
-// TestSetupOnAnExistingInstallationConvergesAndSaysSo: an installation is
-// already there, so setup says so in one line, keeps it and converges as
-// `fugaro update` does — it does not offer to create a second one, and it
-// registers no project stage (D11). Both answers to "is it already there" are
-// here: this machine's own project config, and an installation the runs
-// bucket's marker names while this machine has no config for it yet.
+// TestSetupOnAnExistingInstallationConvergesAndSaysSo: this machine's own
+// project config means the installation is there, so setup says so in one line,
+// keeps it and converges as `fugaro update` does — a re-run, not a creation —
+// and registers no project stage (D11).
 func TestSetupOnAnExistingInstallationConvergesAndSaysSo(t *testing.T) {
-	t.Run("a project config this machine has", func(t *testing.T) {
-		newInitRig(t)
-		out, _, err := executeStdin(t, "", "setup", "--yes")
-		if err != nil {
-			t.Fatalf("%v\n%s", err, out)
-		}
-		if !strings.Contains(out, setupAlreadySetUp) {
-			t.Errorf("the run does not say the installation is already set up:\n%s", out)
-		}
-		if strings.Contains(out, setupAskProject) {
-			t.Errorf("the run offered to create a second installation:\n%s", out)
-		}
-		// The stage set is update's: no project stage at all.
-		js, _, err := executeStdin(t, "", "setup", "--yes", "--json")
-		if err != nil {
-			t.Fatalf("%v\n%s", err, js)
-		}
-		var res convergeJSON
-		if err := json.Unmarshal([]byte(js), &res); err != nil {
-			t.Fatalf("%v:\n%s", err, js)
-		}
-		if got := res.state(initflow.Project); got != "" {
-			t.Errorf("the project stage ran on an installation that exists: %q\n%s", got, js)
-		}
-	})
-
-	t.Run("an installation in the GCP project", func(t *testing.T) {
-		old := installationName
-		installationName = func(context.Context, string, string, string) string { return initProjectName }
-		t.Cleanup(func() { installationName = old })
-		r, out := wizardRun(t, "proj-1234\n"+"\n", nil)
-		if err := r.gatherInputs(t.Context()); err != nil {
-			t.Fatalf("%v\n%s", err, out)
-		}
-		if !strings.Contains(out.String(), setupAlreadySetUp) {
-			t.Errorf("the run does not say the installation is already set up:\n%s", out)
-		}
-		if strings.Contains(out.String(), setupAskProject) {
-			t.Errorf("the run offered to create a second installation:\n%s", out)
-		}
-		if strings.Contains(out.String(), "Fugaro project name") {
-			t.Errorf("the run asked for a name, and the installation has one:\n%s", out)
-		}
-		if r.o.name != initProjectName || r.o.createProject {
-			t.Errorf("name %q, create %v: want the installation's own name and no creation", r.o.name, r.o.createProject)
-		}
-	})
+	newInitRig(t)
+	out, _, err := executeStdin(t, "", "setup", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, setupAlreadySetUp) {
+		t.Errorf("the run does not say the installation is already set up:\n%s", out)
+	}
+	js, _, err := executeStdin(t, "", "setup", "--yes", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, js)
+	}
+	var res convergeJSON
+	if err := json.Unmarshal([]byte(js), &res); err != nil {
+		t.Fatalf("%v:\n%s", err, js)
+	}
+	if got := res.state(initflow.Project); got != "" {
+		t.Errorf("the project stage ran on an installation that exists: %q\n%s", got, js)
+	}
 }
 
-// TestSetupKeepsAnExplicitCreateProjectOnAnExistingInstallation: the answer to
-// the wizard's first question is --create-project's own field, and a run that
-// named it on the command line keeps it. An installation the runs bucket's
-// marker names is what makes `setup` keep the project and take the
-// installation's own name; it is not an answer, and it never overwrites one the
-// run was told.
-//
-// Reversing the flag here would drop --link-billing — the documented way to
-// link billing to a project this run did not create, and one check() has
-// already validated — along with --managed, --parent and --display-name; the
-// project stage's answer() is what decides, and the run said create. It would
-// also be inconsistent with itself: a run that passes --name as well never
-// reaches this path at all, so the flag would be honoured there and reversed
-// here.
-func TestSetupKeepsAnExplicitCreateProjectOnAnExistingInstallation(t *testing.T) {
+// TestSetupRefusesAnIDThatHoldsAnInstallation: a first run of `setup` whose ID
+// already holds a Fugaro installation (the runs bucket's marker names it) is
+// refused before the name is asked — Fugaro only starts fresh — and the
+// refusal names the one command that uses that installation from this machine
+// instead. --create-project changes nothing about it. `update` on the same
+// machine is that command: it takes the installation's own name and asks for
+// nothing (the installation stage then writes the local config,
+// init_new_machine_test.go).
+func TestSetupRefusesAnIDThatHoldsAnInstallation(t *testing.T) {
 	old := installationName
 	installationName = func(context.Context, string, string, string) string { return initProjectName }
 	t.Cleanup(func() { installationName = old })
 
-	o := &initOptions{
-		cloud:         cloudOptions{gcpProject: "proj-1234", region: defaultRegion},
-		createProject: true,
-		linkBilling:   "0123AB-4567CD-89EF01",
+	for name, o := range map[string]*initOptions{
+		"the wizard":       nil,
+		"--create-project": {cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}, createProject: true, linkBilling: "0123AB-4567CD-89EF01"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, out := wizardRun(t, "proj-1234\n"+"\n", o)
+			err := r.gatherInputs(t.Context())
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("setup went on with an ID that holds an installation: %v\n%s", err, out)
+			}
+			for _, want := range []string{"Fugaro only starts fresh: proj-1234 already exists; pick another id", "fugaro update --gcp-project proj-1234 --region " + defaultRegion} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal lacks %q: %v", want, err)
+				}
+			}
+			if strings.Contains(out.String(), "Fugaro project name") {
+				t.Errorf("the run asked for a name before refusing:\n%s", out)
+			}
+		})
 	}
-	r, out := wizardRun(t, "", o)
-	if err := r.gatherInputs(t.Context()); err != nil {
-		t.Fatalf("%v\n%s", err, out)
-	}
-	if !strings.Contains(out.String(), setupAlreadySetUp) {
-		t.Fatalf("the run does not say the installation is already set up, so this path was not taken:\n%s", out)
-	}
-	if r.o.name != initProjectName {
-		t.Errorf("name %q, want the installation's own %q", r.o.name, initProjectName)
-	}
-	if !r.o.createProject {
-		t.Errorf("the installation already being there reversed --create-project: the project stage skips and --link-billing %s never reaches the project:\n%s", o.linkBilling, out)
-	}
-	if r.o.linkBilling != o.linkBilling {
-		t.Errorf("--link-billing %q became %q", o.linkBilling, r.o.linkBilling)
-	}
+
+	t.Run("update on a new machine", func(t *testing.T) {
+		r, out := wizardRun(t, "proj-1234\n"+"\n", &initOptions{})
+		r.o.door = updateDoor.name
+		if err := r.gatherInputs(t.Context()); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if r.o.name != initProjectName || r.o.createProject {
+			t.Errorf("name %q, create %v: want the installation's own name and no creation", r.o.name, r.o.createProject)
+		}
+		if strings.Contains(out.String(), "Fugaro project name") {
+			t.Errorf("the run asked for a name, and the installation has one:\n%s", out)
+		}
+	})
 }
 
 // TestSetupOutsideACheckoutSkipsTheRepositoryQuestion: outside a checkout there

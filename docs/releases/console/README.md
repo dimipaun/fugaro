@@ -20,7 +20,7 @@ and no GoReleaser: the file's first line is the release's **heading**, and the r
 body, so:
 
 ```markdown
-# Fugaro Console 0.11.0 "Cherry"
+# Fugaro Console 0.110.0 "Cherry"
 
 One sentence, for a user who has not read anything else: what this console now does for
 them, in the words they would use.
@@ -41,9 +41,9 @@ in this order:
 
 | Release | Name |
 | --- | --- |
-| `0.11.0` | Cherry |
-| `0.12.0` | Mango |
-| `0.13.0` | Melon |
+| `0.110.0` | Cherry |
+| `0.111.0` | Mango |
+| `0.112.0` | Melon |
 
 **Granny Smith, Golden Delicious and Crab are not on the list**, and neither is Lemon: a
 name that spells "Apple" puts the word in a console release's title, and the desktop app is
@@ -54,8 +54,11 @@ writes its notes file.
 **Never below `0.10.0`.** The console's updater refuses a downgrade (Task 4.4 of
 `docs/plans/2026-10-15-desktop-console.md`), so a console released with a version lower than
 the one an installation already runs would refuse every update it was offered from then on.
-The console's first release on its own stream is **`0.11.0` "Cherry"**: the version line and
-the tag may not go below `0.10.0`, which is the console that shipped inside CLI `v0.10.0`.
+The console's first release on its own stream is **`0.110.0` "Cherry"**: the version line and
+the tag may not go below `0.10.0`, which is the console that shipped inside CLI `v0.10.0`, and
+once Cherry is out, not below `0.110.0`. The stream starts at `0.110.0` rather than `0.11.0` so
+that a console version is never confused with the CLI's own `0.11.0` (the owner's ruling of
+2026-10-24; `docs/release.md`, "Console releases").
 
 ## Before the tag
 

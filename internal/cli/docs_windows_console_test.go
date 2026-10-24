@@ -16,7 +16,7 @@ package cli
 //   - **The twelve decisions are answered, the build is approved, and the two
 //     are separate dates.** The owner answered D1-D12 on 2026-10-20, D7 against
 //     the recommendation (the pack runs at release time only), and approved the
-//     build itself on 2026-10-22 for 0.11.0, its pull requests targeting main. A document
+//     build itself on 2026-10-22 for 0.110.0, its pull requests targeting main. A document
 //     still saying "none is answered" would describe a plan nobody may start; a
 //     gate that had quietly gone back to "not passed" would stop work the owner
 //     has authorised; and a status line that lost the release would leave the
@@ -155,10 +155,10 @@ func TestDocsWindowsConsoleReconciliationRecordsTheOwnerAnswers(t *testing.T) {
 		"The twelve decisions in §4 are answered",
 		"answering a decision is not approving the build",
 		"OWNER APPROVAL GATE was passed on 2026-10-22",
-		"0.11.0",
+		"0.110.0",
 	} {
 		if !strings.Contains(status, want) {
-			t.Errorf("%s's status line no longer carries %q: §4 answers all twelve decisions, the plan's gate was passed on 2026-10-22 for 0.11.0, and the summary has to say both -- an answer is not an approval, and the approval is a separate, dated thing", path, want)
+			t.Errorf("%s's status line no longer carries %q: §4 answers all twelve decisions, the plan's gate was passed on 2026-10-22 for 0.110.0, and the summary has to say both -- an answer is not an approval, and the approval is a separate, dated thing", path, want)
 		}
 	}
 	if strings.Contains(status, "no decision in §4 is answered") {
@@ -186,13 +186,13 @@ func TestDocsWindowsConsolePlanIsReleaseTimeOnly(t *testing.T) {
 		// leave a reader unable to say what for.
 		"the twelve decisions are answered",
 		"approved to build on 2026-10-22",
-		"0.11.0",
+		"0.110.0",
 		// Answering was not approving, and the two dates are separate: the
 		// answers are 2026-10-20 and the approval is 2026-10-22.
 		"Answering a decision was not approving the build",
 	} {
 		if !strings.Contains(flat, want) {
-			t.Errorf("%s no longer carries %q: the D7 ruling of 2026-10-20 is what the plan is re-cut around, the owner approved the build on 2026-10-22 for 0.11.0, and the plan has to say both", path, want)
+			t.Errorf("%s no longer carries %q: the D7 ruling of 2026-10-20 is what the plan is re-cut around, the owner approved the build on 2026-10-22 for 0.110.0, and the plan has to say both", path, want)
 		}
 	}
 
@@ -310,7 +310,7 @@ func TestDocsWindowsConsolePlanIsReleaseTimeOnly(t *testing.T) {
 // status-paragraph-only check cannot see.
 //
 // The mutations that prove it: take the approval's date off the status line,
-// change 0.11.0 to the 0.10.0 the earlier ruling named, and put
+// change 0.110.0 to the 0.10.0 the earlier ruling named, and put
 // the present-tense "the plan is not approved" back anywhere in the file. Each
 // fails by naming what went missing or what came back.
 func TestDocsWindowsConsoleReadmeRecordsTheApproval(t *testing.T) {
@@ -319,10 +319,10 @@ func TestDocsWindowsConsoleReadmeRecordsTheApproval(t *testing.T) {
 	status := flattenDoc(windowsConsoleBlock(t, path, doc, "**Status:", "\n\n"))
 	for _, want := range []string{
 		"approved to build on 2026-10-22",
-		"0.11.0",
+		"0.110.0",
 	} {
 		if !strings.Contains(status, want) {
-			t.Errorf("%s's status line no longer carries %q: the owner approved the build on 2026-10-22 for 0.11.0, and the index is where a reader checks that before reading any document in this folder", path, want)
+			t.Errorf("%s's status line no longer carries %q: the owner approved the build on 2026-10-22 for 0.110.0, and the index is where a reader checks that before reading any document in this folder", path, want)
 		}
 	}
 	if strings.Contains(status, "not approved") {
@@ -343,7 +343,7 @@ func TestDocsWindowsConsoleReadmeRecordsTheApproval(t *testing.T) {
 		"is still not passed",
 	} {
 		if strings.Contains(whole, forbidden) {
-			t.Errorf("%s says %q: the owner approved the build on 2026-10-22 for 0.11.0, and a document that says the plan is unapproved somewhere below a status line recording the approval is a claim that is false on main", path, forbidden)
+			t.Errorf("%s says %q: the owner approved the build on 2026-10-22 for 0.110.0, and a document that says the plan is unapproved somewhere below a status line recording the approval is a claim that is false on main", path, forbidden)
 		}
 	}
 }
@@ -736,10 +736,10 @@ func TestDocsWindowsConsoleClaimsAboutOtherFilesAreTrue(t *testing.T) {
 		"planned and staged, not shipped",
 		"nothing on Windows has been built",
 		"OWNER APPROVAL GATE was passed on 2026-10-22",
-		"target release 0.11.0",
+		"target release 0.110.0",
 	} {
 		if !strings.Contains(release, want) {
-			t.Errorf("docs/release.md no longer carries %q: the Windows build is the plan's Part H work and nothing has been built, the plan is approved to build for 0.11.0, and the release document must say both rather than read as if 0.10.0 had a Windows build", want)
+			t.Errorf("docs/release.md no longer carries %q: the Windows build is the plan's Part H work and nothing has been built, the plan is approved to build for 0.110.0, and the release document must say both rather than read as if 0.10.0 had a Windows build", want)
 		}
 	}
 	if strings.Contains(release, "the console has a Windows build") {

@@ -33,8 +33,8 @@ import (
 //
 // Fugaro-owned means: the project was created by this run (fugaro setup
 // --create-project), or the runs bucket's fugaro/project.json names this
-// project and this GCP project (read-only). A project that is neither (an
-// adopted one, an unmarked one, a failed read) keeps the per-step typed
+// project and this GCP project (read-only). A project that is neither (one an
+// earlier run created and this one resumed, an unmarked one, a failed read) keeps the per-step typed
 // confirmations as they were. The confirmation is per run, in memory only.
 
 type reviewState int
