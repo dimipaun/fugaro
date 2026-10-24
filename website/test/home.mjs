@@ -65,7 +65,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { cssDeclarations, cssRules, findAll, filesUnder, parse, textOf, walk } from './lib/html.mjs'
@@ -2458,4 +2458,47 @@ test('neither page names a claim the product cannot back', () => {
       )
     }
   }
+})
+
+// ---- the latest releases the hero names (owner's request of 2026-10-22, PR #940, and of
+// 2026-10-24 for the console) ------------------------------------------------------------
+
+/** The newest `vX.Y.Z` in `dir` at or below `ceiling`, read here and not from the site's own
+ *  modules, so the check and the page can disagree. */
+function newestAtOrBelow(dir, ceiling) {
+  const num = (v) => v.split('.').map(Number)
+  const cmp = (a, b) => {
+    for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] - b[i]
+    return 0
+  }
+  const top = num(ceiling)
+  const versions = readdirSync(path.join(REPO, dir))
+    .map((name) => /^v(\d+\.\d+\.\d+)\.md$/.exec(name))
+    .filter(Boolean)
+    .map((m) => m[1])
+    .filter((v) => cmp(num(v), top) <= 0)
+    .sort((a, b) => cmp(num(b), num(a)))
+  return versions[0] ?? null
+}
+
+test('the hero names the newest published CLI release and console release, each linked', () => {
+  const cli = newestAtOrBelow('docs/releases', JSON.parse(repoFile('plugin/.claude-plugin/plugin.json')).version)
+  const consoleVersion = newestAtOrBelow('docs/releases/console', JSON.parse(repoFile('console/package.json')).version)
+  assert.ok(cli, 'no CLI release file is published in this checkout, so the line would be held to nothing')
+  const html = readFileSync(path.join(SITE, 'dist', 'index.html'), 'utf8')
+  const lines = findAll(parse(html), (el) => el.name === 'p' && (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-release'))
+  assert.equal(lines.length, 1, 'the hero carries no single latest-release line')
+  const links = [...walk(lines[0])].filter((el) => el.name === 'a')
+  assert.equal(textOf(links[0]).trim(), `v${cli}`, `the hero names ${textOf(links[0]).trim()} and the newest published CLI release is v${cli}`)
+  assert.equal(links[0].attrs.get('href'), '/changelog/', 'the CLI release does not link the changelog')
+  if (consoleVersion === null) {
+    assert.equal(links.length, 1, 'the hero names a console release and none is published')
+  } else {
+    assert.equal(links.length, 2, 'the hero does not name the console release')
+    assert.equal(textOf(links[1]).trim(), `Console ${consoleVersion}`, `the hero names ${textOf(links[1]).trim()} and the newest published console is ${consoleVersion}`)
+    assert.match(links[1].attrs.get('href') ?? '', new RegExp(`/releases/tag/console-v${consoleVersion.replace(/\./g, '\\.')}$`), 'the console release does not link its own release page')
+  }
+  // Above the h1, so it is not part of the lead.
+  const order = html.indexOf('class="hero-release"') < html.indexOf('id="hero-tagline"')
+  assert.ok(order, 'the latest-release line is not above the headline')
 })
