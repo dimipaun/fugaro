@@ -1,15 +1,20 @@
-# Licensing (open core): reconciliation — DRAFT
+# Licensing (open core): reconciliation
 
-**DRAFT, not reviewed, no decision answered.** Checked against `origin/main` at `e924481cd`,
-2026-10-24. Where this file disagrees with [spec.md](spec.md), this file wins. Nothing here is
-legal advice: every statement about copyright or licence terms is a fact found in the repository,
-stated for the owner and counsel to weigh.
+Checked against `origin/main` at `e924481cd`, 2026-10-24. **Every decision D300–D310 was answered
+by the owner on 2026-10-24**, ten as recommended and **D305 not the recommendation**; those answers
+are the approval of this reconciliation. Answering a decision approves no task: the plan
+([implementation-plan.md](implementation-plan.md)) needs its own go, task by task. Where this file
+disagrees with [spec.md](spec.md), this file wins. Nothing here is legal advice: every statement
+about copyright or licence terms is a fact found in the repository or in a published text, stated
+for the owner and counsel to weigh.
 
 **Numbers this work holds:** decisions **D300–D319** (the highest decision written under `docs/`
 on `main` is **D271**, the rigor levels' LD11; open PRs reach **D260**; D272–D299 are left unused
 so that sibling spec reconciliations started the same day cannot collide with this block) and
 checks **130–134** (the highest check written on `main` is **123**; open PR #1022 takes **124**).
-Findings are **F1–F26**; resolutions (one defensible answer) are **R1–R8**.
+Findings are **F1–F27**; resolutions (one defensible answer) are **R1–R8**; decisions
+**D300–D310** are used and **D311–D319** are reserved and unused; checks **131–134** are reserved
+and unused.
 
 ## Headline: spec concept → what the repository already has
 
@@ -41,7 +46,7 @@ No `package.json` in the tree has a `license` field (all ten are `"private": tru
 Homebrew cask stay `MIT` only if the released artifact stays core-only (D303).
 
 **F2 — Wrong: "no outside contributions exist, so the owner owns all the copyright".**
-`.agents/skills/` (299 files, 46 skills) was vendored from the third-party `cc-skills-golang`
+`.agents/skills/` (299 files, 46 skills) was vendored from a third-party Go skills
 project in #994 (`skills-lock.json` names the source per skill; each `SKILL.md` frontmatter says
 `license: MIT` and names its author). The tree carries **no copy of that project's licence text
 or copyright notice**, which the MIT terms ask to be included in copies. `censusVendoredRoots` in
@@ -97,7 +102,8 @@ governs what you may do with the code", which is false once `ee/LICENSE` exists.
 line 1 or the derivation changes in the same PR, and the card's sentence is rewritten (D301, R2).
 
 **F8 — Gap: licence detectors.** GitHub currently reports `MIT`. Extra text in `LICENSE` can make
-GitHub's detector and pkg.go.dev's report "other" (UNVERIFIED U1); pkg.go.dev hides documentation
+GitHub's detector and pkg.go.dev's report "other" (U1; F27 found one repository of that shape
+reported `other`); pkg.go.dev hides documentation
 for packages whose licence it cannot classify as redistributable, which `ee/` packages will be
 (UNVERIFIED U2). *Consequence:* a post-merge look at both is an owner-run check (Check 130, D301).
 
@@ -233,13 +239,59 @@ The boundary test passes vacuously but pins the rule before the first ee file la
 first `ee/` feature is workspaces; that work's reconciliation will need the decisions D302, D303,
 D308 and D309 as inputs. *Consequence:* answer those here first.
 
+**F27 — Open (from D305's answer): the two published texts, read 2026-10-24 at 16:35 UTC over
+HTTPS.** Sources, fetched with `curl`:
+- `https://raw.githubusercontent.com/PostHog/posthog/master/ee/LICENSE` (the file last changed in
+  that repository's commit `7fb9150bf6c1`, 2026-06-16);
+- `https://gitlab.com/gitlab-org/gitlab/-/raw/master/ee/LICENSE` (last changed in commit
+  `8672550c`, 2024-10-29);
+- `https://raw.githubusercontent.com/PostHog/posthog/master/LICENSE` (that repository's root
+  licence, for its shape);
+- GitHub's licence API for that repository (`gh api repos/PostHog/posthog/license`), which
+  answers `NOASSERTION` / `other`.
+
+What the two `ee/LICENSE` texts say, in substance (both alike except where noted): production use
+requires agreeing to the vendor's **Subscription Terms of Service at a named URL** and a valid
+subscription **"for the correct number of user seats"**; anyone may modify the software and
+publish patches, but the vendor keeps all right, title and interest in those modifications, which
+may then be used only under a subscription; copying and modifying for **development and testing**
+needs no subscription; otherwise copying, merging, publishing, distributing, sublicensing and
+selling are forbidden; an MIT-style warranty disclaimer; third-party components stay under their
+own licences. The GitLab text adds a paragraph scoping itself to what is not in that vendor's
+community edition and carving client-side assets out to MIT, and requires the full text in all
+copies. The PostHog root `LICENSE` is the shape D301 chose: a scope statement (`ee/` under
+`ee/LICENSE`, third-party components under their own licences, the rest MIT) ahead of the MIT
+permission text.
+
+Four facts follow, each for the owner and counsel to confirm:
+1. **The fitting model is the PostHog text.** It names one licensor and nothing else; the GitLab
+   text's extra paragraph is about that vendor's own two-edition distribution and has no
+   counterpart here. Its root `LICENSE` is already the shape D301 answered.
+2. **Neither text states a permission to reuse it, and neither states an attribution
+   requirement.** Each file sits inside its own `ee/` directory, which its own terms cover, and on
+   a literal reading those terms forbid copying it. Whether the text of a licence can be reused
+   anyway is a legal question this reconciliation does not answer.
+3. **"As is, with only names filled in" is not enough on its own.** The text points at a
+   Subscription Terms of Service document at a URL and prices by user seats. Fugaro has neither: the
+   website has no terms page (`website/src/pages/` holds none) and no subscription or seat model
+   exists anywhere in the repository. Filling those in is writing terms, not filling in names.
+4. **The licensor line.** The adopted text's copyright line and every vendor name in it become the
+   licensor. The only copyright holder written in the repository is the owner personally (root
+   `LICENSE`), so the line reads `Copyright (c) 2026 <the owner's full name>` unless the owner and
+   counsel name an entity, in which case the root `LICENSE` copyright line should be checked
+   against it too.
+
+*Consequence:* open tension T1 below; until it is settled, D306's fallback ships `ee/` as reserved,
+with no `ee/LICENSE`.
+
 ## Resolutions (one defensible answer each)
 
 - **R1** — Add the vendored project's upstream licence text under `.agents/` (its own `LICENSE`
   with its author's copyright line) and name `.agents/` in the root statement as third-party code
   under its own licence. (F2)
 - **R2** — Keep D101's shape: the website Community card states the split inline (core MIT, `ee/`
-  under `ee/LICENSE`) and links both files; no new `/licensing` page. Rewrite "the only text that
+  as its README describes) and links `LICENSE` and `ee/README.md`, which exists in both of D306's
+  states; no new `/licensing` page. Rewrite "the only text that
   governs", keep `licenceIdentifier()` working (F7), run `npm run check` in `website/`.
 - **R3** — Each `ee/` source file starts with a two-line legal notice:
   `SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise` and a pointer to `ee/LICENSE`, enforced
@@ -256,35 +308,59 @@ D308 and D309 as inputs. *Consequence:* answer those here first.
 - **R8** — The private signing key for licence keys is never written into the repository, a doc,
   a test or a run; minting is OWNER-RUN. (F16)
 
-## Proposed decisions (empty answer cells; not yet asked)
+## Decisions (answered 2026-10-24)
 
-| # | Question | Recommendation and reason | Alternative and its cost | Owner's answer |
+Each row keeps the question, the recommendation as it was put, the alternative and its cost, and
+the owner's answer with a one-line why. `(R)` marks an answer that took the recommendation.
+
+| # | Question | Recommendation and reason | Alternative and its cost | Owner's answer (2026-10-24) |
 | --- | --- | --- | --- | --- |
-| **D300** | Core licence from 0.11.0: MIT or Apache-2.0? | **Stay MIT.** The spec's first principle says "MIT forever"; no outside contributor exists, so Apache's contributor patent grant buys little today; one licence across all versions keeps the story simple | **Apache-2.0:** explicit patent grant and trademark exclusion; costs the five-place edit (F1), a `NOTICE`, a new website derivation (F14), and two licences in the history (≤0.10.x MIT, ≥0.11 Apache; `.agents/` stays MIT) | |
-| **D301** | Shape of the root `LICENSE` | **Keep line 1 `MIT License`, put a three-line scope statement (`ee/` excluded, `.agents/` third-party) between it and the copyright line, MIT text unchanged; Check 130 (owner-run, after merge) confirms GitHub and pkg.go.dev still classify it** | Preamble **above** line 1 as the spec says: breaks the website build (F7) and is likelier to defeat detectors. Or `LICENSE` untouched plus a separate `LICENSING.md`: detectors safe, but the root file then claims MIT over `ee/` | |
-| **D302** | Where the later candidates go (console, mobile, coordinator, central orchestrators, hosted control plane) | **Console, mobile, coordinator and central orchestrators stay core** — they are already published under MIT (F4) and the console is the graphical watch (F20); only net-new organisation features (workspace views, a hosted control plane) are born in `ee/`. Answer before the 0.11.0 tag (F21) | Move future development of some into `ee/`: breaks the spec's first principle, leaves an MIT fork point at the last core version, and needs the cross-language boundary (F11) now | |
-| **D303** | How ee code reaches users | **A separate `main` under `ee/` (`ee/cmd/…`) wrapping `cli.NewRootCmd()`, in the root module, built as a separate artifact; the released `fugaro` stays core-only, so its `LICENSE`, plugin manifest and Homebrew cask stay true** | One binary with ee linked and key-gated: simplest for users, but the released archive becomes mixed-licence and every user downloads commercial code (F9). Build tag in `cmd/fugaro`: core imports ee. Nested module (F23): structural boundary, version-coupling cost | |
-| **D304** | Contributions | **A CLA (individual and entity) through a hosted CLA app the owner installs, covering the whole repository, bots allow-listed, in place before the first outside PR is merged; `CONTRIBUTING.md` says so** | DCO only: lighter, but grants no relicensing right (F13). Accept no outside code to `ee/` plus DCO for core: keeps core contributions MIT-only, gives up relicensing core later | |
-| **D305** | The enterprise licence text and its licensor | **An agent drafts a starting point modelled on the two licences the spec names, marked DRAFT; the owner and counsel settle the text and the licensor; counsel also weighs F3 (a) and (b)** | The owner adopts a published source-available licence verbatim (for example a fair-source or business-source text): quicker, fewer custom terms, less fitted to "production needs a subscription" | |
-| **D306** | What ships with 0.11.0 | **`ee/LICENSE` (counsel-approved) and `ee/README.md`; root statement (D301); README Licensing section (R4); Community card (R2); `.agents/` notice (R1); the Go boundary and header tests (R3, R6); `CONTRIBUTING.md` contribution terms (D304); release notes (R5). No extension points, no workspaces, no key check. If the text is not approved by the tag: ship everything except `ee/LICENSE`, with `ee/README.md` saying the directory is reserved** | Also ship the licence-key library now: unused code, and the key format decided before the first feature that needs it | |
-| **D307** | Third-party notices in released artifacts | **Yes, in 0.11.0: a generated third-party notices file in the CLI archive, and `LICENSE` plus notices packed into the console app** (F5, F6). Owner and counsel confirm the requirement | Leave as is: no work, the pre-existing gap stays | |
-| **D308** | The licence key, when the first ee feature ships | **Ed25519-signed key (licensee, features, expiry), verified offline in ee code with the public key compiled in; stored at the workspace's own policy layer; expiry plus a grace period, no revocation list, no phone-home** | Online activation: revocation possible, but it is the telemetry-based enforcement the spec rules out | |
-| **D309** | Scope of the boundary check | **Go only for now: the parsed-import test (R6) plus the header test, in `go test ./...`; a pending workflow under `docs/pending-workflows/` that deletes `ee/` and builds and tests the core, for the owner to copy in; npm and Terraform boundaries added with the first non-Go `ee/` file** | Every language now: lint rules for four npm projects and an embed check with nothing to check yet | |
-| **D310** | A trademark statement | **One short paragraph in the README Licensing section: the licences grant no right to the Fugaro name or logo** | None: nothing to maintain; the name and logo stay as covered (or not) as today | |
+| **D300** | Core licence from 0.11.0: MIT or Apache-2.0? | **Stay MIT.** The spec's first principle says "MIT forever"; with no outside contributor, Apache's patent grant buys little today; one licence across all versions | **Apache-2.0:** explicit patent grant and trademark exclusion; costs the five-place edit (F1), a `NOTICE`, a new website derivation (F14), two licences in the history | **Stay MIT (R).** *Why:* one licence for every version, and the principle as written |
+| **D301** | Shape of the root `LICENSE` | **Keep line 1 `MIT License`; a short scope statement (`ee/` excluded, `.agents/` third-party) between it and the copyright line; MIT text unchanged; Check 130 looks at the detectors after merge** | Preamble above line 1: breaks the website build (F7). `LICENSE` untouched plus `LICENSING.md`: the root file keeps claiming MIT over `ee/` | **As recommended (R).** *Why:* the website's derivation keeps working and the file states its own scope. See open item O2: F27's evidence says GitHub will most likely report "other" |
+| **D302** | Where the later candidates go | **Console, mobile, coordinator and central orchestrators stay core MIT; only net-new organisation features are born in `ee/`** | Move some into `ee/`: breaks "nothing moves out", leaves an MIT fork point, needs the cross-language boundary now | **As recommended (R).** *Why:* they are already published under MIT (F4), and the console is the graphical watch (F20) |
+| **D303** | How ee code reaches users | **A separate `main` under `ee/` in the same module, built as a separate artifact; the released `fugaro` stays core-only** | One key-gated binary: mixed-licence archive. Build tag in `cmd/fugaro`: core imports ee. Nested module: version coupling | **As recommended (R).** *Why:* the released CLI's `LICENSE`, plugin manifest and Homebrew cask stay true (F9) |
+| **D304** | Contributions | **A CLA through a hosted CLA app, Fugaro's own bots allow-listed, in place before the first outside PR is merged** | DCO only: no relicensing right (F13). DCO for core and no outside code to `ee/`: gives up relicensing core | **As recommended (R); the app install is OWNER-RUN.** *Why:* only a CLA keeps the copyright relicensable |
+| **D305** | The enterprise licence text and its licensor | **An agent drafts a starting point modelled on the two named licences, marked DRAFT; the owner and counsel settle text and licensor** | **Adopt a published source-available licence as is**, with only names filled in: quicker, fewer custom terms, less fitted | **Not the recommendation: adopt a published text as is (GitLab EE or PostHog style), only names filled in; no bespoke licence.** *Why:* the owner prefers a known text to a new one. The current texts were read for this answer (F27): the PostHog text fits; open tension **T1** records what the answer meets; the owner and counsel still confirm the text and the licensor line |
+| **D306** | What ships with 0.11.0 | **The skeleton only:** `ee/LICENSE` and `ee/README.md`, the root statement, the README Licensing section, the Community card in D101's shape, the `.agents/` upstream notice, the Go boundary and header tests, `CONTRIBUTING.md` contribution terms, one release-notes line. **If the licence text is not approved by the tag, ship everything else and mark `ee/` as reserved** | Also the licence-key library now: unused code, a key format fixed before a feature needs it | **As recommended (R).** *Why:* the structure and the rule land before the first `ee/` file |
+| **D307** | Third-party notices in released artifacts | **Yes: a notices file in the CLI archive (goreleaser) and `LICENSE` plus notices in the packed console** | Leave as is: the pre-existing gap stays (F5, F6) | **Yes (R).** *Why:* the released binaries carry other people's notices |
+| **D308** | The licence key, when the first ee feature ships | **Ed25519-signed key checked offline, expiry and grace, no revocation, no phone-home** | Online activation: the telemetry-based enforcement the spec rules out | **As recommended (R); design only, not built in 0.11.0.** *Why:* the spec's "keep it light" with no telemetry |
+| **D309** | Scope of the boundary check | **Go only: the parsed-import test, the `ee/` header test, and a pending workflow that deletes `ee/` and builds the core, staged under `docs/pending-workflows/` with its README section; the owner copies it in** | Every language now: rules for four npm projects with nothing to check | **As recommended (R).** *Why:* the first `ee/` code will be Go; the others arrive with the first non-Go file |
+| **D310** | A trademark statement | **One paragraph in the README: the licences grant no right to the Fugaro name or logo** | None | **As recommended (R).** *Why:* `brand/` sits in the MIT tree (F17) |
 
-Checks: **130** (proposed, owner-run, after the merge): GitHub's licence badge and pkg.go.dev's
-licence classification for the module root and an `ee/` package. **131–134** reserved, unused.
+Checks: **130** (owner-run, after the skeleton merges): GitHub's licence detection and
+pkg.go.dev's licence classification for the module root. **131–134** reserved, unused.
 
-## Open tensions
+## Open tensions and open items for the owner
 
-None between answers yet (no answer is recorded). Two tensions inside the spec, carried into the
-decisions: "nothing moves out of the core" against the later candidates (F4 → D302), and "a CLA or
-a DCO" against "relicensable" (F13 → D304).
+- **T1 — D305 ("adopt a published text as is") against what the published texts say (F27).**
+  (a) Neither text grants a permission to reuse it, and on a literal reading each one's own terms
+  cover the file; (b) both depend on a Subscription Terms of Service document and a seat count that
+  Fugaro does not have, so "only names filled in" leaves those two references pointing at nothing.
+  The choices: **(i)** counsel confirms the PostHog text can be reused and the owner supplies a terms
+  document and a seat definition (this blocks `ee/LICENSE`, task L1.2, on both); **(ii)** the owner
+  picks a source-available licence that is published expressly for others to adopt (which texts
+  qualify, and on what terms, is UNVERIFIED U8), at the cost of terms that differ from "production
+  needs a subscription"; **(iii)** keep D306's fallback: 0.11.0 ships `ee/` as reserved with no
+  licence file, and T1 is settled before the first `ee/` feature. **(iii) is what happens by
+  default at the 0.11.0 tag** if neither (i) nor (ii) is settled; it holds nothing else back.
+- **O1 — Counsel (OWNER-RUN, task L0.1):** the `ee/LICENSE` text and licensor line (T1), the CLA
+  text for the hosted app (D304), F3 (a) and (b), and whether D307's notices meet the dependencies'
+  terms.
+- **O2 — D301 and GitHub's detector.** F27: GitHub reports `other` for a repository whose root
+  `LICENSE` carries a scope statement ahead of the MIT text. D301's statement sits after line 1 but
+  is still extra text, so Check 130 will most likely show "other" rather than "MIT" (U1). The owner
+  either accepts that (the file's own words state the licence) or takes D301's alternative
+  (`LICENSE` untouched plus a separate statement). This does not change the plan's tasks, only
+  Check 130's expected outcome.
+- **O3 — The hosted CLA app** is an install the owner makes (task L0.2) and is not on the 0.11.0
+  critical path: `CONTRIBUTING.md` says no outside pull request is merged before its author signs,
+  which holds whether or not the app is installed yet.
 
 ## UNVERIFIED
 
-- **U1** — Whether GitHub's licence detection still reports MIT with a scope statement inside
-  `LICENSE` (D301, Check 130).
+- **U1** — Whether GitHub's licence detection still reports MIT with D301's scope statement inside
+  `LICENSE`. Evidence against (F27): a repository with a scope statement ahead of the MIT text is
+  reported `other`. Check 130 settles it (O2).
 - **U2** — How pkg.go.dev classifies the module root and `ee/` packages after the change.
 - **U3** — That a nested `ee/go.mod` module may import the root module's `internal/...` packages
   with this toolchain (`go 1.27`).
@@ -294,5 +370,6 @@ a DCO" against "relicensable" (F13 → D304).
   (`images/trivy-secret.yaml`) or GitHub secret scanning.
 - **U6** — Whether any mobile build is already in a store's testing track (no `mobile-v*` tag
   exists; store state is outside the repository).
-- **U7** — The licence terms of GitLab EE and PostHog EE as published today (not read; D305's
-  draft would read them).
+- **U7** — **Resolved 2026-10-24** (F27): both texts read over HTTPS, URLs and commits cited.
+- **U8** — Which source-available licences are published expressly for reuse, and their terms
+  (T1 choice (ii)); not read.
