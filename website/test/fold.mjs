@@ -158,8 +158,10 @@ export function foldFailures(dist) {
         // paints with the gradient, which are a `span` inside the `h1` rather than a second
         // thing in the region — the prompt line the owner's feedback of 2026-10-19 puts under
         // the headline — with the `>` mark that draws it as something a reader types, which is
-        // a span inside that line — the row of links under them, and the links in that row.
-        // Nothing else. A `figure`, an `ol`, a `pre` or a section's own paragraph is what the
+        // a span inside that line — the row of links under them, and the links in that row; and
+        // the latest-release note under the call to action, with its two links (the owner's
+        // ruling of 2026-10-24 moved it there from above the headline, where it read as a kicker
+        // label: it is a fact about the project, not a section's content). Nothing else. A `figure`, an `ol`, a `pre` or a section's own paragraph is what the
         // refusal below is about, and the first of them is named in it.
         const allowed = [
           'span.gradient-text',
@@ -169,6 +171,8 @@ export function foldFailures(dist) {
           'p.hero-actions',
           'a.hero-cta',
           'a.hero-cta-quiet',
+          'p.hero-release',
+          'a.hero-release-link',
         ]
         const foreign = shape.filter((element) => !allowed.includes(element))
         if (foreign.length > 0) {
