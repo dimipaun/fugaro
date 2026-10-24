@@ -70,9 +70,9 @@
     "text": "The Linux build is not signed at all: an AppImage is not code-signed, this project has no Linux signing key, and neither file here carries a signature of its own. What proves these bytes is the release's own console-sha256sums.txt, which covers every artifact of the release and is signed with a Sigstore bundle.",
     "assets": ["linux-appimage", "linux-deb"],
     "verify": [
-      "gh release download console-v{version} -R dimipaun/fugaro -p console-sha256sums.txt -p console-sha256sums.txt.sigstore.json",
+      "gh release download console-v{version} -R dimipaun/fugaro -p console-sha256sums.txt -p console-sha256sums.txt.sigstore.json -p \"Fugaro.Console-{version}-linux-*\"",
       "cosign verify-blob console-sha256sums.txt --bundle console-sha256sums.txt.sigstore.json --certificate-identity \"https://github.com/dimipaun/fugaro/.github/workflows/console-release.yml@refs/tags/console-v{version}\" --certificate-oidc-issuer https://token.actions.githubusercontent.com",
-      "grep \"linux-\" console-sha256sums.txt | sha256sum -c -"
+      "grep \"linux-\" console-sha256sums.txt | sha256sum -c --ignore-missing -"
     ],
     "source": "docs/design/desktop-console.md D10"
   }
