@@ -312,7 +312,7 @@ func TestGoreleaserReleaseBuild(t *testing.T) {
 				cfg := parseGoreleaser(t, c.config)
 				workflow := c.workflow
 				if workflow == "" {
-					workflow = "jobs:\n  release:\n    steps:\n      - run: echo nothing\n"
+					workflow = noTagWorkflow
 				}
 				got := slices.Sorted(maps.Keys(buildTagSet(t, cfg, []byte(workflow))))
 				if !slices.Equal(got, c.want) {
@@ -334,43 +334,77 @@ func workflowWithGOFLAGS(uses, env string) string {
 // only a step carrying it is the build this test reads GOFLAGS from.
 const goreleaserStep = "goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de"
 
+// noTagWorkflow is a release workflow that runs no goreleaser step, so it adds
+// nothing to the effective tag set: the plant for a route that is not the
+// workflow's, and the negative case for a workflow that carries a tag.
+const noTagWorkflow = "jobs:\n  release:\n    steps:\n      - run: echo nothing\n"
+
+// eeTagRoutes are the ways the release build can set the ee tag, one per route
+// the tag reader knows. TestEETagNeedsTheLabels runs its plants over all of
+// them: a coupling that read `tags:` alone would let a release ship the
+// commercial binary with MIT labels on the other five routes.
+var eeTagRoutes = []struct{ name, config, workflow string }{
+	{"tags on the build", "builds:\n  - tags: [ee]\n", noTagWorkflow},
+	{"-tags in the build's flags", "builds:\n  - flags: [-tags=ee]\n", noTagWorkflow},
+	{"GOFLAGS in the build's env", "builds:\n  - env: [GOFLAGS=-tags=ee]\n", noTagWorkflow},
+	{"GOFLAGS in the top-level env", "env:\n  GOFLAGS: -tags=ee\n", noTagWorkflow},
+	{"GOFLAGS in an override's env", "builds:\n  - overrides:\n      - goos: linux\n        env: [GOFLAGS=-tags=ee]\n", noTagWorkflow},
+	{"GOFLAGS in the release workflow's goreleaser step", "", workflowWithGOFLAGS(goreleaserStep, "GOFLAGS: -tags=ee")},
+}
+
 // TestEETagNeedsTheLabels: setting the ee tag in the release build compiles
 // commercial code into the binary every user downloads, so from the first
 // release that sets it, every licence label has to say so (D303 as amended).
-// 0.11.0 sets no tag, so the check holds on today's tree; the plants below are
-// what keep it from being vacuous, and they are the state L5's release moves to.
+// 0.11.0 sets no tag, so the real tree holds; the plants are what keep the
+// coupling from being vacuous, and they are the state L5's release moves to.
+// Each plant is a whole release -- a config, a workflow and a tree of labels --
+// so the tag and the labels are read from the same place they are in this
+// repository, and no caller holds the labels to a tag set of its own.
 func TestEETagNeedsTheLabels(t *testing.T) {
-	root := testutil.ModuleRoot()
-	cfg := readGoreleaser(t, filepath.Join(root, ".goreleaser.yaml"))
-	workflow := readText(t, filepath.Join(root, ".github", "workflows", "release.yml"))
-	if tags := buildTagSet(t, cfg, []byte(workflow)); len(tags) > 0 {
-		for _, gap := range eeLabelGaps(t, cfg, root) {
-			t.Errorf("the release build sets %v, so %s", slices.Sorted(maps.Keys(tags)), gap)
+	if gaps := eeTagLabelGaps(t, testutil.ModuleRoot()); len(gaps) > 0 {
+		for _, gap := range gaps {
+			t.Errorf("the release build sets the ee tag, so %s", gap)
 		}
 	}
 
-	const enterpriseCask = "homebrew_casks:\n  - license: LicenseRef-Fugaro-Enterprise\n"
+	for _, route := range eeTagRoutes {
+		t.Run("a planted ee tag with MIT labels is refused: "+route.name, func(t *testing.T) {
+			root := plantRelease(t, mitLabels, "homebrew_casks:\n  - license: MIT\n"+route.config, route.workflow)
+			gaps := eeTagLabelGaps(t, root)
+			if len(gaps) != len(labelNames) {
+				t.Fatalf("the MIT labels report %d gaps, want one for each of the %d labels: %v", len(gaps), len(labelNames), gaps)
+			}
+			joined := strings.Join(gaps, "\n")
+			for _, name := range labelNames {
+				if !strings.Contains(joined, name) {
+					t.Errorf("no gap names %s: %v", name, gaps)
+				}
+			}
+		})
+	}
 
-	t.Run("a planted ee tag with MIT labels is refused", func(t *testing.T) {
-		dir := plantLabels(t, mitLabels)
-		gaps := eeLabelGaps(t, parseGoreleaser(t, "homebrew_casks:\n  - license: MIT\n"), dir)
-		if len(gaps) != len(labelNames) {
-			t.Fatalf("the MIT labels report %d gaps, want one for each of the %d labels: %v", len(gaps), len(labelNames), gaps)
-		}
-		joined := strings.Join(gaps, "\n")
-		for _, name := range labelNames {
-			if !strings.Contains(joined, name) {
-				t.Errorf("no gap names %s: %v", name, gaps)
+	t.Run("a planted ee tag with every label naming the enterprise licence is accepted", func(t *testing.T) {
+		for _, route := range eeTagRoutes {
+			root := plantRelease(t, enterpriseLabels, "homebrew_casks:\n  - license: "+enterpriseMarker+"\n"+route.config, route.workflow)
+			if gaps := eeTagLabelGaps(t, root); len(gaps) > 0 {
+				t.Errorf("a tree whose every label names the enterprise licence reports gaps (%s): %v", route.name, gaps)
 			}
 		}
 	})
+}
 
-	t.Run("a planted ee tag with every label naming the enterprise licence is accepted", func(t *testing.T) {
-		dir := plantLabels(t, enterpriseLabels)
-		if gaps := eeLabelGaps(t, parseGoreleaser(t, enterpriseCask), dir); len(gaps) > 0 {
-			t.Errorf("a tree whose every label names the enterprise licence reports gaps: %v", gaps)
-		}
-	})
+// eeTagLabelGaps is the coupling: when the tree's own release build sets the ee
+// tag, every licence label has to name the enterprise licence, and this reports
+// each one that does not. The tag set and the labels come from the same tree, so
+// the gate below cannot be dropped or unwired without a plant turning red.
+func eeTagLabelGaps(t *testing.T, root string) []string {
+	t.Helper()
+	cfg := readGoreleaser(t, filepath.Join(root, ".goreleaser.yaml"))
+	workflow := readText(t, filepath.Join(root, ".github", "workflows", "release.yml"))
+	if !buildTagSet(t, cfg, []byte(workflow))["ee"] {
+		return nil
+	}
+	return eeLabelGaps(t, cfg, root)
 }
 
 // labelNames are the six labels the enterprise licence has to reach, one per
@@ -417,12 +451,15 @@ var enterpriseLabels = labels{
 	astroSect: "<section id=\"licence\">\nThe binary carries code under " + enterpriseMarker + " (`ee/LICENSE`).\n",
 }
 
-// plantLabels writes a tree carrying the given labels, so the coupling test can
-// be run against a release that does set the tag without touching the real
-// repository.
-func plantLabels(t *testing.T, l labels) string {
+// plantRelease writes a tree carrying the given labels beside the release build
+// that decides the tag set -- the config and the workflow the coupling test reads
+// them from -- so it can be run against a release that does set the ee tag
+// without touching the real repository.
+func plantRelease(t *testing.T, l labels, config, workflow string) string {
 	t.Helper()
 	root := t.TempDir()
+	writePlant(t, root, ".goreleaser.yaml", config)
+	writePlant(t, root, ".github/workflows/release.yml", workflow)
 	writePlant(t, root, "README.md", l.readme)
 	writePlant(t, root, "LICENSING.md", l.licensing)
 	writePlant(t, root, "plugin/.claude-plugin/plugin.json",
