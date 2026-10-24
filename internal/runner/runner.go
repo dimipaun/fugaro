@@ -2830,13 +2830,19 @@ func openFindings(rs []runstore.ReviewSummary) *runstore.ReviewSummary {
 // A filing that cannot be made is a warning, never the run's outcome: the
 // pull request, the report and the record are what the run is for, and an
 // item that could not be written costs a follow-up, not the run.
+//
+// The title opens with the run's own id (filedTitle), because a repository is
+// filed into by every run it has at once: two parallel runs that end at the
+// same round with the same count would otherwise compose one title, one slug
+// and one file name, and merging both branches would be a conflict over one
+// path rather than a union of two.
 func (r *run) fileOpenItems(ctx context.Context) bool {
 	open := openFindings(r.rec.Reviews)
 	if open == nil {
 		return false
 	}
 	item, err := backlog.Write(filepath.Join(r.repo.Dir, backlog.Dir), backlog.New{
-		Title:   fmt.Sprintf("Review round %d left %s open", open.Round, Plural(open.Findings, "finding")),
+		Title:   r.filedTitle(open),
 		Mode:    r.filedMode(),
 		Area:    r.filedArea(),
 		FiledBy: r.filedBy(),
@@ -2855,6 +2861,22 @@ func (r *run) fileOpenItems(ctx context.Context) bool {
 	}
 	r.rec.Backlog = append(r.rec.Backlog, item.ID)
 	return true
+}
+
+// filedTitle is the item's title, and it opens with the run's id so that no
+// two runs compose the same one (D26). A run's own checkout is all it can read
+// — two parallel runs in one repository each allocate the day's sequence from
+// their own tree, and a run cut from a base that does not yet carry another
+// run's item sees nothing to differ from — so the run's id is the one part of
+// the name that is run-unique. It leads rather than trails, because the slug
+// is cut to MaxSlugRunes and a trailing id would be the first thing cut off a
+// long title, which would put two runs back on one name.
+//
+// The id is also the one thing a reader of a shared backlog wants first: D29
+// settles a project's items into one repository, where an item's run is not
+// obvious from the title alone, and `filed-in` repeats it in the front matter.
+func (r *run) filedTitle(open *runstore.ReviewSummary) string {
+	return fmt.Sprintf("Run %s: review round %d left %s open", r.rec.RunID, open.Round, Plural(open.Findings, "finding"))
 }
 
 // filedMode is the mode the item records: the one the run resolved (D27), or

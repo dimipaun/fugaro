@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -29,14 +30,12 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-// filedRun is a run at finalize that left one review round open: a checkout
-// cloned from a real remote, on its own branch with the run's work committed,
-// the mode resolved from that work, and a record whose reviews are given. It
-// returns the run and the path of the remote it pushed to.
-func filedRun(t *testing.T, reviews ...runstore.ReviewSummary) (*run, string) {
+// filingBase is the repository this file's runs are cut from: a bare remote
+// whose main holds a fugaro.yaml naming one area rule, which the run's own
+// work then matches.
+func filingBase(t *testing.T) string {
 	t.Helper()
-	testutil.IsolateGit(t)
-	base := `version: 1
+	const base = `version: 1
 project: aurora
 git: { provider: github }
 rigor:
@@ -46,13 +45,22 @@ rigor:
 workflows:
   server: { commands: { build: make, test: make test } }
 `
-	remote := testutil.NewRemote(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": base})
+	return testutil.NewRemote(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": base})
+}
+
+// filedRunAt is a run at finalize that left one review round open: a checkout
+// cloned from remote, on branch with the run's work committed, the mode
+// resolved from that work, and a record whose reviews are given. runID is the
+// run's own id, which is what two runs of one repository are told apart by.
+func filedRunAt(t *testing.T, remote, branch, runID string, reviews ...runstore.ReviewSummary) *run {
+	t.Helper()
+	testutil.IsolateGit(t)
 	repo, err := gitops.OpenOrClone(context.Background(), filepath.Join(t.TempDir(), "work"), remote, gitops.IdentityEnv())
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+	if err := repo.CheckoutNewBranch(ctx, "main", branch); err != nil {
 		t.Fatal(err)
 	}
 	testutil.WriteFiles(t, repo.Dir, map[string]string{"internal/payments/charge.go": "package payments\n"})
@@ -64,7 +72,7 @@ workflows:
 	r := &run{
 		repo: repo, cfg: cfg, spec: &task.Spec{RequestedBy: "octocat"},
 		rec: &runstore.Record{
-			Version: 1, RunID: "20261024-120000-abcd", Branch: "fugaro/x", BaseBranch: "main",
+			Version: 1, RunID: runID, Branch: branch, BaseBranch: "main",
 			Status: runstore.StatusRunning, Outcome: runstore.OutcomeNone, Reviews: reviews,
 		},
 		d: Deps{Log: slog.New(slog.DiscardHandler)},
@@ -75,7 +83,33 @@ workflows:
 	r.bootstrapRigor(ctx)
 	r.recordChangedFiles(ctx)
 	r.finalizeRigor()
-	return r, remote
+	return r
+}
+
+// filedRun is one run at finalize, cloned from a remote of its own; it
+// returns the run and the path of the remote it pushes to.
+func filedRun(t *testing.T, reviews ...runstore.ReviewSummary) (*run, string) {
+	t.Helper()
+	remote := filingBase(t)
+	return filedRunAt(t, remote, "fugaro/x", "20261024-120000-abcd", reviews...), remote
+}
+
+// itemNames are the item files a folder holds, sorted; the index and the
+// format document are not items.
+func itemNames(t *testing.T, dir string) []string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(dir, backlog.Dir, "*.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, m := range matches {
+		if base := filepath.Base(m); base != backlog.IndexName && base != backlog.FormatName {
+			names = append(names, base)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 // TestRunFilesTheItemsItLeftOpenIntoItsOwnBranch: a run whose last senior
@@ -98,7 +132,9 @@ func TestRunFilesTheItemsItLeftOpenIntoItsOwnBranch(t *testing.T) {
 	if err := r.repo.Push(ctx, r.rec.Branch); err != nil {
 		t.Fatal(err)
 	}
-	name := "20261024-01-review-round-2-left-3-findings-open.md"
+	// The file's name carries the run's own id, so two runs that leave the
+	// same round and the same count open cannot compose one name (D26).
+	name := "20261024-01-run-20261024-120000-abcd-review-round-2-left-3-findings-open.md"
 	doc := testutil.Git(t, remote, "show", "fugaro/x:"+filepath.Join(backlog.Dir, name))
 	item, err := backlog.Parse(filepath.Join(backlog.Dir, name), []byte(doc))
 	if err != nil {
@@ -202,5 +238,89 @@ func TestFilingRefusesAnItemTheFolderAlreadyHolds(t *testing.T) {
 	entries := testutil.Git(t, remote, "ls-tree", "--name-only", "fugaro/x", filepath.Join(backlog.Dir)+"/")
 	if got := strings.Fields(entries); len(got) != 2 {
 		t.Errorf("the pushed folder holds %v, want the item and its index", got)
+	}
+}
+
+// TestTwoRunsFilingOneFolderTheSameDayBothKeepTheirItem: two runs of one
+// repository, cut from one base, each ending its round with the same count on
+// the same day. A run reads only its own checkout, so both allocate the day's
+// first id and both compose the same title — the run's own id in the name is
+// what keeps them two files instead of one path (D26). What the second branch
+// then meets on a base carrying the first is the id, and D26's answer to that
+// is the rename this refusal names, never a quietly dropped item.
+func TestTwoRunsFilingOneFolderTheSameDayBothKeepTheirItem(t *testing.T) {
+	ctx := context.Background()
+	base := filingBase(t)
+	open := runstore.ReviewSummary{Round: 2, Tier: runstore.TierSenior, Verdict: "changes", Findings: 3}
+	a := filedRunAt(t, base, "fugaro/a", "20261024-120000-abcd", open)
+	b := filedRunAt(t, base, "fugaro/b", "20261024-130000-ef01", open)
+
+	for _, r := range []*run{a, b} {
+		if !r.fileOpenItems(ctx) {
+			t.Fatalf("run %s filed nothing for the round it left open", r.rec.RunID)
+		}
+		if !reflect.DeepEqual(r.rec.Backlog, []string{"20261024-01"}) {
+			t.Errorf("run %s recorded %v, want the day's first id", r.rec.RunID, r.rec.Backlog)
+		}
+	}
+	aNames, bNames := itemNames(t, a.repo.Dir), itemNames(t, b.repo.Dir)
+	if len(aNames) != 1 || len(bNames) != 1 {
+		t.Fatalf("the runs filed %v and %v, want one item each", aNames, bNames)
+	}
+	if aNames[0] == bNames[0] {
+		t.Fatalf("both runs wrote %s: one path for two items, so neither branch can merge the other", aNames[0])
+	}
+	// The second branch's item, standing in the first's folder the way the
+	// merge that would bring it there leaves it: two names, one id.
+	data, err := os.ReadFile(filepath.Join(b.repo.Dir, backlog.Dir, bNames[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder := filepath.Join(a.repo.Dir, backlog.Dir)
+	if err := os.WriteFile(filepath.Join(folder, bNames[0]), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backlog.Load(folder); err == nil || !strings.Contains(err.Error(), "20261024-01") {
+		t.Fatalf("the joined folder did not name the id both runs took: %v", err)
+	}
+}
+
+// TestRunFilingAfterAnotherRunsItemReachedTheBase: the other half of the same
+// day — a run cut from a base that already carries another run's item. It
+// allocates that day's next sequence and writes its own file beside it, so the
+// folder ends with both items and the index over both, neither run's item
+// standing in the other's way (D26).
+func TestRunFilingAfterAnotherRunsItemReachedTheBase(t *testing.T) {
+	ctx := context.Background()
+	base := filingBase(t)
+	open := runstore.ReviewSummary{Round: 2, Tier: runstore.TierSenior, Verdict: "changes", Findings: 3}
+	first := filedRunAt(t, base, "fugaro/a", "20261024-120000-abcd", open)
+	if !first.fileOpenItems(ctx) {
+		t.Fatal("the first run filed nothing")
+	}
+	// The first run's branch is what the second run's base carries, which is
+	// the merge into main that happened while the second was being cut.
+	testutil.Git(t, first.repo.Dir, "push", "origin", "fugaro/a:main")
+
+	second := filedRunAt(t, base, "fugaro/b", "20261024-130000-ef01", open)
+	if !second.fileOpenItems(ctx) {
+		t.Fatal("the second run dropped its item for the one already on the base")
+	}
+	if !reflect.DeepEqual(second.rec.Backlog, []string{"20261024-02"}) {
+		t.Fatalf("the second run recorded %v, want the day's next id", second.rec.Backlog)
+	}
+	names := itemNames(t, second.repo.Dir)
+	if len(names) != 2 {
+		t.Fatalf("the folder holds %v, want both runs' items", names)
+	}
+	items, err := backlog.Load(filepath.Join(second.repo.Dir, backlog.Dir))
+	if err != nil {
+		t.Fatalf("the folder the second run wrote does not pass its own guard: %v", err)
+	}
+	index := backlog.Render(items)
+	for _, want := range []string{"20261024-01", "20261024-02"} {
+		if !strings.Contains(index, want) {
+			t.Errorf("the index does not name %s:\n%s", want, index)
+		}
 	}
 }
