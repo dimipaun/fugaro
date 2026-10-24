@@ -758,7 +758,7 @@ command beside it are read together, and the command reads the tree the slice
 leaves behind — Slice 1 moved all three (10 keys, 70 scope rows, 3 `defaults:`
 blocks), which is the five-edit shape F7 and F36 price, measured.
 
-The **66** is the convention this folder follows: there is no registry test over
+The **67** is the convention this folder follows: there is no registry test over
 `docs/`, so a folder that wants its documents pinned writes its own file, and
 this folder's is `internal/cli/docs_rigor_modes_test.go` — the forty-eighth when
 this folder's own commit wrote it, and one of the pins the row has counted
