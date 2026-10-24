@@ -1254,8 +1254,8 @@ test('the hero offers the console from its call to action only while the flag is
   // whether it is offered at all. (The changes spec of 2026-10-18 has an item 6 too, and it is
   // Getting Started's console option rather than this — `console-option.mjs` holds that one.)
   // This is the flag-off half over the build `npm run check` makes, and it applies only while
-  // the checkout's flag is false. The checkout now ships the flag TRUE (the console's
-  // `console-v0.9.0` release), so this case steps aside and `console-option.mjs` holds both
+  // the checkout's flag is false. The checkout now ships the flag TRUE (the console's own
+  // release stream), so this case steps aside and `console-option.mjs` holds both
   // halves: the flag-on row off this build and the flag-off row off an unreleased copy.
   const flag = /^\s*console_downloads:\s*(true|false)\s*$/m.exec(repoFile('website/data/site.yaml'))
   assert.ok(

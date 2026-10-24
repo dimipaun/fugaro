@@ -595,12 +595,10 @@ func TestTUIPRStateDropsMergedReadyRow(t *testing.T) {
 	if strings.Contains(section, "pull/1") || !strings.Contains(section, "pull/2") {
 		t.Fatalf("want only the open PR listed:\n%s", section)
 	}
-	// The row is gone from the ready list only: its finished row is untouched.
-	// A finished row is a one-liner, not a row of the run table, so it names
-	// the run by its whole id — the four-character form of item 1 is the RUN
-	// column's (shortRun), and looking for that form here would find it in the
-	// middle of the id and prove nothing.
-	if !strings.Contains(s, "r-merged Already merged") {
+	// The row is gone from the ready list only: its finished row is untouched,
+	// and that row's RUN cell is the same short form as every table row's
+	// (shortRun; owner request 2026-10-24).
+	if !strings.Contains(s, shortRun("r-merged")+" Already merged") {
 		t.Fatalf("the finished row itself must stay:\n%s", s)
 	}
 }
