@@ -9,8 +9,7 @@ import (
 // Check 124 — the Cloud Batch backend's own owner-run live check — as the
 // register writes it.
 //
-// The opt-in `--provision-batch` shipped in 0.9.5 (as `fugaro init
-// --provision-batch`) with the compute module,
+// The opt-in `--provision-batch` shipped in 0.9.5 with the compute module,
 // the reaper's invocation, `fugaro doctor`'s Batch half and `fugaro validate`'s
 // offline checks behind it, and its live check was never written: the design
 // (`docs/design/compute-backend.md`) measures the backend in six hand-made
@@ -114,13 +113,20 @@ func hasAnyPrefix(s string, prefixes []string) bool {
 	return false
 }
 
-// check124Facts returns the section's `**FACT:**` lines. The register's FACT
-// convention is one line per assertion, starting at the line's beginning.
-func check124Facts(section string) []string {
+// check124FactLineRE counts the section's `**FACT:**` assertions, which start a
+// line.
+var check124FactLineRE = regexp.MustCompile(`(?m)^\*\*FACT:\*\*`)
+
+// check124FactParagraphs returns the paragraphs that carry a `**FACT:**` line.
+// The register states a fact as a sentence that may wrap, followed by the
+// `**expected output:**` marker — on the FACT line or on the next one — so the
+// marker is asserted per paragraph and not per physical line, and a check
+// reading the `**FACT:**` line alone would refuse the register's own shape.
+func check124FactParagraphs(section string) []string {
 	var facts []string
-	for _, line := range strings.Split(section, "\n") {
-		if strings.HasPrefix(line, "**FACT:**") {
-			facts = append(facts, line)
+	for _, para := range strings.Split(section, "\n\n") {
+		if check124FactLineRE.MatchString(para) {
+			facts = append(facts, para)
 		}
 	}
 	return facts
@@ -365,13 +371,13 @@ func TestDocsCheck124FactsAreFactLined(t *testing.T) {
 	}
 	for letter, wants := range wantFacts {
 		section := check124Section(t, letter)
-		facts := check124Facts(section)
-		if len(facts) < 4 {
-			t.Errorf("Check 124%s carries %d `**FACT:**` line(s): the part's assertions are facts about a real installation, and a section that asserts them in prose instead is the finding Check 59's Task 4.3 was rewritten for", letter, len(facts))
+		if n := len(check124FactLineRE.FindAllString(section, -1)); n < 4 {
+			t.Errorf("Check 124%s carries %d `**FACT:**` line(s): the part's assertions are facts about a real installation, and a section that asserts them in prose instead is the finding Check 59's Task 4.3 was rewritten for", letter, n)
 		}
-		for _, fact := range facts {
+		for _, fact := range check124FactParagraphs(section) {
 			if !strings.Contains(fact, "expected output:") {
-				t.Errorf("Check 124%s carries a FACT line with no expected output: %s", letter, fact)
+				first, _, _ := strings.Cut(fact, "\n")
+				t.Errorf("Check 124%s carries a FACT line with no expected output: %s", letter, first)
 			}
 		}
 		for _, want := range wants {
