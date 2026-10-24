@@ -6,11 +6,16 @@ package cli
 // (spec.md, verbatim), the reconciliation of that spec against the code
 // (reconciliation.md), the index (README.md), and -- since 2026-10-21 -- the
 // plan that turns the owner's answers into ordered parts
-// (implementation-plan.md). P1 is the exception, and the only one: it landed on
-// the long-lived `coordinator` branch as fugaro coordinator status
-// (internal/cli/coordinator.go over internal/coordinator), so the Go that
-// follows from these documents is that one read command. No TypeScript, no
-// Terraform, no rules change and no live action follows from any of them.
+// (implementation-plan.md). Two parts have left this folder for the tree, and
+// they are the only two: P1 landed on the long-lived `coordinator` branch as
+// fugaro coordinator status (internal/cli/coordinator.go over
+// internal/coordinator), and P3 as the state that command reads from -- the
+// `coordinator/` subtree, the account that writes it and the read grant for the
+// signed-in person (internal/coordinator/state.go,
+// deploy/terraform/gcp/modules/firebase/iam.tf and
+// internal/budget/rules/rules.json.tmpl). So what follows from these documents
+// is that command, that subtree, one Terraform grant and one rules change, and
+// no TypeScript and no live action.
 //
 // The reconciliation's whole value is that every claim in it is checkable, and
 // the things a later edit can silently break are: the spec stops being verbatim,
@@ -532,7 +537,7 @@ const (
 // the document NAMES it, not that HEAD is it.
 const coordinatorBase = "1e0953b7"
 
-// coordinatorReadmeStatus is the index's status line after P1 landed on the
+// coordinatorReadmeStatus is the index's status line after P3 landed on the
 // `coordinator` branch. It replaces the "approved to build ... no code is
 // implemented yet" status this package pinned while the plan was all there was,
 // and it is pinned whole: what a reader has to take from it is that the work is
@@ -547,7 +552,12 @@ const coordinatorBase = "1e0953b7"
 // implementation in progress"), because the alternative is a folder whose
 // documents say no code exists while the code is on the branch, with a test
 // pinning the false sentence.
-const coordinatorReadmeStatus = "**Status (2026-10-21, later): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0 and P1 are on `coordinator`, and P2–P8 are not started.**"
+//
+// It has moved three times: with the owner's answers, with P1, and -- on a later
+// day, so the date moves with it -- with P3. P3 is the part that made the
+// index's "no Terraform, no rules change" sentence false, and the two are edited
+// together for that reason: a grant and a read are what it lands.
+const coordinatorReadmeStatus = "**Status (2026-10-24): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0, P1 and P3 are on `coordinator`, and P2 and P4–P8 are not started.**"
 
 // coordinatorReadmeDecisionsAnswered is the index's own sentence about the
 // decisions the planning found, after the owner answered them on 2026-10-21.
@@ -580,20 +590,20 @@ const coordinatorPlanGateColumns = "| Decision | What it blocks | The recommenda
 
 // coordinatorPlanStatus is the plan's own status line, the same statement the
 // index makes, held separately because the plan is the document a builder reads
-// first and it must not be able to say something else. It has moved twice: with
-// the index when the owner answered D193-D197, and again with the index when P1
-// landed -- a plan whose parts are being built while its own status still says
-// none is the mismatch this pair of pins exists to catch, and so is one that
-// says a part is built while the part's own section says otherwise (see
-// coordinatorPlanBuiltStatus).
-const coordinatorPlanStatus = "**Status (2026-10-21, later): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0 and P1 are on `coordinator`, and P2–P8 are not started.**"
+// first and it must not be able to say something else. It has moved three times:
+// with the index when the owner answered D193-D197, again with the index when P1
+// landed, and again with it when P3 did -- a plan whose parts are being built
+// while its own status still says none is the mismatch this pair of pins exists
+// to catch, and so is one that says a part is built while the part's own section
+// says otherwise (see coordinatorPlanBuiltStatus).
+const coordinatorPlanStatus = "**Status (2026-10-24): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0, P1 and P3 are on `coordinator`, and P2 and P4–P8 are not started.**"
 
-// coordinatorPlanBuiltStatus is P1's own status line in its section, in the shape
-// P0's carries ("**Status: written.**"): the status line above says how far the
-// plan has got, and each part says whether THAT part is in the tree, so that the
-// count in the status line and the parts it counts cannot drift apart. P1 is the
-// part this pair of pins moved for, and it is pinned whole for the same reason
-// the two above are.
+// coordinatorPlanBuiltStatus is a part's own status line in its section, in the
+// shape P0's carries ("**Status: written.**"): the status line above says how far
+// the plan has got, and each part says whether THAT part is in the tree, so that
+// the count in the status line and the parts it counts cannot drift apart. P1 and
+// P3 are the parts this pair of pins moved for, and it is pinned whole for the
+// same reason the two above are.
 const coordinatorPlanBuiltStatus = "**Status: built.**"
 
 // coordinatorPlanParts are the plan's parts in order, as their headings are
