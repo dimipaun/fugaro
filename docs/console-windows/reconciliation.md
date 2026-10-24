@@ -4,7 +4,7 @@
 document. The twelve decisions in §4 are answered** — the owner answered all twelve on 2026-10-20,
 and the table at the head of §4 records each one with its why — **and answering a decision is not
 approving the build — the two are separate: the answers are 2026-10-20, and the plan's OWNER APPROVAL
-GATE was passed on 2026-10-22, for the target release 0.11.0; pull requests target `main`.**
+GATE was passed on 2026-10-22, for the target release 0.110.0 (the console's own stream, approved as 0.11.0 and renumbered by the owner's ruling of 2026-10-24); pull requests target `main`.**
 It reads the tree at
 `ccc406b2` and every path and symbol in it was read at that commit. Where it disagrees with the brief
 in §0, **this document wins** and says so.
@@ -223,7 +223,7 @@ path that exists and is unused.
 Each is a real fork with a recommendation first, the alternative and what it costs. **The owner
 answered all twelve on 2026-10-20**, and the table below is the record: the option taken and the
 reason in one line. **Answering a decision is not approving the build** — the plan's OWNER APPROVAL
-GATE is where approval happens, and it **passed on 2026-10-22** (target release 0.11.0; pull
+GATE is where approval happens, and it **passed on 2026-10-22** (target release 0.110.0, the console's; pull
 requests target `main`). The namespaces are local: **D1–D12 are
 this folder's**, they are unrelated to
 [docs/design/desktop-console.md](../design/desktop-console.md)'s D1–D20 and to
