@@ -97,10 +97,53 @@ func TestWriteAllocatesTheNextSequenceAndRegeneratesTheIndex(t *testing.T) {
 	}
 }
 
-// TestWriteRefusesAnItemTheFolderAlreadyHolds: the same title filed twice the
-// same day would be two files saying one thing — `<id>-<slug>.md` with a
-// sequence apart — so the second filing is refused and the folder is left
-// exactly as it was.
+// TestWriteFilesTheSameTitleOnAnotherDay: the same title filed on a later day
+// is another item, not a second copy of the first — the two runs that filed
+// them are different runs, and each item carries its own run and its own date
+// — so it is filed under the new day's own sequence, beside the first. The
+// slug is what makes the title readable in a listing, not a key: the id is
+// the name that must not repeat (D26).
+func TestWriteFilesTheSameTitleOnAnotherDay(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), Dir)
+	first, err := Write(dir, newItem("Review round 2 left 3 findings open"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	later := newItem("Review round 2 left 3 findings open")
+	later.Date = "2026-10-25"
+	second, err := Write(dir, later)
+	if err != nil {
+		t.Fatalf("the same title on another day was refused: %v", err)
+	}
+	want := "20261025-01-review-round-2-left-3-findings-open.md"
+	if filepath.Base(second.Path) != want {
+		t.Errorf("path = %q, want %s: the later day's own sequence (D26)", second.Path, want)
+	}
+	if second.ID == first.ID {
+		t.Errorf("both filings took the id %s: two items may not share an id (D26)", first.ID)
+	}
+	items, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("the folder holds %d items, want both filings", len(items))
+	}
+	index, err := os.ReadFile(filepath.Join(dir, IndexName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{first.ID, second.ID} {
+		if !strings.Contains(string(index), id) {
+			t.Errorf("%s does not list %s:\n%s", IndexName, id, index)
+		}
+	}
+}
+
+// TestWriteRefusesAnItemTheFolderAlreadyHolds: the same title filed twice on
+// one day would be two files saying the same thing about the same day —
+// `<id>-<slug>.md` with a sequence apart — so the second filing is refused and
+// the folder is left exactly as it was.
 func TestWriteRefusesAnItemTheFolderAlreadyHolds(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), Dir)
 	first, err := Write(dir, newItem("Review round 2 left 3 findings open"))

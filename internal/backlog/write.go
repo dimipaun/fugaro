@@ -73,9 +73,16 @@ func Write(dir string, n New) (Item, error) {
 	}
 	name := id + "-" + slug + ".md"
 	itemPath := filepath.Join(dir, name)
+	// The same title filed twice on one day is the one filing the folder
+	// refuses: it is the accidental double-submit, and both files would say
+	// the same thing about the same day. The same title on another day is not
+	// that — an item is filed by the run that left it open, two runs a week
+	// apart can leave the same thing open, and each item carries its own
+	// run and its own date. The id is what must not repeat, and AllocateID
+	// has already made sure of that (D26).
 	for _, it := range items {
-		if itemSlug(it) == slug {
-			return Item{}, fmt.Errorf("%s: %s already holds this title, filed on %s: the same item filed twice is two files saying one thing (D26)", itemPath, it.Path, it.Date)
+		if itemSlug(it) == slug && it.Date == n.Date {
+			return Item{}, fmt.Errorf("%s: %s already holds this title for %s: the same item filed twice on one day is two files saying one thing (D26)", itemPath, it.Path, it.Date)
 		}
 	}
 	doc := render(n, id)
@@ -223,8 +230,9 @@ func Slug(title string) (string, error) {
 }
 
 // itemSlug is the slug half of an item file's name, which is what a duplicate
-// filing is recognised by: the id carries the day's sequence, so two filings of
-// one title the same day differ in their ids and agree in their slugs.
+// filing is recognised by: the id carries the day and the day's sequence, so
+// two filings of one title the same day differ in their ids and agree in their
+// slugs, while the same title on another day is another item.
 func itemSlug(it Item) string {
 	name := strings.TrimSuffix(itemName(it.Path), ".md")
 	return strings.TrimPrefix(name, it.ID+"-")
