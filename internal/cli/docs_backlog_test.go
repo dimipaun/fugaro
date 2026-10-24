@@ -29,6 +29,16 @@ package cli
 // happens to implement it. It also asserts internal/backlog's own Parse accepts
 // every file, which is the other direction: a file the folder's pin reads as
 // well-formed and the tool refuses is a file `fugaro backlog list` cannot show.
+//
+// The closing rule is D31's, and it is the folder's pin that holds it (plan
+// T4.7): a `closed` item carries a `## Closed by` section naming the pull
+// request that closed it, and a `dropped` item states its reason under
+// `## Why`. The parser accepts the heading without requiring it, deliberately —
+// the rule is about a status and the parser is about a file — so the two
+// documents a status can be wrong in are refused here and nowhere else. Both
+// items in the folder are open today, so the rule is also exercised over
+// documents this file writes, which is what keeps it from passing by being
+// vacuous.
 
 import (
 	"fmt"
@@ -228,6 +238,14 @@ func TestDocsBacklogItemsFollowTheFormat(t *testing.T) {
 			t.Errorf("%s: the body carries no heading at all", path)
 		}
 
+		// D31's closing rule, which the status decides: a closed item names the
+		// pull request that closed it and a dropped item states its reason.
+		if status := fm["status"]; status != "" {
+			if problem := backlogClosingProblem(doc, status); problem != "" {
+				t.Errorf("%s: %s", path, problem)
+			}
+		}
+
 		// The other direction: the tool the folder ships has to accept the
 		// same bytes. A file this test reads as well-formed and Parse refuses
 		// is a file `fugaro backlog list` cannot show.
@@ -249,6 +267,168 @@ func backlogFiledIn(value string) bool {
 		}
 	}
 	return false
+}
+
+// backlogSection returns the text under a `## ` heading: the lines after it,
+// up to the next heading. The bool reports whether the heading is there at all,
+// so "the section is missing" and "the section is empty" stay different answers
+// — D31 refuses a `closed` item for the first, and a `dropped` one for the
+// second.
+func backlogSection(doc, heading string) (string, bool) {
+	var out []string
+	seen := false
+	for _, line := range strings.Split(doc, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.HasPrefix(line, "## ") {
+			if seen {
+				break
+			}
+			seen = line == heading
+			continue
+		}
+		if seen {
+			out = append(out, line)
+		}
+	}
+	return strings.Join(out, "\n"), seen
+}
+
+// backlogPullRequestRE is a pull request named the way this repository's
+// documents name one: `#412`, or its URL.
+var backlogPullRequestRE = regexp.MustCompile(`#[0-9]+\b|/pull/[0-9]+\b`)
+
+// backlogClosingProblem returns the closing rule a status breaks, or "" when it
+// breaks none — D31's rule, and the reason it is checked here rather than in
+// internal/backlog: the parser is about a file and this is about a status, and
+// what a tree can hold is the document.
+func backlogClosingProblem(doc, status string) string {
+	switch status {
+	case "closed":
+		section, ok := backlogSection(doc, "## Closed by")
+		if !ok {
+			return "a `closed` item carries a `## Closed by` section, and this one has none (D31)"
+		}
+		if !backlogPullRequestRE.MatchString(section) {
+			return "the `## Closed by` section does not name a pull request: it names the one that closed the item, as `#<number>` or its URL (D31)"
+		}
+	case "dropped":
+		reason, ok := backlogSection(doc, "## Why")
+		if !ok || strings.TrimSpace(reason) == "" {
+			return "a `dropped` item states its reason under `## Why`, and this one states none (D31)"
+		}
+	}
+	return ""
+}
+
+// TestDocsBacklogClosingRuleIsNotVacuous: both items in the folder today are
+// open, so the rule the pin applies above is quiet on the tree, and a rule
+// nothing exercises is a rule nobody has checked. This is the same function
+// over documents written here, in both directions: what D31 refuses and what it
+// accepts, including a `## Closed by` section that is present but names no pull
+// request — the case a check for the heading alone would let through.
+//
+// Mutation (verified, run and restored): drop the pull-request reference from
+// the accepted case's `## Closed by` text — this fails naming the case.
+func TestDocsBacklogClosingRuleIsNotVacuous(t *testing.T) {
+	const body = "## What was left open\n\nthe thing.\n\n## Why\n\nbecause.\n"
+	cases := []struct {
+		name   string
+		status string
+		body   string
+		want   string // a fragment of the refusal, or "" when the rule is satisfied
+	}{
+		{"a closed item that names its pull request", "closed", body + "\n## Closed by\n\n#412\n", ""},
+		{"a closed item that names it by URL", "closed", body + "\n## Closed by\n\nhttps://github.com/owner/name/pull/412\n", ""},
+		{"a closed item with no closing section", "closed", body, "carries a `## Closed by` section"},
+		{"a closed item whose closing section names no pull request", "closed", body + "\n## Closed by\n\nfixed, thanks\n", "does not name a pull request"},
+		{"a closed item whose closing section is empty", "closed", body + "\n## Closed by\n", "does not name a pull request"},
+		{"a dropped item that states its reason", "dropped", body, ""},
+		{"a dropped item that states no reason", "dropped", "## What was left open\n\nthe thing.\n\n## Why\n", "states its reason under `## Why`"},
+		{"an open item with neither", "open", body, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := backlogItemDoc("20261021-01", "a title", tc.status, tc.body)
+			path := backlogDir + "/20261021-01-a-title.md"
+
+			// The fixtures are items the format accepts, so what is refused
+			// below is refused for the status and not for the file: the parser
+			// requires the headings, and the closing rule requires the text
+			// under one of them.
+			if _, err := backlog.Parse(path, []byte(doc)); err != nil {
+				t.Fatalf("the fixture is not an item the format accepts: %v", err)
+			}
+			got := backlogClosingProblem(doc, tc.status)
+			if tc.want == "" {
+				if got != "" {
+					t.Errorf("the closing rule refuses a %s item it accepts: %s", tc.status, got)
+				}
+				return
+			}
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("the closing rule says %q for a %s item, want it to say %q (D31)", got, tc.status, tc.want)
+			}
+		})
+	}
+}
+
+// TestDocsBacklogAStatusFlipMovesTheIndex: D31's "in the same commit" is held
+// by the regenerate-and-compare pin above, and that pin can only catch a flip
+// the index records. This asserts the flip is recorded — closing an item moves
+// its row out of the open group and moves the count line with it — so the pin
+// is not quiet on the one edit the rule is about.
+//
+// Mutation (verified, run and restored): write the flipped item back with its
+// old status — this fails, because the two renders are then equal.
+func TestDocsBacklogAStatusFlipMovesTheIndex(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), backlog.Dir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	itemPath := filepath.Join(dir, "20261021-01-a-title.md")
+	write := func(doc string) {
+		t.Helper()
+		if err := os.WriteFile(itemPath, []byte(doc), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	render := func() string {
+		t.Helper()
+		items, err := backlog.Load(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return backlog.Render(items)
+	}
+
+	write(backlogItemDoc("20261021-01", "a title", "open", "## What was left open\n\nthe thing.\n\n## Why\n\nbecause.\n"))
+	open := render()
+	write(backlogItemDoc("20261021-01", "a title", "closed",
+		"## What was left open\n\nthe thing.\n\n## Why\n\nbecause.\n\n## Closed by\n\n#412\n"))
+	closed := render()
+
+	if open == closed {
+		t.Errorf("closing an item leaves the index byte-identical: a flip the index does not record is a flip the regenerate-and-compare pin cannot catch, and D31's rule is that the flip and the regeneration are one commit")
+	}
+	if !strings.Contains(closed, "1 item: 0 open, 1 closed, 0 dropped.") {
+		t.Errorf("the index of one closed item does not state its count line:\n%s", closed)
+	}
+}
+
+// backlogItemDoc is an item's bytes from its front matter and its body, so a
+// case can write the body it means to test — including a section it
+// deliberately leaves out, which is what a closing-rule case is.
+func backlogItemDoc(id, title, status, body string) string {
+	return "---\n" +
+		"id: " + id + "\n" +
+		"title: " + title + "\n" +
+		"mode: none\n" +
+		"area: repo\n" +
+		"status: " + status + "\n" +
+		"filed-by: dimipaun\n" +
+		"filed-in: hand\n" +
+		"date: 2026-10-21\n" +
+		"---\n\n" + body
 }
 
 // TestDocsBacklogFolderStatesItsFormat: the folder carries FORMAT.md, and it
@@ -276,6 +456,27 @@ func TestDocsBacklogFolderStatesItsFormat(t *testing.T) {
 	for _, key := range backlog.Fields {
 		if !strings.Contains(doc, "`"+key+"`") {
 			t.Errorf("%s does not name the front-matter field %q (D27)", backlogFormat, key)
+		}
+	}
+}
+
+// TestDocsBacklogFormatStatesTheClosingRule: the format document is where a
+// reader meets the rule an item's status follows, and D31's closing rule is
+// stated there as a rule rather than as a step still outstanding (plan T4.7).
+// The assertions are sentences rather than headings because the `## Closed by`
+// heading was already listed before the rule existed: what T4.7 adds is what
+// the heading requires of a `closed` item, and the refusal a `dropped` one
+// meets. The sentences wrap in the file, so they are matched against the
+// whitespace-normalized text, as the other sentence pins in this package do.
+func TestDocsBacklogFormatStatesTheClosingRule(t *testing.T) {
+	doc := strings.Join(strings.Fields(readDoc(t, backlogFormat)), " ")
+	for _, want := range []string{
+		"its `## Closed by` section names the pull request that closed it",
+		"A `dropped` item states its reason under `## Why`",
+		"the folder's pin refuses",
+	} {
+		if !strings.Contains(doc, strings.Join(strings.Fields(want), " ")) {
+			t.Errorf("%s does not state %q: D31's closing rule is a rule the tree holds, and this document is where a reader meets it (plan T4.7)", backlogFormat, want)
 		}
 	}
 }
@@ -467,18 +668,7 @@ func TestDocsBacklogIndexGuardCatchesAnUnregeneratedItem(t *testing.T) {
 // itemDoc is a well-formed item's bytes, so the guard's own fixture is a file
 // the format accepts rather than a stub.
 func itemDoc(id, title string) string {
-	return "---\n" +
-		"id: " + id + "\n" +
-		"title: " + title + "\n" +
-		"mode: none\n" +
-		"area: repo\n" +
-		"status: open\n" +
-		"filed-by: dimipaun\n" +
-		"filed-in: hand\n" +
-		"date: 2026-10-21\n" +
-		"---\n\n" +
-		"## What was left open\n\nthe thing.\n\n" +
-		"## Why\n\nbecause.\n"
+	return backlogItemDoc(id, title, "open", "## What was left open\n\nthe thing.\n\n## Why\n\nbecause.\n")
 }
 
 // TestDocsBacklogIndexIsDeterministic: the index is a pure function of the
