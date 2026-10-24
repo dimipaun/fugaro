@@ -445,9 +445,12 @@ const sourceHref = (file: string): string => `${facts.repository}/blob/${branch}
     margin: 0;
   }
 
+  /* The page's measure rather than a narrower box: the one-line subtitle fits on one line from
+     a tablet up and wraps on its own on a phone (the owner's preview feedback on #1003). */
   .faq-lede {
     margin: 0;
-    max-width: 34rem;
+    max-width: var(--measure);
+    text-wrap: pretty;
     color: var(--text-muted);
     font-size: var(--font-size-xl);
     line-height: var(--leading-snug);

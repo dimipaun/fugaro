@@ -396,7 +396,9 @@ test('every layout refusal fires on the defect it names', () => {
     ],
     [
       "a group's list left in the header's flow",
-      plant('background:var(--surface);position:absolute;top:100%;left:0;right:0}', 'background:var(--surface);top:100%;left:0;right:0}'),
+      // The panel's `transform-origin` sits in the same rule since the owner-approved motion
+      // opportunities 2026-10-23 (the panel grows from its trigger).
+      plant('background:var(--surface);transform-origin:top;position:absolute;top:100%;left:0;right:0}', 'background:var(--surface);transform-origin:top;top:100%;left:0;right:0}'),
       /in the header's flow/,
     ],
     [
@@ -406,7 +408,7 @@ test('every layout refusal fires on the defect it names', () => {
     ],
     [
       "a rule that hides a group's list",
-      plant('background:var(--surface);position:absolute', 'background:var(--surface);display:none;position:absolute'),
+      plant('background:var(--surface);transform-origin:top;position:absolute', 'background:var(--surface);transform-origin:top;display:none;position:absolute'),
       /hides a group's list/,
     ],
     [
@@ -503,12 +505,13 @@ test('every layout refusal fires on the defect it names', () => {
     ],
     [
       "a wide dropdown that is still the header's width",
-      plant('border-radius:var(--radius-md);left:auto;right:0}', 'border-radius:var(--radius-sm);left:0;right:0}'),
+      // `transform-origin` joined the rule with the owner-approved motion opportunities 2026-10-23.
+      plant('border-radius:var(--radius-md);transform-origin:100% 0;left:auto;right:0}', 'border-radius:var(--radius-sm);transform-origin:100% 0;left:0;right:0}'),
       /hangs across the header/,
     ],
     [
       "a group's dropdown opening rightwards off the viewport",
-      plant('border-radius:var(--radius-md);left:auto;right:0}', 'border-radius:var(--radius-sm);left:auto;right:auto}'),
+      plant('border-radius:var(--radius-md);transform-origin:100% 0;left:auto;right:0}', 'border-radius:var(--radius-sm);transform-origin:100% 0;left:auto;right:auto}'),
       /sideways scroll/,
     ],
   ]
@@ -2707,4 +2710,30 @@ test('the skip link is the first thing in the body and points at main', () => {
     assert.match(body[1], /href="#main"/, `${rel}: the skip link does not point at #main`)
     assert.match(html, /<main id="main"/, `${rel}: there is no main#main for the skip link to reach`)
   }
+})
+
+// The copy confirmation is drawn over its button, out of the row (the owner's preview feedback
+// on #1003, 2026-10-24): in the flow it took width from the command, wrapped above the button
+// and moved the block each time a command was copied.
+export function copyStatusFailures(css) {
+  const out = []
+  const last = (selector, property) =>
+    allRules(css)
+      .filter((rule) => rule.selector.split(',').some((part) => part.trim() === selector))
+      .map(declarations)
+      .map((d) => d[property])
+      .filter(Boolean)
+      .pop() ?? ''
+  if (last('.copy-status', 'position') !== 'absolute') out.push('the copy confirmation is in the row, so showing it takes width from the command and moves the block')
+  if (!['relative', 'absolute'].includes(last('.command-controls', 'position'))) out.push('the control box is not positioned, so the confirmation is not anchored to its button')
+  if (last('.copy-status:empty', 'opacity') !== '0') out.push('an empty confirmation is drawn, and it covers the button it sits on')
+  return out
+}
+
+test('the copy confirmation sits over its button and never moves the command', () => {
+  const css = TODAY()
+  assert.deepEqual(copyStatusFailures(css), [], copyStatusFailures(css).join('\n'))
+  const inFlow = css.replace(/(\.copy-status\{[^}]*?)position:absolute;?/, '$1')
+  assert.notEqual(inFlow, css, 'this fixture removes the confirmation\'s positioning, and the built stylesheet no longer carries it')
+  assert.ok(copyStatusFailures(inFlow).some((line) => /takes width from the command/.test(line)), 'a confirmation in the row was not refused')
 })

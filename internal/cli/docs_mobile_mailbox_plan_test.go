@@ -248,6 +248,14 @@ func TestMailboxPlanEveryCitedPathExists(t *testing.T) {
 			// list is walked with its reasons.
 			continue
 		}
+		if p == "docs/pending-workflows/shared-tests.yml" {
+			// Copied into .github/workflows/ on 2026-10-24 (#942), which removed the staged
+			// copy; the plan is a record of when it was staged, so the live file is checked.
+			if _, err := os.Stat("../../.github/workflows/shared-tests.yml"); err != nil {
+				t.Errorf("%s cites the staged %s, which was applied: .github/workflows/shared-tests.yml must exist: %v", mailboxPlan, p, err)
+			}
+			continue
+		}
 		if pathExists(p) {
 			continue
 		}
