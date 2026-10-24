@@ -4253,13 +4253,14 @@ The loop prints **which commits it reverted and which were already reverted** (`
 
 **Method.** Everything happens on your Mac and in the sandbox checkout you are already in. `gh`, `cosign`, `codesign`, `spctl`, `xcrun stapler`, `security`, `jq` and `shasum` are the tools; all of them are read-only except where a step says otherwise. The check's own directory is `/tmp/chk59a`, created by the steps below and removed by the Restore at the end.
 
-⚠ **Set these, and pass the three hard stops, by running ONE block — and re-run that whole block at the start of every later step.** The block is self-contained and idempotent. `P` is the installation's *project* (the installation itself is named `fugaro`), `CHK` is everything this check writes, `SPAWNLOG` is the file the console is asked to write, `IDENTITIES` is the record step 5 takes **before** the check does anything, and `CO` is the sandbox checkout the shell is in. An empty `$P` is the N1 trap itself: without it the second hard stop would be reading a `fugaro` command that resolved its installation from wherever the shell happened to be — and this check points a **running app** at an installation, which is the one thing worth pinning twice.
+⚠ **Set these, and pass the three hard stops, by running ONE block — and re-run that whole block at the start of every later step.** The block is self-contained and idempotent. `P` is the installation's *project* (the installation itself is named `fugaro`), `V` is the release under test, `CHK` is everything this check writes, `SPAWNLOG` is the file the console is asked to write, `IDENTITIES` is the record of the signing identities that predate the check — written in step 4's block, before the app is launched, and read again in step 5 and in the Restore — and `CO` is the sandbox checkout the shell is in. `P` is asserted rather than assumed for the reason every check here does it: without `--project`, `fugaro` would resolve its installation from wherever the shell happened to be, and this check is the one that points a **running app** at an installation.
 
 ```bash
 # === Check 59a: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
 # step (1, 2, 3, 4, 5, Restore). It is idempotent, and nothing below the three
 # hard stops runs unless all three pass. ===
 P=fugaro-dev                 # HARD-CODED, and never read from gcloud
+V=0.110.0                    # the published console release this check verifies: console-v0.110.0 "Cherry"
 CHK=/tmp/chk59a              # this check's own directory: the downloads, the mount point, the spawn log and the record below
 SPAWNLOG="${CHK}/spawn-log/spawn.jsonl"     # what the console is told to write, via FUGARO_CONSOLE_SPAWN_LOG
 IDENTITIES="${CHK}/identities-before.txt"   # the signing identities that existed BEFORE the check: the Restore reads this and removes nothing older
@@ -4267,15 +4268,15 @@ CO=$(git rev-parse --show-toplevel)         # the sandbox checkout: the working 
 
 # ${VAR:?} everywhere: an empty variable is a hard error, never an empty
 # argument a command would resolve from its ambient configuration.
-[ "$P" = fugaro-dev ] && [ -n "$CHK" ] && [ -n "$SPAWNLOG" ] && [ -n "$IDENTITIES" ] && [ -n "$CO" ] \
-  || { echo "Check 59a stopped: re-run the whole setup block (P=$P must be fugaro-dev; CHK=$CHK SPAWNLOG=$SPAWNLOG IDENTITIES=$IDENTITIES CO=$CO must not be empty)" >&2; exit 1; }
+[ "$P" = fugaro-dev ] && [ -n "$V" ] && [ -n "$CHK" ] && [ -n "$SPAWNLOG" ] && [ -n "$IDENTITIES" ] && [ -n "$CO" ] \
+  || { echo "Check 59a stopped: re-run the whole setup block (P=$P must be fugaro-dev; V=$V CHK=$CHK SPAWNLOG=$SPAWNLOG IDENTITIES=$IDENTITIES CO=$CO must not be empty)" >&2; exit 1; }
 fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
   || { echo "Check 59a stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
 git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
   || { echo "Check 59a stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
 ```
 
-**Why the guard is one block, and why it is re-run.** The first stop asserts the block itself ran — `P` is exactly `fugaro-dev` and the other four are non-empty — so a skipped, partially pasted or hand-edited block stops here rather than reaching `gh` or `security` with an empty argument. The second is `fugaro doctor`'s own `project:` line (`internal/cli/doctor.go`, the local config's own project, no cloud call); a `doctor` that could not select an installation returns before printing one — it exits non-zero with its own message — and on a foreign checkout `doctor` refuses, so the `grep` fails either way. The third is the checkout's origin, which is what makes `CO` — the directory the console is told to use — the sandbox's and not another repository's. This check runs **no `gcloud` command at all**, so the rule that gives every `gcloud` command `--project="${P:?}"` has nothing to bind here; it is stated because the block is Check 43's and a reader comparing the two should not have to work out why one line is missing.
+**Why the guard is one block, and why it is re-run.** The first stop asserts the block itself ran — `P` is exactly `fugaro-dev` and the other five are non-empty — so a skipped, partially pasted or hand-edited block stops here rather than reaching `gh` or `security` with an empty argument. The second is `fugaro doctor`'s own `project:` line (`internal/cli/doctor.go`, the local config's own project, no cloud call); a `doctor` that could not select an installation returns before printing one — it exits non-zero with its own message — and on a foreign checkout `doctor` refuses, so the `grep` fails either way. The third is the checkout's origin, which is what makes `CO` — the directory the console is told to use — the sandbox's and not another repository's. This check runs **no `gcloud` command at all**, so the rule that gives every `gcloud` command `--project="${P:?}"` has nothing to bind here; it is stated because the block is Check 43's and a reader comparing the two should not have to work out why one line is missing.
 
 **Every `fugaro` command that takes `--project` gets `--project fugaro`** (the installation's *name*: the project is `fugaro-dev`), and the one command the rule does not reach is `fugaro version`, which takes no flags at all (`internal/cli/root.go`'s `newVersionCmd`, `Args: cobra.NoArgs`, no `Flags()`) and makes no cloud call. `--project` disagreeing with the checkout's `project:` is **refused**, never silently resolved (`this checkout belongs to project <x>; --project says fugaro`, `internal/localcfg/select.go`) — that refusal is the fourth hard stop, and it is what protects the `fugaro` half of the check. **And the sandbox checkout is the working directory for every `fugaro` command the console drives**: the console gives a child the installation's checkout when it has one and a private `0700` directory otherwise, so step 4's preparation sets the checkout in the app's own picker and step 4's FACT lines are what check it happened (design §3.4 rule 5).
 
@@ -4303,7 +4304,6 @@ The bytes come from the published release, so what is verified is what shipped. 
 
 ```bash
 mkdir -p "${CHK:?}"
-V=0.110.0
 gh release download "console-v${V:?}" -R dimipaun/fugaro -D "${CHK:?}" \
   -p "Fugaro.Console-${V:?}-universal.dmg" -p "Fugaro.Console-${V:?}-universal-mac.zip" \
   -p console-sha256sums.txt -p console-sha256sums.txt.sigstore.json -p console-verification.txt
@@ -4378,12 +4378,12 @@ The claim is exactly this, and it is worded as what the lines below prove rather
 ```bash
 mkdir -p "${CHK:?}/spawn-log"
 test ! -e "${SPAWNLOG:?}" || { echo "Check 59a stopped: ${SPAWNLOG} already exists. Delete it and re-run: a log that was not written by this run cannot be read as this run's evidence" >&2; exit 1; }
-security find-identity -v -p codesigning > "${IDENTITIES:?}"
+[ -e "${IDENTITIES:?}" ] || security find-identity -v -p codesigning > "${IDENTITIES:?}"
 export FUGARO_CONSOLE_SPAWN_LOG="${SPAWNLOG}"
 "/Applications/Fugaro Console.app/Contents/MacOS/Fugaro Console" &
 ```
 
-Leave the app open long enough for its startup handshake and at least one read — the dashboard draws which installation it is showing (the handshake: its project, its binary and the CLI version that read returned) and a screen draws its rows (the read). Which screens you visit does not change what step 1 asks: every row of the console's spawn table is one allow-listed argv whose installation argument is `--project fugaro` (`console/src/main/spawn.ts`'s `SPAWN_COMMANDS`), the `version` handshake is the one row that carries no `--project` at all, and no row takes an installation *name* as a value anywhere. Then quit it with ⌘Q, and only then read the log: the app never reads it back, and it is the operator's file.
+Leave the app open long enough for its startup handshake and at least one read — the dashboard draws which installation it is showing (the handshake: its project, its binary and the CLI version that read returned) and a screen draws its rows (the read). Which screens you visit does not change what step 1 asks: every row of the console's spawn table is one allow-listed argv whose installation argument is `--project fugaro` (`console/src/main/spawn.ts`'s `SPAWN_COMMANDS`), the `version` handshake is the one row that carries no `--project` at all, and no row takes an installation *name* as a value anywhere. Then quit it with ⌘Q, and only then read the log: the app never reads it back, and it is the operator's file. The loop below is only a wait — the first spawn usually lands the file before you have finished reading this sentence — and every block after it is a read of that file.
 
 ```bash
 for _ in $(seq 1 60); do [ -s "${SPAWNLOG:?}" ] && break; sleep 1; done
@@ -4458,16 +4458,16 @@ diff "${IDENTITIES:?}" <(security find-identity -v -p codesigning) && echo 'iden
 # === Check 59a: Restore. Re-run the setup block first. It removes ONLY what
 # this check created, and nothing it found. ===
 INSTALLED="/Applications/Fugaro Console.app"
+# The record is read BEFORE ${CHK} is removed, which is the only order in which
+# it can be read at all.
+diff "${IDENTITIES:?}" <(security find-identity -v -p codesigning) && echo 'identical: no identity was added or removed'
 [ ! -e "$INSTALLED" ] || rm -rf "$INSTALLED"
 hdiutil detach "${CHK:?}/dmg-mount" 2>/dev/null || true
 rm -rf "${CHK:?}"
-rm -rf "/tmp/chk59-records" 2>/dev/null || true
-diff "${IDENTITIES:?}" <(security find-identity -v -p codesigning) 2>/dev/null || true
-security find-identity -v -p codesigning
 git status --short
 ```
 
-**FACT:** the diff against `${IDENTITIES}` shows no identity removed — and since `${CHK}` has just been deleted, keep the record's own content pasted back before the Restore runs, or read the second `security find-identity -v -p codesigning` against the `FACT` you pasted. **FACT:** `git status --short` is clean: this check commits nothing and changes no tracked file in the checkout. **FACT:** `/Applications/Fugaro Console.app` is gone, because this check installed it; **if it was there before you started, the check stopped in step 2 and never reached this line** — the Restore never deletes an app it did not install. Nothing here touches a keychain, an identity or a certificate, and nothing here deletes a file this check did not write under `/tmp/chk59a`.
+**FACT:** `diff` prints nothing and `identical: no identity was added or removed` is printed — the identities now are the identities the record holds, so nothing this check did added one or removed one, and the read is taken **before** `${CHK}` is removed because that is the only order in which the record can still be read. **FACT:** `git status --short` is clean: this check commits nothing and changes no tracked file in the checkout. **FACT:** `/Applications/Fugaro Console.app` is gone, because this check installed it; **if it was there before you started, the check stopped in step 2 and never reached this line** — the Restore never deletes an app it did not install. Nothing here touches a keychain, an identity or a certificate, and nothing here deletes a file this check did not write under `/tmp/chk59a`.
 
 ## Check 59b: the update round trip (installation `fugaro`, sandbox repository only, never `belong`; run by you; NOT RUNNABLE YET — and NOT RUN)
 
@@ -4482,7 +4482,7 @@ git status --short
 1. **Task 4.4 ships.** A console release whose bundle carries `electron-updater`, the update check, the opt-out (`FUGARO_NO_UPDATE_CHECK=1`, a local `update_check: false`), the refusal of a mis-signed or downgrade update, and no identifier in any request. `console-v0.110.0` does not: its `package.json` declares no runtime dependencies at all, and the runtime allow-list in `console/test/unit/pinning.test.ts` — whose own message says the update client arrives with Task 4.4 — is what keeps it that way.
 2. **A second console release publishes the feed.** `console-v0.111.0` "Mango" must be tagged and published with the feed's own files on it — the `latest-mac.yml` electron-updater reads, and the `.dmg`/`.zip` it names — so that an installed `0.110.0`, which by then must itself be an updater build, can see a newer version. The console's releases are separate from the CLI's (`console-vX.Y.Z`; `docs/release.md`, "Console releases"), and the version line never goes backwards, so the second release is `0.111.0` and never a re-cut of `0.110.0`.
 
-**Method, when both exist.** Everything happens on your Mac, in the sandbox checkout. The guard block is 59a's, unchanged and re-run at the start of every step — the same three hard stops, `--project fugaro` on every `fugaro` command that takes flags, and the sandbox checkout as the working directory for every `fugaro` command the console drives. This section's Restore is its own: it installs a build into `/Applications` too, and 59a's Restore never runs for it.
+**Method, when both exist.** Everything happens on your Mac, in the sandbox checkout. The guard block is 59a's with its one release variable replaced by the two this section needs (`OLD` and `NEW`), and it is re-run at the start of every step — the same three hard stops, `--project fugaro` on every `fugaro` command that takes flags, and the sandbox checkout as the working directory for every `fugaro` command the console drives. This section's Restore is its own: it installs a build into `/Applications` too, and 59a's Restore never runs for it.
 
 ```bash
 # === Check 59b: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
@@ -4511,7 +4511,13 @@ gh release view "console-v${NEW:?}" -R dimipaun/fugaro --json assets --jq '.asse
 
 **FACT:** the asset list carries the update feed's own files — the `latest-mac.yml` manifest and the `.dmg`/`.zip` it names — beside `console-sha256sums.txt` and its Sigstore bundle. **FACT:** nothing in that list is named for the CLI's release. **If `gh` refuses because `console-v${NEW}` does not exist, the check stops here**: that is today's outcome, and it is a precondition rather than a finding.
 
-**Step 2 — an older, updater-carrying build is installed, and it sees the new release.** Download `console-v${OLD}`, verify it exactly as 59a's step 2 does (the sums file, its Sigstore bundle, `shasum -c`, `codesign --verify --deep --strict`, `spctl --assess --type execute`, `xcrun stapler validate`, the quarantine attribute, the first launch), install it into `/Applications`, and set its update check to on. Then read what the updater saw.
+**Step 2 — an older, updater-carrying build is installed, and it sees the new release.** The identities that predate the check are recorded **first**, before anything is installed, so the Restore can tell what the check did from what it found; then download `console-v${OLD}`, verify it exactly as 59a's step 2 does (the sums file, its Sigstore bundle, `shasum -c`, `codesign --verify --deep --strict`, `spctl --assess --type execute`, `xcrun stapler validate`, the quarantine attribute, the first launch), install it into `/Applications`, and set its update check to on. Then read what the updater saw.
+
+```bash
+[ -e "${IDENTITIES:?}" ] || security find-identity -v -p codesigning > "${IDENTITIES:?}"
+```
+
+**FACT:** the record is written once, before the install (`[ -e ... ] ||` is what keeps a re-run from overwriting it with a post-install list, which would make the Restore's diff say nothing about what the check did).
 
 **FACT:** `defaults read "/Applications/Fugaro Console.app/Contents/Info.plist" CFBundleShortVersionString` prints `0.110.0` for the installed build, and its updater reports the newer version available — **one** version, named, with the release's own tag; **FACT:** the request it made went to the console's own release and carried **no identifier of any kind** — no machine id, no user, no run, no installation name (design §7.4; the assertion is on the request the feed receives, which is Task 4.4's unit test taken live).
 
@@ -4529,14 +4535,14 @@ gh release view "console-v${NEW:?}" -R dimipaun/fugaro --json assets --jq '.asse
 # === Check 59b: Restore. Re-run the setup block first. It removes ONLY what
 # this check created, and nothing it found. ===
 INSTALLED="/Applications/Fugaro Console.app"
+diff "${IDENTITIES:?}" <(security find-identity -v -p codesigning) && echo 'identical: no identity was added or removed'
 [ ! -e "$INSTALLED" ] || rm -rf "$INSTALLED"
 hdiutil detach "${CHK:?}/dmg-mount" 2>/dev/null || true
 rm -rf "${CHK:?}"
-security find-identity -v -p codesigning
 git status --short
 ```
 
-**FACT:** the identity list is the one `${IDENTITIES}` recorded — no identity removed, none added. **FACT:** `git status --short` is clean. **FACT:** `/Applications/Fugaro Console.app` is gone, because this check installed it, and it never deletes an app that was there before it started.
+**FACT:** `diff` prints nothing and `identical: no identity was added or removed` is printed — the identities now are the ones step 2's record holds, read before `${CHK}` is removed. **FACT:** `git status --short` is clean. **FACT:** `/Applications/Fugaro Console.app` is gone, because this check installed it, and it never deletes an app that was there before it started.
 
 ## Check 60: the sealed budget token — a run's token is worthless without its own execution's key (installation `fugaro`, sandbox repository only, never `belong`; run by you; NOT RUN)
 
