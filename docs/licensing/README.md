@@ -20,7 +20,7 @@ Spec owner: the repository owner. Spec received 2026-10-24; reconciled against `
 | Numbers | State |
 | --- | --- |
 | **D300–D319** | this work's block. **D300–D310** written and answered 2026-10-24 (D305 not the recommendation); **D311–D319** reserved and unused. Taken above the highest decision written under `docs/` on `main` (D271) and in open PRs (D260); **D272–D299** are left unused so that reconciliations started the same day cannot collide with this block |
-| **Checks 130–134** | this work's block. **130** written by plan task L1.10 and run by the owner (L1.11): GitHub still reports MIT and `LICENSING.md` renders; **131–134** reserved and unused. The highest check section written on `main` is 113; 119 and 123 are claimed by the console-windows and console dependency graph plans, and open PR #1022 takes 124; 130 is free either way |
+| **Checks 130–134** | this work's block. **130** written by plan task L1.10 and run by the owner (L1.11): GitHub still reports MIT and `LICENSING.md` renders — the section and its register row are in `docs/gcp-live-checklist.md`, and both are **NOT RUN** until L1.11; **131–134** reserved and unused. The highest check section written on `main` was 113 when the block was taken; 119 and 123 are claimed by the console-windows and console dependency graph plans, and open PR #1022 takes 124; 130 was free either way |
 
 ## Headline
 

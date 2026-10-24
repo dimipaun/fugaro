@@ -474,6 +474,20 @@ wrong in a way no byte and no link is — it can promise a date, it can state a 
 tense, or it can ask a reader for something the project has nowhere to keep. The check is
 owner-run and it is **NOT RUN**.
 
+**Check 130 is the licensing work's, reserved by that work rather than taken as the next free
+number** (the licensing plan [licensing/implementation-plan.md](licensing/implementation-plan.md), its
+"Checks this plan takes" and its task **L1.10**; the block **130–134** is that work's, and only
+**130** is written — **131–134** stay reserved and unused). The reading is the same shape as the
+three above and is taken the same way: the highest **written** `## Check N` section in this file,
+read at **`c4d04bd6`** — the commit this change is based on — was **113**, 119 and 123 are claimed
+by the console-windows and console dependency-graph plans, open PR #1022 takes **124**, and **130**
+was free either way, so the section is **written below**. Its subject is the **licence detectors**:
+that GitHub still reports MIT for the repository once the open-core skeleton has put a root
+`LICENSING.md` beside an untouched `LICENSE`, and that `LICENSING.md` renders on GitHub with its
+links working. It reads GitHub and nothing else — no cloud project, no installation, no credential
+and no write of any kind — it is owner-run, and it is **NOT RUN**: its third step reads a file task
+**L1.3** writes, so it is run in full by task **L1.11**, after L1.3 has merged.
+
 **That is the end of the register.** The paragraph below is not another
 reservation: it introduces the check that owns 57, whose row is in the table
 below.
@@ -653,6 +667,7 @@ probe account carries predefined grants only).
 | 111 | The billing picker's failure modes (setup-wizard plan Task W0.3; D3 and D6): the Cloud Billing API disabled on the quota project — in D3's two cases, the quota project **being** the project set up and the quota project being **another** one — a caller without `billing.accounts.list` on a project whose API **is** enabled (so the API answers **403** rather than the disabled-API refusal), and the three sessions that never list anything at all (no TTY, `--json`, an agent session) — each asserting the guided `gcloud billing projects link` line, that **nothing was enabled**, and that **no account list appears in any output** (the one run where a list *is* expected is the `gcloud` fallback answering an API that refused) | See "Check 111" below; **you** run it at your own terminal, on installation `fugaro` (never `belong`), and **no agent runs any step of it** (an agent session is one of the five modes it observes). | Three throwaway projects of your own — `P` (the installation's), `Q` (API off) and `S` (API on) — and the ADC quota project is repointed by three of the runs. Every step is a refusal, and nothing is created, enabled or linked by the check itself. **NOT RUN.** |
 | 112 | The four zoom levels, drawn once and drawn as stills (zoom-diagrams plan §3, Part 4; D237, D244, D245, D247): the section sits on `/how-it-works/`, **under "The run, end to end" and its diagram** (D237); the four levels are four `<figure>`s in the owner's boards' order, each named by its own `<figcaption>`; **every entity is one `<symbol>` of one `<defs>`, drawn through `<use>`** (D244) — seventeen of them, the job tile, the orchestrator, the developer and its planned form, the person and its planned form, the plain, accent and planned cards, the laptop, the phone, the project, the loop, the draft pull request, the Firebase card, the cloud and the level's own box — so a job tile is the same tile at every level, and no level draws its own copy of one; every label of every level is a string of the board it is drawn from, held word for word in both directions; the four markers are one `<nav>` of anchors with accessible names (D245), each jumping to its own level by keyboard and by pointer; the four levels and every label are in the document **with JavaScript off** (the section ships no script of its own); and the drawings are legible — labels at the palette's own contrast, nothing clipped, nothing drawn as an empty box — on a desktop and at 360, 390 x 844 and 320 (ZU4) | See "Check 112" below; **you** run it, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the live site — read-only, no account, no cloud project touched, no `fugaro` command, and **No agent runs any step of it**. The pinned scroll-driven zoom is **Part 5** and is not in this tree: that step of the section is written and cannot be run yet, and an unrun step is not a pass | One browser, a hard reload, one look at the section with script on and one with it off, and one narrow viewport. Nothing is created, enabled, linked or written. **USER-RUN, NOT RUN.** |
 | 113 | The phone app's page, and every claim on it marked shipped or planned (zoom-diagrams plan §3, Part 3; D239, D240, D241, D242): `/mobile/` is the app's own page and it is a **"coming soon"** page, so it carries a **preview badge** over its headline reading "Coming soon" (D240's third condition) and **no date anywhere** — no year, no month, no season, in the page's text, its title or its description (D240's first condition) — and **every bullet is marked**: the claims of `website/data/mobile-claims.yaml` render as two lists under two headings, *What the app does today* and *What is still to come*, each card carrying its own word, **Shipped** or **Planned**, so the mark is a word and not a colour alone (D240's second condition, D241's answer: shipped is status and spend, planned is the roster, switching by name, the wake word, QR pairing and the three roles); the **wake word's bullet says the listening and the recognition happen on the phone** and the page names no speech service and no cloud (D242); **nothing asks a reader for anything** — no form, no field, no button, no `mailto:`, no third party, no waitlist (D239) — and the page shows **no empty frame**: with no row in `website/data/mobile-screens.yaml` there is no slider, no heading and no picture-shaped hole, and when your captures land the slider appears with this page's own slot and ids (D251); and the page reads at a phone's width, with the marks and the badge legible at 360, 390 x 844 and 320 | See "Check 113" below; **you** run it, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the live site — read-only, no account, no cloud project touched, no `fugaro` command, and **No agent runs any step of it**. The pictures are yours and are **not** in this tree: step 6's second half is written and cannot be run until they land, and an unrun step is not a pass | One browser, a hard reload, one look at the page, one look at the menu, and one narrow viewport. Nothing is created, enabled, linked or written, and no address is entered anywhere. **USER-RUN, NOT RUN.** |
+| 130 | The licence detectors after the open-core skeleton ([`docs/licensing/`](licensing/implementation-plan.md), its Check 130, task L1.10, and the reconciliation's F8 and U1 under the owner's **O2** answer of 2026-10-24; the block **130–134** is that work's and only 130 is written): that GitHub **still reports MIT** for the repository with the skeleton's new root `LICENSING.md` beside an untouched `LICENSE` — read twice and recorded both times, as the repository page's own licence label and the file it opens, and as the licence API's machine-readable reading (`spdx_id: MIT`, `key: mit`, and **`path: LICENSE`**, so the file GitHub classified is the untouched one and not the new statement file, which is what a `path` of `LICENSING.md` would mean) — and that **`LICENSING.md` renders on GitHub** as a page whose every relative link works: `LICENSE`, `ee/README.md`, the vendored skills' `.agents/LICENSE` and the README's trademark paragraph anchor. **What it is not:** pkg.go.dev's classification (U2, not this check's after O2) and the release labels — the plugin manifest's, the Homebrew cask's and the archive's — which stay `MIT` at 0.11.0 because the release build sets no `ee` tag (D303 as amended) and move together in the release that first sets it (plan slice L5) | See "Check 130" below; **you** run it, read-only, in a browser and with three `curl` calls against `api.github.com` — the repository read out of the checkout's origin and cross-checked against `go.mod`, so the tree and the page are the same repository — on no cloud project and no installation, never `belong`, holding no credential and writing nothing anywhere, and **no agent runs any step of it**. Its guard stops until task L1.3's `LICENSING.md` is in the tree, so it is run in full by task L1.11, after L1.3 merges | Nothing: three anonymous API reads, which spend part of the anonymous rate limit and change nothing; no image, no bucket, no model call, no Terraform, no node and no file. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -8772,3 +8787,171 @@ yet, that step 6's second half was not run. Until it has been, this row stays **
 - **Never touch `belong`, EdgeWeb or EdgeServer**: no step here reads or writes a project at all,
   and the only host this check fetches is the built artifact on localhost or the canonical origin
   the site's own `site.yaml` names.
+
+## Check 130: the licence detectors after the open-core skeleton — GitHub still reports MIT and `LICENSING.md` renders (the public repository on GitHub, read-only; no cloud project, no installation, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by **task L1.10** of the licensing plan
+([licensing/implementation-plan.md](licensing/implementation-plan.md), its Check 130; decisions
+**D300** and **D301** as amended by the owner's **O2** answer of 2026-10-24). The file is written
+now and **run later**: its guard refuses to start until task **L1.3**'s `LICENSING.md` is in the
+tree, so the run is task **L1.11**'s, after L1.3 merges. Nothing in it writes anything anywhere, so
+it is safe to run at any time — and running it twice costs nothing but a few more anonymous reads.
+
+**Why the check exists.** GitHub classifies a repository's licence from the **text** of the file it
+finds. The reconciliation's F27 reads a published repository whose root `LICENSE` carries a scope
+statement ahead of the MIT permission text, and GitHub reports **`other`** for it — which is U1, and
+which is why the owner's O2 answer took D301's alternative: `LICENSE` is **not touched at all**, so
+GitHub keeps reading plain MIT, and the statement that `ee/` is excluded and reserved, that
+`.agents/` is third-party under its own licence, and where the trademark paragraph is, goes in a new
+root **`LICENSING.md` beside it**. What that leaves unverified is the one thing this check is for:
+**that GitHub still reports MIT with `LICENSING.md` sitting beside `LICENSE`**, and that a reader
+who opens `LICENSING.md` on GitHub meets a rendered page whose links work. No hermetic test can take
+either reading. `LICENSE`'s bytes are pinned in the tree (task L1.3's
+`TestDocsLicensingRootLicenceUnchanged` hashes them), the scope statement's words are pinned too
+(`TestDocsLicensingStatement`), and what GitHub's detectors make of the **pair** is a fact about
+GitHub that only this check records.
+
+**What this check is not.** It is not pkg.go.dev's classification (U2): after O2 that reading is not
+part of this check, because at 0.11.0 `ee/` holds no package, and it is looked at when the first one
+lands. It is not the **release labels** either — the plugin manifest's `license`, the Homebrew
+cask's and the archive's — which stay `MIT` at 0.11.0 because the release build sets no `ee` tag
+(D303 as amended); a test couples them to the tag (plan L2.1's `TestEETagNeedsTheLabels`) and they
+move together in the release that first sets it (plan slice L5). And it is not a re-reading of
+`LICENSE`: **no step here edits `LICENSE`, and no finding here is fixed by editing it** (O2, and the
+plan's Conventions).
+
+**Method.** One browser, one checkout, no credential, nothing written. The repository this check
+reads is not typed in: it is the checkout's own origin, cross-checked against the module path in
+`go.mod`, so that the tree read locally and the page read on GitHub are the same repository. The
+default branch and the licence are what GitHub's own API answers.
+
+```bash
+# === Check 130: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
+# step (step 1, step 2 and step 3). It is idempotent, and nothing below the
+# hard stops runs unless every one of them passes. ===
+
+# The repository, from this checkout rather than from memory: the detectors
+# answer about the repository the module lives in, and a tree paired with
+# another repository's answer is the one mistake this guard exists to stop.
+REPO=$(git remote get-url origin | sed -E 's#^.*github\.com[:/]##; s#\.git$##')
+[ -n "$REPO" ] || { echo "Check 130 stopped: this checkout's origin names no github.com repository, so which repository to read is unknown" >&2; exit 1; }
+MOD=$(sed -n 's|^module[[:space:]]*||p' go.mod)
+[ "$MOD" = "github.com/${REPO}" ] || { echo "Check 130 stopped: go.mod's module path is ${MOD} and this checkout's origin is ${REPO}: the two disagree, so which repository the detectors are read about is ambiguous" >&2; exit 1; }
+
+# L1.3 merged: step 3 reads LICENSING.md, and a tree that has none has nothing
+# to read. Until then, steps 1 and 2 stand alone, and this stop is the honest
+# answer — the check is run in full by task L1.11, after L1.3.
+[ -f LICENSING.md ] || { echo "Check 130 stopped: this tree has no LICENSING.md (task L1.3 has not merged), so step 3 has nothing to read; run steps 1 and 2 alone, or run this check after L1.3 merges (task L1.11)" >&2; exit 1; }
+
+# The default branch step 3's URL is built on, read from the API rather than
+# remembered — a repository's default branch is not always main. The body is
+# fetched first and parsed second: a pipe into python would print a traceback
+# when the endpoint answers nothing, which reads like a broken check rather
+# than the stop it is.
+META=$(curl -sS -f "https://api.github.com/repos/${REPO}") \
+  || { echo "Check 130 stopped: api.github.com did not answer for ${REPO} — no network, or the repository is not public (curl's own line above says which)" >&2; exit 1; }
+BRANCH=$(printf '%s' "$META" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("default_branch", ""))')
+[ -n "$BRANCH" ] || { echo "Check 130 stopped: the API answered for ${REPO} with no default_branch, so step 3's URL cannot be built" >&2; exit 1; }
+
+# Whether GitHub classifies a licence file at all: a 404 here IS the finding
+# step 2 records, and it is not a reason to stop. 403 and 429 are the anonymous
+# rate limit, which is a reason to stop and re-run later.
+CODE=$(curl -sS -o /dev/null -w '%{http_code}' -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${REPO}/license") \
+  || { echo "Check 130 stopped: api.github.com did not answer for ${REPO}'s licence — no network, or the repository is not public (curl's own line above says which)" >&2; exit 1; }
+case "$CODE" in
+  200) : ;;
+  404) echo "Check 130: the licence API answers 404 for ${REPO} — GitHub classifies no file in it as a licence at all. That is a reading other than MIT, and it goes back to the owner (task L1.11); it is not a reason to stop, so read step 3 anyway." >&2 ;;
+  403|429) echo "Check 130 stopped: the licence API answered ${CODE} — the anonymous rate limit is the usual cause. Wait for it to turn and re-run: this check holds no credential and needs none." >&2; exit 1 ;;
+  *) echo "Check 130 stopped: the licence API answered ${CODE} for ${REPO}" >&2; exit 1 ;;
+esac
+
+# The links step 3 follows, read out of LICENSING.md rather than remembered:
+# they are the ones task L1.3's statement pins, so the tree names them and this
+# block prints them rather than a list kept here.
+grep -oE '\]\([^)]+\)' LICENSING.md || { echo "Check 130 stopped: LICENSING.md carries no link at all, so step 3 would have none to follow" >&2; exit 1; }
+
+printf 'CHECK 130 SETUP: repository %s, default branch %s, licence API HTTP %s\n' "$REPO" "$BRANCH" "$CODE"
+```
+
+1. **The detector, on the repository page.** Open `https://github.com/$REPO` and read the
+   repository's own About box, then the file it points at. **FACT:** the licence label's text
+   verbatim, the file the label opens, and whether the file list beside it carries **both**
+   `LICENSE` and `LICENSING.md` — the pair is the whole question, and a page showing only one of them
+   answers a different one. The label is GitHub's detector speaking, and a label reading anything
+   other than **MIT** (or no label at all) is the reading step 2's machine-readable half is then
+   taken against.
+
+2. **The detector, machine-readable.** Ask the same detector again, in the form a script can read,
+   and record the raw object rather than a summary of it:
+
+   ```bash
+   curl -sS -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${REPO:?re-run the Check 130 setup block}/license" \
+     | python3 -c 'import json, sys; d = json.load(sys.stdin); print(json.dumps({"path": d.get("path"), "license": d.get("license"), "message": d.get("message")}, indent=2))'
+   ```
+
+   **FACT:** the object verbatim — its `path`, and under `license` its `spdx_id`, `key` and `name`.
+   The reading that passes is **`spdx_id: "MIT"`**, **`key: "mit"`** and **`path: "LICENSE"`**. The
+   `path` is the half a reader would otherwise skip: it is **which file** GitHub classified, so a
+   `path` of `LICENSING.md` — or an `spdx_id` of `other` or `NOASSERTION`, or the 404 the guard
+   records — means the detector read the new statement file rather than the untouched `LICENSE`, and
+   **O2's premise has failed**: the owner left `LICENSE` untouched precisely so that this answer
+   stays MIT. **Record it and stop there — do not fix it by editing `LICENSE`** (O2; the plan's
+   Conventions): the finding goes back to the owner, whose choice is then between the statement
+   file's **name** and its **placement**, since `LICENSING.md` is the path task L1.3 writes, L1.5
+   links and the plan's later tasks name.
+
+3. **`LICENSING.md` renders, and every link it carries works.** Open
+   `https://github.com/$REPO/blob/$BRANCH/LICENSING.md`. Read it as a reader meets it: GitHub's
+   Markdown rendering, with its headings and paragraphs, not the file's bytes — a page that shows the
+   source, or a "Raw" fallback, is not a page a contributor reads. Then follow **every relative link
+   the guard's `grep` printed**, one at a time: `LICENSE`, the reserved directory's `ee/README.md`,
+   the vendored skills' `.agents/LICENSE`, and the README's trademark paragraph anchor. GitHub
+   rewrites a relative link to `/blob/<branch>/<path>`, so each one must land on the file it names —
+   a link whose target is missing shows GitHub's 404 page while the sentence around it still reads
+   correctly, which is why this is a step and not an assumption. The **anchor** is the quiet one: a
+   fragment that names no heading lands at the top of the README **with no error at all**, so read
+   the paragraph the anchor opened and confirm it is the trademark paragraph and not the top of the
+   page. **FACT:** that the file rendered as a page; per link, its rendered `href`, the file it
+   opened, and whether that was the file the sentence around it named; and, for the anchor, the
+   paragraph it landed on. **If a link fails, record which one and where it went — and change
+   nothing:** the links are the statement's and are pinned by task L1.3's test, so the fix is that
+   task's or the owner's, not this check's.
+
+**Passes when:** the repository page's licence label reads **MIT** and opens `LICENSE`, with both
+`LICENSE` and `LICENSING.md` in the tree beside it; the licence API answers **200** with
+`spdx_id: "MIT"`, `key: "mit"` and **`path: "LICENSE"`** — the detector classified the untouched
+file and not the new one; and `LICENSING.md` renders as a page on the default branch whose every
+relative link opens the file or the heading it names, the README anchor included.
+
+**Fails when:** the label is absent or reads anything other than MIT; the API's `spdx_id` is `other`
+or `NOASSERTION`, its `path` names `LICENSING.md` rather than `LICENSE`, or the endpoint answers
+404, so that the licence GitHub reports is no longer the one `LICENSE` carries; `LICENSING.md`
+renders as source rather than as a page; or a link it carries 404s, or its README anchor lands at the
+top of the README. **What failing looks like:** a page whose every word is right and one of whose
+links opens GitHub's 404 — a path the tree resolves and GitHub does not, or an anchor no heading
+carries. **What failing is not:** a reader who opens only `LICENSE` and sees no exclusion in it.
+That is the cost the owner accepted with O2 (tension T2, recorded 2026-10-24 and not resolved), it
+is stated in `LICENSING.md` and in the README's Licensing section, and it is not a defect this check
+reports. **A reading other than MIT is a finding against O2's premise**, and by task L1.11's own
+rule it goes back to the owner rather than being fixed here.
+
+**Paste back** (no secret, no account, nothing from any project): the guard's `CHECK 130 SETUP`
+line, so the repository and the branch every reading below is about are on the record; the About
+box's licence label verbatim and the file it opened; the licence object verbatim — its `path` and
+its `license` block — and, on a 404, that answer; that `LICENSING.md` rendered as a page; per link,
+its rendered `href` and where it landed, and the paragraph the README anchor opened; the browser and
+its version, and the date; and, if `LICENSING.md` was not in the tree yet, that step 3 was not run
+at all. Nothing else: no token, no cookie, and no page of any other repository. Until this check
+runs, **U1** — that GitHub keeps reporting MIT once `LICENSING.md` sits beside `LICENSE` — is
+**UNVERIFIED**, and its row stays **NOT RUN**.
+
+**Restore.** Nothing is created, so there is nothing to undo: no project, no installation, no
+`fugaro` command, no bucket, no node and no file. The check's whole footprint is three anonymous
+`GET`s to `api.github.com`, one page and one blob read in a browser, and the browser's own history.
+
+- **Close the tabs** you opened, if you would rather not keep them; nothing depends on them.
+- **Forget the checkout** the guard read the repository's name out of: no step of the check writes
+  to it, and it needs no clean-up.
+- **Never touch `belong`, EdgeWeb or EdgeServer**: no step here reads or writes a cloud project at
+  all, and the only host this check fetches is `api.github.com` and the pages of the one public
+  repository the checkout's origin names.
