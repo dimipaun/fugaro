@@ -95,27 +95,30 @@ func readRealEE(t *testing.T, rel string) string {
 	return string(data)
 }
 
+// eeRootRelativeReader is this package's own reader of module-root-relative
+// files, and the one call in the scan whose argument is not written from the
+// file's own directory: readDoc prepends "../../" itself, so readDoc(t,
+// "ee/README.md") in internal/cli reads the repository's ee/README.md, while
+// every other call above writes its path the way filepath.Join would from where
+// the file sits.
+const eeRootRelativeReader = "readDoc"
+
 // eeFilesystemCalls is the set of standard-library functions a test could use to
 // read the real ee/ without going through the helper: the calls the licensing
 // plan names, and nothing else, so a file that merely names ee/ in a string it
 // compares is not reported. "fs" is matched by package rather than by name --
 // every function that package exports takes or answers a path.
-//
-// readDoc is included for the same reason: it is this package's own reader of
-// root-relative files, so readDoc(t, "ee/README.md") is a read of the real ee/
-// spelled in a way no os.* scan would see.
 var eeFilesystemCalls = map[string][]string{
 	"os":       {"ReadFile", "Open", "OpenFile", "Stat", "Lstat", "ReadDir", "Readlink", "Glob"},
 	"ioutil":   {"ReadFile", "ReadDir"},
 	"filepath": {"Join", "Abs", "Glob", "Walk", "WalkDir", "EvalSymlinks", "Rel"},
 	"path":     {"Join"},
 	"fs":       nil,
-	"":         {"readDoc"},
 }
 
 // eeFilesystemCall reports whether a call is one of eeFilesystemCalls. A call
-// written as a bare identifier is one of this package's own helpers, and only
-// readDoc is on that list.
+// written as a bare identifier is one of this package's own helpers, and
+// eeRootRelativeReader is the only one on that list.
 func eeFilesystemCall(call *ast.CallExpr) bool {
 	switch fun := call.Fun.(type) {
 	case *ast.SelectorExpr:
@@ -129,9 +132,19 @@ func eeFilesystemCall(call *ast.CallExpr) bool {
 		}
 		return names == nil || slices.Contains(names, fun.Sel.Name)
 	case *ast.Ident:
-		return slices.Contains(eeFilesystemCalls[""], fun.Name)
+		return fun.Name == eeRootRelativeReader
 	}
 	return false
+}
+
+// eeCallBaseDir is the directory a call's path arguments are written in: the
+// file's own, except for eeRootRelativeReader, whose argument is written from
+// the module root.
+func eeCallBaseDir(fileRel string, call *ast.CallExpr) string {
+	if id, ok := call.Fun.(*ast.Ident); ok && id.Name == eeRootRelativeReader {
+		return "."
+	}
+	return path.Dir(fileRel)
 }
 
 // eeCallReadsEE reports whether a filesystem call names the repository's ee/
@@ -142,30 +155,32 @@ func eeFilesystemCall(call *ast.CallExpr) bool {
 // path is harmless -- and a call with no literal path argument is not a read of
 // anything this scan can see.
 //
-// A path is resolved against the file's own directory, so "../../ee/README.md"
-// from internal/cli and "ee/README.md" from the module root are the same read;
-// it has to land ON the root's ee directory, so "docs/ee/x.md" and a temp tree
-// the test made itself are not this boundary.
+// A path is resolved against the directory the call writes it in (eeCallBaseDir
+// above), and it has to land ON the root's ee directory, so "../../ee/README.md"
+// from internal/cli and readDoc(t, "ee/README.md") are both the repository's
+// ee/, while "docs/ee/x.md" and a temp tree the test made itself are not.
 func eeCallReadsEE(fileRel string, call *ast.CallExpr) bool {
+	baseDir := eeCallBaseDir(fileRel, call)
 	for _, arg := range call.Args {
-		if eePathExpressionReadsEE(fileRel, arg) {
+		if eePathExpressionReadsEE(baseDir, arg) {
 			return true
 		}
 	}
 	return false
 }
 
-// eePathExpressionReadsEE asks the same question of one argument.
-func eePathExpressionReadsEE(fileRel string, expr ast.Expr) bool {
+// eePathExpressionReadsEE asks the same question of one argument, resolving it
+// from baseDir through the resolution the console boundary shares.
+func eePathExpressionReadsEE(baseDir string, expr ast.Expr) bool {
 	switch v := expr.(type) {
 	case *ast.BasicLit:
 		if v.Kind != token.STRING {
 			return false
 		}
 		s, err := strconv.Unquote(v.Value)
-		return err == nil && eeResolvedPath(fileRel, s)
+		return err == nil && boundaryResolvedIntoDir(baseDir, s, eeDirName)
 	case *ast.CallExpr:
-		if !eeJoinCall(v) {
+		if !consoleBoundaryJoinCall(v) {
 			return false
 		}
 		var parts []string
@@ -178,41 +193,29 @@ func eePathExpressionReadsEE(fileRel string, expr ast.Expr) bool {
 				parts = append(parts, s)
 			}
 		}
-		return len(parts) > 0 && eeResolvedPath(fileRel, strings.Join(parts, "/"))
+		return len(parts) > 0 && boundaryResolvedIntoDir(baseDir, strings.Join(parts, "/"), eeDirName)
 	}
 	return false
 }
 
-// eeJoinCall reports whether a call is filepath.Join or path.Join: the two
-// functions whose argument LIST is one path.
-func eeJoinCall(call *ast.CallExpr) bool {
-	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok || sel.Sel.Name != "Join" {
-		return false
-	}
-	pkg, ok := sel.X.(*ast.Ident)
-	return ok && (pkg.Name == "path" || pkg.Name == "filepath")
-}
-
-// eeResolvedPath resolves a slash-separated path written inside the file at
-// fileRel (both relative to the module root) and reports whether it lands on the
-// root's ee/ directory. A filesystem call with no literals at all is the case
-// neither this nor the plan's scan can see; what it does see, it sees exactly.
-func eeResolvedPath(fileRel, p string) bool {
-	if p == "" {
-		return false
-	}
-	resolved := path.Join(path.Dir(fileRel), path.Clean(p))
-	return resolved == eeDirName || strings.HasPrefix(resolved, eeDirName+"/")
-}
-
 // eeFileReadsEE reports whether the Go file whose module-relative path is fileRel
-// reads the real ee/ through one of eeFilesystemCalls. A file the parser refuses
-// is read as runs of quoted literals against a Join spelling instead, so a
-// broken fixture cannot carry the read past the scan.
+// reads the real ee/ through one of eeFilesystemCalls.
+//
+// A file the parser refuses has no AST to attach a call to, so its quoted
+// literals are read one by one, and each comma-separated run of them as the Join
+// spelling: the same two spellings the parsed half reads. Reading them without a
+// call around them over-reports -- a literal that merely names an ee/ path counts
+// as a read -- which is the direction the plan's rule takes, and it is what keeps
+// a deliberately broken fixture from carrying a read past the scan.
 func eeFileReadsEE(fileRel, name, src string) bool {
 	f, err := parser.ParseFile(token.NewFileSet(), name, src, parser.SkipObjectResolution)
 	if err != nil {
+		baseDir := path.Dir(fileRel)
+		for _, q := range consoleStringLitRE.FindAllString(src, -1) {
+			if s, err := strconv.Unquote(q); err == nil && boundaryResolvedIntoDir(baseDir, s, eeDirName) {
+				return true
+			}
+		}
 		for _, run := range consoleStringRunRE.FindAllString(src, -1) {
 			var parts []string
 			for _, q := range consoleStringLitRE.FindAllString(run, -1) {
@@ -220,7 +223,7 @@ func eeFileReadsEE(fileRel, name, src string) bool {
 					parts = append(parts, s)
 				}
 			}
-			if len(parts) > 1 && eeResolvedPath(fileRel, strings.Join(parts, "/")) {
+			if len(parts) > 1 && boundaryResolvedIntoDir(baseDir, strings.Join(parts, "/"), eeDirName) {
 				return true
 			}
 		}
