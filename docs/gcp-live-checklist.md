@@ -8933,7 +8933,7 @@ Other changes:
   create module.compute.google_project_service.this["batch.googleapis.com"]
   …
 ⚠ CONFIRM (project fugaro, GCP project fugaro-dev): provisions the Batch compute backend in GCP project fugaro-dev: the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router (billable while they exist), and a preloaded boot image built by a scheduled Cloud Build (0 imports, N creates, 0 updates)
-Type fugaro to confirm:  
+Type fugaro to confirm: 
 ```
 
 **Nothing is applied before that prompt**, and `--yes` does not cover the step: the stage's
@@ -9020,7 +9020,7 @@ nothing here is the check's.
 - **Never deleted by this check, by its restore, or by anyone tidying up after it**: the two APIs do
   not go back off, the run accounts' IAM stays, the reaper's and the preload's service accounts and
   their two custom roles stay, the Cloud NAT and its router stay, the preload rebuild's and the
-  reaper sweep's scheduler jobs stay, and the reaper job stays. a full teardown of
+  reaper sweep's scheduler jobs stay, and the reaper job stays. A full teardown of
   `deploy/terraform/gcp/roots/compute` is **not** this check's restore step: it would take the
   installation's backend apart, and the two custom roles would keep counting against the project's
   custom-role limit for seven days after it.
