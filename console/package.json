@@ -50,9 +50,9 @@
     "npmRebuild": false,
     "electronDownload": {
       "checksums": {
-        "electron-v44.7.2-darwin-arm64.zip": "07d73d3d6dd0b8679c2f1849e30df179ea50c1d6b17630fcc398ae05221f0bd2",
-        "electron-v44.7.2-darwin-x64.zip": "915cb638692e3595926fa64903ee0562c3c0c5a1febb84724175756ca2f0f3b7",
-        "electron-v44.7.2-linux-x64.zip": "777b26a64aee3d185acb9f93c04782bb51eae7c2c61c793963ef24374e5a1539"
+        "electron-v44.9.2-darwin-arm64.zip": "f333fa20926d265812c0caaefb7398c02bc8658fdb5b252c6aeb9465b67407b1",
+        "electron-v44.9.2-darwin-x64.zip": "3bf52b96b094e3778e85ee98ad91a01c07b6daec5b0e4c65cca6d25887350557",
+        "electron-v44.9.2-linux-x64.zip": "1aade790bad6524c42f257f099141d811f218595c6e865cc1975c042158bd43a"
       }
     },
     "mac": {

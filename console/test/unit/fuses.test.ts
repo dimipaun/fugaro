@@ -124,7 +124,7 @@ function fakeFuses(wire?: Partial<Record<FuseV1Options, FuseState>>): FuseTools 
     },
     async getCurrentFuseWire(path: string) {
       const flipped: Record<number, FuseState> = {}
-      // The untouched fuses at the states the pinned Electron 44.7.2 ships them
+      // The untouched fuses at the states the pinned Electron 44.9.2 ships them
       // in (read off the real binary: cookie encryption and the browser-process
       // snapshot off, WasmTrapHandlers on), so the fake wire is as long as the
       // real one.
@@ -199,7 +199,7 @@ describe('the six fuses the console is built with', () => {
   })
 })
 
-describe('the two fuses left at their upstream default', () => {
+describe('the three fuses left at their upstream default', () => {
   it('leaves EnableCookieEncryption alone', () => {
     expect(flips.has(FuseV1Options.EnableCookieEncryption)).toBe(false)
     expect(LEFT_ALONE_FUSES.map((entry) => entry.option)).toContain(
@@ -214,15 +214,20 @@ describe('the two fuses left at their upstream default', () => {
     )
   })
 
+  it('leaves WasmTrapHandlers alone, at its enabled default', () => {
+    expect(flips.has(FuseV1Options.WasmTrapHandlers)).toBe(false)
+    expect(LEFT_ALONE_FUSES.map((entry) => entry.option)).toContain(FuseV1Options.WasmTrapHandlers)
+  })
+
   it('accounts for every fuse this pin knows, so an Electron bump that adds one fails here', () => {
-    // The pin is what makes the count a fact: `@electron/fuses` 2.0.0 knows
-    // eight V1 fuses, six are flipped, two are named above. A newer Electron
-    // with a ninth arrives with this test red rather than with a fuse nobody
+    // The pin is what makes the count a fact: `@electron/fuses` 2.1.3 knows
+    // nine V1 fuses, six are flipped, three are named above. A newer Electron
+    // with a tenth arrives with this test red rather than with a fuse nobody
     // decided about.
     const known = Object.values(FuseV1Options).filter(
       (value): value is FuseV1Options => typeof value === 'number',
     )
-    expect(known).toHaveLength(8)
+    expect(known).toHaveLength(9)
     const decided = new Set<number>([
       ...FLIPPED_FUSES.map((entry) => entry.option),
       ...LEFT_ALONE_FUSES.map((entry) => entry.option),
@@ -230,14 +235,10 @@ describe('the two fuses left at their upstream default', () => {
     expect(known.filter((option) => !decided.has(option))).toEqual([])
   })
 
-  it('decides about the fuse the pinned Electron carries beyond the package: WasmTrapHandlers', () => {
-    // Electron 44.7.2's wire holds nine fuses and the package knows eight. The
-    // ninth is left at the binary's default, with its reason, and the hook
-    // verifies the default is still what the binary holds.
-    expect(BEYOND_PIN_FUSES.map((fuse) => [fuse.name, fuse.index, fuse.upstreamDefault])).toEqual([
-      ['WasmTrapHandlers', 8, true],
-    ])
-    for (const fuse of BEYOND_PIN_FUSES) expect(fuse.why.trim().length).toBeGreaterThan(20)
+  it('carries no fuse beyond the package: the pinned Electron’s nine are all named by it', () => {
+    // Electron 44.9.2's wire holds nine fuses and `@electron/fuses` 2.1.3 names
+    // all nine, so nothing is left to the beyond-the-pin list.
+    expect(BEYOND_PIN_FUSES).toEqual([])
     expect(ACCOUNTED_FUSE_COUNT).toBe(9)
   })
 })
@@ -359,6 +360,7 @@ describe('the afterPack hook', () => {
     expect(LEFT_ALONE_FUSES.map((fuse) => [fuse.name, fuse.upstreamDefault])).toEqual([
       ['EnableCookieEncryption', false],
       ['LoadBrowserProcessSpecificV8Snapshot', false],
+      ['WasmTrapHandlers', true],
     ])
     for (const fuse of LEFT_ALONE_FUSES) {
       const flipped = fakeFuses({ [fuse.option]: fuse.upstreamDefault ? FuseState.DISABLE : FuseState.ENABLE })
@@ -801,7 +803,7 @@ describe('the packaging configuration the fuses belong to', () => {
     expect(script).not.toMatch(/--publish\s+(?:always|onTag|onTagOrDraft)/)
     expect(script).not.toMatch(/electron-builder@/)
     const pin = manifest.devDependencies['electron-builder']
-    expect(pin).toBe('26.17.0')
+    expect(pin).toBe('26.18.0')
     expect(manifest.dependencies ?? {}).not.toHaveProperty('electron-builder')
     const lock = JSON.parse(readFileSync(LOCKFILE, 'utf8')) as {
       packages: Record<string, { version?: string; resolved?: string; integrity?: string; dev?: boolean }>

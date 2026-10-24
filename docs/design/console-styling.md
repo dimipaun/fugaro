@@ -1008,7 +1008,7 @@ The `:root, [data-theme]` pair is load-bearing and not decoration: a custom prop
 **computed where it is declared**, so a token declared only on `:root` would inherit an
 already-resolved colour into a mount that switched, and the light golden frame would be a
 picture of the dark theme. Declaring the set on `[data-theme]` too makes the switch work at
-any depth. `light-dark()` needs Chromium 123; the console pins Electron 44.7.2
+any depth. `light-dark()` needs Chromium 123; the console pins Electron 44.9.2
 (`console/package.json`), which is far past it — and the fallback, if the owner prefers no
 modern function, is two explicit blocks selected by attribute, with the token test
 asserting both blocks name exactly the same vocabulary (see [§9](#9-alternatives-considered)).
