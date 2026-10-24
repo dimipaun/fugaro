@@ -1241,6 +1241,168 @@
     draw()
   }
 
+  // ---- the four levels on How it works, as a slider (owner's preview feedback, 2026-10-24) --
+  //
+  // The section is four stills in the markup; this makes it a slider and nothing without it
+  // does. It advances by itself every LEVELS_ADVANCE_MS, and only while the reader is not
+  // reading: not under the pointer, not with the focus inside, not with the tab hidden, not off
+  // screen, and never for a reader who asked for less motion (it starts paused for them). Any
+  // press of Previous, Next or a dot pauses it, and Pause/Play is always on the bar. While it
+  // advances by itself the slides are not announced (`aria-live="off"`); paused, a change is.
+  //
+  // Four seconds is the time to read a slide's headline: each board's name and the line under
+  // it (at most 12 words, under three seconds at an ordinary 250 words a minute), plus about a
+  // second to find one's place in the drawing. Two seconds would move on mid-sentence. The
+  // board's longer note under the drawing (up to about 45 words) is for a reader who stops it,
+  // which the pointer, the focus or Pause each do.
+  var LEVELS = '[data-levels]'
+  var LEVELS_ADVANCE_MS = 4000
+  var LEVELS_SWIPE_PX = 40
+
+  function levels() {
+    if (typeof document.querySelector !== 'function') return
+    var root = document.querySelector(LEVELS)
+    if (!root) return
+    var slides = root.querySelectorAll('[data-levels-slide]')
+    var track = root.querySelector('[data-levels-track]')
+    var bar = root.querySelector('[data-levels-controls]')
+    var toggle = root.querySelector('[data-levels-toggle]')
+    var prev = root.querySelector('[data-levels-prev]')
+    var next = root.querySelector('[data-levels-next]')
+    var dots = root.querySelectorAll('[data-levels-dot]')
+    var count = slides.length
+    if (count < 2 || !track || !bar || !toggle || !prev || !next) return
+    var quiet = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null
+    var current = 0
+    var playing = !(quiet && quiet.matches)
+    var hovered = false
+    var focused = false
+    var onScreen = !('IntersectionObserver' in window)
+    var timer = null
+
+    function show(index) {
+      current = (index + count) % count
+      for (var i = 0; i < count; i++) {
+        slides[i].setAttribute('data-current', i === current ? 'true' : 'false')
+        slides[i].setAttribute('aria-hidden', i === current ? 'false' : 'true')
+      }
+      for (var d = 0; d < dots.length; d++) {
+        dots[d].setAttribute('aria-current', d === current ? 'true' : 'false')
+      }
+    }
+
+    function advancing() {
+      return playing && !hovered && !focused && onScreen && !document.hidden
+    }
+
+    // The interval starts again from zero whenever the slider resumes, so a reader who looks
+    // away from a slide is given its full time when they look back.
+    function schedule() {
+      if (timer) window.clearInterval(timer)
+      timer = null
+      track.setAttribute('aria-live', advancing() ? 'off' : 'polite')
+      if (advancing()) {
+        timer = window.setInterval(function () {
+          show(current + 1)
+        }, LEVELS_ADVANCE_MS)
+      }
+    }
+
+    function setPlaying(value) {
+      playing = value
+      toggle.textContent = value ? 'Pause' : 'Play'
+      toggle.setAttribute('aria-label', value ? 'Pause the levels' : 'Play the levels')
+      schedule()
+    }
+
+    function go(index) {
+      show(index)
+      setPlaying(false)
+    }
+
+    toggle.addEventListener('click', function () {
+      setPlaying(!playing)
+    })
+    prev.addEventListener('click', function () {
+      go(current - 1)
+    })
+    next.addEventListener('click', function () {
+      go(current + 1)
+    })
+    for (var d = 0; d < dots.length; d++) {
+      ;(function (dot) {
+        dot.addEventListener('click', function () {
+          go(parseInt(dot.getAttribute('data-levels-dot'), 10) || 0)
+        })
+      })(dots[d])
+    }
+    root.addEventListener('keydown', function (event) {
+      if (event.key === 'ArrowLeft') go(current - 1)
+      else if (event.key === 'ArrowRight') go(current + 1)
+    })
+    root.addEventListener('mouseenter', function () {
+      hovered = true
+      schedule()
+    })
+    root.addEventListener('mouseleave', function () {
+      hovered = false
+      schedule()
+    })
+    root.addEventListener('focusin', function () {
+      focused = true
+      schedule()
+    })
+    root.addEventListener('focusout', function (event) {
+      if (event && event.relatedTarget && root.contains(event.relatedTarget)) return
+      focused = false
+      schedule()
+    })
+    document.addEventListener('visibilitychange', schedule)
+    if (quiet && quiet.addEventListener) {
+      quiet.addEventListener('change', function (event) {
+        if (event.matches) setPlaying(false)
+      })
+    }
+
+    // A swipe on a touch screen is a press of Previous or Next.
+    var startX = null
+    track.addEventListener('pointerdown', function (event) {
+      startX = event.pointerType === 'touch' ? event.clientX : null
+    })
+    track.addEventListener('pointerup', function (event) {
+      if (startX === null) return
+      var dx = event.clientX - startX
+      startX = null
+      if (Math.abs(dx) >= LEVELS_SWIPE_PX) go(dx < 0 ? current + 1 : current - 1)
+    })
+
+    if (!onScreen) {
+      new window.IntersectionObserver(function (entries) {
+        onScreen = entries[entries.length - 1].isIntersecting
+        schedule()
+      }, { threshold: 0.3 }).observe(root)
+    }
+
+    // A link to one level (`#level-3`) opens on it, paused.
+    var start = 0
+    var hash = window.location && window.location.hash ? window.location.hash.slice(1) : ''
+    for (var h = 0; h < count; h++) {
+      if (hash && slides[h].getAttribute('id') === hash) {
+        start = h
+        playing = false
+      }
+    }
+    window.addEventListener('hashchange', function () {
+      var id = window.location.hash.slice(1)
+      for (var k = 0; k < count; k++) if (slides[k].getAttribute('id') === id) go(k)
+    })
+
+    root.setAttribute('data-levels-ready', '')
+    bar.hidden = false
+    show(start)
+    setPlaying(playing)
+  }
+
   // ---- entrances (the redesign's motion layer, step 9) ------------------------------------
   //
   // The parts of each home section rise into place once, in reading order, as the section
@@ -1309,6 +1471,7 @@
     }
     // The hero's live card and the entrances, before the clipboard gate for the same reason.
     liveRun()
+    levels()
     entrances()
     var blocks = document.querySelectorAll('[data-copy]')
     if (blocks.length === 0) return
