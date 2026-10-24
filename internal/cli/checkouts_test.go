@@ -240,6 +240,7 @@ func TestConsoleAllowListedReadsWriteNothing(t *testing.T) {
 		{"accounts", "ls", "--json", "--repo", "acme/app"},
 		{"doctor", "--json", "--dir", co},
 		{"runs", "ls", "--json"},
+		{"runs", "stats", "--json"},
 		{"budget", "show", "--json"},
 		{"report", "--json"},
 		{"secrets", "ls", "--json", "--repo", "acme/app"},

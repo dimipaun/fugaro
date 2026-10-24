@@ -56,7 +56,7 @@ import type { Notice } from '../main/spawn'
 /**
  * JSONDoc is the CLI's document as it arrived: a JSON object, undecoded. It is
  * the type the whole console passes around, and the reason it is not a union of
- * the eleven shapes is that a source is not allowed to decide which shape a
+ * the twelve shapes is that a source is not allowed to decide which shape a
  * document is -- that is Task 2.0's job, in one place, against the contract.
  */
 export type JSONDoc = Readonly<Record<string, unknown>>
@@ -146,11 +146,11 @@ export interface LiveFeed {
 }
 
 /**
- * FugaroSource is the interface every screen talks to. The eleven reads are the
- * eleven documents of design section 2.1 that the dashboard draws
+ * FugaroSource is the interface every screen talks to. The twelve reads are the
+ * twelve documents of design section 2.1 that the dashboard draws
  * (`docs/json-contract.md` section 2), one method each, named after the thing on
  * screen rather than after the CLI verb -- so a screen that says `listRuns` does
- * not change when the verb behind it does. (Section 2.1's twelfth row, the
+ * not change when the verb behind it does. (Section 2.1's thirteenth row, the
  * picker's own `fugaro config list --json`, is the picker window's read and
  * reaches no screen through this interface.)
  *
@@ -180,6 +180,15 @@ export interface FugaroSource {
   showBudget(args: ValidatedArguments): Promise<Snapshot>
   runReport(args: ValidatedArguments): Promise<Snapshot>
   listRuns(args: ValidatedArguments): Promise<Snapshot>
+  /**
+   * statsRuns is the by-person aggregate (`runs stats --json`, console L5b):
+   * the Spend screen's by-person view. Its rows are the ones the *CLI* decided
+   * the caller may see -- an operator's every user, a plain launcher's own row
+   * alone -- because the operation's schema has no `--all-users` to send
+   * (`src/main/ipc.ts`), and the screen draws nothing but the totals when the
+   * document does not say who the caller is.
+   */
+  statsRuns(args: ValidatedArguments): Promise<Snapshot>
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot>
   readRunLogs(args: ValidatedArguments): Promise<Snapshot>
   runLogLink(args: ValidatedArguments): Promise<TextSnapshot>
@@ -268,6 +277,7 @@ export function handlersFor(
     'budget.show': (args) => source.showBudget(args),
     'spend.report': (args) => source.runReport(args),
     'runs.list': (args) => source.listRuns(args),
+    'runs.stats': (args) => source.statsRuns(args),
     'run.diagnose': (args) => source.diagnoseRun(args),
     'run.logs': (args) => source.readRunLogs(args),
     'run.logLink': async (args) => (await source.runLogLink(args)).text,
@@ -278,7 +288,7 @@ export function handlersFor(
       await deps.openExternal(args['url'])
       return null
     },
-    // The fourteenth operation is not a read of the CLI either: it is the
+    // The fifteenth operation is not a read of the CLI either: it is the
     // installation the operator chose, as the store holds it. With no store --
     // and with no installation chosen -- it answers D13's no-installation
     // state, which is a state and not a guess.
@@ -302,7 +312,7 @@ export function handlersFor(
  * The `Omit` is still a *closed* type: a key typed here that is not an operation
  * is an excess property, and an operation deleted from `CONSOLE_OPERATIONS`
  * takes its required key with it -- so the exhaustiveness `satisfies` gives the
- * other twelve rows is unchanged. `registerConsoleHandlers` still demands the
+ * other rows is unchanged. `registerConsoleHandlers` still demands the
  * whole surface, so a console that forgets the join fails to register rather
  * than answering one operation with nothing.
  */

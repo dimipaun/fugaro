@@ -3,8 +3,8 @@
 // rule 10, D13, D14; owner ruling C9, 2026-10-18).
 //
 // It is a second preload rather than a second window on the dashboard's, and
-// the reason is the surface: `src/preload/index.ts` exposes **fourteen** rows to
-// the document that draws the dashboard -- the eleven CLI reads, the startup
+// the reason is the surface: `src/preload/index.ts` exposes **fifteen** rows to
+// the document that draws the dashboard -- the twelve CLI reads, the startup
 // handshake's answer, `openExternal`'s handover and `installation.current` -- and
 // the picker has no business with any of them. The two documents are served from the
 // same origin (`app://console`), so the *only* thing that separates their
@@ -56,6 +56,7 @@ export const INSTALLATION_OPERATIONS = Object.freeze([
   ['choose', 'choose'],
   ['checkout', 'checkout'],
   ['remove', 'remove'],
+  ['reveal', 'reveal'],
   ['openExternal', 'openExternal'],
 ] as const) satisfies readonly (readonly [string, string])[]
 

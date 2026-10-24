@@ -4,7 +4,7 @@
 // **Why this file is about the build rather than about the source.**
 // `test/unit/ipc.test.ts` already holds the *source* surface to its promises: it
 // imports `src/preload/index.ts`, builds the bridge over a recording
-// `ipcRenderer`, and pins the thirteen methods, the frozen object, the key, and
+// `ipcRenderer`, and pins the fifteen methods, the frozen object, the key, and
 // the reply envelope. All of that runs under `vitest`'s Node environment, where
 // `hasRendererContext` is false and the file's guarded block does nothing.
 //
@@ -172,7 +172,7 @@ describe('the built preload, as Electron loads it', () => {
     expect(Object.keys(window ?? {}).sort()).toEqual([CONSOLE_BRIDGE_KEY])
     const api = (window ?? {})[CONSOLE_BRIDGE_KEY] as Record<string, unknown>
     expect(Object.isFrozen(api)).toBe(true)
-    // The thirteen methods and the two fields, by name -- and the fields are the
+    // The fifteen methods and the two fields, by name -- and the fields are the
     // bridge's own, so a method renamed in one file and not the other fails here.
     expect(Object.keys(api).sort()).toEqual(
       ['operations', 'version', ...CONSOLE_OPERATIONS.map((operation) => operation.method)].sort(),

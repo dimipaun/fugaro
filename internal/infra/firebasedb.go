@@ -96,7 +96,7 @@ func (d *DB) RequireCapsForEnforce(ctx context.Context) error {
 func NoCapsForEnforce() error { return noCapsErr() }
 
 func noCapsErr() error {
-	return userErr("--budget-mode enforce needs the database's global caps (%s: dailyMicros and perRunMicros), and there are none: without dailyMicros the rules refuse every lease, so every run halts, and without perRunMicros a run whose repository has no per-run cap of its own and no default has none to compare against. Run 'fugaro setup --firebase-project <firebase-project-id> --budget-mode observe' first (or 'fugaro update --firebase-project <firebase-project-id> --budget-mode observe' on an installation that already exists), set the caps with fugaro budget set --global --daily <usd> --per-run <usd>, then switch with fugaro budget set --global --mode enforce", budget.PathCapsGlobal)
+	return userErr("--budget-mode enforce needs the database's global caps (%s: dailyMicros and perRunMicros), and there are none: without dailyMicros the rules refuse every lease, so every run halts, and without perRunMicros a run whose repository has no per-run cap of its own and no default has none to compare against. Run 'fugaro setup --firebase-project <gcp-project-id> --budget-mode observe' first (or 'fugaro update --firebase-project <gcp-project-id> --budget-mode observe' on an installation that already exists), set the caps with fugaro budget set --global --daily <usd> --per-run <usd>, then switch with fugaro budget set --global --mode enforce", budget.PathCapsGlobal)
 }
 
 // dbErr turns a refused or failed read into the operator's words.

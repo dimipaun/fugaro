@@ -9,28 +9,10 @@
  * own render. A reader who cannot see it is given the `alt` text; the page's `<nav>` of anchors
  * (`#level-1` … `#level-4`) is the same as ever and needs no script.
  */
-const LEVELS = [
-  {
-    id: 'level-1',
-    name: 'Inside one job',
-    alt: 'Level 1 of 4, inside one job. One run is one ephemeral cloud job. Checks run first when the recipe asks for them; the coder and the first-line reviewer go round; then a senior review judges the result and a draft pull request becomes ready only when it ships and the tests pass on the final commit.',
-  },
-  {
-    id: 'level-2',
-    name: 'One orchestrator, many jobs',
-    alt: 'Level 2 of 4, one orchestrator, many jobs. The orchestrator on the developer’s machine asks Fugaro for several runs; Fugaro checks the budget and launches the jobs in parallel; every job opens a draft pull request that flows back to the orchestrator.',
-  },
-  {
-    id: 'level-3',
-    name: 'The developer’s view',
-    alt: 'Level 3 of 4, the developer’s view. You work with an orchestrator agent on your laptop. It uses the Fugaro CLI, which launches runs in your cloud project; the console reads the same project through the CLI.',
-  },
-  {
-    id: 'level-4',
-    name: 'The whole project',
-    alt: 'Level 4 of 4, the whole project. Each developer works from a laptop or workstation with an orchestrator agent and the Fugaro CLI. Jobs, secrets, budgets, live counters and history, and who may launch all live in one cloud project; the coordinator and central orchestrators, the security service and the phone app are planned.',
-  },
-]
+import { LEVELS } from '../lib/zoom-levels.mjs'
+
+// The four levels' names and alt texts are `src/lib/zoom-levels.mjs`'s, shared with the
+// homepage's run section.
 ---
 
 <section class="zoom" aria-labelledby="zoom-title">
@@ -107,15 +89,20 @@ const LEVELS = [
     justify-content: center;
     min-width: 44px;
     min-height: 44px;
-    border: var(--border-width) solid var(--border);
     border-radius: var(--radius-pill);
-    color: var(--text-muted);
+    background: var(--surface);
+    color: var(--text);
     text-decoration: none;
   }
 
-  .zoom-marker:hover,
   .zoom-marker:focus-visible {
-    border-color: var(--accent);
+    background: var(--border);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .zoom-marker:hover {
+      background: var(--border);
+    }
   }
 
   .zoom-figure {
@@ -127,8 +114,7 @@ const LEVELS = [
     display: block;
     width: 100%;
     height: auto;
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-sm);
   }
 
   .zoom-caption {

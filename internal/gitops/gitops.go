@@ -548,14 +548,14 @@ func (r *Repo) countAhead(ctx context.Context, base, until string) (int, error) 
 // Each is a commit or a plain ref name, never a moving ref such as HEAD:
 // the agent controls the checkout while a stage runs (checkpoint.go's C6a).
 // An except the checkout cannot resolve (a base commit the agent never
-// fetched) is left out, which counts more rather than failing. Replace refs
-// are the agent's too, so they are not honoured.
+// fetched) is left out on its own (readableBounds), and the others still
+// subtract theirs, which counts more rather than failing. Replace refs are
+// the agent's too, so they are not honoured.
 func (r *Repo) CommitsAhead(ctx context.Context, since string, except ...string) (int, error) {
+	except = r.readableBounds(ctx, except)
 	revs := []string{"--no-replace-objects", "rev-list", "--count", "--end-of-options", since + "..HEAD"}
 	for _, e := range except {
-		if e != "" {
-			revs = append(revs, "^"+e)
-		}
+		revs = append(revs, "^"+e)
 	}
 	out, err := r.git(ctx, revs...)
 	if err != nil {

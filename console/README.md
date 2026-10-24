@@ -321,10 +321,9 @@ piece: every TypeScript file at the console's root — today
 the vitest unit tests — is asserted to be inside `tsconfig.json`'s `include`,
 because a file outside `include` is not typechecked at all.
 
-### Dependabot's scope is not extended here (a decision, not an oversight)
+### Dependabot watches the console (the owner's decision, applied 2026-10-23)
 
-Recorded as the plan words it, because the plan hands this decision to this
-task: "**Dependabot's scope is not extended here.** §5.2 notes that the console
+The plan handed this decision to the owner rather than to this task: "**Dependabot's scope is not extended here.** §5.2 notes that the console
 adds a second thing Dependabot should watch — `console/package.json` and its
 lockfile — and that Electron's own binary is not an ordinary npm dependency at
 all. `.github/dependabot.yml` is not under `.github/workflows/`, so an agent may
@@ -335,12 +334,15 @@ decision, not an oversight.**"
 (`docs/plans/2026-10-15-desktop-console.md`, "Open items, listed rather than
 fixed", item 5.)
 
-So `.github/dependabot.yml` still tracks one ecosystem — `github-actions` from
-`/`, weekly — and nothing in this task edits it. What that costs is visible
-rather than hidden: the console's pins are bumped by hand, by a person, with the
-lockfile in the same commit, and the only things watching them are
-`test/unit/pinning.test.ts` and `test/unit/lockfile.test.ts`. Dependabot could
-not fully watch this tree even if it were pointed at it: **Electron's own binary
+The owner ruled on 2026-10-22 to extend the scope, and on 2026-10-23 the staged
+file was copied over `.github/dependabot.yml`. It now tracks two ecosystems —
+`github-actions` from `/` and `npm` from `/console`, both weekly — with the
+console's minor and patch bumps grouped into one pull request a week and a major
+left outside the group so it arrives on its own (see
+`docs/pending-workflows/README.md`, `## dependabot-console.yml`).
+`test/unit/pinning.test.ts` and `test/unit/lockfile.test.ts` still hold every
+bump to an exact pin with its lockfile. Dependabot cannot fully watch this tree
+even so: **Electron's own binary
 is not an npm dependency** — npm carries the package, but the runtime comes from
 Electron's download host, so its pin, download and checksum get the hand-bumped
 treatment the repository already gives the Trivy digest and the Dockerfile
@@ -355,10 +357,12 @@ prohibitions that are the whole of the rule: **no `invoke(channel, ...)`**
 the renderer** (the preload exposes one *method* per operation and the renderer
 passes arguments to a method, never a name), and **no dynamic `require`**.
 
-`src/main/ipc.ts` is the table and the gate. Twelve operations — the eleven CLI
+`src/main/ipc.ts` is the table and the gate. Fifteen operations — the twelve CLI
 reads of design section 2.1 (`watch`, `budget show`, `report`, `runs ls`,
-`diagnose`, `logs` for the document, `logs` for the link, `secrets ls`,
-`accounts ls`, `version`, `doctor`) plus the one validated external link — each
+`runs stats` (the Spend screen's by-person view, console L5b), `diagnose`, `logs`
+for the document, `logs` for the link, `secrets ls`, `accounts ls`, `version`,
+`doctor`), the startup handshake's own answer, the dashboard's read of the
+installation the operator chose, and the one validated external link — each
 with the command it drives, the flags it fixes and a **closed argument schema**
 validated in the main process before any handler sees it. Closed means every key
 is declared (an extra key is refused by name), `__proto__`/`constructor`/
@@ -430,9 +434,9 @@ is in main), and the reply is checked for the promised envelope before a screen
 sees it.
 
 **The surface is closed twice, and the second half is the compiler's.** The
-table is declared `as const`, with **no type annotation**, so its twelve rows
-stay literal types: `ExposedName` and `ExposedMethod` are unions of twelve
-literals rather than `string`, `ConsoleBridge` is twelve *named* methods rather
+table is declared `as const`, with **no type annotation**, so its fifteen rows
+stay literal types: `ExposedName` and `ExposedMethod` are unions of fifteen
+literals rather than `string`, `ConsoleBridge` is fifteen *named* methods rather
 than a string index signature, and `bridge.showBudgte(...)` is a compile error
 instead of an `undefined` call somewhere inside a screen's render. Nothing at
 runtime can see this — the object is built *from* the table and the suite pins
@@ -1045,7 +1049,7 @@ two files and no recording at all, and each is labelled for what it is:
 
 ```
 {"fugaro_fixture":{"version":1,"redactor":"fugaro-console-redact/2","case":"synthetic",
- "project":"<project>","synthetic":true,"records":6,"sha256":"24cdc5f829ce2bea6efb4336622c38d85066be5ea522af10ef51079d26415a0e",
+ "project":"<project>","synthetic":true,"records":6,"sha256":"ee29b66642fb538e2ff17d37a9dfaf1be9ec635706fe11c8d9b7368beb528669",
  "note":"synthetic: invented documents put through the same redaction path as a recording; never recorded from any installation or cloud"}}
 ```
 
@@ -3354,7 +3358,7 @@ The foot row is the design's control and it is drawn where the design draws it, 
 the design gives it. The click is the one thing this task cannot add: `+ Add installation`
 opens the add-installation flow, which is the **picker window**, and the dashboard cannot open
 it. The picker is reached from the application menu's `Installations…` item (ruling C9), the
-dashboard's bridge has fourteen operations and none of them opens a window
+dashboard's bridge has fifteen operations and none of them opens a window
 (`denyWindowOpen`), and both the design (§11: no Phase-6 task owns the preload or the IPC
 allow-list) and this task's Files keep it that way. So the control is drawn with no handler
 rather than with one that does nothing, and `drawRail`'s docstring says so at the place a

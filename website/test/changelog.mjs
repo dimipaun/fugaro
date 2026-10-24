@@ -409,7 +409,7 @@ test('the generator steps over the mobile app’s notes directory, and nothing e
     mkdirSync(path.join(releasesDir, 'mobile'))
     writeFileSync(path.join(releasesDir, 'v1.2.0.md'), '- a release file with one bullet\n')
     writeFileSync(
-      path.join(releasesDir, 'mobile', 'v0.1.0.md'),
+      path.join(releasesDir, 'mobile', 'v0.200.0.md'),
       '- the app’s first release, Falcon\n',
     )
     writeFileSync(path.join(releasesDir, 'mobile', 'README.md'), 'the app’s notes format\n')

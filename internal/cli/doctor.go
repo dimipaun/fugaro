@@ -1800,7 +1800,7 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 		// job environment, exactly as they did before this model (P3).
 		checks := []doctorCheck{{ID: "policy-published", Severity: "info",
 			Problem: fmt.Sprintf("project %s has no Firebase budget backend, so it cannot publish a project policy: runs take their ceiling from the job environment", lc.Name),
-			Fix:     "fugaro update --firebase-project <firebase-project-id> --name " + lc.Name + " adds the backend the policy is published to"}}
+			Fix:     "fugaro update --firebase-project " + lc.GCPProject + " --name " + lc.Name + " adds the backend the policy is published to"}}
 		return append(checks, doctorRoutingChecks(lc, nil,
 			fmt.Sprintf("project %s has no Firebase budget backend, so there is no policy node to read a switch from", lc.Name), layer)...)
 	}

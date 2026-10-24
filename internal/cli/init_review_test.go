@@ -578,16 +578,14 @@ func TestFirebaseRunTakesOnePromptPlusTheLocation(t *testing.T) {
 	if _, err, r2 := run(t, initProject, true, initProjectName+"\n"+initProjectName+"\n"); err == nil || len(r2.dst.tags) != 0 {
 		t.Errorf("the project's name confirmed the Firestore location (err %v, copied %v)", err, r2.dst.tags)
 	}
-	// Another project for Firebase, not verified as Fugaro's: its root and its
-	// database writes each take their own typed name; the installation's steps
-	// stay under the one confirmation.
-	out, err, r = run(t, fpID, true, initProjectName+"\n"+names(1)+names(1)+infra.FirestoreLocation+"\n")
-	if err != nil {
+	// Another project for Firebase is no layout any more (Fugaro only starts
+	// fresh): it is refused before anything is asked or applied.
+	out, err, r = run(t, "aurora-fp", true, initProjectName+"\n"+names(1)+names(1)+infra.FirestoreLocation+"\n")
+	if ExitCode(err) != ExitUserError || !strings.Contains(errString(err), "is not the installation's GCP project") {
 		t.Fatalf("separate Firebase project: %v\n%s", err, out)
 	}
-	runP, stepP = prompts(out)
-	if runP != 1 || stepP != 2 || !strings.Contains(out, "NOT verified as Fugaro's") || !strings.Contains(out, "the Firebase project is NOT verified") {
-		t.Fatalf("%d run prompt(s), %d per-step\n%s", runP, stepP, out)
+	if runP, stepP := prompts(out); runP != 0 || stepP != 0 || len(r.dst.tags) != 0 {
+		t.Fatalf("a refused separate Firebase project asked %d run and %d per-step prompt(s), copied %v\n%s", runP, stepP, r.dst.tags, out)
 	}
 	// Unmarked: a name per step, and the count is what it was.
 	out, err, _ = run(t, initProject, false, names(4)+infra.FirestoreLocation+"\n"+names(8))

@@ -40,7 +40,7 @@
 // of its argv, cwd and environment, which is what makes these tests about what a
 // real machine would see rather than about the console's self-consistency.
 
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
@@ -59,33 +59,50 @@ import {
   PICKER_OPERATION_NAMES,
   PLATFORM_LOCATIONS,
   SPAWN_COMMANDS,
+  SPAWN_FLAGS,
   WIN32_LOCATIONS,
+  WSLENV_KEY,
+  WSL_PREFIX_FLAGS,
   argvFor,
   assertArgvFlags,
   assertSpawnSurface,
+  assertWslPrefix,
   binDirectories,
   childEnvironment,
   childPath,
+  isDistroName,
+  isSafeDistroName,
   cliSentence,
   isExecutableFile,
   decodeFeedLine,
   isSafeArgumentValue,
   locationsFor,
+  nodeSpawner,
   parseVersionLine,
   planFor,
   PRIVATE_DIR_LEAF,
   PRIVATE_DIR_NAME,
   privateWorkingDirectory,
+  shellQuoteWord,
   probeVersion,
   resolveBinary,
   resolveHandshakeBinary,
   resolveInstalledBinary,
+  wslUncPath,
   runToCompletion,
   restartDecision,
   spawnCommandFor,
   spawnedArgv,
   startSidecar,
   DEFAULT_BACKOFF,
+  WSL_SHELL_FLAG,
+  WSL_SHELL_PROGRAM,
+  WSL_WRAPPER_MARKER,
+  VERSION_TIMEOUT_MS,
+  withoutWrapperMarker,
+  wrapperPidIn,
+  wslStopArgs,
+  SpawnTimeout,
 } from '../../src/main/spawn'
 import type {
   ChildSpawner,
@@ -94,6 +111,7 @@ import type {
   SpawnedChildLike,
   SpawnOptionsLike,
   Timers,
+  SidecarEnd,
   WslRoute,
 } from '../../src/main/spawn'
 import { createSpawnLog, disabledSpawnLog } from '../../src/main/spawnlog'
@@ -107,16 +125,22 @@ import { SourceRefusal, handlersFor } from '../../src/source/source'
 import { installStub } from './stub'
 import type { Stub } from './stub'
 import { DISTRO_PATH, installWslStub } from './wslstub'
-import type { WslFixture, WslStub } from './wslstub'
+import type { WslFixture, WslReport, WslStub } from './wslstub'
 
 const SOURCE_ROOT = fileURLToPath(new URL('../../src', import.meta.url))
 const PROJECT = 'fugaro'
 
+/** WINDOWS_PATH is a `PATH` spelled the way a Windows host spells one: two
+ * entries separated by `;`, drive-rooted, with backslashes. It is the string the
+ * child's `PATH` must never be, and the two separators of one WSL spawn are
+ * visible side by side because of it (F5, T-A2). */
+const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
+
 /**
- * COMMANDS_TAKING_PROJECT is the plan's own list, hard-coded: the ten
+ * COMMANDS_TAKING_PROJECT is the plan's own list, hard-coded: the eleven
  * operations `addCloudFlags` gives `--project` to (`internal/cli/cloud.go:51`,
  * called from each of those constructors), including the two log operations
- * that share the `logs` command. The complement -- the commands that take no
+ * that share the `logs` command -- console L5b's `runs.stats` is the eleventh. The complement -- the commands that take no
  * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
  * command words the CLI itself uses (`version`, and the picker's `config list`),
  * which is the same list `assertSpawnSurface` holds the table to; this file
@@ -131,6 +155,7 @@ const COMMANDS_TAKING_PROJECT: readonly (OperationName | 'installation.list')[] 
   'budget.show',
   'spend.report',
   'runs.list',
+  'runs.stats',
   'run.diagnose',
   'run.logs',
   'run.logLink',
@@ -343,7 +368,10 @@ function scriptedChild(): SpawnedChildLike & {
   return child
 }
 
-async function waitFor(predicate: () => boolean, ms = 4000): Promise<void> {
+// 15s rather than a few: the WSL cases wait on a second real Node process (the
+// fake `wsl.exe` the stop starts), and a shared CI or developer machine under
+// load can take seconds to start one. The bound only lengthens a failure.
+async function waitFor(predicate: () => boolean, ms = 15_000): Promise<void> {
   const deadline = Date.now() + ms
   while (!predicate()) {
     if (Date.now() > deadline) throw new Error('waitFor timed out')
@@ -397,19 +425,21 @@ describe('the spawn table and the argv it builds', () => {
     }).toThrow(/picker/)
   })
 
-  it('fixes the design allow-list’s dashboard half: eleven argvs, ten commands, nine of them with --project', () => {
-    // The design's §5.1 rule 6 table is the whole allow-list -- twelve argvs
-    // since round 5, because the picker's own read (`config list --json`, the
-    // case above) is on it too -- and this table is the eleven the dashboard
-    // spawns. The two are held in step by hand on purpose: the Go side pins the
-    // document's twelve (`internal/cli/docs_desktop_console_test.go`,
+  it('fixes the design allow-list’s dashboard half: twelve argvs, eleven commands, ten of them with --project', () => {
+    // The design's §5.1 rule 6 table is the whole allow-list -- thirteen argvs
+    // since round 5 and console L5b, because the picker's own read
+    // (`config list --json`, the case above) is on it too -- and this table is
+    // the twelve the dashboard spawns. The two are held in step by hand on
+    // purpose: the Go side pins the document's thirteen
+    // (`internal/cli/docs_desktop_console_test.go`,
     // TestDocsDesktopConsoleDesignAllowListIsExactArgv) and these cases pin the
-    // console's eleven plus the picker's one.
+    // console's twelve plus the picker's one.
     expect([...SPAWN_COMMANDS].map((row) => row.words.join(' '))).toEqual([
       'watch --json',
       'budget show --json',
       'report --json',
       'runs ls --json',
+      'runs stats --json',
       'diagnose --json',
       'logs --json',
       'logs --url',
@@ -418,16 +448,27 @@ describe('the spawn table and the argv it builds', () => {
       'version',
       'doctor --json',
     ])
-    // The nine *commands* that take the flag (addCloudFlags, internal/cli/
-    // cloud.go:51) are nine rows plus one: `logs` has two rows, `--json` and
+    // The ten *commands* that take the flag (addCloudFlags, internal/cli/
+    // cloud.go:51) are ten rows plus one: `logs` has two rows, `--json` and
     // `--url`, and neither of them may be the one that forgets --project.
     const commandsWithProject = SPAWN_COMMANDS.filter((row) => row.takesProject).map((row) =>
       row.words.filter((word) => !word.startsWith('--')).join(' '),
     )
     expect(new Set(commandsWithProject)).toEqual(
-      new Set(['watch', 'budget show', 'report', 'runs ls', 'diagnose', 'logs', 'secrets ls', 'accounts ls', 'doctor']),
+      new Set([
+        'watch',
+        'budget show',
+        'report',
+        'runs ls',
+        'runs stats',
+        'diagnose',
+        'logs',
+        'secrets ls',
+        'accounts ls',
+        'doctor',
+      ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(10)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(11)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))
@@ -695,7 +736,7 @@ describe('the spawn table and the argv it builds', () => {
   it('builds argv as an array and hands the spawner `shell: false`', async () => {
     const spawner = recordingSpawner()
     const plan = planFor('budget.show', { repo: 'acme/widgets' }, safeContext({ binaryPath: '/opt/homebrew/bin/fugaro' }))
-    void runToCompletion(plan, { spawner })
+    void runToCompletion(plan, { spawner }).catch(() => undefined) // a fake child never closes: no late rejection
     expect(spawner.calls).toHaveLength(1)
     const call = spawner.calls[0]
     expect(call?.command).toBe('/opt/homebrew/bin/fugaro')
@@ -712,17 +753,28 @@ describe('the wrapper on the spawn plan', () => {
   // (`prefix`) apart from the CLI's argv, because on Windows the console starts
   // `wsl.exe` and `wsl.exe` starts the CLI inside a distribution.
   const WSL = 'C:\\Windows\\System32\\wsl.exe'
-  const wslPlan = (argv: readonly string[]): SpawnPlan =>
-    Object.freeze({
-      operation: 'cli.version' as const,
-      command: WSL,
-      prefix: Object.freeze(['-d', 'Ubuntu', '--cd', '/home/dimi', '--']),
-      argv: Object.freeze([FUGARO_BINARY_NAME, ...argv]),
-      cwd: '/home/dimi',
-      env: Object.freeze({}),
-      project: PROJECT,
-      backoff: DEFAULT_BACKOFF,
-    })
+  // The two spellings of one directory, as the plan itself has them: `cwd` is
+  // the host directory the console starts `wsl.exe` in, and `--cd` is the
+  // directory *inside* the distribution the CLI starts in (T-D4's translation).
+  const HOST_DIR = 'C:\\Users\\dimi\\src\\fugaro'
+  const LINUX_DIR = '/home/dimi/src/fugaro'
+
+  /** wslPlanFor is a plan `planFor` really builds for the WSL route -- the same
+   * call `resolveBinary` and `startSidecar`'s caller make -- rather than a plan
+   * assembled here. A hand-built one drifts: the wrapper's `sh -c` script, the
+   * `--cd` that belongs to `wsl.exe` and the `fugaro` the distribution resolves
+   * are all decided by `planFor`, so a fixture that spells them itself asserts
+   * against a spawn line the console cannot produce. */
+  const wslPlanFor = (operation: OperationName, args: ValidatedArguments = {}): SpawnPlan =>
+    planFor(operation, args, safeContext({
+      binaryPath: '',
+      directory: HOST_DIR,
+      wsl: { distro: 'Ubuntu', directory: LINUX_DIR, executable: WSL },
+    }))
+
+  /** The wrapper's words, which are `wsl.exe`'s own flags and then the `sh -c`
+   * script: what follows the program on every spawned WSL line. */
+  const WSL_WORDS = ['-d', 'Ubuntu', '--cd', LINUX_DIR, '-e', 'sh', '-c']
 
   it('keeps the program, the wrapper’s words and the CLI’s argv apart', () => {
     // The host route: the command *is* the CLI's program word, so `argv[0]` and
@@ -735,11 +787,25 @@ describe('the wrapper on the spawn plan', () => {
     expect([...spawnedArgv(host)]).toEqual([...host.argv].slice(0, 1).concat(host.argv.slice(1)))
 
     // The WSL route: the command is `wsl.exe`, the wrapper's words are its own
-    // flags, and `argv[0]` is `fugaro` -- the bare name the *distribution*
-    // resolves, which is the whole point of running the CLI inside it.
-    const wsl = wslPlan(['version'])
+    // flags and the script, and `argv[0]` is `fugaro` -- the bare name the
+    // *distribution* resolves, which is the whole point of running the CLI
+    // inside it.
+    const wsl = wslPlanFor('cli.version')
+    expect(wsl.command).toBe(WSL)
     expect(wsl.argv[0]).toBe(FUGARO_BINARY_NAME)
-    expect([...spawnedArgv(wsl)]).toEqual([WSL, '-d', 'Ubuntu', '--cd', '/home/dimi', '--', 'fugaro', 'version'])
+    expect([...wsl.prefix]).toEqual(WSL_WORDS.slice(0, 5))
+    const spawned = [...spawnedArgv(wsl)]
+    expect(spawned.slice(0, 8)).toEqual([WSL, ...WSL_WORDS])
+    // The CLI's argv is *inside* the script, quoted, and not a word of its own:
+    // that is where it is when the CLI runs (T-F4).
+    expect(spawned).toHaveLength(9)
+    expect(spawned[8]).toContain(`exec 'fugaro' 'version'`)
+    expect(spawned).not.toContain('version')
+    // ...and the two directories are the two spellings, not one directory named
+    // twice: the console starts `wsl.exe` in the host one and the CLI runs in
+    // the distribution's.
+    expect(wsl.cwd).toBe(HOST_DIR)
+    expect(spawned[4]).toBe(LINUX_DIR)
   })
 
   it('holds the wrapper’s flags to `wsl.exe` and the CLI’s argv to `SPAWN_FLAGS`', () => {
@@ -747,7 +813,7 @@ describe('the wrapper on the spawn plan', () => {
     // they are two fields. `-d` and `--cd` are `wsl.exe`'s; `--cd` is not a flag
     // this console may emit to the CLI, and neither is `--distribution`, so a
     // wrapper flag that leaked into the CLI's argv is refused by name.
-    const wsl = wslPlan(['version'])
+    const wsl = wslPlanFor('cli.version')
     expect(() => assertArgvFlags('cli.version', wsl.argv)).not.toThrow()
     expect(() => assertArgvFlags('cli.version', [FUGARO_BINARY_NAME, 'version', '--cd', '/home/dimi'])).toThrow(
       /--cd, which is not a flag this console may spawn/,
@@ -765,8 +831,8 @@ describe('the wrapper on the spawn plan', () => {
 
   it('starts `command` with the wrapper’s words, and reports `command` and not `argv[0]`', async () => {
     const spawner = recordingSpawner()
-    const plan = wslPlan(['version'])
-    void runToCompletion(plan, { spawner })
+    const plan = wslPlanFor('cli.version')
+    void runToCompletion(plan, { spawner }).catch(() => undefined) // a fake child never closes: no late rejection
     expect(spawner.calls).toHaveLength(1)
     const call = spawner.calls[0]
     // The reported program is the plan's `command`. Reading `argv[0]` again --
@@ -774,8 +840,15 @@ describe('the wrapper on the spawn plan', () => {
     // does not exist on the machine the console is running on.
     expect(call?.command).toBe(WSL)
     expect(call?.command).not.toBe(plan.argv[0])
-    expect(call?.args).toEqual(['-d', 'Ubuntu', '--cd', '/home/dimi', '--', 'fugaro', 'version'])
+    // The words handed over are the wrapper's: `wsl.exe`'s own flags, then the
+    // script -- with the CLI's argv inside it, quoted, and not one word of it in
+    // a slot of its own, which would start the CLI a second time as `sh`'s own
+    // positional words.
+    expect(call?.args.slice(0, 7)).toEqual([...WSL_WORDS])
+    expect(call?.args).toHaveLength(8)
+    expect(call?.args[7]).toContain(`exec 'fugaro' 'version'`)
     expect(call?.options.shell).toBe(false)
+    expect(call?.options.cwd).toBe(HOST_DIR)
   })
 
   it('records the whole command line in the spawn log, wrapper and all', async () => {
@@ -791,14 +864,23 @@ describe('the wrapper on the spawn plan', () => {
       },
       close: () => undefined,
     }
-    void runToCompletion(wslPlan(['version']), { spawner, log })
+    const plan = wslPlanFor('cli.version')
+    void runToCompletion(plan, { spawner, log }).catch(() => undefined) // a fake child never closes: no late rejection
     expect(seen).toHaveLength(1)
-    expect(seen[0]?.argv).toEqual([WSL, '-d', 'Ubuntu', '--cd', '/home/dimi', '--', 'fugaro', 'version'])
+    // The line the operator reads back is the whole command line: the program
+    // that ran, the wrapper's words, and the script carrying the CLI's argv.
+    // Recording `plan.argv` instead -- the mutation this case exists for --
+    // would log `fugaro`, a name that resolves inside a distribution and
+    // nowhere on the machine the log was written on.
+    expect(seen[0]?.argv[0]).toBe(WSL)
+    expect(seen[0]?.argv).not.toEqual([...plan.argv])
+    expect(seen[0]?.argv.slice(0, 8)).toEqual([WSL, ...WSL_WORDS])
+    expect(seen[0]?.argv[8]).toContain(`exec 'fugaro' 'version'`)
   })
 
   it('supervises a stream through the same wrapper', () => {
     const spawner = recordingSpawner()
-    const sidecar = startSidecar(wslPlan(['watch', '--json']), {
+    const sidecar = startSidecar(wslPlanFor('live.watch'), {
       onFrame: () => undefined,
       onNotice: () => undefined,
       onRestart: () => undefined,
@@ -806,8 +888,184 @@ describe('the wrapper on the spawn plan', () => {
     }, { spawner })
     expect(spawner.calls).toHaveLength(1)
     expect(spawner.calls[0]?.command).toBe(WSL)
-    expect(spawner.calls[0]?.args).toEqual(['-d', 'Ubuntu', '--cd', '/home/dimi', '--', 'fugaro', 'watch', '--json'])
+    expect(spawner.calls[0]?.args.slice(0, 7)).toEqual([...WSL_WORDS])
+    expect(spawner.calls[0]?.args[7]).toContain(`exec 'fugaro' 'watch' '--json'`)
     void sidecar.stop()
+  })
+})
+
+describe('the real spawner', () => {
+  const spawned = (stdio: readonly ['ignore', 'ignore' | 'pipe', 'ignore' | 'pipe']) =>
+    nodeSpawner('/bin/sh', ['-c', 'exit 0'], {
+      cwd: process.cwd(),
+      env: {},
+      shell: false,
+      stdio,
+    })
+
+  const closed = (child: SpawnedChildLike): Promise<void> =>
+    new Promise((resolve) => {
+      child.on('close', () => resolve())
+    })
+
+  it('gives the child the descriptors its caller asked for', async () => {
+    // T-F4: the one child whose output is nobody's is the stop sent **inside**
+    // a distribution, and it asks for `'ignore'` on all three, because a pipe
+    // nobody drains is a child that blocks on write. `nodeSpawner` used to
+    // hardcode `['ignore', 'pipe', 'pipe']`, so that request was a comment: the
+    // stop's own stdout and stderr were pipes the console never read.
+    const quiet = spawned(['ignore', 'ignore', 'ignore'])
+    expect(quiet.stdout).toBeNull()
+    expect(quiet.stderr).toBeNull()
+    await closed(quiet)
+
+    // ...and the other direction, so that "honour `stdio`" is not satisfied by
+    // ignoring it: every read in this module hands `'pipe'` and reads it.
+    const read = spawned(['ignore', 'pipe', 'pipe'])
+    expect(read.stdout).not.toBeNull()
+    expect(read.stderr).not.toBeNull()
+    await closed(read)
+  })
+})
+
+describe('the wrapper’s own words', () => {
+  // T-E3 of docs/console-windows/implementation-plan.md, finding F22: the guard
+  // the CLI's argv is held to is extended to the prefix. Part C put words on a
+  // command line that do not come from the CLI's own table -- a distribution's
+  // name arrives from `wsl.exe --list --quiet` or from the store -- so the
+  // prefix has a guard of its own rather than the CLI's, and the two flag sets
+  // are disjoint by design (T-C1: that is why `prefix` and `argv` are two
+  // fields).
+  //
+  // **What the two values are held to is the *same* rule** -- no control
+  // character, not empty, not absurd, no leading `-` -- and not a narrower
+  // alphabet *at this layer*: with an array argv and `shell: false` a space in
+  // one element is a character and not a second word. This is the argv's last
+  // line only. The rule a distribution must meet to be driven is Part D's
+  // narrower `isDistroName` (`DISTRO_NAME_PATTERN`), which `planFor` and the
+  // resolver apply first, because the WSL route runs the CLI through the
+  // distribution's own shell: a distribution called `My Linux` is refused on
+  // the route (fail closed), and the cases below and in the resolution block
+  // hold both layers.
+  const words = (list: readonly string[]): readonly string[] => Object.freeze([...list])
+  const inside = (directory: string): readonly string[] => words(['-d', 'Ubuntu', '--cd', directory, '-e'])
+
+  it('admits exactly the two shapes `wslWrapper` builds, and nothing else', () => {
+    expect(() => assertWslPrefix(words(['-d', 'Ubuntu', '-e']))).not.toThrow()
+    expect(() => assertWslPrefix(words(['-d', 'Ubuntu-22.04', '--cd', '/home/dimi/src', '-e']))).not.toThrow()
+    // Whitespace in either value, admitted *by this guard*: neither becomes two
+    // words with an array argv. (The route refuses such a distribution name
+    // before the prefix is built -- Part D's rule, asserted below.)
+    expect(() => assertWslPrefix(inside('/home/Ann Lee/src/fugaro'))).not.toThrow()
+    expect(() => assertWslPrefix(words(['-d', 'My Linux', '--cd', '/home/Ann Lee/src', '-e']))).not.toThrow()
+    for (const list of [
+      [], // no `-d` at all
+      ['-d', 'Ubuntu'], // no `-e`
+      ['-d', 'Ubuntu', '--cd', '/home/dimi'], // `--cd` with no `-e`
+      ['-d', 'Ubuntu', '--'], // `--`: the distribution's login shell would re-read the words (T-F4)
+      ['-d', 'Ubuntu', '--cd', '/home/dimi', '--'],
+      ['--cd', '/home/dimi', '-d', 'Ubuntu', '-e'], // the words reordered
+      ['-d', 'Ubuntu', '--cd', '/home/dimi', '-e', 'extra'], // one word too many
+      ['-d', 'Ubuntu', '--distribution', 'Debian', '-e'], // a flag `wsl.exe` has and this console never emits
+    ]) {
+      expect(() => assertWslPrefix(words(list))).toThrow()
+    }
+  })
+
+  it('refuses a distribution name that could be read as a flag, and admits one that merely has a space', () => {
+    // What `isSafeDistroName` is for, in both directions. `-` has to be admitted
+    // -- a real distribution is called `Ubuntu-22.04` -- so `-d --help`, `-d -d`
+    // and `-d --` are words whose *content* is legal and whose *position* makes
+    // them a flag; the leading-hyphen rule is what refuses them, and that is the
+    // whole of the argument confusion with `shell: false` (no shell re-parses a
+    // word, and an array element is never split).
+    for (const name of ['-d', '--', '--help', '-sneaky', '', 'Ubuntu\t22.04', 'ubuntu\n', `a${'\u0007'}b`]) {
+      expect(isSafeDistroName(name), name).toBe(false)
+      expect(() => assertWslPrefix(words(['-d', name, '-e']))).toThrow(/distribution name/)
+    }
+    // Whitespace, quotes and `;` are not argument confusion with an array argv,
+    // so the argv guard admits them. The *route* does not: Part D's
+    // `isDistroName` is the rule a distribution must meet to be driven, because
+    // the WSL route runs the CLI through the distribution's shell, and it
+    // refuses every one of the last four (fail closed, a known limit).
+    for (const name of ['Ubuntu', 'Ubuntu-22.04', 'kali-linux', 'My Linux', 'Ubuntu 22.04', "dimi's distro", 'Ubuntu;x']) {
+      expect(isSafeDistroName(name), name).toBe(true)
+      expect(() => assertWslPrefix(words(['-d', name, '-e'])), name).not.toThrow()
+    }
+    for (const name of ['Ubuntu', 'Ubuntu-22.04', 'kali-linux', 'kali.rolling', 'Ubuntu_2']) {
+      expect(isDistroName(name), name).toBe(true)
+    }
+    for (const name of ['My Linux', 'Ubuntu 22.04', "dimi's distro", 'Ubuntu;x', '-sneaky', '', 'a'.repeat(201)]) {
+      expect(isDistroName(name), name).toBe(false)
+    }
+    // The length bound is the one the store's own values carry.
+    expect(isSafeDistroName('a'.repeat(257))).toBe(false)
+    expect(isSafeDistroName(`a${'b'.repeat(255)}`)).toBe(true)
+  })
+
+  it('keeps the wrapper’s flags and the CLI’s flags apart', () => {
+    // Disjointness is what makes the two fields mean anything: a word in both
+    // would be a wrapper word that also looks like a CLI flag, and the two
+    // halves of the command line would be indistinguishable.
+    expect(WSL_PREFIX_FLAGS.filter((flag) => SPAWN_FLAGS.includes(flag))).toEqual([])
+    expect([...WSL_PREFIX_FLAGS]).toEqual(['-d', '--cd', '-e'])
+    // ...and a wrapper word that *is* one of the CLI's own flags is refused
+    // rather than passed through. This is the mutation the case exists for:
+    // widening the guard with `wsl.exe`'s flags -- the alternative a design that
+    // kept the wrapper in `argv` would have had to choose.
+    expect(() => assertWslPrefix(words(['-d', 'Ubuntu', '--cd', '/home/dimi', '-e', '--json']))).toThrow(
+      /flag this console emits to the CLI/,
+    )
+  })
+
+  it('refuses a directory only for the reasons a path is refused', () => {
+    // The exemption is from the *name* alphabet, not from every rule: what is
+    // still refused is a control character, an empty string, an absurd length
+    // and a leading `-` -- `isSafeInstallationValue`, the rule the project name,
+    // the config path and the checkout already satisfy.
+    expect(() => assertWslPrefix(inside('/home/dimi/src\n-rf'))).toThrow(/start the CLI in/)
+    expect(() => assertWslPrefix(inside('-rf /home/dimi'))).toThrow(/start the CLI in/)
+    expect(() => assertWslPrefix(inside(''))).toThrow(/start the CLI in/)
+    expect(() => assertWslPrefix(inside(`/home/${'a'.repeat(4100)}/src`))).toThrow(/start the CLI in/)
+    expect(() => assertWslPrefix(inside(`/home/${'a'.repeat(1000)}/src`))).not.toThrow()
+  })
+
+  it('spells its own flags and the two separators exactly, and never an approximation', () => {
+    // What is checked here is that the words *this module* chooses are exactly
+    // its own table -- so a prefix that grew a flag, or spelled `--cd` as
+    // `--cd=`, fails here. The directory is a `wsl.exe` argument, not a shell
+    // word, so `/home/Ann Lee/src` is admitted and stays one word (asserted
+    // through the fake in `hands wsl.exe a directory with spaces as one word`).
+    // The distribution's name is held to Part D's rule (`isDistroName`) because
+    // the route runs a shell in whatever it names: `My Linux` is refused with
+    // the rule's sentence before any prefix exists (fail closed).
+    const wsl = (distro: string) =>
+      safeContext({
+        binaryPath: '',
+        wsl: { distro, directory: '/home/Ann Lee/src', executable: 'C:\\Windows\\System32\\wsl.exe' },
+      })
+    const plan = planFor('budget.show', {}, wsl('Ubuntu-22.04'))
+    const prefix = [...plan.prefix]
+    for (const word of prefix.filter((word) => word.startsWith('-'))) {
+      expect([...WSL_PREFIX_FLAGS], word).toContain(word)
+    }
+    expect(prefix).toEqual(['-d', 'Ubuntu-22.04', '--cd', '/home/Ann Lee/src', '-e'])
+    for (const distro of ['My Linux', "dimi's distro", 'Ubuntu;x']) {
+      expect(() => planFor('budget.show', {}, wsl(distro)), distro).toThrow(
+        `${JSON.stringify(distro)} is not a WSL distribution name: a distribution is 200 characters or fewer of letters, digits, dot, dash and underscore`,
+      )
+    }
+  })
+
+  it('checks the prefix on the way to `wsl.exe`, and not only when asked', () => {
+    // The enforcement is inside `wslWrapper`, the only producer of a prefix, for
+    // the same reason `assertArgvFlags` is inside `argvFor`: a check in the
+    // callers is a check a later caller can forget. The distribution's name is a
+    // string that came out of `wsl.exe` or out of the store, so this says the
+    // line it has to cross is the one the wrapper builds.
+    const wsl = { distro: '-sneaky', directory: '/home/dimi/src', executable: 'C:\\Windows\\System32\\wsl.exe' }
+    expect(() => planFor('budget.show', {}, safeContext({ binaryPath: '', wsl }))).toThrow(/distribution name/)
+    expect(() => planFor('budget.show', {}, safeContext({ binaryPath: '', wsl: { ...wsl, distro: 'Ubuntu' } }))).not.toThrow()
   })
 })
 
@@ -971,6 +1229,64 @@ describe('the child environment', () => {
     expect(Object.keys(env).sort()).toEqual(['FUGARO_PROJECT', 'HOME', 'PATH'])
   })
 
+  it('states `WSLENV` empty on the WSL leg, and never carries the key on the host', () => {
+    // T-E2 of docs/console-windows/implementation-plan.md, F20 and decision
+    // D5(a). `wsl.exe` shares a Windows variable with the distribution only when
+    // its name is listed in `WSLENV`, so the console states the list **empty**
+    // rather than leaving the variable out and trusting a default (U4): "no
+    // Windows variable is shared with the distribution" is then a sentence this
+    // console wrote.
+    //
+    // The mutations this case catches: drop the key, and both assertions here
+    // fail; write `'PATH'` (or anything else) into it, and the value assertion
+    // fails -- which is the mutation that matters, because a shared `PATH` is a
+    // Windows path in a Linux child.
+    const wsl = childEnvironment({
+      target: { project: PROJECT },
+      binaryPath: FUGARO_BINARY_NAME,
+      appEnv: fullAppEnv,
+      platform: 'win32',
+      wsl: true,
+    })
+    expect(wsl[WSLENV_KEY]).toBe('')
+    expect(Object.keys(wsl).sort()).toEqual([...CHILD_ENV_KEYS, WSLENV_KEY].sort())
+
+    // The host route does not carry the key at all: there is no `wsl.exe` between
+    // the console and the CLI, so there is no share list to state.
+    const host = childEnvironment({
+      target: { project: PROJECT },
+      binaryPath: '/opt/homebrew/bin/fugaro',
+      appEnv: fullAppEnv,
+    })
+    expect(Object.keys(host)).not.toContain(WSLENV_KEY)
+    expect(host[WSLENV_KEY]).toBeUndefined()
+
+    // **The host's own `WSLENV` is not read.** A value the operator set for their
+    // own `wsl` sessions -- `PATH` shared, or a variable of their own -- is not
+    // this console's share list, and forwarding it would hand the distribution
+    // whatever the operator had arranged elsewhere. The key is written, never
+    // copied.
+    const hostile = childEnvironment({
+      target: { project: PROJECT },
+      binaryPath: FUGARO_BINARY_NAME,
+      appEnv: { ...fullAppEnv, WSLENV: 'PATH/l:FOO/u' },
+      platform: 'win32',
+      wsl: true,
+    })
+    expect(hostile[WSLENV_KEY]).toBe('')
+
+    // And it is the *route* that states it, not the platform: the win32 row is
+    // what a `wsl.exe` **query** uses too (`src/main/wsl.ts`), and a query starts
+    // no distribution process to state a share list to.
+    const query = childEnvironment({
+      target: { project: PROJECT },
+      binaryPath: FUGARO_BINARY_NAME,
+      appEnv: fullAppEnv,
+      platform: 'win32',
+    })
+    expect(Object.keys(query)).not.toContain(WSLENV_KEY)
+  })
+
   it('reaches the child as its real environment, not just as a plan', async () => {
     // The end-to-end half: the stub reports the keys of its own process.env, so
     // a merge with process.env anywhere in the console would show up here.
@@ -1123,6 +1439,38 @@ describe('the private working directory', () => {
     const base = freshDirectory()
     const path = privateWorkingDirectory({ base })
     expect(realpathSync(path)).toBe(path)
+  })
+
+  it('creates a directory on Windows that makes no mode claim at all (F12, T-D4)', () => {
+    // F12: the POSIX guarantees are POSIX-only, and the defect is stating them
+    // anyway. NTFS reports two modes and neither is a POSIX one; `chmodSync` is
+    // a no-op there and `process.getuid` does not exist, so a `0700` description
+    // -- or an ACL -- would be a promise the filesystem does not keep. What the
+    // Windows branch promises is what it can: a directory, empty, at the same
+    // name every time, refusing a link or a file someone else planted there.
+    //
+    // The name is the red step: the Windows branch asks the process for **no
+    // uid**, so the base is the shared `fugaro-console` and not
+    // `fugaro-console-<uid>`. A branch that kept the POSIX name would fail here
+    // on this machine, where `process.getuid` exists and would answer.
+    const owned = ownTemporaryDirectory()
+    const path = privateWorkingDirectory({ platform: 'win32' })
+    expect(dirname(path)).toBe(join(owned, PRIVATE_DIR_NAME))
+    expect(basename(path)).toBe(PRIVATE_DIR_LEAF)
+    expect(statSync(path).isDirectory()).toBe(true)
+    expect(readdirSync(path)).toEqual([])
+    expect(privateWorkingDirectory({ platform: 'win32' })).toBe(path)
+    // ...and a caller that passes a uid anyway does not get one: there is no
+    // such thing to carry here, so `platform` decides and the uid is ignored.
+    expect(privateWorkingDirectory({ platform: 'win32', uid: 4242 })).toBe(path)
+  })
+
+  it('still refuses a file or a link planted at the Windows name (F12, T-D4)', () => {
+    const base = freshDirectory()
+    writeFileSync(join(base, PRIVATE_DIR_LEAF), '')
+    // A file at the name is not a directory this console will spawn from, on
+    // Windows exactly as on POSIX: this is the check the Windows branch keeps.
+    expect(() => privateWorkingDirectory({ base, platform: 'win32' })).toThrow(/not a directory/)
   })
 })
 
@@ -1752,7 +2100,7 @@ describe('the WSL resolution path', () => {
     // The program the console starts is `wsl.exe` -- here, the fake -- and not
     // the CLI: on this route there is no host path to the CLI at all.
     expect(plan.command).toBe(wsl.binary)
-    expect([...plan.prefix]).toEqual(['-d', 'Ubuntu', '--cd', '/home/dimi/src/fugaro', '--'])
+    expect([...plan.prefix]).toEqual(['-d', 'Ubuntu', '--cd', '/home/dimi/src/fugaro', '-e'])
     // `argv[0]` is the bare name, not a path: the distribution's own `PATH`
     // resolves it, which is the point of running the CLI inside (F5).
     expect(plan.argv[0]).toBe(FUGARO_BINARY_NAME)
@@ -1769,26 +2117,34 @@ describe('the WSL resolution path', () => {
     // directory is the wrapper's `--cd`.
     expect(plan.cwd).toBe('/Users/owner/AppData/Local/Temp/fugaro-console/cwd')
     // The whole line, as it will be spawned and as the log records it (O4).
-    expect([...spawnedArgv(plan)]).toEqual([
-      wsl.binary,
-      '-d',
-      'Ubuntu',
-      '--cd',
-      '/home/dimi/src/fugaro',
-      '--',
-      'fugaro',
-      'budget',
-      'show',
-      '--json',
-      '--project',
-      PROJECT,
-    ])
+    // The CLI's argv is **inside** the wrapper's script rather than beside it
+    // (T-F4, D6(a)): the shell is what records the pid inside the distribution,
+    // and `exec` makes that pid the CLI's own.
+    const line = [...spawnedArgv(plan)]
+    expect(line.slice(0, 6)).toEqual([wsl.binary, '-d', 'Ubuntu', '--cd', '/home/dimi/src/fugaro', '-e'])
+    expect(line.slice(6, 8)).toEqual([WSL_SHELL_PROGRAM, WSL_SHELL_FLAG])
+    expect(line).toHaveLength(9)
+    const script = line[8] ?? ''
+    // The marker T-F1 classifies by, the pid T-F4's stop names -- on the same
+    // line, because that is the one channel the console reads -- and the CLI's
+    // argv, each word quoted, so a project named `$(id)` is a word.
+    expect(script).toContain(`printf '%s %s\\n' '${WSL_WRAPPER_MARKER}' "$$" >&2`)
+    expect(script).toContain(`exec 'fugaro' 'budget' 'show' '--json' '--project' '${PROJECT}'`)
+    // Nothing is written anywhere: the pid is a number on stderr, so there is no
+    // file for the shell to name in a directory the console would then have to
+    // spell the same way (the shell's `--cd` is the checkout; `plan.cwd` is a
+    // host path, and the two are not the same directory). The script's one
+    // redirection is `>&2`.
+    expect(script).not.toMatch(/>\s*'/)
+    expect(plan.wrapper?.distro).toBe('Ubuntu')
   })
 
-  it('gives the CLI inside the distribution Linux’s PATH and exactly CHILD_ENV_KEYS', () => {
+  it('gives the CLI inside the distribution Linux’s PATH, CHILD_ENV_KEYS and an empty WSLENV', () => {
     // The credential boundary's near side, on the WSL route: the environment the
     // CLI receives is built by `childEnvironment` and nothing else, and its PATH
-    // is a Linux one even though the host is Windows (F5, T-C2).
+    // is a Linux one even though the host is Windows (F5, T-C2). `WSLENV` is the
+    // one key beside the eleven, and it is the *statement* that the Windows
+    // environment is not shared with the distribution (T-E2, D5(a)).
     const wsl = installWslStub(freshDirectory(), { distros: TWO_DISTROS })
     const plan = planFor('budget.show', {}, safeContext({
       binaryPath: FUGARO_BINARY_NAME,
@@ -1800,9 +2156,16 @@ describe('the WSL resolution path', () => {
       },
       wsl: { distro: 'Ubuntu', directory: '/home/dimi/src', executable: wsl.binary },
     }))
-    // Every key is a `CHILD_ENV_KEY` -- the allow-list is the enforcement, and
-    // the app's own environment is read for nothing else.
-    for (const key of Object.keys(plan.env)) expect(CHILD_ENV_KEYS).toContain(key)
+    // Every key is a `CHILD_ENV_KEY` or the share list this route states -- the
+    // allow-list is the enforcement, and the app's own environment is read for
+    // nothing else.
+    for (const key of Object.keys(plan.env)) expect([...CHILD_ENV_KEYS, WSLENV_KEY]).toContain(key)
+    // The keys are exactly the ones this `appEnv` supplied plus the two this
+    // module always writes (`PATH`, `FUGARO_PROJECT`) and the share list -- a
+    // key that is not on the allow-list would be a key that came from the app's
+    // environment, which is the leak this case exists to refuse.
+    expect(Object.keys(plan.env).sort()).toEqual(['FUGARO_PROJECT', 'HOME', 'PATH', WSLENV_KEY])
+    expect(plan.env[WSLENV_KEY]).toBe('')
     expect(plan.env['PATH']).toBe(childPath(FUGARO_BINARY_NAME, 'linux'))
     expect(plan.env['PATH']).not.toContain('C:\\Windows')
     expect(Object.keys(plan.env)).not.toContain('AWS_SECRET_ACCESS_KEY')
@@ -1832,7 +2195,7 @@ describe('the WSL resolution path', () => {
       directory: '/Users/owner/AppData/Local/Temp/fugaro-console/cwd',
       wsl: { distro: 'Ubuntu', executable: wsl.binary },
     }))
-    expect([...outside.prefix]).toEqual(['-d', 'Ubuntu', '--'])
+    expect([...outside.prefix]).toEqual(['-d', 'Ubuntu', '-e'])
     expect([...outside.argv]).not.toContain('--dir')
     expect([...outside.argv]).not.toContain('/Users/owner/AppData/Local/Temp/fugaro-console/cwd')
   })
@@ -1856,15 +2219,14 @@ describe('the WSL resolution path', () => {
     expect(spawn).toHaveLength(1)
     expect(spawn[0]?.distro).toBe('Ubuntu')
     expect(spawn[0]?.cd).toBe(arrangement.distroDirectory)
-    expect(spawn[0]?.argv).toEqual([
-      '-d',
-      'Ubuntu',
-      '--cd',
-      arrangement.distroDirectory,
-      '--',
-      FUGARO_BINARY_NAME,
-      'version',
-    ])
+    // `wsl.exe`'s own words, then the shell that carries the CLI (T-F4): the
+    // CLI's argv is inside the script, which is what lets the console record the
+    // pid it must kill. What the CLI received is the next assertion, from the
+    // child's own account rather than from the console's intent.
+    expect(spawn[0]?.argv.slice(0, 5)).toEqual(['-d', 'Ubuntu', '--cd', arrangement.distroDirectory, '-e'])
+    expect(spawn[0]?.argv.slice(5, 7)).toEqual([WSL_SHELL_PROGRAM, WSL_SHELL_FLAG])
+    expect(spawn[0]?.argv).toHaveLength(8)
+    expect(spawn[0]?.wrapper).toContain(`exec '${FUGARO_BINARY_NAME}' 'version'`)
     // The host side: `wsl.exe` was started in the directory the console named.
     expect(spawn[0]?.cwd).toBe(arrangement.host)
     // ...and the distribution's side: the CLI's own cwd is the `--cd`.
@@ -1884,8 +2246,11 @@ describe('the WSL resolution path', () => {
     const resolution = await resolveInside(arrangement, { binaryPath: stored })
     expect(resolution.ok && resolution.path).toBe(stored)
     const spawn = only(arrangement.wsl.reports().filter((report) => report.kind === 'spawn'))
-    expect(spawn.argv.at(-2)).toBe(FUGARO_BINARY_NAME)
-    expect(spawn.argv.at(-1)).toBe('version')
+    // The program word is the bare name and it is **inside the script** (T-F4):
+    // the distribution resolves it, and the record's path is what the console
+    // states rather than what it runs.
+    expect(spawn.wrapper).toContain(`exec '${FUGARO_BINARY_NAME}' 'version'`)
+    expect(spawn.wrapper).not.toContain(stored)
     expect(only(arrangement.wsl.children()).argv).toEqual(['version'])
 
     // And the plan says the same thing: the name runs, the record's directory is
@@ -1931,6 +2296,90 @@ describe('the WSL resolution path', () => {
     expect(resolution.reason).toContain('"Ubuntu"')
     expect(resolution.reason).toContain('"Debian"')
     // Nothing was started in any distribution.
+    expect(arrangement.wsl.childCalls()).toBe(0)
+    expect(arrangement.wsl.reports().filter((report) => report.kind === 'spawn')).toHaveLength(0)
+  })
+
+  it('hands `wsl.exe` a directory with spaces as one word', async () => {
+    // **The case a review asked for**: whitespace in the directory is admitted
+    // (`isSafeInstallationValue`; it is a `wsl.exe` argument, not a shell word),
+    // so the claim that it is *safe* has to be made where it can be observed --
+    // at the fake's own argv. A Linux directory can be called `Ann Lee`, and with
+    // an array argv it is one element: nothing splits on the space. The mutation
+    // this catches is building the command line as a string, or a guard that
+    // splits a value to check it. (A *distribution* name with a space is refused
+    // -- Part D's rule; see the next case.)
+    const arrangement = wslRoot({
+      list: 'Ubuntu\r\nMy Linux\r\n',
+      status: 'Default Distribution: Ubuntu\r\nDefault Version: 2\r\n\r\nWSL version: 2.6.1.0\r\n',
+    })
+    const spaced = join(arrangement.distroDirectory, 'Ann Lee')
+    mkdirSync(spaced, { recursive: true })
+    const resolution = await resolveInside(arrangement, { distro: 'Ubuntu', wslDirectory: spaced })
+    expect(resolution.ok).toBe(true)
+
+    const hop = only(arrangement.wsl.reports().filter((report) => report.kind === 'spawn'))
+    expect(hop.argv.filter((word) => word === spaced)).toHaveLength(1)
+    expect(hop.distro).toBe('Ubuntu')
+    expect(hop.cd).toBe(spaced)
+    // ...and the Linux side really was started in it, so this is not only what
+    // the console asked for.
+    const child = only(arrangement.wsl.children())
+    expect(child.argv).toEqual(['version'])
+    expect(realpathSync(child.cwd)).toBe(realpathSync(spaced))
+  })
+
+  it('refuses, with a sentence, a listed distribution whose name has a space, a quote or a `;`', async () => {
+    // Part D's rule (T-D3, `isDistroName`): the WSL route runs the CLI through
+    // the distribution's own shell, so a name outside `DISTRO_NAME_PATTERN` is
+    // refused (fail closed) even though `wsl.exe --list --quiet` prints it and
+    // `wsl --import "My Linux"` registers it. The resolver answers with a
+    // `no-distro` sentence rather than letting `planFor`'s guard throw out of
+    // an async read -- the mutation this case exists for.
+    for (const distro of ['My Linux', "dimi's distro", 'Ubuntu;x']) {
+      const arrangement = wslRoot({
+        list: `Ubuntu\r\n${distro}\r\n`,
+        status: 'Default Distribution: Ubuntu\r\nDefault Version: 2\r\n\r\nWSL version: 2.6.1.0\r\n',
+      })
+      const resolution = await resolveInside(arrangement, { distro })
+      expect(resolution.ok, distro).toBe(false)
+      if (resolution.ok) throw new Error('unreachable')
+      expect(resolution.kind).toBe('no-distro')
+      expect(resolution.path).toBeNull()
+      expect(resolution.reason).toContain(JSON.stringify(distro))
+      expect(resolution.reason).toContain('is listed by wsl.exe and is not a name this console will run a shell in')
+      expect(resolution.reason).toContain('200 characters or fewer of letters, digits, dot, dash and underscore')
+      expect(arrangement.wsl.childCalls()).toBe(0)
+      expect(arrangement.wsl.reports().filter((report) => report.kind === 'spawn')).toHaveLength(0)
+    }
+  })
+
+  it('refuses, with a sentence, a listed distribution whose name it will not hand to `wsl.exe`', async () => {
+    // T-E3's edge, and the reason the guard is a name check and not a crash: a
+    // registered name can begin with `-` -- which is the one shape that is
+    // argument confusion, because `wsl.exe` may read it as its own flag -- and
+    // `wsl.exe --list --quiet` lists it regardless. The console states that it
+    // will not drive it rather than letting the wrapper's own guard throw an
+    // exception out of an async read (which is the mutation this case exists
+    // for: answer it here, and the case fails with an unhandled error instead of
+    // a refusal).
+    const arrangement = wslRoot({
+      list: 'Ubuntu\r\n-sneaky\r\n',
+      status: 'Default Distribution: Ubuntu\r\nDefault Version: 2\r\n\r\nWSL version: 2.6.1.0\r\n',
+    })
+    const resolution = await resolveInside(arrangement, { distro: '-sneaky' })
+    expect(resolution.ok).toBe(false)
+    if (resolution.ok) throw new Error('unreachable')
+    // `no-distro` and not a fifth kind: this is its second shape, documented on
+    // `BinaryRefusalKind` -- there is no distribution this console can drive by
+    // that name, and the remedy is the same one the first shape drives.
+    expect(resolution.kind).toBe('no-distro')
+    expect(resolution.path).toBeNull()
+    // The sentence names the name and the rule, so the operator can see what the
+    // console will not do rather than only that something failed.
+    expect(resolution.reason).toContain('"-sneaky"')
+    expect(resolution.reason).toContain('listed by wsl.exe')
+    expect(resolution.reason).toContain('begin with "-"')
     expect(arrangement.wsl.childCalls()).toBe(0)
     expect(arrangement.wsl.reports().filter((report) => report.kind === 'spawn')).toHaveLength(0)
   })
@@ -1998,17 +2447,13 @@ describe('the WSL resolution path', () => {
       source: 'configured',
     })
     const spawn = only(arrangement.wsl.reports().filter((report) => report.kind === 'spawn'))
-    expect(spawn.argv).toEqual([
-      '-d',
-      'Ubuntu',
-      '--cd',
-      arrangement.distroDirectory,
-      '--',
-      FUGARO_BINARY_NAME,
-      'version',
-    ])
+    expect(spawn.argv.slice(0, 5)).toEqual(['-d', 'Ubuntu', '--cd', arrangement.distroDirectory, '-e'])
+    expect(spawn.argv.slice(5, 7)).toEqual([WSL_SHELL_PROGRAM, WSL_SHELL_FLAG])
     // The handshake's argv is exactly `version` on this route too: no
-    // `--project`, because `fugaro version` takes no flags at all.
+    // `--project`, because `fugaro version` takes no flags at all -- and it is
+    // inside the wrapper's script, which is what the child's own account below
+    // confirms (T-F4).
+    expect(spawn.wrapper).toContain(`exec '${FUGARO_BINARY_NAME}' 'version'`)
     expect(only(arrangement.wsl.children()).argv).toEqual(['version'])
   })
 
@@ -2038,6 +2483,256 @@ describe('the WSL resolution path', () => {
     expect(resolution.kind).toBe('no-distro')
     // The host's `fugaro` was never asked: `resolveBinary` was not reached.
     expect(hostStub.calls()).toBe(0)
+  })
+
+  // SECURITY-SENSITIVE: the credential boundary, proved through `wsl.exe` rather
+  // than around it (T-E1; F18, F19, F21, F22; decision D5(a)).
+  //
+  // **The claim, in one sentence:** nothing the console's own environment holds
+  // reaches the process inside the distribution except the eleven
+  // `CHILD_ENV_KEYS`, and the only key beside them on the way to `wsl.exe` is
+  // the empty `WSLENV` the route states.
+  //
+  // **Why it is asserted here and not read off the plan.** A test that inspected
+  // `plan.env` would be asserting that the console is self-consistent. The fake
+  // reports what each hop *received*: the `wsl.exe` hop's own environment (what
+  // the console handed it) and the `fugaro` hop's (what the Linux side got), and
+  // those are the two accounts an operator's machine could be wrong about.
+  //
+  // **The mutations this case catches**, each one a plausible edit:
+  //   1. `...process.env` merged into `childEnvironment` -- the sentinels are in
+  //      this *test process's* environment, so they appear in the `wsl.exe`
+  //      hop's own report and the case fails by naming them;
+  //   2. the same merge done from `appEnv` -- the sentinels are in the `appEnv`
+  //      handed over too, so that half is covered by the same assertions;
+  //   3. the allow-list widened (a key added to `CHILD_ENV_KEYS`) -- the `wsl.exe`
+  //      hop's key set is pinned exactly;
+  //   4. `WSLENV` forwarded from the host rather than written empty -- the
+  //      near-side assertion on its value fails;
+  //   5. the double forwarding its own environment to the child -- the child
+  //      hop's key set is pinned exactly, and `test/unit/wslstub.test.ts` holds
+  //      that half of the double's contract on its own.
+  it('hands the distribution exactly CHILD_ENV_KEYS, with this process’s credentials planted', async () => {
+    // The planted credentials are *names*, and the values are inert strings that
+    // match no credential shape (the rule `test/unit/secret-hygiene.test.ts`
+    // enforces over this tree). They stand in for everything the console's
+    // environment holds and the distribution must not see.
+    const PLANTED: Readonly<Record<string, string>> = {
+      AWS_SECRET_ACCESS_KEY: 'planted-not-a-real-key',
+      GITHUB_TOKEN: 'planted-not-a-real-token',
+      GOOGLE_APPLICATION_CREDENTIALS: 'C:\\Users\\dimi\\.config\\gcloud\\planted.json',
+    }
+    for (const [name, value] of Object.entries(PLANTED)) vi.stubEnv(name, value)
+    vi.stubEnv('PATH', WINDOWS_PATH)
+
+    // The environment the app hands the console: this process's own (the
+    // sentinels included) plus the eleven keys spelled as a Windows host would
+    // spell them. All eleven are present, so "exactly the eleven" is a literal
+    // claim here and not a claim about whichever keys this machine happens to
+    // have.
+    const appEnv: Readonly<Record<string, string | undefined>> = {
+      ...process.env,
+      ...PLANTED,
+      PATH: WINDOWS_PATH,
+      HOME: 'C:\\Users\\dimi',
+      TMPDIR: 'C:\\Users\\dimi\\AppData\\Local\\Temp',
+      LANG: 'en_US.UTF-8',
+      LC_ALL: 'en_US.UTF-8',
+      XDG_CONFIG_HOME: 'C:\\Users\\dimi\\.config',
+      XDG_CACHE_HOME: 'C:\\Users\\dimi\\.cache',
+      XDG_DATA_HOME: 'C:\\Users\\dimi\\.local\\share',
+      XDG_STATE_HOME: 'C:\\Users\\dimi\\.local\\state',
+      XDG_RUNTIME_DIR: 'C:\\Users\\dimi\\run',
+    }
+
+    const arrangement = wslRoot()
+    const resolution = await resolveInstalledBinary({
+      binaryPath: '',
+      distro: 'Ubuntu',
+      wslDirectory: arrangement.distroDirectory,
+      wslPath: arrangement.wsl.binary,
+      appEnv,
+      directory: arrangement.host,
+      target: { project: PROJECT },
+    })
+    expect(resolution.ok).toBe(true)
+
+    // macOS adds __CF_USER_TEXT_ENCODING to every process it starts (as
+    // elsewhere in this file): the platform's own key, named rather than waved
+    // through so any other addition still fails.
+    const platformKeys = process.platform === 'darwin' ? ['__CF_USER_TEXT_ENCODING'] : []
+
+    // The near side: what `wsl.exe` was handed. The eleven, plus the share list
+    // this route states -- and nothing else, sentinels included.
+    const hop = only(arrangement.wsl.reports().filter((report) => report.kind === 'spawn'))
+    expect(hop.envKeys.filter((key) => !platformKeys.includes(key)).sort()).toEqual(
+      [...CHILD_ENV_KEYS, WSLENV_KEY].sort(),
+    )
+    expect(hop.env[WSLENV_KEY]).toBe('')
+    // The `PATH` the console hands `wsl.exe` is the **child's** -- Linux's --
+    // even though the process that receives it is a Windows one, because it is
+    // the environment the distribution's process is built from (F5, T-A2). The
+    // Windows-shaped `PATH` this test put in the app's own environment is
+    // nowhere in it.
+    expect(hop.path).toBe(childPath(FUGARO_BINARY_NAME, 'win32'))
+    expect(hop.path).not.toContain('C:\\')
+    for (const [name, value] of Object.entries(PLANTED)) {
+      expect(hop.envKeys, name).not.toContain(name)
+      expect(hop.env[name], name).toBeUndefined()
+      // ...and the value is nowhere in the environment either, which is what a
+      // key-by-key check would miss if the name were respelled.
+      expect(Object.values(hop.env), name).not.toContain(value)
+    }
+    // The share list is `wsl.exe`'s: it is not one of the variables the child
+    // inside the distribution receives, so the double does not hand it over.
+    expect(Object.keys(hop.childEnv)).not.toContain(WSLENV_KEY)
+
+    // The far side: what the Linux process got. Exactly the eleven -- the
+    // distribution's own `PATH`, the allow-list's values, and nothing else.
+    //
+    // Part F carries the CLI in `sh -c` (T-F4), and a POSIX shell sets `PWD`
+    // and `SHLVL` in the environment of what it `exec`s. Those two are the
+    // shell's own bookkeeping, not anything the console or the host handed
+    // over, so they are named here -- exactly two, and with their values held to
+    // what a shell writes -- rather than waved through.
+    const child = only(arrangement.wsl.children())
+    const shellKeys = ['PWD', 'SHLVL']
+    const childKeys = child.envKeys.filter((key) => !platformKeys.includes(key) && !shellKeys.includes(key))
+    expect(childKeys.sort()).toEqual([...CHILD_ENV_KEYS].sort())
+    expect(child.env['PWD'] ?? '/').toMatch(/^\//)
+    expect(child.env['SHLVL'] ?? '1').toMatch(/^[0-9]+$/)
+    // The distribution's own `PATH`, with the double's stand-in for the
+    // directory the CLI is installed in at its head (the wrapper's `exec fugaro`
+    // resolves through it, `WRAPPER_PATH` in the double) -- and nothing of the
+    // host's.
+    expect(child.env['PATH']).toBe(`${arrangement.wsl.stub.directory}:${DISTRO_PATH}`)
+    expect(child.env['PATH']).not.toContain('C:\\')
+    expect(child.env[WSLENV_KEY]).toBeUndefined()
+    // The filter is a filter and not an empty environment: the allow-listed
+    // values did arrive, spelled as the Windows host spells them.
+    expect(child.env['HOME']).toBe('C:\\Users\\dimi')
+    expect(child.env['FUGARO_PROJECT']).toBe(PROJECT)
+    for (const [name, value] of Object.entries(PLANTED)) {
+      expect(child.envKeys, name).not.toContain(name)
+      expect(child.env[name], name).toBeUndefined()
+      expect(Object.values(child.env), name).not.toContain(value)
+    }
+  })
+})
+
+describe('the spelling each side gets (Part D, T-D3, D3(a))', () => {
+  // D3(a): **one thing, one spelling, said out loud.** A path the console
+  // *states* or *passes into the distribution* is the distribution's Linux
+  // spelling; the UNC spelling (`wslUncPath`) exists only where Windows opens a
+  // path itself. T-A2's fake refuses a Windows spelling in `--cd` by name, and
+  // the refusals below happen before any process exists -- so the failure names
+  // the rule rather than arriving as an `ENOENT` from inside a distribution.
+  const UBUNTU: WslRoute = { distro: 'Ubuntu', directory: '/home/dimi/src' }
+
+  it('refuses a project name the distribution’s shell would read as syntax', () => {
+    // The carry-over from Part C's review, and the reason it binds this part:
+    // the CLI runs through the distribution's own shell, so every word after
+    // `--` that is not a fixed constant is shell syntax until it is proved
+    // otherwise. A project named `$(touch x)` must never reach a shell.
+    const hostile = ['$(touch x)', '`touch x`', 'a;rm -rf /', 'a|b', 'a&b', 'a>b', "a'b"]
+    for (const project of hostile) {
+      expect(() => planFor('budget.show', {}, safeContext({ project, wsl: UBUNTU })), project).toThrow(
+        /shell/,
+      )
+    }
+    // A newline never gets as far as the shell check: it is refused as a name
+    // before the argv is built. The rule is "refused", and this is the other
+    // reader of it -- what matters is that it is not passed on.
+    expect(() => planFor('budget.show', {}, safeContext({ project: 'a\nb', wsl: UBUNTU }))).toThrow(
+      /not a value this console will pass/,
+    )
+    // ...and the same word is refused in every other value too, by whichever
+    // reader sees it first: an argument's own value check, or this one. What
+    // matters is that it is refused, and that both sentences exist.
+    expect(() =>
+      planFor('budget.show', { repo: 'acme/$(touch x)' }, safeContext({ wsl: UBUNTU })),
+    ).toThrow(/not a value this console will pass|shell/)
+  })
+
+  it('builds the plan for a safe word, so the refusal is a filter and not a wall', () => {
+    // The other direction of the red step: a project name inside the alphabet
+    // still plans, and its Linux directory is what the wrapper names.
+    const plan = planFor('budget.show', {}, safeContext({ project: 'acme-widgets', wsl: UBUNTU }))
+    expect([...plan.argv]).toEqual([FUGARO_BINARY_NAME, 'budget', 'show', '--json', '--project', 'acme-widgets'])
+    expect([...plan.prefix]).toEqual(['-d', 'Ubuntu', '--cd', '/home/dimi/src', '-e'])
+  })
+
+  it('refuses a Windows spelling rather than the directory the distribution has', () => {
+    // D3(a) from the other side: a `C:\...` spelling in the wrapper's `--cd` is
+    // a directory that does not exist inside the distribution. The console
+    // refuses it rather than translating it here -- the translation is
+    // `wslpath`'s (T-D2), and a path this function composed would be right for
+    // `C:` and wrong for every custom mount (D4(b)).
+    expect(() =>
+      planFor('budget.show', {}, safeContext({ wsl: { distro: 'Ubuntu', directory: 'C:\\Users\\dimi\\src' } })),
+    ).toThrow(/Windows spelling/)
+    // ...and the config path is the same rule: it is passed *into* the
+    // distribution, so it is the distribution's spelling.
+    expect(() =>
+      planFor(
+        'budget.show',
+        {},
+        safeContext({
+          configPath: 'C:\\Users\\dimi\\.config\\fugaro\\config.yaml',
+          wsl: UBUNTU,
+        }),
+      ),
+    ).toThrow(/Windows spelling/)
+    // With the distribution's spelling both are passed through verbatim.
+    const plan = planFor(
+      'budget.show',
+      {},
+      safeContext({ configPath: '/home/dimi/.config/fugaro/config.yaml', wsl: UBUNTU }),
+    )
+    expect([...plan.argv]).toContain('/home/dimi/.config/fugaro/config.yaml')
+  })
+
+  it('refuses a distribution name that is not a name, before anything runs', () => {
+    // The name decides **where the shell runs**, and it arrives from a document
+    // (D2(a)); `planFor` is the last place it is still a string, and this is
+    // what "planFor checks the distro itself" means for a function that starts
+    // no process.
+    for (const distro of ['Ubuntu; touch /tmp/x', 'Ubuntu\n', 'a b', '-Ubuntu', '', 'Ubuntu$(id)']) {
+      expect(() => planFor('budget.show', {}, safeContext({ wsl: { distro, directory: '/home/dimi/src' } })), distro).toThrow(
+        /WSL distribution name|shell/,
+      )
+    }
+    // A name inside the alphabet plans: `Ubuntu-22.04` and `Ubuntu_2` are real
+    // distribution names, and a check that refused them would refuse the machine.
+    for (const distro of ['Ubuntu', 'Ubuntu-22.04', 'Ubuntu_2', 'kali.rolling']) {
+      expect(() =>
+        planFor('budget.show', {}, safeContext({ wsl: { distro, directory: '/home/dimi/src' } })),
+      ).not.toThrow()
+    }
+  })
+
+  it('is the only spelling Windows needs, and it is only for Windows opening a path', () => {
+    // `wslUncPath` is the one place a Windows spelling is *produced*, and it
+    // exists for the paths Windows itself opens -- never for a word the console
+    // states or passes into the distribution.
+    expect(wslUncPath('Ubuntu', '/home/dimi/src')).toBe('\\\\wsl.localhost\\Ubuntu\\home\\dimi\\src')
+    expect(wslUncPath('Ubuntu-22.04', '/home/dimi/.local/share/fugaro')).toBe(
+      '\\\\wsl.localhost\\Ubuntu-22.04\\home\\dimi\\.local\\share\\fugaro',
+    )
+    expect(wslUncPath('Ubuntu', '/')).toBe('\\\\wsl.localhost\\Ubuntu\\')
+  })
+
+  it('quotes a word for a POSIX shell, and refuses the one it cannot quote', () => {
+    // `shellQuoteWord` is Part F's, exported now so that the `sh -c` wrapper
+    // quotes rather than concatenates. Until then the WSL route **refuses** a
+    // dangerous word (above), which is the safe half of the same rule.
+    expect(shellQuoteWord('fugaro')).toBe("'fugaro'")
+    expect(shellQuoteWord('a b')).toBe("'a b'")
+    expect(shellQuoteWord("a'b")).toBe("'a'\\''b'")
+    expect(shellQuoteWord('$(touch x)')).toBe("'$(touch x)'")
+    // A NUL cannot be passed to a process at all, so there is nothing to quote:
+    // a quote that dropped it would hand the child a different word.
+    expect(() => shellQuoteWord('a\u0000b')).toThrow()
   })
 })
 
@@ -2339,11 +3034,78 @@ describe('the supervisor', () => {
       ok: false,
       code: null,
       said: null,
-      reason: 'the binary did not answer `version` in time',
+      // The sentence is the read's own, spelled where every other timeout in
+      // this module is spelled (`runToCompletion`'s deadline), so a probe and a
+      // read say the same thing about the same deadline.
+      reason: `fugaro version did not finish within ${String(VERSION_TIMEOUT_MS / 1000)}s`,
+      // The host route: there is no wrapper, so there is no
+      // "did a child inside the distribution start" question to answer (T-F1).
+      wrapperStarted: null,
     })
     await waitFor(() => stub.kills().length === 1)
     expect(stub.kills()[0]?.signal).toBe('SIGTERM')
     expect(stub.kills()[0]?.argv).toContain('version')
+  })
+
+  it('carries the WSL residual and the wrapper fact through a probe timeout', async () => {
+    // The installations list is exactly where a cold-starting distribution is
+    // probed: `VERSION_TIMEOUT_MS` is five seconds and a first `wsl.exe` call
+    // can take longer than that (U15). When it does, the probe must not read as
+    // an ordinary host timeout -- a `fugaro` may have been left running inside
+    // the distribution, and the sentence that says so is the one the read
+    // computed when it refused. A probe that rebuilt its own sentence here
+    // ("the binary did not answer `version` in time", with `wrapperStarted:
+    // null`) threw both facts away, and this is the one caller-facing path
+    // where they exist.
+    const directory = freshDirectory()
+    const plan = planFor('cli.version', {}, {
+      target: { project: PROJECT },
+      binaryPath: '',
+      directory,
+      appEnv: {},
+      wsl: { distro: 'Ubuntu', executable: '/usr/bin/wsl.exe' },
+    })
+    const child = scriptedChild()
+    const timers = manualTimers()
+    const pending = probeVersion(plan, { spawner: () => child, timers, shutdownGraceMs: 50 })
+    timers.fire()
+    // Nothing was ever printed: the distribution was still starting, so the
+    // pid never came. The refusal waits for the grace and then states the
+    // window.
+    timers.fire()
+    const probe = await pending
+    expect(probe.ok).toBe(false)
+    if (probe.ok) return
+    expect(probe.reason).toContain('did not finish within')
+    expect(probe.reason).toContain('may still be running')
+    // ...and the WSL-route timeout is not a host one: no marker was seen, so no
+    // child inside the distribution ever started (T-F1, F26).
+    expect(probe.wrapperStarted).toBe(false)
+    expect(probe.code).toBeNull()
+    expect(probe.said).toBeNull()
+
+    // With the wrapper's line on stderr the same probe is the same refusal
+    // without the window: the console named the process, and the stop went out.
+    const reported = scriptedChild()
+    const calls: string[][] = []
+    const secondTimers = manualTimers()
+    const second = probeVersion(plan, {
+      spawner: ((command: string, args: readonly string[]) => {
+        calls.push([command, ...args])
+        return reported
+      }) as ChildSpawner,
+      timers: secondTimers,
+      shutdownGraceMs: 50,
+    })
+    reported.emitStderr(`${WSL_WRAPPER_MARKER} 4321\n`)
+    secondTimers.fire()
+    secondTimers.fire()
+    const secondProbe = await second
+    expect(secondProbe.ok).toBe(false)
+    if (secondProbe.ok) return
+    expect(secondProbe.reason).not.toContain('may still be running')
+    expect(secondProbe.wrapperStarted).toBe(true)
+    expect(calls[1]).toEqual(['/usr/bin/wsl.exe', '-d', 'Ubuntu', '-e', 'sh', '-c', 'kill -TERM 4321'])
   })
 
   it('stops a long-lived child with SIGTERM and reports the stop', async () => {
@@ -3071,6 +3833,40 @@ describe('the source scan', () => {
     expect(source).not.toMatch(/shell:\s*true/)
     expect(source).not.toMatch(/\/bin\/sh/)
   })
+
+  it('closes stdin at every spawn site, and pipes the other two', () => {
+    // T-E3, finding F19: `stdio: ['ignore', 'pipe', 'pipe']` is written at each
+    // site that starts a child -- the real spawner, the supervised run and the
+    // live subscription -- so a CLI that decides to read a prompt reads EOF
+    // rather than the console's terminal, and nothing a window does with the
+    // keyboard reaches a child. The mutation this catches is `'inherit'` (or a
+    // dropped `stdio`, which hands the child the parent's streams by default) at
+    // any one of the three: the count is asserted as well as the literal, so
+    // deleting the option fails here rather than passing quietly.
+    //
+    // Part F adds a fourth site and changes the real spawner's: the stop sent
+    // **inside** a distribution (T-F4) reads nothing, so it asks for `'ignore'`
+    // on all three, and the real spawner now copies its caller's request
+    // (`[...options.stdio]`) instead of hardcoding the reads' answer. stdin is
+    // still `'ignore'` everywhere -- the type below is what says so for the
+    // spawner's copy, and the literals are listed one by one.
+    const source = codeOnly('main/spawn.ts')
+    const optionLines = source.match(/stdio: \[[^\]]*\]/g) ?? []
+    expect([...optionLines].sort()).toEqual(
+      [
+        'stdio: [...options.stdio]',
+        "stdio: ['ignore', 'ignore', 'ignore']",
+        "stdio: ['ignore', 'pipe', 'pipe']",
+        "stdio: ['ignore', 'pipe', 'pipe']",
+      ].sort(),
+    )
+    // The type the spawner is handed says the same thing, so a caller cannot
+    // widen it -- or hand a child the console's stdin -- without changing this
+    // line too.
+    expect(source).toContain("stdio: readonly ['ignore', 'ignore' | 'pipe', 'ignore' | 'pipe']")
+    expect(source).not.toMatch(/stdio:\s*'inherit'/)
+    expect(source).not.toMatch(/stdio:\s*\[[^\]]*'inherit'/)
+  })
 })
 
 describe('parseLogEntries', () => {
@@ -3209,7 +4005,7 @@ describe('the spawn log records children, not attempts', () => {
   it('writes one line for a one-shot read that did spawn', () => {
     const log = countingLog()
     const plan = planFor('budget.show', {}, safeContext())
-    void runToCompletion(plan, { spawner: recordingSpawner(), log })
+    void runToCompletion(plan, { spawner: recordingSpawner(), log }).catch(() => undefined) // a fake child never closes: no late rejection
     expect(log.records).toBe(1)
   })
 
@@ -3289,5 +4085,866 @@ describe('a feed whose last line has no newline', () => {
     expect(notices).toHaveLength(1)
     expect(notices[0]).toMatch(/last line .*without a newline/)
     expect(notices[0]).not.toContain('2026-')
+  })
+})
+
+/**
+ * Part F of docs/console-windows/implementation-plan.md: spawning, streaming,
+ * cancellation and exit codes on the WSL route (T-F1, T-F3, T-F4, T-F5).
+ *
+ * Every case here runs the **fake** `wsl.exe` (T-A1): Windows cannot be reached
+ * from this machine, so the doubles are the whole of the evidence, and the
+ * checks that need a real Windows host are marked not-run in the PR rather than
+ * guessed at here.
+ *
+ * The one arrangement the cancellation cases need: the directory the
+ * distribution starts in (`--cd`) must be the **distribution's** spelling of
+ * the directory the console starts `wsl.exe` in, because a Windows spelling is
+ * what T-D3/T-D4 exist to translate and the double refuses one (T-C5). The pid
+ * the stop names is not a path at all: it rides the wrapper's own stderr line
+ * (T-F4, D6(a)), so nothing here has to agree about a file.
+ */
+describe('the wrapper into a distribution', () => {
+  const TWO: WslFixture = {
+    list: 'Ubuntu\r\nDebian\r\n',
+    status: 'Default Distribution: Ubuntu\r\nDefault Version: 2\r\n',
+  }
+
+  /** wslPlanIn is a plan whose `--cd` and whose `cwd` are one directory: what
+   * the fake does with a child's directory is not this suite's subject, and one
+   * directory keeps the plans here readable. */
+  function wslPlanIn(wsl: WslStub, operation: string, args: ValidatedArguments = {}): SpawnPlan {
+    return planFor(operation as OperationName, args, {
+      target: { project: PROJECT },
+      binaryPath: '',
+      directory: wsl.stub.directory,
+      appEnv: {},
+      wsl: { distro: 'Ubuntu', directory: wsl.stub.directory, executable: wsl.binary },
+    })
+  }
+
+  /** spawnReports is the `wsl.exe` invocations that started something, in
+   * order: the first is the CLI's own, and a second is a stop. */
+  const spawnReports = (wsl: WslStub): readonly WslReport[] =>
+    wsl.reports().filter((report) => report.kind === 'spawn')
+
+  it('carries the CLI’s exit status through the wrapper, and never shows the wrapper', async () => {
+    // T-F1, F26. The wrapper is transparent to a status: what the operator
+    // reads is `fugaro`'s, and the marker the shell prints before it `exec`s
+    // never reaches a screen (`cliSentence` is what a screen shows).
+    //
+    // The `wsl.exe` here prints a relay warning of its own **before** the
+    // distribution's command runs, which is what the real one does: the
+    // wrapper's line is then not the first thing on the pipe, and both facts
+    // read off it -- that a child started, and its pid -- have to survive that.
+    const preamble = 'wsl: a relay warning about localhost\n'
+    const seven = freshDirectory()
+    const failing = installWslStub(join(seven, 'windows'), {
+      distros: TWO,
+      scenario: { commands: { version: { stdout: '1.4.2\n', code: 7 } } },
+      preamble,
+    })
+    const result = await runToCompletion(wslPlanIn(failing, 'cli.version'), { timeoutMs: 10_000 })
+    expect(result.code).toBe(7)
+    // A child inside the distribution did start, so the status is the CLI's.
+    expect(result.wrapperStarted).toBe(true)
+    expect(result.stdout).toBe('1.4.2\n')
+    // `wsl.exe`'s own warning is `wsl.exe`'s and stays; the console's own line
+    // -- marker and pid together -- does not.
+    expect(result.stderr).toBe(preamble)
+    expect(result.stderr).not.toContain(WSL_WRAPPER_MARKER)
+
+    const zero = freshDirectory()
+    const answering = installWslStub(join(zero, 'windows'), {
+      distros: TWO,
+      scenario: { commands: { version: { stdout: '1.4.2\n' } } },
+    })
+    const ok = await runToCompletion(wslPlanIn(answering, 'cli.version'), { timeoutMs: 10_000 })
+    expect(ok.code).toBe(0)
+    expect(ok.wrapperStarted).toBe(true)
+    // The child exited on its own, so there is nothing to stop and no second
+    // `wsl.exe` was sent (T-F4).
+    expect(spawnReports(answering)).toHaveLength(1)
+    expect(answering.stub.kills()).toEqual([])
+  })
+
+  it('never reads a wsl.exe failure as a CLI exit code', async () => {
+    // T-F1's other half (F26, U7/U8). A `--cd` that does not exist inside the
+    // distribution is a `wsl.exe` that fails **before** it starts anything
+    // there: the status and the sentence are `wsl.exe`'s, and a console that
+    // read them as `fugaro`'s would send an operator to debug a CLI that never
+    // ran. (A Windows spelling would be the other way to get here, and Part D's
+    // `planFor` now refuses that one before any process exists.)
+    const directory = freshDirectory()
+    const wsl = installWslStub(join(directory, 'windows'), { distros: TWO })
+    const plan = planFor('cli.version', {}, {
+      target: { project: PROJECT },
+      binaryPath: '',
+      directory,
+      appEnv: {},
+      wsl: { distro: 'Ubuntu', directory: join(directory, 'not-there'), executable: wsl.binary },
+    })
+    const result = await runToCompletion(plan, { timeoutMs: 10_000 })
+    expect(result.code).not.toBe(0)
+    expect(result.wrapperStarted).toBe(false)
+    expect(result.stderr).toContain('wsl.exe (the fake)')
+    // Nothing was started inside the distribution, which is what "before" means.
+    expect(wsl.children()).toEqual([])
+
+    // ...and the probe says whose status it was, and keeps the number out of
+    // the field a classifier reads.
+    const probe = await probeVersion(plan, { timeoutMs: 10_000 })
+    expect(probe.ok).toBe(false)
+    if (probe.ok) return
+    expect(probe.code).toBeNull()
+    expect(probe.wrapperStarted).toBe(false)
+    expect(probe.reason).toContain('wsl.exe exited')
+    expect(probe.reason).not.toContain('the binary exited')
+  })
+
+  it('cancels inside the distribution, naming the pid the wrapper recorded', async () => {
+    // T-F4, F24 and decision D6(a). Killing the Windows-side `wsl.exe` is not
+    // documented to kill the Linux process it started, so the console sends one
+    // more `wsl.exe` that kills the pid the wrapper reported -- and the fake
+    // here **ignores SIGTERM**, which is what makes this the case a console that
+    // only killed `wsl.exe` fails.
+    //
+    // The fake's `wsl.exe` prints a warning of its own first, as the real one
+    // does, so the wrapper's line -- and the pid on it -- is not the first thing
+    // on the pipe.
+    const directory = freshDirectory()
+    const wsl = installWslStub(join(directory, 'windows'), {
+      distros: TWO,
+      scenario: { commands: { version: { stdout: '1.4.2\n', hold: true } } },
+      holdsOnTerm: true,
+      preamble: 'wsl: a relay warning about localhost\n',
+    })
+    const timers = manualTimers()
+    const pending = runToCompletion(wslPlanIn(wsl, 'cli.version'), { timers, timeoutMs: 100, shutdownGraceMs: 50 })
+    await waitFor(() => wsl.children().length === 1)
+    const refusal: Promise<SpawnTimeout> = pending.then(
+      () => {
+        throw new Error('the read was expected to be refused')
+      },
+      (error: SpawnTimeout) => error,
+    )
+
+    timers.fire()
+    const timeout = await refusal
+    expect(timeout).toBeInstanceOf(SpawnTimeout)
+    // The pid was read before the grace, so the sentence carries no residual:
+    // the console could name the process it stopped.
+    expect(timeout.message).not.toContain('may still be running')
+
+    timers.fire()
+    await waitFor(() => spawnReports(wsl).length === 2)
+    const stop = spawnReports(wsl)[1]
+    // The stop is one `wsl.exe`, into the same distribution, with the shell the
+    // wrapper used: `wsl.exe -d Ubuntu -e sh -c 'kill -TERM <pid>'`.
+    expect(stop?.distro).toBe('Ubuntu')
+    expect(stop?.argv.slice(0, 5)).toEqual(['-d', 'Ubuntu', '-e', WSL_SHELL_PROGRAM, WSL_SHELL_FLAG])
+    expect(stop?.argv).toHaveLength(6)
+    const killed = Number(/^kill -TERM ([0-9]+)$/.exec(stop?.argv[5] ?? '')?.[1])
+    expect(Number.isInteger(killed)).toBe(true)
+
+    // The proof that the pid is the **child's** and not the wrapper's: the stub
+    // `fugaro` reports its own pid when it is stopped, and it is the pid the
+    // stop named. A pid that were the shell's would leave this empty -- the
+    // shell is gone, `exec` replaced it with the CLI.
+    await waitFor(() => wsl.stub.kills().length === 1)
+    const killedChild = only(wsl.stub.kills())
+    expect(killedChild.signal).toBe('SIGTERM')
+    expect(killedChild.pid).toBe(killed)
+    expect(killedChild.argv).toEqual(['version'])
+  })
+
+  it('sends the stop when `wsl.exe` is gone before the grace runs out', async () => {
+    // F24's stated consequence, and the ordering that produces it: the child
+    // exits **after** the console's `SIGTERM` and **before** the grace, which
+    // is what a Windows `TerminateProcess` does every time -- the Windows-side
+    // process is gone within a tick, while the process it started, the CLI,
+    // keeps running inside the distribution with nothing on screen to say so.
+    //
+    // The moment of the death is the test's rather than a race, so this is the
+    // case that fails first: at the grace, `exited` is true, and a stop that
+    // asked `if (!exited)` sends nothing at all.
+    const directory = freshDirectory()
+    const plan = planFor('cli.version', {}, {
+      target: { project: PROJECT },
+      binaryPath: '',
+      directory,
+      appEnv: {},
+      wsl: { distro: 'Ubuntu', executable: '/usr/bin/wsl.exe' },
+    })
+    const calls: string[][] = []
+    const child = scriptedChild()
+    const spawner = ((command: string, args: readonly string[]) => {
+      calls.push([command, ...args])
+      return child
+    }) as ChildSpawner
+    const timers = manualTimers()
+    const pending = runToCompletion(plan, { spawner, timers, timeoutMs: 100, shutdownGraceMs: 50 })
+    child.emitStderr(`${WSL_WRAPPER_MARKER} 4321\n`)
+    const refusal = pending.then(
+      () => {
+        throw new Error('the read was expected to be refused')
+      },
+      (error: SpawnTimeout) => error,
+    )
+    timers.fire()
+    // The pid was read before the grace, so there is no residual to state.
+    expect((await refusal).message).not.toContain('may still be running')
+    expect(child.killed).toEqual(['SIGTERM'])
+
+    child.exit(143, 'SIGTERM')
+    timers.fire()
+    // Two independent facts, and the two signals must not be conflated: the
+    // stronger signal goes only to a Windows-side child that is still there,
+    // and the stop inside the distribution goes whatever `wsl.exe` did.
+    expect(child.killed).toEqual(['SIGTERM'])
+    expect(calls[1]).toEqual(['/usr/bin/wsl.exe', '-d', 'Ubuntu', '-e', 'sh', '-c', 'kill -TERM 4321'])
+  })
+
+  it('stops the Linux process when the fake `wsl.exe` dies at once on `SIGTERM`', async () => {
+    // The same case end to end, with the real double: this `wsl.exe` does not
+    // hold on `SIGTERM` (the case above does), so it dies the moment the
+    // console kills it and the CLI it started is left as an orphan inside the
+    // distribution -- the state F24 describes. The console must still send the
+    // stop, and the evidence that it arrived is the stub `fugaro`'s own report
+    // of the signal.
+    //
+    // Real timers, because the ordering that matters is between a real
+    // process's death and the grace, and the fake is a real process. The
+    // deadline is generous because the pid line has to have been read before
+    // it fires -- the double is a Node process and this machine may be busy --
+    // while what the case itself depends on is narrower: the grace is long
+    // enough that the fake's death has certainly been seen, which on Windows is
+    // the normal case rather than a race.
+    const directory = freshDirectory()
+    const wsl = installWslStub(join(directory, 'windows'), {
+      distros: TWO,
+      scenario: { commands: { version: { stdout: '1.4.2\n', hold: true } } },
+    })
+    const pending = runToCompletion(wslPlanIn(wsl, 'cli.version'), { timeoutMs: 2_000, shutdownGraceMs: 250 })
+    const refusal: Promise<SpawnTimeout> = pending.then(
+      () => {
+        throw new Error('the read was expected to be refused')
+      },
+      (error: SpawnTimeout) => error,
+    )
+    const timeout = await refusal
+    expect(timeout.message).not.toContain('may still be running')
+
+    await waitFor(() => spawnReports(wsl).length === 2)
+    const stop = spawnReports(wsl)[1]
+    expect(stop?.distro).toBe('Ubuntu')
+    expect(stop?.argv.slice(0, 5)).toEqual(['-d', 'Ubuntu', '-e', WSL_SHELL_PROGRAM, WSL_SHELL_FLAG])
+
+    await waitFor(() => wsl.stub.kills().length === 1)
+    const killedChild = only(wsl.stub.kills())
+    expect(killedChild.signal).toBe('SIGTERM')
+    expect(killedChild.argv).toEqual(['version'])
+  })
+
+  it('states the residual when the wrapper has not reported a pid', async () => {
+    // D6(a)'s residual window, said on the screen rather than left implicit.
+    // The one case it covers is "the console cannot name the process": the
+    // wrapper prints its line before it `exec`s, so a child that has started has
+    // reported -- but a deadline that fires while the distribution is still
+    // starting (a cold distribution takes seconds, U15) arrives before the line
+    // does. The console then says so rather than inventing a pid, and sends no
+    // stop.
+    //
+    // The sentence is refused **at the grace**, not at the deadline: a pid can
+    // still arrive during those two seconds, and the console must not tell the
+    // operator the process may be running after it has just stopped it. The
+    // case where it does arrive in time is its own test below.
+    const directory = freshDirectory()
+    const plan = planFor('cli.version', {}, {
+      target: { project: PROJECT },
+      binaryPath: '',
+      directory,
+      appEnv: {},
+      wsl: { distro: 'Ubuntu', executable: '/usr/bin/wsl.exe' },
+    })
+    const calls: string[][] = []
+    const child = scriptedChild()
+    const spawner = ((command: string, args: readonly string[]) => {
+      calls.push([command, ...args])
+      return child
+    }) as ChildSpawner
+
+    const timers = manualTimers()
+    const pending = runToCompletion(plan, { spawner, timers, timeoutMs: 100, shutdownGraceMs: 50 })
+    const refusal: Promise<SpawnTimeout> = pending.then(
+      () => {
+        throw new Error('the read was expected to be refused')
+      },
+      (error: SpawnTimeout) => error,
+    )
+    timers.fire()
+    // The Windows-side child is still stopped first: the residual is about the
+    // process *inside* the distribution, not about the one the console owns.
+    expect(child.killed).toEqual(['SIGTERM'])
+    timers.fire()
+    expect(child.killed).toEqual(['SIGTERM', 'SIGKILL'])
+    // No second call: a pid the console does not have is not a pid it guesses.
+    expect(calls).toHaveLength(1)
+    // ...and the sentence the read is refused with carries the window, because
+    // the grace is over and the pid never came.
+    expect((await refusal).message).toContain('may still be running')
+  })
+
+  it('names a pid that arrives during the grace, and states no residual', async () => {
+    // The same deadline with the wrapper's line landing a moment late -- what a
+    // cold distribution does: `wsl.exe` is still booting when the read's
+    // deadline fires, and the shell prints its pid while the grace is running.
+    // Reading the pid once, at stop time, would leave the stop naming nothing
+    // while the process it could have named kept running inside the
+    // distribution, and would refuse the read with a residual that is untrue by
+    // the time the operator reads it.
+    const directory = freshDirectory()
+    const plan = planFor('cli.version', {}, {
+      target: { project: PROJECT },
+      binaryPath: '',
+      directory,
+      appEnv: {},
+      wsl: { distro: 'Ubuntu', executable: '/usr/bin/wsl.exe' },
+    })
+    const calls: string[][] = []
+    const child = scriptedChild()
+    const spawner = ((command: string, args: readonly string[]) => {
+      calls.push([command, ...args])
+      return child
+    }) as ChildSpawner
+    const timers = manualTimers()
+    const pending = runToCompletion(plan, { spawner, timers, timeoutMs: 100, shutdownGraceMs: 50 })
+    const refusal = pending.then(
+      () => {
+        throw new Error('the read was expected to be refused')
+      },
+      (error: SpawnTimeout) => error,
+    )
+    // The deadline fires with nothing on stderr: no pid, so no stop yet.
+    timers.fire()
+    expect(child.killed).toEqual(['SIGTERM'])
+    // The wrapper's line arrives inside the grace window.
+    child.emitStderr(`${WSL_WRAPPER_MARKER} 4321\n`)
+    timers.fire()
+    // The stop names the pid that arrived, and exactly once: the stale read is
+    // not used as well.
+    expect(calls[1]).toEqual(['/usr/bin/wsl.exe', '-d', 'Ubuntu', '-e', 'sh', '-c', 'kill -TERM 4321'])
+    expect(calls).toHaveLength(2)
+    // The process was named, so there is no window to write down.
+    expect((await refusal).message).not.toContain('may still be running')
+  })
+
+  it('feeds a watch stream through the wrapper exactly as on the host route', async () => {
+    // T-F3 (F28, F29): the wrapper is not allowed to change the feed. The same
+    // scenario runs on both routes and the two must produce the same frames, the
+    // same notices and the same end.
+    //
+    // The scenario is the two things the plan names. A line ends `\r\n` -- which
+    // `decodeFeedLine` strips -- and the child's stdout is written as **bytes**
+    // with the cut **inside a multi-byte character**, so the two chunks on the
+    // pipe are not text on their own and only a `StringDecoder` that remembers
+    // the partial character reassembles the document. `split` cannot do that
+    // (it cuts the string, and a string has no half a character); `splitBytes`
+    // can, and the cut is computed here from the bytes rather than guessed.
+    const document = '{"kind":"live","day":"2026-01-01","note":"héllo ✓"}'
+    const stdout = `${document}\r\nno budget backend: showing run records only\n`
+    const check = Buffer.from('✓', 'utf8')
+    const splitBytes = Buffer.from(stdout, 'utf8').indexOf(check) + 1
+    // The cut is inside the character, which is what makes this the case.
+    expect(Buffer.from(stdout, 'utf8').subarray(splitBytes - 1, splitBytes + 1)).toEqual(check.subarray(0, 2))
+
+    // The child writes its lines and then **refuses** (status 1): the feed then
+    // settles on the child's own end on both routes, which is a fact about the
+    // child rather than a moment a test picked -- and the sentence it ends with
+    // is compared too, so the wrapper's own marker line is asserted absent
+    // (T-F1) as well as asserted equal.
+    const scenario = { commands: { watch: { stdout, splitBytes, delayMs: 5, code: 1 } } }
+
+    const hostDirectory = freshDirectory()
+    const host = installStub(hostDirectory, scenario)
+    const hostPlan = planFor('live.watch', {}, {
+      target: { project: PROJECT },
+      binaryPath: host.binary,
+      directory: hostDirectory,
+      appEnv: {},
+    })
+    const directory = freshDirectory()
+    const wsl = installWslStub(join(directory, 'windows'), { distros: TWO, scenario })
+    const wslPlan = wslPlanIn(wsl, 'live.watch')
+
+    const seen = async (plan: SpawnPlan): Promise<{ frames: unknown[]; notices: string[]; end: SidecarEnd | null }> => {
+      const frames: unknown[] = []
+      const notices: string[] = []
+      let end: SidecarEnd | null = null
+      startSidecar(plan, {
+        onFrame: (frame) => frames.push(frame),
+        onNotice: (notice) => notices.push(notice.text),
+        onRestart: () => undefined,
+        onEnded: (ended) => {
+          end = ended
+        },
+        // A fixed clock: every frame carries a `receivedAt` stamp, and the two
+        // routes run one after the other, so a wall clock would make the frames
+        // differ whenever the two runs straddle a second.
+      }, { clock: () => new Date('2026-01-01T00:00:00Z') })
+      await waitFor(() => end !== null)
+      return { frames, notices, end }
+    }
+
+    const fromHost = await seen(hostPlan)
+    const fromWsl = await seen(wslPlan)
+    expect(fromWsl.frames).toEqual(fromHost.frames)
+    expect(fromWsl.notices).toEqual(fromHost.notices)
+    expect(fromWsl.end).toEqual(fromHost.end)
+    // The document arrived **whole** on both routes: the character cut in half
+    // by the pipe was put back together, and the line was not dropped as a
+    // fragment (which is what a lost `StringDecoder` would do with it).
+    expect(fromHost.notices).toHaveLength(1)
+    expect(fromWsl.frames).toHaveLength(1)
+    const frame = fromWsl.frames[0] as { document?: Record<string, unknown> } | undefined
+    expect(frame?.document?.['note']).toBe('héllo ✓')
+  })
+
+  it('stops a read whose pipe outlives the child at the deadline, through the wrapper', async () => {
+    // T-F5 (F25): the read deadline is the backstop, and on this route it is
+    // load-bearing -- the wrapper adds a relay and the distribution a session,
+    // and either can hold the pipe open after the process that wrote to it has
+    // gone. So the fake here **outlives its child with stdout still open**: the
+    // CLI exits normally, and the reader sees no `close`.
+    //
+    // The assertions are both halves of the rule: nothing settles the read
+    // before the deadline (a reader that settled on `exit` would hand back a
+    // torn document here, which is the failure `close`-not-`exit` prevents),
+    // and it settles **at** the deadline rather than never.
+    const directory = freshDirectory()
+    const wsl = installWslStub(join(directory, 'windows'), {
+      distros: TWO,
+      scenario: { commands: { version: { stdout: '1.4.2\n' } } },
+      lingersAfterChild: true,
+    })
+    const timers = manualTimers()
+    const pending = runToCompletion(wslPlanIn(wsl, 'cli.version'), { timers, timeoutMs: 90_000, shutdownGraceMs: 50 })
+    await waitFor(() => wsl.children().length === 1)
+    let settled = false
+    void pending.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      },
+    )
+    // The CLI has run and exited; the pipe is still open, and nothing has
+    // settled the read.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(settled).toBe(false)
+    expect(timers.fired()).toEqual([])
+
+    timers.fire()
+    const error: SpawnTimeout = await pending.then(
+      () => {
+        throw new Error('the read was expected to be refused')
+      },
+      (thrown: SpawnTimeout) => thrown,
+    )
+    expect(error).toBeInstanceOf(SpawnTimeout)
+    expect(error.message).toContain('did not finish within 90s')
+    expect(timers.fired()).toEqual([90_000])
+    // The child was stopped rather than left behind, exactly as on a timeout
+    // anywhere else in this module: the shutdown grace is armed, and its
+    // `SIGKILL` is the escalation for a process that ignores the `SIGTERM`.
+    expect(timers.pending()).toBe(1)
+  })
+
+  it('refuses a hostile word before the shell, and quotes every word that reaches it', async () => {
+    // The binding carry-over from Part C's review, in the two layers Parts D and
+    // F give it. The CLI's argv is built from a project name, a checkout and a
+    // config path, and `isSafeInstallationValue` deliberately admits `$`, a
+    // backtick, `;`, `|`, `&`, `(`, `)`, quotes and a space in them. With
+    // `shell: false` and an array argv those are harmless; inside a `sh -c`
+    // script they are a subshell, a word break and a command separator.
+    //
+    // Layer 1 (Part D): such a word never reaches the script at all -- `planFor`
+    // refuses it before any process exists, and that refusal wins.
+    const hostile = '/tmp/a b/$(id)/`id`;rm -rf/x|y&z(q)w\'e"r'
+    const directory = freshDirectory()
+    const wsl = installWslStub(join(directory, 'windows'), {
+      distros: TWO,
+      scenario: { commands: { 'budget show': { stdout: '{"ok":true}\n' } } },
+    })
+    const planWith = (configPath: string): SpawnPlan =>
+      planFor('budget.show', {}, {
+        target: { project: PROJECT, configPath },
+        binaryPath: '',
+        directory: wsl.stub.directory,
+        appEnv: {},
+        wsl: { distro: 'Ubuntu', directory: wsl.stub.directory, executable: wsl.binary },
+      })
+    for (const word of [hostile, '/tmp/a\\b', '/tmp/a\nb', 'a\u0000b']) {
+      expect(() => planWith(word), JSON.stringify(word)).toThrow()
+    }
+    expect(wsl.calls()).toBe(0)
+
+    // Layer 2 (Part F): the words that do pass are still each single-quoted in
+    // the script, with the one quoting function there is -- so a later widening
+    // of layer 1 does not by itself open a shell injection.
+    expect(shellQuoteWord(hostile)).toBe(`'${hostile.replaceAll("'", `'\\''`)}'`)
+    expect(() => shellQuoteWord('a\u0000b')).toThrow(/NUL/)
+    const plan = planWith('/home/dimi/.config/fugaro/config.toml')
+    expect(plan.wrapper?.words[2]).toContain(`'--config' '/home/dimi/.config/fugaro/config.toml'`)
+    const result = await runToCompletion(plan, { timeoutMs: 10_000 })
+    expect(result.code).toBe(0)
+    // The child received the word as one argument: the report is the child's
+    // own account of the argv it was handed.
+    const child = only(wsl.children())
+    expect(child.argv[0]).toBe('budget')
+    expect(child.argv.filter((word) => word === '/home/dimi/.config/fugaro/config.toml')).toHaveLength(1)
+  })
+
+  it('sends the stop as an argv array with shell false, and refuses a pid line it cannot trust', async () => {
+    // The stop is spawned like every other child (rule 1): the distribution is
+    // its own argv word, `-e` separates it from the distribution's, and
+    // `shell: false` is what keeps a word from being re-parsed. The pid comes
+    // off the wrapper's stderr line, and a line that does not hold digits yields
+    // **no** stop -- `sh -c` is handed a command line, so an unvalidated value
+    // there is the injection surface `shellQuoteWord` closes for the CLI's argv.
+    const directory = freshDirectory()
+    const plan = planFor('cli.version', {}, {
+      target: { project: PROJECT },
+      binaryPath: '',
+      directory,
+      appEnv: {},
+      wsl: { distro: 'Ubuntu', directory, executable: '/usr/bin/wsl.exe' },
+    })
+
+    const calls: { command: string; args: readonly string[]; options: SpawnOptionsLike }[] = []
+    const child = scriptedChild()
+    const spawner = ((command: string, args: readonly string[], options: SpawnOptionsLike) => {
+      calls.push({ command, args, options })
+      return child
+    }) as ChildSpawner
+
+    const timers = manualTimers()
+    const pending = runToCompletion(plan, { spawner, timers, timeoutMs: 100, shutdownGraceMs: 50 })
+    // The wrapper's own line, as the shell prints it: the marker and the pid it
+    // is about to become, on stderr.
+    child.emitStderr(`${WSL_WRAPPER_MARKER} 4321\n`)
+    const refusal = pending.then(
+      () => {
+        throw new Error('the read was expected to be refused')
+      },
+      (error: SpawnTimeout) => error,
+    )
+    timers.fire()
+    // The pid was read, so there is no residual to state: the stop below names
+    // it.
+    expect((await refusal).message).not.toContain('may still be running')
+    timers.fire()
+
+    expect(calls).toHaveLength(2)
+    const stop = calls[1]
+    expect(stop?.command).toBe('/usr/bin/wsl.exe')
+    expect(stop?.args).toEqual(['-d', 'Ubuntu', '-e', 'sh', '-c', 'kill -TERM 4321'])
+    expect(stop?.options.shell).toBe(false)
+    expect(stop?.options.cwd).toBe(directory)
+    // Nothing was read from a file and nothing is left behind: the pid is a
+    // number the console parsed, and there is no path in the stop at all.
+    expect(stop?.args.join(' ')).not.toContain('/')
+
+    // A line that says something else is not a pid: no stop at all, and the
+    // residual is stated instead of a word becoming shell syntax.
+    const hostile = scriptedChild()
+    const hostileCalls: string[][] = []
+    const hostileSpawner = ((command: string, args: readonly string[]) => {
+      hostileCalls.push([command, ...args])
+      return hostile
+    }) as ChildSpawner
+    const secondTimers = manualTimers()
+    const secondPending = runToCompletion(plan, {
+      spawner: hostileSpawner,
+      timers: secondTimers,
+      timeoutMs: 100,
+      shutdownGraceMs: 50,
+    })
+    hostile.emitStderr(`${WSL_WRAPPER_MARKER} 4321; rm -rf /\n`)
+    const secondRefusal = secondPending.then(
+      () => {
+        throw new Error('the read was expected to be refused')
+      },
+      (error: SpawnTimeout) => error,
+    )
+    secondTimers.fire()
+    secondTimers.fire()
+    expect(hostileCalls).toHaveLength(1)
+    // The line is not a pid, so the window is the whole of the cancellation and
+    // the sentence says so -- refused at the grace, after the second read also
+    // found no number to name.
+    expect((await secondRefusal).message).toContain('may still be running')
+  })
+
+  it('stops a feed inside the distribution too, on the pid the wrapper reported', async () => {
+    // T-F4 for the supervisor's own stop, which is the path `LiveFeed.stop()`
+    // and app quit take: the same second half as the one-shot read's, and the
+    // pid comes off the same line -- this child's line, because a restarted
+    // feed has a new child and the head is cleared with the stderr it came on.
+    const directory = freshDirectory()
+    const plan = planFor('live.watch', {}, {
+      target: { project: PROJECT },
+      binaryPath: '',
+      directory,
+      appEnv: {},
+      wsl: { distro: 'Ubuntu', executable: '/usr/bin/wsl.exe' },
+    })
+    const calls: string[][] = []
+    const child = scriptedChild()
+    const timers = manualTimers()
+    const notices: string[] = []
+    const sidecar = startSidecar(
+      plan,
+      {
+        onFrame: () => undefined,
+        onNotice: (notice) => notices.push(notice.text),
+        onRestart: () => undefined,
+        onEnded: () => undefined,
+      },
+      {
+        spawner: ((command: string, args: readonly string[]) => {
+          calls.push([command, ...args])
+          return child
+        }) as ChildSpawner,
+        timers,
+      },
+    )
+    child.emitStderr(`${WSL_WRAPPER_MARKER} 4321\n`)
+    const stopping = sidecar.stop()
+    expect(child.killed).toEqual(['SIGTERM'])
+    timers.fire()
+    expect(child.killed).toEqual(['SIGTERM', 'SIGKILL'])
+    expect(calls[1]).toEqual(['/usr/bin/wsl.exe', '-d', 'Ubuntu', '-e', 'sh', '-c', 'kill -TERM 4321'])
+    // The pid was read, so there is no residual to state.
+    expect(notices).toEqual([])
+    child.close(null, 'SIGTERM')
+    expect((await stopping).reason).toBe('stopped')
+
+    // A feed whose wrapper reported no pid: the stop still happens on the
+    // Windows side, and the operator is told what could not be reached.
+    const other = scriptedChild()
+    const otherCalls: string[][] = []
+    const otherNotices: string[] = []
+    const secondTimers = manualTimers()
+    const second = startSidecar(
+      plan,
+      {
+        onFrame: () => undefined,
+        onNotice: (notice) => otherNotices.push(notice.text),
+        onRestart: () => undefined,
+        onEnded: () => undefined,
+      },
+      {
+        spawner: ((command: string, args: readonly string[]) => {
+          otherCalls.push([command, ...args])
+          return other
+        }) as ChildSpawner,
+        timers: secondTimers,
+      },
+    )
+    const secondStopping = second.stop()
+    secondTimers.fire()
+    expect(other.killed).toEqual(['SIGTERM', 'SIGKILL'])
+    expect(otherCalls).toHaveLength(1)
+    expect(otherNotices.join(' ')).toContain('may still be running')
+    other.close(null, 'SIGTERM')
+    await secondStopping
+  })
+
+  it('stops the feed’s process inside the distribution when `wsl.exe` is already gone', async () => {
+    // The supervisor's stop and the one-shot read's share one condition, and
+    // this is the case that holds them to it. `wsl.exe` dies from the
+    // `SIGTERM` -- on Windows, `TerminateProcess`, within a tick -- so the
+    // child is null by the time the grace fires, and a stop that returned there
+    // would leave the CLI running inside the distribution while the screen said
+    // the feed had stopped.
+    const directory = freshDirectory()
+    const plan = planFor('live.watch', {}, {
+      target: { project: PROJECT },
+      binaryPath: '',
+      directory,
+      appEnv: {},
+      wsl: { distro: 'Ubuntu', executable: '/usr/bin/wsl.exe' },
+    })
+    const calls: string[][] = []
+    const child = scriptedChild()
+    const timers = manualTimers()
+    const sidecar = startSidecar(
+      plan,
+      {
+        onFrame: () => undefined,
+        onNotice: () => undefined,
+        onRestart: () => undefined,
+        onEnded: () => undefined,
+      },
+      {
+        spawner: ((command: string, args: readonly string[]) => {
+          calls.push([command, ...args])
+          return child
+        }) as ChildSpawner,
+        timers,
+      },
+    )
+    child.emitStderr(`${WSL_WRAPPER_MARKER} 4321\n`)
+    const stopping = sidecar.stop()
+    expect(child.killed).toEqual(['SIGTERM'])
+    child.close(143, 'SIGTERM')
+    timers.fire()
+    // The Windows-side child is gone, so there is nothing to escalate to --
+    // and the stop inside the distribution is sent all the same.
+    expect(child.killed).toEqual(['SIGTERM'])
+    expect(calls[1]).toEqual(['/usr/bin/wsl.exe', '-d', 'Ubuntu', '-e', 'sh', '-c', 'kill -TERM 4321'])
+    expect((await stopping).reason).toBe('stopped')
+  })
+
+  it('names a pid that arrives during the feed’s grace, and notices no window', async () => {
+    // The supervisor's half of the cold-distribution case: the feed is stopped
+    // while the distribution is still starting, and the wrapper's line lands
+    // inside `SHUTDOWN_GRACE_MS`. The pid is read at the grace, not at the
+    // stop: reading it once would skip the one `wsl.exe` that stops the
+    // process, and would tell the operator the process "may still be running"
+    // after the console had in fact killed it.
+    const directory = freshDirectory()
+    const plan = planFor('live.watch', {}, {
+      target: { project: PROJECT },
+      binaryPath: '',
+      directory,
+      appEnv: {},
+      wsl: { distro: 'Ubuntu', executable: '/usr/bin/wsl.exe' },
+    })
+    const calls: string[][] = []
+    const child = scriptedChild()
+    const timers = manualTimers()
+    const notices: string[] = []
+    const sidecar = startSidecar(
+      plan,
+      {
+        onFrame: () => undefined,
+        onNotice: (notice) => notices.push(notice.text),
+        onRestart: () => undefined,
+        onEnded: () => undefined,
+      },
+      {
+        spawner: ((command: string, args: readonly string[]) => {
+          calls.push([command, ...args])
+          return child
+        }) as ChildSpawner,
+        timers,
+      },
+    )
+    const stopping = sidecar.stop()
+    expect(child.killed).toEqual(['SIGTERM'])
+    child.emitStderr(`${WSL_WRAPPER_MARKER} 4321\n`)
+    timers.fire()
+    expect(calls[1]).toEqual(['/usr/bin/wsl.exe', '-d', 'Ubuntu', '-e', 'sh', '-c', 'kill -TERM 4321'])
+    expect(calls).toHaveLength(2)
+    expect(notices).toEqual([])
+    child.close(null, 'SIGTERM')
+    expect((await stopping).reason).toBe('stopped')
+  })
+
+  it('never terminates a distribution: `--terminate` is refused', () => {
+    // D6(b) of docs/console-windows/implementation-plan.md. `wsl.exe
+    // --terminate <distro>` would end every process in the distribution,
+    // including the operator's own shells and anything else they have running
+    // there: a console that can do that can destroy work it does not own, for a
+    // cancellation it was not even asked to make. The one `wsl.exe` this route
+    // sends beyond the spawn is the stop, and it names a single pid.
+    // Comments are stripped first, and only then is the scan a scan of code:
+    // this test's own subject is *named* in the comments beside the stop, which
+    // is the opposite of a refusal being violated -- the rule is that no
+    // `wsl.exe` is ever handed the word.
+    const codeOnly = (source: string): string =>
+      source.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((line) => line.replace(/\/\/.*$/, '')).join('\n')
+    for (const file of ['spawn.ts', 'wsl.ts']) {
+      const code = codeOnly(readFileSync(join(SOURCE_ROOT, 'main', file), 'utf8'))
+      expect(code, `${file} terminates a distribution`).not.toContain('--terminate')
+      expect(code, `${file} shuts WSL down`).not.toContain('--shutdown')
+    }
+  })
+
+  it('names the stop’s own words for wsl.exe, never for the CLI', () => {
+    // `wslStopArgs` is the second invocation's whole argv, and the pid is a
+    // **number**: the value comes off the wrapper's own stderr line, and a line
+    // that said anything else would be shell syntax in a `sh -c` command line.
+    expect(wslStopArgs({ distro: 'Ubuntu-22.04', pid: 4321 })).toEqual([
+      '-d',
+      'Ubuntu-22.04',
+      '-e',
+      'sh',
+      '-c',
+      'kill -TERM 4321',
+    ])
+    // ...and the CLI's own surface assertion refuses these words by name: they
+    // are `wsl.exe`'s, and a design that put them in the CLI's argv would have
+    // to widen `SPAWN_FLAGS` to admit them.
+    for (const word of wslStopArgs({ distro: 'Ubuntu', pid: 1 }).filter((word) => word.startsWith('-'))) {
+      expect([...WSL_PREFIX_FLAGS, WSL_SHELL_FLAG], word).toContain(word)
+      expect(SPAWN_FLAGS, word).not.toContain(word)
+    }
+    // The distribution is held to the plan's own rules (Part D's alphabet, then
+    // `assertWslPrefix`), and the pid to a positive integer: a stop that would
+    // name anything else is refused rather than sent.
+    for (const distro of ['-sneaky', 'My Linux', 'Ubuntu;x', '$(id)', '']) {
+      expect(() => wslStopArgs({ distro, pid: 1 }), distro).toThrow(/not a WSL distribution name/)
+    }
+    for (const pid of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => wslStopArgs({ distro: 'Ubuntu', pid }), String(pid)).toThrow(/not a process id/)
+    }
+  })
+
+  it('reads the wrapper’s line wherever wsl.exe puts it on the pipe', () => {
+    // T-F1/T-F4 and the reason this is not a `startsWith`: `wsl.exe` prints its
+    // own relay warnings on stderr before the distribution's command runs, so
+    // the wrapper's line is regularly not the first thing on the pipe. A reader
+    // that insisted on offset zero would call a shell that did start a shell
+    // that did not, and would leave the console's own sentence -- pid and all --
+    // on the operator's screen.
+    const line = `${WSL_WRAPPER_MARKER} 4321`
+    expect(wrapperPidIn(`${line}\n`)).toBe(4321)
+    expect(wrapperPidIn(`wsl: a relay warning\nthe CLI said something\n${line}\n`)).toBe(4321)
+    // A CRLF from a relay that translated line endings is the same line.
+    expect(wrapperPidIn(`${line}\r\n`)).toBe(4321)
+    // A line the CLI printed that merely *contains* the text is the CLI's own:
+    // only a line that starts with the marker is the wrapper's.
+    expect(wrapperPidIn(`the CLI said: ${line}\n`)).toBeNull()
+    // No line at all is no pid -- and that is a residual, not a guess.
+    expect(wrapperPidIn('the CLI said something\n')).toBeNull()
+    // A pid that is not a plain positive integer is not a pid: `sh -c` is handed
+    // a command line, so this is the injection surface.
+    expect(wrapperPidIn(`${WSL_WRAPPER_MARKER} 4321; rm -rf /\n`)).toBeNull()
+    expect(wrapperPidIn(`${WSL_WRAPPER_MARKER} 0\n`)).toBeNull()
+    expect(wrapperPidIn(`${WSL_WRAPPER_MARKER} -4321\n`)).toBeNull()
+    expect(wrapperPidIn(`${WSL_WRAPPER_MARKER} 99999999999\n`)).toBeNull()
+    expect(wrapperPidIn(`${WSL_WRAPPER_MARKER}\n`)).toBeNull()
+  })
+
+  it('removes the wrapper’s line from the sentence an operator reads', () => {
+    const line = `${WSL_WRAPPER_MARKER} 4321`
+    // The wrapper's line goes, wherever it is, and wsl.exe's own warning -- which
+    // is wsl.exe's and not the console's -- stays.
+    expect(withoutWrapperMarker(`${line}\nthe CLI said no\n`)).toBe('the CLI said no\n')
+    expect(withoutWrapperMarker(`wsl: a relay warning\n${line}\nthe CLI said no\n`)).toBe(
+      'wsl: a relay warning\nthe CLI said no\n',
+    )
+    expect(withoutWrapperMarker(`wsl: a relay warning\r\n${line}\r\nthe CLI said no\r\n`)).toBe(
+      'wsl: a relay warning\r\nthe CLI said no\r\n',
+    )
+    // A CLI line that merely contains the text keeps its own text.
+    expect(withoutWrapperMarker(`the CLI said: ${line}\n`)).toBe(`the CLI said: ${line}\n`)
+    // Nothing to remove: the string is returned as it arrived.
+    expect(withoutWrapperMarker('the CLI said no\n')).toBe('the CLI said no\n')
+    expect(withoutWrapperMarker('')).toBe('')
   })
 })

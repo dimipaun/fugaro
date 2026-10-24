@@ -312,7 +312,12 @@ function within(node, ancestor) {
  * width.
  */
 function heroIllustration(main) {
-  return flatten(main).find((node) => (node.attrs?.get('class') ?? '').split(/\s+/).includes('hero-shot')) ?? null
+  // Since the owner's ruling of 2026-10-23 (the redesign's Step 3) the hero's pictures are one
+  // stage: the card and, under it, the real `fugaro watch` capture with its caption. The stage is
+  // the picture taken out of the lead; a page with no stage falls back to the card alone.
+  const items = flatten(main)
+  const has = (node, name) => (node.attrs?.get('class') ?? '').split(/\s+/).includes(name)
+  return items.find((node) => has(node, 'hero-stage')) ?? items.find((node) => has(node, 'hero-shot')) ?? null
 }
 
 /** True when `node` comes after `other` in `main`'s document order. */
@@ -449,9 +454,17 @@ test('every page, and the whole site, is within the byte budget the README state
 // The site's JavaScript is one file, and this is the case that says so about the ARTIFACT
 // rather than about the budget line above it: every page loads `public/scripts/site.js`
 // exactly once, however many times it references it, and the artifact holds no other script
-// at all. A page that grew a second script — or an inline one — fails here first, with the
-// page named, before it fails the budget with a number.
+// at all, but one. A page that grew another script, or an inline one, fails here first,
+// with the page named, before it fails the budget with a number.
+//
+// **The one other file is the consent banner's early decision**, `public/scripts/consent-early.js`
+// (the owner's ruling of 2026-10-23, the redesign's Step 3: JavaScript is allowed, same-origin
+// only, and the consent banner must not cover the first screen's content). The banner is in the
+// page's flow at the top since that ruling, and the few lines that decide whether it is drawn
+// have to run before the page is, which a deferred file cannot do. A page that renders the
+// banner loads both files, once each; a page with analytics off loads `site.js` alone.
 const SCRIPT = 'scripts/site.js'
+const EARLY_SCRIPT = 'scripts/consent-early.js'
 
 test('the site ships one script file, and every page counts its bytes once', (t) => {
   const file = path.join(DIST, SCRIPT)
@@ -460,22 +473,24 @@ test('the site ships one script file, and every page counts its bytes once', (t)
     `${SCRIPT} is not in the built artifact: the copy control is driven by one first-party script file (D183, P6), and the budget above counts it as every page's JavaScript`,
   )
   const bytes = statSync(file).size
+  const early = statSync(path.join(DIST, EARLY_SCRIPT)).size
 
   const scripts = filesUnder(DIST).filter((rel) => /\.m?js$/.test(rel))
   assert.deepEqual(
-    scripts,
-    [SCRIPT],
-    `the artifact holds ${scripts.length} script files (${scripts.join(', ')}): the site ships one, and the JavaScript budget is a statement about that one file's bytes`,
+    scripts.sort(),
+    [EARLY_SCRIPT, SCRIPT].sort(),
+    `the artifact holds ${scripts.length} script files (${scripts.join(', ')}): the site ships its one script and the consent banner's early decision (the owner's ruling of 2026-10-23), and the JavaScript budget is a statement about those two files' bytes`,
   )
 
   const pages = builtPages(DIST)
   assert.ok(pages.length > 0, 'the build produced no page, so this case would check nothing')
   for (const page of pages) {
     const m = measurePage(page.html, page.rel, DIST)
+    const expected = page.html.includes(`/${EARLY_SCRIPT}`) ? bytes + early : bytes
     assert.equal(
       m.js,
-      bytes,
-      `${page.rel} counts ${m.js} bytes of JavaScript; the site's script is ${bytes} bytes and a page loads it once, however many times it names it`,
+      expected,
+      `${page.rel} counts ${m.js} bytes of JavaScript; the site's script is ${bytes} bytes (and the banner's early decision ${early}) and a page loads each once, however many times it names it`,
     )
     assert.equal(
       m.inlineJS,

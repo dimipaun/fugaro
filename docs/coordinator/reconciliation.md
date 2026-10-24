@@ -47,7 +47,7 @@ not exist. Recording them here so the next reader does not repeat them.
 | --- | --- |
 | A **Fugaro project** (§2, §4) | Defined: *"one GCP project, plus (from M9) one Firebase project … its repositories; its people lists …; one local config"* (`docs/design/v1.md`). The spec's "one coordinator per Fugaro project, deployed into that project's Firebase/GCP project" is therefore well-formed — and it is the same object the repo calls an **installation** (`docs/design/v1.md`). |
 | **Cloud Run service, scale-to-zero** (§4) | **No Cloud Run *service* exists anywhere.** Every workload is `google_cloud_run_v2_job` (history `modules/installation/history.tf:70`; project jobs `modules/project/job.tf:10`; workflow jobs `modules/workflow/job.tf:4`; repo check `modules/repo/check.tf:16`). The type is not even in the plan allowlist (`internal/infra/tf/cover.go:22`). See **#2**. |
-| **Provisioning: "part of project init's existing Terraform"** (§4) | `fugaro init` applies the **installation** root (`internal/cli/init.go:1905 installRoot`), behind one interactive confirmation that covers a plan only if every resource type is allowlisted (`internal/infra/tf/cover.go:22 allowedTypes`, `:128 grantRules`) and every grant is in `grantRules`; anything else gets its own typed confirmation (`internal/cli/init_review.go:77 runCovers`, `:127 notCovered`). See **#3**. |
+| **Provisioning: "part of project init's existing Terraform"** (§4) | `fugaro init` applies the **installation** root (`internal/cli/init.go`'s `installRoot`, the function that plans and applies it), behind one interactive confirmation that covers a plan only if every resource type is allowlisted (`internal/infra/tf/cover.go:22 allowedTypes`, `:128 grantRules`) and every grant is in `grantRules`; anything else gets its own typed confirmation (`internal/cli/init_review.go:77 runCovers`, `:127 notCovered`). See **#3**. |
 | **Access: "whoever can reach the project's coordinator is in the project; no extra permission model in v1"** (§4) | The opposite is the standing design: the compute module **refuses** `allUsers`, `allAuthenticatedUsers` and `domain:` members (`deploy/terraform/gcp/modules/compute/variables.tf:122,144`), launchers are per-person IAM members on one job (`modules/project/iam.tf:7`), and `SECURITY.md:40` puts the trust boundary at the repository and the task source, never at network reach. See **#4**. |
 | **Store: Firestore; "Firestore and RTDB are already available"** (§5) | True, both exist — and they are **two different stores with two different jobs**. RTDB is the budget/policy/kill/registry/mailbox store (`internal/budget/model.go:1-2`); Firestore holds `spendDaily` history only (`internal/firestore/client.go` package doc, `internal/budget/rollover.go:48 SpendCollection`). See **#6**. |
 | **"Firestore's real-time listeners drive live updates in the console"** (§5) | Wrong twice: the Firestore client has no listeners (hand-written REST: `Get`, `Patch`, `Delete`, `Query`, `GetDatabase`, `CreateDatabase`), and the console renderer's CSP is `connect-src 'none'` (`console/src/main/protocol.ts:132`) — it never talks to the network at all. See **#7**. |
@@ -116,8 +116,10 @@ Cloud Run's own. A timeout exists as a job's *task* timeout
 request timeout. A concurrency setting has no precedent anywhere. → **Q1**.
 
 **#3 — "Part of project init's existing Terraform" is the right shape with the wrong noun, and the plan gate is an allowlist that a new service breaks. — Wrong (the noun) / Rule (the gate).**
-`fugaro init` applies the **installation** root (`internal/cli/init.go:1905 installRoot`,
-`:2029 t.Plan`, `:2063 t.Apply`). There is a Terraform module called `project`
+`fugaro init` applies the **installation** root (`internal/cli/init.go`'s `installRoot`, the
+function that plans and applies it — cited by symbol rather than by line, because a line
+number here drifts with every edit to that file and this document's contract is that every
+citation can be followed). There is a Terraform module called `project`
 (`deploy/terraform/gcp/modules/project/`) — but it is the *shared project jobs* module: it
 creates one Cloud Run job and one job service account per (profile, provider, account)
 (`modules/project/job.tf:10`, `modules/project/sa.tf:5`) and nothing else. It creates no

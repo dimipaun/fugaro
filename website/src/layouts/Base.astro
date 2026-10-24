@@ -45,6 +45,7 @@
  */
 import { loadSite } from '../content.ts'
 import ConsentBanner from '../components/ConsentBanner.astro'
+import { CONSENT_KEY } from '../lib/consent-key.mjs'
 
 // The design tokens (W1.2), then the page chrome and element defaults that apply them.
 //
@@ -130,13 +131,13 @@ const fonts = site.fonts
 // plan's page list fixes (how-it-works, why-gcp, getting-started, caps-and-costs, console,
 // mobile, docs, security, changelog, faq, community) and each label is the route's own words
 // rather than a copy of a page's title — a nav that restated the pages would be a second copy
-// of them to keep in step. The groups' six-and-five split is the feedback's, not a symmetry:
-// *Product* carries the pages about running the thing the visitor came for — how it works and
-// where it runs, how to start, what it costs, the console and the phone app — and *Project*
-// the five about the project itself, Docs and Changelog included. **Why GCP is the second
-// *Product* item** (D238, the zoom-diagrams plan's Part 2): the brief puts it "right after the
-// zoom diagrams", because the fourth level is the picture of everything in one project and
-// the page is the argument for it.
+// of them to keep in step. The groups' five-and-six split is the feedback's, not a symmetry:
+// *Product* carries the pages about running the thing the visitor came for (how it works,
+// how to start, what it costs, the console and the phone app), and *Project*
+// the ones about the project itself, Docs and Changelog included. **Why GCP is a *Project*
+// item, after Security** (the owner's explicit approval of 2026-10-23, which moved it out of
+// *Product*, where D238 had put it second): it is the argument for the project's one platform,
+// beside the page about what that platform's boundary protects. Its label and URL are unchanged.
 //
 // **Mobile is the sixth of them** (the zoom-diagrams plan §3, Part 3, item 6, with the owner's
 // answers of 2026-10-21 under it): the phone app's page is the console page's sister, and
@@ -157,7 +158,6 @@ const NAV_GROUPS = [
     label: 'Product',
     items: [
       { href: '/how-it-works/', label: 'How it works' },
-      { href: '/why-gcp/', label: 'Why GCP' },
       { href: '/getting-started/', label: 'Getting started' },
       { href: '/caps-and-costs/', label: 'Caps and costs' },
       { href: '/console/', label: 'Console' },
@@ -169,6 +169,7 @@ const NAV_GROUPS = [
     items: [
       { href: '/docs/', label: 'Docs' },
       { href: '/security/', label: 'Security' },
+      { href: '/why-gcp/', label: 'Why GCP' },
       { href: '/faq/', label: 'FAQ' },
       { href: '/community/', label: 'Community' },
       { href: '/changelog/', label: 'Changelog' },
@@ -319,6 +320,15 @@ const analyticsEnabled = facts.analytics.enabled
         file a reader can read. `defer` puts it after the parse, which is when the blocks it
         drives and the banner it reads its configuration from exist. */}
     <script src="/scripts/site.js" defer></script>
+
+    {/* The banner's early decision (the owner's ruling of 2026-10-23): a few lines, run before
+        the page is drawn, that mark `<html>` when the banner is to be shown, so the banner is in
+        the page's flow from the first frame and nothing below it moves when it appears. Not
+        deferred, on purpose; same origin, so `script-src 'self'` admits it. Rendered only when
+        the banner is. */}
+    {analyticsEnabled && (
+      <script src="/scripts/consent-early.js" data-consent-key={CONSENT_KEY} data-consent-always={alwaysOffer ? 'true' : undefined}></script>
+    )}
   </head>
 
   <body>

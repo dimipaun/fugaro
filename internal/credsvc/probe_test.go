@@ -1209,6 +1209,52 @@ func TestScrubRemovesWhatTheLoaderHolds(t *testing.T) {
 	}
 }
 
+// TestAScrubBeforeTheFirstLoadRemovesNothing pins the OTHER branch of Scrub:
+// the one the loader answers when it has read no document yet (l.cached is nil),
+// which is reachable for an audit line and not only off the end of a call's
+// own path. The auditor every line of this service is written through is armed
+// with this loader (NewProbeAuditor), so every refusal answered between the
+// identity check and the first bundle read — here, a policy that cannot be read
+// — is scrubbed against no values at all before the line is written.
+//
+// Two things are held here and not left to the comment on that branch: the
+// scrub returns its input unchanged when the loader holds nothing (it neither
+// refuses the text nor invents a redaction for a value it cannot know), and the
+// line written through it still lands — the pre-load refusal writes its one
+// audit line, and the bundle was never read, which is what makes the branch the
+// one that answered. A scrub that started refusing pre-load text, or redacting
+// it, would show up as a call whose refusal left no line at all.
+//
+// Mutation (run, restore): make the b == nil branch return redactedValue
+// instead of s, or refuse the text, and the line this call writes is mangled or
+// missing and this test is red.
+func TestAScrubBeforeTheFirstLoadRemovesNothing(t *testing.T) {
+	s, auditLog := auditSvc(t, func(s *svc, _ *Config) {
+		s.policy.sharedErr = errors.New("the shared node could not be read")
+	})
+	loader := s.server.cfg.Bundles
+	value := fakeCred(t, "default")
+	if got := loader.Scrub("credential=" + value + ";"); got != "credential="+value+";" {
+		t.Errorf("a scrub before the first load rewrote text it holds no value to remove: %q", got)
+	}
+
+	resp, body := s.call(t, callBody("pre-load-refusal"))
+	if resp.StatusCode != StatusUnavailable {
+		t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+	}
+	if n := s.src.readCount(); n != 0 {
+		t.Errorf("the bundle was read %d times, want 0: this refusal is the one answered before any document is in the cache", n)
+	}
+	lines := forwardLines(t, auditLog)
+	if len(lines) != 1 {
+		t.Fatalf("the pre-load refusal wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+	}
+	checkAuditShape(t, lines[0])
+	if got := lines[0]["status"]; got != ErrorStateUnavailable {
+		t.Errorf("the pre-load refusal's audit line status is %v, want %q", got, ErrorStateUnavailable)
+	}
+}
+
 // TestNewProbeAuditorRequiresALoader: the arming is not a caller's to skip. An
 // auditor with no loader has nothing to redact with, so it does not exist.
 func TestNewProbeAuditorRequiresALoader(t *testing.T) {

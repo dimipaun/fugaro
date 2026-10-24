@@ -211,12 +211,16 @@ func TestDocsInJobReviewSpecIsVerbatim(t *testing.T) {
 func TestDocsInJobReviewStatesTheBriefCorrections(t *testing.T) {
 	recon := readDoc(t, inJobReviewRecon)
 	readme := readDoc(t, inJobReviewREADME)
-	if _, err := os.Stat("../../CLAUDE.md"); err == nil {
-		t.Errorf("CLAUDE.md now exists: %s's correction that this repository has none is stale, and the Rule class must say what it cites",
-			inJobReviewRecon)
+	// CLAUDE.md was added on 2026-10-23 as a short guide (not a rules file): the
+	// documents say so, and the Rule class cites it. If it is ever removed, the
+	// documents' statement that it exists is stale.
+	if _, err := os.Stat("../../CLAUDE.md"); err != nil {
+		t.Errorf("CLAUDE.md is gone: %s says it exists (added 2026-10-23) and the Rule class cites it", inJobReviewRecon)
 	}
-	if _, err := os.Stat("../../.claude/rules"); err == nil {
-		t.Errorf(".claude/rules now exists: %s's correction that this repository has none is stale", inJobReviewRecon)
+	// .claude/rules was added the same day (short path-scoped rule files), and
+	// the Rule class cites it too.
+	if _, err := os.Stat("../../.claude/rules"); err != nil {
+		t.Errorf(".claude/rules is gone: %s says it exists (added 2026-10-23) and the Rule class cites it", inJobReviewRecon)
 	}
 	// What each document must carry, as the substance of each correction and
 	// not merely a mention of the symbol: a document that says the runner never
@@ -227,7 +231,7 @@ func TestDocsInJobReviewStatesTheBriefCorrections(t *testing.T) {
 		want []string
 	}{
 		{inJobReviewRecon, recon, []string{
-			// Correction 1: no CLAUDE.md, no .claude/rules here.
+			// Correction 1: CLAUDE.md and .claude/rules came later, and both are short.
 			"CLAUDE.md",
 			".claude/rules",
 			// Correction 2: the runner does force-push its own run branch, with

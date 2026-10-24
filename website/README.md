@@ -109,7 +109,7 @@ planted second copy fails. The id, the audit trail and the choices behind them:
 
 ## The gates
 
-Fourteen checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
+Thirteen checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
 with fixtures that keep its refusals running, and none of them needs the network. The count is
 a fact about the list under it, and `website/test/readme.mjs` holds it to that list: a gate
 added or removed without this sentence moving fails there:
@@ -1049,7 +1049,8 @@ added or removed without this sentence moving fails there:
     (28 files, 11 pages): on the merged tree the two rounds together leave `dist/` at **30
     files** and **13 pages**, and *Product* holds **six** items — this round's *Why GCP*
     second, the phone app's *Mobile* last — so the bullet above's "fifth" is where that round
-    put it, not where it sits now.
+    put it, not where it sits now. Since the owner's approval of 2026-10-23, *Why GCP* is a *Project* item,
+    after *Security*, and *Product* holds five.
 
 
   - **The four zoom levels are the owner's four approved boards, redrawn as the site's inline
@@ -1301,15 +1302,6 @@ added or removed without this sentence moving fails there:
   refusals are kept the way the other gates keep theirs: a case writes a synthetic `dist` with
   each defect planted beside a page that keeps every rule, and each rule was mutation-proved by
   removing it from the function and watching that case fail.
-- `test/slider.mjs` — the homepage's one slider (the draft of 2026-10-19, P5/P8): the block is
-  three tabs and three panels, every panel is in the HTML a reader receives, each tab is a
-  fragment link to the panel beside it and the stylesheet shows the panel the fragment names —
-  read one tab at a time, so a stylesheet that pairs the Why Fugaro? tab with the See it panel is
-  refused rather than counted as three pairs present. It also refuses a script in the block, the
-  `role="tab"`/`aria-selected` pair that describes a widget whose selection is scripted, a tab
-  under the owner's 44 px target, a tab row that cannot wrap, a rule that takes the focus ring
-  off the tabs, a panel wider than a 360 px phone's content box, and a step whose line is not the
-  repository's own sentence about it in the order its document writes them.
 - `test/os-cards.mjs` — the install cards on Getting Started (the owner's draft of
   2026-10-19, "Getting Started, draft 2 (OS icons)"). Two rules about the shape no other gate
   can see: **no card names a system `data/install.yaml` does not carry** — the card's
@@ -2100,18 +2092,16 @@ tests it with the tools stubbed on PATH, and `go test ./scripts/` runs that test
 The deploy workflow is still W2.1's and **not a Fugaro run's to write**: W2.1 stages a
 workflow under `docs/pending-workflows/` for the owner to copy in, and the owner runs it to
 deploy to the Firebase project created for the website only (D91, D109) — a run may not
-change `.github/workflows/`. `docs/pending-workflows/` now holds four pending workflows,
+change `.github/workflows/`. `docs/pending-workflows/` now holds three pending workflows,
 `docs/pending-workflows/images.yml` — the credentials service's image leg (credentials-service
 plan, task C1.14) — `docs/pending-workflows/shared-tests.yml` — the shared package's test job
-(mobile plan Task P4.3) — `docs/pending-workflows/console-windows.yml` — the console's Windows
+(mobile plan Task P4.3) — and `docs/pending-workflows/console-windows.yml` — the console's Windows
 installer pack, which runs at release time only rather than on a pull request, and is copied in
-only after the packer and the unit suite can pass on a Windows runner —
-`docs/pending-workflows/dependabot-console.yml`
-— Dependabot's watch over the console's npm dependencies (2026-10-23), which is a settings file
-rather than a workflow and is copied over `.github/dependabot.yml` rather than into
-`.github/workflows/`. None of the four is this site's (the mobile app's release workflow,
-`mobile-release.yml`, and the console's own release stream, `console-release-tag.yml`, were
-copied in on 2026-10-23 and are no longer staged): the website's two manual
+only after the packer and the unit suite can pass on a Windows runner. None of the three is this
+site's (the mobile app's release workflow, `mobile-release.yml`, and the console's own release
+stream, `console-release-tag.yml`, were copied in on 2026-10-23 and are no longer staged, and
+Dependabot's watch over the console's npm dependencies was copied over `.github/dependabot.yml`
+the same day): the website's two manual
 workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the
 owner, and no deploy workflow is staged. The only other workflow files left there are the desktop
 console's `console-tests.yml` and `console-release.yml`, which the owner has copied in as well:

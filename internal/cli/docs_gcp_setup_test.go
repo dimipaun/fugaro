@@ -36,6 +36,32 @@ const gcpSetupDoc = "docs/gcp-setup.md"
 // theirs, and a rename is what would take that away.
 const gcpSetupWindowsSection = "## On Windows and in WSL: the two commands you run yourself"
 
+// TestDocsGCPSetupNotAnOwnerSaysWhatCreatingAndLinkingNeed: the project stage
+// answers a refused creation with `See docs/gcp-setup.md#not-an-owner.`
+// (refusedCreate, internal/cli/init_project.go), and a refused billing link
+// with the two roles that link needs, so #not-an-owner is where the reader
+// lands. The section says what creating a project and linking billing need,
+// and it names the roles as their administrators name them: those are the
+// words the reader repeats.
+func TestDocsGCPSetupNotAnOwnerSaysWhatCreatingAndLinkingNeed(t *testing.T) {
+	doc := readDoc(t, gcpSetupDoc)
+	sec := docSection(t, gcpSetupDoc, doc, "### If setup cannot create the project or link billing")
+	for _, want := range []string{
+		"roles/resourcemanager.projectCreator",
+		"roles/billing.user",
+		"billing.resourceAssociations.create",
+		"Owner or Project Billing Manager",
+		"gcloud billing projects link",
+	} {
+		if !strings.Contains(sec, want) {
+			t.Errorf("%s's #not-an-owner section lacks %q: refusedCreate sends a reader with no project here for the roles to ask for", gcpSetupDoc, want)
+		}
+	}
+	if !strings.Contains(doc, `<a id="not-an-owner"></a>`) {
+		t.Errorf("%s has no not-an-owner anchor: refusedCreate names it in the line it prints", gcpSetupDoc)
+	}
+}
+
 // TestDocsGCPSetupNamesTheWindowsForm: the guide carries both forms of the two
 // commands it has a Windows reader run. The login's two *files* are the claim
 // that makes the environment rule necessary — a Windows gcloud and a WSL gcloud
@@ -96,12 +122,13 @@ func TestDocsGCPSetupNamesTheWindowsForm(t *testing.T) {
 	for _, want := range []string{
 		"in the environment that will run `fugaro`",
 		"different files",
-		// Which preconditions are shell commands at all. The page claimed
-		// preconditions 1 and 3 and then said everything else was `fugaro`,
-		// which is false of 2, 4, 5, 6 and 9 — gcloud and terraform commands
-		// the reader runs — and the next paragraph already treats 2 as one.
-		"`gcloud` in 1, 2, 4, 5 and 9",
-		"`terraform` in 6",
+		// Which preconditions are shell commands at all. An earlier page
+		// claimed only the login and the environment, and said everything
+		// else was `fugaro`, which is false of the quota project, billing,
+		// serviceusage, Terraform and the build identity — gcloud and
+		// terraform commands the reader runs in every subsection.
+		"The `gcloud` lines under Install, Log in and Before you onboard a repository",
+		"`terraform version` under Install",
 	} {
 		if !strings.Contains(flat, want) {
 			t.Errorf("%s does not say %q (whitespace flattened): the environment rule, the two-files fact and which preconditions are shell commands at all are what the section exists to say", gcpSetupDoc, want)
