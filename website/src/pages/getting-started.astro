@@ -98,7 +98,7 @@
 import Base from '../layouts/Base.astro'
 import ConsoleOption from '../components/ConsoleOption.astro'
 import { SITE_ROOT, loadSite } from '../content.ts'
-import { copyControlHTML } from '../lib/copy-control.mjs'
+import { commandPieces, copyControlHTML } from '../lib/copy-control.mjs'
 import { loadConsoleDownloads } from '../lib/console-downloads.mjs'
 
 // The whole generated layer, read and validated through the base layout's own call: a
@@ -366,7 +366,7 @@ const doc = (path: string, fragment: string): string =>
           {path.commands.map((command) => (
             <div class="command-block" data-copy>
               <Fragment set:html={copyControlHTML('Copy the install command')} />
-              <pre><code>{command}</code></pre>
+              <pre><code>{commandPieces(command).map((piece, i) => (i === 0 ? piece : <><wbr />{piece}</>))}</code></pre>
             </div>
           ))}
 
@@ -546,7 +546,7 @@ const doc = (path: string, fragment: string): string =>
           {installPath.commands.map((command) => (
             <div class="command-block" data-copy>
               <Fragment set:html={copyControlHTML('Copy the install command')} />
-              <pre><code>{command}</code></pre>
+              <pre><code>{commandPieces(command).map((piece, i) => (i === 0 ? piece : <><wbr />{piece}</>))}</code></pre>
             </div>
           ))}
 

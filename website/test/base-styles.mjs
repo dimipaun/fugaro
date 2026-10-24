@@ -2711,3 +2711,29 @@ test('the skip link is the first thing in the body and points at main', () => {
     assert.match(html, /<main id="main"/, `${rel}: there is no main#main for the skip link to reach`)
   }
 })
+
+// The copy confirmation is drawn over its button, out of the row (the owner's preview feedback
+// on #1003, 2026-10-24): in the flow it took width from the command, wrapped above the button
+// and moved the block each time a command was copied.
+export function copyStatusFailures(css) {
+  const out = []
+  const last = (selector, property) =>
+    allRules(css)
+      .filter((rule) => rule.selector.split(',').some((part) => part.trim() === selector))
+      .map(declarations)
+      .map((d) => d[property])
+      .filter(Boolean)
+      .pop() ?? ''
+  if (last('.copy-status', 'position') !== 'absolute') out.push('the copy confirmation is in the row, so showing it takes width from the command and moves the block')
+  if (!['relative', 'absolute'].includes(last('.command-controls', 'position'))) out.push('the control box is not positioned, so the confirmation is not anchored to its button')
+  if (last('.copy-status:empty', 'opacity') !== '0') out.push('an empty confirmation is drawn, and it covers the button it sits on')
+  return out
+}
+
+test('the copy confirmation sits over its button and never moves the command', () => {
+  const css = TODAY()
+  assert.deepEqual(copyStatusFailures(css), [], copyStatusFailures(css).join('\n'))
+  const inFlow = css.replace(/(\.copy-status\{[^}]*?)position:absolute;?/, '$1')
+  assert.notEqual(inFlow, css, 'this fixture removes the confirmation\'s positioning, and the built stylesheet no longer carries it')
+  assert.ok(copyStatusFailures(inFlow).some((line) => /takes width from the command/.test(line)), 'a confirmation in the row was not refused')
+})

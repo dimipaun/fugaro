@@ -50,3 +50,12 @@ export function copyControlHTML(label) {
 export function commandBlockHTML(innerHTML, label) {
   return `<div class="command-block" data-copy>${copyControlHTML(label)}${innerHTML}</div>`
 }
+
+/**
+ * A command cut after each `/`, so a page can put a `<wbr>` between the pieces: a long path
+ * such as `github.com/dimipaun/fugaro/cmd/fugaro@latest` then wraps at a slash on a phone rather
+ * than mid-word. `<wbr>` adds no text, so the command a reader copies is unchanged.
+ */
+export function commandPieces(command) {
+  return String(command).split(/(?<=\/)/)
+}
