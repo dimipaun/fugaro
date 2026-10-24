@@ -93,6 +93,9 @@
   // one a reader cannot tell from a fresh one.
   var CLEARS_AFTER_MS = 4000
 
+  // How long the copy button shows its checkmark before it is a clipboard again.
+  var COPIED_MS = 1600
+
   // A short line that changes its words (the copy confirmation, the hero card's stages)
   // crossfades instead of snapping (owner-approved motion opportunities 2026-10-23): the old
   // words fade out and the new ones in, 120 ms in all (`--duration-fast`), on the site's
@@ -177,9 +180,12 @@
   // previous message's timer is not cancelled but guarded instead: a second copy replaces
   // the text, and the older timer no longer matches it, so the newer message keeps its own
   // full time on screen.
-  function say(block, message) {
+  function say(block, message, tone) {
     var status = block.querySelector('[data-copy-status]')
     if (!status) return
+    // `ok` is said to a screen reader only (the checkmark is the sighted reader's); anything
+    // else, a refused copy, is shown as well.
+    status.setAttribute('data-tone', tone || 'error')
     swapText(status, message)
     window.setTimeout(function () {
       if (status.textContent === message) swapText(status, '')
@@ -191,7 +197,18 @@
     if (!source) return
     navigator.clipboard.writeText(source.textContent || '').then(
       function () {
-        say(block, 'Copied')
+        say(block, 'Copied', 'ok')
+        // The clipboard icon becomes a checkmark for a moment; the status line is what a screen
+        // reader is told. A newer copy restarts the moment rather than being cut short by an
+        // older timer.
+        var button = block.querySelector('[data-copy-button]')
+        if (!button) return
+        var turn = (button.fugaroCopied || 0) + 1
+        button.fugaroCopied = turn
+        button.setAttribute('data-copied', 'true')
+        window.setTimeout(function () {
+          if (button.fugaroCopied === turn) button.setAttribute('data-copied', 'false')
+        }, COPIED_MS)
       },
       function () {
         // A browser that refuses the write — an unfocused document, a permission the reader
@@ -1403,6 +1420,35 @@
     setPlaying(playing)
   }
 
+  // ---- the run picture on How it works: its four steps arrive once, in view -----------------
+  //
+  // The stylesheet holds the steps at their first frame from the first paint (paused, filling
+  // backwards) wherever scripts run and motion is welcome; this only starts them, by marking the
+  // picture `play` once it is in view. A picture already in view starts at once (the observer
+  // reports it on its first callback), and a browser with no IntersectionObserver starts at once
+  // too. A print shows the picture whole.
+  function runReveal() {
+    if (typeof document.querySelector !== 'function') return
+    var figure = document.querySelector('.run-diagram')
+    if (!figure) return
+    function play() {
+      figure.setAttribute('data-run-reveal', 'play')
+    }
+    window.addEventListener('beforeprint', play)
+    if (!('IntersectionObserver' in window)) {
+      play()
+      return
+    }
+    var seen = new IntersectionObserver(function (entries) {
+      for (var e = 0; e < entries.length; e++) {
+        if (!entries[e].isIntersecting) continue
+        play()
+        seen.disconnect()
+      }
+    }, { threshold: 0.35 })
+    seen.observe(figure)
+  }
+
   // ---- entrances (the redesign's motion layer, step 9) ------------------------------------
   //
   // The parts of each home section rise into place once, in reading order, as the section
@@ -1472,6 +1518,7 @@
     // The hero's live card and the entrances, before the clipboard gate for the same reason.
     liveRun()
     levels()
+    runReveal()
     entrances()
     var blocks = document.querySelectorAll('[data-copy]')
     if (blocks.length === 0) return

@@ -64,6 +64,8 @@
 
 **Nothing here needs a live cloud in a task's verification** (Global Constraint 12 below): every task but Task 12 runs offline, and Task 12 is the owner's.
 
+**One number was taken for this backend after this plan, and it is recorded here rather than left to be found.** `docs/gcp-live-checklist.md` carries **Check 124**, written on 2026-10-24 as *the Cloud Batch backend's own live check*: the owner-run reading of `fugaro setup --provision-batch` itself (the plan, the typed confirmation, the apply, the doctor and validate read-backs), one ordinary sandbox run on this backend to its pull request, a forced Spot preemption with the exit code read out of `internal/backend/batch/run.go`, the reaper's report, and the check's own spend and cleanup. **The plan did not take it and does not own it**: this section's claim stands — no *task here* reserves a number, and the work this plan schedules is 57b's steps — while 124 is the number the register's own rule gives a check written above the highest section written at the time (113 at `a9500ef3`, with 114–123 reserved, proposed or claimed), and Task 12 remains the task that writes `## Check 57` into the register from the design's §7.2. **The two overlap where 124b–124d re-run readings 57b's steps also make** — a run on `cloud-batch` to its pull request, the reaper's sweep, the recorded spend — and 124 says so in its own text: 57 is the backend's measurement, 124 is the check an owner runs on an installation, and when Task 12 lands the two are read together rather than one of them being dropped. A reader who finds two live checks for this backend has found this paragraph, not a number taken twice.
+
 ## Global Constraints
 
 These hold for every task below, and the plan's own review checks them:

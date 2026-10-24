@@ -514,23 +514,6 @@ const NEUTRALISERS = {
 /** The scroll-driven reveal the retired flow brought its steps in with. */
 const SCROLL_TIMELINE = ['animation-timeline', 'scroll-timeline', 'view-timeline']
 
-// The one scroll-driven motion the site admits: the run picture's left-to-right reveal of its
-// four steps on /how-it-works/ (owner-approved motion opportunities 2026-10-24; the four
-// levels' scroll zoom of 2026-10-23 was replaced by a slider the same day). It is admitted only
-// as the enhancement it was approved as — a rule of the picture (`.run-diagram` selectors and
-// nothing else) behind both the feature query and the reader's own `no-preference` — so the
-// same mechanism anywhere else, or unguarded, is still the retired flow's reveal and refused.
-const SCROLL_SUPPORTS = /@supports\s*\(\s*animation-timeline\s*:\s*view\(\)\s*\)/i
-export function admittedScrollMotion(rule) {
-  const parts = (rule.selector || '').split(',').map((part) => part.trim())
-  return (
-    parts.length > 0 &&
-    parts.every((part) => /^\.run-diagram(?![\w-])/.test(part)) &&
-    rule.conditions.some((condition) => SCROLL_SUPPORTS.test(condition)) &&
-    rule.conditions.some((condition) => ALLOWS_MOTION.test(condition))
-  )
-}
-
 /**
  * Every way one built page keeps motion for a reader who asked for less of it. The retired
  * flow's own gate (W1.4 step 3, D105) asked the page to bring its steps in on a scroll-driven
@@ -567,7 +550,7 @@ export function pageMotionFailures(css) {
     if (!rule.selector || rule.selector.startsWith('@')) continue
     const declared = cssDeclarations(rule.body)
     for (const [property, value] of declared) {
-      if (SCROLL_TIMELINE.includes(property) && !/^none\b/.test(value.trim()) && !admittedScrollMotion(rule)) {
+      if (SCROLL_TIMELINE.includes(property) && !/^none\b/.test(value.trim())) {
         out.push(
           `${rule.selector}${rule.conditions.length > 0 ? ` (inside ${rule.conditions.join(' and ')})` : ''} declares ${property}: ${value}, and the page is not revealed by scrolling: the flow's scroll-driven animation is retired with the flow (the owner's ruling of 2026-10-20), and the slider's panels are the fragment's while the drawing is a still picture (W1.4 step 3, D105)`,
         )
@@ -1953,23 +1936,19 @@ test("the flow's scroll-driven reveal is retired with it, and every motion the p
       `the ${where} page keeps motion a reader who asked for less would still be given:\n  ${pageMotionFailures(css).join('\n  ')}`,
     )
     const flat = css.replace(/\s+/g, '')
-    // Every spelling in the page's text is counted against the declarations the admitted rules
-    // carry, so one the rule reader does not see is still caught.
-    const admitted = cssRules(css).filter(admittedScrollMotion)
     for (const property of ['animation-timeline', 'scroll-timeline', 'view-timeline']) {
-      const allowed = route === 'how-it-works' ? admitted.reduce((n, rule) => n + cssDeclarations(rule.body).filter(([p]) => p === property).length, 0) : 0
       // A feature query names the property too, and asks rather than declares.
       assert.ok(
-        flat.replace(/@supports[^{]*/g, '').split(`${property}:`).length - 1 <= allowed,
-        `the ${where} page declares \`${property}\`, and the page is not revealed by scrolling: the flow's scroll-driven animation is retired with the flow (the owner's ruling of 2026-10-20; W1.4 step 3, D105)`,
+        !flat.replace(/@supports[^{]*/g, '').includes(`${property}:`),
+        `the ${where} page declares \`${property}\`, and the page is not revealed by scrolling: the flow's scroll-driven animation is retired with the flow (the owner's ruling of 2026-10-20; W1.4 step 3, D105). The run picture's step reveal plays once in view, on a timer, not on the scroll (the owner's feedback of 2026-10-24)`,
       )
     }
     // The homepage has a motion layer since the owner's rulings of 2026-10-23 (the redesign's
     // Step 3, lever 7: motion with reduced-motion fallbacks): the hero's capture opens once as the
     // page loads and the live card's rows arrive, so its keyframes are allowed, held by the
     // reduced-motion reading above. How It Works keeps its drawing still; its only keyframes are
-    // the run picture's step reveal (owner-approved motion opportunities 2026-10-24), which runs
-    // only through the admitted rule above.
+    // the run picture's step reveal (owner-approved motion opportunities 2026-10-24), played once
+    // when the picture comes into view.
     if (route !== '') {
       const named = [...flat.matchAll(/@keyframes([\w-]+)/g)].map((match) => match[1])
       assert.deepEqual(
@@ -2135,20 +2114,9 @@ test('the picture refusals fire on the defect each one names', () => {
     pageMotionFailures(`.step-card{animation-timeline:view()}${guard}`).some((line) => /declares animation-timeline: view\(\), and the page is not revealed by scrolling/.test(line)),
     "the flow's scroll-driven reveal passes the motion check as long as it is guarded: the flow is retired and neither thing in its place animates, so the mechanism is refused rather than guarded (the owner's ruling of 2026-10-20)",
   )
-  // The run picture's reveal is admitted behind both guards, and only there (owner-approved
-  // motion opportunities 2026-10-24).
-  assert.deepEqual(
-    pageMotionFailures(`@supports (animation-timeline:view()){@media (prefers-reduced-motion:no-preference){.run-diagram .run-step{animation-timeline:--run-figure}}}${guard}`),
-    [],
-    'the run picture\'s guarded step reveal is refused, and the owner approved it on 2026-10-24',
-  )
-  assert.ok(
-    pageMotionFailures(`@media (prefers-reduced-motion:no-preference){.run-diagram .run-step{animation-timeline:--run-figure}}${guard}`).some((line) => /and the page is not revealed by scrolling/.test(line)),
-    'the run picture\'s reveal passes without its feature query',
-  )
   assert.ok(
     pageMotionFailures(`@supports (animation-timeline:view()){@media (prefers-reduced-motion:no-preference){.step-card{animation-timeline:view()}}}${guard}`).some((line) => /and the page is not revealed by scrolling/.test(line)),
-    'a guarded scroll-driven rule outside the zoom section passes, and the flow\'s reveal is still retired',
+    'a guarded scroll-driven rule passes, and the flow\'s reveal is still retired',
   )
   assert.ok(
     pageMotionFailures(`${guard}.step-card{animation:reveal 2s} .step-card:hover{transition:none}`).length === 0,

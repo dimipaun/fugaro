@@ -344,7 +344,9 @@ func TestPlainLauncherCellCutsAtTheBoundary(t *testing.T) {
 // tuiRowCell is the value under the header's col column on the frame line
 // whose RUN cell is shortID, for the interactive screen's fixed-width table:
 // columns are space padded, so the header's own offsets are the row's. next is
-// the column the wanted one is followed by, which is where its cell ends.
+// the column the wanted one is followed by, which is where its cell ends. A
+// row that stops before that offset — its own last cell is empty, and line()
+// drops the blanks — is cut at its own end.
 //
 // The offsets are counted in runes, not bytes: a row's title is clipped with
 // an ellipsis, which is three bytes wide, and a byte offset taken from the
@@ -371,10 +373,8 @@ func tuiRowCell(t *testing.T, frame, shortID, col, next string) string {
 		if len(f) < 2 || (f[0] != shortID && !(f[0] == "▸" && f[1] == shortID)) {
 			continue
 		}
-		if r := []rune(l); len(r) >= end {
-			return strings.TrimSpace(string(r[start:end]))
-		}
-		return ""
+		r := []rune(l)
+		return strings.TrimSpace(string(r[min(start, len(r)):min(end, len(r))]))
 	}
 	t.Fatalf("no run row %q in the frame:\n%s", shortID, frame)
 	return ""
