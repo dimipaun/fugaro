@@ -93,8 +93,8 @@ runtime dependency today; see below):
 | `vitest` | `5.0.5` | `devDependencies` | `npm run test:unit` |
 | `@playwright/test` | `1.64.1` | `devDependencies` | `npm run test:e2e`, Electron driven by `electron.launch` (Task 1.1) |
 | `@types/node` | `22.20.5` | `devDependencies` | the Node the main process and the tests run on |
-| `@electron/fuses` | `2.0.0` | `devDependencies` | the `afterPack` hook's fuse writer (Task 4.1) |
-| `electron-builder` | `26.17.0` | `devDependencies` | the packer, run from its local binary by `npm run package` (Task 4.1) |
+| `@electron/fuses` | `2.1.3` | `devDependencies` | the `afterPack` hook's fuse writer (Task 4.1) |
+| `electron-builder` | `26.18.0` | `devDependencies` | the packer, run from its local binary by `npm run package` (Task 4.1) |
 
 `dependencies` is empty, and that is a decision rather than a symptom: the
 renderer bundles no framework runtime and no charting library (design D9), and
@@ -1993,10 +1993,10 @@ contents; Check 59a — owner-run, on a Mac with a Developer ID certificate — 
 where it becomes a measurement, and `codesign -d --entitlements -` on the built
 bundle is the command that prints what was actually granted.
 
-### The six fuses, and the two left alone
+### The six fuses, and the three left alone
 
-Flipped in `afterPack` over `@electron/fuses` 2.0.0, and these are the six the
-design's §5.1 rule 4 names — with the two this build does *not* touch named too,
+Flipped in `afterPack` over `@electron/fuses` 2.1.3, and these are the six the
+design's §5.1 rule 4 names — with the three this build does *not* touch named too,
 because "left at its upstream default" is a decision and not an oversight:
 
 | Fuse | Value | Why |
@@ -2009,7 +2009,7 @@ because "left at its upstream default" is a decision and not an oversight:
 | `GrantFileProtocolExtraPrivileges` | **disabled** | `file://` keeps no extra privileges; the console serves itself over `app://` (Task 1.1). |
 | `EnableCookieEncryption` | *left alone* | The console keeps no cookie store: no sign-in is stored. |
 | `LoadBrowserProcessSpecificV8Snapshot` | *left alone* | A startup optimisation for a browser process that loads web content. |
-| `WasmTrapHandlers` (index 8) | *left alone, enabled* | Beyond the pin: Electron 44.7.2's wire holds **nine** fuses and `@electron/fuses` 2.0.0 names eight, so this one cannot be set through the pinned package at all. It is V8's WebAssembly bounds-check strategy: it loads no code, reads no environment variable or flag, and the console runs no WebAssembly. `BEYOND_PIN_FUSES` in `fuses.ts` records it with its default, and the hook verifies the default. |
+| `WasmTrapHandlers` (index 8) | *left alone, enabled* | Upstream default kept: V8's WebAssembly bounds-check strategy loads no code, reads no environment variable or flag, and the console runs no WebAssembly. It was beyond the pin until `@electron/fuses` 2.1 named it; `BEYOND_PIN_FUSES` is now empty, because Electron 44.7.2's nine fuses are all named by the package. |
 
 Three properties of the hook are worth stating here, because they are what make
 the six a fact rather than an intention:
@@ -2043,10 +2043,10 @@ the six a fact rather than an intention:
   for both platforms.
 - **It refuses a wire it has not accounted for.** After the flips, the hook
   compares the wire's length with the fuses `fuses.ts` decides about (six
-  flipped, two left alone, one beyond the pin: nine) and stops the build if they
+  flipped, three left alone, none beyond the pin: nine) and stops the build if they
   differ, so an Electron bump that adds a fuse cannot reach the signer
   unexamined. The three fuses it leaves alone are checked **by value** too: the
-  two left-alone fuses must still be disabled and `WasmTrapHandlers` enabled,
+  cookie and snapshot fuses must still be disabled and `WasmTrapHandlers` enabled,
   the defaults the pinned Electron 44.7.2 ships, or the build stops.
   `fuses.test.ts` also reads the real binary's wire when
   `node_modules/electron/dist` is installed, and on macOS runs the real hook over
@@ -2255,7 +2255,7 @@ with an injected platform could only assert one platform's answer.
 
 ### The packer is a pinned devDependency, and nothing it installs runs
 
-`electron-builder` `26.17.0` is in `devDependencies`, recorded in
+`electron-builder` `26.18.0` is in `devDependencies`, recorded in
 `package-lock.json` with its whole tree (exact versions, integrity hashes, every
 entry from `https://registry.npmjs.org/`), and `npm run package` runs its local
 binary — never `npx`, which resolves a tree outside the lockfile and runs its
@@ -2263,7 +2263,7 @@ install scripts in the shell the signing secrets are exported into. An earlier
 revision did exactly that (`npx --yes electron-builder@26.0.12`), because the
 26.0 line's tree carried a git-sourced `@electron/node-gyp` that
 `lockfile.test.ts` refuses; from the 26.1 line the packer depends on `@electron/rebuild`
-4, whose `node-gyp` comes from the registry, so the 26.17.0 tree passes the
+4, whose `node-gyp` comes from the registry, so the 26.18.0 tree passes the
 lockfile test with no exception and none was added. Three settings keep the
 packer from reaching outside what is pinned:
 
@@ -2368,7 +2368,7 @@ nobody should trust:
 | the `package` script back to `npx --yes electron-builder@26.0.12 …`, or `--publish always` | "packages with the pinned local electron-builder, universal, and never publishing" |
 | `dist/renderer/**/*.js` added to `build.files`, or `!dist/source/fixture.js` removed | the exact-list test and "ships every module the main process and the preload load, and neither excluded file" |
 | a zeroed Electron x64 hash in `electronDownload`; `npmRebuild: true` | the checksum test (and, at pack time, electron-builder's own "did not match expected checksum"); the rebuild test |
-| `BEYOND_PIN_FUSES` emptied (WasmTrapHandlers undecided) | five tests, including both real-binary tests: the wire holds 9 fuses and the file accounts for 8 |
+| `WasmTrapHandlers` dropped from `LEFT_ALONE_FUSES` (undecided) | eight tests, including both real-binary tests: the wire holds 9 fuses and the file accounts for 8 |
 
 ## The signing and notarisation pipeline, staged (Task 4.2)
 
