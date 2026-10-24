@@ -13,9 +13,12 @@ The owner's answers of 2026-10-24 that shape it:
   recommendation):** `LICENSE` is not touched at all, and the scope statement goes in a new root
   `LICENSING.md`; **D302** the console, mobile, coordinator and central
   orchestrators stay core, and only net-new organisation features go to `ee/`.
-- **D303** ee code reaches users through a separate `main` under `ee/`, a separate artifact; the
-  released `fugaro` stays core-only, so `plugin/.claude-plugin/plugin.json` and the Homebrew cask
-  keep `MIT` and no task touches them.
+- **D303, amended by the owner 2026-10-24 (not the recommendation):** one released binary,
+  key-gated: ee code is compiled into the same `fugaro` by an `ee` build tag the release build sets
+  and enabled by the licence key; untagged builds are pure MIT. Only `cmd/fugaro/ee_on.go`
+  (`//go:build ee`) may import `ee/` (R6). At 0.11.0 `ee/` is empty and the release sets no tag,
+  so `plugin/.claude-plugin/plugin.json` and the Homebrew cask keep `MIT`; the release that first
+  sets the tag changes every label together (T3, slice L5).
 - **D304** a CLA through a hosted app, bots allow-listed, before the first outside PR is merged.
 - **D305 (not the recommendation)** adopt a published source-available text as is, names filled
   in; **T1 ruled 2026-10-24 as choice (iii):** 0.11.0 ships `ee/` **reserved, with no licence
@@ -33,8 +36,9 @@ the 0.11.0 slice while being, by ruling, not a 0.11.0 deliverable). No task id w
 different purpose except L1.2, whose earlier content (copying the approved `ee/LICENSE`) moved,
 unchanged, to the new L4.1.
 
-Out of scope here (R7): the spec's Task 3 (extension points) and Task 4 (workspaces), and the
-D303 `ee/` main, belong to the workspaces plan, which takes D302, D303, D308 and D309 as inputs.
+Out of scope here (R7): the spec's Task 3 (extension points) and Task 4 (workspaces), the
+`cmd/fugaro/ee_on.go` assembly file and the `ee/register` package (D303 as amended) belong to the
+workspaces plan, which takes D302, D303, D308 and D309 as inputs.
 
 ## Conventions every part follows
 
@@ -58,7 +62,10 @@ D303 `ee/` main, belong to the workspaces plan, which takes D302, D303, D308 and
   itself must name (the licensor line is the owner's to fill, L0.1).
 - Legal text is the owner's and counsel's: no task writes or edits licence terms. L4.1 copies an
   approved text; L1.3 writes a scope statement (`LICENSING.md`) whose words the owner approves in
-  review. **`LICENSE` is never edited by any task.**
+  review. **`LICENSE` is never edited by any task**, with one named exception: if counsel (L0.1)
+  names an entity whose name must replace the copyright line (reconciliation F27 fact 4), that edit
+  is made only on the owner's explicit go, in its own commit, which updates the hash
+  `TestDocsLicensingRootLicenceUnchanged` pins.
 
 ## Global constraints and review focus
 
@@ -66,19 +73,25 @@ D303 `ee/` main, belong to the workspaces plan, which takes D302, D303, D308 and
 | --- | --- |
 | `LICENSE` is byte-identical to today's (O2: GitHub keeps reporting MIT; the website's `licenceIdentifier()` keeps reading `MIT License`) | L1.3 `TestDocsLicensingRootLicenceUnchanged`; L1.5 `faq-community.mjs` |
 | `LICENSING.md` states the split (`ee/` excluded and reserved, `.agents/` third-party, trademark pointer) and is linked from README and the website card | L1.3 `TestDocsLicensingStatement`; L1.5 |
-| No non-`ee/` Go file of any build tag imports the ee path (matched by path segment), no symlink, `//go:embed`, `//go:generate`, cgo include, `replace` or nested module reaches into `ee/` | L1.1 `TestCoreNeverImportsEE`, `TestCoreNeverEmbedsEE`, `TestNoModuleRouteIntoEE` |
+| No non-`ee/` Go file of any build tag imports the ee path (matched by path segment) except `cmd/fugaro/ee_on.go`, which must carry `//go:build ee` and blank-import only `…/ee/register`; no symlink, `//go:embed`, `//go:generate`, cgo include, `replace` or nested module reaches into `ee/` | L1.1 `TestCoreNeverImportsEE`, `TestCoreNeverEmbedsEE`, `TestNoModuleRouteIntoEE` |
 | Every `ee/` source file (any file but `README.md` and `LICENSE`) starts with the two-line notice, and `ee/LICENSE` exists whenever one source file does (R3, amended) | L1.1 `TestEEFilesCarryTheNotice`, `TestEESourceNeedsTheLicence` |
-| The core builds and tests with `ee/` deleted | L1.7 staged workflow, run after L1.8 |
+| The core builds and tests with `ee/` deleted; the only tests skipped there are the ones that read the real `ee/` through the one helper | L1.2 `TestEEReadersAreListed`; L1.7 `TestDocsCoreWithoutEEWorkflow`; run after L1.8 |
+| The release build (D303 as amended): every goreleaser build's `main` is `./cmd/fugaro`; its build tags are empty at 0.11.0; a non-empty list may hold only `ee`, and only when the cask `license`, the plugin manifest `license`, README, `LICENSING.md` and the website elements name the enterprise licence; no archive file glob reaches `ee/` | L2.1 `TestGoreleaserReleaseBuild`, `TestEETagNeedsTheLabels` |
 | Both website licence elements (the Licence card and the `#licence` section) state the split and link `LICENSING.md`; "the only text that governs" is gone | L1.5 |
 | `ee/README.md` says the folder is reserved and carries no licence yet, until L4.1 | L1.2 creates it, L4.1 switches it |
 | The CLI archive carries a notice for every linked third-party module | L2.1 `TestThirdPartyNoticesCoverEveryLinkedModule` |
-| The packed console carries `LICENSE` and its notices | L2.2 `packaging-licence.test.ts` |
+| The packed console carries `LICENSE` and one notices file, `console/THIRD_PARTY_NOTICES.md`, generated from what the bundler walks **and** copies | L2.2 `packaging-licence.test.ts` |
 | Released versions stay MIT, said in the README Licensing section, `LICENSING.md` and the 0.11.0 notes | L1.3 (both tested), L1.9 |
 
 **Attacker's view.** The boundary tests are the only guard between commercial and MIT code in this
 repository; a build-tagged core file importing `ee/` is the case `go list -deps` misses, so L1.1
 parses every file regardless of tags and its self-test plants one. A contributor who removes the
-test is caught by review, not by the test: L1.6's rule file names it.
+test is caught by review, not by the test: L1.6's rule file names it. Adding `ee` to the release
+build's tags without the label change is refused by L2.1's coupling test; a second assembly file,
+or one without the tag line, is refused by L1.1. **Not covered, by D309's
+accepted Go-only scope:** the image Dockerfiles (`images/`) and the Terraform sources
+(`deploy/terraform/`) could name `ee/` without any test noticing; that scope is extended with the
+first non-Go file under `ee/`.
 
 ## Slices and tasks
 
@@ -107,10 +120,13 @@ test is caught by review, not by the test: L1.6's rule file names it.
 - **Interfaces:** consumes the module tree; produces the rule R6 and R3 as tests.
 - **Schema/rules/config change:** none.
 - **Tests** (tightened after the round-1 review):
-  - `TestCoreNeverImportsEE`: parses imports with `go/parser` in every `.go` file outside `ee/`,
-    `.agents/` and `node_modules/`, every build tag (the core walk keeps the creds walker's skips
-    of `testdata/` and `_`/`.` directories only for files the go tool also skips; it reports any
-    such file that imports the ee path anyway). The ee path is matched **by path segment**: an
+  - `TestCoreNeverImportsEE`: parses imports with `go/parser` in **every** `.go` file outside
+    `ee/`, at any depth and with every build tag, skipping **no** directory: `node_modules/` at any
+    depth, `testdata/`, `.agents/` and `_`/`.` directories are walked like any other, unlike the
+    creds walker, so a file the go tool would not build today still cannot carry the import.
+    **The one exception (D303 as amended):** `cmd/fugaro/ee_on.go` exactly, whose build
+    constraint is `//go:build ee`, whose package is `main`, and whose only import of the ee path
+    is the blank import `_ "github.com/dimipaun/fugaro/ee/register"`. The ee path is matched **by path segment**: an
     import equal to `github.com/dimipaun/fugaro/ee` or starting with
     `github.com/dimipaun/fugaro/ee/` (so `…/eevee` is not a match). It also refuses any symlink
     outside `ee/` that resolves into `ee/` (the walker does not follow symlinks, and the tree
@@ -120,23 +136,31 @@ test is caught by review, not by the test: L1.6's rule file names it.
     `go.mod` (or `go.work`) whose target is `ee/` or under it; no `//go:generate` line outside
     `ee/` naming an `ee/` path; no cgo `#include` or `#cgo` flag outside `ee/` reaching into
     `ee/`.
-  - `TestEEFilesCarryTheNotice`: R3's exact rule (reconciliation R3): the `ee/` walk skips
-    **nothing** (dot-directories, `_` directories and `testdata/` included) and refuses symlinks;
+  - `TestEEFilesCarryTheNotice`: R3's exact rule (reconciliation R3) over the **tracked** files
+    under `ee/` (`git ls-files -s ee/`, so an untracked `.DS_Store` or build output does not fail
+    it, and mode `120000` marks a symlink, which is refused); nothing tracked is skipped
+    (dot-directories, `_` directories and `testdata/` included);
     only the exact paths `ee/README.md` and `ee/LICENSE` are exempt; the comment syntax is chosen
     by file type; a `#!` file carries the notice on lines 2 and 3; a format with no comments
     (`.json`, `go.sum`, binaries, unknown types) needs a sibling `<name>.license` carrying the
     notice, or it is refused.
   - `TestEESourceNeedsTheLicence`: if any non-exempt file exists under `ee/`, `ee/LICENSE` exists.
     Both pass for an absent `ee/` and for a reserved `ee/` holding only `README.md`.
-  - `TestEEBoundaryScanCatchesPlantedViolations`: a `t.TempDir()` tree with one plant per rule,
+  - `TestEEBoundaryScanCatchesPlantedViolations`: a `t.TempDir()` tree (the notice rule's scan
+    takes the file list as input, so the plants hand it theirs) with one plant per rule,
     each reported: a `//go:build ee` core file importing the ee path; an import of `…/ee` exactly;
-    a core symlink into `ee/`; an embed into `ee/`; `ee/go.mod`; a root `go.mod` `replace` into
+    a core symlink into `ee/`; a `.go` file under a nested `web/node_modules/x/` importing the ee
+    path; an embed into `ee/`; `ee/go.mod`; a root `go.mod` `replace` into
     `ee/`; a `//go:generate` naming `ee/`; a cgo `#include` into `ee/`; an `ee/` source file
     without the notice; an `ee/sub/README.md` without it; a file under `ee/.hidden/`; a file under
     `ee/testdata/`; a shebang script with the notice on line 1 instead of line 2; an `ee/x.json`
     with no sibling `.license`; a noticed file while `ee/LICENSE` is missing. Negative plants that
     must **not** be reported: an import of `…/eevee`, a reserved tree with only `ee/README.md`, a
-    shebang script with the notice on lines 2 and 3.
+    shebang script with the notice on lines 2 and 3, and a correct `cmd/fugaro/ee_on.go`. Plants
+    for the exception, each reported: a second file `cmd/fugaro/ee_more.go` with the tag importing
+    `ee/register`; `cmd/fugaro/ee_on.go` without `//go:build ee`; `ee_on.go` importing an ee
+    package other than `ee/register`, or `ee/register` by a non-blank name; an `ee_on.go`-named file
+    in another directory; an import of `ee/register` from `internal/cli` under the tag.
 - **Command:** `go test ./internal/eeboundary/ -run 'TestCoreNeverImportsEE|TestCoreNeverEmbedsEE|TestNoModuleRouteIntoEE|TestEEFilesCarryTheNotice|TestEESourceNeedsTheLicence|TestEEBoundaryScanCatchesPlantedViolations' -count=1`
 - **Red step:** write `TestEEBoundaryScanCatchesPlantedViolations` first against a scan stub that
   returns nothing; every positive plant fails.
@@ -147,12 +171,21 @@ test is caught by review, not by the test: L1.6's rule file names it.
 - **Files:** `ee/README.md` (new: the folder is reserved for net-new organisation features under
   their own licence; it carries **no licence yet** and no code; `ee/LICENSE` arrives only when
   counsel's text is approved; core never imports `ee/`; each future file carries the R3 notice);
-  `internal/cli/docs_ee_reserved_test.go` (new).
-- **Interfaces:** produces the file L1.3's `LICENSING.md` and L1.5's card point at.
-- **Tests:** `TestDocsEEReserved` (`ee/README.md` exists, says reserved and that no licence file
-  exists yet; `ee/` holds no other file; `ee/LICENSE` is absent). L1.1's tests pass on it.
-- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDocsEEReserved|Docs' -count=1 -timeout 900s`
-- **Red step:** `TestDocsEEReserved` before `ee/README.md` exists.
+  `internal/cli/docs_ee_reserved_test.go` (new); `internal/cli/docs_ee_repo_test.go` (new: the
+  **one helper** through which any test reads the real repository's `ee/`, `readRealEE(t, rel)`,
+  and the constant `eeReadingTests`, the exact list of the tests that call it).
+- **Interfaces:** produces the file L1.3's `LICENSING.md` and L1.5's page point at, and the helper
+  and list that L1.3, L1.7 and L4.1 use.
+- **Tests:** `TestDocsEEReserved` (through `readRealEE`: `ee/README.md` exists, says reserved and
+  that no licence file exists yet; `ee/` holds no other file; `ee/LICENSE` is absent);
+  `TestEEReadersAreListed` (both ways: every top-level test in `internal/cli` that calls
+  `readRealEE` is in `eeReadingTests`, and every name in `eeReadingTests` is such a test; and no
+  `_test.go` file anywhere in the module, outside `internal/eeboundary/` and this helper file,
+  holds a string literal naming a path under the repository's `ee/`, so a test cannot read it
+  around the helper). L1.1's tests pass on the reserved tree.
+- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDocsEEReserved|TestEEReadersAreListed|Docs' -count=1 -timeout 900s`
+- **Red step:** `TestDocsEEReserved` before `ee/README.md` exists; `TestEEReadersAreListed` against
+  a list missing `TestDocsEEReserved`.
 - **Depends on:** nothing. **Reviewer tier:** standard. **OWNER-RUN:** no.
 - **Commit:** `ee: the folder is reserved and carries no licence yet`
 
@@ -165,9 +198,11 @@ test is caught by review, not by the test: L1.6's rule file names it.
   `LICENSING.md`, the trademark paragraph (D310));
   `.agents/LICENSE` (new: the vendored project's upstream licence text, fetched from its
   repository by the run, the upstream commit named in the commit body);
-  `internal/cli/docs_licensing_test.go` (new). **`LICENSE` is not edited (O2).**
-- **Tests:** `TestDocsLicensingRootLicenceUnchanged` (`LICENSE`'s SHA-256 equals today's at
-  `e924481cd`); `TestDocsLicensingStatement` (`LICENSING.md` names `ee/` as excluded and reserved,
+  `internal/cli/docs_licensing_test.go` (new); `internal/cli/docs_ee_repo_test.go`
+  (`TestDocsLicensingStatement` joins `eeReadingTests`: it checks the `ee/README.md` link through
+  `readRealEE`). **`LICENSE` is not edited (O2).**
+- **Tests:** `TestDocsLicensingRootLicenceUnchanged` (`LICENSE`'s SHA-256, after normalising CRLF
+  to LF so a Windows checkout passes, equals today's at `e924481cd`); `TestDocsLicensingStatement` (`LICENSING.md` names `ee/` as excluded and reserved,
   `.agents/` as third-party, the earlier-releases sentence, and links `LICENSE`, `ee/README.md`,
   `.agents/LICENSE` and the README's trademark paragraph); `TestDocsLicensingReadmeSection` (the
   section links `LICENSE` and `LICENSING.md` and carries the earlier-releases sentence and the
@@ -177,8 +212,8 @@ test is caught by review, not by the test: L1.6's rule file names it.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDocsLicensing|Docs' -count=1 -timeout 900s`
 - **Red step:** the three new-file tests against today's tree (`TestDocsLicensingRootLicenceUnchanged`
   passes from the start: it is the guard).
-- **Depends on:** L1.2 (`LICENSING.md` links `ee/README.md`). **Reviewer tier:** standard, plus
-  the owner reads `LICENSING.md`'s wording.
+- **Depends on:** L1.2 (`LICENSING.md` links `ee/README.md`; the helper and list). **Reviewer
+  tier:** standard, plus the owner reads `LICENSING.md`'s wording. **OWNER-RUN:** no.
 - **Commit:** `licensing: LICENSING.md states the split, the README Licensing section, the vendored skills' licence`
 
 #### L1.4 — Contribution terms
@@ -192,6 +227,7 @@ test is caught by review, not by the test: L1.6's rule file names it.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDocsContributingCLA|TestDocsPRTemplateCLA|Docs' -count=1 -timeout 900s`
 - **Red step:** both tests before the edit.
 - **Depends on:** nothing (the wording holds before L0.2, O3). **Reviewer tier:** standard.
+  **OWNER-RUN:** no.
 - **Commit:** `contributing: outside contributions need a signed CLA`
 
 #### L1.5 — The website Community page's two licence elements
@@ -203,13 +239,14 @@ test is caught by review, not by the test: L1.6's rule file names it.
   core is released under the {licence} licence in `LICENSE`; `LICENSING.md` says which parts of the
   repository are not, and the reserved `ee/` directory is one", both linked).
   `licenceIdentifier()` is unchanged and still reads `MIT License`, because `LICENSE` is untouched.
-  `website/test/faq-community.mjs`: the pinned facts move with the copy: the identifier test
-  stays, new assertions that **both** elements link `LICENSING.md` and that the page no longer says
-  "the only text that governs", and the link-spacing test still holds for every new link.
+  `website/test/faq-community.mjs` (the pinned facts move with the copy).
+- **Tests:** in `faq-community.mjs`, the identifier test stays; new assertions that **both**
+  elements link `LICENSING.md` and that the page no longer says "the only text that governs"; the
+  link-spacing test holds for every new link.
 - **Command:** `cd website && npm run check`, then `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1 -timeout 900s`
 - **Red step:** the new assertions against today's page (no `LICENSING.md` link in either element;
   the "only text that governs" sentence present).
-- **Depends on:** L1.3 (`LICENSING.md` exists). **Reviewer tier:** standard.
+- **Depends on:** L1.3 (`LICENSING.md` exists). **Reviewer tier:** standard. **OWNER-RUN:** no.
   Deploying the site is a separate, authorised step (`.claude/rules/website.md`).
 - **Commit:** `website: the community card states the core/ee split`
 
@@ -220,40 +257,53 @@ test is caught by review, not by the test: L1.6's rule file names it.
 - **Tests:** none new; `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1 -timeout 900s`
   (in case a docs test reads the table).
 - **Red step:** none (a rule file); the reviewer checks each named test exists.
-- **Depends on:** L1.1 (the test names). **Reviewer tier:** standard.
+- **Depends on:** L1.1 (the test names). **Reviewer tier:** standard. **OWNER-RUN:** no.
 - **Commit:** `rules: ee/ has its own path-scoped rule`
 
-#### L1.7 — Stage the "core without `ee/`" workflow
+#### L1.7 — Stage the "core without `ee/`" workflow (rewritten after the round-2 review)
 - **Files:** `docs/pending-workflows/core-without-ee.yml` (new: on push to `main` and
-  `workflow_dispatch`, `contents: read`, every action pinned by full commit SHA, Go from `go.mod`;
-  deletes `ee/`, then `go build ./...`, `go vet ./...` and `go test ./...` (with `internal/runner`
-  in its own step at `-timeout 40m`, as `CONTRIBUTING.md` says), skipping by name only the tests
-  that read files under `ee/` by design: `TestDocsEEReserved` and `TestDocsLicensingStatement`
-  (later `TestDocsEELicensed` and `TestDocsEELicenceIsTheApprovedText`). The spec asks that the core
-  "pass its tests" without `ee/`, and `go vet` compiles but runs none; the cost is a run about as
-  long as `ci.yml`'s test job, on pushes to `main` only, which the owner's "CI is not a PR gate"
-  ruling already puts off the critical path);
-  `docs/pending-workflows/README.md` (its opening count of pending files and a
-  `## core-without-ee.yml` section with the copy-in commands); a test beside the other staged-workflow
-  tests, `internal/cli/docs_core_without_ee_workflow_test.go` (new: the file parses, triggers only
-  on push to `main` and dispatch, holds no secret, pins every action by SHA, runs `go test ./...`,
-  its skip list equals exactly the set of `_test.go` files' tests that name a path under `ee/`
-  (so a new one must be added deliberately), and the README's section carries the copy-in).
-- **Tests:** the new test plus the existing pending-workflow tests
+  `workflow_dispatch`, `contents: read`, every action pinned by full commit SHA, Go from `go.mod`,
+  a job-level `timeout-minutes: 90`; it deletes `ee/`, then, **with the default build tags** (no
+  `ee` tag, so `cmd/fugaro/ee_on.go` is not compiled), runs `go build ./...` and
+  `go vet ./...`, then **step A**
+  `go test -timeout 30m -skip '^(<eeReadingTests joined by |>)$' $(go list ./... | grep -v internal/runner)`
+  and **step B** `go test -race -timeout 40m ./internal/runner/...` with no skip, so the runner
+  is not run twice and has the bound `CONTRIBUTING.md` gives it. The spec asks that the core "pass
+  its tests" without `ee/`; the cost is a run about as long as `ci.yml`'s test job, on pushes to
+  `main` only); `docs/pending-workflows/README.md` (its opening count of pending files and a
+  `## core-without-ee.yml` section with the copy-in commands);
+  `internal/cli/docs_core_without_ee_workflow_test.go` (new).
+- **Precedent:** `shared-tests.yml`'s (the staged copy is removed at copy-in, and the test then
+  reads `.github/workflows/`). The test reads `docs/pending-workflows/core-without-ee.yml` while
+  it exists and `.github/workflows/core-without-ee.yml` otherwise, and fails if neither exists.
+- **Tests:** `TestDocsCoreWithoutEEWorkflow` (the file parses; triggers only on push to `main` and
+  dispatch; holds no secret; pins every action by SHA; sets `timeout-minutes`; deletes `ee/` before
+  building; step A's `-skip` alternation equals `eeReadingTests` exactly and step A excludes
+  `internal/runner`; step B runs `./internal/runner/...` at `-timeout 40m` with no `-skip`; no
+  step passes `-tags ee` (or any tag list holding `ee`); no
+  `internal/eeboundary` test is ever in the skip list, since those plant their own trees under
+  `t.TempDir()`; the README section carries the copy-in), plus the existing pending-workflow tests
   (`internal/cli/docs_desktop_console_test.go`'s `pendingWorkflows` derives the set from the
   directory and checks the README's opening names it).
-- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDocsCoreWithoutEE|Pending|Docs' -count=1 -timeout 900s`
+- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDocsCoreWithoutEE|TestEEReadersAreListed|Pending|Docs' -count=1 -timeout 900s`
 - **Red step:** the new test before the file exists.
-- **Depends on:** nothing. **Reviewer tier:** standard.
+- **Depends on:** L1.1 (the workflow runs its tests), L1.2 and L1.3 (`eeReadingTests` is final for
+  0.11.0 only after both). **Reviewer tier:** standard. **OWNER-RUN:** no.
 - **Commit:** `pending-workflows: the core builds and tests with ee/ deleted (staged for the owner)`
 
 #### L1.8 — Copy the staged workflow in (OWNER-RUN)
 - **What the owner types**, from a clean checkout of `main` after L1.7 merges:
-  `cp docs/pending-workflows/core-without-ee.yml .github/workflows/core-without-ee.yml`,
-  `git add .github/workflows/core-without-ee.yml`, `git rm docs/pending-workflows/core-without-ee.yml`,
-  update the README's opening count as its section says, commit, push, then
-  `gh workflow run core-without-ee --ref main` and see it green.
-- **Depends on:** L1.7 merged, and L1.1 merged (the workflow runs `internal/eeboundary`).
+  ```sh
+  cp docs/pending-workflows/core-without-ee.yml .github/workflows/core-without-ee.yml
+  git rm docs/pending-workflows/core-without-ee.yml
+  git add .github/workflows/core-without-ee.yml
+  # README: lower the opening count and mark the section "applied", as the section says
+  git commit -am "workflows: the core builds and tests with ee/ deleted"
+  git push
+  gh workflow run core-without-ee --ref main
+  ```
+  and see it green. `TestDocsCoreWithoutEEWorkflow` then reads the applied copy.
+- **Depends on:** L1.7 merged.
 
 #### L1.9 — The 0.11.0 release-notes line
 - **Files:** none in this plan. The 0.11.0 release PR (`/new-release 0.11.0`) adds one Highlights
@@ -271,7 +321,7 @@ test is caught by review, not by the test: L1.6's rule file names it.
 - **Tests:** the checklist's own docs tests.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1 -timeout 900s`
 - **Red step:** none beyond the register's tests, which fail if the row and section disagree.
-- **Depends on:** nothing. **Reviewer tier:** standard.
+- **Depends on:** nothing. **Reviewer tier:** standard. **OWNER-RUN:** no (L1.11 is).
 - **Commit:** `checklist: Check 130, the licence detectors after the open-core skeleton`
 
 #### L1.11 — Run Check 130 (OWNER-RUN)
@@ -295,35 +345,59 @@ test is caught by review, not by the test: L1.6's rule file names it.
   each of the four targets has a section with its licence text, and `NOTICE` contents appear where
   a module has one; a module reached only under one target, such as a `golang.org/x/sys` build for
   darwin, is covered);
-  `TestGoreleaserArchivesShipNotices`.
-- **Command:** `go test ./scripts/ -run 'TestThirdPartyNotices|TestGoreleaserArchivesShipNotices' -count=1`,
+  `TestGoreleaserArchivesShipNotices`; `TestGoreleaserReleaseBuild` (D303 as amended: every entry
+  in `builds` has `main: ./cmd/fugaro`; every build's `tags` list is empty, or holds only `ee`; no
+  `archives[].files` entry or glob reaches `ee/`); `TestEETagNeedsTheLabels` (the coupling: if any
+  build's tags hold `ee`, then the Homebrew cask `license`, `plugin/.claude-plugin/plugin.json`'s
+  `license`, the README Licensing section, `LICENSING.md` and the website's two licence elements
+  all name the enterprise licence; at 0.11.0 the tags are empty and the test holds trivially; a
+  planted goreleaser config with `tags: [ee]` and MIT labels is refused).
+- **Command:** `go test ./scripts/ -run 'TestThirdPartyNotices|TestGoreleaserArchivesShipNotices|TestGoreleaserReleaseBuild|TestEETagNeedsTheLabels' -count=1`,
   then `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1 -timeout 900s` (for `docs/release.md`).
 - **Red step:** the coverage test against a stub script that writes an empty file.
 - **Depends on:** nothing. No new dependency (the Go toolchain and the shell only).
-  **Reviewer tier:** standard. Exercised for real only by the 0.11.0 release run.
+  **Reviewer tier:** standard. **OWNER-RUN:** no. Exercised for real only by the 0.11.0 release run.
 - **Commit:** `release: the CLI archive carries its third-party notices`
 
-#### L2.2 — `LICENSE` and notices in the packed console
-- **Files:** `console/package.json` (`build.extraResources`: the repository's `LICENSE` and a
-  console notices file); `console/tools/bundle-renderer/` (the repository's own renderer bundler
-  records every input file it reads into a list beside `dist/bundle/console.js`; the console has
-  **no** `dependencies`, only `devDependencies`, so "non-dev packages" would list nothing even when
-  third-party code is bundled); `console/scripts/notices.mjs` (new: from that input list, every
-  input under `node_modules/` maps to its package and that package's licence text; today the list
-  holds none, and Electron's own licence files are added by the packer, U4; elkjs, EPL-2.0, planned
-  by the dependency graph's GD3, is covered the moment the bundler reads it);
-  `console/test/unit/packaging-licence.test.ts` (new).
-- **Tests:** `packaging-licence.test.ts` (the build config ships both files; the bundler's input
-  list matches what it read; a planted `node_modules/elkjs`-shaped input carrying an EPL-2.0 licence
-  appears in the notices with its text; a devDependency that is **not** a bundle input does not).
+#### L2.2 — `LICENSE` and notices in the packed console (rewritten after the round-2 review)
+- **Files:** `console/package.json` (`build.extraResources`: the repository's `LICENSE`;
+  `build.files`: `THIRD_PARTY_NOTICES.md`, the way the dependency graph's GV2.2 packs it);
+  `console/tools/bundle-renderer/index.ts` (records every file it **walks** and every file it
+  **copies** verbatim into one inputs list beside `dist/bundle/console.js`; today it walks only
+  the console's own sources, because it refuses every bare specifier and never reads
+  `node_modules/`, and it copies nothing); `console/scripts/notices.mjs` (new: from that list, every
+  input under `node_modules/` maps to its package and that package's licence file, written to
+  `console/THIRD_PARTY_NOTICES.md`); `console/THIRD_PARTY_NOTICES.md` (generated and committed;
+  **the one notices file**, the same path GV2.2 names); `console/test/unit/packaging-licence.test.ts`
+  (new). The console has no `dependencies`, only `devDependencies`, which is why the source is
+  the bundler's inputs and not the lockfile.
+- **elkjs.** GV2.2 (`docs/console-dependency-graph/implementation-plan.md`) copies
+  `node_modules/elkjs/lib/elk-worker.min.js` verbatim into `dist/bundle/`. Recorded as a copied
+  input, it maps to `elkjs` and its EPL-2.0 licence text lands in the notices file: the two plans
+  converge on one file and one mechanism.
+- **Cross-plan overlap.** L2.2 and GV2.2 both write `console/package.json`,
+  `console/tools/bundle-renderer/index.ts`, `console/THIRD_PARTY_NOTICES.md` and the build-files
+  test. Whichever merges **second** rebases: if GV2.2 lands first, L2.2 replaces its hand-written
+  notices file with the generated one (the elkjs section must come out the same) and records the
+  existing copy; if L2.2 lands first, GV2.2 adds its worker to the bundler's copy list and
+  regenerates the file instead of writing it by hand.
+- **Tests:** `packaging-licence.test.ts` (the build config ships `LICENSE` and the notices file; the
+  inputs list holds every walked and every copied file; a planted copied
+  `node_modules/elkjs/lib/elk-worker.min.js` with an EPL-2.0 `LICENSE.md` appears in the notices
+  with its text; a devDependency that is neither walked nor copied does not; the committed notices
+  file equals a fresh generation).
 - **Command:** `cd console && npm run typecheck && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 packaging-licence`
-- **Red step:** the test before `extraResources` changes.
-- **Depends on:** nothing. **Reviewer tier:** standard (the bundler change is reviewed against
-  `.claude/rules/console.md`). Ships with the next `console-vX.Y.Z`; the
-  owner's console release confirms the files inside the packed app (U4).
+- **Red step:** the planted-copy case before the bundler records copies.
+- **Depends on:** nothing in this plan (see the cross-plan overlap). **Reviewer tier:** standard
+  (the bundler change is reviewed against `.claude/rules/console.md`). **OWNER-RUN:** no. Ships
+  with the next `console-vX.Y.Z`; the owner's console release confirms the files inside the
+  packed app (U4).
 - **Commit:** `console: the packed app carries LICENSE and its notices`
 
 ### Slice L3 — design only, handed to the workspaces plan (not built in 0.11.0)
+
+The key check lives in `ee/` and gates at the registration point (`ee/register`); nothing in core
+reads, stores or knows about keys (D308 with D303 as amended).
 
 #### L3.1 — The licence-key design note
 - **Files:** `docs/licensing/licence-key.md` (new): D308 as a design (Ed25519 over a JSON claim
@@ -336,7 +410,7 @@ test is caught by review, not by the test: L1.6's rule file names it.
   an agent reaches (R8); U5 (secret scans) is a check the first implementing task runs.
 - **Tests:** `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1 -timeout 900s`.
 - **Depends on:** nothing. **Reviewer tier:** opus + mandatory independent review (a trust
-  boundary, even on paper).
+  boundary, even on paper). **OWNER-RUN:** no.
 - **Commit:** `docs(licensing): the licence-key design (D308), not built`
 
 ### Slice L4 — the enterprise licence, after counsel (not in 0.11.0)
@@ -345,7 +419,12 @@ test is caught by review, not by the test: L1.6's rule file names it.
 - **Files:** `ee/LICENSE` (new), `ee/README.md` (from "reserved, no licence yet" to "licensed
   under `ee/LICENSE`"), `LICENSING.md` (the `ee/` line names `ee/LICENSE`),
   `internal/cli/docs_ee_reserved_test.go` (its reserved assertions become licensed ones),
-  `internal/cli/docs_licensing_test.go` (the statement test follows).
+  `internal/cli/docs_licensing_test.go` (the statement test follows),
+  `internal/cli/docs_ee_repo_test.go` (`eeReadingTests` follows the renamed and new tests),
+  `docs/pending-workflows/core-without-ee.yml` (the applied workflow, staged again with step A's
+  `-skip` matching the new list) and `docs/pending-workflows/README.md` (its section, now pending
+  again). Without the staged update the applied workflow turns red, because a new test reads the
+  `ee/` the workflow deletes, and no agent can change `.github/workflows/`.
 - **Interfaces:** consumes L0.1's approved text verbatim.
 - **Tests:** `TestDocsEELicenceIsTheApprovedText` (the file's SHA-256 equals a **constant in the
   test**, the hash of the text the owner approved; the commit body only restates it, since a test
@@ -353,52 +432,108 @@ test is caught by review, not by the test: L1.6's rule file names it.
   `TestDocsLicensingStatement` updated.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDocsEE|TestDocsLicensing|Docs' -count=1 -timeout 900s`
 - **Red step:** `TestDocsEELicenceIsTheApprovedText` before the file exists.
-- **Depends on:** L0.1, L1.2, L1.3. **Reviewer tier:** opus + mandatory independent review (legal
-  text; the reviewer diffs it against L0.1's approved copy). **OWNER-RUN:** the approval itself.
+- **Depends on:** L0.1, L1.2, L1.3, L1.8 (the applied workflow exists to be updated). **Reviewer
+  tier:** opus + mandatory independent review (legal text; the reviewer diffs it against L0.1's
+  approved copy). **OWNER-RUN:** the approval itself.
 - **Commit:** `ee: the enterprise licence, as approved`
+
+#### L4.2 — Copy the updated workflow in (OWNER-RUN)
+- **What the owner types**, right after L4.1 merges (the applied workflow is red until then):
+  ```sh
+  cp docs/pending-workflows/core-without-ee.yml .github/workflows/core-without-ee.yml
+  git rm docs/pending-workflows/core-without-ee.yml
+  git add .github/workflows/core-without-ee.yml
+  # README: lower the opening count and mark the section "applied" again
+  git commit -am "workflows: core-without-ee skips the tests that read the licensed ee/"
+  git push
+  gh workflow run core-without-ee --ref main
+  ```
+- **Depends on:** L4.1 merged.
+
+### Slice L5 — the release that ships the first ee feature (not in 0.11.0; added 2026-10-24 for D303's amendment)
+
+#### L5.1 — Counsel on the mixed-licence binary (OWNER-RUN)
+- **What:** with counsel, settle the wording every label carries once the release build sets the
+  `ee` tag (T3 (b)), and whether a pure-MIT artifact is also published (T3 (c)).
+- **Depends on:** L4.1 (an `ee/LICENSE` exists to point at).
+
+#### L5.2 — Label the mixed-licence release
+- **Files:** `.goreleaser.yaml` (`builds[0].tags: [ee]`; the cask's `license` per L5.1),
+  `plugin/.claude-plugin/plugin.json` (`license` per L5.1; `plugin/` tests re-run), `README.md`
+  (the Licensing section says the released binary carries `ee/` code under `ee/LICENSE`),
+  `LICENSING.md`, `website/src/pages/community.astro` and `website/test/faq-community.mjs` (both
+  licence elements), `internal/cli/docs_licensing_test.go`.
+- **Tests:** `TestEETagNeedsTheLabels` (from L2.1) now runs non-trivially and passes;
+  `TestDocsLicensingReadmeSection` and `TestDocsLicensingStatement` updated; the website's pinned
+  facts updated; `go test ./plugin/ -run 'TestPlugin' -count=1`.
+- **Command:** `go test ./scripts/ -run 'TestEETagNeedsTheLabels|TestGoreleaserReleaseBuild' -count=1`,
+  `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDocsLicensing|Docs' -count=1 -timeout 900s`,
+  `cd website && npm run check`.
+- **Red step:** `tags: [ee]` alone, before any label changes: `TestEETagNeedsTheLabels` fails.
+- **Depends on:** L5.1, L2.1, and the workspaces plan's first ee feature with its
+  `cmd/fugaro/ee_on.go`. **Reviewer tier:** opus + mandatory independent review (licence labels).
+  **OWNER-RUN:** no (L5.1 is).
+- **Commit:** `release: the binary carries ee/ code, and every label says so`
 
 ## Parallel execution
 
 **Edges** (from the Depends-on lines): L0.1 → L0.2; L1.2 → L1.3; L1.3 → L1.5; L1.1 → L1.6;
-L1.1, L1.7 → L1.8; L1.2, L1.3, L1.5 → L1.9; L1.3, L1.10 → L1.11; L0.1, L1.2, L1.3 → L4.1.
+L1.1, L1.2, L1.3 → L1.7; L1.7 → L1.8; L1.2, L1.3, L1.5 → L1.9; L1.3, L1.10 → L1.11;
+L0.1, L1.2, L1.3, L1.8 → L4.1; L4.1 → L4.2; L4.1 → L5.1; L5.1, L2.1 → L5.2 (and the workspaces
+plan's first ee feature).
 
 | Level | Tasks (run concurrently) |
 | --- | --- |
-| 0 | L0.1 (owner), L1.1, L1.2, L1.4, L1.7, L1.10, L2.1, L2.2, L3.1 |
-| 1 | L0.2 (owner), L1.3, L1.6, L1.8 (owner) |
-| 2 | L1.5, L1.11 (owner), L4.1 (after counsel) |
-| 3 | L1.9 (the release PR) |
+| 0 | L0.1 (owner), L1.1, L1.2, L1.4, L1.10, L2.1, L2.2, L3.1 |
+| 1 | L0.2 (owner), L1.3, L1.6 |
+| 2 | L1.5, L1.7, L1.11 (owner) |
+| 3 | L1.8 (owner), L1.9 (the release PR) |
+| 4 | L4.1 (after counsel) |
+| 5 | L4.2 (owner), L5.1 (owner) |
+| 6 | L5.2 (with the first ee feature's release) |
 
-**Critical path to the 0.11.0 tag:** L1.2 → L1.3 → L1.5 → L1.9; the website check (~7 minutes)
-is the longest single step. Counsel (L0.1) and the licence file (L4.1) are off it by the T1
-ruling: 0.11.0 ships `ee/` reserved.
+**Ready for the 0.11.0 tag** means these are merged: **L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7,
+L2.1 and L1.9** (L1.9 is the release PR itself). The owner-run L1.8, L1.11 and L0.2 may follow the
+tag if the owner says so. L2.2 ships with the console's own release; L3.1, L4.1, L4.2, L5.1 and
+L5.2 are not 0.11.0 work. At the 0.11.0 tag the release build sets no `ee` tag (D303 as amended),
+which L2.1's test pins.
 
-**What must be sequential and why:** L1.3 after L1.2 (`LICENSING.md` links `ee/README.md`); L1.5
-after L1.3 (the card links `LICENSING.md`); L1.6 after L1.1 (it names L1.1's tests); L1.8 after
-L1.7 and L1.1 (it copies L1.7's file, which runs L1.1's tests); L4.1 after L1.2 and L1.3 (it
-edits both tasks' files) and after counsel.
+**Critical path to the 0.11.0 tag:** L1.2 → L1.3 → L1.5 → L1.9, with L1.7 (after L1.3) beside L1.5
+in level 2; the website check (~7 minutes) is the longest single step. Counsel (L0.1) and the
+licence file (L4.1) are off it by the T1 ruling: 0.11.0 ships `ee/` reserved.
+
+**What must be sequential and why:** L1.3 after L1.2 (`LICENSING.md` links `ee/README.md`, and
+L1.3 extends L1.2's reader list); L1.5 after L1.3 (the page links `LICENSING.md`); L1.6 after L1.1
+(it names L1.1's tests); L1.7 after L1.1, L1.2 and L1.3 (its workflow runs L1.1's tests and skips
+the final reader list); L1.8 after L1.7 (it copies L1.7's file); L4.1 after L1.2, L1.3 and L1.8
+(it edits their files and stages an update of the applied workflow) and after counsel; L4.2 after
+L4.1; L5.2 after L5.1 and L2.1 (it makes L2.1's coupling test non-trivial).
 
 ### Shared-files table (no level has two writers of one file)
 
 | File | Writers (level) |
 | --- | --- |
-| `LICENSE` | none (O2: never edited) |
-| `LICENSING.md` | L1.3 (1), L4.1 (2) |
-| `README.md` | L1.3 (1) |
+| `LICENSE` | none (O2: never edited; the counsel exception in Conventions is its own owner-approved commit) |
+| `LICENSING.md` | L1.3 (1), L4.1 (4), L5.2 (6) |
+| `README.md` | L1.3 (1), L5.2 (6) |
 | `.agents/LICENSE` | L1.3 (1) |
-| `ee/README.md` | L1.2 (0), L4.1 (2) |
-| `ee/LICENSE` | L4.1 (2) |
-| `internal/cli/docs_ee_reserved_test.go` | L1.2 (0), L4.1 (2) |
-| `internal/cli/docs_licensing_test.go` | L1.3 (1), L4.1 (2) |
+| `ee/README.md` | L1.2 (0), L4.1 (4) |
+| `ee/LICENSE` | L4.1 (4) |
+| `internal/cli/docs_ee_reserved_test.go` | L1.2 (0), L4.1 (4) |
+| `internal/cli/docs_ee_repo_test.go` | L1.2 (0), L1.3 (1), L4.1 (4) |
+| `internal/cli/docs_licensing_test.go` | L1.3 (1), L4.1 (4), L5.2 (6) |
 | `internal/eeboundary/boundary_test.go` | L1.1 (0) |
 | `CONTRIBUTING.md`, `.github/pull_request_template.md`, `internal/cli/docs_contributing_cla_test.go` | L1.4 (0) |
-| `website/src/pages/community.astro`, `website/test/faq-community.mjs` | L1.5 (2) |
+| `website/src/pages/community.astro`, `website/test/faq-community.mjs` | L1.5 (2), L5.2 (6) |
+| `plugin/.claude-plugin/plugin.json` | L5.2 (6) |
 | `.claude/rules/ee.md`, `CLAUDE.md` | L1.6 (1) |
-| `docs/pending-workflows/core-without-ee.yml`, `docs/pending-workflows/README.md`, `internal/cli/docs_core_without_ee_workflow_test.go` | L1.7 (0); the owner's copy-in L1.8 (1) |
-| `.github/workflows/core-without-ee.yml` | L1.8 (1, owner) |
+| `docs/pending-workflows/core-without-ee.yml`, `docs/pending-workflows/README.md` | L1.7 (2), L1.8 (3, owner), L4.1 (4), L4.2 (5, owner) |
+| `internal/cli/docs_core_without_ee_workflow_test.go` | L1.7 (2) |
+| `.github/workflows/core-without-ee.yml` | L1.8 (3, owner), L4.2 (5, owner) |
 | `docs/gcp-live-checklist.md` | L1.10 (0); the owner's result L1.11 (2) |
-| `scripts/third-party-notices.sh`, `scripts/notices_test.go`, `.goreleaser.yaml`, `docs/release.md` | L2.1 (0) |
-| `console/package.json`, `console/tools/bundle-renderer/`, `console/scripts/notices.mjs`, `console/test/unit/packaging-licence.test.ts` | L2.2 (0) |
+| `scripts/third-party-notices.sh`, `scripts/notices_test.go`, `docs/release.md` | L2.1 (0) |
+| `.goreleaser.yaml` | L2.1 (0), L5.2 (6) |
+| `console/package.json`, `console/tools/bundle-renderer/index.ts`, `console/scripts/notices.mjs`, `console/THIRD_PARTY_NOTICES.md`, `console/test/unit/packaging-licence.test.ts` | L2.2 (0); also the dependency graph's GV2.2 (another plan: see L2.2's cross-plan overlap) |
 | `docs/licensing/licence-key.md` | L3.1 (0) |
 | `docs/releases/v0.11.0.md`, `website/data/release-summaries.yaml` | the 0.11.0 release PR (3) |
 
@@ -415,4 +550,4 @@ unused. No check touches a cloud project.
 ## After deploy
 
 Nothing runs after a deploy (R5): no backfill, config or secret. The only owner steps are L0.1,
-L0.2, L1.8, L1.11 and the approval inside L4.1, none of which is a rollout step.
+L0.2, L1.8, L1.11, the approval inside L4.1, L4.2 and L5.1, none of which is a rollout step.

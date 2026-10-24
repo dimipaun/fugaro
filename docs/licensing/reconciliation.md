@@ -11,12 +11,17 @@ for the owner and counsel to weigh.
 **Amended 2026-10-24 by the owner's rulings on T1 and O2** (both recorded below, beside the
 original answers): `ee/` ships **reserved**, with no licence file, at 0.11.0 (T1 settled as
 choice (iii)); and the root `LICENSE` stays **pure MIT, unchanged**, with the scope statement in a
-new root `LICENSING.md` (O2, **not the recommendation**, amending D301).
+new root `LICENSING.md` (O2, **not the recommendation**, amending D301). **Also amended
+2026-10-24, not the recommendation: D303** — ee code reaches users in the **same** released
+binary, compiled in by a build tag the release build sets and enabled by the licence key; builds
+without the tag are pure MIT (open tension T3).
 
 **Numbers this work holds:** decisions **D300–D319** (the highest decision written under `docs/`
 on `main` is **D271**, the rigor levels' LD11; open PRs reach **D260**; D272–D299 are left unused
 so that sibling spec reconciliations started the same day cannot collide with this block) and
-checks **130–134** (the highest check written on `main` is **123**; open PR #1022 takes **124**).
+checks **130–134** (the highest check section written in the register on `main` is **113**;
+**119** and **123** are claimed by the console-windows and console dependency graph plans, and
+open PR #1022 takes **124**; **130** is free either way).
 Findings are **F1–F27**; resolutions (one defensible answer) are **R1–R8**; decisions
 **D300–D310** are used and **D311–D319** are reserved and unused; checks **131–134** are reserved
 and unused.
@@ -48,7 +53,9 @@ repository); `website/src/pages/community.astro` (the Licence card, from `licenc
 No `package.json` in the tree has a `license` field (all ten are `"private": true`);
 `.claude-plugin/marketplace.json` has none. No source file carries an SPDX header.
 *Consequence:* the change is a coordinated edit of these five, and the plugin manifest and the
-Homebrew cask stay `MIT` only if the released artifact stays core-only (D303).
+Homebrew cask stay `MIT` only if the released artifact stays core-only (D303). **As amended (D303,
+2026-10-24):** they stay `MIT` while the release build sets no `ee` tag, which is the case at
+0.11.0; the release that first sets it changes all of them together (T3, plan slice L5).
 
 **F2 — Wrong: "no outside contributions exist, so the owner owns all the copyright".**
 `.agents/skills/` (299 files, 46 skills) was vendored from a third-party Go skills
@@ -133,6 +140,9 @@ may import `internal/...` (same path prefix). If the one released binary links e
 archive's `LICENSE`, the plugin manifest and the Homebrew cask's `license: MIT` stop being true,
 and every user downloads commercial code. `go install …@vX` fetches the whole module zip, `ee/`
 included, either way. *Consequence:* D303 (which binary carries ee, and from which module).
+**As amended (D303, 2026-10-24):** option (b), confined to one assembly file
+(`cmd/fugaro/ee_on.go`, `//go:build ee`), which is the single place allowed to import `ee/`; the
+release build's tag makes the released binary mixed-licence from the first ee feature on (T3).
 
 **F10 — Exists (partly): the extension points a workspace feature would plug into.**
 - `backend.Open(ctx, name, openers)` in `internal/backend/registry.go` picks from a
@@ -303,7 +313,9 @@ Four facts follow, each for the owner and counsel to confirm:
    licensor. The only copyright holder written in the repository is the owner personally (root
    `LICENSE`), so the line reads `Copyright (c) 2026 <the owner's full name>` unless the owner and
    counsel name an entity, in which case the root `LICENSE` copyright line should be checked
-   against it too.
+   against it too. **After O2 that is the one counsel-dependent exception to "`LICENSE` is never
+   edited"**: an edit of the copyright line alone, on the owner's explicit go, in its own commit
+   (implementation plan, Conventions).
 
 *Consequence:* open tension T1 below; until it is settled, D306's fallback ships `ee/` as reserved,
 with no `ee/LICENSE`.
@@ -342,7 +354,10 @@ with no `ee/LICENSE`.
 - **R6** — The ee import path is `github.com/dimipaun/fugaro/ee/...`; the boundary test forbids
   it, matched by path segment (`…/ee` or `…/ee/…`), in any non-`ee/` Go file of any build tag, and
   forbids every other route into `ee/`: a symlink, `//go:embed`, `//go:generate`, a cgo include, a
-  `replace` directive, or a nested `go.mod`/`go.work` under `ee/`.
+  `replace` directive, or a nested `go.mod`/`go.work` under `ee/`. **One exception, from D303's
+  amendment:** the assembly file `cmd/fugaro/ee_on.go`, which must carry `//go:build ee` and may
+  import exactly one package, the registration package `github.com/dimipaun/fugaro/ee/register`
+  (blank import); no other file and no other core package may import `ee/`.
   (F12)
 - **R7** — The spec's Tasks 3 (extension points) and 4 (workspaces) move to the workspaces plan;
   this work ships the licensing structure only. (F10, F22)
@@ -359,12 +374,12 @@ the owner's answer with a one-line why. `(R)` marks an answer that took the reco
 | **D300** | Core licence from 0.11.0: MIT or Apache-2.0? | **Stay MIT.** The spec's first principle says "MIT forever"; with no outside contributor, Apache's patent grant buys little today; one licence across all versions | **Apache-2.0:** explicit patent grant and trademark exclusion; costs the five-place edit (F1), a `NOTICE`, a new website derivation (F14), two licences in the history | **Stay MIT (R).** *Why:* one licence for every version, and the principle as written |
 | **D301** | Shape of the root `LICENSE` | **Keep line 1 `MIT License`; a short scope statement (`ee/` excluded, `.agents/` third-party) between it and the copyright line; MIT text unchanged; Check 130 looks at the detectors after merge** | Preamble above line 1: the website renders the preamble line as the licence's name, and its pinning test still passes (F7, corrected after the round-1 review). `LICENSE` untouched plus `LICENSING.md`: the root file keeps claiming MIT over `ee/` | ~~**As recommended (R).** *Why:* the website's derivation keeps working and the file states its own scope.~~ **Amended 2026-10-24 by the owner's O2 answer, not the recommendation:** `LICENSE` stays pure MIT, first line and text unchanged, so GitHub keeps showing MIT; the scope statement (`ee/` excluded and reserved, `.agents/` third-party under its own licence, a pointer to the trademark paragraph) goes in a new root `LICENSING.md`, which the README Licensing section and the website card link. *Why:* GitHub's MIT reading matters more to the owner than the file stating its own scope (F27). Consequence: open tension T2 |
 | **D302** | Where the later candidates go | **Console, mobile, coordinator and central orchestrators stay core MIT; only net-new organisation features are born in `ee/`** | Move some into `ee/`: breaks "nothing moves out", leaves an MIT fork point, needs the cross-language boundary now | **As recommended (R).** *Why:* they are already published under MIT (F4), and the console is the graphical watch (F20) |
-| **D303** | How ee code reaches users | **A separate `main` under `ee/` in the same module, built as a separate artifact; the released `fugaro` stays core-only** | One key-gated binary: mixed-licence archive. Build tag in `cmd/fugaro`: core imports ee. Nested module: version coupling | **As recommended (R).** *Why:* the released CLI's `LICENSE`, plugin manifest and Homebrew cask stay true (F9) |
+| **D303** | How ee code reaches users | **A separate `main` under `ee/` in the same module, built as a separate artifact; the released `fugaro` stays core-only** | One key-gated binary: mixed-licence archive. Build tag in `cmd/fugaro`: core imports ee. Nested module: version coupling | ~~**As recommended (R).** *Why:* the released CLI's `LICENSE`, plugin manifest and Homebrew cask stay true (F9).~~ **Amended by the owner 2026-10-24, not the recommendation:** one released binary, key-gated (the CE/EE model): ee code is compiled into the **same** `fugaro` by an `ee` build tag that the release build sets, and enabled at run time by the licence key; builds without the tag are pure MIT. Core packages never import `ee/`; the one exception is the tag-gated assembly file `cmd/fugaro/ee_on.go` (R6). At 0.11.0 `ee/` is empty, the release sets no tag and the archive stays pure MIT. *Why:* one binary for users; the label consequence is T3 |
 | **D304** | Contributions | **A CLA through a hosted CLA app, Fugaro's own bots allow-listed, in place before the first outside PR is merged** | DCO only: no relicensing right (F13). DCO for core and no outside code to `ee/`: gives up relicensing core | **As recommended (R); the app install is OWNER-RUN.** *Why:* only a CLA keeps the copyright relicensable |
 | **D305** | The enterprise licence text and its licensor | **An agent drafts a starting point modelled on the two named licences, marked DRAFT; the owner and counsel settle text and licensor** | **Adopt a published source-available licence as is**, with only names filled in: quicker, fewer custom terms, less fitted | **Not the recommendation: adopt a published text as is (in the style of either vendor the spec names), only names filled in; no bespoke licence.** *Why:* the owner prefers a known text to a new one. The current texts were read for this answer (F27): vendor A's text fits; open tension **T1** records what the answer meets; the owner and counsel still confirm the text and the licensor line. **Resolved 2026-10-24 by the owner's T1 ruling:** 0.11.0 ships `ee/` **reserved, with no licence file**; `ee/LICENSE` lands only when counsel's text is approved. D305 stays not the recommendation; T1 choice (iii) is how it resolves |
 | **D306** | What ships with 0.11.0 | **The skeleton only:** `ee/LICENSE` and `ee/README.md`, the root statement, the README Licensing section, the Community card in D101's shape, the `.agents/` upstream notice, the Go boundary and header tests, `CONTRIBUTING.md` contribution terms, one release-notes line. **If the licence text is not approved by the tag, ship everything else and mark `ee/` as reserved** | Also the licence-key library now: unused code, a key format fixed before a feature needs it | **As recommended (R).** *Why:* the structure and the rule land before the first `ee/` file. **Applied 2026-10-24 (T1):** the fallback is the shipping state: `ee/` reserved, no `ee/LICENSE`; and the root statement is `LICENSING.md` (O2) |
 | **D307** | Third-party notices in released artifacts | **Yes: a notices file in the CLI archive (goreleaser) and `LICENSE` plus notices in the packed console** | Leave as is: the pre-existing gap stays (F5, F6) | **Yes (R).** *Why:* the released binaries carry other people's notices |
-| **D308** | The licence key, when the first ee feature ships | **Ed25519-signed key checked offline, expiry and grace, no revocation, no phone-home** | Online activation: the telemetry-based enforcement the spec rules out | **As recommended (R); design only, not built in 0.11.0.** *Why:* the spec's "keep it light" with no telemetry |
+| **D308** | The licence key, when the first ee feature ships | **Ed25519-signed key checked offline, expiry and grace, no revocation, no phone-home** | Online activation: the telemetry-based enforcement the spec rules out | **As recommended (R); design only, not built in 0.11.0.** *Why:* the spec's "keep it light" with no telemetry. **With D303 amended:** the check lives in `ee/` and gates at the registration point (`ee/register`): nothing in core knows about keys |
 | **D309** | Scope of the boundary check | **Go only: the parsed-import test, the `ee/` header test, and a pending workflow that deletes `ee/` and builds the core, staged under `docs/pending-workflows/` with its README section; the owner copies it in** | Every language now: rules for four npm projects with nothing to check | **As recommended (R).** *Why:* the first `ee/` code will be Go; the others arrive with the first non-Go file |
 | **D310** | A trademark statement | **One paragraph in the README: the licences grant no right to the Fugaro name or logo** | None | **As recommended (R).** *Why:* `brand/` sits in the MIT tree (F17) |
 
@@ -393,6 +408,18 @@ unused.
   exclusion of `ee/` and `.agents/` lives in `LICENSING.md`, the README and `ee/README.md`. A reader
   who opens only `LICENSE` sees no exclusion. The owner accepted this in exchange for GitHub's MIT
   reading; it is recorded, not resolved, and counsel may revisit it with `ee/LICENSE` (O1).
+- **T3 — D303 amended: from the first ee feature on, the released binary is mixed-licence.**
+  (a) The spec's "core code must never import anything from `/ee`" now has one exception, the
+  tag-gated assembly file `cmd/fugaro/ee_on.go`; "if `/ee` is removed, the core still builds"
+  holds for builds without the tag. (b) The release that first sets the `ee` tag ships commercial
+  code to every user of the archive, so in that same release the Homebrew cask `license`, the
+  plugin manifest `license`, the README, `LICENSING.md` and the website licence elements must say
+  the binary carries code under the enterprise licence; a test (plan L2.1, from 0.11.0) refuses a
+  non-empty tag list without those labels, and the label change is its own slice (plan L5) with an
+  OWNER-RUN counsel review. (c) A user who wants a pure-MIT binary builds from source without the
+  tag; whether to also publish a pure-MIT artifact is open for that release. (d) The repository's
+  `go vet -tags` loop in `ci.yml` does not vet `//go:build ee` files today; the workspaces plan adds
+  the tag to it when the first such file lands.
 - **O1 — Counsel (OWNER-RUN, task L0.1):** the `ee/LICENSE` text and licensor line (T1), the CLA
   text for the hosted app (D304), F3 (a) and (b), and whether D307's notices meet the dependencies'
   terms.
