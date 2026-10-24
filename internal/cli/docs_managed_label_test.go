@@ -28,7 +28,7 @@ func TestDocsGCPManagedLabelSaysItsClaims(t *testing.T) {
 	for what, want := range map[string]string{
 		// The writer a project that already exists has, which is not the
 		// creating run: the flag writes both marks in the same command.
-		"the flag writes both marks": "`fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC` for a project `fugaro setup` created without `--managed`",
+		"the flag writes both marks": "`fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC` for one that already exists",
 		// 0.8.5's managed path is not this one: the mode was off from 0.8.6
 		// on, and 0.9.0 and 0.9.5 shipped with it off, which is what makes a
 		// project marked then a project of another mode (owner's ruling,

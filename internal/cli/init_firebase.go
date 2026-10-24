@@ -115,7 +115,7 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 	return true, false, nil
 }
 
-// initFirebase is fugaro update --firebase-project <fp>: it adopts the project's own
+// initFirebase is fugaro update --firebase-project <gcp-project-id>: it adopts the project's own
 // Firebase project and builds the budget backend in it.
 //
 //  0. checks, before anything is applied: the Firebase project exists, is

@@ -275,14 +275,17 @@ func TestManagedBudgetHasNoDefault(t *testing.T) {
 }
 
 // --create-project --managed on a project an earlier run of fugaro setup
-// created (it carries the creation label): the project stage resumes it and
-// creates nothing, so there is no creation to record and markCreated writes no
-// fact. The owner asked for a managed project, and
+// created (it carries the creation label fugaro_created=true, which only the
+// creating run's create request writes): the project stage resumes it and
+// creates nothing in this run, and the project is still Fugaro's creation, so
+// markCreated records the fact — the object with the budget this run was
+// given, and the fugaro_managed label — exactly as the creating run would have
+// (the owner's ruling of 2026-10-23: a resumed setup is managed by default). The owner asked for a managed project, and
 // getting an unmarked one with no word about it is the failure this pins:
 // the run must say --managed was not applied and that no fact was written.
 // The bucket is seeded as the managed creation's is, so the absence of the
 // fact is about the gate and not about an unwritable bucket.
-func TestManagedOnAResumedProjectSaysItWasNotApplied(t *testing.T) {
+func TestAResumedCreationIsMarkedManaged(t *testing.T) {
 	r := newProjectRig(t)
 	const number = 424242
 	bucket := "fugaro-runs-" + newProj
@@ -312,18 +315,18 @@ func TestManagedOnAResumedProjectSaysItWasNotApplied(t *testing.T) {
 	if n := len(r.crm.Creates()); n != 0 {
 		t.Fatalf("%d project(s) created: the project already existed:\n%s", n, all)
 	}
-	noMarker(t, r.gcs, bucket)
-	if !strings.Contains(all, "--managed was not applied") {
-		t.Errorf("the run resumed a project with --managed and did not say --managed was not applied:\n%s", all)
+	got, ok := markerAt(t, r.gcs, bucket)
+	if !ok {
+		t.Fatalf("a resumed creation wrote no gs://%s/%s:\n%s", bucket, managed.MarkerObject, all)
 	}
-	if !strings.Contains(all, "no creation fact was written") {
-		t.Errorf("the run did not say that no creation fact was written:\n%s", all)
+	if want := `{"version":2,"gcp_project":"` + newProj + `","budget":{"amount":7,"currency":"USD"}}`; got != want {
+		t.Errorf("gs://%s/%s = %s, want %s", bucket, managed.MarkerObject, got, want)
 	}
-	// And the owner is not left with "not managed" as the end of it: since
-	// Task 6.1 there is a command for exactly this project, so the warning
-	// names it with the project ID the owner would type.
-	if want := "fugaro managed flag " + newProj; !strings.Contains(all, want) {
-		t.Errorf("the run did not say how such a project becomes managed (want %q):\n%s", want, all)
+	if v := r.crm.Labels(newProj)[managed.ProjectLabelKey]; v != managed.ProjectLabelValue {
+		t.Errorf("a resumed creation is not labelled %s=%s (got %q):\n%s", managed.ProjectLabelKey, managed.ProjectLabelValue, v, all)
+	}
+	if strings.Contains(all, "--managed was not applied") {
+		t.Errorf("the run said --managed was not applied, and it marked the resumed creation:\n%s", all)
 	}
 }
 

@@ -146,7 +146,7 @@ func (r *initRun) newMachineBudget(ctx context.Context, e *initEngine, outs infr
 		return // no budget backend: nothing to find
 	}
 	skip := func(why string) {
-		fmt.Fprintf(r.w, "the budget section of the local config was left empty (%s); watch and the budget commands need it: an owner's fugaro update --firebase-project <project> fills it, or rerun this once the Firebase root's state can be read\n", why)
+		fmt.Fprintf(r.w, "the budget section of the local config was left empty (%s); watch and the budget commands need it: an owner's fugaro update --firebase-project %s fills it, or rerun this once the Firebase root's state can be read\n", why, e.spec.Project)
 	}
 	switch ok, err := infra.StateExists(ctx, e.c, e.spec.StateBucket, infra.StatePrefixFirebase); {
 	case err != nil:

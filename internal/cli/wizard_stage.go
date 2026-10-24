@@ -212,9 +212,11 @@ func wizardFlagsLeft(flags []string) string {
 func (s *wizardStage) ask(ctx context.Context) error {
 	r, o := s.r, s.r.o
 	if !s.creating {
-		// A project config is selected: this run's inputs are already settled,
-		// nothing is asked, and nothing is created.
-		return r.settleCreation(false)
+		// A project config is selected: this run's inputs are already settled
+		// and nothing is asked. Nothing is created either, unless the config is
+		// the one a first run wrote when it paused for billing: the rerun
+		// resumes that creation (the project stage reads the project again).
+		return r.settleCreation(r.selectedPending(ctx))
 	}
 	if len(s.missing) > 0 && !r.canAsk() {
 		// Nobody can be asked: the flags are the answer. --non-interactive

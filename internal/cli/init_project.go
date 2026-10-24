@@ -58,7 +58,7 @@ func (o *initOptions) checkCreateProject() error {
 	if !o.createProject {
 		switch {
 		case o.managed:
-			return userErr("--managed is for a first run of fugaro setup, which creates the project and marks it: this run creates no project. To create a managed project: fugaro setup --gcp-project <new id> --managed --budget <amount> --budget-currency <code> --billing-account <id>; to record the budget on a project fugaro setup created without --managed: fugaro managed flag <id> --budget <amount> --budget-currency <code>, before a person, who types its ID")
+			return userErr("--managed is for a first run of fugaro setup, which creates the project and marks it: this run creates no project. To create a managed project: fugaro setup --gcp-project <new id> --managed --budget <amount> --budget-currency <code> --billing-account <id>; to flag a project that already exists (one you own and run an installation in) as managed: fugaro managed flag <id> --budget <amount> --budget-currency <code>, before a person, who types its ID")
 		case o.linkBilling != "":
 			return userErr("--link-billing is for a first run of fugaro setup, which creates the project: this run creates no project, and fugaro links billing only to the project it creates. To link billing yourself: gcloud billing projects link <project> --billing-account=<account>")
 		case o.parent != "" || o.displayName != "":
@@ -197,9 +197,35 @@ func (s *projectStage) clients(ctx context.Context) error {
 // one line, and a rewording of it cannot leave the two disagreeing.
 func (s *projectStage) guided() string { return billing.Guided(s.id) }
 
-func billingHelp() string {
-	return "find the account's ID with gcloud billing accounts list, or in https://console.cloud.google.com/billing; then run the command, or rerun " + selfCommand() + " setup with the same --gcp-project and --link-billing BILLING_ACCOUNT_ID to type its confirmation here"
+// billingForAdmin is what the stage leaves when billing is not linked: one
+// plain block, in #992's style, instead of the placeholder line. The person
+// running setup may not be allowed to link billing (it takes Billing Account
+// User on the account), so it says who to ask, gives the exact link line with
+// the real project ID and the account's ID explained, and the exact rerun,
+// which resumes the project this run created (it carries the creation label).
+func (s *projectStage) billingForAdmin() initflow.Left { return s.billingForAdminBecause("") }
+
+// billingForAdminBecause is billingForAdmin with why in front: what refused
+// the link, where a link was tried.
+func (s *projectStage) billingForAdminBecause(why string) initflow.Left {
+	name := s.e.lc.Name
+	if name == "" {
+		name = s.o().name
+	}
+	if why != "" {
+		why += " "
+	}
+	return initflow.Left{Stage: initflow.Project, Kind: initflow.LeftCommand,
+		Text: why + "Billing is not linked to " + s.id + " yet, so setup paused here: the project and Firebase exist, and what needs billing (Cloud Run, Cloud Build, Artifact Registry, Secret Manager, the buckets) waits for it. " +
+			"If you cannot link it yourself, forward this to whoever administers billing in your organization: they run the first line below with their billing account's id " +
+			"(theirs to supply; they find it with gcloud billing accounts list; see docs/gcp-setup.md#not-an-owner). " +
+			"Then run the second line: it resumes " + s.id + " and finishes the setup, marking the project managed",
+		Commands: []string{
+			billing.GcloudBin + " billing projects link " + quoteWord(s.id) + " --billing-account=<billing-account-id>",
+			selfCommand() + " setup --name " + quoteWord(name) + " --gcp-project " + quoteWord(s.id),
+		}}
 }
+
 
 // problem maps a refusal by the project APIs to a stage failure with its
 // one-line fix, or to the user's to do (an API off on the quota project).
@@ -239,6 +265,9 @@ func (s *projectStage) read(ctx context.Context) error {
 	if err := s.refuseExisting(); err != nil {
 		return err
 	}
+	// A project that is there and passed the refusal is an earlier setup's
+	// creation, resumed (restore's strict child never gets here with one).
+	s.e.r.resumedCreation = info.Exists && info.CreatedByFugaro && s.e.r.res.Created != s.id
 	s.create, s.addFirebase, s.link, s.guide = false, false, false, false
 	if !info.Exists {
 		s.create = true
@@ -286,12 +315,12 @@ func (s *projectStage) Check(ctx context.Context) (initflow.Status, error) {
 		return initflow.Status{State: initflow.Todo, Detail: s.describe() + note}, nil
 	}
 	if s.guide {
-		lf := initflow.Left{Stage: initflow.Project, Kind: initflow.LeftCommand, Text: s.guided()}
+		lf := s.billingForAdmin()
 		why := ""
 		if s.whyGuide != "" {
 			why = s.whyGuide + ". "
 		}
-		return initflow.Status{State: initflow.NeedsYou, Detail: "project " + s.id + " has no billing (or it cannot be read): " + why + billingHelp(), Left: &lf}, nil
+		return initflow.Status{State: initflow.BillingPending, Detail: "project " + s.id + " has no billing yet (or it cannot be read): " + why + "billing pending", Left: &lf}, nil
 	}
 	return initflow.Status{State: initflow.Done, Detail: "project " + s.id + " exists, has Firebase and billing" + note}, nil
 }
@@ -343,7 +372,7 @@ func (s *projectStage) Left() initflow.Left {
 		}
 		return promptLeft(initflow.Project, "type the ID(s) it asks for", args...)
 	}
-	return initflow.Left{Stage: initflow.Project, Kind: initflow.LeftCommand, Text: s.guided()}
+	return s.billingForAdmin()
 }
 
 // canType is whether this run may show a typed confirmation: a terminal on
@@ -492,6 +521,7 @@ func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 		if name == "" {
 			name = s.id
 		}
+		s.billingHeadsUp()
 		ok, err := s.typed(fmt.Sprintf("this CREATES the Google Cloud project %q (display name %q) with %s, and adds Firebase to it, %s. "+
 			"The ID is global and permanent: nobody can reuse it, even after the project is deleted. It will be used for everything Fugaro runs. "+
 			"Billing is linked separately: this confirmation does not link it.",
@@ -554,9 +584,17 @@ func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 			var pe *infra.ProjectError
 			if errors.As(err, &pe) && pe.Kind == infra.ProjectLinkGuard {
 				fmt.Fprintln(r.w, pe.Error())
-				return initflow.Outcome{}, &initflow.NeedsYouError{Left: initflow.Left{Stage: initflow.Project, Kind: initflow.LeftCommand, Text: s.guided()}}
+				return initflow.Outcome{}, s.pause(did)
 			}
-			return initflow.Outcome{}, s.failLink(err, acct)
+			if errors.As(err, &pe) && pe.Refused {
+				// The link was refused (a missing role, a closed account): not
+				// a failure of the setup, a pause until whoever administers
+				// billing links it. The service's own text is printed above
+				// the block, so nothing it said is hidden.
+				fmt.Fprintln(r.w, err.Error())
+				return initflow.Outcome{}, s.pauseBecause(did, s.refusedLinkWhy(acct))
+			}
+			return initflow.Outcome{}, s.fail(err)
 		}
 		if err := infra.VerifyBilling(ctx, s.pc, s.id); err != nil {
 			return initflow.Outcome{}, s.fail(err)
@@ -564,10 +602,50 @@ func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 		did = append(did, "linked billing")
 		fmt.Fprintf(r.w, "linked billing account %s to project %s\n", acct, s.id)
 	case s.guide || s.create:
-		// What was done is on the account above; billing is the user's.
-		return initflow.Outcome{}, &initflow.NeedsYouError{Left: initflow.Left{Stage: initflow.Project, Kind: initflow.LeftCommand, Text: s.guided()}}
+		// What was done is on the account above; billing is whoever
+		// administers it.
+		return initflow.Outcome{}, s.pause(did)
 	}
 	return initflow.Outcome{Changed: len(did) > 0, Detail: strings.Join(did, ", ")}, nil
+}
+
+// billingHeadsUp is the one line said before the creation's confirmation
+// when the billing question found no account this run could link (the list
+// could not be read, or was empty) and none was given: the person may not be
+// able to link billing. It never blocks the creation (the owner's ruling of
+// 2026-10-23): setup creates the project and pauses at billing.
+func (s *projectStage) billingHeadsUp() {
+	if !s.e.r.billingUnlisted || s.o().linkBilling != "" {
+		return
+	}
+	fmt.Fprintf(s.e.r.w, "heads-up: you may not be able to link billing; setup will create the project and pause at billing, and say what to forward to whoever administers billing in your organization (docs/gcp-setup.md#not-an-owner)\n")
+}
+
+// pause is what Apply returns when the project's own steps are done and
+// billing is not linked: a BillingPausedError, which the loop records as
+// billing-pending (not a failure) while the stages that need billing wait. A
+// first run writes its local config here, marked as a setup paused for billing
+// (localcfg.Config.SetupPending), so the rerun resumes exactly here.
+func (s *projectStage) pause(did []string) error { return s.pauseBecause(did, "") }
+
+func (s *projectStage) pauseBecause(did []string, why string) error {
+	if s.e.old == nil && s.e.path != "" {
+		next := *s.e.lc
+		next.SetupPending = "billing"
+		if err := s.e.r.writeLocalConfig(&next, s.e.path, nil, true); err != nil {
+			return err
+		}
+	}
+	detail := "billing pending"
+	if len(did) > 0 {
+		detail = strings.Join(did, ", ") + "; billing pending"
+	}
+	return &initflow.BillingPausedError{Left: s.billingForAdminBecause(why), Detail: detail}
+}
+
+// refusedLinkWhy is the refused link in one sentence, for the pause's block.
+func (s *projectStage) refusedLinkWhy(account string) string {
+	return "Fugaro could not link billing account " + account + " to project " + s.id + ": your account is missing a role the link needs (Billing Account User on the account, and Owner or Project Billing Manager on the project), or the account is closed or at its limit of linked projects."
 }
 
 // fail keeps the services' own text (verbatim) and the fix, and exit codes.
@@ -587,7 +665,7 @@ func (s *projectStage) fail(err error) error {
 // Manager's create and Cloud Billing's link -- are the two a person may be
 // refused. Where they are, the API's own answer is not an answer: it names a
 // permission or a constraint and neither what to ask for nor whom to ask.
-// refusedCreate and refusedLink say that; infra.ProjectError.Refused says when
+// refusedCreate says that for the creation, and a refused link pauses the run with refusedLinkWhy (pauseBecause); infra.ProjectError.Refused says when
 // a failure is that case and nothing else does. Every other failure -- a
 // quota, an ID someone else holds, an API that is off -- keeps the message it
 // always had (fail), and the message here carries the service's own text under
@@ -601,34 +679,12 @@ func (s *projectStage) refusedCreate() string {
 		"See docs/gcp-setup.md#not-an-owner."
 }
 
-// refusedLink is what a refused billing link says. The link needs a role on
-// the billing account *and* one on the project (infra.LinkBilling's hint), and
-// the 403 that comes back names neither, so both are here: naming only the
-// billing one would send a reader who holds it -- one linking billing to a
-// project they are not an Owner of -- to the billing administrator for a role
-// they already have, and the loop keeps only this first line for the stage
-// (initflow's oneLine), so the hint under it is not a place to put them. The
-// two non-role causes the same 403 can have (a closed account, an account at
-// its limit of linked projects) are here too, or a reader holding both roles
-// would be told to ask for roles they have. The one line that links it, and
-// the door the reader is at (setup creates a project, update re-converges
-// one), are the last of it: whoever acts for them runs the line, and the
-// reader runs the door again.
-func (s *projectStage) refusedLink(account string) string {
-	return "Fugaro could not link billing account " + account + " to project " + s.id + ": your account is missing a role the link needs. " +
-		"Ask whoever administers " + account + " for the Billing Account User role on it, and whoever owns " + s.id + " for the Owner or Project Billing Manager role on it; " +
-		"either of them can link it for you instead, with the one line `gcloud billing projects link " + s.id + " --billing-account=" + account + "`. " +
-		"Then run `" + selfCommand() + " " + s.o().doorName() + "` again. If you hold both roles already, the billing account may be closed, or at its limit of linked projects."
-}
 
-// failCreate and failLink are fail for those two calls: a recognised refusal
+// failCreate is fail for the creation: a recognised refusal
 // is a user error (exit 1, the reader's to act on) whose message is the
 // helpful line with the service's own text under it.
 func (s *projectStage) failCreate(err error) error { return s.failRefused(err, s.refusedCreate()) }
 
-func (s *projectStage) failLink(err error, account string) error {
-	return s.failRefused(err, s.refusedLink(account))
-}
 
 func (s *projectStage) failRefused(err error, help string) error {
 	var pe *infra.ProjectError

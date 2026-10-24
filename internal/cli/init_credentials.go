@@ -358,14 +358,14 @@ func (s *credentialsStage) requireCredsRules(ctx context.Context) error {
 		return dbErr(lc, fmt.Errorf("reading the credentials rules marker at %s: %w", rules.PathCredsRulesMarker(), err), false)
 	}
 	if !found {
-		return userErr("the installation's database carries no credentials rules marker at %s, so its rules predate the credentials service: the service's runs write the registry entry's credential and waiting_until and are denied /creds, and rules without them would halt every run in the middle; re-run 'fugaro update --firebase-project <firebase-project-id>' with fugaro >= %s, then run this stage", rules.PathCredsRulesMarker(), credsServiceSince)
+		return userErr("the installation's database carries no credentials rules marker at %s, so its rules predate the credentials service: the service's runs write the registry entry's credential and waiting_until and are denied /creds, and rules without them would halt every run in the middle; re-run 'fugaro update --firebase-project <gcp-project-id>' with fugaro >= %s, then run this stage", rules.PathCredsRulesMarker(), credsServiceSince)
 	}
 	var gen int
 	if err := json.Unmarshal(raw, &gen); err != nil {
-		return userErr("the credentials rules marker at %s is %s, which is not a generation number: fix it with 'fugaro update --firebase-project <firebase-project-id>'", rules.PathCredsRulesMarker(), oneLine(string(raw)))
+		return userErr("the credentials rules marker at %s is %s, which is not a generation number: fix it with 'fugaro update --firebase-project <gcp-project-id>'", rules.PathCredsRulesMarker(), oneLine(string(raw)))
 	}
 	if gen < rules.CredsRulesVersion {
-		return userErr("the installation's rules are generation %d at %s and this fugaro carries generation %d: they predate the credentials service, so a run against it would be halted mid-flight; re-run 'fugaro update --firebase-project <firebase-project-id>' with fugaro >= %s, then run this stage", gen, rules.PathCredsRulesMarker(), rules.CredsRulesVersion, credsServiceSince)
+		return userErr("the installation's rules are generation %d at %s and this fugaro carries generation %d: they predate the credentials service, so a run against it would be halted mid-flight; re-run 'fugaro update --firebase-project <gcp-project-id>' with fugaro >= %s, then run this stage", gen, rules.PathCredsRulesMarker(), rules.CredsRulesVersion, credsServiceSince)
 	}
 	return nil
 }

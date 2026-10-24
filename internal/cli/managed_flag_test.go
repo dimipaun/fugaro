@@ -10,7 +10,6 @@ import (
 	storage "google.golang.org/api/storage/v1"
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
-	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
@@ -18,55 +17,14 @@ import (
 // managedFlagRig is the installation's own runs bucket, seeded as the write
 // proves it: the fakes' project number, and the label the installation puts
 // on it. WriteFlag proves both before it writes, so a rig that wants its
-// marker recorded has to seed both. The project is one fugaro setup created
-// (it carries infra.CreatedLabelKey) and whose runs bucket holds no creation
-// fact yet — the resumed creation the flag records a fact for; the rows about a
-// version-1 fact put one there themselves.
+// marker recorded has to seed both.
 func managedFlagRig(t *testing.T) *initRig {
-	t.Helper()
-	r := managedFlagRigNotCreated(t)
-	r.crm.SetLabels(initProject, map[string]string{infra.CreatedLabelKey: infra.CreatedLabelValue})
-	return r
-}
-
-// managedFlagRigNotCreated is managedFlagRig for a project no run of fugaro
-// setup created: no creation label, and no creation fact.
-func managedFlagRigNotCreated(t *testing.T) *initRig {
 	t.Helper()
 	noAgentSession(t)
 	noRunSession(t)
 	r := newInitRig(t)
 	r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
 	return r
-}
-
-// TestManagedFlagRefusesAProjectFugaroDidNotCreate: Fugaro only starts fresh
-// (the owner's ruling of 2026-10-23), so `fugaro managed flag` never makes a
-// project managed that no run of fugaro setup created — no creation fact in its
-// runs bucket and no creation label on the project. The exact ID typed at a
-// terminal does not change that: nothing is written, neither the object nor
-// the label, and the project stays unmanaged.
-func TestManagedFlagRefusesAProjectFugaroDidNotCreate(t *testing.T) {
-	r := managedFlagRigNotCreated(t)
-	terminal(t, true)
-	out, _, err := executeStdin(t, initProject+"\n", managedFlagArgs()...)
-	if ExitCode(err) != ExitUserError || !strings.Contains(errString(err), "Fugaro only manages a project it created") {
-		t.Fatalf("exit %d (%v), want the refusal of a project setup did not create\n%s", ExitCode(err), err, out)
-	}
-	// The label the refusal names is infra's own (internal/infra/managed spells
-	// it apart, for this sentence only, since it does not import infra).
-	if want := infra.CreatedLabelKey + "=" + infra.CreatedLabelValue; !strings.Contains(errString(err), want) {
-		t.Errorf("the refusal does not name the creation label %s: %v", want, err)
-	}
-	if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); ok {
-		t.Errorf("the refused flag wrote gs://%s/%s = %s", initRunsBucket, managed.MarkerObject, got)
-	}
-	if v := r.crm.Labels(initProject)[managed.ProjectLabelKey]; v != "" {
-		t.Errorf("the refused flag labelled the project %s=%s", managed.ProjectLabelKey, v)
-	}
-	if managedFlagIsManaged(t, r) {
-		t.Error("a project setup did not create reads as managed after the flag")
-	}
 }
 
 // noRunSession clears the variables a Fugaro run's own process carries, so a

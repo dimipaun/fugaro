@@ -97,7 +97,7 @@ func userEmail(ctx context.Context, hc *http.Client, url string) (string, error)
 // (a service account, no credentials) it is a needs-you naming the flags.
 func (e *initEngine) defaultMembers(ctx context.Context) error {
 	r, o := e.r, e.r.o
-	if e.old != nil || o.launchersChanged || o.operatorsChanged || len(e.lc.Terraform.Launchers)+len(e.lc.Terraform.Operators) > 0 {
+	if !e.firstRun() || o.launchersChanged || o.operatorsChanged || len(e.lc.Terraform.Launchers)+len(e.lc.Terraform.Operators) > 0 {
 		return nil
 	}
 	email, err := authenticatedUser(ctx, e.lc)

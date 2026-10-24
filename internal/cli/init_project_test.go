@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
@@ -126,7 +128,7 @@ func (r *projectRig) posts(t *testing.T) int {
 type projectJSON struct {
 	Created string `json:"created_project"`
 	Stages  []struct{ Name, State, Detail string }
-	Left    []map[string]string `json:"left_for_you"`
+	Left    []map[string]any `json:"left_for_you"`
 }
 
 func parseProjectJSON(t *testing.T, out string) projectJSON {
@@ -433,7 +435,7 @@ func TestBillingGuidedByDefault(t *testing.T) {
 	if len(r.crm.Creates()) != 1 || len(r.bill.Links()) != 0 {
 		t.Fatalf("creates %d links %v", len(r.crm.Creates()), r.bill.Links())
 	}
-	want := "gcloud billing projects link " + newProj + " --billing-account=BILLING_ACCOUNT_ID"
+	want := "gcloud billing projects link " + newProj + " --billing-account=<billing-account-id>"
 	if !strings.Contains(out, want) {
 		t.Errorf("the guided command is missing:\n%s", out)
 	}
@@ -458,7 +460,13 @@ func TestBillingGuidedJSON(t *testing.T) {
 		t.Fatalf("exit %d (%v)", ExitCode(err), err)
 	}
 	j := parseProjectJSON(t, out)
-	if j.state("project") != "needs-you" || len(j.Left) != 1 || !strings.HasPrefix(j.Left[0]["text"], "gcloud billing projects link "+newProj) {
+	if len(j.Left) != 1 {
+		t.Fatalf("%+v", j)
+	}
+	text, _ := j.Left[0]["text"].(string)
+	cmds, _ := j.Left[0]["commands"].([]any)
+	if len(j.Left) != 1 || j.state("project") != "billing-pending" || !strings.Contains(text, "whoever administers billing") ||
+		len(cmds) != 2 || cmds[0] != "gcloud billing projects link "+newProj+" --billing-account=<billing-account-id>" {
 		t.Errorf("%+v", j)
 	}
 	r.nothingDone(t, "a guided billing")
@@ -681,37 +689,33 @@ func TestRefusedCreationArrivingOnTheOperation(t *testing.T) {
 	})
 }
 
-// The billing half: a refused link names the account, both roles the link can
-// be missing, the one gcloud line that links it, and stops with exit 1. Both
-// roles are named because the 403 names neither: a reader who holds the
-// billing one -- adopting an existing project they are not an Owner of -- is
-// exactly the reader a billing-only line would send to the wrong person, and
-// the stage keeps only this first line. The account and the project are both
-// in the line to run, so both are in the message.
-func TestRefusedBillingLinkIsOneHelpfulLine(t *testing.T) {
-	want := "Fugaro could not link billing account " + billingAcc + " to project " + newProj + ": your account is missing a role the link needs. " +
-		"Ask whoever administers " + billingAcc + " for the Billing Account User role on it, and whoever owns " + newProj + " for the Owner or Project Billing Manager role on it; " +
-		"either of them can link it for you instead, with the one line `gcloud billing projects link " + newProj + " --billing-account=" + billingAcc + "`. " +
-		"Then run `fugaro setup` again. If you hold both roles already, the billing account may be closed, or at its limit of linked projects."
+// The billing half: a refused link is a pause, not a failure (the owner's
+// ruling of 2026-10-23). The service's own text is printed, and the run ends
+// with the block for whoever administers billing: why the link was refused
+// (both roles, since the 403 names neither, and the two non-role causes), the
+// link line for the real project with the account's id to supply, and the
+// rerun. The exit code is the left-for-you one, 1.
+func TestRefusedBillingLinkPausesWithTheBlock(t *testing.T) {
 	r := newProjectRig(t)
 	stubSelfCommand(t)
 	r.existing(false)
 	r.bill.FailLinks(403, "PERMISSION_DENIED", "The caller does not have permission")
-	_, _, err := r.run(t, true, billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
-	if err == nil {
-		t.Fatal("a refused link exited 0")
-	}
+	out, errOut, err := r.run(t, true, billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
+	all := refusalText(out, errOut, err)
 	if ExitCode(err) != ExitUserError {
-		t.Errorf("exit %d (%v), want 1", ExitCode(err), err)
+		t.Fatalf("exit %d (%v), want 1\n%s", ExitCode(err), err, all)
 	}
-	if !strings.HasPrefix(err.Error(), want+"\n") {
-		t.Errorf("err = %q,\nwant the helpful line %q first", err.Error(), want)
-	}
-	if !strings.Contains(err.Error(), "The caller does not have permission") {
-		t.Errorf("err = %q: the service's own text is gone", err.Error())
-	}
-	if got := stageLine(err.Error()); got != want {
-		t.Errorf("the stage's one line = %q, want %q", got, want)
+	for _, want := range []string{
+		"Fugaro could not link billing account " + billingAcc + " to project " + newProj + ": your account is missing a role the link needs (Billing Account User on the account, and Owner or Project Billing Manager on the project)",
+		"The caller does not have permission",
+		"[billing pending]",
+		"whoever administers billing in your organization",
+		"gcloud billing projects link " + newProj + " --billing-account=<billing-account-id>",
+		"fugaro setup --name " + initProjectName + " --gcp-project " + newProj,
+	} {
+		if !strings.Contains(all, want) {
+			t.Errorf("the paused run does not say %q:\n%s", want, all)
+		}
 	}
 	if n := r.bill.Attempts(); n != 1 {
 		t.Errorf("%d write(s) attempted, want 1 (the link that was refused)", n)
@@ -1216,5 +1220,174 @@ func TestTheBillingListIsNarrow(t *testing.T) {
 	}
 	if len(r.bill.Links()) != 0 || r.bill.Attempts() != 0 {
 		t.Errorf("the link the project already had was written: %d link(s), %d attempt(s)", len(r.bill.Links()), r.bill.Attempts())
+	}
+}
+
+// TestBillingLeftForTheAdminAndTheRerunResumes is a teammate's first setup
+// (2026-10-23): the project is created, billing is not linked (the person may
+// not link it: whoever administers billing in the organization does), and the
+// run stops there. What it leaves is one plain block — who to ask, the exact
+// link line with the real project ID and the billing account's ID explained,
+// and the exact rerun — never the BILLING_ACCOUNT_ID placeholder, and the
+// managed warning says in plain words that the mark comes with the rerun. Once
+// billing is linked, the rerun resumes the project it created (the creation
+// label: never "already exists") and completes, the managed mark included.
+func TestBillingLeftForTheAdminAndTheRerunResumes(t *testing.T) {
+	r := newProjectRig(t)
+	out, errOut, err := r.run(t, true, newProj+"\n", "--create-project")
+	all := refusalText(out, errOut, err)
+	if ExitCode(err) != ExitUserError || len(r.crm.Creates()) != 1 {
+		t.Fatalf("exit %d, creates %d: want the creation and a stop at billing\n%s", ExitCode(err), len(r.crm.Creates()), all)
+	}
+	for _, want := range []string{
+		"whoever administers billing in your organization",
+		"gcloud billing projects link " + newProj + " --billing-account=<billing-account-id>",
+		"gcloud billing accounts list",
+		selfCommand() + " setup --name " + initProjectName + " --gcp-project " + newProj,
+		"#not-an-owner",
+		"marked automatically when you rerun",
+	} {
+		if !strings.Contains(all, want) {
+			t.Errorf("the stop at billing does not say %q:\n%s", want, all)
+		}
+	}
+	for _, no := range []string{"BILLING_ACCOUNT_ID", "no Google client was built"} {
+		if strings.Contains(all, no) {
+			t.Errorf("the stop at billing still says %q:\n%s", no, all)
+		}
+	}
+
+	// The billing administrator links it; the project's runs bucket is the one
+	// the installation's apply makes.
+	number := uint64(r.crm.Creates()[0].Number)
+	bucket := "fugaro-runs-" + newProj
+	r.bill.SetBilling(newProj, true)
+	r.gcs.AddProject(newProj, number)
+	r.gcs.AddBucket(bucket, number, managedBucketLabels)
+	roles := map[string]string{}
+	for _, role := range []string{"launcher", "job_runner", "build_submitter", "tag_mover"} {
+		roles[role] = "projects/" + newProj + "/roles/fugaro" + strings.ToUpper(role[:1]) + role[1:]
+	}
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"runs_bucket":               bucket,
+		"registry_host":             "us-east5-docker.pkg.dev/" + newProj,
+		"scheduler_service_account": "fugaro-scheduler@" + newProj + ".iam.gserviceaccount.com",
+		"role_ids":                  roles,
+	})}
+	r.save(t)
+	// The rerun is what the block says to run: the config the paused run left
+	// (setup_pending: billing) makes it resume the creation, with no flag.
+	cfg, rerr := os.ReadFile(r.cfg)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if !strings.Contains(string(cfg), "setup_pending") {
+		if err := os.WriteFile(r.cfg, append(cfg, []byte("setup_pending: billing\n")...), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, errOut, err = r.run(t, true, initProjectName+"\n"+initProjectName+"\n", "--launcher", "user:dev@example.com", "--operator", "user:dev@example.com")
+	all = refusalText(out, errOut, err)
+	if err != nil || strings.Contains(all, "already exists") {
+		t.Fatalf("the rerun after billing was linked did not complete: %v\n%s", err, all)
+	}
+	if n := len(r.crm.Creates()); n != 1 {
+		t.Errorf("%d project(s) created over the two runs, want the one", n)
+	}
+	if got, ok := markerAt(t, r.gcs, bucket); !ok || !strings.Contains(got, `"gcp_project":"`+newProj+`"`) {
+		t.Errorf("the resumed run did not mark the project managed: %q (present %v)\n%s", got, ok, all)
+	}
+	if v := r.crm.Labels(newProj)[managed.ProjectLabelKey]; v != managed.ProjectLabelValue {
+		t.Errorf("the resumed project is not labelled %s=%s (got %q)", managed.ProjectLabelKey, managed.ProjectLabelValue, v)
+	}
+	if cfg, _ := os.ReadFile(r.cfg); strings.Contains(string(cfg), "setup_pending") {
+		t.Errorf("the completed setup left setup_pending in the config:\n%s", cfg)
+	}
+}
+
+// TestBillingPendingIsAStatusInJSON: a run whose project has no billing yet
+// pauses: --json reports the project stage as billing-pending and every stage
+// that needs billing as waiting-for-billing (stable statuses), nothing that
+// needs billing is planned or applied, and the exit code is the left-for-you
+// one (1), with the block for whoever administers billing as the step left.
+func TestBillingPendingIsAStatusInJSON(t *testing.T) {
+	r := newProjectRig(t)
+	r.existing(false)
+	out, _, err := r.run(t, false, "", "--create-project", "--json", "--yes")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d (%v), want 1\n%s", ExitCode(err), err, out)
+	}
+	var res convergeJSON
+	if jerr := json.Unmarshal([]byte(out), &res); jerr != nil {
+		t.Fatalf("%v:\n%s", jerr, out)
+	}
+	if got := res.state(initflow.Project); got != string(initflow.BillingPending) {
+		t.Errorf("project: %q, want %q\n%s", got, initflow.BillingPending, out)
+	}
+	if got := res.state(initflow.Installation); got != string(initflow.WaitingForBilling) {
+		t.Errorf("installation: %q, want %q\n%s", got, initflow.WaitingForBilling, out)
+	}
+	if len(r.ran(t, "plan"))+len(r.ran(t, "apply")) != 0 {
+		t.Errorf("planned or applied while billing is pending: %q", r.calls(t))
+	}
+	if len(res.Left) != 1 || !strings.Contains(res.Left[0]["text"], "whoever administers billing") {
+		t.Errorf("left %+v", res.Left)
+	}
+}
+
+// TestAPausedFirstRunWritesItsConfig: the first run that pauses for billing
+// writes the local config, marked setup_pending: billing, so a rerun resumes
+// exactly there; a run with a config already writes nothing here.
+func TestAPausedFirstRunWritesItsConfig(t *testing.T) {
+	r := newProjectRig(t)
+	e := rigEngine(t, r.initRig, &initOptions{door: setupDoor.name, createProject: true})
+	e.old = nil
+	e.path = filepath.Join(t.TempDir(), "projects", initProjectName+".yaml")
+	s := newProjectStage(e)
+	err := s.pause([]string{"created project " + newProj})
+	var bp *initflow.BillingPausedError
+	if !errors.As(err, &bp) || !strings.Contains(bp.Detail, "billing pending") {
+		t.Fatalf("pause: %v", err)
+	}
+	data, rerr := os.ReadFile(e.path)
+	if rerr != nil || !strings.Contains(string(data), "setup_pending: billing") || !strings.Contains(string(data), "gcp_project: "+newProj) {
+		t.Fatalf("the paused run's config (%v):\n%s", rerr, data)
+	}
+	lc, perr := localcfg.Parse(data)
+	if perr != nil {
+		t.Fatal(perr)
+	}
+	pe := &initEngine{r: e.r, lc: lc, old: data}
+	if !pe.firstRun() {
+		t.Error("a config marked setup_pending is not resumed as a first run")
+	}
+	if (&initEngine{lc: &localcfg.Config{}, old: data}).firstRun() {
+		t.Error("a config with no setup_pending is a first run")
+	}
+}
+
+// TestHeadsUpBeforeCreatingWhenNoBillingAccountWasListed: when the billing
+// question listed no account (the list could not be read, or was empty) and
+// none was given, the creation is preceded by one heads-up line, and goes on.
+func TestHeadsUpBeforeCreatingWhenNoBillingAccountWasListed(t *testing.T) {
+	r := newProjectRig(t)
+	e := rigEngine(t, r.initRig, &initOptions{door: setupDoor.name, createProject: true})
+	var out strings.Builder
+	e.r.w = &out
+	s := newProjectStage(e)
+	s.billingHeadsUp()
+	if out.Len() != 0 {
+		t.Errorf("a heads-up with accounts listed:\n%s", out.String())
+	}
+	e.r.billingUnlisted = true
+	s.billingHeadsUp()
+	if !strings.Contains(out.String(), "you may not be able to link billing; setup will create the project and pause at billing") {
+		t.Errorf("no heads-up:\n%s", out.String())
+	}
+	out.Reset()
+	e.r.o.linkBilling = billingAcc
+	s.billingHeadsUp()
+	if out.Len() != 0 {
+		t.Errorf("a heads-up with --link-billing given:\n%s", out.String())
 	}
 }

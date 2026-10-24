@@ -1,17 +1,21 @@
 [preflight] console: fix the environment problem named above, then rerun
     fugaro setup
-[project/gcp] command: gcloud billing projects link acme-prod --billing-account=BILLING_ACCOUNT_ID
+[project/gcp] command: Billing is not linked to acme-prod yet, so setup paused here: the project and Firebase exist, and what needs billing (Cloud Run, Cloud Build, Artifact Registry, Secret Manager, the buckets) waits for it. If you cannot link it yourself, forward this to whoever administers billing in your organization: they run the first line below with their billing account's id (theirs to supply; they find it with gcloud billing accounts list; see docs/gcp-setup.md#not-an-owner). Then run the second line: it resumes acme-prod and finishes the setup, marking the project managed
+    gcloud billing projects link acme-prod --billing-account=<billing-account-id>
+    fugaro setup --name aurora --gcp-project acme-prod
 [project/create] prompt: in your own terminal window, not through a coding agent or a pipe, type the ID(s) it asks for after running
-    fugaro setup --create-project --gcp-project acme-prod --parent folders/123 --link-billing 0123AB-4567CD-89EF01
-[project/guided] command: gcloud billing projects link acme-prod --billing-account=BILLING_ACCOUNT_ID
+    fugaro setup --gcp-project acme-prod --parent folders/123 --link-billing 0123AB-4567CD-89EF01
+[project/guided] command: Billing is not linked to acme-prod yet, so setup paused here: the project and Firebase exist, and what needs billing (Cloud Run, Cloud Build, Artifact Registry, Secret Manager, the buckets) waits for it. If you cannot link it yourself, forward this to whoever administers billing in your organization: they run the first line below with their billing account's id (theirs to supply; they find it with gcloud billing accounts list; see docs/gcp-setup.md#not-an-owner). Then run the second line: it resumes acme-prod and finishes the setup, marking the project managed
+    gcloud billing projects link acme-prod --billing-account=<billing-account-id>
+    fugaro setup --name aurora --gcp-project acme-prod
 [installation] prompt: in your own terminal window, not through a coding agent or a pipe, type the project's name to apply after running
     fugaro setup
 [firebase] prompt: in your own terminal window, not through a coding agent or a pipe, type the project's name at each apply after running
-    fugaro setup --firebase-project <firebase-project-id>
+    fugaro setup --firebase-project <gcp-project-id>
 [images] prompt: in your own terminal window, not through a coding agent or a pipe, type the project's name to pin this release's base images and copy the release images after running
     fugaro setup
 [installation-2] prompt: in your own terminal window, not through a coding agent or a pipe, type the project's name to apply the history job after running
-    fugaro setup --firebase-project <firebase-project-id>
+    fugaro setup --firebase-project <gcp-project-id>
 [secrets/no-checkout] command: in a checkout of the repository, in your own terminal window, run
     fugaro setup
 [secrets/github] command: run these in your own terminal window, one line at a time, in this order

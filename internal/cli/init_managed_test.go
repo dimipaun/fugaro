@@ -329,7 +329,7 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 		if n := len(r.crm.Creates()); n != 1 {
 			t.Fatalf("%d project(s) created (err %v):\n%s", n, err, out)
 		}
-		if !strings.Contains(out, "no Google client was built for the run") || !strings.Contains(out, newProj) {
+		if !strings.Contains(out, "is not marked as managed yet") || !strings.Contains(out, newProj) {
 			t.Errorf("the run did not warn that the project it created is unmarked:\n%s", out)
 		}
 		// The bucket a marker for newProj would go in: the runs bucket of the
@@ -466,14 +466,14 @@ func TestMarkCreatedWarningsAreInThePrintedResult(t *testing.T) {
 	}
 	var found bool
 	for _, w := range doc.Warnings {
-		if strings.Contains(w, "no Google client was built") && strings.Contains(w, newProj) {
+		if strings.Contains(w, "is not marked as managed yet") && strings.Contains(w, newProj) {
 			found = true
 		}
 	}
 	if !found {
 		t.Errorf("the marker warning is not in the printed result's warnings (%v):\n%s", doc.Warnings, out.String())
 	}
-	if strings.Contains(errOut.String(), "no Google client was built") && !found {
+	if strings.Contains(errOut.String(), "is not marked as managed yet") && !found {
 		t.Errorf("the warning went to stderr alone:\n%s", errOut.String())
 	}
 }

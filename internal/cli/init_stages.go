@@ -186,7 +186,7 @@ func initStages(e *initEngine) []initflow.Stage {
 	// and neither does a `setup` whose installation is already there: e.old is
 	// the project config's file, and a run that has one converges as update
 	// does (D11, reconciliation F24).
-	if e.r.o.createProject || (e.r.o.door == setupDoor.name && e.old == nil) {
+	if e.r.o.createProject || (e.r.o.door == setupDoor.name && e.firstRun()) {
 		stages = append(stages, newProjectStage(e))
 	}
 	return stages
@@ -398,7 +398,7 @@ func newInstallationStage(e *initEngine) *engineStage {
 			if err := e.setup(ctx); err != nil {
 				return err
 			}
-			if e.old == nil { // no local config yet: is the installation already there (a new machine's update)?
+			if e.firstRun() { // no local config yet (or one a paused setup wrote): is the installation already there (a new machine's update)?
 				switch ok, err := e.r.installationExists(ctx, e.c, e.spec); {
 				case err != nil:
 					return err
@@ -413,6 +413,15 @@ func newInstallationStage(e *initEngine) *engineStage {
 		},
 		left: promptLeft(initflow.Installation, "type the project's name to apply", e.r.o.doorName()),
 	}
+}
+
+// firebaseProjectWord is --firebase-project's value in a printed command: the
+// installation's own GCP project id, the only value it takes.
+func (e *initEngine) firebaseProjectWord() string {
+	if e.lc != nil && e.lc.GCPProject != "" {
+		return quoteWord(e.lc.GCPProject)
+	}
+	return "<gcp-project-id>"
 }
 
 // newFirebaseStage is stage 4: update --firebase-project's engine, which is two
@@ -431,7 +440,7 @@ func newFirebaseStage(e *initEngine) *engineStage {
 			if err := e.setup(ctx); err != nil {
 				return err
 			}
-			if e.old == nil { // a first run with --firebase-project: the same default, unless the installation exists
+			if e.firstRun() { // a first run with --firebase-project: the same default, unless the installation exists
 				if ok, err := e.r.installationExists(ctx, e.c, e.spec); err != nil {
 					return err
 				} else if !ok {
@@ -442,7 +451,7 @@ func newFirebaseStage(e *initEngine) *engineStage {
 			}
 			return e.r.initFirebase(ctx, e.c, e.t, e.wd, e.bin, e.lc, e.spec, e.path, e.old)
 		},
-		left: promptLeft(initflow.Firebase, "type the project's name at each apply", e.r.o.doorName(), "--firebase-project", "<firebase-project-id>"),
+		left: promptLeft(initflow.Firebase, "type the project's name at each apply", e.r.o.doorName(), "--firebase-project", e.firebaseProjectWord()),
 	}
 }
 
@@ -464,6 +473,6 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 			}
 			return e.r.firebaseHistory(ctx, e.c, e.t, e.wd, e.lc, e.spec)
 		},
-		left: promptLeft(initflow.Installation2, "type the project's name to apply the history job", e.r.o.doorName(), "--firebase-project", "<firebase-project-id>"),
+		left: promptLeft(initflow.Installation2, "type the project's name to apply the history job", e.r.o.doorName(), "--firebase-project", e.firebaseProjectWord()),
 	}
 }

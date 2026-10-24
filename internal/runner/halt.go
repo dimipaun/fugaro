@@ -230,7 +230,7 @@ func haltLines(rec *runstore.Record) string {
 	case runstore.HaltNoCredential:
 		fmt.Fprintf(&b, "To continue: %s once a credential is usable again (`fugaro accounts ls` shows each admitted account's state; the project policy's `credentials` decides whether another tier may be used meanwhile).\n\n", again)
 	case runstore.HaltCredsRulesDenied:
-		fmt.Fprintf(&b, "To continue: an operator re-runs `fugaro update --firebase-project <firebase-project-id>` with this release, which deploys the rules the cascade's fields need, then %s.\n\n", again)
+		fmt.Fprintf(&b, "To continue: an operator re-runs `fugaro update --firebase-project <gcp-project-id>` with this release, which deploys the rules the cascade's fields need, then %s.\n\n", again)
 	case runstore.HaltRunCap, runstore.HaltNoCap:
 		if rec.Budget != nil && h.Reason == runstore.HaltNoCap {
 			fmt.Fprintf(&b, "To continue: an admin sets the missing cap with `fugaro budget set`, then %s.\n\n", again)

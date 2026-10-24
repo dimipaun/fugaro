@@ -234,6 +234,18 @@ func (r *initRun) firstRunMissing(ctx context.Context) (name, fromCheckout strin
 	return name, fromCheckout, missing, true
 }
 
+// selectedPending is whether the project config this run selects is the one a
+// first run of fugaro setup wrote when it paused for billing
+// (localcfg.Config.SetupPending).
+func (r *initRun) selectedPending(ctx context.Context) bool {
+	co, err := checkoutProject(ctx, "")
+	if err != nil {
+		return false
+	}
+	_, lc, err := selectNamed(r.o.cloud, co, true, r.o.name)
+	return err == nil && lc != nil && lc.SetupPending != ""
+}
+
 // canAsk is whether the run may show a prompt for an input: a terminal on
 // stdin, and none of --non-interactive, --yes, --json (a script's flags) or
 // --print-vars (stdout is the variables alone).

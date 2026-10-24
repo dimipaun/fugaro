@@ -79,13 +79,6 @@ const (
 	// for the life of the project, which is why the two are declared apart.
 	ProjectLabelKey   = "fugaro_managed"
 	ProjectLabelValue = "true"
-
-	// createdLabelKey=createdLabelValue is infra.CreatedLabelKey's label, named
-	// here only for ErrNotCreated's sentence (this package does not import
-	// internal/infra); internal/cli's TestManagedFlagRefusesAProjectFugaroDidNotCreate
-	// holds the two to one value.
-	createdLabelKey   = "fugaro_created"
-	createdLabelValue = "true"
 )
 
 // Budget is the monthly amount and the currency a managed creation was
@@ -205,12 +198,6 @@ func (m Marker) Bytes() ([]byte, error) {
 // a person reads is the writer's sentence rather than a shared and vaguer one.
 var ErrAlreadyMarked = errors.New("the project already records a marker")
 
-// ErrNotCreated is what the owner's flag returns for a project no run of
-// fugaro setup created: its runs bucket holds no creation fact and the project
-// does not carry the creation label. Fugaro only starts fresh (the owner's
-// ruling of 2026-10-23), so a project it did not create is never made managed.
-var ErrNotCreated = errors.New("the project was not created by fugaro setup")
-
 // markerAt is MarkerObject as it is now: its bytes, and the generation those
 // bytes are. ok is false when nothing is there, which is generation 0 — the
 // figure IfGenerationMatch(0) means "write only if nothing is there" — so an
@@ -312,8 +299,8 @@ func insertMarker(ctx context.Context, s *storage.Service, bucket string, gen in
 //
 // The caller warns rather than fails when this returns an error: the
 // project exists either way, an unmarked project is the fail-closed
-// direction (nothing is skipped for it), and the owner-run flag of a
-// project fugaro setup created (D58, Task 6.1) is the way back — including for the
+// direction (nothing is skipped for it), and the owner-run flagging of an
+// existing project (D58, Task 6.1) is the way back — including for the
 // version-1 fact this writes, which WriteFlag may replace with the version
 // that records an amount.
 // The error is one bounded field (safetext.FieldErr) before it is returned:
@@ -414,8 +401,8 @@ func WriteManagedLabel(ctx context.Context, c *crm.Service, created, project str
 
 // WriteManagedLabelForFlag writes the same label under the other gate a
 // managed project can be made by: `fugaro managed flag` (Task 6.1), where the
-// project is one an earlier run of fugaro setup created (without --managed,
-// or before its runs bucket existed) and not the run writing the label.
+// project is an EXISTING one — the owner's, or a project an earlier run
+// created without --managed — and no run of ours ever created it.
 //
 // That is the one difference from WriteManagedLabel, and it is the whole
 // reason this entry point exists: the creation write refuses a project it did
@@ -491,16 +478,10 @@ func writeManagedLabel(ctx context.Context, c *crm.Service, project, who string)
 	return nil
 }
 
-// WriteFlag records the owner's statement that a project fugaro setup created
-// is managed with a budget (docs/design/managed-projects.md, D58; the plan's
-// Task 6.1) — the second way a project's managed fact is written, for a
-// creation that did not record one itself. Since Fugaro only starts fresh (the
-// owner's ruling of 2026-10-23) it never marks a project Fugaro did not create:
-// the object must already be this project's version-1 creation fact, or —
-// where none was written, because the run that created the project stopped
-// before its runs bucket existed and a later run resumed it — the project must
-// carry the creation label (created, read by the caller from the project:
-// infra.CreatedLabelKey). Anything else is ErrNotCreated.
+// WriteFlag records the owner's statement that an EXISTING project is
+// managed (docs/design/managed-projects.md, D58; the plan's Task 6.1) — the
+// second way a project becomes managed, and the only one that does not need
+// a creation.
 //
 // It is the creation fact's object and the creation fact's discipline, and
 // the one thing it does not need is the fact: WriteMarker is gated on
@@ -547,12 +528,12 @@ func writeManagedLabel(ctx context.Context, c *crm.Service, project, who string)
 // API's words, and the owner-run command prints it. The bound is on the
 // message alone, so ErrAlreadyMarked, ErrRefused and a *googleapi.Error inside
 // it are still matched.
-func WriteFlag(ctx context.Context, s *storage.Service, bucket, project string, number uint64, budget Budget, created bool) (replaced bool, err error) {
-	replaced, err = writeFlag(ctx, s, bucket, project, number, budget, created)
+func WriteFlag(ctx context.Context, s *storage.Service, bucket, project string, number uint64, budget Budget) (replaced bool, err error) {
+	replaced, err = writeFlag(ctx, s, bucket, project, number, budget)
 	return replaced, safetext.FieldErr(err)
 }
 
-func writeFlag(ctx context.Context, s *storage.Service, bucket, project string, number uint64, budget Budget, created bool) (replaced bool, err error) {
+func writeFlag(ctx context.Context, s *storage.Service, bucket, project string, number uint64, budget Budget) (replaced bool, err error) {
 	switch {
 	case bucket == "" || number == 0:
 		return false, refusedf("to write %s for %s: no runs bucket, or no project number to check it against", MarkerObject, project)
@@ -583,9 +564,6 @@ func writeFlag(ctx context.Context, s *storage.Service, bucket, project string, 
 			return false, alreadyFlagged(bucket, project, cur)
 		}
 		replaced = true
-	} else if !created {
-		return false, fmt.Errorf("%w: gs://%s/%s holds no creation fact and GCP project %s does not carry the label %s=%s that fugaro setup puts on every project it creates, so %s was not flagged and nothing was written. Fugaro only manages a project it created; an installation in any other project keeps its typed confirmations",
-			ErrNotCreated, bucket, MarkerObject, project, createdLabelKey, createdLabelValue, project)
 	}
 	m := Marker{Version: MarkerVersionBudget, GCPProject: project, Budget: &budget}
 	data, err := m.Bytes()

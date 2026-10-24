@@ -93,7 +93,13 @@ first that fails or needs you; a rerun resumes, and one with nothing to do
 says "No changes" and exits 0. Exit codes: 0 done (or only planned), 1 a
 refusal, or a step left for you (see left_for_you in --json), 2 a cloud
 failure; --json prints the stages, left_for_you and the failed stage on every
-outcome.
+outcome. Billing not linked is a pause, not a failure: the project stage is
+billing-pending, the stages that need billing are waiting-for-billing (the
+plugin wiring still runs), the local config is written with setup_pending:
+billing, the run exits 1 with one block to forward to whoever administers
+billing (the gcloud billing projects link line for the new project, the
+billing account's id theirs to supply, and the rerun line), and the rerun
+resumes the project it created.
 
 setup --anchor, run in the checkout of a repository the project lists, writes
 only the gcp_project: line of its fugaro.yaml (the line teammates find the
@@ -122,10 +128,11 @@ and safe, 1 a check failed or nothing was written, 2 a build record could not
 be read from the cloud (missing credentials included). A coding agent's
 session may run it, --yes included: it edits only a local file.
 
-setup --firebase-project <gcp-project-id> builds the budget backend in the
-installation's own GCP project, the only Firebase project Fugaro uses (one id
-for both, D7): any other id is refused. It is what adds the backend to the
-run, so a setup without it builds none. It creates nothing and links nothing
+setup --firebase-project <gcp-project-id> turns the shared budget on: it
+builds the budget backend in the installation's own GCP project. The value is
+the installation's own GCP project id (the default; the flag is only needed to
+turn the shared budget on), and any other id is refused. A setup without it
+builds no backend. It creates nothing and links nothing
 itself (the project and its billing link are the first run's), and it refuses
 a project that has no billing, or whose database holds data and no Fugaro
 mark. It runs three applies, each
@@ -233,14 +240,15 @@ creates it and adds Firebase to it, as you, after you type its ID at a
 terminal; --link-billing <account> then links that billing account (it may
 incur charges), after you type the account's ID. Each is its own typed
 confirmation, never given by --yes, --non-interactive or --json, and the ID is
-never the gcloud default project. Without --link-billing, setup prints the one
-gcloud command that links billing and stops; the rerun resumes the project it
-created. The project is labelled fugaro_created=true at its creation, and the
+never the gcloud default project. Without a billing link, setup pauses at
+billing (above) and the rerun resumes the project it created. The project is labelled fugaro_created=true at its creation, and the
 run that created it marks it Fugaro-managed (its runs bucket's
 fugaro/managed.json and the label fugaro_managed=true) once it has applied the
 installation; --managed with --budget, --budget-currency and --billing-account
 also records the monthly budget the managed apply needs. A creation that a
-later run finished is marked by the owner's fugaro managed flag. An ID that already exists and was not created by fugaro
+later run finished is marked the same way by that run: the fugaro_created=true
+label the creating run wrote proves the creation (and nothing else). Marking
+any other project the owner runs an installation in is fugaro managed flag's. An ID that already exists and was not created by fugaro
 setup, or that is pending deletion, is refused.
 
 The plugin-wiring stage merges the Fugaro marketplace and plugin into the
@@ -431,11 +439,18 @@ func (r *initRun) settleCreation(firstRun bool) error {
 // transcript; the fact is in the result either way.
 func (e *initEngine) announceAlreadySetUp() {
 	r, o := e.r, e.r.o
-	if o.door != setupDoor.name || e.old == nil || o.asJSON || o.printVars {
+	if o.door != setupDoor.name || e.firstRun() || o.asJSON || o.printVars {
 		return
 	}
 	fmt.Fprintf(r.w, "%s%s: keeping project %s, and converging as %s does\n",
 		o.programPrefix(), setupAlreadySetUp, pluginwire.Printable(e.lc.Name), "fugaro "+updateDoor.name)
+}
+
+// firstRun is whether this converge is a first run: no project config yet,
+// or the one a first run of setup wrote when it paused for billing
+// (localcfg.Config.SetupPending), which the rerun resumes as a first run.
+func (e *initEngine) firstRun() bool {
+	return e.old == nil || e.lc.SetupPending != ""
 }
 
 // programPrefix is the line's own "fugaro setup: ", or "" for a hand-built

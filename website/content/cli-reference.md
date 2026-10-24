@@ -1619,7 +1619,7 @@ Flags:
 Subcommands:
 
 - `fugaro managed apply` -- Apply the agent-authored Terraform root of a managed project, as the deployer account
-- `fugaro managed flag` -- Record the budget of a project fugaro setup created, making it managed (the project's owner)
+- `fugaro managed flag` -- Flag an existing GCP project as managed (the project's owner)
 
 ## `fugaro managed apply`
 
@@ -1676,22 +1676,16 @@ This command has no subcommands.
 
 ## `fugaro managed flag`
 
-Record the budget of a project fugaro setup created, making it managed (the project's owner)
+Flag an existing GCP project as managed (the project's owner)
 
-Record the monthly budget of GCP project PROJECT_ID, a project fugaro setup
-created, in the managed marker in that project's own runs bucket.
+Flag an existing GCP project PROJECT_ID as managed, recording the managed
+marker in that project's own runs bucket.
 
-Every project fugaro setup creates is Fugaro's: the creating run writes its
-creation fact, and a run with --managed records the budget in it at creation.
-This is the after-the-fact way for a creation that recorded no budget (setup
-without --managed), or that stopped before its runs bucket existed and was
-resumed by a later run (answered by the owner on 2026-10-16, design D58). The
-marker is what tells a later run that this project's applies may skip the
-typed confirmation.
-
-Fugaro only starts fresh: a project fugaro setup did not create (no creation
-fact in its runs bucket, and no fugaro_created=true label on the project) is
-refused with nothing written.
+This is how a project Fugaro did not create becomes managed: the marker is
+what tells a later run that this project's applies may skip the typed
+confirmation, and it is normally written by the run that created the project
+(fugaro setup --create-project --managed). Flagging is the after-the-fact way,
+answered by the owner on 2026-10-16 (design D58).
 
 Run it in your own terminal, as an operator, with your own credentials, and
 type the GCP project ID it asks for. A coding agent's session is refused, and
@@ -1743,9 +1737,7 @@ editing one. The one object it does replace is a version-1 creation fact —
 what fugaro setup --create-project without --managed leaves, and the state the
 managed apply refuses for having no amount recorded. What it replaced is said
 in the output, and the write is conditioned on the object it read, so nothing
-is overwritten blind. Where there is no object at all, the project must carry
-the label fugaro_created=true, which fugaro setup puts on every project it
-creates; otherwise nothing is written.
+is overwritten blind.
 
 Usage: `fugaro managed flag PROJECT_ID`
 
@@ -2829,7 +2821,13 @@ first that fails or needs you; a rerun resumes, and one with nothing to do
 says "No changes" and exits 0. Exit codes: 0 done (or only planned), 1 a
 refusal, or a step left for you (see left_for_you in --json), 2 a cloud
 failure; --json prints the stages, left_for_you and the failed stage on every
-outcome.
+outcome. Billing not linked is a pause, not a failure: the project stage is
+billing-pending, the stages that need billing are waiting-for-billing (the
+plugin wiring still runs), the local config is written with setup_pending:
+billing, the run exits 1 with one block to forward to whoever administers
+billing (the gcloud billing projects link line for the new project, the
+billing account's id theirs to supply, and the rerun line), and the rerun
+resumes the project it created.
 
 setup --anchor, run in the checkout of a repository the project lists, writes
 only the gcp_project: line of its fugaro.yaml (the line teammates find the
@@ -2858,10 +2856,11 @@ and safe, 1 a check failed or nothing was written, 2 a build record could not
 be read from the cloud (missing credentials included). A coding agent's
 session may run it, --yes included: it edits only a local file.
 
-setup --firebase-project <gcp-project-id> builds the budget backend in the
-installation's own GCP project, the only Firebase project Fugaro uses (one id
-for both, D7): any other id is refused. It is what adds the backend to the
-run, so a setup without it builds none. It creates nothing and links nothing
+setup --firebase-project <gcp-project-id> turns the shared budget on: it
+builds the budget backend in the installation's own GCP project. The value is
+the installation's own GCP project id (the default; the flag is only needed to
+turn the shared budget on), and any other id is refused. A setup without it
+builds no backend. It creates nothing and links nothing
 itself (the project and its billing link are the first run's), and it refuses
 a project that has no billing, or whose database holds data and no Fugaro
 mark. It runs three applies, each
@@ -2969,14 +2968,15 @@ creates it and adds Firebase to it, as you, after you type its ID at a
 terminal; --link-billing <account> then links that billing account (it may
 incur charges), after you type the account's ID. Each is its own typed
 confirmation, never given by --yes, --non-interactive or --json, and the ID is
-never the gcloud default project. Without --link-billing, setup prints the one
-gcloud command that links billing and stops; the rerun resumes the project it
-created. The project is labelled fugaro_created=true at its creation, and the
+never the gcloud default project. Without a billing link, setup pauses at
+billing (above) and the rerun resumes the project it created. The project is labelled fugaro_created=true at its creation, and the
 run that created it marks it Fugaro-managed (its runs bucket's
 fugaro/managed.json and the label fugaro_managed=true) once it has applied the
 installation; --managed with --budget, --budget-currency and --billing-account
 also records the monthly budget the managed apply needs. A creation that a
-later run finished is marked by the owner's fugaro managed flag. An ID that already exists and was not created by fugaro
+later run finished is marked the same way by that run: the fugaro_created=true
+label the creating run wrote proves the creation (and nothing else). Marking
+any other project the owner runs an installation in is fugaro managed flag's. An ID that already exists and was not created by fugaro
 setup, or that is pending deletion, is refused.
 
 The plugin-wiring stage merges the Fugaro marketplace and plugin into the
@@ -3033,7 +3033,7 @@ Flags:
 | `--create-project` | bool | `false` | no | create the GCP project --gcp-project names and add Firebase to it, as you, after you type its ID at a terminal (never with --yes, --non-interactive or --json). A first run of setup always creates its project, so the flag only says so explicitly. Fugaro only starts fresh: an ID that already exists is refused, unless an earlier run of setup created it (the resume). Billing is not linked unless --link-billing is also given; without it setup prints the one gcloud command that links it |
 | `--display-name` | string | "" | no | on a first run, which creates the project: its display name (default: its ID) |
 | `--expect-digest` | stringArray | `[]` | no | pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it setup trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag |
-| `--firebase-project` | string | "" | no | build the budget backend in the installation's own GCP project, the only Firebase project Fugaro uses (one id for both, D7; any other id is refused). It is the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: typed where it is a first-time question, covered by --yes where the run re-converges an installation that is already there) and the config |
+| `--firebase-project` | string | "" | no | turn the shared budget on: the value is the installation's own GCP project id (the default; the flag is only needed to turn the shared budget on), and any other id is refused. It is the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: typed where it is a first-time question, covered by --yes where the run re-converges an installation that is already there) and the config |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `--github-app-id` | string | "" | no | the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; setup asks once at a terminal, and --non-interactive needs it) |
 | `-h`, `--help` | bool | `false` | no | help for setup |
@@ -3041,7 +3041,7 @@ Flags:
 | `--json` | bool | `false` | no | print the result as JSON on stdout (progress goes to stderr) |
 | `--launcher` | stringArray | `[]` | no | an IAM member who launches and watches runs (repeatable; default: the local config's, and for a new config you, the authenticated user) |
 | `--link-billing` | string | "" | no | on a first run, which creates the project: link this billing account (an ID such as 0123AB-4567CD-89EF01) to the project, after you type the account's ID at a terminal. This may incur charges on that account; never with --yes. It never changes a project's existing billing link |
-| `--managed` | bool | `false` | no | on a first run, which creates the project: record its monthly budget in the creation fact. Every project setup creates is Fugaro-managed (its runs bucket's creation fact and the fugaro_managed label); --managed is what records the budget amount the managed apply needs. The monthly budget amount is required — --budget, --budget-currency and --billing-account together, with no default and no suggestion taken for you — and the amount and the currency are recorded in the project's creation fact (gs://fugaro-runs-<gcp-project>/fugaro/managed.json), where a later run and a restore read what was chosen. It removes no confirmation: the project's creation still types its ID, and the installation's ordinary steps share the run's one review. Recording the budget later, on a project setup created without --managed, is fugaro managed flag's, run by the owner at a terminal, and never setup's |
+| `--managed` | bool | `false` | no | on a first run, which creates the project: record its monthly budget in the creation fact. Every project setup creates is Fugaro-managed (its runs bucket's creation fact and the fugaro_managed label); --managed is what records the budget amount the managed apply needs. The monthly budget amount is required — --budget, --budget-currency and --billing-account together, with no default and no suggestion taken for you — and the amount and the currency are recorded in the project's creation fact (gs://fugaro-runs-<gcp-project>/fugaro/managed.json), where a later run and a restore read what was chosen. It removes no confirmation: the project's creation still types its ID, and the installation's ordinary steps share the run's one review. Flagging a project that already exists as managed is fugaro managed flag's, run by the owner at a terminal, and never setup's |
 | `--name` | string | "" | no | the project's name: for a project config setup creates, and what names an installation that has no name yet (with a config, it must be its name; an installation's name never changes; with several project configs it names the one to create or use; on a machine with no config for an installation that exists, it defaults to the installation's) |
 | `--no-build` | bool | `false` | no | with --repo: don't offer the first image builds |
 | `--no-log-isolation` | bool | `false` | no | leave Fugaro job logs in _Default instead of their own log bucket |
@@ -3215,7 +3215,7 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--config-only` | bool | `false` | no | only write the local config, from the installation's outputs (else the flags) |
 | `--expect-digest` | stringArray | `[]` | no | pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it update trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag |
-| `--firebase-project` | string | "" | no | build the budget backend in the installation's own GCP project, the only Firebase project Fugaro uses (one id for both, D7; any other id is refused). It is the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: typed where it is a first-time question, covered by --yes where the run re-converges an installation that is already there) and the config |
+| `--firebase-project` | string | "" | no | turn the shared budget on: the value is the installation's own GCP project id (the default; the flag is only needed to turn the shared budget on), and any other id is refused. It is the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: typed where it is a first-time question, covered by --yes where the run re-converges an installation that is already there) and the config |
 | `--forget` | bool | `false` | no | roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state. An installation that holds the managed deployer's fence has no rollback and this is refused there: the state removal would leave the seven scoped roles and their seven conditioned bindings live in the project, accounted for by nothing, and taking the project out of managed mode does not remove them (docs/gcp-setup.md, "Rolling back") |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `--github-app-id` | string | "" | no | the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; update asks once at a terminal, and --non-interactive needs it) |

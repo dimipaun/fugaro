@@ -325,7 +325,7 @@ func TestQuotaOptions(t *testing.T) {
 	if got := gcpOptions(lc).GCPProject; got != initProject {
 		t.Fatalf("installation options quota %q", got)
 	}
-	if got := quotaOptions(lc, fpID); got.GCPProject != fpID || got.Region != lc.Region || got.Endpoints != gcpOptions(lc).Endpoints {
+	if got := quotaOptions(lc, "aurora-fp"); got.GCPProject != "aurora-fp" || got.Region != lc.Region || got.Endpoints != gcpOptions(lc).Endpoints {
 		t.Errorf("options %+v: want the Firebase project as quota and the rest unchanged", got)
 	}
 	ctx := t.Context()
@@ -333,7 +333,7 @@ func TestQuotaOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dc, err := (&initRun{}).discoveryClients(ctx, c, lc, fpID)
+	dc, err := (&initRun{}).discoveryClients(ctx, c, lc, "aurora-fp")
 	if err != nil {
 		t.Fatal(err)
 	}
