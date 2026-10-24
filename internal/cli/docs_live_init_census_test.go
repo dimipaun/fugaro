@@ -465,6 +465,13 @@ var censusOutputNames = []string{
 	// records the names of the tests it ran -- the console's test-results/
 	// writes one too.
 	"junit.xml",
+	// .gitignore's /THIRD_PARTY_NOTICES.md: the licence and notice texts of the
+	// Go modules the released binary links, which scripts/third-party-notices.sh
+	// generates from the module cache when GoReleaser's before hooks run. That
+	// pattern is anchored at the root, the one place the script writes; the name
+	// is the shape these lists match, and the text is those modules' rather than
+	// this repository's, which is what they step over.
+	"THIRD_PARTY_NOTICES.md",
 }
 
 // censusOutputMarkers are matched against a file's base name, because the
@@ -985,6 +992,7 @@ var censusIgnored = []struct {
 	bySniff bool   // covered by the binary sniff rather than by censusOutput
 }{
 	{".gitignore", "/dist/", "dist/fugaro", false},
+	{".gitignore", "/THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.md", false},
 	{".gitignore", "/fugaro", "fugaro", true},
 	{".gitignore", "/clidoc", "clidoc", true},
 	{".gitignore", "*.exe", "fugaro.exe", true},

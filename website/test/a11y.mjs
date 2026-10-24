@@ -225,6 +225,11 @@ export const BASE_PAIRS = [
   ['--text-muted', '--surface', BODY_TEXT],
   // The success tone as a step's fill, with the ground as its label.
   ['--ground', '--ok', BODY_TEXT],
+  // The copy button's checkmark, a UI glyph in the success tone, on the ground, on the panel a
+  // command block sits on and on the surface of its hover (the owner's feedback of 2026-10-24).
+  ['--ok', '--ground', LARGE_OR_UI],
+  ['--ok', '--panel', LARGE_OR_UI],
+  ['--ok', '--surface', LARGE_OR_UI],
 ]
 
 // The pairs of a palette that are below their ratio, as the lines a reader sees. Exported
