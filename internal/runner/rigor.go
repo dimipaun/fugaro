@@ -54,8 +54,12 @@ func (r *run) recordRigor(at string, paths []string) {
 	r.rec.Rigor = r.rec.Rigor.Applied(runstore.Moment{Resolved: res, At: at, Revision: r.rigorRev})
 }
 
-// reachedRigor is the mode this run has already resolved at an earlier moment;
-// "" before the first one.
+// reachedRigor is the mode this run has resolved so far: bootstrap's answer
+// once it has run, and "" before the first resolution. It is what the policy
+// reads too — the mode a run gets its per-run default from is the one it
+// resolved at bootstrap, and a policy a run's own stages could move would not
+// be the ceiling it is (plan T6.1) — and what the resolver is given as
+// Request.Reached, so its own answer is monotone as well.
 func (r *run) reachedRigor() rigor.Mode {
 	if r.rec.Rigor == nil {
 		return ""
