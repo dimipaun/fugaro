@@ -10,7 +10,8 @@
 // **The URLs are derived, and nothing under `website/` writes one.** The release workflow
 // publishes the console as its own GitHub release, `console-vX.Y.Z` — X.Y.Z is the CLI tag
 // it was triggered by — carrying `Fugaro Console-X.Y.Z-universal.dmg` and
-// `Fugaro Console-X.Y.Z-universal-mac.zip` for macOS and nothing else
+// `Fugaro Console-X.Y.Z-universal-mac.zip` for macOS and the unsigned
+// `Fugaro.Console-X.Y.Z-linux-x86_64.AppImage` and `…-linux-amd64.deb` for Linux
 // (`.github/workflows/console-release.yml`, `console/README.md`, `docs/release.md`). So
 // `content/downloads.json` carries the released *names* — the tag's prefix, the version,
 // and each asset's file name with `{version}` where the version goes — and this module
@@ -31,7 +32,7 @@
 // **The checksums are held to the release's own sums file.** A checksum is a fact about bytes,
 // and no build can compute it: the one thing a reader of `downloads.json` cannot check is
 // whether a well-formed value is the value the release published. So the release's own
-// `console-sha256sums.txt` — the file the console's workflow uploads beside the two artifacts,
+// `console-sha256sums.txt` — the file the console's workflow uploads beside the artifacts,
 // whose bytes are copied verbatim into `data/console-sha256sums.txt` when the console's release
 // is turned on — is read here, and every entry's `sha256` has to be the value that file records
 // for the entry's published name. That is what makes a wrong checksum a build error rather than
@@ -40,9 +41,8 @@
 //
 // **And the name a reader's link carries is not the name the release's own files print.** GitHub
 // rewrites a space in an uploaded asset's name to a dot: the build writes
-// `Fugaro Console-0.9.0-universal.dmg` on the runner, the release's sums file and its
-// verification record both print that name, and the release page serves the file as
-// `Fugaro.Console-0.9.0-universal.dmg`. So the data file carries the *release's* name — the one
+// `Fugaro Console-X.Y.Z-universal.dmg` on the runner, the release's sums file prints that
+// name, and the release page serves the file as `Fugaro.Console-X.Y.Z-universal.dmg`. So the data file carries the *release's* name — the one
 // its own sums file lists, which is what the checksum above is keyed by — and the URL's last
 // segment is derived from it by `publishedName` below. This is the one fact about the console's
 // release that nothing in this tree can record, because the rename happens after the artifacts
@@ -60,16 +60,16 @@
 // Holding it here, in the build, is what makes the data file's own reader the refusal a page
 // build meets rather than a gate a later test run meets.
 //
-// **And a platform the release does not carry yet is a fact the file may hold, or not.** The
-// console ships for macOS, and since the owner's ruling of 2026-10-20 it is built for Linux too
-// — unsigned, an AppImage and a `.deb` (D10) — while the sentence both pages render about the
-// console is still the macOS one, because no Linux asset exists to link yet. So the data file
-// may carry an optional `linux` block: the sentence a Linux reader needs (what the build is,
-// that it is unsigned, how it is installed) and the ids of the assets it links. **It renders
-// only when it is there**, which is the component's own `if` and not a promise about its copy,
-// and while it is not there the page renders nothing about Linux at all — no heading, no
-// sentence, no link — which is what keeps the two pages saying macOS only without the markup
-// saying so.
+// **And a platform whose own facts differ is a block the file may hold, or not.** The console
+// ships for macOS, and since the owner's ruling of 2026-10-20 it is built for Linux too —
+// unsigned, an AppImage and a `.deb` (D10) — while the sentence both pages render about the
+// console is the macOS one, because signing and notarisation are macOS's facts and Linux has
+// neither. So the data file may carry an optional `linux` block: the sentence a Linux reader
+// needs (what the build is, that it is unsigned, what proves the bytes), the steps that
+// sentence points at, and the ids of the assets it links. **It renders only when it is there**,
+// which is the component's own `if` and not a promise about its copy, and while it is not there
+// the page renders nothing about Linux at all — no heading, no sentence, no link — which is what
+// keeps the two pages saying macOS only without the markup saying so.
 //
 // **And its links are held to the file's own assets.** Every id the block names has to be an id
 // `downloads` lists, and every entry there has already been held to the release's published name
@@ -89,7 +89,7 @@ export const DOWNLOADS_FILE = 'website/content/downloads.json'
 
 /**
  * The release's own sums file, as every message about a checksum names it: the console
- * workflow uploads it beside the two artifacts (`gh release create … console-sha256sums.txt`),
+ * workflow uploads it beside the artifacts (`gh release create … console-sha256sums.txt`),
  * and the copy under `website/data/` is byte-for-byte the published one.
  */
 export const SUMS_FILE = 'website/data/console-sha256sums.txt'
@@ -107,15 +107,17 @@ const VERSION_PLACEHOLDER = '{version}'
 /**
  * The name the release serves an asset under, which is the name the URL's last segment has to
  * carry: GitHub rewrites a space in an uploaded asset's name to a dot, so the file the build
- * writes as `Fugaro Console-0.9.0-universal.dmg` — the name the release's own
- * `console-sha256sums.txt` and `console-verification.txt` print — is served, and linked to, as
- * `Fugaro.Console-0.9.0-universal.dmg`.
+ * writes as `Fugaro Console-X.Y.Z-universal.dmg` — the name the release's own
+ * `console-sha256sums.txt` prints — is served, and linked to, as
+ * `Fugaro.Console-X.Y.Z-universal.dmg`. A name with no space in it — Linux's pair, which the
+ * packer writes with a dot already — is served as it is written, and the rule is applied to
+ * every asset rather than to the ones it changes.
  *
  * This is the whole of the rule, and it is stated here rather than read from anywhere because
  * nothing in this tree can carry it: the rename happens on GitHub, after the artifacts leave the
  * runner, so no document, workflow or checksum list in the repository records it. It was
- * confirmed against the published `console-v0.9.0` release (2026-10-19: the release's own asset
- * list carries the dotted names, the dotted URL answers 200 and the `%20` one 404), and the
+ * confirmed against a published release's own asset list (2026-10-19 for `console-v0.9.0`: the
+ * dotted names are the ones served, the dotted URL answers 200 and the `%20` one 404), and the
  * owner's live check re-confirms it — `docs/gcp-live-checklist.md` check 69a follows every URL
  * the pages carry. A link that skipped this step is a 404 for every reader, which is what
  * `website/test/console.mjs` refuses.
@@ -183,7 +185,7 @@ function releaseSums(siteRoot) {
   const file = path.join(siteRoot, 'data', 'console-sha256sums.txt')
   if (!existsSync(file)) {
     refuseSums(
-      'is missing: it is the release\'s own checksum list, uploaded beside the two artifacts, and the copy here is what the checksums in the data file are held to. A console release is turned on with it (W3.1)',
+      'is missing: it is the release\'s own checksum list, uploaded beside the artifacts, and the copy here is what the checksums in the data file are held to. A console release is turned on with it (W3.1)',
     )
   }
   const raw = readFileSync(file, 'utf8')
@@ -379,10 +381,12 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
 
   // What the section says once the console has shipped: the platform, the signing and
   // notarisation, and the CLI-first rule. The checksums themselves are per asset (below),
-  // because a checksum is a fact about one file rather than about the release — and **the
-  // section carries no verification command**: the owner read the page on 2026-10-21 and
-  // asked for `shasum -a 256 Fugaro.Console-*` to come out, so the released block is one
-  // sentence and its source now, and a file that grew a key back is refused below.
+  // because a checksum is a fact about one file rather than about the release — and **this
+  // block carries no verification command**: the owner read the page on 2026-10-21 and asked
+  // for `shasum -a 256 Fugaro.Console-*` to come out from under the macOS cards, whose readers
+  // have Apple's signature to check, so the released block is one sentence and its source, and a
+  // file that grew a key back is refused below. The commands that do exist belong to the
+  // unsigned platform's own block, where a signature is exactly what is missing.
   const released = (() => {
     const map = asMap(doc.released, 'released')
     for (const key of Object.keys(map)) {
@@ -496,19 +500,18 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
     refuse('available is true and downloads is empty: a section that says the console has shipped with nothing to download is the broken state the flag exists to prevent')
   }
 
-  // The optional block for a platform whose own artifact exists but whose facts differ from the
-  // released sentence's — Linux, whose build is unsigned and whose files are not disk images the
-  // macOS sentence describes (the owner's ruling of 2026-10-20; D10, and the header above).
-  // Absent is the state this checkout ships and the state the pages render nothing for: the
-  // block's links are its assets, so the sentences are not here either, and no part of a page
-  // has to say a platform is missing.
+  // The optional block for a platform whose own facts differ from the released sentence's —
+  // Linux, whose build is unsigned and whose files are not disk images the macOS sentence
+  // describes (the owner's ruling of 2026-10-20; D10, and the header above). Absent is the state
+  // the pages render nothing for: the block's links are its assets, so the sentences are not
+  // there either, and no part of a page has to say a platform is missing.
   const linux = (() => {
     if (doc.linux === undefined) return null
     const map = asMap(doc.linux, 'linux')
     for (const key of Object.keys(map)) {
-      if (!['text', 'assets', 'source'].includes(key)) {
+      if (!['text', 'assets', 'verify', 'source'].includes(key)) {
         refuse(
-          `linux carries the key "${key}", and this block is the sentence a page renders, the ids of the assets it links and the "source" that sentence came from: a fact nothing renders is a fact nothing pins`,
+          `linux carries the key "${key}", and this block is the sentence a page renders, the ids of the assets it links, the steps that prove those bytes and the "source" that sentence came from: a fact nothing renders is a fact nothing pins`,
           'D10',
         )
       }
@@ -539,12 +542,40 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
     if (new Set(named.map((entry) => entry.id)).size !== named.length) {
       refuse('linux.assets names one asset twice, and one asset of a release is one link', 'D10')
     }
+    // The steps that stand behind the links, and they are required rather than optional: an
+    // unsigned artifact is the one download on this page with nothing to check it for, so the
+    // commands that prove its bytes are the whole of what the block is for beside the sentence
+    // that says it is unsigned. They are commands and not prose — a reader runs them — so each
+    // is a non-empty string.
+    //
+    // **And no step spells the version itself.** A step that names the release puts
+    // `{version}` where the version goes, and this reader substitutes it the same way it
+    // substitutes an asset's `file` name, so the version is written once in this file and a
+    // bump moves the commands with it. A step that names no version is left as it is — a
+    // command with no version in it cannot drift — and a step that spells one is refused,
+    // because that is the step the next release leaves naming the last one.
+    if (!Array.isArray(map.verify) || map.verify.length === 0) {
+      refuse(
+        "linux.verify is not a non-empty list, and an unsigned build is the one download here with no signature to check: the steps that prove these bytes are what a Linux reader does instead (docs/release.md, \"Verifying the console's release\")",
+        'D10',
+      )
+    }
+    const verify = map.verify.map((value, index) => {
+      const command = asText(value, `linux.verify[${index}]`)
+      if (command.includes(release.version)) {
+        refuse(
+          `linux.verify[${index}] is ${JSON.stringify(command)} and spells the release's version ${JSON.stringify(release.version)} rather than ${VERSION_PLACEHOLDER}: the version is written once in this file, and a step that carries it is one the next release leaves naming the last one`,
+          'D10',
+        )
+      }
+      return command.split(VERSION_PLACEHOLDER).join(release.version)
+    })
     // Whether the block is drawn is `available`'s business and not this reader's: the section
     // renders the block — as it renders the assets — only while the console has shipped, so an
     // unpublished console with a block in the file draws nothing of it. That is the same `if`
     // the download list above it lives under, and a second refusal here would only make the
     // flag-off fixture the tests build (W3.1's unreleased state) carry one more edit.
-    return { ...claim, downloads: named }
+    return { ...claim, downloads: named, verify }
   })()
 
   return {

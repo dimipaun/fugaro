@@ -6,15 +6,17 @@
 // downloads a reader can reach without leaving the page. The acceptance is exactly that: "from
 // Getting Started a user can install either the CLI or the console without leaving the page" —
 // and, while `features.console_downloads` is false, that the console offers nothing to download
-// at all. This checkout ships the flag TRUE (the console's `console-v0.9.0` release turned it
-// on), so the unreleased state is one the cases below build a copy of the repository into
-// rather than the state `npm run check` builds.
+// at all. This checkout ships the flag TRUE (the console's own release stream turned it on),
+// so the unreleased state is one the cases below build a copy of the repository into rather
+// than the state `npm run check` builds.
 //
 // **Where the console's block sits is the owner's draft of 2026-10-19.** The install section
 // opens with one card per system `install.yaml` supports, and the console is offered inside the
-// card of the system its own data file names on its assets — macOS — rather than beside the
-// cards: a reader on Linux is not offered a build for a machine they are not on, and the console
-// is findable from the page a reader installs the CLI from. The cards themselves (one per
+// card of the system its released sentence describes — macOS, the platform its signed and
+// notarised artifacts are for — rather than beside the cards: the console is findable from the
+// page a reader installs the CLI from, and the platform whose own facts differ is a block
+// inside that card rather than a card of its own (D10, the same shape the console page
+// renders). The cards themselves (one per
 // supported system, each with the path the file offers it first, each with one icon) are
 // `os-cards.mjs`'s; this file is the console's own rules, read inside the card it sits in.
 //
@@ -29,7 +31,8 @@
 //
 //   1. **The console sits in the card of the system it ships for, and the CLI is still the
 //      CLI.** The install section's cards carry the console's block exactly once, in the card
-//      whose system is the one the console's own data file names on its assets, and the CLI's
+//      whose system is the one the console's own data file names on the assets no per-platform
+//      block owns, and the CLI's
 //      commands are still on the page: a command, in a copy block with a named control. P5's
 //      fold claim rests on the section opening with that command, and `fold.mjs` is the gate
 //      that holds the ordering; the check here is that moving the console into a card did not
@@ -193,8 +196,21 @@ test('Getting Started offers the console in the card of the system it ships for,
   const cards = installCards(page)
   assert.ok(cards.length >= 2, `the install section draws ${cards.length} card(s), and the console's block sits in one of the systems the page supports`)
 
-  const platform = [...new Set(downloadsData().downloads.map((download) => download.platform))]
-  assert.equal(platform.length, 1, `website/content/downloads.json names ${platform.length} platform(s) on its downloads, and the console ships for one system`)
+  // The card the console's block sits in is the one the data file's own sentence describes:
+  // the platform of the assets the block does not own. The assets a per-platform block names
+  // — Linux, unsigned, explained by that block's own sentence (D10) — are not that platform
+  // and do not move the option out of its card, exactly as they do not move the console
+  // page's macOS cards.
+  const data = downloadsData()
+  const owned = new Set(data.linux?.assets ?? [])
+  const platform = [
+    ...new Set(data.downloads.filter((download) => !owned.has(download.id)).map((download) => download.platform)),
+  ]
+  assert.equal(
+    platform.length,
+    1,
+    `website/content/downloads.json names ${platform.length} platform(s) on the downloads no per-platform block owns, and the console's block sits in the card of the one system its released sentence describes (${platform.join(', ')})`,
+  )
 
   const block = consoleBlockOrFail(page)
   const named = [...walk(block.card)].find((el) => el.name === 'h3')
