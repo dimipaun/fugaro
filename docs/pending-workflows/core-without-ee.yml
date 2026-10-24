@@ -1,0 +1,77 @@
+# The core, built and tested with ee/ deleted (licensing plan, task L1.7).
+#
+# ee/ is reserved for future organisation features under their own licence
+# (LICENSING.md, ee/README.md) and nothing in the core may depend on it: the
+# boundary tests under internal/eeboundary/ prove the core never imports,
+# embeds or routes into it. This job proves the other half of the same claim,
+# which no test in the repository can: that the module builds, vets and passes
+# its suite with the directory gone.
+#
+# It is a file of its own rather than a job in ci.yml for the reason D309 gives
+# -- the boundary check and the deletion are one change, staged together -- and
+# because its cost is a second full test run: about as long as ci.yml's test
+# job, on pushes to main only. It is in no required-check list and gates no
+# release.
+#
+# The one claim to read carefully before editing: the -skip list below is
+# eeReadingTests, the exact list of tests that read the real ee/ through
+# readRealEE (internal/cli/docs_ee_repo_test.go). It is held to this file in
+# both directions by internal/cli/docs_core_without_ee_workflow_test.go, so a
+# test that starts reading ee/ joins both in the same change. Nothing under
+# internal/eeboundary/ is skipped: those tests plant their own trees under
+# t.TempDir().
+#
+# Staged under docs/pending-workflows/ because no Fugaro run may write under
+# .github/workflows/ (GitHub refuses the push). Copying it in, and what to
+# update afterwards, is in the README beside this file.
+name: core-without-ee
+
+# A push to main, and the owner's manual dispatch. Nothing else: the job is a
+# second full test run, so it is not paid on every pull request, and it has no
+# path filter -- the change that breaks the untagged build is as likely to be
+# in internal/runner as in go.mod.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Least privilege, at the top so that no step can widen it by omission. The
+# job reads the repository and writes nothing -- ee/ is deleted from the
+# checkout's own working tree, never committed -- and it holds no secret at
+# all.
+permissions:
+  contents: read
+
+jobs:
+  core-without-ee:
+    runs-on: ubuntu-latest
+    # The suite takes about as long as ci.yml's test job: the runner package
+    # alone is a 40-minute bound of its own. Without this, a hung test holds a
+    # runner until GitHub's six-hour default.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # The deletion is the point of the job, and it is not committed: the
+      # directory is gone from the working tree, which is what a checkout of a
+      # repository whose core does not depend on it looks like.
+      - name: delete ee/
+        run: rm -rf ee
+      # The default build tags: no `ee` tag is set anywhere in this file, so
+      # cmd/fugaro/ee_on.go is not compiled and what is built here is the
+      # untagged core -- the artifact 0.11.0 ships (D303 as amended).
+      - run: go build ./...
+      - run: go vet ./...
+      # Everything but internal/runner, minus the tests that read the real
+      # ee/. The -skip list is eeReadingTests and nothing else.
+      - name: the core's tests, without the tests that read ee/
+        run: go test -timeout 30m -skip '^(TestDocsEEReserved|TestDocsLicensingStatement)$' $(go list ./... | grep -v internal/runner)
+      # internal/runner alone, at the bound CONTRIBUTING.md gives it, with no
+      # skip: it is the long package, it is not run twice, and no test of it
+      # reads ee/.
+      - name: the runner's tests, which read no ee/
+        run: go test -race -timeout 40m ./internal/runner/...
