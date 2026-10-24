@@ -1088,10 +1088,15 @@ func recordLabel(r coordinatorRecord) string {
 //     write needs.
 //   - TestCoordinatorReportNeedsADatabase: a project with none is refused
 //     naming the command that deploys one.
+//   - TestCoordinatorReportText is the same record as the text a person reads,
+//     which is the record and nothing else.
 //   - TestRunDeclaresItselfToTheCoordinator: the launch path calls the same
 //     writer, so a launch declares itself without a second command.
 //   - TestAFailedReportDoesNotFailTheLaunch: the coordinator is advisory, so
 //     its failure is a warning and never a failed run.
+//   - TestALaunchThatSkipsTheBudgetIsNotDeclared: the declaration follows the
+//     launch's own database switch, so a launch told not to use the budget's
+//     database is not the one call that reaches it.
 
 // coordinatorReportFixture is a cloud fixture whose project has the
 // coordinator's database: an RTDB fake, reached the way the budget commands
