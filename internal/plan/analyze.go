@@ -39,12 +39,13 @@ import (
 // Graph is what a read prints: the artifact's own document, with the answers
 // this file computes added to it.
 //
-// The added fields are additive and the artifact is unchanged — a graph
-// artifact is still schema version 1 with the field set Document states, and
-// this type is the *read's* output. That is the whole skew story: a console
-// that does not know `level`, `ready` or `critical_path` ignores them and draws
-// what it drew before, while a graph written by a newer planner is still
-// refused by the version check in Parse. The read's own output carries no
+// The added fields are additive, and they are not the artifact's: the artifact
+// carries the field set Document states and nothing else — the computed keys
+// are not among them, and a planner that wrote one would be refused by name —
+// while this type is the *read's* output. That is the whole skew story: a
+// console that does not know `level`, `ready` or `critical_path` ignores them
+// and draws what it drew before, while a graph written by a newer planner is
+// still refused by the version check in Parse. The read's own output carries no
 // version of its own to bump: `schema_version` is the artifact's, and adding a
 // field to what a read prints does not change what a planner may write.
 type Graph struct {
