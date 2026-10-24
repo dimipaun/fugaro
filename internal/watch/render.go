@@ -720,8 +720,11 @@ func (r *rend) repo(tier int, b RepoBlock, sel Cursor, expanded map[Cursor]bool,
 // link, coloured to flag a failure or a review-ready success. The RUN cell is
 // the same short form every row of the table shows (shortRun, owner request
 // 2026-10-24): the id's leading characters are the launch stamp, so a whole
-// id here read unlike every row above it. The whole id is in the run's
-// detail, and `fugaro watch --json` carries it too.
+// id here read unlike every row above it. Unlike an active run, a finished row
+// cannot be expanded — repo draws the detail for b.Runs alone — so the whole
+// id, the only form `fugaro logs RUN` and `fugaro diagnose RUN` accept, is not
+// on this screen for a finished run at all: `--json` and `--plain` print it
+// (design generic-tool §10.3).
 func (r *rend) finishedRow(run RunRow, selected bool) string {
 	cur := " "
 	if selected {
