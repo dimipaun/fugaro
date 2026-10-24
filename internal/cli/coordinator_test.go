@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -17,6 +18,7 @@ import (
 
 	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/coordinator"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -1420,5 +1422,230 @@ func TestALaunchThatSkipsTheBudgetIsNotDeclared(t *testing.T) {
 	}
 	if m, _ := f.db.Value(coordinator.PathIntents(appSlug)).(map[string]any); len(m) != 0 {
 		t.Fatalf("a launch that skipped the budget declared %v", m)
+	}
+}
+
+// The aggregation job's entry point (docs/coordinator/implementation-plan.md,
+// part P5). These tests are the command's half — the environment it reads, the
+// database it writes and the exit code it leaves — and not the sweep's own
+// logic, which internal/coordinator's tests hold. What they are here for is the
+// wiring: a tick that reaches the real database, the real runs bucket and P2's
+// own read, driven end to end with fakes at the three seams.
+
+// coordinatorSweepFixture is the fixture the tests below drive: the status
+// fixture's runs bucket and fake host, plus the database the coordinator's
+// state is written to and the environment Terraform gives the job.
+type coordinatorSweepFixture struct {
+	*coordinatorFixture
+	db *gcpfake.RTDB
+}
+
+func newCoordinatorSweepFixture(t *testing.T, seeds []coordinatorRunSeed, prs ...fake.PRState) *coordinatorSweepFixture {
+	t.Helper()
+	f := &coordinatorSweepFixture{coordinatorFixture: newCoordinatorFixture(t, seeds, prs...), db: gcpfake.NewRTDB(t)}
+	old := coordinatorSweepTest
+	coordinatorSweepTest = &coordinatorSweepWiring{
+		noAuth: true,
+		bucket: func(ctx context.Context, _ string) (*blobx.Bucket, error) { return blobx.Open(ctx, f.bucket) },
+		now:    func() time.Time { return time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC) },
+	}
+	t.Cleanup(func() { coordinatorSweepTest = old })
+	setCoordinatorMint(t, nil)
+	t.Setenv(providers.EnvGitHubAppID, "12345")
+	t.Setenv(providers.EnvGitHubAppKey, appKeyPEM(t))
+	for k, v := range map[string]string{
+		"FUGARO_PROJECT": "aurora", "FUGARO_FIREBASE_PROJECT": "aurora-fp",
+		"FUGARO_RTDB_URL": f.db.URL, "FUGARO_RUNS_BUCKET": "unused-bucket",
+		"FUGARO_COORDINATOR_REPOS": `[{"provider":"github","repo":"acme/app"}]`,
+	} {
+		t.Setenv(k, v)
+	}
+	f.db.Set("fugaro/project", "aurora")
+	return f
+}
+
+// view is the repository's view document as the fake database holds it, and
+// stale its marker (nil when there is none).
+func (f *coordinatorSweepFixture) view() (map[string]any, map[string]any) {
+	v, _ := f.db.Value(coordinator.PathView(appSlug)).(map[string]any)
+	s, _ := f.db.Value(coordinator.PathStale(appSlug)).(map[string]any)
+	return v, s
+}
+
+func TestCoordinatorSweepWritesTheView(t *testing.T) {
+	f := newCoordinatorSweepFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	out, _, err := execute(t, "coordinator", "sweep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, stale := f.view()
+	if view == nil {
+		t.Fatalf("the sweep wrote no view at /%s; output %q", coordinator.PathView(appSlug), out)
+	}
+	if stale != nil {
+		t.Errorf("a sweep that read everything wrote a stale marker: %v", stale)
+	}
+	// The document is the view status computes, byte for byte: the two read
+	// the same bucket and the same host through the same reader, and a
+	// difference between them would be a difference between what the
+	// coordinator shows and what it holds.
+	raw, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got coordinator.View
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Repo != "acme/app" || got.InFlight() == 0 || len(got.Collisions) == 0 {
+		t.Errorf("the view is %s with %d records (%d in flight) and %d collisions, want the fixture's own",
+			got.Repo, len(got.Records), got.InFlight(), len(got.Collisions))
+	}
+	shown, _, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--since", "0", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var statusView coordinator.View
+	if err := json.Unmarshal([]byte(shown), &statusView); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, statusView) {
+		t.Errorf("the swept view is not the one status computes:\n%s\n%s", raw, shown)
+	}
+	if !strings.Contains(out, "acme/app:") || !strings.Contains(out, "swept 1 repositories: 1 reconciled, 0 stale") {
+		t.Errorf("the tick's report = %q", out)
+	}
+}
+
+// TestCoordinatorSweepMarksAReadThatFailedStale: a repository the host would
+// not answer for is recorded as unreconciled and the tick still exits 0 — the
+// marker is a fact about the repository, not a failure of the job, and a job
+// that exited non-zero would have Scheduler's own alarm read as an outage of
+// the whole installation.
+func TestCoordinatorSweepMarksAReadThatFailedStale(t *testing.T) {
+	f := newCoordinatorSweepFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	if _, _, err := execute(t, "coordinator", "sweep"); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := f.view()
+
+	f.host.FailPullRequest = 1
+	out, _, err := execute(t, "coordinator", "sweep")
+	if err != nil {
+		t.Fatalf("a read that failed failed the tick: %v", err)
+	}
+	after, stale := f.view()
+	if stale == nil {
+		t.Fatalf("the failed read left no stale marker at /%s", coordinator.PathStale(appSlug))
+	}
+	if stale["reason"] != coordinator.StalePullRequests {
+		t.Errorf("the marker's reason = %v, want %q", stale["reason"], coordinator.StalePullRequests)
+	}
+	if !strings.Contains(out, "stale") {
+		t.Errorf("the tick's report = %q, want the repository reported stale", out)
+	}
+	// The view is the previous sweep's, byte for byte: a view recomputed from
+	// the runs alone would read as "nothing is in flight" about a repository
+	// that has work in it.
+	b, _ := json.Marshal(before)
+	a, _ := json.Marshal(after)
+	if string(a) != string(b) {
+		t.Errorf("the failed read moved the view:\n%s\n%s", b, a)
+	}
+}
+
+// TestCoordinatorSweepRefusesAMissingEnvironment: the job's environment is
+// Terraform's, and a command that guessed a default for a variable nobody set
+// would write the coordinator's state somewhere nobody named.
+func TestCoordinatorSweepRefusesAMissingEnvironment(t *testing.T) {
+	newCoordinatorSweepFixture(t, nil)
+	for _, k := range []string{"FUGARO_PROJECT", "FUGARO_FIREBASE_PROJECT", "FUGARO_RTDB_URL", "FUGARO_RUNS_BUCKET", "FUGARO_COORDINATOR_REPOS"} {
+		t.Run(k, func(t *testing.T) {
+			t.Setenv(k, "")
+			_, _, err := execute(t, "coordinator", "sweep")
+			if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), k) {
+				t.Errorf("without %s: err = %v, want exit 1 naming it", k, err)
+			}
+		})
+	}
+}
+
+// TestCoordinatorSweepRefusesAForeignDatabase: the account can reach any
+// database it is granted, so the tick checks the database is this Fugaro
+// project's before writing to it (plan R-9, the history sweep's own check).
+func TestCoordinatorSweepRefusesAForeignDatabase(t *testing.T) {
+	f := newCoordinatorSweepFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	for _, mark := range []any{"birch", nil, 7} {
+		f.db.Set("fugaro/project", mark)
+		_, _, err := execute(t, "coordinator", "sweep")
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("a database marked %v: err = %v, want exit 1", mark, err)
+		}
+		if v, _ := f.view(); v != nil {
+			t.Fatalf("a foreign database was written to: %v", v)
+		}
+	}
+}
+
+// TestCoordinatorSweepRefusesAURLAsTheBucket: the variable is a bucket name and
+// Terraform writes one, so a value carrying a scheme or a path is refused
+// rather than opened.
+func TestCoordinatorSweepRefusesAURLAsTheBucket(t *testing.T) {
+	newCoordinatorSweepFixture(t, nil)
+	t.Setenv("FUGARO_RUNS_BUCKET", "gs://aurora-runs")
+	_, _, err := execute(t, "coordinator", "sweep")
+	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "bucket name") {
+		t.Errorf("a URL as the bucket: err = %v, want exit 1", err)
+	}
+}
+
+// TestCoordinatorSweepNeverPrintsACredentialOrTheHostsText: the read is P2's,
+// so the credential values the opener hands back are redacted out of whatever
+// this command prints, and the failure it records is this package's own
+// classification rather than the host's message (Q14 A) — a marker carrying
+// "401: bad credentials (token ...)" would be another writer's text kept in
+// the coordinator's state, which is what the classification exists to prevent.
+func TestCoordinatorSweepNeverPrintsACredentialOrTheHostsText(t *testing.T) {
+	const secret = "ghs_0123456789abcdefghij"
+	f := newCoordinatorSweepFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	host := &fake.Provider{Repo: "acme/app", SelfID: "1"}
+	host.State.PRs = coordinatorPRs()
+	setCoordinatorHost(t, func([]string, func(string)) (coordinator.ProviderOpener, error) {
+		return func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
+			return secretErrHost{Provider: host, secret: secret}, []string{secret}, nil
+		}, nil
+	})
+
+	out, errOut, err := execute(t, "coordinator", "sweep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, got := range []string{out, errOut} {
+		if strings.Contains(got, secret) || strings.Contains(got, "bad credentials") {
+			t.Errorf("the credential or the host's text reached the output: %q", got)
+		}
+	}
+	_, stale := f.view()
+	if stale == nil || stale["reason"] != coordinator.StalePullRequests {
+		t.Fatalf("the marker = %v, want %q", stale, coordinator.StalePullRequests)
+	}
+	if raw := fmt.Sprint(f.db.Value(coordinator.PathStale(appSlug))); strings.Contains(raw, secret) || strings.Contains(raw, "401") {
+		t.Errorf("the node carries the host's own text: %s", raw)
+	}
+}
+
+// TestCoordinatorSweepIsHidden: the sweep is the job's entry point and not a
+// command of the coordinator's surface, so the generated CLI reference leaves
+// it out — the same rule budget history follows.
+func TestCoordinatorSweepIsHidden(t *testing.T) {
+	for _, c := range NewRootCmd().Commands() {
+		if c.Name() != "coordinator" {
+			continue
+		}
+		for _, sub := range c.Commands() {
+			if sub.Name() == "sweep" && !sub.Hidden {
+				t.Errorf("fugaro coordinator sweep is not hidden")
+			}
+		}
 	}
 }
