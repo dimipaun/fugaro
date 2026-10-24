@@ -510,7 +510,11 @@ test('every hostile string is refused, each with its own code', () => {
     ['https://evil.example/github.com', URL_REFUSAL.HOST_NOT_ALLOWED],
     ['https://sub.github.com/a', URL_REFUSAL.HOST_NOT_ALLOWED],
     ['https://github.com./a', URL_REFUSAL.TRAILING_DOT],
-    ['https://xn--github-9d0c.com/a', URL_REFUSAL.PUNYCODE_HOST],
+    // `gіthub.com` with a Cyrillic і. The label has to be valid punycode:
+    // Node 22's parser throws on an invalid one (the earlier fixture,
+    // `xn--github-9d0c`), so the case answered `not-a-url` there and never
+    // reached the punycode rule it exists to test.
+    ['https://xn--gthub-n2e.com/a', URL_REFUSAL.PUNYCODE_HOST],
     ['https://%67ithub.com/a', URL_REFUSAL.ENCODED_HOST],
     ['https://127.0.0.1/a', URL_REFUSAL.IP_LITERAL],
     ['https://[::1]/a', URL_REFUSAL.IP_LITERAL],
