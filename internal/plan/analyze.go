@@ -39,19 +39,24 @@ import (
 // Graph is what a read prints: the artifact's own document, with the answers
 // this file computes added to it.
 //
-// The added fields are additive and the artifact is unchanged — a graph
-// artifact is still schema version 1 with the field set Document states, and
-// this type is the *read's* output. That is the whole skew story: a console
-// that does not know `level`, `ready` or `critical_path` ignores them and draws
-// what it drew before, while a graph written by a newer planner is still
-// refused by the version check in Parse. The read's own output carries no
+// The added fields are additive, and they are not the artifact's: the artifact
+// carries the field set Document states and nothing else — the computed keys
+// are not among them, and a planner that wrote one would be refused by name —
+// while this type is the *read's* output. That is the whole skew story: a
+// console that does not know `level`, `ready` or `critical_path` ignores them
+// and draws what it drew before, while a graph written by a newer planner is
+// still refused by the version check in Parse. The read's own output carries no
 // version of its own to bump: `schema_version` is the artifact's, and adding a
 // field to what a read prints does not change what a planner may write.
 type Graph struct {
-	SchemaVersion int         `json:"schema_version"`
-	Plan          string      `json:"plan"`
-	Nodes         []NodeState `json:"nodes"`
-	Edges         []Edge      `json:"edges"`
+	SchemaVersion int    `json:"schema_version"`
+	Plan          string `json:"plan"`
+	// Stream is the release stream the plan names, carried through from the
+	// artifact (GV1.3) and absent when the plan names none — and always absent
+	// for a v1 artifact, which cannot carry one.
+	Stream *string     `json:"stream,omitempty"`
+	Nodes  []NodeState `json:"nodes"`
+	Edges  []Edge      `json:"edges"`
 	// Levels is how many levels the plan has: the longest chain of
 	// dependencies plus one, and 0 for a graph with no tasks. It is the count
 	// of the waves a view can draw, which is the one figure a per-task level
@@ -145,7 +150,7 @@ func Analyze(path string, doc Document, done []string) (Graph, error) {
 		name = "the graph"
 	}
 	switch {
-	case doc.SchemaVersion == SchemaVersion:
+	case readsSchemaVersion(doc.SchemaVersion):
 	case doc.SchemaVersion == 0:
 		return Graph{}, refuse(name, "the graph artifact carries no schema_version; this build reads version %d", SchemaVersion)
 	default:
@@ -227,6 +232,7 @@ func Analyze(path string, doc Document, done []string) (Graph, error) {
 	g := Graph{
 		SchemaVersion: doc.SchemaVersion,
 		Plan:          doc.Plan,
+		Stream:        doc.Stream,
 		Nodes:         make([]NodeState, 0, len(doc.Nodes)),
 		Edges:         doc.Edges,
 		Levels:        levels,

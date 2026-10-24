@@ -653,14 +653,14 @@ func TestPlanAnalysisRefusesAForeignSchemaVersion(t *testing.T) {
 	nodes := []Node{{ID: "a", Title: "first", Footprint: NewFootprint(nil)}}
 	if g, err := Analyze("graph.json", Document{SchemaVersion: 9, Plan: "p.md", Nodes: nodes, Edges: []Edge{}}, nil); err == nil {
 		t.Fatalf("Analyze answered a schema version 9 document: %+v", g)
-	} else if want := "the graph artifact is schema version 9 and this build reads version 1; upgrade fugaro to read it"; !strings.Contains(err.Error(), want) {
+	} else if want := "the graph artifact is schema version 9 and this build reads version 2; upgrade fugaro to read it"; !strings.Contains(err.Error(), want) {
 		t.Errorf("refusal = %q, want it to say %q", err, want)
 	}
 	// The zero value is a document that names no version at all, which is the
 	// thing Parse refuses as "carries no schema_version".
 	if g, err := Analyze("graph.json", Document{Plan: "p.md", Nodes: nodes, Edges: []Edge{}}, nil); err == nil {
 		t.Fatalf("Analyze answered a document with no schema version: %+v", g)
-	} else if want := "the graph artifact carries no schema_version; this build reads version 1"; !strings.Contains(err.Error(), want) {
+	} else if want := "the graph artifact carries no schema_version; this build reads version 2"; !strings.Contains(err.Error(), want) {
 		t.Errorf("refusal = %q, want it to say %q", err, want)
 	}
 }

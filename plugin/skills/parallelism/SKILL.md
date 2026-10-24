@@ -41,7 +41,7 @@ A plan you write as a file can carry its tasks as a graph the CLI reads. Write i
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "plan": "docs/plans/foo.md",
   "nodes": [
     {"id": "T1", "title": "the parser", "run": null, "version": null,
@@ -60,7 +60,7 @@ A plan you write as a file can carry its tasks as a graph the CLI reads. Write i
 - **Depends-on** is an edge: `task` waits for `needs`, and `reason` says why. Both must name a node in the document, and a cycle is refused rather than drawn.
 - **Files footprint** is the node's `footprint.paths`: the paths you expect the task to touch, as doublestar globs (`internal/**`, `docs/*.md`), the same semantics this repository's own checks use. `[]` means the task predicts it touches nothing — not the same as not saying.
 - The footprint is a **prediction** and `prediction` is always `true`: what a run really changed is the run's own record, never this. Two tasks whose paths can match the same file are the conflict to split apart before launching.
-- `run` is the run the task belongs to once one is launched, `null` before that; `version` is the release it ships in, `null` when the plan does not say.
+- `run` is the run the task belongs to once one is launched, `null` before that; `version` is the release it ships in as `MAJOR.MINOR` or `MAJOR.MINOR.PATCH` (`0.10`, or the patch box `0.10.1`), and `null` when the plan does not say — anything else, `v0.10` or a fourth number, is refused.
 
 `fugaro plan graph --json` prints the document back, validated; without `--json` it prints a table of ID, TITLE, VERSION, RUN, NEEDS and FOOTPRINT, every footprint labelled `predicted:`. Name the plan with `--plan` wherever `docs/plans/` holds more than one graph: with none the read takes the one artifact it finds there, and several are a refusal rather than a pick. A refused graph — another schema version, an unknown field, a missing reason, a malformed glob, a cycle — exits non-zero and prints nothing.
 

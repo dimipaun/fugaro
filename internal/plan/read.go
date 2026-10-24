@@ -88,19 +88,20 @@ func Parse(path string, data []byte) (Document, error) {
 	switch {
 	case head.SchemaVersion == nil:
 		return Document{}, refuse(path, "the graph artifact carries no schema_version; this build reads version %d", SchemaVersion)
-	case *head.SchemaVersion != SchemaVersion:
+	case !readsSchemaVersion(*head.SchemaVersion):
 		return Document{}, refuse(path, "the graph artifact is schema version %d and this build reads version %d; upgrade fugaro to read it",
 			*head.SchemaVersion, SchemaVersion)
 	}
+	version := *head.SchemaVersion
 
-	// Then strictly: at this schema version the field set is closed, so a key
+	// Then strictly: at either schema version the field set is closed, so a key
 	// this build does not know is a document written to a schema it does not
 	// have — the same refusal as a future version, caught one field at a time.
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var doc Document
 	if err := dec.Decode(&doc); err != nil {
-		return Document{}, refuse(path, "the graph artifact is not a schema version %d graph: %v", SchemaVersion, err)
+		return Document{}, refuse(path, "the graph artifact is not a schema version %d graph: %v", version, err)
 	}
 	if dec.More() {
 		return Document{}, refuse(path, "the graph artifact carries more than one JSON document")
@@ -116,6 +117,20 @@ func Parse(path string, data []byte) (Document, error) {
 func Normalize(path string, doc Document) (Document, error) {
 	if strings.TrimSpace(doc.Plan) == "" {
 		return Document{}, refuse(path, "the graph artifact does not name the plan it came from")
+	}
+	// The stream is the second schema's field, so a v1 document carrying one is
+	// a document written to neither schema: it is refused rather than read with
+	// the field quietly dropped, which would leave the file and the read
+	// disagreeing about which stream the plan ships in.
+	if doc.Stream != nil {
+		if doc.SchemaVersion < SchemaVersion {
+			return Document{}, refuse(path, "the graph artifact is schema version %d and names the stream %q; a stream is a schema version %d field",
+				doc.SchemaVersion, *doc.Stream, SchemaVersion)
+		}
+		if !validStream(*doc.Stream) {
+			return Document{}, refuse(path, "the graph artifact names the stream %q; a plan's stream is one of %s",
+				*doc.Stream, strings.Join(streams, ", "))
+		}
 	}
 	if doc.Nodes == nil {
 		doc.Nodes = []Node{}
@@ -141,6 +156,13 @@ func Normalize(path string, doc Document) (Document, error) {
 		}
 		if node.Version != nil && strings.TrimSpace(*node.Version) == "" {
 			return Document{}, refuse(path, "node %q carries an empty version; a task with no target version says so with null", node.ID)
+		}
+		// The shape is the current schema's promise and not a retroactive one:
+		// a v1 planner wrote its own words and they are read as written, while
+		// a v2 artifact promises a number a release box can be drawn from.
+		if doc.SchemaVersion == SchemaVersion && node.Version != nil && !versionNumber(*node.Version) {
+			return Document{}, refuse(path, "node %q carries the version %q; a schema version %d graph spells a target version MAJOR.MINOR or MAJOR.MINOR.PATCH",
+				node.ID, *node.Version, SchemaVersion)
 		}
 		// The label is set here rather than read off the document, so a
 		// footprint this build emits is a prediction by construction. A
@@ -173,6 +195,24 @@ func Normalize(path string, doc Document) (Document, error) {
 			strings.Join(cycle, " -> "))
 	}
 	return doc, nil
+}
+
+// versionNumber reports whether v is a target version a release box can be
+// drawn from: MAJOR.MINOR, optionally with .PATCH — "0.10", "0.10.1" — and
+// nothing else. The planner writes it, so a tag prefix ("v0.10") or a fourth
+// number is refused rather than trimmed into shape: a box that guessed which
+// numbers a tag carries would be a second answer to a question the tag answers.
+func versionNumber(v string) bool {
+	parts := strings.Split(v, ".")
+	if len(parts) < 2 || len(parts) > 3 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" || strings.Trim(part, "0123456789") != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // findCycle returns one cycle as the node ids along it, first id repeated at the
