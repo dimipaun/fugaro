@@ -1137,7 +1137,60 @@ Flags:
 
 Subcommands:
 
+- `fugaro coordinator report` -- Declare the work you are about to start
 - `fugaro coordinator status` -- Show the work in flight, and where it collides
+
+## `fugaro coordinator report`
+
+Declare the work you are about to start
+
+Write one intent record for this project's repository: the branch and the
+target release the caller declares, and the files and services it is about
+to touch, so that work still in flight can be seen before code exists
+(spec §6).
+
+The record's ID is derived from the caller and the declaration, and from
+nothing else: reporting the same declaration twice writes ONE document, and
+the second report replaces the first rather than adding to it.
+
+The caller is who the local config names (user:), else git config
+user.email, and a report nobody can be named for is refused: every record
+is somebody's declaration, and one nobody can be named for is not one. That
+name is a declaration too — nothing verifies it, and nothing authorises
+anything by it (finding #11).
+
+This command writes and reads nothing back: it prints the record it wrote
+and issues no advice, which is the coordinator's whole posture in v1
+(spec §3, advisory and never authoritative).
+
+The write goes through the caller's own credentials, on the project's
+budget.rtdb_url database. The rules grant /coordinator a read and no write
+to anyone, so the write is admitted by the database role its caller holds
+(roles/firebasedatabase.admin, which terraform.budget_admins have); a
+launcher who is not an admin reports through the coordinator's front door
+once it is deployed.
+
+Usage: `fugaro coordinator report`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--branch` | string | "" | no | the branch you are about to work on |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--file` | stringArray | `[]` | no | a path you are about to touch (repeatable) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for report |
+| `--json` | bool | `false` | no | print the record as it was written |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--release` | string | "" | no | the target release (default: the one the branch names, e.g. release/v0.11.0) |
+| `--repo` | string | "" | no | the repository this report is about (owner/name; default: the local config's, when it lists one) |
+| `--service` | stringArray | `[]` | no | a service you are about to touch (repeatable) |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro coordinator status`
 
