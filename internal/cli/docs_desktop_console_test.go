@@ -8258,6 +8258,39 @@ func TestCheck59RestoreStepSparesPreexistingIdentities(t *testing.T) {
 		if !strings.Contains(section.text, "never deleted") {
 			t.Errorf("%s does not say a signing identity present before the check is never deleted", label)
 		}
+
+		// The app half of the same rule, held the same way, and this is the half
+		// that bites hardest: both sections install a bundle into /Applications,
+		// so a Restore that removes whatever sits at that path destroys the
+		// operator's own copy on exactly the run whose install guard stopped. The
+		// stamp is the section's own record that it installed it, and the removal
+		// has to be behind that.
+		productName := consoleProductName(t)
+		// Written by the install step, and written BEFORE the Restore that reads
+		// it: a stamp the Restore writes itself would gate the removal on nothing.
+		stampWrite := strings.Index(section.text, `> "${CHK:?}/installed-by-this-check.txt"`)
+		restoreAt := strings.Index(section.text, "# === "+strings.TrimPrefix(label, "## ")+": Restore.")
+		if stampWrite < 0 || restoreAt < 0 || stampWrite > restoreAt {
+			t.Errorf("%s installs an app into /Applications and its install step writes no stamp saying it did (stamp write at %d, Restore at %d): without it the Restore cannot tell this check's own install from one that was there before", label, stampWrite, restoreAt)
+		}
+		if !strings.Contains(section.text, `[ ! -e "$INSTALLED" ] || {`) {
+			t.Errorf("%s does not stop before installing when /Applications/%s.app already exists", label, productName)
+		}
+		stampAt, removeAt := -1, -1
+		for i, line := range restore {
+			if stampAt < 0 && strings.Contains(line, "installed-by-this-check.txt") {
+				stampAt = i
+			}
+			if removeAt < 0 && strings.Contains(line, "rm -rf") && strings.Contains(line, "$INSTALLED") {
+				removeAt = i
+			}
+		}
+		switch {
+		case removeAt < 0:
+			t.Errorf("%s's Restore never removes the app this check installs, so a completed run leaves it in /Applications", label)
+		case stampAt < 0 || stampAt > removeAt:
+			t.Errorf("%s's Restore removes /Applications/%s.app without reading the stamp that says this check installed it (stamp at line %d of the block, removal at %d): an app this check did not install is not this check's to remove", label, productName, stampAt, removeAt)
+		}
 	}
 
 	// 59a's own record is a FACT line, so a restore that could not tell the two

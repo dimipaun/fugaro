@@ -4360,6 +4360,7 @@ INSTALLED="/Applications/Fugaro Console.app"
 [ ! -e "$INSTALLED" ] || { echo "Check 59a stopped: $INSTALLED already exists. Remove it yourself and re-run: this check installs one build and never deletes an app it did not install" >&2; exit 1; }
 ditto -x -k "${CHK:?}/Fugaro Console-${V:?}-universal-mac.zip" "${CHK:?}/unzipped"
 ditto "${CHK:?}/unzipped/Fugaro Console.app" "$INSTALLED"
+printf '%s\n' "$INSTALLED" > "${CHK:?}/installed-by-this-check.txt"
 xattr -w com.apple.quarantine "0083;$(printf '%x' "$(date +%s)");Safari;" "$INSTALLED"
 codesign -dv --verbose=4 "$INSTALLED"
 spctl --assess --type execute --verbose=4 "$INSTALLED"
@@ -4367,6 +4368,8 @@ open "$INSTALLED"
 ```
 
 **FACT:** the installed copy is the same build — the `CDHash` its own `codesign -dv --verbose=4` prints is the one the mounted copy printed, and `defaults read "${INSTALLED:?}/Contents/Info.plist" CFBundleShortVersionString` prints `0.110.0`. **FACT:** the first launch shows no block and no "cannot be opened because the developer cannot be verified": either Gatekeeper's ordinary first-launch prompt appears (its Open button is clicked and the window opens) or, if your Security settings already allow it, the window opens with no prompt at all. Either is a pass; a refusal is not, and the refusal's own text is the FACT to paste back. **FACT:** the dashboard's own installation line names the sandbox installation and the CLI version the handshake read for it, so the app that launched is the released one and it is driving the installation this check pinned. **Quit the app** (⌘Q) before the next step.
+
+**The `printf` is this check's own receipt.** It writes the installed path under `${CHK}` — after the `ditto`, and only on the run that `ditto` succeeded on — and the Restore reads that stamp before it removes anything at `/Applications/Fugaro Console.app`. The app half of "it restores only what it created" is therefore recorded before the run touches `/Applications`, exactly as the identity half is recorded in step 1 before anything is installed: both are read back at the end rather than remembered, which is what the install guard above and the Restore's own condition are for.
 
 ---
 
@@ -4427,17 +4430,19 @@ jq -r '.cwd' "${SPAWNLOG}" | sort -u
 **Step 4 — the mutation control, and this is the step that makes the other three mean something.** With the console closed, one line naming the other installation is appended to a **copy** of the log, and step 1's greps are re-run against the copy. The command that must print `0` prints `1` when the thing it looks for is there.
 
 ```bash
+wc -l "${SPAWNLOG}"                      # the baseline, before the copy is made: the count to read the copy against
 cp "${SPAWNLOG}" "${SPAWNLOG}.test"
 printf '{"ts":"2026-01-01T00:00:00Z","argv":["%s","budget","show","--project"],"cwd":"%s","project":"belong"}\n' >> "${SPAWNLOG}.test" \
   "$(jq -r '.argv[0]' "${SPAWNLOG}" | head -1)" "${CO:?}"
 # The name is written once, inside the printf above, and read back out of the
 # copy for the greps below: no command line here takes it as an argument.
 OTHER=$(jq -r '.project' "${SPAWNLOG}.test" | tail -1)
+wc -l "${SPAWNLOG}.test"                 # the baseline plus the one line the printf appended
 grep -c "$OTHER" "${SPAWNLOG}.test"
 grep -c edgeappinc "${SPAWNLOG}.test"
 ```
 
-**FACT:** the copy holds exactly one line more than the log did, and that line is the control record the `printf` wrote; with `$OTHER` expanded the command reads `grep -c belong "${SPAWNLOG}.test"` → `1`. **FACT:** `grep -c edgeappinc "${SPAWNLOG}.test"` → `0` — the control line names one of the two strings, and the other stays at zero, which is what shows the two greps are two questions and not one. **No step of this check contacts, reads or writes the `belong` installation, and no step of it ever passes that name to a command**: the name appears only inside the `printf` above, writing into a scratch copy, and it never reaches a path, an option or an argument of anything. Then:
+**FACT:** `wc -l "${SPAWNLOG}"` → the log's line count **N** before the copy was made, and `wc -l "${SPAWNLOG}.test"` → **N + 1**: the copy holds exactly one line more than the log did, and that extra line is the control record the `printf` wrote — the two counts are what prove it, so read them off rather than assuming a copy plus one append is one line longer; with `$OTHER` expanded the first grep reads `grep -c belong "${SPAWNLOG}.test"` → `1`. **FACT:** `grep -c edgeappinc "${SPAWNLOG}.test"` → `0` — the control line names one of the two strings, and the other stays at zero, which is what shows the two greps are two questions and not one. **No step of this check contacts, reads or writes the `belong` installation, and no step of it ever passes that name to a command**: the name appears only inside the `printf` above, writing into a scratch copy, and it never reaches a path, an option or an argument of anything. Then:
 
 ```bash
 rm -f "${SPAWNLOG}.test"
@@ -4445,7 +4450,7 @@ wc -l "${SPAWNLOG}"
 grep -c belong "${SPAWNLOG}"
 ```
 
-**FACT:** the copy is gone and the mutation never touched the real log: `grep -c belong "${SPAWNLOG}"` → `0` again, and `wc -l "${SPAWNLOG}"` is the count it was before the copy was made.
+**FACT:** the copy is gone and the mutation never touched the real log: `grep -c belong "${SPAWNLOG}"` → `0` again, and `wc -l "${SPAWNLOG}"` → the same **N** the baseline printed before the copy was made, so the log is the log and not the copy under the log's name.
 
 **Step 5 — the console left no key material behind.** The same read as (1)'s, taken at the other end of a running build:
 
@@ -4461,22 +4466,26 @@ diff "${IDENTITIES:?}" <(security find-identity -v -p codesigning) && echo 'iden
 
 ---
 
-**Restore.** It restores **only what this check created**, and that is a hard rule of the check rather than a courtesy. A restore step that "removes the keychain item it was signed with" would delete **your own signing certificate** — the identity the whole pipeline depends on, which predates the check by design and is not the check's to destroy. **A signing identity that was present before the check is never deleted, never re-imported and never locked.** This check creates no keychain and imports nothing, so its Restore has no business naming an identity at all; the record it took in step 1 (and read again in step 5) is what makes that checkable instead of remembered.
+**Restore.** It restores **only what this check created**, and that is a hard rule of the check rather than a courtesy. A restore step that "removes the keychain item it was signed with" would delete **your own signing certificate** — the identity the whole pipeline depends on, which predates the check by design and is not the check's to destroy. **A signing identity that was present before the check is never deleted, never re-imported and never locked.** This check creates no keychain and imports nothing, so its Restore has no business naming an identity at all; the record it took in step 1 (and read again in step 5) is what makes that checkable instead of remembered. **The same rule holds for the app the check installs, and it is held the same way**: step 2 writes a stamp for `/Applications/Fugaro Console.app` only after it has installed it, so an operator whose own copy was already there — the one step 2's guard stops — gets a Restore that leaves it alone rather than one that removes it because something is at that path.
 
 ```bash
 # === Check 59a: Restore. Re-run the setup block first. It removes ONLY what
 # this check created, and nothing it found. ===
 INSTALLED="/Applications/Fugaro Console.app"
-# The record is read BEFORE ${CHK} is removed, which is the only order in which
-# it can be read at all.
+# Both records are read BEFORE ${CHK} is removed, which is the only order in
+# which they can be read at all.
 diff "${IDENTITIES:?}" <(security find-identity -v -p codesigning) && echo 'identical: no identity was added or removed'
-[ ! -e "$INSTALLED" ] || rm -rf "$INSTALLED"
+if [ -f "${CHK:?}/installed-by-this-check.txt" ] && [ "$(cat "${CHK:?}/installed-by-this-check.txt")" = "$INSTALLED" ]; then
+  rm -rf "$INSTALLED"; echo "removed $INSTALLED: this check's own stamp says it installed it"
+else
+  echo "kept $INSTALLED: no stamp of this check says it installed it, so it is not this check's to remove"
+fi
 hdiutil detach "${CHK:?}/dmg-mount" 2>/dev/null || true
 rm -rf "${CHK:?}"
 git status --short
 ```
 
-**FACT:** `diff` prints nothing and `identical: no identity was added or removed` is printed — the identities now are the identities the record holds, so nothing this check did added one or removed one, and the read is taken **before** `${CHK}` is removed because that is the only order in which the record can still be read. **FACT:** `git status --short` is clean: this check commits nothing and changes no tracked file in the checkout. **FACT:** `/Applications/Fugaro Console.app` is gone, because this check installed it; **if it was there before you started, the check stopped in step 2 and never reached this line** — the Restore never deletes an app it did not install. Nothing here touches a keychain, an identity or a certificate, and nothing here deletes a file this check did not write under `/tmp/chk59a`.
+**FACT:** `diff` prints nothing and `identical: no identity was added or removed` is printed — the identities now are the identities the record holds, so nothing this check did added one or removed one, and the read is taken **before** `${CHK}` is removed because that is the only order in which the record can still be read. **FACT:** the removal runs only when step 2's own stamp is there and names that path, so the app is removed **only on a run that installed it**: `echo` prints either `removed /Applications/Fugaro Console.app: this check's own stamp says it installed it` or `kept /Applications/Fugaro Console.app: no stamp of this check says it installed it…` — **the second line is the pass for a run that stopped at step 2's guard**, and pasting it back is what shows the Restore spared an app this check never installed. **FACT:** `git status --short` is clean: this check commits nothing and changes no tracked file in the checkout. Nothing here touches a keychain, an identity or a certificate, and nothing here deletes a file this check did not write under `/tmp/chk59a`.
 
 ## Check 59b: the update round trip (installation `fugaro`, sandbox repository only, never `belong`; run by you; NOT RUNNABLE YET — and NOT RUN)
 
@@ -4525,11 +4534,20 @@ gh release view "console-v${NEW:?}" -R dimipaun/fugaro --json assets --jq '.asse
 ```bash
 mkdir -p "${CHK:?}"
 [ -e "${IDENTITIES:?}" ] || security find-identity -v -p codesigning > "${IDENTITIES:?}"
+INSTALLED="/Applications/Fugaro Console.app"
+[ ! -e "$INSTALLED" ] || { echo "Check 59b stopped: $INSTALLED already exists. Remove it yourself and re-run: this check installs one build and never deletes an app it did not install" >&2; exit 1; }
 ```
 
-**FACT:** the record is written once, before the install (`[ -e ... ] ||` is what keeps a re-run from overwriting it with a post-install list, which would make the Restore's diff say nothing about what the check did).
+**FACT:** the record is written once, before the install (`[ -e ... ] ||` is what keeps a re-run from overwriting it with a post-install list, which would make the Restore's diff say nothing about what the check did). **FACT:** the install guard is 59a's with this section's number in its message, and it stops **before** anything is downloaded or installed: an operator who already has a console at that path removes it themselves and re-runs, and the check never takes the place of — and never later removes — an app it did not install.
 
-**FACT:** `defaults read "/Applications/Fugaro Console.app/Contents/Info.plist" CFBundleShortVersionString` prints `0.110.0` for the installed build, and its updater reports the newer version available — **one** version, named, with the release's own tag; **FACT:** the request it made went to the console's own release and carried **no identifier of any kind** — no machine id, no user, no run, no installation name (design §7.4; the assertion is on the request the feed receives, which is Task 4.4's unit test taken live).
+**And the same receipt 59a's step 2 writes**, after the install and before the version is read, so this section's Restore can tell its own install from one that was there first:
+
+```bash
+printf '%s\n' "$INSTALLED" > "${CHK:?}/installed-by-this-check.txt"
+defaults read "$INSTALLED/Contents/Info.plist" CFBundleShortVersionString
+```
+
+**FACT:** `defaults read "$INSTALLED/Contents/Info.plist" CFBundleShortVersionString` prints `0.110.0` for the installed build, and its updater reports the newer version available — **one** version, named, with the release's own tag; **FACT:** the request it made went to the console's own release and carried **no identifier of any kind** — no machine id, no user, no run, no installation name (design §7.4; the assertion is on the request the feed receives, which is Task 4.4's unit test taken live).
 
 **Step 3 — the update installs, and the OS verifies what it installed.** Let the update install, relaunch, and verify the new bundle the way 59a's step 2 verifies a downloaded one: `codesign --verify --deep --strict`, `spctl --assess --type execute`, `xcrun stapler validate` and the version line.
 
@@ -4539,20 +4557,26 @@ mkdir -p "${CHK:?}"
 
 ---
 
-**Restore.** As 59a's, and its own: it restores only what this check created, and it removes **only what is not in the record it took before it started** — the build it installed into `/Applications`, the downloads under `/tmp/chk59b`, the mount point, and any file it wrote under a temporary directory. **A signing identity that was present before the check is never deleted, never re-imported and never locked**: this check creates no keychain and imports nothing, so its Restore names no identity either.
+**Restore.** As 59a's, and its own: it restores only what this check created, and it removes **only what is not in the record it took before it started** — the downloads under `/tmp/chk59b`, the mount point, and any file it wrote under a temporary directory — plus the one build it installed into `/Applications`, which it removes only when **step 2's own stamp names that path**; step 2's guard is what makes a stamped install the only kind this check performs. **A signing identity that was present before the check is never deleted, never re-imported and never locked**: this check creates no keychain and imports nothing, so its Restore names no identity either.
 
 ```bash
 # === Check 59b: Restore. Re-run the setup block first. It removes ONLY what
 # this check created, and nothing it found. ===
 INSTALLED="/Applications/Fugaro Console.app"
+# Both records are read BEFORE ${CHK} is removed, which is the only order in
+# which they can be read at all.
 diff "${IDENTITIES:?}" <(security find-identity -v -p codesigning) && echo 'identical: no identity was added or removed'
-[ ! -e "$INSTALLED" ] || rm -rf "$INSTALLED"
+if [ -f "${CHK:?}/installed-by-this-check.txt" ] && [ "$(cat "${CHK:?}/installed-by-this-check.txt")" = "$INSTALLED" ]; then
+  rm -rf "$INSTALLED"; echo "removed $INSTALLED: this check's own stamp says it installed it"
+else
+  echo "kept $INSTALLED: no stamp of this check says it installed it, so it is not this check's to remove"
+fi
 hdiutil detach "${CHK:?}/dmg-mount" 2>/dev/null || true
 rm -rf "${CHK:?}"
 git status --short
 ```
 
-**FACT:** `diff` prints nothing and `identical: no identity was added or removed` is printed — the identities now are the ones step 2's record holds, read before `${CHK}` is removed. **FACT:** `git status --short` is clean. **FACT:** `/Applications/Fugaro Console.app` is gone, because this check installed it, and it never deletes an app that was there before it started.
+**FACT:** `diff` prints nothing and `identical: no identity was added or removed` is printed — the identities now are the ones step 2's record holds, read before `${CHK}` is removed. **FACT:** the app is removed only when step 2's own stamp is there and names that path, so a run that stopped at step 2's guard has its app kept and prints the `kept …` line instead. **FACT:** `git status --short` is clean.
 
 ## Check 60: the sealed budget token — a run's token is worthless without its own execution's key (installation `fugaro`, sandbox repository only, never `belong`; run by you; NOT RUN)
 
