@@ -133,12 +133,12 @@ func TestRunFilesTheItemsItLeftOpenIntoItsOwnBranch(t *testing.T) {
 	}
 }
 
-// TestRunFilesNothingWhenTheRoundShipped: the item is what a run *left* open,
+// TestRunFilesNoItemWhenItsRoundShipped: the item is what a run *left* open,
 // so a round that shipped, a round that found nothing, a run that ended after
 // its first line, one that was never reviewed and one whose review was
 // skipped all file nothing, leave the branch exactly as it was and write no
 // field on the record.
-func TestRunFilesNothingWhenTheRoundShipped(t *testing.T) {
+func TestRunFilesNoItemWhenItsRoundShipped(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		reviews []runstore.ReviewSummary
@@ -172,11 +172,11 @@ func TestRunFilesNothingWhenTheRoundShipped(t *testing.T) {
 	}
 }
 
-// TestFilingRefusesWhatTheFolderAlreadyHolds: the filing is a warning path —
+// TestFilingRefusesAnItemTheFolderAlreadyHolds: the filing is a warning path —
 // an item that cannot be written costs a follow-up, never the run — so a
 // filing the folder refuses leaves the branch and the record exactly as they
 // were and is not recorded as a filing.
-func TestFilingRefusesWhatTheFolderAlreadyHolds(t *testing.T) {
+func TestFilingRefusesAnItemTheFolderAlreadyHolds(t *testing.T) {
 	r, remote := filedRun(t, runstore.ReviewSummary{Round: 2, Tier: runstore.TierSenior, Verdict: "changes", Findings: 3})
 	ctx := context.Background()
 	if !r.fileOpenItems(ctx) {
