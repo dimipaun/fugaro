@@ -683,7 +683,9 @@ setup wizard's rename census), `internal/cli/docs_windows_console_test.go`
 workflow while it waits under `docs/pending-workflows/`) and
 `internal/cli/docs_mobile_eas_runbook_test.go` (`docs/mobile/eas-signing-runbook.md`,
 the EAS signing runbook of Task P4.4, whose page this repository's P4.4 refresh
-rewrote against the tree of 2026-10-22), and on this branch
+rewrote against the tree of 2026-10-22), `internal/cli/docs_credentials_cascade_checks_test.go`
+(#951, which `main` gained after this sentence was written and is why `main` holds
+66 rather than 65), and on this branch
 `internal/cli/docs_backlog_test.go`, which plan T4.3 wrote as the folder's own
 pin on `docs/backlog/` rather than on this folder. They
 are named because the figure is a running total of other folders' guards: a folder
