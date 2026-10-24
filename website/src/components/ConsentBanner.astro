@@ -68,17 +68,19 @@ import { CONSENT_KEY } from '../lib/consent-key.mjs'
   data-analytics-origin={analyticsOrigin}
   hidden
 >
-  <div class="consent-banner__inner">
-    <p class="consent-banner__text">
-      This site counts page views with <strong>Google Analytics</strong>, a third-party script that sets identifiers in your browser, and it loads nothing from Google until you accept. <a href="/privacy/">What this site measures</a>
-    </p>
-    <div class="consent-banner__choices">
-      <button type="button" class="consent-banner__button" data-consent="granted">Accept analytics</button>
-      <button type="button" class="consent-banner__button" data-consent="denied">Decline analytics</button>
+  <div class="consent-banner__body">
+    <div class="consent-banner__inner">
+      <p class="consent-banner__text">
+        This site counts page views with <strong>Google Analytics</strong>, a third-party script that sets identifiers in your browser, and it loads nothing from Google until you accept. <a href="/privacy/">What this site measures</a>
+      </p>
+      <div class="consent-banner__choices">
+        <button type="button" class="consent-banner__button" data-consent="granted">Accept analytics</button>
+        <button type="button" class="consent-banner__button" data-consent="denied">Decline analytics</button>
+      </div>
+      <p class="consent-banner__status" id="consent-banner-status" role="status" hidden>
+        Your browser is not storing this choice, so this site cannot keep it: nothing is loaded from Google, and you will be asked again on your next visit.
+      </p>
     </div>
-    <p class="consent-banner__status" id="consent-banner-status" role="status" hidden>
-      Your browser is not storing this choice, so this site cannot keep it: nothing is loaded from Google, and you will be asked again on your next visit.
-    </p>
   </div>
 </aside>
 
@@ -88,8 +90,8 @@ import { CONSENT_KEY } from '../lib/consent-key.mjs'
      content). It used to be fixed over the foot of the window, where it covered whatever was
      there at every scroll position.
 
-     `.consent-banner` declares no `display` of its own, so the `hidden` attribute keeps it out of
-     the page; the one rule that draws it is the early decision's mark on `<html>`
+     `.consent-banner[hidden]` keeps it out of the page whatever `display` the bar draws with (its
+     grid is the collapse below); the one rule that draws it is the early decision's mark on `<html>`
      (`public/scripts/consent-early.js`), set before the page is drawn, so the bar is in its
      place from the first frame and nothing below it moves when it appears. `site.js` removes the
      mark and sets `hidden` when the visitor decides. With scripts off the mark is never set and
@@ -101,9 +103,39 @@ import { CONSENT_KEY } from '../lib/consent-key.mjs'
        chrome, drawn above the header's panel when a group opens under it. */
     position: relative;
     z-index: var(--z-chrome);
-    padding: var(--space-2xs) var(--frame-gutter);
+    display: grid;
+    grid-template-rows: 1fr;
+    padding-inline: var(--frame-gutter);
     background: var(--panel);
     color: var(--text);
+  }
+
+  /* A choice collapses the bar instead of snapping it away (owner-approved motion opportunities
+     2026-10-23): `site.js` marks it closing and sets `hidden` once the collapse has run. The row
+     goes from its height to none while the bar fades, so the page below rises with it. The bar's
+     vertical padding is the inner box's, inside the clip, so the row can reach zero. */
+  .consent-banner__body {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .consent-banner[data-consent-closing] {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+
+  /* For a reader who asked for less motion the bar only fades, and the layout's reduce rule
+     makes that fade 1ms; the row collapses only where motion is welcome. */
+  .consent-banner {
+    transition: opacity var(--duration-collapse) var(--ease-out);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .consent-banner {
+      transition:
+        grid-template-rows var(--duration-collapse) var(--ease-out),
+        opacity var(--duration-collapse) var(--ease-out);
+    }
   }
 
   .consent-banner[hidden] {
@@ -111,7 +143,7 @@ import { CONSENT_KEY } from '../lib/consent-key.mjs'
   }
 
   :global(html[data-consent-ask]) .consent-banner[hidden] {
-    display: block;
+    display: grid;
   }
 
   .consent-banner__inner {
@@ -120,6 +152,7 @@ import { CONSENT_KEY } from '../lib/consent-key.mjs'
     align-items: center;
     justify-content: space-between;
     gap: var(--space-2xs) var(--space-md);
+    padding-block: var(--space-2xs);
   }
 
   .consent-banner__text {

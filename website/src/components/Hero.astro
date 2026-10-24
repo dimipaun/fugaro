@@ -26,6 +26,8 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { loadHomeScreens, loadSite, REPO_ROOT } from '../content.ts'
 import { REQUEST, REQUEST_SOURCE } from '../lib/agent-request.mjs'
+import { buildChangelog } from '../lib/changelog.mjs'
+import { latestConsoleRelease } from '../lib/console-release.mjs'
 
 const site = loadSite()
 const facts = site.facts
@@ -98,6 +100,25 @@ const MAX_PARALLEL = 20
   }
 }
 
+// The latest releases, for the one line above the headline (the owner's request of 2026-10-22,
+// carried here from PR #940): the CLI's newest published release from the changelog's own data
+// (release files held to the plugin's version) and the console's from its own notes held to its
+// package version (`src/lib/console-release.mjs`). Both are read at build time, so the line names
+// no version this file holds. The paths are passed because inside a build the modules are bundled
+// where their own defaults do not resolve (`src/pages/changelog.astro` says why).
+const latestCli = buildChangelog({
+  releasesDir: path.join(REPO_ROOT, 'docs', 'releases'),
+  pluginFile: path.join(REPO_ROOT, 'plugin', '.claude-plugin', 'plugin.json'),
+}).find((entry) => entry.released)
+if (latestCli === undefined) {
+  throw new Error('website/src/components/Hero.astro: no release file under docs/releases/ is at or below the version in plugin/.claude-plugin/plugin.json, and the latest-release line names the newest published one.')
+}
+const latestConsole = latestConsoleRelease({
+  notesDir: path.join(REPO_ROOT, 'docs', 'releases', 'console'),
+  packageFile: path.join(REPO_ROOT, 'console', 'package.json'),
+})
+const consoleReleaseHref = latestConsole ? `${facts.repository.replace(/\/+$/, '')}/releases/tag/${latestConsole.tag}` : null
+
 /** The capture beside the card: the `fugaro watch` screen, the real terminal capture the
  *  homepage's data file lists, with its alt text from there. */
 const WATCH = loadHomeScreens().screens.find((screen) => screen.src.endsWith('/fugaro-watch.png'))
@@ -113,6 +134,19 @@ const WATCH = loadHomeScreens().screens.find((screen) => screen.src.endsWith('/f
         the page that means "this is the action". */}
     <p class="hero-actions">
       <a class="hero-cta" href="/getting-started/">Get started</a>
+    </p>
+
+    {/* The latest releases, under the call to action (the owner's ruling of 2026-10-24: above
+        the headline it read as a kicker label). The quiet tone at the smallest step: a note about
+        the project, after the promise and its one action. */}
+    <p class="hero-release">
+      Latest release: <a class="hero-release-link" href="/changelog/">{latestCli.tag}</a>
+      {latestConsole && (
+        <>
+          {' · '}
+          <a class="hero-release-link" href={consoleReleaseHref} rel="noopener">Console {latestConsole.version}</a>
+        </>
+      )}
     </p>
   </div>
 
@@ -215,6 +249,12 @@ const WATCH = loadHomeScreens().screens.find((screen) => screen.src.endsWith('/f
     grid-template-columns: minmax(0, 1fr);
     gap: var(--space-xl);
     padding: var(--space-xl) var(--frame-gutter) var(--space-4xl);
+  }
+
+  .hero-release {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
   }
 
   .hero-copy {
@@ -476,6 +516,24 @@ const WATCH = loadHomeScreens().screens.find((screen) => screen.src.endsWith('/f
 
     .hero-shot-job[data-arrive] {
       animation: hero-arrive var(--duration-base) var(--ease-out) both;
+    }
+
+    /* A row that reaches "ready for review" settles its icon into place, once: `site.js` marks
+       the row when its last stage lands, and a row is never marked twice (owner-approved motion
+       opportunities 2026-10-23). The no-script card's rows carry no mark and do not move. */
+    .hero-shot-job[data-settled] .hero-shot-icon {
+      animation: hero-settle var(--duration-enter) var(--ease-out) both;
+    }
+  }
+
+  @keyframes hero-settle {
+    from {
+      opacity: 0;
+      transform: scale(0.92);
+    }
+    to {
+      opacity: 1;
+      transform: none;
     }
   }
 
