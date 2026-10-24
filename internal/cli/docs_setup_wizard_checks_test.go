@@ -34,8 +34,11 @@ func check27(t *testing.T, doc string) string {
 	return section(t, doc, check27Heading, check28Heading)
 }
 
-// check111 is Check 111's text. It is the checklist's last section, so it runs
-// to the end of the document.
+// check111 is Check 111's text: from its heading to the next `## ` heading, or
+// to the end of the document when it is the last section. It was the checklist's
+// last section until Check 124 was written below it, and the bound is what keeps
+// a section appended after 113 out of Check 111's text -- the tests below read
+// every `fugaro setup` line in it and require `--create-project` on each.
 func check111(t *testing.T, doc string) string {
 	t.Helper()
 	i := strings.Index(doc, check111Heading)

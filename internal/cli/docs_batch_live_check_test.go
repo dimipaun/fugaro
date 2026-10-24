@@ -9,7 +9,8 @@ import (
 // Check 124 — the Cloud Batch backend's own owner-run live check — as the
 // register writes it.
 //
-// The opt-in `--provision-batch` shipped in 0.10.0 with the compute module,
+// The opt-in `--provision-batch` shipped in 0.9.5 (as `fugaro init
+// --provision-batch`) with the compute module,
 // the reaper's invocation, `fugaro doctor`'s Batch half and `fugaro validate`'s
 // offline checks behind it, and its live check was never written: the design
 // (`docs/design/compute-backend.md`) measures the backend in six hand-made
