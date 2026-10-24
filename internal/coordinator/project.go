@@ -1,0 +1,231 @@
+package coordinator
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/gitprov"
+)
+
+// This file is P2 of docs/coordinator/implementation-plan.md: the
+// project-wide read. P1 computed one repository's view from the pull requests
+// its runs name; P2 reads those pull requests through a credential of the
+// coordinator's own — a read-only installation token per repository, minted
+// once and cached for the token's life (D193's answer of 2026-10-21) — and
+// refuses the provider whose credential cannot be widened to a project.
+
+// Reader is the project-wide read, behind one interface: one repository's
+// pull requests, by the numbers the caller names.
+//
+// The command is written against this shape rather than against the type
+// below, because D193 is a decision about how far a credential reaches and
+// not about what a read is: a project-wide token would change the
+// implementation and not this signature, and so would a reader that listed a
+// repository's pull requests instead of being told their numbers (which
+// gitprov has no call for today, reconciliation finding #10).
+type Reader interface {
+	PullRequests(ctx context.Context, kind, repo string, numbers []int) ([]PullRequest, error)
+}
+
+// ErrBitbucket is the project-wide read's refusal of a Bitbucket repository
+// (reconciliation Q12, answered (A) on 2026-10-19; finding #30): its
+// credential is one repository's access token and there is nothing to widen
+// it to, so the coordinator reads GitHub only in v1.
+//
+// The refusal names the reason and never the repository: which repositories a
+// project holds is a fact about the project, and a caller reports it as what
+// it is.
+var ErrBitbucket = errors.New("the project-wide view reads github only (docs/coordinator/reconciliation.md, Q12 A, finding #30): a bitbucket credential is one repository's access token and cannot be widened to a project")
+
+// TokenMinter mints the coordinator's installation token for one repository:
+// the coordinator's own read-only permission set, minted through
+// github.MintInstallationToken (github.CoordinatorTokenPermissions, P2).
+type TokenMinter func(ctx context.Context, repo string) (string, time.Time, error)
+
+// ProviderOpener opens repo's git provider, with src installed as the source
+// of every installation token it uses, and returns the credential values it
+// holds — which the reader redacts out of whatever it reports. It is
+// gitprov.Opener's shape, and for the same reason: the opener is the only one
+// that knows which values are credentials.
+//
+// A provider that cannot be given a source is a refusal, never a fallback. A
+// provider that minted on its own would ask GitHub for the run's set, which
+// holds two writes, and this read must not be able to reach one (Q3's
+// answer: the credential is a named read-only set, and no `write` anywhere).
+type ProviderOpener func(ctx context.Context, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error)
+
+// Project is the project-wide read: each repository's pull requests read
+// through a provider opened on a read-only installation token of its own,
+// minted once per repository and cached for the token's life (D193(A)).
+//
+// The project's repositories are named by the caller — the CLI's local config
+// today, the aggregation job's own list when P5 builds it — because which
+// repositories a project holds belongs to the config layer and not to the
+// view. This reader serves one repository at a time and never decides which
+// ones matter.
+type Project struct {
+	// Mint mints repo's read-only installation token. Required.
+	Mint TokenMinter
+	// Open opens repo's provider with the token source installed. Required.
+	Open ProviderOpener
+	// Redact removes the credential values an Opener returned from text
+	// before that text is reported in an error (agent.Redact). Required, and
+	// a missing one panics rather than being skipped: a provider's own error
+	// text is another writer's, and a failure that carried a credential is
+	// what a redactor exists to prevent (internal/followup's rule, for the
+	// same reason).
+	Redact func(text string, secrets []string) string
+	// Now is the clock; nil means time.Now.
+	Now func() time.Time
+
+	mu     sync.Mutex
+	tokens map[string]token
+}
+
+// token is one repository's cached installation token and its expiry.
+type token struct {
+	value   string
+	expires time.Time
+}
+
+// ProjectView is the project's view: every repository the caller read, each
+// with its own records and its own collisions, in the order they were read.
+//
+// Nothing here compares across repositories. A collision is two pieces of
+// work in flight touching one file or one service, and a service is a path's
+// shape in the one tree the work is in (ServiceOf): two repositories' paths
+// say nothing about each other, and a project-wide collision would be a
+// coincidence of names rather than news.
+type ProjectView struct {
+	Repos []View `json:"repos"`
+}
+
+func (p *Project) now() time.Time {
+	if p.Now == nil {
+		return time.Now()
+	}
+	return p.Now()
+}
+
+// PullRequests reads repo's pull requests numbered numbers, in the order
+// asked for, through a provider opened on the coordinator's own credential.
+//
+// Four rules, because each one is a decision a reader would otherwise guess
+// at:
+//
+//   - A kind this read does not serve is refused before anything is minted,
+//     opened or read (ErrBitbucket). The refusal is about what a project may
+//     hold and not about whether it has work in flight, so a repository with
+//     nothing running is refused the same way — and a caller may therefore
+//     ask about every repository it knows.
+//   - No numbers is no call at all: a repository none of whose runs names a
+//     pull request is one GitHub is not asked about.
+//   - A read that fails fails the whole call. The pull requests a repository's
+//     runs name are the preset of one view, and a view missing the ones the
+//     host would not answer for is a partial view presented as a whole one.
+//     The reads are one after another, so the failure is the first number that
+//     failed.
+//   - Nothing this returns names a credential: the provider's own error text
+//     goes through Redact with the values its Opener held.
+func (p *Project) PullRequests(ctx context.Context, kind, repo string, numbers []int) ([]PullRequest, error) {
+	if err := supported(kind); err != nil {
+		return nil, err
+	}
+	if len(numbers) == 0 {
+		return nil, nil
+	}
+	mustRedact(p.Redact)
+	prov, secrets, err := p.Open(ctx, repo, p.sourceFor(repo))
+	if err != nil {
+		return nil, errors.New(p.Redact(err.Error(), secrets))
+	}
+	out := make([]PullRequest, len(numbers))
+	for i, n := range numbers {
+		info, err := prov.PullRequest(ctx, n)
+		if err != nil {
+			return nil, fmt.Errorf("reading pull request %d of %s: %s", n, repo, p.Redact(err.Error(), secrets))
+		}
+		out[i] = PullRequest{
+			Number: info.Number,
+			URL:    info.URL,
+			Title:  info.Title,
+			Branch: info.SourceBranch,
+			Draft:  info.Draft,
+			State:  string(info.State),
+		}
+	}
+	return out, nil
+}
+
+// sourceFor is the token source of one repository, which Open installs: every
+// call through it is served from the cache while that repository's token is
+// still valid for the validity asked for, and mints otherwise.
+func (p *Project) sourceFor(repo string) gitprov.TokenSource {
+	return repoSource{p: p, repo: repo}
+}
+
+// repoSource is one repository's token source: the house token-source shape
+// (gitprov.TokenSource, the same contract tokenSource and ServiceTokens
+// keep), so a provider is opened with its tokens coming from here without
+// knowing where they come from.
+type repoSource struct {
+	p    *Project
+	repo string
+}
+
+// Token returns an installation token for this source's repository, valid for
+// at least minValid, minting one when the cached token would expire sooner —
+// the same rule, and the same cache, as the adapter's own tokenSource.
+//
+// The key of the cache is the repository, and its lifetime is the token's:
+// D193's answer is one token per repository, so two repositories hold two
+// tokens and neither is reused for the other. The check-then-mint runs under
+// the lock, as tokenSource's does, so one repository mints once however many
+// callers reach it at once.
+func (s repoSource) Token(ctx context.Context, minValid time.Duration) (string, time.Time, error) {
+	p := s.p
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if t, ok := p.tokens[s.repo]; ok && t.expires.Sub(p.now()) >= minValid {
+		return t.value, t.expires, nil
+	}
+	value, expires, err := p.Mint(ctx, s.repo)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	if value == "" {
+		// An empty token is no token: a provider handed one would fail every
+		// call as an authentication error, and the cache must not hold it as
+		// if it were one.
+		return "", time.Time{}, errors.New("the coordinator's mint returned no installation token")
+	}
+	if p.tokens == nil {
+		p.tokens = map[string]token{}
+	}
+	p.tokens[s.repo] = token{value: value, expires: expires}
+	return value, expires, nil
+}
+
+// supported reports whether the project-wide read serves providers of kind.
+func supported(kind string) error {
+	switch kind {
+	case gitprov.KindGitHub:
+		return nil
+	case gitprov.KindBitbucket:
+		return ErrBitbucket
+	}
+	return fmt.Errorf("the project-wide view reads %s only: %q is not a git provider kind this repository knows (%s or %s)",
+		gitprov.KindGitHub, kind, gitprov.KindGitHub, gitprov.KindBitbucket)
+}
+
+// mustRedact panics when the redactor is missing: a forgotten one would ship
+// the provider's own text — which is where a credential would arrive — to
+// whoever reads the failure.
+func mustRedact(redact func(string, []string) string) {
+	if redact == nil {
+		panic("coordinator: Project.Redact is required; build it with agent.Redact")
+	}
+}
