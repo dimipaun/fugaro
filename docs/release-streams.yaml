@@ -1,10 +1,11 @@
 # The release streams catalogue: which streams exist, the naming theme each one
 # spends in order, the version each stream is at, and the prefix its tags carry.
-# One file with two readers — the console's dependency graph, which draws a
-# column per stream, and scripts/release.sh, which asks it for the CLI stream's
-# next name and current version. It lives here rather than under docs/releases/
-# because the website build reads every other file there as a release note
-# (GD7; docs/console-dependency-graph/reconciliation.md F29).
+# It is written for the two readers that are coming — the console's dependency
+# graph, which draws a column per stream (GV1.6, GV2.3), and, for the CLI's own
+# release, scripts/release.sh, which takes the CLI stream's next name and current
+# version from it (GV1.5). It lives here rather than under docs/releases/ because
+# the website build reads every other file there as a release note (GD7;
+# docs/console-dependency-graph/reconciliation.md F29).
 #
 # A stream has one naming theme, so a name on its own says which stream it
 # belongs to: the CLI's names are animals and carry no bird, the console's are

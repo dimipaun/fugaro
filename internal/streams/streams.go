@@ -2,13 +2,15 @@
 // the one file that names the three release streams, the naming theme each one
 // spends in order, the version each stream is at and the prefix its tags carry.
 //
-// One file rather than a list beside each reader, because two readers need the
-// same facts and two lists is how one release gets two names (GD7,
-// docs/console-dependency-graph/reconciliation.md): the console's graph view
-// draws its stream columns from this catalogue, and scripts/release.sh asks this
-// package, through internal/streams/cmd/streams, for the CLI stream's name and
-// version. The file is a repository fact written by a person, like the release
-// notes, and this package is its only reader.
+// One file rather than a list beside each reader, because the readers that are
+// coming need the same facts and two lists is how one release gets two names
+// (GD7, docs/console-dependency-graph/reconciliation.md): the console's graph
+// view draws a column per stream out of this catalogue (GV1.6, GV2.3), and
+// scripts/release.sh takes the CLI stream's name and version from it through a
+// helper over this package (GV1.5). Neither reads it yet — this task is the file
+// and its reader. The file is a repository fact written by a person, like the
+// release notes, and the graph and the release script are the two places a name
+// or a version is spent.
 //
 // The file is untrusted in the sense docs/design/desktop-console.md §5.1 gives
 // the word: a contributor's branch writes it, and what it carries is compared
@@ -35,11 +37,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// MaxBytes is the largest streams file this build reads, and the cap the
-// console applies to it as well. The file is a few hundred bytes and a name list
-// grows by one per release: 64 KiB is room for every name the three streams will
-// ever spend, and the point past which a file is a mistake rather than a
-// catalogue.
+// MaxBytes is the largest streams file this build reads. The file is a few
+// hundred bytes and a name list grows by one per release: 64 KiB is room for
+// every name the three streams will ever spend, and the point past which a file
+// is a mistake rather than a catalogue.
 const MaxBytes = 64 << 10
 
 // The three streams, as the file and every caller spell them. A stream in the

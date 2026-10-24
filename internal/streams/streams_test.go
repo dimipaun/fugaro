@@ -289,8 +289,10 @@ func TestForbiddenConsoleNames(t *testing.T) {
 // it carries the three streams docs/release.md describes. What is pinned here is
 // what a release cannot move: the streams and their order, each one's theme and
 // tag prefix, the first name of each list, the CLI's hold on the animal theme,
-// and the console's floor. A version or a next name changes at every release, so
-// only the facts that survive one are asserted.
+// the CLI's line staying below the console's, and the console's floor. A version
+// or a next name changes at every release, so no assertion here may be one a
+// release moves: the CLI's own minor is the one number in this file the release
+// process rewrites.
 func TestRealFileParses(t *testing.T) {
 	c := shipped(t)
 	if len(c.Streams) != 3 {
@@ -308,8 +310,9 @@ func TestRealFileParses(t *testing.T) {
 	}
 
 	cli, _ := c.Lookup(CLI)
-	if cli.Current.Major != 0 || cli.Current.Minor != 10 {
-		t.Errorf("the CLI stream is at %s, want the 0.10 line: its first name is Badger, and Badger is 0.10", cli.Current)
+	if cli.Current.Major != 0 || cli.Current.Minor >= ConsoleFloor.Minor {
+		t.Errorf("the CLI stream is at %s, want a 0.x line below the console's %s: the two lines are numbered apart so that a version on its own says which stream it belongs to, and this one's minor is not pinned here because every CLI release moves it",
+			cli.Current, ConsoleFloor)
 	}
 	if slices.Index(cli.Names, cli.Next) < 1 {
 		t.Errorf("the CLI's next name is %q and its names are %v: the CLI has shipped a release, so its next name cannot be the first of its list", cli.Next, cli.Names)
@@ -360,6 +363,22 @@ func TestSymlinkRefused(t *testing.T) {
 			t.Errorf("refusal = %v, want a directory refused as not a regular file", err)
 		}
 	})
+}
+
+// TestMissingFileRefused: a path with nothing behind it is refused with a
+// sentence naming the path and the file the catalogue is, which is what a caller
+// that guessed one has to show — the console hands the CLI an installation's
+// checkout, and a checkout without the file is a checkout this build says so
+// about rather than an empty catalogue.
+func TestMissingFileRefused(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "release-streams.yaml")
+	_, err := Read(missing)
+	if err == nil {
+		t.Fatal("read a path with no file behind it, want a refusal")
+	}
+	if !strings.Contains(err.Error(), missing) || !strings.Contains(err.Error(), "no such file") {
+		t.Errorf("refusal = %q, want it to name %s and say it is not there", err, missing)
+	}
 }
 
 // TestOversizeRefused: a file over the limit is refused by its size, before any
