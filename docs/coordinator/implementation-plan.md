@@ -1,6 +1,6 @@
 # The coordinator — the implementation plan
 
-**Status (2026-10-24): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0, P1 and P2 are on `coordinator`, and P3–P8 are not started.** Each part carries its own **Status** line below, and this one moves with them: the status line and the pins that hold it change in the commit that lands a part, which is what the P0 section says of itself and what every earlier plan in this repository did (`docs/mobile/README.md`, `docs/setup-wizard/README.md`). This plan follows from
+**Status (2026-10-24): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0, P1, P2 and P3 are on `coordinator`, and P4–P8 are not started.** Each part carries its own **Status** line below, and this one moves with them: the status line and the pins that hold it change in the commit that lands a part, which is what the P0 section says of itself and what every earlier plan in this repository did (`docs/mobile/README.md`, `docs/setup-wizard/README.md`). This plan follows from
 [reconciliation.md](reconciliation.md), which wins wherever it disagrees with
 [spec.md](spec.md). Every path and symbol below was re-read against `main` at `1e0953b7`
 (`docs(central-orchestrator): spec, reconciliation and plan for central orchestrators (#775)`)
@@ -396,6 +396,27 @@ can reach (it can write the whole database, `config/` included, and IAM cannot s
 generation bump and what a client with an older marker sees; and the amended claim in `deploy/terraform/gcp/modules/firebase/iam.tf`.
 
 **Commit.** `coordinator: the project record, its writer identity and the read grant`
+
+**Status: built.** Lands on the long-lived `coordinator` branch when its pull request merges, in
+this plan's own commit message, and the plan's status line above moves with it. The subtree, the
+deterministic IDs, the ETag CAS, the read grant and the writer's grant are in the tree. Three
+things are worth a reader's attention here rather than in the diff. The first is that the writer
+account is **named, not created, and not yet granted**: the installation root creates it in
+**P5**, as it creates the history account's, and IAM refuses a grant to a member that does not
+exist, so the Firebase root's `coordinator_account` defaults to empty and the grant
+(`google_project_iam_member.coordinator_database`) has a count of 0 until P5 sets it — the golden
+plans hold no such row, and the module's own `terraform test` runs cover it on and off. The
+second is that the writer bypasses the rules, so `internal/coordinator`'s `Store` refuses every
+path outside `coordinator/` itself: that check, not IAM and not the rules, is the fence (D194).
+The third is the rules generation: `RulesVersion` moves from 3 to 4, and once an installation has
+deployed generation 4, an older Fugaro's `fugaro update --firebase-project` is refused rather than
+deploying its older document over it.
+
+**For operators.** When this part ships, the release notes' `### For operators` section carries
+one step, per installation: run `fugaro update --firebase-project` from the new CLI to deploy the
+generation-4 rules (until then `fugaro doctor` reports `policy-rules-skew` and a signed-in reader
+is refused every read of `coordinator/`); runs, the project policy and the mobile app are
+unaffected either way. Nothing is needed per repository.
 
 ---
 

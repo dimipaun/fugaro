@@ -508,6 +508,57 @@ run "bad_history_account" {
   expect_failures = [var.history_account]
 }
 
+# The coordinator's writer is granted only once coordinator_account is set:
+# the installation root creates that account in coordinator part P5, and IAM
+# refuses a grant to a member that does not exist, so until then the default
+# (empty) grants nothing.
+run "coordinator_grant_off_by_default" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  assert {
+    condition     = length(google_project_iam_member.coordinator_database) == 0
+    error_message = "without coordinator_account nothing is granted to the coordinator's writer"
+  }
+}
+
+run "TestCoordinatorAccountGrant" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    coordinator_account = "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"
+  }
+
+  assert {
+    condition = (length(google_project_iam_member.coordinator_database) == 1 &&
+      google_project_iam_member.coordinator_database[0].role == "roles/firebasedatabase.admin" &&
+      google_project_iam_member.coordinator_database[0].project == "fp-1234" &&
+    google_project_iam_member.coordinator_database[0].member == "serviceAccount:fugaro-coordinator@proj-1234.iam.gserviceaccount.com")
+    error_message = "with coordinator_account set, the writer holds roles/firebasedatabase.admin on the FP and nothing else here"
+  }
+}
+
+run "bad_coordinator_account" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    coordinator_account = "not-an-email"
+  }
+
+  expect_failures = [var.coordinator_account]
+}
+
 run "bad_member" {
   command = plan
 

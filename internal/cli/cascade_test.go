@@ -40,7 +40,7 @@ workflows:
 // route while tier C for Claude is off (C3.6). The version is the one this
 // binary's reader expects, read from the package rather than restated.
 func cascadePolicy() string {
-	return fmt.Sprintf(`{"version":%d,"allow_repos":["*"],"routing":{"claude":{"via":"cascade"}}}`, projectpolicy.RulesVersion)
+	return fmt.Sprintf(`{"version":%d,"allow_repos":["*"],"routing":{"claude":{"via":"cascade"}}}`, projectpolicy.Version)
 }
 
 // cascadePolicyWithMode is cascadePolicy with the policy's own budget node,
@@ -49,7 +49,7 @@ func cascadePolicy() string {
 // (projectpolicy.validBudget), so this is the shape a mode arrives in when the
 // project config's own ceiling names none.
 func cascadePolicyWithMode(mode string) string {
-	return fmt.Sprintf(`{"version":%d,"allow_repos":["*"],"routing":{"claude":{"via":"cascade"}},"budget":{"mode":%q}}`, projectpolicy.RulesVersion, mode)
+	return fmt.Sprintf(`{"version":%d,"allow_repos":["*"],"routing":{"claude":{"via":"cascade"}},"budget":{"mode":%q}}`, projectpolicy.Version, mode)
 }
 
 // cascadePolicyAllowList is the policy a project that really serves cascade
@@ -66,7 +66,7 @@ func cascadePolicyWithMode(mode string) string {
 // is what a project serving that repository would list.
 func cascadePolicyAllowList(mode string) string {
 	return fmt.Sprintf(`{"version":%d,"allow_repos":["*"],"routing":{"claude":{"via":"cascade"}},`+
-		`"budget":{"mode":%q,"allowed_models":["claude-sonnet-5-5"]}}`, projectpolicy.RulesVersion, mode)
+		`"budget":{"mode":%q,"allowed_models":["claude-sonnet-5-5"]}}`, projectpolicy.Version, mode)
 }
 
 // cascadePolicyViaDirect is a policy whose switch is written with the value
@@ -75,7 +75,7 @@ func cascadePolicyAllowList(mode string) string {
 // does not turn the cascade on, which is the shape a reader that asks only
 // "is a via written here?" mistakes for the cascade's own.
 func cascadePolicyViaDirect() string {
-	return fmt.Sprintf(`{"version":%d,"allow_repos":["*"],"routing":{"claude":{"via":"direct"}}}`, projectpolicy.RulesVersion)
+	return fmt.Sprintf(`{"version":%d,"allow_repos":["*"],"routing":{"claude":{"via":"direct"}}}`, projectpolicy.Version)
 }
 
 // cascadePolicyViaAuto is the other value O3 left exactly as it was: via: auto
@@ -88,7 +88,7 @@ func cascadePolicyViaAuto() string {
 	return fmt.Sprintf(`{"version":%d,"allow_repos":["*"],`+
 		`"providers":{"openrouter-claude":{"kind":"anthropic-compat","base_url":"https://openrouter.ai/api/v1",`+
 		`"auth":"bearer","secret":"openrouter-claude-key","models":["anthropic/claude-sonnet-5.5"],"allow_data_to":["*"]}},`+
-		`"routing":{"claude":{"via":"auto","models":["claude-sonnet-5-5"]}}}`, projectpolicy.RulesVersion)
+		`"routing":{"claude":{"via":"auto","models":["claude-sonnet-5-5"]}}}`, projectpolicy.Version)
 }
 
 // cascadeOtherProject points this machine at a *different* installation —
@@ -196,7 +196,7 @@ func TestValidateRefusesCascadeWhenThePolicyNodeTurnsTheGatewayOff(t *testing.T)
 func TestValidateRefusesCascadeWithoutPolicySwitch(t *testing.T) {
 	t.Run("a published policy without the switch", func(t *testing.T) {
 		f := newLaunchBudget(t, "observe")
-		publishPolicy(t, f, `{"version":`+fmt.Sprint(projectpolicy.RulesVersion)+`,"allow_repos":["*"]}`)
+		publishPolicy(t, f, `{"version":`+fmt.Sprint(projectpolicy.Version)+`,"allow_repos":["*"]}`)
 		out, _, err := execute(t, "validate", writeConfig(t, cascadeCLI))
 		if ExitCode(err) != ExitUserError {
 			t.Fatalf("exit = %d, want %d (err %v, out %q)", ExitCode(err), ExitUserError, err, out)
@@ -300,7 +300,7 @@ func TestValidateRefusesCascadeWithoutPolicySwitch(t *testing.T) {
 		f := newLaunchBudget(t, "observe")
 		markRules(t, f, projectpolicy.RulesVersion)
 		f.db.Set(projectpolicy.PathShared(), json.RawMessage(
-			`{"version":`+fmt.Sprint(projectpolicy.RulesVersion)+`,"allow_repos":["*"],"routing":{"claude":{"via":"cascade"}},"a_key_nobody_reads":1}`))
+			`{"version":`+fmt.Sprint(projectpolicy.Version)+`,"allow_repos":["*"],"routing":{"claude":{"via":"cascade"}},"a_key_nobody_reads":1}`))
 		out, _, err := execute(t, "validate", writeConfig(t, cascadeCLI))
 		if ExitCode(err) != ExitUserError {
 			t.Fatalf("exit = %d, want %d (err %v, out %q)", ExitCode(err), ExitUserError, err, out)
@@ -386,7 +386,7 @@ func TestValidateRefusesCascadeWithoutPolicySwitch(t *testing.T) {
 
 	t.Run("another auth is not this rule's business", func(t *testing.T) {
 		f := newLaunchBudget(t, "observe")
-		publishPolicy(t, f, `{"version":`+fmt.Sprint(projectpolicy.RulesVersion)+`,"allow_repos":["*"]}`)
+		publishPolicy(t, f, `{"version":`+fmt.Sprint(projectpolicy.Version)+`,"allow_repos":["*"]}`)
 		other := strings.Replace(cascadeCLI, "auth: cascade", "auth: api-key", 1)
 		out, errOut, err := execute(t, "validate", writeConfig(t, other))
 		if err != nil {
