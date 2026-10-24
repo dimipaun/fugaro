@@ -308,6 +308,10 @@ type run struct {
 	// review, and the mode must not come from there.
 	rigorCfg rigor.Config
 	rigorRev string
+	// filedFrom is the commit finalize's backlog filing was committed on
+	// top of, "" when the run filed nothing: the report names it as the
+	// commit the suite ran on (report.go's testsLine).
+	filedFrom string
 	// ckpt is the checkpoint pushes' state (checkpoint.go).
 	ckpt checkpointState
 	// skipPR is set when the check gate already ended the run (clean, or an
@@ -2626,6 +2630,7 @@ func (r *run) finalize(ctx context.Context) error {
 	// Hotfix's deferral (D30, D15) and the ordinary case for that row.
 	decided := sha
 	if r.fileOpenItems(ctx) {
+		r.filedFrom = decided
 		if sha, err = r.repo.HeadSHA(ctx); err != nil {
 			return fmt.Errorf("reading head sha after filing: %w", err)
 		}
@@ -2786,7 +2791,7 @@ func (r *run) finalize(ctx context.Context) error {
 		fu = r.followUpSection()
 		fu.MovedToDraft = r.follow.wasReady && !ready
 	}
-	report := agent.Redact(followUpReport(r.rec, r.d.Store.Prefix(), r.logTail(ready, records), fu, notes), r.secretList())
+	report := agent.Redact(followUpReport(r.rec, r.d.Store.Prefix(), r.logTail(ready, records), fu, notes, r.filedFrom), r.secretList())
 	// A follow-up's pull request is the one people watch: an earlier
 	// attempt of this execution may already have posted this report.
 	if r.follow != nil && r.reportPosted(ctx, pr) {
