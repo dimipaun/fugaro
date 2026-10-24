@@ -785,6 +785,34 @@ a.skip-link:focus {
   transform: translateY(12px);
 }
 
+/* The inner pages' header (the owner's question of 2026-10-24, "same easing animation as the
+ * Home page on the rest of the pages"): the title and the line under it arrive once as the page
+ * loads, the way the home page's live card rows do: 8 px of rise and a fade on the site's
+ * `--ease-out`, the line 60 ms after the title. CSS only (`@starting-style`, the first frame the
+ * header is drawn in) and never scroll-triggered, so a page with no script, or a browser without
+ * `@starting-style`, shows the header as it is. Nothing for a
+ * reader who asked for less motion. The home page's own headline is not one of these. */
+@media (prefers-reduced-motion: no-preference) {
+  main h1.display-xl:not(.hero-tagline),
+  main h1.display-xl:not(.hero-tagline) + p {
+    transition:
+      opacity var(--duration-enter) var(--ease-out),
+      transform var(--duration-enter) var(--ease-out);
+  }
+
+  main h1.display-xl:not(.hero-tagline) + p {
+    transition-delay: 60ms;
+  }
+
+  @starting-style {
+    main h1.display-xl:not(.hero-tagline),
+    main h1.display-xl:not(.hero-tagline) + p {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+  }
+}
+
 /* A printed page shows every part, whether or not it was scrolled to (the failsafe the
  * owner-approved motion review of 2026-10-23 asked for; the script also reveals on `beforeprint`). */
 @media print {
