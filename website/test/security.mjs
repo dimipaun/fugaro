@@ -2605,12 +2605,22 @@ test('the page points at no file the build does not produce', () => {
 // The key phrases under the drawing are marked, not only bolded (the owner's feedback of
 // 2026-10-24: bold alone was hard to see): an accent underline the reader can find, at a
 // contrast a non-text mark needs on the card's surface.
-test('the key phrases under the drawing are bold and underlined in the accent, at a visible contrast', () => {
+test('every line under the drawing opens with a bold lead underlined in the accent, at a visible contrast', () => {
   const html = readFileSync(path.join(DIST, 'security', 'index.html'), 'utf8')
-  const strong = (html.match(/<li>[^]*?<\/li>|<p class="boundary-limit"[^>]*>[^]*?<\/p>/g) ?? []).join('').match(/<strong>/g) ?? []
-  assert.ok(strong.length >= 5, `the lines under the drawing carry ${strong.length} bold key phrases, and the page marks a handful`)
+  // Every line under the drawing (the four facts and the two limits) opens with its bold lead.
+  const lines = findAll(parse(html), (el) => el.attrs.has('data-security-diagram'))
+    .flatMap((section) => findAll(section, (el) => (el.name === 'li' && el.parent?.attrs?.get('class') === 'boundary-facts') || (el.name === 'p' && (el.attrs.get('class') ?? '').split(/\s+/).includes('boundary-limit'))))
+  assert.equal(lines.length, 6, `the drawing carries ${lines.length} lines under it, and the owner's list is six`)
+  for (const line of lines) {
+    const first = (line.children ?? []).find((child) => child.name !== undefined || (child.text ?? '').trim() !== '')
+    assert.equal(first?.name, 'strong', 'a line under the drawing does not open with its bold lead phrase')
+  }
   const css = [...html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n')
   const rules = cssRules(css).filter((rule) => /data-security-diagram/.test(rule.selector || '') && /strong/.test(rule.selector || ''))
+  // A `:global()` left in a global stylesheet is kept as written and matches nothing, which is
+  // how the first version of this rule drew no line on any browser.
+  for (const rule of rules) assert.ok(!/:global\(/.test(rule.selector), `${rule.selector} is a selector no browser matches`)
+  assert.ok(rules.some((rule) => /boundary-facts\s*>\s*li\s*>\s*strong/.test(rule.selector)) && rules.some((rule) => /boundary-limit\s*>\s*strong/.test(rule.selector)), 'the underline does not reach the bold lead of the facts and of the limits')
   const decl = Object.fromEntries(rules.flatMap((rule) => cssDeclarations(rule.body)))
   assert.match(decl['text-decoration'] ?? decl['text-decoration-line'] ?? '', /underline/, 'the key phrases carry no underline')
   assert.equal(decl['text-decoration-color'], 'var(--accent)', 'the key phrases\' underline is not the accent')
