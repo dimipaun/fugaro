@@ -1076,3 +1076,19 @@ test('the page’s head carries the boards’ background, and the headline paint
   const titleRule = declarationsFor(css, 'the page’s headline', '.changelog-title[')
   assert.match(titleRule, /position:\s*relative/, `the page’s headline is not a positioned box (${titleRule}): the background paints over a static box, so the headline would be drawn under the glow it sits on`)
 })
+
+// The notes' reveal (the owner's request of 2026-10-24): an entrance on `[open]` in every
+// browser, gated on the reader's no-preference, and nothing hidden outside the animation.
+test('the release notes reveal on open, only where motion is welcome, and are never hidden at rest', () => {
+  const html = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'changelog', 'index.html'), 'utf8')
+  assert.match(html, /<details class="release-notes"[^>]*>\s*<summary[^>]*>Highlights<\/summary>\s*<div class="release-notes-body"/, 'the notes carry no body wrapper for the reveal to run on')
+  const css = [...html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n')
+  const reveal = cssRules(css).filter((rule) => /release-notes-body/.test(rule.selector || '') && cssDeclarations(rule.body).some(([p]) => p === 'animation' || p === 'animation-name'))
+  assert.ok(reveal.length > 0, 'the notes carry no reveal')
+  for (const rule of reveal) {
+    assert.match(rule.selector, /\[open\]/, `${rule.selector} animates the notes without the reader opening them`)
+    assert.ok(rule.conditions.some((c) => /prefers-reduced-motion\s*:\s*no-preference/.test(c)), `${rule.selector} animates for a reader who asked for less motion`)
+  }
+  const hiding = cssRules(css).filter((rule) => /release-notes-body/.test(rule.selector || '') && cssDeclarations(rule.body).some(([p, v]) => (p === 'opacity' && v.trim() === '0') || p === 'visibility'))
+  assert.deepEqual(hiding.map((rule) => rule.selector), [], 'a rule hides the notes outside the animation, so a browser that runs none never shows them')
+})
