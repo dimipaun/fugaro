@@ -22,16 +22,20 @@ const (
 	// top of the impact scale, and — fail closed, like the table — a finding
 	// whose score cannot be read at all (D4).
 	Blocker Label = "blocker"
-	// High is a finding a mode that fixes what is common and material blocks
-	// on, and a mode that weighs the fix cost may still leave open.
+	// High is a finding above the floor of every mode that has one: Startup,
+	// Pro and Critical all block it, and only POC and Hotfix, which block
+	// nothing but the catastrophic, tolerate it.
 	High Label = "high"
-	// Medium is a finding on the boundary of Startup's floor: the worst thing
-	// that mode tolerates.
+	// Medium is the band Startup's floor starts at: the mildest finding that
+	// mode blocks, and one Pro and Critical block as well.
 	Medium Label = "medium"
-	// Low is a finding on the boundary of Pro's floor: what the default mode
-	// fixes unless the fix is expensive.
+	// Low is the band Pro's floor starts at: the mildest finding the default
+	// mode blocks, and the only band its fix-cost escape can reach — the
+	// escape's likelihood of 1 caps it at a risk of 4.
 	Low Label = "low"
-	// Nit is a finding every on-axis mode's floor is above.
+	// Nit is below every floor there is: POC, Hotfix, Startup and Pro all
+	// tolerate it, and Critical, whose floor is the bottom of the scale,
+	// blocks it with everything else.
 	Nit Label = "nit"
 )
 
@@ -45,11 +49,20 @@ func KnownLabel(l Label) bool { return slices.Contains(Labels, l) }
 // itself, which is the same word whatever mode the finding met, because the
 // mode decides what happens to a finding and not how bad it is.
 //
-// The bands are the table's floors read back (table.go): a finding this calls
-// a nit is one Startup's and Pro's floors are both above, one it calls a
-// blocker is one no mode tolerates, and each of the three words between them
-// is where one of the modes' floors starts. That is what makes the two files
-// one system rather than two opinions about the same score.
+// Two of the bands' lower edges are floors of the table read back (table.go):
+// the low band starts where Pro's floor is and the medium band where
+// Startup's is, so moving either floor is a change here too — that coupling is
+// what makes the two files one system rather than two opinions about the same
+// score, and what TestTheLabelAndTheTableAgree holds.
+//
+// The other three bands start at no floor, and the five of them are not five
+// modes' thresholds: the blocker band is the spec's override, which no threshold
+// reaches however low a mode sets one; the high band is the risk above
+// Startup's floor, which no floor starts because the mode above Startup needs
+// none — Critical blocks everything, so its floor is the bottom of the scale
+// rather than a rung higher up; and a nit is below every floor there is. So a
+// band is where a floor happens to fall, never the reason a floor is where it
+// is: an editor moving a floor to "match" a band has the relation backwards.
 func (s Score) Label() Label {
 	switch {
 	case !s.Scored() || s.catastrophic():
