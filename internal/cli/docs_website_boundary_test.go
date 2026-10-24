@@ -942,14 +942,19 @@ func TestWebsiteConsoleReleaseFactsAreComplete(t *testing.T) {
 		}
 	}
 
-	// The CLI release the console is published from: its note is in the tree,
-	// and it names the console's own release. This is the offline half of "the
+	// The console release whose assets these are: its own notes file is in the
+	// tree, and it names the console's version. This is the offline half of "the
 	// tag exists" -- a git tag cannot be checked without a fetch, and a shallow
-	// CI checkout has none (D11, W3.1).
-	note := "docs/releases/v" + downloads.Release.Version + ".md"
+	// CI checkout has none (D11, W3.1). Since the console's own release stream
+	// (docs/releases/console/README.md, the owner's addendum of 2026-10-22) the
+	// console has its own tag, version line and notes, and its workflow reads
+	// docs/releases/console/vX.Y.Z.md from the tagged commit and refuses to build
+	// without it -- so that file is where this repository records that the
+	// version the site offers a download for was released.
+	note := "docs/releases/console/v" + downloads.Release.Version + ".md"
 	body := readDoc(t, note)
-	if !strings.Contains(body, downloads.Release.TagPrefix+downloads.Release.Version) {
-		t.Errorf("%s does not name %q: the console is published from the CLI's own v%s tag (D11), so the release note for that version is where the console's release is recorded, and the site offers a download for it (W3.1)", note, downloads.Release.TagPrefix+downloads.Release.Version, downloads.Release.Version)
+	if !strings.Contains(body, "Fugaro Console "+downloads.Release.Version) {
+		t.Errorf("%s does not name %q: the console's own release is cut with its notes file, which the workflow reads from the tagged commit and passes as the release body, so the notes for that version are where the console's release is recorded -- and the site offers a download for it (docs/releases/console/README.md, W3.1)", note, "Fugaro Console "+downloads.Release.Version)
 	}
 }
 
