@@ -226,7 +226,6 @@ func (s *projectStage) billingForAdminBecause(why string) initflow.Left {
 		}}
 }
 
-
 // problem maps a refusal by the project APIs to a stage failure with its
 // one-line fix, or to the user's to do (an API off on the quota project).
 func (s *projectStage) problem(err error) (initflow.Status, error) {
@@ -679,12 +678,10 @@ func (s *projectStage) refusedCreate() string {
 		"See docs/gcp-setup.md#not-an-owner."
 }
 
-
 // failCreate is fail for the creation: a recognised refusal
 // is a user error (exit 1, the reader's to act on) whose message is the
 // helpful line with the service's own text under it.
 func (s *projectStage) failCreate(err error) error { return s.failRefused(err, s.refusedCreate()) }
-
 
 func (s *projectStage) failRefused(err error, help string) error {
 	var pe *infra.ProjectError
