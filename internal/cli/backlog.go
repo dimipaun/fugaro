@@ -6,10 +6,13 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/backlog"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 // backlogOptions are the two flags the pair shares: which folder to read, and
@@ -20,20 +23,22 @@ type backlogOptions struct {
 }
 
 // newBacklogCmd builds `fugaro backlog` (rigor modes, the owner's ruling of
-// 2026-10-20: D26–D32, plan T4.3 and T4.4). The folder is docs/backlog/: one
+// 2026-10-20: D26–D32, plan T4.3–T4.5). The folder is docs/backlog/: one
 // Markdown file per item, named `<id>-<slug>.md`, and one generated index
 // beside them, README.md.
 //
-// The pair is read-only in the sense that matters for a review: nothing here
-// touches a network, a credential, a cloud project or an installation. `index`
-// writes exactly one file, the folder's own index, from the item files beside
-// it; `list` writes nothing at all and prints what the index would say.
+// Nothing here touches a network, a credential, a cloud project or an
+// installation: the items and the index are files in a checkout. `add` writes
+// one item and regenerates the index beside it — the commit that files an item
+// is the commit that regenerates the index (D28) — and `index` regenerates it
+// alone; `list` writes nothing at all and prints what the index would say.
 //
-// There is no `add` and no `close`: filing is a run's step and closing is the
-// fixing pull request's step (D31), and neither is a command a person needs a
-// tool for. `index` exists because the index is derived state — it is
-// regenerated, never merged by hand (D28) — and `list` exists because a reader
-// who wants the backlog on a terminal should not have to open a file.
+// There is no `close`: closing an item is the fixing pull request's step, which
+// flips the status and regenerates the index in the same commit (D31), and a
+// command that closed one would be a second way to do it. `index` exists because
+// the index is derived state — regenerated, never merged by hand (D28) — and
+// `list` exists because a reader who wants the backlog on a terminal should not
+// have to open a file.
 func newBacklogCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "backlog",
@@ -50,8 +55,105 @@ func newBacklogCmd() *cobra.Command {
 			"Nothing here reaches a network, a credential or an installation: the items\n" +
 			"and the index are files in this checkout.",
 	}
-	cmd.AddCommand(newBacklogIndexCmd(), newBacklogListCmd())
+	cmd.AddCommand(newBacklogAddCmd(), newBacklogIndexCmd(), newBacklogListCmd())
 	return cmd
+}
+
+// backlogAddOptions are `fugaro backlog add`'s flags: D27's eight fields, less
+// the id and the status the folder sets itself.
+type backlogAddOptions struct {
+	backlogOptions
+	title   string
+	what    string
+	why     string
+	done    string
+	links   []string
+	mode    string
+	area    string
+	filedBy string
+	filedIn string
+	date    string
+}
+
+// newBacklogAddCmd builds `fugaro backlog add`: filing an item by hand.
+//
+// A run files its own items (D9, plan T4.5); this is the command a person uses
+// for the items no run will file — a project-level one, a deferral the owner
+// wrote down, anything the backlog's own practice asks for. What it writes is
+// exactly what a run writes: D27's front matter, the id D26 allocates from the
+// folder's own state, and the index regenerated beside it.
+func newBacklogAddCmd() *cobra.Command {
+	var o backlogAddOptions
+	cmd := &cobra.Command{
+		Use:   "add",
+		Short: "File an item in docs/backlog/ and regenerate the index",
+		Long: "File an item, and regenerate the index beside it.\n\n" +
+			"The item takes the next id for the day it is filed (D26) and is written\n" +
+			"as `<id>-<slug>.md`, with the eight front-matter fields the format\n" +
+			"requires (D27). The index is regenerated in the same command, so the\n" +
+			"commit that files an item is the commit that regenerates the index.\n\n" +
+			"--title and --why are required, and so is --filed-by: an item is not a\n" +
+			"title with no text, and who filed it is one of the eight fields. --what\n" +
+			"defaults to the title, and --done and --link are written when given.\n\n" +
+			"An item filed by hand records `mode: none` — no run chose a mode for it.\n" +
+			"--mode names the mode a run resolved when the item is about one, and\n" +
+			"--filed-in says where it came from: `hand`, `run:<run id>` or\n" +
+			"`pr:<number>`.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error { return runBacklogAdd(cmd, &o) },
+	}
+	f := cmd.Flags()
+	addBacklogFlags(cmd, &o.backlogOptions)
+	f.StringVar(&o.title, "title", "", "the item's title, one line (required)")
+	f.StringVar(&o.what, "what", "", "what was left open; the title when empty")
+	f.StringVar(&o.why, "why", "", "why it is left open (required)")
+	f.StringVar(&o.done, "done", "", "what done looks like")
+	f.StringArrayVar(&o.links, "link", nil, "a link for the item's Links section (repeatable)")
+	f.StringVar(&o.mode, "mode", "none", "the mode a run resolved; none for an item filed by hand")
+	f.StringVar(&o.area, "area", "repo", "the area the item is about: an area name, project or repo")
+	f.StringVar(&o.filedBy, "filed-by", "", "who filed it: the run's launcher, or your login (required)")
+	f.StringVar(&o.filedIn, "filed-in", "hand", "where it came from: hand, run:<run id> or pr:<number>")
+	f.StringVar(&o.date, "date", "", "the day it is filed, as YYYY-MM-DD; today when empty")
+	return cmd
+}
+
+// runBacklogAdd writes the item and says which file it wrote.
+func runBacklogAdd(cmd *cobra.Command, o *backlogAddOptions) error {
+	if o.date == "" {
+		o.date = time.Now().UTC().Format("2006-01-02")
+	}
+	if err := backlogModeKnown(o.mode); err != nil {
+		return userErr("%v", err)
+	}
+	what := o.what
+	if strings.TrimSpace(what) == "" {
+		what = o.title
+	}
+	item, err := backlog.Write(o.dir, backlog.New{
+		Title: o.title, Mode: o.mode, Area: o.area, FiledBy: o.filedBy, FiledIn: o.filedIn,
+		Date: o.date, Body: backlog.Body(what, o.why, o.done, o.links),
+	})
+	if err != nil {
+		return userErr("%v", err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "filed %s\nwrote %s\n", item.Path, filepath.Join(o.dir, backlog.IndexName))
+	return nil
+}
+
+// backlogModeKnown holds --mode to the mode vocabulary plus `none`, which is
+// what a hand-filed item records. A mode outside it is a typo a reader would
+// find in the index months later, which is the one place a value nobody can
+// check is worth refusing at the command that writes it (D27).
+func backlogModeKnown(mode string) error {
+	if mode == "none" || rigor.Known(rigor.Mode(mode)) {
+		return nil
+	}
+	names := make([]string, 0, len(rigor.Modes)+1)
+	names = append(names, "none")
+	for _, m := range rigor.Modes {
+		names = append(names, string(m))
+	}
+	return fmt.Errorf("mode %q is none of %s (D27)", mode, strings.Join(names, ", "))
 }
 
 // newBacklogIndexCmd builds `fugaro backlog index`: it writes the folder's

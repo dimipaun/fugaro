@@ -512,8 +512,52 @@ Flags:
 
 Subcommands:
 
+- `fugaro backlog add` -- File an item in docs/backlog/ and regenerate the index
 - `fugaro backlog index` -- Regenerate docs/backlog/README.md from the item files beside it
 - `fugaro backlog list` -- Print the backlog's items as the index lists them
+
+## `fugaro backlog add`
+
+File an item in docs/backlog/ and regenerate the index
+
+File an item, and regenerate the index beside it.
+
+The item takes the next id for the day it is filed (D26) and is written
+as `<id>-<slug>.md`, with the eight front-matter fields the format
+requires (D27). The index is regenerated in the same command, so the
+commit that files an item is the commit that regenerates the index.
+
+--title and --why are required, and so is --filed-by: an item is not a
+title with no text, and who filed it is one of the eight fields. --what
+defaults to the title, and --done and --link are written when given.
+
+An item filed by hand records `mode: none` — no run chose a mode for it.
+--mode names the mode a run resolved when the item is about one, and
+--filed-in says where it came from: `hand`, `run:<run id>` or
+`pr:<number>`.
+
+Usage: `fugaro backlog add`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--area` | string | `repo` | no | the area the item is about: an area name, project or repo |
+| `--date` | string | "" | no | the day it is filed, as YYYY-MM-DD; today when empty |
+| `--dir` | string | `docs/backlog` | no | the folder the item files live in |
+| `--done` | string | "" | no | what done looks like |
+| `--filed-by` | string | "" | no | who filed it: the run's launcher, or your login (required) |
+| `--filed-in` | string | `hand` | no | where it came from: hand, run:<run id> or pr:<number> |
+| `-h`, `--help` | bool | `false` | no | help for add |
+| `--link` | stringArray | `[]` | no | a link for the item's Links section (repeatable) |
+| `--mode` | string | `none` | no | the mode a run resolved; none for an item filed by hand |
+| `--title` | string | "" | no | the item's title, one line (required) |
+| `--what` | string | "" | no | what was left open; the title when empty |
+| `--why` | string | "" | no | why it is left open (required) |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro backlog index`
 
