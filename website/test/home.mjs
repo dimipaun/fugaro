@@ -514,9 +514,10 @@ const NEUTRALISERS = {
 /** The scroll-driven reveal the retired flow brought its steps in with. */
 const SCROLL_TIMELINE = ['animation-timeline', 'scroll-timeline', 'view-timeline']
 
-// The one scroll-driven motion the site admits: the zoom between the four levels on
-// /how-it-works/ (owner-approved motion opportunities 2026-10-23). It is admitted only as the
-// enhancement it was approved as — a rule of the zoom section (`.zoom-…` selectors and nothing
+// The scroll-driven motion the site admits, both on /how-it-works/: the zoom between the four
+// levels (owner-approved motion opportunities 2026-10-23) and the run picture's left-to-right
+// reveal of its four steps (2026-10-24). Each is admitted only as the enhancement it was
+// approved as — a rule of its own section (`.zoom-…` or `.run-diagram` selectors and nothing
 // else) behind both the feature query and the reader's own `no-preference` — so the same
 // mechanism anywhere else, or unguarded, is still the retired flow's reveal and still refused.
 const SCROLL_SUPPORTS = /@supports\s*\(\s*animation-timeline\s*:\s*view\(\)\s*\)/i
@@ -524,7 +525,7 @@ export function admittedZoomScroll(rule) {
   const parts = (rule.selector || '').split(',').map((part) => part.trim())
   return (
     parts.length > 0 &&
-    parts.every((part) => /^\.zoom-[\w-]+/.test(part)) &&
+    parts.every((part) => /^\.zoom-[\w-]+/.test(part) || /^\.run-diagram(?![\w-])/.test(part)) &&
     rule.conditions.some((condition) => SCROLL_SUPPORTS.test(condition)) &&
     rule.conditions.some((condition) => ALLOWS_MOTION.test(condition))
   )
@@ -1968,12 +1969,13 @@ test("the flow's scroll-driven reveal is retired with it, and every motion the p
     // Step 3, lever 7: motion with reduced-motion fallbacks): the hero's capture opens once as the
     // page loads and the live card's rows arrive, so its keyframes are allowed, held by the
     // reduced-motion reading above. How It Works keeps its drawing still; its only keyframes are
-    // the four levels' scroll-linked zoom (owner-approved motion opportunities 2026-10-23), which
-    // run only through the admitted rules above.
+    // the four levels' scroll-linked zoom (2026-10-23) and the run picture's step reveal
+    // (2026-10-24), owner-approved motion opportunities that run only through the admitted rules
+    // above.
     if (route !== '') {
       const named = [...flat.matchAll(/@keyframes([\w-]+)/g)].map((match) => match[1])
       assert.deepEqual(
-        named.filter((name) => !name.startsWith('zoom-')),
+        named.filter((name) => !name.startsWith('zoom-') && !name.startsWith('run-step-') && !name.startsWith('run-link-')),
         [],
         `the ${where} page declares a \`@keyframes\` animation other than the levels' zoom, and the drawing is a still picture (the owner's ruling of 2026-10-20; W1.4 step 3, D105)`,
       )
@@ -2150,6 +2152,15 @@ test('the picture refusals fire on the defect each one names', () => {
   assert.ok(
     pageMotionFailures(`@supports (animation-timeline:view()){${zoom}}${guard}`).some((line) => /and the page is not revealed by scrolling/.test(line)),
     'the levels\' zoom passes without the reader\'s no-preference, so a reader who asked for less motion would be zoomed',
+  )
+  assert.deepEqual(
+    pageMotionFailures(`@supports (animation-timeline:view()){@media (prefers-reduced-motion:no-preference){.run-diagram .run-step{animation-timeline:--run-figure}}}${guard}`),
+    [],
+    'the run picture\'s guarded step reveal is refused, and the owner approved it on 2026-10-24',
+  )
+  assert.ok(
+    pageMotionFailures(`@media (prefers-reduced-motion:no-preference){.run-diagram .run-step{animation-timeline:--run-figure}}${guard}`).some((line) => /and the page is not revealed by scrolling/.test(line)),
+    'the run picture\'s reveal passes without its feature query',
   )
   assert.ok(
     pageMotionFailures(`@supports (animation-timeline:view()){@media (prefers-reduced-motion:no-preference){.step-card{animation-timeline:view()}}}${guard}`).some((line) => /and the page is not revealed by scrolling/.test(line)),
