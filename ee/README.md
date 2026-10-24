@@ -19,5 +19,5 @@ Three rules hold while the folder is reserved:
 - **A release carries no `ee/` code until it sets the `ee` build tag**, and that tag obliges the
   release to label the binary as carrying code under the enterprise licence.
 
-`LICENSING.md` at the repository root states the repository-wide split: what is MIT, what is not,
-and where each part's terms are written.
+Nothing else changes with the reservation: the rest of the repository stays under the MIT licence in
+[`LICENSE`](../LICENSE), and this folder takes nothing away from it.
