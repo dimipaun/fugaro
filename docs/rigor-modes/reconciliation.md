@@ -673,8 +673,8 @@ folder's own: the pins were **48**, the 47 the base `1d325928` (§1) already hel
 plus this folder's `internal/cli/docs_rigor_modes_test.go`, and they are files
 rather than folders, 13 of them pinning one of `docs/`'s folders and the rest a
 standalone document, which is why the row above counts the pins and not the
-folders they sit beside. **The figure is 66 at this branch's tree, because other
-folders have written a pin since** — `main` holds 65 — among them `internal/cli/docs_gcp_setup_test.go` (#764, the WSL
+folders they sit beside. **The figure is 67 at this branch's tree, because other
+folders have written a pin since** — `main` holds 66 — among them `internal/cli/docs_gcp_setup_test.go` (#764, the WSL
 route's Windows forms), `internal/cli/docs_setup_wizard_checks_test.go` (#771, the
 register's Check 27), `internal/cli/docs_live_init_census_test.go` (#772, the
 setup wizard's rename census), `internal/cli/docs_windows_console_test.go`
@@ -683,7 +683,9 @@ setup wizard's rename census), `internal/cli/docs_windows_console_test.go`
 workflow while it waits under `docs/pending-workflows/`) and
 `internal/cli/docs_mobile_eas_runbook_test.go` (`docs/mobile/eas-signing-runbook.md`,
 the EAS signing runbook of Task P4.4, whose page this repository's P4.4 refresh
-rewrote against the tree of 2026-10-22), and on this branch
+rewrote against the tree of 2026-10-22), `internal/cli/docs_credentials_cascade_checks_test.go`
+(#951, which `main` gained after this sentence was written and is why `main` holds
+66 rather than 65), and on this branch
 `internal/cli/docs_backlog_test.go`, which plan T4.3 wrote as the folder's own
 pin on `docs/backlog/` rather than on this folder. They
 are named because the figure is a running total of other folders' guards: a folder
@@ -704,7 +706,7 @@ stale has found a merge that did not.
 | Files in `internal/runner` that mention `Severity` at all | 3 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
 | Image-skew `Since` constants | 12 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 66 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 67 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 3 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -ci repo` |
@@ -758,7 +760,7 @@ command beside it are read together, and the command reads the tree the slice
 leaves behind — Slice 1 moved all three (10 keys, 70 scope rows, 3 `defaults:`
 blocks), which is the five-edit shape F7 and F36 price, measured.
 
-The **66** is the convention this folder follows: there is no registry test over
+The **67** is the convention this folder follows: there is no registry test over
 `docs/`, so a folder that wants its documents pinned writes its own file, and
 this folder's is `internal/cli/docs_rigor_modes_test.go` — the forty-eighth when
 this folder's own commit wrote it, and one of the pins the row has counted
