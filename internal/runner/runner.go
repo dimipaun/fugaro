@@ -1476,8 +1476,10 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// The mode this run resolved, read from the base branch and recorded at
 	// D22's first moment (rigor.go). Here, and not earlier: a first run has
 	// just fetched its base above, and a follow-up's or a review run's
-	// configuration already *is* the base's. It never fails the run — the
-	// mode acts on nothing yet.
+	// configuration already *is* the base's. A first run's own read asks
+	// origin for the default branch, which is the file the project check and
+	// the policy are read from — the checkout cannot choose it. It never
+	// fails the run — the mode acts on nothing yet.
 	r.bootstrapRigor(ctx)
 	if err := r.checkProject(ctx, cfg); err != nil {
 		return err

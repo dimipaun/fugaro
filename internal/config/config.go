@@ -46,7 +46,11 @@ type Config struct {
 	// accepts to reduce risk. A file that writes no rigor: block sets none —
 	// this is a default, not a floor, and a project layer's
 	// defaults.rigor.default is what a repository that writes none takes.
-	Rigor *Rigor `yaml:"rigor,omitempty"`
+	// The json tag is what keeps an absent block out of the resolved
+	// config's hash: SHA256 marshals this struct (resolve.go), and a
+	// pointer with no json name would write a null key into every file
+	// that writes none, moving the hash of a file that did not change.
+	Rigor *Rigor `yaml:"rigor,omitempty" json:"rigor,omitempty"`
 
 	// Layer is the project layer Resolve resolved this config over, nil
 	// for none. It is never part of the file or of SHA256: a consumer that
