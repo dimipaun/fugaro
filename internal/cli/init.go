@@ -445,14 +445,16 @@ type initRun struct {
 
 	// update --firebase-project: the Firebase root's outputs once known (the history
 	// job's environment), a change to the local config the run makes, the
-	// text appended to the installation apply's confirmation, and whether
-	// the history job's missing image has been said.
-	fb           *infra.FirebaseOutputs
-	mutate       func(*localcfg.Config)
-	installLabel string
-	historyNoted bool
-	printed      bool // the --json result has been printed
-	anchorNoted  bool // update --repo's pointer at --anchor has been said
+	// text appended to the installation apply's confirmation, whether the
+	// history job's missing image has been said, and whether the
+	// coordinator's missing App ID has.
+	fb               *infra.FirebaseOutputs
+	mutate           func(*localcfg.Config)
+	installLabel     string
+	historyNoted     bool
+	coordinatorNoted bool
+	printed          bool // the --json result has been printed
+	anchorNoted      bool // update --repo's pointer at --anchor has been said
 	// notedOpenProviders is the once-per-run guard on the note about the
 	// providers every repository may use: the converge's repository stage
 	// runs the repo engine too, and the note belongs once.
@@ -1996,6 +1998,9 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 // applies.
 func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, lc *localcfg.Config, spec infra.InstallationSpec) (outs infra.InstallationOutputs, stop bool, err error) {
 	if spec, err = r.historyJob(ctx, c, lc, spec); err != nil {
+		return outs, false, err
+	}
+	if spec, err = r.coordinatorJob(ctx, c, lc, spec); err != nil {
 		return outs, false, err
 	}
 	im, err := infra.DiscoverInstallation(ctx, c, spec)

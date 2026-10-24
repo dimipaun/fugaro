@@ -121,9 +121,12 @@ type InstallationSpec struct {
 	LogIsolation *bool `json:"log_isolation,omitempty"`
 	// EnableBudget and History give the installation the history account
 	// and, with History.DeployJob, the sweeper's job (M9b); both are left
-	// out of an installation without a budget backend.
-	EnableBudget bool         `json:"enable_budget,omitempty"`
-	History      *HistorySpec `json:"history,omitempty"`
+	// out of an installation without a budget backend. Coordinator is the
+	// aggregation job and the writer account beside them (P5, D194), left
+	// out the same way.
+	EnableBudget bool             `json:"enable_budget,omitempty"`
+	History      *HistorySpec     `json:"history,omitempty"`
+	Coordinator  *CoordinatorSpec `json:"coordinator,omitempty"`
 	// ProjectSecrets are the installation module's project-wide secret
 	// containers (logical name -> gcp.ProjectSecretID), which fugaro update
 	// creates or adopts; their values are never set by Terraform (design
@@ -683,7 +686,11 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 		if err != nil {
 			return InstallationSpec{}, err
 		}
-		s.EnableBudget, s.History = true, &h
+		c, err := Coordinator(lc)
+		if err != nil {
+			return InstallationSpec{}, err
+		}
+		s.EnableBudget, s.History, s.Coordinator = true, &h, &c
 	}
 	if e := firstOf(o.AlertEmail, lc.Terraform.AlertEmail); e != "" {
 		s.AlertEmail = &e
