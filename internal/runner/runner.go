@@ -2815,21 +2815,23 @@ func openFindings(rs []runstore.ReviewSummary) *runstore.ReviewSummary {
 }
 
 // fileOpenItems files the backlog item for what this run left open and says
-// whether it filed one (docs/rigor-modes/implementation-plan.md T4.5, D9,
-// D26, D27). The item goes into this run's own checkout and its own commit —
-// the same branch and the same pull request as the change it was filed from,
-// so the filing dirties nothing a reviewer was not already reading (D9) —
-// and its id is recorded beside the review round it came from.
+// whether it filed one (docs/rigor-modes/implementation-plan.md T4.5, T4.6,
+// D9, D26, D27, D30). The item goes into this run's own checkout and its own
+// commit — the same branch and the same pull request as the change it was
+// filed from, so the filing dirties nothing a reviewer was not already reading
+// (D9) — and its id is recorded beside the review round it came from.
+//
+// Whether a run files at all is D30's per-mode table, read from internal/rigor
+// (T4.6): a mode whose row files nothing of its own leaves the branch exactly
+// as it was, so a Critical run's tree and pull request body are the ones main
+// produces. The table is asked rather than compared here, so a mode that files
+// differently is a row in that package and not a branch in this one.
 //
 // The item is written before the run's diff is what a reviewer reads and
 // after the record's own ChangedFiles was measured, so the item file is
 // deliberately not part of "the paths this run changed" (D22's third moment
 // reads that field, and an item about the run must not move the mode the run
 // resolved).
-//
-// Nothing here decides *whether* a mode files: D30's per-mode table is T4.6's
-// (it lands beside the policy, in internal/rigor/), so this files for every
-// mode that reaches here with a round that did not ship, and T4.6 narrows it.
 //
 // A filing that cannot be made is a warning, never the run's outcome: the
 // pull request, the report and the record are what the run is for, and an
@@ -2846,30 +2848,49 @@ func (r *run) fileOpenItems(ctx context.Context) bool {
 	if r.haltValue() != nil || r.isCancelled() {
 		return false
 	}
-	open := openFindings(r.rec.Reviews)
-	if open == nil {
+	files := rigor.Files(r.reachedRigor())
+	if !files.Any() {
 		return false
 	}
-	item, err := backlog.Write(filepath.Join(r.repo.Dir, backlog.Dir), backlog.New{
-		Title:   r.filedTitle(open),
-		Mode:    r.filedMode(),
-		Area:    r.filedArea(),
-		FiledBy: r.filedBy(),
-		FiledIn: "run:" + r.rec.RunID,
-		Date:    r.d.Now().UTC().Format("2006-01-02"),
-		Body:    r.filedBody(open),
-	})
+	open := openFindings(r.rec.Reviews)
+	if open == nil && !files.Deferred {
+		return false
+	}
+	item, err := backlog.Write(filepath.Join(r.repo.Dir, backlog.Dir), r.filedItem(open))
 	if err != nil {
 		r.d.Log.Warn("filing the run's open items failed", "err", r.redact(err.Error()))
 		return false
 	}
-	msg := fmt.Sprintf("fugaro: file %s, what review round %d left open", item.ID, open.Round)
+	msg := fmt.Sprintf("fugaro: file %s, the follow-up this hotfix deferred", item.ID)
+	if open != nil {
+		msg = fmt.Sprintf("fugaro: file %s, what review round %d left open", item.ID, open.Round)
+	}
 	if _, err := r.repo.CommitAll(ctx, msg); err != nil {
 		r.d.Log.Warn("committing the filed item failed", "err", r.redact(err.Error()))
 		return false
 	}
 	r.rec.Backlog = append(r.rec.Backlog, item.ID)
 	return true
+}
+
+// filedItem is the item this run files: the round it left open when the mode's
+// row files what it tolerated, and otherwise the deferral Hotfix's row files
+// whether or not a round was left open (D30). open is nil only in that second
+// case, which is why the deferral's own text is what the item then carries.
+func (r *run) filedItem(open *runstore.ReviewSummary) backlog.New {
+	n := backlog.New{
+		Mode:    r.filedMode(),
+		Area:    r.filedArea(),
+		FiledBy: r.filedBy(),
+		FiledIn: "run:" + r.rec.RunID,
+		Date:    r.d.Now().UTC().Format("2006-01-02"),
+	}
+	if open == nil {
+		n.Title, n.Body = r.deferredTitle(), r.deferredBody()
+		return n
+	}
+	n.Title, n.Body = r.filedTitle(open), r.filedBody(open)
+	return n
 }
 
 // filedTitle is the item's title, and it opens with the run's id so that no
@@ -2946,6 +2967,30 @@ func (r *run) filedBody(open *runstore.ReviewSummary) string {
 		open.Round, who, open.Verdict, Plural(open.Findings, "finding"))
 	why := "The run left them open: they are not what this pull request's outcome was decided on, and an item filed here is a record a later reader can cite, which a finding in a transcript is not (D9)."
 	done := "The pull request that addresses them closes this item (D31)."
+	links := []string{fmt.Sprintf("run `%s`", r.rec.RunID)}
+	if r.rec.PR != nil && r.rec.PR.Number != 0 {
+		links = append(links, fmt.Sprintf("pull request #%d", r.rec.PR.Number))
+	}
+	return backlog.Body(what, why, done, links)
+}
+
+// deferredTitle is the title of the item a hotfix files when it left no round
+// open: its own deferral, which is the proper fix, because the one it shipped
+// is the expedient one (spec.md, D15, D30). It opens with the run's id for the
+// same reason filedTitle does (D26).
+func (r *run) deferredTitle() string {
+	return fmt.Sprintf("Run %s: revisit this hotfix in the area's normal mode", r.rec.RunID)
+}
+
+// deferredBody is that item's body: what the hotfix deferred, why it is filed
+// rather than done here, and what closes it. Nothing else carries this — the
+// deferred text the agent wrote is the agent's own free-form file, which no
+// part of the run parses — so the item says what a hotfix is rather than
+// inventing a summary of the change.
+func (r *run) deferredBody() string {
+	what := "This run was a hotfix: it made the smallest change that stops the bleeding, and revisiting the fix properly is what it deferred (spec.md, D15)."
+	why := "Time is the dominant constraint in Hotfix mode, so the fix ships first and is done properly afterwards — in the area's normal mode, which is a separate run rather than another round of this one."
+	done := "The pull request that revisits the fix in the area's normal mode closes this item (D31)."
 	links := []string{fmt.Sprintf("run `%s`", r.rec.RunID)}
 	if r.rec.PR != nil && r.rec.PR.Number != 0 {
 		links = append(links, fmt.Sprintf("pull request #%d", r.rec.PR.Number))
