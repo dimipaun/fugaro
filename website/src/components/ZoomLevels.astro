@@ -8,6 +8,16 @@
  * the boards and cost more than it was worth (owner, 2026-10-22), so the picture is the board's
  * own render. A reader who cannot see it is given the `alt` text; the page's `<nav>` of anchors
  * (`#level-1` … `#level-4`) is the same as ever and needs no script.
+ *
+ * **A slider, where a script runs** (the owner's preview feedback on #1003, 2026-10-24, which
+ * replaced the scroll-linked zoom of 2026-10-23 with it). The markup is the four stills, in
+ * order, and a control bar emitted `hidden`; `public/scripts/site.js` (`levels()`) marks the
+ * section `data-levels-ready`, which is the only state the slider's rules below are scoped to,
+ * reveals the bar and advances one level at a time. With no script the section is the stack
+ * of four it always was, and the anchors land on four places. The bar is Pause/Play (WCAG
+ * 2.2.2), Previous, one dot per level and Next: real buttons, named, the current dot marked
+ * with `aria-current`. The interval, the pauses (hover, focus inside, a hidden tab, off-screen)
+ * and the reduced-motion default (start paused) are the script's.
  */
 import { LEVELS } from '../lib/zoom-levels.mjs'
 
@@ -15,7 +25,7 @@ import { LEVELS } from '../lib/zoom-levels.mjs'
 // homepage's run section.
 ---
 
-<section class="zoom" aria-labelledby="zoom-title">
+<section class="zoom" data-levels aria-roledescription="carousel" aria-labelledby="zoom-title">
   <h2 class="zoom-title" id="zoom-title">The four levels</h2>
 
   <p class="zoom-legend">
@@ -36,24 +46,54 @@ import { LEVELS } from '../lib/zoom-levels.mjs'
     </ul>
   </nav>
 
-  {
-    LEVELS.map((entry, index) => (
-      <figure class="zoom-figure" id={entry.id}>
-        <img
-          class="zoom-img"
-          src={`/images/zoom/level${index + 1}.png`}
-          width="2560"
-          height="1440"
-          alt={entry.alt}
-          loading={index === 0 ? 'eager' : 'lazy'}
-          decoding="async"
-        />
-        <figcaption class="zoom-caption">
-          <span class="zoom-level-name">{entry.name}</span>
-        </figcaption>
-      </figure>
-    ))
-  }
+  <div class="zoom-track" data-levels-track aria-live="polite">
+    {
+      LEVELS.map((entry, index) => (
+        <figure
+          class="zoom-figure"
+          id={entry.id}
+          data-levels-slide
+          role="group"
+          aria-roledescription="slide"
+          aria-label={`${index + 1} of ${LEVELS.length}`}
+        >
+          <img
+            class="zoom-img"
+            src={`/images/zoom/level${index + 1}.png`}
+            width="2560"
+            height="1440"
+            alt={entry.alt}
+            loading={index === 0 ? 'eager' : 'lazy'}
+            decoding="async"
+          />
+          <figcaption class="zoom-caption">
+            <span class="zoom-level-name">{entry.name}</span>
+          </figcaption>
+        </figure>
+      ))
+    }
+  </div>
+
+  <div class="zoom-controls" data-levels-controls hidden>
+    <button type="button" class="zoom-button zoom-toggle" data-levels-toggle aria-label="Pause the levels">Pause</button>
+    <button type="button" class="zoom-button" data-levels-prev aria-label="Previous level">Previous</button>
+    <ul class="zoom-dots">
+      {
+        LEVELS.map((entry, index) => (
+          <li>
+            <button
+              type="button"
+              class="zoom-dot"
+              data-levels-dot={String(index)}
+              aria-label={`Level ${index + 1}: ${entry.name}`}
+              aria-current={index === 0 ? 'true' : 'false'}
+            />
+          </li>
+        ))
+      }
+    </ul>
+    <button type="button" class="zoom-button" data-levels-next aria-label="Next level">Next</button>
+  </div>
 </section>
 
 <style>
@@ -121,5 +161,120 @@ import { LEVELS } from '../lib/zoom-levels.mjs'
     margin-top: var(--space-xs);
     color: var(--text-muted);
     font-size: var(--font-size-sm);
+  }
+
+  /* The slider (owner's preview feedback on #1003, 2026-10-24), scoped to the state only
+     `site.js` writes: the four figures share one cell and the current one shows. A change is an
+     opacity and scale crossfade over `--duration-base`; the layout's reduced-motion rule makes
+     it 1ms. `visibility` waits for the fade so the outgoing level is still there to fade from,
+     and a hidden level is neither seen nor reached. */
+  .zoom[data-levels-ready] .zoom-nav {
+    display: none;
+  }
+
+  .zoom[data-levels-ready] .zoom-track {
+    display: grid;
+    touch-action: pan-y;
+  }
+
+  .zoom[data-levels-ready] .zoom-figure {
+    grid-area: 1 / 1;
+    margin: 0;
+    opacity: 0;
+    visibility: hidden;
+    transform: scale(0.98);
+    transition:
+      opacity var(--duration-base) var(--ease-out),
+      transform var(--duration-base) var(--ease-out),
+      visibility 0s linear var(--duration-base);
+  }
+
+  .zoom[data-levels-ready] .zoom-figure[data-current='true'] {
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+    transition-delay: 0s;
+  }
+
+  .zoom-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2xs);
+    margin-top: var(--space-sm);
+  }
+
+  .zoom-controls[hidden] {
+    display: none;
+  }
+
+  .zoom-button {
+    min-height: 44px;
+    padding: var(--space-3xs) var(--space-sm);
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    font-size: var(--font-size-sm);
+    font-weight: var(--weight-semibold);
+    cursor: pointer;
+    transition: background-color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
+  }
+
+  .zoom-button:active,
+  .zoom-dot:active {
+    transform: scale(0.96);
+  }
+
+  /* Wide enough for either word, so Pause and Play do not move the buttons beside them. */
+  .zoom-toggle {
+    min-width: 5.5rem;
+  }
+
+  .zoom-dots {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .zoom-dots > li {
+    display: flex;
+  }
+
+  /* A dot is a 44px target with a small mark in it. */
+  .zoom-dot {
+    position: relative;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: pointer;
+    transition: transform var(--duration-fast) var(--ease-out);
+  }
+
+  .zoom-dot::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    width: 10px;
+    height: 10px;
+    margin: auto;
+    border-radius: var(--radius-pill);
+    background: var(--border);
+  }
+
+  .zoom-dot[aria-current='true']::after {
+    background: var(--accent);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .zoom-button:hover {
+      background: var(--border);
+    }
   }
 </style>
