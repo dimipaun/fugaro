@@ -590,11 +590,11 @@ const launcherColNarrow = 8
 // the fifteen columns it had at 120 columns of screen, where the row was
 // clipping it anyway. Tier 2 starts at 70 columns and has no slack anywhere
 // else, so it gives up five of its flags column's eighteen columns and one of
-// its own BY cell's. Both tiers end up whole where they were: a tier-3 row at
-// 120 columns is 119 wide, as main's was, and a tier-2 row fits at the 70
-// columns its tier starts at. Dropping the trailing VERIFY and MODELS columns
-// (owner request 2026-10-24) returns their columns to the title, which was
-// the cell the clip was eating.
+// its own BY cell's. Both tiers end up whole where they were: a tier-2 row
+// fits at the 70 columns its tier starts at, and a tier-3 row at 120. Dropping
+// the trailing VERIFY and MODELS columns (owner request 2026-10-24) returns
+// their columns to the title, the cell the clip was eating: at 120 columns the
+// tier-3 title is 33 wide where its floor of 10 was binding.
 //
 // The trailing constants leave the elastic row one column short of the
 // screen's edge, so a cell is clipped by its own width and never by the
