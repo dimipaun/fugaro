@@ -453,7 +453,7 @@ func (e *initEngine) announceAlreadySetUp() {
 // or the one a first run of setup wrote when it paused for billing
 // (localcfg.Config.SetupPending), which the rerun resumes as a first run.
 func (e *initEngine) firstRun() bool {
-	return e.old == nil || e.lc.SetupPending != ""
+	return e.old == nil || (e.lc != nil && e.lc.SetupPending != "")
 }
 
 // programPrefix is the line's own "fugaro setup: ", or "" for a hand-built
