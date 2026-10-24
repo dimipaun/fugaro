@@ -285,10 +285,13 @@ const (
 // are fugaro-<readable>-<8 hex>. The deployer account (DeployerAccountID) and
 // the credentials service's (CredentialsAccountID) are deliberately NOT among
 // FugaroAccounts: each holds roles of its own and nothing a job holds, so each
-// is its own kind of principal (toDeployer, toCredentials).
+// is its own kind of principal (toDeployer, toCredentials). The coordinator's
+// writer account (internal/infra's CoordinatorAccountID) is among them: it
+// holds no custom role of its own, and the one role it does hold — the FP's
+// database admin — is the history account's own.
 var (
 	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole}
-	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
+	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload", "fugaro-coordinator"}
 )
 
 // The deployer account of D75, and the condition that fences the half of it

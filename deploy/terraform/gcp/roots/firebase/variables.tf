@@ -57,3 +57,7 @@ variable "budget_admins" {
 variable "history_account" {
   type = string
 }
+
+variable "coordinator_account" {
+  type = string
+}
