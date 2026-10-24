@@ -75,7 +75,35 @@ type Spec struct {
 	// applied by the launcher and by Validate below): it becomes a
 	// terminal line and a pull request's title, and neither may be forged
 	// by the text of a title.
-	Title       string    `json:"title,omitempty"`
+	Title string `json:"title,omitempty"`
+	// PlanTask is the plan task this run works on, from fugaro run
+	// --plan-task: the id of one task in one plan, as the plan's own graph
+	// artifact spells it ("setup-wizard/W1.3"; a plan under docs/plans/ is
+	// a two-segment plan id, so its tasks are three segments). It is the
+	// join key between a run and a node of the plan's dependency graph
+	// (console dependency graph plan, decision GD5): the console matches a
+	// run to a node by it, and by nothing else, since a title is free text
+	// and not unique.
+	//
+	// It is a DISPLAY-ONLY join hint (the plan's constraint C3). It is
+	// shape-checked (PlanTaskProblem, applied by the launcher and by
+	// Validate below), length-capped, never joined into a path and never an
+	// authorization input: no policy, admission, budget or grant rule reads
+	// it, and a run's claim about it changes no other node's readiness. A
+	// job can claim any task it likes — the abuse this field allows is
+	// state spoofing in a display, and the plan answers that by scoping the
+	// join to the plan's own repository (GV1.6), not by trusting this text.
+	//
+	// Empty (the common case, and every spec written before this release)
+	// is no claim at all, and writes no field, so a spec from a launch
+	// without --plan-task is byte-identical to what the previous release
+	// wrote, and a runner that has never heard of the field still reads it.
+	// A task that carries one needs a runner that knows it: Parse decodes
+	// with DisallowUnknownFields, so an older runner refuses the whole
+	// spec — the skew every new task field has, and the reason launch.json,
+	// which its readers decode without that refusal, is not enough on its
+	// own for a run's own record of it.
+	PlanTask    string    `json:"plan_task,omitempty"`
 	Branch      string    `json:"branch,omitempty"`
 	PR          int       `json:"pr,omitempty"`
 	PreviousRun string    `json:"previous_run,omitempty"`
@@ -301,6 +329,74 @@ func InputNameProblem(name string) string {
 	return ""
 }
 
+// MaxPlanTaskBytes bounds a plan task id (Spec.PlanTask, fugaro run
+// --plan-task): it names one task in one plan. The cap is deliberately well
+// under what the surfaces that show it have room for, and a value over it
+// is a refusal, not a truncation: two tasks named by the part that was cut
+// off must not read alike.
+const MaxPlanTaskBytes = 128
+
+// PlanTaskElemRE is the form of one "/"-separated element of a plan task
+// id: letters, digits, '.', '_' and '-', starting with a letter or a digit.
+// An allow-list rather than a list of refusals, because the id is shown as
+// text in the console and matched against plan ids and task ids that came
+// out of file names; anything outside this set (a space, a quote, a
+// control, a Unicode look-alike) is not one.
+//
+// Exported the way config.ClaudeAccountNameRE is: schemas/task.schema.json
+// carries the same shape as a pattern, and the test that holds the two
+// together (TestTaskSchemaPlanTaskMatchesTheGoRule, schemas/schemas_test.go)
+// derives the schema's whole-id pattern from this one.
+var PlanTaskElemRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// PlanTaskProblem reports what is wrong with a plan task id t — "" when
+// nothing is — for the two places one is accepted: the launcher, at fugaro
+// run --plan-task, and the runner, reading a stored task back
+// (Spec.Validate). One list with two callers, the rule TitleProblem and
+// InputNameProblem already follow in this package, and for the same reason:
+// an id the launcher accepts has to be one the runner accepts, or the
+// launch writes a task the run then refuses at bootstrap.
+//
+// The rules are: not empty, at most MaxPlanTaskBytes bytes, at least two
+// "/"-separated elements (a plan and a task), no NUL or newline, no
+// absolute path, no "." or ".." element, no control character, and nothing
+// outside PlanTaskElemRE in any element. It is a shape check and nothing
+// more: the id is a display-only join hint (Spec.PlanTask), so this does
+// not check that the plan or the task exists — nothing may act on the
+// answer — and the id is never joined into a path.
+func PlanTaskProblem(t string) string {
+	switch {
+	case t == "":
+		return "is empty"
+	case len(t) > MaxPlanTaskBytes:
+		return fmt.Sprintf("is longer than %d bytes", MaxPlanTaskBytes)
+	case strings.ContainsAny(t, "\x00\n\r"):
+		return "holds a NUL or a newline"
+	case strings.HasPrefix(t, "/"):
+		return "is an absolute path"
+	}
+	for _, r := range t {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			return fmt.Sprintf("holds a control character (U+%04X)", r)
+		}
+	}
+	elems := strings.Split(t, "/")
+	if len(elems) < 2 {
+		return "must name a task in a plan, as <plan>/<task>"
+	}
+	for _, elem := range elems {
+		switch {
+		case elem == "":
+			return "has an empty path element"
+		case elem == "." || elem == "..":
+			return fmt.Sprintf("has a %q path element", elem)
+		case !PlanTaskElemRE.MatchString(elem):
+			return fmt.Sprintf("has %q, where letters, digits, '.', '_' and '-' are allowed", elem)
+		}
+	}
+	return ""
+}
+
 // Recipe is the recipe the launching CLI resolved (docs/design/recipes.md §5).
 type Recipe struct {
 	Name   string `json:"name"`
@@ -507,6 +603,17 @@ func (s *Spec) Validate() error {
 			// spaces — was not written by it, and would otherwise reach
 			// the pull request's title (rawPRText) verbatim.
 			bad("task spec: title %q is not in its sanitised form (bidi, zero-width or other invisible characters, or untrimmed or repeated spaces)", s.Title)
+		}
+	}
+	// The plan task's own shape, through the one list the launcher applies
+	// to --plan-task (PlanTaskProblem): the id is shown as text in the
+	// console and joins a run to a node of a plan's graph, so a
+	// hand-written task.json carrying a path or a control character in it
+	// is refused here rather than shown. An absent id is legal — the
+	// common case, a launch that named no task.
+	if s.PlanTask != "" {
+		if p := PlanTaskProblem(s.PlanTask); p != "" {
+			bad("task spec: plan_task %s", p)
 		}
 	}
 	// config.ClaudeAccountNameRE and config.MaxClaudeAccountNameLen are the

@@ -134,12 +134,31 @@ type Row struct {
 	// could rewrite a line and caps what is left. It is read for display
 	// only: nothing authorises or admits anything by it (the guard test in
 	// this package fails if any other code reads the field).
-	LaunchedBy string        `json:"launched_by,omitempty"`
-	PRURL      string        `json:"pr_url,omitempty"`
-	Execution  string        `json:"execution,omitempty"`
-	LogURL     string        `json:"log_url,omitempty"`
-	Created    time.Time     `json:"created"`
-	Cost       runstore.Cost `json:"cost"`
+	LaunchedBy string `json:"launched_by,omitempty"`
+	// PlanTask is the plan task this run works on, as the run's own
+	// launch.json recorded it at launch (runstore.Launch.PlanTask, from
+	// task.Spec.PlanTask at fugaro run --plan-task): the id of one task in
+	// one plan, the join key the console's graph screen matches a run to a
+	// node by (console dependency graph plan, decision GD5).
+	//
+	// It is the launch record's own value and nothing else, like LaunchedBy
+	// beside it: absent for a run whose launch.json has none (never
+	// launched, or launched by a CLI that recorded none), and never filled
+	// in from the task, which carries it for the recovery path and --retry
+	// rather than for display.
+	//
+	// UNTRUSTED display text, sanitised here for the same reason the
+	// launcher is (safetext.Field): a launcher writes it, and both documents
+	// this row appears in — runs ls --json and the console that reads it —
+	// are rendered as they are. It is a DISPLAY-ONLY join hint (the plan's
+	// constraint C3): nothing decides anything by it, it is never joined
+	// into a path, and a run's claim about it changes no other node's state.
+	PlanTask  string        `json:"plan_task,omitempty"`
+	PRURL     string        `json:"pr_url,omitempty"`
+	Execution string        `json:"execution,omitempty"`
+	LogURL    string        `json:"log_url,omitempty"`
+	Created   time.Time     `json:"created"`
+	Cost      runstore.Cost `json:"cost"`
 	// ImageAgeS is how old the run's image was when the run started
 	// (started_at minus built_at), in seconds; absent when either is unknown.
 	ImageAgeS *int64 `json:"image_age_s,omitempty"`
@@ -280,6 +299,7 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 	if in.Launch != nil {
 		row.Execution, row.LogURL = in.Launch.Execution, in.Launch.LogURL
 		row.LaunchedBy = safetext.Field(in.Launch.LaunchedBy)
+		row.PlanTask = safetext.Field(in.Launch.PlanTask)
 	}
 	r, e := in.Record, in.Exec
 	followUpFields(&row, in.Task, r)

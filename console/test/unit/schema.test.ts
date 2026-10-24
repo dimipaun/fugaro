@@ -279,6 +279,10 @@ const FULL_ROW: JSONDoc = Object.freeze({
   // key the struct's pin caught `RECORD_KEYS` missing: it sits between
   // `requested_by` and `pr_url`, and a real `runs ls --json` row carries it.
   launched_by: 'redacted@example.invalid',
+  // The plan task the run says it works on (GV1.2, decision GD5), between
+  // `launched_by` and `pr_url`: written on every row whose `launch.json`
+  // recorded one, and absent for every run launched without `--plan-task`.
+  plan_task: 'setup-wizard/W1.3',
   pr_url: 'https://example.invalid/r-4c25cf20/r-f1aa9214/pull/412',
   execution: 'fugaro-20261015-120000-aa01',
   log_url: 'https://example.invalid/logs/20261015-120000-aa01',
@@ -375,6 +379,10 @@ const FULL_LIVE_RUN: JSONDoc = Object.freeze({
   provider: 'github',
   account: 'redacted@example.invalid',
   launched_by: 'redacted@example.invalid',
+  // GV1.2 (decision GD5): the plan task the run was launched to work on, as
+  // its own `launch.json` recorded it. `JSONRun` and `JSONFinished` carry it;
+  // the Live screen draws no column for it yet (GV2.3's graph is the reader).
+  plan_task: 'setup-wizard/W1.3',
   // 0.10.0 (credentials-service C1.21): the name of the credential the run's
   // cascade is spending on -- a name, never a value -- and the instant a run
   // held up for one expects to resume at. Both are `JSONRun`'s alone: a
@@ -402,6 +410,8 @@ const FULL_FINISHED_RUN: JSONDoc = Object.freeze({
   provider: 'github',
   account: 'redacted@example.invalid',
   launched_by: 'redacted@example.invalid',
+  // GV1.2: a finished run does not stop having been asked to work on a task.
+  plan_task: 'setup-wizard/W1.3',
 })
 
 /** LIVE_REAL is the committed fixture's first document carrying those two rows:
@@ -551,6 +561,12 @@ describe('both document shapes decode', () => {
         expect(fromTheStruct, `${name} carries ${found}`).toContain(found)
       }
     }
+    // GV1.2's `plan_task` is named too, on both shapes: it was the third key
+    // this comparison could have agreed with two lists that lost it together,
+    // and the shape's own contract row now carries it.
+    for (const name of ['JSONRun', 'JSONFinished'] as const) {
+      expect(structTags(WATCH_SOURCE, name).map((tag) => tag.key), `${name} carries plan_task`).toContain('plan_task')
+    }
     // 0.10.0's two are named as well, and they are `JSONRun`'s alone -- a
     // finished run spends nothing and waits for nothing -- so they are asserted
     // here rather than in the loop above, which walks both structs. Naming them
@@ -593,6 +609,9 @@ describe('both document shapes decode', () => {
     for (const found of ['artifact_count', 'artifact_bytes']) {
       expect(fromTheStruct, `${found} is the omission this pin exists for`).toContain(found)
     }
+    // GV1.2's `plan_task` (decision GD5), named for the same reason: the
+    // comparison below cannot catch a key both sides lost together.
+    expect(fromTheStruct, 'plan_task is the omission this pin exists for').toContain('plan_task')
     expect([...RECORD_KEYS].sort()).toEqual([...fromTheStruct].sort())
     expect(RECORD_KEYS.length).toBe(fromTheStruct.length)
     // The keys without `omitempty` are the ones whose absence broke it, and they
@@ -1040,6 +1059,14 @@ describe('every wire string is classified', () => {
     expect(wireTextClass('job')).toBe('label')
     expect(wireTextClass('profile')).toBe('label')
     expect(wireTextClass('provider')).toBe('label')
+    // GV1.2's `plan_task` (decision GD5) is text a launcher wrote, so it is
+    // classified rather than exempted even though no screen draws it yet: an id
+    // the plan's document spells a node with, which is a label and neither a
+    // person nor prose. It is `label` and not `sentence` because a value that
+    // were prose must not be drawn as an identifier.
+    expect(wireTextClass('plan_task')).toBe('label')
+    expect(wireTextClass('plan_task')).not.toBe('sentence')
+    expect(wireTextClass('plan_task')).not.toBe('person')
     // 0.10.0's two (credentials-service C1.21). `credential` is a **name** -- a
     // label, the class an identifier a policy or the service wrote carries, and
     // not `person`: it names an account's token, not a person. It goes through

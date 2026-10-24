@@ -72,6 +72,18 @@ type RunFacts struct {
 	// sanitises it with Field (runview.Join): one launch.json must read the
 	// same in both documents, cap included.
 	LaunchedBy string
+	// PlanTask is the plan task the run's launch.json recorded (task.Spec's
+	// PlanTask, at fugaro run --plan-task): the display-only join hint the
+	// console matches a run to a node of a plan's graph by (console
+	// dependency graph plan, decision GD5). "" when the reader has no
+	// launch.json for the run, or the one it has recorded none — never a
+	// value this package invents.
+	//
+	// UNTRUSTED display text a launcher wrote, sanitised like the launcher
+	// beside it (safetext.Field, so one launch.json reads the same in watch
+	// --json and fugaro runs ls --json), and never an authority: nothing
+	// decides anything by it.
+	PlanTask string
 }
 
 // Facts is the RunFacts of each run a scan saw, by the run's key.
@@ -102,6 +114,7 @@ func MergeFacts(v View, facts Facts) View {
 				rows[j].Job, rows[j].Profile = clean(f.Job), clean(f.Profile)
 				rows[j].Provider, rows[j].Account = clean(f.Provider), clean(f.Account)
 				rows[j].LaunchedBy = safetext.Field(f.LaunchedBy)
+				rows[j].PlanTask = safetext.Field(f.PlanTask)
 			}
 		}
 	}

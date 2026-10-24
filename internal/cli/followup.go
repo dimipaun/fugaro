@@ -410,9 +410,12 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 	// --run-id would report a launch whose title is not the one asked for.
 	// No --title is no claim about it: the stored title (the follow-up's
 	// own, or the one it inherited from its run) is kept as it is, which is
-	// what makes the repeat idempotent.
+	// what makes the repeat idempotent. The plan task follows the same rule:
+	// an explicit --plan-task must be the stored one, and none repeats the
+	// stored task whatever it claims.
 	if have.PR != o.pr[0] || have.Task != text || have.Batch != o.batch || (o.title != "" && have.Title != o.title) || string(a) != string(b) || (o.recipe != "" && o.recipe != haveRecipe) ||
-		(o.token != "" && o.token != cmp.Or(have.OAuthToken, config.DefaultClaudeAccount)) {
+		(o.token != "" && o.token != cmp.Or(have.OAuthToken, config.DefaultClaudeAccount)) ||
+		(o.planTask != "" && have.PlanTask != o.planTask) {
 		return nil, userErr("run ID %s already holds a different task", o.runID)
 	}
 	// have is stored bucket data nobody vouches for (review finding A): its
@@ -545,9 +548,15 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	// the job it is. A chain whose first run carried no title has none to
 	// inherit, and writes no title at all — the follow-up is then listed by
 	// its own instructions' first line, exactly as before the flag existed.
+	// The follow-up's plan task is the flag's alone, never the run's it
+	// continues: a follow-up is joined to the graph through its pull request
+	// number (the run it follows holds the node), and a chain that kept
+	// re-claiming a task would say the task is running again with every
+	// follow-up. An explicit --plan-task claims one for this run itself.
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: c.Ref, Workflow: workflow, Task: text,
-		Title:  cmp.Or(o.title, c.Title),
-		Branch: c.Branch, PR: o.pr[0], PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch, Recipe: rcp}
+		Title:    cmp.Or(o.title, c.Title),
+		PlanTask: o.planTask,
+		Branch:   c.Branch, PR: o.pr[0], PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch, Recipe: rcp}
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()
 	}
