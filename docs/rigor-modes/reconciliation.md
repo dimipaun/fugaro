@@ -673,8 +673,8 @@ folder's own: the pins were **48**, the 47 the base `1d325928` (§1) already hel
 plus this folder's `internal/cli/docs_rigor_modes_test.go`, and they are files
 rather than folders, 13 of them pinning one of `docs/`'s folders and the rest a
 standalone document, which is why the row above counts the pins and not the
-folders they sit beside. **The figure is 66 at this branch's tree, because other
-folders have written a pin since** — `main` holds 65 — among them `internal/cli/docs_gcp_setup_test.go` (#764, the WSL
+folders they sit beside. **The figure is 67 at this branch's tree, because other
+folders have written a pin since** — `main` holds 66 — among them `internal/cli/docs_gcp_setup_test.go` (#764, the WSL
 route's Windows forms), `internal/cli/docs_setup_wizard_checks_test.go` (#771, the
 register's Check 27), `internal/cli/docs_live_init_census_test.go` (#772, the
 setup wizard's rename census), `internal/cli/docs_windows_console_test.go`
@@ -758,7 +758,7 @@ command beside it are read together, and the command reads the tree the slice
 leaves behind — Slice 1 moved all three (10 keys, 70 scope rows, 3 `defaults:`
 blocks), which is the five-edit shape F7 and F36 price, measured.
 
-The **66** is the convention this folder follows: there is no registry test over
+The **67** is the convention this folder follows: there is no registry test over
 `docs/`, so a folder that wants its documents pinned writes its own file, and
 this folder's is `internal/cli/docs_rigor_modes_test.go` — the forty-eighth when
 this folder's own commit wrote it, and one of the pins the row has counted
@@ -1720,6 +1720,21 @@ the mode from the base branch, so `fugaro run --ref feature-x` can run on
 exactly the kind F35 is, and the honest mitigation is that the run's record says
 which revision each came from (D24) rather than that the divergence does not
 exist.
+
+**As T1.2 read it: "the base branch" is the repository's default branch.** A
+first run's checkout is cut from the ref the run will push, so `git.base_branch`
+is a key the branch under review writes for itself: reading `origin/<that name>`
+would let a branch be its own base, which is the one shape the answer above
+forbids. `internal/runner/rigor.go` therefore reads the mode through the same
+default-branch read the project check and the budget policy make
+(`internal/runner/policy.go`'s `defaultBranchFile`, `repo.DefaultBranch`) — the
+revision no file in the checkout can name — and D24's `revision` is what the
+record says it read. A repository whose `git.base_branch` is not its default
+branch resolves its mode from the default branch's file nonetheless. A local run
+is the exception, and has its own reason: it has no project, so checkProject and
+resolvePolicy already skip that read there, and it has no branch under review to
+be protected from — the checkout is the developer's own — so it reads the ref
+its own configuration names, as it did before the default-branch read arrived.
 
 **Alternative: the checked-out ref, for a first run only.** Cost: free (the file
 is already read), consistent with every other key a first run uses, and it means a

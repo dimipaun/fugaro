@@ -1,7 +1,9 @@
 package config
 
 import (
+	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/rigor"
@@ -50,6 +52,43 @@ func TestRigorConfigKeepsTheTwoLayersApart(t *testing.T) {
 	}
 	if zero := (&Config{}).ProjectRigor(); !reflect.DeepEqual(zero, rigor.Config{}) {
 		t.Errorf("neither layer: %+v", zero)
+	}
+}
+
+// TestRigorIsOutOfTheHashWhenTheFileWritesNone: SHA256 is the hash of this
+// struct's JSON (resolve.go) and is the quick check that a repository's
+// resolved values did not move (docs/design/layered-config.md §4). A pointer
+// with a yaml tag and no json name marshals as "rigor":null in every file
+// that writes no rigor: block — which is nearly every file — and so moves the
+// hash of a file nobody changed. Layer and RepoRigor, the two fields beside
+// it, carry json:"-" for the same reason; this one needs the name, because a
+// block a file does write is part of the values the hash covers.
+func TestRigorIsOutOfTheHashWhenTheFileWritesNone(t *testing.T) {
+	layer := mustLayer(t, testLayer)
+	c, _, ps := Resolve([]byte(minimalRepo), layer)
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	if c.Rigor != nil {
+		t.Fatalf("a file that writes no rigor: block resolved one: %+v", c.Rigor)
+	}
+	b, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), `"rigor"`) {
+		t.Errorf("a config whose file writes no rigor: block carries the key anyway, so its hash moves for a file that did not change: %s", b)
+	}
+
+	with, _, ps := Resolve([]byte(minimalRepo+"rigor: { default: poc }\n"), layer)
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	if with.Rigor == nil || with.Rigor.Default != rigor.POC {
+		t.Fatalf("the block a file writes did not resolve: %+v", with.Rigor)
+	}
+	if with.SHA256() == c.SHA256() {
+		t.Error("a file that writes a rigor: block hashes as one that writes none")
 	}
 }
 
