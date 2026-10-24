@@ -16,8 +16,11 @@ import (
 
 	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/internal/coordinator"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
+	"github.com/dimipaun/fugaro/internal/gitprov/httpfixture"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -72,6 +75,7 @@ var updateCoordinatorGolden = flag.Bool("update-coordinator", false, "rewrite te
 // what its result record ended up as.
 type coordinatorRunSeed struct {
 	id     string
+	repo   string // the repository the run is of; "" means the fixture's own
 	pr     int    // the pull request the task names, 0 for none (a first run)
 	prev   string // the run the task continues, set with pr
 	branch string // the run's branch, on the task and on the record
@@ -106,8 +110,12 @@ func newCoordinatorFixture(t *testing.T, seeds []coordinatorRunSeed, prs ...fake
 	}
 	defer b.Close()
 	for _, s := range seeds {
-		store := runstore.Open(b, appSlug, s.id)
-		spec := &task.Spec{Version: 1, RunID: s.id, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
+		repo, slug := "acme/app", appSlug
+		if s.repo != "" {
+			repo, slug = s.repo, mustSlug(gitprov.KindGitHub, s.repo)
+		}
+		store := runstore.Open(b, slug, s.id)
+		spec := &task.Spec{Version: 1, RunID: s.id, Repo: repo, Ref: "main", Workflow: "web", Task: "x"}
 		// A follow-up task names its pull request, its branch and the run it
 		// continues — task.Validate's own rule ("branch, pr and previous_run
 		// must be set together") — and a first run names none of the three.
@@ -123,10 +131,10 @@ func newCoordinatorFixture(t *testing.T, seeds []coordinatorRunSeed, prs ...fake
 		if s.status == "" {
 			continue
 		}
-		rec := &runstore.Record{Version: 1, RunID: s.id, Repo: "acme/app", Workflow: "web",
+		rec := &runstore.Record{Version: 1, RunID: s.id, Repo: repo, Workflow: "web",
 			Status: s.status, Branch: s.branch, BaseBranch: s.base}
 		if s.prRef != 0 {
-			rec.PR = &runstore.PRRef{Number: s.prRef, URL: fmt.Sprintf("https://github.com/acme/app/pull/%d", s.prRef)}
+			rec.PR = &runstore.PRRef{Number: s.prRef, URL: fmt.Sprintf("https://github.com/%s/pull/%d", repo, s.prRef)}
 		}
 		if len(s.files) > 0 {
 			rec.ChangedFiles = runstore.NewChangedFiles(s.files)
@@ -146,16 +154,68 @@ func newCoordinatorFixture(t *testing.T, seeds []coordinatorRunSeed, prs ...fake
 	}
 	host := &fake.Provider{Repo: "acme/app", SelfID: "1"}
 	host.State.PRs = prs
-	setCoordinatorHost(t, func([]string, func(string)) (gitprov.Opener, error) { return gitprov.Static(host), nil })
+	setCoordinatorHost(t, func([]string, func(string)) (coordinator.ProviderOpener, error) {
+		return func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
+			return host, nil, nil
+		}, nil
+	})
 	return &coordinatorFixture{cloudFixture: f, host: host}
 }
 
-// setCoordinatorHost replaces the command's provider opener for one test.
-func setCoordinatorHost(t *testing.T, open func([]string, func(string)) (gitprov.Opener, error)) {
+// setCoordinatorHost replaces the command's provider opener for one test: the
+// coordinator.ProviderOpener the reader is built with, so a test decides what
+// a repository is opened as — and, because the opener is also what installs the
+// coordinator's token source on a provider, what the read is authenticated
+// with.
+func setCoordinatorHost(t *testing.T, open func([]string, func(string)) (coordinator.ProviderOpener, error)) {
 	t.Helper()
 	prev := openCoordinatorProvider
 	openCoordinatorProvider = open
 	t.Cleanup(func() { openCoordinatorProvider = prev })
+}
+
+// setCoordinatorProject is the fixture for a project-wide read: one fake host
+// per repository, opened through the coordinator's own token source, which the
+// opener asks for a token the way a provider's first call does — so the read
+// mints, caches and reads exactly as a real one does.
+//
+// tokens records the token each repository was read with, whichever mint is in
+// place: that is how a test says "one token per repository" without a network.
+func setCoordinatorProject(t *testing.T, hosts map[string]*fake.Provider, tokens map[string]string) {
+	t.Helper()
+	setCoordinatorHost(t, func([]string, func(string)) (coordinator.ProviderOpener, error) {
+		return func(ctx context.Context, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
+			host, ok := hosts[repo]
+			if !ok {
+				return nil, nil, fmt.Errorf("the fixture has no host for %s", repo)
+			}
+			token, _, err := src.Token(ctx, 2*time.Minute)
+			if err != nil {
+				return nil, nil, err
+			}
+			if tokens != nil {
+				tokens[repo] = token
+			}
+			return host, nil, nil
+		}, nil
+	})
+}
+
+// setCoordinatorMint replaces the command's mint for one test, so that a read
+// mints without reaching GitHub: the token is per repository, which is what the
+// coordinator's own mint is keyed by (D193(A)), and a test then asserts on the
+// tokens the reads were authenticated with.
+func setCoordinatorMint(t *testing.T, tokens map[string]string) {
+	t.Helper()
+	prev := coordinatorMint
+	coordinatorMint = func(_ context.Context, repo string) (string, time.Time, error) {
+		token := "ghs_fixture_" + strings.ReplaceAll(repo, "/", "_")
+		if tokens != nil {
+			tokens[repo] = token
+		}
+		return token, time.Now().Add(time.Hour), nil
+	}
+	t.Cleanup(func() { coordinatorMint = prev })
 }
 
 // coordinatorPR is one pull request in the fake host's state.
@@ -430,6 +490,129 @@ func TestCoordinatorStatusRefusesAnUnnamedRepository(t *testing.T) {
 	if _, _, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--json", "--since", "0"); err != nil {
 		t.Fatalf("--repo acme/app: %v", err)
 	}
+	if _, _, err := execute(t, "coordinator", "status", "--all", "--repo", "acme/app", "--since", "0"); err == nil ||
+		!strings.Contains(err.Error(), "--all") || !strings.Contains(err.Error(), "--repo") {
+		t.Fatalf("--all with --repo: err = %v, want one naming both flags", err)
+	}
+}
+
+// --all is the project-wide read: every repository the local config lists is
+// read, one view each, each through its own credential — and the views are not
+// compared across repositories, because a service is a path's shape in one tree
+// and two repositories' paths say nothing about each other.
+//
+// The tokens the two repositories were read with are asserted to be two, which
+// is D193's answer of 2026-10-21 held at the command's own level: one token per
+// repository, minted for that repository.
+func TestCoordinatorStatusAllReadsEveryRepository(t *testing.T) {
+	f := newCoordinatorFixture(t, append(coordinatorSeeds(),
+		coordinatorRunSeed{id: "20261013-150000-ffff", repo: "acme/other", pr: 21, prev: "20261012-090000-4444",
+			branch: "fugaro/20261013-150000-ffff", who: "someone@example.com",
+			status: runstore.StatusRunning, prRef: 21, base: "main", files: []string{"internal/api/handler.go"}},
+	), coordinatorPRs()...)
+	f.appendConfig(t, "  acme/other: { provider: github, base_branch: main, workflows: [web] }\n")
+	other := &fake.Provider{Repo: "acme/other", SelfID: "2"}
+	other.State.PRs = []fake.PRState{coordinatorPR(21, "fugaro/20261013-150000-ffff", gitprov.PROpen, false)}
+	tokens := map[string]string{}
+	setCoordinatorProject(t, map[string]*fake.Provider{"acme/app": f.host, "acme/other": other}, tokens)
+	setCoordinatorMint(t, nil)
+
+	out, _, err := execute(t, "coordinator", "status", "--all", "--json", "--since", "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var project struct {
+		Repos []coordinatorView `json:"repos"`
+	}
+	if err := json.Unmarshal([]byte(out), &project); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	var repos []string
+	for _, v := range project.Repos {
+		repos = append(repos, v.Repo)
+	}
+	if !slices.Equal(repos, []string{"acme/app", "acme/other"}) {
+		t.Fatalf("the project view holds %v, want one view per repository the config lists", repos)
+	}
+	var otherLabels []string
+	for _, r := range project.Repos[1].Records {
+		otherLabels = append(otherLabels, recordLabel(r))
+	}
+	if !slices.Equal(otherLabels, []string{"#21"}) {
+		t.Errorf("acme/other holds %v, want the work its own runs name", otherLabels)
+	}
+	if project.Repos[1].Collisions == nil || len(project.Repos[1].Collisions) != 0 {
+		t.Errorf("acme/other reports collisions %+v, want none: nothing it touches is in the other repository's tree", project.Repos[1].Collisions)
+	}
+	// One token per repository, and neither repository read with the other's.
+	if tokens["acme/app"] == "" || tokens["acme/other"] == "" {
+		t.Fatalf("the read held tokens %v, want one for each repository", tokens)
+	}
+	if tokens["acme/app"] == tokens["acme/other"] {
+		t.Errorf("both repositories were read with %q, want one token each (D193)", tokens["acme/app"])
+	}
+
+	text, _, err := execute(t, "coordinator", "status", "--all", "--since", "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, repo := range []string{"acme/app", "acme/other"} {
+		if !strings.Contains(text, repo+": ") {
+			t.Errorf("the project view does not print %s's own view:\n%s", repo, text)
+		}
+	}
+}
+
+// The coordinator's credential is a named read-only set, minted per repository
+// from the App the environment holds (Q3 answered (A), D193(A)): the fixture is
+// a real mint's own exchanges, so what is asserted here is the request the
+// command sends — one repository per token, and no permission above read.
+func TestCoordinatorStatusMintsAReadOnlyTokenPerRepository(t *testing.T) {
+	srv := httpfixture.Serve(t, filepath.Join("testdata", "coordinator_token.json"))
+	t.Setenv(providers.EnvGitHubAppID, "12345")
+	t.Setenv(providers.EnvGitHubAppKey, appKeyPEM(t))
+	t.Setenv(providers.EnvGitHubAPIURL, srv.URL)
+
+	f := newCoordinatorFixture(t, append(coordinatorSeeds(),
+		coordinatorRunSeed{id: "20261013-150000-ffff", repo: "acme/other", pr: 21, prev: "20261012-090000-4444",
+			branch: "fugaro/20261013-150000-ffff", who: "someone@example.com",
+			status: runstore.StatusRunning, prRef: 21, base: "main", files: []string{"internal/api/handler.go"}},
+	), coordinatorPRs()...)
+	f.appendConfig(t, "  acme/other: { provider: github, base_branch: main, workflows: [web] }\n")
+	other := &fake.Provider{Repo: "acme/other", SelfID: "2"}
+	other.State.PRs = []fake.PRState{coordinatorPR(21, "fugaro/20261013-150000-ffff", gitprov.PROpen, false)}
+	tokens := map[string]string{}
+	setCoordinatorProject(t, map[string]*fake.Provider{"acme/app": f.host, "acme/other": other}, tokens)
+
+	if _, _, err := execute(t, "coordinator", "status", "--all", "--json", "--since", "0"); err != nil {
+		t.Fatal(err)
+	}
+	if tokens["acme/app"] != "ghs_fixture/app" || tokens["acme/other"] != "ghs_fixture/other" {
+		t.Errorf("the reads were authenticated with %v, want one installation token per repository, scoped to it", tokens)
+	}
+
+	// The App's ID and key are the mint's whole input, and a missing one is a
+	// refusal naming the variable rather than a read that reaches GitHub.
+	t.Setenv(providers.EnvGitHubAppID, "")
+	if _, _, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--since", "0"); ExitCode(err) != ExitUserError ||
+		!strings.Contains(err.Error(), providers.EnvGitHubAppID) {
+		t.Errorf("no App ID: exit %d, %v", ExitCode(err), err)
+	}
+}
+
+// A project holding a repository this read does not serve is refused, and the
+// refusal names the reason and not the repository (reconciliation Q12 (A),
+// finding #30): a bitbucket credential is one repository's access token and
+// there is nothing to widen it to.
+func TestCoordinatorStatusRefusesABitbucketProject(t *testing.T) {
+	f := newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	f.appendConfig(t, "  acme/legacy: { provider: bitbucket, base_branch: main, workflows: [web] }\n")
+	if _, _, err := execute(t, "coordinator", "status", "--all", "--since", "0"); ExitCode(err) != ExitUserError ||
+		!strings.Contains(err.Error(), "cannot be widened to a project") {
+		t.Fatalf("a bitbucket repository in the project: exit %d, %v", ExitCode(err), err)
+	} else if strings.Contains(err.Error(), "legacy") {
+		t.Errorf("the refusal names the repository rather than the reason: %v", err)
+	}
 }
 
 // secretErrHost fails every read of a pull request with an error carrying the
@@ -450,16 +633,16 @@ func TestCoordinatorStatusNeverPrintsACredential(t *testing.T) {
 	const secret = "ghs_0123456789abcdefghij"
 	for _, tc := range []struct {
 		name string
-		open func([]string, func(string)) (gitprov.Opener, error)
+		open func([]string, func(string)) (coordinator.ProviderOpener, error)
 	}{
-		{"opening the provider", func([]string, func(string)) (gitprov.Opener, error) {
-			return func(context.Context, string, string) (gitprov.Provider, []string, error) {
+		{"opening the provider", func([]string, func(string)) (coordinator.ProviderOpener, error) {
+			return func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
 				return nil, []string{secret}, fmt.Errorf("github: the App credential %s was refused", secret)
 			}, nil
 		}},
-		{"reading a pull request", func([]string, func(string)) (gitprov.Opener, error) {
+		{"reading a pull request", func([]string, func(string)) (coordinator.ProviderOpener, error) {
 			host := &fake.Provider{Repo: "acme/app", SelfID: "1"}
-			return func(context.Context, string, string) (gitprov.Provider, []string, error) {
+			return func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
 				return secretErrHost{Provider: host, secret: secret}, []string{secret}, nil
 			}, nil
 		}},
@@ -480,6 +663,37 @@ func TestCoordinatorStatusNeverPrintsACredential(t *testing.T) {
 				t.Errorf("the failure is %q, want the credential redacted in it", err)
 			}
 		})
+	}
+}
+
+// The coordinator's own mint is the half of this command that holds the App's
+// private key, and a failure it reports must not carry one: the key is redacted
+// out of whatever the mint says (agent.Redact). The host here answers the
+// installation lookup with an error, so the read fails the way an unreachable
+// or refusing API does and the key is read from the environment on the way.
+func TestCoordinatorStatusNeverPrintsTheAppKey(t *testing.T) {
+	const secret = "ghs_0123456789abcdefghij"
+	pem := appKeyPEM(t)
+	srv := httpfixture.Serve(t, filepath.Join("testdata", "coordinator_mint_refused.json"))
+	t.Setenv(providers.EnvGitHubAppID, "12345")
+	t.Setenv(providers.EnvGitHubAppKey, pem)
+	t.Setenv(providers.EnvGitHubAPIURL, srv.URL)
+
+	newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	// The real coordinatorMint, against a host that refuses: the key is read
+	// from the environment on the way and must not reach what is printed.
+	setCoordinatorProject(t, map[string]*fake.Provider{"acme/app": {Repo: "acme/app", SelfID: "1"}}, nil)
+	out, errOut, err := execute(t, "coordinator", "status", "--since", "0")
+	if err == nil {
+		t.Fatalf("the mint was refused and the command succeeded: %s%s", out, errOut)
+	}
+	for _, got := range []string{err.Error(), out, errOut} {
+		if strings.Contains(got, pem) || strings.Contains(got, secret) {
+			t.Errorf("a credential reached the output: %q", got)
+		}
+	}
+	if !strings.Contains(err.Error(), "github") {
+		t.Errorf("the failure is %q, want the mint's own failure reported", err)
 	}
 }
 

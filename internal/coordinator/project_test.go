@@ -218,10 +218,11 @@ func TestCoordinatorReusesTheCachedToken(t *testing.T) {
 type secretHost struct {
 	*fake.Provider
 	secret string
+	cause  error
 }
 
 func (h secretHost) PullRequest(context.Context, int) (gitprov.PRInfo, error) {
-	return gitprov.PRInfo{}, fmt.Errorf("GET /repos/acme/web/pulls/12: 401: bad credentials (token %s)", h.secret)
+	return gitprov.PRInfo{}, fmt.Errorf("GET /repos/acme/web/pulls/12: 401: bad credentials (token %s): %w", h.secret, h.cause)
 }
 
 // Nothing the reader reports names a credential: the credential values the
@@ -229,6 +230,11 @@ func (h secretHost) PullRequest(context.Context, int) (gitprov.PRInfo, error) {
 // provider or from a read through it.
 func TestCoordinatorRedactsTheCredentialsAnOpenerHolds(t *testing.T) {
 	const secret = "ghs_0123456789abcdefghij"
+	// The failure's kind, wrapped by both hosts below: the reader rewrites the
+	// text of what it reports, and a caller above decides from the kind whether
+	// a failure is the configuration's or the host's — so the kind has to
+	// survive the rewrite (redactedError).
+	sentinel := errors.New("the host refused the credential")
 	ctx := context.Background()
 	mint := func(context.Context, string) (string, time.Time, error) {
 		return "ghs_fixture_token", time.Now().Add(time.Hour), nil
@@ -238,10 +244,10 @@ func TestCoordinatorRedactsTheCredentialsAnOpenerHolds(t *testing.T) {
 		open ProviderOpener
 	}{
 		{"opening the provider", func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
-			return nil, []string{secret}, fmt.Errorf("github: the App credential %s was refused", secret)
+			return nil, []string{secret}, fmt.Errorf("github: the App credential %s was refused: %w", secret, sentinel)
 		}},
 		{"reading a pull request", func(_ context.Context, repo string, _ gitprov.TokenSource) (gitprov.Provider, []string, error) {
-			return secretHost{Provider: &fake.Provider{Repo: repo, SelfID: "1"}, secret: secret}, []string{secret}, nil
+			return secretHost{Provider: &fake.Provider{Repo: repo, SelfID: "1"}, secret: secret, cause: sentinel}, []string{secret}, nil
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -255,6 +261,9 @@ func TestCoordinatorRedactsTheCredentialsAnOpenerHolds(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), "[REDACTED]") {
 				t.Errorf("the failure is %v, want the credential redacted in it", err)
+			}
+			if !errors.Is(err, sentinel) {
+				t.Errorf("the failure is %v, want the kind of what failed still findable in it", err)
 			}
 		})
 	}

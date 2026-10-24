@@ -130,6 +130,11 @@ func (p *Project) now() time.Time {
 //     failed.
 //   - Nothing this returns names a credential: the provider's own error text
 //     goes through Redact with the values its Opener held.
+//
+// What it reports also keeps the kind of the failure it rewrote (redactedError):
+// the text is this reader's, but whether a failure is the configuration's or the
+// host's is the caller's to decide, and a caller that could only see the text
+// would have to match on it.
 func (p *Project) PullRequests(ctx context.Context, kind, repo string, numbers []int) ([]PullRequest, error) {
 	if err := supported(kind); err != nil {
 		return nil, err
@@ -140,13 +145,14 @@ func (p *Project) PullRequests(ctx context.Context, kind, repo string, numbers [
 	mustRedact(p.Redact)
 	prov, secrets, err := p.Open(ctx, repo, p.sourceFor(repo))
 	if err != nil {
-		return nil, errors.New(p.Redact(err.Error(), secrets))
+		return nil, redactedError{err: err, text: p.Redact(err.Error(), secrets)}
 	}
 	out := make([]PullRequest, len(numbers))
 	for i, n := range numbers {
 		info, err := prov.PullRequest(ctx, n)
 		if err != nil {
-			return nil, fmt.Errorf("reading pull request %d of %s: %s", n, repo, p.Redact(err.Error(), secrets))
+			return nil, redactedError{err: err,
+				text: fmt.Sprintf("reading pull request %d of %s: %s", n, repo, p.Redact(err.Error(), secrets))}
 		}
 		out[i] = PullRequest{
 			Number: info.Number,
@@ -220,6 +226,19 @@ func supported(kind string) error {
 	return fmt.Errorf("the project-wide view reads %s only: %q is not a git provider kind this repository knows (%s or %s)",
 		gitprov.KindGitHub, kind, gitprov.KindGitHub, gitprov.KindBitbucket)
 }
+
+// redactedError is a failure whose text has had a credential removed and whose
+// kind is still there: Unwrap is the original error, so a caller above finds
+// what failed — a refusal of the credential the environment holds is the user's
+// own and not the host's, and this reader is not where that is decided
+// (internal/cli's redactedError, the same shape, for the same reason).
+type redactedError struct {
+	err  error
+	text string
+}
+
+func (e redactedError) Error() string { return e.text }
+func (e redactedError) Unwrap() error { return e.err }
 
 // mustRedact panics when the redactor is missing: a forgotten one would ship
 // the provider's own text — which is where a credential would arrive — to
