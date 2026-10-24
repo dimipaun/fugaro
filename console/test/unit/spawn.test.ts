@@ -2105,11 +2105,12 @@ describe('the WSL resolution path', () => {
 
   it('builds the wrapper on the plan: `wsl.exe`, the distribution, the directory, the CLI’s own argv', () => {
     const wsl = installWslStub(freshDirectory(), { distros: TWO_DISTROS })
-    const plan = planFor('budget.show', {}, safeContext({
+    const context = safeContext({
       binaryPath: '',
       directory: '/Users/owner/AppData/Local/Temp/fugaro-console/cwd',
       wsl: { distro: 'Ubuntu', directory: '/home/dimi/src/fugaro', executable: wsl.binary },
-    }))
+    })
+    const plan = planFor('budget.show', {}, context)
     // The program the console starts is `wsl.exe` -- here, the fake -- and not
     // the CLI: on this route there is no host path to the CLI at all.
     expect(plan.command).toBe(wsl.binary)
@@ -2160,6 +2161,34 @@ describe('the WSL resolution path', () => {
     // redirection is `>&2`.
     expect(script).not.toMatch(/>\s*'/)
     expect(plan.wrapper?.distro).toBe('Ubuntu')
+  })
+
+  it('draws a fresh nonce for every plan, so the marker is one spawn’s own', () => {
+    // SECURITY-SENSITIVE, and the property the whole fix rests on (review of
+    // `#981`): the marker is unforgeable because nothing the CLI prints can carry
+    // bytes it never saw. A nonce fixed in this module would be as printable by
+    // the CLI as the fixed prefix was, and **nothing else in this file would
+    // notice**: `[0-9a-f]{64}` is a shape a constant satisfies, every reader case
+    // feeds the plan's own marker back in, and the forged-line cases forge the
+    // fixed prefix alone. Hence this case, which is the one that fails when the
+    // draw is hoisted out of `wslWrapperFor`.
+    const wsl = installWslStub(freshDirectory(), { distros: TWO_DISTROS })
+    const context = safeContext({
+      binaryPath: '',
+      directory: '/Users/owner/AppData/Local/Temp/fugaro-console/cwd',
+      wsl: { distro: 'Ubuntu', directory: '/home/dimi/src/fugaro', executable: wsl.binary },
+    })
+    const first = planFor('budget.show', {}, context)
+    const second = planFor('budget.show', {}, context)
+    // One context, two plans, two markers -- and the same script text apart from
+    // the nonce on it, which is what "the same spawn's" means: the marker the
+    // readers accept is the one the script the plan spawns printed.
+    expect(wrapperMarkerOf(second)).not.toBe(wrapperMarkerOf(first))
+    expect(second.wrapper?.words[2]).not.toBe(first.wrapper?.words[2])
+    // A second plan's marker is not one the first plan's readers accept: the two
+    // do not overlap, so a line the first spawn's script printed is not a line
+    // the second spawn reads as its own.
+    expect(wrapperPidIn(`${wrapperMarkerOf(first)} 4321\n`, wrapperMarkerOf(second))).toBeNull()
   })
 
   it('gives the CLI inside the distribution Linux’s PATH, CHILD_ENV_KEYS and an empty WSLENV', () => {
@@ -5138,11 +5167,33 @@ describe('the wrapper into a distribution', () => {
     const forged = `${WSL_WRAPPER_MARKER_PREFIX} 4242\n`
     expect(withoutWrapperMarker(forged, marker)).toBe(forged)
     expect(withoutWrapperMarker(`${line}\n${line}\n`, marker)).toBe(`${line}\n`)
-    // Nothing to remove: the string is returned as it arrived.
+    // Nothing to remove: what arrived is what comes back, byte for byte.
     expect(withoutWrapperMarker('the CLI said no\n', marker)).toBe('the CLI said no\n')
     expect(withoutWrapperMarker('', marker)).toBe('')
     // ...and a plan with no wrapper at all (the host route) has no marker to look
-    // for, so its stderr is handed back untouched rather than rewritten.
+    // for, so its stderr is handed back untouched rather than rewritten: this
+    // console wrote nothing into that stream.
     expect(withoutWrapperMarker('the CLI said \u0000 no\n', null)).toBe('the CLI said \u0000 no\n')
+  })
+
+  it('cleans the UTF-16LE of a wsl.exe that never started a shell', () => {
+    // The case where there is **no line to remove and still text to read** (review
+    // of `#981`): `wsl.exe` failed before the shell ran -- the no-distro failure,
+    // `wrapperStarted === false` -- so its whole stderr is its own warnings, and
+    // on a build that ignores `WSL_UTF8` every byte of them is UTF-16LE. This
+    // text is the whole answer an operator gets: `probeVersion` turns it into its
+    // reason and the picker shows the same sentence, both through `cliSentence`,
+    // which strips no control characters of its own, so the NULs are what the
+    // operator would read. The mutation this catches: hand `stderr` back untouched
+    // when no line matched.
+    const failed = Buffer.from('Windows Subsystem for Linux has no installed distributions.\r\n', 'utf16le').toString(
+      'utf8',
+    )
+    expect(failed).toContain('\u0000')
+    expect(withoutWrapperMarker(failed, SOME_MARKER)).toBe(
+      'Windows Subsystem for Linux has no installed distributions.\r\n',
+    )
+    // A leading BOM goes the same way, with nothing to remove behind it.
+    expect(withoutWrapperMarker(`${'\uFEFF'}wsl: a warning\n`, SOME_MARKER)).toBe('wsl: a warning\n')
   })
 })

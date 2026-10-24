@@ -2256,9 +2256,16 @@ export function wrapperPidIn(head: string, marker: string): number | null {
  * before it (see `wrapperMarkerOffset`), and a line that ends in `\r` (a CRLF
  * from a relay that translated them) is the same line. Only a line that *starts*
  * with the marker is removed: a CLI that happened to print the same sentence's
- * text inside a line of its own keeps its own text. stderr with no such line is
- * returned untouched -- and so is stderr on a plan with no wrapper at all
- * (`marker === null`, the host route), where the question does not arise.
+ * text inside a line of its own keeps its own text. stderr with no such line has
+ * no line removed -- and **that is the case the cleaning below is for**: a
+ * `wsl.exe` that failed before the shell ever ran (`wrapperStarted === false`,
+ * the no-distro failure above all) prints nothing but its own warnings, and on a
+ * build that ignores `WSL_UTF8` every byte of them is UTF-16LE. There is no line
+ * to remove there and there is still text an operator must be able to read, so
+ * the cleaning is applied whenever the plan carries a wrapper and not only when
+ * a line matched. Only a plan with **no wrapper at all** (`marker === null`, the
+ * host route) is handed back untouched, because there the question does not
+ * arise: this console wrote nothing into that stream to begin with.
  *
  * **One line goes, not every line that matches**: the line removed is the one
  * `wrapperLine` read (`wrapperMarkerOffset` answers it), which is the only line
@@ -2270,11 +2277,14 @@ export function wrapperPidIn(head: string, marker: string): number | null {
  * in a UTF-8 read** (`WSL_TEXT_NUL`, a leading `WSL_TEXT_BOM`): removing the
  * NULs from UTF-16LE ASCII is the warning `wsl.exe` meant to print, so the
  * operator reads `wsl: a relay warning` rather than the same text with a NUL
- * between every pair of characters. */
+ * between every pair of characters. That matters most where this text is the
+ * whole answer: `probeVersion` turns a no-distro failure into its reason
+ * (`wrapperStarted === false`) and the picker shows the same sentence, both
+ * through `cliSentence`, which strips no control characters of its own. */
 export function withoutWrapperMarker(stderr: string, marker: string | null): string {
   if (marker === null) return stderr
   const at = wrapperMarkerOffset(stderr, marker)
-  if (at < 0) return stderr
+  if (at < 0) return withoutWslTextNoise(stderr)
   const end = stderr.indexOf('\n', at)
   const kept = stderr.slice(0, at) + stderr.slice(end < 0 ? stderr.length : end + 1)
   return withoutWslTextNoise(kept)
