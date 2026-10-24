@@ -395,12 +395,13 @@ func newCreatedFBRig(t *testing.T) *createdFBRig {
 		roles[role] = "projects/" + newProj + "/roles/fugaro" + strings.ToUpper(role[:1]) + role[1:]
 	}
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
-		"runs_bucket":               bucket,
-		"registry_host":             "us-east5-docker.pkg.dev/" + newProj,
-		"scheduler_service_account": "fugaro-scheduler@" + newProj + ".iam.gserviceaccount.com",
-		"role_ids":                  roles,
-		"history_service_account":   "fugaro-history@" + newProj + ".iam.gserviceaccount.com",
-		"history_job":               nil,
+		"runs_bucket":                 bucket,
+		"registry_host":               "us-east5-docker.pkg.dev/" + newProj,
+		"scheduler_service_account":   "fugaro-scheduler@" + newProj + ".iam.gserviceaccount.com",
+		"role_ids":                    roles,
+		"history_service_account":     "fugaro-history@" + newProj + ".iam.gserviceaccount.com",
+		"history_job":                 nil,
+		"coordinator_service_account": "fugaro-coordinator@" + newProj + ".iam.gserviceaccount.com",
 	})}
 	r.script["output@firebase"] = map[string]any{"stdout": r.firebaseOutputs(t)}
 	r.save(t)

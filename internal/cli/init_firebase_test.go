@@ -23,11 +23,15 @@ const (
 	// fpID is the installation's own GCP project: Fugaro only starts fresh,
 	// and the budget backend lives in the project setup created (D7), never in
 	// a Firebase project of another id.
-	fpID             = initProject
-	fpSigner         = "fugaro-token-signer@" + initProject + ".iam.gserviceaccount.com"
-	fpAPIKey         = "AIzaSyA0123456789abcdefghijklmnopqrstu"
-	historyAccount   = "fugaro-history@proj-1234.iam.gserviceaccount.com"
-	historyImagePath = "us-east5-docker.pkg.dev/proj-1234/" + infra.BaseRegistry + "/" + infra.HistoryImagePackage + ":latest"
+	fpID           = initProject
+	fpSigner       = "fugaro-token-signer@" + initProject + ".iam.gserviceaccount.com"
+	fpAPIKey       = "AIzaSyA0123456789abcdefghijklmnopqrstu"
+	historyAccount = "fugaro-history@proj-1234.iam.gserviceaccount.com"
+	// coordinatorAccount is the aggregation job's own account (P5): the same
+	// first apply creates it, beside the history account's, and the Firebase
+	// root below is handed it.
+	coordinatorAccount = "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"
+	historyImagePath   = "us-east5-docker.pkg.dev/proj-1234/" + infra.BaseRegistry + "/" + infra.HistoryImagePackage + ":latest"
 )
 
 // fbRig is the init rig plus the fakes of update --firebase-project: Cloud Billing, the
@@ -76,7 +80,7 @@ func newFBRigFor(t *testing.T, fp string) *fbRig {
 	if err := os.WriteFile(r.cfg, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"history_service_account": historyAccount, "history_job": nil})}
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"history_service_account": historyAccount, "history_job": nil, "coordinator_service_account": coordinatorAccount})}
 	r.script["output@firebase"] = map[string]any{"stdout": r.firebaseOutputs(t)}
 	r.save(t)
 	return r

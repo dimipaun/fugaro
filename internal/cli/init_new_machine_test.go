@@ -231,7 +231,7 @@ func (r *initRig) firebaseState(t *testing.T) {
 // history account) and returns the config it wrote and the run's output.
 func newMachineRun(t *testing.T, r *initRig, firebaseOutput string) (cfg, out string) {
 	t.Helper()
-	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"history_service_account": historyAccount, "history_job": nil})}
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"history_service_account": historyAccount, "history_job": nil, "coordinator_service_account": coordinatorAccount})}
 	if firebaseOutput != "" {
 		r.script["output@firebase"] = map[string]any{"stdout": firebaseOutput}
 	}

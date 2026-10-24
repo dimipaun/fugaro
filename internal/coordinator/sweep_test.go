@@ -366,6 +366,47 @@ func TestTheSweepKeepsTheNewestIntentsAndPrunesTheRest(t *testing.T) {
 	}
 }
 
+// TestTheSweepKeepsEveryRecordWhenTheBoundIsNegative: the field's own doc says
+// a negative Keep keeps every record, and that is the reading this pins —
+// otherwise the bound is a slice past the end of the list, which is a panic in
+// a tick rather than a decision about a record.
+//
+// Hand mutation this fails on: dropping the negative case from prune's switch,
+// so ids[:len(ids)-keep] is indexed past the end.
+func TestTheSweepKeepsEveryRecordWhenTheBoundIsNegative(t *testing.T) {
+	s, _, src := testSweeper(t)
+	ctx := testCtx(t)
+	src.runs, src.prs = testWork()
+	slug := testRepo().Slug
+	s.Keep = -1
+
+	base := time.Date(2026, 10, 24, 8, 0, 0, 0, time.UTC)
+	var paths []string
+	for i := range 3 {
+		in := Intent{DeclaredBy: fmt.Sprintf("someone-%d@example.com", i), At: base.Add(time.Duration(i) * time.Hour), Branch: "main"}
+		path := PathIntent(slug, IntentID(in))
+		if err := s.Store.Write(ctx, path, in); err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, path)
+	}
+
+	res, err := s.Sweep(ctx, []Repo{testRepo()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Repos[0].Pruned != 0 {
+		t.Errorf("a sweep with a negative bound pruned %d records, want 0", res.Repos[0].Pruned)
+	}
+	for _, path := range paths {
+		if _, found, err := s.Store.Read(ctx, path, nil); err != nil {
+			t.Fatal(err)
+		} else if !found {
+			t.Errorf("the record %s was dropped, want every record kept", path)
+		}
+	}
+}
+
 // TestTheSweepPrunesOneRepositorysRecordsOnly: the records sit under the
 // repository they are about (D195), so a sweep of one repository touches no
 // other's — the same rule the read grant of Q15(A) is built on.

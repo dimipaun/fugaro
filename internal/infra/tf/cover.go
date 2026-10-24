@@ -190,10 +190,16 @@ var grantRules = map[string]map[string]who{
 		// The credentials service's bundle is read by its own account
 		// (credentials.tf, the Q6 ruling), so this one row accepts the service
 		// account beside the jobs: it is the account's only Secret Manager
-		// reach, and it is on one container. The coordinator's writer is here
-		// for the same shape (coordinator plan P5): the GitHub App's key, on the
-		// one secret its job mounts, is the reader credential P2 defines and
-		// nothing more.
+		// reach. The coordinator's writer is here for the same shape
+		// (coordinator plan P5): the GitHub App's key, on the one secret its
+		// job mounts, is the reader credential P2 defines and nothing more.
+		//
+		// What this row decides is the principal KIND and the role, and not
+		// which container: the cover reads no secret_id for this type, so a
+		// hand-edited plan that pointed one of these principals at another of
+		// the run's containers would be covered. The container is the module's
+		// own to get right and its own plan tests to hold (the installation
+		// root asserts the coordinator's one grant names the App key's secret).
 		"roles/secretmanager.secretAccessor":     toAccounts | toCredentials | toCoordinator,
 		"roles/secretmanager.secretVersionAdder": toPeople,
 		"roles/secretmanager.viewer":             toPeople,

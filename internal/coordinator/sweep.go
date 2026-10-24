@@ -303,8 +303,14 @@ func (s *Sweeper) clearStale(ctx context.Context, repo Repo) error {
 // the record this sweep decided to drop.
 func (s *Sweeper) prune(ctx context.Context, repo Repo) (int, error) {
 	keep := s.Keep
-	if keep == 0 {
+	switch {
+	case keep == 0:
 		keep = DefaultIntents
+	case keep < 0:
+		// Every record, which is what the field's own doc says a negative
+		// value means. It is read here rather than left to the slice below,
+		// where a negative keep would be an index past the end.
+		return 0, nil
 	}
 	parent := PathIntents(repo.Slug)
 	var records map[string]Intent
