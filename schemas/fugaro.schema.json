@@ -134,7 +134,7 @@
     "rigor": {
       "type": "object",
       "additionalProperties": false,
-      "description": "How much cost this repository's runs accept to reduce risk (docs/rigor-modes/spec.md). A default, not a floor: the project layer's defaults.rigor may set both keys too, and the narrowest layer that sets one wins.",
+      "description": "How much cost this repository's runs accept to reduce risk (docs/rigor-modes/spec.md). A default, not a floor: the project layer's defaults.rigor may set both keys too, and the narrowest layer that sets one wins. Fugaro before 0.11.0 refuses the block.",
       "properties": {
         "default": { "$ref": "#/$defs/rigorMode", "description": "The mode a run of this repository resolves to when nothing narrower decides. Absent: the project layer's defaults.rigor.default, else Fugaro's own default (pro). Needs fugaro 0.11.0." },
         "areas": {

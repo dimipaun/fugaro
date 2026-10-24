@@ -80,6 +80,19 @@ type LayerDefaults struct {
 	Rigor LayerRigor `yaml:"rigor"`
 }
 
+// SetsRigor reports whether the layer's text writes defaults.rigor, at any
+// value: a runner before 0.11.0 decodes the layer with KnownFields, so the key
+// alone is what it refuses, and LayerRigor's zero value cannot tell an empty
+// block from none.
+func (l *ProjectLayer) SetsRigor() bool {
+	if l == nil {
+		return false
+	}
+	d, _ := l.tree["defaults"].(map[string]any)
+	_, ok := d["rigor"]
+	return ok
+}
+
 // LayerRigor is defaults.rigor: the same two keys the repository's own
 // rigor: block carries, because either layer may set either of them
 // (docs/project-layer.md §5).

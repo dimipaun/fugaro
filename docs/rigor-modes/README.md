@@ -32,12 +32,16 @@ because `gitprov` has no merge call and the runner never deploys. What is
 already there is reused rather than rebuilt: `doublestar/v4` for path rules, one
 trust list for authority, the recorded `ChangedFiles` for a post-hoc floor check,
 the existing CI on `main` for the post-flight suite. The migration default is
-**Pro** (D19) — so the first cut **does** change what "ready" means for a
-repository that configures nothing, and the loud migration note plus the one-line
-pin `rigor.default: critical` are what a repository uses to keep today's
-behaviour; the security-sensitive tier (the D18 floors) stays **Critical**, so
-every claim that the first cut "relaxes nothing" or is "byte-identical to today"
-holds for **Critical mode only**.
+**Pro** (D19). What this branch builds changes two things for a repository that
+configures nothing: its runs resolve and record Pro, and Pro's per-run budget
+default is 0.85 of the deployed cap (T6.1). It does **not** change what "ready"
+means yet: `runner.Decide` takes no mode until Slice 3 (the run loop that applies
+the mode) is built, and that is the slice that will change readiness for an
+unconfigured repository. The loud migration note plus the one-line pin
+`rigor.default: critical` are what a repository uses to keep today's behaviour;
+the security-sensitive tier (the D18 floors) stays **Critical**, so every claim
+that a cut "relaxes nothing" or is "byte-identical to today" holds for
+**Critical mode only**.
 
 The owner's 2026-10-20 spec was written without seeing this repository, so
 several of its premises moved work: the top-level `review:` configuration it
@@ -131,17 +135,20 @@ operators` section:
 
 ## What this folder is not
 
-- **Not implemented.** The decisions are answered and the plan's
-  [OWNER APPROVAL GATE](implementation-plan.md#owner-approval-gate) is passed, so
-  the slices are approved to build on the branch `rigor-modes` — and **no line of
-  them is written yet**: no code, config, schema or workflow is touched by these
-  documents.
+- **Not implemented.** Not in full: the decisions are answered and the plan's
+  [OWNER APPROVAL GATE](implementation-plan.md#owner-approval-gate) is passed, and
+  part of the plan is built on the branch `rigor-modes` — Slice 0, Slice 1's mode
+  layers and where they show (the run record, `fugaro runs ls`, `fugaro diagnose`),
+  T2.1–T2.3 of Slice 2 (a score the run loop does not act on yet), the backlog (T4.3–T4.7) and the per-mode budgets
+  (T6.1). The rest is not: `fugaro run --mode` (T1.6), Slice 3, which is what
+  would make the mode decide readiness, Slice 5's task field and Hotfix gate, and
+  Slices 7 and 8.
 - **Not a product document.** When the modes ship they get one —
   `docs/rigor-modes.md`, the plan's T7.1 — and this folder is where the design
   and the plan live until then. The two are separate on purpose: a folder that is
   a plan ages into a design record, and a product document is a promise.
-- **Not a change to the tree.** This folder is documents: the slices say what
-  would touch what, and none of it is written.
+- **Not the record of what is built.** This folder is documents: the slices say
+  what would touch what, and the commits on the branch are what wrote each one.
 
 ## Related work
 

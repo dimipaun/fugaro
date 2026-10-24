@@ -29,6 +29,12 @@ const (
 	APIKeyID        = "fugaro-web"
 
 	HistoryAccountID = "fugaro-history"
+	// CoordinatorAccountID is the coordinator's writer account (D194): the
+	// aggregation job's own, which the installation root creates in
+	// coordinator part P5, as it creates the history account's. Once it
+	// exists the Firebase root grants it roles/firebasedatabase.admin on the
+	// FP, so it can write the coordinator's subtree under the rules' floor.
+	CoordinatorAccountID = "fugaro-coordinator"
 	// HistoryJob must not start with fugaro-: ls and max_parallel count
 	// every fugaro-* job as a workflow's.
 	HistoryJob          = "fugarohist"
@@ -114,11 +120,16 @@ type FirebaseSpec struct {
 	// Launchers and Operators mint run tokens and read the database;
 	// Admins (the GCP project's owners and editors) and BudgetAdmins write
 	// it. The history account is the sweeper's, which holds its own roles.
-	Launchers      []string `json:"launchers"`
-	Operators      []string `json:"operators"`
-	Admins         []string `json:"admins"`
-	BudgetAdmins   []string `json:"budget_admins"`
-	HistoryAccount string   `json:"history_account"`
+	// CoordinatorAccount is the aggregation job's (D194) and stays empty, so
+	// the Firebase root grants it nothing, until P5 creates the account: IAM
+	// refuses a grant to a member that does not exist, and a grant here would
+	// fail every apply of this root until then.
+	Launchers          []string `json:"launchers"`
+	Operators          []string `json:"operators"`
+	Admins             []string `json:"admins"`
+	BudgetAdmins       []string `json:"budget_admins"`
+	HistoryAccount     string   `json:"history_account"`
+	CoordinatorAccount string   `json:"coordinator_account"`
 	// SkipAPIs are the APIs the Firebase root leaves to the installation
 	// root: set (to SharedAPIs) only when the Firebase project is the
 	// installation's own project, and left out of the tfvars otherwise.

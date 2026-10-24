@@ -55,7 +55,7 @@
         "rigor": {
           "type": "object",
           "additionalProperties": false,
-          "description": "The rigor mode every repository of this project runs at, and the area rules in effect for all of them (docs/rigor-modes/spec.md D20). Both keys may also be set in a repository's own rigor: block, and the two areas lists are a union, not a replacement: a repository's own rules never switch the project's off.",
+          "description": "The rigor mode every repository of this project runs at, and the area rules in effect for all of them (docs/rigor-modes/spec.md D20). Both keys may also be set in a repository's own rigor: block, and the two areas lists are a union, not a replacement: a repository's own rules never switch the project's off. Fugaro before 0.11.0 refuses the key, in every repository of the project.",
           "properties": {
             "default": { "$ref": "#/$defs/rigorMode", "description": "The mode a run of any repository of this project resolves to when the repository sets none. Needs fugaro 0.11.0." },
             "areas": {

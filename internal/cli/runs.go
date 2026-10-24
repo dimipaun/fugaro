@@ -356,9 +356,19 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 
 // parallel calls fn(0) … fn(n-1) on up to lsWorkers goroutines.
 func parallel(n int, fn func(i int)) {
+	parallelN(n, lsWorkers, fn)
+}
+
+// parallelN is parallel with its own bound: fn(0) … fn(n-1) run on at most
+// workers goroutines, and nothing is written between them — indices go out on
+// the channel in order, and whatever each call computes is the caller's to
+// place (a slice indexed by i, so the result is deterministic whatever order
+// the goroutines finish in). A caller with a bound of its own passes it here
+// rather than growing lsWorkers, which is runs ls's own read width.
+func parallelN(n, workers int, fn func(i int)) {
 	var wg sync.WaitGroup
 	next := make(chan int)
-	for range min(lsWorkers, n) {
+	for range min(workers, n) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

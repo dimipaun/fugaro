@@ -1,6 +1,6 @@
 # The coordinator — the implementation plan
 
-**Status: approved to build on the branch `coordinator`, target 0.11.0; no code is implemented yet.** This plan follows from
+**Status (2026-10-24): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0, P1, P2, P3 and P4 are on `coordinator`, and P5–P8 are not started.** Each part carries its own **Status** line below, and this one moves with them: the status line and the pins that hold it change in the commit that lands a part, which is what the P0 section says of itself and what every earlier plan in this repository did (`docs/mobile/README.md`, `docs/setup-wizard/README.md`). This plan follows from
 [reconciliation.md](reconciliation.md), which wins wherever it disagrees with
 [spec.md](spec.md). Every path and symbol below was re-read against `main` at `1e0953b7`
 (`docs(central-orchestrator): spec, reconciliation and plan for central orchestrators (#775)`)
@@ -279,6 +279,21 @@ credential and no write; its GitHub access is the per-repository read the CLI al
 
 **Commit.** `coordinator: the project view's shape, and the one-repository join`
 
+**Status: built.** On the long-lived `coordinator` branch, in this plan's own commit message. The
+package, the join, the collision rule, the fixtures, the command and its registration are in the
+tree, with the command's own twelve tests and the package's ten; the plan's status line above moved
+with them. The review of this part left four things, and they are in that count: the service a path
+belongs to is two segments under the trees that hold more than one unit (`internal/`, `cmd/`) and
+one segment everywhere else — the first segment alone put nearly every path in this repository in
+the one service `internal`, so every pair of pull requests working in unrelated packages was
+reported as colliding — the pull requests are read a few at a time rather than one after another,
+the command's own help and the reference say which pull requests it can list at all, and a run
+whose stored task and result records are half-written is listed as work in flight rather than
+dropped. The one thing this part does NOT do is stated where a reader meets it rather than
+here: `gitprov.Provider` reads one pull request by number and cannot list a repository's
+(reconciliation **#10**), so this part's pull requests are the numbers the runs name, and **P2** is
+the part that replaces the reader — behind the same input to the join, as D193 asks.
+
 ---
 
 ### P2 — Every repository: the project-wide read (D193)
@@ -317,6 +332,23 @@ whether the token is per repository or project-wide, and D193's answer; the cach
 lifetime; and what a coordinator whose token leaked can read.
 
 **Commit.** `coordinator: the project-wide read, and the read-only GitHub credential`
+
+**Status: built.** On the long-lived `coordinator` branch, in this plan's own commit message. The
+permission set and its exported accessor (`internal/gitprov/github/apptoken.go`), the project-wide
+reader with its per-repository token cache and its Bitbucket refusal (`internal/coordinator/`), the
+opener and the mint that install the read-only token source on it, and the command's `--all`
+(`internal/cli/coordinator.go`) are in the tree, with the permission set held to the mint's request
+body by a golden and the read itself held to the token it was minted — the fixture's own
+`Authorization` header is the read-only one; the plan's status line above moved with them. The
+reader reads a repository's pull requests a few at a time, the width P1's review asked for and the
+reader it replaced carried. One thing in the tree is not in this part's own Files line, and it is
+recorded here rather than left to be found: `internal/gitprov/providers/providers.go` gains one
+exported name, `AppKey`, because the mint and the opener must not disagree about where the App's key
+is (`EnvGitHubAppKey`, else `EnvGitHubAppKeyFile`); what `FromEnv` did with the environment moved
+into an unexported `envVars`, unchanged. The one thing this part does NOT do
+is stated where a reader meets it rather than here: D193's answer is **one read-only installation
+token per repository**, so there is no single project-wide credential to steal, and whether an
+installation token may omit `repositories` at all is **U3**, still an owner check.
 
 ---
 
@@ -365,6 +397,27 @@ generation bump and what a client with an older marker sees; and the amended cla
 
 **Commit.** `coordinator: the project record, its writer identity and the read grant`
 
+**Status: built.** Lands on the long-lived `coordinator` branch when its pull request merges, in
+this plan's own commit message, and the plan's status line above moves with it. The subtree, the
+deterministic IDs, the ETag CAS, the read grant and the writer's grant are in the tree. Three
+things are worth a reader's attention here rather than in the diff. The first is that the writer
+account is **named, not created, and not yet granted**: the installation root creates it in
+**P5**, as it creates the history account's, and IAM refuses a grant to a member that does not
+exist, so the Firebase root's `coordinator_account` defaults to empty and the grant
+(`google_project_iam_member.coordinator_database`) has a count of 0 until P5 sets it — the golden
+plans hold no such row, and the module's own `terraform test` runs cover it on and off. The
+second is that the writer bypasses the rules, so `internal/coordinator`'s `Store` refuses every
+path outside `coordinator/` itself: that check, not IAM and not the rules, is the fence (D194).
+The third is the rules generation: `RulesVersion` moves from 3 to 4, and once an installation has
+deployed generation 4, an older Fugaro's `fugaro update --firebase-project` is refused rather than
+deploying its older document over it.
+
+**For operators.** When this part ships, the release notes' `### For operators` section carries
+one step, per installation: run `fugaro update --firebase-project` from the new CLI to deploy the
+generation-4 rules (until then `fugaro doctor` reports `policy-rules-skew` and a signed-in reader
+is refused every read of `coordinator/`); runs, the project policy and the mobile app are
+unaffected either way. Nothing is needed per repository.
+
 ---
 
 ### P4 — The report path: what every orchestrator declares
@@ -403,6 +456,51 @@ its text is written by whoever can already run `fugaro run` (finding #11's trust
 adds no network surface.
 
 **Commit.** `coordinator: the intent record, and the report path every orchestrator uses`
+
+**Status: built.** Lands on the long-lived `coordinator` branch when its pull request merges, in
+this plan's own commit message, and the plan's status line above moves with it. The record, its
+deterministic ID (`IntentID`, over `DocumentID`'s length-prefixed parts), its two refusals and the
+writer are in `internal/coordinator/intent.go`; the node is
+`internal/coordinator/state.go`'s `PathIntents` and `PathIntent`; `fugaro coordinator report` is
+the transport; and `launchRun` calls the same writer beside `takeClaim`, so a launch declares
+itself without a second command. What a launch can
+declare before any code exists is the caller the task names and the branch the run is about to
+work on — the files and the services are what the run's own record holds once it has worked, and
+the join is P1's. The declaration is **advisory in the launch as it is everywhere**: a project
+with no database is skipped, a task that names no requester is not declared (the report path's own
+refusal is right when a person asks and pointless when nobody did), a failure is a warning on
+stderr and never a failed launch, and the whole thing is bounded at 15 seconds so a database that
+does not answer cannot eat the time the launch needs. The declaration also **follows the launch's
+own database switch**: `budget.mode: off`, a project with no `budget.rtdb_url`, and
+`--no-budget-check` all declare nothing, because the coordinator's state lives in the database the
+budget uses and a launch that was told not to use it may not be the one call that reaches it —
+beyond the policy read a launch always makes. Nothing is lost by it: the declaration is advisory,
+and the view P1 renders reads the runs bucket, where the launch's own record lands either way.
+
+**What this part does not do, and the one tension it leaves.** The record is written through the
+**caller's own credentials**, on the project's `budget.rtdb_url` database, because there is no
+other credential in the tree: P2's reader is read-only and P3's writer account does not exist until
+P5 creates it. But the rules P3 deployed grant `/coordinator` a **read** and `.write: false` to
+everybody (Q15 A), so what admits a report is the **database role its caller holds** —
+`roles/firebasedatabase.admin`, which `terraform.budget_admins` have — and nothing else. So
+`fugaro coordinator report` works for a person who is already a budget admin of the installation,
+and refuses, saying exactly that, for a launcher who is not: the local orchestrators Q15(C) is
+about report through the front door, `report_intent` (**P8**), which writes as the coordinator
+rather than as the person. That is the gap Q15(A) leaves between "the CLI is the transport" and
+"no client writes the subtree", and it is recorded here rather than papered over: this part is
+built as the P4 section specifies, and **a later part that wants the non-admin path builds it in
+P8**, not by widening the rules. Nothing in this part mints a credential, changes the rules,
+deploys anything or grants anybody: the grant and the rules deployment stay owner-run.
+
+**One deviation from the section above, and one proposal this part does not take.** The **Files**
+line names "one line of `internal/cli/root.go`"; the subcommand is registered beside the others in
+`newCoordinatorCmd` (`internal/cli/coordinator.go`), which is where every coordinator subcommand
+is added, and the root command's own file is untouched. And the record carries **no plan task
+id**: `docs/console-dependency-graph/reconciliation.md` **GD5** proposes one recorded in the
+launch record a run already writes, and its §4 item (f) says recording it in this record is
+*"proposed here and not made"*, so the record is the
+shape this plan gives it — the caller, the clock, the branch, the target release, the files and
+the services — and a later part that wants a plan task id adds a field and adds it to the ID.
 
 ---
 

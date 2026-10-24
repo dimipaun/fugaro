@@ -147,3 +147,41 @@ func TestBacklogAddRecordsTheRunAndAreaItIsFiledAbout(t *testing.T) {
 		t.Errorf("front matter = %+v, want the mode, the area and the run the filing named", item)
 	}
 }
+
+// TestBacklogAddNeverCommitsAnAddress: an item is committed into the
+// repository, so --filed-by never writes an email address into it (the owner's
+// ruling of 2026-10-24). A value with an @ in it records `unknown`, exactly as
+// a run's own filing does (runner's filedBy), and the command says so on
+// stderr rather than shortening the address to a guessed login.
+func TestBacklogAddNeverCommitsAnAddress(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), backlog.Dir)
+	_, errOut, err := execute(t, addArgs(dir, "--filed-by", "dev@example.com")...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "20261024-01-review-round-2-left-3-findings-open.md")
+	doc, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(doc), "@") {
+		t.Errorf("the item carries an address:\n%s", doc)
+	}
+	item, err := backlog.Parse(path, doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.FiledBy != "unknown" {
+		t.Errorf("filed-by = %q, want unknown", item.FiledBy)
+	}
+	if !strings.Contains(errOut, "unknown") {
+		t.Errorf("stderr = %q: the rewrite is not said", errOut)
+	}
+	index, err := os.ReadFile(filepath.Join(dir, backlog.IndexName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(index), "@") {
+		t.Errorf("the index carries an address:\n%s", index)
+	}
+}

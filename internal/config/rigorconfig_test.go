@@ -139,3 +139,29 @@ func TestRigorConfigSaysWhetherTheRepositoryOptedIn(t *testing.T) {
 		t.Error("a project layer that sets defaults.rigor did not opt its repositories in")
 	}
 }
+
+// TestSetsRigorReadsTheKeyNotTheValue: a runner before 0.11.0 decodes the
+// project layer with KnownFields, so what it refuses is defaults.rigor being
+// written at all, and an empty block is refused exactly like a full one. The
+// skew gate in fugaro update --repo asks this, so the answer has to come from
+// the text: LayerRigor is a value, and its zero value cannot tell `rigor: {}`
+// from a layer that never wrote the key.
+func TestSetsRigorReadsTheKeyNotTheValue(t *testing.T) {
+	const head = "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+	for _, c := range []struct {
+		text string
+		want bool
+	}{
+		{rigorLayer, true},
+		{head + "defaults:\n  rigor: {}\n", true},
+		{head + "defaults:\n  git: { provider: github }\n", false},
+		{head, false},
+	} {
+		if got := mustLayer(t, c.text).SetsRigor(); got != c.want {
+			t.Errorf("SetsRigor() = %v, want %v for\n%s", got, c.want, c.text)
+		}
+	}
+	if (*ProjectLayer)(nil).SetsRigor() {
+		t.Error("a nil layer sets nothing")
+	}
+}
