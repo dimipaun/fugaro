@@ -369,7 +369,7 @@
     },
     "backlog": {
       "type": "array",
-      "description": "The ids of the backlog items this run filed for what it left open, in the order it filed them (docs/rigor-modes/implementation-plan.md T4.5, D9, D26). The item files are on the run's branch and in its pull request; this is the record's own account of them, so a reader can cite an item without a second read of the tree. Absent — never an empty list — for a run that filed none, which is every record written before this field existed, so an old reader sees the record it always saw.",
+      "description": "The ids of the backlog items this run filed for what it left open, in the order it filed them (docs/rigor-modes/implementation-plan.md T4.5, D9, D26). The item files are on the run's branch and in its pull request, where `fugaro backlog list` reads them. Nothing consumes this property yet — neither `fugaro diagnose` nor the console's run row carries the ids — and it is written anyway, because the record is what survives the run. Absent — never an empty list — for a run that filed none, which is every record written before this field existed, so an old reader sees the record it always saw.",
       "items": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{2}$", "description": "One item id: the day the item was filed and the day's sequence, the name its file under docs/backlog/ opens with (internal/backlog's AllocateID)." }
     }
   }

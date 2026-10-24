@@ -323,11 +323,14 @@ type Record struct {
 	// Backlog is the ids of the backlog items this run filed for what it
 	// left open, in the order it filed them: the `<YYYYMMDD-NN>` names
 	// their files under docs/backlog/ are known by (docs/rigor-modes/
-	// implementation-plan.md T4.5, D9, D26). The files themselves are on
-	// the run's branch and in its pull request; this is the record's own
-	// account of them, so `fugaro diagnose` and the console can say what a
-	// run left behind without a second read of the tree. Absent — never an
-	// empty list — for a run that filed none, which is every record
+	// implementation-plan.md T4.5, D9, D26). Nothing reads it yet — no
+	// `Diagnosis` field carries it and `runview.Row`, which the console's
+	// record keys are derived from, has no backlog key; the items
+	// themselves are on the run's branch and in its pull request, and
+	// `fugaro backlog list` is how they are read today. It is written
+	// because the record is what survives the run, and the ids are the one
+	// part of the filing nothing else on the record names. Absent — never
+	// an empty list — for a run that filed none, which is every record
 	// written before this field existed.
 	Backlog []string `json:"backlog,omitempty"`
 }
