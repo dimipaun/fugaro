@@ -4514,6 +4514,7 @@ gh release view "console-v${NEW:?}" -R dimipaun/fugaro --json assets --jq '.asse
 **Step 2 — an older, updater-carrying build is installed, and it sees the new release.** The identities that predate the check are recorded **first**, before anything is installed, so the Restore can tell what the check did from what it found; then download `console-v${OLD}`, verify it exactly as 59a's step 2 does (the sums file, its Sigstore bundle, `shasum -c`, `codesign --verify --deep --strict`, `spctl --assess --type execute`, `xcrun stapler validate`, the quarantine attribute, the first launch), install it into `/Applications`, and set its update check to on. Then read what the updater saw.
 
 ```bash
+mkdir -p "${CHK:?}"
 [ -e "${IDENTITIES:?}" ] || security find-identity -v -p codesigning > "${IDENTITIES:?}"
 ```
 
