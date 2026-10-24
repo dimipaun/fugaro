@@ -674,7 +674,7 @@ plus this folder's `internal/cli/docs_rigor_modes_test.go`, and they are files
 rather than folders, 13 of them pinning one of `docs/`'s folders and the rest a
 standalone document, which is why the row above counts the pins and not the
 folders they sit beside. **The figure is 67 at this branch's tree, because other
-folders have written a pin since** — `main` holds 65 — among them `internal/cli/docs_gcp_setup_test.go` (#764, the WSL
+folders have written a pin since** — `main` holds 66 — among them `internal/cli/docs_gcp_setup_test.go` (#764, the WSL
 route's Windows forms), `internal/cli/docs_setup_wizard_checks_test.go` (#771, the
 register's Check 27), `internal/cli/docs_live_init_census_test.go` (#772, the
 setup wizard's rename census), `internal/cli/docs_windows_console_test.go`
