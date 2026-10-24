@@ -33,7 +33,7 @@ ninth field is a field nobody decided, and is refused.
 | `mode` | the **resolved** mode the run ran under; `none` for an item filed by hand |
 | `area` | the matched areas' names, **strictest first**, comma-separated; `project` or `repo` for an item about the whole layer |
 | `status` | `open`, `closed` or `dropped` — three words, and no fourth |
-| `filed-by` | the run's launcher, or the filer's login for a hand-filed item |
+| `filed-by` | the run's launcher, or the filer's login for a hand-filed item — a login, never an email address: a run whose launcher is recorded only as an address writes `unknown` |
 | `filed-in` | what filed it: `run:<run id>`, `pr:<number>`, or `hand` for an item a person filed |
 | `date` | the record's finish time in UTC, as `YYYY-MM-DD` — **never** the clock of whoever regenerates the index |
 

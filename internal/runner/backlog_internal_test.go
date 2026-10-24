@@ -359,3 +359,52 @@ func TestRunFilingAfterAnotherRunsItemReachedTheBase(t *testing.T) {
 		}
 	}
 }
+
+// TestFiledByIsALoginAndNeverAnAddress: the item's filed-by is the launcher's
+// login (the owner's ruling of 2026-10-24, R2). A launcher recorded as an
+// email address is not shortened to its local part — that would be a guess at
+// a login — and neither it nor an empty launcher reaches the file: both
+// record `unknown`. No `@` lands anywhere in a filed item.
+func TestFiledByIsALoginAndNeverAnAddress(t *testing.T) {
+	for _, tc := range []struct{ by, want string }{
+		{"octocat", "octocat"},
+		{" octocat ", "octocat"},
+		{"dev@example.com", "unknown"},
+		{"runner@aurora-fugaro.iam.gserviceaccount.com", "unknown"},
+		{"", "unknown"},
+	} {
+		t.Run(tc.by, func(t *testing.T) {
+			r, _ := filedRun(t, runstore.ReviewSummary{Round: 2, Tier: runstore.TierSenior, Verdict: "changes", Findings: 3})
+			r.spec.RequestedBy = tc.by
+			if !r.fileOpenItems(context.Background()) {
+				t.Fatal("the run filed nothing")
+			}
+			names := itemNames(t, r.repo.Dir)
+			if len(names) != 1 {
+				t.Fatalf("items = %v; want one", names)
+			}
+			path := filepath.Join(r.repo.Dir, backlog.Dir, names[0])
+			doc, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			item, err := backlog.Parse(filepath.Join(backlog.Dir, names[0]), doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if item.FiledBy != tc.want {
+				t.Errorf("filed-by = %q; want %q", item.FiledBy, tc.want)
+			}
+			if strings.Contains(string(doc), "@") {
+				t.Errorf("the filed item carries an @:\n%s", doc)
+			}
+			index, err := os.ReadFile(filepath.Join(r.repo.Dir, backlog.Dir, backlog.IndexName))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(index), "@") {
+				t.Errorf("the index carries an @:\n%s", index)
+			}
+		})
+	}
+}

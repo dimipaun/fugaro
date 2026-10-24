@@ -2976,15 +2976,17 @@ func (r *run) filedArea() string {
 	return "repo"
 }
 
-// filedBy is the item's launcher: the identity the task was requested by,
-// which is who asked for the run. A task that names nobody — a hand-built
-// one, or one an older launcher wrote — records Fugaro itself rather than an
-// empty field D27's format refuses.
+// filedBy is the item's launcher: the login the task was requested by, which
+// is who asked for the run (D27). An item is committed into the repository, so
+// it never carries an email address (the owner's ruling of 2026-10-24): a
+// launcher recorded as one — the cloud account `fugaro run` reads — is not
+// shortened to a guessed login, and it records `unknown`, as does a task that
+// names nobody, rather than the empty field D27's format refuses.
 func (r *run) filedBy() string {
-	if by := strings.TrimSpace(r.spec.RequestedBy); by != "" {
+	if by := strings.TrimSpace(r.spec.RequestedBy); by != "" && !strings.Contains(by, "@") {
 		return by
 	}
-	return "fugaro"
+	return "unknown"
 }
 
 // filedBody is the item's body: what the round left open, why it is filed
