@@ -168,8 +168,10 @@ const STEPS = [
   }
 
   /* The wide composition: each step is a row of two parts on a 5/7 split, the words on the left
-     and the picture on the right. */
-  @media (min-width: 64rem) {
+     and the picture on the right — every step the same, the inside of one job included (the
+     owner's preview feedback on #1003, 2026-10-24: its picture had sat under its words, narrower
+     than the others). The row holds from a tablet up; only a phone stacks the picture under. */
+  @media (min-width: 48rem) {
     .home-run-steps {
       gap: var(--space-2xl);
     }
@@ -178,18 +180,6 @@ const STEPS = [
       grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
       align-items: center;
       gap: var(--space-2xl);
-    }
-
-    /* The inside of one job is the run's centre, so its row changes shape: the words over the
-       picture, and the picture across the whole width, which keeps four steps from reading as
-       four copies of one row. */
-    .home-run-step:nth-child(3) {
-      grid-template-columns: minmax(0, 1fr);
-      gap: var(--space-md);
-    }
-
-    .home-run-step:nth-child(3) .home-run-figure {
-      max-width: 56rem;
     }
   }
 </style>
