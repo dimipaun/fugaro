@@ -91,8 +91,17 @@ about a file — the parser accepts either item and the pin refuses it:
   empty: a status that says "not doing this" with nothing after it is the one
   thing a reader cannot act on.
 
-A run may not close an item it did not fix. That is a review rule rather than a
-rule a test can hold, stated here so a reviewer can ask.
+The run that closes an item is the follow-up on the pull request that fixed it:
+it flips the status and writes the section in its own commit, and a run that
+left findings open closes nothing — the round it did not answer is still what
+the item names. Closing is the whole of what a follow-up does about an item it
+did not file: what a run files is D30's own table, one item per tolerated
+finding, so a follow-up that also left findings open files an item of its own
+beside whatever the pull request already carries. The folder cannot check that a
+run fixed what it closes: it sees a status and a pull request number and never
+the diff between them, so that rule is the runner's (internal/runner's
+`fileOpenItems`) and what is held here is what the folder can see: a close names
+the pull request it was made on.
 
 ## The index
 

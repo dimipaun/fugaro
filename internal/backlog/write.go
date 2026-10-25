@@ -4,25 +4,26 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"unicode"
 )
 
-// Filing an item (docs/rigor-modes/implementation-plan.md T4.5, D9, D26–D28):
-// the one place an item file is written.
+// Filing an item (docs/rigor-modes/implementation-plan.md T4.5, D9, D26–D28)
+// and closing one (T4.7, D31): the two places an item file is written.
 //
 // The folder allocates the id rather than the caller, because D26 makes the id
 // the file's name and the folder's own state is the only place the day's
-// sequence is known. Filing also regenerates the index, so the commit that adds
-// an item is the commit that regenerates it (D28) — a filed item the index does
-// not list is the drift the folder's two guards exist to catch, and a filing
-// command is the one caller that can keep them green without a person
-// remembering to run a second command.
+// sequence is known. Both writes regenerate the index, so the commit that adds
+// an item and the commit that flips one are the commits that regenerate it
+// (D28, D31) — an item the index does not agree with is the drift the folder's
+// two guards exist to catch, and a write path of its own is the one way to keep
+// them green without a person remembering to run a second command.
 //
-// It reads no clock: the day an item is filed is given to it (D26's id is the
-// day the item was filed, and D27's `date` is that day), so the same filing on
-// the same folder is the same bytes on every machine, and a caller that wants
-// "today" says so.
+// Neither reads a clock: the day an item is filed is given to it (D26's id is
+// the day the item was filed, and D27's `date` is that day), so the same filing
+// on the same folder is the same bytes on every machine, and a caller that
+// wants "today" says so.
 
 // MaxSlugRunes bounds the slug half of a file name. An item's title is a
 // filer's own words and a file name is what a reader has to live with, so the
@@ -99,6 +100,107 @@ func Write(dir string, n New) (Item, error) {
 		return Item{}, fmt.Errorf("write %s: %w", indexPath, err)
 	}
 	return item, nil
+}
+
+// closedByRE is what a `## Closed by` section must name: the pull request that
+// closed the item, as `#<number>` or its URL (D31). The folder's pin states the
+// same rule over the document (internal/cli's docs_backlog_test.go, plan T4.7)
+// and is deliberately a second reading of it: the pin holds a tree, which is
+// the only place an item a person edited by hand is seen, and this holds the
+// moment a close is made, where a section naming no pull request can still be
+// refused rather than written.
+var closedByRE = regexp.MustCompile(`#[0-9]+\b|/pull/[0-9]+\b`)
+
+// Close flips an open item to `closed`, appends D31's `## Closed by` section
+// naming what closed it, and regenerates the index beside it (plan T4.7). id is
+// D26's id — the file's own name, which is why a close is by id and not by
+// path — and closedBy is the pull request that fixed the item, as `#<number>`
+// or its URL: the section is what a reader follows from an item to the change
+// that answered it, and a close naming none would be a status with nothing
+// behind it.
+//
+// The run that fixes an item is the one that closes it, so this is Write's
+// sibling and not a command of its own (internal/cli's backlog command states
+// the same thing): the index has to move in the same commit as the status, and
+// the caller that can do that is the one holding the commit.
+//
+// Every refusal happens before anything is written, so a close that cannot be
+// made leaves the folder exactly as it was. The item's own words are left as
+// they are: closing adds the section to somebody's account of what was left
+// open rather than rewriting it.
+func Close(dir, id, closedBy string) (Item, error) {
+	if !closedByRE.MatchString(closedBy) {
+		return Item{}, fmt.Errorf("closing %s names no pull request: the `%s` section names the one that closed the item, as `#<number>` or its URL (D31)", id, ClosedHeading)
+	}
+	items, err := Load(dir)
+	if err != nil {
+		return Item{}, err
+	}
+	at := -1
+	for i, it := range items {
+		if it.ID == id {
+			at = i
+			break
+		}
+	}
+	if at < 0 {
+		return Item{}, fmt.Errorf("%s holds no item %s: an id is the name of a file, and a close that invented one would leave the item it meant open where it is (D26)", dir, id)
+	}
+	item := items[at]
+	if item.Status != "open" {
+		return Item{}, fmt.Errorf("%s: %s is %s, not open: only an open item is closed, and a second close would append a second `%s` section to a status that already says what closed it (D31)", item.Path, id, item.Status, ClosedHeading)
+	}
+	doc, err := os.ReadFile(item.Path)
+	if err != nil {
+		return Item{}, fmt.Errorf("read %s: %w", item.Path, err)
+	}
+	if _, ok := section(string(doc), ClosedHeading); ok {
+		return Item{}, fmt.Errorf("%s carries a `%s` section while it is open: the section is what a closed item has and no other item does (D31)", item.Path, ClosedHeading)
+	}
+	closed := closeDoc(string(doc), closedBy)
+	// What is written is parsed again, as Write does: a file the folder accepts
+	// is a file Close produced, not one it hoped for.
+	item, err = Parse(item.Path, []byte(closed))
+	if err != nil {
+		return Item{}, err
+	}
+	if err := os.WriteFile(item.Path, []byte(closed), 0o644); err != nil {
+		return Item{}, fmt.Errorf("write %s: %w", item.Path, err)
+	}
+	items[at] = item
+	indexPath := filepath.Join(dir, IndexName)
+	if err := os.WriteFile(indexPath, []byte(Render(items)), 0o644); err != nil {
+		return Item{}, fmt.Errorf("write %s: %w", indexPath, err)
+	}
+	return item, nil
+}
+
+// closeDoc is the item's bytes with the close applied: the `status` field
+// flipped and D31's section appended. Nothing else moves — the filer's words,
+// the fields' order, the blank lines — so the diff a close makes is the status
+// and the section and nothing a reader has to re-read.
+//
+// The front matter is walked rather than searched for: the body is somebody's
+// prose and may well carry a line that starts with `status:`, and only the
+// field between the two fences is the item's status.
+func closeDoc(doc, closedBy string) string {
+	lines := strings.Split(doc, "\n")
+	fences := 0
+	for i, line := range lines {
+		if strings.TrimRight(line, "\r") == "---" {
+			fences++
+			if fences == 2 {
+				break
+			}
+			continue
+		}
+		if fences == 1 && strings.HasPrefix(line, "status:") {
+			lines[i] = "status: closed"
+			break
+		}
+	}
+	out := strings.TrimRight(strings.Join(lines, "\n"), "\n")
+	return out + "\n\n" + ClosedHeading + "\n\n" + oneLine(closedBy) + "\n"
 }
 
 // render is the item file's bytes: the `---` fenced front matter in the order

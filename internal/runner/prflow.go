@@ -445,19 +445,30 @@ func reviewsPart(rs []runstore.ReviewSummary) string {
 	return fmt.Sprintf("%sreview round %d: %s", who, last.Round, Plural(last.Findings, "finding"))
 }
 
-// backlogPart is the section's account of the items the run filed: the ids
-// beside the review line that says what it left open, so a reader of the
-// pull request can cite an item without opening the tree (D9, D26, D27).
-// "" for a run that filed none, which is most of them.
+// backlogPart is the section's account of the items the run wrote: the ids it
+// filed and the ids it closed as the follow-up that fixed them, beside the
+// review line that says what was left open, so a reader of the pull request can
+// cite an item without opening the tree (D9, D26, D27, D31 — the closing rule's
+// "names the item id in its body"). "" for a run that wrote neither, which is
+// most of them.
 func (r *run) backlogPart() string {
-	if len(r.rec.Backlog) == 0 {
-		return ""
+	var parts []string
+	if len(r.rec.Backlog) > 0 {
+		parts = append(parts, "filed "+backlogIDs(r.rec.Backlog))
 	}
-	ids := make([]string, 0, len(r.rec.Backlog))
-	for _, id := range r.rec.Backlog {
-		ids = append(ids, "`"+inlineText(id)+"`")
+	if len(r.closedBacklog) > 0 {
+		parts = append(parts, "closed "+backlogIDs(r.closedBacklog))
 	}
-	return "filed " + strings.Join(ids, ", ")
+	return strings.Join(parts, ", ")
+}
+
+// backlogIDs renders ids as the section cites them, one code span each.
+func backlogIDs(ids []string) string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, "`"+inlineText(id)+"`")
+	}
+	return strings.Join(out, ", ")
 }
 
 // costPart is the model cost for the section: dollars for api-key and

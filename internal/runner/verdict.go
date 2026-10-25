@@ -2,6 +2,7 @@ package runner
 
 import (
 	"encoding/json"
+	"errors"
 	"regexp"
 
 	"github.com/dimipaun/fugaro/internal/agent"
@@ -43,31 +44,71 @@ type Verdict struct {
 var fencedJSONRE = regexp.MustCompile("(?s)```json\\s*\\n(.*?)\\n```")
 
 // ParseVerdict reads the verdict from structured output, falling back to the
-// last fenced JSON block. Anything unparseable counts as a blocking finding.
+// last fenced JSON block. Anything unparseable counts as a blocking finding,
+// and the finding says what could not be read: the decoder's own refusal
+// names the field it refused, which is the one thing a reader of a failed
+// round needs — a score written as a word ("likelihood": "high") is the case
+// this is for, and a finding that says only "no parseable verdict" leaves
+// that reader searching the transcript by hand.
 func ParseVerdict(res agent.Result) Verdict {
-	if v, ok := TryVerdict(res); ok {
+	v, why := readVerdict(res)
+	if why == "" {
 		return v
 	}
-	return Verdict{Verdict: "changes", Findings: []Finding{{Severity: "blocker", Summary: "review produced no parseable verdict"}}}
+	return Verdict{Verdict: "changes", Findings: []Finding{{Severity: "blocker", Summary: "review produced no parseable verdict: " + why}}}
 }
 
 // TryVerdict is ParseVerdict that says whether there was a verdict to read.
 func TryVerdict(res agent.Result) (Verdict, bool) {
-	if v, ok := decodeVerdict(res.Structured); ok {
-		return v, true
-	}
-	if m := fencedJSONRE.FindAllStringSubmatch(res.Text, -1); len(m) > 0 {
-		if v, ok := decodeVerdict([]byte(m[len(m)-1][1])); ok {
-			return v, true
-		}
-	}
-	return Verdict{}, false
+	v, why := readVerdict(res)
+	return v, why == ""
 }
 
-func decodeVerdict(b []byte) (Verdict, bool) {
-	var v Verdict
-	if len(b) == 0 || json.Unmarshal(b, &v) != nil {
-		return v, false
+// readVerdict decodes a verdict from the structured output or, failing that,
+// from the last fenced JSON block in the text. It returns "" as the reason
+// when there was a verdict, and otherwise why the read failed — the refusal
+// of the structured output first, since that is the one a reviewer wrote.
+func readVerdict(res agent.Result) (Verdict, string) {
+	why := ""
+	note := func(err error) {
+		if why == "" {
+			why = err.Error()
+		}
 	}
-	return v, v.Verdict == "ship" || v.Verdict == "changes"
+	if len(res.Structured) > 0 {
+		v, err := decodeVerdict(res.Structured)
+		if err == nil {
+			return v, ""
+		}
+		note(err)
+	}
+	if m := fencedJSONRE.FindAllStringSubmatch(res.Text, -1); len(m) > 0 {
+		v, err := decodeVerdict([]byte(m[len(m)-1][1]))
+		if err == nil {
+			return v, ""
+		}
+		note(err)
+	}
+	if why == "" {
+		why = "nothing in the result was a verdict"
+	}
+	return Verdict{}, why
+}
+
+// decodeVerdict reads one verdict. A verdict that is not one of the two words
+// the readiness rule reads is refused rather than passed on: every reader of
+// a verdict compares it against those two, so a third word would be a run
+// that shipped nothing and said so.
+func decodeVerdict(b []byte) (Verdict, error) {
+	var v Verdict
+	if len(b) == 0 {
+		return v, errors.New("the output was empty")
+	}
+	if err := json.Unmarshal(b, &v); err != nil {
+		return v, err
+	}
+	if v.Verdict != "ship" && v.Verdict != "changes" {
+		return v, errors.New("verdict is neither ship nor changes")
+	}
+	return v, nil
 }
