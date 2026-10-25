@@ -74,6 +74,7 @@
 // happen at all.
 
 import { putReading, putText, startConsole } from './app'
+import { ONBOARDING_COPY } from './installations'
 import type { CompatibilityBridge, MountLike, ScreenGate } from './app'
 import { readNumber, unavailable } from '../shared/availability'
 import type { Reading } from '../shared/availability'
@@ -742,6 +743,9 @@ export const RAIL_STATE_CLASS = 'console-rail-state'
 export const RAIL_SPEND_CLASS = 'console-rail-spend'
 export const RAIL_ADD_CLASS = 'console-rail-add'
 export const RAIL_HINT_CLASS = 'console-rail-hint'
+/** RAIL_EMPTY_CLASS is the line the rail draws in place of rows when it has
+ * none; the `+` below it stays the way to add one. */
+export const RAIL_EMPTY_CLASS = 'console-rail-empty'
 
 /** RAIL_LIST_ID is what the collapse control's `aria-controls` names. It is an
  * `id` and not a hook: `aria-controls` takes an element's id, and no rule in the
@@ -754,6 +758,7 @@ export const RAIL_LIST_ID = 'console-rail-list'
  * row's label is the design's. */
 export const RAIL_TITLE = 'Installations'
 export const RAIL_HINT = 'Switch with the shortcut keys 1 2 3'
+export const RAIL_EMPTY_TEXT = 'No installations yet'
 export const RAIL_ADD_LABEL = '+ Add installation'
 
 /** RAIL_COLLAPSE_LABEL and RAIL_EXPAND_LABEL are the collapse control's
@@ -1082,6 +1087,10 @@ export function drawRail(
   hint.setAttribute('class', RAIL_HINT_CLASS)
   hint.textContent = RAIL_HINT
 
+  const empty = factory.create('p')
+  empty.setAttribute('class', RAIL_EMPTY_CLASS)
+  empty.textContent = RAIL_EMPTY_TEXT
+
   // The drawn rows, in the order they are drawn: the shortcut keys address them
   // by position and the arrows move between them. Each entry keeps the row's
   // four writable spans beside the row it was drawn for, so a setter below
@@ -1222,12 +1231,15 @@ export function drawRail(
       })
     }
     surface.nodeOf(list).replaceChildren(...elements.map((element) => surface.nodeOf(element)))
+    if (next.length > 0) empty.setAttribute('hidden', '')
+    else empty.removeAttribute('hidden')
     mark()
     writeState()
   }
 
   rail.append(head)
   rail.append(list)
+  rail.append(empty)
   rail.append(foot)
   rail.append(hint)
   setRows(rows)
@@ -1277,6 +1289,71 @@ export function drawRail(
       activate(wanted.row)
     },
   }
+}
+
+// ---------------------------------------------------------------------------
+// The onboarding view: a machine with no installation at all.
+// ---------------------------------------------------------------------------
+
+/** RailOnboarding is the list answer's `onboard` state, as this file draws it:
+ * the two screens `src/main/onboarding.ts` defines, never `none`. */
+export interface RailOnboarding {
+  readonly kind: 'install-cli' | 'first-installation'
+  readonly command: string
+  /** reason is the resolution's own sentence for `install-cli`, `''` otherwise. */
+  readonly reason: string
+}
+
+/** railOnboarding reads `onboard` out of one `installation.list` answer, or
+ * `null` when it names no screen this build draws. */
+export function railOnboarding(reply: unknown): RailOnboarding | null {
+  const answer = replyData(reply)
+  if (!answer.ok || typeof answer.data !== 'object' || answer.data === null) return null
+  const onboard = (answer.data as Record<string, unknown>)['onboard']
+  if (typeof onboard !== 'object' || onboard === null) return null
+  const state = onboard as Record<string, unknown>
+  const kind = state['kind']
+  if (kind !== 'install-cli' && kind !== 'first-installation') return null
+  return Object.freeze({
+    kind,
+    command: textOf(state['command'], 'the onboarding command'),
+    reason: typeof state['reason'] === 'string' ? textOf(state['reason'], 'the resolution’s sentence') : '',
+  })
+}
+
+export const ONBOARDING_CLASS = 'installation-onboarding'
+export const ONBOARDING_TITLE_CLASS = 'installation-onboarding-title'
+export const ONBOARDING_BODY_CLASS = 'installation-onboarding-body'
+export const ONBOARDING_REASON_CLASS = 'installation-onboarding-reason'
+export const ONBOARDING_COMMAND_CLASS = 'installation-onboarding-command'
+
+/** drawOnboarding is the main area of a console with no installation: the
+ * picker's own words for the screen (`ONBOARDING_COPY`), the resolution's
+ * sentence when the CLI is missing, and the one command from the main process. */
+export function drawOnboarding(surface: DomSurface, onboarding: RailOnboarding): SkewElement {
+  const factory = surface.factory
+  const copy = ONBOARDING_COPY[onboarding.kind]
+  const section = factory.create('section')
+  section.setAttribute('class', ONBOARDING_CLASS)
+  const title = factory.create('h1')
+  title.setAttribute('class', ONBOARDING_TITLE_CLASS)
+  title.textContent = copy.title
+  section.append(title)
+  const body = factory.create('p')
+  body.setAttribute('class', ONBOARDING_BODY_CLASS)
+  body.textContent = copy.body
+  section.append(body)
+  if (onboarding.reason !== '') {
+    const reason = factory.create('p')
+    reason.setAttribute('class', ONBOARDING_REASON_CLASS)
+    reason.textContent = onboarding.reason
+    section.append(reason)
+  }
+  const command = factory.create('code')
+  command.setAttribute('class', ONBOARDING_COMMAND_CLASS)
+  command.textContent = onboarding.command
+  section.append(command)
+  return section
 }
 
 // ---------------------------------------------------------------------------
@@ -1643,7 +1720,9 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
     installation = null
   }
   const railBridge = railBridgeFrom(scope.fugaro)
-  const rows = railRows(await railBridge.listInstallations({})) ?? currentRailRows(installation)
+  const listed = await railBridge.listInstallations({})
+  const rows = railRows(listed) ?? currentRailRows(installation)
+  const onboarding = railOnboarding(listed)
   // The rail is drawn before the dashboard for the DOM order, and a click on it
   // is answered by the dashboard's own views: `mountDashboard` binds `activate`.
   const wiring: RailWiring = { activate: () => undefined }
@@ -1667,6 +1746,7 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
     rail,
     railBridge,
     rows,
+    onboarding,
     wiring,
     navigator: scope.navigator,
   })
@@ -1726,6 +1806,9 @@ interface DashboardDeps {
    * first drawn with, and the click this function binds. */
   readonly railBridge: RailBridge
   readonly rows: readonly RailRow[]
+  /** onboarding is the screen the list answer names for a machine with no
+   * installation, or `null`. */
+  readonly onboarding: RailOnboarding | null
   readonly wiring: RailWiring
   /** navigator is the window's, for the one question the shortcut keys ask of
    * the machine -- which modifier they are spelled with (design section 4.1:
@@ -1748,7 +1831,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   // The Live screen's own state, kept across polls: the burn window accumulates
   // samples, so it must outlive a drawing. A fresh one per poll would be a
   // one-bar sparkline forever.
-  const history = new BurnHistory()
+  let history = new BurnHistory()
   const live: {
     drawn: Drawn | null
     inFlight: boolean
@@ -2300,6 +2383,25 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * the row it was drawn with; this is what an action's own answer replaces.
    */
   let railNow: readonly RailRow[] = deps.rows
+  let onboardNow: RailOnboarding | null = deps.onboarding
+
+  /** showOnboarding puts the first-run screen in the main area: no
+   * installation, so nothing to read and no Live refusal in its place. */
+  const showOnboarding = (onboarding: RailOnboarding): void => {
+    markCurrent('onboarding')
+    rail.view(null)
+    replace(drawOnboarding(surface, onboarding))
+  }
+
+  /** forgetLive drops what the Live screen held for the installation the
+   * console was open on, so the next one is read afresh rather than drawn from
+   * the frame and the burn history of an installation that is gone. */
+  const forgetLive = (): void => {
+    live.drawn = null
+    live.rigor = new Map()
+    live.rigorAt = 0
+    history = new BurnHistory()
+  }
 
   /** showIssue puts one installation's issue in the main area (owner's design
    * ruling of 2026-10-25): a view like Run detail, with no navigation button
@@ -2318,6 +2420,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       showIssue(open)
       return
     }
+    if (open === undefined && railNow.length === 0 && onboardNow !== null) {
+      showOnboarding(onboardNow)
+      return
+    }
     show('live')
   }
 
@@ -2332,8 +2438,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     }
     const next = railRows(reply)
     if (next === null) return
+    const openBefore = railNow.find((row) => row.open)?.project
     railNow = next
+    onboardNow = railOnboarding(reply) ?? onboardNow
     rail.setRows(next)
+    if (next.find((row) => row.open)?.project !== openBefore) forgetLive()
     const still = next.find((row) => row.project === project)
     if (still !== undefined && still.issue !== 'none') {
       showIssue(still)
@@ -2405,6 +2514,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   // issue view of the first one in the main area").
   const opened = railNow.find((row) => row.open)
   if (opened !== undefined && !opened.readable) showIssue(opened)
+  else if (opened === undefined && railNow.length === 0 && onboardNow !== null) showOnboarding(onboardNow)
   else await pollLive()
   syncPolling()
 

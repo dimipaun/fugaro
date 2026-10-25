@@ -74,11 +74,11 @@ const NEXT_SECTION = '## 3.'
  * scan does not read is a stylesheet whose selectors nothing checks. */
 const SCANNED: readonly string[] = Object.freeze(['base.css', 'screens.css'])
 
-/** RAIL_HOOKS is the rail's fourteen classes, which §2.1 names and §4.1 draws as
- * fifteen elements (the name line and the warning mark are the owner's design
- * ruling of 2026-10-25). They are listed here because the count is the claim:
- * the stylesheet selects these fourteen and no fifteenth, and a case below says
- * so. */
+/** RAIL_HOOKS is the rail's fifteen classes, which §2.1 names and §4.1 draws as
+ * sixteen elements (the name line, the warning mark and the empty-state line
+ * are the owner's design ruling of 2026-10-25). They are listed here because the
+ * count is the claim: the stylesheet selects these fifteen and no sixteenth, and
+ * a case below says so. */
 const RAIL_HOOKS: readonly string[] = Object.freeze([
   'console-rail',
   'console-rail-head',
@@ -93,6 +93,7 @@ const RAIL_HOOKS: readonly string[] = Object.freeze([
   'console-rail-state',
   'console-rail-spend',
   'console-rail-add',
+  'console-rail-empty',
   'console-rail-hint',
 ])
 
@@ -620,7 +621,7 @@ function elementQualified(css: string): readonly string[] {
 }
 
 describe('the theme’s selectors against the design’s §2 inventory', () => {
-  it('reads the inventory out of the design, and it names the rail’s fourteen hooks', () => {
+  it('reads the inventory out of the design, and it names the rail’s fifteen hooks', () => {
     // The non-vacuity guard for every case below: an extraction that found
     // nothing, or that read the wrong section, would pass a scan against an
     // empty list. The rail's twelve are the hooks this task adds, and §2.1 is
@@ -695,9 +696,9 @@ describe('the theme’s selectors against the design’s §2 inventory', () => {
     expect(unknown, 'a rule selects an attribute the design’s §2 does not name').toEqual([])
   })
 
-  it('selects the rail’s fourteen hooks and no fifteenth', () => {
-    // "Fourteen hooks on fifteen elements" (design §2.1 and §4.1): the foot row
-    // and the button inside it share `console-rail-add`. A fifteenth
+  it('selects the rail’s fifteen hooks and no sixteenth', () => {
+    // "Fifteen hooks on sixteen elements" (design §2.1 and §4.1): the foot row
+    // and the button inside it share `console-rail-add`. A sixteenth
     // `console-rail-*` class in the stylesheet would be a hook either the entry
     // does not draw or §2.1 does not list, and both are the same defect.
     const rail = selectorsIn(readTheme('base.css')).classes.filter((name) => name.startsWith('console-rail'))

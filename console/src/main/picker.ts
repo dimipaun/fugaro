@@ -823,18 +823,7 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
     if (held === null && !lastListed.has(project)) {
       return { ok: false, reason: `no installation is named ${JSON.stringify(project)}` }
     }
-    const probed = await probeInstallation(
-      {
-        project,
-        ...(held?.binaryPath === undefined ? {} : { binaryPath: held.binaryPath }),
-        ...(held?.configPath === undefined ? {} : { configPath: held.configPath }),
-        ...(held?.checkout === undefined ? {} : { checkout: held.checkout }),
-      },
-      // `probeInstallation` takes everything but the two seams it does not use:
-      // the pairing check (a choose runs no `doctor`) and the filesystem (it
-      // stats nothing -- a checkout was checked when it was set).
-      validationDeps(),
-    )
+    const probed = await probeFor(project)
     if (!probed.ok) return { ok: false, reason: probed.reason }
     // The compatibility first, so a row drawn by the list this choose returns
     // already carries the mode the handshake just read.
@@ -848,6 +837,24 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
       resolvedBinaryPath: probed.value.path,
     })
     return { ok: true, data: await listReply() }
+  }
+
+  /** probeFor runs one installation's handshake with its record's own override,
+   * config and checkout -- what a choose and a rebind after a removal both ask. */
+  const probeFor = (project: string): ReturnType<typeof probeInstallation> => {
+    const held = registry.entry(project)
+    return probeInstallation(
+      {
+        project,
+        ...(held?.binaryPath === undefined ? {} : { binaryPath: held.binaryPath }),
+        ...(held?.configPath === undefined ? {} : { configPath: held.configPath }),
+        ...(held?.checkout === undefined ? {} : { checkout: held.checkout }),
+      },
+      // `probeInstallation` takes everything but the two seams it does not use:
+      // the pairing check (a choose runs no `doctor`) and the filesystem (it
+      // stats nothing -- a checkout was checked when it was set).
+      validationDeps(),
+    )
   }
 
   /**
@@ -928,14 +935,35 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
     if (registry.entry(project) === null) return { ok: false, reason: 'no such installation' }
     const before = current()
     registry.remove(project)
-    if (before.chosen && before.project === project) deps.onRemoved?.(before.id)
+    const wasOpen = before.chosen && before.project === project
+    if (wasOpen) deps.onRemoved?.(before.id)
     // A removal re-reads, so the answer the screen draws from and the session it
     // leaves behind are one decision: the record that went is gone from the rows
     // (`saved`), and the console is open on whichever row the open rule names now.
-    // The answer's shape is the list's, narrowed to the two fields a removal has
-    // ever answered with.
     const reply = await listReply()
-    return { ok: true, data: { rows: reply.rows, active: reply.active } }
+    if (wasOpen) await rebindAfterRemoval(reply)
+    return { ok: true, data: { rows: reply.rows, active: reply.active, onboard: reply.onboard } }
+  }
+
+  /**
+   * rebindAfterRemoval is what keeps a removal of the open installation from
+   * leaving the dashboard on a source and a handshake for a record that is gone:
+   * when the open rule now names a readable installation, that installation's
+   * handshake runs and `onChosen` reopens the window on it -- a choose in all but
+   * the store, which keeps no new `active` (the operator chose nothing). An
+   * unreadable or absent next row needs no handshake: the dashboard draws its
+   * issue, or the onboarding, and reads nothing.
+   */
+  const rebindAfterRemoval = async (reply: InstallationsListReply): Promise<void> => {
+    const open = reply.rows.find((row) => row.open)
+    if (open === undefined || !open.state.readable) return
+    const probed = await probeFor(open.project)
+    if (!probed.ok) return
+    await deps.onChosen?.({
+      project: open.project,
+      compatibility: probed.value.compatibility,
+      resolvedBinaryPath: probed.value.path,
+    })
   }
 
   const answerFor = async (name: InstallationOperationName, args: InstallationArguments): Promise<unknown> => {

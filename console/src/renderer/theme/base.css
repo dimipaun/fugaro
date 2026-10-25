@@ -367,6 +367,13 @@ button.console-rail-add:hover {
   color: var(--text);
 }
 
+/* The line the rail draws when it has no row; the add row below it stays. */
+p.console-rail-empty {
+  padding: var(--space-xs) var(--space-md);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
 p.console-rail-hint {
   padding: var(--space-2xs) var(--space-md) var(--space-sm);
   color: var(--text-muted);
@@ -384,6 +391,7 @@ aside.console-rail[data-collapsed='true'] span.console-rail-name,
 aside.console-rail[data-collapsed='true'] span.console-rail-project,
 aside.console-rail[data-collapsed='true'] span.console-rail-spend,
 aside.console-rail[data-collapsed='true'] p.console-rail-title,
+aside.console-rail[data-collapsed='true'] p.console-rail-empty,
 aside.console-rail[data-collapsed='true'] p.console-rail-hint {
   position: absolute;
   width: 1px;
@@ -510,6 +518,47 @@ button.installation-issue-checkout {
   font-family: var(--font-mono);
   overflow-wrap: anywhere;
   text-align: left;
+}
+
+/* ---- The onboarding view --------------------------------------------------
+ *
+ * The panel of a console with no installation at all: the picker's own words
+ * for the screen, and the one command. Nothing is wrong, so no `--warn` rule. */
+section.installation-onboarding {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  color: var(--text);
+}
+
+h1.installation-onboarding-title {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: var(--weight-semibold);
+}
+
+p.installation-onboarding-body {
+  margin: 0;
+  font-size: var(--font-size-base);
+  line-height: var(--leading-normal);
+}
+
+p.installation-onboarding-reason {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+code.installation-onboarding-command {
+  display: inline-block;
+  padding: var(--space-2xs) var(--space-xs);
+  background: var(--surface-alt);
+  border: var(--rule-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
 }
 
 /* ---- The installation line, the nav and the panel ------------------------- */
@@ -689,6 +738,7 @@ div.console-panel {
 
   section.installation-issue,
   code.installation-issue-command,
+  code.installation-onboarding-command,
   pre.installation-issue-lines,
   button.installation-issue-choose,
   button.installation-issue-remove,

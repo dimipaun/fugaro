@@ -60,6 +60,10 @@ import {
   RAIL_STATE_CLASS,
   RAIL_WARNING_CLASS,
   RAIL_WARNING_GLYPH,
+  RAIL_EMPTY_CLASS,
+  ONBOARDING_CLASS,
+  ONBOARDING_COMMAND_CLASS,
+  ONBOARDING_TITLE_CLASS,
   ISSUE_CLASS,
   ISSUE_COMMAND_CLASS,
   ISSUE_DETAILS_LABEL,
@@ -1040,6 +1044,7 @@ describe('the installation rail', () => {
     expect(rail.children.map((child) => child.attributes.get('class'))).toEqual([
       RAIL_HEAD_CLASS,
       RAIL_LIST_CLASS,
+      RAIL_EMPTY_CLASS,
       RAIL_ADD_CLASS,
       RAIL_HINT_CLASS,
     ])
@@ -1626,6 +1631,7 @@ function orbitRow(open = false): Record<string, unknown> {
 function railBridge(
   rows: readonly Record<string, unknown>[],
   answers: Readonly<Record<string, AReply>> = {},
+  onboard?: Readonly<Record<string, unknown>>,
 ): FakeBridge & { readonly rail: readonly { readonly name: string; readonly args: unknown }[] } {
   const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
   const base = fakeBridge({ replies: { subscribeLive: () => snapshotReply(frame, nowStamp()) } })
@@ -1642,7 +1648,9 @@ function railBridge(
       rail.push({ name, args })
       const answer = answers[name]
       if (answer !== undefined) return answer(args)
-      return name === 'listInstallations' ? { ok: true, data: { rows } } : { ok: true, data: null }
+      return name === 'listInstallations'
+        ? { ok: true, data: { rows, ...(onboard === undefined ? {} : { onboard }) } }
+        : { ok: true, data: null }
     }
   }
   return { ...base, rail }
@@ -1755,5 +1763,73 @@ describe('the rail over the installation list', () => {
     add?.click()
     await flush()
     expect(rail.at(-1)).toEqual({ name: 'openInstallations', args: {} })
+  })
+})
+
+describe('the rail with nothing left to open', () => {
+  const FIRST = { kind: 'first-installation', command: 'fugaro setup' }
+
+  it('draws the onboarding in the main area and an empty rail with its + when there is no installation at all', async () => {
+    const { bridge, calls, rail } = railBridge([], {}, FIRST)
+    const document = await boot(bridge, new FakeDocument())
+    const onboarding = classed(panelOf(document), ONBOARDING_CLASS)[0]
+    expect(onboarding, 'the panel drew no onboarding').toBeDefined()
+    expect(classed(onboarding as FakeNode, ONBOARDING_TITLE_CLASS)[0]?.textContent).toBe('Set up your first installation')
+    expect(classed(onboarding as FakeNode, ONBOARDING_COMMAND_CLASS)[0]?.textContent).toBe('fugaro setup')
+    // Nothing to read, so nothing is read -- no Live refusal drawn in its place.
+    expect(calls).toEqual([])
+    const empty = classed(railOf(document), RAIL_EMPTY_CLASS)[0]
+    expect(empty?.attributes.get('hidden')).toBeUndefined()
+    expect(rowsOf(document)).toHaveLength(0)
+    classed(railOf(document), RAIL_ADD_CLASS).find((node) => node.tagName === 'BUTTON')?.click()
+    await flush()
+    expect(rail.at(-1)?.name).toBe('openInstallations')
+  })
+
+  it('hides the empty-state line while the rail has rows', async () => {
+    const { bridge } = railBridge([listRow('aurora', { open: true })])
+    const document = await boot(bridge, new FakeDocument())
+    expect(classed(railOf(document), RAIL_EMPTY_CLASS)[0]?.attributes.get('hidden')).toBe('')
+  })
+
+  it('draws the onboarding at once when the last installation is removed from its issue view', async () => {
+    const { bridge, calls } = railBridge([orbitRow(true)], {
+      removeInstallation: () => ({ ok: true, data: { rows: [], onboard: FIRST } }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonLabelled(classed(panelOf(document), ISSUE_CLASS)[0] as FakeNode, ISSUE_REMOVE_LABEL).click()
+    await flush()
+    expect(classed(panelOf(document), ONBOARDING_CLASS)).toHaveLength(1)
+    expect(rowsOf(document)).toHaveLength(0)
+    expect(calls).toEqual([])
+  })
+
+  it('opens the next readable installation at once when the open one is removed, with a fresh read', async () => {
+    const { bridge, calls } = railBridge([orbitRow(true)], {
+      removeInstallation: () => ({ ok: true, data: { rows: [listRow('aurora', { open: true })] } }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    expect(calls).toEqual([])
+    buttonLabelled(classed(panelOf(document), ISSUE_CLASS)[0] as FakeNode, ISSUE_REMOVE_LABEL).click()
+    await flush()
+    expect(classed(panelOf(document), ISSUE_CLASS)).toHaveLength(0)
+    expect(calls.map((call) => call.name)).toContain('subscribeLive')
+    expect(rowNamed(document, 'aurora').attributes.get('aria-selected')).toBe('true')
+  })
+
+  it('never redraws the removed installation’s Live frame: the next one is read afresh', async () => {
+    const stale = listRow('aurora', { open: true, issue: 'stale', readable: true, sentence: 'aurora is stale.' })
+    stale['saved'] = true
+    const { bridge, calls } = railBridge([stale, listRow('comet')], {
+      removeInstallation: () => ({ ok: true, data: { rows: [listRow('comet', { open: true })] } }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const before = calls.filter((call) => call.name === 'subscribeLive').length
+    rowNamed(document, 'aurora').click()
+    await flush()
+    buttonLabelled(classed(panelOf(document), ISSUE_CLASS)[0] as FakeNode, ISSUE_REMOVE_LABEL).click()
+    await flush()
+    expect(calls.filter((call) => call.name === 'subscribeLive').length).toBe(before + 1)
+    expect(rowNamed(document, 'comet').attributes.get('aria-selected')).toBe('true')
   })
 })

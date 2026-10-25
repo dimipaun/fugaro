@@ -193,10 +193,11 @@ rule does not allow. **A fifth child precedes these four whenever the mode is no
 
 | Region | Element and hooks | What it holds |
 |---|---|---|
-| Installation rail | `aside.console-rail` (with its own `data-collapsed`) → `div.console-rail-head` (`p.console-rail-title`, `button.console-rail-collapse`), `div.console-rail-list` → one `button.console-rail-row` per installation it draws (`div.console-rail-nameline` → `span.console-rail-name` and, for an installation with an issue, `span.console-rail-warning` with `role="img"` and an `aria-label`; `span.console-rail-project`, `span.console-rail-state` with `data-state`, `span.console-rail-spend`), `div.console-rail-add` → `button.console-rail-add`, `p.console-rail-hint`; the ARIA is `role="tablist"` on the list, `role="tab"` and `aria-selected` on its rows, `aria-controls`/`aria-expanded` on the collapse control | the canvas's structural addition (§4.1): the header row and its collapse control, one tab per row, **one row per installation the CLI listed or this console holds, readable or not** (§4.1, owner's design ruling of 2026-10-25), the add row and the hint. The first `role=` in the renderer. **Fourteen hooks on fifteen elements** — `console-rail-add` names the foot row and its button both — and a rule selects no other: the tree, the tokens and the keyboard are §4.1's. The two `data-*` hooks are Task 6.3's, added here in the PR that wrote the rules that select them (§2's licence rule): `data-collapsed` on the rail is which of the two widths it is drawn at, and `data-state` on the state span is the word it already draws, repeated as the tone's hook |
+| Installation rail | `aside.console-rail` (with its own `data-collapsed`) → `div.console-rail-head` (`p.console-rail-title`, `button.console-rail-collapse`), `div.console-rail-list` → one `button.console-rail-row` per installation it draws (`div.console-rail-nameline` → `span.console-rail-name` and, for an installation with an issue, `span.console-rail-warning` with `role="img"` and an `aria-label`; `span.console-rail-project`, `span.console-rail-state` with `data-state`, `span.console-rail-spend`), `p.console-rail-empty` (the line drawn, unhidden, when the rail has no row), `div.console-rail-add` → `button.console-rail-add`, `p.console-rail-hint`; the ARIA is `role="tablist"` on the list, `role="tab"` and `aria-selected` on its rows, `aria-controls`/`aria-expanded` on the collapse control | the canvas's structural addition (§4.1): the header row and its collapse control, one tab per row, **one row per installation the CLI listed or this console holds, readable or not** (§4.1, owner's design ruling of 2026-10-25), the add row and the hint. The first `role=` in the renderer. **Fifteen hooks on sixteen elements** — `console-rail-add` names the foot row and its button both — and a rule selects no other: the tree, the tokens and the keyboard are §4.1's. The two `data-*` hooks are Task 6.3's, added here in the PR that wrote the rules that select them (§2's licence rule): `data-collapsed` on the rail is which of the two widths it is drawn at, and `data-state` on the state span is the word it already draws, repeated as the tone's hook |
 | Installation line | `section.console-installation`, `data-installation`, `data-mode` | `data-installation="chosen"` with `p.installation-project`, `p.installation-binary`, `p.installation-version` and `data-mode`; `data-installation="none"` with `p.installation-none`; `data-installation="unreadable"` with `p.installation-unreadable`; and `p.installation-store-refusal` |
 | Navigation | `nav.console-views` → one `button.console-view` per view | `type="button"`, `data-view="live\|spend\|projects"`, `aria-current="true\|false"`, label as text |
-| Panel | `div.console-panel` | the mounted screen's root, or the installation issue view |
+| Panel | `div.console-panel` | the mounted screen's root, the installation issue view, or the onboarding view |
+| Onboarding | `section.installation-onboarding` → `h1.installation-onboarding-title`, `p.installation-onboarding-body`, `p.installation-onboarding-reason` (the CLI resolution's own sentence, only when no CLI was found), `code.installation-onboarding-command` | drawn by `drawOnboarding` into the panel when the machine has no installation at all: the picker's own words for the two onboarding screens (`ONBOARDING_COPY`) and the command the main process names (`src/main/onboarding.ts`). Nothing is read |
 | Installation issue | `section.installation-issue` → `h1.installation-issue-headline`, `p.installation-issue-sentence`, `code.installation-issue-command`, `details.installation-issue-details` (`summary.installation-issue-summary`, `pre.installation-issue-lines`), `div.installation-issue-actions` (`button.installation-issue-choose`, `button.installation-issue-remove`, `button.installation-issue-reveal`, `p.installation-issue-checkout-lead`, `button.installation-issue-checkout`) | drawn by `drawIssue` into the panel when a rail row with an issue is clicked, or at boot when no installation can be read (§4.1): the installation's name, **one plain sentence first** with the exact command, the CLI's own text behind the `details` disclosure, and the row's actions. No banner. The `data-issue` it carries is the main process's classification and no rule selects it |
 | Reduced/refused banner | `section.console-skew`, drawn by `renderVersionSkew` into the mount, **first of all** — before the rail and the installation line as well as the nav | see §2.8 |
 
@@ -1242,11 +1243,11 @@ and Run detail — are reached as [§2](#2-screen-inventory) says: three from th
 detail from a run row. The rail adds no tab of its own, and the console gains no view.
 
 The rail itself is `aside.console-rail` — the one element the entry appends for it — and its
-tree is **fifteen classed elements**, each element's class a hook a rule may select. Those
-fifteen elements carry **fourteen classes**: the foot row and its button share
+tree is **sixteen classed elements**, each element's class a hook a rule may select. Those
+sixteen elements carry **fifteen classes**: the foot row and its button share
 `console-rail-add` (a row and the control inside it are one region, and the class names the
-region), so a stylesheet selects fourteen distinct hooks and
-[§2.1](#21-the-dashboards-chrome--srcrendererentryts) lists the same fourteen. **The count is
+region), so a stylesheet selects fifteen distinct hooks and
+[§2.1](#21-the-dashboards-chrome--srcrendererentryts) lists the same fifteen. **The count is
 stated here and in §2.1 because it is what a reader checks the tree against**, and the tree
 below is the list:
 
@@ -1263,6 +1264,7 @@ aside.console-rail                        the rail — the grid's first column
 │       ├─ span.console-rail-project      its GCP project, in small text
 │       ├─ span.console-rail-state        the state glyph **and** the state word
 │       └─ span.console-rail-spend        the spend
+├─ p.console-rail-empty                   "No installations yet", only when there is no row
 ├─ div.console-rail-add                   the foot row, with a top divider above it
 │   └─ button.console-rail-add            "+ Add installation"
 └─ p.console-rail-hint                    "Switch with the shortcut keys 1 2 3"
@@ -1348,7 +1350,14 @@ aside.console-rail                        the rail — the grid's first column
   no installation can be read, the console opens on the first row's issue and makes no read.
   The remembered choice is never dropped from the saved store: when it cannot be read the
   console opens the first readable row for this run only, and the remembered row keeps its
-  place and its mark.
+  place and its mark. **Removing the open installation rebinds at once**: the open rule
+  picks again, a readable next row gets its own handshake and the window reopens on it, an
+  unreadable one opens its issue, and with no row left the main area is the onboarding.
+- **No installation at all.** The rail draws no row and `p.console-rail-empty` in their
+  place, with "+ Add installation" still below it, and the main area is the **onboarding
+  view** (`section.installation-onboarding`, §2.1): "Set up your first installation" with
+  `fugaro setup`, or "Install the Fugaro CLI first" with the install command, as the list
+  answer's `onboard` says. Nothing is read, so no Live refusal is drawn.
 - **The console stays READ ONLY.** The rail's writes are the console's own: a click on a
   readable row with no issue switches the console to it (`installation.choose`, which writes
   `installations.json` and reopens the window), and the issue view can remove the console's

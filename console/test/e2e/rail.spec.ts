@@ -118,4 +118,69 @@ test.describe('the installation rail, in the real window', () => {
       await app.close()
     }
   })
+
+  test('with no installation at all, draws the onboarding and an empty rail whose + still works', async () => {
+    stub = installCliStub(CLI_VERSION_BUILT_AGAINST)
+    const app = await launchConsole({ args: stub.launchArgs(consoleDir), env: stub.env })
+    try {
+      const page = await app.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      expect(page.url()).toBe(APP_ENTRY_URL)
+      const onboarding = page.locator('div.console-panel section.installation-onboarding')
+      await expect(onboarding.locator('h1.installation-onboarding-title')).toHaveText('Set up your first installation')
+      await expect(onboarding.locator('code.installation-onboarding-command')).toHaveText('fugaro setup')
+      // No Live refusal in its place.
+      await expect(page.locator('div.console-panel section.console-unavailable')).toHaveCount(0)
+      const rail = page.locator('aside.console-rail')
+      await expect(rail.locator('button.console-rail-row')).toHaveCount(0)
+      await expect(rail.locator('p.console-rail-empty')).toBeVisible()
+      const opened = app.waitForEvent('window')
+      await rail.locator('button.console-rail-add').click()
+      const picker = await opened
+      await picker.waitForLoadState('domcontentloaded')
+      expect(picker.url()).toBe(PICKER_ENTRY_URL)
+    } finally {
+      await app.close()
+    }
+  })
+
+  test('removing the open installation opens the next readable one at once, through its own handshake', async () => {
+    stub = installCliStub(CLI_VERSION_BUILT_AGAINST)
+    // `aurora` is the console's own record, remembered and stale (readable, with
+    // a warning); the CLI lists `orbit`. Removing `aurora` leaves `orbit`.
+    stub.seedInstallationsList(
+      ['orbit'],
+      ["aurora's shared config was last checked 83h2m41s ago, over the 24h0m0s the reader refreshes it within"],
+    )
+    stub.seedInstallations(
+      [
+        { id: AURORA_ID, project: 'aurora', binaryPath: join(stub.dir, 'fugaro') },
+        { id: ORBIT_ID, project: 'orbit', binaryPath: join(stub.dir, 'fugaro') },
+      ],
+      AURORA_ID,
+    )
+    const app = await launchConsole({ args: stub.launchArgs(consoleDir), env: stub.env })
+    try {
+      const page = await app.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      const rows = page.locator('aside.console-rail button.console-rail-row')
+      // The CLI's rows first, then the console's own records it did not list.
+      await expect(page.locator('aside.console-rail span.console-rail-name')).toHaveText(['orbit', 'aurora'])
+      await expect(rows.nth(1)).toHaveAttribute('aria-selected', 'true')
+      await rows.nth(1).click()
+      const issue = page.locator('div.console-panel section.installation-issue')
+      await expect(issue.locator('p.installation-issue-sentence')).toContainText('fugaro doctor --project aurora')
+      const reopened = app.waitForEvent('window')
+      await issue.locator('button.installation-issue-remove').click()
+      const next = await reopened
+      await next.waitForLoadState('domcontentloaded')
+      expect(next.url()).toBe(APP_ENTRY_URL)
+      await expect(next.locator('aside.console-rail span.console-rail-name')).toHaveText(['orbit'])
+      await expect(next.locator('aside.console-rail button.console-rail-row')).toHaveAttribute('aria-selected', 'true')
+      await expect(next.locator('section.console-installation p.installation-project')).toContainText('orbit')
+      await expect.poll(() => app.windows().filter((window) => !window.isClosed()).length).toBe(1)
+    } finally {
+      await app.close()
+    }
+  })
 })

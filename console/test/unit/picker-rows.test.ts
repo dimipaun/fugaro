@@ -125,7 +125,11 @@ function store(entries: readonly { readonly id: string; readonly project: string
 
 /** over builds a picker whose rule 4 walk is the stub's directory alone, with the
  * temporary root this test names. */
-function over(options: { readonly userData: string; readonly stub?: Stub }) {
+function over(options: {
+  readonly userData: string
+  readonly stub?: Stub
+  readonly onChosen?: Parameters<typeof createInstallationPicker>[0]['onChosen']
+}) {
   const ipcMain = fakeIpcMain()
   const picker = createInstallationPicker({
     BrowserWindow: function BrowserWindow() {
@@ -141,6 +145,7 @@ function over(options: { readonly userData: string; readonly stub?: Stub }) {
     tempDirectory: () => TMP,
     appPath: '/work/repo/console',
     appEnv: {},
+    ...(options.onChosen === undefined ? {} : { onChosen: options.onChosen }),
   })
   return { picker, ipcMain }
 }
@@ -155,6 +160,13 @@ async function list(ipcMain: ReturnType<typeof fakeIpcMain>): Promise<Installati
   expect(reply.ok, reply.ok ? '' : reply.reason).toBe(true)
   if (!reply.ok) throw new Error(reply.reason)
   return reply.data as InstallationsListReply
+}
+
+/** ask drives one of the picker's operations with a picker frame. */
+async function ask(ipcMain: ReturnType<typeof fakeIpcMain>, name: string, args: Record<string, string>): Promise<ConsoleReply> {
+  const listener = ipcMain.listeners.get(installationChannel(name as 'list'))
+  const frame = { url: PICKER_ENTRY_URL }
+  return (await listener?.({ senderFrame: frame, sender: { mainFrame: frame } }, args)) as ConsoleReply
 }
 
 /** rowOf is one row by project name, and it fails loudly when there is none --
@@ -424,5 +436,84 @@ describe('the checkouts a row may offer', () => {
     const reply = await list(ipcMain)
 
     expect(rowOf(reply, 'aurora').checkouts).toEqual([])
+  })
+})
+
+describe('removing the installation the console is open on', () => {
+  const BOTH_READABLE = {
+    installations: [
+      { name: 'aurora', gcp_project: 'aurora-482301', region: 'europe-west4' },
+      { name: 'orbit', gcp_project: 'orbit-482301', region: 'europe-west4' },
+    ],
+  }
+
+  it('rebinds the console to the next readable installation at once, through the handshake', async () => {
+    const chosen: string[] = []
+    const userData = store([
+      { id: '0123456789abcdef', project: 'aurora' },
+      { id: 'fedcba9876543210', project: 'orbit' },
+    ])
+    // `aurora` is the console's own record and the CLI does not list it, so
+    // removing the record removes the row; `orbit` is the next readable one. (A
+    // record the CLI does list stays a row after removal: the console forgot it,
+    // the machine did not.)
+    const { picker, ipcMain } = over({
+      userData,
+      stub: stubWith({ installations: [{ name: 'orbit', gcp_project: 'orbit-482301', region: 'europe-west4' }] }),
+      onChosen: async (installation) => {
+        chosen.push(installation.project)
+      },
+    })
+    await list(ipcMain)
+    expect(picker.installation()).toMatchObject({ chosen: true, project: 'aurora' })
+    const removed = await ask(ipcMain, 'remove', { project: 'aurora' })
+    expect(removed.ok).toBe(true)
+    // The handshake for the next one ran, and the window it reopens is that
+    // installation's: no source is left bound to the record that went.
+    expect(chosen).toEqual(['orbit'])
+    expect(picker.installation()).toMatchObject({ chosen: true, project: 'orbit' })
+    if (removed.ok) {
+      const data = removed.data as { rows: readonly InstallationsListRow[] }
+      expect(data.rows.filter((row) => row.open).map((row) => row.project)).toEqual(['orbit'])
+    }
+  })
+
+  it('does not rebind when the row removed was not the open one', async () => {
+    const chosen: string[] = []
+    const userData = store([
+      { id: '0123456789abcdef', project: 'aurora' },
+      { id: 'fedcba9876543210', project: 'orbit' },
+    ])
+    const { ipcMain } = over({
+      userData,
+      stub: stubWith(BOTH_READABLE),
+      onChosen: async (installation) => {
+        chosen.push(installation.project)
+      },
+    })
+    await list(ipcMain)
+    expect((await ask(ipcMain, 'remove', { project: 'orbit' })).ok).toBe(true)
+    expect(chosen).toEqual([])
+  })
+
+  it('does not rebind to an installation it cannot read, and answers the onboarding when none remain', async () => {
+    const chosen: string[] = []
+    const userData = store([{ id: '0123456789abcdef', project: 'aurora' }])
+    const { ipcMain } = over({
+      userData,
+      stub: stubWith({ installations: [] }),
+      onChosen: async (installation) => {
+        chosen.push(installation.project)
+      },
+    })
+    await list(ipcMain)
+    const removed = await ask(ipcMain, 'remove', { project: 'aurora' })
+    expect(removed.ok).toBe(true)
+    expect(chosen).toEqual([])
+    if (removed.ok) {
+      const data = removed.data as { rows: readonly unknown[]; onboard: { kind: string } }
+      expect(data.rows).toEqual([])
+      expect(data.onboard.kind).toBe('first-installation')
+    }
   })
 })
