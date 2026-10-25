@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -239,5 +240,154 @@ func TestGuardSubtractsTheNarrowedCommitOnlyWhileOriginHoldsIt(t *testing.T) {
 	r.narrowBase = own
 	if _, except := r.guardBounds(ctx); slices.Contains(except, own) {
 		t.Fatalf("guardBounds = %v subtracts %s, a commit no branch on origin holds", except, own)
+	}
+}
+
+// TestNarrowingAndTheGuardCostTheSameWhateverTheBranchCount: with 220
+// branches on origin, narrowing the range is seven git processes (the git
+// version, ls-remote, one cat-file for every head's presence, one rev-list
+// for the run's own commits, the first one's parent, and the two counts),
+// and the guard's check of the narrowed commit is three (ls-remote, cat-file
+// and one rev-list fed the heads on stdin). Before, each was a process per
+// branch: a cat-file each, and a merge-base each in the guard.
+//
+// Mutation (a merge-base per head in onOrigin, or a cat-file -e per head in
+// gitops.OriginHeads): the counts below fail.
+func TestNarrowingAndTheGuardCostTheSameWhateverTheBranchCount(t *testing.T) {
+	ctx := context.Background()
+	repo, remote, tip := ownRangeRepo(t, 3)
+	testutil.ManyBranches(t, remote, 220)
+	testutil.Git(t, repo.Dir, "fetch", "--quiet", "origin", "+refs/heads/*:refs/remotes/origin/*")
+	testutil.Git(t, repo.Dir, "checkout", "--quiet", "-b", "work", "origin/integration")
+	commitFiles(t, repo.Dir, "a.txt", "b.txt")
+	r := &run{
+		d:    Deps{Log: slog.New(slog.DiscardHandler)},
+		spec: &task.Spec{Ref: "main"},
+		cfg:  &config.Config{Git: config.Git{BaseBranch: "main"}},
+		rec:  &runstore.Record{Branch: "fugaro/r1"},
+		repo: repo,
+	}
+	calls := testutil.RecordGit(t, "")
+	r.narrowReviewRange(ctx)
+	if r.narrowBase != tip {
+		t.Fatalf("narrowBase = %q, want the integration tip %s", r.narrowBase, tip)
+	}
+	lines := testutil.GitCalls(t, calls)
+	if n := testutil.GitSubcommands(lines); len(lines) != 7 || n["cat-file"] != 1 || n["ls-remote"] != 1 || n["merge-base"] != 0 {
+		t.Fatalf("narrowing over 220 branches ran %d git processes (%v), want 7:\n%s", len(lines), n, strings.Join(lines, "\n"))
+	}
+	if !r.onOrigin(ctx, tip) {
+		t.Fatalf("onOrigin(%s) = false, want the integration branch to hold it", tip)
+	}
+	lines = testutil.GitCalls(t, calls)
+	if n := testutil.GitSubcommands(lines); len(lines) != 3 || n["ls-remote"] != 1 || n["cat-file"] != 1 || n["rev-list"] != 1 {
+		t.Fatalf("the guard's check over 220 branches ran %d git processes (%v), want ls-remote, cat-file and rev-list", len(lines), n)
+	}
+	if own := testutil.Git(t, repo.Dir, "rev-parse", "HEAD"); r.onOrigin(ctx, own) {
+		t.Fatalf("onOrigin(%s) = true for the run's own commit", own)
+	}
+}
+
+// TestNarrowingIsOffUnderAGitOlderThan244: an older git ignores
+// GIT_NO_LAZY_FETCH, and reading origin's heads would fetch every missing
+// branch's commit in a blobless clone, so the range is the recorded one and
+// nothing about origin's branches is read; the run says so once.
+//
+// Mutation (drop the version check in narrowReviewRange): the range is
+// narrowed and ls-remote runs.
+func TestNarrowingIsOffUnderAGitOlderThan244(t *testing.T) {
+	ctx := context.Background()
+	repo, _, _ := ownRangeRepo(t, 3)
+	testutil.Git(t, repo.Dir, "checkout", "--quiet", "-b", "work", "origin/integration")
+	commitFiles(t, repo.Dir, "a.txt")
+	var logs strings.Builder
+	r := &run{
+		d:    Deps{Log: slog.New(slog.NewTextHandler(&logs, nil))},
+		spec: &task.Spec{Ref: "main"},
+		cfg:  &config.Config{Git: config.Git{BaseBranch: "main"}},
+		rec:  &runstore.Record{Branch: "fugaro/r1"},
+		repo: repo,
+	}
+	calls := testutil.RecordGit(t, "2.43.0")
+	r.narrowReviewRange(ctx)
+	if r.narrowBase != "" {
+		t.Fatalf("narrowed to %s under git 2.43", r.narrowBase)
+	}
+	if n := testutil.GitSubcommands(testutil.GitCalls(t, calls)); n["ls-remote"] != 0 || n["cat-file"] != 0 {
+		t.Fatalf("origin's branches were read under git 2.43: %v", n)
+	}
+	if c := strings.Count(logs.String(), "GIT_NO_LAZY_FETCH needs git 2.44"); c != 1 {
+		t.Fatalf("the fallback is logged %d times, want once:\n%s", c, logs.String())
+	}
+	if got := r.reviewRev(ctx); got != "origin/main" {
+		t.Fatalf("reviewRev = %q, want the recorded origin/main", got)
+	}
+}
+
+// TestAReviewRoundSaysWhenAFixMovedTheBranchOffTheNarrowedCommit: the
+// prompt's scope line is built once and names the narrowed commit; a round
+// after a fix that rebased away from it reads the recorded range, and its
+// prompt says so rather than leaving the reviewer two ranges to choose from.
+// A round still on the narrowed commit carries no such line.
+//
+// Mutation (drop the note in reviewPromptWithInput): this test fails.
+func TestAReviewRoundSaysWhenAFixMovedTheBranchOffTheNarrowedCommit(t *testing.T) {
+	ctx := context.Background()
+	repo, _, tip := ownRangeRepo(t, 4)
+	testutil.Git(t, repo.Dir, "checkout", "--quiet", "-b", "work", "origin/integration")
+	commitFiles(t, repo.Dir, "a.txt", "b.txt")
+	r := &run{
+		d:          Deps{Log: slog.New(slog.DiscardHandler)},
+		spec:       &task.Spec{Ref: "main"},
+		cfg:        &config.Config{Git: config.Git{BaseBranch: "main"}},
+		repo:       repo,
+		narrowBase: tip,
+	}
+	prompt := ReviewPrompt("", "", r.reviewRev(ctx), DiffSize{}, false)
+	if got := r.reviewPromptWithInput(ctx, prompt); strings.Contains(got, "moved this branch off") {
+		t.Fatalf("a round on the narrowed range says it moved:\n%s", got)
+	}
+	testutil.Git(t, repo.Dir, "rebase", "--quiet", "--onto", "origin/main", tip)
+	got := r.reviewPromptWithInput(ctx, prompt)
+	want := "A fix round moved this branch off " + tip + ", so the range named above no longer leads to HEAD: this round reviews origin/main...HEAD instead"
+	if !strings.Contains(got, want) {
+		t.Fatalf("the round after the rebase does not say which range it reads:\n%s", got)
+	}
+	if !strings.Contains(got, "git diff origin/main...HEAD") {
+		t.Fatalf("the input is not built over the recorded range:\n%s", got)
+	}
+}
+
+// TestNarrowSummary is the line the report and the status section carry: the
+// commit the review started after and the run's own count, then what else
+// the pull request carries against its base; a run moved off the narrowed
+// commit says which range its later rounds read, and a run never narrowed
+// says nothing.
+//
+// Mutation (drop the "also carries" part, or count against diffBase's
+// narrowed commit for both): this test fails.
+func TestNarrowSummary(t *testing.T) {
+	ctx := context.Background()
+	repo, _, tip := ownRangeRepo(t, 5)
+	testutil.Git(t, repo.Dir, "checkout", "--quiet", "-b", "work", "origin/integration")
+	commitFiles(t, repo.Dir, "a.txt", "b.txt", "c.txt")
+	r := &run{
+		d:    Deps{Log: slog.New(slog.DiscardHandler)},
+		spec: &task.Spec{Ref: "main"},
+		cfg:  &config.Config{Git: config.Git{BaseBranch: "main"}},
+		repo: repo,
+	}
+	if got := r.narrowSummary(ctx); got != "" {
+		t.Fatalf("a run not narrowed says %q", got)
+	}
+	r.narrowBase = tip
+	want := "review covered commits after `" + tip[:7] + "` (3 commits); this PR also carries 5 commits from other branches"
+	if got := r.narrowSummary(ctx); got != want {
+		t.Fatalf("narrowSummary = %q, want %q", got, want)
+	}
+	testutil.Git(t, repo.Dir, "rebase", "--quiet", "--onto", "origin/main", tip)
+	want = "review covered commits after `" + tip[:7] + "` until a fix round moved the branch off it; later rounds covered origin/main...HEAD"
+	if got := r.narrowSummary(ctx); got != want {
+		t.Fatalf("after a rebase away narrowSummary = %q, want %q", got, want)
 	}
 }

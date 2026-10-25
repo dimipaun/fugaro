@@ -512,7 +512,7 @@ func TestReviewInputOfAnUnchangedBranch(t *testing.T) {
 // Mutation (drop reviewInputBlock's r.repo == nil guard): this panics.
 func TestReviewInputBlockIsEmptyWithoutACheckout(t *testing.T) {
 	r := &run{cfg: &config.Config{Git: config.Git{BaseBranch: "main"}}, d: Deps{Log: slog.New(slog.DiscardHandler)}}
-	if got := r.reviewInputBlock(context.Background()); got != "" {
+	if got := r.reviewInputBlock(context.Background(), "origin/main"); got != "" {
 		t.Fatalf("block = %q, want none", got)
 	}
 }
@@ -523,7 +523,7 @@ func TestReviewInputBlockIsEmptyWithoutACheckout(t *testing.T) {
 func TestReviewInputBlockOnARealCheckout(t *testing.T) {
 	repo := reviewInputRepo(t)
 	r := &run{repo: repo, cfg: &config.Config{Git: config.Git{BaseBranch: "main"}}, d: Deps{Log: slog.New(slog.DiscardHandler)}}
-	got := r.reviewInputBlock(context.Background())
+	got := r.reviewInputBlock(context.Background(), r.reviewRev(context.Background()))
 	if !strings.Contains(got, `binary file "mobile/assets/icon.png" changed, `+strconv.Itoa(len(pngFixture))+" bytes") {
 		t.Fatalf("block:\n%s", got)
 	}

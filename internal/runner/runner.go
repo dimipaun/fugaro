@@ -305,6 +305,9 @@ type run struct {
 	// narrowReviewRange), "" when the range is origin/<diffBase>. It is set
 	// once, between stages, so no checkpoint goroutine reads it mid-write.
 	narrowBase string
+	// narrowText is narrowSummary's line, read once at finalize for both the
+	// status section and the report.
+	narrowText string
 	// rigorCfg is the run's rigor configuration *as the base branch has it*
 	// (docs/rigor-modes D25), read once at bootstrap and reused at every
 	// later moment (rigor.go); rigorRev is the revision it was read from, ""
@@ -2797,7 +2800,11 @@ func (r *run) finalize(ctx context.Context) error {
 		r.rec.Status, r.rec.Outcome = runstore.StatusFailed, runstore.OutcomeDraft
 	}
 	r.updateCost()
+	r.narrowText = r.narrowSummary(ctx)
 	notes, gone := r.settlePR(ctx, pr, ready, reason, records)
+	if r.narrowText != "" {
+		notes = append(notes, r.narrowText)
+	}
 	if gone {
 		r.endUnchanged(ctx, fmt.Sprintf("PR #%d was %s during the run; the branch was pushed", pr.Number, r.closedWord(ctx, pr.Number)), records)
 		return nil
