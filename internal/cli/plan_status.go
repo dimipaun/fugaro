@@ -65,10 +65,17 @@ func newPlanStatusCmd() *cobra.Command {
 			"is a run of this checkout's own repository: a run of another repository\n" +
 			"naming the same task is ignored. The join is display-only — nothing here\n" +
 			"makes another plan's task ready.\n\n" +
+			"The runs read are the ones the bucket still holds, and a run that claims no\n" +
+			"task of any plan here is not read at all: this is what the merge lookup\n" +
+			"below is asked about, so the read costs what the plans hold rather than\n" +
+			"what the repository's history holds.\n\n" +
 			"Whether a pull request is merged is asked of your own gh, when it is\n" +
 			"installed; where it cannot answer (a Bitbucket repository, no gh, a lookup\n" +
 			"that failed) a task whose run recorded a ready pull request shows done with\n" +
 			"the mark \"merge unknown\" rather than nothing.\n\n" +
+			"Two artifacts that would be one plan id — docs/plans/foo.graph.json and\n" +
+			"docs/plans/foo/bar.graph.json both give plans/foo — cannot be joined apart,\n" +
+			"so the second is not listed and a warning names both.\n\n" +
 			"Merged and cancelled tasks are counted per release and not listed; --all\n" +
 			"lists them too. This command writes nothing.",
 		Args: cobra.NoArgs,
@@ -170,32 +177,78 @@ func runPlanStatus(cmd *cobra.Command, o *planStatusOptions) error {
 		if err != nil {
 			return err
 		}
-		rows, err := loadRows(ctx, env, lsFilter{slugs: []string{slug}, warn: errw}, time.Now().UTC())
+		// The listing is bounded by the runs bucket's own age, the window
+		// `run --pr` reads with (followUpLookback is that lifecycle): a join
+		// wants every run the bucket still holds — an older one has been
+		// deleted with its run and can never join a task — and nothing beyond
+		// it, so the read costs what the bucket holds rather than everything
+		// the repository has ever launched.
+		now := time.Now().UTC()
+		rows, err := loadRows(ctx, env, lsFilter{
+			slugs: []string{slug}, since: now.Add(-followUpLookback), warn: errw,
+		}, now)
 		if err != nil {
 			return err
 		}
 		facts = planRunFacts(rows)
 	}
 
+	// The plans are read before a single run is asked about. Which plans exist
+	// and which tasks they carry is what decides which runs the join reads, and
+	// therefore which pull requests are looked up at all (planMerges); an
+	// artifact this build refuses, and one whose plan id another artifact has
+	// already taken, are warnings rather than the end of the read, and neither
+	// is a plan the join may read runs for.
 	artifacts, err := planArtifacts(planDocsDir)
 	if err != nil {
 		return err
 	}
-	merge := planMerges(ctx, facts)
+	plans := make([]plan.PlanRef, 0, len(artifacts))
+	paths := make(map[string]string, len(artifacts)) // plan id -> the artifact that took it
 	for _, path := range artifacts {
+		id := planIDFromPath(path)
 		d, err := plan.ReadFile(path)
-		if err == nil {
-			var st plan.StatePlan
-			st, err = plan.State(planIDFromPath(path), d, facts, plan.StateOptions{
-				Artifact: path, Repo: doc.Repo, All: o.all, Catalogue: cat, Merge: merge,
-			})
-			if err == nil {
-				doc.Plans = append(doc.Plans, st)
-				continue
-			}
+		if err != nil {
+			fmt.Fprintf(errw, "warning: %s\n", oneLine(err.Error()))
+			doc.Warnings = append(doc.Warnings, planCell(path)+" could not be read: its tasks are not listed")
+			continue
 		}
-		fmt.Fprintf(errw, "warning: %s\n", oneLine(err.Error()))
-		doc.Warnings = append(doc.Warnings, planCell(path)+" could not be read: its tasks are not listed")
+		if other, taken := paths[id]; taken {
+			// Two artifacts that derive one plan id cannot be joined apart: a run
+			// claiming the id would paint a task of both, and one set of figures
+			// would be read for two plans. The first in path order keeps the id,
+			// and the sentence names both — it is the paths that are wrong, and a
+			// reader has to see which two files they are.
+			sentence := fmt.Sprintf("%s and %s are both the plan %s; only the first is listed",
+				planCell(other), planCell(path), planCell(id))
+			fmt.Fprintf(errw, "warning: %s\n", sentence)
+			doc.Warnings = append(doc.Warnings, sentence)
+			continue
+		}
+		paths[id] = path
+		plans = append(plans, plan.PlanRef{ID: id, Doc: d})
+	}
+
+	// The join reads the runs that claim one of these plans and no others, and
+	// everything spent per run is spent on those — the merge lookup above all,
+	// which spawns a process per distinct pull request. Scoping it to the runs
+	// the join reads is what keeps a command the console calls to draw a graph
+	// from costing what the plans hold rather than what the repository's whole
+	// history holds.
+	joined := plan.JoinedRuns(plans, facts, doc.Repo)
+	merge := planMerges(ctx, joined)
+
+	for _, p := range plans {
+		path := paths[p.ID]
+		st, err := plan.State(p.ID, p.Doc, joined, plan.StateOptions{
+			Artifact: path, Repo: doc.Repo, All: o.all, Catalogue: cat, Merge: merge,
+		})
+		if err != nil {
+			fmt.Fprintf(errw, "warning: %s\n", oneLine(err.Error()))
+			doc.Warnings = append(doc.Warnings, planCell(path)+" could not be read: its tasks are not listed")
+			continue
+		}
+		doc.Plans = append(doc.Plans, st)
 	}
 
 	doc.Totals = planStatusTotals{Plans: len(doc.Plans)}
@@ -211,9 +264,12 @@ func runPlanStatus(cmd *cobra.Command, o *planStatusOptions) error {
 //
 // The walk does not follow a symlink and refuses one: a link under docs/ is a
 // way for the text a screen shows to be text from somewhere else, and the plan's
-// artifacts are read where they sit (C2). A missing docs/ is no plans rather
-// than a refusal — a repository that has none is a repository this read has
-// nothing to say about, which is a different statement from a read that was
+// artifacts are read where they sit (C2). Anything else that would be an
+// artifact and is not a regular file — a fifo, a socket, a device — is refused
+// for the same reason: opening one is a read that may never return, and a
+// plan's artifact is a regular file in a checkout. A missing docs/ is no plans
+// rather than a refusal — a repository that has none is a repository this read
+// has nothing to say about, which is a different statement from a read that was
 // stopped.
 func planArtifacts(dir string) ([]string, error) {
 	info, err := os.Lstat(dir)
@@ -239,12 +295,15 @@ func planArtifacts(dir string) ([]string, error) {
 		if path == dir {
 			return nil
 		}
-		if d.Type()&fs.ModeSymlink != 0 {
+		switch {
+		case d.Type()&fs.ModeSymlink != 0:
 			fail = userErr("%s is a symlink; plan status reads the graph artifacts where they sit and follows no link", path)
 			return filepath.SkipAll
-		}
-		if d.IsDir() || !strings.HasSuffix(d.Name(), plan.ArtifactSuffix) {
+		case d.IsDir(), !strings.HasSuffix(d.Name(), plan.ArtifactSuffix):
 			return nil
+		case !d.Type().IsRegular():
+			fail = userErr("%s is not a regular file; plan status reads a checkout's graph artifacts, and opening anything else is a read that may never end", path)
+			return filepath.SkipAll
 		}
 		out = append(out, path)
 		if len(out) > planMaxArtifacts {
@@ -303,8 +362,15 @@ func planRunFacts(rows []runview.Row) []plan.RunFact {
 	return out
 }
 
-// planMerges asks gh about every pull request the runs carry, once each, and
-// answers the join's lookup from the answers.
+// planMerges asks gh about every pull request the joined runs carry, once each,
+// and answers the join's lookup from the answers.
+//
+// It is handed the runs the join reads (plan.JoinedRuns) and no others: a
+// lookup spawns a process, and asking about every pull request of a repository's
+// whole run history would make a command the console calls to draw a graph cost
+// whatever the history costs. The answers are not cached across invocations
+// either — watch's cache lives in this process, and this command is one process
+// — so what bounds the spawns is this set and the dedup below.
 //
 // It goes through internal/watch rather than spawning gh here, and that is the
 // point of it: the URL is matched against watch's own anchored GitHub pattern

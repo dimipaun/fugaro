@@ -71,7 +71,7 @@ const (
 	outcomeReviewed = "reviewed"
 )
 
-// The seven states a task can be in. They are the words the document carries and
+// The six states a task can be in. They are the words the document carries and
 // the words a renderer shows; a task is exactly one of them.
 const (
 	// StateRunning is a live run joined to the task: it is being worked on now,
@@ -173,7 +173,7 @@ type StateOptions struct {
 type StateNode struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
-	// State is one of the seven above, and every field below it is read in its
+	// State is one of the six above, and every field below it is read in its
 	// light: a screen colours a node from this word and applies no rule of its
 	// own.
 	State string `json:"state"`
@@ -576,13 +576,23 @@ func runSuffix(id string) string {
 // it. A follow-up that was given no plan task of its own joins through the pull
 // request it follows: it is the same work, continued.
 func joinRuns(planID string, doc Document, runs []RunFact, repo string) map[string][]RunFact {
-	ids := make(map[string]bool, len(doc.Nodes))
-	for _, n := range doc.Nodes {
-		ids[n.ID] = true
-	}
 	joined := map[string][]RunFact{}
+	for i, taskID := range claimIndex(planID, taskIDs(doc), runs, repo) {
+		if taskID != "" {
+			joined[taskID] = append(joined[taskID], runs[i])
+		}
+	}
+	return joined
+}
+
+// claimIndex is the join itself, one entry per run: the task of this plan that
+// the run joins, and "" for a run that joins none of them. State's per-task map
+// and JoinedRuns' subset are both built from it, so the runs a read joins and
+// the runs a caller may spend something per run on cannot come apart.
+func claimIndex(planID string, ids map[string]bool, runs []RunFact, repo string) []string {
+	out := make([]string, len(runs))
 	owner := map[int]string{} // pull request number -> the task that carries it
-	for _, r := range runs {
+	for i, r := range runs {
 		if !sameRepo(r.Repo, repo) {
 			continue
 		}
@@ -590,7 +600,7 @@ func joinRuns(planID string, doc Document, runs []RunFact, repo string) map[stri
 		if !ok {
 			continue
 		}
-		joined[taskID] = append(joined[taskID], r)
+		out[i] = taskID
 		// The first run to carry a pull request owns it, and the runs are read
 		// in the order the read listed them: a follow-up follows the task its
 		// previous run is on, and two tasks cannot both claim one pull request.
@@ -600,17 +610,61 @@ func joinRuns(planID string, doc Document, runs []RunFact, repo string) map[stri
 			}
 		}
 	}
-	for _, r := range runs {
+	for i, r := range runs {
 		if !sameRepo(r.Repo, repo) || r.PlanTask != "" {
 			continue
 		}
 		if n := prOf(r); n > 0 {
 			if taskID, ok := owner[n]; ok {
-				joined[taskID] = append(joined[taskID], r)
+				out[i] = taskID
 			}
 		}
 	}
-	return joined
+	return out
+}
+
+// taskIDs is a plan's own task ids: what a run's claim has to name to join it.
+func taskIDs(doc Document) map[string]bool {
+	ids := make(map[string]bool, len(doc.Nodes))
+	for _, n := range doc.Nodes {
+		ids[n.ID] = true
+	}
+	return ids
+}
+
+// PlanRef is one plan and the id the join knows it by (rule i): what a caller
+// holds after reading the artifacts, before it asks for any task's state.
+type PlanRef struct {
+	ID  string
+	Doc Document
+}
+
+// JoinedRuns returns the runs that join at least one of the plans — the runs a
+// State read of them is made of — in the order they were given.
+//
+// It is the join's own rules (i) through (iii), answered for the whole set of
+// plans at once, and it exists so that a caller can scope what it spends per
+// run to the runs a screen will actually ask about. A merge lookup spawns a
+// process, and one spawn per distinct pull request of a repository's entire run
+// history is a cost that grows with the history rather than with the plan: a
+// run that joins no plan of the set is one no state in this read is ever made
+// of.
+func JoinedRuns(plans []PlanRef, runs []RunFact, repo string) []RunFact {
+	joins := make([]bool, len(runs))
+	for _, p := range plans {
+		for i, taskID := range claimIndex(p.ID, taskIDs(p.Doc), runs, repo) {
+			if taskID != "" {
+				joins[i] = true
+			}
+		}
+	}
+	out := make([]RunFact, 0, len(runs))
+	for i, r := range runs {
+		if joins[i] {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // claimedTask is the task a run's plan_task names, when it names one of this

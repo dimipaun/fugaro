@@ -476,4 +476,51 @@ func TestStateRefusesWhatTheReadRefuses(t *testing.T) {
 	}
 }
 
+// TestPlanIDScopesTheJoinedRuns: JoinedRuns is the subset of runs the join
+// reads, which is what a caller may spend something per run on — a merge lookup
+// spawns a process, and one per pull request of a repository's whole history is a
+// cost that grows with the history rather than with the plan. A run of another
+// repository, a claim on a plan that is not in the set, a claim on a task that is
+// not a node, and a follow-up on a pull request no joined run carries are all
+// left out; a follow-up that follows a joined run is kept.
+func TestPlanIDScopesTheJoinedRuns(t *testing.T) {
+	plans := []PlanRef{{ID: "the-plan", Doc: joinDoc()}}
+	joined := runFact("r1", "100000", "the-plan/A", statusRunning)
+	foreign := runFact("r2", "100000", "the-plan/A", statusRunning)
+	foreign.Repo = "other/repo"
+	follow := RunFact{RunID: "20260101-110000-bbbb", Repo: "acme/widget", Status: statusRunning, PR: joined.PR}
+	stranger := RunFact{RunID: "20260101-120000-cccc", Repo: "acme/widget", Status: statusRunning, PR: 77}
+	other := runFact("r3", "100000", "another-plan/A", statusRunning)
+	unknown := runFact("r4", "100000", "the-plan/Z", statusRunning)
+	runs := []RunFact{joined, foreign, follow, stranger, other, unknown}
+
+	got := JoinedRuns(plans, runs, "acme/widget")
+	if len(got) != 2 || got[0].RunID != joined.RunID || got[1].RunID != follow.RunID {
+		t.Fatalf("JoinedRuns = %+v, want the joined run and the follow-up that follows it", got)
+	}
+	// Nothing that joins is left out: a State over the subset answers what a
+	// State over every run answers, node for node. A scoping that dropped a run
+	// would answer a different state here.
+	all := statePlan(t, joinDoc(), runs, StateOptions{All: true, Merge: mergedPRs(nil, nil)})
+	scoped := statePlan(t, joinDoc(), got, StateOptions{All: true, Merge: mergedPRs(nil, nil)})
+	if len(all.Nodes) != len(scoped.Nodes) {
+		t.Fatalf("nodes = %+v, want %+v", scoped.Nodes, all.Nodes)
+	}
+	for i := range all.Nodes {
+		if all.Nodes[i] != scoped.Nodes[i] {
+			t.Errorf("node %s = %+v over the subset, %+v over every run", all.Nodes[i].ID, scoped.Nodes[i], all.Nodes[i])
+		}
+	}
+	// Every plan of the set is read the same way: a second plan's own run joins,
+	// and a claim on it is not the first plan's.
+	two := append(plans, PlanRef{ID: "another-plan", Doc: joinDoc()})
+	if got := JoinedRuns(two, runs, "acme/widget"); len(got) != 3 {
+		t.Errorf("JoinedRuns over two plans = %+v, want the other plan's run too", got)
+	}
+	// An unknown repository joins nothing, exactly as State joins nothing.
+	if got := JoinedRuns(plans, runs, ""); len(got) != 0 {
+		t.Errorf("JoinedRuns with no repository = %+v, want nothing", got)
+	}
+}
+
 func strPtr(s string) *string { return &s }
