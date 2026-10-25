@@ -32,8 +32,9 @@ streams:
     # updater refuses a downgrade (docs/release.md, "Console releases"). Apple
     # and Lemon are avoided, and internal/streams refuses them.
     names: [Cherry, Mango, Melon]
-    current: "0.110.0"
-    next: Mango
+    # The last console release, console-v0.111.0 "Mango"; 0.112.0 "Melon" is next.
+    current: "0.111.0"
+    next: Melon
     tag_prefix: console-v
 
   - name: mobile
