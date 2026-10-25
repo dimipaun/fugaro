@@ -78,7 +78,6 @@ func TestDocsComputeBackendCitationsExist(t *testing.T) {
 		"docs/plans/2026-10-14-project-centric.md",
 		"docs/releases/v0.8.6.md",
 		"docs/release.md",
-		"docs/gcp-setup.md",
 		"docs/pending-workflows/README.md",
 		"SECURITY.md",
 		"CONTRIBUTING.md",
