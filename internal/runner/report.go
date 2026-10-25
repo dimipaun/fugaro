@@ -63,8 +63,9 @@ func FollowUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 // followUpReport is FollowUpReport with notes about the pull request itself
 // (reviewers that could not be requested, a host without drafts), each
 // shown as a line after the outcome. filedFrom is the commit the run's
-// backlog filing was committed on top of, "" when it filed nothing: the
-// suite ran there, and the filing commit rec.HeadSHA names adds only items.
+// backlog write was committed on top of, "" when it wrote nothing: the
+// suite ran there, and the write commit rec.HeadSHA names only writes items —
+// it files them, and a follow-up's closes the ones it fixed (D31).
 func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *FollowUpSection, notes []string, filedFrom string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "### Fugaro run `%s`\n\n", rec.RunID)
@@ -243,7 +244,7 @@ func testsLine(rec *runstore.Record, filedFrom string) string {
 	}
 	s += ")"
 	if filed {
-		s += fmt.Sprintf("; the final commit %s only adds backlog items", shortSHA(rec.HeadSHA))
+		s += fmt.Sprintf("; the final commit %s only writes backlog items", shortSHA(rec.HeadSHA))
 	}
 	return s + "\n\n"
 }

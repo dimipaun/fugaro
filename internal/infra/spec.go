@@ -140,6 +140,13 @@ type InstallationOutputs struct {
 	// roles) and its Cloud Run job.
 	HistoryServiceAccount string `json:"history_service_account"`
 	HistoryJob            string `json:"history_job"`
+	// CoordinatorServiceAccount and CoordinatorJob are the same pair for the
+	// aggregation job (P5, D194): the account the Firebase root grants the
+	// FP's database admin to, and the job the schedule starts. Both are null
+	// unless the owner opted in (fugaro update --coordinator), which no
+	// installation has by default.
+	CoordinatorServiceAccount string `json:"coordinator_service_account"`
+	CoordinatorJob            string `json:"coordinator_job"`
 	// CredentialsService is the installation's credentials service, or null
 	// while it has not opted in (D146, D147) — which is every installation
 	// today, and the reason nothing here changes until an owner runs C1.20's

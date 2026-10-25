@@ -6,9 +6,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -17,6 +19,7 @@ import (
 
 	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/coordinator"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -221,10 +224,18 @@ func setCoordinatorProject(t *testing.T, hosts map[string]*fake.Provider, tokens
 // setCoordinatorMint replaces the command's mint for one test, so that a read
 // mints without reaching GitHub: the token is per repository, which is what the
 // coordinator's own mint is keyed by (D193(A)), and a test then asserts on the
-// tokens the reads were authenticated with.
-func setCoordinatorMint(t *testing.T, tokens map[string]string) {
+// tokens the reads were authenticated with. It returns the tokens the command
+// revoked, in the order it revoked them.
+//
+// The revoke goes with the mint, always, and that is not a convenience: a token
+// this fixture minted is not one GitHub knows, so a command that revoked it for
+// real would send a request no fixture recorded — out of the test container, on
+// a suite that must be hermetic. A test about the revoke replaces it again,
+// after this.
+func setCoordinatorMint(t *testing.T, tokens map[string]string) *[]string {
 	t.Helper()
-	prev := coordinatorMint
+	prevMint, prevRevoke := coordinatorMint, coordinatorRevoke
+	revoked := &[]string{}
 	coordinatorMint = func(_ context.Context, repo string) (string, time.Time, error) {
 		token := "ghs_fixture_" + strings.ReplaceAll(repo, "/", "_")
 		if tokens != nil {
@@ -232,7 +243,12 @@ func setCoordinatorMint(t *testing.T, tokens map[string]string) {
 		}
 		return token, time.Now().Add(time.Hour), nil
 	}
-	t.Cleanup(func() { coordinatorMint = prev })
+	coordinatorRevoke = func(_ context.Context, token string) error {
+		*revoked = append(*revoked, token)
+		return nil
+	}
+	t.Cleanup(func() { coordinatorMint, coordinatorRevoke = prevMint, prevRevoke })
+	return revoked
 }
 
 // coordinatorPR is one pull request in the fake host's state.
@@ -626,7 +642,7 @@ func TestCoordinatorStatusMintsAReadOnlyTokenPerRepository(t *testing.T) {
 // wiring — no opener replaced and no mint replaced — against a hermetic host,
 // and holds the read to the credential P2 mints for it.
 //
-// The fixture is the whole assertion: the mint's request body is the four-read
+// The fixture is the whole assertion: the mint's request body is the two-read
 // set, and the pull-request read that follows carries that token's own
 // Authorization header. A read authenticated with the run's set — what the
 // provider's own mint asks for, two writes among them — fails here on the
@@ -688,6 +704,198 @@ func TestCoordinatorStatusReadsWithTheReadOnlyToken(t *testing.T) {
 		t.Errorf("no App key: %v, want a failure naming %s", err, providers.EnvGitHubAppKeyFile)
 	} else if ExitCode(err) != ExitUserError {
 		t.Errorf("no App key: exit %d, want %d", ExitCode(err), ExitUserError)
+	}
+}
+
+// A key that is there and is not a key is the caller's own failure, wherever
+// this command reads it. The credential is asked for in two places -- the
+// provider opener asks for it before it opens anything (so that a person who has
+// not exported it is not told the host failed), and the mint reads it for the
+// token -- and the same environment has to answer the same way from both: a
+// parse left to providers.FromEnv made a malformed key exit 2 through the opener
+// and 1 through the mint, so a person whose key is not a key would be told the
+// host failed and would retry it.
+//
+// The fixture holds no exchange at all, which is the other half of the claim:
+// neither path may reach GitHub to find this out, and a request that arrived
+// would fail the test rather than the network being asked.
+func TestCoordinatorStatusRefusesAMalformedAppKeyAsTheCallers(t *testing.T) {
+	srv := httpfixture.Serve(t, filepath.Join("testdata", "coordinator_no_requests.json"))
+	realOpen := openCoordinatorProvider
+	t.Setenv(providers.EnvGitHubAppID, "12345")
+	t.Setenv(providers.EnvGitHubAppKey, "this is not a PEM block")
+	t.Setenv(providers.EnvGitHubAPIURL, srv.URL)
+
+	newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	setCoordinatorHost(t, realOpen)
+	_, _, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--since", "0")
+	if err == nil {
+		t.Fatalf("the App's key is not a key and the command succeeded")
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("a malformed App key: exit %d, want %d: the environment the caller holds the key in is the caller's to fix, exactly as it is when the key is missing",
+			ExitCode(err), ExitUserError)
+	}
+	if !strings.Contains(err.Error(), "private key") {
+		t.Errorf("a malformed App key: %v, want a failure naming the key", err)
+	}
+
+	// The mint is the second place the same credential is read, and it answers
+	// the same way. The opener's refusal above is what a person meets; this is
+	// the assertion that the two halves of the command cannot disagree, because
+	// it is the one this command's own wiring does not reach first.
+	if _, _, err := coordinatorMint(context.Background(), "acme/app"); ExitCode(err) != ExitUserError ||
+		!strings.Contains(err.Error(), "private key") {
+		t.Errorf("the mint with a malformed App key: exit %d, %v, want exit %d naming the key", ExitCode(err), err, ExitUserError)
+	}
+}
+
+// With the installation's credentials service on, the App's key is the
+// service's (C2.2, D145) and this process holds none. This command mints its
+// own read-only token from that key, so there is no credential here to work
+// with -- and a key read anyway would be one the environment says is not this
+// process's to hold, which is the rule providers.FromEnv keeps for the run path
+// and the one the coordinator's own mint has to keep too. The service mints a
+// RUN's token and this read is not a run, so there is nothing to ask it for
+// either: the command is refused rather than served the wrong credential.
+//
+// The refusal is the caller's (exit 1), because the environment they are
+// running in is theirs, and it happens before anything is opened or minted --
+// the empty fixture is here to prove that: a key present in the environment
+// beside the service URL changes nothing.
+func TestCoordinatorStatusRefusesToMintWhenTheServiceHoldsTheKey(t *testing.T) {
+	srv := httpfixture.Serve(t, filepath.Join("testdata", "coordinator_no_requests.json"))
+	realOpen := openCoordinatorProvider
+	t.Setenv(providers.EnvGitHubAppID, "12345")
+	t.Setenv(providers.EnvGitHubAppKey, appKeyPEM(t))
+	t.Setenv(providers.EnvGitHubAPIURL, srv.URL)
+	t.Setenv(providers.EnvCredentialsServiceURL, "https://credentials.example")
+
+	newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	setCoordinatorHost(t, realOpen)
+	_, _, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--since", "0")
+	if err == nil {
+		t.Fatalf("the credentials service holds the App's key and the command read one anyway")
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("the service holds the key: exit %d, want %d: the environment the caller is running in is the caller's to fix",
+			ExitCode(err), ExitUserError)
+	}
+	if !strings.Contains(err.Error(), providers.EnvCredentialsServiceURL) {
+		t.Errorf("the service holds the key: %v, want a failure naming %s", err, providers.EnvCredentialsServiceURL)
+	}
+
+	// The mint is the second place the credential is read, and it answers the
+	// same way: the opener's refusal above is what a person meets, and this is
+	// the assertion that the two halves of the command cannot disagree.
+	if _, _, err := coordinatorMint(context.Background(), "acme/app"); ExitCode(err) != ExitUserError ||
+		!strings.Contains(err.Error(), providers.EnvCredentialsServiceURL) {
+		t.Errorf("the mint with the service holding the key: exit %d, %v, want exit %d naming %s",
+			ExitCode(err), err, ExitUserError, providers.EnvCredentialsServiceURL)
+	}
+}
+
+// The credential lives for the read and no longer: every token this command
+// minted is taken back when it is done, in the order it minted them, and the
+// revoke happens on EVERY return — a command that failed on its second
+// repository has still left the first one's token behind, and that is the one
+// nothing else would ever take back.
+//
+// The mint and the revoke are both replaced here (setCoordinatorMint), so what
+// this asserts is the command's own bookkeeping; the two fixture tests above
+// are what hold the request itself — the method, the path and the token's own
+// Authorization header — to GitHub's API.
+func TestCoordinatorStatusRevokesEveryTokenItMinted(t *testing.T) {
+	f := newCoordinatorFixture(t, append(coordinatorSeeds(),
+		coordinatorRunSeed{id: "20261013-150000-ffff", repo: "acme/other", pr: 21, prev: "20261012-090000-4444",
+			branch: "fugaro/20261013-150000-ffff", who: "someone@example.com",
+			status: runstore.StatusRunning, prRef: 21, base: "main", files: []string{"internal/api/handler.go"}},
+	), coordinatorPRs()...)
+	f.appendConfig(t, "  acme/other: { provider: github, base_branch: main, workflows: [web] }\n")
+	other := &fake.Provider{Repo: "acme/other", SelfID: "2"}
+	other.State.PRs = []fake.PRState{coordinatorPR(21, "fugaro/20261013-150000-ffff", gitprov.PROpen, false)}
+	setCoordinatorProject(t, map[string]*fake.Provider{"acme/app": f.host, "acme/other": other}, nil)
+	revoked := setCoordinatorMint(t, nil)
+
+	if _, _, err := execute(t, "coordinator", "status", "--all", "--since", "0"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"ghs_fixture_acme_app", "ghs_fixture_acme_other"}
+	if !slices.Equal(*revoked, want) {
+		t.Errorf("the command revoked %v, want every token it minted, in the order it minted them (%v)", *revoked, want)
+	}
+
+	// A project with nothing in flight mints nothing — a repository whose runs
+	// name no pull request is never opened, so the mint is never reached — and
+	// the command then revokes nothing: a revoke is a token taken back, never a
+	// call made for the look of it.
+	*revoked = nil
+	newCoordinatorFixture(t, nil)
+	if _, _, err := execute(t, "coordinator", "status", "--all", "--since", "0"); err != nil {
+		t.Fatal(err)
+	}
+	if len(*revoked) != 0 {
+		t.Errorf("a read with nothing in flight revoked %v, want nothing: no token was minted to take back", *revoked)
+	}
+}
+
+// A command that failed still revokes what it minted: the token of a repository
+// it read before the failure is the one nothing else would take back.
+func TestCoordinatorStatusRevokesAfterAFailedRead(t *testing.T) {
+	newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	// A host with no state: the first pull request the runs name is refused
+	// after the mint, so the read fails with the token already handed out.
+	setCoordinatorProject(t, map[string]*fake.Provider{"acme/app": {Repo: "acme/app", SelfID: "1"}}, nil)
+	revoked := setCoordinatorMint(t, nil)
+
+	if _, _, err := execute(t, "coordinator", "status", "--since", "0"); err == nil {
+		t.Fatal("the read failed and the command succeeded")
+	}
+	if !slices.Equal(*revoked, []string{"ghs_fixture_acme_app"}) {
+		t.Errorf("the failed command revoked %v, want the token it minted before the failure", *revoked)
+	}
+}
+
+// A revoke that fails is not a read that failed: the token is left to expire on
+// its own within the hour, the command exits as it would have, and nothing
+// about it is printed — neither the failure nor the token.
+func TestCoordinatorStatusSurvivesARefusedRevoke(t *testing.T) {
+	const refusal = "the host refused the revoke for ghs_0123456789abcdefghij"
+	f := newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	setCoordinatorProject(t, map[string]*fake.Provider{"acme/app": f.host}, nil)
+	setCoordinatorMint(t, nil)
+	prev := coordinatorRevoke
+	coordinatorRevoke = func(context.Context, string) error { return errors.New(refusal) }
+	t.Cleanup(func() { coordinatorRevoke = prev })
+
+	out, errOut, err := execute(t, "coordinator", "status", "--since", "0")
+	if err != nil {
+		t.Fatalf("the revoke was refused and the command failed: %v", err)
+	}
+	for _, got := range []string{out, errOut} {
+		if strings.Contains(got, "refused") || strings.Contains(got, "ghs_0123456789abcdefghij") {
+			t.Errorf("a refused revoke reached the output: %q", got)
+		}
+	}
+}
+
+// An interrupted read still takes its tokens back. The command's context is not
+// the revoke's to obey: a person who stops the read has been handed a token per
+// repository it got to, and those are the ones nobody would ever take back — the
+// credential outliving its use is the whole of what this revoke exists against.
+// The revoke runs on the command's context detached and bounded, so a cancel
+// that has already happened is not a revoke that does not happen.
+func TestCoordinatorTokensRevokeOutlivesTheCommand(t *testing.T) {
+	revoked := setCoordinatorMint(t, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	tokens := &coordinatorTokens{}
+	if _, _, err := tokens.mint(ctx, "acme/app"); err != nil {
+		t.Fatal(err)
+	}
+	tokens.revoke(ctx)
+	if !slices.Equal(*revoked, []string{"ghs_fixture_acme_app"}) {
+		t.Errorf("an interrupted read revoked %v, want the token it had already minted", *revoked)
 	}
 }
 
@@ -1483,5 +1691,309 @@ func TestALaunchThatSkipsTheBudgetIsNotDeclared(t *testing.T) {
 	}
 	if m, _ := f.db.Value(coordinator.PathIntents(appSlug)).(map[string]any); len(m) != 0 {
 		t.Fatalf("a launch that skipped the budget declared %v", m)
+	}
+}
+
+// The aggregation job's entry point (docs/coordinator/implementation-plan.md,
+// part P5). These tests are the command's half — the environment it reads, the
+// database it writes and the exit code it leaves — and not the sweep's own
+// logic, which internal/coordinator's tests hold. What they are here for is the
+// wiring: a tick that reaches the real database, the real runs bucket and P2's
+// own read, driven end to end with fakes at the three seams.
+
+// coordinatorSweepFixture is the fixture the tests below drive: the status
+// fixture's runs bucket and fake host, plus the database the coordinator's
+// state is written to and the environment Terraform gives the job.
+type coordinatorSweepFixture struct {
+	*coordinatorFixture
+	db *gcpfake.RTDB
+}
+
+func newCoordinatorSweepFixture(t *testing.T, seeds []coordinatorRunSeed, prs ...fake.PRState) *coordinatorSweepFixture {
+	t.Helper()
+	f := &coordinatorSweepFixture{coordinatorFixture: newCoordinatorFixture(t, seeds, prs...), db: gcpfake.NewRTDB(t)}
+	old := coordinatorSweepTest
+	coordinatorSweepTest = &coordinatorSweepWiring{
+		noAuth: true,
+		bucket: func(ctx context.Context, _ string) (*blobx.Bucket, error) { return blobx.Open(ctx, f.bucket) },
+		now:    func() time.Time { return time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC) },
+	}
+	t.Cleanup(func() { coordinatorSweepTest = old })
+	setCoordinatorMint(t, nil)
+	t.Setenv(providers.EnvGitHubAppID, "12345")
+	t.Setenv(providers.EnvGitHubAppKey, appKeyPEM(t))
+	for k, v := range map[string]string{
+		"FUGARO_PROJECT": "aurora", "FUGARO_FIREBASE_PROJECT": "aurora-fp",
+		"FUGARO_RTDB_URL": f.db.URL, "FUGARO_RUNS_BUCKET": "unused-bucket",
+		"FUGARO_COORDINATOR_REPOS": `[{"provider":"github","repo":"acme/app"}]`,
+	} {
+		t.Setenv(k, v)
+	}
+	f.db.Set("fugaro/project", "aurora")
+	return f
+}
+
+// view is the repository's view document as the fake database holds it, and
+// stale its marker (nil when there is none).
+func (f *coordinatorSweepFixture) view() (map[string]any, map[string]any) {
+	v, _ := f.db.Value(coordinator.PathView(appSlug)).(map[string]any)
+	s, _ := f.db.Value(coordinator.PathStale(appSlug)).(map[string]any)
+	return v, s
+}
+
+func TestCoordinatorSweepWritesTheView(t *testing.T) {
+	f := newCoordinatorSweepFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	out, _, err := execute(t, "coordinator", "sweep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, stale := f.view()
+	if view == nil {
+		t.Fatalf("the sweep wrote no view at /%s; output %q", coordinator.PathView(appSlug), out)
+	}
+	if stale != nil {
+		t.Errorf("a sweep that read everything wrote a stale marker: %v", stale)
+	}
+	// The document is the view status computes, byte for byte: the two read
+	// the same bucket and the same host through the same reader, and a
+	// difference between them would be a difference between what the
+	// coordinator shows and what it holds.
+	raw, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got coordinator.View
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Repo != "acme/app" || got.InFlight() == 0 || len(got.Collisions) == 0 {
+		t.Errorf("the view is %s with %d records (%d in flight) and %d collisions, want the fixture's own",
+			got.Repo, len(got.Records), got.InFlight(), len(got.Collisions))
+	}
+	shown, _, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--since", "0", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var statusView coordinator.View
+	if err := json.Unmarshal([]byte(shown), &statusView); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, statusView) {
+		t.Errorf("the swept view is not the one status computes:\n%s\n%s", raw, shown)
+	}
+	if !strings.Contains(out, "acme/app:") || !strings.Contains(out, "swept 1 repositories: 1 reconciled, 0 stale") {
+		t.Errorf("the tick's report = %q", out)
+	}
+}
+
+// TestCoordinatorSweepRecordsAPullRequestTheHostRefused: one pull request the
+// host would not answer for is recorded in the view on its own, with the state
+// the last sweep read, and the repository is still reconciled — the numbers a
+// view reads are written by the runs, so one refused number must not be able
+// to keep a repository stale. The tick still exits 0.
+func TestCoordinatorSweepRecordsAPullRequestTheHostRefused(t *testing.T) {
+	f := newCoordinatorSweepFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	if _, _, err := execute(t, "coordinator", "sweep"); err != nil {
+		t.Fatal(err)
+	}
+
+	f.host.FailPullRequest = 1
+	out, _, err := execute(t, "coordinator", "sweep")
+	if err != nil {
+		t.Fatalf("a read that failed failed the tick: %v", err)
+	}
+	view, stale := f.view()
+	if stale != nil {
+		t.Errorf("one refused pull request left the repository stale: %v", stale)
+	}
+	unread, _ := view["unread"].([]any)
+	if len(unread) != 1 {
+		t.Fatalf("the view records %d unread pull requests, want 1: %v", len(unread), view["unread"])
+	}
+	u, _ := unread[0].(map[string]any)
+	if u["reason"] != coordinator.UnreadFailed || u["carried"] != true {
+		t.Errorf("the unread entry = %v, want %q with the last sweep's state carried", u, coordinator.UnreadFailed)
+	}
+	if !strings.Contains(out, "1 unread") || !strings.Contains(out, "1 reconciled, 0 stale") {
+		t.Errorf("the tick's report = %q", out)
+	}
+}
+
+// TestCoordinatorSweepMarksAHostItCannotOpenStale: a host the coordinator's
+// token cannot be opened against is the repository's failure as a whole, so
+// the previous view stays and the marker says so — a view recomputed from the
+// runs alone would read as "nothing is in flight" about a repository that has
+// work in it. The marker is a fact about the repository, not a failure of the
+// job, so the tick exits 0.
+func TestCoordinatorSweepMarksAHostItCannotOpenStale(t *testing.T) {
+	f := newCoordinatorSweepFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	if _, _, err := execute(t, "coordinator", "sweep"); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := f.view()
+	setCoordinatorHost(t, func([]string, func(string)) (coordinator.ProviderOpener, error) {
+		return func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
+			return nil, nil, errors.New("the host is unreachable")
+		}, nil
+	})
+	out, _, err := execute(t, "coordinator", "sweep")
+	if err != nil {
+		t.Fatalf("a host that could not be opened failed the tick: %v", err)
+	}
+	after, stale := f.view()
+	if stale == nil || stale["reason"] != coordinator.StalePullRequests {
+		t.Fatalf("the marker = %v, want %q", stale, coordinator.StalePullRequests)
+	}
+	if !strings.Contains(out, "stale") {
+		t.Errorf("the tick's report = %q, want the repository reported stale", out)
+	}
+	b, _ := json.Marshal(before)
+	a, _ := json.Marshal(after)
+	if string(a) != string(b) {
+		t.Errorf("the failed read moved the view:\n%s\n%s", b, a)
+	}
+}
+
+// TestCoordinatorSweepRefusesAMissingEnvironment: the job's environment is
+// Terraform's, and a command that guessed a default for a variable nobody set
+// would write the coordinator's state somewhere nobody named.
+func TestCoordinatorSweepRefusesAMissingEnvironment(t *testing.T) {
+	newCoordinatorSweepFixture(t, nil)
+	for _, k := range []string{"FUGARO_PROJECT", "FUGARO_FIREBASE_PROJECT", "FUGARO_RTDB_URL", "FUGARO_RUNS_BUCKET", "FUGARO_COORDINATOR_REPOS"} {
+		t.Run(k, func(t *testing.T) {
+			t.Setenv(k, "")
+			_, _, err := execute(t, "coordinator", "sweep")
+			if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), k) {
+				t.Errorf("without %s: err = %v, want exit 1 naming it", k, err)
+			}
+		})
+	}
+}
+
+// TestCoordinatorSweepRefusesAForeignDatabase: the account can reach any
+// database it is granted, so the tick checks the database is this Fugaro
+// project's before writing to it (plan R-9, the history sweep's own check).
+func TestCoordinatorSweepRefusesAForeignDatabase(t *testing.T) {
+	f := newCoordinatorSweepFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	for _, mark := range []any{"birch", nil, 7} {
+		f.db.Set("fugaro/project", mark)
+		_, _, err := execute(t, "coordinator", "sweep")
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("a database marked %v: err = %v, want exit 1", mark, err)
+		}
+		if v, _ := f.view(); v != nil {
+			t.Fatalf("a foreign database was written to: %v", v)
+		}
+	}
+}
+
+// TestCoordinatorSweepRefusesAURLAsTheBucket: the variable is a bucket name and
+// Terraform writes one, so a value carrying a scheme or a path is refused
+// rather than opened.
+func TestCoordinatorSweepRefusesAURLAsTheBucket(t *testing.T) {
+	newCoordinatorSweepFixture(t, nil)
+	t.Setenv("FUGARO_RUNS_BUCKET", "gs://aurora-runs")
+	_, _, err := execute(t, "coordinator", "sweep")
+	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "bucket name") {
+		t.Errorf("a URL as the bucket: err = %v, want exit 1", err)
+	}
+}
+
+// TestCoordinatorSweepNeverPrintsACredentialOrTheHostsText: the read is P2's,
+// so the credential values the opener hands back are redacted out of whatever
+// this command prints, and the failure it records is this package's own
+// classification rather than the host's message (Q14 A) — a view carrying
+// "401: bad credentials (token ...)" would be another writer's text kept in
+// the coordinator's state, which is what the classification exists to prevent.
+func TestCoordinatorSweepNeverPrintsACredentialOrTheHostsText(t *testing.T) {
+	const secret = "ghs_0123456789abcdefghij"
+	f := newCoordinatorSweepFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	host := &fake.Provider{Repo: "acme/app", SelfID: "1"}
+	host.State.PRs = coordinatorPRs()
+	setCoordinatorHost(t, func([]string, func(string)) (coordinator.ProviderOpener, error) {
+		return func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
+			return secretErrHost{Provider: host, secret: secret}, []string{secret}, nil
+		}, nil
+	})
+
+	out, errOut, err := execute(t, "coordinator", "sweep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, got := range []string{out, errOut} {
+		if strings.Contains(got, secret) || strings.Contains(got, "bad credentials") {
+			t.Errorf("the credential or the host's text reached the output: %q", got)
+		}
+	}
+	view, _ := f.view()
+	unread, _ := view["unread"].([]any)
+	if len(unread) == 0 {
+		t.Fatalf("the view records no unread pull request: %v", view)
+	}
+	for _, e := range unread {
+		if u, _ := e.(map[string]any); u["reason"] != coordinator.UnreadFailed {
+			t.Errorf("the unread entry = %v, want %q", u, coordinator.UnreadFailed)
+		}
+	}
+	if raw := fmt.Sprint(f.db.Value(coordinator.PathRepo(appSlug))); strings.Contains(raw, secret) || strings.Contains(raw, "401") {
+		t.Errorf("the repository's node carries the host's own text: %s", raw)
+	}
+}
+
+// TestCoordinatorSweepRevokesEveryTokenItMinted: the scheduled sweep holds a
+// repository's read-only token for the tick and no longer, exactly as status
+// does. It drives the command's own opener, mint and revoke against a hermetic
+// host, and the fixture's last exchange is the revoke: a tick that left its
+// token behind leaves that DELETE unused, which fails the test.
+func TestCoordinatorSweepRevokesEveryTokenItMinted(t *testing.T) {
+	srv := httpfixture.Serve(t, filepath.Join("testdata", "coordinator_read_token.json"))
+	realOpen, realMint, realRevoke := openCoordinatorProvider, coordinatorMint, coordinatorRevoke
+	newCoordinatorSweepFixture(t, []coordinatorRunSeed{{
+		id: "20261013-100000-aaaa", pr: 12, prev: "20261012-090000-1111",
+		branch: "fugaro/20261013-100000-aaaa", who: "someone@example.com",
+		status: runstore.StatusSucceeded, prRef: 12, base: "main",
+		files: []string{"internal/cli/exec.go"},
+	}})
+	setCoordinatorHost(t, realOpen)
+	coordinatorMint, coordinatorRevoke = realMint, realRevoke
+	t.Setenv(providers.EnvGitHubAPIURL, srv.URL)
+	t.Setenv(providers.EnvCredentialsServiceURL, "")
+
+	if _, _, err := execute(t, "coordinator", "sweep"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestCoordinatorSweepWithAnInjectedReader: a sweep handed its reader builds no
+// token record of its own, and the revoke at the end of the tick has nothing
+// to take back rather than a nil record to fail on.
+func TestCoordinatorSweepWithAnInjectedReader(t *testing.T) {
+	f := newCoordinatorSweepFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	reader, _, err := coordinatorReader(io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinatorSweepTest.reader = reader
+	if _, _, err := execute(t, "coordinator", "sweep"); err != nil {
+		t.Fatal(err)
+	}
+	if view, _ := f.view(); view == nil {
+		t.Errorf("the sweep with an injected reader wrote no view")
+	}
+}
+
+// TestCoordinatorSweepIsHidden: the sweep is the job's entry point and not a
+// command of the coordinator's surface, so the generated CLI reference leaves
+// it out — the same rule budget history follows.
+func TestCoordinatorSweepIsHidden(t *testing.T) {
+	for _, c := range NewRootCmd().Commands() {
+		if c.Name() != "coordinator" {
+			continue
+		}
+		for _, sub := range c.Commands() {
+			if sub.Name() == "sweep" && !sub.Hidden {
+				t.Errorf("fugaro coordinator sweep is not hidden")
+			}
+		}
 	}
 }

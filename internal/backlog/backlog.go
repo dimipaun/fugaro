@@ -70,8 +70,15 @@ var Headings = []string{
 	"## Why",
 	"## What done looks like",
 	"## Links",
-	"## Closed by",
+	ClosedHeading,
 }
+
+// ClosedHeading is D31's closing section: the one heading a `closed` item
+// carries and no other item does. It is named because Close writes it and the
+// folder's pin requires it of a status, and the two have to agree on the
+// heading's own bytes — Headings carries this value rather than a second
+// literal, so the list and the writer cannot drift apart.
+const ClosedHeading = "## Closed by"
 
 // requiredHeadings is the prefix of Headings that an item's body must carry.
 var requiredHeadings = Headings[:2]

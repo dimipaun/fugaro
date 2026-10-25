@@ -218,6 +218,40 @@ func TestMintInstallationTokenBuildPermissions(t *testing.T) {
 	}
 }
 
+// TestRevokeInstallationToken: the token's own end. GitHub revokes an
+// installation token at DELETE /installation/token, authenticated with the
+// token itself -- the App's JWT is not needed, and the endpoint revokes the
+// token that carries it and no other -- and the fixture pins the whole of the
+// request: the method, the path and the Authorization header.
+//
+// The second half is the contract the caller depends on: a refused revoke is
+// returned as a failure, and the failure carries the status and never the
+// token. The command that calls this revokes best-effort and prints nothing, so
+// what it does with the failure is its own decision -- but the value reaching
+// an error or a log line is not a decision it gets to make.
+func TestRevokeInstallationToken(t *testing.T) {
+	srv := httpfixture.Serve(t, filepath.Join("testdata", "revoke_token.json"))
+	if err := RevokeInstallationToken(context.Background(), srv.URL, "ghs_fixture_revoked", nil); err != nil {
+		t.Fatalf("RevokeInstallationToken: %v", err)
+	}
+	// No token is nothing to revoke: a refusal rather than a DELETE under an
+	// empty Authorization header, which would revoke whatever the API read it
+	// as. No request is made, which the fixture's strict order is what proves.
+	if err := RevokeInstallationToken(context.Background(), srv.URL, "", nil); err == nil {
+		t.Error("RevokeInstallationToken with no token: want a refusal")
+	}
+	err := RevokeInstallationToken(context.Background(), srv.URL, "ghs_fixture_refused", nil)
+	if err == nil {
+		t.Fatal("a refused revoke: want the failure reported")
+	}
+	if strings.Contains(err.Error(), "ghs_fixture_refused") {
+		t.Errorf("the refused revoke's failure carries the token: %v", err)
+	}
+	if !strings.Contains(err.Error(), "404") {
+		t.Errorf("the refused revoke's failure is %v, want the status reported", err)
+	}
+}
+
 // TestRunTokenPermissionsAreTheRuns: RunTokenPermissions is the run's own set
 // — the four permissions design §6.1 gives a run, and no more — and it is a
 // copy, so a caller that mutates what it was handed (the credentials service,
@@ -241,8 +275,15 @@ func TestRunTokenPermissionsAreTheRuns(t *testing.T) {
 
 // TestAppTokenCoordinatorPermissionsHoldNoWrite is Q3's hard rule made
 // mechanical (P2 of docs/coordinator/implementation-plan.md, D193(A)): the
-// installation token a coordinator mints carries the four reads the project
-// view needs and no write anywhere.
+// installation token a coordinator mints carries the reads the project view
+// makes and no write anywhere.
+//
+// The set is exactly the two reads the reader makes -- a pull request is read
+// one at a time (gitprov.Provider.PullRequest), and metadata: read is what
+// GitHub requires of any request -- and it is asserted as an equality rather
+// than as "no write" alone: a permission asked for and never used is reach a
+// stolen token would have for nothing, which is the half of Q3's rule that a
+// write-only check cannot see.
 //
 // The set is read twice, because the two are not the same claim: the accessor
 // is what the caller asks with, and testdata/coordinator_token.json holds the
@@ -250,7 +291,7 @@ func TestRunTokenPermissionsAreTheRuns(t *testing.T) {
 // is not the one it holds, so a permission added to the set after that file
 // was written fails here rather than reaching GitHub.
 func TestAppTokenCoordinatorPermissionsHoldNoWrite(t *testing.T) {
-	want := map[string]string{"contents": "read", "pull_requests": "read", "issues": "read", "metadata": "read"}
+	want := map[string]string{"pull_requests": "read", "metadata": "read"}
 	perms := CoordinatorTokenPermissions()
 	if !maps.Equal(perms, want) {
 		t.Fatalf("CoordinatorTokenPermissions() = %v, want %v", perms, want)
@@ -260,7 +301,7 @@ func TestAppTokenCoordinatorPermissionsHoldNoWrite(t *testing.T) {
 			t.Errorf("the coordinator's token asks GitHub for %s: %s", name, level)
 		}
 	}
-	perms["contents"] = "write"
+	perms["pull_requests"] = "write"
 	if again := CoordinatorTokenPermissions(); !maps.Equal(again, want) {
 		t.Errorf("CoordinatorTokenPermissions() after a caller mutated its copy = %v, want %v", again, want)
 	}

@@ -1,0 +1,5 @@
+[
+  {"method": "DELETE", "path": "/installation/token", "auth": "Bearer ghs_fixture_revoked", "status": 204},
+  {"method": "DELETE", "path": "/installation/token", "auth": "Bearer ghs_fixture_refused", "status": 404,
+   "response": {"message": "Not Found"}}
+]

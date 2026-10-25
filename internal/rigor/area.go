@@ -66,7 +66,7 @@ func (a Area) Validate() string {
 		return "must have a name: it is what the run record and the pull request say decided the mode"
 	case !areaNameRE.MatchString(a.Name):
 		return fmt.Sprintf("a name must be 1 to %d characters of letters, digits, space, dash, underscore and dot, starting with a letter or a digit", MaxAreaName)
-	case a.Match == "":
+	case strings.TrimSpace(a.Match) == "":
 		return "must have a match: a doublestar path glob relative to the repository root"
 	case len(a.Match) > MaxAreaPattern:
 		return fmt.Sprintf("a match must be at most %d characters", MaxAreaPattern)
