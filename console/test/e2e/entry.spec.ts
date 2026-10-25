@@ -811,9 +811,10 @@ test.describe('the renderer entry, in the real window', () => {
       )
       await expect(rail.locator('button.console-rail-add')).toHaveText('+ Add installation')
       await expect(rail.locator('p.console-rail-hint')).toHaveText('Switch with the shortcut keys 1 2 3')
-      // And the rail asked for nothing: the log holds the handshake's probe and
-      // the live watch, which is what a healthy console spawns -- a row per stored
-      // installation would have added a read here. The watch is written by the
+      // And the rail asked for nothing: the log holds the handshake's probe, the
+      // live watch and -- when it has landed -- the Live screen's rigor join
+      // (`runs ls --json`), which is what a healthy console spawns -- a row per
+      // stored installation would have added a read here. The watch is written by the
       // entry's *first poll*, which is a message round and a spawn behind the rail
       // being drawn -- the row's `running` is the word the rail opens with, not
       // evidence that a read has landed -- so this waits for the record the way
@@ -824,8 +825,24 @@ test.describe('the renderer entry, in the real window', () => {
           message: 'the live read never reached the spawn log',
         })
         .toBe(true)
-      const reads = [...new Set(launched.records().map((record) => record.argv[1]))].sort()
-      expect(reads, 'the rail made a read of its own').toEqual(['version', 'watch'])
+      // The rigor join is the Live screen's, asked for after its first frame, so
+      // whether it has reached the log yet is a race this case does not decide:
+      // it is admitted by its whole argv and by nothing shorter.
+      const records = launched.records()
+      const reads = [...new Set(records.map((record) => record.argv[1]))].sort()
+      expect(
+        reads.filter((read) => read !== 'runs'),
+        'the rail made a read of its own',
+      ).toEqual(['version', 'watch'])
+      for (const record of records.filter((each) => each.argv[1] === 'runs')) {
+        expect(record.argv.slice(1), 'the rail made a read of its own').toEqual([
+          'runs',
+          'ls',
+          '--json',
+          '--project',
+          'e2e',
+        ])
+      }
     } finally {
       await close(launched)
     }
