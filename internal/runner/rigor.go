@@ -72,8 +72,14 @@ func (r *run) roundRigor(ctx context.Context) {
 // goes to the resolver as well (rigor.Request.Reached), so the resolver's own
 // answer is monotone too and the record keeps the narrower reason when a later
 // moment resolves the same mode.
+//
+// The run's own request (rigor.Request.Mode, the spec's Rigor: fugaro run
+// --mode) is part of every moment, not only the first: the resolver's
+// raise-only rule is what keeps a request from being outvoted by a later,
+// weaker read, and giving it to all three moments is what makes a requested
+// mode hold for the whole run rather than for the moment it arrived at.
 func (r *run) recordRigor(at string, paths []string) {
-	res := rigor.Resolve(r.rigorCfg, rigor.Request{Paths: paths, Reached: r.reachedRigor()})
+	res := rigor.Resolve(r.rigorCfg, rigor.Request{Mode: r.spec.Rigor, Paths: paths, Reached: r.reachedRigor()})
 	r.rec.Rigor = r.rec.Rigor.Applied(runstore.Moment{Resolved: res, At: at, Revision: r.rigorRev})
 }
 
@@ -91,14 +97,16 @@ func (r *run) reachedRigor() rigor.Mode {
 }
 
 // declaredPaths are the paths the run says it will touch: D22's first moment,
-// where `fugaro run --path` (repeatable) and the task's own list land.
+// where `fugaro run --path` (repeatable) and the task's own list land. The
+// spec is where the launcher's flags travelled, and it is the whole of the
+// input: the run's configuration is not consulted, and a path no area rule
+// matches changes nothing, so a declaration can only raise the mode an area
+// rule sets.
 //
-// Nothing declares any yet. The flag, the task field it travels in, and the
-// image-skew gate a runner-side read of a new spec field needs are T1.6's, so a
-// run starts at its repository's or its project's value — exactly what D22 says
-// a run that declares no path does. It is a function rather than a nil at the
-// call site so the seam has one name, and one place to fill.
-func (r *run) declaredPaths() []string { return nil }
+// A run that declared none — every launch without the flag — starts at its
+// repository's or its project's value, which is what D22 says a run that
+// declares no path does.
+func (r *run) declaredPaths() []string { return r.spec.Paths }
 
 // changedPaths are the paths the run's own record measured
 // (runstore.Record.ChangedFiles). D22's third moment reads exactly that field,
