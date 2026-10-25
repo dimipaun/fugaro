@@ -880,7 +880,7 @@ span.projects-kill-repo {
 /* The rigor mark: one word, in a chip. **The five modes have no colour of their
  * own in this tree** -- not in `fugaro runs ls`'s MODE column, not in
  * `docs/rigor-modes` -- so the chip is a boundary and a size and nothing else,
- * and section 2.3's paragraph is the decision. A rule that painted `POC` one way
+ * and the paragraphs of sections 2.3 and 2.5 are the decision. A rule that painted `POC` one way
  * and `Hotfix` another would be inventing a meaning, and section 3.5's table has
  * no mark to pair it with. */
 span.live-run-mode,
