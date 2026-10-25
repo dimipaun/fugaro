@@ -2,6 +2,7 @@ package plan
 
 import (
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -54,5 +55,11 @@ func TestShippedPlanGraphReads(t *testing.T) {
 	}
 	if len(doc.Edges) != 18 {
 		t.Errorf("the shipped artifact carries %d edges, want the plan's 18 (its own \"Edges (from Depends on)\" line)", len(doc.Edges))
+	}
+	// The plan's section 5 names its critical path in prose; the command
+	// computes it, and the two must name one chain.
+	want := []string{"GV1.1", "GV1.6", "GV2.1", "GV2.3", "GV2.4", "GV2.6"}
+	if got := CriticalPathTasks(doc); !slices.Equal(got, want) {
+		t.Errorf("the shipped artifact's critical path is %v, and the plan's section 5 names %v", got, want)
 	}
 }
