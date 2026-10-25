@@ -236,6 +236,44 @@ var baseCells = []baseCell{
 			return baseRun{rec: rec, err: err, prompt: reviewPromptOf(t, h.agent.calls), provider: h.provider}
 		},
 	},
+	{
+		name:  "(f) a run on main whose work moved onto the integration branch",
+		want:  integrationBranch,
+		stale: "main",
+		// The record is read from the commit the run was cut from (main's
+		// tip), so the integration branch's own file is in it: the same
+		// design choice (workBase) cells (d) and (e) document.
+		recordHolds: []string{"feature.txt", "integration.txt"},
+		wantPRBase:  "main",
+		run: func(t *testing.T) baseRun {
+			h := newHarness(t, "", nil)
+			addBaseBranch(t, h, integrationBranch)
+			rec, err := h.run(t, moveOntoIntegration, review("ship", 0))
+			return baseRun{rec: rec, err: err, prompt: reviewPromptOf(t, h.agent.calls), provider: h.provider}
+		},
+	},
+	{
+		name:        "(g) a run on main whose work moved onto an integration branch main has moved past",
+		want:        integrationBranch,
+		stale:       "main",
+		recordHolds: []string{"feature.txt", "integration.txt"},
+		wantPRBase:  "main",
+		run: func(t *testing.T) baseRun {
+			h := newHarness(t, "", nil)
+			addBaseBranch(t, h, integrationBranch)
+			commitOnBranch(t, h.remote, "main", map[string]string{"person.txt": "a person's file\n"})
+			rec, err := h.run(t, moveOntoIntegration, review("ship", 0))
+			return baseRun{rec: rec, err: err, prompt: reviewPromptOf(t, h.agent.calls), provider: h.provider}
+		},
+	},
+}
+
+// moveOntoIntegration is an implement stage told by its brief to work on the
+// integration branch rather than the ref the run was launched from: it
+// fetches that branch and moves its work onto it before it commits.
+func moveOntoIntegration(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+	shell(t, req, "git fetch -q origin "+integrationBranch+" && git checkout -q -B work origin/"+integrationBranch)
+	return implement("feature")(t, ctx, req)
 }
 
 // TestTheReviewStageAndTheWritebackUseTheSameBase is the matrix: every cell

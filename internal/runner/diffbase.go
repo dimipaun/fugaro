@@ -29,7 +29,11 @@ import (
 // So, for the three ways a run has a base:
 //
 //   - a first run diffs against the ref it was cut from (spec.Ref): the
-//     branch the work started on is the base of the work;
+//     branch the work started on is the base of the work — unless the work
+//     moved onto another branch after the run was cut (an agent told to
+//     `git checkout -B work origin/<integration>` on a run launched without
+//     --ref), when it is the nearest branch the work grew from instead
+//     (forkbase.go, decided once before the review stage);
 //   - a follow-up diffs against the branch its pull request targets NOW,
 //     read from the provider (r.follow.pr.Base — the follow-up state is
 //     filled at bootstrap, before the prefetch). The previous run's base is
@@ -54,6 +58,9 @@ func (r *run) diffBase() string {
 			r.d.Log.Warn("the pull request's base branch is not a branch name; using the run's own ref",
 				"base", r.redact(b))
 		}
+	}
+	if r.follow == nil && !r.review && r.forkBase != "" {
+		return r.forkBase
 	}
 	return r.refBase()
 }

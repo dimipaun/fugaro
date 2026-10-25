@@ -300,6 +300,12 @@ type run struct {
 	// values (checkpoint.go). They differ when the run starts from another
 	// ref than its base branch (--ref develop with base_branch main).
 	baseSHA, startSHA string
+	// forkBase is the branch a first run's work grew from, when that is not
+	// the ref it was cut from (forkbase.go), and forkBaseSettled says it was
+	// decided: once, before the review stage names its range, and kept for
+	// every diff after it so the review and the guard never disagree.
+	forkBase        string
+	forkBaseSettled bool
 	// rigorCfg is the run's rigor configuration *as the base branch has it*
 	// (docs/rigor-modes D25), read once at bootstrap and reused at every
 	// later moment (rigor.go); rigorRev is the revision it was read from, ""
@@ -2004,6 +2010,7 @@ func (r *run) agentLoop(ctx context.Context) {
 	// configuration came from (diffbase.go, diffBase): a run started from
 	// another ref must review its own change, not the whole of that ref's
 	// divergence from the default branch.
+	r.settleForkBase(ctx)
 	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.reviewPromptBase(), r.reviewDiffSize(ctx), r.baseUnreadable())
 	if f := r.follow; f != nil {
 		if add := followup.ReviewAddendum(f.sel, f.nonce); add != "" {

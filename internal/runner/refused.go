@@ -109,7 +109,7 @@ func (r *run) guardBounds(ctx context.Context) (since string, except []string) {
 	// is measured against, then the branch its configuration came from. They
 	// are the same branch for most runs, and reading it once is also what
 	// keeps one commit from being named twice.
-	for _, base := range []string{r.diffBase(), r.cfg.Git.BaseBranch} {
+	for _, base := range []string{r.guardDiffBase(ctx), r.cfg.Git.BaseBranch} {
 		if base == "" || seen[base] {
 			continue
 		}
