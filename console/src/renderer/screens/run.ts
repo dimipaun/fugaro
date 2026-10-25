@@ -853,37 +853,45 @@ function header(factory: ScreenFactory, model: RunModel): ScreenElement {
  * moment (`at`) and the revision the configuration was read from are in the
  * record and are not drawn: this row is about what the run resolved, and the
  * two stamps answer different questions.
+ *
+ * Each cell is drawn by a `cell`/`textCell` call **here** rather than inside
+ * `rigorWord`, because that is where the class literal is: the selector scan
+ * (`test/unit/theme-selectors.test.ts`) reads the tag and the class off the
+ * emitter call, and a class handed to a helper as a parameter is a hook the
+ * scan cannot see.
  */
 function rigorLine(factory: ScreenFactory, rigor: RigorView): ScreenElement {
   const element = make(factory, 'div', 'run-rigor')
   literal(cell(element, factory, 'span', 'run-rigor-word'), 'RIGOR')
-  rigorWordCell(element, factory, rigorModeWord, rigor.mode, 'rigor.mode', 'run-rigor-mode')
+  rigorWord(cell(element, factory, 'span', 'run-rigor-mode'), rigorModeWord, rigor.mode, 'row.rigor.mode')
   literal(cell(element, factory, 'span', 'run-rigor-from-word'), 'from')
-  rigorWordCell(element, factory, rigorLayerWord, rigor.from, 'rigor.from', 'run-rigor-from')
+  rigorWord(cell(element, factory, 'span', 'run-rigor-from'), rigorLayerWord, rigor.from, 'row.rigor.from')
   for (const area of rigor.areas) {
     const drawn = cell(element, factory, 'span', 'run-rigor-area')
-    textCell(drawn, factory, 'span', area.name, 'label', 'rigor.areas[].name', 'run-rigor-area-name')
-    rigorWordCell(drawn, factory, rigorModeWord, area.mode, 'rigor.areas[].mode', 'run-rigor-area-mode')
+    textCell(drawn, factory, 'span', area.name, 'label', 'row.rigor.areas[].name', 'run-rigor-area-name')
+    rigorWord(cell(drawn, factory, 'span', 'run-rigor-area-mode'), rigorModeWord, area.mode, 'row.rigor.areas[].mode')
   }
   return element
 }
 
-/** rigorWordCell writes one mode or layer: the console's word when this build
- * knows it, and the raw value through `putText` when it does not. `word` is the
- * vocabulary to look the value up in -- `rigorModeWord` for a mode, which is the
- * five the dial has, and `rigorLayerWord` for a layer, which is the five that
- * decide one (`shared/rigor.ts`). */
-function rigorWordCell(
-  parent: ScreenElement,
-  factory: ScreenFactory,
+/** rigorWord writes one mode or one layer into a cell the caller has already
+ * drawn: the console's word when this build knows it, and the raw value through
+ * `putText` when it does not. `word` is the vocabulary to look the value up in
+ * -- `rigorModeWord` for a mode, which is the five the dial has, and
+ * `rigorLayerWord` for a layer, which is the five that decide one
+ * (`shared/rigor.ts`). */
+function rigorWord(
+  element: ScreenElement,
   word: (value: string) => string | null,
   value: string,
   field: string,
-  ...classes: string[]
-): ScreenElement {
+): void {
   const known = word(value)
-  if (known !== null) return literal(cell(parent, factory, 'span', ...classes), known)
-  return textCell(parent, factory, 'span', value, 'label', field, ...classes)
+  if (known !== null) {
+    literal(element, known)
+    return
+  }
+  putText(element, value, 'label', field)
 }
 
 /** haltLine is why the run halted: the reason, the scope and the time. A halting

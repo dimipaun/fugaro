@@ -538,6 +538,53 @@ li.live-repo[data-killed='true'] {
   border-left: 3px solid var(--halted);
 }
 
+/* The run's rigor, under the header's flags (design section 2.6): the mode, the
+ * layer that decided it and every area rule that matched -- the whole answer,
+ * which is what this screen has room for and what neither the Live chip nor the
+ * Projects MODE cell draws. It is the halt banner's box without the banner's
+ * `--halted` rule, because a rigor block is not a stop. */
+div.run-rigor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  margin-top: var(--space-2xs);
+  padding: var(--space-2xs) var(--space-xs);
+  background: var(--surface-alt);
+  border-radius: var(--radius-sm);
+}
+
+span.run-rigor-word {
+  color: var(--text-muted);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: var(--font-size-xs);
+}
+
+span.run-rigor-mode {
+  font-weight: var(--weight-semibold);
+}
+
+span.run-rigor-from-word,
+span.run-rigor-from,
+span.run-rigor-area-name,
+span.run-rigor-area-mode {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* One matched rule: its own name and the mode it set, in the same chip the two
+ * other screens draw the mode in. */
+span.run-rigor-area {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2xs);
+  padding: 0 var(--space-2xs);
+  border: var(--rule-width) solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
 /* The review inbox (design F26; desktop-console v2 plan Task V2.7.1): the
  * section the Live screen ends with -- the finished runs that are ready for a
  * look, as rows of **text**. Its box is the panel group above, so what is here
@@ -828,6 +875,22 @@ span.projects-only-enrolled-repo,
 span.projects-kill-repo {
   color: var(--text-muted);
   font-size: var(--font-size-xs);
+}
+
+/* The rigor mark: one word, in a chip. **The five modes have no colour of their
+ * own in this tree** -- not in `fugaro runs ls`'s MODE column, not in
+ * `docs/rigor-modes` -- so the chip is a boundary and a size and nothing else,
+ * and section 2.3's paragraph is the decision. A rule that painted `POC` one way
+ * and `Hotfix` another would be inventing a meaning, and section 3.5's table has
+ * no mark to pair it with. */
+span.live-run-mode,
+span.projects-job-mode {
+  padding: 0 var(--space-2xs);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  border: var(--rule-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
 }
 
 /* A panel that is not `read` is not an empty region: it draws its state and the
@@ -1393,6 +1456,16 @@ main p {
   span.live-run-started-by,
   span.live-run-workflow,
   span.live-run-contradiction,
+  span.live-run-mode,
+  span.projects-job-mode,
+  div.run-rigor,
+  span.run-rigor-word,
+  span.run-rigor-mode,
+  span.run-rigor-from-word,
+  span.run-rigor-from,
+  span.run-rigor-area,
+  span.run-rigor-area-name,
+  span.run-rigor-area-mode,
   span.run-status,
   span.run-outcome,
   span.run-branch,
@@ -1532,6 +1605,11 @@ main p {
   li.live-run-stuck,
   div.live-stale,
   li.live-repo[data-killed='true'],
+  /* The rigor chips are boundaries and nothing else, so the boundary is what
+   * has to survive the author's colours going away. */
+  span.live-run-mode,
+  span.projects-job-mode,
+  span.run-rigor-area,
   section.projects-panel[data-state='read'],
   section.projects-panel[data-state='unavailable'],
   section.projects-panel[data-state='not-built'],

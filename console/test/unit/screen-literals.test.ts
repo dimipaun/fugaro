@@ -167,7 +167,7 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     'model.because': 'one of two console sentences (`PR_NO_LINK_REASON` or the no-pull-request one)',
     'model.linkBecause': '`LOG_NO_LINK`, a console constant',
     known: {
-      within: 'rigorWordCell',
+      within: 'rigorWord',
       reason:
         'the answer of the vocabulary the caller passed in (`rigorModeWord` or `rigorLayerWord`, both `shared/rigor.ts`), which is one of the console\'s own words or `null`; `null` is the branch that hands the document\'s own mode or layer to `putText` as text',
     },
@@ -325,11 +325,6 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     'flag.name': 'a RunFlag name from live.ts\'s own flag table (`runFlags`)',
     'flag.tone': '`RunTone`, from the same flag table',
     'flag.because': 'the flag table\'s own sentences, interpolating only console constants',
-    'rigor.mode': {
-      within: 'modeChip',
-      reason:
-        'reached only when `rigorModeWord` found the value, so it is one of the five keys of `RIGOR_MODE_WORDS` -- a console word written as a key, never a string the document chose (the document\'s own value takes the `putText` branch, whose attribute is the literal `unknown`)',
-    },
     'sanitizedKey(repo.slug)': 'the slug as `sanitizeText` drew it (slug class)',
     "repo.kill === null ? 'false' : 'true'": 'a boolean drawn as one of two literals',
     "connection.textContent ?? ''": 'read back from a cell `putText` wrote, so it is the sanitized text',

@@ -1139,13 +1139,17 @@ function runRow(factory: ScreenFactory, row: LiveRunRow): ScreenElement {
  * for -- the whole answer is on the run's own screen (`run.ts`'s `rigorLine`),
  * and the Projects screen's MODE cell is the same word in a table.
  *
- * **The word is the chip.** `data-mode` carries the wire value so the
- * stylesheet can mark the five modes apart, and the text carries the meaning,
- * so a chip whose colour a reader cannot see is still the mode (styling §3.5,
- * "never colour alone"). A mode this build has never heard of is the
- * document's own word, through `putText` with the `label` class and the
- * `runs[].rigor.mode` field -- bounded, escaped, and `n/a` when the sanitizer
- * will not have it -- with `data-mode="unknown"`, because a mode a newer CLI
+ * **The word is the chip, and there is no second channel.** The five modes are
+ * a dial with no colour of its own anywhere in this tree -- not in the CLI's own
+ * MODE column, not in `docs/rigor-modes` -- so a chip that painted one mode
+ * differently from another would be inventing a meaning, and the stylesheet's
+ * rule is that every colour meaning carries a text mark (styling §3.5). Here
+ * the text is the whole of it: a bounded, small mark that separates the mode
+ * from the title and the stage around it.
+ *
+ * A mode this build has never heard of is the document's own word, through
+ * `putText` with the `label` class and the `runs[].rigor.mode` field -- bounded,
+ * escaped, and `n/a` when the sanitizer will not have it. A mode a newer CLI
  * resolved is not a reason to draw nothing.
  *
  * A run whose record carries no block draws **no chip at all**, not an empty
@@ -1157,14 +1161,9 @@ function modeChip(parent: ScreenElement, factory: ScreenFactory, rigor: RigorVie
   const word = rigorModeWord(rigor.mode)
   if (word === null) {
     putText(drawn, rigor.mode, 'label', 'runs[].rigor.mode')
-    drawn.setAttribute('data-mode', 'unknown')
     return
   }
   literal(drawn, word)
-  // `rigor.mode` is one of the five keys of `RIGOR_MODE_WORDS` on this line --
-  // the branch is reached only when the lookup found it -- so the attribute
-  // carries the console's own vocabulary and not a string the document chose.
-  drawn.setAttribute('data-mode', rigor.mode)
 }
 
 /** repoBlock draws one repository: its name, its bar, its burn and its runs. */

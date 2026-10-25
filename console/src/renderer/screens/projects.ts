@@ -979,17 +979,13 @@ function numberCell(
  * cell that wrote it as vocabulary would be putting a value no reader can check
  * into the document under the console's own name.
  */
-function rigorCell(
-  parent: ScreenElement,
-  factory: ScreenFactory,
-  view: RigorView | null,
-  field: string,
-  ...classes: string[]
-): ScreenElement {
-  if (view === null) return literal(cell(parent, factory, 'span', ...classes), RIGOR_ABSENT)
+function rigorCell(parent: ScreenElement, factory: ScreenFactory, view: RigorView | null): ScreenElement {
+  const drawn = cell(parent, factory, 'span', 'projects-job-mode')
+  if (view === null) return literal(drawn, RIGOR_ABSENT)
   const word = rigorModeWord(view.mode)
-  if (word !== null) return literal(cell(parent, factory, 'span', ...classes), word)
-  return textCell(parent, factory, 'span', view.mode, 'label', field, ...classes)
+  if (word !== null) return literal(drawn, word)
+  putText(drawn, view.mode, 'label', 'runs[].rigor.mode')
+  return drawn
 }
 
 /** sanitizedKey is a document string bound for an **attribute value** rather
@@ -1182,7 +1178,7 @@ function jobsPanel(factory: ScreenFactory, model: ProjectJobs): ScreenElement {
       textCell(line, factory, 'span', startedBy, 'label', 'runs[].launched_by', 'projects-job-started-by')
     }
     if (job.created !== null) textCell(line, factory, 'span', job.created, 'label', 'runs[].created', 'projects-job-created')
-    if (showMode) rigorCell(line, factory, job.rigor, 'runs[].rigor.mode', 'projects-job-mode')
+    if (showMode) rigorCell(line, factory, job.rigor)
     // The three accounts, apart: a subscription's model dollars are notional.
     numberCell(line, factory, 'span', job.cost.model, 'usd', 'projects-job-model')
     numberCell(line, factory, 'span', job.cost.compute, 'usd', 'projects-job-compute')
