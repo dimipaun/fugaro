@@ -18,8 +18,8 @@
 // repair — a symlink, a file over MaxBytes, YAML anchors and aliases, a key this
 // build does not know, a stream that is not one of the three, a theme or a tag
 // prefix that is not the stream's own, a name out of alphabetical order or in
-// two lists, and a console version below the one the console has already
-// shipped.
+// two lists, a next name that is not the first one the stream's version has not
+// spent, and a console version below the one the console has already shipped.
 package streams
 
 import (
@@ -55,6 +55,23 @@ const (
 // streamNames is the three in the order docs/release.md writes them, the CLI
 // first, which is the order a message names them in.
 var streamNames = []string{CLI, Console, Mobile}
+
+// Names returns the three streams in that order. It is a copy, so a caller
+// that sorts or appends to it cannot change the catalogue's own list.
+func Names() []string { return slices.Clone(streamNames) }
+
+// Known reports whether name is one of the three streams.
+func Known(name string) bool { return slices.Contains(streamNames, name) }
+
+// firstMinors is the minor each stream's first named release took: the CLI's
+// Badger is 0.10, the console's Cherry 0.110 and the app's Falcon 0.200
+// (docs/release.md). A stream spends one name per minor from there, so the
+// version a stream is at says how many of its names are spent.
+var firstMinors = map[string]int{CLI: 10, Console: 110, Mobile: 200}
+
+// FirstVersion is the version a stream's first named release carries, the
+// lowest a stream that has shipped may be at.
+func FirstVersion(stream string) Version { return Version{Minor: firstMinors[stream]} }
 
 // themes is each stream's naming theme, so that a release name alone says which
 // stream it belongs to (the spec's addendum §2). The CLI's list carries no bird:
@@ -120,10 +137,12 @@ func (v Version) atLeast(other Version) bool {
 	return v.Patch >= other.Patch
 }
 
-// UnmarshalYAML reads a version from its own scalar, refusing anything that is
-// not a quoted MAJOR.MINOR.PATCH string: an unquoted 0.10 is a YAML number, and
-// a version whose value depends on which YAML schema a reader implements is a
-// version that means two things.
+// UnmarshalYAML reads a version from its own scalar, refusing one that YAML
+// resolves to anything but a string: an unquoted 0.10 is a YAML number, and a
+// version whose value depends on which YAML schema a reader implements is a
+// version that means two things. An unquoted 0.10.4 is not a number in any
+// schema, so it reads as the string it looks like and is accepted; the file
+// quotes every version anyway, so one habit covers both.
 func (v *Version) UnmarshalYAML(n *yaml.Node) error {
 	if n.Kind != yaml.ScalarNode || n.Tag != "!!str" {
 		return fmt.Errorf("a version is a quoted string, as in %q", "0.10.4")
@@ -287,8 +306,8 @@ func checkShape(path string, n *yaml.Node) error {
 
 // validate holds the file to what the three streams are: the three and no
 // others, each one's theme and tag prefix, the names spent in alphabetical order
-// and never twice, the next name the one after what is spent, and the version a
-// release can no longer go behind.
+// and never twice, the next name the first one the stream's version has not
+// spent, and the version a release can no longer go behind.
 func validate(path string, list []Stream) error {
 	if len(list) == 0 {
 		return refuse(path, "names no stream; the file names the three: %s", strings.Join(streamNames, ", "))
@@ -335,14 +354,29 @@ func validate(path string, list []Stream) error {
 		if next < 0 {
 			return refuse(path, "the %s stream's next name is %q, which is not one of its names", s.Name, s.Next)
 		}
-		switch {
-		case s.Current.IsZero() && next != 0:
-			return refuse(path, "the %s stream has released nothing, so its next name is %q, the first of its list", s.Name, s.Names[0])
-		case !s.Current.IsZero() && next == 0:
-			return refuse(path, "the %s stream is at %s, so its next name cannot be %q: the release that version came from has already spent it", s.Name, s.Current, s.Next)
-		}
 		if s.Name == Console && !s.Current.atLeast(ConsoleFloor) {
 			return refuse(path, "the console stream is at %s, below %s, a version it has already shipped: the console's updater refuses a downgrade, so its version line never goes backwards", s.Current, ConsoleFloor)
+		}
+		if s.Current.IsZero() {
+			if next != 0 {
+				return refuse(path, "the %s stream has released nothing, so its next name is %q, the first of its list", s.Name, s.Names[0])
+			}
+			continue
+		}
+		first := FirstVersion(s.Name)
+		if s.Current.Major != first.Major || s.Current.Minor < first.Minor {
+			return refuse(path, "the %s stream is at %s, and its named line starts at %s, %q: a stream that has shipped is at that version or later on the same major", s.Name, s.Current, first, s.Names[0])
+		}
+		spent := s.Current.Minor - first.Minor
+		if spent+1 >= len(s.Names) {
+			return refuse(path, "the %s stream is at %s and has spent every name in its list, %s last: add the name its next minor takes", s.Name, s.Current, s.Names[len(s.Names)-1])
+		}
+		want := s.Names[spent+1]
+		switch {
+		case next <= spent:
+			return refuse(path, "the %s stream is at %s, so its next name cannot be %q: the release that version came from has already spent it, and its next name is %q", s.Name, s.Current, s.Next, want)
+		case next > spent+1:
+			return refuse(path, "the %s stream is at %s, which spent %q, so its next name is %q rather than %q: names are spent in order, one per minor", s.Name, s.Current, s.Names[spent], want, s.Next)
 		}
 	}
 	for _, name := range streamNames {
