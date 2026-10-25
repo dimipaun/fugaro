@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitops"
@@ -238,10 +239,124 @@ func TestBootstrapRigorForAFollowUpReadsNoBranch(t *testing.T) {
 	}
 }
 
+// TestBootstrapRigorTakesTheRunsOwnRequestOnlyUpward: the run's own request —
+// `fugaro run --mode`, carried in the task (T1.6) — is D6's raise-only input.
+// Above the layers' answer it decides and the block says so; below it, or off
+// the axis (Hotfix), it decides nothing and the layer that already set the mode
+// keeps its name, which is the fail-closed direction a launcher must not be
+// able to outvote.
+func TestBootstrapRigorTakesTheRunsOwnRequestOnlyUpward(t *testing.T) {
+	base := `version: 1
+project: aurora
+git: { provider: github }
+rigor:
+  default: startup
+  areas:
+    - { name: payments, match: "internal/payments/**", mode: critical }
+` + workflowsYAML
+	for _, tc := range []struct {
+		name string
+		req  string
+		mode rigor.Mode
+		from rigor.Layer
+	}{
+		{"a request above the repository's default", "critical", rigor.Critical, rigor.FromRequest},
+		{"a request below it", "poc", rigor.Startup, rigor.FromRepo},
+		{"hotfix, which is off the axis", "hotfix", rigor.Startup, rigor.FromRepo},
+		{"no request at all", "", rigor.Startup, rigor.FromRepo},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _ := rigorRun(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": base}, nil, &task.Spec{Rigor: tc.req})
+
+			r.bootstrapRigor(context.Background())
+
+			rg := r.rec.Rigor
+			if rg == nil || rg.Mode != tc.mode || rg.From != tc.from {
+				t.Fatalf("the block = %+v, want %q from %q", rg, tc.mode, tc.from)
+			}
+			if len(rg.Areas) != 0 {
+				t.Errorf("a request that declares no path matched an area: %+v", rg.Areas)
+			}
+		})
+	}
+}
+
+// TestBootstrapRigorResolvesTheRunsDeclaredPaths: D22's first moment reads the
+// paths the run said it would touch (`fugaro run --path`, in the task's own
+// list), so the area rule a declared path matches sets the mode before any of
+// the work is done. Without the declared paths bootstrap could only resolve the
+// repository's default, and a Critical area would not arrive until finalize.
+func TestBootstrapRigorResolvesTheRunsDeclaredPaths(t *testing.T) {
+	base := `version: 1
+project: aurora
+git: { provider: github }
+rigor:
+  default: startup
+  areas:
+    - { name: payments, match: "internal/payments/**", mode: critical }
+    - { name: docs, match: "docs/**", mode: poc }
+` + workflowsYAML
+	r, _ := rigorRun(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": base}, nil,
+		&task.Spec{Paths: []string{"internal/payments/charge.go"}})
+
+	r.bootstrapRigor(context.Background())
+
+	rg := r.rec.Rigor
+	if rg == nil || rg.Mode != rigor.Critical || rg.From != rigor.FromArea || rg.At != runstore.RigorAtBootstrap {
+		t.Fatalf("the block = %+v, want critical from the area the declared path matched", rg)
+	}
+	want := []runstore.RigorArea{{Name: "payments", Mode: rigor.Critical, At: runstore.RigorAtBootstrap}}
+	if !reflect.DeepEqual(rg.Areas, want) {
+		t.Errorf("the areas = %+v, want %+v", rg.Areas, want)
+	}
+}
+
+// TestFinalSectionNamesTheModeAndWhereItCameFrom: D18's one-value rule at the
+// pull request — the mode the run used is in the body, in the same words the
+// record carries, so the two can be diffed — in D24's shape: the mode, the
+// layer that won, and the strictest area rule that matched, with a "+N" for the
+// rest. A run whose record carries no block shows no line at all: an absent
+// answer is not the built-in default.
+func TestFinalSectionNamesTheModeAndWhereItCameFrom(t *testing.T) {
+	const twoAreas = `rigor:
+  default: startup
+  areas:
+    - { name: payments, match: "internal/payments/**", mode: critical }
+    - { name: ledgers, match: "internal/payments/**", mode: startup }
+`
+	for _, tc := range []struct {
+		name  string
+		block string
+		want  string
+	}{
+		{"the repository's own default", "rigor: { default: critical }\n", "rigor: critical (repo)"},
+		{"the area a path the run touched matched",
+			"rigor:\n  default: startup\n  areas:\n    - { name: payments, match: \"internal/payments/**\", mode: critical }\n",
+			"rigor: critical (area payments)"},
+		{"two matching rules, the strictest named", twoAreas, "rigor: critical (area payments +1)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := filedRunAt(t, modeBase(t, tc.block), "fugaro/x", "20261024-120000-abcd", openRound)
+
+			section := r.finalSection(false, "review round 2 still has 3 findings", nil)
+
+			if !strings.Contains(section, tc.want) {
+				t.Fatalf("the status section does not carry %q:\n%s", tc.want, section)
+			}
+		})
+	}
+
+	r := &run{rec: &runstore.Record{Version: 1, RunID: "20261024-120000-abcd"},
+		d: Deps{Now: func() time.Time { return time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC) }}}
+	if section := r.finalSection(true, "", nil); strings.Contains(section, "rigor") {
+		t.Errorf("a run that resolved no mode shows a rigor line:\n%s", section)
+	}
+}
+
 // TestFinalizeRigorResolvesFromTheRunsOwnPathsAndNeverFalls: D22's moments at
-// the runner. Bootstrap declares no path (T1.6 owns the flag), so the run
-// starts at its repository's default; finalize resolves from the paths the
-// run's own record measured, and the area both paths match decides the mode.
+// the runner. Bootstrap declares no path here, so the run starts at its
+// repository's default; finalize resolves from the paths the run's own record
+// measured, and the area both paths match decides the mode.
 // A moment after that which resolves weaker leaves the block as it stands: a
 // mode a run has reached never falls (D22).
 func TestFinalizeRigorResolvesFromTheRunsOwnPathsAndNeverFalls(t *testing.T) {
