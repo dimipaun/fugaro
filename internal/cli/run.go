@@ -151,6 +151,17 @@ type runOptions struct {
 	// it instead (owner ruling, 2026-10-12, task 9b review), through the
 	// same allow-list, agent.auth and version-gate checks a first run's does.
 	token string
+	// planTask is --plan-task, as the task stores it: the id of one task in
+	// one plan ("setup-wizard/W1.3"), recorded so the console can join this
+	// run to a node of that plan's dependency graph (console dependency
+	// graph plan, task GV1.2, decision GD5). runRun validates it once
+	// (planTaskFlag), so every spec builder below writes the same value and
+	// the repeat comparison reads it back. Empty (the default) is no claim
+	// at all: the launch writes no plan_task field anywhere, exactly as
+	// before the flag existed. A follow-up (--pr) carries one only when this
+	// is given: it never inherits its previous run's, and is otherwise
+	// joined to the graph through its pull request number (GV1.6).
+	planTask string
 	// rigor is --mode: the rigor mode this run's own launcher asks for
 	// (docs/rigor-modes implementation-plan T1.6). It is the one input that
 	// may raise the mode the run resolves from its configuration and never
@@ -200,6 +211,11 @@ func newRunCmd() *cobra.Command {
 			"start with the same preamble all read alike. A follow-up (--pr) keeps its run's\n" +
 			"title unless --title is given, and --retry takes none (the stored task keeps its\n" +
 			"own).\n\n" +
+			"--plan-task PLAN/TASK records which task of which plan this run works on, so\n" +
+			"the console's graph can join the run to that node. One plan and one task id,\n" +
+			"as the plan's own graph spells them, at most 128 bytes; what the run does is\n" +
+			"unchanged by it. A follow-up (--pr) records one only when it is given, and\n" +
+			"--retry takes none (the stored task keeps its own).\n\n" +
 			"--mode MODE asks for a rigor mode for this run: " + rigor.ModeList() + ".\n" +
 			"It may raise the mode the run resolves from its own configuration\n" +
 			"(rigor.default and rigor.areas in fugaro.yaml, the project layer's defaults)\n" +
@@ -218,6 +234,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.runID, "run-id", "", "run ID to use; repeating one reports its launch instead of starting another")
 	f.StringVar(&o.batch, "batch", "", "batch label, to group runs in fugaro runs ls")
 	f.StringVar(&o.title, "title", "", "the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given")
+	f.StringVar(&o.planTask, "plan-task", "", "record the plan task this run works on, as <plan>/<task> (for example setup-wizard/W1.3): the id the console's graph joins this run to a node by; it changes nothing about what the run does, and a follow-up (--pr) records one only when given")
 	f.StringVar(&o.tf, "task-file", "", "read the task from this file, or - for stdin")
 	f.StringVar(&o.retry, "retry", "", "launch the stored task of RUN (<repo-slug>/<run-id> or a run ID) that never started")
 	f.StringVar(&o.totalTimeout, "total-timeout", "", "override the workflow's timeouts.total for this run, such as 45m")
@@ -235,7 +252,7 @@ func newRunCmd() *cobra.Command {
 }
 
 // taskFlags are the flags --retry excludes: the stored task.json supplies them.
-var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path"}
+var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "plan-task", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path"}
 
 // prFlags are the flags --pr excludes: the previous run on the PR supplies them.
 var prFlags = []string{"ref", "workflow"}
@@ -284,6 +301,12 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		// a best-of-N batch, a review, a follow-up): o.title then holds the
 		// title exactly as the task stores it, or "" for no title at all.
 		if err = titleFlag(cmd, o); err != nil {
+			return err
+		}
+		// --plan-task, resolved once for every launch shape below, like the
+		// title: o.planTask then holds the id exactly as the task stores it,
+		// or "" for no claim at all.
+		if err = planTaskFlag(cmd, o); err != nil {
 			return err
 		}
 		// --mode and --path, resolved once for every launch shape below, as
@@ -537,6 +560,12 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 					return launchResult{}, err
 				}
 			}
+			if spec.PlanTask != "" {
+				if err := checkCloneImageSince(env.lc, spec, planTaskSince,
+					"a plan task (--plan-task)", "the plan task", "", warn); err != nil {
+					return launchResult{}, err
+				}
+			}
 			// The rigor: gate, judged on the file the run will read rather
 			// than on a task field: see checkRigorImage. Unconditional, since
 			// the repository's file alone can carry the key.
@@ -580,6 +609,20 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			if spec.Title != "" {
 				if err := checkImageSince(ctx, env, slug, spec, kind, titlesSince,
 					"a job title (--title, kept by --pr follow-ups and --retry)", "the job title", "", warn); err != nil {
+					return launchResult{}, err
+				}
+			}
+			// The plan task's own gate, for the same reason as the three
+			// above: task.Parse decodes with DisallowUnknownFields, so a
+			// runner older than planTaskSince refuses a task carrying one
+			// outright, and the run would die at bootstrap over a field that
+			// changes nothing about what it does. A launch with no
+			// --plan-task carries no such field (the spec is byte-identical
+			// to what the previous release wrote) and is never gated: the
+			// check is the field's, not the flag's.
+			if spec.PlanTask != "" {
+				if err := checkImageSince(ctx, env, slug, spec, kind, planTaskSince,
+					"a plan task (--plan-task)", "the plan task", "", warn); err != nil {
 					return launchResult{}, err
 				}
 			}
@@ -760,6 +803,35 @@ func titleFlag(cmd *cobra.Command, o *runOptions) error {
 	return nil
 }
 
+// planTaskFlag resolves fugaro run --plan-task into the id the task stores,
+// in o.planTask: the flag trimmed, checked against task's ONE list of what a
+// plan task id may be (task.PlanTaskProblem, the same list the runner applies
+// when it reads a task back, so an id this accepts is never one the run
+// refuses at bootstrap).
+//
+// The flag's absence is not a claim about any plan, and leaves o.planTask
+// empty — every launch before the flag existed, and every launch that does
+// not use it. A present but empty value (--plan-task "") is refused: it is
+// indistinguishable from no flag at all once stored, and the reading it would
+// get silently — "this run was not asked to join anything" — is the one
+// reading nobody meant.
+//
+// The value is NOT sanitised the way a title is: a plan task id is a shape,
+// not prose, and the shape check already allows only ASCII letters, digits,
+// '.', '_', '-' and the '/' between them (safetext.Field, which drops bidi
+// overrides and invisible characters and re-spaces text, cannot change such a
+// value — and a value it WOULD change is one PlanTaskProblem refuses).
+func planTaskFlag(cmd *cobra.Command, o *runOptions) error {
+	if !cmd.Flags().Changed("plan-task") {
+		return nil
+	}
+	o.planTask = strings.TrimSpace(o.planTask)
+	if p := task.PlanTaskProblem(o.planTask); p != "" {
+		return userErr("--plan-task: %s", p)
+	}
+	return nil
+}
+
 // rigorFlags is the run's own rigor request, validated once for every launch
 // shape that accepts it (a first run, a best-of-N batch, a review, a
 // follow-up): the mode against the closed vocabulary (rigor.Modes, D20), and
@@ -906,7 +978,7 @@ func buildAttemptSpec(plan *attemptPlan, o *runOptions, text string) (string, *t
 		}
 	}
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: plan.repo, Ref: plan.ref, Workflow: plan.workflow, Task: text, Title: o.title,
-		RequestedBy: plan.me, Batch: o.batch, Recipe: plan.recipe, Mode: plan.mode,
+		PlanTask: o.planTask, RequestedBy: plan.me, Batch: o.batch, Recipe: plan.recipe, Mode: plan.mode,
 		Rigor: rigor.Mode(o.rigor), Paths: o.paths}
 	if plan.totalOverride != "" {
 		spec.Overrides.TotalTimeout = plan.totalOverride
@@ -1149,7 +1221,7 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 		return "", nil, err
 	}
 	printRecipeNote(warn, rr, true)
-	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: ref, Workflow: workflow, Task: text, Title: o.title,
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: ref, Workflow: workflow, Task: text, Title: o.title, PlanTask: o.planTask,
 		RequestedBy: me, Batch: o.batch, Recipe: rr.taskRecipe(), ReviewPRs: append([]int(nil), o.pr...),
 		Rigor: rigor.Mode(o.rigor), Paths: o.paths}
 	if total > 0 {
@@ -2199,7 +2271,9 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 	}
 	if rec.Execution == "" {
 		// It ran already, with no cloud execution (a local run against this
-		// bucket): never launch it again. Nothing to backfill.
+		// bucket): never launch it again. Nothing to backfill, and nothing
+		// is stored: a run with no launch.json has no plan task for any
+		// reader to find, the same way it has no launcher (LaunchedBy).
 		return &runstore.Launch{Version: 1, RunID: runID, LaunchedAt: rec.StartedAt}, nil
 	}
 	if err := check(rec.Execution); err != nil {
@@ -2210,7 +2284,7 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 	// elsewhere must be recorded as that backend's, or fugaro logs, cancel
 	// and diagnose read the record against the wrong platform's names
 	// (design compute-backend.md §2.5).
-	l := &runstore.Launch{Version: 1, RunID: runID, Backend: launchBackend(env.be), Execution: rec.Execution, LaunchedAt: rec.StartedAt}
+	l := &runstore.Launch{Version: 1, RunID: runID, Backend: launchBackend(env.be), Execution: rec.Execution, PlanTask: spec.PlanTask, LaunchedAt: rec.StartedAt}
 	if id, ok := backend.ParseExecution(rec.Execution); ok {
 		l.Job = id.Job
 	}
@@ -2431,7 +2505,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	}
 	// The backend the launch actually used, from the seam, as above: the
 	// launch succeeded on env.be, so env.be's codec is what names it.
-	l := &runstore.Launch{Version: 1, RunID: spec.RunID, Backend: launchBackend(env.be), Execution: ref.Name, Job: ref.Job, LogURL: ref.LogURL, LaunchedBy: spec.RequestedBy, LaunchedAt: now.UTC()}
+	l := &runstore.Launch{Version: 1, RunID: spec.RunID, Backend: launchBackend(env.be), Execution: ref.Name, Job: ref.Job, LogURL: ref.LogURL, LaunchedBy: spec.RequestedBy, PlanTask: spec.PlanTask, LaunchedAt: now.UTC()}
 	if err := s.WriteLaunch(hctx, l); errors.Is(err, runstore.ErrExists) {
 		theirs, rerr := s.ReadLaunch(hctx)
 		if rerr != nil {

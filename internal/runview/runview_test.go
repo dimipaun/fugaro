@@ -875,6 +875,78 @@ func TestJoinReboundsTheRecordedChangedFiles(t *testing.T) {
 	}
 }
 
+// TestJoinPlanTaskIsTheLaunchRecordsOwn: the plan task id is what the run's
+// own launch.json recorded, sanitised, and nothing at all for a run whose
+// launch record has none — never a value invented from the task (which
+// carries the same id for the recovery path and --retry, not for display).
+//
+// It is a display-only join hint: the console joins a run to a node of the
+// plan's graph by it, and nothing decides anything by it (console
+// dependency graph plan, constraint C3).
+//
+// Mutation caught: leaving PlanTask out of Join, or filling it from
+// in.Task.PlanTask.
+func TestJoinPlanTaskIsTheLaunchRecordsOwn(t *testing.T) {
+	l := *launch
+	l.PlanTask = "setup-wizard/W1.3"
+	row := Join(Input{Task: spec, Launch: &l, Record: rec(runstore.StatusSucceeded, nil), Exec: exec(backend.StateSucceeded)}, prices, now)
+	if row.PlanTask != "setup-wizard/W1.3" {
+		t.Errorf("PlanTask = %q, want the launch.json's own value", row.PlanTask)
+	}
+	// A launch.json with no plan_task (one written by hand, or by a
+	// launcher older than the field): absent, not the task's.
+	tasked := *spec
+	tasked.PlanTask = "setup-wizard/W1.3"
+	row = Join(Input{Task: &tasked, Launch: launch, Record: rec(runstore.StatusSucceeded, nil)}, prices, now)
+	if row.PlanTask != "" {
+		t.Errorf("PlanTask = %q for a launch.json with none, want \"\"", row.PlanTask)
+	}
+	// No launch.json at all: an unlaunched run carries none.
+	if row := Join(Input{Task: &tasked}, prices, now); row.PlanTask != "" {
+		t.Errorf("unlaunched row carries PlanTask %q", row.PlanTask)
+	}
+}
+
+// TestJoinPlanTaskDropsAnIDThatIsNotOne: the id is text whoever writes
+// launch.json chose, and the run's own service account can write it, so Join
+// keeps it only when it passes the launcher's own shape check
+// (task.PlanTaskProblem): an escape sequence, a bidi override, a newline, a
+// traversal, spaces or a value past the 128-byte bound yields no plan_task at
+// all, never a sanitised remnant the console could join by. A run whose
+// launch.json recorded none emits no key either, never "".
+//
+// Mutation caught: sanitising and capping only (the previous read side), or
+// dropping omitempty from the row's json tag.
+func TestJoinPlanTaskDropsAnIDThatIsNotOne(t *testing.T) {
+	for _, id := range []string{
+		"setup-wizard/\x1b[2JW1.3" + string(rune(0x202e)) + "\nsetup-wizard/W9.9",
+		"../x",
+		"setup wizard/W 1.3",
+		"plan/" + strings.Repeat("x", 495),
+	} {
+		l := *launch
+		l.PlanTask = id
+		row := Join(Input{Task: spec, Launch: &l}, prices, now)
+		if row.PlanTask != "" {
+			t.Errorf("launch.json plan_task %q reads as %q, want none", id, row.PlanTask)
+		}
+		data, err := json.Marshal(row)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), "plan_task") {
+			t.Errorf("a dropped plan task still emitted the key: %s", data)
+		}
+	}
+	empty, err := json.Marshal(Join(Input{Task: spec, Launch: launch}, prices, now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(empty), "plan_task") {
+		t.Errorf("an absent plan task still emitted the key: %s", empty)
+	}
+}
+
 // TestJoinCarriesTheRunsRigor: the row carries the record's rigor block, and
 // the JSON key is `rigor`, so `runs ls --json`, `diagnose` and the console
 // read the mode, the layer that won and the areas that matched from the one

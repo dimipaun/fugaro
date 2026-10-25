@@ -166,14 +166,14 @@ type scanResult struct {
 	Finished   watch.FinishedRun
 	IsFinished bool
 	// Facts is what the run's own launch.json says about it: the Cloud Run job
-	// it names, and who started the run — reported for every run the scan read
-	// one for, a live run's included, whose RTDB registry entry carries
-	// neither and could not be trusted with either (a launcher writes a job's
-	// environment and its own launch.json, never the job's name or the
-	// registry). Job is "" when there is no launch.json to read, and
-	// LaunchedBy too (a launch that recorded no launcher: the recovery
-	// backfill, a local run with no execution, or `fugaro logs`'s synthetic
-	// launch).
+	// it names, who started the run, and the plan task it recorded — reported
+	// for every run the scan read one for, a live run's included, whose RTDB
+	// registry entry carries neither and could not be trusted with either (a
+	// launcher writes a job's environment and its own launch.json, never the
+	// job's name or the registry). Job is "" when there is no launch.json to
+	// read, and LaunchedBy too (a launch that recorded no launcher: the
+	// recovery backfill, a local run with no execution, or `fugaro logs`'s
+	// synthetic launch), and PlanTask too (a launch that named no plan task).
 	Facts watch.RunFacts
 }
 
@@ -198,6 +198,7 @@ func scanRun(ctx context.Context, env *cloudEnv, slug, id string, w scanWindow, 
 	facts := watch.RunFacts{}
 	if in.Launch != nil {
 		facts.Job, facts.LaunchedBy = in.Launch.Job, in.Launch.LaunchedBy
+		facts.PlanTask = in.Launch.PlanTask
 	}
 	res, err := scanRow(ctx, env, ro, in, w, now)
 	if err != nil {
@@ -570,7 +571,7 @@ feed:
 
 	r := repoScan{total: len(ids)}
 	for i, res := range results {
-		if res.done && res.err == nil && (res.res.Facts.Job != "" || res.res.Facts.LaunchedBy != "") {
+		if res.done && res.err == nil && (res.res.Facts.Job != "" || res.res.Facts.LaunchedBy != "" || res.res.Facts.PlanTask != "") {
 			if r.facts == nil {
 				r.facts = watch.Facts{}
 			}
@@ -700,11 +701,12 @@ feed:
 
 // factsOf is what a scan read about one run, as the facts a frame stamps onto
 // the row it draws: the job name launch.json recorded, placed against the
-// published policy (s.index.ref — never parsed), and the launcher launch.json
-// recorded. The launcher is carried as it was read; watch.MergeFacts sanitises
-// it for display like every other bucket-derived string.
+// published policy (s.index.ref — never parsed), the launcher launch.json
+// recorded, and the plan task it recorded. The launcher and the plan task are
+// carried as they were read; watch.MergeFacts sanitises them for display like
+// every other bucket-derived string.
 func (s *queuedScanner) factsOf(f watch.RunFacts) watch.RunFacts {
-	return watch.RunFacts{JobRef: s.index.ref(f.Job), LaunchedBy: f.LaunchedBy}
+	return watch.RunFacts{JobRef: s.index.ref(f.Job), LaunchedBy: f.LaunchedBy, PlanTask: f.PlanTask}
 }
 
 // Facts is the job and launcher of each run the last scan read, by the run's

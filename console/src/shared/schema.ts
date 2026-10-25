@@ -114,6 +114,16 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   provider: 'label',
   account: 'person',
   launched_by: 'person',
+  // GV1.2's key on the live run shapes and on `runview.Row`: the plan task the
+  // run says it works on, as its own `launch.json` recorded it. An **id** the
+  // plan's document spells a node with (`<plan>/<task>`, its shape checked by
+  // `task.PlanTaskProblem` where it is written, and where the CLI reads it back:
+  // `runview.Join` and `watch.MergeFacts` drop an id that fails it, so the key
+  // is absent), so a label -- the class `job`,
+  // `profile`, `provider` and `workflow` carry -- and not `person` and not
+  // `sentence`: nothing here is prose, and a value that is not an id draws the
+  // free-text rules' refusal rather than a link or a path.
+  plan_task: 'label',
   // 0.10.0's key on the live run shape (credentials-service C1.21): the **name**
   // -- never the value -- of the credential the run's cascade is spending on.
   // A label, the class an identifier a policy or the service wrote carries
@@ -756,6 +766,14 @@ export const REPO_KEYS = [
  * nothing in the committed fixture could have caught it, because the recording
  * predates the fields.
  *
+ * **`plan_task` arrived with the console dependency graph's GV1.2** (a run's
+ * plan task, recorded at launch: decision GD5), between `launched_by` and
+ * `credential` in `JSONRun`, and it is written on every run launched with
+ * `--plan-task`. It is accepted and not read -- no Live-screen column draws it
+ * yet, and the screen that does is GV2.3's graph -- and classified as a
+ * **label**: an id the plan's own document spells a node with, never a person
+ * and never free prose.
+ *
  * Exported so `schema.test.ts` can pin it against the struct, as it pins
  * `RECORD_KEYS` and `REPO_KEYS`. */
 export const RUN_KEYS = [
@@ -784,6 +802,7 @@ export const RUN_KEYS = [
   'provider',
   'account',
   'launched_by',
+  'plan_task',
   'credential',
   'waiting_until',
 ]
@@ -792,6 +811,10 @@ export const RUN_KEYS = [
  * `ready[]`, the Live screen's other two lists. It carries 0.9.0's five new
  * keys too, for `RUN_KEYS`'s reason and with the same classification: a reader
  * that follows a run out of `runs[]` must not be refused the row it lands on.
+ * GV1.2's `plan_task` as well, for the same reason: a run that finishes does
+ * not stop having been asked to work on a task. The two keys it does *not*
+ * carry -- `credential` and `waiting_until` -- are `JSONRun`'s alone, as its own
+ * row in this file says.
  * Exported so `schema.test.ts` can pin it against the struct. */
 export const FINISHED_KEYS = [
   'run',
@@ -809,6 +832,7 @@ export const FINISHED_KEYS = [
   'provider',
   'account',
   'launched_by',
+  'plan_task',
 ]
 const TOTALS_KEYS = ['runs', 'model_usd', 'model_notional_usd', 'compute_usd', 'total_usd', 'compute_not_estimated']
 /**
@@ -869,6 +893,15 @@ const TOTALS_KEYS = ['runs', 'model_usd', 'model_notional_usd', 'compute_usd', '
  * classified as a person's text in `WIRE_TEXT_CLASSES`, the class `requested_by`
  * carries and the class the recorder already gives it by its `_by` suffix.
  *
+ * **`plan_task` arrived with the console dependency graph's GV1.2**, between
+ * `launched_by` and `pr_url` in the struct, and it is written on every row whose
+ * `launch.json` recorded a plan task -- every run launched with
+ * `--plan-task`. It is `title`'s and `launched_by`'s omission a third time, and
+ * it fails the same way: a list without the key refuses a real
+ * `runs ls --json` document whole, as `runs[0].plan_task`. It is accepted and
+ * not read: no Runs-screen column draws it, and the screen that joins a run to
+ * a node of its plan's graph is GV2.3's, on its own document.
+ *
  * **`rigor` arrived with the rigor modes (0.11.0)**, between `changed_files`
  * and `artifact_count` in the struct, and a run that resolved a mode writes it:
  * the mode, the layer that decided it (`from`), the areas that matched -- each
@@ -899,6 +932,7 @@ export const RECORD_KEYS = [
   'batch',
   'requested_by',
   'launched_by',
+  'plan_task',
   'pr_url',
   'execution',
   'log_url',

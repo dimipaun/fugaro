@@ -2702,6 +2702,12 @@ start with the same preamble all read alike. A follow-up (--pr) keeps its run's
 title unless --title is given, and --retry takes none (the stored task keeps its
 own).
 
+--plan-task PLAN/TASK records which task of which plan this run works on, so
+the console's graph can join the run to that node. One plan and one task id,
+as the plan's own graph spells them, at most 128 bytes; what the run does is
+unchanged by it. A follow-up (--pr) records one only when it is given, and
+--retry takes none (the stored task keeps its own).
+
 --mode MODE asks for a rigor mode for this run: poc, startup, pro, critical, hotfix.
 It may raise the mode the run resolves from its own configuration
 (rigor.default and rigor.areas in fugaro.yaml, the project layer's defaults)
@@ -2727,6 +2733,7 @@ Flags:
 | `--mode` | string | "" | no | the rigor mode to ask for: poc, startup, pro, critical, hotfix; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it; without it the run resolves from those layers alone |
 | `--no-budget-check` | bool | `false` | no | skip the launch pre-check of the budget (kill switches, missing caps, no headroom); the run is held to the same limits when it starts |
 | `--path` | stringArray | `[]` | no | declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none resolves from its configuration alone |
+| `--plan-task` | string | "" | no | record the plan task this run works on, as <plan>/<task> (for example setup-wizard/W1.3): the id the console's graph joins this run to a node by; it changes nothing about what the run does, and a follow-up (--pr) records one only when given |
 | `--pr` | intSlice | `[]` | no | continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--recipe` | string | "" | no | the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's (default, lint-fix, pick, premium, review-only, solo, standard, test-and-fix); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's |

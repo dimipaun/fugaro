@@ -665,3 +665,84 @@ func TestInputNameProblem(t *testing.T) {
 		}
 	}
 }
+
+// A plan task id (Spec.PlanTask, fugaro run --plan-task) is a display-only
+// join hint: it says which task of which plan a run is working on, so the
+// console can join the run to a node of that plan's graph. It is written by
+// a launcher — job-writable text — so it is shape-validated on write and on
+// read, never joined into a path and never an authorization input (console
+// dependency graph plan, constraint C3).
+//
+// Mutation (drop the shape check from Validate): a hand-written task.json
+// carrying "../etc/passwd" as its plan task is accepted, and the field that
+// exists to be shown as text starts carrying a path.
+func TestPlanTaskShape(t *testing.T) {
+	for _, ok := range []string{
+		"setup-wizard/W1.3",
+		"setup-wizard/GV1.2",
+		// A plan under docs/plans/ is a two-segment plan id, so its tasks
+		// are three segments (the join rule GV1.6 names).
+		"plans/2026-10-15-desktop-console-v2/GV1.2",
+		"a/b",
+		"acme_plan/task-1.2",
+	} {
+		if got := PlanTaskProblem(ok); got != "" {
+			t.Errorf("PlanTaskProblem(%q) = %q, want it accepted", ok, got)
+		}
+	}
+	for _, c := range []struct{ name, want string }{
+		{"", "is empty"},
+		{"setup-wizard", "must name a task in a plan"},
+		{"setup-wizard/", "has an empty path element"},
+		{"/setup-wizard/W1.3", "is an absolute path"},
+		{"setup-wizard/../etc/passwd", `has a ".." path element`},
+		{"setup-wizard/./W1.3", `has a "." path element`},
+		{"setup-wizard/W1.3\x1b[31m", "holds a control character"},
+		{"setup-wizard/W1.3\x00", "holds a NUL or a newline"},
+		{"setup-wizard/W1.3\nx", "holds a NUL or a newline"},
+		{"setup wizard/W1.3", "letters, digits, '.', '_' and '-'"},
+		{"setup-wizard/W1.3;rm -rf /", "letters, digits, '.', '_' and '-'"},
+		{strings.Repeat("a", MaxPlanTaskBytes+1) + "/b", "is longer than 128 bytes"},
+	} {
+		if got := PlanTaskProblem(c.name); !strings.Contains(got, c.want) {
+			t.Errorf("PlanTaskProblem(%q) = %q, want it to mention %q", c.name, got, c.want)
+		}
+	}
+	// The cap counts bytes, and a value exactly at it is accepted.
+	if id := "a/" + strings.Repeat("b", MaxPlanTaskBytes-2); len(id) != MaxPlanTaskBytes || PlanTaskProblem(id) != "" {
+		t.Errorf("PlanTaskProblem of a %d-byte id = %q, want it accepted", len(id), PlanTaskProblem(id))
+	}
+	// The same list is what Validate applies to a stored task.
+	s := Spec{Version: 1, RunID: "20261024-120000-abcd", Repo: "acme/app", Ref: "main", Task: "x"}
+	if err := s.Validate(); err != nil {
+		t.Fatalf("no plan task: %v", err)
+	}
+	s.PlanTask = "setup-wizard/W1.3"
+	if err := s.Validate(); err != nil {
+		t.Fatalf("a shaped plan task: %v", err)
+	}
+	s.PlanTask = "setup-wizard/../escape"
+	if err := s.Validate(); err == nil || !strings.Contains(err.Error(), "task spec: plan_task") {
+		t.Fatalf("Validate() = %v, want the plan_task refusal", err)
+	}
+	// And an absent one writes no field, so a spec from a launcher that
+	// never heard of the flag is byte-identical to before (the runner's
+	// decoder refuses unknown fields).
+	s.PlanTask = ""
+	data, err := s.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "plan_task") {
+		t.Fatalf("a spec with no plan task carries the field:\n%s", data)
+	}
+	s.PlanTask = "setup-wizard/W1.3"
+	data, err = s.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Parse(data)
+	if err != nil || got.PlanTask != "setup-wizard/W1.3" {
+		t.Fatalf("round trip = %+v, %v", got, err)
+	}
+}
