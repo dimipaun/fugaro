@@ -72,7 +72,7 @@ const preloads = filesNamed('src/preload', '.ts').map((name) => `dist/preload/${
  * a window with no style in it, which is the failure this test exists for. */
 const compiled = compiledModules()
 const bundlerOutputs = [
-  'dist/bundle/console.css',
+  'THIRD_PARTY_NOTICES.md', 'dist/bundle/console.css', 'dist/bundle/elk-worker.min.js',
   'dist/bundle/console.js',
   'dist/bundle/installations.js',
 ]

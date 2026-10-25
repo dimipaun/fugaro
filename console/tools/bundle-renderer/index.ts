@@ -839,6 +839,33 @@ export function pickerBundlePaths(consoleRoot: string): { readonly entry: string
   }
 }
 
+/** WORKER_FILE is the one file in the served root that this build neither
+ * compiles nor writes: elkjs's layout worker, copied byte for byte out of the
+ * pinned package (GV2.2). It is a devDependency rather than a dependency
+ * because nothing requires it at runtime -- the renderer reaches it through
+ * `new Worker`, and the 8 MB package stays out of the asar because only this
+ * one file is copied. Serving it verbatim is the point: it is minified by its
+ * own build, so anything this build did to it would be a second, unreviewed
+ * artefact under the console's CSP (`script-src 'self'`, unchanged). */
+export const WORKER_FILE = 'elk-worker.min.js'
+
+/** consoleWorker is the worker's source and destination: from the installed
+ * `elkjs` package into the served root, where `SERVED_FILES` lists it. */
+export function consoleWorker(consoleRoot: string): { readonly source: string; readonly out: string } {
+  return {
+    source: join(consoleRoot, 'node_modules', 'elkjs', 'lib', WORKER_FILE),
+    out: join(consoleRoot, 'dist', 'bundle', WORKER_FILE),
+  }
+}
+
+/** bundleWorker copies the worker verbatim, re-checking its destination as the
+ * other writers do, so a link planted between `buildConsole`'s refusal pass and
+ * this write is refused here rather than followed. */
+export function bundleWorker(worker: { readonly source: string; readonly out: string }): void {
+  refuseSymlinkedOutput(worker.out)
+  writeFileSync(worker.out, readFileSync(worker.source))
+}
+
 /** consoleBundles is every bundle `npm run build` writes, each told the others'
  * names -- and the stylesheet's -- so the served root's foreign-file refusal
  * still holds for anything else. `console.css` is written by
@@ -852,6 +879,7 @@ export function consoleBundles(consoleRoot: string): readonly BundleOptions[] {
     siblings: [
       ...all.filter((other) => other !== bundle).map((other) => basename(other.out)),
       stylesheet,
+      WORKER_FILE,
     ],
   }))
 }
@@ -902,8 +930,9 @@ export function buildConsole(consoleRoot: string): void {
   }
   const directory = dirname(resolve(first.out))
   const stylesheet = consoleStylesheet(consoleRoot)
-  const owned = new Set<string>()
-  const outputs: string[] = [resolve(stylesheet.out)]
+  const worker = consoleWorker(consoleRoot)
+  const owned = new Set<string>([WORKER_FILE])
+  const outputs: string[] = [resolve(stylesheet.out), resolve(worker.out)]
   for (const bundle of bundles) {
     const documents = documentsOf(bundle.entry)
     for (const name of ownedInRoot(bundle, documents)) owned.add(name)
@@ -917,6 +946,7 @@ export function buildConsole(consoleRoot: string): void {
   for (const bundle of bundles) moduleClosure(bundle.entry)
 
   bundleStylesheet(stylesheet)
+  bundleWorker(worker)
   for (const bundle of bundles) bundleRenderer(bundle)
 }
 

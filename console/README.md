@@ -97,7 +97,7 @@ runtime dependency today; see below):
 | `electron-builder` | `26.18.0` | `devDependencies` | the packer, run from its local binary by `npm run package` (Task 4.1) |
 
 `dependencies` is empty, and that is a decision rather than a symptom: the
-renderer bundles no framework runtime and no charting library (design D9), and
+renderer bundles no framework runtime and no charting library (design D9); its one third-party file is elkjs's layout worker, a devDependency whose `elk-worker.min.js` the build copies verbatim into the served root and whose EPL-2.0 licence is `console/THIRD_PARTY_NOTICES.md`, and
 everything a `dependencies` entry names is packed into the shipped asar. Task 1.0
 pinned `electron-updater` there for Task 4.4's auto-update; Task 4.1's review
 found it shipped in the bundle with nothing importing it, so it was removed, and

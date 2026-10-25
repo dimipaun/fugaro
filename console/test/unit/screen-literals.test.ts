@@ -931,6 +931,7 @@ describe('no module under src/renderer writes an inline style', () => {
     expect([...RENDERER_FILES]).toEqual([
       'app.ts',
       'entry.ts',
+      'graph/layout-client.ts',
       'installations.ts',
       'screens/degraded.ts',
       'screens/live.ts',

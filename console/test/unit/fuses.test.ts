@@ -497,6 +497,7 @@ describe('the packaging configuration the fuses belong to', () => {
     // packing hook (it needs a devDependency) and the fixture loader (tests and
     // the recorder) -- are excluded by name.
     expect(build.files).toEqual([
+      'THIRD_PARTY_NOTICES.md',
       'dist/main/**/*.js',
       '!dist/main/fuses.js',
       'dist/preload/index.js',
@@ -506,6 +507,7 @@ describe('the packaging configuration the fuses belong to', () => {
       '!dist/source/fixture.js',
       'dist/bundle/console.css',
       'dist/bundle/console.js',
+      'dist/bundle/elk-worker.min.js',
       'dist/bundle/index.html',
       'dist/bundle/installations.html',
       'dist/bundle/installations.js',
@@ -523,7 +525,7 @@ describe('the packaging configuration the fuses belong to', () => {
     const patterns = build.files ?? []
     for (const pattern of patterns) {
       expect(pattern, `${pattern} is not a shape this test can read`).toMatch(
-        /^!?(?:[a-z]+\/[a-z]+\/\*\*\/\*\.js|[a-z]+(?:\/[a-z]+)*\/[a-z]+\.(?:js|html|css))$/,
+        /^!?(?:[a-z]+\/[a-z]+\/\*\*\/\*\.js|[a-z]+(?:\/[a-z]+)*\/[a-z][a-z.-]*\.(?:js|html|css)|THIRD_PARTY_NOTICES\.md)$/,
       )
     }
     const ships = (file: string): boolean => {
@@ -577,7 +579,7 @@ describe('the packaging configuration the fuses belong to', () => {
     // include in the list ends in `.js`, names one of the `.html` documents, or
     // is the served `.css` (Task 6.2) -- so no include names a `.map`, and a
     // pattern that started to would fail here.
-    for (const pattern of build.files ?? []) expect(pattern).toMatch(/\.(?:js|html|css)$/)
+    for (const pattern of build.files ?? []) expect(pattern).toMatch(/\.(?:js|html|css|md)$/)
   })
 
   it('publishes nowhere: publish is null, not merely absent', () => {

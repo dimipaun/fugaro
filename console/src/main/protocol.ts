@@ -94,7 +94,7 @@ export const PICKER_ENTRY_URL = `${APP_ORIGIN}${PICKER_ENTRY_PATH}`
  * own script.
  *
  * The root itself is `dist/bundle/` (`rendererRoot` in `src/main/index.ts`),
- * and the six files are there because `npm run build` puts them there: `tsc`
+ * and the seven files are there because `npm run build` puts them there: `tsc`
  * compiles `src/renderer/entry.ts` and `src/renderer/installations.ts` and
  * everything they require, and `tools/bundle-renderer/index.ts` writes
  * `console.js`, `installations.js` and `console.css` and copies the three
@@ -122,7 +122,7 @@ export const PICKER_ENTRY_URL = `${APP_ORIGIN}${PICKER_ENTRY_PATH}`
  */
 export const SERVED_FILES: readonly string[] = Object.freeze([
   '/console.css',
-  '/console.js',
+  '/console.js', '/elk-worker.min.js',
   '/index.html',
   '/installations.html',
   '/installations.js',
