@@ -40,7 +40,7 @@ inventing a parallel one. Everything below is read from the code at this
 branch's base (after merging `origin/next`) and cited by file; nothing was
 run.
 
-**A second, independent precedent for the same gap.** `docs/gcp-setup.md:257`
+**A second, independent precedent for the same gap.** `e924481:docs/gcp-setup.md:370` (the page before its rewrite)
 already tells an operator: "If Claude Code's tool search is on for a
 repository with many MCP tools it sends a server tool too: set
 `ENABLE_TOOL_SEARCH=false` **in the agent's environment**." There is no way
@@ -395,7 +395,7 @@ var AgentEnvAllowed = []string{
     // so setting it here only has an effect on an all-Claude stage.
     "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS",
     "MAX_THINKING_TOKENS",
-    // Already told to users with no mechanism to apply it (docs/gcp-setup.md:257).
+    // Already told to users with no mechanism to apply it (e924481:docs/gcp-setup.md:370).
     "ENABLE_TOOL_SEARCH",
     // Telemetry/updater/non-essential-traffic knobs Claude Code documents.
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",

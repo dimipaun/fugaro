@@ -96,15 +96,6 @@ func TestDocsProjectPolicyPublishAfterDeleteReseedsTheList(t *testing.T) {
 			"repair the list with `fugaro project repos add <owner/name>` and `fugaro project repos rm <owner/name>`",
 			"Runs of a shared job halt in between",
 		}},
-		{"docs/gcp-setup.md", []string{
-			"fugaro project policy show` first and keep its output",
-			"fugaro project policy publish --delete",
-			"the publish that follows rebuilds `allow_repos` from that installation's config",
-			"a repository removed with `fugaro project repos rm` comes back, one added with `repos add` is dropped",
-			"the node's `clone_urls` and any hand-written `routing` block go with it",
-			"repair the list with `fugaro project repos add` / `rm`",
-			"expect a shared job's runs to halt in between",
-		}},
 		{"docs/project-layer.md", []string{
 			"reading the list you are about to lose with `fugaro project policy show`",
 			"a publish with no node seeds the list from your config",

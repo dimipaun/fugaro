@@ -9,6 +9,8 @@ import (
 	"io/fs"
 	"os"
 	"strings"
+
+	"github.com/dimipaun/fugaro/internal/streams"
 )
 
 // Refusal is why a graph artifact could not be read as a graph. It is a typed
@@ -129,7 +131,7 @@ func Normalize(path string, doc Document) (Document, error) {
 		}
 		if !validStream(*doc.Stream) {
 			return Document{}, refuse(path, "the graph artifact names the stream %q; a plan's stream is one of %s",
-				*doc.Stream, strings.Join(streams, ", "))
+				*doc.Stream, strings.Join(streams.Names(), ", "))
 		}
 	}
 	if doc.Nodes == nil {
