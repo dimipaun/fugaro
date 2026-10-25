@@ -35,6 +35,7 @@ import (
 // work then matches.
 func filingBase(t *testing.T) string {
 	t.Helper()
+	testutil.IsolateGit(t)
 	const base = `version: 1
 project: aurora
 git: { provider: github }
