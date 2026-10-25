@@ -238,6 +238,30 @@ document, release assignment later — so Slices 1–2 wait on no ruling; (e)
   `TestJoinIgnoresOtherRepo` fails against a join on the id alone.
 - **Reviewer:** **opus + mandatory independent review** (filesystem confinement; a cloud read joined
   to repository files; a job-writable join key). **OWNER-RUN:** no.
+- **Amended 2026-10-25, as GV1.6 shipped:**
+  - **The contract section is §6.12, not §6.11.** `console/docs/json-contract.md` gained §6.11 as
+    `backlog list` after this plan was written (CLI 0.11.0), so the graph-joined-to-runs section is
+    §6.12 and the `plan status` row in §8 says so. `plan_task` was already in §2 and §5 (GV1.2).
+  - **One file is added: `internal/watch/prstate_query.go`** (with
+    `internal/watch/prstate_query_test.go`). This task's state table needs the merge answer
+    synchronously, and `internal/watch`'s `PRState` answers asynchronously — `Filter` starts lookups
+    off the render loop and the answer lands in a cache for the next frame. `PRState.MergeNow` asks
+    the same question and returns it, and it lives in `internal/watch` rather than in the CLI so the
+    URL pattern, the argv, the pinned host, the process group and the capped pipes stay the one
+    spawn path this tree has; the alternative — a second `gh` invocation in `internal/cli` — would be
+    a second answer to "which URLs may be handed to a subprocess".
+  - **`docs/release-streams.yaml`'s CLI row was stale** (`current: "0.10.4"`, `next: Camel`) and is
+    now `"0.11.1"` / `Dolphin`: 0.11.0 and 0.11.1 "Camel" have shipped (the owner's renumbering of
+    2026-10-24), so the file the graph reads for a release's name and version would otherwise date
+    every CLI release a minor behind. This is a corpus fix, not a change to GV1.4's reader.
+  - **`plan.StatePlan` states its own figures** (`tasks`, `closed`, `open`), and each release box
+    carries `total`, `done`, `closed` and `open` beside GD6's `closed` counter: `nodes` is filtered
+    by `--all`, so a header or a totals line a screen draws cannot be added up from it. Additive,
+    and the contract's §6.12 states them.
+  - **The console contract's own tests learned the shapes**
+    (`internal/cli/docs_desktop_console_test.go`: the two field lists and
+    `consoleContractCommands`), and `website/content/cli-reference.md` is regenerated — a new
+    command is a page the generator writes.
 
 #### GV1.7 — The planning skill writes the graph (V2.8.1, with the stream)
 - **Files:** `plugin/skills/parallelism/SKILL.md`, new
