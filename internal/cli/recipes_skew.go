@@ -341,8 +341,11 @@ const cascadeSince = "0.10.0"
 // built from an older base image refuses either key at bootstrap; the project
 // layer's key does it to every repository of the project at once. Like
 // cascadeSince the judge is the installation's base image and the gate is
-// fugaro update --repo's (refuseRigorSkew), and docs/release.md ("Before you
-// tag") has the checklist verify it equals the release that ships the key.
+// fugaro update --repo's (refuseRigorSkew); fugaro run gates the launch too
+// (checkRigorImage, checkCloneRigorImage), but only from a checkout of the
+// repository, where it can read the file the run will, so outside one only
+// fugaro update --repo checks. docs/release.md ("Before you tag") has the
+// checklist verify it equals the release that ships the key.
 const rigorSince = "0.11.0"
 
 // rigorRequestSince is the first fugaro release whose runner reads a task's
@@ -727,6 +730,102 @@ func rigorSubject(repo string, fromRepo, fromLayer bool) (subject, alt string) {
 		return "the project layer's defaults.rigor (read for " + repo + ")", layerAlt
 	}
 	return "fugaro.yaml's rigor: block of " + repo, "remove the rigor: block from fugaro.yaml"
+}
+
+// rigorKnows names, for the image gate's messages, the key the job image's
+// runner has to know: the message reads "needs a job image whose runner knows
+// <this>", so it has to name whichever of the two the config wrote.
+func rigorKnows(fromRepo, fromLayer bool) string {
+	switch {
+	case fromRepo && fromLayer:
+		return "the rigor: block and the project layer's defaults.rigor"
+	case fromLayer:
+		return "the project layer's defaults.rigor"
+	}
+	return "the rigor: block"
+}
+
+// checkRigorImage and checkCloneRigorImage are the launch's own rigorSince
+// gate, for a workflow whose job image is a derived one and for a checkout:
+// clone workflow respectively: the pair every other per-workflow image gate
+// has (checkImageSince and checkCloneImageSince), judged on the key the
+// configuration the run will read writes (rigorLaunchSources). The refusal
+// names the fix that kind of image has — fugaro image refresh for a built
+// image, fugaro update --base base for the installation's own — and the way
+// out the file's author has, from rigorSubject.
+//
+// The image is the judge because that is where the reader is: a runner older
+// than rigorSince decodes fugaro.yaml and the project layer with KnownFields,
+// so the key alone kills the run at bootstrap, before the agent starts and
+// after the launch was paid for.
+func checkRigorImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
+	fromRepo, fromLayer := rigorLaunchSources(ctx, env, spec)
+	if !fromRepo && !fromLayer {
+		return nil
+	}
+	subject, alt := rigorSubject(spec.Repo, fromRepo, fromLayer)
+	return checkImageSince(ctx, env, slug, spec, kind, rigorSince, subject, rigorKnows(fromRepo, fromLayer), "; or "+alt, warn)
+}
+
+// checkCloneRigorImage is checkRigorImage for a checkout: clone workflow: see
+// checkCloneImageSince.
+func checkCloneRigorImage(ctx context.Context, env *cloudEnv, spec *task.Spec, warn io.Writer) error {
+	fromRepo, fromLayer := rigorLaunchSources(ctx, env, spec)
+	if !fromRepo && !fromLayer {
+		return nil
+	}
+	subject, alt := rigorSubject(spec.Repo, fromRepo, fromLayer)
+	return checkCloneImageSince(env.lc, spec, rigorSince, subject, rigorKnows(fromRepo, fromLayer), "; or "+alt, warn)
+}
+
+// rigorLaunchSources reports, for the launch's rigorSince gate, whether the
+// configuration the run will read writes the key: the repository's fugaro.yaml
+// (fromRepo) or the project layer it resolves over (fromLayer).
+//
+// The file is read as cascadeLaunchRefusal reads it — at the ref, out of this
+// checkout's object database, so a launch is judged on the file the run checks
+// out rather than on the launcher's working tree, which the run never reads —
+// with the checkout's own document standing in when the ref cannot be read (no
+// checkout here, or a ref that does not resolve), the fallback the auth read
+// has always had. The layer is the one that file resolves over: ResolveConfig
+// applies a layer only to a file that names its project and GCP project, so a
+// file that cannot be read is a run that reads no defaults.rigor either, and
+// such a launch is not gated — its bootstrap, which reads the file this
+// launcher could not, is what refuses the key then.
+func rigorLaunchSources(ctx context.Context, env *cloudEnv, spec *task.Spec) (fromRepo, fromLayer bool) {
+	cfg := cascadeRefConfig(ctx, env, spec)
+	if cfg == nil {
+		cfg = checkoutConfig(ctx, spec.Repo)
+	}
+	if cfg == nil {
+		return false, false
+	}
+	return cfg.RepoRigorSet, cfg.Layer.SetsRigor()
+}
+
+// rigorImageWarnings warns, once, that a configuration which writes the key —
+// the repository's file (RepoRigorSet) or the project layer it resolved over
+// (SetsRigor) — needs every job image on rigorSince. It is validate's half of
+// checkRigorImage, and a warning rather than a Problem for the reason
+// usesProfiles' profile warning is one: the file is valid, and what has to move
+// is the installation (the base image, or a workflow's derived one), which is
+// why both ways to move an image are named. It says which of the two wrote the
+// key, the same distinction rigorSubject draws for the launch gates, because
+// the layer's key reaches every repository of the project and only its operator
+// can remove it.
+func rigorImageWarnings(c *config.Config) []config.Problem {
+	fromRepo, fromLayer := c.RepoRigorSet, c.Layer.SetsRigor()
+	if !fromRepo && !fromLayer {
+		return nil
+	}
+	subject := "this file's rigor: block"
+	switch {
+	case fromRepo && fromLayer:
+		subject = "this file's rigor: block and the project layer's defaults.rigor"
+	case fromLayer:
+		subject = "the project layer's defaults.rigor"
+	}
+	return []config.Problem{{Path: "rigor", Message: subject + " needs fugaro " + rigorSince + " or later in the job image that runs it, and in the CLI of everyone who reads this file: an older runner decodes the file strictly and refuses the run at bootstrap. Run fugaro update --base base in your own terminal window to move the installation's base image, and fugaro image refresh for a workflow's own derived image"}}
 }
 
 // refuseCatalogSwitches refuses fugaro update --repo, before any cloud effect,

@@ -102,6 +102,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 			return nil, nil, noLayerHint(repo, ps)
 		}
 		repo.RepoRigor = repo.Rigor
+		repo.RepoRigorSet = setsRigor(tree)
 		res := &Resolution{Sources: map[string]string{}}
 		markLeaves(tree, "", SourceRepo, res.Sources)
 		res.ConfigSHA256 = repo.SHA256()
@@ -145,6 +146,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	// rather than being replaced by them (D20c), so a consumer that resolves
 	// a mode needs both (Config.RigorConfig).
 	c.RepoRigor = repo.Rigor
+	c.RepoRigorSet = setsRigor(tree)
 	applyDefaults(&c)
 	if ps := Validate(&c); len(ps) > 0 {
 		return nil, nil, annotate(ps, res, profileOf)
@@ -311,6 +313,17 @@ func markLeaves(v any, path, source string, sources map[string]string) {
 	if v != nil && path != "" {
 		sources[path] = source
 	}
+}
+
+// setsRigor is ProjectLayer.SetsRigor for a repository file's own tree: whether
+// the text writes the rigor: key, at any value. It reads the tree and not the
+// resolved value for the reason that method states — a runner older than
+// rigorSince decodes the file with KnownFields, so the key alone is what it
+// refuses, and an explicit null, which decodes to no block at all, is refused
+// exactly like a full one. Its answer becomes Config.RepoRigorSet.
+func setsRigor(tree map[string]any) bool {
+	_, ok := tree["rigor"]
+	return ok
 }
 
 // docTree is a YAML document as Resolve merges it (nodeTree).
