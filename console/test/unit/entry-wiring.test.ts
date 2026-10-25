@@ -57,6 +57,17 @@ import {
   RAIL_ROW_CLASS,
   RAIL_SPEND_CLASS,
   RAIL_STATE_CLASS,
+  RAIL_WARNING_CLASS,
+  RAIL_WARNING_GLYPH,
+  ISSUE_CLASS,
+  ISSUE_COMMAND_CLASS,
+  ISSUE_DETAILS_LABEL,
+  ISSUE_LINES_CLASS,
+  ISSUE_REMOVE_LABEL,
+  ISSUE_CHOOSE_LABEL,
+  ISSUE_CHECKOUT_LABEL,
+  ISSUE_SENTENCE_CLASS,
+  ISSUE_SUMMARY_CLASS,
   READ_UNREADABLE,
   VIEW_BUTTON_CLASS,
   VIEW_NAV_CLASS,
@@ -972,9 +983,9 @@ describe('the installation rail', () => {
   })
 
   it('draws no row for an installation it cannot read, and draws the rail either way', async () => {
-    // The dashboard's surface has no list read, and this task adds none: a rail
-    // that drew a row per *stored* installation would be drawing rows from a
-    // read no file in this commit brings (design sections 4.1 and 11).
+    // A bridge with no `installation.list` answer falls back to
+    // `installation.current`, and an installation that answer does not name is
+    // not invented (design section 4.1).
     for (const installation of [
       { ok: false, reason: 'the installations file could not be read' },
       { ok: true, data: { chosen: false, sentence: 'no installation has been chosen' } },
@@ -1476,5 +1487,190 @@ describe('the console’s theme', () => {
         ),
       ),
     ).toEqual(['matchMedia', 'prefers-color-scheme'])
+  })
+})
+
+// The rail over the list read (owner's design ruling of 2026-10-25: no picker
+// screen; every installation in the rail; a warning mark and an issue view for
+// the ones the console cannot read).
+// ---------------------------------------------------------------------------
+
+/** listRow is one `installation.list` row as the main process answers it. */
+function listRow(
+  project: string,
+  options: {
+    readonly open?: boolean
+    readonly issue?: 'none' | 'config' | 'stale' | 'store' | 'binary'
+    readonly readable?: boolean
+    readonly sentence?: string
+    readonly command?: string
+    readonly details?: readonly string[]
+    readonly checkouts?: readonly string[]
+  } = {},
+): Record<string, unknown> {
+  return {
+    project,
+    open: options.open ?? false,
+    active: options.open ?? false,
+    saved: true,
+    checkouts: options.checkouts ?? [],
+    state: {
+      issue: options.issue ?? 'none',
+      readable: options.readable ?? true,
+      sentence: options.sentence ?? '',
+      command: options.command ?? '',
+      details: options.details ?? [],
+    },
+  }
+}
+
+const ORBIT_SENTENCE = 'edit ~/.config/fugaro/projects/orbit.yaml: unknown field. Then run fugaro doctor --project orbit.'
+const ORBIT_LINE = '~/.config/fugaro/projects/orbit.yaml could not be read: unknown field'
+
+function orbitRow(open = false): Record<string, unknown> {
+  return listRow('orbit', {
+    open,
+    issue: 'config',
+    readable: false,
+    sentence: ORBIT_SENTENCE,
+    command: 'fugaro doctor --project orbit',
+    details: [ORBIT_LINE],
+    checkouts: ['/home/operator/src/orbit'],
+  })
+}
+
+/** railBridge is `fakeBridge` with the rail's six operations, each recorded. */
+function railBridge(
+  rows: readonly Record<string, unknown>[],
+  answers: Readonly<Record<string, AReply>> = {},
+): FakeBridge & { readonly rail: readonly { readonly name: string; readonly args: unknown }[] } {
+  const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
+  const base = fakeBridge({ replies: { subscribeLive: () => snapshotReply(frame, nowStamp()) } })
+  const rail: { name: string; args: unknown }[] = []
+  for (const name of [
+    'listInstallations',
+    'chooseInstallation',
+    'setInstallationCheckout',
+    'removeInstallation',
+    'revealInstallation',
+    'openInstallations',
+  ]) {
+    base.bridge[name] = (args: unknown): unknown => {
+      rail.push({ name, args })
+      const answer = answers[name]
+      if (answer !== undefined) return answer(args)
+      return name === 'listInstallations' ? { ok: true, data: { rows } } : { ok: true, data: null }
+    }
+  }
+  return { ...base, rail }
+}
+
+function rowsOf(document: FakeDocument): readonly FakeNode[] {
+  return classed(railOf(document), RAIL_ROW_CLASS)
+}
+
+function rowNamed(document: FakeDocument, project: string): FakeNode {
+  const row = rowsOf(document).find((each) => classed(each, RAIL_NAME_CLASS)[0]?.textContent === project)
+  if (row === undefined) throw new Error(`the rail drew no row for ${project}`)
+  return row
+}
+
+function buttonLabelled(root: FakeNode, label: string): FakeNode {
+  const button = everyNode(root).find((node) => node.tagName === 'BUTTON' && node.textContent === label)
+  if (button === undefined) throw new Error(`no button reads ${label}`)
+  return button
+}
+
+describe('the rail over the installation list', () => {
+  it('draws every listed installation, readable or not, and marks the one with an issue', async () => {
+    const { bridge, rail, calls } = railBridge([listRow('aurora', { open: true }), orbitRow()])
+    const document = await boot(bridge, new FakeDocument())
+    expect(rowsOf(document).map((row) => classed(row, RAIL_NAME_CLASS)[0]?.textContent)).toEqual(['aurora', 'orbit'])
+    expect(rail.map((call) => call.name)).toEqual(['listInstallations'])
+    // The readable one is open and selected, and the dashboard read it.
+    expect(rowNamed(document, 'aurora').attributes.get('aria-selected')).toBe('true')
+    expect(calls.map((call) => call.name)).toEqual(['subscribeLive'])
+    // The mark is text with a name, never the tone alone (design section 3.5).
+    expect(classed(rowNamed(document, 'aurora'), RAIL_WARNING_CLASS)).toHaveLength(0)
+    const mark = classed(rowNamed(document, 'orbit'), RAIL_WARNING_CLASS)[0]
+    expect(mark, 'the unreadable row drew no warning mark').toBeDefined()
+    expect(mark?.textContent).toBe(RAIL_WARNING_GLYPH)
+    expect(mark?.attributes.get('role')).toBe('img')
+    expect(mark?.attributes.get('aria-label')).toBe(`warning: ${ORBIT_SENTENCE}`)
+    // Only the open row is being read; the other says idle.
+    expect(classed(rowNamed(document, 'orbit'), RAIL_STATE_CLASS)[0]?.attributes.get('data-state')).toBe('idle')
+  })
+
+  it('opens a row’s issue in the main area: the sentence first, the CLI’s text behind details, the actions inside', async () => {
+    const { bridge, rail } = railBridge([listRow('aurora', { open: true }), orbitRow()], {
+      removeInstallation: () => ({ ok: true, data: { rows: [listRow('aurora', { open: true })] } }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    rowNamed(document, 'orbit').click()
+    await flush()
+    const issue = classed(panelOf(document), ISSUE_CLASS)[0]
+    expect(issue, 'the click drew no issue view').toBeDefined()
+    const view = issue as FakeNode
+    expect(view.children[0]?.tagName).toBe('H1')
+    expect(view.children[0]?.textContent).toBe('orbit')
+    // One plain sentence first, then the exact command.
+    expect(view.children[1]?.attributes.get('class')).toBe(ISSUE_SENTENCE_CLASS)
+    expect(view.children[1]?.textContent).toBe(ORBIT_SENTENCE)
+    expect(classed(view, ISSUE_COMMAND_CLASS)[0]?.textContent).toBe('fugaro doctor --project orbit')
+    expect(classed(view, ISSUE_SUMMARY_CLASS)[0]?.textContent).toBe(ISSUE_DETAILS_LABEL)
+    expect(classed(view, ISSUE_LINES_CLASS)[0]?.textContent).toBe(ORBIT_LINE)
+    // A row the console cannot read offers no switch; it offers the old
+    // Installations screen's actions instead.
+    expect(everyNode(view).some((node) => node.textContent === ISSUE_CHOOSE_LABEL)).toBe(false)
+    expect(rowNamed(document, 'orbit').attributes.get('aria-selected')).toBe('true')
+    expect(rowNamed(document, 'aurora').attributes.get('aria-selected')).toBe('false')
+
+    buttonLabelled(view, `${ISSUE_CHECKOUT_LABEL}: /home/operator/src/orbit`).click()
+    await flush()
+    expect(rail.at(-1)).toEqual({
+      name: 'setInstallationCheckout',
+      args: { project: 'orbit', checkout: '/home/operator/src/orbit' },
+    })
+
+    const current = classed(panelOf(document), ISSUE_CLASS)[0] as FakeNode
+    buttonLabelled(current, ISSUE_REMOVE_LABEL).click()
+    await flush()
+    expect(rail.at(-1)).toEqual({ name: 'removeInstallation', args: { project: 'orbit' } })
+    // The row is gone, so its issue is too: the main area is the dashboard again.
+    expect(rowsOf(document)).toHaveLength(1)
+    expect(classed(panelOf(document), ISSUE_CLASS)).toHaveLength(0)
+    expect(rowNamed(document, 'aurora').attributes.get('aria-selected')).toBe('true')
+  })
+
+  it('switches on a click on a readable row, and draws the refusal when the switch is refused', async () => {
+    const { bridge, rail } = railBridge([listRow('aurora', { open: true }), listRow('comet')], {
+      chooseInstallation: () => ({ ok: false, reason: 'the CLI for comet is too old' }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    rowNamed(document, 'comet').click()
+    await flush()
+    expect(rail.at(-1)).toEqual({ name: 'chooseInstallation', args: { project: 'comet' } })
+    expect(textOf(panelOf(document))).toContain('the CLI for comet is too old')
+  })
+
+  it('opens on the first row’s issue, and reads nothing, when no installation can be read', async () => {
+    const { bridge, calls } = railBridge([orbitRow(true)])
+    const document = await boot(bridge, new FakeDocument())
+    expect(classed(panelOf(document), ISSUE_CLASS)).toHaveLength(1)
+    expect(calls).toEqual([])
+    // The nav still leads somewhere: Live reads on the way in.
+    buttonFor(document, 'live').click()
+    await flush()
+    expect(calls.map((call) => call.name)).toEqual(['subscribeLive'])
+    expect(classed(panelOf(document), ISSUE_CLASS)).toHaveLength(0)
+  })
+
+  it('opens the picker window from the + row, which is the one way to add an installation', async () => {
+    const { bridge, rail } = railBridge([listRow('aurora', { open: true })])
+    const document = await boot(bridge, new FakeDocument())
+    const add = classed(railOf(document), RAIL_ADD_CLASS).find((node) => node.tagName === 'BUTTON')
+    add?.click()
+    await flush()
+    expect(rail.at(-1)).toEqual({ name: 'openInstallations', args: {} })
   })
 })

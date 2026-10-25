@@ -12,9 +12,9 @@
 //
 // The picker is a *separate window* (C9) and not a panel in the dashboard's
 // header, and the reason is the surface rather than the layout: the dashboard's
-// document is exposed to fifteen operations -- the CLI reads, the handshake,
-// the link handover and `installation.current` -- and the picker's job is to
-// write a file. Two documents, two preloads, two channel prefixes, and a sender
+// document is exposed to twenty-one operations -- the CLI reads, the handshake,
+// the link handover, `installation.current` and the rail's six -- and the
+// picker's job is to add an installation by checkout path. Two documents, two preloads, two channel prefixes, and a sender
 // gate narrowed to one document each (`isSenderOnDocument` in `src/main/ipc.ts`) --
 // so a frame on the dashboard cannot reach `fugaro:installations/remove`, and a
 // frame on the picker cannot reach `runs.list`.
@@ -53,7 +53,7 @@ import type {
   ValidationDeps,
 } from './installations'
 import { parseInstallationsDocument } from './installlist'
-import { classifyInstallation, openProject, suggestedCheckouts } from './installationstate'
+import { TEMP_ROOTS, classifyInstallation, openProject, suggestedCheckouts } from './installationstate'
 import type { ConsoleFacts } from './installationstate'
 import {
   FUGARO_INSTALL_COMMAND,
@@ -198,6 +198,11 @@ export interface InstallationPickerDeps {
    * are checked beside it, because a checkout recorded by a tool may spell the
    * one `os.tmpdir()` does not answer. */
   readonly tempDirectory?: (() => string) | undefined
+  /** tempRoots replaces `TEMP_ROOTS`, the literal temporary roots refused beside
+   * `tempDirectory`, for the same reason: a unit test that sets a real checkout
+   * has to create it under the OS's temporary directory. **The shipped app never
+   * passes it.** */
+  readonly tempRoots?: readonly string[] | undefined
   /**
    * onChosen is the seam the entry point consumes: it is called after a choose
    * has run the handshake and persisted `active`, and `src/main/index.ts` hands
@@ -533,6 +538,12 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
    */
   let session: StoredInstallation | null = null
 
+  const tempDirectory = (): string => deps.tempDirectory?.() ?? tmpdir()
+  /** offeredCheckouts is the one list a checkout is offered from and accepted
+   * from: the screen draws it, and a checkout write is held to it. */
+  const offeredCheckouts = (recorded: string | undefined, listed: readonly string[]): readonly string[] =>
+    suggestedCheckouts(recorded, listed, tempDirectory(), deps.tempRoots ?? TEMP_ROOTS)
+
   const rowsOf = (
     discovered: readonly { name: string; gcpProject: string; region: string; checkouts: readonly string[] }[],
     warnings: readonly string[],
@@ -550,7 +561,6 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
       installCommand: FUGARO_INSTALL_COMMAND,
       warnings,
     }
-    const tempDirectory = deps.tempDirectory?.() ?? tmpdir()
     const rows: InstallationsListRow[] = discovered.map((installation) => {
       const held = stored.find((row) => row.project === installation.name)
       const rowFacts = {
@@ -570,7 +580,7 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         active: held?.active ?? false,
         mode: held?.mode ?? 'unknown',
         ...(held?.checkout === undefined ? {} : { checkout: held.checkout }),
-        checkouts: suggestedCheckouts(held?.checkout, installation.checkouts, tempDirectory),
+        checkouts: offeredCheckouts(held?.checkout, installation.checkouts),
         state: classifyInstallation(rowFacts, facts),
         open: false,
       }
@@ -588,7 +598,7 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         active: row.active,
         mode: row.mode,
         ...(row.checkout === undefined ? {} : { checkout: row.checkout }),
-        checkouts: suggestedCheckouts(row.checkout, [], tempDirectory),
+        checkouts: offeredCheckouts(row.checkout, []),
         state: classifyInstallation(rowFacts, facts),
         open: false,
       })
@@ -622,13 +632,10 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
    * never obtained. It is empty until a list has been read, and an empty map
    * offers nothing -- which is the safe direction.
    *
-   * It is the CLI's own list and **not** the row's drawn `checkouts`, which is the
-   * narrower list the screen offers (`suggestedCheckouts`: tool-owned and
-   * temporary paths dropped, the project's own recorded checkout first). The two
-   * differ deliberately, and this is the wider one: membership here answers "did
-   * the CLI name this directory for this project", which is the question a
-   * checkout write has always been held to, while what the *screen* offers is a
-   * display decision that may only ever narrow it.
+   * A checkout write is held to `suggestedCheckouts` over this list -- the same
+   * list the screen draws, tool-owned and temporary paths dropped -- and not to
+   * this map alone: a directory the CLI listed under a temporary root is still
+   * one the console never offers, so it is not one a renderer may set either.
    */
   let lastListed: ReadonlyMap<string, readonly string[]> = new Map()
 
@@ -642,6 +649,7 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
    * here can go stale behind a screen.
    */
   let bootReply: InstallationsListReply | null = null
+  let bootRead = false
 
   /**
    * openInstallation is the owner's open-first-readable rule, run once at
@@ -654,6 +662,12 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
    * than one that never draws a window.
    */
   const openInstallation = async (): Promise<void> => {
+    // Once per process: the handshake that calls this runs again on a retry or
+    // after a choose, and re-reading there would spawn `config list` again and
+    // re-decide the session behind the operator's back. A later decision is an
+    // explicit one -- a rail `list`, a choose, a checkout or a removal.
+    if (bootRead) return
+    bootRead = true
     try {
       bootReply = await listReply()
     } catch {
@@ -869,10 +883,13 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
       if (held !== null) registry.setCheckout(project, undefined)
       return { ok: true, data: await listReply() }
     }
-    // Membership of the list the CLI printed, and not a shape check: a path that
-    // is absolute and well-formed but was never listed is a directory this
-    // console did not obtain, and it is refused by name.
-    const offered = lastListed.get(project) ?? []
+    // Membership of the list the screen offers, and not a shape check: a path
+    // that is absolute and well-formed but was never listed is a directory this
+    // console did not obtain, and one the CLI listed under a temporary or
+    // tool-owned root is one the console never offers (`suggestedCheckouts`
+    // drops it). The write is held to the same list the screen draws, so a
+    // renderer cannot set a directory the screen would not have shown.
+    const offered = offeredCheckouts(held?.checkout, lastListed.get(project) ?? [])
     if (!offered.includes(checkout)) {
       return {
         ok: false,

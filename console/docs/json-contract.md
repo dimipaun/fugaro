@@ -748,6 +748,18 @@ one the installation picker waits on. It enumerates
 `LoadProject`, so the list is the CLI's own enumeration and the app still never
 opens `~/.config/fugaro` (§3.4 rule 7).
 
+**Who reads it.** Since the owner's design ruling of 2026-10-25 it is the
+installation rail's read: the dashboard's `installation.list` operation (one of
+the surface's twenty-one, `CONSOLE_OPERATIONS` in `src/main/ipc.ts`), answered by
+the same dispatcher the picker window uses. The console reads two of the
+`warnings` lines by their wording, to mark the rail's rows
+(`src/main/installationstate.ts`): `<path> could not be read: <reason>`, matched
+to an installation by `projects/<name>.yaml` in the path (with `\` read as `/`,
+for native Windows), and `<name>'s shared config was last checked <age> ago, over
+the <window> the reader refreshes it within`. A change to either sentence in
+`internal/cli/config_list.go` is a change to this contract. Every other line is
+shown verbatim in the row's issue view and is not interpreted.
+
 The document:
 
 | Key | Type | Absent | Null | Notes |

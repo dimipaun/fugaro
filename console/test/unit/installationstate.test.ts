@@ -10,7 +10,6 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  DOCTOR_COMMAND,
   MAX_DETAIL_LINES,
   NO_ISSUE,
   classifyInstallation,
@@ -91,10 +90,10 @@ describe('classifyInstallation', () => {
     )
     expect(state.issue).toBe('config')
     expect(state.readable).toBe(false)
-    expect(state.command).toBe(DOCTOR_COMMAND)
+    expect(state.command).toBe('fugaro doctor --project aurora')
     expect(state.sentence).toContain('edit ~/.config/fugaro/projects/aurora.yaml:')
     expect(state.sentence).toContain('base_images.java-services')
-    expect(state.sentence).toContain(DOCTOR_COMMAND)
+    expect(state.sentence).toContain('fugaro doctor --project aurora')
     expect(state.details).toHaveLength(1)
   })
 
@@ -102,7 +101,7 @@ describe('classifyInstallation', () => {
     const state = classifyInstallation(row({ configUnreadable: true }), facts())
     expect(state.issue).toBe('config')
     expect(state.sentence).toContain('aurora')
-    expect(state.sentence).toContain(DOCTOR_COMMAND)
+    expect(state.sentence).toContain('fugaro doctor --project aurora')
   })
 
   it('classifies the shared-config staleness line as stale, and still opens the installation', () => {
@@ -113,7 +112,7 @@ describe('classifyInstallation', () => {
     const state = classifyInstallation(row(), facts({ warnings: [staleLine('aurora')] }))
     expect(state.issue).toBe('stale')
     expect(state.readable).toBe(true)
-    expect(state.command).toBe(DOCTOR_COMMAND)
+    expect(state.command).toBe('fugaro doctor --project aurora')
     expect(state.sentence).toContain('stale')
     expect(state.details).toEqual([staleLine('aurora')])
   })
@@ -151,6 +150,13 @@ describe('namesInstallation', () => {
     expect(namesInstallation('the remembered checkouts could not be read, so no checkout is listed: x', 'orbit')).toBe(false)
     expect(namesInstallation('', 'orbit')).toBe(false)
     expect(namesInstallation('anything', '')).toBe(false)
+  })
+
+  it('matches a refused config path native Windows printed with backslashes', () => {
+    const line = 'C:\\Users\\operator\\AppData\\Roaming\\fugaro\\projects\\orbit.yaml could not be read: x'
+    expect(namesInstallation(line, 'orbit')).toBe(true)
+    expect(namesInstallation(line, 'aurora')).toBe(false)
+    expect(namesInstallation(line.replace('orbit.yaml', 'orbit-2.yaml'), 'orbit')).toBe(false)
   })
 })
 

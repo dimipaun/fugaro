@@ -136,7 +136,7 @@ export function classifyInstallation(row: RowFacts, facts: ConsoleFacts): Instal
       issue: 'config',
       readable: false,
       sentence: configSentence(row.project, details),
-      command: DOCTOR_COMMAND,
+      command: doctorCommand(row.project),
       details: Object.freeze(details),
     })
   }
@@ -146,8 +146,8 @@ export function classifyInstallation(row: RowFacts, facts: ConsoleFacts): Instal
       readable: true,
       sentence:
         `${row.project}'s shared config is stale, so the console is reading the copy this machine has. ` +
-        `Refresh it with ${DOCTOR_COMMAND}.`,
-      command: DOCTOR_COMMAND,
+        `Refresh it with ${doctorCommand(row.project)}.`,
+      command: doctorCommand(row.project),
       details: Object.freeze(details),
     })
   }
@@ -165,6 +165,17 @@ export function classifyInstallation(row: RowFacts, facts: ConsoleFacts): Instal
  * printed by `doctor` verbatim.
  */
 export const DOCTOR_COMMAND = 'fugaro doctor'
+
+/**
+ * doctorCommand is `DOCTOR_COMMAND` aimed at one installation. `doctor` acts on
+ * the checkout's project, `$FUGARO_PROJECT` or the only project config, so a bare
+ * `fugaro doctor` checks whichever installation the shell happens to resolve and
+ * not necessarily the row the issue is about; `--project` (doctor's cloud flags)
+ * names it.
+ */
+export function doctorCommand(project: string): string {
+  return `${DOCTOR_COMMAND} --project ${project}`
+}
 
 /**
  * CONFIG_REFUSAL_MARKER is the CLI's own wording for a project config it could
@@ -196,20 +207,20 @@ function sharedStaleLead(project: string): string {
  * printed one), and the advice is this console's.
  *
  * The owner's example is this shape -- `edit <path>: <what is wrong> and run
- * <command> in each repository checkout` -- and the command here is `doctor`,
- * which re-reads the same file and prints the same refusal with its own fix
- * line. The console does not invent a fix per refusal: the one command that
+ * <command> in each repository checkout` -- and the command here is `doctor
+ * --project <name>`, which re-reads the same file and prints the same refusal
+ * with its own fix line, wherever it is run from. The console does not invent a fix per refusal: the one command that
  * names the file the CLI could not read is the CLI's own check.
  */
 function configSentence(project: string, details: readonly string[]): string {
   const line = details.find((candidate) => candidate.includes(CONFIG_REFUSAL_MARKER))
   if (line === undefined) {
-    return `the config for ${project} could not be read. Fix it and run ${DOCTOR_COMMAND} in each repository checkout.`
+    return `the config for ${project} could not be read. Fix it and run ${doctorCommand(project)}.`
   }
   const cut = line.indexOf(CONFIG_REFUSAL_MARKER)
   const path = line.slice(0, cut)
   const reason = line.slice(cut + CONFIG_REFUSAL_MARKER.length)
-  return `edit ${path}: ${reason}. Run ${DOCTOR_COMMAND} in each repository checkout.`
+  return `edit ${path}: ${reason}. Then run ${doctorCommand(project)}.`
 }
 
 /**
@@ -248,7 +259,11 @@ export function detailsFor(project: string, warnings: readonly string[]): readon
  * this installation. See `detailsFor` for the two shapes it recognises. */
 export function namesInstallation(line: string, project: string): boolean {
   if (project === '') return false
-  return line.includes(`projects/${project}.yaml`) || line.startsWith(sharedStaleLead(project))
+  // Native Windows prints the config path with backslashes, so the path is
+  // compared with its separators folded to `/`.
+  return (
+    line.replace(/\\/g, '/').includes(`projects/${project}.yaml`) || line.startsWith(sharedStaleLead(project))
+  )
 }
 
 /** staleLineFor is the CLI's staleness line for this installation, or
@@ -292,11 +307,15 @@ export function isStaleWarning(line: string, project: string): boolean {
  * spelling is compared with both separators, because the paths the CLI lists on
  * the WSL route are Linux ones and a host checkout on Windows is not.
  */
-export function isToolOwnedPath(path: string, tempDirectory: string): boolean {
+export function isToolOwnedPath(
+  path: string,
+  tempDirectory: string,
+  literalRoots: readonly string[] = TEMP_ROOTS,
+): boolean {
   if (path === '') return false
   const normalized = path.replace(/\\/g, '/')
   const segments = normalized.split('/').filter((segment) => segment !== '')
-  const roots = [tempDirectory, '/tmp', '/private/tmp', '/var/folders', '/private/var/folders']
+  const roots = [tempDirectory, ...literalRoots]
     .filter((root) => root !== '')
     .map((root) => root.replace(/\\/g, '/').split('/').filter((segment) => segment !== ''))
   for (const root of roots) {
@@ -309,6 +328,11 @@ export function isToolOwnedPath(path: string, tempDirectory: string): boolean {
   if (hasSegmentRun(segments, ['scratchpad'])) return true
   return hasSegmentRun(segments, ['.claude', 'worktrees'])
 }
+
+/** TEMP_ROOTS is the temporary roots refused beside `tempDirectory`. It is a
+ * parameter only so a unit test can create a real checkout under the OS's own
+ * temporary directory; the shipped app always uses this list. */
+export const TEMP_ROOTS: readonly string[] = Object.freeze(['/tmp', '/private/tmp', '/var/folders', '/private/var/folders'])
 
 /** hasSegmentRun reports whether `run` appears as consecutive segments. */
 function hasSegmentRun(segments: readonly string[], run: readonly string[]): boolean {
@@ -340,11 +364,14 @@ export function suggestedCheckouts(
   recorded: string | undefined,
   listed: readonly string[],
   tempDirectory: string,
+  literalRoots: readonly string[] = TEMP_ROOTS,
 ): readonly string[] {
   const out: string[] = []
-  if (recorded !== undefined && recorded !== '' && !isToolOwnedPath(recorded, tempDirectory)) out.push(recorded)
+  if (recorded !== undefined && recorded !== '' && !isToolOwnedPath(recorded, tempDirectory, literalRoots)) {
+    out.push(recorded)
+  }
   for (const candidate of listed) {
-    if (candidate === '' || isToolOwnedPath(candidate, tempDirectory)) continue
+    if (candidate === '' || isToolOwnedPath(candidate, tempDirectory, literalRoots)) continue
     if (out.includes(candidate)) continue
     out.push(candidate)
   }

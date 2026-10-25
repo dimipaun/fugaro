@@ -45,6 +45,7 @@ import {
   invokeOperation,
 } from '../../src/preload/installations'
 import { createInstallationPicker } from '../../src/main/picker'
+import { TEMP_ROOTS } from '../../src/main/installationstate'
 import {
   INSTALLATIONS_MENU_LABEL,
   OPEN_EXTERNAL_FAILED,
@@ -182,6 +183,10 @@ function pickerOver(
     readonly appEnv?: Readonly<Record<string, string | undefined>>
     readonly home?: string
     readonly prefixes?: readonly string[]
+    /** tempRoots is the picker's temporary-root rule. It defaults to none here,
+     * because these cases create their checkouts under the OS's temporary
+     * directory; the case that pins the rule passes the real one. */
+    readonly tempRoots?: readonly string[]
     readonly spawnLog?: unknown
     readonly onChosen?: Parameters<typeof createInstallationPicker>[0]['onChosen']
     readonly onRemoved?: Parameters<typeof createInstallationPicker>[0]['onRemoved']
@@ -232,6 +237,9 @@ function pickerOver(
     userData: options.userData ?? freshDirectory(),
     home: options.home ?? freshDirectory(),
     prefixes: options.prefixes ?? [],
+    ...(options.tempRoots === undefined
+      ? { tempDirectory: () => '/nonexistent-console-temp', tempRoots: [] }
+      : { tempDirectory: () => tmpdir(), tempRoots: options.tempRoots }),
     appPath: '/work/repo/console',
     appEnv: options.appEnv ?? {},
     ...(options.onChosen === undefined ? {} : { onChosen: options.onChosen }),
@@ -752,6 +760,24 @@ describe('the picker’s checkout', () => {
     })
     return { directory: stub.directory, checkout }
   }
+
+  it('refuses a checkout the CLI listed under a temporary root, as the screen never offers it', async () => {
+    // The renderer is not trusted to keep to the drawn list: the write is held to
+    // the same list the rail offers, so a temporary or tool-owned directory the
+    // CLI listed is refused here as well as left off the screen.
+    const { directory, checkout } = withCheckouts()
+    const { picker, ipcMain } = pickerOver({ prefixes: [directory], tempRoots: TEMP_ROOTS })
+    void picker
+    const listed = (await answer(ipcMain, 'list')) as ConsoleReply
+    expect(listed.ok).toBe(true)
+    if (listed.ok) {
+      const data = listed.data as { rows: readonly { project: string; checkouts: readonly string[] }[] }
+      expect(data.rows.find((row) => row.project === 'sandbox')?.checkouts).toEqual([])
+    }
+    const refused = (await answer(ipcMain, 'checkout', { project: 'sandbox', checkout })) as ConsoleReply
+    expect(refused.ok).toBe(false)
+    if (!refused.ok) expect(refused.reason).toContain('not one of the checkouts the CLI listed')
+  })
 
   it('offers only what the CLI listed: a directory it never named is refused', async () => {
     const { directory, checkout } = withCheckouts()

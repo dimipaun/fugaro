@@ -180,7 +180,7 @@ describe('the rows the rail draws', () => {
     const aurora = rowOf(reply, 'aurora')
     expect(aurora.state.issue).toBe('config')
     expect(aurora.state.readable).toBe(false)
-    expect(aurora.state.command).toBe(DOCTOR_COMMAND)
+    expect(aurora.state.command).toBe(`${DOCTOR_COMMAND} --project aurora`)
     expect(aurora.state.sentence).toContain('edit ~/.config/fugaro/projects/aurora.yaml:')
     expect(aurora.state.sentence).toContain('base_images.java-services')
     expect(aurora.state.details).toEqual([CONFIG_LINE])
@@ -270,9 +270,9 @@ describe('the rows the rail draws', () => {
     const orbit = rowOf(reply, 'orbit')
     expect(orbit.state.issue).toBe('stale')
     expect(orbit.state.readable).toBe(true)
-    expect(orbit.state.command).toBe(DOCTOR_COMMAND)
+    expect(orbit.state.command).toBe(`${DOCTOR_COMMAND} --project orbit`)
     expect(orbit.state.sentence).toContain('stale')
-    expect(orbit.state.sentence).toContain(DOCTOR_COMMAND)
+    expect(orbit.state.sentence).toContain(`${DOCTOR_COMMAND} --project orbit`)
     expect(orbit.state.details).toEqual([STALE_LINE])
     expect(firstReadableIndex(reply.rows.map((row) => row.state))).toBe(0)
   })
@@ -331,6 +331,21 @@ describe('the console’s own open rule at startup', () => {
     expect(lists(), 'the rail’s first read spawned the same command twice').toBe(1)
     await list(ipcMain)
     expect(lists(), 'a later read was served from the boot read').toBe(2)
+  })
+
+  it('decides once per process: a second handshake neither reads again nor re-decides', async () => {
+    // `readCliVersion` runs `openInstallation` and the handshake can run again (a
+    // retry); a re-read there would spawn `config list` behind the operator's
+    // back and could move the console to another installation.
+    const stub = stubWith(DOCUMENT, [CONFIG_LINE])
+    const userData = store([{ id: '0123456789abcdef', project: 'aurora' }])
+    const { picker } = over({ userData, stub })
+    const lists = (): number => stub.reports().filter((report) => report.argv[1] === 'list').length
+    await picker.openInstallation()
+    const decided = picker.installation()
+    await picker.openInstallation()
+    expect(lists()).toBe(1)
+    expect(picker.installation()).toEqual(decided)
   })
 
   it('opens the first readable installation for the run, and writes nothing to the store', async () => {

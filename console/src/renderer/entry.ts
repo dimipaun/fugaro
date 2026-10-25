@@ -322,20 +322,22 @@ export interface ReadBridge {
  * rejects, which is what `invoke` does on a channel with nothing behind it.
  * Both are "the console could not read this", which `replyData` turns into the
  * sentence every screen draws in place of a figure. */
-export function readBridgeFrom(fugaro: unknown): ReadBridge {
-  const ask = (name: string, args: Readonly<Record<string, unknown>>): Promise<unknown> => {
-    const member = methodOf(fugaro, name)
-    if (member === null) return Promise.resolve(null)
-    try {
-      // The rejection is the half a `try`/`catch` around the call cannot see:
-      // the call returned before it failed. Left alone it is an unhandled
-      // rejection and a screen that silently keeps whatever was drawn before
-      // it, so the read that failed to answer answers `null` like the rest.
-      return Promise.resolve(member(args)).catch(() => null)
-    } catch {
-      return Promise.resolve(null)
-    }
+function askMember(fugaro: unknown, name: string, args: Readonly<Record<string, unknown>>): Promise<unknown> {
+  const member = methodOf(fugaro, name)
+  if (member === null) return Promise.resolve(null)
+  try {
+    // The rejection is the half a `try`/`catch` around the call cannot see:
+    // the call returned before it failed. Left alone it is an unhandled
+    // rejection and a screen that silently keeps whatever was drawn before
+    // it, so the read that failed to answer answers `null` like the rest.
+    return Promise.resolve(member(args)).catch(() => null)
+  } catch {
+    return Promise.resolve(null)
   }
+}
+
+export function readBridgeFrom(fugaro: unknown): ReadBridge {
+  const ask = (name: string, args: Readonly<Record<string, unknown>>): Promise<unknown> => askMember(fugaro, name, args)
   return {
     subscribeLive: (args) => ask('subscribeLive', args),
     showBudget: (args) => ask('showBudget', args),
@@ -345,6 +347,30 @@ export function readBridgeFrom(fugaro: unknown): ReadBridge {
     diagnoseRun: (args) => ask('diagnoseRun', args),
     readRunLogs: (args) => ask('readRunLogs', args),
     runLogLink: (args) => ask('runLogLink', args),
+  }
+}
+
+/** RailBridge is the rail's six operations (`installation.*`) over the
+ * structural bridge, answered the way `readBridgeFrom` answers: a member that is
+ * missing or fails to answer is `null`, which `replyData` draws as a refusal. */
+export interface RailBridge {
+  listInstallations(args: Readonly<Record<string, unknown>>): Promise<unknown>
+  chooseInstallation(args: Readonly<Record<string, unknown>>): Promise<unknown>
+  setInstallationCheckout(args: Readonly<Record<string, unknown>>): Promise<unknown>
+  removeInstallation(args: Readonly<Record<string, unknown>>): Promise<unknown>
+  revealInstallation(args: Readonly<Record<string, unknown>>): Promise<unknown>
+  openInstallations(args: Readonly<Record<string, unknown>>): Promise<unknown>
+}
+
+export function railBridgeFrom(fugaro: unknown): RailBridge {
+  const ask = (name: string, args: Readonly<Record<string, unknown>>): Promise<unknown> => askMember(fugaro, name, args)
+  return {
+    listInstallations: (args) => ask('listInstallations', args),
+    chooseInstallation: (args) => ask('chooseInstallation', args),
+    setInstallationCheckout: (args) => ask('setInstallationCheckout', args),
+    removeInstallation: (args) => ask('removeInstallation', args),
+    revealInstallation: (args) => ask('revealInstallation', args),
+    openInstallations: (args) => ask('openInstallations', args),
   }
 }
 
@@ -962,6 +988,11 @@ export interface RailView {
   /** setRows draws a fresh list: every installation the main process answered
    * with, in its own order, and the row it marks `open` selected. */
   setRows(rows: readonly RailRow[]): void
+  /** view marks the row whose issue the main area is showing as the selected
+   * row, or -- with `null` -- hands the mark back to the row the console is open
+   * on. A row the list no longer holds marks nothing and falls back the same
+   * way. */
+  view(project: string | null): void
   /** selectAt activates the row at a position -- the write the shortcut keys make
    * (design section 4.1: "the shortcut keys select by position", and the hint's
    * own sentence is "Switch with the shortcut keys 1 2 3"). It moves the keyboard
@@ -1054,6 +1085,11 @@ export function drawRail(
   // four writable spans beside the row it was drawn for, so a setter below
   // writes to the row it is about rather than to "the row".
   const drawn: { readonly row: RailRow; readonly element: DomElement; readonly state: DomElement; readonly spend: DomElement }[] = []
+  // The same rows' buttons and state spans, position for position: the two
+  // writers below walk these, which is the shape the theme's selector scan reads
+  // an attribute's element from (`test/unit/theme-selectors.test.ts`).
+  const drawnButtons: DomElement[] = []
+  const drawnStates: DomElement[] = []
 
   /** word is the state of the installation the console is reading. It is
    * `running` from the first paint, because a console that has just mounted is
@@ -1072,25 +1108,32 @@ export function drawRail(
    * The two are one row in every answer this console sends (the main process
    * marks exactly one row open whenever it lists one), so the fallback is a
    * shape the reply cannot produce today rather than a state the rail is in.
+   *
+   * While the main area shows another row's issue (`view`), that row is the
+   * selected one: the mark says which installation the main area is about.
    */
+  let viewing: string | null = null
   const mark = (): void => {
-    const openIndex = drawn.findIndex((entry) => entry.row.open)
-    const stop = openIndex >= 0 ? openIndex : 0
-    drawn.forEach((entry, index) => {
-      entry.element.setAttribute('aria-selected', index === openIndex ? 'true' : 'false')
-      entry.element.setAttribute('tabindex', tabStop(index === stop))
-    })
+    const viewIndex = viewing === null ? -1 : drawn.findIndex((entry) => entry.row.project === viewing)
+    const selected = viewIndex >= 0 ? viewIndex : drawn.findIndex((entry) => entry.row.open)
+    const stop = selected >= 0 ? selected : 0
+    for (const rowButton of drawnButtons) {
+      const index = drawnButtons.indexOf(rowButton)
+      rowButton.setAttribute('aria-selected', index === selected ? 'true' : 'false')
+      rowButton.setAttribute('tabindex', tabStop(index === stop))
+    }
   }
 
   /** writeState writes the state word and its glyph on every row: the open row
    * carries `word` when it can be read, and `idle` is what everything else is. */
   const writeState = (): void => {
     const openIndex = drawn.findIndex((entry) => entry.row.open)
-    drawn.forEach((entry, index) => {
-      const shown: RailState = index === openIndex && entry.row.readable ? word : 'idle'
-      entry.state.textContent = `${RAIL_STATE_GLYPHS[shown]} ${shown}`
-      entry.state.setAttribute('data-state', shown)
-    })
+    for (const stateSpan of drawnStates) {
+      const index = drawnStates.indexOf(stateSpan)
+      const shown: RailState = index === openIndex && drawn[index]?.row.readable === true ? word : 'idle'
+      stateSpan.textContent = `${RAIL_STATE_GLYPHS[shown]} ${shown}`
+      stateSpan.setAttribute('data-state', shown)
+    }
   }
 
   /** rowElement draws one installation's row, with the two spans a setter
@@ -1098,10 +1141,10 @@ export function drawRail(
   const rowElement = (
     row: RailRow,
   ): { readonly element: DomElement; readonly state: DomElement; readonly spend: DomElement } => {
-    const element = factory.create('button')
-    element.setAttribute('class', RAIL_ROW_CLASS)
-    element.setAttribute('type', 'button')
-    element.setAttribute('role', 'tab')
+    const rowButton = factory.create('button')
+    rowButton.setAttribute('class', RAIL_ROW_CLASS)
+    rowButton.setAttribute('type', 'button')
+    rowButton.setAttribute('role', 'tab')
     const nameline = factory.create('div')
     nameline.setAttribute('class', RAIL_NAMELINE_CLASS)
     const name = factory.create('span')
@@ -1127,16 +1170,18 @@ export function drawRail(
     const project = factory.create('span')
     project.setAttribute('class', RAIL_PROJECT_CLASS)
     putText(project, row.project, 'label', 'the installation’s project')
-    const state = factory.create('span')
-    state.setAttribute('class', RAIL_STATE_CLASS)
+    const stateSpan = factory.create('span')
+    stateSpan.setAttribute('class', RAIL_STATE_CLASS)
     const spend = factory.create('span')
     spend.setAttribute('class', RAIL_SPEND_CLASS)
     putReading(spend, unavailable(RAIL_SPEND_UNREAD), 'usd')
-    element.append(nameline)
-    element.append(project)
-    element.append(state)
-    element.append(spend)
-    return { element, state, spend }
+    rowButton.append(nameline)
+    rowButton.append(project)
+    rowButton.append(stateSpan)
+    rowButton.append(spend)
+    drawnButtons.push(rowButton)
+    drawnStates.push(stateSpan)
+    return { element: rowButton, state: stateSpan, spend }
   }
 
   /**
@@ -1151,6 +1196,8 @@ export function drawRail(
    */
   const setRows = (next: readonly RailRow[]): void => {
     drawn.length = 0
+    drawnButtons.length = 0
+    drawnStates.length = 0
     const elements: DomElement[] = []
     for (const row of next) {
       const { element, state, spend } = rowElement(row)
@@ -1214,6 +1261,10 @@ export function drawRail(
       putReading(open.spend, reading, 'usd')
     },
     setRows,
+    view: (project: string | null): void => {
+      viewing = project
+      mark()
+    },
     selectAt: (index: number): void => {
       const wanted = drawn[index]
       if (wanted === undefined) return
@@ -1341,9 +1392,9 @@ export function drawIssue(surface: DomSurface, row: RailRow, actions: IssueActio
 
   const controls = factory.create('div')
   controls.setAttribute('class', ISSUE_ACTIONS_CLASS)
-  const button = (className: string, label: string, onClick: () => void): void => {
-    const element = factory.create('button')
-    element.setAttribute('class', className)
+  // The class is set at each `create`, not through a helper's parameter: the
+  // theme's selector scan reads a hook's tag from that pair.
+  const wire = (element: DomElement, label: string, onClick: () => void): void => {
     element.setAttribute('type', 'button')
     element.textContent = label
     surface.nodeOf(element).addEventListener('click', onClick)
@@ -1352,10 +1403,20 @@ export function drawIssue(surface: DomSurface, row: RailRow, actions: IssueActio
 
   // The switch comes first when there is one: it is the action that leaves the
   // issue, and every other action below keeps the operator in it.
-  if (row.readable) button(ISSUE_CHOOSE_CLASS, ISSUE_CHOOSE_LABEL, () => actions.choose(row.project))
-  if (row.saved) button(ISSUE_REMOVE_CLASS, ISSUE_REMOVE_LABEL, () => actions.remove(row.project))
+  if (row.readable) {
+    const choose = factory.create('button')
+    choose.setAttribute('class', ISSUE_CHOOSE_CLASS)
+    wire(choose, ISSUE_CHOOSE_LABEL, () => actions.choose(row.project))
+  }
+  if (row.saved) {
+    const remove = factory.create('button')
+    remove.setAttribute('class', ISSUE_REMOVE_CLASS)
+    wire(remove, ISSUE_REMOVE_LABEL, () => actions.remove(row.project))
+  }
   if (row.checkout !== null) {
-    button(ISSUE_REVEAL_CLASS, ISSUE_REVEAL_LABEL, () => actions.reveal(row.project))
+    const reveal = factory.create('button')
+    reveal.setAttribute('class', ISSUE_REVEAL_CLASS)
+    wire(reveal, ISSUE_REVEAL_LABEL, () => actions.reveal(row.project))
   }
 
   const offered = row.checkouts.filter((candidate) => candidate !== row.checkout)
@@ -1558,7 +1619,21 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
   } catch {
     installation = null
   }
-  const rail = drawRail(surface, installation)
+  const railBridge = railBridgeFrom(scope.fugaro)
+  const rows = railRows(await railBridge.listInstallations({})) ?? currentRailRows(installation)
+  // The rail is drawn before the dashboard for the DOM order, and a click on it
+  // is answered by the dashboard's own views: `mountDashboard` binds `activate`.
+  const wiring: RailWiring = { activate: () => undefined }
+  const rail = drawRail(
+    surface,
+    rows,
+    (row) => {
+      wiring.activate(row)
+    },
+    () => {
+      void railBridge.openInstallations({})
+    },
+  )
   surface.mount.append(rail.root)
   surface.mount.append(drawInstallation(surface.factory, installation))
   await mountDashboard({
@@ -1567,8 +1642,50 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
     gate,
     bridge,
     rail,
+    railBridge,
+    rows,
+    wiring,
     navigator: scope.navigator,
   })
+}
+
+/** RailWiring is the rail's click, bound by `mountDashboard` once the views a
+ * click can show exist. */
+interface RailWiring {
+  activate: (row: RailRow) => void
+}
+
+/**
+ * currentRailRows is the rail a console draws when its list read failed: the one
+ * installation `installation.current` named, readable and open, or no row at all
+ * -- never an invented one. A failed `config list` is not a reason to hide the
+ * installation the console is reading.
+ */
+export function currentRailRows(installation: unknown): readonly RailRow[] {
+  const answer = replyData(installation)
+  const value =
+    answer.ok && typeof answer.data === 'object' && answer.data !== null && !Array.isArray(answer.data)
+      ? (answer.data as Record<string, unknown>)
+      : null
+  const project = value === null ? undefined : value['project']
+  if (value === null || value['chosen'] !== true || typeof project !== 'string' || project === '') {
+    return Object.freeze([])
+  }
+  return Object.freeze([
+    Object.freeze({
+      project,
+      issue: 'none' as const,
+      readable: true,
+      sentence: '',
+      command: '',
+      details: Object.freeze([]),
+      open: true,
+      active: true,
+      saved: true,
+      checkout: null,
+      checkouts: Object.freeze([]),
+    }),
+  ])
 }
 
 /** DashboardDeps is what the dashboard half of `bootDashboard` needs, named so
@@ -1582,6 +1699,11 @@ interface DashboardDeps {
    * updated from here: the Live half owns its state word, the two views that
    * read the budget fill its spend, and the shortcut keys select its rows. */
   readonly rail: RailView
+  /** railBridge, rows and wiring are the rail's own operations, the rows it was
+   * first drawn with, and the click this function binds. */
+  readonly railBridge: RailBridge
+  readonly rows: readonly RailRow[]
+  readonly wiring: RailWiring
   /** navigator is the window's, for the one question the shortcut keys ask of
    * the machine -- which modifier they are spelled with (design section 4.1:
    * Command on macOS, Control elsewhere). It is the scope's rather than a global
@@ -1596,7 +1718,7 @@ interface DashboardDeps {
  * figures in it rather than at an empty panel that fills in later.
  */
 async function mountDashboard(deps: DashboardDeps): Promise<void> {
-  const { document, surface, gate, bridge, rail, navigator } = deps
+  const { document, surface, gate, bridge, rail, railBridge, wiring, navigator } = deps
   const factory = surface.factory
   const theme = CONSOLE_THEME
 
@@ -1736,8 +1858,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * screen -- and the other two read on entry. */
   const show = (id: string): void => {
     markCurrent(id)
+    rail.view(null)
     if (id === 'live') {
+      // A console that opened on an issue has made no Live read yet.
       if (live.drawn !== null) replace(live.drawn)
+      else void pollLive()
       return
     }
     if (id === 'spend') void showSpend()
@@ -2086,12 +2211,119 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     replace(renderRun(factory, buildRunModel({ diagnosis, logs, logLink, sentences }), theme))
   }
 
+  // ---- The installation rail's issue view --------------------------------
+
+  /**
+   * The rail's rows as the last list answer drew them. A click is answered from
+   * the row it was drawn with; this is what an action's own answer replaces.
+   */
+  let railNow: readonly RailRow[] = deps.rows
+
+  /** showIssue puts one installation's issue in the main area (owner's design
+   * ruling of 2026-10-25): a view like Run detail, with no navigation button
+   * and no Live poll under it. */
+  const showIssue = (row: RailRow): void => {
+    markCurrent('issue')
+    rail.view(row.project)
+    replace(drawIssue(surface, row, issueActions))
+  }
+
+  /** leaveIssue is where the main area goes when the issue it showed is gone:
+   * the open installation's own issue when it cannot be read, Live otherwise. */
+  const leaveIssue = (): void => {
+    const open = railNow.find((row) => row.open)
+    if (open !== undefined && !open.readable) {
+      showIssue(open)
+      return
+    }
+    show('live')
+  }
+
+  /** answered draws one rail action's answer: the refusal in the CLI's or the
+   * store's own words, or the fresh list -- and the issue of the row the action
+   * was about while it still has one. */
+  const answered = (operation: string, reply: unknown, project: string): void => {
+    const answer = replyData(reply)
+    if (!answer.ok) {
+      refuse(operation, answer.sentence)
+      return
+    }
+    const next = railRows(reply)
+    if (next === null) return
+    railNow = next
+    rail.setRows(next)
+    const still = next.find((row) => row.project === project)
+    if (still !== undefined && still.issue !== 'none') {
+      showIssue(still)
+      return
+    }
+    leaveIssue()
+  }
+
+  /** choose switches the console to one installation. On success the main
+   * process replaces this window with one for that installation, so the answer
+   * drawn here is the refusal, or a list from a host that kept the window. */
+  const choose = async (project: string): Promise<void> => {
+    answered('installation.choose', await railBridge.chooseInstallation({ project }), project)
+  }
+
+  const issueActions: IssueActions = {
+    choose: (project) => {
+      const row = railNow.find((each) => each.project === project)
+      if (row?.open === true) {
+        show('live')
+        return
+      }
+      void choose(project)
+    },
+    remove: (project) => {
+      void railBridge
+        .removeInstallation({ project })
+        .then((reply) => answered('installation.remove', reply, project))
+    },
+    checkout: (project, checkout) => {
+      void railBridge
+        .setInstallationCheckout(checkout === null ? { project } : { project, checkout })
+        .then((reply) => answered('installation.checkout', reply, project))
+    },
+    reveal: (project) => {
+      void railBridge.revealInstallation({ project }).then((reply) => {
+        const answer = replyData(reply)
+        if (!answer.ok) refuse('installation.reveal', answer.sentence)
+      })
+    },
+  }
+
+  /**
+   * activate is a click on a rail row (or its shortcut key). A row with an issue
+   * opens that issue in the main area -- the warning mark is the door to it --
+   * and its issue view carries the switch when the row is readable. A row with
+   * none switches the console to it, or, when it is already the open one, puts
+   * the dashboard back.
+   */
+  wiring.activate = (row: RailRow): void => {
+    if (row.issue !== 'none' || !row.readable) {
+      showIssue(row)
+      return
+    }
+    if (row.open) {
+      if (currentView === 'issue') show('live')
+      return
+    }
+    void choose(row.project)
+  }
+
   // ---- The first read ---------------------------------------------------
 
   // The first read is not a poll: the screen is drawn once whatever the window's
   // visibility is, so a console that opened behind another window still has the
-  // figures it read. The interval is what pauses.
-  await pollLive()
+  // figures it read. The interval is what pauses. A console open on an
+  // installation it cannot read draws that installation's issue instead and
+  // reads nothing (the owner's ruling: "If NO installation is readable, show the
+  // issue view of the first one in the main area").
+  const opened = railNow.find((row) => row.open)
+  if (opened !== undefined && !opened.readable) showIssue(opened)
+  else await pollLive()
   syncPolling()
 
   document.addEventListener('visibilitychange', () => {

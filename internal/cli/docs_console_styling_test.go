@@ -2372,17 +2372,15 @@ func TestDocsConsoleStylingRailIsSpecified(t *testing.T) {
 		t.Errorf("%s: §4.1's tree no longer draws one tab per row; the rows are the tablist's tabs, and the fence is where the shape is read from", path)
 	}
 
-	// The rail's rows are the installations this console's architecture can read.
-	// The picker's list is on the picker's channels, gated to the picker's own
-	// document, and the dashboard's one installations read takes no argument and
-	// names no id — so a design that promises a row per stored installation
-	// promises a read no task in the phase owns, and one that hedges both ways
-	// leaves the implementer to pick. §4.1 states one value, and the plan's test
-	// clause states the same one.
+	// The rail's rows are every installation the CLI listed or the console holds,
+	// readable or not (owner's design ruling of 2026-10-25, which put
+	// `installation.list` on the dashboard's surface). Task 6.3's plan clause is
+	// the one-row rail it built before that ruling, and it keeps its own wording;
+	// neither document may promise a row per *stored* installation alone.
 	planDoc := readDoc(t, "docs/plans/2026-10-15-desktop-console.md")
 	planPath := "docs/plans/2026-10-15-desktop-console.md"
-	if !strings.Contains(structure, "one row per installation the dashboard can read") {
-		t.Errorf("%s: §4.1 does not say the rail draws one row per installation the dashboard can read; with no list read on the dashboard's surface those are the rows it has, and the sentence is what Task 6.3's case is written from", path)
+	if !strings.Contains(structure, "one row per installation the CLI listed or this console holds, readable or not") {
+		t.Errorf("%s: §4.1 does not say the rail draws one row per installation the CLI listed or this console holds, readable or not; that is the owner's ruling of 2026-10-25, and the sentence the rail's cases are written from", path)
 	}
 	if strings.Contains(structure, "or draws the row it *can* read") {
 		t.Errorf("%s: §4.1 still offers the rail task a choice between landing a new read and drawing the row it can read; the two branches disagree about §11 and about Task 6.3's test, so the block has to state one of them", path)
