@@ -876,6 +876,26 @@ func TestCoordinatorStatusSurvivesARefusedRevoke(t *testing.T) {
 	}
 }
 
+// An interrupted read still takes its tokens back. The command's context is not
+// the revoke's to obey: a person who stops the read has been handed a token per
+// repository it got to, and those are the ones nobody would ever take back — the
+// credential outliving its use is the whole of what this revoke exists against.
+// The revoke runs on the command's context detached and bounded, so a cancel
+// that has already happened is not a revoke that does not happen.
+func TestCoordinatorTokensRevokeOutlivesTheCommand(t *testing.T) {
+	revoked := setCoordinatorMint(t, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	tokens := &coordinatorTokens{}
+	if _, _, err := tokens.mint(ctx, "acme/app"); err != nil {
+		t.Fatal(err)
+	}
+	tokens.revoke(ctx)
+	if !slices.Equal(*revoked, []string{"ghs_fixture_acme_app"}) {
+		t.Errorf("an interrupted read revoked %v, want the token it had already minted", *revoked)
+	}
+}
+
 // coordinatorSource is a TokenSource whose answer a test decides.
 type coordinatorSource struct{ token string }
 

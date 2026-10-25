@@ -628,12 +628,25 @@ func (t *coordinatorTokens) mint(ctx context.Context, repo string) (string, time
 	return token, expires, nil
 }
 
+// coordinatorRevokeTimeout bounds the revoke as a whole. It is the bound the
+// launch's own report at the end of a run takes (internal/cli/run.go): a few
+// short calls to one host, which answers in milliseconds when it answers at
+// all, and a host that answers none of them must not hold the process after the
+// command has finished its work.
+const coordinatorRevokeTimeout = 30 * time.Second
+
 // revoke takes back every token this run minted, and returns nothing: it is
 // best-effort by contract. A revoke that failed leaves a token to expire on its
 // own within the hour, and the read that used it has already succeeded or
 // already failed for a reason of its own — so there is no failure to report, no
 // exit code to change, and nothing to print. The token reaches neither an error
 // nor a log line here, which is the rule this whole path keeps.
+//
+// The context is the command's, detached and bounded. Detached, because the one
+// moment a credential is most likely to be left behind is the moment the person
+// interrupts the read: they have still been handed a token per repository, and
+// those are the ones nobody would ever take back. Bounded, because the command
+// is over and nothing here may hold it.
 //
 // The mutex is held for the copy and not for the calls: revoking is a network
 // round trip per token, and the only other holder is a mint that has already
@@ -642,8 +655,18 @@ func (t *coordinatorTokens) revoke(ctx context.Context) {
 	t.mu.Lock()
 	tokens := slices.Clone(t.tokens)
 	t.mu.Unlock()
+	if len(tokens) == 0 {
+		return
+	}
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), coordinatorRevokeTimeout)
+	defer cancel()
 	for _, token := range tokens {
-		_ = coordinatorRevoke(ctx, token)
+		if rctx.Err() != nil {
+			// Out of budget: what is left expires on its own within the hour,
+			// which is where a revoke that failed already leaves it.
+			return
+		}
+		_ = coordinatorRevoke(rctx, token)
 	}
 }
 
