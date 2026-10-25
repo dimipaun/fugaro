@@ -239,10 +239,15 @@ describe('the dashboard the entry mounts', () => {
       VIEW_BUTTON_CLASS,
     ])
     // And the two reads behind the withheld views are not made -- not on the
-    // first drawing, and not on a poll.
-    expect(calls.map((call) => call.name)).toEqual(['subscribeLive'])
+    // first drawing, and not on a poll. `listRuns` IS made, and it is not one of
+    // them: it is the run list, which a reduced mode keeps (the run list, the
+    // stages, the ages and the deadlines are fields `watch` has always carried,
+    // `ReducedView`'s own doc comment), and the Live screen reads it for the
+    // rigor join its rows draw a chip from. What is withheld is `runReport` and
+    // `showBudget`, and the two assertions below are the ones that say so.
+    expect(calls.map((call) => call.name)).toEqual(['subscribeLive', 'listRuns'])
     await flush()
-    expect(calls.map((call) => call.name)).toEqual(['subscribeLive'])
+    expect(calls.map((call) => call.name)).toEqual(['subscribeLive', 'listRuns'])
     expect(calls.some((call) => call.name === 'runReport')).toBe(false)
     expect(calls.some((call) => call.name === 'showBudget')).toBe(false)
   })
@@ -459,11 +464,13 @@ describe('the dashboard the entry mounts', () => {
         },
       })
       await boot(bridge, new FakeDocument())
-      expect(calls.map((call) => call.name)).toEqual(['subscribeLive'])
+      expect(calls.map((call) => call.name)).toEqual(['subscribeLive', 'listRuns'])
 
-      // One tick: a second read is made, and it does not answer.
+      // One tick: a second watch is made, and it does not answer. The rigor join
+      // is not read again -- its TTL is `LIVE_RIGOR_TTL_MS` and this tick is one
+      // second in -- so a poll is one `watch` and the join is not on its clock.
       await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
-      expect(calls.map((call) => call.name)).toEqual(['subscribeLive', 'subscribeLive'])
+      expect(calls.map((call) => call.name)).toEqual(['subscribeLive', 'listRuns', 'subscribeLive'])
       expect(held).toHaveLength(1)
 
       // Three more ticks with that read outstanding: **no third call**. This is
@@ -471,12 +478,12 @@ describe('the dashboard the entry mounts', () => {
       // next tick, so the console never has two watches of one installation in
       // flight at once.
       await vi.advanceTimersByTimeAsync(LIVE_POLL_MS * 3)
-      expect(calls.map((call) => call.name)).toEqual(['subscribeLive', 'subscribeLive'])
+      expect(calls.map((call) => call.name)).toEqual(['subscribeLive', 'listRuns', 'subscribeLive'])
 
       // Once it answers, the next tick is a new read.
       held[0]?.()
       await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
-      expect(calls.map((call) => call.name)).toHaveLength(3)
+      expect(calls.map((call) => call.name)).toHaveLength(4)
     })
 
     it('stops polling while the window is not visible, and starts again when it is', async () => {
@@ -509,7 +516,7 @@ describe('the dashboard the entry mounts', () => {
         },
       })
       const document = await boot(bridge, new FakeDocument())
-      expect(calls.map((call) => call.name)).toEqual(['subscribeLive'])
+      expect(calls.map((call) => call.name)).toEqual(['subscribeLive', 'listRuns'])
 
       // Spend is offered in an `ok` console, and leaving Live for it stops the
       // interval; the read behind the view is made once, on entry.
@@ -968,7 +975,9 @@ describe('the installation rail', () => {
     const spend = spanOf(document, RAIL_SPEND_CLASS)
     expect(spend.textContent).toBe('n/a')
     expect(spend.attributes.get('title')).toBe('no budget show document was read')
-    expect(calls.map((call) => call.name)).toEqual(['subscribeLive'])
+    // The two reads the mount makes and no more: the Live frame, and the run
+    // list the Live screen's rigor join is read from. The rail reads neither.
+    expect(calls.map((call) => call.name)).toEqual(['subscribeLive', 'listRuns'])
   })
 
   it('draws no row for an installation it cannot read, and draws the rail either way', async () => {

@@ -166,3 +166,47 @@ export function readRigor(raw: unknown): RigorView | null {
  * saying `pro`, so the dash and the default are two different cells.
  */
 export const RIGOR_ABSENT = '-'
+
+/**
+ * rigorIndex reads a `runs ls --json` document into the block of each run it
+ * names, keyed by run id.
+ *
+ * **It is the Live screen's join, and the reason one is needed.** `watch --json`
+ * carries no rigor block -- the live shape is `JSONRun`, the block lives on the
+ * record (`runview.Row`, which `runs ls --json` and `diagnose --json` both
+ * answer with) -- so a Live row's mode is read from the run list and matched to
+ * the row by id. This is the one place a `runs ls` row becomes a key: the id is
+ * the row's `run`, or its `run_id` where the CLI wrote the older spelling (the
+ * same pair `projects.ts` reads, in the same order).
+ *
+ * A row that names no run, or whose block this reader will not show, is simply
+ * **absent from the index** -- a run the index does not know is drawn with no
+ * chip at all, never with a mode taken from another run, which is the direction
+ * every reader in this module fails in.
+ */
+export function rigorIndex(document: unknown): ReadonlyMap<string, RigorView> {
+  const index = new Map<string, RigorView>()
+  const rows = objectAt(document)?.['runs']
+  if (!Array.isArray(rows)) return index
+  for (const row of rows) {
+    const record = objectAt(row)
+    if (record === null) continue
+    const id = textAt(record['run']) ?? textAt(record['run_id'])
+    if (id === null || id === '') continue
+    const rigor = readRigor(record['rigor'])
+    if (rigor === null) continue
+    if (!index.has(id)) index.set(id, rigor)
+  }
+  return index
+}
+
+/** objectAt is a value that is a JSON object, or null. */
+function objectAt(raw: unknown): Record<string, unknown> | null {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null
+  return raw as Record<string, unknown>
+}
+
+/** textAt is a value that is a JSON string, or null. */
+function textAt(raw: unknown): string | null {
+  return typeof raw === 'string' ? raw : null
+}

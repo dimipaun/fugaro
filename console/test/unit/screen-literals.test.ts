@@ -105,6 +105,11 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
       'a ready run\'s pull request number, filtered by `prNumberAt` to a positive integer (`schema.ts`\'s `optionalInt` guarantees a finite number and not a whole one) -- the same rule and the same entry `run.ts` keeps for `#${String(model.number)}`, and the review inbox draws the fact the same way: as text, this screen\'s own mark in front of a number the document carried',
     '`${LIVE_REVIEW_TITLE} (${formatReading(measured(model.reviewCount), \'count\')})`':
       'the review inbox\'s heading, and the interpolation is the count and nothing else: `LIVE_REVIEW_TITLE` is a console constant (the CLI\'s own words, `readyForReview` in `internal/watch/render.go`) and `reviewCount` is a number this console counted off the frame (`buildLiveModel`: `review.length`), drawn through `formatReading`, the only formatter, as `measured` because a frame that carried no `ready` list at all is refused by `schema.ts` before a screen sees it -- so no document *string* reaches the sink, which is why the heading is one text run rather than four slots (spend.ts\'s `note` is the same shape: a console sentence with a count the console computed)',
+    word: {
+      within: 'modeChip',
+      reason:
+        '`rigorModeWord(rigor.mode)`, which answers one of the console\'s five mode words or `null`; `null` is the branch that hands the document\'s own value to `putText` (the `label` class, the `runs[].rigor.mode` field), so only the console\'s word reaches the sink',
+    },
   },
   'spend.ts': {
     'entry.dimension': 'the switch is `SPEND_DIMENSIONS.map(...)`: the seven words are the console\'s table, and an unknown document dimension is drawn as "an unknown breakdown"',
@@ -320,6 +325,11 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     'flag.name': 'a RunFlag name from live.ts\'s own flag table (`runFlags`)',
     'flag.tone': '`RunTone`, from the same flag table',
     'flag.because': 'the flag table\'s own sentences, interpolating only console constants',
+    'rigor.mode': {
+      within: 'modeChip',
+      reason:
+        'reached only when `rigorModeWord` found the value, so it is one of the five keys of `RIGOR_MODE_WORDS` -- a console word written as a key, never a string the document chose (the document\'s own value takes the `putText` branch, whose attribute is the literal `unknown`)',
+    },
     'sanitizedKey(repo.slug)': 'the slug as `sanitizeText` drew it (slug class)',
     "repo.kill === null ? 'false' : 'true'": 'a boolean drawn as one of two literals',
     "connection.textContent ?? ''": 'read back from a cell `putText` wrote, so it is the sanitized text',
