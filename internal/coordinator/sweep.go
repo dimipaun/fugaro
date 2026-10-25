@@ -90,6 +90,13 @@ const DefaultIntentMaxAge = RunsWindow
 // further ahead than this is ordered as the oldest there is instead.
 const intentClockSkew = 5 * time.Minute
 
+// MaxUndecodablePrunes is how many undecodable intent records the sweep
+// removes from one repository in one tick. Such a record has no age and no
+// place in the order, so neither bound reaches it; removing it is a write
+// per record, and this keeps a node full of them from spending a whole tick's
+// writes on one repository. The next tick takes the rest.
+const MaxUndecodablePrunes = 20
+
 // RunsWindow is how far back one tick reads a repository's runs. A view is
 // computed from the runs of this window and the pull requests they name, so
 // a pull request whose newest run is older than this leaves the view: it is
@@ -187,11 +194,32 @@ const (
 // Unread is one pull request a view could not read on this pass: its number,
 // why, and whether the state the view shows for it is the last one a sweep did
 // read (Carried) rather than none at all.
+//
+// Failures and RetryAfter are the view's memory of a number the host keeps
+// refusing. Such a number is never read, so nothing else would stop the next
+// tick asking for it again — first, because a number no sweep has read sorts
+// ahead of the rest — and a run that wrote a bogus one would spend its
+// repository's share of the read budget on every tick. Failures counts the
+// consecutive ticks the host refused it, up to MaxReadFailures; once it gets
+// there RetryAfter is when it is asked for again, and until then it is carried
+// as unread without a read.
 type Unread struct {
-	Number  int    `json:"number"`
-	Reason  string `json:"reason"`
-	Carried bool   `json:"carried,omitempty"`
+	Number     int       `json:"number"`
+	Reason     string    `json:"reason"`
+	Carried    bool      `json:"carried,omitempty"`
+	Failures   int       `json:"failures,omitempty"`
+	RetryAfter time.Time `json:"retry_after,omitzero"`
 }
+
+// MaxReadFailures is how many consecutive ticks the host may refuse one pull
+// request before the sweep stops asking for it every tick, and ReadRetryAfter
+// how long it then waits before asking once more. Three refusals is past a
+// transient error on any one tick; a day is how long a number that is really
+// a pull request (one the token cannot read yet, say) waits to be seen.
+const (
+	MaxReadFailures = 3
+	ReadRetryAfter  = 24 * time.Hour
+)
 
 // Unread's reasons.
 const (
@@ -239,8 +267,9 @@ type RepoResult struct {
 	// Pruned is how many intent records this sweep removed.
 	Pruned int `json:"pruned"`
 	// Undecodable is how many documents of this repository's node the sweep
-	// could not decode and stepped over: intent records, the stale marker
-	// and the previous view. None of them stops the tick.
+	// could not decode: intent records (which it also removes, counted in
+	// Pruned), the stale marker and the previous view. None of them stops
+	// the tick.
 	Undecodable int `json:"undecodable,omitempty"`
 }
 
@@ -464,17 +493,22 @@ func (s *Sweeper) recompute(ctx context.Context, repo Repo, budget *int, row *Re
 	if err != nil {
 		return View{}, StaleRuns, nil
 	}
-	known, err := s.previous(ctx, repo, row)
+	now := s.now()
+	known, before, err := s.previous(ctx, repo, now, row)
 	if err != nil {
 		return View{}, "", err
 	}
-	ask, carried := []int{}, []PullRequest{}
+	ask, carried, backedOff := []int{}, []PullRequest{}, []int{}
 	for _, n := range Numbers(runs) {
 		if pr, ok := known[n]; ok && pr.State == StateMerged {
 			// Merged is final on the host, so the state the last sweep read
 			// is the state, and re-reading it every tick would spend the
 			// shared rate limit on an answer that cannot change.
 			carried = append(carried, pr)
+			continue
+		}
+		if u, ok := before[n]; ok && now.Before(u.RetryAfter) {
+			backedOff = append(backedOff, n)
 			continue
 		}
 		ask = append(ask, n)
@@ -519,11 +553,21 @@ func (s *Sweeper) recompute(ctx context.Context, repo Repo, budget *int, row *Re
 	for _, set := range []struct {
 		numbers []int
 		reason  string
-	}{{failed, UnreadFailed}, {deferred, UnreadDeferred}} {
+	}{{failed, UnreadFailed}, {backedOff, UnreadFailed}, {deferred, UnreadDeferred}} {
 		for _, n := range set.numbers {
 			u := Unread{Number: n, Reason: set.reason}
 			if pr, ok := known[n]; ok {
 				prs, u.Carried = append(prs, pr), true
+			}
+			// A number that was not asked for keeps the count it had; one the
+			// host refused again adds to it, and backs off once it reaches the
+			// bound.
+			u.Failures, u.RetryAfter = before[n].Failures, before[n].RetryAfter
+			if slices.Contains(failed, n) {
+				u.Failures = min(u.Failures+1, MaxReadFailures)
+				if u.Failures >= MaxReadFailures {
+					u.RetryAfter = now.Add(ReadRetryAfter)
+				}
 			}
 			unread = append(unread, u)
 		}
@@ -534,19 +578,20 @@ func (s *Sweeper) recompute(ctx context.Context, repo Repo, budget *int, row *Re
 }
 
 // previous is the host state the last written view holds for each pull
-// request it read: the answer a pull request that is not read again carries.
-// A view that does not decode is a view with no answers, counted and stepped
-// over — the next write replaces it.
-func (s *Sweeper) previous(ctx context.Context, repo Repo, row *RepoResult) (map[int]PullRequest, error) {
+// request it read — the answer a pull request that is not read again carries —
+// and the unread entries it recorded, which hold each refused number's failure
+// count and retry-after. A view that does not decode is a view with no
+// answers, counted and stepped over — the next write replaces it.
+func (s *Sweeper) previous(ctx context.Context, repo Repo, now time.Time, row *RepoResult) (map[int]PullRequest, map[int]Unread, error) {
 	var raw json.RawMessage
 	_, found, err := s.Store.Read(ctx, PathView(repo.Slug), &raw)
 	if err != nil || !found {
-		return nil, err
+		return nil, nil, err
 	}
 	var v View
 	if json.Unmarshal(raw, &v) != nil {
 		row.Undecodable++
-		return nil, nil
+		return nil, nil, nil
 	}
 	out := map[int]PullRequest{}
 	for _, r := range v.Records {
@@ -554,7 +599,19 @@ func (s *Sweeper) previous(ctx context.Context, repo Repo, row *RepoResult) (map
 			out[r.PR.Number] = *r.PR
 		}
 	}
-	return out, nil
+	unread := map[int]Unread{}
+	for _, u := range v.Unread {
+		// The count is the view's own, but the view is a document in a
+		// database other writers could reach: a count outside the bound is
+		// held to it, and a retry further off than one back-off is due now
+		// rather than a number never asked for again.
+		u.Failures = max(0, min(u.Failures, MaxReadFailures))
+		if u.RetryAfter.After(now.Add(ReadRetryAfter)) {
+			u.RetryAfter = time.Time{}
+		}
+		unread[u.Number] = u
+	}
+	return out, unread, nil
 }
 
 // bound holds a view to maxRecords records and maxCollisions collisions,
@@ -676,9 +733,9 @@ func (s *Sweeper) clearStale(ctx context.Context, repo Repo) error {
 // A record's age is its own At, which is the reporter's clock: one stamped
 // further in the future than intentClockSkew is ordered as the oldest record
 // there is, so a reporter cannot keep a record past both bounds by dating it
-// ahead. A record that does not decode is stepped over and counted, never a
-// stop of the tick: the node is written by every reporter, and one bad record
-// is one reporter's.
+// ahead. A record that does not decode is counted and removed, at most
+// MaxUndecodablePrunes a tick, never a stop of the tick: the node is written by
+// every reporter, and one bad record is one reporter's.
 //
 // Two things make this safe against a reporter writing at the same time. The
 // records are ordered from one read of the node, so a record written after it
@@ -710,10 +767,12 @@ func (s *Sweeper) prune(ctx context.Context, repo Repo, row *RepoResult) (int, e
 		at time.Time
 	}
 	records := make([]record, 0, len(raw))
+	var undecodable []string
 	for id, doc := range raw {
 		var in Intent
 		if json.Unmarshal(doc, &in) != nil {
 			row.Undecodable++
+			undecodable = append(undecodable, id)
 			continue
 		}
 		at := in.At
@@ -744,26 +803,57 @@ func (s *Sweeper) prune(ctx context.Context, repo Repo, row *RepoResult) (int, e
 	}
 	pruned := 0
 	for _, r := range records[:drop] {
-		path := PathIntent(repo.Slug, r.id)
-		etag, found, err := s.Store.Read(ctx, path, nil)
+		ok, err := s.dropIntent(ctx, PathIntent(repo.Slug, r.id), false)
 		if err != nil {
 			return pruned, err
 		}
-		if !found {
-			continue
-		}
-		switch err := s.Store.Put(ctx, path, etag, nil); {
-		case err == nil:
+		if ok {
 			pruned++
-		case errors.Is(err, rtdb.ErrPrecondition):
-			// A reporter rewrote it while this sweep was reading: it is not
-			// the record this sweep decided to drop, and the next sweep
-			// decides about the new one.
-		default:
+		}
+	}
+	// In ID order, so the records a bounded tick leaves for the next one do
+	// not depend on the order the database listed them in.
+	slices.Sort(undecodable)
+	if len(undecodable) > MaxUndecodablePrunes {
+		undecodable = undecodable[:MaxUndecodablePrunes]
+	}
+	for _, id := range undecodable {
+		ok, err := s.dropIntent(ctx, PathIntent(repo.Slug, id), true)
+		if err != nil {
 			return pruned, err
+		}
+		if ok {
+			pruned++
 		}
 	}
 	return pruned, nil
+}
+
+// dropIntent removes one intent record through the store's compare-and-set
+// on the record's own ETag, and reports whether it did. With undecodable set
+// it removes the record only while it still does not decode: a reporter that
+// rewrote it since the node was read wrote a declaration, which is not the
+// record this sweep decided to drop.
+func (s *Sweeper) dropIntent(ctx context.Context, path string, undecodable bool) (bool, error) {
+	var doc json.RawMessage
+	etag, found, err := s.Store.Read(ctx, path, &doc)
+	if err != nil || !found {
+		return false, err
+	}
+	if undecodable && json.Unmarshal(doc, new(Intent)) == nil {
+		return false, nil
+	}
+	switch err := s.Store.Put(ctx, path, etag, nil); {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, rtdb.ErrPrecondition):
+		// A reporter rewrote it while this sweep was reading: it is not
+		// the record this sweep decided to drop, and the next sweep
+		// decides about the new one.
+		return false, nil
+	default:
+		return false, err
+	}
 }
 
 func (s *Sweeper) now() time.Time {

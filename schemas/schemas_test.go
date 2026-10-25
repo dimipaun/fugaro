@@ -580,6 +580,8 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		// And the items the run filed (docs/rigor-modes T4.5, D9): ids of
 		// the files a reviewer finds under docs/backlog/ on the branch.
 		Backlog: []string{"20261024-01", "20261024-02"},
+		// And the items it closed as the follow-up that fixed them (D31).
+		BacklogClosed: []string{"20261023-01"},
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {
@@ -692,14 +694,36 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			t.Errorf("schema accepts %s: %s", tc.name, repl)
 		}
 	}
+	// The closed items (D31) are the same ids, held to the same shape, and
+	// bounded: a run closes what the runs of one pull request filed, which
+	// runstore.MaxBacklogClosed is the ceiling of.
+	for _, tc := range []struct{ name, old, new string }{
+		{"a closed id that is not one", `"backlog_closed":["20261023-01"]`, `"backlog_closed":["20261023-1"]`},
+		{"a closed id that is not text", `"backlog_closed":["20261023-01"]`, `"backlog_closed":[20261023]`},
+		{"a close the record cannot name", `"backlog_closed":["20261023-01"]`, `"backlog_closed":{"20261023-01":1}`},
+		{"more closes than the bound", `"backlog_closed":["20261023-01"]`, `"backlog_closed":[` + strings.TrimSuffix(strings.Repeat(`"20261023-01",`, runstore.MaxBacklogClosed+1), ",") + `]`},
+	} {
+		old, repl := []byte(tc.old), []byte(tc.new)
+		if !bytes.Contains(data, old) {
+			t.Fatalf("fixture lacks the literal this test replaces (%s): %s", tc.name, data)
+		}
+		bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, old, repl, 1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(bad); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, repl)
+		}
+	}
 	without := rec
 	without.Backlog = nil
+	without.BacklogClosed = nil
 	bare, err := json.Marshal(without)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(bare, []byte(`"backlog"`)) {
-		t.Fatalf("a run that filed nothing still writes the field: %s", bare)
+	if bytes.Contains(bare, []byte(`"backlog"`)) || bytes.Contains(bare, []byte(`"backlog_closed"`)) {
+		t.Fatalf("a run that filed and closed nothing still writes the fields: %s", bare)
 	}
 	inst, err = jsonschema.UnmarshalJSON(bytes.NewReader(bare))
 	if err != nil {
@@ -1863,6 +1887,49 @@ func TestFugaroSchemaLayeredCorpus(t *testing.T) {
 		if err := sch.Validate(yamlInstance(t, data)); err != nil {
 			t.Errorf("%s: schema rejects a valid layered config: %v", f, err)
 		}
+	}
+}
+
+// TestTaskSchemaPlanTaskMatchesTheGoRule ties the task schema's `plan_task`
+// property to the Go rule it mirrors (task.PlanTaskProblem's own list: at
+// least two "/"-separated elements, each matching task.PlanTaskElemRE, at
+// most task.MaxPlanTaskBytes bytes). The schema is a second copy of that
+// shape, and without this a change to the Go rule would drift from it with
+// only the corpus fixtures noticing: a property that is too wide accepts a
+// task.json the launcher would refuse to write, and one that is too narrow
+// refuses a task.json it does write, which is the defect that made this
+// property necessary -- task.schema.json is additionalProperties: false, so
+// a launch with --plan-task wrote a document this schema rejected.
+//
+// Mutation (run, restored): widen the schema's pattern to `^[^/]+/[^/]+$`,
+// or set maxLength to 256, and this fails naming the side that drifted.
+func TestTaskSchemaPlanTaskMatchesTheGoRule(t *testing.T) {
+	data, err := os.ReadFile("task.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]struct {
+			Pattern   string `json:"pattern"`
+			MaxLength int    `json:"maxLength"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	p, ok := doc.Properties["plan_task"]
+	if !ok {
+		t.Fatal("task.schema.json has no plan_task property: a launch with --plan-task writes a task.json this schema refuses (additionalProperties: false)")
+	}
+	// One element, as task.PlanTaskElemRE writes it (its anchors are the
+	// whole pattern's here, so they come off), then the whole id: at least
+	// two of them.
+	elem := strings.TrimSuffix(strings.TrimPrefix(task.PlanTaskElemRE.String(), "^"), "$")
+	if want := "^" + elem + "(/" + elem + ")+$"; p.Pattern != want {
+		t.Errorf("schema pattern %q != task.PlanTaskProblem's own shape %q (task.PlanTaskElemRE)", p.Pattern, want)
+	}
+	if p.MaxLength != task.MaxPlanTaskBytes {
+		t.Errorf("schema maxLength %d != task.MaxPlanTaskBytes %d", p.MaxLength, task.MaxPlanTaskBytes)
 	}
 }
 

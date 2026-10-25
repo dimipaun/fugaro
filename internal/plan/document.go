@@ -22,6 +22,8 @@
 //     be inventing them.
 package plan
 
+import "github.com/dimipaun/fugaro/internal/streams"
+
 // SchemaVersion is the graph schema this build writes, and the newest it reads.
 // It is 2 since the plan's graph learned the stream its plan ships in and the
 // shape a node's target version has (GV1.3). The field is on the document rather
@@ -42,21 +44,12 @@ const FirstSchemaVersion = 1
 // fields: a v1 artifact is a graph this build draws, not one it refuses.
 func readsSchemaVersion(v int) bool { return v >= FirstSchemaVersion && v <= SchemaVersion }
 
-// streams are the release streams a plan may name (GD7): the CLI's, the
-// console's and the mobile app's, in the order the JSON contract lists them.
-// The list is what the schema allows, so a value outside it is refused by name
-// rather than drawn as a column whose heading nothing can fill.
-var streams = []string{"cli", "console", "mobile"}
-
-// validStream reports whether name is one of them.
-func validStream(name string) bool {
-	for _, s := range streams {
-		if s == name {
-			return true
-		}
-	}
-	return false
-}
+// validStream reports whether name is one of the release streams a plan may
+// name (GD7). The list is internal/streams' own, the one the streams file is
+// held to, so a plan cannot name a stream the catalogue does not carry; a value
+// outside it is refused by name rather than drawn as a column whose heading
+// nothing can fill.
+func validStream(name string) bool { return streams.Known(name) }
 
 // ArtifactSuffix is what a graph artifact is called beside its plan: the plan
 // `docs/plans/2026-10-15-desktop-console-v2.md` is described by

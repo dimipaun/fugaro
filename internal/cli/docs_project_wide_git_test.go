@@ -29,13 +29,6 @@ func TestDocsWarnAboutAProjectWideGitCredential(t *testing.T) {
 			"the App key mints tokens for every repository the App is installed on",
 			"Use it only where that reach is what you mean.",
 		}},
-		{"../../docs/gcp-setup.md", []string{
-			"A project-wide git credential reaches other repositories:",
-			"the App key mints tokens for every repository the App is installed on",
-			"Store the git credential with `--repo acme/webapp` unless that is the reach you mean",
-			"give each repository its own App if it matters",
-			"installations of one App share its key",
-		}},
 	}
 	for _, tc := range cases {
 		data, err := os.ReadFile(tc.path)

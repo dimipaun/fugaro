@@ -58,7 +58,8 @@ func TestParseAcceptsAWellFormedItem(t *testing.T) {
 // TestParseRefusesEveryWayAnItemCanBeWrong is the format, one refusal at a
 // time: D27's eight fields (missing, unknown, empty, duplicated), D26's id and
 // its agreement with the file name, the three-word status, the day-shaped
-// date, `filed-in`'s vocabulary, and D27's body headings.
+// date, `filed-in`'s vocabulary, a filed-by that is an address, and D27's
+// body headings.
 func TestParseRefusesEveryWayAnItemCanBeWrong(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -82,6 +83,7 @@ func TestParseRefusesEveryWayAnItemCanBeWrong(t *testing.T) {
 		{"a status outside the three words", itemPath, func(d *string) { *d = strings.Replace(*d, "status: open", "status: deferred", 1) }, "deferred"},
 		{"a date that is not a day", itemPath, func(d *string) { *d = strings.Replace(*d, "date: 2026-10-21", "date: 2026-10-21T09:00:00Z", 1) }, "YYYY-MM-DD"},
 		{"filed-in outside the vocabulary", itemPath, func(d *string) { *d = strings.Replace(*d, "filed-in: hand", "filed-in: somewhere", 1) }, "filed-in"},
+		{"filed-by is an email address", itemPath, func(d *string) { *d = strings.Replace(*d, "filed-by: dimipaun", "filed-by: someone@example.com", 1) }, "address"},
 		{"a run with no id", itemPath, func(d *string) { *d = strings.Replace(*d, "filed-in: hand", "filed-in: run:", 1) }, "filed-in"},
 		{"a required heading is missing", itemPath, func(d *string) { *d = strings.Replace(*d, "## Why\n\nbecause.\n", "", 1) }, "## Why"},
 		{"a heading nobody decided", itemPath, func(d *string) { *d = strings.Replace(*d, "## Why", "## Notes", 1) }, "## Notes"},

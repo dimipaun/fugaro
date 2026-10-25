@@ -372,7 +372,7 @@ func restoreSteps(cmd *cobra.Command, o restoreOptions, newID, rootArg string) (
 			// refusal names the condition and not the command, because a
 			// refusal is what a coding agent's session reads (Task 3.0 §5).
 			moved = false
-			return restoreWrap(err, "%s exists: this run created it and wrote its creation fact, so the project config keeps naming it (its previous content is in the backup %s) and the checkout's gcp_project: line did not move. What is missing is the project's %s=%s label, which only the owner writes, in their own terminal: docs/gcp-setup.md has that one line. Run it, then change the checkout's line to gcp_project: %s and run fugaro managed apply %s to finish. If the project is unwanted instead, shut %s down (gcloud projects delete %s), put the backup back over the project config, and run fugaro restore again with another NEW_PROJECT_ID",
+			return restoreWrap(err, "%s exists: this run created it and wrote its creation fact, so the project config keeps naming it (its previous content is in the backup %s) and the checkout's gcp_project: line did not move. What is missing is the project's %s=%s label, which only the owner writes, in their own terminal: docs/design/managed-projects.md has that one line. Run it, then change the checkout's line to gcp_project: %s and run fugaro managed apply %s to finish. If the project is unwanted instead, shut %s down (gcloud projects delete %s), put the backup back over the project config, and run fugaro restore again with another NEW_PROJECT_ID",
 				rr.newID, rr.backup, managed.ProjectLabelKey, managed.ProjectLabelValue, rr.newID, rr.rootArg, rr.newID, rr.newID)
 		default:
 			return err

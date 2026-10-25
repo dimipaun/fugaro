@@ -312,7 +312,7 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 		// command, the rule Task 3.0's refusal text keeps, because this
 		// command's output is the operator's (a coding agent's session is
 		// refused above and never reaches it).
-		return remote(fmt.Errorf("wrote gs://%s/%s, but not the %s=%s label on GCP project %s (%v): the read requires both marks, so %s is not managed yet and nothing is skipped for it. The label is written on the account that owns the project, in the owner's own terminal, and docs/gcp-setup.md has that one line; it is not a second run of this command, which replaces only the creation fact that records no amount",
+		return remote(fmt.Errorf("wrote gs://%s/%s, but not the %s=%s label on GCP project %s (%v): the read requires both marks, so %s is not managed yet and nothing is skipped for it. The label is written on the account that owns the project, in the owner's own terminal, and docs/design/managed-projects.md has that one line; it is not a second run of this command, which replaces only the creation fact that records no amount",
 			safetext.Field(bucket), managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, safetext.Field(lc.GCPProject), safetext.FieldErr(err), safetext.Field(lc.Name)))
 	}
 	// Read back through the managed read itself, with its project-number
@@ -345,8 +345,8 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	// alone makes the project unmanaged again — the read requires both — and
 	// they come off differently: the object has no command of ours, and the
 	// label has a gcloud line that no test can run, so it is marked
-	// UNVERIFIED as the backfill in docs/gcp-setup.md is.
-	fmt.Fprintf(w, "undo: this command wrote two things, and either one alone makes the project unmanaged again, because the read requires both — delete the object gs://%s/%s yourself as the operator, since no command of ours removes the marker in this release, and take the label %s=%s off the project itself with gcloud projects update %s --remove-labels=%s, which is UNVERIFIED until an operator has run it live (docs/gcp-setup.md carries the same line)\n",
+	// UNVERIFIED as the backfill in docs/design/managed-projects.md is.
+	fmt.Fprintf(w, "undo: this command wrote two things, and either one alone makes the project unmanaged again, because the read requires both — delete the object gs://%s/%s yourself as the operator, since no command of ours removes the marker in this release, and take the label %s=%s off the project itself with gcloud projects update %s --remove-labels=%s, which is UNVERIFIED until an operator has run it live (docs/design/managed-projects.md carries the same line)\n",
 		safetext.Field(bucket), managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, safetext.Field(lc.GCPProject), managed.ProjectLabelKey)
 	return nil
 }
