@@ -43,6 +43,7 @@ import {
 import type { InstallationCandidate } from '../source/cli'
 import type {
   ActiveInstallation,
+  StoredInstallation,
   InstallationArguments,
   InstallationFileStore,
   InstallationFs,
@@ -52,7 +53,7 @@ import type {
   ValidationDeps,
 } from './installations'
 import { parseInstallationsDocument } from './installlist'
-import { classifyInstallation, suggestedCheckouts } from './installationstate'
+import { classifyInstallation, openProject, suggestedCheckouts } from './installationstate'
 import type { ConsoleFacts } from './installationstate'
 import {
   FUGARO_INSTALL_COMMAND,
@@ -224,8 +225,33 @@ export interface InstallationPickerDeps {
 export interface InstallationPicker {
   /** installation is the read `handlersFor` answers `installation.current`
    * with. It is a function so the answer is the store's *now*, not the one it
-   * had when the handlers were registered. */
+   * had when the handlers were registered.
+   *
+   * It answers the **session installation** when this run has one -- the row the
+   * console is open on, which is not the store's `active` when the operator's
+   * choice cannot be read (`openInstallation` below) -- and the store's own
+   * answer otherwise. */
   installation(): ActiveInstallation
+  /**
+   * openInstallation is the owner's open-first-readable rule (ruling of
+   * 2026-10-25), run **once at startup, before the handshake**: it reads the list
+   * the rail draws from, decides which installation this console is open on
+   * (`openProject`: the remembered choice when the CLI's document says it can be
+   * read, the first readable row otherwise, the first row when nothing is), and
+   * holds that decision as this run's session installation.
+   *
+   * **It writes nothing.** The store keeps the operator's choice -- "never drop
+   * the remembered choice from the saved store" -- so the session's record is the
+   * store's own when there is one and an in-memory one otherwise
+   * (`registry.sessionRecordFor`).
+   *
+   * The read it makes is the rail's own, and the first `list` answers it rather
+   * than spawning `config list --json` a second time in the same instant
+   * (`bootReply`). It never throws: a console whose list read failed has nothing
+   * worse to do than open what the store says, which is what a session of `null`
+   * leaves it doing.
+   */
+  openInstallation(): Promise<void>
   /** open shows the picker, focusing the window that is already there rather
    * than opening a second one. Since the owner's design ruling of 2026-10-25 it
    * is the rail's `+` door (`installation.open` on the dashboard's surface) as
@@ -498,11 +524,24 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
    * here: the facts are the CLI's own document, the store's own refusal, the
    * resolution's own sentence and the CLI's own warning lines.
    */
+  /**
+   * session is the record of the installation this console is **open on**
+   * without having chosen one: `null` when the open row is the store's own active
+   * installation, and an in-memory record otherwise (`registry.sessionRecordFor`,
+   * which is where the "never written down" rule lives). `markOpen` assigns it on
+   * every list read.
+   */
+  let session: StoredInstallation | null = null
+
   const rowsOf = (
     discovered: readonly { name: string; gcpProject: string; region: string; checkouts: readonly string[] }[],
     warnings: readonly string[],
     cliRefusal: string,
   ): readonly InstallationsListRow[] => {
+    // The session is re-decided on every read, because it is a function of what
+    // the read found and of the store's own answer -- which a choose, a checkout
+    // or a removal may have just changed. It is assigned at the foot of this
+    // function, once the rows are the rows.
     const stored = registry.rows()
     const facts: ConsoleFacts = {
       storeRefusal: registry.refusal ?? '',
@@ -533,6 +572,7 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         ...(held?.checkout === undefined ? {} : { checkout: held.checkout }),
         checkouts: suggestedCheckouts(held?.checkout, installation.checkouts, tempDirectory),
         state: classifyInstallation(rowFacts, facts),
+        open: false,
       }
     })
     for (const row of stored) {
@@ -550,9 +590,28 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         ...(row.checkout === undefined ? {} : { checkout: row.checkout }),
         checkouts: suggestedCheckouts(row.checkout, [], tempDirectory),
         state: classifyInstallation(rowFacts, facts),
+        open: false,
       })
     }
-    return Object.freeze(rows)
+    return markOpen(rows)
+  }
+
+  /**
+   * markOpen marks the one row the console is open on and settles the session
+   * installation from it (`openProject`, `installationstate.ts`). It is the only
+   * place either is written, so the rail's selected row and the installation this
+   * process drives cannot disagree.
+   *
+   * The session record is `null` when the open row is the store's own active
+   * installation: `installation()` then answers the store, which is the answer it
+   * would have given anyway, and the file's record keeps its id.
+   */
+  const markOpen = (rows: readonly InstallationsListRow[]): readonly InstallationsListRow[] => {
+    const decided = openProject(rows)
+    const chosen = registry.active()
+    session =
+      decided === null || decided === chosen?.project ? null : registry.sessionRecordFor(decided)
+    return Object.freeze(rows.map((row) => (row.project === decided ? { ...row, open: true } : row)))
   }
 
   /**
@@ -573,15 +632,49 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
    */
   let lastListed: ReadonlyMap<string, readonly string[]> = new Map()
 
+  /**
+   * bootReply is the answer `openInstallation` read, kept for the first `list`
+   * the renderer asks. It is one-shot and nothing else reads it: the startup's
+   * read and the rail's first read are the same question asked in the same
+   * instant, and a console that spawned `config list --json` twice at every
+   * launch would be paying for a document it already had. Every later `list`
+   * reads (a removal, a checkout or the picker window's own refresh), so nothing
+   * here can go stale behind a screen.
+   */
+  let bootReply: InstallationsListReply | null = null
+
+  /**
+   * openInstallation is the owner's open-first-readable rule, run once at
+   * startup: one list read, and the session installation it settles (see the
+   * interface's own comment for the rule and for why nothing is written).
+   *
+   * A read that throws leaves the session as it was -- `null` on a boot, so the
+   * console opens what the store says -- because a console whose `config list`
+   * failed is a console that should still open, with its own issue view, rather
+   * than one that never draws a window.
+   */
+  const openInstallation = async (): Promise<void> => {
+    try {
+      bootReply = await listReply()
+    } catch {
+      bootReply = null
+    }
+  }
+
   /** listReply is D13's list: the onboarding state, the rows, the CLI's own
    * warning lines and the console's view of the active installation. */
   const listReply = async (): Promise<InstallationsListReply> => {
     const found = await discover()
-    const base = {
+    // A function, and spread **last** in each answer below: `active` is the
+    // session installation, and the session is settled by `rowsOf` (through
+    // `markOpen`) from the rows of this very read. A value read here would be the
+    // answer of the *previous* read -- at a boot, the store's, before the open
+    // rule had run at all.
+    const base = (): Pick<InstallationsListReply, 'path' | 'active'> & { readonly refusal?: string } => ({
       ...(registry.refusal === null ? {} : { refusal: registry.refusal }),
       path: storePath,
       active: current(),
-    }
+    })
     if (!found.ok) {
       // A refusal still draws the rows the console itself has: a store entry is
       // the console's own record, and hiding it because the CLI would not list
@@ -598,7 +691,7 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         onboard: found.onboarding,
         rows: rowsOf([], [], found.onboarding.kind === 'install-cli' ? found.reason : ''),
         warnings: Object.freeze(found.onboarding === NO_ONBOARDING && found.reason !== '' ? [found.reason] : []),
-        ...base,
+        ...base(),
       })
     }
     // What this read listed is what a checkout may be set from, and it replaces
@@ -614,14 +707,14 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         onboard: firstInstallationState(),
         rows,
         warnings: Object.freeze([...found.warnings]),
-        ...base,
+        ...base(),
       })
     }
     return Object.freeze({
       onboard: NO_ONBOARDING,
       rows,
       warnings: Object.freeze([...found.warnings]),
-      ...base,
+      ...base(),
     })
   }
 
@@ -683,7 +776,10 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
   }
 
   const rows = (): readonly InstallationRow[] => registry.rows()
-  const current = (): ActiveInstallation => registry.current()
+  /** current is `installation()`: the session installation's answer when this run
+   * has one, and the store's own otherwise. */
+  const current = (): ActiveInstallation =>
+    session === null ? registry.current() : registry.currentFor(session)
 
   /** clearCheckouts drops the document a checkout is checked against. It is
    * called when a read refused, so a refusal cannot be followed by a checkout
@@ -811,24 +907,37 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
    * the removal took the active one away -- firing it for a non-active row would
    * tell the dashboard it has nothing to drive while `active` still names an
    * installation the operator can use. */
-  const removeInstallation = (project: string): unknown => {
+  const removeInstallation = async (project: string): Promise<unknown> => {
     if (registry.entry(project) === null) return { ok: false, reason: 'no such installation' }
     const before = current()
     registry.remove(project)
     if (before.chosen && before.project === project) deps.onRemoved?.(before.id)
-    return { ok: true, data: { rows: rows(), active: current() } }
+    // A removal re-reads, so the answer the screen draws from and the session it
+    // leaves behind are one decision: the record that went is gone from the rows
+    // (`saved`), and the console is open on whichever row the open rule names now.
+    // The answer's shape is the list's, narrowed to the two fields a removal has
+    // ever answered with.
+    const reply = await listReply()
+    return { ok: true, data: { rows: reply.rows, active: reply.active } }
   }
 
   const answerFor = async (name: InstallationOperationName, args: InstallationArguments): Promise<unknown> => {
     switch (name) {
-      case 'list':
-        return { ok: true, data: await listReply() }
+      case 'list': {
+        // The startup's own read, when it is still unclaimed: the rail's first
+        // ask and the session's decision are one read (`bootReply`). It is taken
+        // here rather than in `listReply` so a mutation's own re-read never
+        // consumes it.
+        const kept = bootReply
+        bootReply = null
+        return { ok: true, data: kept ?? (await listReply()) }
+      }
       case 'choose':
         return serially(() => chooseInstallation(args['project'] ?? ''))
       case 'checkout':
         return serially(() => setInstallationCheckout(args['project'] ?? '', args['checkout']))
       case 'remove':
-        return serially(async () => removeInstallation(args['project'] ?? ''))
+        return serially(() => removeInstallation(args['project'] ?? ''))
       case 'reveal':
         // The renderer names a project and nothing else. The path the file
         // manager is handed is this process's own `explorerPath` for that record
@@ -888,6 +997,7 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
   return {
     installation: current,
     open,
+    openInstallation,
     answer: answerFor,
     installMenu(): void {
       deps.menu.setApplicationMenu(

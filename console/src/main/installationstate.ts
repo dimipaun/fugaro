@@ -352,18 +352,50 @@ export function suggestedCheckouts(
 }
 
 /**
- * firstReadableIndex is the owner's open-first-readable rule: the index of the
- * first row whose installation the console can open, or `-1` when it can open
- * none.
- *
- * The rule is a **fact about the rows and not a choice among them**: the
- * console opens the first one it can, in the CLI's own order, and it does not
- * prefer the previously chosen installation over it. That is the owner's ruling
- * of 2026-10-25 in as many words -- "If the previously chosen installation is
- * unreadable the console simply opens the first readable one and the chosen one
- * keeps its place and warning icon in the rail" -- so the remembered choice is
- * never dropped from the store and never opened when it cannot be read.
+ * firstReadableIndex is the first row whose installation the console can open,
+ * in the rows' own order, or `-1` when it can open none. It is the **fallback**
+ * half of `openProject` below and not a rule of its own: the console prefers the
+ * remembered choice when that one can be read, and this is what it opens when it
+ * cannot.
  */
 export function firstReadableIndex(states: readonly InstallationState[]): number {
   return states.findIndex((state) => state.readable)
+}
+
+/**
+ * openProject is the installation this console is open on: the row the main area
+ * is about, named by its project, or `null` when the machine has no installation
+ * at all.
+ *
+ * Three steps, in the owner's own order (ruling of 2026-10-25):
+ *
+ *   1. **the remembered choice**, when the CLI's document says it can be read.
+ *      That is the whole of what "switching is a click on the rail" is worth
+ *      across a restart: the operator's choice is in the store, and a console
+ *      that opened the first row of every launch would ignore it;
+ *   2. **the first readable row** otherwise, which is the ruling's own sentence
+ *      -- "If the previously chosen installation is unreadable the console simply
+ *      opens the first readable one and the chosen one keeps its place and
+ *      warning icon in the rail";
+ *   3. **the first row** when nothing is readable, which is the state the issue
+ *      view is drawn in ("If NO installation is readable, show the issue view of
+ *      the first one in the main area").
+ *
+ * A `stale` row counts as readable (`InstallationState.readable`), so an
+ * installation whose shared config is overdue is opened rather than marked
+ * unopenable.
+ *
+ * **Nothing here writes anything.** The store keeps the operator's choice and
+ * this is a decision about this run: `picker.ts` holds the answer as its session
+ * installation and never persists it, which is what "never drop the remembered
+ * choice from the saved store" asks for.
+ */
+export function openProject(
+  rows: readonly { readonly project: string; readonly active: boolean; readonly state: InstallationState }[],
+): string | null {
+  const remembered = rows.find((row) => row.active)
+  if (remembered !== undefined && remembered.state.readable) return remembered.project
+  const index = firstReadableIndex(rows.map((row) => row.state))
+  if (index >= 0) return rows[index]?.project ?? null
+  return rows[0]?.project ?? null
 }

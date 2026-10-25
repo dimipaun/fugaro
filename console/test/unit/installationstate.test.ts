@@ -19,6 +19,7 @@ import {
   isStaleWarning,
   isToolOwnedPath,
   namesInstallation,
+  openProject,
   staleLineFor,
   suggestedCheckouts,
 } from '../../src/main/installationstate'
@@ -265,5 +266,47 @@ describe('firstReadableIndex', () => {
   it('is -1 when no row is readable, which is the state the issue view is drawn for', () => {
     expect(firstReadableIndex([state('config', false), state('store', false)])).toBe(-1)
     expect(firstReadableIndex([])).toBe(-1)
+  })
+})
+
+describe('openProject', () => {
+  const state = (issue: InstallationState['issue'], readable: boolean): InstallationState => ({
+    issue,
+    readable,
+    sentence: '',
+    command: '',
+    details: [],
+  })
+  const row = (project: string, active: boolean, issue: InstallationState['issue'], readable: boolean) => ({
+    project,
+    active,
+    state: state(issue, readable),
+  })
+
+  it('is the remembered choice when the CLI’s document says it can be read', () => {
+    // The operator's choice, wherever it sits in the CLI's order: a console that
+    // opened the first row of every launch would throw that choice away at each
+    // start, and "switching is a click on the rail" would be worth one session.
+    expect(openProject([row('aurora', false, 'none', true), row('orbit', true, 'none', true)])).toBe('orbit')
+  })
+
+  it('is the first readable row when the remembered one cannot be read', () => {
+    expect(openProject([row('aurora', true, 'config', false), row('orbit', false, 'none', true)])).toBe('orbit')
+  })
+
+  it('is the first readable row when the console has chosen none', () => {
+    expect(openProject([row('aurora', false, 'none', true), row('orbit', false, 'none', true)])).toBe('aurora')
+  })
+
+  it('counts a stale row as openable, which is the owner’s "still open that installation"', () => {
+    expect(openProject([row('aurora', true, 'stale', true), row('orbit', false, 'none', true)])).toBe('aurora')
+  })
+
+  it('is the first row when nothing can be read, which is the row the issue view is drawn for', () => {
+    expect(openProject([row('aurora', false, 'config', false), row('orbit', false, 'store', false)])).toBe('aurora')
+  })
+
+  it('is null when the machine has no installation at all', () => {
+    expect(openProject([])).toBe(null)
   })
 })

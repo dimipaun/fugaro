@@ -9,14 +9,15 @@
 //      a click opens it or its issue, the sentence and the command) and the
 //      checkouts the console may offer it (`checkouts`: never a temporary or
 //      tool-owned path, the project's own recorded checkout first);
-//   2. **which row is opened**: `firstReadableIndex` over those states, which is
-//      the owner's rule -- the first readable one, in the CLI's own order, with
-//      the previously chosen installation keeping its place and its mark.
+//   2. **which row is opened**: `openProject` over those rows, which is the
+//      owner's rule -- the remembered choice when it can be read, the first
+//      readable one otherwise, and the first row when nothing is readable -- with
+//      the remembered installation keeping its place and its mark.
 //
 // The project names are invented (`aurora`, `orbit`) and every path is one the
 // test itself wrote.
 
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -199,9 +200,13 @@ describe('the rows the rail draws', () => {
     expect(firstReadableIndex(reply.rows.map((row) => row.state))).toBe(1)
     expect(rowOf(reply, 'aurora').active, 'the remembered choice was dropped from the store').toBe(true)
     expect(rowOf(reply, 'orbit').active).toBe(false)
+    // The row the console is **open on** is the readable one, and it is exactly
+    // one row: the rail draws it as its selected row, and the main area reads
+    // from it.
+    expect(reply.rows.filter((row) => row.open).map((row) => row.project)).toEqual(['orbit'])
   })
 
-  it('opens the first readable installation when both are readable', async () => {
+  it('opens the remembered choice when it can be read, wherever it sits in the CLI’s order', async () => {
     const document = {
       installations: [
         { name: 'aurora', gcp_project: 'aurora-482301', region: 'europe-west4' },
@@ -216,8 +221,40 @@ describe('the rows the rail draws', () => {
     expect(reply.rows.every((row) => row.state.readable)).toBe(true)
     expect(firstReadableIndex(reply.rows.map((row) => row.state))).toBe(0)
     // The chosen installation is still the console's own answer, wherever it sits
-    // in the CLI's order.
+    // in the CLI's order -- and it is the one the console is open on, because a
+    // console that opened the CLI's first row at every launch would throw the
+    // operator's choice away each time it started.
     expect(rowOf(reply, 'orbit').active).toBe(true)
+    expect(rowOf(reply, 'orbit').open).toBe(true)
+    expect(rowOf(reply, 'aurora').open).toBe(false)
+  })
+
+  it('opens the first readable installation when the console has chosen none', async () => {
+    // A console that has never been used: nothing is stored, the CLI lists two
+    // readable installations, and one of them is open -- the rail is drawn with a
+    // row for each and no picker screen in front of it.
+    const document = {
+      installations: [
+        { name: 'aurora', gcp_project: 'aurora-482301', region: 'europe-west4' },
+        { name: 'orbit', gcp_project: 'orbit-482301', region: 'europe-west4' },
+      ],
+    }
+    const userData = freshDirectory()
+    const { ipcMain } = over({ userData, stub: stubWith(document) })
+    const reply = await list(ipcMain)
+
+    expect(reply.rows.map((row) => row.active)).toEqual([false, false])
+    expect(reply.rows.filter((row) => row.open).map((row) => row.project)).toEqual(['aurora'])
+  })
+
+  it('opens the first row when nothing is readable, which is the row the issue view is for', async () => {
+    const userData = freshDirectory()
+    writeFileSync(join(userData, INSTALLATIONS_FILE_NAME), 'not json at all', { mode: 0o600 })
+    const { ipcMain } = over({ userData, stub: stubWith(DOCUMENT, [CONFIG_LINE]) })
+    const reply = await list(ipcMain)
+
+    expect(reply.rows.every((row) => !row.state.readable)).toBe(true)
+    expect(reply.rows.filter((row) => row.open).map((row) => row.project)).toEqual(['aurora'])
   })
 
   it('classifies a stale shared config as a warning, and still opens that installation', async () => {
@@ -272,6 +309,72 @@ describe('the rows the rail draws', () => {
     expect(reply.rows[0]?.state.readable).toBe(false)
     expect(reply.rows[0]?.state.command).toBe(FUGARO_INSTALL_COMMAND)
     expect(firstReadableIndex(reply.rows.map((row) => row.state))).toBe(-1)
+  })
+})
+
+describe('the console’s own open rule at startup', () => {
+  it('decides from one read, and the rail’s first list answers that read rather than spawning again', async () => {
+    // The startup and the rail ask the same question in the same instant, and
+    // `config list --json` is a child process: one read answers both, and every
+    // read after that is the screen's own (a removal, a checkout, the picker
+    // window's refresh).
+    const stub = stubWith(DOCUMENT, [CONFIG_LINE])
+    const userData = store([{ id: '0123456789abcdef', project: 'orbit' }])
+    const { picker, ipcMain } = over({ userData, stub })
+    // The read itself, counted by its argv rather than by the spawn total: rule
+    // 4's walk probes the binary it finds with a `version`, which is a spawn of
+    // its own and not the document this test is about.
+    const lists = (): number => stub.reports().filter((report) => report.argv[1] === 'list').length
+    await picker.openInstallation()
+    expect(lists()).toBe(1)
+    await list(ipcMain)
+    expect(lists(), 'the rail’s first read spawned the same command twice').toBe(1)
+    await list(ipcMain)
+    expect(lists(), 'a later read was served from the boot read').toBe(2)
+  })
+
+  it('opens the first readable installation for the run, and writes nothing to the store', async () => {
+    // The owner's case, end to end: `aurora` is the operator's remembered choice
+    // and its config cannot be read, `orbit` can. The console is open on `orbit`
+    // -- so the source, the header and the screens read from it -- and the store
+    // is **byte for byte** what it was, because the remembered choice is not
+    // dropped.
+    const userData = store([{ id: '0123456789abcdef', project: 'aurora', checkout: '/home/operator/src/aurora' }])
+    const storePath = join(userData, INSTALLATIONS_FILE_NAME)
+    const before = readFileSync(storePath, 'utf8')
+    const { picker, ipcMain } = over({ userData, stub: stubWith(DOCUMENT, [CONFIG_LINE]) })
+
+    await picker.openInstallation()
+    expect(picker.installation()).toMatchObject({ chosen: true, project: 'orbit' })
+    expect(readFileSync(storePath, 'utf8')).toBe(before)
+
+    const reply = await list(ipcMain)
+    expect(rowOf(reply, 'aurora').active, 'the remembered choice was dropped').toBe(true)
+    expect(rowOf(reply, 'aurora').open).toBe(false)
+    expect(rowOf(reply, 'orbit').open).toBe(true)
+    // The reply's own `active` is the session's answer too, so the line the
+    // dashboard draws and the row the rail selects are the same installation.
+    expect(reply.active).toMatchObject({ chosen: true, project: 'orbit' })
+  })
+
+  it('answers the store’s own record when the remembered choice can be read', async () => {
+    const userData = store([{ id: '0123456789abcdef', project: 'orbit' }])
+    const { picker } = over({ userData, stub: stubWith(DOCUMENT, [CONFIG_LINE]) })
+
+    await picker.openInstallation()
+    // The record's own id: the session is the store's record and not a copy of
+    // it, so nothing about this installation changes shape at a boot.
+    expect(picker.installation()).toMatchObject({ chosen: true, project: 'orbit', id: '0123456789abcdef' })
+  })
+
+  it('leaves the store’s own answer in place when the read fails', async () => {
+    // A console whose `config list` could not run is a console that still opens,
+    // on what the store says: the open rule has no rows to decide from, and a
+    // failed read must not take the installation away.
+    const userData = store([{ id: '0123456789abcdef', project: 'aurora' }])
+    const { picker } = over({ userData })
+    await picker.openInstallation()
+    expect(picker.installation()).toMatchObject({ chosen: true, project: 'aurora', id: '0123456789abcdef' })
   })
 })
 

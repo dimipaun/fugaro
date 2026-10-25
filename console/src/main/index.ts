@@ -208,6 +208,19 @@ let handshakeProject: string | null = null
  */
 async function readCliVersion(): Promise<VersionRead> {
   const log = createSpawnLog(process.env)
+  // The owner's open-first-readable rule, before anything is resolved (ruling of
+  // 2026-10-25): the console opens the installation it can read -- the remembered
+  // choice when the CLI's own document says so, the first readable one otherwise
+  // -- and the handshake below is then the handshake of **that** installation.
+  // Doing it here rather than in the renderer is what makes the whole run agree:
+  // the header's binary, the source the screens read through and the rail's
+  // selected row are one decision.
+  //
+  // It is awaited before `handshakeInstallation`, which reads the session the
+  // call settles, and it never throws (`openInstallation`): a list read that
+  // failed leaves the console on the store's own answer, which is what it did
+  // before this rule existed.
+  await picker?.openInstallation()
   const chosen = handshakeInstallation()
   try {
     const resolution = await resolveHandshakeBinary({

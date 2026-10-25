@@ -680,7 +680,18 @@ describe('the picker’s choose', () => {
     expect(reply.ok).toBe(false)
     if (!reply.ok) expect(reply.reason).toContain('0.5.0')
     expect(handed).toEqual([])
-    expect(picker.installation()).toEqual({ chosen: false, sentence: NO_ACTIVE_INSTALLATION })
+    // **Nothing was chosen**, and the store says so: the row the console just
+    // listed is still `saved: false` with no `active`, which is what "the choose
+    // wrote nothing" means from the renderer's side. What changed with the
+    // owner's design ruling of 2026-10-25 is that the console is nonetheless
+    // **open** on it -- the first readable installation is opened without being
+    // chosen (`openProject`, `installationstate.ts`) -- so `installation()`
+    // answers that session and not "no installation has been chosen".
+    const relisted = await answer(ipcMain, 'list')
+    if (!relisted.ok) throw new Error(relisted.reason)
+    const data = relisted.data as { rows: readonly { project: string; active: boolean; saved: boolean }[] }
+    expect(data.rows.find((row) => row.project === 'old')).toMatchObject({ active: false, saved: false })
+    expect(picker.installation()).toMatchObject({ chosen: true, project: 'old' })
   })
 
   it('refuses a project the console never listed', async () => {
@@ -908,7 +919,17 @@ describe('the picker’s remove', () => {
     const reply = await answer(ipcMain, 'remove', { project: 'sandbox' })
     expect(reply.ok).toBe(true)
     expect(removed).toEqual([active.chosen ? active.id : ''])
-    expect(picker.installation()).toEqual({ chosen: false, sentence: NO_ACTIVE_INSTALLATION })
+    // The console's own record for `sandbox` is gone -- the removal re-reads, and
+    // the row comes back with no `saved` and no `active`, which is the fact the
+    // screen draws. The installation itself is still on the machine (the CLI lists
+    // it), so the open rule of 2026-10-25 opens it again as this run's **session**:
+    // the console reads from an installation it keeps no record of, which is what
+    // "every discovered installation is listed in the rail, and one of them is
+    // open" means once the operator drops the record for the one that was.
+    if (!reply.ok) throw new Error(reply.reason)
+    const data = reply.data as { rows: readonly { project: string; active: boolean; saved: boolean }[] }
+    expect(data.rows.find((row) => row.project === 'sandbox')).toMatchObject({ active: false, saved: false })
+    expect(picker.installation()).toMatchObject({ chosen: true, project: 'sandbox' })
   })
 })
 

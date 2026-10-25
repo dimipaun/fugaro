@@ -147,6 +147,18 @@ export interface InstallationsListRow {
   readonly checkout?: string
   readonly checkouts: readonly string[]
   readonly state: InstallationState
+  /**
+   * `open` is true for the one row the console is **open on** (`openProject`,
+   * `installationstate.ts`): the row the main area is about, which the rail draws
+   * as its selected row.
+   *
+   * It is not `active`. `active` is the operator's remembered choice, which the
+   * store holds and this console never rewrites; `open` is this run's decision,
+   * and the two differ in exactly the case the owner's ruling names -- the
+   * remembered installation cannot be read, so the console opens the first one it
+   * can while the chosen one keeps its place and its warning icon in the rail.
+   */
+  readonly open: boolean
 }
 
 /**

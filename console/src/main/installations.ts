@@ -1268,6 +1268,31 @@ export interface InstallationRegistry {
   /** remember records the compatibility the handshake read for one project, so
    * a row can say `reduced` without re-running `version`. */
   remember(project: string, compatibility: CliCompatibility): void
+  /**
+   * sessionRecordFor is the record of an installation this console is **open on
+   * without having chosen**: the store's own record when it holds one, and
+   * otherwise a record made here and kept in memory only.
+   *
+   * It exists for the owner's open-first-readable rule (ruling of 2026-10-25):
+   * the console opens an installation for this run -- the remembered choice when
+   * it can be read, the first readable one otherwise -- and it must not write
+   * that decision down, because the store holds the operator's choice and a boot
+   * that rewrote `active` would drop it. So the session's record is built the way
+   * a choose's would be (`recordOf`) and never reaches the file: `rows()` does not
+   * list it, `active()` is not it, and nothing on disk changes.
+   *
+   * The bound `MAX_INSTALLATIONS` does not apply, and that is the point of the
+   * separate function: a machine whose list is longer than this console remembers
+   * still opens one of them, and the store is not the thing being asked.
+   *
+   * The id is stable for the run -- the same project answers the same record --
+   * because it is the key the source is cached by (`createBoundSource`).
+   */
+  sessionRecordFor(project: string): StoredInstallation
+  /** currentFor is `current()` for a record that is not the file's active one:
+   * the session installation's own answer, in the shape `installation.current`
+   * carries. */
+  currentFor(record: StoredInstallation): ActiveInstallation
   readonly path: string
 }
 
@@ -1320,6 +1345,29 @@ export function createInstallationRegistry(options: {
       throw new Error(`the console keeps at most ${String(MAX_INSTALLATIONS)} installations`)
     }
     return { id: newInstallationId(), project }
+  }
+
+  /** sessionRecords holds the records `sessionRecordFor` made, so one project
+   * answers one record for the run. Nothing else reads it and nothing writes it
+   * to the file. */
+  const sessionRecords = new Map<string, StoredInstallation>()
+
+  /** currentFor is the answer for one record, in the shape `current()` gives the
+   * file's active one: the store's fields plus the compatibility this run read
+   * for that project, or `cliVersion: null` and `unknown` when nothing has. */
+  const currentFor = (record: StoredInstallation): ActiveInstallation => {
+    const read = compatibility.get(record.project)
+    return {
+      chosen: true,
+      id: record.id,
+      project: record.project,
+      ...(record.binaryPath === undefined ? {} : { binary: record.binaryPath }),
+      ...(record.configPath === undefined ? {} : { config: record.configPath }),
+      ...(record.checkout === undefined ? {} : { checkout: record.checkout }),
+      ...(record.distro === undefined ? {} : { distro: record.distro }),
+      cliVersion: read?.cliVersion ?? null,
+      mode: read?.mode ?? 'unknown',
+    }
   }
 
   /** replace writes one record into the file, in the place the record it
@@ -1382,19 +1430,16 @@ export function createInstallationRegistry(options: {
           ...(refusal === null ? {} : { refusal, path: options.store.path }),
         }
       }
-      const read = compatibility.get(active.project)
-      return {
-        chosen: true,
-        id: active.id,
-        project: active.project,
-        ...(active.binaryPath === undefined ? {} : { binary: active.binaryPath }),
-        ...(active.configPath === undefined ? {} : { config: active.configPath }),
-        ...(active.checkout === undefined ? {} : { checkout: active.checkout }),
-        ...(active.distro === undefined ? {} : { distro: active.distro }),
-        cliVersion: read?.cliVersion ?? null,
-        mode: read?.mode ?? 'unknown',
-      }
+      return currentFor(active)
     },
+    sessionRecordFor(project: string): StoredInstallation {
+      const held = entryOf(project)
+      if (held !== null) return held
+      const made = sessionRecords.get(project) ?? { id: newInstallationId(), project }
+      sessionRecords.set(project, made)
+      return made
+    },
+    currentFor,
     choose(project: string): InstallationFile {
       if (refusal !== null) {
         throw new Error(`the console keeps no installations while ${options.store.path} is unreadable (${refusal})`)
