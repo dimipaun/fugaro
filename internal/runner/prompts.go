@@ -122,6 +122,16 @@ func baseUnreadNote(base string) string {
 		"restrict yourself to the commits listed by `git log origin/%s..HEAD` and the files they touch.", base, base)
 }
 
+// oversizedRangeNote is the one line the review prompt opens with when the
+// range against base is far larger than the run's own commits
+// (reviewRestriction): the base is kept, and the reviewer is told which
+// commits are the run's, by a command that does not depend on the base.
+func oversizedRangeNote(base string, size, own DiffSize, branch string) string {
+	return fmt.Sprintf("The range origin/%s...HEAD below changes %s, but this run's own commits change only %s: most of the range is commits that were already on origin, not this run's work, so origin/%s is probably not the branch this work started from. "+
+		"Restrict yourself to this run's own commits, listed by `%s`, and the files they touch; read each with `git show <commit>`.",
+		base, size, own, base, ownCommitsCommand(branch))
+}
+
 // hugeDiffNote is what the review prompt says before anything else when the
 // branch's diff against the base is huge. It names the base explicitly, so
 // the reviewer's own reads are of the same range the prompt was built over,
@@ -144,16 +154,17 @@ func hugeDiffNote(base string, size DiffSize) string {
 // is how large that diff is, which only decides whether the prompt warns
 // about it first (hugeDiffNote).
 //
-// baseUnread says the pull request's own base could not be read (baseUnreadable),
-// so base is a fallback and the reviewer must restrict itself to the branch's
-// own commits.
-func ReviewPrompt(review, promptFile, base string, size DiffSize, baseUnread bool) string {
+// restrict, when not "", is the note that the range cannot be trusted to be
+// the change under review (reviewRestriction: the pull request's own base
+// could not be read, or the range is far larger than the run's own
+// commits), and it tells the reviewer which commits to restrict itself to.
+func ReviewPrompt(review, promptFile, base string, size DiffSize, restrict string) string {
 	scope := fmt.Sprintf("Review the changes on this branch against origin/%s (see `git diff origin/%s...HEAD`). Do not modify any files.", base, base)
 	if size.Huge() {
 		scope = hugeDiffNote(base, size) + "\n\n" + scope
 	}
-	if baseUnread {
-		scope = baseUnreadNote(base) + "\n\n" + scope
+	if restrict != "" {
+		scope = restrict + "\n\n" + scope
 	}
 	tail := "\n\n" + reviewScoring + "\n\nWhen you are done, give your verdict: \"ship\" if nothing must change before this is merged, otherwise \"changes\" with one finding per issue that must be fixed."
 	switch {

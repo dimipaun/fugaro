@@ -51,11 +51,11 @@ func TestHugeDiffThreshold(t *testing.T) {
 // this test fails.
 func TestReviewPromptHugeNoteIsUpFrontAndNamesTheBase(t *testing.T) {
 	const base = "integration-0.9.6"
-	small := ReviewPrompt("", "", base, DiffSize{Files: hugeDiffFiles, Lines: hugeDiffLines}, false)
+	small := ReviewPrompt("", "", base, DiffSize{Files: hugeDiffFiles, Lines: hugeDiffLines}, "")
 	if strings.Contains(small, "huge") {
 		t.Fatalf("a diff at the threshold is warned about:\n%s", small)
 	}
-	big := ReviewPrompt("", "", base, DiffSize{Files: hugeDiffFiles + 1}, false)
+	big := ReviewPrompt("", "", base, DiffSize{Files: hugeDiffFiles + 1}, "")
 	note, scope, ok := strings.Cut(big, "Review the changes on this branch against ")
 	if !ok {
 		t.Fatalf("the scope line is gone:\n%s", big)
@@ -150,13 +150,66 @@ func TestBaseValidationOnABareRun(t *testing.T) {
 // fallback and scoping the reviewer to the branch's own commits; absent when
 // the base was read.
 func TestReviewPromptSaysTheBaseCouldNotBeRead(t *testing.T) {
-	unread := ReviewPrompt("", "", "main", DiffSize{}, true)
+	unread := ReviewPrompt("", "", "main", DiffSize{}, baseUnreadNote("main"))
 	for _, want := range []string{"base branch could not be read", "git log origin/main..HEAD"} {
 		if !strings.Contains(unread, want) {
 			t.Errorf("the prompt lacks %q:\n%s", want, unread)
 		}
 	}
-	if strings.Contains(ReviewPrompt("", "", "main", DiffSize{}, false), "could not be read") {
+	if strings.Contains(ReviewPrompt("", "", "main", DiffSize{}, ""), "could not be read") {
 		t.Error("a readable base is warned about")
+	}
+}
+
+// TestOversizedRangeThreshold pins the oversized-range constants and that
+// they judge the range's excess over the run's own commits, not its size:
+// a run's own large change is never oversized, and exactly the threshold
+// beyond it is not past it.
+func TestOversizedRangeThreshold(t *testing.T) {
+	if oversizedRangeLines != 2000 || oversizedRangeFiles != 100 {
+		t.Fatalf("thresholds = %d lines, %d files; want 2000 and 100", oversizedRangeLines, oversizedRangeFiles)
+	}
+	own := DiffSize{Files: 3, Lines: 50}
+	for _, tc := range []struct {
+		rng, own DiffSize
+		want     bool
+	}{
+		{DiffSize{Files: 3, Lines: 50}, own, false},
+		{DiffSize{Files: 300, Lines: 9000}, DiffSize{Files: 300, Lines: 9000}, false},
+		{DiffSize{Files: 3, Lines: 50 + oversizedRangeLines}, own, false},
+		{DiffSize{Files: 3 + oversizedRangeFiles, Lines: 50}, own, false},
+		{DiffSize{Files: 3, Lines: 51 + oversizedRangeLines}, own, true},
+		{DiffSize{Files: 4 + oversizedRangeFiles, Lines: 50}, own, true},
+		{DiffSize{Files: 186, Lines: 33000}, own, true},
+	} {
+		if got := oversized(tc.rng, tc.own); got != tc.want {
+			t.Errorf("oversized(%+v, %+v) = %v, want %v", tc.rng, tc.own, got, tc.want)
+		}
+	}
+}
+
+// TestReviewPromptOversizedNote: the note opens the prompt, keeps the base
+// in the scope line, says how large the range and the run's own commits
+// are, and names the own-commits command with the run's branch excluded.
+func TestReviewPromptOversizedNote(t *testing.T) {
+	note := oversizedRangeNote("main", DiffSize{Files: 186, Lines: 33000}, DiffSize{Files: 2, Lines: 40}, "fugaro/20260927-100000-abcd")
+	p := ReviewPrompt("", "", "main", DiffSize{Files: 186, Lines: 33000}, note)
+	if !strings.HasPrefix(strings.SplitN(p, "\n\n", 3)[1], "The range origin/main...HEAD below changes 186 file(s) and 33000 changed line(s)") {
+		t.Fatalf("the note does not open the scope:\n%s", p)
+	}
+	for _, want := range []string{
+		"this run's own commits change only 2 file(s) and 40 changed line(s)",
+		"`git log --name-only HEAD --not --exclude=origin/fugaro/20260927-100000-abcd --remotes=origin`",
+		"Review the changes on this branch against origin/main",
+	} {
+		if !strings.Contains(p, want) {
+			t.Errorf("the prompt lacks %q:\n%s", want, p)
+		}
+	}
+	if got := ownCommitsCommand(""); got != "git log --name-only HEAD --not --remotes=origin" {
+		t.Errorf("ownCommitsCommand without a branch = %q", got)
+	}
+	if got := ownCommitsCommand("--upload-pack=x"); strings.Contains(got, "upload-pack") {
+		t.Errorf("a refused branch name reached the command: %q", got)
 	}
 }

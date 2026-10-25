@@ -300,6 +300,10 @@ type run struct {
 	// values (checkpoint.go). They differ when the run starts from another
 	// ref than its base branch (--ref develop with base_branch main).
 	baseSHA, startSHA string
+	// rangeNote is the report's note that the review range was oversized
+	// and the review was restricted to the run's own commits
+	// (reviewRestriction); "" when it was not.
+	rangeNote string
 	// rigorCfg is the run's rigor configuration *as the base branch has it*
 	// (docs/rigor-modes D25), read once at bootstrap and reused at every
 	// later moment (rigor.go); rigorRev is the revision it was read from, ""
@@ -2004,7 +2008,8 @@ func (r *run) agentLoop(ctx context.Context) {
 	// configuration came from (diffbase.go, diffBase): a run started from
 	// another ref must review its own change, not the whole of that ref's
 	// divergence from the default branch.
-	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.reviewPromptBase(), r.reviewDiffSize(ctx), r.baseUnreadable())
+	size := r.reviewDiffSize(ctx)
+	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.reviewPromptBase(), size, r.reviewRestriction(ctx, size))
 	if f := r.follow; f != nil {
 		if add := followup.ReviewAddendum(f.sel, f.nonce); add != "" {
 			reviewPrompt += "\n\n" + add
@@ -2793,6 +2798,9 @@ func (r *run) finalize(ctx context.Context) error {
 	if gone {
 		r.endUnchanged(ctx, fmt.Sprintf("PR #%d was %s during the run; the branch was pushed", pr.Number, r.closedWord(ctx, pr.Number)), records)
 		return nil
+	}
+	if r.rangeNote != "" {
+		notes = append(notes, r.rangeNote)
 	}
 	var fu *FollowUpSection
 	if r.follow != nil {

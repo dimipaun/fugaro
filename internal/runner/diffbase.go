@@ -257,3 +257,109 @@ func parseNumstat(out string) ([]reviewChange, DiffSize, error) {
 	}
 	return changes, size, nil
 }
+
+// oversizedRangeLines and oversizedRangeFiles are how much the review range
+// (`origin/<base>...HEAD`) may carry beyond the run's own commits before the
+// review is restricted to those commits (oversizedRange). Either alone is
+// enough. The range is the run's whole divergence from its base, so it
+// outgrows the run's own work when the work did not start on that base:
+// most often a run launched without --ref whose task checked out an
+// integration branch inside the job, which then reviewed that branch's
+// whole divergence from main every round (700-1500 review calls, ~33,000
+// changed lines). 2,000 lines or 100 files of someone else's commits is
+// already more than one review round should read for nothing, and far
+// below the hugeDiff thresholds, which judge the diff's size alone.
+const (
+	oversizedRangeLines = 2000
+	oversizedRangeFiles = 100
+)
+
+// ownCommitsRevs are the revisions that name a run's own commits: those on
+// HEAD that no remote-tracking ref of origin has, other than the run's own
+// branch (branch), which an early draft or a checkpoint push may have put
+// there. Base branches, integration branches the agent fetched, and the
+// commits a merge of them brought in are all on origin already, so they
+// are not the run's.
+func ownCommitsRevs(branch string) []string {
+	revs := []string{"HEAD", "--not"}
+	if branch != "" && config.ValidBranchName(branch) {
+		revs = append(revs, "--exclude=origin/"+branch)
+	}
+	return append(revs, "--remotes=origin")
+}
+
+// ownCommitsCommand is ownCommitsRevs as the reviewer is told to type it.
+func ownCommitsCommand(branch string) string {
+	return "git log --name-only " + strings.Join(ownCommitsRevs(branch), " ")
+}
+
+// ownWorkSize sums the changes of the run's own commits (ownCommitsRevs),
+// commit by commit: a line two commits touch counts twice and a merge
+// counts nothing of its own, so the figure only ever errs towards the run
+// having done more, which keeps oversizedRange from firing on a run's own
+// large change.
+func ownWorkSize(ctx context.Context, repo *gitops.Repo, branch string) (DiffSize, error) {
+	args := append([]string{"log", "--numstat", "--format=", "--no-renames", "--no-ext-diff", "--no-textconv"}, ownCommitsRevs(branch)...)
+	out, err := sessionGit(ctx, repo, args...)
+	if err != nil {
+		return DiffSize{}, err
+	}
+	var size DiffSize
+	files := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		added, rest, ok := strings.Cut(line, "\t")
+		if !ok {
+			continue
+		}
+		deleted, path, ok := strings.Cut(rest, "\t")
+		if !ok {
+			continue
+		}
+		files[path] = true
+		a, errA := strconv.Atoi(added)
+		d, errD := strconv.Atoi(deleted)
+		if errA == nil && errD == nil {
+			size.Lines += a + d
+		}
+	}
+	size.Files = len(files)
+	return size, nil
+}
+
+// oversized reports whether rng carries more than the thresholds beyond own.
+func oversized(rng, own DiffSize) bool {
+	return rng.Lines-own.Lines > oversizedRangeLines || rng.Files-own.Files > oversizedRangeFiles
+}
+
+// reviewRestriction is the note the review prompt opens with when the range
+// it names cannot be trusted to be the run's own change, "" otherwise:
+// baseUnreadNote when the pull request's base could not be read, and
+// oversizedRangeNote when the range (size) is far larger than the run's own
+// commits. Neither changes the base: the reviewer is pointed at the run's
+// own commits instead. An oversized range is logged once and kept for the
+// run's report (r.rangeNote), so whoever launched it sees why the review
+// was narrowed and that --ref is the fix.
+//
+// A review run is never judged oversized: its checkout is the reviewed pull
+// request's head, which has no commits of the run's own to compare with.
+func (r *run) reviewRestriction(ctx context.Context, size DiffSize) string {
+	base := r.reviewPromptBase()
+	if r.baseUnreadable() {
+		return baseUnreadNote(base)
+	}
+	if r.review || r.repo == nil || size == (DiffSize{}) {
+		return ""
+	}
+	own, err := ownWorkSize(ctx, r.repo, r.rec.Branch)
+	if err != nil {
+		r.d.Log.Warn("measuring the run's own commits failed; the review range is not checked for size", "err", r.redact(err.Error()))
+		return ""
+	}
+	if !oversized(size, own) {
+		return ""
+	}
+	r.d.Log.Warn("the review range is far larger than this run's own commits; the review is restricted to them (launch with --ref the branch the work starts on)",
+		"base", base, "range", size.String(), "own", own.String())
+	r.rangeNote = fmt.Sprintf("review range was oversized: base %s, origin/%s...HEAD changes %s but this run's own commits change %s; the review was restricted to the run's own commits (use --ref with the branch the work starts on)", base, base, size, own)
+	return oversizedRangeNote(base, size, own, r.rec.Branch)
+}
