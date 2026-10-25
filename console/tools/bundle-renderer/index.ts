@@ -910,12 +910,13 @@ export function consoleBundles(consoleRoot: string): readonly BundleOptions[] {
 
 /**
  * buildConsole is the whole bundle step of `npm run build`, in its order, and it
- * is a function rather than three lines in the entry point below because the
+ * is a function rather than four lines in the entry point below because the
  * **order** is a claim a test has to be able to make (review M3).
  *
  * The order is: **every refusal this build can make**, then the stylesheet, then
- * the two renderer bundles. They come first because they are the ones that can
- * stop the build, and a build that stops must not have written anything: with
+ * elkjs's worker (GV2.2), then the two renderer bundles. The refusals come
+ * first because they are the ones that can stop the build, and a build that
+ * stops must not have written anything: with
  * the stylesheet first, a foreign file in `dist/bundle/` was a build failure that
  * nonetheless left a fresh `console.css` behind. That was harmless -- a failed
  * build is not packaged -- but "a refusal must not leave half a bundle behind"
