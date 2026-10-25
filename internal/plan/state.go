@@ -262,6 +262,14 @@ type StatePlan struct {
 	Nodes []StateNode `json:"nodes"`
 	// Releases is one box per target version, in version order.
 	Releases []StateRelease `json:"releases"`
+	// Tasks, Closed and Open are the plan's own figures over every task it
+	// carries, listed or collapsed, so a header drawn from them reads the same
+	// in both reads. They are the sum of the release boxes plus the tasks a
+	// plan gives no version (which are in no box), which is why they are
+	// stated here rather than left to a renderer to add up.
+	Tasks  int `json:"tasks"`
+	Closed int `json:"closed"`
+	Open   int `json:"open"`
 }
 
 // StateStream is one row of the streams catalogue, in the shape a console draws
@@ -360,10 +368,15 @@ func State(planID string, doc Document, runs []RunFact, o StateOptions) (StatePl
 		// unknown is open, so the screen keeps asking about it.
 		sn.Closed = (sn.State == StateDone && sn.Mark == "") || sn.State == StateCancelled
 		states[node.ID] = sn
+		out.Tasks++
+		if sn.Closed {
+			out.Closed++
+		}
 		if o.All || !sn.Closed {
 			out.Nodes = append(out.Nodes, sn)
 		}
 	}
+	out.Open = out.Tasks - out.Closed
 	out.Releases = releases(doc, states, o)
 	return out, nil
 }

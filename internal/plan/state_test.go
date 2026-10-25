@@ -345,6 +345,11 @@ func TestOpenWorkByDefault(t *testing.T) {
 	if second := open.Releases[1]; second.Version != "0.113" || second.Total != 1 || second.Closed != 0 || second.Open != 1 {
 		t.Errorf("release 0.113 = %+v", second)
 	}
+	// The plan's own figures do not depend on --all: they are over every task it
+	// carries, which is what a header drawn in either read has to read.
+	if open.Tasks != 3 || open.Closed != 2 || open.Open != 1 {
+		t.Errorf("plan figures = %d tasks, %d closed, %d open, want 3, 2, 1", open.Tasks, open.Closed, open.Open)
+	}
 }
 
 // TestAllShowsClosed: --all lists what the counter collapsed, and the closed
@@ -368,6 +373,11 @@ func TestAllShowsClosed(t *testing.T) {
 	rel := all.Releases[0]
 	if rel.Closed != 2 || rel.Open != 1 || rel.Done != 1 {
 		t.Errorf("release = %+v", rel)
+	}
+	// The same figures as the collapsed read: --all changes what is listed, not
+	// what is counted.
+	if all.Tasks != 3 || all.Closed != 2 || all.Open != 1 {
+		t.Errorf("plan figures = %d tasks, %d closed, %d open, want 3, 2, 1", all.Tasks, all.Closed, all.Open)
 	}
 }
 

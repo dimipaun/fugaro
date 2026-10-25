@@ -30,7 +30,7 @@ import (
 // set (the console's JSON contract, §8).
 func newPlanCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "plan", Short: "Read a plan's graph artifact"}
-	cmd.AddCommand(newPlanGraphCmd())
+	cmd.AddCommand(newPlanGraphCmd(), newPlanStatusCmd())
 	return cmd
 }
 
