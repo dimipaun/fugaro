@@ -567,6 +567,50 @@ func (r *Repo) CommitsAhead(ctx context.Context, since string, except ...string)
 	return strconv.Atoi(out)
 }
 
+// OwnCommits lists, oldest first (parents before children), the commits
+// HEAD has that no branch on origin holds — as this checkout's
+// remote-tracking refs last saw origin — other than runBranch, the run's
+// own branch, which the run's pushes fill with exactly those commits. It
+// answers "which commits did this run make" without knowing which branch
+// the work was cut from: an agent told to `git checkout -b <b>
+// origin/<integration>` starts from a branch nothing recorded.
+//
+// --exclude must come before the --remotes it narrows, and for --remotes
+// its pattern is matched without the refs/remotes/ prefix. runBranch is a
+// pattern there, so one that carries glob characters is refused rather
+// than allowed to exclude other branches too. The refs are the checkout's,
+// so the answer is only as good as what the checkout fetched: a branch
+// fetched to FETCH_HEAD alone counts its commits as the run's, which only
+// ever makes the list longer.
+func (r *Repo) OwnCommits(ctx context.Context, runBranch string) ([]string, error) {
+	if runBranch == "" || strings.HasPrefix(runBranch, "-") || strings.ContainsAny(runBranch, "*?[\\ \t\n") {
+		return nil, fmt.Errorf("refusing to read the commits of run branch %q: not a plain branch name", runBranch)
+	}
+	out, err := r.git(ctx, "--no-replace-objects", "rev-list", "--topo-order", "--reverse", "HEAD",
+		"--not", "--exclude=origin/"+runBranch, "--remotes=origin")
+	if err != nil {
+		return nil, err
+	}
+	return strings.Fields(out), nil
+}
+
+// FirstParent returns sha's first parent, "" for a root commit. sha must be
+// a full commit SHA, so it is never read as an option or a moving ref.
+func (r *Repo) FirstParent(ctx context.Context, sha string) (string, error) {
+	if !IsFullSHA(sha) {
+		return "", fmt.Errorf("refusing to read the parent of %q: not a full commit SHA", sha)
+	}
+	out, err := r.git(ctx, "--no-replace-objects", "rev-list", "--parents", "--max-count=1", "--end-of-options", sha)
+	if err != nil {
+		return "", err
+	}
+	fields := strings.Fields(out)
+	if len(fields) < 2 {
+		return "", nil
+	}
+	return fields[1], nil
+}
+
 // RunBranchPrefix starts every branch the runner pushes.
 const RunBranchPrefix = "fugaro/"
 

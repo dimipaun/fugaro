@@ -381,7 +381,7 @@ func (r *run) reviewInputBlock(ctx context.Context) string {
 	// the prompt was built over. Building it against the configuration's
 	// base instead handed the reviewer the whole of another branch's
 	// divergence: 33,000 lines in run 865e, out of a $10 run cap.
-	in, err := buildReviewInput(ctx, r.repo, "origin/"+r.reviewPromptBase(), "HEAD")
+	in, err := buildReviewInput(ctx, r.repo, r.reviewRev(), "HEAD")
 	if err != nil {
 		r.d.Log.Warn("the review input could not be built; the reviewer reads the diff itself",
 			"err", r.redact(err.Error()))

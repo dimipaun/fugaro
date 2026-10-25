@@ -123,6 +123,16 @@ func (r *run) guardBounds(ctx context.Context) (since string, except []string) {
 		}
 		except = append(except, tip)
 	}
+	// A first run whose review range was narrowed to its own commits
+	// (diffbase.go, narrowReviewRange) leaves out what that range leaves
+	// out: the commits before the first of its own, which another branch's
+	// were. The guard then measures the run's work over the range its
+	// reviewer was handed. Unlike the tips above it is the checkout's own
+	// reading of origin, taken once after implement; it is a commit SHA, so
+	// nothing the agent repoints later moves it.
+	if r.narrowBase != "" && r.follow == nil {
+		except = append(except, r.narrowBase)
+	}
 	return since, except
 }
 

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/followup"
+	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
@@ -117,9 +118,19 @@ func (d DiffSize) String() string {
 
 // baseUnreadNote is the one line the review prompt carries when the pull
 // request's base branch could not be read from the provider.
-func baseUnreadNote(base string) string {
-	return fmt.Sprintf("The pull request's base branch could not be read, so origin/%s below is only a fallback and may be far larger than this pull request's own change: "+
-		"restrict yourself to the commits listed by `git log origin/%s..HEAD` and the files they touch.", base, base)
+func baseUnreadNote(rev string) string {
+	return fmt.Sprintf("The pull request's base branch could not be read, so %s below is only a fallback and may be far larger than this pull request's own change: "+
+		"restrict yourself to the commits listed by `git log %s..HEAD` and the files they touch.", rev, rev)
+}
+
+// ownRangeNote is the one line the review prompt carries when the range
+// starts at a commit rather than a branch: a first run's range narrowed to
+// its own commits (diffbase.go, narrowReviewRange). Without it a reviewer
+// told to diff against a bare commit would go looking for the branch
+// instead.
+func ownRangeNote(rev string) string {
+	return fmt.Sprintf("%s is the commit this run's own commits start after, not a branch: "+
+		"the branch also carries commits another branch on origin already holds, which this run did not make and which are not under review.", rev)
 }
 
 // hugeDiffNote is what the review prompt says before anything else when the
@@ -127,33 +138,37 @@ func baseUnreadNote(base string) string {
 // the reviewer's own reads are of the same range the prompt was built over,
 // and it says what to do instead: review the files the pull request's own
 // commits touch, and do not fan out sub-agents across the base.
-func hugeDiffNote(base string, size DiffSize) string {
-	return fmt.Sprintf("The diff under review is huge: this branch changes %s against origin/%s. "+
+func hugeDiffNote(rev string, size DiffSize) string {
+	return fmt.Sprintf("The diff under review is huge: this branch changes %s against %s. "+
 		"That is far more than this pull request's own change, so review only what this pull request's own commits touch: "+
-		"`git log --name-only origin/%s..HEAD` lists those commits and their files, and `git diff origin/%s..HEAD -- <path>` reads one of them. "+
+		"`git log --name-only %s..HEAD` lists those commits and their files, and `git diff %s..HEAD -- <path>` reads one of them. "+
 		"Do NOT fan out sub-agents across the rest of the base branch, and do not review the base's own history: "+
 		"reading it is what spends a run's whole budget before the change under review is reached.",
-		size, base, base, base)
+		size, rev, rev, rev)
 }
 
 // ReviewPrompt builds the review stage prompt. review is the configured
 // agent.review: a skill (starting with "/") or empty; promptFile is the
-// content of a configured review prompt file. base is the branch the
-// changes are reviewed against — the run's own base of work, never assumed
-// to be the repository's default branch (diffbase.go, diffBase) — and size
-// is how large that diff is, which only decides whether the prompt warns
-// about it first (hugeDiffNote).
+// content of a configured review prompt file. rev is the revision the
+// changes are reviewed against (diffbase.go, reviewRev): origin/<the run's
+// own base of work>, never assumed to be the repository's default branch,
+// or the commit a first run's own commits start after — and size is how
+// large that diff is, which only decides whether the prompt warns about it
+// first (hugeDiffNote).
 //
 // baseUnread says the pull request's own base could not be read (baseUnreadable),
-// so base is a fallback and the reviewer must restrict itself to the branch's
+// so rev is a fallback and the reviewer must restrict itself to the branch's
 // own commits.
-func ReviewPrompt(review, promptFile, base string, size DiffSize, baseUnread bool) string {
-	scope := fmt.Sprintf("Review the changes on this branch against origin/%s (see `git diff origin/%s...HEAD`). Do not modify any files.", base, base)
+func ReviewPrompt(review, promptFile, rev string, size DiffSize, baseUnread bool) string {
+	scope := fmt.Sprintf("Review the changes on this branch against %s (see `git diff %s...HEAD`). Do not modify any files.", rev, rev)
+	if gitops.IsFullSHA(rev) {
+		scope = ownRangeNote(rev) + "\n\n" + scope
+	}
 	if size.Huge() {
-		scope = hugeDiffNote(base, size) + "\n\n" + scope
+		scope = hugeDiffNote(rev, size) + "\n\n" + scope
 	}
 	if baseUnread {
-		scope = baseUnreadNote(base) + "\n\n" + scope
+		scope = baseUnreadNote(rev) + "\n\n" + scope
 	}
 	tail := "\n\n" + reviewScoring + "\n\nWhen you are done, give your verdict: \"ship\" if nothing must change before this is merged, otherwise \"changes\" with one finding per issue that must be fixed."
 	switch {

@@ -357,8 +357,7 @@ func (r *run) freshContext(ctx context.Context) {
 	// pull request targets now (diffbase.go, diffBase), not the run's
 	// configuration base, which is stale the moment the pull request is
 	// retargeted.
-	base := r.diffBase()
-	stat, err := sessionGit(ctx, r.repo, "diff", "--stat", "origin/"+base+"...HEAD")
+	stat, err := sessionGit(ctx, r.repo, "diff", "--stat", r.reviewRev()+"...HEAD")
 	if err != nil {
 		r.d.Log.Warn("reading the branch's diff stat failed", "err", r.redact(err.Error()))
 	}

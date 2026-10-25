@@ -304,7 +304,7 @@ func (r *run) reviewModePrompt(ctx context.Context) string {
 		// provider at bootstrap (checkReviewPRs), never the run's own --ref
 		// assumed to be it: a pull request retargeted at an integration
 		// branch must be reviewed against that branch (diffbase.go).
-		p = ReviewPrompt("", r.reviewFile, r.reviewPromptBase(), r.reviewDiffSize(ctx), r.baseUnreadable())
+		p = ReviewPrompt("", r.reviewFile, r.reviewRev(), r.reviewDiffSize(ctx), r.baseUnreadable())
 	} else {
 		nums := make([]int, len(r.reviewHeads))
 		dirs := make([]string, len(r.reviewHeads))
