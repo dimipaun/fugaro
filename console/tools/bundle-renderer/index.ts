@@ -858,10 +858,34 @@ export function consoleWorker(consoleRoot: string): { readonly source: string; r
   }
 }
 
-/** bundleWorker copies the worker verbatim, re-checking its destination as the
- * other writers do, so a link planted between `buildConsole`'s refusal pass and
- * this write is refused here rather than followed. */
+/** refuseMissingSource refuses the worker's source when it is not a file, in the
+ * shape the rest of this tool refuses in: a sentence rather than `readFileSync`'s
+ * bare `ENOENT`. The ordinary way this happens is a tree that has not run
+ * `npm ci` (the worker is copied out of the installed `elkjs` package), and the
+ * failure that matters is the *order*: without this refusal the build would stop
+ * with the missing input **after** `console.css` had been written, which is the
+ * half-a-bundle shape review M3 asked `buildConsole`'s pre-write pass to
+ * prevent. `bundleWorker` asks it again itself, one step before the bytes. */
+function refuseMissingSource(source: string): void {
+  let stats: Stats | undefined
+  try {
+    stats = lstatSync(source)
+  } catch {
+    stats = undefined
+  }
+  if (stats === undefined || !stats.isFile()) {
+    throw new BundleRefusal(
+      `${source} is not a file: this build copies elkjs's worker out of the installed package, so run npm ci in console/ first`,
+    )
+  }
+}
+
+/** bundleWorker copies the worker verbatim, re-checking its source and its
+ * destination as the other writers do, so a tree without the package or a link
+ * planted between `buildConsole`'s refusal pass and this write is refused here
+ * rather than followed. */
 export function bundleWorker(worker: { readonly source: string; readonly out: string }): void {
+  refuseMissingSource(worker.source)
   refuseSymlinkedOutput(worker.out)
   writeFileSync(worker.out, readFileSync(worker.source))
 }
@@ -900,8 +924,8 @@ export function consoleBundles(consoleRoot: string): readonly BundleOptions[] {
  * **The pre-write phase asks all of them, and not only the two the served root
  * owns** (review M4, left open by #701). The pair the directory owns
  * (`refuseSymlinkedDirectory`, `refuseForeignFilesIn`) was here; beside them
- * are now `refuseSymlinkedOutput` for **every name this build is about to
- * write** -- the stylesheet, each bundle, and each served document each bundle
+ * are now `refuseMissingSource` for the worker the build copies and
+ * `refuseSymlinkedOutput` for **every name this build is about to write** -- the stylesheet, each bundle, and each served document each bundle
  * copies -- and `moduleClosure` for each entry, whose walk is where a bare
  * specifier, a computed one and a module the build did not emit are refused. A
  * symlinked `dist/bundle/console.js`, a symlinked `dist/bundle/index.html` and a
@@ -942,6 +966,7 @@ export function buildConsole(consoleRoot: string): void {
 
   refuseSymlinkedDirectory(directory)
   refuseForeignFilesIn(directory, owned)
+  refuseMissingSource(worker.source)
   for (const output of outputs) refuseSymlinkedOutput(output)
   for (const bundle of bundles) moduleClosure(bundle.entry)
 

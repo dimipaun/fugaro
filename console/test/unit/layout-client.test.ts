@@ -24,6 +24,10 @@ class FakeWorker implements WorkerLike {
   answer(data: unknown): void {
     for (const listener of this.listeners.get('message') ?? []) listener({ data })
   }
+
+  fail(message: string): void {
+    for (const listener of this.listeners.get('error') ?? []) listener({ message })
+  }
 }
 
 const GRAPH: LayoutGraph = {
@@ -123,6 +127,82 @@ describe('the layout client', () => {
     const pending = layoutClient.layout(GRAPH)
     layoutClient.dispose()
     await expect(pending).rejects.toThrow(/disposed of/)
+    expect(worker.terminated).toBe(true)
+  })
+})
+
+describe('the replies it will not draw', () => {
+  // Every arm below is a shape a hostile, truncated or stale worker can take.
+  // The reconciliation makes "the renderer validates every reply (known ids,
+  // finite numbers)" one of GV2.2's security probes, so each refusal is a case
+  // rather than a line of code nothing exercises.
+  const refused: readonly (readonly [string, unknown, RegExp])[] = [
+    ['a node left unplaced', { ...PLACED, children: [PLACED.children[0]] }, /placed no b, which this layout asked about/],
+    ['a node placed twice', { ...PLACED, children: [PLACED.children[0], PLACED.children[0]] }, /answered about a twice/],
+    [
+      'an entry with no id',
+      { ...PLACED, children: [{ x: 0, y: 0, width: 1, height: 1 }, PLACED.children[1]] },
+      /with an entry that has no id/,
+    ],
+    ['children that are not a list', { ...PLACED, children: 'a' }, /answered without a position for every node/],
+    ['edges that are not a list', { ...PLACED, edges: {} }, /answered without a route for every edge/],
+    ['an edge left unrouted', { ...PLACED, edges: [] }, /placed no a->b, which this layout asked about/],
+    ['sections that are not a list', { ...PLACED, edges: [{ id: 'a->b', sections: 3 }] }, /sections that are not a list/],
+    [
+      'bend points that are not a list',
+      { ...PLACED, edges: [{ id: 'a->b', sections: [{ startPoint: { x: 0, y: 0 }, endPoint: { x: 0, y: 1 }, bendPoints: 7 }] }] },
+      /bendPoints as something that is not a list/,
+    ],
+    [
+      'a start point that is not a point',
+      { ...PLACED, edges: [{ id: 'a->b', sections: [{ startPoint: 5, endPoint: { x: 0, y: 1 } }] }] },
+      /startPoint as something that is not a point/,
+    ],
+    [
+      'a start point with no x',
+      { ...PLACED, edges: [{ id: 'a->b', sections: [{ startPoint: { y: 0 }, endPoint: { x: 0, y: 1 } }] }] },
+      /startPoint\.x = undefined, which is not a finite number/,
+    ],
+    ['data that is not a graph', 'nope', /answered without a graph/],
+    ['a width that is a string', { ...PLACED, children: [{ ...PLACED.children[0], width: '100' }, PLACED.children[1]] }, /a\.width = 100, which is not a finite number/],
+  ]
+
+  for (const [what, data, message] of refused) {
+    it(`refuses ${what}`, async () => {
+      const { worker, client: layoutClient } = client()
+      const pending = layoutClient.layout(GRAPH)
+      worker.answer({ id: 2, data })
+      await expect(pending).rejects.toThrow(message)
+    })
+  }
+
+  it('refuses an edge the engine routed no sections for, by drawing it straight', async () => {
+    // The one arm that is *not* a refusal: ELK omits `sections` for an edge it
+    // routes as a straight line, and the client draws it from the two points it
+    // has rather than inventing a route.
+    const { worker, client: layoutClient } = client()
+    const pending = layoutClient.layout(GRAPH)
+    worker.answer({
+      id: 2,
+      data: { ...PLACED, edges: [{ id: 'a->b', sections: [{ startPoint: { x: 0, y: 0 }, endPoint: { x: 0, y: 1 } }] }] },
+    })
+    await expect(pending).resolves.toMatchObject({ edges: [{ id: 'a->b' }] })
+  })
+
+  it('refuses a reply for a request this client never made', async () => {
+    const { worker, client: layoutClient } = client()
+    const pending = layoutClient.layout(GRAPH)
+    worker.answer('a string the worker had no business sending')
+    await expect(pending).rejects.toThrow(/answered id undefined, which this client did not ask about/)
+    expect(worker.terminated).toBe(true)
+  })
+
+  it("fails the layout when the worker's own error event fires", async () => {
+    const { worker, client: layoutClient } = client()
+    const pending = layoutClient.layout(GRAPH)
+    worker.fail('boom')
+    await expect(pending).rejects.toThrow(/the layout worker failed: boom/)
+    await expect(layoutClient.layout(GRAPH)).rejects.toThrow(/the layout worker failed: boom/)
     expect(worker.terminated).toBe(true)
   })
 })
