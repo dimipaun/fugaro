@@ -358,7 +358,7 @@ if [ "$dry_run" = 1 ]; then
 Dry run for $tag$name_suffix: every precondition above passed; $plugin_check_line.
 Nothing else was changed.
 Without --dry-run this would:
-  2. create $branch from main, bump the plugin to $version (scripts/bump-plugin-version.sh), record $version as the cli stream's current in docs/release-streams.yaml, commit "release: $tag", push it, open a PR to main, and enable squash auto-merge
+  2. create $branch from main, bump the plugin to $version (scripts/bump-plugin-version.sh), record $version as the cli stream's current in docs/release-streams.yaml (moving its next name when the release opens a new minor), commit "release: $tag", push it, open a PR to main, and enable squash auto-merge
   3. wait up to ${timeout_minutes}m for that PR to merge
   4. wait up to ${timeout_minutes}m for the merge commit's test, terraform, rules and console checks, and require them to pass (the release gate)
   5. ask to create and push the tag $tag
@@ -432,11 +432,11 @@ else
     # The catalogue's cli row moves with the release, in the release commit
     # itself: the file is what the graph draws and what the next release's floor
     # is read from, so it never describes a version that has shipped (GV1.5).
-    # `set` refuses a write that does not read back, so a commit carrying a
-    # catalogue this build cannot parse cannot be made. It writes `current`
-    # only: `next` is the name the next minor takes, so a release that opens a
-    # new minor is where the operator advances it (docs/release-streams.yaml's
-    # header; the release notes for a minor release are hand-written anyway).
+    # `set` writes both halves of the row -- `current`, and `next` moved on when
+    # the release opens a new minor, since `next` is the name the minor after the
+    # current one takes -- and refuses a write that does not read back, so a
+    # commit carrying a catalogue this build cannot parse, or one that names the
+    # release after it wrongly, cannot be made.
     $streams_cmd set cli "$version"
     git add -A
     git commit --quiet -m "release: $tag" -m "$commit_body"

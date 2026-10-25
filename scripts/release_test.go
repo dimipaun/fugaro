@@ -1066,6 +1066,30 @@ func TestReleaseBumpsStreamCurrent(t *testing.T) {
 	}
 }
 
+// TestReleaseMovesStreamNextOnANewMinor: the release that opens a new minor
+// spends the name the catalogue's `next` holds, so the same commit moves `next`
+// on to the name after it. `next` is the name the minor after the current one
+// takes, so a file left at current 0.12.0 with next Dolphin would contradict its
+// own header -- Dolphin is 0.12.0's own name -- and every later release would be
+// spoken one minor behind: 0.12.1 "Camel one", 0.13.0 "Dolphin".
+func TestReleaseMovesStreamNextOnANewMinor(t *testing.T) {
+	r := newReleaseRepo(t)
+	rewriteFixtureStreams(t, r, streamsFixtureReleased)
+	addReleaseNotes(t, r, "0.12.0")
+	g := newGHState(t, r, greenChecks())
+
+	res := runRelease(t, r, g, "", "0.12.0")
+
+	res.requireSuccess(t)
+	catalogue := testutil.Git(t, r.bare, "show", "main:docs/release-streams.yaml")
+	if !strings.Contains(catalogue, `current: "0.12.0"`) || !strings.Contains(catalogue, "next: Gecko") {
+		t.Errorf("0.12.0 opens a new minor, so the release commit should leave the cli row at current 0.12.0 with Gecko next:\n%s", catalogue)
+	}
+	if !strings.Contains(res.out, "name:    Dolphin") {
+		t.Errorf("0.12.0 is the minor Dolphin, so the release should be spoken with it, got:\n%s", res.out)
+	}
+}
+
 // TestReleaseRefusesACatalogueItCannotRead: the file the release takes its own
 // floor and its name from is repository-written, and the reader refuses one
 // that is not the catalogue -- here a cli row whose tag prefix is not `v`, a
