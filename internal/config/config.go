@@ -58,11 +58,20 @@ type Config struct {
 	Layer *ProjectLayer `yaml:"-" json:"-"`
 	// RepoRigor is the rigor: block the repository's own file wrote, before
 	// the project layer's defaults.rigor merged over it, nil when the file
-	// wrote none. Like Layer it is never part of the file or of SHA256, and
+	// wrote none or wrote an explicit null (`rigor:`, which decodes to a nil
+	// block). Like Layer it is never part of the file or of SHA256, and
 	// it exists because the project layer's area rules stay in effect beside
 	// the repository's rather than being replaced by them (D20c: the two
 	// lists are a union), which RigorConfig reads.
 	RepoRigor *Rigor `yaml:"-" json:"-"`
+	// RepoRigorSet is whether the repository's own file wrote the rigor: key
+	// at all, at any value: RepoRigor cannot answer for an explicit null, and
+	// the two questions are different ones — what the block says (RepoRigor,
+	// which RigorConfig reads) and whether the key is there (this, which the
+	// image-skew gates read, because a runner older than rigorSince decodes
+	// the file with KnownFields and refuses it on the key alone). Like
+	// RepoRigor it is never part of the file or of SHA256.
+	RepoRigorSet bool `yaml:"-" json:"-"`
 }
 
 // Rigor is fugaro.yaml's rigor: block and the project layer's defaults.rigor

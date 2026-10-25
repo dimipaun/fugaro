@@ -532,6 +532,12 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 					return launchResult{}, err
 				}
 			}
+			// The rigor: gate, judged on the file the run will read rather
+			// than on a task field: see checkRigorImage. Unconditional, since
+			// the repository's file alone can carry the key.
+			if err := checkCloneRigorImage(ctx, env, spec, warn); err != nil {
+				return launchResult{}, err
+			}
 			// The run's own rigor request, gated on the field the same way:
 			// a runner older than rigorRequestSince refuses a task carrying
 			// rigor or paths outright (task.Parse decodes with
@@ -571,6 +577,12 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 					"a job title (--title, kept by --pr follow-ups and --retry)", "the job title", "", warn); err != nil {
 					return launchResult{}, err
 				}
+			}
+			// The rigor: gate, judged on the file the run will read rather
+			// than on a task field: see checkRigorImage. Unconditional, since
+			// the repository's file alone can carry the key.
+			if err := checkRigorImage(ctx, env, slug, spec, kind, warn); err != nil {
+				return launchResult{}, err
 			}
 			// The same gate as the clone branch's above, and for the same
 			// reason: the request is a new task field, and a runner that
