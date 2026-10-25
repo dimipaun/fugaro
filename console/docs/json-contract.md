@@ -975,8 +975,9 @@ The document:
 
 | Key | Type | Absent | Null | Notes |
 | --- | --- | --- | --- | --- |
-| `schema_version` | number | never | never | `1` today; a document carrying another number is **refused**, not rendered |
+| `schema_version` | number | never | never | `1` or `2` today; a document carrying another number is **refused**, not rendered |
 | `plan` | string | never | never | the plan the artifact came from, as the artifact names it |
+| `stream` | string | **yes** | **yes** | the release stream the plan ships in: `cli`, `console` or `mobile` (GD7). Absent, or null, when the plan does not say — and **refused** when it names another. A **schema-2** field, so a v1 artifact carrying one is refused rather than read |
 | `nodes` | array | never | never | the tasks; `[]` is a plan with no tasks yet |
 | `edges` | array | never | never | the dependencies; `[]` is a plan with no dependencies yet |
 | `levels` | number | never | never | how many levels the plan has — the longest chain of dependencies plus one; `0` for a plan with no tasks |
@@ -990,7 +991,7 @@ one entry of `nodes`:
 | `id` | string | never | never | the planner's own name for the task; unique in the document |
 | `title` | string | never | never | what a person reads |
 | `run` | string | never | **yes** | the run this task belongs to; null when it belongs to none |
-| `version` | string | never | **yes** | the target version; null when the plan does not say |
+| `version` | string | never | **yes** | the target version; null when the plan does not say. In a **v2** artifact it is `MAJOR.MINOR` or `MAJOR.MINOR.PATCH` — `0.10`, or the patch box `0.10.1` a release such as 0.10.1 is — and anything else is **refused**; a v1 artifact's version is free text and is read as written |
 | `footprint` | object | never | never | the expected paths, below |
 | `level` | number | never | never | the longest chain of dependencies *ending* at this task: `0` for a task that waits on nothing, otherwise one more than the deepest task it waits for |
 | `done` | bool | never | never | the task is in the `--done` set the read was given. **A fact the caller stated, not one the CLI derived**: a finished run is not the same claim as a done task (see below) |
@@ -1064,12 +1065,22 @@ this, and they answer different halves: an older CLI has no `plan graph` at all,
 and a newer *planner* can write a `schema_version` the CLI refuses. The console
 shows the CLI's refusal sentence rather than a graph.
 
-**The computed fields are additive, and `schema_version` stays `1`.** They are
-fields of the *read's* document and not of the artifact: a graph artifact is
-still schema version 1 with the artifact's own field set — the nine computed
-keys above are not among them, and a planner that wrote one would be refused by
-name — so what a planner writes and what an older CLI accepts are unchanged, and
-`--done` is a flag on the read rather than a field a planner writes. A console built before
+**Two schema versions are read, and the older one is not a second dialect.**
+Schema **2** added the document's `stream` and the shape a node's `version` has;
+schema **1** is a plan written before them, and it stays a document this build
+renders — its `version` is the planner's own words and is read as written,
+because the shape is the newer schema's promise rather than a retroactive one. A
+v1 artifact carrying a `stream`, or a v2 artifact whose `version` is not
+`MAJOR.MINOR[.PATCH]`, is **refused** rather than read with the difference
+dropped: a file and a read that disagree about which stream a plan ships in is
+worse than a refusal. A **3** is a graph from a newer planner, and it is the
+refusal the version number exists for.
+
+**The computed fields are additive, and they are not the artifact's.** They are
+fields of the *read's* document and not of the artifact: the artifact carries the
+field set above and nothing else — the nine computed keys are not among them, and
+a planner that wrote one would be refused by name — so `--done` is a flag on the
+read rather than a field a planner writes. A console built before
 these keys existed ignores them and draws the graph it drew before; a console
 built after them must not require them of a CLI that predates them — an older
 CLI's document has no `level`, no `ready` and no `critical_path`, and that
