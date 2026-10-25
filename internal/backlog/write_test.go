@@ -212,6 +212,139 @@ func TestWriteRefusesAFilingItCannotRender(t *testing.T) {
 	}
 }
 
+// closeFolder is one open item in a folder of its own, with a snapshot of the
+// two files a close can touch: what a refused close has to leave exactly as it
+// was.
+func closeFolder(t *testing.T) (dir string, item Item, snapshot func() (string, string)) {
+	t.Helper()
+	dir = filepath.Join(t.TempDir(), Dir)
+	item, err := Write(dir, newItem("Review round 2 left 3 findings open"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot = func() (string, string) {
+		t.Helper()
+		doc, err := os.ReadFile(item.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		index, err := os.ReadFile(filepath.Join(dir, IndexName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(doc), string(index)
+	}
+	return dir, item, snapshot
+}
+
+// TestCloseFlipsTheStatusAndNamesWhatClosedIt: D31's close, as the folder
+// writes it (plan T4.7): the status flips to `closed`, the `## Closed by`
+// section names the pull request that fixed the item, and the index is
+// regenerated in the same write — so the commit that flips an item is the
+// commit that moves its row, which is the state the folder's own guards read
+// (D28, D31). The filer's own words are left as they were: closing an item
+// adds to somebody's account of what was left open rather than rewriting it.
+func TestCloseFlipsTheStatusAndNamesWhatClosedIt(t *testing.T) {
+	dir, item, _ := closeFolder(t)
+	closed, err := Close(dir, item.ID, "#412")
+	if err != nil {
+		t.Fatalf("closing %s: %v", item.ID, err)
+	}
+	if closed.Status != "closed" {
+		t.Errorf("status = %q, want closed (D31)", closed.Status)
+	}
+	if closed.ID != item.ID || closed.Title != item.Title || closed.Path != item.Path {
+		t.Errorf("closing changed the item's identity: %+v, want %s's own fields", closed, item.ID)
+	}
+	// What is returned is the file as the folder reads it, not the struct the
+	// close built: the two cannot drift apart.
+	doc, err := os.ReadFile(item.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := Parse(item.Path, doc)
+	if err != nil {
+		t.Fatalf("what Close wrote is not an item the folder accepts: %v\n%s", err, doc)
+	}
+	if back != closed {
+		t.Errorf("Close returned %+v, but the file reads as %+v", closed, back)
+	}
+	if !strings.Contains(string(doc), "## What was left open") || !strings.Contains(string(doc), "the round's findings") {
+		t.Errorf("closing rewrote the item's own body:\n%s", doc)
+	}
+	if !strings.Contains(string(doc), "## Closed by") || !strings.Contains(string(doc), "#412") {
+		t.Errorf("the item does not name the pull request that closed it:\n%s", doc)
+	}
+	// D28's regenerate-and-compare: the index is what the items beside it
+	// render to, and a flipped status moves the row and the count line with it.
+	index, err := os.ReadFile(filepath.Join(dir, IndexName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(index) != Render(items) {
+		t.Errorf("%s is not what the items beside it render to: closing regenerates the index in the same write (D28)", IndexName)
+	}
+	if !strings.Contains(string(index), "1 item: 0 open, 1 closed, 0 dropped.") {
+		t.Errorf("the index does not state the flipped status:\n%s", index)
+	}
+}
+
+// TestCloseRefusesWhatItCannotClose: a close is a step of the run that fixed an
+// item, so an id the folder does not hold, an item that is not open and a
+// section that names no pull request are all refused, and a refused close
+// leaves the folder byte-for-byte as it was — a second close would append a
+// second section to a status that already says what closed it, and a section
+// naming no pull request is the item the folder's pin refuses (D31).
+func TestCloseRefusesWhatItCannotClose(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		id   string
+		by   string
+		want string
+	}{
+		{"an id the folder does not hold", "20261024-09", "#412", "20261024-09"},
+		{"a closing that names no pull request", "20261024-01", "fixed, thanks", "pull request"},
+		{"a closing that names nothing", "20261024-01", "", "pull request"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, _, snapshot := closeFolder(t)
+			beforeItem, beforeIndex := snapshot()
+			if _, err := Close(dir, tc.id, tc.by); err == nil {
+				t.Fatal("the close was accepted")
+			} else if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal does not name %q: %v", tc.want, err)
+			}
+			if afterItem, afterIndex := snapshot(); afterItem != beforeItem || afterIndex != beforeIndex {
+				t.Errorf("a refused close rewrote the folder:\nitem:\n%s\nindex:\n%s", afterItem, afterIndex)
+			}
+		})
+	}
+
+	t.Run("an item that is already closed", func(t *testing.T) {
+		dir, item, snapshot := closeFolder(t)
+		if _, err := Close(dir, item.ID, "#412"); err != nil {
+			t.Fatal(err)
+		}
+		beforeItem, beforeIndex := snapshot()
+		if _, err := Close(dir, item.ID, "#413"); err == nil {
+			t.Fatal("an item that is already closed was closed again")
+		} else if !strings.Contains(err.Error(), "closed") {
+			t.Errorf("the refusal does not say the item is closed: %v", err)
+		}
+		afterItem, afterIndex := snapshot()
+		if afterItem != beforeItem || afterIndex != beforeIndex {
+			t.Errorf("a second close rewrote the folder:\nitem:\n%s\nindex:\n%s", afterItem, afterIndex)
+		}
+		if strings.Contains(afterItem, "#413") {
+			t.Errorf("the second close's pull request reached the item:\n%s", afterItem)
+		}
+	})
+}
+
 // TestSlugIsLowerKebabWordsFromTheTitle: the slug is the part of the file name a
 // reader reads, and D26's rule is lower-kebab words.
 func TestSlugIsLowerKebabWordsFromTheTitle(t *testing.T) {

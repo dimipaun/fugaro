@@ -63,6 +63,21 @@ func TestAreaValidateRefuses(t *testing.T) {
 	}
 }
 
+// TestAreaValidateRefusesAWhitespaceOnlyMatch: a match of spaces is the
+// missing-match mistake written with a space bar, and doublestar accepts it —
+// the pattern is a legal glob that matches nothing a repository holds. So the
+// one rule that can refuse it is this one, and it refuses it as a missing
+// match rather than as a bad glob: what the rule needs is a pattern, and a
+// value with no pattern in it is the same mistake as an empty one (D20c).
+func TestAreaValidateRefusesAWhitespaceOnlyMatch(t *testing.T) {
+	for _, match := range []string{" ", "   ", "\t", " \t "} {
+		msg := Area{Name: "payments", Match: match, Mode: Pro}.Validate()
+		if !strings.HasPrefix(msg, "must have a match") {
+			t.Errorf("Area{Match: %q}.Validate() = %q; want the missing-match refusal, not the glob one", match, msg)
+		}
+	}
+}
+
 // TestAreaValidateSaysWhyTheNameIsRequired pins the distinct refusal for a
 // rule that wrote no name at all. It is not the shape message: a missing name
 // is refused for the reason the name exists — it is what names the rule to

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -309,9 +310,16 @@ type run struct {
 	rigorCfg rigor.Config
 	rigorRev string
 	// filedFrom is the commit finalize's backlog filing was committed on
-	// top of, "" when the run filed nothing: the report names it as the
-	// commit the suite ran on (report.go's testsLine).
+	// top of, "" when the run wrote no item at all: the report names it as
+	// the commit the suite ran on (report.go's testsLine).
 	filedFrom string
+	// closedBacklog is the ids of the backlog items this run closed as the
+	// follow-up that fixed them (D31, plan T4.7), in the order it closed
+	// them: the pull request body's status section names them beside the
+	// ids it filed. It is not a record field: the record's own Backlog is
+	// what the run *filed*, and a reader of the branch has the closed
+	// items themselves, whose `## Closed by` names this run's pull request.
+	closedBacklog []string
 	// ckpt is the checkpoint pushes' state (checkpoint.go).
 	ckpt checkpointState
 	// skipPR is set when the check gate already ended the run (clean, or an
@@ -2826,19 +2834,22 @@ func openFindings(rs []runstore.ReviewSummary) *runstore.ReviewSummary {
 	return last
 }
 
-// fileOpenItems files the backlog items for what this run left open and says
-// whether it filed any (docs/rigor-modes/implementation-plan.md T4.5, T4.6,
-// D9, D26, D27, D30). They go into this run's own checkout and one commit of
-// their own — the same branch and the same pull request as the change they
-// were filed from, so the filing dirties nothing a reviewer was not already
-// reading (D9) — and their ids are recorded beside the round they came from.
+// fileOpenItems writes this run's backlog items and closes the ones it fixed,
+// and says whether it wrote anything (docs/rigor-modes/implementation-plan.md
+// T4.5, T4.6, T4.7, D9, D26, D27, D30, D31). What it writes goes into this
+// run's own checkout and one commit of its own — the same branch and the same
+// pull request as the change they belong to, so the writing dirties nothing a
+// reviewer was not already reading (D9) — and the ids it filed are recorded
+// beside the round they came from.
 //
-// Whether a run files at all is first the repository's opt-in — a rigor:
+// Whether a run writes at all is first the repository's opt-in — a rigor:
 // block, or a project-layer rigor default (rigor.Config.Configured) — and then
-// D30's per-mode table, read from internal/rigor (T4.6): a mode whose row files nothing of its own leaves the branch exactly
-// as it was, so a Critical run's tree and pull request body are the ones main
-// produces. The table is asked rather than compared here, so a mode that files
-// differently is a row in that package and not a branch in this one.
+// D30's per-mode table, read from internal/rigor (T4.6): a mode whose row files
+// nothing of its own leaves the branch exactly as it was, so a Critical run's
+// tree and pull request body are the ones main produces. That gate covers the
+// closing too: the close is the same commit as a filing, and a mode with no row
+// has no such commit. The table is asked rather than compared here, so a mode
+// that files differently is a row in that package and not a branch in this one.
 //
 // A row carries two independent things a run can owe — the findings it
 // tolerated and, for Hotfix alone, the fix it deferred (D30, D15) — and a run
@@ -2847,13 +2858,23 @@ func openFindings(rs []runstore.ReviewSummary) *runstore.ReviewSummary {
 // them would drop the other exactly where the run has least to show for
 // itself.
 //
+// A follow-up on a pull request is the other half of D31: the run that fixes an
+// item is the run that closes it, so a follow-up whose own review shipped
+// closes the items an earlier run on the same pull request filed for a round it
+// answered (openRoundItems). Closing is the whole of what a follow-up does
+// about an item that is already open: what a run files is D30's table and
+// nothing else — one item per tolerated finding — so a follow-up that also left
+// findings open files its own round's item beside the earlier one rather than
+// suppressing it, and the pull request's status section says which ids this run
+// filed and which it closed.
+//
 // The item is written before the run's diff is what a reviewer reads and
 // after the record's own ChangedFiles was measured, so the item file is
 // deliberately not part of "the paths this run changed" (D22's third moment
 // reads that field, and an item about the run must not move the mode the run
 // resolved).
 //
-// A filing that cannot be made is a warning, never the run's outcome: the
+// A write that cannot be made is a warning, never the run's outcome: the
 // pull request, the report and the record are what the run is for, and an
 // item that could not be written costs a follow-up, not the run.
 //
@@ -2879,6 +2900,10 @@ func (r *run) fileOpenItems(ctx context.Context) bool {
 		return false
 	}
 	open := openFindings(r.rec.Reviews)
+	// The items an earlier run on this pull request filed for a round and the
+	// folder still holds open: this run's checkout carries them, because a run
+	// writes into its own branch and a follow-up starts from that branch (D9).
+	earlier := r.openRoundItems(ctx)
 	// The deferral leads: it is the mode's own substance rather than a
 	// review's residue, so it takes the day's first id.
 	var owed []backlog.New
@@ -2887,29 +2912,195 @@ func (r *run) fileOpenItems(ctx context.Context) bool {
 		owed = append(owed, r.filedItem(nil))
 		what = append(what, "the follow-up this hotfix deferred")
 	}
+	// One item per tolerated finding, whatever the pull request already
+	// carries (D30): a follow-up that left findings open is handing over a
+	// round of its own, and an item open for an earlier run's round is not a
+	// reason to leave this one with nothing. Round numbers restart per run, so
+	// a later run cannot tell an earlier item's round from its own and could
+	// not dedup on it; suppressing the filing while any item on the pull
+	// request is open would instead lose a finding for good the moment that
+	// item is closed (implementation-plan §7 Q5, Q8).
 	if open != nil && files.Tolerated {
 		owed = append(owed, r.filedItem(open))
 		what = append(what, fmt.Sprintf("what review round %d left open", open.Round))
 	}
-	if len(owed) == 0 {
+	// What this run fixed: a follow-up whose review shipped answered the round
+	// an earlier run left open, so those items are closed here, in the same
+	// commit as anything this run files (D31).
+	var closing []string
+	if r.shippedItsRound() {
+		closing = earlier
+	}
+	if len(owed) == 0 && len(closing) == 0 {
 		return false
 	}
+	dir := filepath.Join(r.repo.Dir, backlog.Dir)
 	ids := make([]string, 0, len(owed))
 	for _, n := range owed {
-		item, err := backlog.Write(filepath.Join(r.repo.Dir, backlog.Dir), n)
+		item, err := backlog.Write(dir, n)
 		if err != nil {
 			r.d.Log.Warn("filing the run's open items failed", "err", r.redact(err.Error()))
 			return false
 		}
 		ids = append(ids, item.ID)
 	}
-	msg := fmt.Sprintf("fugaro: file %s, %s", strings.Join(ids, " and "), strings.Join(what, " and "))
-	if _, err := r.repo.CommitAll(ctx, msg); err != nil {
-		r.d.Log.Warn("committing the filed items failed", "err", r.redact(err.Error()))
+	// A close that cannot be made is a warning per item rather than the end of
+	// the sweep: the items of one pull request are independent, and one the
+	// folder refuses must not leave the others open.
+	closed := make([]string, 0, len(closing))
+	for _, id := range closing {
+		if _, err := backlog.Close(dir, id, r.pullRequestRef()); err != nil {
+			r.d.Log.Warn("closing the item this run fixed failed", "item", id, "err", r.redact(err.Error()))
+			continue
+		}
+		closed = append(closed, id)
+	}
+	if len(ids) == 0 && len(closed) == 0 {
+		return false
+	}
+	if _, err := r.repo.CommitAll(ctx, backlogCommit(ids, what, closed)); err != nil {
+		r.d.Log.Warn("committing the run's backlog items failed", "err", r.redact(err.Error()))
 		return false
 	}
 	r.rec.Backlog = append(r.rec.Backlog, ids...)
+	r.closedBacklog = append(r.closedBacklog, closed...)
 	return true
+}
+
+// maxRunsOnOnePR bounds the walk back through the runs of one pull request
+// (roundItemIDs). A chain longer than this is a loop or a pull request nothing
+// else bounds; the walk stops either way, and what it has read is what the run
+// acts on.
+const maxRunsOnOnePR = 20
+
+// openRoundItems is the ids an earlier run on this run's pull request filed for
+// a review round, as the items this run's own checkout holds them and only
+// while the folder still holds them open: the items D31's follow-up closes when
+// its own review shipped.
+//
+// The checkout is the only place the statuses are read: an item is closed on
+// the branch of the run that fixed it, so the folder a follow-up starts from
+// carries the closes made before it (D9, D31). A folder that is not there holds
+// none — the items have not reached this checkout — and the run then files what
+// it owes rather than closing something it cannot see: a finding that
+// disappears is the failure this feature risks (the plan's §7.5).
+func (r *run) openRoundItems(ctx context.Context) []string {
+	ids := r.roundItemsOnThisPR(ctx)
+	if len(ids) == 0 {
+		return nil
+	}
+	items, err := backlog.Load(filepath.Join(r.repo.Dir, backlog.Dir))
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			r.d.Log.Warn("reading the backlog folder failed; the run closes nothing and files its own round", "err", r.redact(err.Error()))
+		}
+		return nil
+	}
+	open := map[string]bool{}
+	for _, it := range items {
+		if it.Status == "open" {
+			open[it.ID] = true
+		}
+	}
+	var out []string
+	for _, id := range ids {
+		if open[id] {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// roundItemsOnThisPR walks the run chain this follow-up hangs off — its
+// previous run, and the runs before that while each record names one on this
+// pull request (runstore.Record.FollowUp) — and collects the ids each run on
+// the pull request filed for a review round. The chain is what makes "the same
+// pull request" a fact rather than a guess: a record names the pull request it
+// ran on and the run it followed, so the walk stops at the first run that was
+// not on this one. A run's own record carries the ids it filed
+// (runstore.Record.Backlog), which is what keeps this a read of what was filed
+// rather than a reading of the item files' titles.
+//
+// A chain whose records cannot be read ends the walk where it is: what was read
+// is what the run acts on, and an unreadable record is a warning rather than a
+// refusal, like every other read on this path. A record that names a previous
+// run that is not a run id ends it too, before that id names an object
+// (runstore.Store.Sibling's own rule for its callers).
+func (r *run) roundItemsOnThisPR(ctx context.Context) []string {
+	pr, id := r.spec.PR, r.spec.PreviousRun
+	if pr == 0 || id == "" || r.d.Store == nil {
+		return nil
+	}
+	var ids []string
+	seen := map[string]bool{}
+	for id != "" && !seen[id] && len(seen) < maxRunsOnOnePR {
+		if !task.ValidRunID(id) {
+			r.d.Log.Warn("a record names a previous run that is not a run id; the runs behind it are not read", "run", r.redact(id))
+			return ids
+		}
+		seen[id] = true
+		rec, err := r.d.Store.Sibling(id).ReadRecord(ctx)
+		if err != nil {
+			r.d.Log.Warn("an earlier run on this pull request has no readable record; the runs behind it are not read", "run", id, "err", r.redact(err.Error()))
+			return ids
+		}
+		if rec.PR == nil || rec.PR.Number != pr {
+			return ids
+		}
+		ids = append(ids, roundItemIDs(rec)...)
+		if rec.FollowUp == nil {
+			return ids
+		}
+		id = rec.FollowUp.PreviousRun
+	}
+	return ids
+}
+
+// roundItemIDs is the ids one run filed for a review round: what its record
+// carries, less the deferral a hotfix's row files first (D30, fileOpenItems).
+// A record whose last senior review left nothing open filed no round item, so
+// whatever it filed — a hotfix's deferral alone — is not one, and a deferral is
+// never closed by a follow-up that merely shipped its review: the run that
+// revisits the area at its normal mode is the one that answers it (D30, D15).
+func roundItemIDs(rec *runstore.Record) []string {
+	if openFindings(rec.Reviews) == nil {
+		return nil
+	}
+	if rec.Rigor != nil && rigor.Files(rec.Rigor.Mode).Deferred && len(rec.Backlog) > 0 {
+		return rec.Backlog[1:]
+	}
+	return rec.Backlog
+}
+
+// shippedItsRound reports whether this run answered the round it was handed: it
+// is a follow-up whose last senior review shipped. A run that left findings open
+// did not fix them, and a run that never reached a senior review — one that died
+// before review — fixed nothing, however empty its record's review list looks.
+func (r *run) shippedItsRound() bool {
+	if r.spec.PR == 0 || r.spec.PreviousRun == "" {
+		return false
+	}
+	last := seniorReview(r.rec.Reviews)
+	return last != nil && last.Verdict == "ship"
+}
+
+// pullRequestRef is the pull request this run is on, as D31's `## Closed by`
+// section names one. Only a follow-up reaches it: an item is closed by the
+// follow-up that fixed it, and a follow-up is the run whose spec names a pull
+// request.
+func (r *run) pullRequestRef() string { return fmt.Sprintf("#%d", r.spec.PR) }
+
+// backlogCommit is the one commit message the run's backlog writes go into:
+// what it filed and what it closed, each named by id.
+func backlogCommit(ids, what, closed []string) string {
+	var parts []string
+	if len(ids) > 0 {
+		parts = append(parts, fmt.Sprintf("file %s, %s", strings.Join(ids, " and "), strings.Join(what, " and ")))
+	}
+	if len(closed) > 0 {
+		parts = append(parts, fmt.Sprintf("close %s, fixed by this pull request", strings.Join(closed, " and ")))
+	}
+	return "fugaro: " + strings.Join(parts, "; ")
 }
 
 // filedItem is one item this run files: the round it left open when the mode's

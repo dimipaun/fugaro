@@ -2,6 +2,7 @@ package config
 
 import (
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/pricing"
@@ -87,10 +88,24 @@ var RigorBudgetFractions = map[rigor.Mode]float64{
 // applied — a floor that is only asserted is a floor a mode's fraction can go
 // under (D16, plan T6.1).
 //
-// A deployed cap below the floor is the one case it cannot answer for: the
-// ceiling is the ceiling, so a run there gets the whole cap, and a deployment
-// that low is under one stage's lease whatever mode a run is at.
-var RigorBudgetFloorUSD = RigorBudgetStageFloorUSD * float64(smokeStages())
+// A deployed cap below the floor is the one case it cannot answer for, and it
+// is answered by saying so rather than by enforcing it: the ceiling is the
+// ceiling, so a run there gets the whole cap — a mode raising it would be a
+// mode raising the owner's ceiling (F15) — and a deployment that low is under
+// one stage's lease whatever mode a run is at
+// (TestRigorBudgetFloorCannotLiftATinyCap).
+//
+// It is a function and not a value because computing it parses the whole
+// recipe catalog (smokeStages), and this package is imported by every CLI
+// command: a package-level initializer made `fugaro version` parse the catalog
+// too. The read is memoized, so the catalog is parsed once, on the first run
+// that asks for a cap.
+func RigorBudgetFloorUSD() float64 { return rigorBudgetFloor() }
+
+// rigorBudgetFloor memoizes the floor above.
+var rigorBudgetFloor = sync.OnceValue(func() float64 {
+	return RigorBudgetStageFloorUSD * float64(smokeStages())
+})
 
 // smokeStages is the model stages the smallest run the built-in recipe
 // catalog ships can start, at the knobs' defaults: the smallest
@@ -149,7 +164,7 @@ func RigorBudgetCap(m rigor.Mode, deployed pricing.Micros) pricing.Micros {
 	if err != nil || scaled <= 0 {
 		return deployed
 	}
-	if floor, err := pricing.FromUSD(RigorBudgetFloorUSD); err == nil {
+	if floor, err := pricing.FromUSD(RigorBudgetFloorUSD()); err == nil {
 		scaled = max(scaled, floor)
 	}
 	return min(scaled, deployed)

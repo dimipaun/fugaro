@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"time"
 )
@@ -80,6 +81,28 @@ var (
 	// that says only "somebody was here" is a record the view has to read and
 	// then discard, and it would collide with the next such report.
 	ErrNothingDeclared = errors.New("an intent report must declare something: the branch, the release, a file or a service the caller is about to touch")
+	// ErrIntentTooLarge refuses a report whose text is longer than a record
+	// the coordinator holds. A declaration is a handful of names — a branch, a
+	// release, a few paths and services — and the caller writes all of it: a
+	// report that carried a megabyte of text would be a document every reader
+	// of the view has to fetch and render, written by anybody who can reach
+	// the report path, and the ID that makes it idempotent would not collide
+	// with anything (P4's review, the size half of the follow-up).
+	ErrIntentTooLarge = fmt.Errorf("an intent report must be a declaration and not a document: at most %d characters in one name, %d names in one list and %d characters of text in all (branch, release, files and services)", maxIntentName, maxIntentNames, maxIntentText)
+)
+
+// The bounds ErrIntentTooLarge names, and why they are what they are. They
+// are generous for what a declaration is and small enough that a record is a
+// record: a branch name GitHub accepts is at most 255 characters and a path
+// in a tree is bounded by the filesystem, so maxIntentName holds a real name
+// with room to spare, and maxIntentText is far below anything that would make
+// one document a burden to read. They are a ceiling on the CALLER's own text
+// and nothing else: the record's ID is a hash, so a refused report costs one
+// error and writes nothing.
+const (
+	maxIntentName  = 512
+	maxIntentNames = 100
+	maxIntentText  = 8192
 )
 
 // Normalise returns the declaration as the report path records it: the file
@@ -99,14 +122,37 @@ func (in Intent) Normalise() Intent {
 }
 
 // Validate refuses a report the coordinator could not hold: one from a caller
-// it cannot name, and one that declares nothing. It is called on the
-// normalised record, so a branch naming a release counts as the release too.
+// it cannot name, one that declares nothing, and one too large to be a
+// declaration (ErrIntentTooLarge). It is called on the normalised record, so
+// a branch naming a release counts as the release too, and so the bounds are
+// checked over the lists as the record holds them — sorted and deduplicated —
+// rather than over what the caller happened to pass.
 func (in Intent) Validate() error {
 	switch {
 	case in.DeclaredBy == "":
 		return ErrUnnamedCaller
 	case in.Branch == "" && in.Release == "" && len(in.Files) == 0 && len(in.Services) == 0:
 		return ErrNothingDeclared
+	}
+	return in.checkSize()
+}
+
+// checkSize refuses a declaration longer than a record the coordinator holds.
+// Every string here is the caller's own, which is why the ceiling is checked
+// on the record's own fields rather than trusted to whatever wrote them.
+func (in Intent) checkSize() error {
+	if len(in.Files) > maxIntentNames || len(in.Services) > maxIntentNames {
+		return ErrIntentTooLarge
+	}
+	total := 0
+	for _, text := range append([]string{in.DeclaredBy, in.Branch, in.Release}, append(in.Files, in.Services...)...) {
+		if len(text) > maxIntentName {
+			return ErrIntentTooLarge
+		}
+		total += len(text)
+	}
+	if total > maxIntentText {
+		return ErrIntentTooLarge
 	}
 	return nil
 }

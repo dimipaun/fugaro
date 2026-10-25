@@ -4,6 +4,7 @@ import (
 	"errors"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -207,6 +208,62 @@ func TestReportReadsNothingBack(t *testing.T) {
 	// goes through, and mints no credential of its own.
 	if !reflect.TypeOf(&Store{}).Implements(w) {
 		t.Error("Store is not a Writer: the report path does not write through the coordinator's own store")
+	}
+}
+
+// TestReportRefusesADeclarationLongerThanARecord is P4's review follow-up, the
+// size half of it: a declaration is a handful of names, and the caller writes
+// every one of them, so the report path refuses a report that is a document.
+// The refusal is checked on the record's own fields, after Normalise, which is
+// why the list bound is asserted over a caller who passed the same name a
+// hundred and one times rather than over a caller who passed a long list of
+// distinct ones: dedup runs first, and a hundred and one copies of one path
+// are one path, not a hundred and one.
+//
+// Hand mutation this fails on: dropping checkSize from Validate (all four
+// reports are written, and the fake holds one document per declaration).
+func TestReportRefusesADeclarationLongerThanARecord(t *testing.T) {
+	r, f := testReporter(t)
+	ctx := testCtx(t)
+	slug := "acme-webapp"
+	long := strings.Repeat("a", maxIntentName+1)
+	many := make([]string, 0, maxIntentNames+1)
+	for i := 0; i <= maxIntentNames; i++ {
+		many = append(many, "internal/coordinator/p"+strconv.Itoa(i)+".go")
+	}
+	// One name over the per-name bound, one list over the per-list bound, and
+	// names that are each legal but together say more than a record holds. The
+	// long list's entries differ in their last digits on purpose: Normalise
+	// deduplicates, so eighteen copies of one name would be one name.
+	tooMuchText := make([]string, 0, maxIntentText/maxIntentName+2)
+	for i := 0; i <= maxIntentText/maxIntentName+1; i++ {
+		suffix := strconv.Itoa(i)
+		tooMuchText = append(tooMuchText, strings.Repeat("b", maxIntentName-len(suffix))+suffix)
+	}
+	for _, c := range []struct {
+		name string
+		in   Intent
+	}{
+		{"a branch longer than one name", Intent{DeclaredBy: "someone@example.com", Branch: long}},
+		{"more files than one record holds", Intent{DeclaredBy: "someone@example.com", Files: many}},
+		{"more text than one record holds", Intent{DeclaredBy: "someone@example.com", Files: tooMuchText}},
+		{"a caller whose own name is over the bound", Intent{DeclaredBy: long, Branch: "main"}},
+	} {
+		if _, path, err := r.Report(ctx, slug, c.in); !errors.Is(err, ErrIntentTooLarge) {
+			t.Errorf("%s = %v, want ErrIntentTooLarge", c.name, err)
+		} else if path != "" {
+			t.Errorf("%s was refused and still returned the path %q", c.name, path)
+		}
+	}
+	if v := f.Value(PathIntents(slug)); v != nil {
+		t.Errorf("a refused report wrote %v", v)
+	}
+	// And a declaration that is at the bounds, not over them, is written: the
+	// ceiling is a ceiling and not a target, and a report path that refused a
+	// real branch name would be worse than the one this bound replaced.
+	at := Intent{DeclaredBy: "someone@example.com", Branch: strings.Repeat("c", maxIntentName)}
+	if _, _, err := r.Report(ctx, slug, at); err != nil {
+		t.Errorf("a declaration exactly at the per-name bound = %v, want it written", err)
 	}
 }
 

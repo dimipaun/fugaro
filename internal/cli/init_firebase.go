@@ -78,6 +78,46 @@ func (r *initRun) historyJob(ctx context.Context, c *infra.Clients, lc *localcfg
 	return spec, nil
 }
 
+// coordinatorJob completes the installation spec's aggregation job: it is
+// deployed only when the Firebase root's outputs are known (they go into its
+// environment), its image exists and a GitHub App ID is recorded — the sweep
+// mints its own read-only installation token from the App, so a job deployed
+// without one would fail every tick it ran. Otherwise the installation keeps
+// the coordinator's account alone, which is what the Firebase root's grant
+// needs, and a job that is already there is kept by the next run that has all
+// three.
+//
+// A missing image is not said here: it is the history job's own image
+// (infra.Coordinator's spec takes HistoryImage), and historyJob's warning
+// names it once per run.
+func (r *initRun) coordinatorJob(ctx context.Context, c *infra.Clients, lc *localcfg.Config, spec infra.InstallationSpec) (infra.InstallationSpec, error) {
+	if spec.Coordinator == nil {
+		return spec, nil
+	}
+	cs := *spec.Coordinator
+	if r.fb != nil {
+		cs.FirebaseProject, cs.RTDBURL = r.fb.FirebaseProject, r.fb.RTDBURL
+	}
+	cs.DeployJob = false
+	switch {
+	case cs.FirebaseProject == "" || cs.RTDBURL == "" || len(cs.Repos) == 0:
+		// Nothing to reconcile, or nowhere to write it: the account alone.
+	case cs.GitHubAppID == "":
+		if !r.coordinatorNoted {
+			r.coordinatorNoted = true
+			r.warn("the coordinator's aggregation job is not deployed: the local config records no GitHub App ID, and the sweep reads every repository through a token minted from one. Onboarding a GitHub repository records it (fugaro update --repo <owner/name> --github-app-id <id>), and the next fugaro update --firebase-project deploys the job.")
+		}
+	default:
+		ok, err := infra.CoordinatorImageExists(ctx, c, lc, cs)
+		if err != nil {
+			return spec, initErr(err)
+		}
+		cs.DeployJob = ok
+	}
+	spec.Coordinator = &cs
+	return spec, nil
+}
+
 // applyRoot plans, shows, guards and (once confirmed) applies the root t
 // runs, which is not the installation (installRoot does that). what says
 // where; stop means --plan-only ended the run.
@@ -214,6 +254,15 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	if outs.HistoryServiceAccount == "" {
 		return remote(errors.New("the installation has no history account in its outputs; the first apply did not create it"))
 	}
+	// The coordinator's account is created by that same apply on an
+	// installation whose owner opted in (P5), and the Firebase root below
+	// grants it the FP's database admin: with no output to name it, that
+	// grant would be planned for an account that may not exist, and IAM
+	// refuses a member it cannot find. Without the opt-in there is no account
+	// and no grant, and nothing to check.
+	if spec.Coordinator != nil && outs.CoordinatorServiceAccount == "" {
+		return remote(errors.New("the installation has no coordinator account in its outputs; the first apply did not create it"))
+	}
 
 	// 2. The Firebase root.
 	fdir, err := infra.FirebaseWorkdir(os.Getenv, lc.GCPProject)
@@ -224,7 +273,7 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	if err != nil {
 		return err
 	}
-	fspec, err := infra.Firebase(spec, infra.FirebaseInputs{FP: fp, Admins: admins, BudgetAdmins: r.budgetAdmins(lc), HistoryAccount: outs.HistoryServiceAccount})
+	fspec, err := infra.Firebase(spec, infra.FirebaseInputs{FP: fp, Admins: admins, BudgetAdmins: r.budgetAdmins(lc), HistoryAccount: outs.HistoryServiceAccount, CoordinatorAccount: outs.CoordinatorServiceAccount})
 	if err != nil {
 		return initErr(err)
 	}

@@ -16,17 +16,24 @@ package runner
 // injected (filedRunAt).
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"gocloud.dev/blob/memblob"
 
 	"github.com/dimipaun/fugaro/internal/backlog"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -42,6 +49,7 @@ var openRound = runstore.ReviewSummary{Round: 2, Tier: runstore.TierSenior, Verd
 // is a repository that configures no rigor at all, which is D19's case.
 func modeBase(t *testing.T, block string) string {
 	t.Helper()
+	testutil.IsolateGit(t)
 	const head = "version: 1\nproject: aurora\ngit: { provider: github }\n"
 	const tail = "workflows:\n  server: { commands: { build: make, test: make test } }\n"
 	return testutil.NewRemote(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": head + block + tail})
@@ -306,6 +314,427 @@ func TestHotfixFilesItsFollowUpItemAlways(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// followUpAt is the follow-up a case below runs: the same checkout as first —
+// the branch the earlier run pushed, with the item it filed already committed
+// on it — a record naming first as its previous run, and a store in which
+// first's own record is readable, which is where this run reads what an earlier
+// run on its pull request filed (runstore.Record.Backlog, Record.FollowUp).
+//
+// The run is given work of its own under the same area rule the fixture
+// declares, so it resolves the same mode the earlier run did: a run with no
+// work resolves its mode from no path at all (D22's third moment), and these
+// cases are about what a follow-up writes rather than about what it reached.
+func followUpAt(t *testing.T, first *run, runID string, reviews ...runstore.ReviewSummary) *run {
+	t.Helper()
+	bucket := memblob.OpenBucket(nil)
+	t.Cleanup(func() { bucket.Close() })
+	return followUpAfter(t, runstore.Open(bucket, "acme/app", runID), first, runID, reviews...)
+}
+
+// followUpAfter is followUpAt in a store a case keeps across a chain: the record
+// of the run before it is written here, so a follow-up of a follow-up can read
+// the whole chain back rather than its predecessor alone (roundItemsOnThisPR).
+func followUpAfter(t *testing.T, store *runstore.Store, prev *run, runID string, reviews ...runstore.ReviewSummary) *run {
+	t.Helper()
+	ctx := context.Background()
+	// The earlier run is the one that opened the pull request, so its record
+	// names it: that field is how the walk back through the run chain knows
+	// which runs were on this pull request (roundItemsOnThisPR).
+	prev.rec.PR = &runstore.PRRef{Number: 1, URL: "https://example.test/acme/app/pull/1"}
+	if err := store.Sibling(prev.rec.RunID).WriteRecord(ctx, prev.rec); err != nil {
+		t.Fatal(err)
+	}
+	next := &run{
+		repo: prev.repo, cfg: prev.cfg,
+		spec: &task.Spec{RequestedBy: "octocat", Branch: prev.rec.Branch, PR: 1, PreviousRun: prev.rec.RunID},
+		rec: &runstore.Record{
+			Version: 1, RunID: runID, Branch: prev.rec.Branch, BaseBranch: "main",
+			Status: runstore.StatusRunning, Outcome: runstore.OutcomeNone, Reviews: reviews,
+			PR:       &runstore.PRRef{Number: 1, URL: "https://example.test/acme/app/pull/1"},
+			FollowUp: &runstore.FollowUp{PR: 1, PreviousRun: prev.rec.RunID},
+		},
+		d: Deps{Log: slog.New(slog.DiscardHandler), Store: store},
+	}
+	// The day is injected, as it is for the earlier run: the id a follow-up
+	// files under is the same on every machine (D26, D27).
+	next.d.Now = func() time.Time { return time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC) }
+	testutil.WriteFiles(t, next.repo.Dir, map[string]string{filepath.Join("internal/payments", runID+".go"): "package payments\n"})
+	if _, err := next.repo.CommitAll(ctx, "the follow-up's work"); err != nil {
+		t.Fatal(err)
+	}
+	next.bootstrapRigor(ctx)
+	next.recordChangedFiles(ctx)
+	next.finalizeRigor()
+	return next
+}
+
+// followUpOn is one run that left openRound open and then a follow-up on its
+// pull request, with the item the first run filed. It returns both runs and the
+// remote they push to.
+func followUpOn(t *testing.T, reviews ...runstore.ReviewSummary) (*run, *run, string) {
+	t.Helper()
+	remote := filingBase(t)
+	first := filedRunAt(t, remote, "fugaro/x", "20261024-120000-abcd", openRound)
+	if !first.fileOpenItems(context.Background()) {
+		t.Fatal("the earlier run filed nothing for the round it left open, so there is no item to close")
+	}
+	return first, followUpAt(t, first, "20261025-120000-ef01", reviews...), remote
+}
+
+// TestFollowUpClosesTheItemItsRoundFixed: a follow-up whose own review shipped
+// answered the round the run before it left open, so it closes that run's item
+// — `closed`, a `## Closed by` section naming the pull request, the index
+// regenerated in the same commit (D31, plan T4.7) — and files nothing of its
+// own, because it left nothing open. The item is read off the branch the run
+// pushes, which is where a reviewer of the pull request meets it, and the
+// commit that flips it is the run's one backlog commit.
+func TestFollowUpClosesTheItemItsRoundFixed(t *testing.T) {
+	ctx := context.Background()
+	first, follow, remote := followUpOn(t, runstore.ReviewSummary{Round: 2, Tier: runstore.TierSenior, Verdict: "ship", Findings: 1})
+	if got := follow.reachedRigor(); got != rigor.Startup {
+		t.Fatalf("the follow-up resolved %q; want startup, or the case proves nothing", got)
+	}
+	name := "20261024-01-run-20261024-120000-abcd-review-round-2-left-3-findings-open.md"
+	before := testutil.Git(t, follow.repo.Dir, "rev-parse", "HEAD")
+
+	if !follow.fileOpenItems(ctx) {
+		t.Fatal("a follow-up that shipped its review closed nothing")
+	}
+	if len(follow.rec.Backlog) != 0 {
+		t.Errorf("the record carries %v; want no id: the follow-up filed nothing", follow.rec.Backlog)
+	}
+	after := testutil.Git(t, follow.repo.Dir, "rev-parse", "HEAD")
+	if n := strings.TrimSpace(testutil.Git(t, follow.repo.Dir, "rev-list", "--count", before+".."+after)); n != "1" {
+		t.Errorf("the close moved HEAD by %s commits; want one commit for the run's backlog writes", n)
+	}
+	if err := follow.repo.Push(ctx, follow.rec.Branch); err != nil {
+		t.Fatal(err)
+	}
+	doc := testutil.Git(t, remote, "show", "fugaro/x:"+filepath.Join(backlog.Dir, name))
+	closed, err := backlog.Parse(filepath.Join(backlog.Dir, name), []byte(doc))
+	if err != nil {
+		t.Fatalf("what the follow-up pushed is not an item the folder accepts: %v\n%s", err, doc)
+	}
+	if closed.Status != "closed" {
+		t.Errorf("status = %q; want closed: the follow-up answered what the item names (D31)", closed.Status)
+	}
+	if !strings.Contains(doc, "## Closed by\n\n#1") {
+		t.Errorf("the item does not name the pull request that closed it:\n%s", doc)
+	}
+	if !strings.Contains(doc, "## What was left open") || !strings.Contains(doc, first.rec.RunID) {
+		t.Errorf("closing rewrote the item's own account:\n%s", doc)
+	}
+	// The index moved in the same commit, which is what the folder's own
+	// regenerate-and-compare pin reads (D28).
+	index := testutil.Git(t, remote, "show", "fugaro/x:"+filepath.Join(backlog.Dir, backlog.IndexName))
+	if !strings.Contains(index, "1 item: 0 open, 1 closed, 0 dropped.") {
+		t.Errorf("the pushed index does not state the flipped status:\n%s", index)
+	}
+	// And the pull request's own section names the id, beside the review line
+	// (D31's "names the item id in its body").
+	section := follow.finalSection(true, "", nil)
+	if !strings.Contains(section, "closed `"+closed.ID+"`") {
+		t.Errorf("the status section does not name the item the run closed:\n%s", section)
+	}
+}
+
+// TestFollowUpFilesItsOwnRoundBesideAnOpenItem: what a run files is D30's
+// table, one item per tolerated finding, and a follow-up that also left findings
+// open is handing over a round of its own — so it files its own item even though
+// the item an earlier run on the pull request filed for its round is still open,
+// and it closes nothing: nothing was fixed, so the earlier item's round is still
+// what it names. The two items name different rounds of one area, which is what
+// the pull request's status section says.
+func TestFollowUpFilesItsOwnRoundBesideAnOpenItem(t *testing.T) {
+	ctx := context.Background()
+	first, follow, remote := followUpOn(t, openRound)
+	if got := follow.reachedRigor(); got != rigor.Startup {
+		t.Fatalf("the follow-up resolved %q; want startup, or the case proves nothing", got)
+	}
+
+	if !follow.fileOpenItems(ctx) {
+		t.Fatal("a follow-up that left findings open filed nothing for its own round")
+	}
+	if !reflect.DeepEqual(follow.rec.Backlog, []string{"20261025-01"}) {
+		t.Errorf("the follow-up filed %v; want its own round's item alone", follow.rec.Backlog)
+	}
+	if len(follow.closedBacklog) != 0 {
+		t.Errorf("the follow-up closed %v; want nothing: it fixed nothing (D31)", follow.closedBacklog)
+	}
+	if err := follow.repo.Push(ctx, follow.rec.Branch); err != nil {
+		t.Fatal(err)
+	}
+	names := filedItemNames(t, remote, "fugaro/x")
+	if len(names) != 2 {
+		t.Fatalf("the pushed branch holds %v; want the two runs' items", names)
+	}
+	items, err := backlog.Load(filepath.Join(follow.repo.Dir, backlog.Dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("the folder holds %d items; want both runs'", len(items))
+	}
+	for _, it := range items {
+		if it.Status != "open" {
+			t.Errorf("item %s is %q; want open: nothing fixed what either names", it.ID, it.Status)
+		}
+	}
+	if !slices.Contains(follow.rec.Backlog, items[0].ID) && !slices.Contains(follow.rec.Backlog, items[1].ID) {
+		t.Errorf("the record's %v names neither of the items the branch carries (%s, %s)", follow.rec.Backlog, items[0].ID, items[1].ID)
+	}
+	if first.rec.Backlog[0] == follow.rec.Backlog[0] {
+		t.Errorf("both runs filed %s; the two rounds are one item", first.rec.Backlog[0])
+	}
+	section := follow.finalSection(false, "review round 2 still has 3 findings", nil)
+	if !strings.Contains(section, "filed `"+follow.rec.Backlog[0]+"`") {
+		t.Errorf("the status section does not name the item the follow-up filed:\n%s", section)
+	}
+	if strings.Contains(section, "closed `") {
+		t.Errorf("the status section names an item the follow-up closed:\n%s", section)
+	}
+}
+
+// TestFollowUpClosesEveryRoundItemTheChainLeftOpen: the chain is read as far
+// back as it goes, so a follow-up of a follow-up closes what both runs before it
+// filed for their rounds (D31) — each named by its own id in the one commit the
+// run writes, and each left with its own account intact.
+func TestFollowUpClosesEveryRoundItemTheChainLeftOpen(t *testing.T) {
+	ctx := context.Background()
+	remote := filingBase(t)
+	first := filedRunAt(t, remote, "fugaro/x", "20261024-120000-abcd", openRound)
+	if !first.fileOpenItems(ctx) {
+		t.Fatal("the first run filed nothing for the round it left open")
+	}
+	bucket := memblob.OpenBucket(nil)
+	t.Cleanup(func() { bucket.Close() })
+	store := runstore.Open(bucket, "acme/app", "20261025-120000-ef01")
+	middle := followUpAfter(t, store, first, "20261025-120000-ef01", openRound)
+	if !middle.fileOpenItems(ctx) {
+		t.Fatal("the middle follow-up filed nothing for the round it left open")
+	}
+	last := followUpAfter(t, store, middle, "20261026-120000-aa02",
+		runstore.ReviewSummary{Round: 2, Tier: runstore.TierSenior, Verdict: "ship", Findings: 1})
+	if got := last.reachedRigor(); got != rigor.Startup {
+		t.Fatalf("the last follow-up resolved %q; want startup, or the case proves nothing", got)
+	}
+
+	if !last.fileOpenItems(ctx) {
+		t.Fatal("a follow-up that shipped its review closed nothing")
+	}
+	if len(last.rec.Backlog) != 0 {
+		t.Errorf("the record carries %v; want no id: the last follow-up filed nothing", last.rec.Backlog)
+	}
+	// The walk meets the newest run first, so the closes are in that order: the
+	// middle follow-up's round, then the first run's.
+	want := []string{middle.rec.Backlog[0], first.rec.Backlog[0]}
+	if !reflect.DeepEqual(last.closedBacklog, want) {
+		t.Errorf("the follow-up closed %v; want %v: both runs on the pull request filed one each", last.closedBacklog, want)
+	}
+	items, err := backlog.Load(filepath.Join(last.repo.Dir, backlog.Dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := map[string]string{}
+	for _, it := range items {
+		status[it.ID] = it.Status
+	}
+	if len(items) != 2 {
+		t.Fatalf("the folder holds %d items; want the two rounds'", len(items))
+	}
+	for _, id := range want {
+		if status[id] != "closed" {
+			t.Errorf("item %s is %q; want closed (D31)", id, status[id])
+		}
+	}
+	if err := last.repo.Push(ctx, last.rec.Branch); err != nil {
+		t.Fatal(err)
+	}
+	index := testutil.Git(t, remote, "show", "fugaro/x:"+filepath.Join(backlog.Dir, backlog.IndexName))
+	if !strings.Contains(index, "2 items: 0 open, 2 closed, 0 dropped.") {
+		t.Errorf("the pushed index does not state both closes:\n%s", index)
+	}
+}
+
+// TestFollowUpClosesTheRoundAndLeavesTheDeferralOpen: Hotfix's row files two
+// things and only one of them is a review's — the deferral is the proper fix
+// the expedient one owes (D30, D15) — so a hotfix follow-up that shipped its
+// review closes the round its predecessor left open and leaves the deferral
+// alone: the run that revisits the area at its normal mode is the one that
+// answers a deferral, and a follow-up that merely shipped its own round has not
+// made the proper fix either. It files its own deferral, as every hotfix run
+// does, so the pull request ends with two open deferrals and one closed round.
+func TestFollowUpClosesTheRoundAndLeavesTheDeferralOpen(t *testing.T) {
+	ctx := context.Background()
+	remote := modeBase(t, "rigor: { default: hotfix }\n")
+	first := filedRunAt(t, remote, "fugaro/x", "20261024-120000-abcd", openRound)
+	if !first.fileOpenItems(ctx) {
+		t.Fatal("the earlier hotfix filed nothing")
+	}
+	// The deferral leads the record's ids (fileOpenItems), so the two are told
+	// apart by position: the first is what the hotfix deferred, the second the
+	// round it left open.
+	if len(first.rec.Backlog) != 2 {
+		t.Fatalf("the earlier hotfix recorded %v; want the deferral and the round", first.rec.Backlog)
+	}
+	deferral, round := first.rec.Backlog[0], first.rec.Backlog[1]
+	follow := followUpAt(t, first, "20261025-120000-ef01",
+		runstore.ReviewSummary{Round: 2, Tier: runstore.TierSenior, Verdict: "ship", Findings: 1})
+
+	if !follow.fileOpenItems(ctx) {
+		t.Fatal("a hotfix follow-up that shipped its review wrote nothing")
+	}
+	if !reflect.DeepEqual(follow.rec.Backlog, []string{"20261025-01"}) {
+		t.Errorf("the follow-up filed %v; want its own deferral alone", follow.rec.Backlog)
+	}
+	if !reflect.DeepEqual(follow.closedBacklog, []string{round}) {
+		t.Errorf("the follow-up closed %v; want the round %s alone: a deferral is answered by the run that revisits the area, not by one that shipped its review", follow.closedBacklog, round)
+	}
+	items, err := backlog.Load(filepath.Join(follow.repo.Dir, backlog.Dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := map[string]string{}
+	for _, it := range items {
+		status[it.ID] = it.Status
+	}
+	if status[deferral] != "open" {
+		t.Errorf("the deferral %s is %q; want it still open (D15, D30)", deferral, status[deferral])
+	}
+	if status[round] != "closed" {
+		t.Errorf("the round %s is %q; want closed: the follow-up shipped it (D31)", round, status[round])
+	}
+}
+
+// prRef is a pull request as a run's record names it, which is the field the
+// walk back through a chain reads to tell whose runs it is reading.
+func prRef(n int) *runstore.PRRef {
+	return &runstore.PRRef{Number: n, URL: fmt.Sprintf("https://example.test/acme/app/pull/%d", n)}
+}
+
+// chainStore is a store holding the records a walk reads, written from the
+// records themselves rather than by running them: the states these cases need —
+// a predecessor on another pull request, a record that is not in the bucket, a
+// chain longer than the bound — are ones a real run cannot be put in.
+func chainStore(t *testing.T, recs ...runstore.Record) *runstore.Store {
+	t.Helper()
+	bucket := memblob.OpenBucket(nil)
+	t.Cleanup(func() { bucket.Close() })
+	store := runstore.Open(bucket, "acme/app", "20261026-120000-ffff")
+	for _, rec := range recs {
+		if err := store.Sibling(rec.RunID).WriteRecord(context.Background(), &rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return store
+}
+
+// walkRun is a run whose only work is the walk: the pull request it is on, the
+// run it followed, the store the chain is read from and the log it warns to.
+func walkRun(pr int, prev string, store *runstore.Store, log *slog.Logger) *run {
+	return &run{
+		spec: &task.Spec{PR: pr, PreviousRun: prev},
+		rec:  &runstore.Record{Version: 1, RunID: "20261026-120000-ffff", PR: prRef(pr)},
+		d:    Deps{Log: log, Store: store},
+	}
+}
+
+// TestRoundItemsStopAtARunOnAnotherPullRequest: the chain is what makes "the
+// same pull request" a fact rather than a guess — a record names the pull
+// request it ran on — so the walk stops at the first run that was not on this
+// one and the items behind it are not this run's to close: the item two runs
+// back is filed for a round of a different pull request.
+func TestRoundItemsStopAtARunOnAnotherPullRequest(t *testing.T) {
+	store := chainStore(t,
+		runstore.Record{
+			Version: 1, RunID: "20261023-120000-1111", PR: prRef(1),
+			Backlog: []string{"20261023-01"}, Reviews: []runstore.ReviewSummary{openRound},
+		},
+		runstore.Record{
+			Version: 1, RunID: "20261024-120000-2222", PR: prRef(2),
+			Backlog: []string{"20261024-01"}, Reviews: []runstore.ReviewSummary{openRound},
+			FollowUp: &runstore.FollowUp{PR: 2, PreviousRun: "20261023-120000-1111"},
+		},
+	)
+	r := walkRun(1, "20261024-120000-2222", store, slog.New(slog.DiscardHandler))
+	if got := r.roundItemsOnThisPR(context.Background()); len(got) != 0 {
+		t.Errorf("the walk read %v; want nothing: the run it starts from ran on another pull request", got)
+	}
+}
+
+// TestRoundItemsStopAtAnUnreadableRecord: a chain whose record is not in the
+// bucket ends the walk where it is — what was read before it is what the run
+// acts on — and says so, rather than refusing the close altogether.
+func TestRoundItemsStopAtAnUnreadableRecord(t *testing.T) {
+	var logs bytes.Buffer
+	store := chainStore(t,
+		runstore.Record{
+			Version: 1, RunID: "20261024-120000-2222", PR: prRef(1),
+			Backlog: []string{"20261024-01"}, Reviews: []runstore.ReviewSummary{openRound},
+			FollowUp: &runstore.FollowUp{PR: 1, PreviousRun: "20261023-120000-1111"},
+		},
+	)
+	r := walkRun(1, "20261024-120000-2222", store, slog.New(slog.NewTextHandler(&logs, nil)))
+	if got := r.roundItemsOnThisPR(context.Background()); !slices.Equal(got, []string{"20261024-01"}) {
+		t.Errorf("the walk read %v; want the one id whose record is there", got)
+	}
+	if !strings.Contains(logs.String(), "no readable record") {
+		t.Errorf("the walk said nothing about the record it could not read:\n%s", logs.String())
+	}
+}
+
+// TestRoundItemsStopAtAnIdThatIsNotARunID: the id a record names becomes part of
+// an object name, so the walk checks its form before it is read
+// (runstore.Store.Sibling's own rule for its callers) and stops there when the
+// record names something else: whatever the id would have addressed is not this
+// run's to read, let alone to close.
+func TestRoundItemsStopAtAnIdThatIsNotARunID(t *testing.T) {
+	var logs bytes.Buffer
+	store := chainStore(t,
+		runstore.Record{
+			Version: 1, RunID: "20261024-120000-2222", PR: prRef(1),
+			Backlog: []string{"20261024-01"}, Reviews: []runstore.ReviewSummary{openRound},
+			FollowUp: &runstore.FollowUp{PR: 1, PreviousRun: "../../runs/acme/app/20261023-120000-1111"},
+		},
+	)
+	r := walkRun(1, "20261024-120000-2222", store, slog.New(slog.NewTextHandler(&logs, nil)))
+	if got := r.roundItemsOnThisPR(context.Background()); !slices.Equal(got, []string{"20261024-01"}) {
+		t.Errorf("the walk read %v; want the one id whose record it was willing to read", got)
+	}
+	if !strings.Contains(logs.String(), "not a run id") {
+		t.Errorf("the walk said nothing about the id it refused to read:\n%s", logs.String())
+	}
+}
+
+// TestRoundItemsStopAtTheChainBound: the walk is bounded, so a chain longer than
+// maxRunsOnOnePR — a loop, or a pull request nothing else bounds — stops there
+// and the runs beyond it are not read: the ids are the newest maxRunsOnOnePR
+// runs' own, in the order the walk meets them, and the oldest run's item is not
+// among them.
+func TestRoundItemsStopAtTheChainBound(t *testing.T) {
+	n := maxRunsOnOnePR + 2
+	recs := make([]runstore.Record, n)
+	var want []string
+	for i := range n {
+		rec := runstore.Record{
+			Version: 1, RunID: fmt.Sprintf("20260101-%06d-%04x", i, i), PR: prRef(1),
+			Backlog: []string{fmt.Sprintf("20260101-%02d", i)},
+			Reviews: []runstore.ReviewSummary{openRound},
+		}
+		if i+1 < n {
+			rec.FollowUp = &runstore.FollowUp{PR: 1, PreviousRun: fmt.Sprintf("20260101-%06d-%04x", i+1, i+1)}
+		}
+		recs[i] = rec
+		if i < maxRunsOnOnePR {
+			want = append(want, rec.Backlog[0])
+		}
+	}
+	r := walkRun(1, recs[0].RunID, chainStore(t, recs...), slog.New(slog.DiscardHandler))
+	if got := r.roundItemsOnThisPR(context.Background()); !slices.Equal(got, want) {
+		t.Errorf("the walk read %d ids (%v); want the newest %d (%v)", len(got), got, maxRunsOnOnePR, want)
 	}
 }
 

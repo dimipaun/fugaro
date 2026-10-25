@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/agent"
@@ -87,6 +88,34 @@ func TestVerdictOutOfRangeScoreIsReadNotRefused(t *testing.T) {
 		if got := strconv.Itoa(v.Findings[0].Likelihood); got != score {
 			t.Errorf("likelihood %s read as %s, want it read as given", score, got)
 		}
+	}
+}
+
+// TestVerdictWithAStringScoreFailsClosedAndNamesTheField: the schema declares
+// the three axes as integers, and a reviewer that writes one as a word
+// ("likelihood": "high") writes a verdict the decoder refuses. The refusal
+// stays the whole verdict's — a finding nobody can read is not a finding to
+// be lenient about (D4) — and the message names the field the decoder
+// refused, because "no parseable verdict" alone leaves a reader searching a
+// transcript by hand for the one key that was wrong.
+//
+// The fenced fallback is asserted here too: a structured output the decoder
+// refuses is not the end of the read, and the text's own block is still tried
+// before the verdict fails closed.
+func TestVerdictWithAStringScoreFailsClosedAndNamesTheField(t *testing.T) {
+	res := agent.Result{Structured: json.RawMessage(`{"verdict":"changes","findings":[{"summary":"x","likelihood":"high"}]}`)}
+	v := ParseVerdict(res)
+	if v.Verdict != "changes" || len(v.Findings) != 1 || v.Findings[0].Severity != "blocker" {
+		t.Fatalf("a verdict whose score is a word did not fail closed: %+v", v)
+	}
+	if !strings.Contains(v.Findings[0].Summary, "likelihood") {
+		t.Errorf("the blocker's summary %q does not name the field the decoder refused: a reader has nothing to act on", v.Findings[0].Summary)
+	}
+
+	both := res
+	both.Text = "Looks fine.\n```json\n{\"verdict\":\"ship\",\"findings\":[]}\n```\n"
+	if got := ParseVerdict(both).Verdict; got != "ship" {
+		t.Errorf("a refused structured output hid the fenced verdict in the text: got %q, want ship", got)
 	}
 }
 

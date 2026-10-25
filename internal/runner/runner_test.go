@@ -430,7 +430,7 @@ func TestFilingDoesNotSpendTheFinalizeReserveOnTheSuite(t *testing.T) {
 		t.Fatalf("remote branch %s != record head %s: the filing commit was not pushed", got, rec.HeadSHA)
 	}
 	// The report's tests line names the commit the suite ran on — the filing
-	// commit's parent — and says the filing commit adds only items, rather
+	// commit's parent — and says the filing commit only writes items, rather
 	// than reporting no test run because the head moved (owner ruling R3).
 	tested := strings.TrimSpace(testutil.Git(t, h.remote, "rev-parse", rec.HeadSHA+"^"))
 	report := onlyPR(t, h.provider).Comments[0]
@@ -438,8 +438,8 @@ func TestFilingDoesNotSpendTheFinalizeReserveOnTheSuite(t *testing.T) {
 	if !strings.Contains(report, want) {
 		t.Errorf("the report's tests line does not name the tested commit %s:\n%s", tested[:7], report)
 	}
-	if !strings.Contains(report, fmt.Sprintf("the final commit %s only adds backlog items", rec.HeadSHA[:7])) {
-		t.Errorf("the report's tests line does not say the filing commit adds only items:\n%s", report)
+	if !strings.Contains(report, fmt.Sprintf("the final commit %s only writes backlog items", rec.HeadSHA[:7])) {
+		t.Errorf("the report's tests line does not say the filing commit only writes items:\n%s", report)
 	}
 	if strings.Contains(report, "no recorded test run") {
 		t.Errorf("the report says no test ran, though the suite ran on the commit before the filing:\n%s", report)

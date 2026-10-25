@@ -1,9 +1,12 @@
 package runner_test
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/runner"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // TestPolicyRigorModeScalesTheCeiling: D16's cost rule, and T6.1's — the
@@ -37,6 +40,63 @@ func TestPolicyRigorModeScalesTheCeiling(t *testing.T) {
 			tokenHalt(t, rec, err, "run used 500 tokens of 50")
 			if rec.Policy == nil || rec.Policy.Effective.PerRunUSD != tc.want {
 				t.Fatalf("the record's per-run cap = %+v, want %v: the run's mode did not scale the owner's cap", rec.Policy, tc.want)
+			}
+		})
+	}
+}
+
+// TestPolicyRigorModeCapIsTheOneTheGatewayEnforces: the mode's cap is not only
+// the figure the record carries — it is the ceiling every call is refused
+// against. The deployed cap is $0.60 and each call costs $0.04, so Pro's
+// $0.51 pays for twelve calls and refuses the thirteenth, and Startup's $0.42
+// pays for ten and refuses the eleventh; a run that enforced the deployed cap
+// instead would pay for fifteen. The record's own figure is asserted beside
+// the refusals, so the cap a reader is told about and the cap the gateway
+// held are the same number.
+//
+// The case is the mode's *fraction* binding on a deployed cap above the
+// floor: RigorBudgetCap's floor is what the smaller deployments get
+// (TestPolicyRigorModeScalesTheCeiling, and internal/config's smoke check).
+func TestPolicyRigorModeCapIsTheOneTheGatewayEnforces(t *testing.T) {
+	for _, tc := range []struct {
+		mode  string
+		calls int     // the calls the mode's cap pays for
+		cap   float64 // that cap, in dollars
+	}{
+		{"pro", 12, 0.51},
+		{"startup", 10, 0.42},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			capUSD := strconv.FormatFloat(tc.cap, 'f', 2, 64)
+			g := newGW(t, gwConfig(t, "rigor:\n  default: "+tc.mode+"\n"), "enforce", "0.60", capScript(tc.calls+1)...)
+			calls := make([]call, tc.calls+1)
+			for i := range calls {
+				calls[i] = call{sonnet, 4000}
+			}
+			var st []int
+			rec, err := g.run(t, calling(&st, implement("feature"), calls...))
+			if err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if len(st) != tc.calls+1 {
+				t.Fatalf("statuses = %v; want %d calls", st, tc.calls+1)
+			}
+			for i, s := range st[:tc.calls] {
+				if s != 200 {
+					t.Fatalf("call %d = %d: %s's $%s cap pays for %d calls of $0.04", i+1, s, tc.mode, capUSD, tc.calls)
+				}
+			}
+			if st[tc.calls] != 403 {
+				t.Fatalf("statuses = %v: call %d must be refused by %s's $%s cap", st, tc.calls+1, tc.mode, capUSD)
+			}
+			if rec.Halt == nil || rec.Halt.Reason != runstore.HaltRunCap || !strings.Contains(rec.Halt.Detail, "$"+capUSD) {
+				t.Fatalf("halt = %+v; want a run-cap halt naming $%s", rec.Halt, capUSD)
+			}
+			if rec.Policy == nil || rec.Policy.Effective.PerRunUSD != tc.cap {
+				t.Errorf("the record's per-run cap = %+v; want the mode's $%s, the cap the refusals above were made against", rec.Policy, capUSD)
+			}
+			if got := sourceOf(t, rec, "per_run_usd"); got != "ceiling" {
+				t.Errorf("per_run_usd source = %q; want ceiling: the mode scales the ceiling's own cap", got)
 			}
 		})
 	}

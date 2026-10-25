@@ -1,6 +1,6 @@
 # The coordinator — the implementation plan
 
-**Status (2026-10-24): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0, P1, P2, P3 and P4 are on `coordinator`, and P5–P8 are not started.** Each part carries its own **Status** line below, and this one moves with them: the status line and the pins that hold it change in the commit that lands a part, which is what the P0 section says of itself and what every earlier plan in this repository did (`docs/mobile/README.md`, `docs/setup-wizard/README.md`). This plan follows from
+**Status (2026-10-24): approved to build on the branch `coordinator`, target 0.11.0; partly implemented — P0, P1, P2, P3, P4 and P5 are on `coordinator`, and P6–P8 are not started.** Each part carries its own **Status** line below, and this one moves with them: the status line and the pins that hold it change in the commit that lands a part, which is what the P0 section says of itself and what every earlier plan in this repository did (`docs/mobile/README.md`, `docs/setup-wizard/README.md`). This plan follows from
 [reconciliation.md](reconciliation.md), which wins wherever it disagrees with
 [spec.md](spec.md). Every path and symbol below was re-read against `main` at `1e0953b7`
 (`docs(central-orchestrator): spec, reconciliation and plan for central orchestrators (#775)`)
@@ -350,6 +350,23 @@ is stated where a reader meets it rather than here: D193's answer is **one read-
 token per repository**, so there is no single project-wide credential to steal, and whether an
 installation token may omit `repositories` at all is **U3**, still an owner check.
 
+**The follow-up of 2026-10-25 narrowed this part's credential and gave it an end, and the two
+are recorded here because the Scope line above says what was planned rather than what is.** The
+set is `{pull_requests: read, metadata: read}`, and those are the two reads the project-wide
+reader makes: every pull request is read one at a time through `gitprov.Provider.PullRequest`,
+and `metadata: read` is what GitHub requires of any request. `contents` and `issues` were asked
+for and never used — this reader opens no file and reads no issue, and a permission nobody uses
+is reach a stolen token would have for nothing; P5's aggregation job re-reads through this same
+reader, so it asks for no more. The token also has an end: the command revokes every token it
+minted when it is done (`DELETE /installation/token`,
+`internal/gitprov/github/apptoken.go`'s `RevokeInstallationToken`), in the order it minted them,
+best-effort and silent — a revoke that failed changes no exit code and prints nothing, because
+a credential that outlives the read it was minted for is the one thing this part's posture is
+against. P5's sweep takes back the tokens of its tick the same way. With
+`FUGARO_CREDENTIALS_SERVICE_URL` set, the service holds the App's key and this process holds
+none, so `coordinator status` refuses: exit 1, before it reads the App ID or the key, because the
+service mints a run's token and this read is not a run.
+
 ---
 
 ### P3 — The state: the nodes, the writer and the read grant (D194, D195)
@@ -404,8 +421,11 @@ things are worth a reader's attention here rather than in the diff. The first is
 account is **named, not created, and not yet granted**: the installation root creates it in
 **P5**, as it creates the history account's, and IAM refuses a grant to a member that does not
 exist, so the Firebase root's `coordinator_account` defaults to empty and the grant
-(`google_project_iam_member.coordinator_database`) has a count of 0 until P5 sets it — the golden
-plans hold no such row, and the module's own `terraform test` runs cover it on and off. The
+(`google_project_iam_member.coordinator_database`) has a count of 0 until **P5** sets it — which P5
+now does only for an installation whose owner opts in (`fugaro update --firebase-project <id>
+--coordinator`, P5's **For operators**), so the default golden plans still hold no such row, the
+opt-in goldens (`installation-coordinator`, `firebase-coordinator`) hold it, and the module's own
+`terraform test` runs cover it on and off. The
 second is that the writer bypasses the rules, so `internal/coordinator`'s `Store` refuses every
 path outside `coordinator/` itself: that check, not IAM and not the rules, is the fence (D194).
 The third is the rules generation: `RulesVersion` moves from 3 to 4, and once an installation has
@@ -540,6 +560,97 @@ the database-wide writer account, so the review must confirm what it may write (
 read-only set, and that its schedule and timeout carry no unbounded retry.
 
 **Commit.** `coordinator: the aggregation job and the drift reconciliation`
+
+**Status: built.** Lands on the long-lived `coordinator` branch when its pull request merges, in
+this plan's own commit message, and the plan's status line above moves with it. The sweep is
+`internal/coordinator/sweep.go` (the recompute, the `stale` marker, the write set, and the
+pruning P4's review asked for) and `internal/coordinator/view.go`; `fugaro coordinator sweep` is
+the manual invocation the owner's live check runs, in `internal/cli/coordinator.go`; the job, its
+account, the runs-bucket reader, the App-key grant and the schedule are
+`deploy/terraform/gcp/modules/installation/coordinator.tf`, wired through the root's variables and
+outputs and the `Coordinator` spec in `internal/infra/firebase.go`, with the golden plans
+regenerated. The job's environment is the whole of its configuration
+(`FUGARO_PROJECT`, `FUGARO_FIREBASE_PROJECT`, `FUGARO_RTDB_URL`, `FUGARO_RUNS_BUCKET`,
+`FUGARO_COORDINATOR_REPOS`, `FUGARO_GITHUB_APP_ID`, and the App key as a `secret_key_ref`, so no
+plan, no `terraform show` and no job describe carries the credential), it runs as
+`fugaro-coordinator` with `max_retries = 0` and a 600s timeout under an 8-minute in-code bound, and
+its schedule is `*/15 * * * *` with `retry_count = 0` — a failed sweep logs its failure and the next
+tick is the retry.
+
+**The fixes the independent security review asked for, and what they bound.** The job, its
+account and every grant are **off by default**: `infra.Installation` plans them only when the owner
+has opted in (`InstallOptions.Coordinator`), and the Firebase root is handed no account otherwise,
+so the plans of every existing installation are unchanged (the default goldens hold no
+coordinator resource; `installation-coordinator` and `firebase-coordinator` are the opt-in's). A
+tick is **bounded**: it reads the runs of the last 30 days (`coordinator.RunsWindow`), at most 200
+pull requests from the host across every repository (`DefaultReadBudget`; a merged pull request is
+carried from the last view and never read again), and it starts with the repository a cursor in
+`coordinator/project/sweep_cursor` names, so a project whose work is more than one tick can read
+is read in turns; on the 8-minute deadline the repository being read is marked stale under a
+30-second grace of its own and the next tick starts after it. **One pull request** the host
+refuses is recorded in the view on its own (`unread`, with the last state a sweep read, if any)
+and the others are read, because the numbers a view reads are written by the runs themselves.
+The view holds at most 500 records and 500 collisions (`MaxViewRecords`, `MaxViewCollisions`) and
+says how many it left out (`omitted`, `omitted_collisions`): the finished records whose newest run
+is oldest go first, never one in flight while a finished one is kept. The intent records are
+pruned by age (30 days) as well as by count, a record dated more than five minutes ahead of the
+sweep's clock is ordered as the oldest, and one record — or a stale marker, or a view — that does
+not decode is stepped over and counted (`undecodable`) instead of stopping the tick.
+
+**Two deviations from the section above, and the follow-up it carries.** The **Files** line names
+"a new entry point under `cmd/fugaro` and its package"; `cmd/fugaro` is only `main` in this tree,
+so the sweep lives in `internal/coordinator` with its command in `internal/cli`, beside every
+other coordinator subcommand. And the job's image is `HistoryImage` — the history job's own
+`fugaro-base/history:latest` — rather than a new one, because the sweep is the same binary the CLI
+is and a second image would be a second thing to build, pin and publish for no difference in what
+runs. On the review P4's pull request left for this part: the sweep **prunes** the
+oldest intent records of a repository, keeping the newest 200 (D197's bound, `DefaultIntents`), each
+removal through the store's compare-and-set on the record's own ETag so a record that changed
+between the read and the removal is left alone; and the report path **refuses a declaration larger
+than a record** (`ErrIntentTooLarge`: 512 characters in one name, 100 names in one list, 8192
+characters of text in all), because the caller writes all of it and the ID that makes a report
+idempotent would not collide with anything.
+
+**What this part does not do.** Nothing here is a live action, and nothing is on by default: the
+job, the account and the schedule are declared in Terraform and applied only by the owner's own
+`fugaro update --firebase-project <id> --coordinator`, and the account's
+`roles/firebasedatabase.admin` on the Firebase project is granted by the Firebase root in that same
+run — the grant P3 gated off, turned on by this part only where the owner opted in and the account
+it names therefore exists. What
+the account may write is still not IAM's to say (D194): the fence is `internal/coordinator`'s own
+subtree check and the deployed rules' floor, which is the one respect the section above calls
+security-sensitive.
+
+#### For operators
+
+The coordinator's aggregation job is **OFF by default**: an installation that has not opted in
+has no coordinator account, no grant, no job and no schedule, and `fugaro update` plans none of
+them. The owner opts in once, at a real terminal (`--yes` never covers it, and a coding agent's
+session is refused), per installation:
+
+```sh
+fugaro update --firebase-project <firebase-project-id> --coordinator
+```
+
+That run creates, in the installation's GCP project:
+
+- the service account `fugaro-coordinator`;
+- its grants: `roles/firebasedatabase.admin` on the Firebase project (project-wide, because IAM
+  cannot scope it to `coordinator/`; the job's own code does), `roles/storage.objectViewer` on the
+  runs bucket, and `roles/secretmanager.secretAccessor` on the GitHub App key's one secret;
+- the Cloud Run job `fugarocoord`, which runs `fugaro coordinator sweep` as that account with the
+  App key mounted from Secret Manager, `max_retries = 0` and a 600s timeout;
+- the Scheduler job `fugaro-coordinator-sweep`, every 15 minutes, with `retry_count = 0`, and the
+  scheduler account's `fugaroJobRunner` on that one job.
+
+The job, its key grant and its schedule wait until the history image exists and the local config
+records a GitHub App ID (`fugaro update --repo <owner/name> --github-app-id <id>`); until then the
+run creates the account and its two reads, warns, and the next `fugaro update --firebase-project`
+deploys the rest. The opt-in is recorded as `terraform.coordinator: true` in the local config once
+the apply has created the account, and a new machine's config takes it from the installation's
+outputs, so later runs keep it. There is no opt-out command in this release: removing that key
+makes the next plan list the coordinator's resources as deletions, which `fugaro update` refuses
+without `--allow-delete`, and the job itself carries deletion protection.
 
 ---
 
@@ -806,6 +917,7 @@ Each check below is **owner-run, on a real project, by the owner** unless it is 
 | a report survives the job, and the view shows it | P4, P5 | owner | the write path end to end, on the real database clock |
 | the sweep against GitHub's rate limits | P5 | owner | that a tick's read volume is affordable at the spec's scale |
 | the sweep when GitHub is unreachable | P5 | owner | the stale marker, and that the previous view stays |
+| the coordinator opt-in, and one sweep end to end | P5 | owner | `fugaro update --firebase-project --coordinator` creates exactly the account, grants, job and schedule P5's **For operators** names and nothing on an installation that did not opt in; one manual `fugaro coordinator sweep` tick (the job's own execution) writes each repository's view, records a refused pull request under `unread` without staling the repository, moves `coordinator/project/sweep_cursor`, and stays inside its read budget |
 | the first service deploys and scales to zero | P7 | owner | the type is admitted, a service runs, and an idle service costs nothing |
 | an ID token from the CLI is accepted, and one for another project is not | P7 | owner | Q2(A)'s credential on the real platform |
 | a per-person invoker grant, and its removal | P7 | owner | offboarding is the launcher-list edit finding #5 describes |
