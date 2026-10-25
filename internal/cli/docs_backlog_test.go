@@ -474,6 +474,14 @@ func TestDocsBacklogFormatStatesTheClosingRule(t *testing.T) {
 		"its `## Closed by` section names the pull request that closed it",
 		"A `dropped` item states its reason under `## Why`",
 		"the folder's pin refuses",
+		// Who closes an item, and the duplicate the folder can see: the runner
+		// is the only thing that closes one (D31, plan T4.7), and the sentence
+		// that used to say a run may not close an item it did not fix as a rule
+		// no test could hold is now the runner's own behaviour — stated here,
+		// where a reader meets the rule, and asserted there
+		// (TestFollowUpClosesTheItemItsRoundFixed).
+		"a run that left findings open closes nothing",
+		"is not filed a second time",
 	} {
 		if !strings.Contains(doc, strings.Join(strings.Fields(want), " ")) {
 			t.Errorf("%s does not state %q: D31's closing rule is a rule the tree holds, and this document is where a reader meets it (plan T4.7)", backlogFormat, want)

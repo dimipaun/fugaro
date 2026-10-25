@@ -17,16 +17,21 @@ package runner
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"gocloud.dev/blob/memblob"
 
 	"github.com/dimipaun/fugaro/internal/backlog"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -306,6 +311,166 @@ func TestHotfixFilesItsFollowUpItemAlways(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// followUpAt is the follow-up a case below runs: the same checkout as first —
+// the branch the earlier run pushed, with the item it filed already committed
+// on it — a record naming first as its previous run, and a store in which
+// first's own record is readable, which is where this run reads what an earlier
+// run on its pull request filed (runstore.Record.Backlog, Record.FollowUp).
+//
+// The run is given work of its own under the same area rule the fixture
+// declares, so it resolves the same mode the earlier run did: a run with no
+// work resolves its mode from no path at all (D22's third moment), and these
+// cases are about what a follow-up writes rather than about what it reached.
+func followUpAt(t *testing.T, first *run, runID string, reviews ...runstore.ReviewSummary) *run {
+	t.Helper()
+	ctx := context.Background()
+	bucket := memblob.OpenBucket(nil)
+	t.Cleanup(func() { bucket.Close() })
+	store := runstore.Open(bucket, "acme/app", runID)
+	// The earlier run is the one that opened the pull request, so its record
+	// names it: that field is how the walk back through the run chain knows
+	// which runs were on this pull request (roundItemsOnThisPR).
+	first.rec.PR = &runstore.PRRef{Number: 1, URL: "https://example.test/acme/app/pull/1"}
+	if err := store.Sibling(first.rec.RunID).WriteRecord(ctx, first.rec); err != nil {
+		t.Fatal(err)
+	}
+	next := &run{
+		repo: first.repo, cfg: first.cfg,
+		spec: &task.Spec{RequestedBy: "octocat", Branch: first.rec.Branch, PR: 1, PreviousRun: first.rec.RunID},
+		rec: &runstore.Record{
+			Version: 1, RunID: runID, Branch: first.rec.Branch, BaseBranch: "main",
+			Status: runstore.StatusRunning, Outcome: runstore.OutcomeNone, Reviews: reviews,
+			PR:       &runstore.PRRef{Number: 1, URL: "https://example.test/acme/app/pull/1"},
+			FollowUp: &runstore.FollowUp{PR: 1, PreviousRun: first.rec.RunID},
+		},
+		d: Deps{Log: slog.New(slog.DiscardHandler), Store: store},
+	}
+	// The day is injected, as it is for the earlier run: the id a follow-up
+	// files under is the same on every machine (D26, D27).
+	next.d.Now = func() time.Time { return time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC) }
+	testutil.WriteFiles(t, next.repo.Dir, map[string]string{filepath.Join("internal/payments", runID+".go"): "package payments\n"})
+	if _, err := next.repo.CommitAll(ctx, "the follow-up's work"); err != nil {
+		t.Fatal(err)
+	}
+	next.bootstrapRigor(ctx)
+	next.recordChangedFiles(ctx)
+	next.finalizeRigor()
+	return next
+}
+
+// followUpOn is one run that left openRound open and then a follow-up on its
+// pull request, with the item the first run filed. It returns both runs and the
+// remote they push to.
+func followUpOn(t *testing.T, reviews ...runstore.ReviewSummary) (*run, *run, string) {
+	t.Helper()
+	remote := filingBase(t)
+	first := filedRunAt(t, remote, "fugaro/x", "20261024-120000-abcd", openRound)
+	if !first.fileOpenItems(context.Background()) {
+		t.Fatal("the earlier run filed nothing for the round it left open, so there is no item to close")
+	}
+	return first, followUpAt(t, first, "20261025-120000-ef01", reviews...), remote
+}
+
+// TestFollowUpClosesTheItemItsRoundFixed: a follow-up whose own review shipped
+// answered the round the run before it left open, so it closes that run's item
+// — `closed`, a `## Closed by` section naming the pull request, the index
+// regenerated in the same commit (D31, plan T4.7) — and files nothing of its
+// own, because it left nothing open. The item is read off the branch the run
+// pushes, which is where a reviewer of the pull request meets it, and the
+// commit that flips it is the run's one backlog commit.
+func TestFollowUpClosesTheItemItsRoundFixed(t *testing.T) {
+	ctx := context.Background()
+	first, follow, remote := followUpOn(t, runstore.ReviewSummary{Round: 2, Tier: runstore.TierSenior, Verdict: "ship", Findings: 1})
+	if got := follow.reachedRigor(); got != rigor.Startup {
+		t.Fatalf("the follow-up resolved %q; want startup, or the case proves nothing", got)
+	}
+	name := "20261024-01-run-20261024-120000-abcd-review-round-2-left-3-findings-open.md"
+	before := testutil.Git(t, follow.repo.Dir, "rev-parse", "HEAD")
+
+	if !follow.fileOpenItems(ctx) {
+		t.Fatal("a follow-up that shipped its review closed nothing")
+	}
+	if len(follow.rec.Backlog) != 0 {
+		t.Errorf("the record carries %v; want no id: the follow-up filed nothing", follow.rec.Backlog)
+	}
+	after := testutil.Git(t, follow.repo.Dir, "rev-parse", "HEAD")
+	if n := strings.TrimSpace(testutil.Git(t, follow.repo.Dir, "rev-list", "--count", before+".."+after)); n != "1" {
+		t.Errorf("the close moved HEAD by %s commits; want one commit for the run's backlog writes", n)
+	}
+	if err := follow.repo.Push(ctx, follow.rec.Branch); err != nil {
+		t.Fatal(err)
+	}
+	doc := testutil.Git(t, remote, "show", "fugaro/x:"+filepath.Join(backlog.Dir, name))
+	closed, err := backlog.Parse(filepath.Join(backlog.Dir, name), []byte(doc))
+	if err != nil {
+		t.Fatalf("what the follow-up pushed is not an item the folder accepts: %v\n%s", err, doc)
+	}
+	if closed.Status != "closed" {
+		t.Errorf("status = %q; want closed: the follow-up answered what the item names (D31)", closed.Status)
+	}
+	if !strings.Contains(doc, "## Closed by\n\n#1") {
+		t.Errorf("the item does not name the pull request that closed it:\n%s", doc)
+	}
+	if !strings.Contains(doc, "## What was left open") || !strings.Contains(doc, first.rec.RunID) {
+		t.Errorf("closing rewrote the item's own account:\n%s", doc)
+	}
+	// The index moved in the same commit, which is what the folder's own
+	// regenerate-and-compare pin reads (D28).
+	index := testutil.Git(t, remote, "show", "fugaro/x:"+filepath.Join(backlog.Dir, backlog.IndexName))
+	if !strings.Contains(index, "1 item: 0 open, 1 closed, 0 dropped.") {
+		t.Errorf("the pushed index does not state the flipped status:\n%s", index)
+	}
+	// And the pull request's own section names the id, beside the review line
+	// (D31's "names the item id in its body").
+	section := follow.finalSection(true, "", nil)
+	if !strings.Contains(section, "closed `"+closed.ID+"`") {
+		t.Errorf("the status section does not name the item the run closed:\n%s", section)
+	}
+}
+
+// TestFollowUpFilesNoSecondItemForTheSameOpenRound: a follow-up that also left
+// findings open is handing over the same round — the item an earlier run on
+// this pull request filed for it is still open, and nobody has fixed what it
+// names — so it files no second item beside it: the branch it pushes carries
+// the one item the pull request already had, still open, and its record
+// carries no id of its own.
+func TestFollowUpFilesNoSecondItemForTheSameOpenRound(t *testing.T) {
+	ctx := context.Background()
+	_, follow, remote := followUpOn(t, openRound)
+	if got := follow.reachedRigor(); got != rigor.Startup {
+		t.Fatalf("the follow-up resolved %q; want startup, or the case proves nothing", got)
+	}
+	before := testutil.Git(t, follow.repo.Dir, "rev-parse", "HEAD")
+
+	if follow.fileOpenItems(ctx) {
+		t.Fatal("a follow-up filed a second item for a round the pull request already has open")
+	}
+	if len(follow.rec.Backlog) != 0 {
+		t.Errorf("the record carries %v; want no id: nothing was filed", follow.rec.Backlog)
+	}
+	if after := testutil.Git(t, follow.repo.Dir, "rev-parse", "HEAD"); after != before {
+		t.Errorf("HEAD moved from %s to %s for a follow-up that filed nothing", before, after)
+	}
+	if err := follow.repo.Push(ctx, follow.rec.Branch); err != nil {
+		t.Fatal(err)
+	}
+	names := filedItemNames(t, remote, "fugaro/x")
+	if len(names) != 1 {
+		t.Fatalf("the pushed branch holds %v; want the one item the earlier run filed", names)
+	}
+	items, err := backlog.Load(filepath.Join(follow.repo.Dir, backlog.Dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Status != "open" {
+		t.Errorf("the folder holds %+v; want the earlier run's item, still open: nothing fixed what it names", items)
+	}
+	section := follow.finalSection(false, "review round 2 still has 3 findings", nil)
+	if strings.Contains(section, "filed ") || strings.Contains(section, "closed `") {
+		t.Errorf("the status section names an item the follow-up did not write:\n%s", section)
 	}
 }
 
