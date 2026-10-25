@@ -412,8 +412,19 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 	// No --title is no claim about it: the stored title (the follow-up's
 	// own, or the one it inherited from its run) is kept as it is, which is
 	// what makes the repeat idempotent.
+	//
+	// The run's own rigor request (--mode, --path) is compared the same way,
+	// and the case for it is stronger than the title's: the stored task is
+	// what the job reads, so a raise this launch asked for that the list did
+	// not check would be dropped from a spec reused as it is, while the
+	// launch reported the run as already launched — a mode nobody resolved,
+	// reported as success. The same shape as the title: a flag that is given
+	// must be the stored one, and a launch that gives none makes no claim
+	// (the stored request stands, exactly as the stored title does).
 	if have.PR != o.pr[0] || have.Task != text || have.Batch != o.batch || (o.title != "" && have.Title != o.title) || string(a) != string(b) || (o.recipe != "" && o.recipe != haveRecipe) ||
-		(o.token != "" && o.token != cmp.Or(have.OAuthToken, config.DefaultClaudeAccount)) {
+		(o.token != "" && o.token != cmp.Or(have.OAuthToken, config.DefaultClaudeAccount)) ||
+		(o.rigor != "" && string(have.Rigor) != o.rigor) ||
+		(len(o.paths) > 0 && !slices.Equal(have.Paths, o.paths)) {
 		return nil, userErr("run ID %s already holds a different task", o.runID)
 	}
 	// have is stored bucket data nobody vouches for (review finding A): its

@@ -398,7 +398,7 @@ turns that from a data bug into a parse error (D19, plan T5.1).
 **F23 — A new task field needs an image-skew gate.** Class: **Rule**.
 `internal/cli/recipes_skew.go`'s `…Since` constants and `checkImageSince` gate a
 task field on the image that understands it; the remedy printed to the user is
-`fugaro image refresh`. There were eleven such constants when this was written; the census (§4) counts them now, `rigorSince` among them, which gates `fugaro.yaml`'s `rigor:` block and the project layer's `defaults.rigor` on the base image in `fugaro update --repo` — not the task field, which is not built. Consequence: the task
+`fugaro image refresh`. There were eleven such constants when this was written; the census (§4) counts them now, `rigorSince` among them, which gates `fugaro.yaml`'s `rigor:` block and the project layer's `defaults.rigor` on the base image in `fugaro update --repo` — not the task field. **The task field is built since 0.11.1** (plan T5.1): `task.Spec.Rigor` and `task.Spec.Paths` carry `fugaro run --mode` and `--path` into the run, and `rigorRequestSince` gates a launch that would set either on the job image whose runner reads them (`checkImageSince` for a built image, `checkCloneImageSince` for a `checkout: clone` workflow), because `task.Parse` decodes with `DisallowUnknownFields` and an older runner refuses the whole spec at bootstrap. Consequence: the task
 file's `rigor:` key cannot ship before the image that validates it, and the plan
 orders the two in one slice with the skew test as its verification (plan T5.1).
 

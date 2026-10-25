@@ -5,8 +5,11 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // release0111 is a job image new enough to read a task's rigor request
@@ -145,5 +148,131 @@ func TestRunRigorRequestIsGatedOnTheJobImage(t *testing.T) {
 	writeBuildRecord(t, f, appSlug, "web", release0111)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "Fix the flaky test."); err != nil {
 		t.Fatalf("a launch with no request was gated: %v", err)
+	}
+}
+
+// TestRunRigorRequestIsGatedOnACloneWorkflow: a checkout: clone workflow has
+// no build record to judge, so the same gate is judged against
+// base_images.base itself — the other half of the check, and the half a
+// mutation can drop without the test above noticing.
+//
+// Mutation (drop the asksForRigor block from finishLaunch's clone branch):
+// the launch goes through on an image whose runner refuses the whole task at
+// bootstrap, which is the failure the gate exists to prevent.
+func TestRunRigorRequestIsGatedOnACloneWorkflow(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, "base_images: {base: ghcr.io/dimipaun/fugaro-base:0.7.5}\n")
+	testutil.IsolateGit(t)
+	other := mustSlug("github", "acme/other")
+	f.run.AddJob(gcp.JobName(other, "svc"), "2", "4Gi")
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nworkflows:\n" +
+		"  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n"})
+	t.Chdir(dir)
+	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "--mode", "critical", "A task")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "the run's own rigor request (--mode, --path) needs a job image whose runner knows the rigor request (fugaro "+rigorRequestSince+" or later)") ||
+		!strings.Contains(err.Error(), "ghcr.io/dimipaun/fugaro-base:0.7.5, release 0.7.5") {
+		t.Fatalf("err = %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
+
+// TestFollowUpCarriesTheRigorRequest: a --pr follow-up builds its spec in
+// newFollowUpSpec, a second builder, so the request has to be written there
+// too — otherwise the flags are accepted, the launch reports success, and the
+// job reads a task that asks for nothing.
+//
+// Mutation (drop Rigor/Paths from newFollowUpSpec's spec literal): the
+// follow-up stores neither and this test fails on its first assertion.
+func TestFollowUpCarriesTheRigorRequest(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+	writeBuildRecord(t, f, appSlug, "web", release0111)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID,
+		"--mode", "critical", "--path", "internal/payments/x.go", "also rename x"); err != nil {
+		t.Fatal(err)
+	}
+	spec := readSpec(t, f, fuID)
+	if spec.Rigor != "critical" || !reflect.DeepEqual(spec.Paths, []string{"internal/payments/x.go"}) {
+		t.Fatalf("follow-up task carries rigor %q and paths %v, want the flags'", spec.Rigor, spec.Paths)
+	}
+}
+
+// TestReviewLaunchCarriesTheRigorRequest: a mode: review recipe builds its
+// spec in reviewSpec, the third builder. The request is the launcher's on
+// every launch shape the flags are accepted on, so a review is no exception.
+//
+// Mutation (drop Rigor/Paths from reviewSpec's spec literal): the review
+// stores neither and this test fails.
+func TestReviewLaunchCarriesTheRigorRequest(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", release0111)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261025-120300-abcd",
+		"--recipe", "review-only", "--pr", "7", "--mode", "critical", "--path", "internal/payments/x.go"); err != nil {
+		t.Fatal(err)
+	}
+	spec := readSpec(t, f, "20261025-120300-abcd")
+	if spec.Rigor != "critical" || !reflect.DeepEqual(spec.Paths, []string{"internal/payments/x.go"}) {
+		t.Fatalf("review task carries rigor %q and paths %v, want the flags'", spec.Rigor, spec.Paths)
+	}
+}
+
+// TestRunRigorRefusedWithRetry: --retry launches the stored task as it is, so
+// it takes no task flags at all — a request given there would be accepted and
+// then silently dropped, which is worse than a refusal.
+func TestRunRigorRefusedWithRetry(t *testing.T) {
+	f := newCloudFixture(t)
+	wantRefused(t, f, "it takes no --mode", "run", "--retry", "20261018-120000-abcd", "--mode", "critical")
+	wantRefused(t, f, "it takes no --path", "run", "--retry", "20261018-120000-abcd", "--path", "internal/x.go")
+}
+
+// TestStoredFollowUpRefusesADifferentRigorRequest: a repeated --run-id names
+// a stored task, and the rigor request is part of that task — the stored spec
+// is what the job reads, so a raise this launch asked for and the comparison
+// did not check would be dropped while the launch reported the run as already
+// launched: a mode nobody resolved, reported as success.
+//
+// Mutation (drop the two rigor terms from storedFollowUp's comparison): the
+// second launch reports the first as the same task and the stored request
+// stays what it was.
+func TestStoredFollowUpRefusesADifferentRigorRequest(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+	writeBuildRecord(t, f, appSlug, "web", release0111)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID,
+		"--mode", "startup", "--path", "docs/x.md", "also rename x"); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID,
+		"--mode", "critical", "also rename x")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "already holds a different task") {
+		t.Fatalf("err = %v, want the different task refusal", err)
+	}
+	// A different list of paths is a different task too, and so is the same
+	// mode with another path beside it.
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID,
+		"--mode", "startup", "--path", "docs/y.md", "also rename x"); ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the different task refusal for the other path", err)
+	}
+	// The same request is the same task: the repeated launch reports the
+	// existing one instead of starting another.
+	out, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID,
+		"--mode", "startup", "--path", "docs/x.md", "also rename x")
+	if err != nil || !strings.Contains(out, "already launched") {
+		t.Fatalf("out = %q, err = %v", out, err)
+	}
+	// And a launch that asks for nothing makes no claim about it: the stored
+	// request stands, exactly as the stored title does.
+	out, _, err = execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "also rename x")
+	if err != nil || !strings.Contains(out, "already launched") {
+		t.Fatalf("out = %q, err = %v", out, err)
+	}
+	spec := readSpec(t, f, fuID)
+	if spec.Rigor != "startup" || !reflect.DeepEqual(spec.Paths, []string{"docs/x.md"}) {
+		t.Fatalf("stored task carries rigor %q and paths %v, want the first launch's", spec.Rigor, spec.Paths)
 	}
 }
