@@ -108,7 +108,7 @@ function png(file: string): { width: number; height: number; colourType: number;
  * five filter types included -- so the comparison below can look at the
  * pictures rather than only at the files. It is here rather than in a
  * dependency for the reason every other tool in this tree is: every entry of
- * `console/package.json` is an exact version -- seven devDependencies, no
+ * `console/package.json` is an exact version -- eight devDependencies, no
  * runtime dependencies -- and all four dependency sections are pinned by
  * `test/unit/pinning.test.ts`, so an image library would be a pin to argue for
  * and a large tree for the one thing this file needs. It throws on anything it
