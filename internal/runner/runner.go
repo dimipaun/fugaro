@@ -2860,10 +2860,13 @@ func openFindings(rs []runstore.ReviewSummary) *runstore.ReviewSummary {
 //
 // A follow-up on a pull request is the other half of D31: the run that fixes an
 // item is the run that closes it, so a follow-up whose own review shipped
-// closes the items an earlier run on the same pull request filed for the round
-// it answered (openRoundItems), and a follow-up that left findings open files
-// no second item while the pull request already has one open — the same
-// hand-over said twice is the item a reader then has to reconcile by hand.
+// closes the items an earlier run on the same pull request filed for a round it
+// answered (openRoundItems). Closing is the whole of what a follow-up does
+// about an item that is already open: what a run files is D30's table and
+// nothing else — one item per tolerated finding — so a follow-up that also left
+// findings open files its own round's item beside the earlier one rather than
+// suppressing it, and the pull request's status section says which ids this run
+// filed and which it closed.
 //
 // The item is written before the run's diff is what a reviewer reads and
 // after the record's own ChangedFiles was measured, so the item file is
@@ -2909,13 +2912,15 @@ func (r *run) fileOpenItems(ctx context.Context) bool {
 		owed = append(owed, r.filedItem(nil))
 		what = append(what, "the follow-up this hotfix deferred")
 	}
-	// One item per open round: while an item an earlier run filed for this
-	// pull request's round is still open, the round this run left open is the
-	// same hand-over and a second item would say the same thing about the same
-	// pull request twice. It is filed when the folder holds no such item — a
-	// first run, and a follow-up whose predecessor's item someone has since
-	// closed.
-	if open != nil && files.Tolerated && len(earlier) == 0 {
+	// One item per tolerated finding, whatever the pull request already
+	// carries (D30): a follow-up that left findings open is handing over a
+	// round of its own, and an item open for an earlier run's round is not a
+	// reason to leave this one with nothing. Round numbers restart per run, so
+	// a later run cannot tell an earlier item's round from its own and could
+	// not dedup on it; suppressing the filing while any item on the pull
+	// request is open would instead lose a finding for good the moment that
+	// item is closed (implementation-plan §7 Q5, Q8).
+	if open != nil && files.Tolerated {
 		owed = append(owed, r.filedItem(open))
 		what = append(what, fmt.Sprintf("what review round %d left open", open.Round))
 	}
@@ -2970,10 +2975,8 @@ const maxRunsOnOnePR = 20
 
 // openRoundItems is the ids an earlier run on this run's pull request filed for
 // a review round, as the items this run's own checkout holds them and only
-// while the folder still holds them open. It is the pair of answers D31's
-// follow-up needs: an open one is the item this run closes when it fixed the
-// round, and its presence is why this run files no second item for a round the
-// pull request already has open.
+// while the folder still holds them open: the items D31's follow-up closes when
+// its own review shipped.
 //
 // The checkout is the only place the statuses are read: an item is closed on
 // the branch of the run that fixed it, so the folder a follow-up starts from
@@ -3020,7 +3023,9 @@ func (r *run) openRoundItems(ctx context.Context) []string {
 //
 // A chain whose records cannot be read ends the walk where it is: what was read
 // is what the run acts on, and an unreadable record is a warning rather than a
-// refusal, like every other read on this path.
+// refusal, like every other read on this path. A record that names a previous
+// run that is not a run id ends it too, before that id names an object
+// (runstore.Store.Sibling's own rule for its callers).
 func (r *run) roundItemsOnThisPR(ctx context.Context) []string {
 	pr, id := r.spec.PR, r.spec.PreviousRun
 	if pr == 0 || id == "" || r.d.Store == nil {
@@ -3029,6 +3034,10 @@ func (r *run) roundItemsOnThisPR(ctx context.Context) []string {
 	var ids []string
 	seen := map[string]bool{}
 	for id != "" && !seen[id] && len(seen) < maxRunsOnOnePR {
+		if !task.ValidRunID(id) {
+			r.d.Log.Warn("a record names a previous run that is not a run id; the runs behind it are not read", "run", r.redact(id))
+			return ids
+		}
 		seen[id] = true
 		rec, err := r.d.Store.Sibling(id).ReadRecord(ctx)
 		if err != nil {
