@@ -299,6 +299,26 @@ var sealRunnerIntroduced = time.Date(2026, 10, 17, 17, 45, 33, 0, time.UTC)
 // never gated.
 const titlesSince = "0.8.5"
 
+// planTaskSince is the first fugaro release whose runner reads a task's
+// plan_task field (task.Spec.PlanTask, fugaro run --plan-task): an older
+// runner refuses the field outright, since task.Parse decodes with
+// DisallowUnknownFields, and the run would fail at bootstrap on a task
+// nobody can read. It must equal the release that ships
+// task.Spec.PlanTask: docs/release.md ("Before you tag") has the release
+// checklist verify it, and the same bullet records the operator order the
+// field needs for the release note's "For operators" section (every job
+// image a --plan-task launch can reach is rebuilt or repointed at this
+// release first). internal/cli/run.go gates a launch that would set one
+// against an older build record, exactly as it does for a title
+// (titlesSince) and for a named Claude account (namedTokensSince); a
+// launch with no --plan-task writes no such field and is never gated.
+//
+// It names 0.11.2 ("Camel two"), the release after 0.11.1 and the first
+// that ships the field -- a number ahead of the tag, like cascadeSince's
+// 0.10.0, and the checklist bullet above is what holds it to the version
+// actually tagged.
+const planTaskSince = "0.11.2"
+
 // cascadeSince is the first fugaro release whose config reader accepts
 // fugaro.yaml's agent.auth: cascade (docs/credentials-service, D133): before
 // it the value is not one of config.AgentAuths, so a job built from an older

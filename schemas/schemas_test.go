@@ -1866,6 +1866,49 @@ func TestFugaroSchemaLayeredCorpus(t *testing.T) {
 	}
 }
 
+// TestTaskSchemaPlanTaskMatchesTheGoRule ties the task schema's `plan_task`
+// property to the Go rule it mirrors (task.PlanTaskProblem's own list: at
+// least two "/"-separated elements, each matching task.PlanTaskElemRE, at
+// most task.MaxPlanTaskBytes bytes). The schema is a second copy of that
+// shape, and without this a change to the Go rule would drift from it with
+// only the corpus fixtures noticing: a property that is too wide accepts a
+// task.json the launcher would refuse to write, and one that is too narrow
+// refuses a task.json it does write, which is the defect that made this
+// property necessary -- task.schema.json is additionalProperties: false, so
+// a launch with --plan-task wrote a document this schema rejected.
+//
+// Mutation (run, restored): widen the schema's pattern to `^[^/]+/[^/]+$`,
+// or set maxLength to 256, and this fails naming the side that drifted.
+func TestTaskSchemaPlanTaskMatchesTheGoRule(t *testing.T) {
+	data, err := os.ReadFile("task.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]struct {
+			Pattern   string `json:"pattern"`
+			MaxLength int    `json:"maxLength"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	p, ok := doc.Properties["plan_task"]
+	if !ok {
+		t.Fatal("task.schema.json has no plan_task property: a launch with --plan-task writes a task.json this schema refuses (additionalProperties: false)")
+	}
+	// One element, as task.PlanTaskElemRE writes it (its anchors are the
+	// whole pattern's here, so they come off), then the whole id: at least
+	// two of them.
+	elem := strings.TrimSuffix(strings.TrimPrefix(task.PlanTaskElemRE.String(), "^"), "$")
+	if want := "^" + elem + "(/" + elem + ")+$"; p.Pattern != want {
+		t.Errorf("schema pattern %q != task.PlanTaskProblem's own shape %q (task.PlanTaskElemRE)", p.Pattern, want)
+	}
+	if p.MaxLength != task.MaxPlanTaskBytes {
+		t.Errorf("schema maxLength %d != task.MaxPlanTaskBytes %d", p.MaxLength, task.MaxPlanTaskBytes)
+	}
+}
+
 // TestTaskSchemaOAuthTokenMatchesTheGoRules ties the task schema's
 // `oauth_token` property to the Go rules it mirrors (config.ClaudeAccountNameRE
 // and config.MaxClaudeAccountNameLen): the schema pattern and maxLength are
