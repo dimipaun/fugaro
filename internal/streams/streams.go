@@ -126,8 +126,8 @@ func (v Version) String() string {
 // released: the first release of a stream is a minor of its own line.
 func (v Version) IsZero() bool { return v == Version{} }
 
-// atLeast reports whether v is later than or equal to other.
-func (v Version) atLeast(other Version) bool {
+// AtLeast reports whether v is later than or equal to other.
+func (v Version) AtLeast(other Version) bool {
 	if v.Major != other.Major {
 		return v.Major > other.Major
 	}
@@ -354,7 +354,7 @@ func validate(path string, list []Stream) error {
 		if next < 0 {
 			return refuse(path, "the %s stream's next name is %q, which is not one of its names", s.Name, s.Next)
 		}
-		if s.Name == Console && !s.Current.atLeast(ConsoleFloor) {
+		if s.Name == Console && !s.Current.AtLeast(ConsoleFloor) {
 			return refuse(path, "the console stream is at %s, below %s, a version it has already shipped: the console's updater refuses a downgrade, so its version line never goes backwards", s.Current, ConsoleFloor)
 		}
 		if s.Current.IsZero() {

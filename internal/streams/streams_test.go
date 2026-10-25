@@ -250,7 +250,7 @@ func TestConsoleFloor(t *testing.T) {
 		if !ok {
 			t.Fatal("the shipped catalogue names no console stream")
 		}
-		if !console.Current.atLeast(ConsoleFloor) {
+		if !console.Current.AtLeast(ConsoleFloor) {
 			t.Errorf("the console stream is at %s and the floor is %s", console.Current, ConsoleFloor)
 		}
 	})
@@ -326,7 +326,7 @@ func TestRealFileParses(t *testing.T) {
 	// a version on its own line from then on, so either is what the file may say:
 	// pinning the placeholder would break on the commit that cuts Falcon.
 	mobile, _ := c.Lookup(Mobile)
-	if first := FirstVersion(Mobile); !mobile.Current.IsZero() && !mobile.Current.atLeast(first) {
+	if first := FirstVersion(Mobile); !mobile.Current.IsZero() && !mobile.Current.AtLeast(first) {
 		t.Errorf("the mobile stream is at %s: want the 0.0.0 placeholder or a version on the app's own line, %s or later", mobile.Current, first)
 	}
 	for _, name := range mobile.Names {

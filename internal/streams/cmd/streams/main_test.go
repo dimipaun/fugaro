@@ -111,14 +111,15 @@ func TestSpokenName(t *testing.T) {
 }
 
 // TestSpokenNameRefused: a version the catalogue does not describe is refused
-// rather than guessed at. A major bump is off the stream's line, a minor below
-// the current one is behind it, a minor past the last name has none, and a
-// stream that has released nothing names nothing at all.
+// rather than guessed at. A major bump and a minor below the named line (the
+// CLI's starts at 0.10) are off the line the names describe, and a minor past
+// the last name has none.
 func TestSpokenNameRefused(t *testing.T) {
 	s := cliStream(t)
 	for _, tc := range []struct{ version, want string }{
 		{"1.0.0", "is not on the line"},
-		{"0.10.9", "is not on the line"},
+		{"0.9.0", "is not on the line"},
+		{"0.0.1", "is not on the line"},
 		{"0.17.0", "past the last name"},
 	} {
 		t.Run(tc.version, func(t *testing.T) {
@@ -136,18 +137,30 @@ func TestSpokenNameRefused(t *testing.T) {
 		})
 	}
 
+	// The name is counted from the stream's own first version, by the reader's
+	// rule, not from where the stream is now: a stream that has shipped nothing
+	// still names its first release, and a version below its line has no name.
 	t.Run("a stream that has released nothing", func(t *testing.T) {
 		c, err := streams.Parse(cataloguePath, []byte(catalogue))
 		if err != nil {
 			t.Fatal(err)
 		}
 		mobile, _ := c.Lookup(streams.Mobile)
+		for version, want := range map[string]string{"0.200.0": "Falcon", "0.201.2": "Pelican two"} {
+			v, err := parseVersion(version)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, err := spokenName(mobile, v); err != nil || got != want {
+				t.Errorf("spokenName(mobile, %s) = %q, %v, want %q", version, got, err, want)
+			}
+		}
 		v, err := parseVersion("0.1.0")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, err := spokenName(mobile, v); err == nil || !strings.Contains(err.Error(), "released nothing") {
-			t.Errorf("spokenName on a stream at 0.0.0 = %q, %v, want a refusal naming that nothing has shipped", got, err)
+		if got, err := spokenName(mobile, v); err == nil || !strings.Contains(err.Error(), "is not on the line") {
+			t.Errorf("spokenName(mobile, 0.1.0) = %q, %v, want a refusal: the app's line starts at 0.200", got, err)
 		}
 	})
 }
@@ -233,14 +246,43 @@ func TestSetMovesNext(t *testing.T) {
 		}
 	})
 
-	t.Run("a version off the stream's line leaves next alone", func(t *testing.T) {
+	// A version the reader refuses as a stream's current -- another major, or a
+	// minor below the named line -- is refused before anything is written: the
+	// catalogue cannot record it, and a write that tried would fail its own
+	// re-read after the release had already made its branch.
+	// The app's stream is at 0.0.0, so no floor stands in front of its
+	// 0.199.0: the line is the only refusal there.
+	for _, tc := range [][2]string{{"cli", "1.0.0"}, {"mobile", "0.199.0"}, {"mobile", "1.200.0"}} {
+		name, version := tc[0], tc[1]
+		t.Run("a version off the stream's line: "+name+" "+version, func(t *testing.T) {
+			path := inCatalogue(t, catalogue)
+			_, err := runStreams(t, "set", name, version)
+			if err == nil || !strings.Contains(err.Error(), "is not on the line") {
+				t.Fatalf("set %s %s = %v, want a refusal naming the line", name, version, err)
+			}
+			if body := read(t, path); body != catalogue {
+				t.Errorf("a refused write changed the file:\n%s", body)
+			}
+		})
+	}
+
+	// The file is the floor the next release reads, so a version below the
+	// stream's current is refused, and the version it is already at is not
+	// (an interrupted release re-runs with it).
+	t.Run("a version below current", func(t *testing.T) {
 		path := inCatalogue(t, catalogue)
-		if _, err := runStreams(t, "set", "cli", "1.0.0"); err != nil {
-			t.Fatalf("set cli 1.0.0: %v", err)
+		_, err := runStreams(t, "set", "cli", "0.10.4")
+		if err == nil || !strings.Contains(err.Error(), "below the cli stream's current 0.11.1") {
+			t.Fatalf("set cli 0.10.4 = %v, want a refusal: it would lower the floor", err)
 		}
-		body := read(t, path)
-		if !strings.Contains(body, `current: "1.0.0"`) || !strings.Contains(body, "next: Dolphin") {
-			t.Errorf("a major bump is off the line the catalogue's names describe, so next stays where it is:\n%s", body)
+		if body := read(t, path); body != catalogue {
+			t.Errorf("a refused write changed the file:\n%s", body)
+		}
+		if _, err := runStreams(t, "set", "cli", "0.11.1"); err != nil {
+			t.Errorf("set cli 0.11.1 (the version the stream is at) = %v, want it allowed", err)
+		}
+		if body := read(t, path); body != catalogue {
+			t.Errorf("setting the version the stream is at changed the file:\n%s", body)
 		}
 	})
 
@@ -270,21 +312,63 @@ func TestSetMovesNext(t *testing.T) {
 }
 
 // TestSetFirstReleaseSpendsTheFirstName: a stream that has released nothing has
-// `next` at the first name, and its first release spends it, so the minor after
-// that release takes the second. The file's own rule is that a non-zero current
-// cannot keep the first name as `next`, so this is also what keeps the write
-// readable at all.
+// `next` at the first name, and its first release -- the first minor of its
+// named line, 0.200.0 for the app -- spends it, so the minor after that release
+// takes the second. The file's own rule is that a non-zero current cannot keep
+// the first name as `next`, so this is also what keeps the write readable at
+// all.
 func TestSetFirstReleaseSpendsTheFirstName(t *testing.T) {
 	path := inCatalogue(t, catalogue)
-	if _, err := runStreams(t, "set", "mobile", "0.1.0"); err != nil {
-		t.Fatalf("set mobile 0.1.0: %v", err)
+	if _, err := runStreams(t, "set", "mobile", "0.200.0"); err != nil {
+		t.Fatalf("set mobile 0.200.0: %v", err)
 	}
 	body := read(t, path)
-	if !strings.Contains(body, `current: "0.1.0"`) || !strings.Contains(body, "next: Pelican") {
+	if !strings.Contains(body, `current: "0.200.0"`) || !strings.Contains(body, "next: Pelican") {
 		t.Errorf("the mobile stream's first release should have spent Falcon and left Pelican next:\n%s", body)
 	}
 	if _, err := streams.Read(path); err != nil {
 		t.Errorf("the written file is not a catalogue this build reads: %v", err)
+	}
+}
+
+// TestSetCheck: `set --check` is set's whole computation -- the floor, the next
+// name, the line-targeted rewrite and its re-read -- with no write, so the
+// release's step 1 can refuse what its step 2 would. It prints the row it would
+// write, and it refuses everything set refuses, the file untouched either way.
+func TestSetCheck(t *testing.T) {
+	t.Run("a release it would write", func(t *testing.T) {
+		path := inCatalogue(t, catalogue)
+		out, err := runStreams(t, "set", "--check", "cli", "0.12.0")
+		if err != nil {
+			t.Fatalf("set --check cli 0.12.0: %v", err)
+		}
+		if out != "current=0.12.0\nnext=Gecko\n" {
+			t.Errorf("set --check printed %q, want the row it would write", out)
+		}
+		if body := read(t, path); body != catalogue {
+			t.Errorf("set --check wrote the file:\n%s", body)
+		}
+	})
+	unquoted := strings.Replace(catalogue, `current: "0.11.1"`, "current: 0.11.1", 1)
+	for _, tc := range []struct {
+		name, body, version, want string
+	}{
+		// The reader accepts an unquoted 0.11.1 (it is a string in every YAML
+		// schema), and set's line-targeted rewrite only finds a quoted one.
+		{"an unquoted current", unquoted, "0.11.2", "no current version"},
+		{"no name left after it", catalogue, "0.16.0", "no name for the minor after it"},
+		{"a version the reader refuses", catalogue, "1.0.0", "is not on the line"},
+		{"a version below current", catalogue, "0.11.0", "below the cli stream's current"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := inCatalogue(t, tc.body)
+			if _, err := runStreams(t, "set", "--check", "cli", tc.version); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("set --check cli %s = %v, want a refusal carrying %q", tc.version, err, tc.want)
+			}
+			if body := read(t, path); body != tc.body {
+				t.Errorf("set --check changed the file:\n%s", body)
+			}
+		})
 	}
 }
 
@@ -342,6 +426,7 @@ func TestRunUsageAndRefusals(t *testing.T) {
 		{"get without a stream", []string{"get"}, "usage: streams"},
 		{"name without a version", []string{"name", "cli"}, "usage: streams"},
 		{"set without a version", []string{"set", "cli"}, "usage: streams"},
+		{"set --check without a version", []string{"set", "--check", "cli"}, "usage: streams"},
 		{"a stream the file does not name", []string{"get", "desktop"}, "names no desktop stream"},
 		{"a version that is not one", []string{"name", "cli", "0.12"}, "MAJOR.MINOR.PATCH"},
 		{"a version with a v", []string{"set", "cli", "v0.12.0"}, "MAJOR.MINOR.PATCH"},
