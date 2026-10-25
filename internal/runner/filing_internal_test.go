@@ -474,6 +474,56 @@ func TestFollowUpFilesNoSecondItemForTheSameOpenRound(t *testing.T) {
 	}
 }
 
+// TestFollowUpClosesTheRoundAndLeavesTheDeferralOpen: Hotfix's row files two
+// things and only one of them is a review's — the deferral is the proper fix
+// the expedient one owes (D30, D15) — so a hotfix follow-up that shipped its
+// review closes the round its predecessor left open and leaves the deferral
+// alone: the run that revisits the area at its normal mode is the one that
+// answers a deferral, and a follow-up that merely shipped its own round has not
+// made the proper fix either. It files its own deferral, as every hotfix run
+// does, so the pull request ends with two open deferrals and one closed round.
+func TestFollowUpClosesTheRoundAndLeavesTheDeferralOpen(t *testing.T) {
+	ctx := context.Background()
+	remote := modeBase(t, "rigor: { default: hotfix }\n")
+	first := filedRunAt(t, remote, "fugaro/x", "20261024-120000-abcd", openRound)
+	if !first.fileOpenItems(ctx) {
+		t.Fatal("the earlier hotfix filed nothing")
+	}
+	// The deferral leads the record's ids (fileOpenItems), so the two are told
+	// apart by position: the first is what the hotfix deferred, the second the
+	// round it left open.
+	if len(first.rec.Backlog) != 2 {
+		t.Fatalf("the earlier hotfix recorded %v; want the deferral and the round", first.rec.Backlog)
+	}
+	deferral, round := first.rec.Backlog[0], first.rec.Backlog[1]
+	follow := followUpAt(t, first, "20261025-120000-ef01",
+		runstore.ReviewSummary{Round: 2, Tier: runstore.TierSenior, Verdict: "ship", Findings: 1})
+
+	if !follow.fileOpenItems(ctx) {
+		t.Fatal("a hotfix follow-up that shipped its review wrote nothing")
+	}
+	if !reflect.DeepEqual(follow.rec.Backlog, []string{"20261025-01"}) {
+		t.Errorf("the follow-up filed %v; want its own deferral alone", follow.rec.Backlog)
+	}
+	if !reflect.DeepEqual(follow.closedBacklog, []string{round}) {
+		t.Errorf("the follow-up closed %v; want the round %s alone: a deferral is answered by the run that revisits the area, not by one that shipped its review", follow.closedBacklog, round)
+	}
+	items, err := backlog.Load(filepath.Join(follow.repo.Dir, backlog.Dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := map[string]string{}
+	for _, it := range items {
+		status[it.ID] = it.Status
+	}
+	if status[deferral] != "open" {
+		t.Errorf("the deferral %s is %q; want it still open (D15, D30)", deferral, status[deferral])
+	}
+	if status[round] != "closed" {
+		t.Errorf("the round %s is %q; want closed: the follow-up shipped it (D31)", round, status[round])
+	}
+}
+
 // TestNoModeSuppressesTheOwnersItem: the table is what a *run* files of its
 // own, and nothing else. An item the owner filed by hand — `fugaro backlog
 // add`, which writes what it is given and reads no mode — is in the checkout
