@@ -51,6 +51,7 @@
 
 import type { ConsoleHandlers, ValidatedArguments } from '../main/ipc'
 import { NO_ACTIVE_INSTALLATION } from '../main/installations'
+import type { InstallationArguments, InstallationOperationName } from '../main/installations'
 import type { Notice } from '../main/spawn'
 
 /**
@@ -232,6 +233,34 @@ export function refusalFrom(operation: string, sentence: string | null): SourceR
 }
 
 /**
+ * InstallationSurface is the rail's half of the surface, and it is one method:
+ * `picker.ts`'s own dispatcher (`answerFor`), reached from the dashboard's
+ * document instead of from the picker window's (owner's design ruling of
+ * 2026-10-25).
+ *
+ * It answers in the picker's own reply shape -- `{ ok: true, data }` or
+ * `{ ok: false, reason }` -- rather than the dashboard's, because it is the
+ * same dispatcher the picker's channels call: a second shape here would be a
+ * second implementation of every one of these six operations. `handlersFor`
+ * below is where the two shapes meet, in one place.
+ */
+export interface InstallationSurface {
+  answer(name: InstallationOperationName, args: InstallationArguments): Promise<unknown>
+  /** open is the rail's `+` door: the window that adds an installation by
+   * checkout path. It is the picker module's own `open`, which focuses the
+   * window when it is already there rather than opening a second one. */
+  open(): Promise<void>
+}
+
+/**
+ * NO_INSTALLATION_SURFACE is what the rail's operations answer in a console
+ * built without one (a unit test's, a `refused` console's). It is a state and
+ * not a guess, the same way `NO_ACTIVE_INSTALLATION` is: nothing is wrong with
+ * the machine, this process simply has no store behind the operation.
+ */
+export const NO_INSTALLATION_SURFACE = 'this console has no installation store'
+
+/**
  * handlersFor answers the whole IPC surface from one source. It is a function
  * rather than a class because the surface is a table: one handler per operation,
  * each a one-line call.
@@ -251,6 +280,15 @@ export function refusalFrom(operation: string, sentence: string | null): SourceR
  * something this mapping can add by caching: a mapping-level cache would have to
  * key on the arguments it was handed, which is a second copy of the source's own
  * idea of what "the same subscription" is.
+ *
+ * The rail's six operations (`installation.*`, owner's design ruling of
+ * 2026-10-25) are not reads of the CLI either, with one exception:
+ * `installation.list` spawns `fugaro config list --json` and is the only one of
+ * them that does. All six go through `deps.installations`, which is the picker
+ * module's dispatcher, so the dashboard and the picker window answer from the
+ * same code; the dep is **optional** for the reason `installation` is -- a
+ * console with no store refuses them with a sentence rather than failing to
+ * register.
  */
 export function handlersFor(
   source: FugaroSource,
@@ -262,8 +300,39 @@ export function handlersFor(
      * console built without a store (a unit test's, a `refused` console's)
      * answers D13's no-installation state rather than failing to register. */
     readonly installation?: () => unknown
+    /** `installations` is the rail's surface (owner's design ruling of
+     * 2026-10-25). Optional for the same reason `installation` is -- and a
+     * *function* for the same reason too: the entry point builds this surface
+     * before the store exists and reads it at message time. */
+    readonly installations?: () => InstallationSurface
   },
 ): CliBackedHandlers {
+  /**
+   * rail turns one picker answer into the dashboard's reply convention: the
+   * data on success, and an exception whose message is the picker's own
+   * refusal sentence on failure -- which `registerConsoleHandlers` passes
+   * through verbatim (design section 6.3), and which `dispatch` bounds and
+   * flattens before a renderer sees it.
+   */
+  const rail = async (name: InstallationOperationName, args: InstallationArguments): Promise<unknown> => {
+    const surface = deps.installations?.()
+    if (surface === undefined) throw new Error(NO_INSTALLATION_SURFACE)
+    const answer = (await surface.answer(name, args)) as
+      | { readonly ok?: unknown; readonly reason?: unknown; readonly data?: unknown }
+      | null
+      | undefined
+    if (answer === null || typeof answer !== 'object' || answer.ok !== true) {
+      const reason = answer === null || typeof answer !== 'object' ? undefined : answer.reason
+      throw new Error(typeof reason === 'string' && reason !== '' ? reason : `${name} failed`)
+    }
+    return answer.data
+  }
+
+  /** project is the one argument every rail row but `list` and `open` takes,
+   * read as the string the schema validated it as. */
+  const project = (args: ValidatedArguments): string =>
+    typeof args['project'] === 'string' ? args['project'] : ''
+
   // `satisfies` rather than a cast: the mapped type makes a missing handler a
   // compile error, which is the whole reason `ConsoleHandlers` is mapped. A cast
   // here would turn "one operation answers nothing" back into a runtime state.
@@ -293,6 +362,31 @@ export function handlersFor(
     // and with no installation chosen -- it answers D13's no-installation
     // state, which is a state and not a guess.
     'installation.current': () => deps.installation?.() ?? { chosen: false, sentence: NO_ACTIVE_INSTALLATION },
+    // The rail's own surface: the list every row is drawn from, and the five
+    // things a row or its issue view can do. `checkout`'s directory is omitted
+    // from the payload rather than sent as `undefined`, which is the schema's
+    // own way of saying "no checkout" (design section 3.4 rule 5).
+    'installation.list': () => rail('list', {}),
+    'installation.choose': (args) => rail('choose', { project: project(args) }),
+    'installation.checkout': (args) => {
+      const checkout = args['checkout']
+      return rail(
+        'checkout',
+        typeof checkout === 'string' ? { project: project(args), checkout } : { project: project(args) },
+      )
+    },
+    'installation.remove': (args) => rail('remove', { project: project(args) }),
+    'installation.reveal': (args) => rail('reveal', { project: project(args) }),
+    // The one rail operation that is not a row's action but the rail's foot:
+    // the window the `+` opens. It goes to `open` rather than through `answer`
+    // because the picker's own table has no `open` row -- opening the window is
+    // not something the window's document may ask for.
+    'installation.open': async () => {
+      const surface = deps.installations?.()
+      if (surface === undefined) throw new Error(NO_INSTALLATION_SURFACE)
+      await surface.open()
+      return null
+    },
   } satisfies CliBackedHandlers
 }
 

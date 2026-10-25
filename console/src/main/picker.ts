@@ -68,7 +68,6 @@ import type { ConsoleEventLike, IpcMainLike } from './ipc'
 import { PICKER_ENTRY_PATH, PICKER_ENTRY_URL } from './protocol'
 import { verifyCandidate } from '../source/cli'
 import {
-  PICKER_COMMANDS,
   assertSpawnSurface,
   binDirectories,
   planFor,
@@ -228,12 +227,23 @@ export interface InstallationPicker {
    * had when the handlers were registered. */
   installation(): ActiveInstallation
   /** open shows the picker, focusing the window that is already there rather
-   * than opening a second one. */
+   * than opening a second one. Since the owner's design ruling of 2026-10-25 it
+   * is the rail's `+` door (`installation.open` on the dashboard's surface) as
+   * well as the menu item: **the console no longer opens it by itself**, which
+   * is what "the console never shows a picker screen" means here. */
   open(): Promise<void>
-  /** openOnFirstRun is D13's "the picker opens once, automatically, on that
-   * first run": it opens only when no installation has been chosen, and only
-   * once per process. */
-  openOnFirstRun(): Promise<void>
+  /** answer is the picker's own dispatcher, exposed so the dashboard's surface
+   * can reach the same six answers from the console's document
+   * (`handlersFor`'s `installations` dep, `src/source/source.ts`). It answers in
+   * this module's reply shape, and the join to the dashboard's is one place:
+   * `rail` in `src/source/source.ts`.
+   *
+   * The validated arguments are the picker's own (`InstallationArguments`), so
+   * a caller has already been through one closed schema before it gets here --
+   * the dashboard's schema for the dashboard's document, the picker's for the
+   * picker's. Both admit the same values, which is what
+   * `test/unit/ipc.test.ts` holds them to. */
+  answer(name: InstallationOperationName, args: InstallationArguments): Promise<unknown>
   /** installMenu puts `Installations…` in the application menu. It is called in
    * **every** mode, `refused` included: choosing an installation is how an
    * operator gets out of a refusal. */
@@ -331,13 +341,14 @@ export function pickerPreloadPath(appPath: string): string {
  * with no installation, and an add is refused until the operator fixes the file.
  */
 export function createInstallationPicker(deps: InstallationPickerDeps): InstallationPicker {
-  // The spawn surface is asserted here as well as in the dashboard, and the
-  // picker's own table is the second argument: `installation.list` is a row the
-  // dashboard's fifteen operations do not have, and `assertSpawnSurface` holds
-  // it to the picker's one command (`config list --json`, no `--project`, no
-  // `--dir`, no declared arguments). A row that grew an argument, or a name
-  // outside `INSTALLATION_OPERATION_NAMES`, is refused before a window exists.
-  assertSpawnSurface(SPAWN_COMMANDS, PICKER_COMMANDS)
+  // The spawn surface is asserted here as well as in the dashboard: there is
+  // **one** table since the owner's design ruling of 2026-10-25 (the rail's
+  // `installation.list` is the dashboard's own operation now, so the picker's
+  // second table went with it), and `assertSpawnSurface` holds every row to the
+  // operation it serves -- `config list --json` with no `--project`, no `--dir`
+  // and no declared argument among them. A row that grew an argument is refused
+  // before a window exists.
+  assertSpawnSurface(SPAWN_COMMANDS)
   // A `userData` the path rule refuses -- `$FUGARO_CONFIG` in the home directory
   // makes every `userData` "inside" the CLI's configuration -- is **not** a
   // reason to quit at startup (review S7). The console starts with no store: the
@@ -393,7 +404,6 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
   registry.load()
 
   let window: BrowserWindow | null = null
-  let openedOnFirstRun = false
 
   /** workingDirectory is where a probe without a checkout runs (rule 5). */
   const workingDirectory = (): string => privateWorkingDirectory()
@@ -878,12 +888,7 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
   return {
     installation: current,
     open,
-    async openOnFirstRun(): Promise<void> {
-      if (openedOnFirstRun) return
-      openedOnFirstRun = true
-      if (registry.current().chosen) return
-      await open()
-    },
+    answer: answerFor,
     installMenu(): void {
       deps.menu.setApplicationMenu(
         deps.menu.buildFromTemplate(
@@ -923,11 +928,15 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
  *
  *   1. passes `picker.installation` to `handlersFor` as its `installation` dep,
  *      which is what answers `installation.current` (Task 3.4a's join), and
- *   2. calls `picker.installMenu()` once the app is ready and
- *      `picker.openOnFirstRun()` when the handshake has settled.
+ *      `picker.answer`/`picker.open` as its `installations` dep, which is what
+ *      answers the rail's six operations (owner's design ruling of
+ *      2026-10-25), and
+ *   2. calls `picker.installMenu()` once the app is ready.
  *
  * Both of those are the entry point's because both need the lifecycle it owns;
- * neither is a second copy of anything here.
+ * neither is a second copy of anything here. **It no longer opens the window**:
+ * the rail's `+` door and the menu item are the two ways in, and neither is
+ * something the console does by itself.
  */
 export function installInstallationPicker(options: {
   readonly electron: {

@@ -57,6 +57,8 @@ import type { BoundInstallation } from '../source/cli'
 import { withResolvedBinary } from './installations'
 import type { ActiveInstallation } from './installations'
 import type { CliCompatibility } from '../shared/version'
+import { NO_INSTALLATION_SURFACE } from '../source/source'
+import type { InstallationSurface } from '../source/source'
 
 // Before `whenReady` resolves, which is the only window Electron gives for it:
 // a scheme registered later is not a standard or secure one.
@@ -426,8 +428,37 @@ const gated: ConsoleHandlers = {
     // `installationState`). Before the picker exists the answer is
     // `handlersFor`'s own no-installation state.
     installation: () => installationState(),
+    // The installation rail's own surface (owner's design ruling of
+    // 2026-10-25): the picker module's dispatcher, read at message time for the
+    // same reason `installation` is -- this constant is built before
+    // `whenReady` and the picker is built after it.
+    installations: () => railSurface(),
   }),
   'startup.compatibility': startupCompatibility(storedCompatibility),
+}
+
+/**
+ * railSurface is the rail's half of the surface as `handlersFor` reaches it:
+ * the picker module's own answers, so the dashboard's document and the picker
+ * window's are one implementation rather than two.
+ *
+ * A console whose picker was never built -- a unit test's, a build with no
+ * store -- gets a surface that refuses every one of the six with
+ * `NO_INSTALLATION_SURFACE`, which is a state and not a guess, and is what
+ * `handlersFor` answers with when the dep is absent altogether.
+ */
+function railSurface(): InstallationSurface {
+  const built = picker
+  if (built === null) {
+    const absent = async (): Promise<never> => {
+      throw new Error(NO_INSTALLATION_SURFACE)
+    }
+    return { answer: absent, open: absent }
+  }
+  return {
+    answer: (name, args) => built.answer(name, args),
+    open: () => built.open(),
+  }
 }
 
 /** registered is whether this process has put the surface on `ipcMain`. */
@@ -558,13 +589,14 @@ async function main(): Promise<void> {
   // hid the door would be a console with no way back.
   picker.installMenu()
   await lifecycle.start()
-  // D13's first run: with no installation chosen the console makes no guess,
-  // says so, and opens the picker once. A picker that fails to open is logged
-  // and is not a reason to quit a console whose own window is already up: the
-  // menu item is still there.
-  await picker.openOnFirstRun().catch((error: unknown) => {
-    console.error('[console] the installation picker could not be opened:', error)
-  })
+  // **The console does not open the picker window here, and that is the
+  // owner's design ruling of 2026-10-25**: there is no picker screen. D13's
+  // first run -- no installation chosen -- is drawn by the dashboard's own
+  // rail, which lists every installation the CLI found and opens the issue
+  // view of the first one when none of them can be read. The picker window is
+  // left where the ruling puts it: behind the rail's `+` door
+  // (`installation.open`) and the menu item, both of which the operator asks
+  // for.
 }
 
 app.whenReady().then(main).catch(reportAndQuit)

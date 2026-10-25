@@ -15,7 +15,7 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { PICKER_COMMANDS, SPAWN_COMMANDS } from '../../src/main/spawn'
+import { SPAWN_COMMANDS } from '../../src/main/spawn'
 import { STUB_COMMAND_KEYS, commandKey, installStub } from './stub'
 
 /** freshDirectory is a temporary directory this test owns. */
@@ -45,16 +45,16 @@ describe('the stub’s command keys', () => {
       'doctor',
       'config list',
     ])
-    // Both tables: the dashboard's fifteen operations and the picker's one read
-    // (`config list --json`, the discovery the whole first run is built on). The
-    // picker's row is a *spawn* row the dashboard's table does not have, and a
-    // stub that answered fourteen of them and fell through on the fifteenth
-    // would make every discovery test pass for the wrong reason.
-    expect(STUB_COMMAND_KEYS).toEqual([...SPAWN_COMMANDS, ...PICKER_COMMANDS].map((row) => commandKey([...row.words])))
+    // The console's one spawn table, which since the owner's design ruling of
+    // 2026-10-25 includes the installation rail's own read (`config list
+    // --json`, the discovery the whole first run is built on). A stub that
+    // answered every row but one would make every discovery test pass for the
+    // wrong reason.
+    expect(STUB_COMMAND_KEYS).toEqual(SPAWN_COMMANDS.map((row) => commandKey([...row.words])))
     // One key per operation: two rows sharing one would make one of them
     // unreachable and its scenario silently wrong.
     expect(new Set(STUB_COMMAND_KEYS).size).toBe(STUB_COMMAND_KEYS.length)
-    expect(STUB_COMMAND_KEYS).toHaveLength(SPAWN_COMMANDS.length + PICKER_COMMANDS.length)
+    expect(STUB_COMMAND_KEYS).toHaveLength(SPAWN_COMMANDS.length)
   })
 
   it('tells the two log operations apart by their own flag', () => {

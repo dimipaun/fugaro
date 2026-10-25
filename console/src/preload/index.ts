@@ -145,6 +145,20 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   ['installation.current', 'getInstallation'],
   ['environment.report', 'environmentReport'],
   ['link.openExternal', 'openExternal'],
+  // The installation rail (owner's design ruling of 2026-10-25). The console
+  // never shows a picker screen: the rail lists every installation, a click
+  // switches the console to one, and a row that cannot be read opens its issue
+  // in the main area. Six rows, and five of them spawn nothing: they read and
+  // write the console's own store, hand the file manager a directory this
+  // process computed, or open the window the `+` door is. The sixth,
+  // `installation.list`, is `fugaro config list --json` -- the read that was
+  // the picker window's own and is now the rail's.
+  ['installation.list', 'listInstallations'],
+  ['installation.choose', 'chooseInstallation'],
+  ['installation.checkout', 'setInstallationCheckout'],
+  ['installation.remove', 'removeInstallation'],
+  ['installation.reveal', 'revealInstallation'],
+  ['installation.open', 'openInstallations'],
 ] as const) satisfies readonly (readonly [string, string])[]
 
 /**

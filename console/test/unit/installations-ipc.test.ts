@@ -1074,19 +1074,22 @@ describe('the picker’s reveal', () => {
 })
 
 describe('the picker’s window', () => {
-  it('opens its own document, once, on the first run', async () => {
+  it('opens its own document when it is asked to, and focuses the window it already has', async () => {
+    // **Nothing opens this window by itself** (owner's design ruling of
+    // 2026-10-25): the console never shows a picker screen, so the only two
+    // callers are the rail's `+` door (`installation.open`) and the menu item.
+    // What is asserted here is that `open` is the one door and that it is
+    // idempotent -- a second call focuses rather than building a second window.
     const { picker, windows } = pickerOver()
-    await picker.openOnFirstRun()
-    await picker.openOnFirstRun()
+    expect(windows).toHaveLength(0)
+    await picker.open()
+    await picker.open()
     expect(windows).toHaveLength(1)
     // The picker's own document, on the console's own origin, and the preload is
     // the picker's -- a window that got the dashboard's preload would expose
-    // fifteen operations to a document whose whole job is to draw a list.
+    // twenty-one operations to a document whose whole job is to draw a list.
     expect(windows[0]?.loaded).toEqual([PICKER_ENTRY_URL])
     expect(PICKER_ENTRY_URL).toBe('app://console/installations.html')
-    // A second `open()` focuses rather than building a second window.
-    await picker.open()
-    expect(windows).toHaveLength(1)
   })
 
   it('is built through the same hardened path as the dashboard (buildHardenedWindow)', async () => {
@@ -1109,14 +1112,15 @@ describe('the picker’s window', () => {
   })
 
   it('treats a picker closed while it loads as dismissed, not as a failure', async () => {
-    // The first run awaits `openOnFirstRun()` inside `main`, whose catch quits
-    // the console: a load aborted because the operator closed the picker must not
-    // reach it. Any other load failure still does.
+    // A load aborted because the operator closed the picker must not be
+    // reported as a failure -- the door that opened it (the rail's `+`, the menu
+    // item) is not a screen anybody is waiting on. Any other load failure still
+    // is.
     const dismissed = pickerOver({ loadFails: 'closed' })
-    await expect(dismissed.picker.openOnFirstRun()).resolves.toBeUndefined()
+    await expect(dismissed.picker.open()).resolves.toBeUndefined()
     expect(dismissed.windows).toHaveLength(1)
     const closing = pickerOver({ loadFails: 'closing' })
-    await expect(closing.picker.openOnFirstRun()).resolves.toBeUndefined()
+    await expect(closing.picker.open()).resolves.toBeUndefined()
     const broken = pickerOver({ loadFails: 'error' })
     await expect(broken.picker.open()).rejects.toThrow(/ERR_FAILED/)
   })

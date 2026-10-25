@@ -25,7 +25,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import { PICKER_COMMANDS, SPAWN_COMMANDS } from '../../src/main/spawn'
+import { SPAWN_COMMANDS } from '../../src/main/spawn'
 
 /** StubAnswer is what one command does when the stub is asked for it. */
 export interface StubAnswer {
@@ -294,18 +294,18 @@ export function commandKey(argv: readonly string[]): string {
 }
 
 /**
- * STUB_COMMAND_KEYS is every key a scenario may use: the console's own spawn
- * tables -- `src/main/spawn.ts`'s `SPAWN_COMMANDS` (the dashboard's fifteen
- * operations) **and** `PICKER_COMMANDS` (the picker's one read, `config list
- * --json`) -- read through `commandKey`, so a new operation in either table is a
- * key the stub answers without this file changing and without a second list to
- * keep in step.
+ * STUB_COMMAND_KEYS is every key a scenario may use: the console's one spawn
+ * table, `src/main/spawn.ts`'s `SPAWN_COMMANDS`, read through `commandKey`, so a
+ * new operation in it is a key the stub answers without this file changing and
+ * without a second list to keep in step. (There were two tables until the
+ * owner's design ruling of 2026-10-25 moved the installation rail's own read
+ * onto the dashboard's.)
  *
  * It is exported so a test can hold it, and so `installStub` can refuse a key the
  * stub can never be asked for (see `refuseUnknownCommands`).
  */
 export const STUB_COMMAND_KEYS: readonly string[] = Object.freeze(
-  [...SPAWN_COMMANDS, ...PICKER_COMMANDS].map((row) => commandKey([...row.words])),
+  SPAWN_COMMANDS.map((row) => commandKey([...row.words])),
 )
 
 /**
