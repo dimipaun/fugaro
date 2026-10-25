@@ -128,6 +128,12 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     'row.perRunCapSource': '`capSourceAt` keeps a word only when it is on `CAP_SOURCES`, else `unknown`',
     'panel.because':
       'every panel constructor draws its reason through `sanitizeRefusal` (`drawnRefusal`) before it is stored, or it is one of the two console constants (`POLICY_BECAUSE`, `ENROLLMENT_BECAUSE`); a document\'s own `note` takes the `putText` branch instead (`becauseKind`)',
+    RIGOR_ABSENT: 'the dash `runs ls`\'s MODE column draws for a run whose record carries no rigor block (`shared/rigor.ts`), a console constant',
+    word: {
+      within: 'rigorCell',
+      reason:
+        '`rigorModeWord(view.mode)`, which answers one of the console\'s five mode words or `null`; `null` is the branch that hands the document\'s own value to `textCell` (the `label` class, the `runs[].rigor.mode` field), so only the console\'s word reaches the sink',
+    },
   },
   // The one drawer outside `src/renderer/screens`: `src/shared/version.ts` draws
   // the version skew banner and the refusal screen (Task 3.2), because the main
@@ -155,6 +161,11 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     '`#${String(model.number)}`': 'a pull request number the model read as a finite integer (`prNumberOf`)',
     'model.because': 'one of two console sentences (`PR_NO_LINK_REASON` or the no-pull-request one)',
     'model.linkBecause': '`LOG_NO_LINK`, a console constant',
+    known: {
+      within: 'rigorWordCell',
+      reason:
+        'the answer of the vocabulary the caller passed in (`rigorModeWord` or `rigorLayerWord`, both `shared/rigor.ts`), which is one of the console\'s own words or `null`; `null` is the branch that hands the document\'s own mode or layer to `putText` as text',
+    },
   },
 })
 
@@ -747,6 +758,7 @@ describe('a screen writes only its own vocabulary through literal', () => {
       '../../shared/availability.ts',
       '../../shared/launcher.ts',
       '../../shared/replay.ts',
+      '../../shared/rigor.ts',
       '../../shared/sanitize.ts',
       '../../shared/schema.ts',
       '../../shared/stringify.ts',

@@ -65,6 +65,8 @@ import { ReplayBuffer, REPLAY_MAX_RECORDS, REPLAY_WINDOW_SECONDS } from '../../s
 import type { ReplayArrival, ReplayDocument, ReplayRecord } from '../../shared/replay'
 import type { OperationName } from '../../main/ipc'
 import { launcherFull } from '../../shared/launcher'
+import { readRigor, rigorLayerWord, rigorModeWord } from '../../shared/rigor'
+import type { RigorView } from '../../shared/rigor'
 import type { TextClass } from '../../shared/sanitize'
 import { putLink, putReading, putText } from '../app'
 import type { ElementLike } from '../app'
@@ -175,6 +177,12 @@ export interface RunRow {
   readonly settled: boolean
   readonly followUp: boolean
   readonly staleDraft: boolean
+  /** the run's rigor block -- the mode it resolved, the layer that decided it
+   * and the rules that matched -- or `null` for a record that carries none this
+   * reader can show (`shared/rigor.ts`). The header draws the Rigor row exactly
+   * when it is not null: **absence is "no record of this run's rigor"**, which
+   * is not a mode, and a row saying so would be a row about the console. */
+  readonly rigor: RigorView | null
 }
 
 /** RunLedger is the run's spend: the three accounts, apart. */
@@ -658,6 +666,7 @@ export function buildRunModel(inputs: RunInputs): RunModel {
       settled: boolAt(row['settled']),
       followUp: boolAt(row['follow_up']),
       staleDraft: boolAt(row['stale_draft']),
+      rigor: readRigor(row['rigor']),
     },
     ledger: ledgerOf(row),
     stages: stagesOf(row, document['verify']),
@@ -820,8 +829,61 @@ function header(factory: ScreenFactory, model: RunModel): ScreenElement {
   if (model.row.settled) literal(cell(flags, factory, 'span', 'run-settled'), 'settled')
   if (model.row.staleDraft) literal(cell(flags, factory, 'span', 'run-stale'), 'stale draft')
   if (model.row.followUp) literal(cell(flags, factory, 'span', 'run-follow-up'), 'follow-up')
+  if (model.row.rigor !== null) element.append(rigorLine(factory, model.row.rigor))
   if (model.halt !== null) element.append(haltLine(factory, model.halt))
   return element
+}
+
+/**
+ * rigorLine is the run's rigor: the mode it resolved, the layer that decided it
+ * and the area rules that matched (docs/rigor-modes D23, D24, D25).
+ *
+ * **This is the screen that has room for the whole answer.** `runs ls`'s MODE
+ * column and the Projects screen's own cell are one word in a table, and the
+ * Live screen's chip is one word on a row; here the reader is looking at one
+ * run, so the layer that won and every rule that matched are drawn beside the
+ * mode. The CLI's `fugaro diagnose` prints the same three facts on its own
+ * `Rigor:` line (`internal/cli/diagnose.go`'s `rigorLine`).
+ *
+ * Every string is a document's: the five modes and the five layers have the
+ * console's words and go through `literal`, and anything else -- a mode or a
+ * layer from a CLI newer than this build, or a value a tampered record carries
+ * -- goes through `putText` as the bounded, escaped text it is. The area names
+ * are a repository's own words either way, so they are text on every path. A
+ * moment (`at`) and the revision the configuration was read from are in the
+ * record and are not drawn: this row is about what the run resolved, and the
+ * two stamps answer different questions.
+ */
+function rigorLine(factory: ScreenFactory, rigor: RigorView): ScreenElement {
+  const element = make(factory, 'div', 'run-rigor')
+  literal(cell(element, factory, 'span', 'run-rigor-word'), 'RIGOR')
+  rigorWordCell(element, factory, rigorModeWord, rigor.mode, 'rigor.mode', 'run-rigor-mode')
+  literal(cell(element, factory, 'span', 'run-rigor-from-word'), 'from')
+  rigorWordCell(element, factory, rigorLayerWord, rigor.from, 'rigor.from', 'run-rigor-from')
+  for (const area of rigor.areas) {
+    const drawn = cell(element, factory, 'span', 'run-rigor-area')
+    textCell(drawn, factory, 'span', area.name, 'label', 'rigor.areas[].name', 'run-rigor-area-name')
+    rigorWordCell(drawn, factory, rigorModeWord, area.mode, 'rigor.areas[].mode', 'run-rigor-area-mode')
+  }
+  return element
+}
+
+/** rigorWordCell writes one mode or layer: the console's word when this build
+ * knows it, and the raw value through `putText` when it does not. `word` is the
+ * vocabulary to look the value up in -- `rigorModeWord` for a mode, which is the
+ * five the dial has, and `rigorLayerWord` for a layer, which is the five that
+ * decide one (`shared/rigor.ts`). */
+function rigorWordCell(
+  parent: ScreenElement,
+  factory: ScreenFactory,
+  word: (value: string) => string | null,
+  value: string,
+  field: string,
+  ...classes: string[]
+): ScreenElement {
+  const known = word(value)
+  if (known !== null) return literal(cell(parent, factory, 'span', ...classes), known)
+  return textCell(parent, factory, 'span', value, 'label', field, ...classes)
 }
 
 /** haltLine is why the run halted: the reason, the scope and the time. A halting
