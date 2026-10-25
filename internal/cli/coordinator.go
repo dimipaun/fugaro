@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"crypto/rsa"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -583,20 +584,34 @@ func coordinatorReader(warn io.Writer) (coordinator.Reader, error) {
 }
 
 // coordinatorAppCredential is the App credential the coordinator's mint needs:
-// the App's ID, and its private key PEM read the way the opener reads it
+// the App's ID, and its private key read the way the opener reads it
 // (providers.AppKey, so the mint and the opener cannot disagree about where the
-// key is). Each is named when it is missing, and the failure is the user's own
-// rather than the host's.
-func coordinatorAppCredential() (appID, pemData string, err error) {
+// key is) and parsed into the key the mint signs with. Each failure names what
+// is missing or malformed, and every one of them is the user's own rather than
+// the host's.
+//
+// The parse is here, and not left to the caller that mints, because this
+// function is what BOTH halves of the command ask for the credential: a key
+// that is there and is not a key has to be the caller's failure from either,
+// and a parse left to providers.FromEnv would answer the same environment
+// twice — exit 1 through the mint, which parses the key itself, and exit 2
+// through the opener, whose plain error travels as a failure through the host.
+// A person holding a key that is not a key would be told GitHub failed and
+// would retry it.
+func coordinatorAppCredential() (appID string, key *rsa.PrivateKey, pemData string, err error) {
 	appID = os.Getenv(providers.EnvGitHubAppID)
 	if appID == "" {
-		return "", "", userErr("%s is not set: the project-wide read mints the coordinator's own token and needs the GitHub App's ID (see docs/git-providers.md)", providers.EnvGitHubAppID)
+		return "", nil, "", userErr("%s is not set: the project-wide read mints the coordinator's own token and needs the GitHub App's ID (see docs/git-providers.md)", providers.EnvGitHubAppID)
 	}
 	pemData, err = providers.AppKey(os.Environ())
 	if err != nil {
-		return "", "", userErr("%v", err)
+		return "", nil, "", userErr("%v", err)
 	}
-	return appID, pemData, nil
+	key, err = github.ParsePrivateKey([]byte(pemData))
+	if err != nil {
+		return "", nil, "", userErr("%v", err)
+	}
+	return appID, key, pemData, nil
 }
 
 // openCoordinatorProvider opens the git providers the view is read through. It
@@ -614,12 +629,13 @@ func coordinatorAppCredential() (appID, pemData string, err error) {
 // the second half of the decision. providers.FromEnv reports a variable it does
 // not find as a plain error, and a failure through the host is a remote one
 // (exit 2) — so without this check a person who simply has not exported the
-// App's ID would be told the host failed and would retry it, when the refusal
-// is theirs to fix and the same condition is already a user error where the
-// mint asks for the credential (coordinatorAppCredential, exec 1). Asking here
-// is also what makes that wording reachable: the opener refuses before the mint
-// is reached, so the mint's own message could never be the one a person saw.
-// It costs a repository whose runs name a pull request the same two values read
+// App's ID, or whose key is not a key, would be told the host failed and would
+// retry it, when the refusal is theirs to fix and the same condition is already
+// a user error where the mint asks for the credential
+// (coordinatorAppCredential, exit 1). Asking here is also what makes that
+// wording reachable: the opener refuses before the mint is reached, so the
+// mint's own message could never be the one a person saw.
+// It costs a repository whose runs name a pull request the same credential read
 // a second time, and nothing at all for one without: Project.PullRequests
 // returns before opening when the runs name no pull request, so a project with
 // nothing in it is still read with no App credential anywhere.
@@ -629,7 +645,7 @@ var openCoordinatorProvider = func(env []string, warn func(string)) (coordinator
 		return nil, err
 	}
 	return func(ctx context.Context, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
-		if _, _, err := coordinatorAppCredential(); err != nil {
+		if _, _, _, err := coordinatorAppCredential(); err != nil {
 			return nil, nil, err
 		}
 		p, secrets, err := open(ctx, gitprov.KindGitHub, repo)
@@ -670,24 +686,20 @@ func installCoordinatorSource(p gitprov.Provider, src gitprov.TokenSource) error
 // carries. One repository at a time (D193(A)): the token is scoped to the
 // repository it was minted for, and a second repository mints its own.
 //
-// The credential — the App's ID and its key PEM — is read through
-// coordinatorAppCredential, which reads it the same way the opener does, so
-// where the key comes from is one rule. A failure this returns carries no key:
-// what it reports is redacted with the PEM it read (agent.Redact), because the
-// mint's own error text can quote what it was handed. Tests replace it, so a
-// read never reaches GitHub.
+// The credential — the App's ID and its key — is read through
+// coordinatorAppCredential, which reads and parses it the same way the opener
+// does, so where the key comes from and what counts as a key are one rule. A
+// failure this returns carries no key: what it reports is redacted with the PEM
+// it read (agent.Redact), because the mint's own error text can quote what it
+// was handed. Tests replace it, so a read never reaches GitHub.
 var coordinatorMint = func(ctx context.Context, repo string) (string, time.Time, error) {
 	owner, name, ok := gitprov.SplitRepo(repo)
 	if !ok {
 		return "", time.Time{}, userErr("repository %q must look like owner/name", repo)
 	}
-	appID, pemData, err := coordinatorAppCredential()
+	appID, key, pemData, err := coordinatorAppCredential()
 	if err != nil {
 		return "", time.Time{}, err
-	}
-	key, err := github.ParsePrivateKey([]byte(pemData))
-	if err != nil {
-		return "", time.Time{}, userErr("%v", err)
 	}
 	token, expires, err := github.MintInstallationToken(ctx, github.Options{
 		Owner:      owner,

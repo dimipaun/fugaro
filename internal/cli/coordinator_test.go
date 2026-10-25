@@ -691,6 +691,49 @@ func TestCoordinatorStatusReadsWithTheReadOnlyToken(t *testing.T) {
 	}
 }
 
+// A key that is there and is not a key is the caller's own failure, wherever
+// this command reads it. The credential is asked for in two places -- the
+// provider opener asks for it before it opens anything (so that a person who has
+// not exported it is not told the host failed), and the mint reads it for the
+// token -- and the same environment has to answer the same way from both: a
+// parse left to providers.FromEnv made a malformed key exit 2 through the opener
+// and 1 through the mint, so a person whose key is not a key would be told the
+// host failed and would retry it.
+//
+// The fixture holds no exchange at all, which is the other half of the claim:
+// neither path may reach GitHub to find this out, and a request that arrived
+// would fail the test rather than the network being asked.
+func TestCoordinatorStatusRefusesAMalformedAppKeyAsTheCallers(t *testing.T) {
+	srv := httpfixture.Serve(t, filepath.Join("testdata", "coordinator_no_requests.json"))
+	realOpen := openCoordinatorProvider
+	t.Setenv(providers.EnvGitHubAppID, "12345")
+	t.Setenv(providers.EnvGitHubAppKey, "this is not a PEM block")
+	t.Setenv(providers.EnvGitHubAPIURL, srv.URL)
+
+	newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	setCoordinatorHost(t, realOpen)
+	_, _, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--since", "0")
+	if err == nil {
+		t.Fatalf("the App's key is not a key and the command succeeded")
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("a malformed App key: exit %d, want %d: the environment the caller holds the key in is the caller's to fix, exactly as it is when the key is missing",
+			ExitCode(err), ExitUserError)
+	}
+	if !strings.Contains(err.Error(), "private key") {
+		t.Errorf("a malformed App key: %v, want a failure naming the key", err)
+	}
+
+	// The mint is the second place the same credential is read, and it answers
+	// the same way. The opener's refusal above is what a person meets; this is
+	// the assertion that the two halves of the command cannot disagree, because
+	// it is the one this command's own wiring does not reach first.
+	if _, _, err := coordinatorMint(context.Background(), "acme/app"); ExitCode(err) != ExitUserError ||
+		!strings.Contains(err.Error(), "private key") {
+		t.Errorf("the mint with a malformed App key: exit %d, %v, want exit %d naming the key", ExitCode(err), err, ExitUserError)
+	}
+}
+
 // coordinatorSource is a TokenSource whose answer a test decides.
 type coordinatorSource struct{ token string }
 
