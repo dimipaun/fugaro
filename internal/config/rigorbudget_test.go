@@ -104,12 +104,12 @@ func TestRigorBudgetDefaultsAreOrdered(t *testing.T) {
 // production one is would move with it and assert nothing.
 func TestRigorBudgetDefaultsFinishTheSmokeCheck(t *testing.T) {
 	const smallestRunStages = 1
-	if got, want := RigorBudgetFloorUSD, RigorBudgetStageFloorUSD*smallestRunStages; got != want {
+	if got, want := RigorBudgetFloorUSD(), RigorBudgetStageFloorUSD*smallestRunStages; got != want {
 		t.Fatalf("RigorBudgetFloorUSD = %v; the smallest run the catalog ships starts %d stage(s), so the floor is %v",
 			got, smallestRunStages, want)
 	}
-	if RigorBudgetFloorUSD < RigorBudgetStageFloorUSD {
-		t.Fatalf("RigorBudgetFloorUSD = %v, under one stage's floor", RigorBudgetFloorUSD)
+	if RigorBudgetFloorUSD() < RigorBudgetStageFloorUSD {
+		t.Fatalf("RigorBudgetFloorUSD = %v, under one stage's floor", RigorBudgetFloorUSD())
 	}
 	for _, usd := range []float64{0.30, 2, 5, 20, 50} {
 		deployed, err := pricing.FromUSD(usd)
@@ -117,25 +117,70 @@ func TestRigorBudgetDefaultsFinishTheSmokeCheck(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, m := range rigor.Modes {
-			if got := RigorBudgetCap(m, deployed).USD(); got < RigorBudgetFloorUSD {
-				t.Errorf("RigorBudgetCap(%s, $%v) = $%v, under the floor $%v a stage needs: a run at this cap can be granted nothing", m, usd, got, RigorBudgetFloorUSD)
+			if got := RigorBudgetCap(m, deployed).USD(); got < RigorBudgetFloorUSD() {
+				t.Errorf("RigorBudgetCap(%s, $%v) = $%v, under the floor $%v a stage needs: a run at this cap can be granted nothing", m, usd, got, RigorBudgetFloorUSD())
 			}
 		}
 	}
-	// A deployed cap under the floor is the one case the floor cannot answer
-	// for, and it must not be answered by raising the cap: the ceiling is the
-	// ceiling, so the run gets all of it. The mode's fraction is still what
-	// lowers a cap above the floor; below it there is nothing to lower.
+}
+
+// TestRigorBudgetFloorCannotLiftATinyCap: the floor is a *default* a mode's
+// fraction may not go under, and the deployed cap is the ceiling — so a
+// deployment whose whole cap is under the floor gives every mode all of it,
+// and a run there can be under one stage's lease floor ($0.25), where the
+// gateway grants a stage nothing and the run dies on the cap having produced
+// nothing. That is the one case the floor cannot answer for, and the smaller
+// change is to say so rather than to enforce it: enforcing it would mean a
+// mode raising the owner's ceiling, which is the one thing D16 forbids (F15).
+// Hotfix is named because it is the mode the review of T6.1 asked about, and
+// it is the mode whose fraction is lowest — the one that would fall furthest
+// if the clamp were dropped.
+//
+// Mutation (verified, run and restored): take the min(scaled, deployed) out of
+// RigorBudgetCap — the floor then lifts a $0.05 cap to $0.25 and this fails
+// naming the mode and the cap.
+func TestRigorBudgetFloorCannotLiftATinyCap(t *testing.T) {
 	for _, usd := range []float64{0.05, 0.20} {
 		deployed, err := pricing.FromUSD(usd)
 		if err != nil {
 			t.Fatal(err)
 		}
+		if deployed.USD() >= RigorBudgetFloorUSD() {
+			t.Fatalf("$%v is not under the floor $%v: this case is about a cap the floor cannot carry", usd, RigorBudgetFloorUSD())
+		}
 		for _, m := range rigor.Modes {
-			if got := RigorBudgetCap(m, deployed); got != deployed {
-				t.Errorf("RigorBudgetCap(%s, $%v) = %v; want the whole deployed cap, which is the most the ceiling can give", m, usd, got)
+			got := RigorBudgetCap(m, deployed)
+			if got != deployed {
+				t.Errorf("RigorBudgetCap(%s, $%v) = %v; want the whole deployed cap: a mode may lower a cap and never raise it (F15)", m, usd, got)
+			}
+			if got.USD() >= RigorBudgetStageFloorUSD {
+				t.Errorf("RigorBudgetCap(%s, $%v) = $%v, at or above one stage's lease floor $%v: this case is supposed to pin the deployment where the floor cannot be met", m, usd, got.USD(), RigorBudgetStageFloorUSD)
 			}
 		}
+	}
+}
+
+// TestRigorBudgetFloorIsComputedOnFirstUse: smokeStages parses every recipe in
+// the built-in catalog, and internal/config is imported by every CLI command —
+// `fugaro version` included — so a package-level initializer makes each of
+// them pay for a catalog it may never read. The floor is read through a
+// memoized function instead, and this reads the source to hold the shape,
+// because laziness is a property of the declaration and not of any value the
+// function returns: a var that computes the same number is the regression, and
+// no assertion over the number can tell the two apart.
+func TestRigorBudgetFloorIsComputedOnFirstUse(t *testing.T) {
+	data, err := os.ReadFile("defaults.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := regexp.MustCompile(`(?m)^var\s+RigorBudgetFloorUSD\b`).Find(data); m != nil {
+		t.Errorf("defaults.go declares %q at package level: computing it parses the whole recipe catalog when internal/config loads, which every CLI command does", m)
+	}
+	if !regexp.MustCompile(`(?m)^var\s+rigorBudgetFloor\s*=\s*sync\.OnceValue\(`).Match(data) {
+		t.Error("defaults.go does not compute the floor through a memoized function: the catalog is then parsed at package init, or parsed again on every read")
+	}
+	if !strings.Contains(string(data), "func RigorBudgetFloorUSD() float64") {
+		t.Error("RigorBudgetFloorUSD is not the function a lazy floor is read through")
 	}
 }
 
