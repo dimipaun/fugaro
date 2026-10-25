@@ -111,6 +111,14 @@ type JSONRun struct {
 	// like every other bucket-derived string here, and never an authority — no
 	// policy, admission or budget rule reads it.
 	LaunchedBy string `json:"launched_by,omitempty"`
+	// PlanTask is the plan task the run's launch.json recorded (task.Spec's
+	// PlanTask, at fugaro run --plan-task): the display-only join hint the
+	// console matches a run to a node of a plan's graph by (console
+	// dependency graph plan, decision GD5). It is the same value runs ls
+	// --json carries, sanitised the same way (RunFacts), and absent when the
+	// launch record has none — never a value this package invents, and never
+	// an identifier anything acts on.
+	PlanTask string `json:"plan_task,omitempty"`
 	// Credential is the name — never the value — of the credential the run's
 	// cascade is currently using (budget.AgentEntry.Credential, written by the
 	// run itself under C1.3's rules; the credentials service chooses it). It is
@@ -152,6 +160,10 @@ type JSONFinished struct {
 	// run into finished[] must not lose who launched it either. Absent when the
 	// launch record has none.
 	LaunchedBy string `json:"launched_by,omitempty"`
+	// PlanTask is the plan task the run's launch.json recorded, as in
+	// JSONRun: a reader that follows a run into finished[] must not lose the
+	// node it was joined to either. Absent when the launch record has none.
+	PlanTask string `json:"plan_task,omitempty"`
 }
 
 // JSONDoc is one watch --json document.
@@ -179,7 +191,7 @@ func jsonFinished(slug, repo string, r RunRow) JSONFinished {
 	return JSONFinished{Run: r.Run, Slug: slug, Repo: repo, Title: r.Title, Status: r.Stage, Outcome: r.Outcome,
 		Failed: r.Failed, PRURL: r.PRURL, PRNumber: r.PRNumber, AgeSecs: r.Age.Seconds(),
 		Job: r.Job, Profile: r.Profile, Provider: r.Provider, Account: r.Account,
-		LaunchedBy: r.LaunchedBy}
+		LaunchedBy: r.LaunchedBy, PlanTask: r.PlanTask}
 }
 
 func usdPtr(b Bar) (cap, pct *float64) {
@@ -235,6 +247,7 @@ func BuildJSON(project string, v View) JSONDoc {
 				Provider:    run.Provider,
 				Account:     run.Account,
 				LaunchedBy:  run.LaunchedBy,
+				PlanTask:    run.PlanTask,
 				Credential:  run.Credential}
 			if run.Waiting {
 				j.WaitingUntil = time.UnixMilli(run.WaitingUntil).UTC().Format(time.RFC3339)
