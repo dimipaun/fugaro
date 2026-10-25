@@ -218,15 +218,6 @@ func TestMintInstallationTokenBuildPermissions(t *testing.T) {
 	}
 }
 
-// TestRunTokenPermissionsAreTheRuns: RunTokenPermissions is the run's own set
-// — the four permissions design §6.1 gives a run, and no more — and it is a
-// copy, so a caller that mutates what it was handed (the credentials service,
-// C2.1, builds its mint's request from it) cannot change what the next caller
-// asks GitHub for.
-//
-// The set itself is pinned where it is used: token_refresh.json's two mint
-// bodies are exactly these four permissions, and the fixture server refuses a
-// request body that is not the one it holds.
 // TestRevokeInstallationToken: the token's own end. GitHub revokes an
 // installation token at DELETE /installation/token, authenticated with the
 // token itself -- the App's JWT is not needed, and the endpoint revokes the
@@ -261,6 +252,15 @@ func TestRevokeInstallationToken(t *testing.T) {
 	}
 }
 
+// TestRunTokenPermissionsAreTheRuns: RunTokenPermissions is the run's own set
+// — the four permissions design §6.1 gives a run, and no more — and it is a
+// copy, so a caller that mutates what it was handed (the credentials service,
+// C2.1, builds its mint's request from it) cannot change what the next caller
+// asks GitHub for.
+//
+// The set itself is pinned where it is used: token_refresh.json's two mint
+// bodies are exactly these four permissions, and the fixture server refuses a
+// request body that is not the one it holds.
 func TestRunTokenPermissionsAreTheRuns(t *testing.T) {
 	want := map[string]string{"contents": "write", "pull_requests": "write", "issues": "read", "metadata": "read"}
 	perms := RunTokenPermissions()

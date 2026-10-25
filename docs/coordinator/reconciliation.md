@@ -246,7 +246,8 @@ run's own `tokenPermissions` set, which asks for `contents: write, pull_requests
 So the coordinator's read-only credential is a **reuse of a mechanism that already runs in
 production**, not a new one: the named-set pattern, the accessor, and the two call sites are
 all there, and the change is to name a third set wide enough to read pull requests
-(`pull_requests: read`, `issues: read` beside the build's two) and call it. What the existing
+(`pull_requests: read` and `metadata: read`, the two reads **Q3**'s answer names — see the
+narrowing note there) and call it. What the existing
 read-only token cannot give is reach across repositories: the body posted to GitHub is
 `{"repositories": []string{s.repo}, "permissions": perms}`
 (`internal/gitprov/github/apptoken.go`'s `tokenSource.Token`) — **one repository per token**.
@@ -331,9 +332,10 @@ third named set in a pattern the tree already uses.
 What could **not** be verified from here: the permissions the App itself has been granted on
 GitHub. `tokenPermissions` is what a run *asks for*, and GitHub caps it at the App's own
 grant; the App's grant is configured in GitHub's UI, not in this repository.
-*Consequence:* a named `coordinatorTokenPermissions` set — `{contents: read,
-pull_requests: read, issues: read, metadata: read}`, and no `write` anywhere — is the rule's
-implementation, and the App's own grant has to be checked by the owner. → **Q3**.
+*Consequence:* a named `coordinatorTokenPermissions` set — proposed here on 2026-10-19 as
+`{contents: read, pull_requests: read, issues: read, metadata: read}` and, since the
+2026-10-25 narrowing, `{pull_requests: read, metadata: read}`, and no `write` anywhere — is
+the rule's implementation, and the App's own grant has to be checked by the owner. → **Q3**.
 
 **#15 — The existing App can be reused for a read-only coordinator, but "reused" has a caveat the owner must accept. — Open.**
 Reuse is plausible for three reasons: `github-app-key` is already the project-scoped git
@@ -653,6 +655,8 @@ not lost:
 *Consequence:* under any option, "the coordinator holds no GitHub write power" becomes a **hard rule** the code enforces by never asking for a write permission — the mechanical form of spec §3's "advisory, not authoritative".
 
 **Answered 2026-10-19: option (A)** — the existing App, minting a new read-only named permission set and never a `write`, with the App's own grant on GitHub needing `pull_requests: read` (U2, still an owner check): under this option "the coordinator holds no GitHub write power" is a hard rule the code enforces.
+
+**Narrowed 2026-10-25: the set is `{pull_requests: read, metadata: read}`** — the two reads the project-wide view makes, and not the four (A) named on 2026-10-19. The reader opens no file and reads no issue: every pull request is read one at a time through `gitprov.Provider.PullRequest`, which is `pull_requests: read`, and `metadata: read` is what GitHub requires of any request at all. A permission asked for and never used is reach a stolen token would have for nothing, which is the half of this question's hard rule that a "no write" check cannot see. P5's aggregation job re-reads through this same reader, so it asks for no more than these two. The set is `internal/gitprov/github/apptoken.go`'s `coordinatorTokenPermissions`, and the plan's P2 Status note records the narrowing where the part is.
 
 ### Q4 — Does the coordinator hold a model credential, or wait for the credentials service?
 **Changes spec §8.**
