@@ -101,7 +101,7 @@ func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service
 				len(owners), strings.Join(ownerOrder, ", "))})
 	}
 	// Always said, and always partial: nothing found is not "safe".
-	msg := "checked the project and service-account IAM policies of " + pfp + "; not read: folder- and organization-inherited bindings, deny policies (docs/gcp-setup.md#token-signers)"
+	msg := "checked the project and service-account IAM policies of " + pfp + "; not read: folder- and organization-inherited bindings, deny policies (docs/design/m9-budget-and-dashboard.md)"
 	if nerr == nil {
 		msg += "; Google service agents of this project are read and classified"
 	} else {

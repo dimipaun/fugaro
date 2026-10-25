@@ -589,7 +589,10 @@ carried from the last view and never read again), and it starts with the reposit
 is read in turns; on the 8-minute deadline the repository being read is marked stale under a
 30-second grace of its own and the next tick starts after it. **One pull request** the host
 refuses is recorded in the view on its own (`unread`, with the last state a sweep read, if any)
-and the others are read, because the numbers a view reads are written by the runs themselves.
+and the others are read, because the numbers a view reads are written by the runs themselves;
+the entry counts the consecutive ticks the host refused it (`failures`), and after three
+(`MaxReadFailures`) it is asked for once a day (`retry_after`, `ReadRetryAfter`) rather than on
+every tick, so a number no pull request has stops spending the repository's share of the budget.
 The view holds at most 500 records and 500 collisions (`MaxViewRecords`, `MaxViewCollisions`) and
 says how many it left out (`omitted`, `omitted_collisions`): the finished records whose newest run
 is oldest go first, never one in flight while a finished one is kept. The intent records are

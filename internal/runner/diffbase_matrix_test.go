@@ -37,11 +37,23 @@ import (
 //	    and whose branch merges that in: the guard must leave out both
 //	    bases' own commits, or it refuses this run for a workflow file main
 //	    added (the mirror of (d) — with only the diff base subtracted, this
-//	    cell is the one that fails).
+//	    cell is the one that fails);
+//	(f) a run launched on main (no --ref) whose agent cut its branch from
+//	    the integration branch itself: the run's base is main as far as
+//	    anything recorded knows, so every diff must be narrowed to the
+//	    run's own commits — the parent of the first one is the base — or
+//	    the reviewer is handed the whole integration branch every round;
+//	(g) the same in the production layout: a blobless --single-branch clone,
+//	    where `git fetch origin <integration>` writes FETCH_HEAD alone and
+//	    the agent cuts its branch from FETCH_HEAD, so no remote-tracking ref
+//	    names the integration branch and only origin itself can say its
+//	    commits are not the run's.
 //
 // Every cell names the base it must use (want) and a base a wrong answer
 // would name instead (stale): a diff measured against the stale base shows
-// up as `origin/<stale>` in a prompt or as a path the stale base owns.
+// up as `origin/<stale>` in a prompt or as a path the stale base owns. A
+// cell whose base is a commit rather than a branch (f) returns it from its
+// run (wantRev), since the commit only exists once the run has made it.
 
 // advanceBranch pushes one commit onto branch on the remote, cut from the
 // tip the branch already has: the base a run is measured against moving on
@@ -69,6 +81,15 @@ type baseRun struct {
 	impl     string         // the follow-up's implement prompt, "" when not a follow-up
 	fetched  map[string]int // the base of each prefetch fetch, counted
 	provider *fake.Provider // the run's provider, for the pull request it opened
+	wantRev  string         // the revision every diff must name, when it is a commit and not origin/<want>
+}
+
+// rev is the revision every diff of the cell must be measured against.
+func (b baseRun) rev(want string) string {
+	if b.wantRev != "" {
+		return b.wantRev
+	}
+	return "origin/" + want
 }
 
 // ownFiles is the paths the writeback recorded, sorted by the runner itself.
@@ -85,8 +106,12 @@ func (b baseRun) ownFiles() []string {
 type baseCell struct {
 	name string
 	// want is the base of work every diff must name; stale is the base a
-	// wrong answer names instead. Neither may be empty.
+	// wrong answer names instead. stale may not be empty, and want only when
+	// the cell's run returns the commit every diff must name (wantRev).
 	want, stale string
+	// promptOmits are paths the review stage must not be handed: commits
+	// another branch holds that a range narrowed to the run's own leaves out.
+	promptOmits []string
 	// recordHolds are the paths the run record must hold, and recordOmits
 	// paths it must not. The record is read from the commit the run was cut
 	// from (workBase, refused.go) by design, so where a base moved on and the
@@ -236,6 +261,95 @@ var baseCells = []baseCell{
 			return baseRun{rec: rec, err: err, prompt: reviewPromptOf(t, h.agent.calls), provider: h.provider}
 		},
 	},
+	{
+		name:  "(f) a run launched on main whose work starts on the integration branch",
+		stale: "main",
+		// The record is read from the commit the run was cut from (main), so
+		// the integration branch's files are in it: the record is not narrowed
+		// (workBase), only the review range and the guard are.
+		recordHolds: []string{"own1.txt", "own2.txt", "feature.txt"},
+		// What the reviewer must not be handed: the integration branch's own
+		// commits, which the run never made.
+		promptOmits: []string{"integration.txt", "more-integration.txt", ".github/workflows/integration.yml"},
+		wantPRBase:  "main",
+		run: func(t *testing.T) baseRun {
+			h := newHarness(t, "", nil)
+			addBaseBranch(t, h, integrationBranch)
+			// The integration branch carries a workflow file: a guard measured
+			// against main blames the run for it and refuses the push.
+			advanceBranch(t, h.remote, integrationBranch, map[string]string{".github/workflows/integration.yml": "on: push\n"})
+			tip := advanceBranch(t, h.remote, integrationBranch, map[string]string{"more-integration.txt": "more\n"})
+			// The brief's own instruction, run inside the run: fetch the
+			// integration branch and cut the work from it, then three commits.
+			cutFromIntegration := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+				shell(t, req, "git fetch -q origin +refs/heads/"+integrationBranch+":refs/remotes/origin/"+integrationBranch+
+					" && git checkout -q -b work origin/"+integrationBranch+
+					" && echo 1 > own1.txt && git add -A && git commit -qm own1"+
+					" && echo 2 > own2.txt && git add -A && git commit -qm own2")
+				return implement("feature")(t, ctx, req)
+			}
+			rec, err := h.run(t, cutFromIntegration, review("ship", 0))
+			return baseRun{rec: rec, err: err, prompt: reviewPromptOf(t, h.agent.calls), provider: h.provider, wantRev: tip}
+		},
+	},
+	{
+		name:        "(g) the same from FETCH_HEAD in a single-branch blobless clone",
+		stale:       "main",
+		recordHolds: []string{"own1.txt", "own2.txt", "feature.txt"},
+		promptOmits: []string{"integration.txt", "more-integration.txt", ".github/workflows/integration.yml"},
+		wantPRBase:  "main",
+		run: func(t *testing.T) baseRun {
+			h := newHarness(t, cloneYAML, nil)
+			bloblessRemote(t, h)
+			h.cloneJob(t)
+			addBaseBranch(t, h, integrationBranch)
+			advanceBranch(t, h.remote, integrationBranch, map[string]string{".github/workflows/integration.yml": "on: push\n"})
+			tip := advanceBranch(t, h.remote, integrationBranch, map[string]string{"more-integration.txt": "more\n"})
+			cutFromFetchHead := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+				shell(t, req, "git fetch -q origin "+integrationBranch+
+					" && ! git rev-parse -q --verify refs/remotes/origin/"+integrationBranch+
+					" && git checkout -q -b work FETCH_HEAD"+
+					" && echo 1 > own1.txt && git add -A && git commit -qm own1"+
+					" && echo 2 > own2.txt && git add -A && git commit -qm own2")
+				return implement("feature")(t, ctx, req)
+			}
+			rec, err := h.run(t, cutFromFetchHead, review("ship", 0))
+			return baseRun{rec: rec, err: err, prompt: reviewPromptOf(t, h.agent.calls), provider: h.provider, wantRev: tip}
+		},
+	},
+}
+
+// TestAForgedOriginRefNeitherNarrowsNorHidesAWorkflowFile: the agent commits
+// a workflow file, then a harmless commit, then points a remote-tracking ref
+// it wrote itself (no push) at the workflow commit. Nothing on origin holds
+// that commit, so it is the run's own: the range is not narrowed past it,
+// and the guard still refuses the push for it. Measured from the checkout's
+// remote-tracking refs, the forged ref made the workflow commit "another
+// branch's", narrowed the range to the harmless commit and took the
+// workflow file out of the guard.
+//
+// Mutation (read --remotes=origin in gitops.OwnCommits): this test fails,
+// and so does cell (g). The guard's own check of the narrowed commit is
+// pinned apart (TestGuardSubtractsTheNarrowedCommitOnlyWhileOriginHoldsIt).
+func TestAForgedOriginRefNeitherNarrowsNorHidesAWorkflowFile(t *testing.T) {
+	h := newHarness(t, "", nil)
+	forge := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "mkdir -p .github/workflows && echo 'on: push' > .github/workflows/e.yml && git add -A && git commit -qm workflow")
+		res, err := implement("feature")(t, ctx, req)
+		shell(t, req, "git update-ref refs/remotes/origin/decoy HEAD~1")
+		return res, err
+	}
+	rec, err := h.run(t, forge, review("ship", 0))
+	if err == nil || rec == nil || !strings.Contains(rec.Reason, ".github/workflows/e.yml") {
+		t.Fatalf("the push was not refused for the run's own workflow file: rec = %+v, err = %v", rec, err)
+	}
+	prompt := reviewPromptOf(t, h.agent.calls)
+	if !strings.Contains(prompt, "Review the changes on this branch against origin/main") {
+		t.Fatalf("the forged ref narrowed the review range:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, ".github/workflows/e.yml") {
+		t.Fatalf("the reviewer is not handed the run's own workflow file:\n%s", prompt)
+	}
 }
 
 // TestTheReviewStageAndTheWritebackUseTheSameBase is the matrix: every cell
@@ -248,7 +362,10 @@ var baseCells = []baseCell{
 // (refused.go's guardBounds reading cfg.Git.BaseBranch rather than the base
 // the review diffs against — cell (d)), or it reads only one of the two
 // bases the run works from (refused.go's guardBounds with a single bound —
-// cell (e)).
+// cell (e)). For cell (f): skip narrowReviewRange, or have reviewRev ignore
+// the narrowed commit (the prompt names the integration tip no more), or
+// drop the narrowed commit from guardBounds (the push is refused for the
+// integration branch's workflow file).
 func TestTheReviewStageAndTheWritebackUseTheSameBase(t *testing.T) {
 	for _, c := range baseCells {
 		t.Run(c.name, func(t *testing.T) {
@@ -268,16 +385,22 @@ func TestTheReviewStageAndTheWritebackUseTheSameBase(t *testing.T) {
 
 			// 1. The review stage's scope line names the run's base of work,
 			//    and the reviewer is never handed the other base.
-			if !strings.Contains(got.prompt, "Review the changes on this branch against origin/"+c.want) {
-				t.Fatalf("the review prompt does not name origin/%s:\n%s", c.want, got.prompt)
+			rev := got.rev(c.want)
+			if !strings.Contains(got.prompt, "Review the changes on this branch against "+rev) {
+				t.Fatalf("the review prompt does not name %s:\n%s", rev, got.prompt)
 			}
 			if strings.Contains(got.prompt, "origin/"+c.stale) {
 				t.Fatalf("the review prompt names the wrong base origin/%s:\n%s", c.stale, got.prompt)
 			}
 			// 2. The input the runner built for the reviewer — the diff it
 			//    was handed — is the same range as the scope line.
-			if !strings.Contains(got.prompt, "git diff origin/"+c.want+"...HEAD:") {
-				t.Fatalf("the review input is not the diff against origin/%s:\n%s", c.want, got.prompt)
+			if !strings.Contains(got.prompt, "git diff "+rev+"...HEAD:") {
+				t.Fatalf("the review input is not the diff against %s:\n%s", rev, got.prompt)
+			}
+			for _, absent := range c.promptOmits {
+				if strings.Contains(got.prompt, absent) {
+					t.Errorf("the reviewer is handed %s, which another branch's own commit carries:\n%s", absent, got.prompt)
+				}
 			}
 
 			// 3. The writeback's record of the run's work holds what it must
@@ -318,12 +441,12 @@ func TestTheReviewStageAndTheWritebackUseTheSameBase(t *testing.T) {
 			total := 0
 			for base, n := range got.fetched {
 				total += n
-				if base != "origin/"+c.want {
-					t.Errorf("the prefetch fetched %s %d time(s), want only origin/%s", base, n, c.want)
+				if base != rev {
+					t.Errorf("the prefetch fetched %s %d time(s), want only %s", base, n, rev)
 				}
 			}
 			if total != c.fetches {
-				t.Errorf("the prefetch fetched %d time(s) (%v), want %d against origin/%s", total, got.fetched, c.fetches, c.want)
+				t.Errorf("the prefetch fetched %d time(s) (%v), want %d against %s", total, got.fetched, c.fetches, rev)
 			}
 			// 6. A follow-up's own prompt reads the same range: the base it
 			//    says the pull request targets, and the stat below it.
@@ -331,7 +454,7 @@ func TestTheReviewStageAndTheWritebackUseTheSameBase(t *testing.T) {
 				if !strings.Contains(got.impl, "which targets "+c.want) {
 					t.Errorf("the follow-up prompt names another base:\n%s", got.impl)
 				}
-				if !strings.Contains(got.impl, "git diff --stat origin/"+c.want+"...HEAD") {
+				if !strings.Contains(got.impl, "git diff --stat "+rev+"...HEAD") {
 					t.Errorf("the follow-up's stat is read against another base:\n%s", got.impl)
 				}
 			}
@@ -346,4 +469,32 @@ func contains(paths []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// TestANarrowedReviewIsShownOnThePullRequest: cell (f)'s reviewer saw the
+// run's three commits, while the pull request against main also carries the
+// integration branch's three. A person reading the pull request is told so,
+// in its status section and in the run report.
+//
+// Mutation (drop narrowText from finalSection, or from the report's notes):
+// this test fails.
+func TestANarrowedReviewIsShownOnThePullRequest(t *testing.T) {
+	var cell *baseCell
+	for i := range baseCells {
+		if strings.HasPrefix(baseCells[i].name, "(f)") {
+			cell = &baseCells[i]
+		}
+	}
+	got := cell.run(t)
+	if got.err != nil || got.rec == nil {
+		t.Fatalf("the run did not finish: rec = %+v, err = %v", got.rec, got.err)
+	}
+	want := "review covered commits after `" + got.wantRev[:7] + "` (3 commits); this PR also carries 3 commits from other branches"
+	pr := onlyPR(t, got.provider)
+	if !strings.Contains(pr.Body, want) {
+		t.Errorf("the status section does not say the review was narrowed (want %q):\n%s", want, pr.Body)
+	}
+	if len(pr.Comments) == 0 || !strings.Contains(pr.Comments[len(pr.Comments)-1], "**Note:** "+want) {
+		t.Errorf("the run report does not say the review was narrowed (want %q): %q", want, pr.Comments)
+	}
 }

@@ -290,12 +290,23 @@ section at all: not an inert one, and not one waiting for a provider.
 | Header | `live-header`, `live-project`, `live-mode`, `live-day`, `live-connection`, `live-connection-age`, `live-connection-reason`, `live-note` |
 | Total | `live-total`, `live-counted`, `live-cap`, `live-percent`, `live-total-notional`, `live-total-percent` |
 | Repository | `live-repos`, `live-repo`, `live-repo-name`, `live-repo-counted`, `live-repo-cap`, `live-repo-percent`, `live-repo-notional`, `live-burn-rate`, `live-burn`, `live-burn-bar`, `live-burn-unit`, `live-runs`, `live-orphans` |
-| Run row | `live-run`, `live-run-id`, `live-run-title`, `live-run-stage`, `live-run-round`, `live-run-verify`, `live-run-models`, `live-run-recipe`, `live-run-auth`, `live-run-spend`, `live-run-age`, `live-run-flag`, `live-run-contradiction`, `live-run-workflow`, `live-run-requester`, `live-run-started-by` |
+| Run row | `live-run`, `live-run-id`, `live-run-title`, `live-run-mode`, `live-run-stage`, `live-run-round`, `live-run-verify`, `live-run-models`, `live-run-recipe`, `live-run-auth`, `live-run-spend`, `live-run-age`, `live-run-flag`, `live-run-contradiction`, `live-run-workflow`, `live-run-requester`, `live-run-started-by` |
 | Condition classes on a row | `live-run-queued`, `live-run-stuck` |
 | Review inbox | `live-review`, `live-review-title` (the CLI's one line, `Ready for your review (N)`, drawn as **one text run** — `reviewSection` writes the words, the parentheses and the count together, so no rule can space them apart), `live-review-list`, `live-review-row`, `live-review-repo`, `live-review-number`, `live-review-url`, `live-review-run-title`, `live-review-age`, `live-review-run-id`, `live-review-empty`, `live-review-note`, `live-review-capped`, `live-review-dropped` (the count of rows the cap left out), `live-review-of`, `live-review-total` |
 | Kill banner | `live-kill`, `live-kill-word`, `live-kill-by`, `live-kill-at`, `live-kill-reason` |
 | Stale / recency | `live-stale`, `live-stale-word`, `live-stale-silence`, `live-stale-threshold`, `live-stale-at`, `live-since`, `live-since-word`, `live-since-at`, `live-since-age` |
 | Bars and numbers | `live-bar`, `live-num` (every numeric cell) |
+
+**The rigor chip is the one mark on a run row that carries no colour and no `data-*`.**
+`span.live-run-mode` draws one word — `POC`, `Startup`, `Pro`, `Critical` or `Hotfix`, or
+the record's own value when this build does not know it — and it is a chip by its border
+and its size and by nothing else. The five modes have no colour of their own anywhere in
+this tree: not in `fugaro runs ls`'s MODE column, not in `docs/rigor-modes`. A rule that
+painted one mode differently from another would therefore be inventing a meaning, and §3.5
+has no mark to pair it with — so the word is the whole of the mark, on this row and on the
+two other screens that draw it (§2.5's `projects-job-mode`, §2.6's `run-rigor`). A run whose
+record carries no rigor block draws **no chip at all**, which is a different cell from one
+whose mode is the built-in default.
 
 `data-*` emitted by this screen, with their value sets:
 
@@ -427,7 +438,7 @@ Eight panels, each `section.projects-panel` carrying `data-panel`, `data-state` 
 | Caps | `projects-caps`, `projects-reserve`, `projects-reserve-value`, `projects-cap-list`, `projects-cap`, `projects-cap-repo`, `projects-cap-scope`, `projects-cap-value`, `projects-cap-source` |
 | Kill | `projects-kills`, `projects-kill-global`, `projects-kill-scope`, `projects-kill-none`, `projects-kill-row`, `projects-kill-repo`, `projects-kill`, `projects-kill-word`, `projects-kill-by`, `projects-kill-at`, `projects-kill-reason` |
 | Repositories | `projects-repos`, `projects-enrolled`, `projects-enrolled-count`, `projects-enrolled-list`, `projects-enrolled-repo`, `projects-seen`, `projects-seen-count`, `projects-seen-list`, `projects-seen-repo`, `projects-only-seen`, `projects-only-seen-repo`, `projects-only-enrolled`, `projects-only-enrolled-repo`, `projects-repos-label` |
-| Jobs | `projects-jobs`, `projects-job-list`, `projects-job`, `projects-job-run`, `projects-job-repo`, `projects-job-workflow`, `projects-job-status`, `projects-job-stage`, `projects-job-by`, `projects-job-started-by`, `projects-job-created`, `projects-job-model`, `projects-job-compute`, `projects-job-total`, `projects-jobs-note`, `projects-jobs-dropped`, `projects-jobs-total`, `projects-jobs-total-of` |
+| Jobs | `projects-jobs`, `projects-job-list`, `projects-job`, `projects-job-run`, `projects-job-repo`, `projects-job-workflow`, `projects-job-status`, `projects-job-stage`, `projects-job-by`, `projects-job-started-by`, `projects-job-created`, `projects-job-model`, `projects-job-compute`, `projects-job-total`, `projects-job-mode`, `projects-jobs-note`, `projects-jobs-dropped`, `projects-jobs-total`, `projects-jobs-total-of` |
 | Accounts | `projects-accounts`, `projects-accounts-repo`, `projects-account-list`, `projects-account`, `projects-accounts-note` |
 | Secrets | `projects-secrets`, `projects-secret-list`, `projects-secret`, `projects-secret-name`, `projects-secret-scope`, `projects-secret-versions`, `projects-secret-latest`, `projects-secret-label`, `projects-secret-label-key`, `projects-secret-label-value`, `projects-secret-allowed` |
 
@@ -456,6 +467,16 @@ Readings: money (`usd`) for the reserve, the caps and the job figures; counts fo
 counts, dropped/total, enrolled/seen, secret versions. **No reading is a time on this
 screen** — every date is text.
 
+**`projects-job-mode` is the jobs row's rigor mode, and the column is conditional.** The
+cell draws the mode's word — the five §2.3 names — or the record's own value when this
+build does not know it, or `-` for a run whose record carries no block; and **no cell is
+drawn at all unless some listed run carries a block**, which is the rule `fugaro runs ls`
+writes for its own MODE column (`internal/cli/runs.go`'s `showMode`). A project whose runs
+all predate the field therefore draws the jobs list it drew before, and not a column of
+dashes. The cell is the mode and nothing else: the CLI's own cell appends the layer and the
+strictest matched area (`pro (repo payments +2)`), and the screen that has room for that
+whole answer is the run detail's Rigor row (§2.6).
+
 ### 2.6 Run detail — `console/src/renderer/screens/run.ts`
 
 Reached from a `live-run` row. Regions in tree order: header → ledger → stages → pull
@@ -463,7 +484,7 @@ request → logs → diagnosis → replay → warnings.
 
 | Group | Class hooks |
 |---|---|
-| Header | `run-header`, `run-id`, `run-repo`, `run-workflow`, `run-status`, `run-outcome`, `run-stage`, `run-branch`, `run-requested-by`, `run-started-by`, `run-flags`, `run-settled`, `run-stale`, `run-follow-up`, `run-halt`, `run-halt-word`, `run-halt-reason`, `run-halt-scope`, `run-halt-at`, `run-halt-detail` |
+| Header | `run-header`, `run-id`, `run-repo`, `run-workflow`, `run-status`, `run-outcome`, `run-stage`, `run-branch`, `run-requested-by`, `run-started-by`, `run-flags`, `run-settled`, `run-stale`, `run-follow-up`, `run-halt`, `run-halt-word`, `run-halt-reason`, `run-halt-scope`, `run-halt-at`, `run-halt-detail`, `run-rigor`, `run-rigor-word`, `run-rigor-mode`, `run-rigor-from-word`, `run-rigor-from`, `run-rigor-area`, `run-rigor-area-name`, `run-rigor-area-mode` |
 | Ledger | `run-ledger`, `run-ledger-model`, `run-ledger-model-value`, `run-ledger-compute`, `run-ledger-compute-value`, `run-ledger-total`, `run-ledger-total-value`, `run-number`, `run-panel-title` |
 | Stages | `run-stages`, `run-stage-list`, `run-stage`, `run-stage-name`, `run-stage-passed`, `run-stage-tests`, `run-stage-failures`, `run-stage-duration`, `run-stage-spend`, `run-stage-deadline` |
 | Pull request | `run-pr`, `run-pr-repo`, `run-pr-number`, `run-pr-sep`, `run-pr-url`, `run-pr-reason` |
@@ -486,6 +507,18 @@ refused lines; replay scrubbed / not scrubbed.
 Readings: money (`usd`) throughout the ledger, the diagnosis route and model splits, the
 reported/charged pair; counts for tests, failures, dropped lines, follow-up PRs and
 comments, replay records; **seconds** for a stage's duration and the replay window.
+
+**The Rigor row is the one place the whole block is drawn.** `div.run-rigor` is appended to
+the header only when the record carries a block, and it draws four things in tree order:
+the word `RIGOR`, the mode, the word `from` and the layer that decided it, then one
+`span.run-rigor-area` per matched rule — each holding the rule's own name and the mode it
+set. The modes and the layers have the console's own words (`POC` … `Hotfix`, `default`,
+`the project layer`, `the repository`, `an area rule`, `the request`), and a value this
+build does not know is the record's own text through `putText` with the `label` class, so a
+mode a newer CLI resolved is drawn as the bounded, escaped text it is rather than as a word
+this build would be inventing. The record's two stamps — the moment the block was written
+(`at`) and the revision the configuration was read from — are **not drawn**: this row is
+about what the run resolved, and `fugaro diagnose` prints both on its own lines.
 
 ### 2.7 Degraded: no Firebase — `console/src/renderer/screens/degraded.ts`
 
@@ -935,6 +968,7 @@ the code already emits**, and the stylesheet must never be the only carrier of a
 | degraded / polling | the words `degraded` and `polling` |
 | cap near / over | the **number**: the percent reading, and the bar's `data-fill` |
 | not-built | the panel's own sentence |
+| a run's rigor mode | the mode's own **word** — `POC`, `Startup`, `Pro`, `Critical`, `Hotfix` — in the chip on a Live row (§2.3), the MODE cell on Projects (§2.5) and the Rigor row on the run detail (§2.6). **This mark carries no colour at all**, and the row is here to say so: the five modes have no colour of their own in this tree, so the word is the whole of the mark and a rule must not paint the modes apart |
 
 The rules this makes binding on the stylesheet: (1) **a colour never replaces a word**;
 (2) a state colour is used on a **fill, a rule or a badge**, and the badge keeps its text;

@@ -66,7 +66,7 @@ func TestRunHumanOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "launched " + appSlug + "/20260927-100000-abcd\n  branch fugaro/20260927-100000-abcd\n  logs https://"
+	want := "launched " + appSlug + "/20260927-100000-abcd\n  branch fugaro/20260927-100000-abcd cut from main\n  logs https://"
 	if !strings.HasPrefix(out, want) {
 		t.Fatalf("output:\n%s\nwant prefix:\n%s", out, want)
 	}

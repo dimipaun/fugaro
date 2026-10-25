@@ -241,7 +241,7 @@ func readFact(ctx context.Context, s *storage.Service, c *crm.Service, project, 
 		// TestTheNoLabelReasonNamesNoCommand pins it. The line a person runs
 		// is in the setup document, which the reason names, and neither
 		// writer of the label is this string's to name.
-		labelWhy = fmt.Sprintf("GCP project %s carries no %s label, so %s is not managed: a managed project carries both marks, the creation fact in its runs bucket and the label on the project itself, and a project that has the fact without the label is marked again by hand, on the account that owns it (docs/gcp-setup.md)", gcpProject, ProjectLabelKey, project)
+		labelWhy = fmt.Sprintf("GCP project %s carries no %s label, so %s is not managed: a managed project carries both marks, the creation fact in its runs bucket and the label on the project itself, and a project that has the fact without the label is marked again by hand, on the account that owns it (docs/design/managed-projects.md)", gcpProject, ProjectLabelKey, project)
 	} else if v != ProjectLabelValue {
 		labelWhy = fmt.Sprintf("GCP project %s carries %s=%s, not %s, so %s is not managed", gcpProject, ProjectLabelKey, v, ProjectLabelValue, project)
 	}
@@ -252,7 +252,7 @@ func readFact(ctx context.Context, s *storage.Service, c *crm.Service, project, 
 	// Budget.Check refuses is reported as that figure, and not as the missing
 	// label: "a managed creation could not have chosen this amount" is the
 	// more specific of the two sentences, and the label's sends the owner to
-	// the backfill in docs/gcp-setup.md, which would leave them with a managed
+	// the backfill in docs/design/managed-projects.md, which would leave them with a managed
 	// project whose recorded amount nothing can be compared against. The cost
 	// is a bucket and an object read for a project that has no label — the
 	// state every project marked before Task 3.0 is in (decisions §5) — and it

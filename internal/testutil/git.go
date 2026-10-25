@@ -118,3 +118,83 @@ func NewRemote(t *testing.T, files map[string]string) string {
 	Git(t, seed, "push", "--quiet", "origin", "HEAD:refs/heads/main")
 	return bare
 }
+
+// RecordGit puts a git first on PATH (FakeCommand) that appends each
+// invocation's arguments to the returned file, one line per process, and
+// then runs the real git with them: a test reads how many git processes a
+// call cost. version, when not "", is what `git --version` answers instead,
+// for a test of what the caller does with an older git.
+func RecordGit(t *testing.T, version string) (calls string) {
+	t.Helper()
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := ""
+	if version != "" {
+		script = "for a; do [ \"$a\" = --version ] && { echo 'git version " + version + "'; exit 0; }; done\n"
+	}
+	return FakeCommand(t, "git", script+"exec '"+real+"' \"$@\"\n")
+}
+
+// GitCalls reads the lines RecordGit's file holds and empties it, so the
+// next read counts only what ran after this one. A file not written yet is
+// no calls.
+func GitCalls(t *testing.T, calls string) []string {
+	t.Helper()
+	data, err := os.ReadFile(calls)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(calls); err != nil {
+		t.Fatal(err)
+	}
+	return strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+}
+
+// GitSubcommands counts GitCalls' lines by git subcommand: the first
+// argument after the global options (`-c <x>` and the like), or --version.
+func GitSubcommands(lines []string) map[string]int {
+	out := map[string]int{}
+	for _, l := range lines {
+		f := strings.Fields(l)
+		for i := 0; i < len(f); i++ {
+			if f[i] == "-c" {
+				i++
+				continue
+			}
+			if strings.HasPrefix(f[i], "-") && f[i] != "--version" {
+				continue
+			}
+			out[f[i]]++
+			break
+		}
+	}
+	return out
+}
+
+// ManyBranches pushes n branches to remote (b000, b001, ...), each one
+// commit of its own on top of main, in one fast-import and one push, and
+// returns main's tip they were cut from: a repository with as many branches
+// as a busy one has, for a test of what a call costs per branch.
+func ManyBranches(t *testing.T, remote string, n int) string {
+	t.Helper()
+	seed := filepath.Join(t.TempDir(), "seed-branches")
+	Git(t, filepath.Dir(seed), "clone", "--quiet", remote, seed)
+	main := Git(t, seed, "rev-parse", "HEAD")
+	var stream strings.Builder
+	for i := range n {
+		msg := fmt.Sprintf("branch %d\n", i)
+		fmt.Fprintf(&stream, "commit refs/heads/b%03d\ncommitter Test <test@example.invalid> 1700000000 +0000\ndata %d\n%sfrom %s\n\n", i, len(msg), msg, main)
+	}
+	cmd := exec.Command("git", "fast-import", "--quiet")
+	cmd.Dir, cmd.Stdin = seed, strings.NewReader(stream.String())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git fast-import: %v\n%s", err, out)
+	}
+	Git(t, seed, "push", "--quiet", "origin", "refs/heads/b*:refs/heads/b*")
+	return main
+}

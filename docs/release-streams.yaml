@@ -12,16 +12,17 @@
 # fruits, the app's are birds. Names are spent in alphabetical order, one per
 # minor, and a patch release is spoken as the name and the patch ("Badger four").
 # `current` is the version the stream is at, and 0.0.0 says nothing has shipped
-# on it yet; `next` is the name the next minor takes. internal/streams refuses a
-# file that breaks any of this, and one whose console version falls below the
-# release the console has already shipped.
+# on it yet; `next` is the name the next minor takes, the first one `current` has
+# not spent (the CLI's names start at 0.10, the console's at 0.110, the app's at
+# 0.200). internal/streams refuses a file that breaks any of this, and one whose
+# console version falls below the release the console has already shipped.
 streams:
   - name: cli
     theme: animals
     # Badger is 0.10, Camel 0.11, and one name per minor after that.
     names: [Badger, Camel, Dolphin, Gecko, Hippo, Koala, Moose]
-    # The last CLI release, v0.11.1 "Camel one"; 0.12.0 "Dolphin" is next.
-    current: "0.11.1"
+    # The last CLI release, v0.11.3 "Camel three"; 0.12.0 "Dolphin" is next.
+    current: "0.11.3"
     next: Dolphin
     tag_prefix: v
 

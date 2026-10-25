@@ -421,6 +421,11 @@ func TestFollowUpClosesTheItemItsRoundFixed(t *testing.T) {
 	if closed.Status != "closed" {
 		t.Errorf("status = %q; want closed: the follow-up answered what the item names (D31)", closed.Status)
 	}
+	// The record names what the run closed beside what it filed, so the ids
+	// survive the run the way its filed ones do (result.json's backlog_closed).
+	if !reflect.DeepEqual(follow.rec.BacklogClosed, []string{closed.ID}) {
+		t.Errorf("the record carries closed %v; want [%s]", follow.rec.BacklogClosed, closed.ID)
+	}
 	if !strings.Contains(doc, "## Closed by\n\n#1") {
 		t.Errorf("the item does not name the pull request that closed it:\n%s", doc)
 	}
@@ -461,8 +466,8 @@ func TestFollowUpFilesItsOwnRoundBesideAnOpenItem(t *testing.T) {
 	if !reflect.DeepEqual(follow.rec.Backlog, []string{"20261025-01"}) {
 		t.Errorf("the follow-up filed %v; want its own round's item alone", follow.rec.Backlog)
 	}
-	if len(follow.closedBacklog) != 0 {
-		t.Errorf("the follow-up closed %v; want nothing: it fixed nothing (D31)", follow.closedBacklog)
+	if len(follow.rec.BacklogClosed) != 0 {
+		t.Errorf("the follow-up closed %v; want nothing: it fixed nothing (D31)", follow.rec.BacklogClosed)
 	}
 	if err := follow.repo.Push(ctx, follow.rec.Branch); err != nil {
 		t.Fatal(err)
@@ -531,8 +536,8 @@ func TestFollowUpClosesEveryRoundItemTheChainLeftOpen(t *testing.T) {
 	// The walk meets the newest run first, so the closes are in that order: the
 	// middle follow-up's round, then the first run's.
 	want := []string{middle.rec.Backlog[0], first.rec.Backlog[0]}
-	if !reflect.DeepEqual(last.closedBacklog, want) {
-		t.Errorf("the follow-up closed %v; want %v: both runs on the pull request filed one each", last.closedBacklog, want)
+	if !reflect.DeepEqual(last.rec.BacklogClosed, want) {
+		t.Errorf("the follow-up closed %v; want %v: both runs on the pull request filed one each", last.rec.BacklogClosed, want)
 	}
 	items, err := backlog.Load(filepath.Join(last.repo.Dir, backlog.Dir))
 	if err != nil {
@@ -590,8 +595,8 @@ func TestFollowUpClosesTheRoundAndLeavesTheDeferralOpen(t *testing.T) {
 	if !reflect.DeepEqual(follow.rec.Backlog, []string{"20261025-01"}) {
 		t.Errorf("the follow-up filed %v; want its own deferral alone", follow.rec.Backlog)
 	}
-	if !reflect.DeepEqual(follow.closedBacklog, []string{round}) {
-		t.Errorf("the follow-up closed %v; want the round %s alone: a deferral is answered by the run that revisits the area, not by one that shipped its review", follow.closedBacklog, round)
+	if !reflect.DeepEqual(follow.rec.BacklogClosed, []string{round}) {
+		t.Errorf("the follow-up closed %v; want the round %s alone: a deferral is answered by the run that revisits the area, not by one that shipped its review", follow.rec.BacklogClosed, round)
 	}
 	items, err := backlog.Load(filepath.Join(follow.repo.Dir, backlog.Dir))
 	if err != nil {

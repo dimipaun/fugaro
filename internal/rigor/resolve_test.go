@@ -114,7 +114,7 @@ func TestResolveLayerPrecedence(t *testing.T) {
 		if got.Mode != c.wantMode || got.From != c.wantFrom {
 			t.Errorf("%s: Resolve = (%q, %q); want (%q, %q)", c.name, got.Mode, got.From, c.wantMode, c.wantFrom)
 		}
-		if names := NamesOf(got.Areas); !slices.Equal(names, c.wantArea) {
+		if names := areaNames(got.Areas); !slices.Equal(names, c.wantArea) {
 			t.Errorf("%s: areas = %v; want %v", c.name, names, c.wantArea)
 		}
 	}
