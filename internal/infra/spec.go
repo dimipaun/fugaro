@@ -143,7 +143,8 @@ type InstallationOutputs struct {
 	// CoordinatorServiceAccount and CoordinatorJob are the same pair for the
 	// aggregation job (P5, D194): the account the Firebase root grants the
 	// FP's database admin to, and the job the schedule starts. Both are null
-	// without a budget backend.
+	// unless the owner opted in (fugaro update --coordinator), which no
+	// installation has by default.
 	CoordinatorServiceAccount string `json:"coordinator_service_account"`
 	CoordinatorJob            string `json:"coordinator_job"`
 	// CredentialsService is the installation's credentials service, or null

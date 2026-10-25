@@ -182,6 +182,18 @@ type View struct {
 	// The two sections of the view are then read the same way, and a
 	// reader can predict the order without running the code.
 	Collisions []Collision `json:"collisions"`
+	// Unread, Omitted and OmittedCollisions are written by the sweep alone
+	// (sweep.go) and are absent from a view status computes. Unread is every
+	// pull request whose host state this view could not read on this pass,
+	// sorted by number, each with why and with whether the state shown is
+	// the last one a sweep did read. Omitted is how many records the
+	// document's bound left out and OmittedCollisions how many collisions
+	// (MaxViewRecords, MaxViewCollisions): the records dropped are the
+	// finished ones whose newest run is oldest, never one in flight while a
+	// finished one is kept.
+	Unread            []Unread `json:"unread,omitempty"`
+	Omitted           int      `json:"omitted,omitempty"`
+	OmittedCollisions int      `json:"omitted_collisions,omitempty"`
 }
 
 // InFlight is how many of the view's records are still in flight.

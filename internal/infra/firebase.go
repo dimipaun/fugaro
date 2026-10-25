@@ -234,9 +234,9 @@ type FirebaseSpec struct {
 	// the installation root creates and this root grants
 	// roles/firebasedatabase.admin to, because the coordinator's records are
 	// written under the rules' floor and a path cannot be expressed as an
-	// IAM binding. It is empty only when the caller has no output to give
-	// (print-vars before any apply) and then derives the same address, as
-	// HistoryAccount does.
+	// IAM binding. It is empty, and nothing is granted, on an installation
+	// whose owner has not opted in to the coordinator (InstallOptions.
+	// Coordinator), which is every installation by default.
 	Launchers          []string `json:"launchers"`
 	Operators          []string `json:"operators"`
 	Admins             []string `json:"admins"`
@@ -275,8 +275,10 @@ type FirebaseInputs struct {
 	// the account's address in the installation's project.
 	HistoryAccount string
 	// CoordinatorAccount is the coordinator's writer account's email, the
-	// same kind of output of the same apply (P5 creates it). Empty is the
-	// same address derivation HistoryAccount's is.
+	// same kind of output of the same apply (P5 creates it once the owner
+	// opts in). It is read only when the installation spec carries the
+	// coordinator, and empty is then the same address derivation
+	// HistoryAccount's is.
 	CoordinatorAccount string
 }
 
@@ -291,15 +293,20 @@ func Firebase(inst InstallationSpec, in FirebaseInputs) (FirebaseSpec, error) {
 	if history == "" {
 		history = serviceAccountEmail(HistoryAccountID, inst.Project)
 	}
-	// P5 creates the coordinator's account in the installation root's first
-	// apply, which every path to this root runs first, so this is the address
-	// of an account that exists by the time the grant below is planned — the
-	// same claim history's is. P3 left it empty on purpose: IAM refuses a
-	// grant to a member that does not exist, and until P5 there was no
-	// account for it to name.
-	coordinator := in.CoordinatorAccount
-	if coordinator == "" {
-		coordinator = serviceAccountEmail(CoordinatorAccountID, inst.Project)
+	// The coordinator's account exists only on an installation whose owner
+	// opted in (inst.Coordinator, P5): the installation root's first apply
+	// creates it, which every path to this root runs first, so this is then
+	// the address of an account that exists by the time the grant is planned
+	// — the same claim history's is. Without the opt-in it stays empty and
+	// the Firebase root grants nothing: IAM refuses a grant to a member that
+	// does not exist, and an installation that did not ask for the database
+	// admin's writer must not get one.
+	coordinator := ""
+	if inst.Coordinator != nil {
+		coordinator = in.CoordinatorAccount
+		if coordinator == "" {
+			coordinator = serviceAccountEmail(CoordinatorAccountID, inst.Project)
+		}
 	}
 	s := FirebaseSpec{
 		Project:            in.FP,

@@ -447,16 +447,18 @@ func coordinatorSweepRepos(raw string) ([]coordinator.Repo, error) {
 // command's own read (coordinatorRuns), so the sweep and the view cannot
 // disagree about what a repository's runs are.
 //
-// The window is unbounded, unlike status's: a tick reconciles the repository,
-// and a view computed from the last 36 hours of runs would be a view that
-// forgot every pull request older than that.
+// The window is the sweep's (coordinator.RunsWindow, 30 days), wider than
+// status's: a tick reconciles the repository, and a view computed from the
+// last 36 hours of runs would forget every pull request older than that. It
+// is still a window, because a tick that read every run a repository ever had
+// would grow with the repository's history every 15 minutes.
 type coordinatorRunsSource struct {
 	env  *cloudEnv
 	warn io.Writer
 }
 
-func (s coordinatorRunsSource) Runs(ctx context.Context, repo coordinator.Repo) ([]coordinator.Run, error) {
-	return coordinatorRuns(ctx, s.env, repo.Slug, time.Time{}, s.warn)
+func (s coordinatorRunsSource) Runs(ctx context.Context, repo coordinator.Repo, since time.Time) ([]coordinator.Run, error) {
+	return coordinatorRuns(ctx, s.env, repo.Slug, since, s.warn)
 }
 
 // writeCoordinatorSweep prints one line per repository and the tick's own
@@ -468,11 +470,20 @@ func writeCoordinatorSweep(w io.Writer, res coordinator.Result) error {
 			fmt.Fprintf(w, "%s: stale: %s\n", oneLine(r.Repo), oneLine(r.Reason))
 			continue
 		}
-		fmt.Fprintf(w, "%s: %d records, %d in flight, %d collisions, %d records pruned\n",
-			oneLine(r.Repo), r.Records, r.InFlight, r.Collisions, r.Pruned)
+		fmt.Fprintf(w, "%s: %d records, %d in flight, %d collisions, %d pull requests read, %d unread, %d records pruned\n",
+			oneLine(r.Repo), r.Records, r.InFlight, r.Collisions, r.Read, r.Unread, r.Pruned)
+		if r.Omitted > 0 {
+			fmt.Fprintf(w, "%s: %d records left out of the view (its bound is %d)\n", oneLine(r.Repo), r.Omitted, coordinator.MaxViewRecords)
+		}
+		if r.Undecodable > 0 {
+			fmt.Fprintf(w, "%s: %d documents did not decode and were stepped over\n", oneLine(r.Repo), r.Undecodable)
+		}
 	}
 	fmt.Fprintf(w, "swept %d repositories: %d reconciled, %d stale\n",
 		len(res.Repos), len(res.Repos)-res.StaleRepos(), res.StaleRepos())
+	if res.Stopped != "" {
+		fmt.Fprintf(w, "the tick stopped early on %s; the next one starts with %s\n", res.Stopped, oneLine(res.Next))
+	}
 	return nil
 }
 

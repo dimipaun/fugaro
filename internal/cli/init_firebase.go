@@ -254,11 +254,13 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	if outs.HistoryServiceAccount == "" {
 		return remote(errors.New("the installation has no history account in its outputs; the first apply did not create it"))
 	}
-	// The coordinator's account is created by that same apply (P5), and the
-	// Firebase root below grants it the FP's database admin: with no output to
-	// name it, that grant would be planned for an account that may not exist,
-	// and IAM refuses a member it cannot find.
-	if outs.CoordinatorServiceAccount == "" {
+	// The coordinator's account is created by that same apply on an
+	// installation whose owner opted in (P5), and the Firebase root below
+	// grants it the FP's database admin: with no output to name it, that
+	// grant would be planned for an account that may not exist, and IAM
+	// refuses a member it cannot find. Without the opt-in there is no account
+	// and no grant, and nothing to check.
+	if spec.Coordinator != nil && outs.CoordinatorServiceAccount == "" {
 		return remote(errors.New("the installation has no coordinator account in its outputs; the first apply did not create it"))
 	}
 

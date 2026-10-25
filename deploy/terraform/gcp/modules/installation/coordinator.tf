@@ -5,6 +5,9 @@
 # It is the deterministic half of the coordinator, and the account below is
 # the only identity that writes the coordinator's state.
 #
+# None of this exists unless the owner opts in (fugaro update
+# --firebase-project <id> --coordinator); var.coordinator is null otherwise.
+#
 # The account is created in the first of fugaro update's applies, so the
 # Firebase root can grant it roles/firebasedatabase.admin on the FP — that
 # root grants nothing to an account that does not exist yet (P3). The job, the
@@ -19,15 +22,16 @@
 # container, and the job_runner role on this job alone.
 
 locals {
-  # coordinator is what the run records, and it is the whole switch: an
-  # installation that records none — every installation before 0.11.0, and the
-  # credentials fixture — plans exactly what it planned before, and the
-  # Firebase root's own gate is the same fact (its coordinator_account is
-  # empty). The history job hangs off enable_budget instead because nothing
-  # else ever carries a history block; a run that has a budget backend always
-  # writes both, and it is internal/cli's coordinatorJob that refuses the one
-  # combination this cannot see (a recorded Firebase project with no account
-  # in the installation's outputs).
+  # coordinator is the owner's opt-in, and it is the whole switch: fugaro
+  # writes the block only after fugaro update --firebase-project --coordinator
+  # (recorded as terraform.coordinator in the local config), so an
+  # installation that never asked — every installation by default — plans
+  # exactly what it planned before, and the Firebase root's own gate is the
+  # same fact (its coordinator_account is empty). The history job hangs off
+  # enable_budget alone because every budget backend has one; the coordinator
+  # needs both, and it is internal/cli's initFirebase that refuses the one
+  # combination this cannot see (an opt-in with no account in the
+  # installation's outputs).
   coordinator_on     = var.enable_budget && var.coordinator != null
   deploy_coordinator = local.coordinator_on && try(var.coordinator.deploy_job, false)
 }

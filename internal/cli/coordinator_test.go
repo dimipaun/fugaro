@@ -1580,36 +1580,67 @@ func TestCoordinatorSweepWritesTheView(t *testing.T) {
 	}
 }
 
-// TestCoordinatorSweepMarksAReadThatFailedStale: a repository the host would
-// not answer for is recorded as unreconciled and the tick still exits 0 — the
-// marker is a fact about the repository, not a failure of the job, and a job
-// that exited non-zero would have Scheduler's own alarm read as an outage of
-// the whole installation.
-func TestCoordinatorSweepMarksAReadThatFailedStale(t *testing.T) {
+// TestCoordinatorSweepRecordsAPullRequestTheHostRefused: one pull request the
+// host would not answer for is recorded in the view on its own, with the state
+// the last sweep read, and the repository is still reconciled — the numbers a
+// view reads are written by the runs, so one refused number must not be able
+// to keep a repository stale. The tick still exits 0.
+func TestCoordinatorSweepRecordsAPullRequestTheHostRefused(t *testing.T) {
 	f := newCoordinatorSweepFixture(t, coordinatorSeeds(), coordinatorPRs()...)
 	if _, _, err := execute(t, "coordinator", "sweep"); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := f.view()
 
 	f.host.FailPullRequest = 1
 	out, _, err := execute(t, "coordinator", "sweep")
 	if err != nil {
 		t.Fatalf("a read that failed failed the tick: %v", err)
 	}
-	after, stale := f.view()
-	if stale == nil {
-		t.Fatalf("the failed read left no stale marker at /%s", coordinator.PathStale(appSlug))
+	view, stale := f.view()
+	if stale != nil {
+		t.Errorf("one refused pull request left the repository stale: %v", stale)
 	}
-	if stale["reason"] != coordinator.StalePullRequests {
-		t.Errorf("the marker's reason = %v, want %q", stale["reason"], coordinator.StalePullRequests)
+	unread, _ := view["unread"].([]any)
+	if len(unread) != 1 {
+		t.Fatalf("the view records %d unread pull requests, want 1: %v", len(unread), view["unread"])
+	}
+	u, _ := unread[0].(map[string]any)
+	if u["reason"] != coordinator.UnreadFailed || u["carried"] != true {
+		t.Errorf("the unread entry = %v, want %q with the last sweep's state carried", u, coordinator.UnreadFailed)
+	}
+	if !strings.Contains(out, "1 unread") || !strings.Contains(out, "1 reconciled, 0 stale") {
+		t.Errorf("the tick's report = %q", out)
+	}
+}
+
+// TestCoordinatorSweepMarksAHostItCannotOpenStale: a host the coordinator's
+// token cannot be opened against is the repository's failure as a whole, so
+// the previous view stays and the marker says so — a view recomputed from the
+// runs alone would read as "nothing is in flight" about a repository that has
+// work in it. The marker is a fact about the repository, not a failure of the
+// job, so the tick exits 0.
+func TestCoordinatorSweepMarksAHostItCannotOpenStale(t *testing.T) {
+	f := newCoordinatorSweepFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	if _, _, err := execute(t, "coordinator", "sweep"); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := f.view()
+	setCoordinatorHost(t, func([]string, func(string)) (coordinator.ProviderOpener, error) {
+		return func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
+			return nil, nil, errors.New("the host is unreachable")
+		}, nil
+	})
+	out, _, err := execute(t, "coordinator", "sweep")
+	if err != nil {
+		t.Fatalf("a host that could not be opened failed the tick: %v", err)
+	}
+	after, stale := f.view()
+	if stale == nil || stale["reason"] != coordinator.StalePullRequests {
+		t.Fatalf("the marker = %v, want %q", stale, coordinator.StalePullRequests)
 	}
 	if !strings.Contains(out, "stale") {
 		t.Errorf("the tick's report = %q, want the repository reported stale", out)
 	}
-	// The view is the previous sweep's, byte for byte: a view recomputed from
-	// the runs alone would read as "nothing is in flight" about a repository
-	// that has work in it.
 	b, _ := json.Marshal(before)
 	a, _ := json.Marshal(after)
 	if string(a) != string(b) {
@@ -1665,7 +1696,7 @@ func TestCoordinatorSweepRefusesAURLAsTheBucket(t *testing.T) {
 // TestCoordinatorSweepNeverPrintsACredentialOrTheHostsText: the read is P2's,
 // so the credential values the opener hands back are redacted out of whatever
 // this command prints, and the failure it records is this package's own
-// classification rather than the host's message (Q14 A) — a marker carrying
+// classification rather than the host's message (Q14 A) — a view carrying
 // "401: bad credentials (token ...)" would be another writer's text kept in
 // the coordinator's state, which is what the classification exists to prevent.
 func TestCoordinatorSweepNeverPrintsACredentialOrTheHostsText(t *testing.T) {
@@ -1688,12 +1719,18 @@ func TestCoordinatorSweepNeverPrintsACredentialOrTheHostsText(t *testing.T) {
 			t.Errorf("the credential or the host's text reached the output: %q", got)
 		}
 	}
-	_, stale := f.view()
-	if stale == nil || stale["reason"] != coordinator.StalePullRequests {
-		t.Fatalf("the marker = %v, want %q", stale, coordinator.StalePullRequests)
+	view, _ := f.view()
+	unread, _ := view["unread"].([]any)
+	if len(unread) == 0 {
+		t.Fatalf("the view records no unread pull request: %v", view)
 	}
-	if raw := fmt.Sprint(f.db.Value(coordinator.PathStale(appSlug))); strings.Contains(raw, secret) || strings.Contains(raw, "401") {
-		t.Errorf("the node carries the host's own text: %s", raw)
+	for _, e := range unread {
+		if u, _ := e.(map[string]any); u["reason"] != coordinator.UnreadFailed {
+			t.Errorf("the unread entry = %v, want %q", u, coordinator.UnreadFailed)
+		}
+	}
+	if raw := fmt.Sprint(f.db.Value(coordinator.PathRepo(appSlug))); strings.Contains(raw, secret) || strings.Contains(raw, "401") {
+		t.Errorf("the repository's node carries the host's own text: %s", raw)
 	}
 }
 

@@ -131,8 +131,9 @@ resource "google_project_iam_member" "history_usage" {
 # whole database, /config included. The installation root creates the account
 # (P5, modules/installation/coordinator.tf) and hands it here as
 # coordinator_account, so this grant exists exactly when the account does: an
-# installation that records no coordinator, and every one before 0.11.0, passes
-# an empty account and nothing is granted.
+# installation whose owner has not opted in to the coordinator (fugaro update
+# --firebase-project <id> --coordinator), which is every installation by
+# default, passes an empty account and nothing is granted.
 #trivy:ignore:AVD-GCP-0007
 resource "google_project_iam_member" "coordinator_database" {
   count   = var.coordinator_account == "" ? 0 : 1

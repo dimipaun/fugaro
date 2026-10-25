@@ -64,6 +64,9 @@ func (r *initRun) newMachineConfig(ctx context.Context, e *initEngine) error {
 	if outs.HistoryServiceAccount != "" {
 		next.Terraform.BudgetBackend = true
 	}
+	if outs.CoordinatorServiceAccount != "" {
+		next.Terraform.Coordinator = true
+	}
 	if !r.o.launchersChanged && len(next.Terraform.Launchers) == 0 {
 		next.Terraform.Launchers = slices.Clone(outs.Launchers)
 	}

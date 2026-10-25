@@ -45,13 +45,29 @@ type fakeSource struct {
 	runErr error
 	prs    []PullRequest
 	prErr  error
-	// asked is the numbers the last read asked for, and calls how many times
-	// the reader was reached.
+	// fail is the numbers the host refuses one by one, which the reader
+	// reports as P2's own reader does: a *PartialError carrying the rest.
+	fail map[int]bool
+	// asked is the numbers the last read asked for, calls how many times the
+	// reader was reached, since the window the last runs read asked for, and
+	// order the slugs whose runs were read, in order.
 	asked []int
 	calls int
+	since time.Time
+	order []string
+	// onRuns runs inside each runs read, before it answers.
+	onRuns func()
 }
 
-func (s *fakeSource) Runs(context.Context, Repo) ([]Run, error) {
+func (s *fakeSource) Runs(ctx context.Context, repo Repo, since time.Time) ([]Run, error) {
+	s.since = since
+	s.order = append(s.order, repo.Slug)
+	if s.onRuns != nil {
+		s.onRuns()
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
 	if s.runErr != nil {
 		return nil, s.runErr
 	}
@@ -65,12 +81,20 @@ func (s *fakeSource) PullRequests(_ context.Context, _, _ string, numbers []int)
 		return nil, s.prErr
 	}
 	out := make([]PullRequest, 0, len(numbers))
+	var failed []int
 	for _, n := range numbers {
+		if s.fail[n] {
+			failed = append(failed, n)
+			continue
+		}
 		for _, pr := range s.prs {
 			if pr.Number == n {
 				out = append(out, pr)
 			}
 		}
+	}
+	if len(failed) > 0 {
+		return nil, &PartialError{Read: out, Failed: failed, err: errors.New("the host answered 404 for a number a run wrote")}
 	}
 	return out, nil
 }

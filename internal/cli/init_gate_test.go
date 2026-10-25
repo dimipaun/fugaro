@@ -291,8 +291,7 @@ func TestAdoptCopiesWhatTheOutputsExpose(t *testing.T) {
 	r.installationState(t)
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"launchers": []string{"group:eng@example.com"}, "registry_cleanup_dry_run": false,
-		"log_view": "", "history_service_account": "fugaro-history@proj-1234.iam.gserviceaccount.com",
-		"coordinator_service_account": coordinatorAccount})}
+		"log_view": "", "history_service_account": "fugaro-history@proj-1234.iam.gserviceaccount.com"})}
 	r.save(t)
 	e := newMachineEngine(t, r, &initOptions{yes: true})
 	var out strings.Builder

@@ -956,12 +956,64 @@ run "history_account_first" {
   }
 }
 
+# The coordinator is the owner's opt-in (P5): a budget installation with the
+# history job deployed and no coordinator block — every installation until its
+# owner runs fugaro update --firebase-project --coordinator — plans no
+# coordinator account, grant, job or schedule, and outputs no account for the
+# Firebase root to grant the database's admin to.
+run "coordinator_off_by_default" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  override_resource {
+    target          = google_service_account.history[0]
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-history@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-history@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  variables {
+    enable_budget = true
+    history = {
+      account_id       = "fugaro-history"
+      job              = "fugarohist"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/history:latest"
+      scheduler_job    = "fugaro-history-sweep"
+      scheduler_region = "us-east1"
+      deploy_job       = true
+      firebase_project = "fp-1234"
+      rtdb_url         = "https://fp-1234-default-rtdb.firebaseio.com"
+    }
+  }
+
+  assert {
+    condition = (length(google_service_account.coordinator) == 0 &&
+      length(google_storage_bucket_iam_member.coordinator_runs_reader) == 0 &&
+      length(google_secret_manager_secret_iam_member.coordinator_app_key) == 0 &&
+      length(google_cloud_run_v2_job.coordinator) == 0 &&
+      length(google_cloud_run_v2_job_iam_member.coordinator_runner) == 0 &&
+    length(google_cloud_scheduler_job.coordinator_sweep) == 0)
+    error_message = "without the coordinator opt-in there is no coordinator account, grant, job or schedule"
+  }
+  assert {
+    condition     = output.coordinator_service_account == null && output.coordinator_job == null
+    error_message = "without the coordinator opt-in the coordinator outputs are null"
+  }
+}
+
 # The coordinator's account, which the Firebase root grants the FP's database
 # admin from (coordinator plan P5, D194): the first apply creates it and its
 # read of the runs bucket, and nothing else — the job, the App key's grant and
 # the schedule wait for deploy_job, the history account's own shape. A run that
-# records no coordinator plans neither, which is what keeps every installation
-# deployed before 0.11.0 byte for byte where it was.
+# records no coordinator plans neither (coordinator_off_by_default), which is
+# what keeps every installation that has not opted in byte for byte where it
+# was.
 run "coordinator_account_first" {
   command = plan
 
