@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest'
 import {
   MAX_DISCOVERED_INSTALLATIONS,
   MAX_WARNING_LINES,
+  isCliProjectName,
   parseInstallationsDocument,
 } from '../../src/main/installlist'
 
@@ -226,5 +227,39 @@ describe('the installation list document', () => {
     expect(answer.ok && answer.document.installations.length).toBe(0)
     expect(answer.ok && answer.document.warnings.length).toBe(0)
     expect(answer.ok && Object.isFrozen(answer.document.installations)).toBe(true)
+  })
+})
+
+describe('the names the console will drive (review m3)', () => {
+  it('skips a row whose name is not a CLI project name, and says so, so no command is built from it', () => {
+    const result = parsed({
+      installations: [
+        { name: 'aurora', gcp_project: 'aurora-482301', region: 'europe-west4' },
+        { name: 'orbit;rm -rf ~', gcp_project: '', region: '' },
+        { name: 'Orbit', gcp_project: '', region: '' },
+        { name: '$(orbit)', gcp_project: '', region: '' },
+      ],
+      warnings: ['a line the CLI printed'],
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.document.installations.map((row) => row.name)).toEqual(['aurora'])
+    expect(result.document.warnings[0]).toBe('a line the CLI printed')
+    expect(result.document.warnings.slice(1)).toEqual([
+      'the CLI listed "orbit;rm -rf ~", which is not a project name, so the console will not use it',
+      'the CLI listed "Orbit", which is not a project name, so the console will not use it',
+      'the CLI listed "$(orbit)", which is not a project name, so the console will not use it',
+    ])
+  })
+
+  it('takes exactly the CLI’s own grammar', () => {
+    expect(isCliProjectName('a')).toBe(true)
+    expect(isCliProjectName('aurora-2')).toBe(true)
+    expect(isCliProjectName('a'.repeat(40))).toBe(true)
+    expect(isCliProjectName('a'.repeat(41))).toBe(false)
+    expect(isCliProjectName('-aurora')).toBe(false)
+    expect(isCliProjectName('aurora-')).toBe(false)
+    expect(isCliProjectName('aurora_2')).toBe(false)
+    expect(isCliProjectName('')).toBe(false)
   })
 })

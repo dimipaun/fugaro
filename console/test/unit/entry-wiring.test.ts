@@ -61,6 +61,9 @@ import {
   RAIL_WARNING_CLASS,
   RAIL_WARNING_GLYPH,
   RAIL_EMPTY_CLASS,
+  RAIL_TITLE_CLASS,
+  RAIL_TITLE_ID,
+  ISSUE_HEADLINE_CLASS,
   ONBOARDING_CLASS,
   ONBOARDING_COMMAND_CLASS,
   ONBOARDING_TITLE_CLASS,
@@ -1831,5 +1834,35 @@ describe('the rail with nothing left to open', () => {
     await flush()
     expect(calls.filter((call) => call.name === 'subscribeLive').length).toBe(before + 1)
     expect(rowNamed(document, 'comet').attributes.get('aria-selected')).toBe('true')
+  })
+})
+
+describe('the rail’s accessibility (review m5)', () => {
+  it('names its tablist by the rail’s own title', async () => {
+    const { bridge } = railBridge([listRow('aurora', { open: true })])
+    const document = await boot(bridge, new FakeDocument())
+    const title = classed(railOf(document), RAIL_TITLE_CLASS)[0]
+    const list = classed(railOf(document), RAIL_LIST_CLASS)[0]
+    expect(title?.attributes.get('id')).toBe(RAIL_TITLE_ID)
+    expect(list?.attributes.get('aria-labelledby')).toBe(RAIL_TITLE_ID)
+  })
+
+  it('moves the keyboard to the issue’s heading when the row was activated from the keyboard', async () => {
+    const { bridge } = railBridge([listRow('aurora', { open: true }), orbitRow()])
+    const document = await boot(bridge, new FakeDocument())
+    rowNamed(document, 'orbit').press('Enter')
+    await flush()
+    const heading = classed(panelOf(document), ISSUE_HEADLINE_CLASS)[0]
+    expect(heading?.attributes.get('tabindex')).toBe('-1')
+    expect(document.activeElement).toBe(heading)
+  })
+
+  it('leaves the focus where it was on a pointer click', async () => {
+    const { bridge } = railBridge([listRow('aurora', { open: true }), orbitRow()])
+    const document = await boot(bridge, new FakeDocument())
+    rowNamed(document, 'orbit').click()
+    await flush()
+    const heading = classed(panelOf(document), ISSUE_HEADLINE_CLASS)[0]
+    expect(document.activeElement).not.toBe(heading)
   })
 })

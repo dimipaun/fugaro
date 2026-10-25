@@ -233,13 +233,14 @@ export const REPORT_MAX_WEEKS = 522
  *     looked up among the records this console holds and one it does not hold
  *     is refused (`picker.ts`), so a path-shaped string the grammar admits has
  *     no record to reach anything through;
- *   - `installationCheckout` -- a **directory the CLI itself listed** for that
+ *   - `installationCheckout` -- a directory **the rail offered** for that
  *     installation (`isAbsolutePath`): an absolute path, at most
  *     `MAX_INSTALLATION_PATH_LENGTH`, no control character, no leading `-`. The
- *     shape is all this grammar can decide; whether the CLI ever offered the
- *     directory is the main process's check against the document it last read
- *     (`picker.ts`), because a validator that guessed would be the place a
- *     made-up path got through.
+ *     shape is all this grammar can decide; whether the rail offered the
+ *     directory -- one the CLI listed, or the console's own recorded checkout,
+ *     and in either case not a temporary or tool-owned path -- is the main
+ *     process's check (`offeredCheckouts`, `picker.ts`), because a validator
+ *     that guessed would be the place a made-up path got through.
  *
  * The last two are the only path-shaped kinds on this surface, and they are the
  * installation rail's (owner's design ruling of 2026-10-25). Both are the
@@ -665,9 +666,10 @@ export const CONSOLE_OPERATIONS = [
   // (`.checkout`), hand a directory this process computed to the file manager
   // (`.reveal`), or open the picker window the rail's `+` door is
   // (`.open`). None of them takes a path a renderer chose: `.checkout` takes a
-  // directory **the CLI itself listed** and checks membership against the
-  // document it last read, and `.reveal` takes a project name and computes the
-  // path itself.
+  // directory **the rail offered** -- one the CLI listed in the document it last
+  // read, or the console's own recorded checkout, never a temporary or
+  // tool-owned path -- and `.reveal` takes a project name and computes the path
+  // itself.
   {
     name: 'installation.list',
     method: 'listInstallations',
@@ -708,7 +710,7 @@ export const CONSOLE_OPERATIONS = [
         key: 'checkout',
         kind: 'installationCheckout',
         required: false,
-        why: 'a directory out of that installation’s own `checkouts` list, which the main process checks for membership. Absent means "no checkout", which is a state an installation may be in (design section 3.4 rule 5).',
+        why: 'a directory out of that installation’s own `checkouts` list (what the CLI listed, plus the console’s own recorded checkout, minus temporary and tool-owned paths), which the main process checks for membership. Absent means "no checkout", which is a state an installation may be in (design section 3.4 rule 5).',
       },
     ],
   },

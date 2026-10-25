@@ -22,7 +22,7 @@
 // that reads `node:fs`) and a duplicate nobody compares is a duplicate that
 // drifts.
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -777,6 +777,32 @@ describe('the picker’s checkout', () => {
     const refused = (await answer(ipcMain, 'checkout', { project: 'sandbox', checkout })) as ConsoleReply
     expect(refused.ok).toBe(false)
     if (!refused.ok) expect(refused.reason).toContain('not one of the checkouts the CLI listed')
+  })
+
+  it('refuses a listed checkout that is a symlink into a tool-owned directory, offer and write both (review m1)', async () => {
+    const target = join(freshDirectory(), 'scratchpad', 'real')
+    mkdirSync(target, { recursive: true })
+    const link = join(freshDirectory(), 'link')
+    symlinkSync(target, link)
+    const stub = installStub(join(freshDirectory(), 'bin'), {
+      commands: {
+        version: { stdout: `${CLOCKED}\n` },
+        doctor: { stdout: '{"ok":true,"checks":[]}\n' },
+        'config list': {
+          stdout: `${JSON.stringify({ installations: [{ name: 'sandbox', gcp_project: 'p', region: 'r', checkouts: [{ repository: 'github/o/r', path: link, enrolled: true, valid: true }] }], warnings: [] })}\n`,
+        },
+      },
+    })
+    const { picker, ipcMain } = pickerOver({ prefixes: [stub.directory] })
+    void picker
+    const listed = (await answer(ipcMain, 'list')) as ConsoleReply
+    expect(listed.ok).toBe(true)
+    if (listed.ok) {
+      const data = listed.data as { rows: readonly { project: string; checkouts: readonly string[] }[] }
+      expect(data.rows.find((row) => row.project === 'sandbox')?.checkouts).toEqual([])
+    }
+    const refused = (await answer(ipcMain, 'checkout', { project: 'sandbox', checkout: link })) as ConsoleReply
+    expect(refused.ok).toBe(false)
   })
 
   it('offers only what the CLI listed: a directory it never named is refused', async () => {

@@ -754,11 +754,15 @@ the surface's twenty-one, `CONSOLE_OPERATIONS` in `src/main/ipc.ts`), answered b
 the same dispatcher the picker window uses. The console reads two of the
 `warnings` lines by their wording, to mark the rail's rows
 (`src/main/installationstate.ts`): `<path> could not be read: <reason>`, matched
-to an installation by `projects/<name>.yaml` in the path (with `\` read as `/`,
-for native Windows), and `<name>'s shared config was last checked <age> ago, over
+to an installation when the path before that marker ends in `projects/<name>.yaml`
+(with `\` read as `/`, for native Windows; a path the reason mentions does not
+count), and `<name>'s shared config was last checked <age> ago, over
 the <window> the reader refreshes it within`. A change to either sentence in
 `internal/cli/config_list.go` is a change to this contract. Every other line is
-shown verbatim in the row's issue view and is not interpreted.
+shown verbatim in the row's issue view and is not interpreted. A row whose `name` is not
+the CLI's own project-name grammar (`config.ProjectNameRE`) is not used at all:
+the console builds commands from the name, so it skips the row and adds a
+warning line naming it.
 
 The document:
 

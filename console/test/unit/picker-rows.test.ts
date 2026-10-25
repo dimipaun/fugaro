@@ -457,11 +457,16 @@ describe('removing the installation the console is open on', () => {
     // removing the record removes the row; `orbit` is the next readable one. (A
     // record the CLI does list stays a row after removal: the console forgot it,
     // the machine did not.)
+    const bound: string[] = []
     const { picker, ipcMain } = over({
       userData,
       stub: stubWith({ installations: [{ name: 'orbit', gcp_project: 'orbit-482301', region: 'europe-west4' }] }),
       onChosen: async (installation) => {
         chosen.push(installation.project)
+        // What the reopened window's handshake and source read, at the moment
+        // the window is asked for.
+        const now = picker.installation()
+        bound.push(now.chosen ? now.project : '')
       },
     })
     await list(ipcMain)
@@ -471,6 +476,7 @@ describe('removing the installation the console is open on', () => {
     // The handshake for the next one ran, and the window it reopens is that
     // installation's: no source is left bound to the record that went.
     expect(chosen).toEqual(['orbit'])
+    expect(bound).toEqual(['orbit'])
     expect(picker.installation()).toMatchObject({ chosen: true, project: 'orbit' })
     if (removed.ok) {
       const data = removed.data as { rows: readonly InstallationsListRow[] }
@@ -515,5 +521,35 @@ describe('removing the installation the console is open on', () => {
       expect(data.rows).toEqual([])
       expect(data.onboard.kind).toBe('first-installation')
     }
+  })
+})
+
+describe('a choose reopens the window on the chosen installation', () => {
+  it('answers the chosen installation inside onChosen, after a first run opened another one', async () => {
+    // Review M1: a first run with no remembered choice opens the first readable
+    // row as the session; a choose must not leave that session answering while
+    // the window it reopens runs its handshake and binds its source.
+    const document = {
+      installations: [
+        { name: 'aurora', gcp_project: 'aurora-482301', region: 'europe-west4' },
+        { name: 'orbit', gcp_project: 'orbit-482301', region: 'europe-west4' },
+      ],
+    }
+    const bound: string[] = []
+    const userData = freshDirectory()
+    const { picker, ipcMain } = over({
+      userData,
+      stub: stubWith(document),
+      onChosen: async () => {
+        const now = picker.installation()
+        bound.push(now.chosen ? now.project : '')
+      },
+    })
+    await picker.openInstallation()
+    expect(picker.installation()).toMatchObject({ chosen: true, project: 'aurora' })
+    const chosen = await ask(ipcMain, 'choose', { project: 'orbit' })
+    expect(chosen.ok, chosen.ok ? '' : chosen.reason).toBe(true)
+    expect(bound).toEqual(['orbit'])
+    expect(picker.installation()).toMatchObject({ chosen: true, project: 'orbit' })
   })
 })

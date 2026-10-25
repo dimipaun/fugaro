@@ -1362,8 +1362,9 @@ aside.console-rail                        the rail — the grid's first column
   readable row with no issue switches the console to it (`installation.choose`, which writes
   `installations.json` and reopens the window), and the issue view can remove the console's
   record of an installation or pair it with a checkout. **No renderer names a path it made
-  up**: a checkout is accepted only from the directories the CLI listed for that installation,
-  with temporary and tool-owned paths refused in the main process as well as left off the
+  up**: a checkout is accepted only from the directories the rail offers for that installation
+  (the ones the CLI listed, plus the console's own recorded checkout), with temporary and
+  tool-owned paths (and symlinks into them) refused in the main process as well as left off the
   screen, and the folder the file manager opens is computed from the console's own record.
   Nothing on the rail writes to the cloud or to the CLI's configuration.
 - **The keyboard** — the detail is [§4.3](#43-keyboard-and-focus): the rail's list is **a

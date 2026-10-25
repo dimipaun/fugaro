@@ -158,6 +158,18 @@ describe('namesInstallation', () => {
     expect(namesInstallation(line, 'aurora')).toBe(false)
     expect(namesInstallation(line.replace('orbit.yaml', 'orbit-2.yaml'), 'orbit')).toBe(false)
   })
+
+  it('reads the path the line starts with, not a path the reason mentions (review m2)', () => {
+    // Another installation's refusal that mentions this one's file is that
+    // other installation's line: drawn here, it would send the operator to edit
+    // the wrong file.
+    const other = '~/.config/fugaro/projects/orbit.yaml could not be read: it includes ~/.config/fugaro/projects/aurora.yaml'
+    expect(namesInstallation(other, 'aurora')).toBe(false)
+    expect(namesInstallation(other, 'orbit')).toBe(true)
+    // A directory whose name merely ends in `projects` is not the projects one.
+    expect(namesInstallation('/home/operator/myprojects/aurora.yaml could not be read: x', 'aurora')).toBe(false)
+    expect(namesInstallation('projects/aurora.yaml could not be read: x', 'aurora')).toBe(true)
+  })
 })
 
 describe('staleLineFor and isStaleWarning', () => {
@@ -218,6 +230,19 @@ describe('isToolOwnedPath', () => {
     expect(isToolOwnedPath('C:\\Users\\operator\\scratchpad\\aurora', temp)).toBe(true)
     expect(isToolOwnedPath('C:\\Users\\operator\\src\\aurora', temp)).toBe(false)
   })
+
+  it('normalises the path and compares without case before it decides (review m1)', () => {
+    expect(isToolOwnedPath('/TMP/aurora', temp)).toBe(true)
+    expect(isToolOwnedPath('/Private/Tmp/aurora', temp)).toBe(true)
+    expect(isToolOwnedPath('/Users/operator/Scratchpad/aurora', temp)).toBe(true)
+    expect(isToolOwnedPath('/home/operator/src/.Claude/Worktrees/wt-1', temp)).toBe(true)
+    expect(isToolOwnedPath('/home/operator/../../tmp/aurora', temp)).toBe(true)
+    expect(isToolOwnedPath('/home/operator/./src/../src/aurora', temp)).toBe(false)
+    // A Windows temporary directory, spelled in another case than the OS answered it.
+    const windowsTemp = 'C:\\Users\\operator\\AppData\\Local\\Temp'
+    expect(isToolOwnedPath('c:\\users\\Operator\\appdata\\local\\temp\\aurora', windowsTemp)).toBe(true)
+    expect(isToolOwnedPath('C:\\Users\\operator\\src\\..\\AppData\\Local\\Temp\\aurora', windowsTemp)).toBe(true)
+  })
 })
 
 describe('suggestedCheckouts', () => {
@@ -246,6 +271,13 @@ describe('suggestedCheckouts', () => {
 
   it('offers nothing when there is nothing to offer', () => {
     expect(suggestedCheckouts(undefined, [], temp)).toEqual([])
+  })
+
+  it('refuses a directory whose real path is tool-owned, as a symlink into one is (review m1)', () => {
+    const real = (path: string): string => (path === '/home/operator/link' ? '/tmp/real' : path)
+    expect(
+      suggestedCheckouts('/home/operator/link', ['/home/operator/link', '/home/operator/src/aurora'], temp, undefined, real),
+    ).toEqual(['/home/operator/src/aurora'])
   })
 })
 

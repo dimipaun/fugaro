@@ -751,6 +751,10 @@ export const RAIL_EMPTY_CLASS = 'console-rail-empty'
  * `id` and not a hook: `aria-controls` takes an element's id, and no rule in the
  * stylesheet selects it -- the class above is what a rule may select. */
 export const RAIL_LIST_ID = 'console-rail-list'
+/** RAIL_TITLE_ID is the rail title's id, which names the rows' tablist
+ * (`aria-labelledby`): a tablist with no accessible name is announced as a bare
+ * list of tabs (review m5). */
+export const RAIL_TITLE_ID = 'console-rail-title'
 
 /** RAIL_TITLE, RAIL_HINT and RAIL_ADD_LABEL are the rail's own words, drawn
  * from here rather than from a document: the title names the region, the hint is
@@ -1044,7 +1048,7 @@ export interface RailView {
 export function drawRail(
   surface: DomSurface,
   rows: readonly RailRow[],
-  activate: (row: RailRow) => void,
+  activate: (row: RailRow, byKeyboard: boolean) => void,
   openPicker: () => void,
 ): RailView {
   const factory = surface.factory
@@ -1056,6 +1060,7 @@ export function drawRail(
   const title = factory.create('p')
   title.setAttribute('class', RAIL_TITLE_CLASS)
   title.textContent = RAIL_TITLE
+  title.setAttribute('id', RAIL_TITLE_ID)
   const collapse = factory.create('button')
   collapse.setAttribute('class', RAIL_COLLAPSE_CLASS)
   collapse.setAttribute('type', 'button')
@@ -1073,6 +1078,7 @@ export function drawRail(
   list.setAttribute('class', RAIL_LIST_CLASS)
   list.setAttribute('id', RAIL_LIST_ID)
   list.setAttribute('role', 'tablist')
+  list.setAttribute('aria-labelledby', RAIL_TITLE_ID)
 
   const foot = factory.create('div')
   foot.setAttribute('class', RAIL_ADD_CLASS)
@@ -1215,7 +1221,7 @@ export function drawRail(
       elements.push(element)
       drawn.push({ row, element, state, spend })
       surface.nodeOf(element).addEventListener('click', () => {
-        activate(row)
+        activate(row, false)
       })
       keydownOn(surface.nodeOf(element), (event: KeyEventLike) => {
         const target = tabTarget(event.key, elements.indexOf(element), elements.length, 'y')
@@ -1226,7 +1232,7 @@ export function drawRail(
         }
         if (event.key === 'Enter') {
           event.preventDefault()
-          activate(row)
+          activate(row, true)
         }
       })
     }
@@ -1286,7 +1292,7 @@ export function drawRail(
       // shortcut that switched the console while the keyboard stayed where it
       // was would leave the operator's next arrow key acting somewhere else.
       wanted.element.focus()
-      activate(wanted.row)
+      activate(wanted.row, true)
     },
   }
 }
@@ -1429,7 +1435,11 @@ export interface IssueActions {
  * pass), and no path is invented here: the checkouts offered are the row's own
  * list, and the main process checks membership against the document it read.
  */
-export function drawIssue(surface: DomSurface, row: RailRow, actions: IssueActions): SkewElement {
+export function drawIssue(
+  surface: DomSurface,
+  row: RailRow,
+  actions: IssueActions,
+): { readonly root: SkewElement; readonly headline: DomElement } {
   const factory = surface.factory
   const section = factory.create('section')
   section.setAttribute('class', ISSUE_CLASS)
@@ -1440,6 +1450,9 @@ export function drawIssue(surface: DomSurface, row: RailRow, actions: IssueActio
 
   const headline = factory.create('h1')
   headline.setAttribute('class', ISSUE_HEADLINE_CLASS)
+  // Focusable by script and not in the tab order: a keyboard activation moves
+  // the reader to the issue it opened (review m5).
+  headline.setAttribute('tabindex', '-1')
   putText(headline, row.project, 'label', 'the installation’s project')
   section.append(headline)
 
@@ -1527,7 +1540,7 @@ export function drawIssue(surface: DomSurface, row: RailRow, actions: IssueActio
   }
 
   section.append(controls)
-  return section
+  return { root: section, headline }
 }
 
 // ---------------------------------------------------------------------------
@@ -1729,8 +1742,8 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
   const rail = drawRail(
     surface,
     rows,
-    (row) => {
-      wiring.activate(row)
+    (row, byKeyboard) => {
+      wiring.activate(row, byKeyboard)
     },
     () => {
       void railBridge.openInstallations({})
@@ -1755,7 +1768,7 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
 /** RailWiring is the rail's click, bound by `mountDashboard` once the views a
  * click can show exist. */
 interface RailWiring {
-  activate: (row: RailRow) => void
+  activate: (row: RailRow, byKeyboard: boolean) => void
 }
 
 /**
@@ -2406,10 +2419,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   /** showIssue puts one installation's issue in the main area (owner's design
    * ruling of 2026-10-25): a view like Run detail, with no navigation button
    * and no Live poll under it. */
-  const showIssue = (row: RailRow): void => {
+  const showIssue = (row: RailRow, focus = false): void => {
     markCurrent('issue')
     rail.view(row.project)
-    replace(drawIssue(surface, row, issueActions))
+    const drawn = drawIssue(surface, row, issueActions)
+    replace(drawn.root)
+    if (focus) drawn.headline.focus()
   }
 
   /** leaveIssue is where the main area goes when the issue it showed is gone:
@@ -2492,9 +2507,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * none switches the console to it, or, when it is already the open one, puts
    * the dashboard back.
    */
-  wiring.activate = (row: RailRow): void => {
+  wiring.activate = (row: RailRow, byKeyboard: boolean): void => {
     if (row.issue !== 'none' || !row.readable) {
-      showIssue(row)
+      showIssue(row, byKeyboard)
       return
     }
     if (row.open) {

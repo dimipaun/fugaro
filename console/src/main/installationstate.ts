@@ -32,6 +32,8 @@
 // one this repository documents, and where there is no command to run the
 // sentence says what to edit instead.
 
+import { posix } from 'node:path'
+
 /** InstallationIssue is what the rail marks beside one installation's name. */
 export type InstallationIssue = 'none' | 'store' | 'config' | 'binary' | 'stale'
 
@@ -259,11 +261,15 @@ export function detailsFor(project: string, warnings: readonly string[]): readon
  * this installation. See `detailsFor` for the two shapes it recognises. */
 export function namesInstallation(line: string, project: string): boolean {
   if (project === '') return false
-  // Native Windows prints the config path with backslashes, so the path is
-  // compared with its separators folded to `/`.
-  return (
-    line.replace(/\\/g, '/').includes(`projects/${project}.yaml`) || line.startsWith(sharedStaleLead(project))
-  )
+  if (line.startsWith(sharedStaleLead(project))) return true
+  // The refusal's path is what the line starts with, up to the CLI's marker: a
+  // path the *reason* mentions belongs to another installation's line (review
+  // m2). Native Windows prints it with backslashes, so separators are folded.
+  const cut = line.indexOf(CONFIG_REFUSAL_MARKER)
+  if (cut < 0) return false
+  const path = line.slice(0, cut).replace(/\\/g, '/')
+  const file = `projects/${project}.yaml`
+  return path === file || path.endsWith(`/${file}`)
 }
 
 /** staleLineFor is the CLI's staleness line for this installation, or
@@ -313,11 +319,8 @@ export function isToolOwnedPath(
   literalRoots: readonly string[] = TEMP_ROOTS,
 ): boolean {
   if (path === '') return false
-  const normalized = path.replace(/\\/g, '/')
-  const segments = normalized.split('/').filter((segment) => segment !== '')
-  const roots = [tempDirectory, ...literalRoots]
-    .filter((root) => root !== '')
-    .map((root) => root.replace(/\\/g, '/').split('/').filter((segment) => segment !== ''))
+  const segments = pathSegments(path)
+  const roots = [tempDirectory, ...literalRoots].filter((root) => root !== '').map(pathSegments)
   for (const root of roots) {
     if (root.length === 0 || root.length > segments.length) continue
     if (root.every((segment, index) => segments[index] === segment)) return true
@@ -333,6 +336,22 @@ export function isToolOwnedPath(
  * parameter only so a unit test can create a real checkout under the OS's own
  * temporary directory; the shipped app always uses this list. */
 export const TEMP_ROOTS: readonly string[] = Object.freeze(['/tmp', '/private/tmp', '/var/folders', '/private/var/folders'])
+
+/**
+ * pathSegments is one path as the rule above compares it (review m1): the
+ * separators folded to `/`, `.` and `..` resolved (`posix.normalize`, so
+ * `/home/u/../../tmp` is `/tmp`), and every segment in lower case. Case is
+ * folded everywhere, not only on the two case-insensitive file systems: on
+ * Linux that refuses a `/TMP` the operator could have used, which is the safe
+ * direction for a list of offers.
+ */
+function pathSegments(path: string): readonly string[] {
+  return posix
+    .normalize(path.replace(/\\/g, '/'))
+    .toLowerCase()
+    .split('/')
+    .filter((segment) => segment !== '' && segment !== '.')
+}
 
 /** hasSegmentRun reports whether `run` appears as consecutive segments. */
 function hasSegmentRun(segments: readonly string[], run: readonly string[]): boolean {
@@ -365,13 +384,17 @@ export function suggestedCheckouts(
   listed: readonly string[],
   tempDirectory: string,
   literalRoots: readonly string[] = TEMP_ROOTS,
+  realPath: (path: string) => string = (path) => path,
 ): readonly string[] {
+  // A directory is refused when either spelling is tool-owned: the one listed,
+  // and the one it resolves to (`realPath` is the main process's `realpath`, so
+  // a symlink into a temporary directory is refused like the directory itself).
+  const refused = (path: string): boolean =>
+    isToolOwnedPath(path, tempDirectory, literalRoots) || isToolOwnedPath(realPath(path), tempDirectory, literalRoots)
   const out: string[] = []
-  if (recorded !== undefined && recorded !== '' && !isToolOwnedPath(recorded, tempDirectory, literalRoots)) {
-    out.push(recorded)
-  }
+  if (recorded !== undefined && recorded !== '' && !refused(recorded)) out.push(recorded)
   for (const candidate of listed) {
-    if (candidate === '' || isToolOwnedPath(candidate, tempDirectory, literalRoots)) continue
+    if (candidate === '' || refused(candidate)) continue
     if (out.includes(candidate)) continue
     out.push(candidate)
   }

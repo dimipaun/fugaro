@@ -23,6 +23,7 @@
 // an add, a choose or a remove.** It never writes on a load, on a pick, or on a
 // failed validation, and it never deletes or rewrites a file it refused to read.
 
+import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -539,10 +540,20 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
   let session: StoredInstallation | null = null
 
   const tempDirectory = (): string => deps.tempDirectory?.() ?? tmpdir()
+  /** realPathOf is a directory as the file system resolves it, so a symlink
+   * into a temporary or tool-owned directory is judged by where it leads. A
+   * path that does not resolve (gone, unreadable) is judged as spelled. */
+  const realPathOf = (path: string): string => {
+    try {
+      return realpathSync(path)
+    } catch {
+      return path
+    }
+  }
   /** offeredCheckouts is the one list a checkout is offered from and accepted
    * from: the screen draws it, and a checkout write is held to it. */
   const offeredCheckouts = (recorded: string | undefined, listed: readonly string[]): readonly string[] =>
-    suggestedCheckouts(recorded, listed, tempDirectory(), deps.tempRoots ?? TEMP_ROOTS)
+    suggestedCheckouts(recorded, listed, tempDirectory(), deps.tempRoots ?? TEMP_ROOTS, realPathOf)
 
   const rowsOf = (
     discovered: readonly { name: string; gcpProject: string; region: string; checkouts: readonly string[] }[],
@@ -829,6 +840,11 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
     // already carries the mode the handshake just read.
     registry.remember(project, probed.value.compatibility)
     registry.choose(project)
+    // The store now names the chosen installation, so the session decided for
+    // an earlier row must not answer any more: the window `onChosen` reopens runs
+    // its handshake and binds its source through `installation()` before any
+    // list re-reads and `markOpen` settles the session again (review M1).
+    session = null
     // Awaited inside the chain: the next mutation waits for the window this
     // choose asked for.
     await deps.onChosen?.({
@@ -860,8 +876,10 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
   /**
    * setInstallationCheckout is the one place a repository is asked for, and the
    * screen asks at the moment it needs one (requirement 3): the directories the
-   * CLI itself listed for that installation are the only ones this accepts, and
-   * an absent `checkout` clears the one that was there.
+   * rail offers for that installation (`offeredCheckouts`: what the CLI listed,
+   * plus the console's own recorded checkout, minus temporary and tool-owned
+   * paths) are the only ones this accepts, and an absent `checkout` clears the
+   * one that was there.
    *
    * Setting one runs the pairing check (`validateInstallation`, which is rule
    * 7's `doctor --json` from that directory with that project). Clearing one
