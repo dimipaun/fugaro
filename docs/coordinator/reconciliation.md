@@ -51,7 +51,7 @@ not exist. Recording them here so the next reader does not repeat them.
 | **Access: "whoever can reach the project's coordinator is in the project; no extra permission model in v1"** (§4) | The opposite is the standing design: the compute module **refuses** `allUsers`, `allAuthenticatedUsers` and `domain:` members (`deploy/terraform/gcp/modules/compute/variables.tf:122,144`), launchers are per-person IAM members on one job (`modules/project/iam.tf:7`), and `SECURITY.md:40` puts the trust boundary at the repository and the task source, never at network reach. See **#4**. |
 | **Store: Firestore; "Firestore and RTDB are already available"** (§5) | True, both exist — and they are **two different stores with two different jobs**. RTDB is the budget/policy/kill/registry/mailbox store (`internal/budget/model.go:1-2`); Firestore holds `spendDaily` history only (`internal/firestore/client.go` package doc, `internal/budget/rollover.go:48 SpendCollection`). See **#6**. |
 | **"Firestore's real-time listeners drive live updates in the console"** (§5) | Wrong twice: the Firestore client has no listeners (hand-written REST: `Get`, `Patch`, `Delete`, `Query`, `GetDatabase`, `CreateDatabase`), and the console renderer's CSP is `connect-src 'none'` (`console/src/main/protocol.ts:132`) — it never talks to the network at all. See **#7**. |
-| **GitHub as ground truth** (§6) | `gitprov.Provider` reads `Repository`, `PullRequest`, `Comments`, `FetchPRHead` (`internal/gitprov/gitprov.go:208-270`), and `github.MintInstallationToken(ctx, o, perms)` mints a token **scoped to one repository** (`internal/gitprov/github/apptoken.go:190`). See **#9**, **#10**. |
+| **GitHub as ground truth** (§6) | `gitprov.Provider` reads `Repository`, `PullRequest`, `Comments`, `FetchPRHead` (`internal/gitprov/gitprov.go:208-270`), and `github.MintInstallationToken(ctx, o, perms)` mints a token **scoped to one repository** (`internal/gitprov/github/apptoken.go`'s `tokenSource.Token`, whose body names one). See **#9**, **#10**. |
 | **Intent signals from local orchestrators, before code exists** (§6) | No channel exists. The only per-person fact written today is `launch.json`'s `launched_by` (`internal/runstore/launch.go`), a **self-declared email** (`internal/cli/run.go:1731`, from `localcfg.Config.Me`). See **#11**. |
 | **MCP server over HTTP** (§7) | No MCP server, no MCP dependency. The only HTTP server in the repository is the per-run budget gateway, bound to loopback (`internal/gateway/gateway.go:220-232`, `127.0.0.1:0`). See **#8**. |
 | **Two model tiers; "reuses the project's existing key management and security service"** (§8) | The security service does not exist (`docs/credentials-service/README.md:3` — *"plan only; nothing is implemented"*). Model configuration today is per **slot**, not per tier (`agent.models.coder|reviewer|background`, `docs/design/m10-multi-model.md`) plus the routing switch (`internal/config/routing.go:42-61`). See **#21**, **#22**, **#23**. |
@@ -59,7 +59,7 @@ not exist. Recording them here so the next reader does not repeat them.
 | **Daily token-spend cap that "counts toward the project's existing spend caps"** (§9) | The existing caps are **per run**, keyed to a run's Firebase identity (`internal/budget/token/token.go:83-88 Claims`; `internal/budget/evaluate.go:135 Evaluate`). A long-lived service has no run identity. See **#25**. |
 | **Drift reconciliation: a scheduled job via the same Terraform** (§9) | This shape exists: Cloud Scheduler → HTTP POST to the Cloud Run Admin `jobs:run` API (`deploy/terraform/gcp/modules/installation/history.tf:180`, `*/15 * * * *`; a daily rollover at `:223`). It targets a **job**, not a service. See **#18**. |
 | **Console project-wide view; "ask the coordinator"** (§10) | The console's nav is Live / Spend / Projects (`console/src/renderer/entry.ts:490-496`); its data plane is one interface over the `fugaro` CLI as a sidecar (`console/src/source/cli.ts:1-8`), with thirteen read operations and one `link.openExternal` (`console/src/main/ipc.ts:307-558`, fourteen entries). The v2 *spec*'s "Overview" is unbuilt, and v2's ruling is one write only — launch (D22, `docs/design/desktop-console-v2.md`). See **#27**, **#28**. |
-| **Advisory, not authoritative; "never blocks or reorders merges"** (§3) | Consistent with the repo, and it has a hard consequence: the coordinator must hold **no GitHub write permission**. The App's per-run token asks for `contents: write, pull_requests: write, issues: read, metadata: read` (`internal/gitprov/github/apptoken.go:91`); a read-only set is not merely expressible, it is **minted today** — `{contents: read, metadata: read}` (`:97 buildTokenPermissions`, exported at `:101`) — by two callers, both of which only clone (`internal/cli/gitcred.go:107`, `internal/cli/imagecheck.go:517`). See **#9**, **Q3**. |
+| **Advisory, not authoritative; "never blocks or reorders merges"** (§3) | Consistent with the repo, and it has a hard consequence: the coordinator must hold **no GitHub write permission**. The App's per-run token asks for `contents: write, pull_requests: write, issues: read, metadata: read` (`internal/gitprov/github/apptoken.go`'s `tokenPermissions`); a read-only set is not merely expressible, it is **minted today** — `{contents: read, metadata: read}` (`buildTokenPermissions`, exported as `BuildTokenPermissions`) — by two callers, both of which only clone (`internal/cli/gitcred.go:107`, `internal/cli/imagecheck.go:517`). See **#9**, **Q3**. |
 | **Self-hosted; no Fugaro-operated central service** (§3) | Consistent: everything is per-installation, and managed projects were gated off in the release this table was written against (`internal/cli/recipes_skew.go`'s `managedDeployerShipped`; 0.10.0 ships it true, with the deployer's fence unmeasured — Check 68 is owner-run after the release). |
 | **"Works with any MCP-capable agent, not only Claude"** (§7) | The repository drives **only Claude Code** (`docs/base-image.md`). A front door for arbitrary MCP clients is a new integration and a new untrusted-input surface. See **#8**, **#13**. |
 
@@ -234,21 +234,22 @@ which widens the untrusted-input surface beyond Fugaro's own runs. → **Q2**, *
 
 **#9 — A read-only installation token exists and is minted today; what does not exist is a *project-wide* one, and the per-repository scope is baked into the token call. — Exists / Gap.**
 `github.MintInstallationToken(ctx, o, perms)` takes the permissions as an argument
-(`internal/gitprov/github/apptoken.go:121`), and the read-only set is not a proposal: it is
-`buildTokenPermissions`, `{contents: read, metadata: read}` (`:97`), exported as
-`BuildTokenPermissions()` (`:101`) for the callers that keep a copy. Two callers mint with
+(`internal/gitprov/github/apptoken.go`'s `MintInstallationToken`), and the read-only set is not
+a proposal: it is `buildTokenPermissions`, `{contents: read, metadata: read}`, exported as
+`BuildTokenPermissions()` for the callers that keep a copy. Two callers mint with
 it — `internal/cli/gitcred.go:107` (the image build's credential step, `mintBuildToken`,
 whose doc says the token *"can only read the one repository"*) and
 `internal/cli/imagecheck.go:517` (the daily image check, which also only clones) — against a
 run's own `tokenPermissions` set, which asks for `contents: write, pull_requests: write`
-(`internal/gitprov/github/apptoken.go:91`).
+(`internal/gitprov/github/apptoken.go`'s `tokenPermissions`).
 So the coordinator's read-only credential is a **reuse of a mechanism that already runs in
 production**, not a new one: the named-set pattern, the accessor, and the two call sites are
 all there, and the change is to name a third set wide enough to read pull requests
-(`pull_requests: read`, `issues: read` beside the build's two) and call it. What the existing
+(`pull_requests: read` and `metadata: read`, the two reads **Q3**'s answer names — see the
+narrowing note there) and call it. What the existing
 read-only token cannot give is reach across repositories: the body posted to GitHub is
 `{"repositories": []string{s.repo}, "permissions": perms}`
-(`internal/gitprov/github/apptoken.go:190`) — **one repository per token**.
+(`internal/gitprov/github/apptoken.go`'s `tokenSource.Token`) — **one repository per token**.
 A project-wide reader therefore needs either N tokens (one per repository) or a
 project-wide installation token with `repositories` omitted, which `tokenSource` cannot
 express.
@@ -317,10 +318,12 @@ GitHub, and may never call a tool because a document told it to. → **Q4**, **Q
 **#14 — The coordinator must hold no GitHub write permission, and that is a hard rule the code can enforce. — Rule.**
 Spec §3: *"Advisory, not authoritative … It never blocks or reorders merges."* The
 mechanical form of that sentence is a read-only GitHub credential. `MintInstallationToken`
-already takes the permission set as an argument (`internal/gitprov/github/apptoken.go:121`),
+already takes the permission set as an argument (`internal/gitprov/github/apptoken.go`'s
+`MintInstallationToken`),
 so the rule is enforceable by never minting anything but a read-only set — and the repo does
 not merely have the precedent for a named, narrower set beside the run's, it **runs one
-today**: `buildTokenPermissions` (`:97`, `{contents: read, metadata: read}`) exists
+today**: `buildTokenPermissions` (`internal/gitprov/github/apptoken.go`'s own,
+`{contents: read, metadata: read}`) exists
 precisely because *"it only clones the repository"*, and it is minted by two callers
 (`internal/cli/gitcred.go:107`, `internal/cli/imagecheck.go:517`). A coordinator that holds
 no write permission is therefore not asking for a new kind of credential; it is asking for a
@@ -328,16 +331,17 @@ third named set in a pattern the tree already uses.
 What could **not** be verified from here: the permissions the App itself has been granted on
 GitHub. `tokenPermissions` is what a run *asks for*, and GitHub caps it at the App's own
 grant; the App's grant is configured in GitHub's UI, not in this repository.
-*Consequence:* a named `coordinatorTokenPermissions` set — `{contents: read,
-pull_requests: read, issues: read, metadata: read}`, and no `write` anywhere — is the rule's
-implementation, and the App's own grant has to be checked by the owner. → **Q3**.
+*Consequence:* a named `coordinatorTokenPermissions` set — proposed here on 2026-10-19 as
+`{contents: read, pull_requests: read, issues: read, metadata: read}` and, since the
+2026-10-25 narrowing, `{pull_requests: read, metadata: read}`, and no `write` anywhere — is
+the rule's implementation, and the App's own grant has to be checked by the owner. → **Q3**.
 
 **#15 — The existing App can be reused for a read-only coordinator, but "reused" has a caveat the owner must accept. — Open.**
 Reuse is plausible for three reasons: `github-app-key` is already the project-scoped git
 credential (finding **#9**), the App is already one App per team's repositories
 (`internal/infra/secretmounts_test.go:97`), and the token call takes its permissions as an
 argument. The caveat: **the App is also the credential a run uses to write pull requests**
-(`internal/gitprov/github/apptoken.go:91 tokenPermissions`), so the same private key would
+(`internal/gitprov/github/apptoken.go`'s `tokenPermissions`), so the same private key would
 sit in two places with two different permission ceilings, and the coordinator would hold a
 key that *can* mint a write-capable token even if it never does. The alternative is a
 second, read-only App.
@@ -644,12 +648,14 @@ not lost:
 
 ### Q3 — What GitHub credential does the coordinator hold, and is read-only a hard rule?
 **Changes spec §3, §6, §7.**
-- **(A) Recommended — reuse the existing App (`github-app-key`) and mint a read-only installation token with a new named permission set `{contents: read, pull_requests: read, issues: read, metadata: read}`, and never a `write`.** This is the smallest step of the three, because the mechanism is already built and running: `BuildTokenPermissions()` (`internal/gitprov/github/apptoken.go:101`) hands out `{contents: read, metadata: read}` and two callers mint with it today (`internal/cli/gitcred.go:107`, `internal/cli/imagecheck.go:517`), so the coordinator's set is a second var beside `buildTokenPermissions` plus the two read permissions it needs beyond a clone, and its call site is a third caller of the same function. The App key is already project-scoped by the owner's 2026-10-15 ruling (finding **#30**), and `MintInstallationToken` takes the set as an argument (finding **#9**). Cost: the same private key then sits in three places with two ceilings (finding **#15**), the token is still scoped to **one repository** (`apptoken.go:190`), so a project-wide reader is N tokens, and the App's own grant on GitHub has to include `pull_requests: read` — which could not be verified from this container.
+- **(A) Recommended — reuse the existing App (`github-app-key`) and mint a read-only installation token with a new named permission set `{contents: read, pull_requests: read, issues: read, metadata: read}`, and never a `write`.** This is the smallest step of the three, because the mechanism is already built and running: `BuildTokenPermissions()` (`internal/gitprov/github/apptoken.go`'s exported copy) hands out `{contents: read, metadata: read}` and two callers mint with it today (`internal/cli/gitcred.go:107`, `internal/cli/imagecheck.go:517`), so the coordinator's set is a second var beside `buildTokenPermissions` plus the two read permissions it needs beyond a clone, and its call site is a third caller of the same function. The App key is already project-scoped by the owner's 2026-10-15 ruling (finding **#30**), and `MintInstallationToken` takes the set as an argument (finding **#9**). Cost: the same private key then sits in three places with two ceilings (finding **#15**), the token is still scoped to **one repository** (`internal/gitprov/github/apptoken.go`'s `tokenSource.Token`), so a project-wide reader is N tokens, and the App's own grant on GitHub has to include `pull_requests: read` — which could not be verified from this container.
 - **(B) A second, read-only GitHub App, used only by the coordinator.** Cleanest blast radius: a compromise of the coordinator cannot mint a write-capable token at all. Cost: a second App to create, install on every repository, and rotate — and a second secret to manage.
 - **(C) A fine-grained personal access token per project.** Cost: a long-lived human credential, no per-repository scoping guarantee, and it dies with the person who made it.
 *Consequence:* under any option, "the coordinator holds no GitHub write power" becomes a **hard rule** the code enforces by never asking for a write permission — the mechanical form of spec §3's "advisory, not authoritative".
 
 **Answered 2026-10-19: option (A)** — the existing App, minting a new read-only named permission set and never a `write`, with the App's own grant on GitHub needing `pull_requests: read` (U2, still an owner check): under this option "the coordinator holds no GitHub write power" is a hard rule the code enforces.
+
+**Narrowed 2026-10-25: the set is `{pull_requests: read, metadata: read}`** — the two reads the project-wide view makes, and not the four (A) named on 2026-10-19. The reader opens no file and reads no issue: every pull request is read one at a time through `gitprov.Provider.PullRequest`, which is `pull_requests: read`, and `metadata: read` is what GitHub requires of any request at all. A permission asked for and never used is reach a stolen token would have for nothing, which is the half of this question's hard rule that a "no write" check cannot see. P5's aggregation job re-reads through this same reader, so it asks for no more than these two. The set is `internal/gitprov/github/apptoken.go`'s `coordinatorTokenPermissions`, and the plan's P2 Status note records the narrowing where the part is.
 
 ### Q4 — Does the coordinator hold a model credential, or wait for the credentials service?
 **Changes spec §8.**
@@ -784,8 +790,8 @@ rewritten to it rather than to the answer above.
 | # | What could not be verified | Why, and what would settle it |
 | --- | --- | --- |
 | U1 | **The MCP specification's authorization model.** The spec's §7 describes "an MCP server over HTTP"; the published MCP specification's authorization section is OAuth 2.1-based. | The public specification is not reachable from this container. Reading it would settle whether Q16's option (A) is a small departure or a large one. |
-| U2 | **The permissions the GitHub App has actually been granted on GitHub.** `tokenPermissions` is what a *run asks for* (`internal/gitprov/github/apptoken.go:91`); GitHub caps it at the App's own grant, which is configured in GitHub's UI. | Only the owner can read the App's settings. It decides whether Q3's option (A) works at all: the App must already have `pull_requests: read`. |
-| U3 | **Whether an installation token with `repositories` omitted is acceptable in this design.** `tokenSource` always posts one repository (`apptoken.go:190`). | A read of GitHub's API documentation, or one owner-run experiment. It decides whether a project-wide reader is N tokens or one. |
+| U2 | **The permissions the GitHub App has actually been granted on GitHub.** `tokenPermissions` is what a *run asks for* (`internal/gitprov/github/apptoken.go`'s `tokenPermissions`); GitHub caps it at the App's own grant, which is configured in GitHub's UI. | Only the owner can read the App's settings. It decides whether Q3's option (A) works at all: the App must already have `pull_requests: read`. |
+| U3 | **Whether an installation token with `repositories` omitted is acceptable in this design.** `tokenSource.Token` always posts one repository (`internal/gitprov/github/apptoken.go`). | A read of GitHub's API documentation, or one owner-run experiment. It decides whether a project-wide reader is N tokens or one. |
 | U4 | **The real cost of a reasoning-tier call at the spec's scale.** The arithmetic in finding **#26** is arithmetic from the shipped price catalog, not a measurement. | `fugaro report` and `fugaro budget preview` measure runs, not a service. Only running one would settle it. |
 | U5 | **Whether the RTDB rules can express a read grant for a coordinator's own state without widening anything else.** The template's macros are `TOKEN`, `RUN`, `USER`, `MAILBOX`, `CONSUMER` (`internal/budget/rules/rules.go:375-398`). | The rules have an emulator and a golden file (`internal/budget/rules/testdata/rules.golden.json`), so this is answerable by writing the change — but it is a change, and none is proposed here. |
 | U6 | **What `docs/design/always-on-orchestrator.md` (PR #632) finally rules.** It is an open draft and it asks Q1–Q7 rather than deciding. | Reading it at the commit it merges with. Q10's option (A) depends on its answers. |

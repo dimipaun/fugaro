@@ -29,10 +29,12 @@ Subcommands:
 - `fugaro allow-delete` -- Record the objects a run may delete or replace, by address (the project's owner)
 - `fugaro artifacts` -- List and download what an artifact run delivered
 - `fugaro backends` -- List the compute backends an installation can run its jobs on
+- `fugaro backlog` -- File a backlog item, read the backlog, regenerate its index
 - `fugaro budget` -- Show and change the project's model-spend caps and kill switches
 - `fugaro cancel` -- Cancel a run, letting the runner open a draft PR first
 - `fugaro completion` -- Generate the autocompletion script for the specified shell
 - `fugaro config` -- Work with fugaro.yaml
+- `fugaro coordinator` -- The coordinator's project view: what is in flight, and what collides
 - `fugaro creds` -- Set and list the credentials service's one bundle secret (the owner)
 - `fugaro diagnose` -- Explain how a run went: status, tests, review findings, the agent's last word, logs
 - `fugaro doctor` -- Check that Fugaro is set up and ready, without changing anything
@@ -478,6 +480,153 @@ Flags:
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro backlog`
+
+File a backlog item, read the backlog, regenerate its index
+
+Read the backlog in docs/backlog/, file an item into it, and regenerate
+its index.
+
+The backlog is one Markdown file per item, named `<id>-<slug>.md`, beside
+the generated index README.md and the hand-written format FORMAT.md. The
+naming rule is what lets two pull requests file an item at once: they write
+two differently named files, and the merge is a union of disjoint files
+rather than a conflict (D26). `add` writes one item under that rule and
+refuses the one the folder already holds — the same title filed twice on
+the same day. The index is derived state — regenerated,
+never merged by hand — so two branches that regenerated it at once are
+reconciled by re-running `fugaro backlog index`, and never by merging the
+file (D28). `add` regenerates it in the same commit that files the item;
+`index` regenerates it alone; `list` writes nothing and prints what the
+index would say.
+
+Nothing here reaches a network, a credential or an installation: the items
+and the index are files in this checkout.
+
+Usage: `fugaro backlog`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for backlog |
+
+Subcommands:
+
+- `fugaro backlog add` -- File an item in docs/backlog/ and regenerate the index
+- `fugaro backlog index` -- Regenerate docs/backlog/README.md from the item files beside it
+- `fugaro backlog list` -- Print the backlog's items as the index lists them
+
+## `fugaro backlog add`
+
+File an item in docs/backlog/ and regenerate the index
+
+File an item, and regenerate the index beside it.
+
+The item takes the next id for the day it is filed (D26) and is written
+as `<id>-<slug>.md`, with the eight front-matter fields the format
+requires (D27). The index is regenerated in the same command, so the
+commit that files an item is the commit that regenerates the index.
+
+--title and --why are required, and so is --filed-by: an item is not a
+title with no text, and who filed it is one of the eight fields. An item
+is committed, so a --filed-by with an @ in it records `unknown`. --what
+defaults to the title, and --done and --link are written when given.
+
+An item filed by hand records `mode: none` — no run chose a mode for it.
+--mode names the mode a run resolved when the item is about one, and
+--filed-in says where it came from: `hand`, `run:<run id>` or
+`pr:<number>`.
+
+Usage: `fugaro backlog add`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--area` | string | `repo` | no | the area the item is about: an area name, project or repo |
+| `--date` | string | "" | no | the day it is filed, as YYYY-MM-DD; today when empty |
+| `--dir` | string | `docs/backlog` | no | the folder the item files live in |
+| `--done` | string | "" | no | what done looks like |
+| `--filed-by` | string | "" | no | who filed it: the run's launcher, or your login (required) |
+| `--filed-in` | string | `hand` | no | where it came from: hand, run:<run id> or pr:<number> |
+| `-h`, `--help` | bool | `false` | no | help for add |
+| `--link` | stringArray | `[]` | no | a link for the item's Links section (repeatable) |
+| `--mode` | string | `none` | no | the mode a run resolved; none for an item filed by hand |
+| `--title` | string | "" | no | the item's title, one line (required) |
+| `--what` | string | "" | no | what was left open; the title when empty |
+| `--why` | string | "" | no | why it is left open (required) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro backlog index`
+
+Regenerate docs/backlog/README.md from the item files beside it
+
+Regenerate the backlog's index from the item files.
+
+The index lists one row per item — the id linked to its file, the title,
+the mode, the area, the status, who filed it and the date — sorted by id,
+with the closed and dropped rows grouped under the open ones, under a
+count line (D28). It is written to <dir>/README.md, and it is the only
+file this command touches.
+
+The document is a pure function of the item files: every date in it comes
+from the item that carries it and no clock is read, so regenerating an
+unchanged folder rewrites the same bytes and a regeneration in review
+diffs only where an item changed (D27). A pull request that adds an item
+runs this in the same commit, and a test in internal/cli fails on an index
+that is not current — which is why the file is never merged by hand.
+
+Usage: `fugaro backlog index`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--dir` | string | `docs/backlog` | no | the folder the item files live in |
+| `-h`, `--help` | bool | `false` | no | help for index |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro backlog list`
+
+Print the backlog's items as the index lists them
+
+Print the backlog's items.
+
+The output is the index itself, rendered from the item files rather than
+read back from README.md: a stale index on disk cannot change what this
+prints, and a reader who sees a difference between the two has found the
+file that needs `fugaro backlog index`.
+
+--json prints one document instead: {dir, items[{id, title, mode, area,
+status, filed_by, filed_in, date, path}], open, closed, dropped}, indented.
+The rows are the index's own rows in the index's own order, and the three
+counts are the count line's own figures, so a screen shows what the
+Markdown says rather than a second reading of the folder.
+
+Nothing is written, and nothing is reached over the network: a folder that
+does not exist is an error rather than an empty backlog.
+
+Usage: `fugaro backlog list`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--dir` | string | `docs/backlog` | no | the folder the item files live in |
+| `-h`, `--help` | bool | `false` | no | help for list |
+| `--json` | bool | `false` | no | print machine-readable output |
 
 Subcommands:
 
@@ -1110,6 +1259,148 @@ Flags:
 | `--offline` | bool | `false` | no | never read the runs bucket: resolve against the cached project layer, if any |
 | `--project-layer` | string | "" | no | resolve against this project layer file instead of the published one |
 | `--workflow` | string | "" | no | show only this workflow's keys besides the top-level ones |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator`
+
+The coordinator's project view: what is in flight, and what collides
+
+The coordinator's deterministic half (docs/coordinator/implementation-plan.md).
+Nothing here holds a model credential, a service of its own or a store of its
+own: these commands read what fugaro already reads.
+
+Advisory, never authoritative: a collision is reported and never blocks,
+reorders or refuses a merge (spec §3).
+
+Usage: `fugaro coordinator`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for coordinator |
+
+Subcommands:
+
+- `fugaro coordinator report` -- Declare the work you are about to start
+- `fugaro coordinator status` -- Show the work in flight, and where it collides
+
+## `fugaro coordinator report`
+
+Declare the work you are about to start
+
+Write one intent record for this project's repository: the branch and the
+target release the caller declares, and the files and services it is about
+to touch, so that work still in flight can be seen before code exists
+(spec §6).
+
+The record's ID is derived from the caller and the declaration, and from
+nothing else: reporting the same declaration twice writes ONE document, and
+the second report replaces the first rather than adding to it.
+
+The caller is who the local config names (user:), else git config
+user.email, and a report nobody can be named for is refused: every record
+is somebody's declaration, and one nobody can be named for is not one. That
+name is a declaration too — nothing verifies it, and nothing authorises
+anything by it (finding #11).
+
+This command writes and reads nothing back: it prints the record it wrote
+and issues no advice, which is the coordinator's whole posture in v1
+(spec §3, advisory and never authoritative).
+
+The write goes through the caller's own credentials, on the project's
+budget.rtdb_url database. The rules grant /coordinator a read and no write
+to anyone, so the write is admitted by the database role its caller holds
+(roles/firebasedatabase.admin, which terraform.budget_admins have); a
+launcher who is not an admin reports through the coordinator's front door
+once it is deployed.
+
+Usage: `fugaro coordinator report`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--branch` | string | "" | no | the branch you are about to work on |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--file` | stringArray | `[]` | no | a path you are about to touch (repeatable) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for report |
+| `--json` | bool | `false` | no | print the record as it was written |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--release` | string | "" | no | the target release (default: the one the branch names, e.g. release/v0.11.0) |
+| `--repo` | string | "" | no | the repository this report is about (owner/name; default: the local config's, when it lists one) |
+| `--service` | stringArray | `[]` | no | a service you are about to touch (repeatable) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator status`
+
+Show the work in flight, and where it collides
+
+Join a repository's pull requests with its run records and print the view:
+each pull request, the runs behind it, the branch and target release it declares,
+the files and services those runs touched, and every pair of work still in
+flight that touches the same file or service.
+
+One repository by default, every repository the local config lists with --all,
+which prints a view per repository and compares nothing across them: a service
+is a path's shape in one tree, so two repositories' paths say nothing about
+each other.
+
+The pull requests listed are the ones the runs name, and that is the whole of
+the list this reader can produce: gitprov reads one pull request by number and
+has no call that lists a repository's (finding #10), so a pull request no run
+names is never asked for. The rule the join is written to — a pull request no
+run names is listed as having none, because it is work somebody has open and
+dropping it is the one thing this view must not do — is not reached by this
+command today.
+
+Every repository is read through the coordinator's own credential: an
+installation token for that repository, minted from the GitHub App the
+environment holds and carrying a named read-only permission set — pull
+requests and metadata, the two reads this view makes (Q3 answered (A)) —
+and cached for the token's life, so a second read of the same repository
+mints nothing. Every token the command minted is revoked when it is done,
+so the credential lives for the read and no longer.
+With FUGARO_CREDENTIALS_SERVICE_URL set, the installation's credentials
+service holds the App's key and this command holds none, so it refuses (exit 1)
+before it reads the App's ID or key: the service mints a run's token, and this
+read is not a run.
+Exit codes: 1 for a missing or malformed App credential (or the refusal above),
+2 for a failure of the host.
+The coordinator reads github only: a bitbucket repository is refused, and the
+refusal names the reason, because its credential is one repository's access
+token and cannot be widened to a project (reconciliation Q12 (A), finding #30).
+
+The launcher of a run is printed as what it is — the string the run's own launch
+record wrote about itself — and never as an identity.
+
+This command reads and writes nothing of its own: no store of the coordinator's
+own, no service, no model credential. It is the read the CLI already performs,
+the runs bucket and a pull request read that can only read.
+
+Usage: `fugaro coordinator status`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--all` | bool | `false` | no | read every repository the local config lists, one view each |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for status |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | the repository to read (owner/name; default: the local config's, when it lists one) |
+| `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
 
 Subcommands:
 
@@ -2411,6 +2702,15 @@ start with the same preamble all read alike. A follow-up (--pr) keeps its run's
 title unless --title is given, and --retry takes none (the stored task keeps its
 own).
 
+--mode MODE asks for a rigor mode for this run: poc, startup, pro, critical, hotfix.
+It may raise the mode the run resolves from its own configuration
+(rigor.default and rigor.areas in fugaro.yaml, the project layer's defaults)
+and never lower it, so a launch that asks for less cannot outvote a repository
+that asked for more. --path PATH declares a path this run will touch,
+repeatable, matched against those area rules before the run starts; without
+either flag the run resolves from its configuration alone. Both are recorded
+in the run's record and named in the pull request's status line.
+
 Usage: `fugaro run [TEXT]`
 
 Flags:
@@ -2424,7 +2724,9 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for run |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--mode` | string | "" | no | the rigor mode to ask for: poc, startup, pro, critical, hotfix; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it; without it the run resolves from those layers alone |
 | `--no-budget-check` | bool | `false` | no | skip the launch pre-check of the budget (kill switches, missing caps, no headroom); the run is held to the same limits when it starts |
+| `--path` | stringArray | `[]` | no | declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none resolves from its configuration alone |
 | `--pr` | intSlice | `[]` | no | continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--recipe` | string | "" | no | the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's (default, lint-fix, pick, premium, review-only, solo, standard, test-and-fix); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's |
@@ -3033,6 +3335,7 @@ Flags:
 | `--check-github-app` | bool | `false` | no | let the GitHub App pre-check read the App's private key from Secret Manager with your own credentials (held in memory only, for one signed token; refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it); without it setup checks only with the key you typed in this run |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--config-only` | bool | `false` | no | only write the local config, from the installation's outputs (else the flags) |
+| `--coordinator` | bool | `false` | no | with --firebase-project, opt the installation in to the coordinator's aggregation job (docs/coordinator, P5): the fugaro-coordinator service account, its roles/firebasedatabase.admin on the Firebase project (IAM cannot scope it to the coordinator's subtree; the job's own code does), roles/storage.objectViewer on the runs bucket, and — once the history image exists and the local config records a GitHub App ID — the Cloud Run job that holds the App key, its accessor on that one secret and a Scheduler job that runs it every 15 minutes. Nothing creates any of it by default. The opt-in is recorded in the local config (terraform.coordinator) once the apply has created the account, so later runs keep it. --yes never covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor) |
 | `--create-project` | bool | `false` | no | create the GCP project --gcp-project names and add Firebase to it, as you, after you type its ID at a terminal (never with --yes, --non-interactive or --json). A first run of setup always creates its project, so the flag only says so explicitly. Fugaro only starts fresh: an ID that already exists is refused, unless an earlier run of setup created it (the resume). Billing is not linked unless --link-billing is also given; without it setup prints the one gcloud command that links it |
 | `--display-name` | string | "" | no | on a first run, which creates the project: its display name (default: its ID) |
 | `--expect-digest` | stringArray | `[]` | no | pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it setup trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag |
@@ -3217,6 +3520,7 @@ Flags:
 | `--check-github-app` | bool | `false` | no | let the GitHub App pre-check read the App's private key from Secret Manager with your own credentials (held in memory only, for one signed token; refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it); without it update checks only with the key you typed in this run |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--config-only` | bool | `false` | no | only write the local config, from the installation's outputs (else the flags) |
+| `--coordinator` | bool | `false` | no | with --firebase-project, opt the installation in to the coordinator's aggregation job (docs/coordinator, P5): the fugaro-coordinator service account, its roles/firebasedatabase.admin on the Firebase project (IAM cannot scope it to the coordinator's subtree; the job's own code does), roles/storage.objectViewer on the runs bucket, and — once the history image exists and the local config records a GitHub App ID — the Cloud Run job that holds the App key, its accessor on that one secret and a Scheduler job that runs it every 15 minutes. Nothing creates any of it by default. The opt-in is recorded in the local config (terraform.coordinator) once the apply has created the account, so later runs keep it. --yes never covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor) |
 | `--expect-digest` | stringArray | `[]` | no | pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it update trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag |
 | `--firebase-project` | string | "" | no | turn the shared budget on: the value is the installation's own GCP project id (the default; the flag is only needed to turn the shared budget on), and any other id is refused. It is the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: typed where it is a first-time question, covered by --yes where the run re-converges an installation that is already there) and the config |
 | `--forget` | bool | `false` | no | roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state. An installation that holds the managed deployer's fence has no rollback and this is refused there: the state removal would leave the seven scoped roles and their seven conditioned bindings live in the project, accounted for by nothing, and taking the project out of managed mode does not remove them (docs/design/managed-projects.md, "Rolling back") |

@@ -5,6 +5,10 @@ project_name: fugaro
 before:
   hooks:
     - go mod verify
+    # The archive ships the notices of every module the binary links; the
+    # script writes the file into the tree here, before the builds and the
+    # archive, and the archive's file list below carries it (D307).
+    - ./scripts/third-party-notices.sh THIRD_PARTY_NOTICES.md
 
 builds:
   - id: fugaro
@@ -27,6 +31,7 @@ archives:
     files:
       - LICENSE
       - README.md
+      - THIRD_PARTY_NOTICES.md
 
 checksum:
   name_template: checksums.txt

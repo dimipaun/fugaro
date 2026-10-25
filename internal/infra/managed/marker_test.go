@@ -1697,9 +1697,31 @@ var runAccountGrants = setOf(
 	`google_project_iam_member | "projects/${var.project}/roles/fugaroHistory" | project=var.project | google_service_account.history[0].member | for_each= | perms=run.executions.get,run.executions.list,run.jobs.get,run.jobs.list,run.operations.get`,
 	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | google_service_account.history[0].member | for_each= | perms=`,
 
-	// The scheduler account's: starting the history and check jobs.
+	// The coordinator's writer (coordinator plan task P3): the history
+	// account's database grant above, for the second identity that holds one —
+	// the aggregation job's account, which writes the coordinator's subtree
+	// under the rules' floor. Reviewed as the history account's was:
+	// firebasedatabase.admin reaches the FP's databases and no storage at all,
+	// so it is no write path to this object or to the delete list, both of
+	// which are the runs bucket's. What the role does reach is the database's
+	// own rules, which it bypasses: the writer's code is what keeps it to the
+	// coordinator's subtree, and this test cannot bound it.
+	`google_project_iam_member | "roles/firebasedatabase.admin" | project=var.project | "serviceAccount:${var.coordinator_account}" | for_each= | perms=`,
+	// The same account's two reads (coordinator plan P5, the job P5 deploys):
+	// the runs bucket, which the view is computed from — objectViewer, the
+	// history account's own read, so no create, delete or update and no way to
+	// replace the marker or the delete list at the bucket's root — and the
+	// GitHub App's key, the reader credential P2 defines, on the one secret
+	// container the job mounts and at the secret level, never project-wide.
+	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | google_service_account.coordinator[0].member | for_each= | perms=`,
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.project_secrets[var.coordinator.app_key_secret] | google_service_account.coordinator[0].member | for_each= | perms=`,
+
+	// The scheduler account's: starting the history and check jobs, and the
+	// coordinator's sweep (coordinator plan P5, the same custom role and the
+	// same member, on the coordinator job alone).
 	`google_cloud_run_v2_job_iam_member | "roles/run.invoker" | name=google_cloud_run_v2_job.check[0].name | "serviceAccount:${var.installation.scheduler_service_account}" | for_each= | perms=`,
 	`google_cloud_run_v2_job_iam_member | google_project_iam_custom_role.job_runner.name | name=google_cloud_run_v2_job.history[0].name | google_service_account.scheduler.member | for_each= | perms=run.jobs.run,run.jobs.runWithOverrides`,
+	`google_cloud_run_v2_job_iam_member | google_project_iam_custom_role.job_runner.name | name=google_cloud_run_v2_job.coordinator[0].name | google_service_account.scheduler.member | for_each= | perms=run.jobs.run,run.jobs.runWithOverrides`,
 
 	// The deployer account's (D75, Task 1.5): the identity an agent-authored
 	// root is applied as, and the only project-level grant of a storage write

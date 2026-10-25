@@ -722,6 +722,10 @@ var inlineAgentSites = []inlineAgentSite{
 		r.o.onboardRepo = "acme/app"
 		return r.o.checkOnboardRepo() == nil
 	}},
+	{"init.go refuseCoordinatorUnattended", "init.go refuseCoordinatorUnattended (the --coordinator opt-in)", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
+		r.o.coordinator = true
+		return r.refuseCoordinatorUnattended() == nil
+	}},
 }
 
 // propertyAgentSites are the agent-marker sites the other ManagedXxx tests
@@ -820,6 +824,7 @@ var initFlagCases = map[string]string{
 	"print-vars":            "no cloud call and no confirmation (canAsk is false under it)",
 	"no-build":              "only drops the first image build's offer (a Typed step); takes nothing away from a confirmation",
 	"provision-batch":       "main's compute stage (0.9.5, init_compute.go): registered noYes, its confirmation is the project's name typed (initflow.Typed), so --yes never covers it; added on the merge of main into next-0.8.5, the confirm table does not drive this stage itself",
+	"coordinator":           "the coordinator's opt-in (P5): it is an apply of the installation's own roots whose steps confirm through ask (covered), but --yes is refused beside it (checkCoordinator), and a coding agent's session and a run with no terminal are refused before anything is read (refuseCoordinatorUnattended, an inline site, covered)",
 	"provision-credentials": "the credentials stage (0.10.0, C1.20, init_credentials.go): registered noYes, its confirmation is the project's name typed (initflow.Typed), so --yes never covers it, and a coding agent's session is refused by the loop's own gate; the confirm table does not drive this stage itself",
 	// Values a confirmed step carries: they change what is confirmed, never whether.
 	"alert-email": "value", "base": "value", "base-image": "value", "billing-account": "value", "budget": "value",

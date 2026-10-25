@@ -63,12 +63,7 @@ const minSecretLen = 4
 // it: the key is the service's, and the installation tokens it mints are
 // still the caller's to redact (C2.2, D145).
 func FromEnv(env []string, hc *http.Client, warn func(string)) gitprov.Opener {
-	vars := map[string]string{}
-	for _, kv := range env {
-		if k, v, ok := strings.Cut(kv, "="); ok {
-			vars[k] = v
-		}
-	}
+	vars := envVars(env)
 	return func(_ context.Context, kind, repo string) (gitprov.Provider, []string, error) {
 		owner, name, ok := gitprov.SplitRepo(repo)
 		if !ok {
@@ -116,6 +111,30 @@ func FromEnv(env []string, hc *http.Client, warn func(string)) gitprov.Opener {
 			return nil, nil, fmt.Errorf("unknown git provider %q (want %s or %s)", kind, gitprov.KindGitHub, gitprov.KindBitbucket)
 		}
 	}
+}
+
+func envVars(env []string) map[string]string {
+	vars := map[string]string{}
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			vars[k] = v
+		}
+	}
+	return vars
+}
+
+// AppKey returns the GitHub App's private key PEM from env (KEY=VALUE pairs,
+// usually os.Environ()), reading the file EnvGitHubAppKeyFile names when the
+// key is not in the environment itself.
+//
+// It is exported for the caller that mints an installation token of its own
+// rather than letting a provider mint one — the coordinator's read-only token
+// (internal/coordinator.Project) — so that the mint and the opener cannot
+// disagree about where the App's key is. A caller that mints tokens itself
+// must redact the PEM out of every failure it reports, as FromEnv's own
+// comment says of the value it returns.
+func AppKey(env []string) (string, error) {
+	return appKey(envVars(env))
 }
 
 func secret(vars map[string]string, name, what string) (string, error) {

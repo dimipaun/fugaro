@@ -32,12 +32,16 @@ because `gitprov` has no merge call and the runner never deploys. What is
 already there is reused rather than rebuilt: `doublestar/v4` for path rules, one
 trust list for authority, the recorded `ChangedFiles` for a post-hoc floor check,
 the existing CI on `main` for the post-flight suite. The migration default is
-**Pro** (D19) — so the first cut **does** change what "ready" means for a
-repository that configures nothing, and the loud migration note plus the one-line
-pin `rigor.default: critical` are what a repository uses to keep today's
-behaviour; the security-sensitive tier (the D18 floors) stays **Critical**, so
-every claim that the first cut "relaxes nothing" or is "byte-identical to today"
-holds for **Critical mode only**.
+**Pro** (D19). What this branch builds changes two things for a repository that
+configures nothing: its runs resolve and record Pro, and Pro's per-run budget
+default is 0.85 of the deployed cap (T6.1). It does **not** change what "ready"
+means yet: `runner.Decide` takes no mode until Slice 3 (the run loop that applies
+the mode) is built, and that is the slice that will change readiness for an
+unconfigured repository. The loud migration note plus the one-line pin
+`rigor.default: critical` are what a repository uses to keep today's behaviour;
+the security-sensitive tier (the D18 floors) stays **Critical**, so every claim
+that a cut "relaxes nothing" or is "byte-identical to today" holds for
+**Critical mode only**.
 
 The owner's 2026-10-20 spec was written without seeing this repository, so
 several of its premises moved work: the top-level `review:` configuration it
@@ -111,19 +115,42 @@ setting this folder picks.
 | **The backlog ruling** | one Markdown file per item under `docs/backlog/`, a generated index, and one backlog rather than two: §1.3, F42–F48, D26–D32, plan T4.3–T4.7. It adds no config key except D29's designated repository, no schema and no check number. |
 | **No new D-block, no new check range, no new schema** | the three registers this folder touches, and the reason each is written down here rather than discovered later. |
 
+## For operators
+
+When this branch ships, three facts go into the release notes' `### For
+operators` section:
+
+- **An unconfigured repository now resolves Pro** (D19): a repository whose
+  `fugaro.yaml` has no `rigor:` block, under a project layer that sets no rigor
+  default, runs at Pro, and Pro's per-run budget default is **0.85 of the
+  deployed per-run cap** (D16, plan T6.1). A repository that wants the whole cap
+  and today's readiness rule pins `rigor: { default: critical }`.
+- **Backlog filing is opt-in per repository** (the owner's ruling of
+  2026-10-24): a run files items under `docs/backlog/` only for a repository
+  whose `fugaro.yaml` has a `rigor:` block, even an empty one, or whose project
+  layer sets a rigor default. An unconfigured repository's runs file nothing, and
+  `fugaro backlog add` works everywhere.
+- **An older CLI is unaffected**: its runs use the runner image it deploys,
+  which has no modes, so nothing changes until the CLI is upgraded.
+
 ## What this folder is not
 
-- **Not implemented.** The decisions are answered and the plan's
-  [OWNER APPROVAL GATE](implementation-plan.md#owner-approval-gate) is passed, so
-  the slices are approved to build on the branch `rigor-modes` — and **no line of
-  them is written yet**: no code, config, schema or workflow is touched by these
-  documents.
+- **Not implemented.** Not in full: the decisions are answered and the plan's
+  [OWNER APPROVAL GATE](implementation-plan.md#owner-approval-gate) is passed, and
+  part of the plan is built — Slice 0, Slice 1's mode layers and where they show
+  (the run record, `fugaro runs ls`, `fugaro diagnose`, the pull request's status
+  line, and the run's own `fugaro run --mode`/`--path` request), T2.1–T2.3 of
+  Slice 2 (a score the run loop does not act on yet), the backlog (T4.3–T4.7),
+  T5.1 (the task field that request travels in, `task.Spec.Rigor` and
+  `task.Spec.Paths`, with its image-skew gate) and the per-mode budgets (T6.1).
+  The rest is not: Slice 3, which is what would make the mode decide readiness,
+  Slice 5's follow-up rule (T5.2) and Hotfix gate, and Slices 7 and 8.
 - **Not a product document.** When the modes ship they get one —
   `docs/rigor-modes.md`, the plan's T7.1 — and this folder is where the design
   and the plan live until then. The two are separate on purpose: a folder that is
   a plan ages into a design record, and a product document is a promise.
-- **Not a change to the tree.** This folder is documents: the slices say what
-  would touch what, and none of it is written.
+- **Not the record of what is built.** This folder is documents: the slices say
+  what would touch what, and the commits on the branch are what wrote each one.
 
 ## Related work
 

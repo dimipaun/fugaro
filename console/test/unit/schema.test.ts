@@ -299,6 +299,24 @@ const FULL_ROW: JSONDoc = Object.freeze({
   // The run's own record of the paths it changed (console v2 design D27, F17;
   // `runstore.ChangedFiles`): absent for a run that recorded none.
   changed_files: { paths: ['console/src/shared/schema.ts', 'internal/runview/runview.go'], total: 2 },
+  // The mode the run resolved, the layer that decided it and the areas that
+  // matched, each with the mode it sets and the moment it was applied at
+  // (0.11.0, docs/rigor-modes D23/D24/D25; `runstore.RigorRecord`, between
+  // `changed_files` and `artifact_count` in the struct). Accepted and not read
+  // -- no screen draws a run's mode yet -- and carried here so the
+  // classification walk sees its string keys: `from` is an enum of the
+  // resolver's own layers, the areas' `mode` is the same enum as the block's,
+  // and `revision` is a git ref.
+  rigor: {
+    mode: 'critical',
+    from: 'area',
+    areas: [
+      { name: 'payments', mode: 'critical', at: 'bootstrap' },
+      { name: 'docs', mode: 'poc', at: 'finalize' },
+    ],
+    at: 'finalize',
+    revision: 'origin/main',
+  },
   // What a run that delivered artifacts carries (`internal/runview/runview.go`,
   // between `outcome` and `task_pr`): the record's own count and byte total.
   // Absent for every run that opens a pull request, which is why the omission

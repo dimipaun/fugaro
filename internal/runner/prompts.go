@@ -71,6 +71,23 @@ func SystemPrompt(d PromptData, instructions string) string {
 
 const defaultReview = "You are reviewing a pull request written by another engineer. Look for correctness bugs, missing or weak tests, security problems, and deviations from this repository's conventions (see CLAUDE.md if present). Ignore pure style preferences."
 
+// reviewScoring is the scoring contract every reviewer gets, whatever text it
+// reviews against: the five anchored values D1 answers for on each axis, and
+// the five labels D2 derives from them. The anchors are what makes a cheap
+// reviewer's "common" mean what the threshold table's "common" means, and each
+// word is written exactly once — a meaning stated twice is a meaning that can
+// drift. The class is asked for beside the axes because the threshold table
+// reads it too, and a finding without a known class is unscored (D4); its
+// list repeats "cosmetic", impact's first anchor, which is a class name rather
+// than a second meaning. The coder never sees it: a coder that scored its own
+// work would be grading the findings a reviewer is there to make.
+const reviewScoring = `Score every finding on three axes, each an integer from 1 to 5, and set severity to one of five labels: blocker, high, medium, low, nit.
+- likelihood, how often it will occur: 1 rare, 2 uncommon, 3 occasional, 4 common, 5 certain.
+- impact, how bad it is when it does: 1 cosmetic, 2 minor, 3 degrading, 4 severe, 5 catastrophic.
+- fix_cost, the effort to address it: 1 trivial, 2 small, 3 moderate, 4 large, 5 rewrite.
+- class, the kind of issue, exactly one of: correctness, performance, security, data_loss, maintainability, cosmetic; a finding without one of these counts as unscored.
+Leave nothing unscored: a finding with no score blocks the pull request in every mode.`
+
 // DiffSize is how large a diff is: the files it changes and the lines it
 // adds or removes, a binary file counting as a file and no lines
 // (diffbase.go's diffSize, built on `git diff --numstat`).
@@ -138,7 +155,7 @@ func ReviewPrompt(review, promptFile, base string, size DiffSize, baseUnread boo
 	if baseUnread {
 		scope = baseUnreadNote(base) + "\n\n" + scope
 	}
-	tail := "\n\nWhen you are done, give your verdict: \"ship\" if nothing must change before this is merged, otherwise \"changes\" with one finding per issue that must be fixed."
+	tail := "\n\n" + reviewScoring + "\n\nWhen you are done, give your verdict: \"ship\" if nothing must change before this is merged, otherwise \"changes\" with one finding per issue that must be fixed."
 	switch {
 	case strings.HasPrefix(review, "/"):
 		return review + " " + scope + tail
@@ -168,7 +185,7 @@ func PickPrompt(review, promptFile string, nums []int, dirs []string) string {
 	for i, n := range nums {
 		fmt.Fprintf(&b, "- PR #%d: %s\n", n, dirs[i])
 	}
-	b.WriteString("\nCompare them and decide which to keep.\n\nWhen you are done, give your verdict: \"ship\" if the one you keep needs no more changes, otherwise \"changes\" with one finding per issue it still has; either way, name the pull request you keep by its number.")
+	b.WriteString("\nCompare them and decide which to keep.\n\n" + reviewScoring + "\n\nWhen you are done, give your verdict: \"ship\" if the one you keep needs no more changes, otherwise \"changes\" with one finding per issue it still has; either way, name the pull request you keep by its number.")
 	return b.String()
 }
 

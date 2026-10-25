@@ -168,7 +168,7 @@ When the CLI resolves the recipe (`--recipe`, or a local checkout), it does so b
 
 A published project recipe is cached on each machine for 24 hours (up to 7 days when the bucket cannot be reached, with a note), so another machine's `fugaro run` may launch the old text for up to 24 hours. `ls` and `show` refresh the cache; `fugaro run` does not.
 
-`fugaro watch` shows the recipe name of a run that does not use `default`. `fugaro runs ls` adds a RECIPE column once any listed run is not `default`; the column then has a value on every row, `default` included. In `fugaro watch` a name longer than 24 columns is shortened, and at widths of about 100 to 130 columns a long recipe name can be clipped further.
+`fugaro watch` shows the recipe name of a run that does not use `default` beside its models, in that run's expanded detail (space on the row): the run table itself has no MODELS column, and `fugaro watch --json` carries the recipe too. `fugaro runs ls` adds a RECIPE column once any listed run is not `default`; the column then has a value on every row, `default` included.
 
 ## 8. What is refused
 

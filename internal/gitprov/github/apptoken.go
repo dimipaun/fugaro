@@ -96,9 +96,38 @@ var tokenPermissions = map[string]string{
 // clones the repository.
 var buildTokenPermissions = map[string]string{"contents": "read", "metadata": "read"}
 
+// coordinatorTokenPermissions is what the coordinator's token asks for (P2 of
+// docs/coordinator/implementation-plan.md, reconciliation Q3 answered (A)):
+// the reads the project-wide view is built from, and no value carrying a write
+// anywhere. A coordinator that could write would be a coordinator that could
+// answer a merge (Q10 C, refused), which is why this set is a set of its own
+// rather than a level taken off the run's.
+//
+// Two permissions, because two are what this read uses: every pull request is
+// read one at a time through gitprov.Provider.PullRequest -- GET
+// /repos/{owner}/{repo}/pulls/{number} -- which is pull_requests: read, and
+// metadata: read, which GitHub requires of any request at all. contents and
+// issues were asked for and never used: this reader opens no file and reads no
+// issue, and a permission nobody uses is reach a stolen token would have for
+// nothing. P5's aggregation job re-reads through this same reader, so it asks
+// for no more than these two.
+var coordinatorTokenPermissions = map[string]string{
+	"pull_requests": "read", "metadata": "read",
+}
+
 // BuildTokenPermissions are the permissions of an image build's token, a
 // copy the caller may keep.
 func BuildTokenPermissions() map[string]string { return maps.Clone(buildTokenPermissions) }
+
+// CoordinatorTokenPermissions are the permissions of the coordinator's
+// installation token, a copy the caller may keep: the read-only set the
+// coordinator's credential is, minted through MintInstallationToken with it.
+// Pull requests are read with pull_requests: read (U2, the owner's check that
+// the App holds it), and nothing here asks to write anything — the rule the
+// set's own test holds to the mint's body.
+func CoordinatorTokenPermissions() map[string]string {
+	return maps.Clone(coordinatorTokenPermissions)
+}
 
 // RunTokenPermissions are the permissions of a run's installation token, a
 // copy the caller may keep. It is the exported spelling of tokenPermissions,
@@ -141,6 +170,48 @@ func MintInstallationToken(ctx context.Context, o Options, perms map[string]stri
 	}}
 	src := &tokenSource{app: app, owner: o.Owner, repo: o.Repo, now: o.Now, permissions: maps.Clone(perms)}
 	return src.Token(ctx, buildTokenMinValid)
+}
+
+// RevokeInstallationToken revokes one installation token at GitHub
+// (DELETE /installation/token), authenticated with the token itself: that is
+// the whole identity the call needs, and the App's JWT is not one of them. The
+// endpoint revokes the token that carries it and no other, which is why this
+// takes a token rather than a repository or an installation.
+//
+// It exists because a token minted for one read is a credential with a life of
+// its own after the read: the coordinator mints one per repository (D193 A),
+// hands it to a provider, and is done with it when the view is printed. The
+// call is best-effort by contract, and this function does not soften that -- it
+// reports what happened and the caller decides, which is where "a revoke that
+// failed is not a read that failed" belongs.
+//
+// Neither the failure nor the success here carries the token: what is returned
+// is the method, the path, the status and GitHub's own text, none of which is
+// the value. The request itself is made with the client the credentials service
+// mints through (serviceMintClient): a bearer credential does not follow a
+// redirect to another host, and a call that cannot be answered is cut off
+// rather than held.
+func RevokeInstallationToken(ctx context.Context, baseURL, token string, hc *http.Client) error {
+	if token == "" {
+		return errors.New("github: there is no installation token to revoke")
+	}
+	if baseURL == "" {
+		baseURL = DefaultBaseURL
+	}
+	c := &httpjson.Client{
+		BaseURL: strings.TrimSuffix(baseURL, "/"),
+		HTTP:    serviceMintClient(hc),
+		Auth:    func(context.Context) (string, error) { return "Bearer " + token, nil },
+		Header: http.Header{
+			"Accept":               {"application/vnd.github+json"},
+			"X-Github-Api-Version": {"2022-11-28"},
+			"User-Agent":           {"fugaro"},
+		},
+	}
+	if err := c.Do(ctx, "DELETE", "/installation/token", nil, nil); err != nil {
+		return fmt.Errorf("revoking an installation token: %w", err)
+	}
+	return nil
 }
 
 // tokenSource mints installation tokens scoped to one repository and to

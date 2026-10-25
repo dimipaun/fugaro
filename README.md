@@ -207,6 +207,10 @@ Open design questions are tracked in [docs/SPEC.md](docs/SPEC.md#9-open-question
 
 Ideas, issues, and PRs are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). The project is young, so opening an issue to discuss a direction before a large change is appreciated. Please follow the [Code of Conduct](CODE_OF_CONDUCT.md); report vulnerabilities as [SECURITY.md](SECURITY.md) describes.
 
-## License
+## Licensing
 
-[MIT](LICENSE)
+Fugaro's core is released under the [MIT licence](LICENSE). [`LICENSING.md`](LICENSING.md) says which parts of the repository that licence does not cover: the reserved `ee/` directory is one, and the vendored skills under `.agents/` are another. Every release before 0.11.0 is MIT, and the core stays MIT.
+
+### Trademarks
+
+The licences grant no right to the Fugaro name or logo: they license the code, not the brand.

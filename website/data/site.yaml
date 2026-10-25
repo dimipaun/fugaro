@@ -102,9 +102,9 @@ analytics:
 
 # The features the site renders only when they exist. The console is published:
 # console/ holds the application, .github/workflows/console-release.yml signed,
-# notarised and stapled its .dmg and .zip, and its own release -- console-v0.9.0
-# -- carries them (website/content/downloads.json names the version and each
-# asset's SHA-256). So its section renders the release's own downloads, and the
+# notarised and stapled its .dmg and .zip and packed its unsigned Linux pair, and
+# its own release -- `console-v` plus the version in website/content/downloads.json
+# -- carries all four (that file names the version and each asset's SHA-256). So its section renders the release's own downloads, and the
 # test above holds every download URL to an asset of that release rather than
 # refusing one (W3.1). The explainer video does not exist yet, so the hero
 # carries no player, no iframe, no poster and no play button (D107).

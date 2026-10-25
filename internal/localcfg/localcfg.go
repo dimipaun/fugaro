@@ -491,6 +491,14 @@ type Terraform struct {
 	RegistryCleanup string `yaml:"registry_cleanup,omitempty"`
 	NoLogIsolation  bool   `yaml:"no_log_isolation,omitempty"`
 	BudgetBackend   bool   `yaml:"budget_backend,omitempty"`
+	// Coordinator is the owner's opt-in to the coordinator's aggregation job
+	// (docs/coordinator, P5): its account, that account's grants and the
+	// scheduled job, which nothing creates by default. fugaro update
+	// --firebase-project --coordinator records it once that run has applied
+	// the account, and adopt mode copies it from the installation's outputs,
+	// so every later run keeps what the owner turned on rather than planning
+	// its removal.
+	Coordinator bool `yaml:"coordinator,omitempty"`
 }
 
 // Price is a region's compute price per second, in US dollars.

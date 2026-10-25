@@ -474,6 +474,63 @@ wrong in a way no byte and no link is — it can promise a date, it can state a 
 tense, or it can ask a reader for something the project has nowhere to keep. The check is
 owner-run and it is **NOT RUN**.
 
+**Check 124 is the Cloud Batch backend's own, and it is the next number free above 123** (the
+compute-backend plan `docs/plans/2026-10-19-compute-backend.md`, whose design is
+`docs/design/compute-backend.md`; the subject is the **opt-in Cloud Batch backend** — the
+`--provision-batch` half of setup, shipped in **0.9.5** and named `setup` since — whose live check
+was never written: 57a measured it in hand-made scripts and 57b is written inside that plan, not
+here). The reading is the
+same shape as the three above and is taken the same way: the highest **written** `## Check N` section
+in this file, read at **`a9500ef3`** — the commit this change is based on — was **113**; **114-118**
+are the mobile voice-session work's, numbered and reserved and unwritten; **119** is proposed by two
+plans and unwritten; **120, 121 and 122 are claimed by an open pull request** (#922); and **123** is
+claimed on `main` by the console-dependency-graph plan's merged text, which is why it is not free
+either. Above the highest written section a claim is settled at its merge, and by the rule above
+whichever of two open claims merges second **renumbers** itself — so **124 is the next free number**,
+and this work takes it: its row and its four sections are written below. There are four because each
+is run — and restored — on its own: **124a** the plan, the apply and the two read-backs (the only part
+runnable on this tree), **124b** one ordinary sandbox task to its pull request, **124c** a forced
+preemption and the reaper, and **124d** the check's own cost and its cleanup. The check is owner-run
+and it is **NOT RUN**.
+
+**Check 57 is this backend's own number, and 124 is a second one, so the overlap is written here
+rather than left to be found.** The compute-backend plan's `## Check numbers this plan takes (57,
+and no new number)` is the tree's record of that allocation and its pins hold it
+(`TestDocsComputeBackendPlanReservesNoCheckNumber`, `TestDocsComputeBackendCheck57IsStillOnlyARow`):
+57 is the compute-instance Docker backend's, its summary row is in the table below, its body lives in
+`docs/design/compute-backend.md` §7.2, and the plan's Task 12 is the task that writes the
+`## Check 57` section here from it — which is why this file still says it has none. **124 does not
+reuse or renumber 57** (the rule above is that a number, once reserved, is never reused or
+renumbered); it is the number the register's own rule gives a check written above the highest
+section written at the time, and it exists because Task 12 has not landed. **The two overlap, and
+this paragraph is where that is said rather than a reader's discovery**: 124b, 124c and 124d re-run
+readings 57b's steps also make — a run on this backend to its pull request, the reaper's sweep, the
+spend the runs recorded — while 124a's plan, apply and two read-backs and 124c's forced preemption
+with the exit code read out of the tree are this check's own. 57 is the backend's **measurement**;
+124 is the check an **owner runs on an installation**, and when Task 12 lands the two are read
+together rather than one of them being dropped. The plan names 124 in that section now, so the
+register and the plan record the same allocation.
+
+**Check 130 is the licensing work's, reserved by that work rather than taken as the next free
+number** (the licensing plan [licensing/implementation-plan.md](licensing/implementation-plan.md), its
+"Checks this plan takes" and its task **L1.10**; the block **130–134** is that work's, and only
+**130** is written — **131–134** stay reserved and unused). The reading is the same shape as the
+ones above and is taken the same way: the highest **written** `## Check N` section in this file,
+read at **`c4d04bd6`** — the commit this change is based on — was **113**; **119** is taken by the
+rigor-modes work, whose plan says so in its own words ("So the next free number is **119**, and
+this plan takes it", `docs/rigor-modes/implementation-plan.md` §3), and proposed besides by the
+console-windows work for its owner's manual checklist, which claims nothing by that work's own
+**D12(a)** (`docs/console-windows/implementation-plan.md` §4, "proposed, not claimed"), so 119 is
+not this work's whichever way that collision falls;
+**123** is claimed by the console dependency-graph work
+(`docs/console-dependency-graph/README.md`, "Numbers this work holds"); **124** is the Cloud
+Batch backend's, written above by #1022, which merged after this work's base; and **130** was free either way, so the section is **written below**. Its subject is the
+**licence detectors**: that GitHub still reports MIT for the repository once the open-core skeleton
+has put a root `LICENSING.md` beside an untouched `LICENSE`, and that `LICENSING.md` renders on
+GitHub with its links working. It reads GitHub and nothing else — no cloud project, no installation, no credential
+and no write of any kind — it is owner-run, and it is **NOT RUN**: its third step reads a file task
+**L1.3** writes, so it is run in full by task **L1.11**, after L1.3 has merged.
+
 **That is the end of the register.** The paragraph below is not another
 reservation: it introduces the check that owns 57, whose row is in the table
 below.
@@ -632,15 +689,17 @@ probe account carries predefined grants only).
 | 52 | The UNVERIFIED questions phase 3 depends on, written and **RUN 2026-10-16** (the results are at the end of the section): they had to be answered **before any phase 3 code was written**, and all three were (design `project-centric.md` §13 and §4.5; plan `2026-10-14-project-centric.md` Task 3.0): **U2** whether a Cloud Run secret **reference** works inside a container env override (the API type has a `ValueSource`) and whether an execution's overrides are visible to the container — **accepted, the reference works**; **U3** whether a Secret Manager IAM condition on a name prefix is honoured for `secretmanager.versions.access` — **yes, the condition is honoured** (answered on a rerun; the first U3 run was invalid, a bug in the check's own script rather than the API's answer); **U4** the sandbox project's service-account count against Google's default quota and the runs bucket's IAM policy binding count (the ceilings the design's §13 names) — **no service-account quota** (10 accounts held; `ServiceAccountsPerProject` reported `-1`); and **U1**, which is **no longer a probe** — the owner ruled on 2026-10-15 that a Bitbucket credential cannot be scoped to one project's repositories, so Bitbucket credentials stay per repository and phase 3's shared jobs are GitHub's, with D5 amended to record the ruling (plan Task 0.5) | See "Check 52" below; **you** run it, on installation `fugaro` (never `belong`) — every step acts only on the sandbox's **own** job, service account, bucket and secrets in project `fugaro-dev`, and **no Bitbucket credential, project or repository is created, read or written at all** (U1 is answered by ruling, not by a probe), never anything under `edgeappinc`. | A few `gcloud` reads, **three** override executions on the sandbox job (the secret-reference call in (a), the plain-literal comparison in (c), and the length-only run when the container's command is a shell — (b) is a template-level `--update-secrets` update, and the bare `gcloud run jobs execute` carries no override at all, so neither is one of the three), the check's own probe service account `fugaro-chk52-probe` and its two throwaway secrets (`fugaro-probe-in`, inside the condition's prefix, and `fugaro-other-probe`, outside it), and **nothing on the Bitbucket side**. **USER-RUN, RUN 2026-10-16: U2 accepted, U3 honoured, U4 no quota.** |
 | 57 | The compute-instance Docker backend (design `compute-backend.md` §7). **57a, the pre-build probe, needs no Fugaro change and is the go/no-go:** a Docker-capable run on Compute Engine VMs from a committed job JSON (`gcloud` only), the cold start with a plain pull, image streaming and a preloaded boot image, `docker run` and a small Postgres container inside a run, the cost of one run, the socket's permission path in four committed variants (no `options`, `--group-add <gid>`, `--user 0`, `--privileged`, each running `docker version` and a real container against the host socket), teardown on success/failure/cancel/a crashed runner, the raw IAM bindings, and the raw log entry's job label. **57b, the post-build acceptance run, needs the backend enabled — except its step 7 (the preload image *family*'s rebuild), which needs only the compute root:** `fugaro run`/`logs`/`cancel` on `cloud-batch`, the reaper, the recorded cost against the bill, the fail-closed marker, and **the largest `computeResource` a task can ask for on `e2-standard-4` and still leave `QUEUED`** (the built shares are Check 57a's own 2000m/4096MiB submission, a floor known to work rather than a measured maximum — the built-in headroom for the OS, the Batch agent and the Docker daemon is what that step pins), and — step 1 and step 7 — the two UNVERIFIEDs the compute module ships with (whether a run's VM reports to the Batch agent under the module's deny-all ingress rule, and whether the family handover leaves the runs' boot reference serving while the delete of a superseded generation is refused or accepted). | See "Check 57" in `docs/design/compute-backend.md` §7.2; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs a Check-43-shaped hard-coded project guard (`P` hard-coded, `${P:?}` on gcloud, `--project fugaro --gcp-project "$P"` on fugaro, `fugaro doctor` and the checkout's git origin as hard stops). Its Restore deletes only what the check created — the `fugaro-chk57` account (and its IAM bindings first, since deleting an account leaves them behind), the probe jobs carrying `fugaro_chk=57`, the 57b runs **by the job names 57b recorded** (a 57b job is created by the launcher and Batch v1 cannot add a label to it afterwards, and a filter on the installation's own labels would also match runs this check never started) **and their VMs by the `fugaro_run` label values it read back off those jobs** (a job's name never reaches its VMs, and the label value cannot be derived from the name), the preload image (the check's own 57a-3b artefact, `${SA}-preload`; the compute module's preload **family** is the installation's and is never this check's to delete), the `${SA}-*` router and NAT it created only if the project had none **on the probe's own network and region covering the subnet** (a NAT on another network, one whose rules cannot be read, or one that lists its subnets by name, is not borrowed — the check makes its own pair instead of editing the project's), and the `containerfilesystem.googleapis.com` API only if it was this check that enabled it; never the installation's account — and ends in an assertion whose every line must read `0` (counts, not an empty-looking line, and the probe account's leftover IAM bindings are one of them, since deleting an account does not remove them). It is the successor of the dropped gen-2 Docker probe (generic-tool Task 26, which the plan numbered Check 31 — a number already taken by `fugaro upgrade` here). | A handful of sandbox Batch runs (minutes of VM time each), one small custom boot image, and a NAT/registry round trip. **57a RUN 2026-10-15: see the RESULTS block above; 57b USER-RUN, NOT RUN.** |
 | 58 | Artifact runs (design `artifact-runs.md` §3–§9 and §11; plan `2026-10-15-artifact-runs.md`): a `mode: artifact` recipe rendered on a real image (ffmpeg through `image.apt`, one Cloud Build), three attached PNGs in and a video out, the `render` record and the model-against-compute counters, **no branch pushed and no pull request opened**, the probe's verdict through `commands.probe` beside an independent local `ffprobe`, the recorded content type against the object's own (U5), retrieval with a sha256 match and the upload's wall clock inside `finalize_reserve` — at the set's own size, and in 6b for two files written at exactly `outputs.max_bytes` (U6) — and the failure direction in three halves — a probe that demands an impossible duration and must fail the run with nothing uploaded, a set over `outputs.max_total_bytes` that must refuse with the cap named and the container alive, and a render driven past the job's memory, whose FACT is what was seen (U3) | See "Check 58" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs one hard-coded project guard (`P` hard-coded and never read from `gcloud`, `${VAR:?}` on every argument, the three hard stops, the workflow name checked against the checkout), every launch is guarded per step and records its run id, its commit and the image and base HEAD step 1 found in a per-attempt record file (`/tmp/chk58-records/<batch>.env`), and the Restore reverts only the commits that record holds and that are not already reverted — it refuses to guess at one it does not. | One Cloud Build (the image that carries ffmpeg) and five tiny sandbox runs — two of them carrying the same three attached PNGs (step 2 and 7a; 7b may too), one render-only and therefore at model $0, and one driven past its memory limit. **USER-RUN, NOT RUN.** |
+| 59a | The console's first signed build: the signing material exists and only you can reach it, and the published macOS bundle is signed, notarised and stapled — `codesign --verify --deep --strict`, `spctl --assess --type execute` on a machine that has never seen it, `xcrun stapler validate` on the bundle and the disk image — plus **the safety assertion**, read out of the app's own spawn log: with the console pointed at the sandbox installation it spawned nothing for `belong`, every spawn record names the sandbox installation's `fugaro`, the sandbox project and the sandbox checkout, and none mentions `belong` or `edgeappinc` (design `desktop-console.md` §5.1 rule 10, §7.2, D8, D12, D20; plan `2026-10-15-desktop-console.md` Task 4.3; released as `console-v0.110.0` "Cherry") | See "Check 59a" below; run by you, on your own Mac, on installation `fugaro` (never `belong`) and the sandbox checkout only — and every step re-runs the one guarded setup block, which hard-stops unless the project is `fugaro-dev` and the checkout is the sandbox. It runs against the **published** `console-v0.110.0` assets, so nothing has to be built first. **No agent performs any step of it.** | One download of the published release, one install into `/Applications` (`/Applications/Fugaro Console.app` must not already exist — check step 2), one app launch. No cloud spend, no write to any installation: the console is read-only, and the only file it is asked to write is the spawn log, in this check's own temporary directory. **USER-RUN, NOT RUN.** |
+| 59b | The console's update round trip: an installed older build sees the new console release and installs a bundle the OS verifies, over the console's own signed feed — the manifest `electron-updater` reads (`latest-mac.yml`), the update refused when its signature does not verify, no downgrade and no telemetry (design `desktop-console.md` §7.3, §7.4, D5, D12; plan `2026-10-15-desktop-console.md` Tasks 4.3 and 4.4) | See "Check 59b" below; run by you, on your own Mac, on installation `fugaro` (never `belong`). **NOT RUNNABLE TODAY, and the section says so in its own first lines**: it needs Task 4.4's auto-update in a shipped build **and** a **second** published console release (`console-v0.111.0`) carrying the feed. `console-v0.110.0` is the first release and carries no feed, so there is nothing for an older build to update to yet. **No agent performs any step of it.** | Two published console releases, one install into `/Applications`, one update. No cloud spend. **USER-RUN, NOT RUN — and not runnable until both preconditions exist.** |
 | 60 | The sealed budget token (design `budget-token-channel.md` §7 and "The check outline"): a sealed run works end to end; the `tokens/` object is ciphertext with no claim readable and nothing is left under `runs/`; where the key is and is not (the job's environment, the execution record — U2 as found — and the RunJob audit entry, recorded by length, never by value); a wrong key, a plaintext object and a sideways copy all refuse; a peer job account cannot delete a queued token; the launchers' widened `runs/`+`tokens/` condition and the job's read-only `tokens/<slug>/` grant read off the live policy | See "Check 60" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only, with Check 43's guard block re-run at every step; Restore puts back the two objects the check overwrote, removes its probe file and scratch dir, and diffs the bucket policy against step 8's. | Three or four tiny sandbox runs and executions. **USER-RUN, NOT RUN.** |
 | 68 | The managed deployer's fenced prefix, measured live (design `managed-deployer-fence.md`; the 0.10.0 redesign of D75's deployer, `deploy/terraform/gcp/modules/installation/deployer.tf`): whether GCP **accepts** the seven conditioned bindings the redesign writes — one role per service, one binding each, three logical operators at the most (Cloud Storage's two clauses and the `||` between them) where the 0.8.6 shape had 17 and a `resource.name.contains()` IAM does not support (F1, C1) — whether `resource.name` is **honoured per type** for an IAM service account, an API key, an Artifact Registry repository, a Cloud Run job and a Cloud Scheduler job (C3, UNVERIFIED in the design, and it covers those **five**), and — a **sixth** service measured for a different fact — whether the Secret Manager name form the design's `extract` reads is honoured (C6/C7, not C3), against a prefixed `fmgd-chk68-*` resource (expect the action) and against a resource **the check creates itself** under a name the fence does not admit — `chk68-neg-*`, expect a denial that names the condition, not the role; the runs bucket is the one the check does not create, and it is read rather than written — plus a near miss that contains the prefix without starting with it. **C7 (does a name that misses an `extract` template fail closed) is NOT this check's question, and no step of this check can answer it**: the reading is that it fails closed — a name the template does not match extracts the empty string, and `"".startsWith("fmgd-")` is false — and no live step can construct the non-match, so what the check adds is the one direction a live read can add, the near miss, which tests the prefix and not the template. **The reading's status is not marked here**: it is marked once, in the section's own C7 paragraph, which cites its evidence and the design of record's one labelled row for it (§3's C7). | See "Check 68" below; **you** run it, on a **sandbox project only** — and the sandbox is pinned: **installation `fugaro` in project `fugaro-dev` and nowhere else** (never `belong`, EdgeWeb's and EdgeServer's, and never a production project: both are refused by name), with `P` typed by you and never read from `gcloud`'s ambient configuration, `${VAR:?}` on every argument, twelve hard stops, the config's own `gcp_project` required to be `$P`, the region, the Scheduler region and the runs bucket read out of that config rather than the environment, an owner-typed `CHK68_OWNER_RUN=yes` required before anything is read, every `gcloud` command carrying `--project="${P:?}"`, and every action taken **as the deployer account** (`--impersonate-service-account`) because a denial for your own identity would prove nothing. **Check 67 — the transitive-reach half — is the managed-projects plan's Task 5.3 and is not written here.** | One owner-run `terraform apply` of the sandbox installation's root with `managed_deployer_scoped = true` (seven roles, seven conditioned bindings), sixteen throwaway resources named `fmgd-chk68-*`, `xfmgd-chk68-*` and `chk68-neg-*` — the seven per-service probes of step 4, the three near misses and the six negative probes of step 5 — a guard trap that deletes them when the run ends — the final step, a stop, or a Ctrl-C, and **never between steps**, since the whole check is one script — and the Restore that deletes them again and closes the gate. **Nothing here is run by an agent** (`agentMarker` refuses a live apply inside one), **no credential or secret value is created or read** (the check's secret carries a throwaway string), and **no gate hangs on the result any more**: 0.10.0 ships this shape (the flip's own notes are in the section below), so a failure here is not a reason the fence stays unbuilt — it is a defect of the fence as shipped, fixed by dropping or falling back that service's role in a later release, and until then the prefix condition is not a boundary (design §9). **USER-RUN, NOT RUN.** |
-| 69a | The site is live and honest (website plan `docs/website/implementation-plan.md`, Task W2.2; D92, D108's fourth gate): the canonical origin in `website/data/site.yaml` answers over **HTTPS** with a certificate for that host, the deployed HTML is the artifact `npm run build` produced from the commit that is checked out, and the page a stranger lands on names no unshipped feature — no player for the video, which does not exist (`features.video` is false), and every console download it offers resolving to an asset of the release its own facts name (`features.console_downloads` is true, and the console moved to `console-v0.9.0`) | See "Check 69a" below; run by you, in a browser and a terminal, against the site's own Firebase project only (never an installation's, and no `fugaro` command runs at all). The canonical origin is read out of `website/data/site.yaml` by the guard block, so it is not typed from memory, and it is the only host this check fetches: there is no second domain (owner ruling 2026-10-17), so no step here observes one. **No agent runs any step of it** | HTTPS 200 from the canonical origin with `ssl_verify_result` 0 and a certificate whose subject is that host; the deployed home page's sha256 equal to the local build's; the greps for a player printing nothing; and every console download URL the pages carry answering 200 (or a redirect to the release's own storage) with the checksum the page printed beside it. **USER-RUN, NOT RUN.** |
+| 69a | The site is live and honest (website plan `docs/website/implementation-plan.md`, Task W2.2; D92, D108's fourth gate): the canonical origin in `website/data/site.yaml` answers over **HTTPS** with a certificate for that host, the deployed HTML is the artifact `npm run build` produced from the commit that is checked out, and the page a stranger lands on names no unshipped feature — no player for the video, which does not exist (`features.video` is false), and every console download it offers resolving to an asset of the release its own facts name (`features.console_downloads` is true, and the release the tree names is the one step 3 reads out of `website/content/downloads.json` rather than one this row remembers) | See "Check 69a" below; run by you, in a browser and a terminal, against the site's own Firebase project only (never an installation's, and no `fugaro` command runs at all). The canonical origin is read out of `website/data/site.yaml` by the guard block, so it is not typed from memory, and it is the only host this check fetches: there is no second domain (owner ruling 2026-10-17), so no step here observes one. **No agent runs any step of it** | HTTPS 200 from the canonical origin with `ssl_verify_result` 0 and a certificate whose subject is that host; the deployed home page's sha256 equal to the local build's; the greps for a player printing nothing; and every console download URL the pages carry answering 200 (or a redirect to the release's own storage) with the checksum the page printed beside it — **all four rows, the two Linux ones included**: the unsigned Linux pair carries no **signature** of its own, which is what step 3 says of it besides the checksum, and the steps the page prints under it are what stand behind those two files. **USER-RUN, NOT RUN.** |
 | 69b | Nothing phones home (website plan Task W2.2; D93, D106, W1.11): the live page, loaded with the browser's network panel open and the cache disabled, requests **no origin outside `website/data/site.yaml`'s `allowed_hosts`** — no font, no script, no embed, no pixel — and nothing is requested from the analytics origin **before consent**; after consent exactly that one origin and no other third party appears (D93 chose Google Analytics behind the consent banner and **W3.2 has turned it on** — the measurement id is `website/data/site.yaml`'s, the gate is the site's own file, and the pass is therefore a pass about the post-consent request, not about analytics being absent) | See "Check 69b" below; run by you, in a browser, on the live site — read-only, no command that changes anything, no cloud project touched, **No agent runs any step of it** | The panel's host list holds the canonical host and, where the page links them, `github.com` and `raw.githubusercontent.com` — and nothing else; the deployed markup's absolute URLs hold no other origin; and no request to the analytics origin before consent. **USER-RUN, NOT RUN.** |
 | 70a | The mobile header fits one row, and the group labels are the phone's menu (website redesign plan `docs/website/redesign/implementation-plan.md` §3, part P3; D182 and the amendments of 2026-10-19 and 2026-10-21, RF3): at **390 × 844** — and at 375, 320 and 391 — the header is **one row** of about 77 px, with the wordmark's mark kept and its text out of the row below the breakpoint, nothing wrapped under them and no sideways scroll; the labels are the whole menu there (**Product** and **Project** since the owner's feedback of 2026-10-21 dropped the Reference group, each at least 44 px tall, **no `Menu` control on the page**), each opens its own panel **by tap and by keyboard**, Escape and a click outside close it, the focus goes back to the label that opened it, the two are exclusive, **an open panel is drawn above the page's blocks and not under them** (the owner's reading of 2026-10-19), the menu reaches every link with **JavaScript disabled**, and on a device whose **pointer hovers** a group's submenu opens when the pointer arrives at it and stays open while the pointer is inside it (the owner's brief of 2026-10-18, item 1) | See "Check 70a" below; run by you, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the deployed site — read-only, no cloud project touched, no `fugaro` command, and **No agent runs any step of it** | The header's measured height at each width is one row's (about 77 px, not the 177 px of three rows RF3 measured), `document.documentElement.scrollWidth` is not wider than the viewport, the wordmark's text is out of the row below its breakpoint and the mark is in it, the labels are on the one row and each is at least 44 px tall, a label is focusable and opens its panel, Escape closes it and returns the focus, opening a second label closes the first, the open panel is drawn above a page's block rather than under it (`/how-it-works/`, where the flow's steps are positioned), every link in the two groups is reachable and follows with JavaScript off, **and on a device whose pointer hovers a group's submenu opens when the pointer arrives at it and stays open while the pointer is inside it** (the owner's brief of 2026-10-18, item 1), and at 1280 × 900 the group labels are **drawn** in the header's one row as the dropdowns D182 asks for, with no `Menu` control and no overlay panel, and opening a group showing its links **without changing the header's height**. **USER-RUN, NOT RUN.** |
 | 70b | The gist is above the fold (website redesign plan `docs/website/redesign/implementation-plan.md` §3 and §8, part P5; D187, D188, RF23, RF5): on the built or deployed site **every page states its main point above the fold** — the `h1`'s bottom and the lead's bottom inside the first screen at **390 × 844** — the homepage's **first screen** holds the promise and its call to action and **no command** — the page's first command (the slider's `fugaro watch` block, inside the "See it" panel) carrying its copy control **beside it in the command's own row**, Getting Started's **first command block** is fully visible at **390 × 844 and 1280 × 900**, the consent banner neither pushes the commands below the fold nor covers the first command on a first visit, the word ceilings hold (a page's lead at most **40 words**; the **privacy statement** within its own derived ceiling; and every other page at most **250 words** except `/docs/`, `/security/` and `/changelog/`), and no page carries the provenance phrases the build refuses | See "Check 70b" below; run by you, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the deployed site — read-only, no account, no cloud project touched, no `fugaro` command, and **No agent runs any step of it** | Per page, the `h1`'s and the lead's bottom under 844 at 390 × 844; the homepage's first screen's blocks in order and the page's first command (the slider's `fugaro watch` block) with its control in the command's own row; Getting Started's first command block inside the first screen at both widths; the banner's rectangle and what it covers, with the first command clear of it; every page's lead and page word counts inside the ceilings `website/README.md` states — the privacy statement's own count against the ceiling derived from it — read from the site's own gate; and none of the gate's provenance phrases on any page. **USER-RUN, NOT RUN.** |
 | 70c | Every copy control copies its own command (redesign plan §3, part P6; D183, RF13): on the built or deployed site **each kind of control** — the hero's install blocks, Getting Started's code blocks, the docs hub's rendered reference, the caps guide's usage lines and the terminal's own line — puts **that command** on a real clipboard, **by mouse and by keyboard**, the "Copied" state is announced politely and clears itself, and **nothing is shown with JavaScript off** | See "Check 70c" below; run by you, in a browser, against the **built artifact** or the deployed site — read-only, no cloud project touched, and **No agent runs any step of it** | Each control's clipboard content equals the command it sits on and nothing else — no `$` prompt, no caret, no neighbouring line, no page furniture — the copied state appears, is announced and clears, the keyboard reaches every control and the focus ring is visible on it, and with JavaScript disabled every command is still on the page with **no button rendered at all**. **USER-RUN, NOT RUN.** |
 | 81 | The deployed rules' fence (design `m9-budget-and-dashboard.md` §6.2 and §6.4; mobile plan Task P4.2a writes it, and P2.3 and P4.2 **run** it): the live half of P2.2's and P6.4's denial cases for the **signed-in user** — an account whose own uid has a device node (`config/admin/devices/<uid>`, D166, which **you** write over IAM because `fugaro pair` is P6.6 and is not built) and a token whose `mu` claim is its own uid makes **exactly two writes** (one message into its own `inbox/$msg`, carrying the `mac` and `kind` generation 3 requires; the `acked: true` once, on a message already in its own `outbox/$msg`) and reads **nothing beyond** the nodes D112's user-claim read grant sits at (`config/caps/{global,defaults,repos/$slug}`, `config/kill/{global,repos/$slug}`, `spend/$day/{global,repos/$slug,runs/$slug/$run}`, plus its own `outbox` and `heartbeat` — the grant sits on those nodes and cascades down only, so `spend/$day` and each of their parents is **not** readable); everything else is refused — another account's mailbox, a read of its own inbox, the outbox message and the heartbeat (the consumer's writes, **check 80's** half), a message with no `mac`, a second, `false` or parent-less ack, the parents of the granted nodes, the device allowlist (its own node included, which no client token may read), both pairing nodes, and every family the grant does not name (`config/limits/policyRules`, `config/mode`, `config/policy/**`, `agents/**`, `outcomes/**`, `runs/**`, `fugaro/**`) — an account with **no** device node is refused everything, its own mailbox included, and a token whose `mu` names another uid is admitted nowhere | See "Check 81" below; **you** run it, on installation `fugaro` (never `belong`), in project `fugaro-dev`, with two accounts you add by hand (D114) and custom tokens you mint yourself; every step re-runs the one guarded setup block, which reads the backend out of the project's own config (printing the project ids it found, never the key), and five nodes are seeded with your own IAM credentials (which bypass the rules and prove nothing about them): the three mailbox nodes it reads and acks, and the two device nodes. **No agent runs any step of it** | Four minted custom tokens exchanged for ID tokens (two in step 1, step 7's mismatch token and the residual's, which needs a second signer), five seeded nodes, and a set of reads and writes each of which must answer a permission denial; the tokens and the web API key are credentials and never appear in a `FACT` line or a pull request. **USER-RUN, NOT RUN.** |
-| 82 | The rules deploy and the marker (design `m9-budget-and-dashboard.md` §6.2 and §6.4; mobile plan Task P4.2a writes it, and P2.3 **runs** it): `fugaro update --firebase-project` puts this release's generated rules document on the database and records the generation the emulator cases and check 81's denial cases are written against — the two act lines in the order the plan prints them — `rules: deploys the security rules (<N> bytes, generated)` when the deployed document differs, and then, as the plan's **last** write, the marker line `config/limits/policyRules: records the rules generation (config/limits/policyRules = 3)` — followed by a second run that writes nothing (`The database already has the rules, mark, project name and mode.`), and by the marker node itself read back holding this release's `projectpolicy.RulesVersion` (3) over a document that `infra.SameJSON` calls `rules.Generate()`'s own output — the same JSON document, formatting ignored; the generated document is 58942 bytes — and that carries the `mailbox` subtree, the device allowlist and the pairing nodes; an installation still on an older generation (1 or 2) is moved to generation 3 by exactly this run, with `fugaro doctor`'s `policy-rules-skew` line as the before-state — and, if its accounts have no device node, every app read refused until they do (check 81 step 1 writes them by hand) | See "Check 82" below; **you** run it, on installation `fugaro` (never `belong`), `fugaro-dev`, at your own terminal, and **you** type the confirmation (a coding agent's session cannot). **No agent applies rules** | One rules deploy of about 58 KB and at most the marker write beside it, under the database step's own confirmation; the marker-above-this-binary refusal is **read, not provoked** (no hand-written marker on the dogfood installation). **USER-RUN, NOT RUN.** |
+| 82 | The rules deploy and the marker (design `m9-budget-and-dashboard.md` §6.2 and §6.4; mobile plan Task P4.2a writes it, and P2.3 **runs** it): `fugaro update --firebase-project` puts this release's generated rules document on the database and records the generation the emulator cases and check 81's denial cases are written against — the two act lines in the order the plan prints them — `rules: deploys the security rules (<N> bytes, generated)` when the deployed document differs, and then, as the plan's **last** write, the marker line `config/limits/policyRules: records the rules generation (config/limits/policyRules = 4)` — followed by a second run that writes nothing (`The database already has the rules, mark, project name and mode.`), and by the marker node itself read back holding this release's `projectpolicy.RulesVersion` (4) over a document that `infra.SameJSON` calls `rules.Generate()`'s own output — the same JSON document, formatting ignored; the generated document is 59142 bytes — and that carries the `mailbox` subtree, the device allowlist, the pairing nodes and the coordinator's read grant; an installation still on an older generation (1, 2 or 3) is moved to generation 4 by exactly this run, with `fugaro doctor`'s `policy-rules-skew` line as the before-state — and, coming from 1 or 2, if its accounts have no device node, every app read refused until they do (check 81 step 1 writes them by hand) | See "Check 82" below; **you** run it, on installation `fugaro` (never `belong`), `fugaro-dev`, at your own terminal, and **you** type the confirmation (a coding agent's session cannot). **No agent applies rules** | One rules deploy of about 58 KB and at most the marker write beside it, under the database step's own confirmation; the marker-above-this-binary refusal is **read, not provoked** (no hand-written marker on the dogfood installation). **USER-RUN, NOT RUN.** |
 | 89 | A signed EAS build, and the store's **internal** track (mobile plan Task P4.2a writes it, and P4.4 **runs** it; D120, C8): a build of the app at `mobile/` — its own artifact, outside the Go module (C2), at the commit whose tag it is versioned from (C6) — signed with **your** distribution credentials (EAS-managed or your own distribution certificate and upload key), and reaching the stores' internal testing tracks only; no public release is implied or made, and the submit track is read before anything is built — step 1's `jq` reads `submit.internal.android.track`, and a profile naming a public track is a stop you take there ("edit it and re-run"), not something the guard reads: the guard hard-stops on the build itself — without `mobile/eas.json` or `mobile/app.config.js` in the checkout (P4.4's), and without the store identity, which it resolves through `app.config.js` out of the two variables you export (the identity is **not** in `app.json` and never will be: the committed config carries no release identity, P3.1's boundary test, and the identity is yours). No agent runs `eas build` or `eas submit`, none touches a signing key, an App Store Connect API key or a Play service-account key, and no store credential enters an agent's environment | See "Check 89" below; **you** run it, at your own terminal, with your own Apple and Google accounts, your own signing keys and your own EAS project, from a clean checkout of the tagged commit; **no agent runs any step of it** (D120, Global Constraint 9). Its guard hard-stops today: P3.1's `mobile/app.json` and P4.4's `mobile/eas.json` and `mobile/app.config.js` are in the tree, so the file tests pass and the stop is the store identity itself — the two variables must be in your shell (or in the EAS project's environment the profile names, for the build job), and until they are, the guard stops before a build that could not reach any track | One build per platform and one submission per platform, on the internal tracks; the signing keys, the App Store Connect API key and the Play service-account key are yours, are never read by this check and are never pasted into a `FACT` line. **USER-RUN, NOT RUN.** |
 | 90 | The OAuth header swap, on your own machine ([`docs/credentials-service/`](credentials-service/implementation-plan.md), its Check 90 and D151; **settles U1, and U4's client timeout and retry count; records U4's third part — Claude Code's own wording for a limit — only if a usage limit can be observed, and that part stays UNVERIFIED otherwise, as U3's answer does when no limit is met; does NOT ask you to paste `claude setup-token`'s line about the token's validity — that line sits next to the token, so a paste beside it is how a token reaches a block or a shell history: it records that the token was accepted by a live call, and U2's expiry stays Anthropic's own answer, printed by `claude setup-token` itself; and reaches U3 only if a usage limit can be observed, recording either outcome**): Claude Code's subscription traffic reaching Anthropic through a throwaway loopback proxy that strips the incoming `Authorization`/`x-api-key` and attaches your own `claude setup-token` value with a placeholder in the environment — which request headers have to pass through, what a usage or rate limit looks like on the wire (the status, the error object's own `type` and `message`, and the reset headers) and what Claude Code itself prints when it meets one, what the client does when the proxy delays, and that the token was accepted by a live call | See "Check 90" below; **you** run `bash scripts/live-checks/check90.sh` at your own terminal — it makes its own scratch directory outside every repository — and paste the block it prints. **No cloud project, no installation, no `fugaro` command and no agent runs anything** | No cost beyond the subscription's own traffic. The header list it records **is** what that plan's Task C1.7 is written against, and a swap that fails drops tier A (that plan's Global Constraint 4). **USER-RUN. RUN 2026-10-21: PASSED — TIER A VIABLE** — `anthropic-version` is the one header that must pass through, one informational FAIL (`stream`: the client's own buffering, or an answer too short to tell), and U3 stays open (no usage limit observed or provoked, so the 15-minute default back-off applies). The run's own facts are recorded in the section below. |
 | 91 | Cloud Run streaming through a throwaway service (same plan, its Check 91 and D151; **settles U5's request timeout, cold start, SSE delivery and HTTP/1.1 request-body limit — U5's end-to-end HTTP/2 half stays UNVERIFIED**): whether SSE reaches the caller unbuffered through the front end, the request-body limit on HTTP/1.1 and what the front end does with an HTTP/2 request above it, and the cold start — measured with one long call through `fugaro-chk91`, a service relaying a fake upstream that emits SSE for N minutes | See "Check 91" below; **you** run `bash scripts/live-checks/check91.sh`, on installation `fugaro` (never `belong`), sandbox only — its guards run once, before anything is created (the project `fugaro-dev` and the region are hard-coded and every `gcloud` call names them, so no step can be pointed at another installation; the guards are not re-run between steps), and it stops before the build when `gs://fugaro-dev_cloudbuild/` cannot be listed, because `gcloud builds submit` would **create** that bucket for it and a bucket is the installation's rather than this check's — and **no agent runs any step** | One throwaway Cloud Run service, the registry repository this check creates *and* its image, and the build's staged source — whose per-run prefix in the installation's staging bucket the same Restore removes — all deleted by the check's own Restore, whose three counts must each read `0` (and whose scratch directory it removes only once they do) — the check stopping at its baseline if a repository of that name is already there, because it never adopts what it did not create. **USER-RUN, NOT RUN.** |
@@ -653,6 +712,8 @@ probe account carries predefined grants only).
 | 111 | The billing picker's failure modes (setup-wizard plan Task W0.3; D3 and D6): the Cloud Billing API disabled on the quota project — in D3's two cases, the quota project **being** the project set up and the quota project being **another** one — a caller without `billing.accounts.list` on a project whose API **is** enabled (so the API answers **403** rather than the disabled-API refusal), and the three sessions that never list anything at all (no TTY, `--json`, an agent session) — each asserting the guided `gcloud billing projects link` line, that **nothing was enabled**, and that **no account list appears in any output** (the one run where a list *is* expected is the `gcloud` fallback answering an API that refused) | See "Check 111" below; **you** run it at your own terminal, on installation `fugaro` (never `belong`), and **no agent runs any step of it** (an agent session is one of the five modes it observes). | Three throwaway projects of your own — `P` (the installation's), `Q` (API off) and `S` (API on) — and the ADC quota project is repointed by three of the runs. Every step is a refusal, and nothing is created, enabled or linked by the check itself. **NOT RUN.** |
 | 112 | The four zoom levels, drawn once and drawn as stills (zoom-diagrams plan §3, Part 4; D237, D244, D245, D247): the section sits on `/how-it-works/`, **under "The run, end to end" and its diagram** (D237); the four levels are four `<figure>`s in the owner's boards' order, each named by its own `<figcaption>`; **every entity is one `<symbol>` of one `<defs>`, drawn through `<use>`** (D244) — seventeen of them, the job tile, the orchestrator, the developer and its planned form, the person and its planned form, the plain, accent and planned cards, the laptop, the phone, the project, the loop, the draft pull request, the Firebase card, the cloud and the level's own box — so a job tile is the same tile at every level, and no level draws its own copy of one; every label of every level is a string of the board it is drawn from, held word for word in both directions; the four markers are one `<nav>` of anchors with accessible names (D245), each jumping to its own level by keyboard and by pointer; the four levels and every label are in the document **with JavaScript off** (the section ships no script of its own); and the drawings are legible — labels at the palette's own contrast, nothing clipped, nothing drawn as an empty box — on a desktop and at 360, 390 x 844 and 320 (ZU4) | See "Check 112" below; **you** run it, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the live site — read-only, no account, no cloud project touched, no `fugaro` command, and **No agent runs any step of it**. The pinned scroll-driven zoom is **Part 5** and is not in this tree: that step of the section is written and cannot be run yet, and an unrun step is not a pass | One browser, a hard reload, one look at the section with script on and one with it off, and one narrow viewport. Nothing is created, enabled, linked or written. **USER-RUN, NOT RUN.** |
 | 113 | The phone app's page, and every claim on it marked shipped or planned (zoom-diagrams plan §3, Part 3; D239, D240, D241, D242): `/mobile/` is the app's own page and it is a **"coming soon"** page, so it carries a **preview badge** over its headline reading "Coming soon" (D240's third condition) and **no date anywhere** — no year, no month, no season, in the page's text, its title or its description (D240's first condition) — and **every bullet is marked**: the claims of `website/data/mobile-claims.yaml` render as two lists under two headings, *What the app does today* and *What is still to come*, each card carrying its own word, **Shipped** or **Planned**, so the mark is a word and not a colour alone (D240's second condition, D241's answer: shipped is status and spend, planned is the roster, switching by name, the wake word, QR pairing and the three roles); the **wake word's bullet says the listening and the recognition happen on the phone** and the page names no speech service and no cloud (D242); **nothing asks a reader for anything** — no form, no field, no button, no `mailto:`, no third party, no waitlist (D239) — and the page shows **no empty frame**: with no row in `website/data/mobile-screens.yaml` there is no slider, no heading and no picture-shaped hole, and when your captures land the slider appears with this page's own slot and ids (D251); and the page reads at a phone's width, with the marks and the badge legible at 360, 390 x 844 and 320 | See "Check 113" below; **you** run it, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the live site — read-only, no account, no cloud project touched, no `fugaro` command, and **No agent runs any step of it**. The pictures are yours and are **not** in this tree: step 6's second half is written and cannot be run until they land, and an unrun step is not a pass | One browser, a hard reload, one look at the page, one look at the menu, and one narrow viewport. Nothing is created, enabled, linked or written, and no address is entered anywhere. **USER-RUN, NOT RUN.** |
+| 124 | The Cloud Batch backend's own live check (compute-backend plan `docs/plans/2026-10-19-compute-backend.md`, its Task 12; design `docs/design/compute-backend.md` — **57 is this backend's reserved number and 124 is a second one taken above it**, which the claim paragraph above states with the overlap named: 57's section is Task 12's and this check's parts are the owner's, so the two are read together rather than one replacing the other; the opt-in `--provision-batch` backend, shipped in 0.9.5, whose live check was never written — 57a measured it in hand-made scripts and 57b lives inside that plan): **four owner-run parts.** **124a** — `fugaro setup --provision-batch --project fugaro`: the plan the compute root prints (the two APIs, the run accounts' IAM, the reaper's and the preload's accounts and their two custom roles, the Cloud NAT and its router, the preload's scheduled rebuild, the reaper's job), the typed confirmation nothing is applied before, the apply's `provisioned; the preloaded boot image …` line, the second run's `No changes: the compute backend's provisioning matches the plan.`, and the two read-backs — the lines `fugaro doctor`'s Batch half prints, which is the one `info batch-artifact-boundary: …` line it always prints for an installation carrying a `batch:` block and `fugaro doctor: everything checked is ok`; the other seven ids print nothing while their read is OK, so a `warning batch-…: …` line is the finding — and `fugaro validate`'s refusal, which is the pass today and `<path> is valid` after **the enable task**. **This part is the only one runnable now**: `internal/localcfg` refuses `backend: cloud-batch` (`backend "cloud-batch" is not enabled yet (this build runs cloud-run)`) until the plan's Task 10, so **124b, 124c and 124d are written and cannot be run yet**. **124b** — one ordinary sandbox task through a Batch job to its **draft pull request**, then declined and its branch deleted (Bitbucket, the sandbox's own repository). **124c** — a forced preemption: the run's own VM, selected by the label value the **job itself** records (`fugaro_run=<slug>-<run-id>`, never a typed name, and the step refuses a VM whose label is not its own job's), deleted by hand; the job must end `FAILED` with the task's exit code equal to the value read out of the tree (`grep -n 'preemptExitCode =' internal/backend/batch/run.go` — the number has one home and is written nowhere under `docs/`), and `fugaro runs ls` must read `failed (preempted)` — a **derived** reading, because nothing writes a preempted run's record; the reaper then reports what it would reap and what it reaped. **no Fugaro run is Spot today**, so this is a **simulated** reclaim and the design's §7.2 step 7 stays unrun. **124d** — the check's own cost and the cleanup: the runs' dollars, the budget lease released, and `gcloud batch jobs list` / `gcloud compute instances list` diffed against the before-state the check recorded, with the installation's own provisioning — **the installation's own, never deleted**: the preload image family, the reaper's and the preload's service accounts, **the two custom roles**, the Cloud NAT and its router, the preload rebuild's and the reaper sweep's scheduler jobs, the reaper job — named as what no restore here may touch | See "Check 124a"–"Check 124d" below; **you** run it, on installation `fugaro` (GCP project `fugaro-dev`, never `belong`), a sandbox checkout only, at your own terminal, with the guard block re-run before every part; the apply's confirmation and `fugaro setup` are refused a coding agent's session, and **no agent performs any step of the check** | 124a: one installation-root apply and the compute root's, one Cloud Build for the preload image and the scheduled rebuilds after it, and nothing else; 124b and 124c: **two** small sandbox runs on Batch (one ordinary, one preempted by hand), the check's own dollars recorded in 124d, with the batch jobs' own records kept. Nothing in the register is deleted by the check except 124b's declined pull request and its branch, and **the installation's own provisioning is never deleted**. **USER-RUN, NOT RUN — and 124b, 124c and 124d are written and cannot be run yet**, for the reason the sections record in as many words: `backend: cloud-batch` is refused by `internal/localcfg` until the enable task (the plan's Task 10, "to build"). |
+| 130 | The licence detectors after the open-core skeleton ([`docs/licensing/`](licensing/implementation-plan.md), its Check 130, task L1.10, and the reconciliation's F8 and U1 under the owner's **O2** answer of 2026-10-24; the block **130–134** is that work's and only 130 is written): that GitHub **still reports MIT** for the repository with the skeleton's new root `LICENSING.md` beside an untouched `LICENSE` — read twice and recorded both times, as the repository page's own licence label and the file it opens, and as the licence API's machine-readable reading (`spdx_id: MIT`, `key: mit`, and **`path: LICENSE`**, so the file GitHub classified is the untouched one and not the new statement file, which is what a `path` of `LICENSING.md` would mean) — and that **`LICENSING.md` renders on GitHub** as a page whose every relative link works: `LICENSE`, `ee/README.md`, the vendored skills' `.agents/LICENSE` and the README's trademark paragraph anchor. **What it is not:** pkg.go.dev's classification (U2, not this check's after O2) and the release labels — the plugin manifest's, the Homebrew cask's and the archive's — which stay `MIT` at 0.11.0 because the release build sets no `ee` tag (D303 as amended) and move together in the release that first sets it (plan slice L5) | See "Check 130" below; **you** run it, read-only, in a browser and with three `curl` calls against `api.github.com` — the repository read out of the checkout's origin and cross-checked against `go.mod`, so the tree and the page are the same repository — on no cloud project and no installation, never `belong`, holding no credential and writing nothing anywhere, and **no agent runs any step of it**. Its guard stops until task L1.3's `LICENSING.md` is in the tree, so it is run in full by task L1.11, after L1.3 merges | Nothing: three anonymous API reads, which spend part of the anonymous rate limit and change nothing; no image, no bucket, no model call, no Terraform, no node and no file. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -4239,6 +4300,343 @@ The loop prints **which commits it reverted and which were already reverted** (`
 
 **Paste back:** every `FACT` line above — the job's image reference and the digest it resolves to, **before and after** the build, and the job they belong to, `task.json`'s inputs against `sha256sum`, the `render` record and the counters, both halves of the probe's verdict, the recorded and the object's own content type, the retrieved files' hashes and the upload's wall clock **at both sizes** (step 6's set, and step 6b's near-cap pair with `finalize_reserve_s` beside it), and 7a, 7b and 7c's reason lines — **and never a secret value or the contents of an attached file**. Until this check runs, `docs/design/artifact-runs.md` §12's **U3, U5 and U6** stay open, and **U2's mise half stays open however this check turns out** — only its `image.apt` half is settled here — and that is the honest state of the design's claims rather than a fault list. Never run any step of this check against `belong`; no agent runs any step of it — every command is yours.
 
+## Check 59a: the console's first signed build, its Gatekeeper verification and the safety assertion (installation `fugaro`, sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**No agent performs any step of this check.** Every command below is yours, in your own terminal, on your own Mac: the check downloads a published release, verifies the bytes and the signature it carries, installs the app into `/Applications`, launches it, and reads one log it asked the app to write. No agent runs any part of it, and no agent may.
+
+**One number, two sections.** Check 59 is written as **59a** and **59b**, the way Check 43 carries 43a to 43f (design [D12](design/desktop-console.md)). The assertion numbers are the ones the plan's rounds kept, so a reader can follow where each went: **59a is (1), (2) and (4)** — the signing material, a signed, notarised and stapled build that Gatekeeper accepts on a machine that has never seen it, and the safety assertion — and **59b is (3)**, the update round trip. They are two sections rather than one because they cannot run at the same moment: 59b needs a published update feed, so it runs after a second console release has published one, while 59a runs now.
+
+**What 59a runs against, and why it can run today.** The console's first release is published: **`console-v0.110.0` "Cherry"**, on the console's own release stream (`docs/release.md`, "Console releases" and "Verifying the console's release"). It carries `Fugaro.Console-0.110.0-universal.dmg`, `Fugaro.Console-0.110.0-universal-mac.zip`, the two unsigned Linux artifacts, `console-sha256sums.txt` and `console-sha256sums.txt.sigstore.json`, plus `console-verification.txt`. So 59a verifies **that** release — the signed and notarised macOS pair — rather than a build you produce by hand, and it needs nothing built first. What it proves is the same thing either way: that the packaging pipeline's output is signed, notarised, stapled, accepted by Gatekeeper on a machine that has never seen it, and safe in the one way that only a running build can show.
+
+⚠ **This is a deviation from the two documents this section is written from, and it is recorded here rather than left for a reader to find.** Design **D12** says "59a runs on the first signed build, **before any tag**", and the plan's Task 4.3 says "It runs **before any tag**, on the first build the packaging pipeline produces" — both written when no signed build existed, so the only build 59a could read was one the owner produced by hand. That is no longer true: the owner's ruling of 2026-10-24 renumbered the console stream, and the first signed build **is** the published `console-v0.110.0` — the first build the pipeline produced and the first published release are the same object, so verifying the published one is the stricter reading rather than a relaxation: the bytes are the ones that shipped, not ones that resemble them. **A re-run after a packaging change does not prove the new build.** `entitlements.mac.plist` and design §12 item 4 both point at this section for a signed build's entitlement set, and re-run as written it re-verifies `console-v0.110.0`, whatever version `V` names. After a change to the packing configuration, run this section against a **new published release** — the next console tag, with `V` and the asset names moved with it — or against a build of your own; and if you do the latter, say which build it was in the FACT lines, because a hand-built bundle and a published one are not the same evidence and only one of them is the artifact. It also does not **submit** anything: the task's assertion (2) is about a build the pipeline produced, and 59a verifies the ticket that build carries — `xcrun stapler validate` on the bundle and on the disk image — rather than producing one. For the published release the submission is the release workflow's own step (`console/scripts/notarize-and-staple.sh`, whose `xcrun notarytool submit --wait` is the submission and whose exit status is read as the answer, `.github/workflows/console-release.yml`), so what this section reads is that step's result. A build of your own would need that script, or `xcrun notarytool submit --wait` by hand, before the same validations mean anything. D12's cell carries the dated note that records this; the plan's Task 4.3 is left as the plan's own record, and this paragraph is where the two are reconciled.
+
+**`belong` is never touched** (EdgeWeb's and EdgeServer's): no step of this check touches `belong`, reads anything of it, writes in it or runs a command against it. The installation the console is pointed at is the sandbox's `fugaro` and the checkout is the sandbox's, and the only place the other installation's name appears at all is step 4's scratch copy — one line appended to a **copy** of the app's own log, inside this check's own temporary directory. That copy is the only way to prove this negative without performing the forbidden thing, and no step of this check contacts, reads or writes that installation.
+
+**Method.** Everything happens on your Mac and in the sandbox checkout you are already in. `gh`, `cosign`, `codesign`, `spctl`, `xcrun stapler`, `security`, `jq` and `shasum` are the tools; all of them are read-only except where a step says otherwise. The check's own directory is `/tmp/chk59a`, created by the steps below and removed by the Restore at the end.
+
+⚠ **Set these, and pass the three hard stops, by running ONE block — and re-run that whole block at the start of every later step.** The block is self-contained and idempotent. `P` is the installation's *project* (the installation itself is named `fugaro`), `V` is the release under test, `CHK` is everything this check writes, `SPAWNLOG` is the file the console is asked to write, `IDENTITIES` is the record of the signing identities that predate the check — written in step 1's block, before anything is downloaded or installed, and read again in step 5 and in the Restore — and `CO` is the sandbox checkout the shell is in. `P` is asserted rather than assumed for the reason every check here does it: without `--project`, `fugaro` would resolve its installation from wherever the shell happened to be, and this check is the one that points a **running app** at an installation.
+
+```bash
+# === Check 59a: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
+# step (1, 2, 3, 4, 5, Restore). It is idempotent, and nothing below the three
+# hard stops runs unless all three pass. ===
+P=fugaro-dev                 # HARD-CODED, and never read from gcloud
+V=0.110.0                    # the published console release this check verifies: console-v0.110.0 "Cherry"
+CHK=/tmp/chk59a              # this check's own directory: the downloads, the mount point, the spawn log and the record below
+SPAWNLOG="${CHK}/spawn-log/spawn.jsonl"     # what the console is told to write, via FUGARO_CONSOLE_SPAWN_LOG
+IDENTITIES="${CHK}/identities-before.txt"   # the signing identities that existed BEFORE the check: the Restore reads this and removes nothing older
+CO=$(git rev-parse --show-toplevel)         # the sandbox checkout: the working directory every fugaro command the console drives must have
+
+# ${VAR:?} everywhere: an empty variable is a hard error, never an empty
+# argument a command would resolve from its ambient configuration.
+[ "$P" = fugaro-dev ] && [ -n "$V" ] && [ -n "$CHK" ] && [ -n "$SPAWNLOG" ] && [ -n "$IDENTITIES" ] && [ -n "$CO" ] \
+  || { echo "Check 59a stopped: re-run the whole setup block (P=$P must be fugaro-dev; V=$V CHK=$CHK SPAWNLOG=$SPAWNLOG IDENTITIES=$IDENTITIES CO=$CO must not be empty)" >&2; exit 1; }
+fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+  || { echo "Check 59a stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
+git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
+  || { echo "Check 59a stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
+```
+
+**Why the guard is one block, and why it is re-run.** The first stop asserts the block itself ran — `P` is exactly `fugaro-dev` and the other five are non-empty — so a skipped, partially pasted or hand-edited block stops here rather than reaching `gh` or `security` with an empty argument. The second is `fugaro doctor`'s own `project:` line (`internal/cli/doctor.go`, the local config's own project, no cloud call); a `doctor` that could not select an installation returns before printing one — it exits non-zero with its own message — and on a foreign checkout `doctor` refuses, so the `grep` fails either way. The third is the checkout's origin, which is what makes `CO` — the directory the console is told to use — the sandbox's and not another repository's. This check runs **no `gcloud` command at all**, so the rule that gives every `gcloud` command `--project="${P:?}"` has nothing to bind here; it is stated because the block is Check 43's and a reader comparing the two should not have to work out why one line is missing.
+
+**Every `fugaro` command that takes `--project` gets `--project fugaro`** (the installation's *name*: the project is `fugaro-dev`), and the one command the rule does not reach is `fugaro version`, which takes no flags at all (`internal/cli/root.go`'s `newVersionCmd`, `Args: cobra.NoArgs`, no `Flags()`) and makes no cloud call. `--project` disagreeing with the checkout's `project:` is **refused**, never silently resolved (`this checkout belongs to project <x>; --project says fugaro`, `internal/localcfg/select.go`) — that refusal is the fourth hard stop, and it is what protects the `fugaro` half of the check. **And the sandbox checkout is the working directory for every `fugaro` command the console drives**: the console gives a child the installation's checkout when it has one and a private `0700` directory otherwise, so step 4's preparation sets the checkout in the app's own picker and step 4's FACT lines are what check it happened (design §3.4 rule 5).
+
+In a terminal, `exit 1` closes that terminal window — the intended outcome, since nothing after it runs. Run the whole check in a `bash` sub-shell or from a script file if you would rather keep the window. **Paste the block into a file, not straight into an interactive zsh**: every block here carries `#` comments, and an interactive zsh does not honour them unless `setopt interactive_comments` is set first.
+
+---
+
+**(1) The signing material exists, and only you can reach it.**
+
+This is the assertion the whole pipeline stands on, and it is a statement about your machine rather than about the release: a Developer ID Application certificate in a keychain only you can unlock, and an App Store Connect API key (the `.p8`), stored where only you can read it. The release workflow never sees either except as a repository secret read into a protected environment (`.github/workflows/console-release.yml`, the `console-release` environment), so what this step confirms is that the material you feed it is yours and is not lying around.
+
+```bash
+mkdir -p "${CHK:?}"
+[ -e "${IDENTITIES:?}" ] || security find-identity -v -p codesigning > "${IDENTITIES:?}"
+security find-identity -v -p codesigning
+# The keychains in the user's search list, so "the check created no keychain and
+# removed none" is a comparison rather than a claim.
+security list-keychains -d user
+# The App Store Connect key: its own directory, and nothing group- or world-readable.
+ls -l "$HOME/.appstoreconnect/private_keys/" 2>/dev/null || ls -l "$HOME/.private_keys/" 2>/dev/null
+```
+
+**FACT:** `security find-identity -v -p codesigning` → at least one `"Developer ID Application: …"` line, and the identity's SHA-1 fingerprint; the same output is written once into `${IDENTITIES}` here — **before anything is downloaded or installed**, so the record is of what predated the check, and a re-run cannot overwrite it with a later list. **FACT:** `security list-keychains -d user` → the keychains in the search list, quoted one per line — record them beside the identities, because they are the other half of what this check must leave exactly as it found it (the Restore removes no keychain: the check creates none, and a keychain that was there before it is not its to delete). **FACT:** what the `.p8`'s directory and file modes are — the file owner-only (`-rw-------`, or `600`), not group- or world-readable. **FACT:** whether the certificate's expiry gives the next release room; a certificate that expires inside the next few months is a release that will fail at the packaging step, and this is where that is worth noticing rather than at the tag. Nothing in this step writes, imports, exports or unlocks anything.
+
+---
+
+**(2) The signed, notarised and stapled build, and Gatekeeper on a machine that has never seen it.**
+
+The bytes come from the published release, so what is verified is what shipped. `docs/release.md`'s "Verifying the console's release" is the same procedure for the Linux artifacts; here it is for the macOS pair, which carry a real signature and a real ticket and are therefore the only assets `codesign`, `spctl` and `stapler` can say anything about.
+
+```bash
+mkdir -p "${CHK:?}"
+gh release download "console-v${V:?}" -R dimipaun/fugaro -D "${CHK:?}" \
+  -p "Fugaro.Console-${V:?}-universal.dmg" -p "Fugaro.Console-${V:?}-universal-mac.zip" \
+  -p console-sha256sums.txt -p console-sha256sums.txt.sigstore.json -p console-verification.txt
+
+# The one sums file covers every asset of the release, macOS and Linux alike, and
+# the console workflow signed it keyless on that tag. The identity's ref segment
+# is the CONSOLE tag: console-vX.Y.Z, never vX.Y.Z.
+cosign verify-blob "${CHK:?}/console-sha256sums.txt" \
+  --bundle "${CHK:?}/console-sha256sums.txt.sigstore.json" \
+  --certificate-identity "https://github.com/dimipaun/fugaro/.github/workflows/console-release.yml@refs/tags/console-v${V:?}" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+**FACT:** `cosign verify-blob`'s `Verified OK`, with the certificate identity's workflow path and tag printed — `console-release.yml@refs/tags/console-v0.110.0`, never the CLI's `v0.110.0` and never `release.yml`. **FACT:** the four asset names as `gh` printed them.
+
+⚠ **GitHub serves the two macOS assets with the space in their names replaced by a dot, and the release's own sums file carries the names the packer wrote — with the space.** `console-sha256sums.txt` holds `Fugaro Console-0.110.0-universal.dmg`; the released asset is `Fugaro.Console-0.110.0-universal.dmg`. So the download and the sums file spell the same file two ways, and the two lines are renamed back before the check reads them: a `shasum -c` against the dotted names reports every macOS line as unreadable and verifies nothing.
+
+```bash
+mv "${CHK:?}/Fugaro.Console-${V:?}-universal.dmg"     "${CHK:?}/Fugaro Console-${V:?}-universal.dmg"
+mv "${CHK:?}/Fugaro.Console-${V:?}-universal-mac.zip" "${CHK:?}/Fugaro Console-${V:?}-universal-mac.zip"
+sed -n '/^[0-9a-f]\{64\}  Fugaro Console-/p' "${CHK:?}/console-sha256sums.txt" | (cd "${CHK:?}" && shasum -a 256 -c -)
+```
+
+**FACT:** `shasum -c` prints `OK` for exactly the two lines it read and no `FAILED open or read` for any line — and prints **two** lines: the `sed` is what keeps the macOS half of the file (the `Fugaro.Console-…-linux-…` lines are the Linux artifacts, which step 2 does not download), and a `shasum -c` over an empty list exits 0 having verified nothing, which is why the count is a FACT rather than an assumption.
+
+```bash
+DMG="${CHK:?}/Fugaro Console-${V:?}-universal.dmg"
+MOUNT="${CHK:?}/dmg-mount"; mkdir -p "$MOUNT"
+hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MOUNT"
+APP="${MOUNT}/Fugaro Console.app"
+codesign --verify --deep --strict --verbose=2 "$APP"
+codesign -dv --verbose=4 "$APP"
+codesign -d --entitlements - "$APP"
+spctl --assess --type execute --verbose=4 "$APP"
+xcrun stapler validate "$APP"
+xcrun stapler validate "$DMG"
+spctl --assess --type open --context context:primary-signature -v "$DMG"
+hdiutil detach "$MOUNT"
+```
+
+**FACT:** `codesign --verify --deep --strict` says `valid on disk` and `satisfies its Designated Requirement` and exits 0 — the **`--deep` and `--strict`** are the design's own form, and a bundle that only verifies without them is not what was asked for. **FACT:** the entitlements print the hardened runtime's minimum and nothing else — `com.apple.security.cs.allow-jit` (`console/entitlements.mac.plist`; the file is the authority, and `get-task-allow` must not appear, which is the entitlement a debug build would add). **FACT:** `codesign -dv --verbose=4` prints the bundle's `CDHash`, its `Authority=Developer ID Application: …` chain and its `TeamIdentifier` — record the `CDHash` (step 2's install block compares the installed copy against it) and the TeamIdentifier, which is the team the certificate was issued to. **FACT:** `spctl --assess --type execute` prints `accepted` with `source=Notarized Developer ID` — **this is assertion (2)**. **FACT:** both `stapler validate` calls print `The validate action worked!` and exit 0; the disk image's staple is a different ticket from the bundle's, which is why both are run. **FACT:** `spctl --assess --type open --context context:primary-signature -v` accepts the `.dmg` as itself, which is what Gatekeeper assesses when the download is opened.
+
+**And then the launch a person actually makes, which is the half `spctl` cannot show.** The download above is a `gh` fetch, so macOS has set no quarantine attribute on it and a first launch would prove nothing. This step installs the bundle and sets exactly the attribute a browser download sets, then opens it as a user would — the app must start, and it must not be blocked.
+
+```bash
+INSTALLED="/Applications/Fugaro Console.app"
+[ ! -e "$INSTALLED" ] || { echo "Check 59a stopped: $INSTALLED already exists. Remove it yourself and re-run: this check installs one build and never deletes an app it did not install" >&2; exit 1; }
+ditto -x -k "${CHK:?}/Fugaro Console-${V:?}-universal-mac.zip" "${CHK:?}/unzipped"
+ditto "${CHK:?}/unzipped/Fugaro Console.app" "$INSTALLED"
+printf '%s\n' "$INSTALLED" > "${CHK:?}/installed-by-this-check.txt"
+xattr -w com.apple.quarantine "0083;$(printf '%x' "$(date +%s)");Safari;" "$INSTALLED"
+codesign -dv --verbose=4 "$INSTALLED"
+spctl --assess --type execute --verbose=4 "$INSTALLED"
+open "$INSTALLED"
+```
+
+**FACT:** the installed copy is the same build — the `CDHash` its own `codesign -dv --verbose=4` prints is the one the mounted copy printed, and `defaults read "${INSTALLED:?}/Contents/Info.plist" CFBundleShortVersionString` prints `0.110.0`. **FACT:** the first launch shows no block and no "cannot be opened because the developer cannot be verified": either Gatekeeper's ordinary first-launch prompt appears (its Open button is clicked and the window opens) or, if your Security settings already allow it, the window opens with no prompt at all. Either is a pass; a refusal is not, and the refusal's own text is the FACT to paste back. **FACT:** the dashboard's own installation line names the sandbox installation and the CLI version the handshake read for it, so the app that launched is the released one and it is driving the installation this check pinned. **Quit the app** (⌘Q) before the next step.
+
+**The `printf` is this check's own receipt.** It writes the installed path under `${CHK}` — after the `ditto`, and only on the run that `ditto` succeeded on — and the Restore reads that stamp before it removes anything at `/Applications/Fugaro Console.app`. The app half of "it restores only what it created" is therefore recorded before the run touches `/Applications`, exactly as the identity half is recorded in step 1 before anything is installed: both are read back at the end rather than remembered, which is what the install guard above and the Restore's own condition are for.
+
+---
+
+**(4) The safety assertion: with the console pointed at the sandbox installation it never spawns anything for `belong`.**
+
+The claim is exactly this, and it is worded as what the lines below prove rather than as what a reader might wish they proved: **with the console pointed at the sandbox installation it spawned nothing for `belong` — every spawn record names the sandbox installation's `fugaro`, the sandbox project and the sandbox checkout, and none mentions `belong` or `edgeappinc`.** It is a claim about **spawns**, because the console's only egress is a spawn of one allow-listed argv (design §3.4 rule 1). It is not a claim about what the console "can reach": this check never tests a reachability, and an earlier revision that said "nothing it can reach belongs to `belong`" was asserting something no command under it could show.
+
+**The evidence is the app's own log of what it ran**, which is why the app has to be told to write one. `console/src/main/spawnlog.ts` writes nothing unless **`FUGARO_CONSOLE_SPAWN_LOG` names a path**; when it does, the main process appends one JSON object per line with **exactly four keys** — `ts` (RFC 3339 UTC), `argv` (the array as spawned, the binary's absolute path first), `cwd` (absolute) and `project` (the installation's project name, the value passed as `--project`, so the bare `version` handshake still records which installation it was for). It holds no command output, no environment, no credential and nothing a job wrote; the app never reads it back, never rotates it and never deletes it. **Without that variable the file does not exist and not one of the commands below can run.**
+
+**Preparation, and it is done with the log off.** The console gives a child its installation's **checkout** when the installation has one and a private `0700` directory otherwise (design §3.4 rule 5), so the checkout is set first, in the app's own picker, and this half of the run writes no log at all:
+
+1. Open `/Applications/Fugaro Console.app` and choose **Installations…** from the app menu (the picker is its own window; the app's menu is the only way in).
+2. Choose the sandbox installation — its project is `fugaro`, the one `fugaro config list --json` lists for this installation — and set its checkout to the sandbox checkout this shell is in (`$CO`), which is one of the directories the CLI itself printed for that installation.
+3. Quit the app.
+
+**Then the logged run, launched from this terminal by the executable's path.** A Finder or Dock launch inherits launchd's environment and **not** this shell's, so an app opened that way never sees the variable and writes no log — the check would then fail at its first FACT line with the right conclusion for the wrong reason. `open` is deliberately **not** used here for the same reason: it does not forward the shell's environment to the launched app.
+
+```bash
+mkdir -p "${CHK:?}/spawn-log"
+test ! -e "${SPAWNLOG:?}" || { echo "Check 59a stopped: ${SPAWNLOG} already exists. Delete it and re-run: a log that was not written by this run cannot be read as this run's evidence" >&2; exit 1; }
+export FUGARO_CONSOLE_SPAWN_LOG="${SPAWNLOG}"
+"/Applications/Fugaro Console.app/Contents/MacOS/Fugaro Console" &
+```
+
+Leave the app open long enough for its startup handshake and at least one read — the dashboard draws which installation it is showing (the handshake: its project, its binary and the CLI version that read returned) and a screen draws its rows (the read). Which screens you visit does not change what step 1 asks: every row of the console's spawn table is one allow-listed argv whose installation argument is `--project fugaro` (`console/src/main/spawn.ts`'s `SPAWN_COMMANDS`), the `version` handshake is the one row that carries no `--project` at all, and no row takes an installation *name* as a value anywhere. Then quit it with ⌘Q, and only then read the log: the app never reads it back, and it is the operator's file. The loop below is only a wait — the first spawn usually lands the file before you have finished reading this sentence — and every block after it is a read of that file.
+
+```bash
+for _ in $(seq 1 60); do [ -s "${SPAWNLOG:?}" ] && break; sleep 1; done
+```
+
+**Step 1 — the console's own record of what it ran.**
+
+```bash
+test -s "${SPAWNLOG}"; echo "exit $?"
+grep -c belong "${SPAWNLOG}"
+grep -c edgeappinc "${SPAWNLOG}"
+```
+
+**FACT:** `test -s "${SPAWNLOG}"` → exit `0` (the log exists and is non-empty). **FACT:** `grep -c belong "${SPAWNLOG}"` → `0`. **FACT:** `grep -c edgeappinc "${SPAWNLOG}"` → `0`. The unit is a **line**, not a byte: one JSON object per line, so a count of zero means *no spawn record mentions it*, which is the statement being proved. (`grep -c` **prints** `0` and **exits 1** when there is no match: the FACT is the printed number, and an exit status of 1 here is the pass, not the failure: `grep -c belong` is never a failure of this step for its exit status.)
+
+**Step 2 — every spawned argv resolves to the sandbox installation.** One binary, and it is the sandbox's.
+
+```bash
+jq -r '.argv[0]' "${SPAWNLOG}" | sort -u
+```
+
+**FACT:** `jq -r '.argv[0]' "${SPAWNLOG}" | sort -u` → **one line**, the sandbox installation's own resolved `fugaro` path (the console resolves it from the platform's well-known prefixes — `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `/usr/bin` on macOS — and never from the app's inherited `PATH`), and **never** the `belong` installation's own binary path. Two lines mean the console is driving two binaries, which is the failure this step exists to catch: the whole design rests on *one* spawned binary, resolved explicitly.
+
+**Step 3 — every spawn was for the sandbox installation, from the sandbox checkout.**
+
+```bash
+jq -r '.project' "${SPAWNLOG}" | sort -u
+jq -r '.cwd' "${SPAWNLOG}" | sort -u
+```
+
+**FACT:** `jq -r '.project' "${SPAWNLOG}" | sort -u` → **one line**, `fugaro` — the guard block's own installation name, which is the value passed as `--project`. One line and not two is also what proves the bare `version` handshake recorded its installation: the schema gives every line a `project`, the handshake's included, and a second value here is a spawn for another installation. **FACT:** `jq -r '.cwd' "${SPAWNLOG}" | sort -u` → **one line**, the sandbox checkout's absolute path as the CLI itself printed it — the directory you chose in the preparation above, and not the private `0700` directory the console falls back to for an installation with no checkout. Two lines mean at least one spawn ran somewhere else, which is design §3.4 rule 5 checked rather than assumed.
+
+**Step 4 — the mutation control, and this is the step that makes the other three mean something.** With the console closed, one line naming the other installation is appended to a **copy** of the log, and step 1's greps are re-run against the copy. The command that must print `0` prints `1` when the thing it looks for is there.
+
+```bash
+wc -l "${SPAWNLOG}"                      # the baseline, before the copy is made: the count to read the copy against
+cp "${SPAWNLOG}" "${SPAWNLOG}.test"
+printf '{"ts":"2026-01-01T00:00:00Z","argv":["%s","budget","show","--project"],"cwd":"%s","project":"belong"}\n' >> "${SPAWNLOG}.test" \
+  "$(jq -r '.argv[0]' "${SPAWNLOG}" | head -1)" "${CO:?}"
+# The name is written once, inside the printf above, and read back out of the
+# copy for the greps below: no command line here takes it as an argument.
+OTHER=$(jq -r '.project' "${SPAWNLOG}.test" | tail -1)
+wc -l "${SPAWNLOG}.test"                 # the baseline plus the one line the printf appended
+grep -c "$OTHER" "${SPAWNLOG}.test"
+grep -c edgeappinc "${SPAWNLOG}.test"
+```
+
+**FACT:** `wc -l "${SPAWNLOG}"` → the log's line count **N** before the copy was made, and `wc -l "${SPAWNLOG}.test"` → **N + 1**: the copy holds exactly one line more than the log did, and that extra line is the control record the `printf` wrote — the two counts are what prove it, so read them off rather than assuming a copy plus one append is one line longer; with `$OTHER` expanded the first grep reads `grep -c belong "${SPAWNLOG}.test"` → `1`. **FACT:** `grep -c edgeappinc "${SPAWNLOG}.test"` → `0` — the control line names one of the two strings, and the other stays at zero, which is what shows the two greps are two questions and not one. **No step of this check contacts, reads or writes the `belong` installation, and no step of it ever passes that name to a command**: the name appears only inside the `printf` above, writing into a scratch copy, and it never reaches a path, an option or an argument of anything. Then:
+
+```bash
+rm -f "${SPAWNLOG}.test"
+wc -l "${SPAWNLOG}"
+grep -c belong "${SPAWNLOG}"
+```
+
+**FACT:** the copy is gone and the mutation never touched the real log: `grep -c belong "${SPAWNLOG}"` → `0` again, and `wc -l "${SPAWNLOG}"` → the same **N** the baseline printed before the copy was made, so the log is the log and not the copy under the log's name.
+
+**Step 5 — the console left no key material behind.** The same read as (1)'s, taken at the other end of a running build:
+
+```bash
+diff "${IDENTITIES:?}" <(security find-identity -v -p codesigning) && echo 'identical'
+```
+
+**FACT:** `diff` prints nothing and `identical` is printed — the two outputs are **identical**, so the console neither added an identity nor removed one. **FACT:** the second read is compared against the record step 1 wrote before anything was installed, not against a remembered list.
+
+**Paste back:** every `FACT` line above — the identity and its fingerprint, the `.p8`'s modes, the asset names `gh` printed, `cosign`'s verified identity, the two `shasum -c` lines, the `codesign`/`spctl`/`stapler` lines with their `CDHash` and TeamIdentifier, the first launch's outcome, the full output of steps 1 to 5, and the identity diff.
+
+**If a step fails, what it lands in.** A `spctl` refusal on the mounted bundle is a finding about the packaging pipeline, not about your machine — paste the refusal's text into the PR and do not work around it. A second line from step 2 or step 3 is a finding about the console's spawn contract, never a pass, and its log lines go in the PR beside it. A run that finds the log empty after the app clearly spawned is a finding about `spawnlog.ts` or about how the app was launched (a Finder launch records nothing, by design), and the launch line is the first thing to re-read.
+
+---
+
+**Restore.** It restores **only what this check created**, and that is a hard rule of the check rather than a courtesy. A restore step that "removes the keychain item it was signed with" would delete **your own signing certificate** — the identity the whole pipeline depends on, which predates the check by design and is not the check's to destroy. **A signing identity that was present before the check is never deleted, never re-imported and never locked.** This check creates no keychain and imports nothing, so its Restore has no business naming an identity at all; the record it took in step 1 (and read again in step 5) is what makes that checkable instead of remembered. **The same rule holds for the app the check installs, and it is held the same way**: step 2 writes a stamp for `/Applications/Fugaro Console.app` only after it has installed it, so an operator whose own copy was already there — the one step 2's guard stops — gets a Restore that leaves it alone rather than one that removes it because something is at that path.
+
+```bash
+# === Check 59a: Restore. Re-run the setup block first. It removes ONLY what
+# this check created, and nothing it found. ===
+INSTALLED="/Applications/Fugaro Console.app"
+# Both records are read BEFORE ${CHK} is removed, which is the only order in
+# which they can be read at all.
+diff "${IDENTITIES:?}" <(security find-identity -v -p codesigning) && echo 'identical: no identity was added or removed'
+if [ -f "${CHK:?}/installed-by-this-check.txt" ] && [ "$(cat "${CHK:?}/installed-by-this-check.txt")" = "$INSTALLED" ]; then
+  rm -rf "$INSTALLED"; echo "removed $INSTALLED: this check's own stamp says it installed it"
+else
+  echo "kept $INSTALLED: no stamp of this check says it installed it, so it is not this check's to remove"
+fi
+hdiutil detach "${CHK:?}/dmg-mount" 2>/dev/null || true
+rm -rf "${CHK:?}"
+git status --short
+```
+
+**FACT:** `diff` prints nothing and `identical: no identity was added or removed` is printed — the identities now are the identities the record holds, so nothing this check did added one or removed one, and the read is taken **before** `${CHK}` is removed because that is the only order in which the record can still be read. **FACT:** the removal runs only when step 2's own stamp is there and names that path, so the app is removed **only on a run that installed it**: `echo` prints either `removed /Applications/Fugaro Console.app: this check's own stamp says it installed it` or `kept /Applications/Fugaro Console.app: no stamp of this check says it installed it…` — **the second line is the pass for a run that stopped at step 2's guard**, and pasting it back is what shows the Restore spared an app this check never installed. **FACT:** `git status --short` is clean: this check commits nothing and changes no tracked file in the checkout. Nothing here touches a keychain, an identity or a certificate, and nothing here deletes a file this check did not write under `/tmp/chk59a`.
+
+## Check 59b: the update round trip (installation `fugaro`, sandbox repository only, never `belong`; run by you; NOT RUNNABLE YET — and NOT RUN)
+
+**No agent performs any step of this check. It is NOT RUNNABLE today, and its first lines are where that is read rather than at the end:** it needs **two** things that do not both exist — the auto-update feature of **Task 4.4** of `docs/plans/2026-10-15-desktop-console.md`, which is what puts an updater and a **published feed** into a shipped build, and a **second** published console release carrying that feed, which is `console-v0.111.0` "Mango". The first release, **`console-v0.110.0` "Cherry"**, is published and carries no feed at all: it was built before Task 4.4, and a build with no updater cannot be updated and cannot update. So there is nothing for an older build to update to, and no build that would look. **Until both exist, this section is written and cannot be run, and an unrun step is not a pass.**
+
+**What it asserts, and it is assertion (3) of the one number:** an installed **older** console build sees the newer release over the console's own signed feed and installs a bundle whose signature the OS verifies — over `electron-updater`, the `electron-builder` companion that supplies the feed client and the `latest-mac.yml` manifest (that manifest format is electron-updater's, not Squirrel's), on top of Electron's own `autoUpdater` (Squirrel.Mac). Design §7.3 and §7.4 and D5 are the rules it checks: an update whose signature does not verify is **refused, never installed**; a **downgrade** is refused; the check happens on launch and then on a long interval; nothing is installed silently without telling the user; the toggle is visible and switching it off stops the check; and **no telemetry of any kind** — the only outbound requests are the CLI's own and this one update check.
+
+**Never `belong`**: no step of this check touches `belong` either, and the installation it updates is the sandbox's `fugaro`.
+
+**The two preconditions, in detail.**
+
+1. **Task 4.4 ships.** A console release whose bundle carries `electron-updater`, the update check, the opt-out (`FUGARO_NO_UPDATE_CHECK=1`, a local `update_check: false`), the refusal of a mis-signed or downgrade update, and no identifier in any request. `console-v0.110.0` does not: its `package.json` declares no runtime dependencies at all, and the runtime allow-list in `console/test/unit/pinning.test.ts` — whose own message says the update client arrives with Task 4.4 — is what keeps it that way.
+2. **A second console release publishes the feed.** `console-v0.111.0` "Mango" must be tagged and published with the feed's own files on it — the `latest-mac.yml` electron-updater reads, and the `.dmg`/`.zip` it names — so that an installed `0.110.0`, which by then must itself be an updater build, can see a newer version. The console's releases are separate from the CLI's (`console-vX.Y.Z`; `docs/release.md`, "Console releases"), and the version line never goes backwards, so the second release is `0.111.0` and never a re-cut of `0.110.0`.
+
+**Method, when both exist.** Everything happens on your Mac, in the sandbox checkout. The guard block is 59a's with its one release variable replaced by the two this section needs (`OLD` and `NEW`), and it is re-run at the start of every step — the same three hard stops, `--project fugaro` on every `fugaro` command that takes flags, and the sandbox checkout as the working directory for every `fugaro` command the console drives. This section's Restore is its own: it installs a build into `/Applications` too, and 59a's Restore never runs for it.
+
+```bash
+# === Check 59b: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
+# step (1, 2, 3, Restore). It is idempotent, and nothing below the three hard
+# stops runs unless all three pass. ===
+P=fugaro-dev                 # HARD-CODED, and never read from gcloud
+CHK=/tmp/chk59b              # this check's own directory: the downloads, the mount point and the record below
+OLD=0.110.0                  # the installed build that is being updated AWAY from
+NEW=0.111.0                  # the release whose feed the installed build must see
+IDENTITIES="${CHK}/identities-before.txt"   # the signing identities that existed BEFORE the check: the Restore removes nothing older
+CO=$(git rev-parse --show-toplevel)         # the sandbox checkout
+
+[ "$P" = fugaro-dev ] && [ -n "$CHK" ] && [ -n "$OLD" ] && [ -n "$NEW" ] && [ -n "$IDENTITIES" ] && [ -n "$CO" ] \
+  || { echo "Check 59b stopped: re-run the whole setup block (P=$P must be fugaro-dev; CHK=$CHK OLD=$OLD NEW=$NEW IDENTITIES=$IDENTITIES CO=$CO must not be empty)" >&2; exit 1; }
+fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+  || { echo "Check 59b stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
+git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
+  || { echo "Check 59b stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
+```
+
+**Step 1 — the feed exists, and 59b stops here if it does not.** Before anything is installed, read the release's assets. This is the step written for the day the second release is cut, and it is the step that fails closed today: the release `console-v${NEW}` does not exist, so `gh` refuses, and the section stops rather than proceeding into steps that would install a build nothing can update.
+
+```bash
+gh release view "console-v${NEW:?}" -R dimipaun/fugaro --json assets --jq '.assets[].name' | sort
+```
+
+**FACT:** the asset list carries the update feed's own files — the `latest-mac.yml` manifest and the `.dmg`/`.zip` it names — beside `console-sha256sums.txt` and its Sigstore bundle. **FACT:** nothing in that list is named for the CLI's release. **If `gh` refuses because `console-v${NEW}` does not exist, the check stops here**: that is today's outcome, and it is a precondition rather than a finding.
+
+**Step 2 — an older, updater-carrying build is installed, and it sees the new release.** The identities that predate the check are recorded **first**, before anything is installed, so the Restore can tell what the check did from what it found; then download `console-v${OLD}`, verify it exactly as 59a's step 2 does (the sums file, its Sigstore bundle, `shasum -c`, `codesign --verify --deep --strict`, `spctl --assess --type execute`, `xcrun stapler validate`, the quarantine attribute, the first launch), install it into `/Applications`, and set its update check to on. Then read what the updater saw.
+
+```bash
+mkdir -p "${CHK:?}"
+[ -e "${IDENTITIES:?}" ] || security find-identity -v -p codesigning > "${IDENTITIES:?}"
+INSTALLED="/Applications/Fugaro Console.app"
+[ ! -e "$INSTALLED" ] || { echo "Check 59b stopped: $INSTALLED already exists. Remove it yourself and re-run: this check installs one build and never deletes an app it did not install" >&2; exit 1; }
+```
+
+**FACT:** the record is written once, before the install (`[ -e ... ] ||` is what keeps a re-run from overwriting it with a post-install list, which would make the Restore's diff say nothing about what the check did). **FACT:** the install guard is 59a's with this section's number in its message, and it stops **before** anything is downloaded or installed: an operator who already has a console at that path removes it themselves and re-runs, and the check never takes the place of — and never later removes — an app it did not install.
+
+**And the same receipt 59a's step 2 writes**, after the install and before the version is read, so this section's Restore can tell its own install from one that was there first:
+
+```bash
+printf '%s\n' "$INSTALLED" > "${CHK:?}/installed-by-this-check.txt"
+defaults read "$INSTALLED/Contents/Info.plist" CFBundleShortVersionString
+```
+
+**FACT:** `defaults read "$INSTALLED/Contents/Info.plist" CFBundleShortVersionString` prints `0.110.0` for the installed build, and its updater reports the newer version available — **one** version, named, with the release's own tag; **FACT:** the request it made went to the console's own release and carried **no identifier of any kind** — no machine id, no user, no run, no installation name (design §7.4; the assertion is on the request the feed receives, which is Task 4.4's unit test taken live).
+
+**Step 3 — the update installs, and the OS verifies what it installed.** Let the update install, relaunch, and verify the new bundle the way 59a's step 2 verifies a downloaded one: `codesign --verify --deep --strict`, `spctl --assess --type execute`, `xcrun stapler validate` and the version line.
+
+**FACT:** that same `CFBundleShortVersionString` read prints `0.111.0` after the update, and the bundle that replaced the old one passes `codesign --verify --deep --strict` and `spctl --assess --type execute` — **this is assertion (3)**: the OS verified the new bundle's signature before it was installed, and an update it could not verify was never installed. **FACT:** the old bundle is gone from `/Applications` as an application, and nothing was left beside it. **FACT:** the switch is visible in the app, and with the opt-out set (`FUGARO_NO_UPDATE_CHECK=1`, and again with a local `update_check: false`) a launch makes no update request at all — Task 4.4's three-way opt-out, taken live. **FACT:** a **downgrade** is refused: an installed `0.111.0` offered `0.110.0` stays where it is, and the refusal is recorded rather than silently ignored.
+
+**Paste back:** every `FACT` line above — step 1's asset list, the installed build's version and what its updater saw, the request's contents as far as the feed records them, the post-update `codesign`/`spctl`/`stapler` lines and version line, and the three opt-out outcomes.
+
+---
+
+**Restore.** As 59a's, and its own: it restores only what this check created, and it removes **only what is not in the record it took before it started** — the downloads under `/tmp/chk59b`, the mount point, and any file it wrote under a temporary directory — plus the one build it installed into `/Applications`, which it removes only when **step 2's own stamp names that path**; step 2's guard is what makes a stamped install the only kind this check performs. **A signing identity that was present before the check is never deleted, never re-imported and never locked**: this check creates no keychain and imports nothing, so its Restore names no identity either.
+
+```bash
+# === Check 59b: Restore. Re-run the setup block first. It removes ONLY what
+# this check created, and nothing it found. ===
+INSTALLED="/Applications/Fugaro Console.app"
+# Both records are read BEFORE ${CHK} is removed, which is the only order in
+# which they can be read at all.
+diff "${IDENTITIES:?}" <(security find-identity -v -p codesigning) && echo 'identical: no identity was added or removed'
+if [ -f "${CHK:?}/installed-by-this-check.txt" ] && [ "$(cat "${CHK:?}/installed-by-this-check.txt")" = "$INSTALLED" ]; then
+  rm -rf "$INSTALLED"; echo "removed $INSTALLED: this check's own stamp says it installed it"
+else
+  echo "kept $INSTALLED: no stamp of this check says it installed it, so it is not this check's to remove"
+fi
+hdiutil detach "${CHK:?}/dmg-mount" 2>/dev/null || true
+rm -rf "${CHK:?}"
+git status --short
+```
+
+**FACT:** `diff` prints nothing and `identical: no identity was added or removed` is printed — the identities now are the ones step 2's record holds, read before `${CHK}` is removed. **FACT:** the app is removed only when step 2's own stamp is there and names that path, so a run that stopped at step 2's guard has its app kept and prints the `kept …` line instead. **FACT:** `git status --short` is clean.
+
 ## Check 60: the sealed budget token — a run's token is worthless without its own execution's key (installation `fugaro`, sandbox repository only, never `belong`; run by you; NOT RUN)
 
 The budget token's seal ([design/budget-token-channel.md](design/budget-token-channel.md) §7, both halves built for 0.9.0): the launcher seals the run's Firebase custom token under a key drawn for that one launch and writes it to `tokens/<slug>/<run>/budget-token`; the key travels as the value of the execution's `FUGARO_BUDGET_TOKEN` override; the run reads the object read-only, unseals it, and refuses everything else. The unit tests hold the AAD and every refusal row of §7.4; this check records what only a live installation can show: that a sealed run works end to end, what the object and the override actually expose, what the audit log carries, and that the grants are the ones the plan says. **No agent runs any step of this check**; you run every command. **Never `belong`**: nothing here creates, changes or deletes anything there.
@@ -5298,18 +5696,19 @@ git log -1 --format='the tree is at %h %s'   # the commit the deployed site shou
 
    **FACT:** both hashes, the deployed `etag`/`last-modified`/`content-encoding`, and `git log -1 --format=%h`.
 
-3. **The page a stranger lands on names no unshipped feature, and every feature it does name is real.** The explainer video does not exist (`features.video` is false), so the deployed home page may carry no player. The console **has shipped** — `features.console_downloads` is true, and the release it names is `console-v0.9.0` — so the page does offer its downloads, and every one of them has to resolve to an asset of the release the site's own facts name. A link that 404s is the drift this step is for, and it is the one failure a hermetic gate cannot see: the site's own tests check the URL's shape against the release's facts, and only the live release can answer whether the bytes are there. **This is also the one step that can confirm the name the site spells the asset with**: the release's own files name the artifacts with a space (`Fugaro Console-0.9.0-universal.dmg`) and GitHub serves them with a dot (`Fugaro.Console-0.9.0-universal.dmg`), so `src/lib/console-downloads.mjs` derives the URL's last segment from the release's name by replacing the space with a dot — a rule no file in this tree can confirm, and one whose failure is a 404 on every reader's link rather than a visible error. A printed URL that carries `%20` is that failure. Then the browser half: read the page, and read the console section — it says what the console is, that it is macOS only, signed and notarised, and each link offers a `.dmg` or a `.zip` with its checksum beside it.
+3. **The page a stranger lands on names no unshipped feature, and every feature it does name is real.** The explainer video does not exist (`features.video` is false), so the deployed home page may carry no player. The console **has shipped** — `features.console_downloads` is true, and the release the tree names is read below rather than remembered here — so the page does offer its downloads, and every one of them has to resolve to an asset of the release the site's own facts name. A link that 404s is the drift this step is for, and it is the one failure a hermetic gate cannot see: the site's own tests check the URL's shape against the release's facts, and only the live release can answer whether the bytes are there. **This is also the one step that can confirm the name the site spells the asset with**: the release's own files name the macOS artifacts with a space (`Fugaro Console-X.Y.Z-universal.dmg`) and GitHub serves them with a dot (`Fugaro.Console-X.Y.Z-universal.dmg`), so `src/lib/console-downloads.mjs` derives the URL's last segment from the release's name by replacing the space with a dot — a rule no file in this tree can confirm, and one whose failure is a 404 on every reader's link rather than a visible error. A printed URL that carries `%20` is that failure. The Linux pair carries no space at all, so its two URLs are the release's own names *and* the spellings the sums file lists: `Fugaro.Console-X.Y.Z-linux-x86_64.AppImage` and `…-linux-amd64.deb`. **And the arch words are the packer's, not this document's**: the AppImage says `x86_64` and the `.deb` says `amd64`, so a URL or a page that says `linux-x64` is looking for a file the release does not hold. Then the browser half: read the page, and read the console section — it says what the console is, that the macOS build is signed and notarised and **the Linux build is not signed at all**, and each of the four links offers a `.dmg`, a `.zip`, an `.AppImage` or a `.deb` with its checksum beside it, with the steps that stand behind the unsigned pair under them.
 
    ```bash
    # The console's own flag, read from the same facts file as the origin above:
    # what this step expects is what the tree says, not what this document said.
    F=$(sed -n 's/^ *console_downloads: *//p' website/data/site.yaml)
-   echo "console_downloads: $F"
+   V=$(sed -n 's/^ *"version": *"\([0-9.]*\)".*/\1/p' website/content/downloads.json | head -1)
+   echo "console_downloads: $F   version: $V"
    curl -sS "$C/" > /tmp/chk69a-home.html
    curl -sS "$C/console/" > /tmp/chk69a-console.html
    grep -niE '<video|<iframe|youtube|vimeo|poster=' /tmp/chk69a-home.html
    grep -oE 'href="[^"]*releases/download[^"]*"' /tmp/chk69a-home.html /tmp/chk69a-console.html
-   grep -niE '\.dmg|\.zip|shasum -a 256' /tmp/chk69a-console.html
+   grep -niE '\.dmg|\.zip|\.AppImage|\.deb|cosign verify-blob|sha256sum -c' /tmp/chk69a-console.html
    ```
 
    **FACT:** what each grep printed, and — for every hit — what it is. A hit is not automatically a failure (the word "download" in a sentence is not a link), so read each one: the failure is a player for a video that does not exist, or a link to an asset that is not there. For every download URL printed, follow it — a redirect to the release's own storage is fine, a 404 is not:
@@ -5319,7 +5718,7 @@ git log -1 --format='the tree is at %h %s'   # the commit the deployed site shou
    curl -sSI -o /dev/null -w '%{http_code} %{url_effective}\n' '<the URL>'
    ```
 
-   **FACT:** every download URL and the status it answered with, and the checksum the page printed beside it (compare it with the release's own `console-sha256sums.txt` if you want that half too: the site's copy of the checksum is a fact about bytes, and no hermetic test can check it against the release). **Read that sums file by hand rather than with `shasum -c`**: it names the artifacts the way the *workflow* wrote them, with a space, and GitHub serves them with a dot, so `shasum -a 256 -c` on it fails with `FAILED open or read` for anyone who downloads it from the release page. That is a defect on the release side, not on the site's, and the site's own copy of the file is the one the build reads.
+   **FACT:** every download URL and the status it answered with, and the checksum the page printed beside it (compare it with the release's own `console-sha256sums.txt` if you want that half too: the site's copy of the checksum is a fact about bytes, and no hermetic test can check it against the release). **Read that sums file by hand rather than with `shasum -c`**: it names the macOS artifacts the way the *workflow* wrote them, with a space, and GitHub serves them with a dot, so `shasum -a 256 -c` on the whole file fails with `FAILED open or read` for anyone who downloads the `.dmg` or the `.zip` from the release page. **Its Linux lines are the exception**: those two names have no space in them, so a download of the AppImage or the `.deb` checks against them as it stands — which is exactly the step the console page prints beside them. That macOS half is a defect on the release side, not on the site's, and the site's own copy of the file is the one the build reads.
 
 4. **Every link the page carries resolves.**
 
@@ -6139,7 +6538,7 @@ and the row above stays **NOT RUN**.
 
 The emulator (P2.2 and P6.4, build tag `firebase`, `go test -tags firebase ./internal/budget/rules/...`) proves the mailbox rules against a local RTDB emulator. This check is the half no emulator can prove: that **the document actually deployed in `fugaro-dev`** — the one P2.1's template generates, whose generation check 82 reads back — answers the same way to real Firebase ID tokens minted by the project's own signer, over the real Identity Toolkit and the real Realtime Database. Its subject is the plan's row 81: a signed-in **user** may write **only** its own inbox messages and the ack on a message it has spoken (D113's two writes), and may read **nothing** beyond the nodes D112's user-claim read grant sits at — and their parents are not granted either. Its cases are P2.2's `TestMailboxPhoneWritesItsOwnInbox`, `TestMailboxMessageShape`, `TestMailboxHeartbeatDeleteIsDenied` (from the user's side), `TestMailboxPhoneAcksWhatItSpoke`, `TestMailboxClaimMismatchIsAdmittedNowhere` and `TestMailboxReadsAreTheGrantedSet`, P6.4's `TestDeviceNodeGatesEverythingUserReaches` and `TestMailboxMessagesRequireTheTag`, plus — recorded, not failed — `TestMailboxResidualMintedTokenNeedsTheDeviceNode`, whose subject generation 3 changed: a minted token for an account **with** a device node is that account (step 7), and one for an account without is refused everything.
 
-**What the deployed rules are.** The subtree is `mailbox/$mb/{inbox/$msg, outbox/$msg(.acked), heartbeat}` (`internal/budget/rules/rules.json.tmpl`, the `mailbox` node), and every message of every kind and the heartbeat carry a `mac` — a tag of exactly 64 lowercase-hex characters, the shape `MACOK` checks and the value it cannot (`internal/budget/rules`'s `MaxMacLength`; P6.7 is what verifies the value) — beside the `kind` that says which of the four shapes the message is (`message`, `prompt`, `answer` or `action`, with the fields that kind carries: `agent`, `options` on a prompt, `reply_to` on an answer, the `action` record on an action). Four predicates decide everything (`internal/budget/rules/rules.go`): `USER` (`auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists()` — the last conjunct is D166's device node, and it is what makes an account a *device*: an account whose uid has no node there reads and writes **nothing at all**, not even its own mailbox), `MAILBOX` (`USER && $mb == auth.uid`), `CONSUMER` (`auth != null && auth.token.mc != null && auth.token.mc == $mb`) and `PAIRING` (the `pu` claim a pairing session carries on the `p~<random>` uid it created — the only identity a phone has before it is paired, and what admits it to the two pairing nodes). A **user** — the account whose own uid is its `mu` claim **and whose uid has a device node** — may **write** one message into its own `inbox/$msg` (write-once: `MAILBOX && newData.exists() && !data.exists()`; shape `{id, sender, text, at, mac}` with `id == $msg` and `sender == $mb`, `at` a `TIMESTAMP` and the tag a `mac`) and may write `acked: true` once onto a message already in its own `outbox/$msg` (`MAILBOX && newData.exists() && !data.exists()`, with `data.parent().exists()`; the parent must already exist — that write is the **consumer's**, see below). Nothing else in the subtree is a user's: `$other: {".validate": false}` everywhere, the outbox message and the heartbeat are `CONSUMER`'s, the inbox has **no read grant at all**, and the only reads are `outbox` and `heartbeat` under `MAILBOX`. Outside the mailbox, what a `mu` token may read is exactly **the locations D112's grant sits at, plus its own mailbox's two nodes**: `config/caps/{global,defaults,repos/$slug}`, `config/kill/{global,repos/$slug}` and `spend/$day/{global,repos/$slug,runs/$slug/$run}` — `rules.json.tmpl` lines 12–14, 23–24, 97 and 126 carry `TOKEN || USER` (their three `repos/$slug` entries `(TOKEN && auth.token.fs == $slug) || USER`), and line 182, the day's per-run node, carries `RUN || USER`: `USER` is in every one of those disjunctions, which is the whole of what a `mu` token is admitted by — plus its own `outbox` and `heartbeat` (lines 296 and 340, under `MAILBOX`). An RTDB read grant sits at the location it is written on and cascades **down** only, so those nodes and everything under them are readable and **their parents are not**: `config/caps`, `config/caps/repos`, `config/kill`, `config/kill/repos`, `spend`, `spend/$day`, `spend/$day/repos` and `mailbox/$mb` itself are each refused — `TestMailboxReadsAreTheGrantedSet` names every one of them in its denied list. The grant is on the **claim, not the day or the repository**: `spend/<another day>/repos/$slug` and `config/caps/repos/$slug` for a slug that does not exist are readable too (the app shows the day it is looking at), and a read of an absent node is a 200 with `null`, not a denial. `config/limits/**`, `config/mode` and `config/policy/**` are `TOKEN` (the run token: a `fp` claim equal to `/fugaro/project` and a live `fx`); `config/admin` — and the device allowlist under it, `config/admin/devices/$uid`, which is `false` to read and to write — and `fugaro/**` are `false` and `outcomes/**` grants no read at all (it carries a run's `.write` and inherits the root's `.read: false`); `runs/**` and `agents/**` are `RUN` (`rules.json.tmpl` lines 53 and 212) — the run's own token, `TOKEN` **and** `fs`/`fr` naming that `$slug`/`$run`; and `pairing/$uid/{request,delivery}` belongs to `PAIRING` and to nothing else — the request write-once (`key` and `at`), the delivery read-only, which is how a pairing session is handed its answer and why a `mu` token cannot see it. A `mu` token is none of them.
+**What the deployed rules are.** The subtree is `mailbox/$mb/{inbox/$msg, outbox/$msg(.acked), heartbeat}` (`internal/budget/rules/rules.json.tmpl`, the `mailbox` node), and every message of every kind and the heartbeat carry a `mac` — a tag of exactly 64 lowercase-hex characters, the shape `MACOK` checks and the value it cannot (`internal/budget/rules`'s `MaxMacLength`; P6.7 is what verifies the value) — beside the `kind` that says which of the four shapes the message is (`message`, `prompt`, `answer` or `action`, with the fields that kind carries: `agent`, `options` on a prompt, `reply_to` on an answer, the `action` record on an action). Four predicates decide everything (`internal/budget/rules/rules.go`): `USER` (`auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists()` — the last conjunct is D166's device node, and it is what makes an account a *device*: an account whose uid has no node there reads and writes **nothing at all**, not even its own mailbox), `MAILBOX` (`USER && $mb == auth.uid`), `CONSUMER` (`auth != null && auth.token.mc != null && auth.token.mc == $mb`) and `PAIRING` (the `pu` claim a pairing session carries on the `p~<random>` uid it created — the only identity a phone has before it is paired, and what admits it to the two pairing nodes). A **user** — the account whose own uid is its `mu` claim **and whose uid has a device node** — may **write** one message into its own `inbox/$msg` (write-once: `MAILBOX && newData.exists() && !data.exists()`; shape `{id, sender, text, at, mac}` with `id == $msg` and `sender == $mb`, `at` a `TIMESTAMP` and the tag a `mac`) and may write `acked: true` once onto a message already in its own `outbox/$msg` (`MAILBOX && newData.exists() && !data.exists()`, with `data.parent().exists()`; the parent must already exist — that write is the **consumer's**, see below). Nothing else in the subtree is a user's: `$other: {".validate": false}` everywhere, the outbox message and the heartbeat are `CONSUMER`'s, the inbox has **no read grant at all**, and the only reads are `outbox` and `heartbeat` under `MAILBOX`. Outside the mailbox, what a `mu` token may read is exactly **the locations D112's grant sits at, plus its own mailbox's two nodes and the coordinator's subtree**: `config/caps/{global,defaults,repos/$slug}`, `config/kill/{global,repos/$slug}` and `spend/$day/{global,repos/$slug,runs/$slug/$run}` — `rules.json.tmpl` lines 16–18, 27–28, 101 and 130 carry `TOKEN || USER` (their three `repos/$slug` entries `(TOKEN && auth.token.fs == $slug) || USER`), and line 186, the day's per-run node, carries `RUN || USER`: `USER` is in every one of those disjunctions, which is the whole of what a `mu` token is admitted by — plus its own `outbox` and `heartbeat` (lines 300 and 344, under `MAILBOX`) — plus, since generation 4, `coordinator/**` (line 11, `USER` alone: the coordinator's state, coordinator plan P3, D195). An RTDB read grant sits at the location it is written on and cascades **down** only, so those nodes and everything under them are readable and **their parents are not**: `config/caps`, `config/caps/repos`, `config/kill`, `config/kill/repos`, `spend`, `spend/$day`, `spend/$day/repos` and `mailbox/$mb` itself are each refused — `TestMailboxReadsAreTheGrantedSet` names every one of them in its denied list. The grant is on the **claim, not the day or the repository**: `spend/<another day>/repos/$slug` and `config/caps/repos/$slug` for a slug that does not exist are readable too (the app shows the day it is looking at), and a read of an absent node is a 200 with `null`, not a denial. `config/limits/**`, `config/mode` and `config/policy/**` are `TOKEN` (the run token: a `fp` claim equal to `/fugaro/project` and a live `fx`); `config/admin` — and the device allowlist under it, `config/admin/devices/$uid`, which is `false` to read and to write — and `fugaro/**` are `false` and `outcomes/**` grants no read at all (it carries a run's `.write` and inherits the root's `.read: false`); `runs/**` and `agents/**` are `RUN` (`rules.json.tmpl` lines 57 and 216) — the run's own token, `TOKEN` **and** `fs`/`fr` naming that `$slug`/`$run`; and `pairing/$uid/{request,delivery}` belongs to `PAIRING` and to nothing else — the request write-once (`key` and `at`), the delivery read-only, which is how a pairing session is handed its answer and why a `mu` token cannot see it. A `mu` token is none of them.
 
 **What this check does not cover.** The **consumer's** own half of the fence — that a token whose `mc` names a mailbox writes that mailbox's outbox message and heartbeat and is admitted nowhere else (P2.2's `TestMailboxConsumerWritesOnlyItsMailbox`) — is **check 80's**, the mailbox end to end, written by P4.2. This check needs an outbox message to ack and a second one with no ack on it, so the three nodes it reads and acks — step 4's outbox message and heartbeat, and step 5's second outbox message — are **seeded with the operator's IAM credentials** — and the two device nodes steps 1 and 5 write are seeded the same way, **five nodes in all** — which bypass the rules entirely: `FACT:` lines record them, and they prove **nothing about the rules** — what step 4 proves is that the *user* may read them and step 5 that the *user* may ack one and be refused a `false` on the other.
 
@@ -6417,9 +6816,9 @@ TOK() { curl -sS -w '\nHTTP %{http_code}\n' "$@"; }
    test -s "$W/deployed.json" || { echo "the read returned nothing: check \$DB and the token, do not read on"; exit 1; }
    wc -c < "$W/deployed.json"                # the deployed document's size
    grep -o '"mailbox"' "$W/deployed.json" | wc -l              # 1: the subtree is deployed
-   grep -o 'auth.token.mu != null' "$W/deployed.json" | wc -l  # 12: the USER predicate, on every node that carries it
+   grep -o 'auth.token.mu != null' "$W/deployed.json" | wc -l  # 13: the USER predicate, on every node that carries it
    grep -o '"\.validate": false' "$W/deployed.json" | wc -l    # 13: $other's guard is deployed
-   grep -o 'config/admin/devices' "$W/deployed.json" | wc -l   # 12: D166's device conjunct, inside every expansion of USER
+   grep -o 'config/admin/devices' "$W/deployed.json" | wc -l   # 13: D166's device conjunct, inside every expansion of USER
    grep -o '"pairing"' "$W/deployed.json" | wc -l              # 1: D165's subtree
    grep -o '"mac"' "$W/deployed.json" | wc -l                  # 3: the tag, on both message directions and the heartbeat
    # The comparison the CLI itself makes (infra.SameJSON): the same JSON document,
@@ -6432,9 +6831,9 @@ TOK() { curl -sS -w '\nHTTP %{http_code}\n' "$@"; }
    print("the deployed document is the generated one (JSON-equal)")
    PY
    ```
-   **FACT:** the read-back's byte count — **whatever the API stored**: no number is required of it, because `internal/infra`'s `DB.Plan` compares the deployed document with the generated one through `SameJSON`, which unmarshals both and re-marshals them, i.e. **the same JSON document, formatting ignored** — so a document the API stored with other whitespace is the same document at another byte count, which is what the JSON comparison above is for. The one number that exists is the generator's own **58942** bytes, the size `internal/budget/rules/testdata/rules.golden.json` carries and check 82's step 3's plan line prints. The six counts: **1, 12, 13, 12, 1 and 3** for this release's document — they are this document's own numbers and not thresholds: a generation-2 document, the older one this check is written to catch, carries the mailbox and so answers **1** for the first pattern, but **0** for each of the last three. **The patterns are the document's own text, and `auth.token.mu != null` is the one to copy carefully**: the rules render the `USER` predicate expanded, so `mu` is never the first word after a quote and `grep -o '"mu != null"'` matches nothing in a correct document — a pattern that cannot match is a FACT line that reads as a failed deploy of a perfect one, which is why the counts are the generator's and `internal/cli`'s test for this check derives them from `internal/budget/rules/testdata/rules.golden.json`. The last three are generation 3's own: `config/admin/devices` is D166's conjunct and appears as many times as `USER` is expanded, `pairing` is D165's subtree (one node, absent from any generation-2 document), and `"mac"` is the tag on the two message directions and the heartbeat — a document without it is generation 2's, and the deploy that put it there is check 82's. A deployed document **without** `mailbox` is the failure this step exists to catch, and it is the one that makes the rest unreadable in the other direction: **step 3's and step 6's refused columns would pass on a document that grants nothing at all**, which is why the two are read together. If it is `mailbox`-less, stop and run **check 82** (the deploy) before reading any other result of this check.
+   **FACT:** the read-back's byte count — **whatever the API stored**: no number is required of it, because `internal/infra`'s `DB.Plan` compares the deployed document with the generated one through `SameJSON`, which unmarshals both and re-marshals them, i.e. **the same JSON document, formatting ignored** — so a document the API stored with other whitespace is the same document at another byte count, which is what the JSON comparison above is for. The one number that exists is the generator's own **59142** bytes, the size `internal/budget/rules/testdata/rules.golden.json` carries and check 82's step 3's plan line prints. The six counts: **1, 13, 13, 13, 1 and 3** for this release's document — they are this document's own numbers and not thresholds: a generation-2 document, the older one this check is written to catch, carries the mailbox and so answers **1** for the first pattern, but **0** for each of the last three. **The patterns are the document's own text, and `auth.token.mu != null` is the one to copy carefully**: the rules render the `USER` predicate expanded, so `mu` is never the first word after a quote and `grep -o '"mu != null"'` matches nothing in a correct document — a pattern that cannot match is a FACT line that reads as a failed deploy of a perfect one, which is why the counts are the generator's and `internal/cli`'s test for this check derives them from `internal/budget/rules/testdata/rules.golden.json`. The last three are generation 3's own: `config/admin/devices` is D166's conjunct and appears as many times as `USER` is expanded, `pairing` is D165's subtree (one node, absent from any generation-2 document), and `"mac"` is the tag on the two message directions and the heartbeat — a document without it is generation 2's, and the deploy that put it there is check 82's. A deployed document **without** `mailbox` is the failure this step exists to catch, and it is the one that makes the rest unreadable in the other direction: **step 3's and step 6's refused columns would pass on a document that grants nothing at all**, which is why the two are read together. If it is `mailbox`-less, stop and run **check 82** (the deploy) before reading any other result of this check.
 
-**Passes when:** step 1 writes Alice's device node and leaves Bob without one; step 2's write and step 5's first ack answer 200; every refused line in steps 3, 4, 5, 6 and 7 answers 401 `Permission denied` — including step 3's three `$BO` lines, the account whose `mu` is its own uid and which has **no device node**; step 6's first thirteen reads answer 200 (some with an absent node's `null`) and its second twenty-six 401, including a 401 on each parent of a granted node (`spend/$DAY`, `config/caps`, `config/kill`), a 401 on `config/admin/devices/$ALICE` and on both pairing nodes, and a 200 on the same granted nodes under another day and an absent slug; the user cannot read its own inbox or the message it wrote; and step 8's JSON comparison finds the deployed document equal to `rules.Generate()`'s output (formatting ignored — `SameJSON`), carrying `mailbox`, the `USER` predicate with its device conjunct, `pairing`, the `mac` field and `$other`'s guard (its byte count is the API's to choose; only the generated document is 58942 bytes). Step 7's residual succeeding is expected today and does not fail the check.
+**Passes when:** step 1 writes Alice's device node and leaves Bob without one; step 2's write and step 5's first ack answer 200; every refused line in steps 3, 4, 5, 6 and 7 answers 401 `Permission denied` — including step 3's three `$BO` lines, the account whose `mu` is its own uid and which has **no device node**; step 6's first thirteen reads answer 200 (some with an absent node's `null`) and its second twenty-six 401, including a 401 on each parent of a granted node (`spend/$DAY`, `config/caps`, `config/kill`), a 401 on `config/admin/devices/$ALICE` and on both pairing nodes, and a 200 on the same granted nodes under another day and an absent slug; the user cannot read its own inbox or the message it wrote; and step 8's JSON comparison finds the deployed document equal to `rules.Generate()`'s output (formatting ignored — `SameJSON`), carrying `mailbox`, the `USER` predicate with its device conjunct, `pairing`, the `mac` field and `$other`'s guard (its byte count is the API's to choose; only the generated document is 59142 bytes). Step 7's residual succeeding is expected today and does not fail the check.
 
 **Fails when:** any refusal answers 200 — another user's inbox accepted; the outbox message or the heartbeat accepted from a user; a second, `false`, consumer-less or parent-less ack accepted; an account with **no device node** admitted to its own mailbox, its own outbox or the granted read nodes (step 3's three `$BO` lines); the device allowlist readable by the user whose node it is, or a pairing node readable or writable by a `mu` token; a message with no `mac` accepted; any non-granted read answering 200 (especially `config/mode`, `config/limits/policyRules` or `fugaro/**`); a user reading its own inbox; or a `mu` that disagrees with the token's own `uid` admitted anywhere. **What failing looks like:** a deployed document older than generation 3 — generation 2's has `mailbox` but neither `config/admin/devices` nor `pairing`, so every read in step 6 passes and the app is open to any account that can be signed in; a hand-edited document in the Firebase console that a later deploy overwrote; a `$mb` guard written `auth.token.mu == $mb` instead of `USER && $mb == auth.uid`, which is what makes a mismatch token work. **The fix is the deploy, never a hand-edit in the console** — a document edited there is one this release's template does not generate, and check 82's second run would report the difference as a deploy rather than as "already has the rules". Stop and run check 82.
 
@@ -6470,7 +6869,7 @@ rmdir "$W" 2>/dev/null || true   # and the 700 directory itself goes
 
 ## Check 82: the rules deploy and the marker — `config/limits/policyRules` reads back this release's `RulesVersion` (`fugaro-dev` only, never `belong`; run by you; NOT RUN)
 
-The rules are a **generated artifact** of the CLI, not a file anyone edits: `internal/budget/rules`'s `Generate()` renders `rules.json.tmpl` with `rules.go`'s macros, `internal/budget/rules/testdata/rules.golden.json` (58942 bytes) pins the output, and `TestRulesParity`/`TestRulesGolden`/`TestGeneratedRulesParse` keep the three from drifting. The only path that puts that document on a database is **`fugaro update --firebase-project`**, and the deploy is the write **immediately before the generation marker**: the marker is written **after** the rules, never before (`internal/infra`'s `DB.Plan` and `Apply` — `firebasedb.go` appends the rules action and then the marker's own `d.put` call), which is what makes the marker's presence a statement about the document underneath it and this check is held to the code by `internal/cli`'s tests, so a plan that really changed breaks them. This check is that deploy and the generation it records: `internal/projectpolicy`'s `RulesVersion` (**3** on this release — generation 1 is the policy nodes, generation 2 adds the mailbox, generation 3 the message fields, the device allowlist and the pairing nodes), recorded at `projectpolicy.PathRulesMarker()` = `config/limits/policyRules`, which is the generation **check 81's denial cases and the emulator cases are written against**. A binary whose `RulesVersion` is not 3 would deploy a different document; `internal/cli`'s test for this section ties the number written here to that constant, so a bump breaks the test and the check is rewritten with it.
+The rules are a **generated artifact** of the CLI, not a file anyone edits: `internal/budget/rules`'s `Generate()` renders `rules.json.tmpl` with `rules.go`'s macros, `internal/budget/rules/testdata/rules.golden.json` (59142 bytes) pins the output, and `TestRulesParity`/`TestRulesGolden`/`TestGeneratedRulesParse` keep the three from drifting. The only path that puts that document on a database is **`fugaro update --firebase-project`**, and the deploy is the write **immediately before the generation marker**: the marker is written **after** the rules, never before (`internal/infra`'s `DB.Plan` and `Apply` — `firebasedb.go` appends the rules action and then the marker's own `d.put` call), which is what makes the marker's presence a statement about the document underneath it and this check is held to the code by `internal/cli`'s tests, so a plan that really changed breaks them. This check is that deploy and the generation it records: `internal/projectpolicy`'s `RulesVersion` (**4** on this release — generation 1 is the policy nodes, generation 2 adds the mailbox, generation 3 the message fields, the device allowlist and the pairing nodes, generation 4 the coordinator's read grant), recorded at `projectpolicy.PathRulesMarker()` = `config/limits/policyRules`, which is the generation **check 81's denial cases and the emulator cases are written against**. A binary whose `RulesVersion` is not 4 would deploy a different document; `internal/cli`'s test for this section ties the number written here to that constant, so a bump breaks the test and the check is rewritten with it.
 
 **No agent applies rules.** The database step asks for the project's name typed at a real terminal, and a coding-agent session cannot confirm it whatever flags it passes (`internal/cli`'s `askOrdinary`: an agent session raises `initflow.AgentError` before anything is shown), so this step is yours alone; nothing here is a CI job and no agent's session is one. **`--yes` is the owner's own shortcut, not an agent's**: `ask` does take it for an ordinary step (the step prints `confirmed by --yes`), which is why this check says what to do — read the plan and type the name — rather than claiming the CLI refuses it.
 
@@ -6520,17 +6919,17 @@ wc -c < internal/budget/rules/testdata/rules.golden.json 2>/dev/null || true    
    echo "mailbox: $(grep -o '"mailbox"' "$W/before.json" | wc -l)"
    fugaro doctor --project fugaro | sed -n '/policy-rules-skew/,+3p'
    ```
-   **FACT:** the marker's raw body (**`3`**, or `2`, or `1`, or `null` for an absent node), the deployed document's byte count and its `mailbox` count, and **doctor's `policy-rules-skew` line verbatim — or the record that doctor printed no such line at all**. Which line doctor prints is a function of the marker (`internal/cli/doctor.go`'s `doctorRulesSkew`), and for every marker but this release's own there are five states: an **absent or unreadable** marker prints **no line at all** (there is no generation to compare, so there is nothing to warn about — a `null` here is recorded as "no line", never as a sentence); a marker of **0** prints `rulesMarkerPrePolicyText(0)`, the sentence for rules that predate the policy nodes themselves; a marker of **1 or 2** prints `rulesMarkerOlderText`, the sentence for rules that carry the policy nodes but predate this release's document; a marker **above 3** prints the "a newer Fugaro deployed them" warning; and a hand-edited non-integer prints "the deployed rules cannot be told apart". A marker of **3** is the sixth state, and the only one the marker does not decide: doctor then reads the deployed document and compares it with the one this binary generates (`infra.SameJSON`, formatting ignored) — **no line at all** when the two are the same document, `rulesSkewText` ("the deployed rules are older than the marker ...") when they differ, which is a hand edit of `/.settings/rules.json` in the console and not of the marker, and an **info** note, never a warning, when the document or this binary's own generated rules cannot be read. On an installation still on generation 2 — the before-state of this release's deploy — the line is `rulesMarkerOlderText`'s sentence (`internal/cli/project_cmd.go`), printed for a marker of 2: *"the policy marker config/limits/policyRules records generation 2, below the generation 3 this Fugaro deploys: these rules do carry the policy nodes of generation 1, so a published policy is read and enforced and publishing another is not refused — what they predate is this release's own document, which adds the mailbox subtree and the user-claim read grants the mobile app reads (mobile plan P2.1, design m9 §6.4), and binds that user claim to a device node (mobile plan P6.4, D166): a phone account with no config/admin/devices/<uid> node reads and writes nothing at all, so before you deploy, every account that is meant to reach the app needs one — nothing mints a device node yet ('fugaro pair' is plan task P6.6 and is not built), so today that means adding it by hand; re-run 'fugaro update --firebase-project' in your own terminal from a Fugaro that deploys generation 3 or newer, which writes that document and records its generation in the marker"* (the same sentence with `records generation 1` is what a marker of 1 prints). **Read the device node in that sentence before you confirm step 3**: the deploy takes the warning away and leaves every unpaired account refused, which is exactly what it says. A `policy-rules-skew` line that is **neither** of the two above and not the "newer Fugaro" warning is one of two states, and step 1's marker tells them apart. With a **hand-edited marker** this Fugaro cannot read as a generation, record it verbatim and **stop**: the deploy would go over rules a newer Fugaro wrote, and `DB.Plan` refuses exactly that (step 7). With a **marker of 3** the line is `rulesSkewText`, and its remedy is this very step: the marker names this generation and the document underneath it is not the one this binary generates (a console hand-edit of `/.settings/rules.json`, which check 81's "What failing looks like" names), so record it verbatim and **confirm step 3**, which is what the sentence tells you to do.
+   **FACT:** the marker's raw body (**`4`**, or `3`, or `2`, or `1`, or `null` for an absent node), the deployed document's byte count and its `mailbox` count, and **doctor's `policy-rules-skew` line verbatim — or the record that doctor printed no such line at all**. Which line doctor prints is a function of the marker (`internal/cli/doctor.go`'s `doctorRulesSkew`), and for every marker but this release's own there are five states: an **absent or unreadable** marker prints **no line at all** (there is no generation to compare, so there is nothing to warn about — a `null` here is recorded as "no line", never as a sentence); a marker of **0** prints `rulesMarkerPrePolicyText(0)`, the sentence for rules that predate the policy nodes themselves; a marker of **1, 2 or 3** prints `rulesMarkerOlderText`, the sentence for rules that carry the policy nodes but predate this release's document; a marker **above 4** prints the "a newer Fugaro deployed them" warning; and a hand-edited non-integer prints "the deployed rules cannot be told apart". A marker of **4** is the sixth state, and the only one the marker does not decide: doctor then reads the deployed document and compares it with the one this binary generates (`infra.SameJSON`, formatting ignored) — **no line at all** when the two are the same document, `rulesSkewText` ("the deployed rules are older than the marker ...") when they differ, which is a hand edit of `/.settings/rules.json` in the console and not of the marker, and an **info** note, never a warning, when the document or this binary's own generated rules cannot be read. On an installation on generation 3 — the before-state of this release's deploy wherever the previous release's was run — the line is `rulesMarkerOlderText`'s sentence (`internal/cli/project_cmd.go`) for a marker of 3: *"the policy marker config/limits/policyRules records generation 3, below the generation 4 this Fugaro deploys: these rules carry the policy nodes, the mailbox and the device binding, so runs, a published policy and the mobile app are unaffected — what they predate is this release's own document, which adds the read grant on the coordinator's state (coordinator plan P3): a signed-in reader is refused every read of coordinator/ until it is deployed; re-run 'fugaro update --firebase-project' in your own terminal from a Fugaro that deploys generation 4 or newer, which writes that document and records its generation in the marker"*. On one still on generation 2 it is the same function's longer sentence, printed for a marker of 2: *"the policy marker config/limits/policyRules records generation 2, below the generation 4 this Fugaro deploys: these rules do carry the policy nodes of generation 1, so a published policy is read and enforced and publishing another is not refused — what they predate is this release's own document, which adds the mailbox subtree and the user-claim read grants the mobile app reads (mobile plan P2.1, design m9 §6.4), and binds that user claim to a device node (mobile plan P6.4, D166): a phone account with no config/admin/devices/<uid> node reads and writes nothing at all, so before you deploy, every account that is meant to reach the app needs one — nothing mints a device node yet ('fugaro pair' is plan task P6.6 and is not built), so today that means adding it by hand; re-run 'fugaro update --firebase-project' in your own terminal from a Fugaro that deploys generation 4 or newer, which writes that document and records its generation in the marker"* (the same sentence with `records generation 1` is what a marker of 1 prints). **On a marker of 1 or 2, read the device node in that sentence before you confirm step 3**: the deploy takes the warning away and leaves every unpaired account refused, which is exactly what it says. A `policy-rules-skew` line that is **neither** of the two above and not the "newer Fugaro" warning is one of two states, and step 1's marker tells them apart. With a **hand-edited marker** this Fugaro cannot read as a generation, record it verbatim and **stop**: the deploy would go over rules a newer Fugaro wrote, and `DB.Plan` refuses exactly that (step 7). With a **marker of 4** the line is `rulesSkewText`, and its remedy is this very step: the marker names this generation and the document underneath it is not the one this binary generates (a console hand-edit of `/.settings/rules.json`, which check 81's "What failing looks like" names), so record it verbatim and **confirm step 3**, which is what the sentence tells you to do.
 
 2. **`--print-vars` and nothing else.** *(Guard block.)* The read-only pre-flight of the installation's order: it resolves and prints the variables — including the Firebase project id every write below will be made in — and writes nothing. **FACT:** the resolved Firebase project and the region — the output is one JSON object with two halves, `{"installation": {...}, "firebase": {...}}`, and the two values are at `installation.region` and `firebase.project` (the project id the local config calls `budget.firebase_project`; the key is not `firebase_project` in this document) — that the command exits 0, and that `$DB/config/limits/policyRules` and the deployed document are still what step 1 read (a read-only run changes nothing).
 
 3. **⚠ CONFIRM — the deploy.** *(Guard block.)* **`fugaro update --firebase-project "$FP"`** in your own terminal, and read the plan **before** typing anything. The database step prints, in this order, only what it would write:
 
    ```
-   rules: deploys the security rules (58942 bytes, generated)
-   config/limits/policyRules: records the rules generation (config/limits/policyRules = 3)
+   rules: deploys the security rules (59142 bytes, generated)
+   config/limits/policyRules: records the rules generation (config/limits/policyRules = 4)
    ```
-   (the two act lines are `internal/infra/firebasedb.go`'s, printed in this order: `DB.Plan` appends the rules action (`Path: "rules"`) and then plans the marker with its `d.put(projectpolicy.PathRulesMarker(), …)` call, and `deployDatabase` prints the plan's actions in slice order, so the rules line comes **first** and the marker line **last**. The rules line appears only when `SameJSON` says the deployed document differs from the generated one; the marker line appears whenever the marker is absent or holds another generation. The other lines — `writes the Fugaro mark (fugaro/mark)`, `writes the project's name (fugaro/project = fugaro), which every run token's fp claim must equal`, `seeds the mode: observe`, `seeds the largest lease (max reserve) at $5` — are planned before both of these, for the fields that are absent, so they print above the two lines above.) The confirmation sentence names what it does — `writes the database as listed, as you (project owner, editor or budget admin), and then the local config` — and **this check does not take `--yes`**: the step's confirmation is an *ordinary* one (`askOrdinary`, `internal/cli/init.go`'s `ask`), so `--yes` **would** confirm it — the CLI prints `confirmed by --yes` and writes — which is exactly the shortcut this check exists to avoid, because the point is that you read the plan first; what no flag can do is confirm it for a **coding agent's session**, where `askOrdinary` raises `initflow.AgentError` before it prints anything. So: type the project's name. **FACT:** every act line verbatim, in the order printed; the sentence you confirmed; the byte count in the rules line is `rules.Generate()`'s own **58942**, the size `internal/budget/rules/testdata/rules.golden.json` carries; it is **not** the read-back document's size, which the API may store with other formatting — `DB.Plan` compares the two as JSON through `SameJSON`, ignoring formatting, so only the generated bytes have this number; and that the **marker line names 3** — which is how this binary states its own `projectpolicy.RulesVersion`, and the value `internal/projectpolicy` exports. **A rules line whose byte count is not the generated document's is a stop:** it means the plan is not this release's `Generate()` output, and nothing may be confirmed. **The marker is the step's last write, and the rules deploy comes immediately before it** (`DB.Plan` appends the rules action and then plans the marker with `d.put(projectpolicy.PathRulesMarker(), …)`, and `Apply` writes them in that order): that is what makes the marker's presence a statement about the document underneath it. A deploy that fails on the rules leaves the marker as it was — **absent** on a first deploy, which is generation 0, the legacy path under which no policy is read and none can be published, or the **old generation** on an upgrade, which is what the document still deployed carries — rather than recording this generation over rules that never landed. Written the other way round, a failed deploy would have left exactly that claim behind: the state doctor reports as `rulesSkewText`, and the state check 81's steps are written to catch. An absent marker is not itself a refusal: what stops a run is a policy node that exists and cannot be read or decoded (`internal/runner/projectpolicy.go`'s `unreadablePolicy`), not a marker that is not there. A run that prints a **marker** line while no rules line appears above it is the other state: the document already matched, only the marker moved.
+   (the two act lines are `internal/infra/firebasedb.go`'s, printed in this order: `DB.Plan` appends the rules action (`Path: "rules"`) and then plans the marker with its `d.put(projectpolicy.PathRulesMarker(), …)` call, and `deployDatabase` prints the plan's actions in slice order, so the rules line comes **first** and the marker line **last**. The rules line appears only when `SameJSON` says the deployed document differs from the generated one; the marker line appears whenever the marker is absent or holds another generation. The other lines — `writes the Fugaro mark (fugaro/mark)`, `writes the project's name (fugaro/project = fugaro), which every run token's fp claim must equal`, `seeds the mode: observe`, `seeds the largest lease (max reserve) at $5` — are planned before both of these, for the fields that are absent, so they print above the two lines above.) The confirmation sentence names what it does — `writes the database as listed, as you (project owner, editor or budget admin), and then the local config` — and **this check does not take `--yes`**: the step's confirmation is an *ordinary* one (`askOrdinary`, `internal/cli/init.go`'s `ask`), so `--yes` **would** confirm it — the CLI prints `confirmed by --yes` and writes — which is exactly the shortcut this check exists to avoid, because the point is that you read the plan first; what no flag can do is confirm it for a **coding agent's session**, where `askOrdinary` raises `initflow.AgentError` before it prints anything. So: type the project's name. **FACT:** every act line verbatim, in the order printed; the sentence you confirmed; the byte count in the rules line is `rules.Generate()`'s own **59142**, the size `internal/budget/rules/testdata/rules.golden.json` carries; it is **not** the read-back document's size, which the API may store with other formatting — `DB.Plan` compares the two as JSON through `SameJSON`, ignoring formatting, so only the generated bytes have this number; and that the **marker line names 4** — which is how this binary states its own `projectpolicy.RulesVersion`, and the value `internal/projectpolicy` exports. **A rules line whose byte count is not the generated document's is a stop:** it means the plan is not this release's `Generate()` output, and nothing may be confirmed. **The marker is the step's last write, and the rules deploy comes immediately before it** (`DB.Plan` appends the rules action and then plans the marker with `d.put(projectpolicy.PathRulesMarker(), …)`, and `Apply` writes them in that order): that is what makes the marker's presence a statement about the document underneath it. A deploy that fails on the rules leaves the marker as it was — **absent** on a first deploy, which is generation 0, the legacy path under which no policy is read and none can be published, or the **old generation** on an upgrade, which is what the document still deployed carries — rather than recording this generation over rules that never landed. Written the other way round, a failed deploy would have left exactly that claim behind: the state doctor reports as `rulesSkewText`, and the state check 81's steps are written to catch. An absent marker is not itself a refusal: what stops a run is a policy node that exists and cannot be read or decoded (`internal/runner/projectpolicy.go`'s `unreadablePolicy`), not a marker that is not there. A run that prints a **marker** line while no rules line appears above it is the other state: the document already matched, only the marker moved.
 
 4. **The second run writes nothing.** *(Guard block.)* `fugaro update --firebase-project "$FP"` again, and **do not confirm**: a database already in the wanted state plans no action and asks for no confirmation (`deployDatabase`: `len(acts) == 0 && !idp.missing && !fs.Pending()`), printing exactly
 
@@ -6562,7 +6961,7 @@ wc -c < internal/budget/rules/testdata/rules.golden.json 2>/dev/null || true    
    print("the deployed document is the generated one (JSON-equal)")
    PY
    ```
-   **FACT:** the marker's raw body — **`3`**, `internal/projectpolicy`'s `RulesVersion` for this release — the read-back document's byte count (**whatever the API stored**: no number is required of it, because `infra.SameJSON` compares the read-back with `rules.Generate()`'s output by unmarshalling and re-marshalling both, i.e. the same JSON document ignoring formatting); **58942 is the generator's own size**, the one `internal/budget/rules/testdata/rules.golden.json` holds, and the JSON comparison above is what ties the two together; its `mailbox` count (**1**: the mailbox subtree generation 2 adds, which check 81 step 8 requires), its `config/admin/devices` count (**12**: D166's device conjunct, expanded into every `USER` — check 81 steps 3, 4 and 6 are what a missing one looks like live), its `pairing` count (**1**: D165's subtree, which generation 2 had not), whether the JSON comparison says the document is the generated one, and whether the document changed in step 3. The marker and the document have to agree: a marker of 3 over a document without `mailbox`, without the device allowlist or without `pairing` is the state this check exists to catch, and it is a **failure** — the runner would read the marker, believe the mailbox grant exists, and the app's writes would be refused (or, on a marker below this binary's, the app would be met with a document that has no mailbox at all), and the whole of check 81 would be reading a fence the app cannot see.
+   **FACT:** the marker's raw body — **`4`**, `internal/projectpolicy`'s `RulesVersion` for this release — the read-back document's byte count (**whatever the API stored**: no number is required of it, because `infra.SameJSON` compares the read-back with `rules.Generate()`'s output by unmarshalling and re-marshalling both, i.e. the same JSON document ignoring formatting); **59142 is the generator's own size**, the one `internal/budget/rules/testdata/rules.golden.json` holds, and the JSON comparison above is what ties the two together; its `mailbox` count (**1**: the mailbox subtree generation 2 adds, which check 81 step 8 requires), its `config/admin/devices` count (**13**: D166's device conjunct, expanded into every `USER` — check 81 steps 3, 4 and 6 are what a missing one looks like live), its `pairing` count (**1**: D165's subtree, which generation 2 had not), whether the JSON comparison says the document is the generated one, and whether the document changed in step 3. The marker and the document have to agree: a marker of 4 over a document without `mailbox`, without the device allowlist or without `pairing` is the state this check exists to catch, and it is a **failure** — the runner would read the marker, believe the mailbox grant exists, and the app's writes would be refused (or, on a marker below this binary's, the app would be met with a document that has no mailbox at all), and the whole of check 81 would be reading a fence the app cannot see.
 
 6. **The transition off the older generation, for the marker step 1 actually found.** *(Guard block.)* What happens here depends on step 1's marker, and the three cases are the three `doctorRulesSkew` can produce for a marker at or below this binary's generation:
 
@@ -6574,15 +6973,15 @@ wc -c < internal/budget/rules/testdata/rules.golden.json 2>/dev/null || true    
    fugaro doctor --project fugaro | grep -c policy-rules-skew   # 0
    fugaro doctor --strict --project fugaro >/dev/null; echo "doctor --strict exit: $?"
    ```
-   **FACT:** the count (`0`) — a `grep -c` of 0 is the pass, and a line here is a deploy that did not land — and `doctor --strict`'s exit code; when it is not 0, the failing check ids, because a `policy-rules-skew` **warning** here is a deploy that did not land and any **other** warning is a separate finding (`token-signers`, a caps gap) that this check records and does not own. If step 1's marker was already **`3`**, this step is **not run**: record "the installation was already on generation 3; the transition was not observed" — an installation that has been on this release's generation since its deploy is the normal case, and pretending to have watched a transition that did not happen is worse than recording that it was not needed.
+   **FACT:** the count (`0`) — a `grep -c` of 0 is the pass, and a line here is a deploy that did not land — and `doctor --strict`'s exit code; when it is not 0, the failing check ids, because a `policy-rules-skew` **warning** here is a deploy that did not land and any **other** warning is a separate finding (`token-signers`, a caps gap) that this check records and does not own. If step 1's marker was already **`4`**, this step is **not run**: record "the installation was already on generation 4; the transition was not observed" — an installation that has been on this release's generation since its deploy is the normal case, and pretending to have watched a transition that did not happen is worse than recording that it was not needed.
 
 7. **The marker above this binary's generation is a refusal — read, not provoked.** *(Guard block, read-only.)* `DB.Plan` reads the marker **first** and refuses the whole plan when it is above this binary's `RulesVersion`, before anything is planned: *"the deployed security rules are generation %d (config/limits/policyRules = %d) and this Fugaro's are generation %d: the rules this database runs under came from a newer Fugaro, and 'fugaro update --firebase-project' would deploy this binary's older rules over them and record generation %d in the marker. Upgrade Fugaro first ('fugaro upgrade'), then run 'fugaro update --firebase-project' again with the newer binary; 'fugaro doctor' reports this as policy-rules-skew"* (`internal/infra/firebasedb.go`). **This check does not test that live, on purpose**: provoking it means hand-writing a marker above this binary's generation, and while that value stands the runs under it still read and enforce the policy published there — a marker at or above this Fugaro's generation reads as deployed (`internal/projectpolicy`'s `rulesGeneration`) — while `fugaro update --firebase-project` refuses to deploy this binary's document over the newer one and doctor reports the skew; a hand-edited marker the CLI has no reason to write, on the installation that runs the dogfood. The boundary is covered offline, where it can be driven without a window: `internal/infra`'s `TestDBRefusesToDeployOverNewerRules` is the plan test for the refusal (`DB.Plan` returns it before `d.acts` is cleared, so the refused plan writes nothing and the newer installation's rules and marker are left as they are), and `internal/cli`'s `TestDoctorPolicyChecks` covers the reporting — its `policy-rules-skew` cases include the marker above this binary's generation ("rules newer than this Fugaro"). **FACT:** the sentence above, quoted from the source, and the two test names — and record explicitly that **check 82 did not write a marker by hand**. A live proof of the refusal belongs to a scratch project with no runs in it, not to `fugaro-dev`.
 
-**Passes when:** step 3's act lines hold the marker line naming **3** and (when the document differed) the rules line naming the generated document's byte count, and the confirmation was typed; step 4's second run prints `The database already has the rules, mark, project name and mode.` and asks for no confirmation; step 5's read-back marker is `3` and its document is `infra.SameJSON`-equal to `rules.Generate()`'s output (its byte count is the API's to choose) with `mailbox`, the device allowlist and `pairing` present; step 6's doctor prints no `policy-rules-skew` line after the deploy (or the step is recorded as not run because the installation was already on generation 3, or as not observed because the marker was absent); and step 7 records the refusal's sentence and the offline tests without provoking it.
+**Passes when:** step 3's act lines hold the marker line naming **4** and (when the document differed) the rules line naming the generated document's byte count, and the confirmation was typed; step 4's second run prints `The database already has the rules, mark, project name and mode.` and asks for no confirmation; step 5's read-back marker is `4` and its document is `infra.SameJSON`-equal to `rules.Generate()`'s output (its byte count is the API's to choose) with `mailbox`, the device allowlist and `pairing` present; step 6's doctor prints no `policy-rules-skew` line after the deploy (or the step is recorded as not run because the installation was already on generation 4, or as not observed because the marker was absent); and step 7 records the refusal's sentence and the offline tests without provoking it.
 
-**Fails when:** the marker line does not name 3 (an older CLI deployed an older document — the fix is `fugaro upgrade` and this check again, never a hand-edit); the rules line's byte count is not the generated document's; the second run plans a write (the first run's marker write did not land); the read-back marker is not `3`, or is `3` over a document with no `mailbox`, no device allowlist or no `pairing` (the two disagree, and it is the state that makes every one of check 81's refusals meaningless); or `doctor` still reports `policy-rules-skew` as a warning after the deploy. **What failing looks like:** a rules deploy refused for size or syntax (the RTDB rules endpoint has a size limit — the generated document is 58942 bytes and well inside it, and a refusal is worth recording verbatim); a project where Identity Platform is not initialized, which fails the database step **after** the rules and the marker are deployed (`deployDatabase` runs `db.Apply` — the rules' `PutRules`, the marker and the other database writes — and only then `idp.initialize`, `internal/cli/init_firebase.go`; `internal/cli`'s `TestIdentityPlatformInitializedWhenMissing` is the case: the run succeeds with Identity Platform missing and the mark written), so a failure there leaves generation 3 live and the owner looking for a rules problem that is not there — **and, since generation 3, an installation whose accounts have no device node**: the deploy lands, the warning disappears, and every app read is refused until `config/admin/devices/<uid>` exists for each account (`internal/projectpolicy`'s `RulesVersion` comment; check 81 step 1 writes them by hand because `fugaro pair` is P6.6 and is not built); a CLI older than the release whose document is being deployed, which quietly writes the older generation. **The order is the operator's CLI, then this deploy, then the runner images and any repository image**: a runner built from the new CLI asks the backend for leases the old rules refuse, and the gateway reads a refused write with no cap reason as the backend being unavailable, so the run waits and then halts on the grace period.
+**Fails when:** the marker line does not name 4 (an older CLI deployed an older document — the fix is `fugaro upgrade` and this check again, never a hand-edit); the rules line's byte count is not the generated document's; the second run plans a write (the first run's marker write did not land); the read-back marker is not `4`, or is `4` over a document with no `mailbox`, no device allowlist or no `pairing` (the two disagree, and it is the state that makes every one of check 81's refusals meaningless); or `doctor` still reports `policy-rules-skew` as a warning after the deploy. **What failing looks like:** a rules deploy refused for size or syntax (the RTDB rules endpoint has a size limit — the generated document is 59142 bytes and well inside it, and a refusal is worth recording verbatim); a project where Identity Platform is not initialized, which fails the database step **after** the rules and the marker are deployed (`deployDatabase` runs `db.Apply` — the rules' `PutRules`, the marker and the other database writes — and only then `idp.initialize`, `internal/cli/init_firebase.go`; `internal/cli`'s `TestIdentityPlatformInitializedWhenMissing` is the case: the run succeeds with Identity Platform missing and the mark written), so a failure there leaves generation 4 live and the owner looking for a rules problem that is not there — **and, since generation 3, an installation whose accounts have no device node**: the deploy lands, the warning disappears, and every app read is refused until `config/admin/devices/<uid>` exists for each account (`internal/projectpolicy`'s `RulesVersion` comment; check 81 step 1 writes them by hand because `fugaro pair` is P6.6 and is not built); a CLI older than the release whose document is being deployed, which quietly writes the older generation. **The order is the operator's CLI, then this deploy, then the runner images and any repository image**: a runner built from the new CLI asks the backend for leases the old rules refuse, and the gateway reads a refused write with no cap reason as the backend being unavailable, so the run waits and then halts on the grace period.
 
-**Paste back:** the `fugaro version` and `--print-vars` output (the project and region only — no token); the marker's raw body before and after; the deployed document's byte count and `mailbox` count before and after; **every act line of step 3 verbatim and the confirmation sentence**; step 4's "already has" line verbatim; `doctor`'s `policy-rules-skew` line before and after (or the note that the installation was already on generation 3, or that the marker was absent and doctor printed no line either time); step 7's refusal sentence and the note that nothing was hand-written. **Never paste an access token, a refresh token or the web API key.** Until this check runs, the deployed document's generation is **UNVERIFIED** on a live installation and the row above stays **NOT RUN**.
+**Paste back:** the `fugaro version` and `--print-vars` output (the project and region only — no token); the marker's raw body before and after; the deployed document's byte count and `mailbox` count before and after; **every act line of step 3 verbatim and the confirmation sentence**; step 4's "already has" line verbatim; `doctor`'s `policy-rules-skew` line before and after (or the note that the installation was already on generation 4, or that the marker was absent and doctor printed no line either time); step 7's refusal sentence and the note that nothing was hand-written. **Never paste an access token, a refresh token or the web API key.** Until this check runs, the deployed document's generation is **UNVERIFIED** on a live installation and the row above stays **NOT RUN**.
 
 **Restore.** Nothing: this check's whole point is the write it makes, and there is nothing to undo. The rules and the marker it deployed **stay** — that is the state every later check reads. Two cases that are not a rollback:
 
@@ -8772,3 +9171,823 @@ yet, that step 6's second half was not run. Until it has been, this row stays **
 - **Never touch `belong`, EdgeWeb or EdgeServer**: no step here reads or writes a project at all,
   and the only host this check fetches is the built artifact on localhost or the canonical origin
   the site's own `site.yaml` names.
+
+## Check 124a: the plan, the two read-backs, and the two refusals an owner meets today (installation `fugaro`, the sandbox checkout only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written for the **opt-in Cloud Batch backend** — `fugaro setup --provision-batch`,
+shipped in 0.9.5 — whose design (`docs/design/compute-backend.md`) measured the backend in
+hand-made scripts (**Check 57a**, run 2026-10-15) and wrote the post-build acceptance run (**57b**)
+inside a design document, never in this register. This part is the half an owner can run **today**:
+the plan, the apply, and the two read-backs. **No agent performs any step of it**: every command
+below is run by you, at your terminal, in a shell whose `gcloud` identity is the operator's.
+
+**What this part can be run against, and what it cannot.** The provisioning itself is shipped:
+`--provision-batch` no longer refuses, `internal/cli/init_compute.go` is the stage behind it, and
+`deploy/terraform/gcp/roots/compute` is the root it applies. The **backend name** is not selectable
+in this build: `internal/localcfg` refuses `backend: cloud-batch` with
+`backend "cloud-batch" is not enabled yet (this build runs cloud-run)`, until **the enable task** —
+`docs/plans/2026-10-19-compute-backend.md`'s Task 10, whose coverage table says *to build*. So this
+part is runnable end to end, and **124b, 124c and 124d are written and cannot be run yet**: they
+need a run on this backend, and a run needs the name.
+
+**The doctor reading, and the one line a healthy installation prints.** `fugaro doctor`'s Batch half
+is **warning-shaped** today — `internal/cli/doctor_batch.go` says so in the term: *"All of them are
+WARNINGS, never failures: nothing in this build can select `backend: cloud-batch`"*, so an
+installation's `batch:` block is a fact about work in progress rather than a broken installation.
+What that means for the reading is the opposite of the obvious one, and it is `internal/cli/doctor.go`
+that decides it: `printDoctorChecks` skips a check that is `OK` **and** carries no severity, so a
+Batch check prints a line only when it is **not** OK — a correctly provisioned installation prints
+**nothing** from `batch-apis`, `batch-job-definition`, `batch-image-family`, `batch-network`,
+`batch-subnetwork`, `batch-log-sink` and `batch-launcher-iam`. The one Batch line that always
+prints is `info batch-artifact-boundary: …`, the boundary Global Constraint 13 leaves standing: it is
+`Severity: "info"`, and the same comment says why it is not a failure — *"an info check does not fail
+doctor, with or without `--strict` … it must not suppress the summary line either"*. **So the
+healthy reading after the apply is one `info batch-artifact-boundary:` line and
+`fugaro doctor: everything checked is ok`, and `--strict` exits 0.** A `warning batch-…: …` line is
+the finding, and it names what that read found wrong or could not read; a **missing** summary line
+is the other half of it. After the enable task the same checks become the gate they were written to
+be, and `internal/cli/doctor_batch.go` says who decides which of them a project must satisfy before
+it may.
+
+**Never `belong` as a target, and no step of this check names it as an argument.** Every command
+that names a project names the sandbox's (`--project="${P:?}"`, which is `fugaro-dev`) or the
+installation (`--project fugaro`), and this check has no reason to go anywhere else: the
+installation, the sandbox repository and one hand-made task are its whole subject. It is a
+prohibition and not a task, and no agent performs it either.
+
+**The guard block — re-run it from a fresh shell before this part and before each of the other
+three.** It is Check 43's three hard stops, with this check's number in the messages; every check
+from 48 onward carries them (the rule is the project-centric plan's, and Check 59's sections say it
+again). Read it as three assertions rather than three prints: `P` is exactly `fugaro-dev` **and**
+`L`, `R` and `U` are non-empty, so a skipped, partially pasted or hand-edited block stops here
+instead of reaching `gcloud` with an empty argument; `fugaro doctor`'s `project:` line is the
+checkout's own installation; and this checkout's origin is the sandbox.
+
+```bash
+# Save this to a file and run it with `bash` — an interactive zsh does not
+# honour the `#` comments unless `setopt interactive_comments` is set first.
+: "${CHK124_OWNER_RUN:?export CHK124_OWNER_RUN=yes first: this check is owner-run, and no agent performs any step of it}"
+P=fugaro-dev
+L=us-east5
+R=fugaro-ghcr
+U=dimipaun/fugaro-base
+W=/tmp/chk124; mkdir -p "$W"
+
+[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$R" ] && [ -n "$U" ] \
+  || { echo "Check 124 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R U=$U must not be empty)" >&2; exit 1; }
+fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+  || { echo "Check 124 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
+git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
+  || { echo "Check 124 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
+```
+
+`R` and `U` are Check 43's registry variables and this check reads no image out of them: they are in
+the block because the first stop asserts the **block itself** ran, and a variable that is not there
+is a flag someone edited. `V` (`fugaro version`) is not needed here — nothing in this check
+interpolates an image tag. Of the commands this check runs, **`fugaro version` and
+`fugaro validate` are the two that take no `--project` flag at all** (`fugaro version --help`,
+`fugaro validate --help`; `validate` resolves the project from the checkout, the way `doctor` does
+without the flag — the register's own note under Check 43's rule says the same), which is why the
+block below has no `V` and why the step that runs `validate` runs it bare.
+
+**Every `fugaro` command below carries `--project fugaro`** (the installation's *name*: its GCP
+project is `fugaro-dev`), and every `gcloud` command carries `--project="${P:?}"`. Which command
+takes what, and why it is not optional:
+
+- **`--project` disagreeing with the checkout's `project:` is refused, not resolved**
+  (the checkout's own project is named in the refusal message, `internal/localcfg/select.go`).
+  That refusal is a fourth hard stop and it is what makes the `fugaro` half of the guard hold: a
+  `fugaro` command run from the wrong checkout cannot quietly change the wrong installation.
+- **`gcloud` reads its project from the operator's ambient configuration** when no `--project=`
+  is given, and the owner's default is a `*-prod` project. Every `gcloud` line in this check names
+  it, and `${P:?}` makes an empty one a hard error rather than an empty argument.
+- **`fugaro doctor`, `fugaro runs ls`, `fugaro budget show`, `fugaro validate` and `fugaro reaper`**
+  are the ones this check drives, in every part.
+
+**(124a-1) Record what is in the project before you touch it.** The cleanup in 124d is "nothing was
+left behind", and that is only a fact against a before-state; the restore is only *safe* against
+one, because the lists below are also what says which jobs and VMs were there before the check and
+are therefore not the check's to delete. This installation's own provisioning is not litter: the
+`fugaro-preload` image family, the reaper job and the scheduler jobs are here before you start and
+stay after you finish (and no **instance template** is: see the FACT below).
+
+```bash
+gcloud batch jobs list --project="${P:?}" --location="${L:?}" \
+  --filter="labels.fugaro=managed" --format='value(name,status.state)' | sort > "$W/jobs-before.txt"
+gcloud compute instances list --project="${P:?}" \
+  --filter="labels.fugaro=managed" --format='value(name)' | sort > "$W/instances-before.txt"
+gcloud compute instance-templates list --project="${P:?}" \
+  --format='value(name)' | sort > "$W/templates-before.txt"
+wc -l "$W/jobs-before.txt" "$W/instances-before.txt" "$W/templates-before.txt"
+```
+
+**FACT:** the three `wc -l` numbers, and the three files' contents, cat'd back.
+**expected output:** on a sandbox whose Batch backend has never run a job, `0` jobs, `0` instances and `0` templates: the
+installation provisions **no** instance template at all (what the preload builds is an **image
+family**, `projects/<project>/global/images/family/fugaro-preload-<8 hex>`, and a run's VM comes from
+the Batch job's own spec, not from a template), so a template here is something a person made by
+hand. A non-empty jobs or instances list means a run of this backend is still in flight or was left
+behind, and it is **not** the check's to delete — write down what it is before going on.
+
+**(124a-2) The plan-only form, and what it does not show.** FACT first, because this is the step
+that surprises an owner, and it is a fact about the tree rather than a defect of the flags.
+
+```bash
+fugaro setup --plan-only --provision-batch --project fugaro
+```
+
+**FACT:** the whole output. **expected output:** the **installation root's** plan — its own
+`Plan: N to import, N to create, N to update, N to forget` line, `Other changes:` and its
+`create …` lines — and then `--plan-only: nothing applied; the plan is <path>`, and **no
+`module.compute.` address anywhere in it**. The plan-only stop is `installRoot`'s
+(`internal/cli/init.go`), reached inside the installation stage, and the compute stage is registered
+*after* the repository stage (`internal/cli/init_stages.go`) — so **this form cannot show the Batch
+plan**: an owner who reads it as "the Batch resources are not planned" has read a stop as a result.
+The Batch plan is printed by the apply itself, in the next step, before it asks for anything.
+
+**(124a-3) The real plan, and the typed confirmation.** This is the step the check is named for:
+nothing is created until the plan is on the screen and you have typed the installation's name.
+
+```bash
+fugaro setup --provision-batch --project fugaro
+```
+
+**FACT:** the two plans and the confirmation, in order. **expected output:** the installation root's
+plan and its own ordinary confirmations first (nothing about them is this check's business), and
+then, from the compute stage — **once**: a `Plan` pass runs only under `--plan-only`
+(`internal/initflow`'s `preview` calls `Plan` there and nowhere else), so an applying run prints the
+compute root's summary from its `Apply` alone:
+
+```
+Plan: 0 to import, N to create, 0 to update, 0 to forget
+Other changes:
+  create module.compute.google_project_service.this["compute.googleapis.com"]
+  create module.compute.google_project_service.this["batch.googleapis.com"]
+  …
+⚠ CONFIRM (project fugaro, GCP project fugaro-dev): provisions the Batch compute backend in GCP project fugaro-dev: the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router (billable while they exist), and a preloaded boot image built by a scheduled Cloud Build (0 imports, N creates, 0 updates)
+Type fugaro to confirm: 
+```
+
+**Nothing is applied before that prompt**, and `--yes` does not cover the step: the stage's
+confirmation is `Typed` in both front doors (`internal/cli/init_compute.go`, `askTyped`), so
+`--yes`, `--non-interactive`, `--json`, a pipe and a coding agent's session never confirm it.
+
+The addresses the plan must carry, and why each is the design's (§8.1 task 6; the module's own
+files are the authority and this list is the reading of it): the **two APIs**
+(`module.compute.google_project_service.this`), the **run accounts' IAM**
+(`module.compute.google_project_iam_member`,
+`module.compute.google_artifact_registry_repository_iam_member`, and the launcher's conditioned
+`module.compute.google_project_iam_member`), the **reaper's** account, custom role and binding
+(`module.compute.google_service_account.reaper`,
+`module.compute.google_project_iam_custom_role.reaper`), the **preload's** account and custom role
+(`module.compute.google_service_account.preload`,
+`module.compute.google_project_iam_custom_role.preload_builder`), the **jobs' network**
+(`module.compute.google_compute_firewall`, `module.compute.google_compute_router.this`,
+`module.compute.google_compute_router_nat.this`), the **reaper's invocation**
+(`module.compute.google_cloud_run_v2_job.reaper` and its two scheduler-facing bindings), and the
+**preload's rebuild** (`module.compute.google_cloud_scheduler_job.preload_rebuild`). **FACT:** whether the plan holds anything else, and
+whether any address of a pre-existing installation's root appears at all — a create of the
+installation root's own resources in this plan is a finding, because the compute root has a state of
+its own (`deploy/terraform/gcp/roots/compute`).
+
+**(124a-4) Type the name, and read what it applied.** After the confirmation the apply runs, and
+this installation's preload image starts building now rather than at the next schedule.
+
+**FACT:** the lines the stage printed after the apply. **expected output:** exactly
+
+```
+provisioned; the preloaded boot image fugaro-preload-<the pin's first eight hex> is being built now (Cloud Build, about two minutes), and rebuilt on its schedule; each generation records the socket's gid under its socket-gid label, read off the builder VM
+```
+
+(`internal/cli/init_compute.go`; the family name is `infra.PreloadedImage`, held to the module's own
+derivation by that package's test, and the label name is the module's `socket_gid_label`). **FACT:**
+the Cloud Build run it started — its build id, that it succeeded, and roughly how long it took.
+**FACT:** a second run of the same command. **expected output:** exactly `No changes: the compute
+backend's provisioning matches the plan.` — the stage re-plans and reports nothing to do, which is
+also the reading that says the apply finished whole.
+
+**(124a-5) `fugaro doctor` for the Batch setup.** The read-back, and the step whose reading is not
+the one an owner expects (see the note above): the Batch half prints a line only when a check is
+**not** OK, and one `info` line plus the summary line is the pass.
+
+```bash
+fugaro doctor --project fugaro
+fugaro doctor --strict --project fugaro; echo "exit: $?"
+```
+
+**FACT:** every line whose id begins `batch-`, whole, with its severity word, its problem and its
+fix. **expected output:** exactly one line — `info batch-artifact-boundary: …`, the design's own
+boundary, which doctor always prints — and then `fugaro doctor: everything checked is ok`. The other
+seven ids (`batch-apis`, `batch-job-definition`, `batch-image-family`, `batch-network`,
+`batch-subnetwork`, `batch-log-sink`, `batch-launcher-iam`) print **nothing at all** while the read
+behind each is OK, and a line beginning `warning batch-` followed by one of them is **the finding**:
+it carries the value the project answered that makes it not OK (an API that is not `ENABLED`, a
+family that is not there, a name that resolves to nothing, a sink whose destination or filter is
+not the installation's, a launcher whose conditioned grant is missing or unconditioned), or the read
+it could not make. **FACT:** the `--strict` run's exit code. **expected output:** `exit: 0` — a
+warning fails `--strict` and an `info` check never does (`internal/cli/doctor.go`, `checksFail`), so
+a non-zero exit here is a `warning batch-` line to read and not a property of this setup. **FACT:**
+whether any `batch-` line appears at all — `doctorBatchChecks` returns nothing for an installation
+with no `batch:` block (`internal/cli/doctor_batch.go`, `if lc.Batch == nil`), and the block reaches
+a machine through the project layer's shared config (`internal/projectpolicy`, `MergeShared`), so
+**an installation that prints no `batch-` line at all — not even the `info` one — has no `batch:`
+block to read**, and that is the first thing to fix: the rest of this step says nothing about it.
+
+**(124a-6) `fugaro validate` for the Batch setup.** The offline half of the same reading, and the
+one an owner can run in ten seconds.
+
+```bash
+fugaro validate
+```
+
+**FACT:** the whole output and the exit code. **expected output:** today the refusal
+`backend "cloud-batch" is not enabled yet (this build runs cloud-run)`, and **not**
+`<path> is valid` — the name is refused before any of the offline checks
+(`internal/cli/validate_batch.go`) is reached. **After the enable task** the same command on the same
+file must print `<path> is valid`, and that is the second half of this step: the machine type priced
+from the price table, `batch.task_timeout` under Batch's own `RUNNING` ceiling, and the artifact
+boundary are what it is judging. A run that prints the refusal is a **pass for this step today**,
+and a run that prints `<path> is valid` today is the finding — it would mean the name was enabled
+without the enable task's doctor gate.
+
+**Restore (124a) — nothing to undo, and one list never to delete.** This part creates the
+installation's own Batch provisioning, deliberately and permanently: it is **what the check
+proves**, not the check's litter, and the check leaves it in place. Nothing here is restored, because
+nothing here is the check's.
+
+- **Never deleted by this check, by its restore, or by anyone tidying up after it**: the two APIs do
+  not go back off, the run accounts' IAM stays, the reaper's and the preload's service accounts and
+  their two custom roles stay, the Cloud NAT and its router stay, the preload rebuild's and the
+  reaper sweep's scheduler jobs stay, and the reaper job stays. A full teardown of
+  `deploy/terraform/gcp/roots/compute` is **not** this check's restore step: it would take the
+  installation's backend apart, and the two custom roles would keep counting against the project's
+  custom-role limit for seven days after it.
+- **The only thing to put back** is what you typed: if you edited the sandbox's shared config for
+  the step, put it back with `fugaro project policy publish --project fugaro` and record that you
+  did.
+- **Never `belong`, EdgeWeb or EdgeServer**: no step above reads or writes anything outside the
+  sandbox installation, and the name appears in this section only as this sentence.
+
+## Check 124b: one ordinary sandbox task on Batch, to its pull request (installation `fugaro`, the sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** It cannot be run yet: this part needs a run **on this backend**, and this build
+refuses the name: `internal/localcfg` answers `backend: cloud-batch` with
+`backend "cloud-batch" is not enabled yet (this build runs cloud-run)` until **the enable task**
+(`docs/plans/2026-10-19-compute-backend.md`'s Task 10, *to build*). It is written now, the way Check
+57b is, so that the day the name is enabled the acceptance run is on the shelf rather than to be
+invented. **No agent performs any step of it**: you run it, and the point of it is that a real task
+reaches a real pull request through a job on Batch.
+
+**The guard block — re-run it from a fresh shell before this part.** It is 124a's, verbatim: the
+three hard stops and the two pinning rules, `--project fugaro` on every `fugaro` command and
+`--project="${P:?}"` on every `gcloud` command. Never `belong`: no step below names it as an
+argument, and the only repository this part touches is the sandbox's.
+
+```bash
+: "${CHK124_OWNER_RUN:?export CHK124_OWNER_RUN=yes first: this check is owner-run, and no agent performs any step of it}"
+P=fugaro-dev
+L=us-east5
+R=fugaro-ghcr
+U=dimipaun/fugaro-base
+W=/tmp/chk124; mkdir -p "$W"
+
+[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$R" ] && [ -n "$U" ] \
+  || { echo "Check 124 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R U=$U must not be empty)" >&2; exit 1; }
+fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+  || { echo "Check 124 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
+git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
+  || { echo "Check 124 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
+```
+
+The methods block and the alternative method, in full, are the design's: `docs/design/compute-backend.md`
+§7.2 is where a hand-made submission is written (`check57/job.json`, the socket recipe, the explicit
+network and subnetwork), and this part deliberately does **not** repeat it. What this part adds is
+the one thing no hand-made job can show: Fugaro's own launcher, runner, gateway, git provider and
+finalize, on this backend, end to end.
+
+**(124b-1) The installation selects the backend.** `backend:` is the **project config's** key
+(`internal/localcfg`'s `BackendName`, `$XDG_CONFIG_HOME/fugaro/projects/<name>.yaml`), not a key of a
+repository's `fugaro.yaml` — that file's decoder refuses unknown fields, so a `backend:` written
+there is a config error rather than a selection. The sandbox installation's project config names
+`backend: cloud-batch`, and after the enable task that is accepted: `internal/cli/backends.go` lists
+`cloud-batch` among the names `fugaro backends ls` reports, and the config validation is what turns
+the name from *known* into *selectable*.
+
+**FACT:** `fugaro backends ls --project fugaro` and the `backend:` line of that project config,
+**expected output:** `cloud-run` and `cloud-batch` listed, with `cloud-batch` marked by the
+`fugaro's backend` the command appends to the selected one, and the same name in the project config —
+and **no `backend:` key in the sandbox checkout's `fugaro.yaml`**, since the repository decoder
+refuses it. **FACT:** `fugaro validate` in the sandbox
+checkout, **expected output:** `<path> is valid` — the offline checks are what say the machine type, the
+timeout and the artifact boundary are satisfied before a run is launched at all.
+
+**(124b-2) Launch one ordinary task.** The task is an ordinary sandbox task — the same one the
+register's other run checks use — and nothing about it is Batch-specific: that is the point, because
+a task written for the backend would test the task.
+
+```bash
+fugaro run --json --project fugaro --title "check 124b: one task on the Batch backend" \
+  "Add one sentence to README.md saying which check last ran against this repository, and commit it."
+```
+
+**FACT:** the launch's JSON, and the job it created. **expected output:** a `run_id`, and a Batch job
+whose name is the run's job id (`internal/backend/batch/names.go`'s `JobID`) — check it with
+`gcloud batch jobs list --project="${P:?}" --location="${L:?}" --format='value(name,labels)'`, whose
+labels are `fugaro=managed`, `fugaro_repo`, `fugaro_workflow` and `fugaro_run=<slug>-<run-id>` — read
+the run's own back with `--format='value(name,labels.fugaro_run)'`, which is the value 124c-2 and
+124d-2 select by.
+**FACT:** the job's `AllocationPolicy`, read out of `gcloud batch jobs describe`: the preloaded boot
+image family from 124a's apply, the explicit network and subnetwork, and its `provisioningModel`.
+**expected output:** the family name 124a printed, the network and subnetwork 124a's plan created,
+and **no Spot provisioning model anywhere in it** (nothing in this check runs Spot: see 124c).
+
+**(124b-3) The draft pull request, and the run's end.** A Fugaro run opens its pull request as a
+draft at its first checkpoint push and flips it at finalize, so the draft is read in flight and the
+end is read after it.
+
+```bash
+fugaro runs ls --project fugaro
+gcloud batch jobs describe <job> --project="${P:?}" --location="${L:?}" --format='value(status.state)'
+```
+
+**FACT:** the row while the run is in flight, and again after it ends. **expected output:** the row
+shows the run with `#<id> <url> (draft)` while it is running, the `pull request` is the sandbox
+repository's own on its host (the sandbox is on Bitbucket: `edgeappinc/fugarosandbox`), and at the
+end the run reads `succeeded` with the pull request ready; the job's state is `SUCCEEDED`. **FACT:**
+the pull request's number, its URL, and whether it ended a draft or ready — the register's own checks
+record both readings rather than assuming the flip. **FACT:** the run's own record says which backend
+it ran on, and its log lines came through the installation's log sink rather than `_Default`
+(`internal/backend/batch`'s logging destination, design §1.5) — read one task line out of Cloud
+Logging and record where it lives.
+
+**(124b-4) One hand-made job, only if you want the platform's own words.** The design's §7.2 methods
+block already submits a job by hand; a submission *here* is not required by this part, and this check
+does not repeat it. What is worth recording once, if you do it: the job's service account, its
+labels, and the fact that its VM is in the subnetwork the block names — the three readings the design
+asks for at a hand-made submission.
+
+**Restore (124b) — the check's own litter, and only that.** The pull request and the branch are the
+check's; the run record and the job's own history are not restored (a run's record is history —
+`internal/backend/batch/reap.go` says so — and a `FAILED` or `SUCCEEDED` job keeps its record while
+Batch deletes the VM itself). Decline the pull request with the sandbox token, never your own, and
+delete the branch, exactly as the register's older checks do:
+
+```bash
+# The repository is spelled out (edgeappinc/fugarosandbox, the sandbox): a URL
+# built from a variable is one empty or edited value away from naming another
+# workspace, and these two calls are destructive. <token-file> is a path you
+# substitute here: it holds the sandbox token, and `printf` is a builtin, so the
+# token stays out of every process's command line. Never merge a sandbox pull
+# request.
+curl -fsS --config <(printf 'header = "Authorization: Bearer %s"\n' "$(cat <token-file>)") -X POST \
+  "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/<id>/decline"
+curl -fsS --config <(printf 'header = "Authorization: Bearer %s"\n' "$(cat <token-file>)") -X DELETE \
+  "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/refs/branches/fugaro/<run-id>"
+```
+
+**FACT:** both calls, and the read-back. **expected output:** the decline's JSON with
+`"state": "DECLINED"`, the branch delete's `204`, and `fugaro runs ls --project fugaro` still
+showing the run's history. **Not restored, deliberately**: the run's record, the job's record, and
+the installation's own provisioning (124a's list). **Never `belong`, EdgeWeb or EdgeServer**: no step
+of this part reads or writes anything but the sandbox repository and the sandbox installation, and
+the name appears in this section only as this sentence.
+
+## Check 124c: a forced preemption, the exit code the tree carries, and what the reaper does and does not do (installation `fugaro`, the sandbox only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** It cannot be run yet — the same refusal as 124b (`backend "cloud-batch" is not
+enabled yet (this build runs cloud-run)`, **the enable task** being
+`docs/plans/2026-10-19-compute-backend.md`'s Task 10). **No agent performs any step of it.**
+
+This is the part the read side's preemption derivation was written for and never measured. Design
+§1.3 derives a run whose machine the platform reclaimed as **`failed (preempted)`**, on either of two
+readings: a job whose task-level status event **says the VM was preempted**, or a job whose task's
+exit code is the **reserved code** Cloud Batch reports for a reclaimed Spot VM. That number has
+**one home on this tree** — `internal/backend/batch/run.go`'s `preemptExitCode` — and it is written
+deliberately **nowhere under `docs/`**: `internal/cli/docs_compute_backend_test.go` walks `docs/` and
+fails if the literal appears outside the compute-backend plan. So this part reads the constant out of
+the file it lives in and asserts the job's report carries **that** value, rather than typing a digit
+that would be a second home for it and a second thing to update.
+
+**The guard block — re-run it from a fresh shell before this part.** It is 124a's, verbatim. This is
+the part that deletes something, so the guard matters most here: every `gcloud` command carries
+`--project="${P:?}"`, and the VM it deletes is selected from **its own job's** recorded label rather
+than from a name anyone typed. Never `belong`: no step below names it as an argument.
+
+```bash
+: "${CHK124_OWNER_RUN:?export CHK124_OWNER_RUN=yes first: this check is owner-run, and no agent performs any step of it}"
+P=fugaro-dev
+L=us-east5
+R=fugaro-ghcr
+U=dimipaun/fugaro-base
+W=/tmp/chk124; mkdir -p "$W"
+
+[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$R" ] && [ -n "$U" ] \
+  || { echo "Check 124 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R U=$U must not be empty)" >&2; exit 1; }
+fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+  || { echo "Check 124 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
+git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
+  || { echo "Check 124 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
+```
+
+**(124c-0) Read the number out of the tree before anything else.** This is a FACT and not a step:
+the assertion below is about the tree's own constant, so it is read rather than remembered.
+
+```bash
+grep -n 'preemptExitCode =' internal/backend/batch/run.go
+```
+
+**FACT:** the line and its value on this checkout's commit. **expected output:** the declaration, and
+the value on its right-hand side — record both verbatim, and record the `git rev-parse HEAD` they
+were read at. It is not written into this document on purpose.
+
+**(124c-1) Launch the run the preemption lands on, and catch it in flight.** One ordinary sandbox
+task, long enough to be caught: the check needs the job `RUNNING` with its VM alive.
+
+```bash
+fugaro run --json --project fugaro --title "check 124c: the preemption" \
+  "Add one sentence to README.md saying which check last ran against this repository, and commit it."
+```
+
+**FACT:** the launch's `run_id`, and the job's state. **expected output:** a job in `SCHEDULED` then
+`RUNNING` (`gcloud batch jobs describe <job> --project="${P:?}" --location="${L:?}"`), and a VM with
+that job's labels. Note what is **not** the case: no Fugaro run is Spot on this tree — there is no
+config key that asks for a Spot provisioning model — so this job's VM is an ordinary one, and the
+preemption below is **simulated**: the check takes the VM away by hand, which is what a Spot reclaim
+does to the run, and the design's own method (a hand-submitted **Spot** job, `docs/design/compute-backend.md`
+§7.2 step 7) is a different measurement, still unrun.
+
+**(124c-2) Take the run's own VM away, and refuse anything that is not its own.** The VM is selected
+by the label value the **job itself** records — `fugaro_run=<slug>-<run-id>` — read back off the job,
+never by a name typed into this check. The guard refuses to delete a VM whose label does not carry
+exactly that value, and it refuses a VM whose `fugaro=managed` label is absent, because a VM without
+it is not this installation's at all.
+
+```bash
+# The job, then its own label value, then the VM that carries it: every step is
+# a read, and only the last command deletes anything.
+JOB=$(gcloud batch jobs list --project="${P:?}" --location="${L:?}" \
+  --filter="labels.fugaro_run=<slug>-<run-id>" --format='value(name)' | head -1)
+LABEL=$(gcloud batch jobs describe "${JOB:?}" --project="${P:?}" --location="${L:?}" \
+  --format='value(labels.fugaro_run)')
+mapfile -t VMS < <(gcloud compute instances list --project="${P:?}" \
+  --filter="labels.fugaro_run=${LABEL:?} AND labels.fugaro=managed" \
+  --format='value(name,zone.basename())')
+[ "${#VMS[@]}" = 1 ] || { echo "Check 124c stopped: ${#VMS[@]} VM(s) carry this job's own label (${LABEL}), want exactly one; nothing was deleted" >&2; exit 1; }
+read -r VM ZONE <<<"${VMS[0]}"
+[ -n "${VM:-}" ] && [ -n "${ZONE:-}" ] || { echo "Check 124c stopped: no VM carries this job's own label (${LABEL}); nothing was deleted" >&2; exit 1; }
+gcloud compute instances delete "${VM:?}" --project="${P:?}" --zone="${ZONE:?}" --quiet
+```
+
+**FACT:** the four reads and the delete. **expected output:** one job name, its label value, the
+one VM's name and zone, and the delete's
+`Deleted [https://www.googleapis.com/compute/v1/projects/fugaro-dev/zones/<zone>/instances/<name>]`.
+**FACT:** that the count of VMs carrying the label was **1** and not more. **expected output:** the
+`mapfile` array holds one line — a second one means the selection is not the check's job's, and the
+step must stop (it refuses to delete a VM whose label does not carry the job's own `fugaro_run`
+value, and the filter's `labels.fugaro=managed` half refuses a VM that is not the installation's).
+
+**(124c-3) The run ends `FAILED`, and the report's exit code is the assertion.** This is the reading
+the whole part exists for.
+
+```bash
+gcloud batch jobs describe "${JOB:?}" --project="${P:?}" --location="${L:?}" \
+  --format='value(status.state)'                       # expected: FAILED
+gcloud batch jobs describe "${JOB:?}" --project="${P:?}" --location="${L:?}" \
+  --format='json(status)' | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d, indent=2))'
+fugaro runs ls --project fugaro
+```
+
+**FACT:** the job's terminal state, the task-level `exitCode` its own `status` carries, the text of
+the status events, and the run's row. **expected output:** the job is `FAILED` (not `CANCELLED`, and
+not a retry: its `taskGroups[0].taskSpec.maxRetryCount` must be **present and `0`**, which is what
+keeps Batch from attempting the task again, and the field is written with `ForceSendFields` for
+exactly that reason — an int64 with `omitempty` drops a zero, `internal/backend/batch/run.go`); the
+task's exit code
+equals the value **124c-0 read out of the tree**; and `fugaro runs ls --project fugaro` shows the run
+`failed (preempted)` — the read side's `DerivedPreempted` and its reason
+(`the Batch job was preempted: its Spot VM was reclaimed before the run finalized`,
+`internal/runview/runview.go`). **FACT, and this one is a finding when it happens:** if the report
+carries a **different** exit code and no status event says the VM was preempted, then the derivation's
+exit-code arm does **not** cover a hand-deleted VM, the job reads only through its description, and
+that is exactly the fact this step was written to settle — record it, do not adjust the check to it.
+The design says the same thing in its own words (§7.2 step 7: *the code the platform actually reports
+is what says which of the two is the one to trust*), and it is why this document refuses to name a
+number.
+
+**(124c-4) What finalises the run's record: nothing does, and this is the read side's derivation.**
+The reaper is a sweeper of billing and of leaked machines, not a finaliser. On this tree nothing
+writes a preempted run's record — the owner's ruling of 2026-10-21, design §1.3 and the
+compute-backend plan's open item — so the record stays unfinished and **the reading is derived**:
+`fugaro runs ls` and `fugaro diagnose` read the execution's own report and decorate the row. The
+reaper's business is the VM and the job, and its report says what it did and what it refused.
+
+```bash
+fugaro reaper --dry-run --project fugaro
+fugaro reaper --project fugaro
+```
+
+**FACT:** both reports, whole. **expected output:** a headline naming the sweep —
+`would reap projects/fugaro-dev/locations/us-east5: queue deadline <d>, run budget <d>, max age <d>`
+for the dry run and `reaped projects/fugaro-dev/locations/us-east5: …` for the real pass — then one
+line per action and one `refused <target>: <reason>` line per refusal
+(`internal/backend/batch/reap.go`'s `Report.Lines`). **FACT:** that the preempted run's VM is
+**not** a line in either report — it is already gone — and that nothing in either report names the
+run's record: the reaper never touches one. **FACT:** a job or a VM the pass refused, with its
+reason verbatim if there is one: a VM whose job is still running is refused, which is exactly what a
+second, still-flying run of this backend would produce, and it is **not** the check's to delete.
+
+**(124c-5) What this part does NOT show, stated so a reader does not read it as covered.** The first
+of them is that **no Fugaro run is Spot today** — there is no config key for a provisioning model —
+so nothing above is
+the **platform's** reclaim: it is a hand-delete that leaves the same evidence a reclaim does, and
+the design's own method (a hand-submitted Spot job and the platform's own preemption,
+`docs/design/compute-backend.md` §7.2 step 7) remains **unrun**, as do §7.2's step 11 (the quota
+question) and §7.2's step 8 cancel path on this backend. So this part does not show: what Batch
+reports when **it** reclaims a Spot VM (the number above is read; the platform's own words are not
+observed), whether the 120-second preemption notice reaches the runner, whether `finalize` runs, or
+how long the VM's death takes after the notice. **What it does show** is the two things the read
+side is built on and no unit test can see: the job really ends `FAILED` with the task's own exit code
+in its report, and a row read after that says `failed (preempted)` while the record itself stays
+unfinished.
+
+**Restore (124c).** The VM is already gone (that was the step), the job keeps its record, and the
+run's record stays unfinished on purpose — it is the evidence. **Never deleted**: everything in
+124a's list, and any VM or job that does not carry this run's own `fugaro_run` value. **Never `belong`,
+EdgeWeb or EdgeServer**: the delete above is scoped to the sandbox project
+(`--project="${P:?}"`, `fugaro-dev`) and to one VM carrying this run's own label; the name appears in
+this section only as this sentence.
+
+## Check 124d: the check's own spend, and a cleanup that spares the installation (installation `fugaro`, the sandbox only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** It cannot be run yet: it reads back the runs 124b and 124c made, and this build
+refuses `backend: cloud-batch` (`backend "cloud-batch" is not enabled yet (this build runs
+cloud-run)`) until **the enable task** (`docs/plans/2026-10-19-compute-backend.md`'s Task 10).
+**No agent performs any step of it.**
+
+**The guard block — re-run it from a fresh shell before this part.** It is 124a's, verbatim: the
+three hard stops and the two pinning rules. Never `belong`: no step below names it as an argument.
+
+```bash
+: "${CHK124_OWNER_RUN:?export CHK124_OWNER_RUN=yes first: this check is owner-run, and no agent performs any step of it}"
+P=fugaro-dev
+L=us-east5
+R=fugaro-ghcr
+U=dimipaun/fugaro-base
+W=/tmp/chk124; mkdir -p "$W"
+
+[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$R" ] && [ -n "$U" ] \
+  || { echo "Check 124 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R U=$U must not be empty)" >&2; exit 1; }
+fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+  || { echo "Check 124 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
+git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
+  || { echo "Check 124 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
+```
+
+**(124d-1) What the check spent, and where the lease went.** The cost is a FACT per run and a FACT
+for the whole check, and the budget lease is the second half of it: a run that never settled would
+leave a reservation behind, and a Batch run whose VM is taken away by hand is exactly the run that
+might.
+
+```bash
+fugaro runs ls --project fugaro --json
+fugaro budget show --project fugaro
+```
+
+**FACT:** each run's cost out of its row (`cost`), the two runs' total, and the budget node's
+reading. **expected output:** both runs listed with their own dollar amounts, and `fugaro budget
+show --project fugaro` showing **no run in flight** and **no reserve** for either of them once both
+have ended — a reserve that outlives the run is the finding, and its fix is the reaper's queue
+deadline or the budget node's own sweep. **FACT:** the number this sandbox task costs on this
+backend, stated as dollars, with the window it was measured over (the design's own 57a-5 measured a
+143-second `e2-standard-4` window at about a cent, and this check's number is its own). **FACT, and
+it is the one an owner should not have to guess:** whether the check's own spend was inside the
+installation's per-run ceiling (`budget.per_run_usd`) and whether the preempted run was billed at all
+— a preempted Spot VM is not billed past its end, and this run's VM was not Spot, so **what the
+preemption costs is not this check's measurement** (see 124c-5).
+
+**(124d-2) Nothing orphaned: the before-state, diffed.** This is where 124a's three files earn their
+keep. A job, a VM or a template that is there now and was not there before is the check's litter, and
+the whole point of recording the before-state is that the diff is a fact rather than a memory.
+
+```bash
+diff <(sort "$W/jobs-before.txt") <(gcloud batch jobs list --project="${P:?}" --location="${L:?}" \
+  --filter="labels.fugaro=managed" --format='value(name,status.state)' | sort)
+diff <(sort "$W/instances-before.txt") <(gcloud compute instances list --project="${P:?}" \
+  --filter="labels.fugaro=managed" --format='value(name)' | sort)
+diff <(sort "$W/templates-before.txt") <(gcloud compute instance-templates list --project="${P:?}" \
+  --format='value(name)' | sort)
+```
+
+**FACT:** the jobs' own label values, one per run
+(`gcloud batch jobs list --project="${P:?}" --location="${L:?}" --format='value(name,labels.fugaro_run)'`),
+so the VMs above are attributable to the runs that made them rather than to the installation.
+**expected output:** each job's own `labels.fugaro_run` value, one line per run.
+**FACT:** the three diffs, whole. **expected output:** **empty** diffs for the instances and the
+templates — Batch deletes a finished job's VM itself (the design's §3.4 and 57a-8's measured
+teardown), and neither the installation nor a run creates an instance template. For the jobs, the diff must hold the
+runs' own job names and nothing else: a terminal job keeps its record deliberately
+(`internal/backend/batch/reap.go`: *"It never deletes a finished job's record"*), so the two jobs are
+**expected** to remain and are named; a **third** job, or a job still in `QUEUED` or `RUNNING`, is the
+finding. **FACT:** `gcloud compute instances list --project="${P:?}" --filter="labels.fugaro=managed"`
+and `gcloud batch jobs list --project="${P:?}" --location="${L:?}"` printed whole, so a reader sees
+the counts and not only the diff.
+
+**(124d-3) The restore, and the one list it never touches.** The check's own litter is 124b's declined
+pull request and deleted branch (that part's restore) and nothing else; there is no VM to delete here
+because Batch deleted it, and no job to delete because a terminal job's record is history. **What the
+restore — and anyone tidying up after it — must never delete** is **the installation's own, never
+deleted**: **the preload image family** and every generation in it, **the reaper's and the preload's
+service accounts**, **the two custom roles** they hold, **the Cloud NAT and its router**, **the
+preload rebuild's and the reaper sweep's scheduler jobs**, **the reaper job**, and the two APIs the
+apply turned on. Each of those is what 124a applied and the reason this check exists; a teardown of
+`deploy/terraform/gcp/roots/compute`, or a hand `delete` of any of them, is not a restore step and
+would take the installation's backend apart (and the two custom roles would
+keep counting against the project's custom-role limit for seven days after it — the note under the
+compute root's own teardown).
+
+**FACT:** the read-back that the installation is whole. **expected output:** the same `batch-` lines
+124a-5 printed — the one `info batch-artifact-boundary:` line and the summary line the rest of the
+Batch half prints nothing beside (for the reason 124a gives), so a new `warning batch-` line here is
+a finding this check made — plus
+`gcloud compute images list --project="${P:?}" --filter='name~^fugaro-preload-'` still listing the
+family's generation 124a's build produced — the read that says the preload half of the installation
+is intact. **FACT:** that nothing was torn down anywhere in this check — record it as a sentence,
+because the absence of a command is not visible in an output.
+
+**Never `belong`, EdgeWeb or EdgeServer**: every command above carries `--project fugaro` or
+`--project="${P:?}"`, and this check has no command that names any other installation. The name
+appears in this section only as this sentence.
+
+## Check 130: the licence detectors after the open-core skeleton — GitHub still reports MIT and `LICENSING.md` renders (the public repository on GitHub, read-only; no cloud project, no installation, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by **task L1.10** of the licensing plan
+([licensing/implementation-plan.md](licensing/implementation-plan.md), its Check 130; decision
+**D300**'s MIT premise, and decision **D301 as amended by the owner's O2 answer** of 2026-10-24 —
+**O2** is the amendment of D301 alone, and it is the root `LICENSE` that stays pure MIT with the
+scope statement in a new `LICENSING.md`; **D303** was amended the same day, separately and not the
+recommendation, and what it settles is the release labels' `ee` tag, which this check is not). The
+file is written now and **run later**: its guard refuses to start until task **L1.3**'s
+`LICENSING.md` is in the tree, so the run is task **L1.11**'s, after L1.3 merges. Nothing in it
+writes anything anywhere, so it is safe to run at any time — and running it twice costs nothing but
+a few more anonymous reads.
+
+**Why the check exists.** GitHub classifies a repository's licence from the **text** of the file it
+finds. The reconciliation's F27 reads a published repository whose root `LICENSE` carries a scope
+statement ahead of the MIT permission text, and GitHub reports **`other`** for it — which is U1, and
+which is why the owner's O2 answer took D301's alternative: `LICENSE` is **not touched at all**, so
+GitHub keeps reading plain MIT, and the statement that `ee/` is excluded and reserved, that
+`.agents/` is third-party under its own licence, and where the trademark paragraph is, goes in a new
+root **`LICENSING.md` beside it**. What that leaves unverified is the one thing this check is for:
+**that GitHub still reports MIT with `LICENSING.md` sitting beside `LICENSE`**, and that a reader
+who opens `LICENSING.md` on GitHub meets a rendered page whose links work. No hermetic test can take
+either reading. `LICENSE`'s bytes are pinned in the tree (task L1.3's
+`TestDocsLicensingRootLicenceUnchanged` hashes them), the scope statement's words are pinned too
+(`TestDocsLicensingStatement`), and what GitHub's detectors make of the **pair** is a fact about
+GitHub that only this check records.
+
+**What this check is not.** It is not pkg.go.dev's classification (U2): after O2 that reading is not
+part of this check, because at 0.11.0 `ee/` holds no package, and it is looked at when the first one
+lands. It is not the **release labels** either — the plugin manifest's `license`, the Homebrew
+cask's and the archive's — which stay `MIT` at 0.11.0 because the release build sets no `ee` tag
+(D303 as amended); a test couples them to the tag (plan L2.1's `TestEETagNeedsTheLabels`) and they
+move together in the release that first sets it (plan slice L5). And it is not a re-reading of
+`LICENSE`: **no step here edits `LICENSE`, and no finding here is fixed by editing it** (O2, and the
+plan's Conventions).
+
+**Method.** One browser, one checkout, no credential, nothing written. The repository this check
+reads is not typed in: it is the checkout's own origin, cross-checked against the module path in
+`go.mod`, so that the tree read locally and the page read on GitHub are the same repository. The
+default branch and the licence are what GitHub's own API answers.
+
+```bash
+# === Check 130: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
+# step (step 1, step 2 and step 3). It is idempotent, and nothing below the
+# hard stops runs unless every one of them passes. ===
+
+# The repository, from this checkout rather than from memory: the detectors
+# answer about the repository the module lives in, and a tree paired with
+# another repository's answer is the one mistake this guard exists to stop.
+REPO=$(git remote get-url origin | sed -E 's#^.*github\.com[:/]##; s#\.git$##')
+[ -n "$REPO" ] || { echo "Check 130 stopped: this checkout's origin names no github.com repository, so which repository to read is unknown" >&2; exit 1; }
+MOD=$(sed -n 's|^module[[:space:]]*||p' go.mod)
+[ "$MOD" = "github.com/${REPO}" ] || { echo "Check 130 stopped: go.mod's module path is ${MOD} and this checkout's origin is ${REPO}: the two disagree, so which repository the detectors are read about is ambiguous" >&2; exit 1; }
+
+# L1.3 merged: step 3 reads LICENSING.md, and a tree that has none has nothing
+# to read. Until then, steps 1 and 2 stand alone, and this stop is the honest
+# answer — the check is run in full by task L1.11, after L1.3.
+[ -f LICENSING.md ] || { echo "Check 130 stopped: this tree has no LICENSING.md (task L1.3 has not merged), so step 3 has nothing to read; run steps 1 and 2 alone, or run this check after L1.3 merges (task L1.11)" >&2; exit 1; }
+
+# The default branch step 3's URL is built on, read from the API rather than
+# remembered — a repository's default branch is not always main. The body is
+# fetched first and parsed second: a pipe into python would print a traceback
+# when the endpoint answers nothing, which reads like a broken check rather
+# than the stop it is.
+META=$(curl -sS -f "https://api.github.com/repos/${REPO}") \
+  || { echo "Check 130 stopped: api.github.com did not answer for ${REPO} — no network, or the repository is not public (curl's own line above says which)" >&2; exit 1; }
+BRANCH=$(printf '%s' "$META" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("default_branch", ""))')
+[ -n "$BRANCH" ] || { echo "Check 130 stopped: the API answered for ${REPO} with no default_branch, so step 3's URL cannot be built" >&2; exit 1; }
+
+# Whether GitHub classifies a licence file at all: a 404 here IS the finding
+# step 2 records, and it is not a reason to stop. 403 and 429 are the anonymous
+# rate limit, which is a reason to stop and re-run later.
+CODE=$(curl -sS -o /dev/null -w '%{http_code}' -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${REPO}/license") \
+  || { echo "Check 130 stopped: api.github.com did not answer for ${REPO}'s licence — no network, or the repository is not public (curl's own line above says which)" >&2; exit 1; }
+case "$CODE" in
+  200) : ;;
+  404) echo "Check 130: the licence API answers 404 for ${REPO} — GitHub classifies no file in it as a licence at all. That is a reading other than MIT, and it goes back to the owner (task L1.11); it is not a reason to stop, so read step 3 anyway." >&2 ;;
+  403|429) echo "Check 130 stopped: the licence API answered ${CODE} — the anonymous rate limit is the usual cause. Wait for it to turn and re-run: this check holds no credential and needs none." >&2; exit 1 ;;
+  *) echo "Check 130 stopped: the licence API answered ${CODE} for ${REPO}" >&2; exit 1 ;;
+esac
+
+# The links step 3 follows, read out of LICENSING.md rather than remembered:
+# they are the ones task L1.3's statement pins, so the tree names them and this
+# block prints them rather than a list kept here.
+grep -oE '\]\([^)]+\)' LICENSING.md || { echo "Check 130 stopped: LICENSING.md carries no link at all, so step 3 would have none to follow" >&2; exit 1; }
+
+printf 'CHECK 130 SETUP: repository %s, default branch %s, licence API HTTP %s\n' "$REPO" "$BRANCH" "$CODE"
+```
+
+1. **The detector, on the repository page.** Open `https://github.com/$REPO` and read the
+   repository's own About box, then the file it points at. **FACT:** the licence label's text
+   verbatim, the file the label opens, and whether the file list beside it carries **both**
+   `LICENSE` and `LICENSING.md` — the pair is the whole question, and a page showing only one of them
+   answers a different one. The label is GitHub's detector speaking, and a label reading anything
+   other than **MIT** (or no label at all) is the reading step 2's machine-readable half is then
+   taken against.
+
+2. **The detector, machine-readable.** Ask the same detector again, in the form a script can read,
+   and record the raw object rather than a summary of it:
+
+   ```bash
+   curl -sS -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${REPO:?re-run the Check 130 setup block}/license" \
+     | python3 -c 'import json, sys; d = json.load(sys.stdin); print(json.dumps({"path": d.get("path"), "license": d.get("license"), "message": d.get("message")}, indent=2))'
+   ```
+
+   **FACT:** the object verbatim — its `path`, and under `license` its `spdx_id`, `key` and `name`;
+   and, when the endpoint has no licence to name, the `message` it carries in place of both, which is
+   the 404 the guard recorded, in full.
+   The reading that passes is **`spdx_id: "MIT"`**, **`key: "mit"`** and **`path: "LICENSE"`**. The
+   `path` is the half a reader would otherwise skip: it is **which file** GitHub classified, so a
+   `path` of `LICENSING.md` — or an `spdx_id` of `other` or `NOASSERTION`, or the 404 the guard
+   records — means the detector read the new statement file rather than the untouched `LICENSE`, and
+   **O2's premise has failed**: the owner left `LICENSE` untouched precisely so that this answer
+   stays MIT. **Record it and stop there — do not fix it by editing `LICENSE`** (O2; the plan's
+   Conventions): the finding goes back to the owner, whose choice is then between the statement
+   file's **name** and its **placement**, since `LICENSING.md` is the path task L1.3 writes, L1.5
+   links and the plan's later tasks name.
+
+3. **`LICENSING.md` renders, and every link it carries works.** Open
+   `https://github.com/$REPO/blob/$BRANCH/LICENSING.md`. Read it as a reader meets it: GitHub's
+   Markdown rendering, with its headings and paragraphs, not the file's bytes — a page that shows the
+   source, or a "Raw" fallback, is not a page a contributor reads. Then follow **every relative link
+   the guard's `grep` printed**, one at a time: `LICENSE`, the reserved directory's `ee/README.md`,
+   the vendored skills' `.agents/LICENSE`, and the README's trademark paragraph anchor. GitHub
+   rewrites a relative link to `/blob/<branch>/<path>`, so each one must land on the file it names —
+   a link whose target is missing shows GitHub's 404 page while the sentence around it still reads
+   correctly, which is why this is a step and not an assumption. The **anchor** is the quiet one: a
+   fragment that names no heading lands at the top of the README **with no error at all**, so read
+   the paragraph the anchor opened and confirm it is the trademark paragraph and not the top of the
+   page. **FACT:** that the file rendered as a page; per link, its rendered `href`, the file it
+   opened, and whether that was the file the sentence around it named; and, for the anchor, the
+   paragraph it landed on. **If a link fails, record which one and where it went — and change
+   nothing:** the links are the statement's and are pinned by task L1.3's test, so the fix is that
+   task's or the owner's, not this check's.
+
+**Passes when:** the repository page's licence label reads **MIT** and opens `LICENSE`, with both
+`LICENSE` and `LICENSING.md` in the tree beside it; the licence API answers **200** with
+`spdx_id: "MIT"`, `key: "mit"` and **`path: "LICENSE"`** — the detector classified the untouched
+file and not the new one; and `LICENSING.md` renders as a page on the default branch whose every
+relative link opens the file or the heading it names, the README anchor included.
+
+**Fails when:** the label is absent or reads anything other than MIT; the API's `spdx_id` is `other`
+or `NOASSERTION`, its `path` names `LICENSING.md` rather than `LICENSE`, or the endpoint answers
+404, so that the licence GitHub reports is no longer the one `LICENSE` carries; `LICENSING.md`
+renders as source rather than as a page; or a link it carries 404s, or its README anchor lands at the
+top of the README. **What failing looks like:** a page whose every word is right and one of whose
+links opens GitHub's 404 — a path the tree resolves and GitHub does not, or an anchor no heading
+carries. **What failing is not:** a reader who opens only `LICENSE` and sees no exclusion in it.
+That is the cost the owner accepted with O2 (tension T2, recorded 2026-10-24 and not resolved), it
+is stated in `LICENSING.md` and in the README's Licensing section, and it is not a defect this check
+reports. **A reading other than MIT is a finding against O2's premise**, and by task L1.11's own
+rule it goes back to the owner rather than being fixed here.
+
+**Paste back** (no secret, no account, nothing from any project): the guard's `CHECK 130 SETUP`
+line, so the repository and the branch every reading below is about are on the record; the About
+box's licence label verbatim and the file it opened; the licence object verbatim — its `path` and
+its `license` block — and, on a 404, that answer; that `LICENSING.md` rendered as a page; per link,
+its rendered `href` and where it landed, and the paragraph the README anchor opened; the browser and
+its version, and the date; and, if `LICENSING.md` was not in the tree yet, that step 3 was not run
+at all. Nothing else: no token, no cookie, and no page of any other repository. Until this check
+runs, **U1** — that GitHub keeps reporting MIT once `LICENSING.md` sits beside `LICENSE` — is
+**UNVERIFIED**, and its row stays **NOT RUN**.
+
+**Restore.** Nothing is created, so there is nothing to undo: no project, no installation, no
+`fugaro` command, no bucket, no node and no file. The check's whole footprint is three anonymous
+`GET`s to `api.github.com`, one page and one blob read in a browser, and the browser's own history.
+
+- **Close the tabs** you opened, if you would rather not keep them; nothing depends on them.
+- **Forget the checkout** the guard read the repository's name out of: no step of the check writes
+  to it, and it needs no clean-up.
+- **Never touch `belong`, EdgeWeb or EdgeServer**: no step here reads or writes a cloud project at
+  all, and the only host this check fetches is `api.github.com` and the pages of the one public
+  repository the checkout's origin names.

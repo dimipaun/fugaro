@@ -84,6 +84,11 @@ var allowedTypes = map[string]bool{
 // it accepts this account: today exactly two do, the bundle's accessor and its
 // own database role, and a third means editing this table on purpose.
 // TestCredentialsAccountIsItsOwnPrincipalKind is what holds that.
+//
+// Coordinator is the coordinator's writer account (coordinator plan P3), its
+// own kind for the same reason: it holds the FP's database admin and nothing
+// else, and as one of FugaroAccounts every toAccounts row would have accepted
+// it. TestCoordinatorAccountIsItsOwnPrincipalKind holds that.
 type who uint8
 
 const (
@@ -91,6 +96,7 @@ const (
 	toAccounts
 	toDeployer
 	toCredentials
+	toCoordinator
 )
 
 // customKey is how grantRules names a custom role of the installation (by its
@@ -149,7 +155,7 @@ var grantRules = map[string]map[string]who{
 		"roles/datastore.user":                    toAccounts,
 		"roles/datastore.viewer":                  toPeople,
 		"roles/firebaseauth.admin":                toAccounts,
-		"roles/firebasedatabase.admin":            toPeople | toAccounts,
+		"roles/firebasedatabase.admin":            toPeople | toAccounts | toCoordinator,
 		"roles/firebasedatabase.viewer":           toPeople,
 		"roles/logging.logWriter":                 toAccounts,
 		"roles/serviceusage.serviceUsageConsumer": toPeople | toAccounts,
@@ -165,9 +171,15 @@ var grantRules = map[string]map[string]who{
 		DeployerTokenCreatorRole: toPeople,
 	},
 	"google_storage_bucket_iam_member": {
-		"roles/storage.objectAdmin":  toPeople,
-		"roles/storage.objectUser":   toPeople | toAccounts, // people only under the launchers' condition (bucketCondition)
-		"roles/storage.objectViewer": toPeople | toAccounts,
+		"roles/storage.objectAdmin": toPeople,
+		// objectUser is people only under the launchers' condition
+		// (bucketCondition). objectViewer's toCoordinator is the aggregation
+		// job's reader on the runs bucket (coordinator plan P5): the account is
+		// its own kind, so the row says on purpose that the writer may read the
+		// run records its view is computed from — and nothing else of the
+		// bucket, which is what makes this the row's only coordinator bit.
+		"roles/storage.objectUser":   toPeople | toAccounts,
+		"roles/storage.objectViewer": toPeople | toAccounts | toCoordinator,
 	},
 	"google_artifact_registry_repository_iam_member": {
 		customKey + "fugaroTagMover":    toAccounts,
@@ -178,8 +190,17 @@ var grantRules = map[string]map[string]who{
 		// The credentials service's bundle is read by its own account
 		// (credentials.tf, the Q6 ruling), so this one row accepts the service
 		// account beside the jobs: it is the account's only Secret Manager
-		// reach, and it is on one container.
-		"roles/secretmanager.secretAccessor":     toAccounts | toCredentials,
+		// reach. The coordinator's writer is here for the same shape
+		// (coordinator plan P5): the GitHub App's key, on the one secret its
+		// job mounts, is the reader credential P2 defines and nothing more.
+		//
+		// What this row decides is the principal KIND and the role, and not
+		// which container: the cover reads no secret_id for this type, so a
+		// hand-edited plan that pointed one of these principals at another of
+		// the run's containers would be covered. The container is the module's
+		// own to get right and its own plan tests to hold (the installation
+		// root asserts the coordinator's one grant names the App key's secret).
+		"roles/secretmanager.secretAccessor":     toAccounts | toCredentials | toCoordinator,
 		"roles/secretmanager.secretVersionAdder": toPeople,
 		"roles/secretmanager.viewer":             toPeople,
 	},
@@ -280,12 +301,21 @@ const (
 	CredentialsDatabaseRole = "fugaroCredentialsDatabase"
 )
 
+// CoordinatorAccountID is the coordinator's writer account (internal/infra's
+// CoordinatorAccountID; coordinator plan P3, D194), created in the
+// installation's project. It is NOT among FugaroAccounts, for the credentials
+// account's reason: it holds roles/firebasedatabase.admin on the Firebase
+// project and nothing else, so it is its own kind (toCoordinator).
+const CoordinatorAccountID = "fugaro-coordinator"
+
 // FugaroRoles are the custom role IDs the modules create; FugaroAccounts the
 // fixed service account IDs a toAccounts row accepts. Job and build accounts
 // are fugaro-<readable>-<8 hex>. The deployer account (DeployerAccountID) and
 // the credentials service's (CredentialsAccountID) are deliberately NOT among
 // FugaroAccounts: each holds roles of its own and nothing a job holds, so each
-// is its own kind of principal (toDeployer, toCredentials).
+// is its own kind of principal (toDeployer, toCredentials). The coordinator's
+// writer (CoordinatorAccountID) is not among them either, for the same reason
+// (toCoordinator).
 var (
 	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole}
 	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
@@ -604,6 +634,14 @@ func (c Cover) isCredentialsMember(m string) bool {
 	return p != "" && m == "serviceAccount:"+CredentialsAccountID+"@"+p+".iam.gserviceaccount.com"
 }
 
+// isCoordinatorMember is whether m is exactly the coordinator's writer
+// account as an IAM member, in the installation's project: its one grant is
+// on the Firebase project, which does not move the account.
+func (c Cover) isCoordinatorMember(m string) bool {
+	p := c.installationProject()
+	return p != "" && m == "serviceAccount:"+CoordinatorAccountID+"@"+p+".iam.gserviceaccount.com"
+}
+
 // isDeployerMember is whether m is exactly this run's deployer account as an
 // IAM member: "serviceAccount:" + DeployerAccount(the installation's project).
 func (c Cover) isDeployerMember(m string) bool {
@@ -731,10 +769,12 @@ var RolePermissions = map[string][]string{
 
 // knownCommands are the container command and args the modules set: none for a
 // workflow's job and for the credentials service (whose image's own entrypoint
-// is the service, credentials.tf), the history sweep and the image check.
+// is the service, credentials.tf), the history sweep, the coordinator's
+// aggregation sweep and the image check.
 var knownCommands = [][2][]string{
 	{nil, nil},
 	{{"/usr/local/bin/fugaro"}, {"budget", "history", "--sweep"}},
+	{{"/usr/local/bin/fugaro"}, {"coordinator", "sweep"}},
 	{{"fugaro"}, {"image", "check", "--job"}},
 }
 
@@ -1175,6 +1215,10 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 			// listed its address on the review screen would otherwise be able
 			// to grant it a launcher's or an operator's role.
 			kind = toCredentials
+		case c.isCoordinatorMember(m):
+			// The coordinator's writer likewise: its one row is the FP's
+			// database admin.
+			kind = toCoordinator
 		case slices.Contains(c.Listed, m):
 			if !strings.HasPrefix(m, "user:") && !strings.HasPrefix(m, "group:") && !strings.HasPrefix(m, "serviceAccount:") {
 				return fmt.Sprintf("grants to %s, which is not a user, group or service account", m)

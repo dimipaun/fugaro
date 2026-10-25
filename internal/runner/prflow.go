@@ -445,6 +445,58 @@ func reviewsPart(rs []runstore.ReviewSummary) string {
 	return fmt.Sprintf("%sreview round %d: %s", who, last.Round, Plural(last.Findings, "finding"))
 }
 
+// backlogPart is the section's account of the items the run wrote: the ids it
+// filed and the ids it closed as the follow-up that fixed them, beside the
+// review line that says what was left open, so a reader of the pull request can
+// cite an item without opening the tree (D9, D26, D27, D31 — the closing rule's
+// "names the item id in its body"). "" for a run that wrote neither, which is
+// most of them.
+func (r *run) backlogPart() string {
+	var parts []string
+	if len(r.rec.Backlog) > 0 {
+		parts = append(parts, "filed "+backlogIDs(r.rec.Backlog))
+	}
+	if len(r.closedBacklog) > 0 {
+		parts = append(parts, "closed "+backlogIDs(r.closedBacklog))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// backlogIDs renders ids as the section cites them, one code span each.
+func backlogIDs(ids []string) string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, "`"+inlineText(id)+"`")
+	}
+	return strings.Join(out, ", ")
+}
+
+// rigorPart is the section's line for the mode the run resolved (D18, D24):
+// the mode, the layer that decided it, and the strictest area rule that
+// matched, with a "+N" for the rest D23 also recorded — the shape D24 gives,
+// and the same words the record carries, so the two can be diffed (D18's
+// one-value rule: the mode is not re-derived here, it is read from the block
+// the runner wrote).
+//
+// The mode is lower-case because the record's is (the vocabulary's own
+// spelling), and the layer is the record's own word for it. "" for a run whose
+// record carries no block: an absent answer is not the built-in default, and a
+// line claiming one would be a mode nobody resolved.
+func (r *run) rigorPart() string {
+	rg := r.rec.Rigor
+	if rg == nil {
+		return ""
+	}
+	out := "rigor: " + string(rg.Mode) + " (" + string(rg.From)
+	if len(rg.Areas) > 0 {
+		out += " " + inlineText(rg.Areas[0].Name)
+		if n := len(rg.Areas) - 1; n > 0 {
+			out += fmt.Sprintf(" +%d", n)
+		}
+	}
+	return out + ")"
+}
+
 // costPart is the model cost for the section: dollars for api-key and
 // Vertex runs (against the run's cap when it has one), notional for oauth.
 func (r *run) costPart() string {
@@ -546,7 +598,7 @@ func (r *run) finalSection(ready bool, reason string, records []verify.Record) s
 	case r.rec.Status == runstore.StatusCancelled:
 		head = "**Cancelled**"
 	}
-	return r.sectionLines(head, why, verifyPart(records), reviewsPart(r.rec.Reviews), r.costPart(), r.updated("finished"))
+	return r.sectionLines(head, why, r.rigorPart(), verifyPart(records), reviewsPart(r.rec.Reviews), r.backlogPart(), r.costPart(), r.updated("finished"))
 }
 
 // ---- finalize ----

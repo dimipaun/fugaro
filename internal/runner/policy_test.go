@@ -37,6 +37,13 @@ func ceilingOf(t *testing.T, kv ...string) runner.Spend {
 	return s
 }
 
+// critRigor pins a run to Critical. The tests that use it are about which
+// layer's value wins, and Critical contributes no per-run default, so the
+// deployed cap is the ceiling exactly as it was before a mode had one
+// (docs/rigor-modes D16, plan T6.1); TestPolicyRigorModeScalesTheCeiling is
+// where the scaling itself is pinned.
+const critRigor = "rigor:\n  default: critical\n"
+
 func tokenHalt(t *testing.T, rec *runstore.Record, err error, detail string) {
 	t.Helper()
 	if err != nil || rec.Status != runstore.StatusHalted || rec.Halt == nil || rec.Halt.Reason != runstore.HaltTokenCap || rec.Halt.Detail != detail {
@@ -65,7 +72,7 @@ func TestPolicyReadFromDefaultBranchNotRef(t *testing.T) {
 }
 
 func TestPolicyCeilingClampsBothFiles(t *testing.T) {
-	g := newGW(t, gwConfig(t, "")+"budget:\n  per_run_usd: 1000\n", "enforce", "0.10", capScript(3)...)
+	g := newGW(t, gwConfig(t, critRigor)+"budget:\n  per_run_usd: 1000\n", "enforce", "0.10", capScript(3)...)
 	g.deps.Project = "aurora"
 	var st []int
 	rec, err := g.run(t, calling(&st, implement("feature"), call{sonnet, 4000}, call{sonnet, 4000}, call{sonnet, 4000}))
@@ -324,7 +331,7 @@ func TestPolicyCommittedEnforceWithoutCapHalts(t *testing.T) {
 // The owner's cap holds with the ceiling's mode off: a repository that
 // escalates to enforce with a looser cap runs at the owner's.
 func TestPolicyOffCeilingCapHolds(t *testing.T) {
-	g := newGW(t, gwConfig(t, "")+"budget:\n  mode: enforce\n  per_run_usd: 20\n", "off", "0.10", capScript(3)...)
+	g := newGW(t, gwConfig(t, critRigor)+"budget:\n  mode: enforce\n  per_run_usd: 20\n", "off", "0.10", capScript(3)...)
 	g.deps.Project = "aurora"
 	var st []int
 	rec, err := g.run(t, calling(&st, implement("feature"), call{sonnet, 4000}, call{sonnet, 4000}, call{sonnet, 4000}))

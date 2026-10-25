@@ -2303,3 +2303,22 @@ test('the levels slider advances by itself, pauses for a reader, and starts paus
   quietRoot.querySelector('[data-levels-toggle]').dispatch('click')
   assert.equal(still.running().filter((timer) => timer.ms === 4000).length, 1, 'Play does not start the slider')
 })
+
+// The run picture's steps arrive once in view, on a timer (the owner's feedback of 2026-10-24).
+// They are held at their first frame by CSS from the first paint, only where scripts run and the
+// reader allows motion, and `site.js` only starts them; the built page carries no started state.
+test('the run picture holds its steps from the first paint only where a script will start them', () => {
+  const html = builtPages().find((entry) => entry.rel === 'how-it-works/index.html').html
+  assert.ok(!findAll(parse(html), (el) => el.attrs.has('data-run-reveal')).length, 'the built page already carries the started state')
+  const css = [...html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n')
+  const steps = cssRules(css).filter((rule) => /\.run-step/.test(rule.selector || ''))
+  const held = steps.filter((rule) => cssDeclarations(rule.body).some(([p, v]) => (p === 'animation' && /\bpaused\b/.test(v)) || (p === 'animation-play-state' && /paused/.test(v))))
+  assert.ok(held.length > 0, 'the steps are not held at their first frame, so a picture already in view shows them all at once')
+  for (const rule of steps.filter((r) => cssDeclarations(r.body).some(([p]) => p.startsWith('animation')))) {
+    assert.ok(rule.conditions.some((c) => /prefers-reduced-motion\s*:\s*no-preference/.test(c)), `${rule.selector} moves or holds a step for a reader who asked for less motion`)
+    assert.ok(rule.conditions.some((c) => /scripting\s*:\s*enabled/.test(c)), `${rule.selector} holds a step where no script will start it`)
+  }
+  const running = steps.filter((rule) => cssDeclarations(rule.body).some(([p, v]) => p === 'animation-play-state' && /running/.test(v)))
+  assert.ok(running.length > 0 && running.every((rule) => /\[data-run-reveal=["']?play/.test(rule.selector)), 'the steps are started by something other than the script\'s play mark')
+  assert.ok(!steps.some((rule) => cssDeclarations(rule.body).some(([p]) => p === 'animation-timeline')), 'the reveal is tied to the scroll, and it plays once on a timer')
+})
