@@ -176,8 +176,10 @@ type runOptions struct {
 	// paths is --path, repeated: the paths this launch declares it will
 	// touch, which the runner matches against the area rules at D22's first
 	// moment (bootstrap). Nil (the default) is no declaration, and a
-	// declared path that matches no rule changes nothing, so the flag can
-	// only raise the mode an area sets.
+	// declared path that matches no rule changes nothing. A path that does
+	// match replaces the repository's value with the area's, which may be
+	// lower: areas are defaults, not floors (docs/project-layer.md §2), and
+	// finalize resolves again from the paths the run really changed.
 	paths []string
 }
 
@@ -420,6 +422,9 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	}
 	if err != nil {
 		return err
+	}
+	if o.retry == "" {
+		noteRigorRequest(ctx, o, spec.Repo, cmd.ErrOrStderr())
 	}
 	res, err := finishLaunch(ctx, env, o, slug, spec, reused, cmd.ErrOrStderr(), false)
 	if err != nil {
@@ -857,6 +862,30 @@ func rigorFlags(o *runOptions) error {
 	return nil
 }
 
+// noteRigorRequest says, once per launch, when --mode asks for a mode the
+// layers already meet: the request may raise and never lower (D6), so such a
+// request is recorded as asked and changes nothing, and a launcher that typed
+// it — `--mode hotfix` above all, which ranks below every on-axis mode —
+// would otherwise believe it took effect. It reads the checkout's fugaro.yaml
+// with the project layer, the closest thing to the base branch the launcher
+// has; without a checkout of repo it cannot tell, and says nothing. Never an
+// error: the runner, reading the base branch, is the one that decides.
+func noteRigorRequest(ctx context.Context, o *runOptions, repo string, warn io.Writer) {
+	if o.rigor == "" {
+		return
+	}
+	c := checkoutConfig(ctx, repo)
+	if c == nil {
+		return
+	}
+	cfg := c.RigorConfig()
+	if rigor.Resolve(cfg, rigor.Request{Mode: rigor.Mode(o.rigor), Paths: o.paths}).From == rigor.FromRequest {
+		return
+	}
+	resolved := rigor.Resolve(cfg, rigor.Request{Paths: o.paths}).Mode
+	fmt.Fprintf(warn, "--mode %s is not higher than the repository's resolved mode %s: it has no effect\n", o.rigor, resolved)
+}
+
 // attemptPlan is everything a new run's attempts share, resolved once: the
 // repository, workflow, ref, account and recipe. newSpec (a single launch)
 // and runAttempts (every attempt of a best-of-N batch) both build one, then
@@ -1024,6 +1053,7 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 	if err != nil {
 		return err
 	}
+	noteRigorRequest(ctx, o, plan.repo, warn)
 	if err := checkMaxParallelFor(ctx, env, n); err != nil {
 		return err
 	}

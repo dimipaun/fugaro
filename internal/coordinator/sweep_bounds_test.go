@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"testing"
@@ -340,7 +341,8 @@ func TestAFutureDatedIntentIsNotTheNewest(t *testing.T) {
 
 // TestAnUndecodableRecordDoesNotStopTheTick: the intents node is written by
 // every reporter and the stale marker by an earlier sweep, so one document
-// that does not decode is stepped over and counted, and the tick goes on.
+// that does not decode is counted (and an intent record removed), and the
+// tick goes on.
 //
 // Fails when prune or markStale decode the node in one piece.
 func TestAnUndecodableRecordDoesNotStopTheTick(t *testing.T) {
@@ -360,8 +362,8 @@ func TestAnUndecodableRecordDoesNotStopTheTick(t *testing.T) {
 	if err != nil {
 		t.Fatalf("an undecodable intent record stopped the tick: %v", err)
 	}
-	if res.Repos[0].Undecodable != 1 || res.Repos[0].Pruned != 1 {
-		t.Errorf("result = %+v, want one undecodable record stepped over and one record pruned", res.Repos[0])
+	if res.Repos[0].Undecodable != 1 || res.Repos[0].Pruned != 2 {
+		t.Errorf("result = %+v, want one undecodable record counted and pruned beside the one past the count", res.Repos[0])
 	}
 
 	f.Set(PathStale(slug), "not a marker")
@@ -374,7 +376,53 @@ func TestAnUndecodableRecordDoesNotStopTheTick(t *testing.T) {
 	if _, found, err := s.Store.Read(ctx, PathStale(slug), &mark); err != nil || !found || mark.Reason != StaleRuns {
 		t.Errorf("the marker = %+v found=%v err=%v, want it replaced with %q", mark, found, err, StaleRuns)
 	}
-	if res.Repos[0].Undecodable < 2 {
-		t.Errorf("undecodable = %d, want the marker counted beside the intent record", res.Repos[0].Undecodable)
+	if res.Repos[0].Undecodable != 1 {
+		t.Errorf("undecodable = %d, want the marker counted, the intent record being gone since the first sweep", res.Repos[0].Undecodable)
+	}
+}
+
+// TestAnUndecodableIntentIsPruned: a record that does not decode has no age
+// and no place in the order, so neither bound would ever reach it. The sweep
+// removes it on its own ETag, at most MaxUndecodablePrunes a repository a
+// tick, so a node full of them costs the tick a bounded number of writes and
+// the next tick takes the rest.
+//
+// Fails when an undecodable record is only counted (the node grows for ever).
+func TestAnUndecodableIntentIsPruned(t *testing.T) {
+	s, f, src := testSweeper(t)
+	ctx := testCtx(t)
+	src.runs, src.prs = testWork()
+	slug := testRepo().Slug
+	const extra = 3
+	for i := range MaxUndecodablePrunes + extra {
+		f.Set(PathIntent(slug, fmt.Sprintf("garbage-%03d", i)), map[string]any{"at": i})
+	}
+	good := Intent{DeclaredBy: "someone@example.com", At: s.Now().Add(-time.Hour), Branch: "main"}
+	if err := s.Store.Write(ctx, PathIntent(slug, IntentID(good)), good); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.Sweep(ctx, []Repo{testRepo()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := res.Repos[0]; got.Undecodable != MaxUndecodablePrunes+extra || got.Pruned != MaxUndecodablePrunes {
+		t.Errorf("result = %+v, want %d undecodable and %d pruned", got, MaxUndecodablePrunes+extra, MaxUndecodablePrunes)
+	}
+	res, err = s.Sweep(ctx, []Repo{testRepo()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := res.Repos[0]; got.Undecodable != extra || got.Pruned != extra {
+		t.Errorf("second sweep = %+v, want the remaining %d taken", got, extra)
+	}
+	var raw map[string]json.RawMessage
+	if _, _, err := s.Store.Read(ctx, PathIntents(slug), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) != 1 {
+		t.Errorf("the node holds %d records, want only the decodable one", len(raw))
+	}
+	if _, found, _ := s.Store.Read(ctx, PathIntent(slug, IntentID(good)), nil); !found {
+		t.Errorf("the decodable record was pruned")
 	}
 }

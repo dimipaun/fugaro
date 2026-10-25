@@ -90,6 +90,13 @@ const DefaultIntentMaxAge = RunsWindow
 // further ahead than this is ordered as the oldest there is instead.
 const intentClockSkew = 5 * time.Minute
 
+// MaxUndecodablePrunes is how many undecodable intent records the sweep
+// removes from one repository in one tick. Such a record has no age and no
+// place in the order, so neither bound reaches it; removing it is a write
+// per record, and this keeps a node full of them from spending a whole tick's
+// writes on one repository. The next tick takes the rest.
+const MaxUndecodablePrunes = 20
+
 // RunsWindow is how far back one tick reads a repository's runs. A view is
 // computed from the runs of this window and the pull requests they name, so
 // a pull request whose newest run is older than this leaves the view: it is
@@ -239,8 +246,9 @@ type RepoResult struct {
 	// Pruned is how many intent records this sweep removed.
 	Pruned int `json:"pruned"`
 	// Undecodable is how many documents of this repository's node the sweep
-	// could not decode and stepped over: intent records, the stale marker
-	// and the previous view. None of them stops the tick.
+	// could not decode: intent records (which it also removes, counted in
+	// Pruned), the stale marker and the previous view. None of them stops
+	// the tick.
 	Undecodable int `json:"undecodable,omitempty"`
 }
 
@@ -676,9 +684,9 @@ func (s *Sweeper) clearStale(ctx context.Context, repo Repo) error {
 // A record's age is its own At, which is the reporter's clock: one stamped
 // further in the future than intentClockSkew is ordered as the oldest record
 // there is, so a reporter cannot keep a record past both bounds by dating it
-// ahead. A record that does not decode is stepped over and counted, never a
-// stop of the tick: the node is written by every reporter, and one bad record
-// is one reporter's.
+// ahead. A record that does not decode is counted and removed, at most
+// MaxUndecodablePrunes a tick, never a stop of the tick: the node is written by
+// every reporter, and one bad record is one reporter's.
 //
 // Two things make this safe against a reporter writing at the same time. The
 // records are ordered from one read of the node, so a record written after it
@@ -710,10 +718,12 @@ func (s *Sweeper) prune(ctx context.Context, repo Repo, row *RepoResult) (int, e
 		at time.Time
 	}
 	records := make([]record, 0, len(raw))
+	var undecodable []string
 	for id, doc := range raw {
 		var in Intent
 		if json.Unmarshal(doc, &in) != nil {
 			row.Undecodable++
+			undecodable = append(undecodable, id)
 			continue
 		}
 		at := in.At
@@ -744,26 +754,57 @@ func (s *Sweeper) prune(ctx context.Context, repo Repo, row *RepoResult) (int, e
 	}
 	pruned := 0
 	for _, r := range records[:drop] {
-		path := PathIntent(repo.Slug, r.id)
-		etag, found, err := s.Store.Read(ctx, path, nil)
+		ok, err := s.dropIntent(ctx, PathIntent(repo.Slug, r.id), false)
 		if err != nil {
 			return pruned, err
 		}
-		if !found {
-			continue
-		}
-		switch err := s.Store.Put(ctx, path, etag, nil); {
-		case err == nil:
+		if ok {
 			pruned++
-		case errors.Is(err, rtdb.ErrPrecondition):
-			// A reporter rewrote it while this sweep was reading: it is not
-			// the record this sweep decided to drop, and the next sweep
-			// decides about the new one.
-		default:
+		}
+	}
+	// In ID order, so the records a bounded tick leaves for the next one do
+	// not depend on the order the database listed them in.
+	slices.Sort(undecodable)
+	if len(undecodable) > MaxUndecodablePrunes {
+		undecodable = undecodable[:MaxUndecodablePrunes]
+	}
+	for _, id := range undecodable {
+		ok, err := s.dropIntent(ctx, PathIntent(repo.Slug, id), true)
+		if err != nil {
 			return pruned, err
+		}
+		if ok {
+			pruned++
 		}
 	}
 	return pruned, nil
+}
+
+// dropIntent removes one intent record through the store's compare-and-set
+// on the record's own ETag, and reports whether it did. With undecodable set
+// it removes the record only while it still does not decode: a reporter that
+// rewrote it since the node was read wrote a declaration, which is not the
+// record this sweep decided to drop.
+func (s *Sweeper) dropIntent(ctx context.Context, path string, undecodable bool) (bool, error) {
+	var doc json.RawMessage
+	etag, found, err := s.Store.Read(ctx, path, &doc)
+	if err != nil || !found {
+		return false, err
+	}
+	if undecodable && json.Unmarshal(doc, new(Intent)) == nil {
+		return false, nil
+	}
+	switch err := s.Store.Put(ctx, path, etag, nil); {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, rtdb.ErrPrecondition):
+		// A reporter rewrote it while this sweep was reading: it is not
+		// the record this sweep decided to drop, and the next sweep
+		// decides about the new one.
+		return false, nil
+	default:
+		return false, err
+	}
 }
 
 func (s *Sweeper) now() time.Time {

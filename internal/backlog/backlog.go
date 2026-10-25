@@ -122,7 +122,8 @@ type Item struct {
 // Every rule the format states is a refusal here rather than a warning: a
 // missing or unknown field, an empty value, a status outside the three words,
 // a date that is not a day, an id that disagrees with the file name, a
-// duplicate field and a body missing a required heading. An item the folder's
+// duplicate field, a filed-by that is an email address and a body missing a
+// required heading. An item the folder's
 // pin accepts and this refuses would be one `fugaro backlog list` cannot show,
 // which is why the two are checked against each other.
 func Parse(path string, data []byte) (Item, error) {
@@ -149,6 +150,13 @@ func Parse(path string, data []byte) (Item, error) {
 	}
 	if item.FiledIn != "hand" && !filedInRE.MatchString(item.FiledIn) {
 		return Item{}, fmt.Errorf("%s: filed-in %q is none of %s (D27)", path, item.FiledIn, strings.Join(FiledInKinds, ", "))
+	}
+	if strings.Contains(item.FiledBy, "@") {
+		// The folder is committed to the repository, so an address in it
+		// is published with every clone (the owner's ruling of 2026-10-24):
+		// the runner and `fugaro backlog add` write `unknown` instead, and an
+		// item written by hand is held to the same rule here.
+		return Item{}, fmt.Errorf("%s: filed-by %q is an email address; an item records a login, or unknown (D27)", path, item.FiledBy)
 	}
 	if err := checkBody(path, body); err != nil {
 		return Item{}, err
