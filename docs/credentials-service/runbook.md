@@ -159,7 +159,7 @@ This is an **ordered** procedure — re-apply every repository root first, then 
 
 This is the step **Check 94** (Task C1.23) reads back, and it is here because the check cannot do it for itself and no Fugaro command does it either.
 
-Secret Manager `DATA_READ` audit logs are **off by default**, and Fugaro's Terraform manages no audit config, so the live check reads the config back before it reads a log line. Turn them on yourself, the same owner-run way [docs/gcp-setup.md](../gcp-setup.md) records for the runs bucket's `DATA_WRITE`:
+Secret Manager `DATA_READ` audit logs are **off by default**, and Fugaro's Terraform manages no audit config, so the live check reads the config back before it reads a log line. Turn them on yourself, the same owner-run way [design/bucket-iam.md](../design/bucket-iam.md)'s H13 records for the runs bucket's `DATA_WRITE`:
 
 ```bash
 gcloud projects get-iam-policy <gcp-project> --format=json > policy.json

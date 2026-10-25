@@ -296,7 +296,7 @@ Veto alternative: a local-config switch `terraform.launcher_bucket_access: full`
 
 Veto alternative: `init` removes the `projectEditor:` convenience binding as it removes the Viewers' bindings. That buys nothing, because `roles/editor` writes objects at the project level anyway, and it surprises Editors who read the bucket in the console.
 
-**H13: the audit trail is documented, not managed (recommended).** Cloud Storage Data Access audit logs (`DATA_WRITE`) are off by default. With them on, every write to `fugaro/` is attributable. `gcp-setup.md` gains an optional operator step with the one `gcloud projects get-iam-policy`/`set-iam-policy` recipe for `storage.googleapis.com` `DATA_WRITE`, and its log-volume cost note.
+**H13: the audit trail is documented, not managed (recommended).** Cloud Storage Data Access audit logs (`DATA_WRITE`) are off by default. With them on, every write to `fugaro/` is attributable. The optional operator step, which Fugaro's Terraform does not apply: `gcloud projects get-iam-policy <gcp-project> --format=json > policy.json`, add an `auditConfigs` entry for `storage.googleapis.com` with a `DATA_WRITE` log type, then `gcloud projects set-iam-policy <gcp-project> policy.json`. Logging every object write in the runs bucket can cost significant log volume.
 
 Veto alternative: a Terraform `google_project_iam_audit_config`. The guard refuses audit configs by design (`cover.go`), and an audit config is project-wide and authoritative for its service.
 

@@ -123,7 +123,43 @@ func (r *run) guardBounds(ctx context.Context) (since string, except []string) {
 		}
 		except = append(except, tip)
 	}
+	// A first run whose review range was narrowed to its own commits
+	// (diffbase.go, narrowReviewRange) leaves out what that range leaves
+	// out: the commits before the first of its own, which another branch's
+	// were. The guard then measures the run's work over the range its
+	// reviewer was handed. The commit is checked again here, against
+	// origin's own branches as origin names them now: it is subtracted only
+	// while one of them holds it, so a commit only the agent's checkout
+	// calls "on origin" can never take the run's own commits out of the
+	// guard.
+	if nb := r.narrowed(); nb != "" {
+		if r.onOrigin(ctx, nb) {
+			except = append(except, nb)
+		}
+	}
 	return since, except
+}
+
+// onOrigin reports whether commit is held by a branch on origin other than
+// the run's own, read from origin now (gitops.OriginHeads), in one more
+// process whatever the branch count (gitops.HeldBy). Anything that cannot
+// be read is a "no", logged: the guard then subtracts less, which is today's
+// stricter comparison.
+func (r *run) onOrigin(ctx context.Context, commit string) bool {
+	heads, err := r.repo.OriginHeads(ctx, r.rec.Branch)
+	if err != nil {
+		r.d.Log.Warn("reading origin's branches failed; the run's own range is not subtracted from the guard", "err", r.redact(err.Error()))
+		return false
+	}
+	held, err := r.repo.HeldBy(ctx, commit, heads)
+	if err != nil {
+		r.d.Log.Warn("checking origin's branches for the commit the run's own range starts after failed; it is not subtracted from the guard", "narrowed", commit, "err", r.redact(err.Error()))
+		return false
+	}
+	if !held {
+		r.d.Log.Warn("no branch on origin holds the commit the run's own range starts after; it is not subtracted from the guard", "narrowed", commit)
+	}
+	return held
 }
 
 // workflowGuard returns the refusal GitHub is certain to give, without the

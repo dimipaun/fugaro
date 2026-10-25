@@ -333,7 +333,22 @@ type Record struct {
 	// an empty list — for a run that filed none, which is every record
 	// written before this field existed.
 	Backlog []string `json:"backlog,omitempty"`
+	// BacklogClosed is the ids of the backlog items this run closed as the
+	// follow-up whose review shipped the round an earlier run on its pull
+	// request left open (D31, plan T4.7), in the order it closed them, the
+	// same `<YYYYMMDD-NN>` names as Backlog. Nothing reads it yet either; it
+	// is written so the record says what the run answered as well as what it
+	// left. At most MaxBacklogClosed, and absent — never an empty list — for
+	// a run that closed none.
+	BacklogClosed []string `json:"backlog_closed,omitempty"`
 }
+
+// MaxBacklogClosed bounds Record.BacklogClosed. A run closes only what the
+// runs of its own pull request filed for a round, one item a run over a walk
+// the runner bounds at twenty runs, so this is room for every close a real
+// run makes and the point past which a record is not believed
+// (result.schema.json's maxItems).
+const MaxBacklogClosed = 64
 
 // ReviewedPR is one pull request a mode: review run reviewed (design
 // generic-tool §3.6, G12): the commit it reviewed and the stage's verdict,

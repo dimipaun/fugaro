@@ -100,7 +100,7 @@ func TestDoctorTokenSignersNoneIsStillPartial(t *testing.T) {
 	if err != nil || !ok || c.OK || c.Severity != "info" || len(signerChecks(o)) != 0 {
 		t.Fatalf("err %v, checks %+v", err, o.Checks)
 	}
-	for _, want := range []string{"checked the project and service-account IAM policies of proj-1234", "not read:", "folder- and organization-inherited bindings", "deny policies", "Google service agents of this project are read and classified", "docs/gcp-setup.md#token-signers"} {
+	for _, want := range []string{"checked the project and service-account IAM policies of proj-1234", "not read:", "folder- and organization-inherited bindings", "deny policies", "Google service agents of this project are read and classified", "docs/design/m9-budget-and-dashboard.md"} {
 		if !strings.Contains(c.Problem, want) {
 			t.Errorf("summary %q lacks %q", c.Problem, want)
 		}

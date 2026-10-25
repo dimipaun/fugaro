@@ -580,6 +580,8 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		// And the items the run filed (docs/rigor-modes T4.5, D9): ids of
 		// the files a reviewer finds under docs/backlog/ on the branch.
 		Backlog: []string{"20261024-01", "20261024-02"},
+		// And the items it closed as the follow-up that fixed them (D31).
+		BacklogClosed: []string{"20261023-01"},
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {
@@ -692,14 +694,36 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			t.Errorf("schema accepts %s: %s", tc.name, repl)
 		}
 	}
+	// The closed items (D31) are the same ids, held to the same shape, and
+	// bounded: a run closes what the runs of one pull request filed, which
+	// runstore.MaxBacklogClosed is the ceiling of.
+	for _, tc := range []struct{ name, old, new string }{
+		{"a closed id that is not one", `"backlog_closed":["20261023-01"]`, `"backlog_closed":["20261023-1"]`},
+		{"a closed id that is not text", `"backlog_closed":["20261023-01"]`, `"backlog_closed":[20261023]`},
+		{"a close the record cannot name", `"backlog_closed":["20261023-01"]`, `"backlog_closed":{"20261023-01":1}`},
+		{"more closes than the bound", `"backlog_closed":["20261023-01"]`, `"backlog_closed":[` + strings.TrimSuffix(strings.Repeat(`"20261023-01",`, runstore.MaxBacklogClosed+1), ",") + `]`},
+	} {
+		old, repl := []byte(tc.old), []byte(tc.new)
+		if !bytes.Contains(data, old) {
+			t.Fatalf("fixture lacks the literal this test replaces (%s): %s", tc.name, data)
+		}
+		bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, old, repl, 1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(bad); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, repl)
+		}
+	}
 	without := rec
 	without.Backlog = nil
+	without.BacklogClosed = nil
 	bare, err := json.Marshal(without)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(bare, []byte(`"backlog"`)) {
-		t.Fatalf("a run that filed nothing still writes the field: %s", bare)
+	if bytes.Contains(bare, []byte(`"backlog"`)) || bytes.Contains(bare, []byte(`"backlog_closed"`)) {
+		t.Fatalf("a run that filed and closed nothing still writes the fields: %s", bare)
 	}
 	inst, err = jsonschema.UnmarshalJSON(bytes.NewReader(bare))
 	if err != nil {

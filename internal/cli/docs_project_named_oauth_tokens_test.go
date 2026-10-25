@@ -508,53 +508,48 @@ func TestDocsProjectClaudeAccountsNoSecretShapes(t *testing.T) {
 	}
 }
 
-// TestDocsProjectClaudeAccountsGcpSetupRollout is plan task 4's own red step:
-// docs/gcp-setup.md is the cloud runbook an operator follows, and the rollout
-// of the account axis is a step of it — a 0.9.0 CLI publishes a node an older
-// runner refuses, so the upgrade order is what an operator who skipped this
-// would otherwise find out at a failed run. The section also carries the two
-// other things task 4 lists for this file: the profile field, and the
-// project-wide storage step.
+// TestDocsProjectClaudeAccountsGcpSetupRollout is plan task 4's own red step.
+// The rollout of the account axis used to be a step of docs/gcp-setup.md, the
+// cloud runbook an operator followed; that page is the short setup path now
+// (this review's finding: it carries the fresh-setup path only), and the rollout
+// lives where the rest of the account axis does, in
+// docs/project-claude-accounts.md's §5, which states the order its four steps
+// run in. This pins the three things task 4 lists — the version-3 rollout, the
+// profile field and the project-wide storage step — against the page that
+// carries them now.
 //
 // Mutation (verified, run and restored): delete the "Republish the policy, per
 // installation" step from the section — this fails naming it. The same holds
 // for the profile field's sentence and the project-wide storage step.
 func TestDocsProjectClaudeAccountsGcpSetupRollout(t *testing.T) {
-	doc := readDoc(t, "docs/gcp-setup.md")
+	doc := readDoc(t, projectClaudeAccountsDoc)
 	// The section says the feature is in the released CLI: that must be true
 	// of the tree's own release, or the page describes a CLI nobody has.
 	releasedAtLeast(t, releasedFugaroVersion(t), "0.9.0")
 	for _, want := range []string{
-		"## Claude accounts a project job serves (0.9.0)",
-		"**It is in the released CLI since 0.9.0 — 0.8.x does not read any of it**",
-		"(project-claude-accounts.md)",
-		// The profile field.
-		"`profiles.<profile>.claude_accounts` in the project's local config",
-		"One job per (profile, provider, account) is what `fugaro setup` deploys.",
+		"## 5. What `fugaro setup` deploys, and the version-3 rollout",
+		// The profile field, and the jobs it deploys.
+		"claude_accounts` in the project's local config",
+		"one Cloud Run job and one job service account per `(profile, provider, Claude account)`",
 		// The project-wide storage step.
-		"**The project-wide storage step.**",
-		"the job mounts the **project-wide** copy",
 		"fugaro secrets set claude-oauth-token-<name>",
-		// The bare name's scope, as internal/cli/secrets.go actually decides it
-		// (the review of PR #642): project-wide when the entry lists the
-		// repository in hand, refused for --project-wide with no entry, and
-		// the repository's own copy for a bare command in a checkout.
-		"project-wide only when `project_secrets.claude-oauth-token` allow-lists the repository you run it from",
-		"a bare `fugaro secrets set claude-oauth-token` run in a checkout quietly stores **that repository's own copy**",
 		// The Version 3 rollout, in order.
-		"**The Version 3 rollout.**",
+		"**0.9.0's accounts need all four of these**, in this order:",
 		"brew upgrade dimipaun/tap/fugaro && fugaro upgrade",
 		"fugaro project policy publish --delete",
 		"fugaro image refresh",
 		// The shared jobs move last, per installation: image refresh never
 		// touches a project job (the review of PR #660).
-		"Move the shared jobs, **per installation**, on a machine where step 3 ran: `fugaro update --firebase-project <gcp-project-id>`",
-		"a project job runs the installation's base image, and only this re-apply of the installation moves it",
-		// And the one-line pointer in the optional pieces.
-		"**Named Claude accounts on a shared job (0.9.0):**",
+		"**Move the shared jobs onto it, per installation**",
+		"fugaro update --firebase-project <gcp-project-id>",
+		"re-pins `base_images` and moves each repository's own jobs, but never a",
+		"only a re-apply of the installation moves them",
+		// A 0.8.x runner refuses the 0.9.0 node, which is why the images move.
+		"0.9.0 policy read by an 0.8.x runner is refused",
+		"the fix is the image, not the policy.",
 	} {
 		if !strings.Contains(doc, want) {
-			t.Errorf("docs/gcp-setup.md no longer says %q: the version-3 rollout, the profile field and the project-wide storage step are plan task 4's own additions to the operator runbook", want)
+			t.Errorf("docs/project-claude-accounts.md no longer says %q: §5 is where the version-3 rollout, the profile field and the project-wide storage step live, and the order is what an operator who skipped this would otherwise find out at a failed run", want)
 		}
 	}
 	// The bare token's scope, tied to the code that decides it (the review of
@@ -564,17 +559,17 @@ func TestDocsProjectClaudeAccountsGcpSetupRollout(t *testing.T) {
 	// refused (only --project-wide is refused). Change either and the runbook's
 	// sentence is stale.
 	if config.ProjectScopeByDefault(config.ClaudeOAuthToken) {
-		t.Errorf("config.ProjectScopeByDefault(%q) is true, so the bare name is swept project-wide with no project_secrets entry: docs/gcp-setup.md's sentence about the repository's own copy is now wrong", config.ClaudeOAuthToken)
+		t.Errorf("config.ProjectScopeByDefault(%q) is true, so the bare name is swept project-wide with no project_secrets entry: docs/project-claude-accounts.md's sentence about the repository's own copy is now wrong", config.ClaudeOAuthToken)
 	}
 	if scope := sourceOfFunc(t, "secrets.go", "projectScopeName"); !strings.Contains(scope, "infra.ProjectSecretCandidate(lc, name, repo)") {
-		t.Error("secrets.go's projectScopeName no longer asks infra.ProjectSecretCandidate with the checkout's repository: docs/gcp-setup.md's sentence about the bare claude-oauth-token's repository copy is now wrong")
+		t.Error("secrets.go's projectScopeName no longer asks infra.ProjectSecretCandidate with the checkout's repository: docs/project-claude-accounts.md's sentence about the bare claude-oauth-token's repository copy is now wrong")
 	}
 
 	// The runbook must not still send an operator to the repository copy for a
 	// token a shared job mounts: the default account's scope is stated with the
 	// condition the CLI actually applies (projectWideAccepted).
 	if strings.Contains(doc, "the only scope that name has by default") {
-		t.Errorf("docs/gcp-setup.md still says claude-oauth-token's repository copy is \"the only scope that name has by default\", and the CLI stores that name project-wide whenever project_secrets lists it (internal/cli/secrets.go's projectWideAccepted)")
+		t.Errorf("docs/project-claude-accounts.md still says claude-oauth-token's repository copy is \"the only scope that name has by default\", and the CLI stores that name project-wide whenever project_secrets lists it (internal/cli/secrets.go's projectWideAccepted)")
 	}
 }
 

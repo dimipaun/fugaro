@@ -168,7 +168,7 @@ document, release assignment later — so Slices 1–2 wait on no ruling; (e)
 - **Schema/rules/config:** the file; content per GD7: CLI Badger 0.10, Camel 0.11, Dolphin,
   Gecko, Hippo, Koala, Moose; Console Cherry, Mango, Melon; Mobile Falcon, Pelican, Robin.
 - **Tests:** `TestCatalogueValid`, `TestNamesAlphabetical`, `TestNoNameInTwoStreams`,
-  `TestConsoleFloor` (console `current` ≥ 0.10.0; F33), `TestForbiddenConsoleNames` (Apple,
+  `TestConsoleFloor` (console `current` ≥ 0.110.0; F33), `TestForbiddenConsoleNames` (Apple,
   Lemon), `TestRealFileParses` (reads the repository's own file), `TestSymlinkRefused`,
   `TestOversizeRefused`, `TestAliasRefused`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/streams -count=1 -timeout 300s`

@@ -17,7 +17,7 @@ func TestSelectKeepsTheStrictestOfTheMatched(t *testing.T) {
 	}
 	got := Select(areas, []string{"web/admin/page.tsx", "internal/payments/card.go", "docs/readme.md"})
 	want := []string{"payments", "web", "docs"}
-	if names := NamesOf(got); !slices.Equal(names, want) {
+	if names := areaNames(got); !slices.Equal(names, want) {
 		t.Fatalf("Select = %v; want %v (strictest first)", names, want)
 	}
 	if mode := Strictest(ModesOf(got)...); mode != Critical {
@@ -33,7 +33,7 @@ func TestSelectLeavesTheModeAloneWhenNothingMatches(t *testing.T) {
 	areas := []Area{{Name: "payments", Match: "internal/payments/**", Mode: Critical}}
 	for _, paths := range [][]string{nil, {}, {"README.md"}, {"internal/paymentss/card.go"}} {
 		if got := Select(areas, paths); len(got) != 0 {
-			t.Errorf("Select(%v) = %v; want no match", paths, NamesOf(got))
+			t.Errorf("Select(%v) = %v; want no match", paths, areaNames(got))
 		}
 	}
 }
@@ -51,7 +51,7 @@ func TestSelectDeduplicatesByNameKeepingTheStrictest(t *testing.T) {
 		{Name: "payments", Match: "internal/payments/**", Mode: Critical},
 	}
 	got := Select(areas, []string{"internal/payments/card.go"})
-	if names := NamesOf(got); !slices.Equal(names, []string{"payments"}) {
+	if names := areaNames(got); !slices.Equal(names, []string{"payments"}) {
 		t.Fatalf("Select = %v; want the name once", names)
 	}
 	if got[0].Mode != Critical {
@@ -72,7 +72,7 @@ func TestSelectDeduplicatesByNameNotByPattern(t *testing.T) {
 		{Name: "payments", Match: "internal/billing/**", Mode: Critical},
 	}
 	got := Select(areas, []string{"internal/payments/card.go", "internal/billing/invoice.go"})
-	if names := NamesOf(got); !slices.Equal(names, []string{"payments"}) {
+	if names := areaNames(got); !slices.Equal(names, []string{"payments"}) {
 		t.Fatalf("Select = %v; want the name once, whatever globs it was written with", names)
 	}
 	if got[0].Mode != Critical {
@@ -92,7 +92,7 @@ func TestSelectDedupeKeepsTheInPlaceOrder(t *testing.T) {
 		{Name: "alpha", Match: "a/**", Mode: POC},
 	}
 	got := Select(areas, []string{"a/x.go", "b/y.go"})
-	if names := NamesOf(got); !slices.Equal(names, []string{"alpha", "beta"}) {
+	if names := areaNames(got); !slices.Equal(names, []string{"alpha", "beta"}) {
 		t.Fatalf("Select = %v; want [alpha beta]", names)
 	}
 	if got[0].Mode != Critical {
@@ -110,7 +110,7 @@ func TestSelectSortsEqualRanksStably(t *testing.T) {
 		{Name: "three", Match: "c/**", Mode: Pro},
 	}
 	got := Select(areas, []string{"a/x", "b/x", "c/x"})
-	if names := NamesOf(got); !slices.Equal(names, []string{"one", "two", "three"}) {
+	if names := areaNames(got); !slices.Equal(names, []string{"one", "two", "three"}) {
 		t.Errorf("Select = %v; want the written order for equal ranks", names)
 	}
 }
@@ -159,19 +159,13 @@ func TestMatchesIsQuietOnABadPattern(t *testing.T) {
 	}
 }
 
-// TestNamesAndModesOfEmptyAreNil pins that an empty set is a nil slice and
-// not a zero-length one, so the run record leaves the field absent rather
-// than writing an empty list a reader would read as "no areas matched, and I
+// TestModesOfEmptyIsNil pins that an empty set is a nil slice and not a
+// zero-length one, so the run record leaves the field absent rather than
+// writing an empty list a reader would read as "no areas matched, and I
 // checked".
-func TestNamesAndModesOfEmptyAreNil(t *testing.T) {
-	if got := NamesOf(nil); got != nil {
-		t.Errorf("NamesOf(nil) = %#v; want nil", got)
-	}
+func TestModesOfEmptyIsNil(t *testing.T) {
 	if got := ModesOf(nil); got != nil {
 		t.Errorf("ModesOf(nil) = %#v; want nil", got)
-	}
-	if got := NamesOf([]Area{}); got != nil {
-		t.Errorf("NamesOf(empty) = %#v; want nil", got)
 	}
 	if got := ModesOf([]Area{}); got != nil {
 		t.Errorf("ModesOf(empty) = %#v; want nil", got)
@@ -196,8 +190,18 @@ func TestConfigAreasUnionsTheTwoLayers(t *testing.T) {
 		{"both, project first", Config{ProjectAreas: project, RepoAreas: repo}, []string{"proj", "repo"}},
 	}
 	for _, c := range cases {
-		if names := NamesOf(c.cfg.Areas()); !slices.Equal(names, c.want) {
+		if names := areaNames(c.cfg.Areas()); !slices.Equal(names, c.want) {
 			t.Errorf("%s: Areas() = %v; want %v", c.name, names, c.want)
 		}
 	}
+}
+
+// areaNames is the names of areas, in order, for a test that compares only
+// which rules matched.
+func areaNames(areas []Area) []string {
+	var out []string
+	for _, a := range areas {
+		out = append(out, a.Name)
+	}
+	return out
 }

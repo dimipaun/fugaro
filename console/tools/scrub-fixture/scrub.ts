@@ -642,6 +642,7 @@ const JOB_RULES: Readonly<Record<string, Rule>> = {
   provider: invent('example-provider'),
   account: invent('redacted@example.invalid'),
   launched_by: invent('redacted@example.invalid'),
+  plan_task: invent('example-plan/example-task'),
 }
 
 function scrubRun(

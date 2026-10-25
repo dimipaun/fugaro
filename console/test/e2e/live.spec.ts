@@ -117,6 +117,7 @@ const MODULES: readonly string[] = Object.freeze([
   'shared/availability.js',
   'shared/sanitize.js',
   'shared/launcher.js',
+  'shared/rigor.js',
   'shared/version.js',
   'shared/schema.js',
   'renderer/app.js',
@@ -207,7 +208,7 @@ function domFactory() {
  * one (design section 6.3) -- and mount what the last of them draws. One document
  * is the usual case; a sequence is how a test can see the burn window itself,
  * whose bars depend on the clock the model was built at. */
-function draw(frames: readonly JSONDoc[], theme: string): string {
+function draw(frames: readonly JSONDoc[], theme: string, runs: JSONDoc | null = null): string {
   return `(function () {
 ${LOADER}${MODULES.map(moduleSource).join('\n')}${FACTORY}
 var live = load('/renderer/screens/live.js');
@@ -216,10 +217,15 @@ var history = new live.BurnHistory();
 var factory = domFactory();
 var tree = null;
 var frames = ${JSON.stringify(frames)};
+// The rigor join: the live frame carries no mode, so a row's mode is read from
+// a runs-ls document and matched by run id (shared/rigor.js). A spec that
+// passes none is a console that has not made the join.
+var runs = ${JSON.stringify(runs)};
+var rigor = runs === null ? new Map() : load('/shared/rigor.js').rigorIndex(runs);
 for (var i = 0; i < frames.length; i++) {
   var decoded = schema.decodeSnapshot(frames[i], 'the fixture frame');
   if (!decoded.ok) return { error: decoded.skew.because };
-  var model = live.buildLiveModel(decoded.value, history);
+  var model = live.buildLiveModel(decoded.value, history, null, rigor);
   if (i === frames.length - 1) tree = live.renderLive(factory, model, ${JSON.stringify(theme)});
 }
 var previous = document.getElementById('live-mount');
@@ -249,6 +255,9 @@ interface Screen {
   readonly killed: readonly (string | null)[]
   readonly killText: string | null
   readonly flags: readonly string[]
+  /** the rigor chip on each run row that carries one, in row order: empty when
+   * no row's run is in the joined run list */
+  readonly modes: readonly string[]
   readonly sparkBars: number
   /** each sparkline bar's own height, as drawn (`data-height`): the reading a
    * clock that moved the burn window's cut would change */
@@ -284,6 +293,7 @@ function screen(page: Page): Promise<Screen> {
       killed: attributes('.live-repo', 'data-killed'),
       killText: scope.querySelector('.live-kill')?.textContent ?? null,
       flags: texts('.live-run-flag'),
+      modes: texts('.live-run-mode'),
       sparkBars: all('.live-burn-bar').length,
       sparkHeights: attributes('.live-burn-bar', 'data-height'),
       anchors: all('a').length,
@@ -384,14 +394,20 @@ test.describe('the Live screen', () => {
 
   /** mount draws these documents -- one, or a sequence observed through one
    * `BurnHistory` -- and fails with the window's own words if the console's
-   * decoder refused any of them. */
-  async function mount(document: JSONDoc | readonly JSONDoc[], theme: string): Promise<void> {
+   * decoder refused any of them. `runs` is the `runs ls --json` document the
+   * rows' rigor chips are joined from, and a case that passes none is a console
+   * that has not made the join. */
+  async function mount(
+    document: JSONDoc | readonly JSONDoc[],
+    theme: string,
+    runs: JSONDoc | null = null,
+  ): Promise<void> {
     const frames = Array.isArray(document) ? document : [document]
     const result = await app.evaluate(async ({ BrowserWindow }, source) => {
       const window = BrowserWindow.getAllWindows()[0]
       if (window === undefined) return { error: 'the console has no window' }
       return (await window.webContents.executeJavaScript(source, true)) as { error?: string }
-    }, draw(frames, theme))
+    }, draw(frames, theme, runs))
     expect(result.error).toBeUndefined()
   }
 
@@ -433,6 +449,36 @@ test.describe('the Live screen', () => {
     // A queued run's spend is `null` on the wire, so the screen draws the
     // console's mark for "not known" rather than a zero.
     expect(drawn.text).toContain('n/a')
+  })
+
+  test('draws each run\'s rigor mode, joined from the runs list by run id', async () => {
+    // Owner request 2026-10-25: the mode on a Live row. **The live frame does
+    // not carry it** -- the frame is `JSONRun` -- so the chip is a join against
+    // `runs ls --json` by run id (`shared/rigor.js`'s `rigorIndex`), and this is
+    // the only place that join runs against the real compiled module in the
+    // window. The runs list names both of the frame's runs, so both rows draw a
+    // chip, and each is the word this build gives that mode.
+    const runs: JSONDoc = {
+      project: 'example-project',
+      runs: [
+        { run: '20261015-120000-aa01', rigor: { mode: 'poc', from: 'request' } },
+        { run: '20261015-120400-aa03', rigor: { mode: 'critical', from: 'area', areas: [{ name: 'payments', mode: 'critical' }] } },
+      ],
+      warnings: [],
+    }
+    await mount(theLastFrame(), 'light', runs)
+    expect((await screen(page)).modes).toEqual(['POC', 'Critical'])
+
+    // A console that has not made the join draws no chip at all -- never a mode
+    // taken from another run -- and one whose list knows only the other run
+    // draws the chip on that row alone.
+    await mount(theLastFrame(), 'light')
+    expect((await screen(page)).modes).toEqual([])
+    const rows = runs['runs'] as readonly JSONDoc[]
+    const only = rows[0]
+    if (only === undefined) throw new Error('the runs document has no rows')
+    await mount(theLastFrame(), 'light', { ...runs, runs: [only] })
+    expect((await screen(page)).modes).toEqual(['POC'])
   })
 
   test('is painted from the design tokens, not from the browser defaults', async () => {

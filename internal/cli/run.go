@@ -68,11 +68,15 @@ type launchRecipe struct {
 
 // launchResult is what fugaro run reports, and its --json output.
 type launchResult struct {
-	Project   string `json:"project"` // the Fugaro project
-	Run       string `json:"run"`
-	Repo      string `json:"repo"`
-	RunID     string `json:"run_id"`
-	Branch    string `json:"branch"`
+	Project string `json:"project"` // the Fugaro project
+	Run     string `json:"run"`
+	Repo    string `json:"repo"`
+	RunID   string `json:"run_id"`
+	Branch  string `json:"branch"`
+	// Ref is the ref a new run's branch is cut from, which its review
+	// measures the run's work against; empty for a follow-up and a review
+	// run, whose review reads each pull request's own base.
+	Ref       string `json:"ref,omitempty"`
 	Execution string `json:"execution"`
 	LogURL    string `json:"log_url,omitempty"`
 	Status    string `json:"status"` // launched | already-launched
@@ -176,8 +180,10 @@ type runOptions struct {
 	// paths is --path, repeated: the paths this launch declares it will
 	// touch, which the runner matches against the area rules at D22's first
 	// moment (bootstrap). Nil (the default) is no declaration, and a
-	// declared path that matches no rule changes nothing, so the flag can
-	// only raise the mode an area sets.
+	// declared path that matches no rule changes nothing. A path that does
+	// match replaces the repository's value with the area's, which may be
+	// lower: areas are defaults, not floors (docs/project-layer.md §2), and
+	// finalize resolves again from the paths the run really changed.
 	paths []string
 }
 
@@ -227,7 +233,7 @@ func newRunCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.StringVar(&o.repo, "repo", "", "repository as owner/name (default: this checkout's origin)")
-	f.StringVar(&o.ref, "ref", "", "base branch or ref (default: the repo's base_branch)")
+	f.StringVar(&o.ref, "ref", "", "base branch or ref the run is cut from (default: the branch this checkout is on, when origin has it and it is not the base branch; else the repo's base_branch)")
 	f.StringVar(&o.workflow, "workflow", "", "workflow to run (default: the repo's only workflow)")
 	f.StringVar(&o.runID, "run-id", "", "run ID to use; repeating one reports its launch instead of starting another")
 	f.StringVar(&o.batch, "batch", "", "batch label, to group runs in fugaro runs ls")
@@ -420,6 +426,9 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	}
 	if err != nil {
 		return err
+	}
+	if o.retry == "" {
+		noteRigorRequest(ctx, o, spec.Repo, cmd.ErrOrStderr())
 	}
 	res, err := finishLaunch(ctx, env, o, slug, spec, reused, cmd.ErrOrStderr(), false)
 	if err != nil {
@@ -857,6 +866,30 @@ func rigorFlags(o *runOptions) error {
 	return nil
 }
 
+// noteRigorRequest says, once per launch, when --mode asks for a mode the
+// layers already meet: the request may raise and never lower (D6), so such a
+// request is recorded as asked and changes nothing, and a launcher that typed
+// it — `--mode hotfix` above all, which ranks below every on-axis mode —
+// would otherwise believe it took effect. It reads the checkout's fugaro.yaml
+// with the project layer, the closest thing to the base branch the launcher
+// has; without a checkout of repo it cannot tell, and says nothing. Never an
+// error: the runner, reading the base branch, is the one that decides.
+func noteRigorRequest(ctx context.Context, o *runOptions, repo string, warn io.Writer) {
+	if o.rigor == "" {
+		return
+	}
+	c := checkoutConfig(ctx, repo)
+	if c == nil {
+		return
+	}
+	cfg := c.RigorConfig()
+	if rigor.Resolve(cfg, rigor.Request{Mode: rigor.Mode(o.rigor), Paths: o.paths}).From == rigor.FromRequest {
+		return
+	}
+	resolved := rigor.Resolve(cfg, rigor.Request{Paths: o.paths}).Mode
+	fmt.Fprintf(warn, "--mode %s is not higher than the repository's resolved mode %s: it has no effect\n", o.rigor, resolved)
+}
+
 // attemptPlan is everything a new run's attempts share, resolved once: the
 // repository, workflow, ref, account and recipe. newSpec (a single launch)
 // and runAttempts (every attempt of a best-of-N batch) both build one, then
@@ -909,12 +942,8 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	}
 	ref := o.ref
 	if ref == "" {
-		if r, ok := env.localRepo(repo); ok && r.BaseBranch != "" {
-			ref = r.BaseBranch
-		} else if c := checkout(); c != nil && c.Git.BaseBranch != "" {
-			ref = c.Git.BaseBranch
-		} else {
-			return nil, userErr("cannot tell the base branch of %s; pass --ref", repo)
+		if ref, err = newRunRef(ctx, env, repo, checkout, warn); err != nil {
+			return nil, err
 		}
 	}
 	me, err := env.lc.Me(ctx)
@@ -975,6 +1004,7 @@ func newSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tot
 	if err != nil {
 		return "", nil, err
 	}
+	warnTaskCutsBranch(warn, text, plan.ref)
 	return buildAttemptSpec(plan, o, text)
 }
 
@@ -1024,6 +1054,8 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 	if err != nil {
 		return err
 	}
+	noteRigorRequest(ctx, o, plan.repo, warn)
+	warnTaskCutsBranch(warn, text, plan.ref)
 	if err := checkMaxParallelFor(ctx, env, n); err != nil {
 		return err
 	}
@@ -2200,7 +2232,11 @@ func printLaunch(w io.Writer, res launchResult, asJSON bool) error {
 	if res.PR > 0 {
 		what += fmt.Sprintf(" (follow-up of PR #%d, after %s)", res.PR, oneLine(res.PreviousRun))
 	}
-	if _, err := fmt.Fprintf(w, "%s %s\n  branch %s\n", verb, what, oneLine(res.Branch)); err != nil {
+	branch := oneLine(res.Branch)
+	if res.Ref != "" {
+		branch += " cut from " + oneLine(res.Ref)
+	}
+	if _, err := fmt.Fprintf(w, "%s %s\n  branch %s\n", verb, what, branch); err != nil {
 		return err
 	}
 	if res.LogURL != "" {
@@ -2301,6 +2337,9 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		PR: spec.PR, PreviousRun: spec.PreviousRun}
 	if spec.Branch != "" {
 		res.Branch = spec.Branch
+	}
+	if !spec.IsFollowUp() && len(spec.ReviewPRs) == 0 {
+		res.Ref = spec.Ref
 	}
 	done := func(l *runstore.Launch, status string) (launchResult, error) {
 		res.Execution, res.LogURL, res.Status = l.Execution, l.LogURL, status

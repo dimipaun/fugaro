@@ -52,6 +52,8 @@ import {
 } from '../../shared/availability'
 import type { Reading, Sample } from '../../shared/availability'
 import { launcherCell } from '../../shared/launcher'
+import { rigorModeWord } from '../../shared/rigor'
+import type { RigorView } from '../../shared/rigor'
 import { sanitizeText } from '../../shared/sanitize'
 import type { BurnView, FinishedView, KillView, LiveDocument, RunView, TotalsView } from '../../shared/schema'
 import { putReading, putText } from '../app'
@@ -611,6 +613,14 @@ export interface LiveRunRow {
   /** the console's sentence about a flag the run's own age cannot support, or
    * `null` when there is nothing impossible to report */
   readonly contradiction: string | null
+  /** the run's rigor block, or `null`. **It is not in the live document**: the
+   * frame is `JSONRun`, which carries no rigor, so this is a join against
+   * `runs ls --json` by run id (`shared/rigor.ts`'s `rigorIndex`) and the
+   * caller is what makes it. `null` is "no record of this run's rigor" -- a
+   * run from before the block, one that died before bootstrap, or a run the
+   * join did not reach -- and the row draws no chip at all for it, never a
+   * mode guessed from another run. */
+  readonly rigor: RigorView | null
 }
 
 /** LiveRepoRow is one repository: its bar, its sparkline, its kill banner and
@@ -732,7 +742,7 @@ export function feedReading(feed: FeedHealth): Reading {
 }
 
 /** rowOf builds one run row. */
-function rowOf(run: RunView): LiveRunRow {
+function rowOf(run: RunView, rigor: ReadonlyMap<string, RigorView>): LiveRunRow {
   const flags = runFlags(run)
   const age = run.ageSeconds.value
   return {
@@ -754,6 +764,7 @@ function rowOf(run: RunView): LiveRunRow {
     queued: run.queued,
     stuck: run.stuck,
     contradiction: contradiction(run.health, age),
+    rigor: rigor.get(run.run) ?? null,
   }
 }
 
@@ -804,6 +815,12 @@ function silenceStamp(now: string, seconds: number | null): string {
   return new Date(when + seconds * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z')
 }
 
+/** NO_RIGOR is the join a caller that has none passes: every row draws no chip.
+ * It is a shared empty map rather than a fresh one per call because it is
+ * read-only and never written -- `rigorIndex` (`shared/rigor.ts`) is what
+ * builds the map a caller does pass. */
+const NO_RIGOR: ReadonlyMap<string, RigorView> = new Map()
+
 /**
  * buildLiveModel is one frame as the screen's data.
  *
@@ -812,11 +829,20 @@ function silenceStamp(now: string, seconds: number | null): string {
  * sparkline roll rather than repeat. A caller drawing a single frame passes a
  * fresh one and gets a one-bar sparkline, which is the truth about a console
  * that has seen one document.
+ *
+ * `rigor` is the Live screen's one **join**, keyed by run id: the frame is
+ * `JSONRun`, which carries no rigor block, so the mode on a row comes from
+ * `runs ls --json` and is matched here (`rigorIndex`). A caller that has not
+ * made that read passes nothing, and every row is then drawn with no chip --
+ * which is the same cell a run with no block draws, and the reason the
+ * parameter is a map rather than a reason string: the screen is not degraded by
+ * a join it does not have, it simply says less.
  */
 export function buildLiveModel(
   document: LiveDocument,
   history: BurnHistory = new BurnHistory(),
   feed: FeedHealth | null = null,
+  rigor: ReadonlyMap<string, RigorView> = NO_RIGOR,
 ): LiveModel {
   const repos: LiveRepoRow[] = document.repos.map((repo) => {
     const burn = burnReading(repo.burn)
@@ -860,12 +886,12 @@ export function buildLiveModel(
       burnFast: repo.burn.fast,
       spark: sparkline(history, repo.slug, at),
       kill: repo.kill,
-      runs: document.runs.filter((run) => run.slug === repo.slug).map(rowOf),
+      runs: document.runs.filter((run) => run.slug === repo.slug).map((run) => rowOf(run, rigor)),
     }
   })
 
   const known = new Set(document.repos.map((repo) => repo.slug))
-  const orphans = document.runs.filter((run) => !known.has(run.slug)).map(rowOf)
+  const orphans = document.runs.filter((run) => !known.has(run.slug)).map((run) => rowOf(run, rigor))
 
   // The review list is the document's own order -- `ReadyForReview` sorts it
   // newest first (`internal/watch/filter.go`), and a console that sorted again
@@ -1068,6 +1094,7 @@ function runRow(factory: ScreenFactory, row: LiveRunRow): ScreenElement {
 
   textCell(element, factory, 'span', row.run, 'runId', 'runs[].run', 'live-run-id')
   textCell(element, factory, 'span', row.title, 'sentence', 'runs[].title', 'live-run-title')
+  if (row.rigor !== null) modeChip(element, factory, row.rigor)
   textCell(element, factory, 'span', row.stage, 'label', 'runs[].stage', 'live-run-stage')
   textCell(element, factory, 'span', row.round, 'label', 'runs[].round', 'live-run-round')
   textCell(element, factory, 'span', row.verify, 'label', 'runs[].verify', 'live-run-verify')
@@ -1106,6 +1133,37 @@ function runRow(factory: ScreenFactory, row: LiveRunRow): ScreenElement {
     textCell(element, factory, 'span', startedBy, 'label', 'runs[].launched_by', 'live-run-started-by')
   }
   return element
+}
+
+/** modeChip is one run's rigor mode, as the single mark a Live row has room
+ * for -- the whole answer is on the run's own screen (`run.ts`'s `rigorLine`),
+ * and the Projects screen's MODE cell is the same word in a table.
+ *
+ * **The word is the chip, and there is no second channel.** The five modes are
+ * a dial with no colour of its own anywhere in this tree -- not in the CLI's own
+ * MODE column, not in `docs/rigor-modes` -- so a chip that painted one mode
+ * differently from another would be inventing a meaning, and the stylesheet's
+ * rule is that every colour meaning carries a text mark (styling §3.5). Here
+ * the text is the whole of it: a bounded, small mark that separates the mode
+ * from the title and the stage around it.
+ *
+ * A mode this build has never heard of is the document's own word, through
+ * `putText` with the `label` class and the `runs[].rigor.mode` field -- bounded,
+ * escaped, and `n/a` when the sanitizer will not have it. A mode a newer CLI
+ * resolved is not a reason to draw nothing.
+ *
+ * A run whose record carries no block draws **no chip at all**, not an empty
+ * one: the row is about what the run is doing, and a mark for a fact nobody
+ * recorded would be a mark the reader has to interpret.
+ */
+function modeChip(parent: ScreenElement, factory: ScreenFactory, rigor: RigorView): void {
+  const drawn = cell(parent, factory, 'span', 'live-run-mode')
+  const word = rigorModeWord(rigor.mode)
+  if (word === null) {
+    putText(drawn, rigor.mode, 'label', 'runs[].rigor.mode')
+    return
+  }
+  literal(drawn, word)
 }
 
 /** repoBlock draws one repository: its name, its bar, its burn and its runs. */

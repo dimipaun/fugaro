@@ -41,7 +41,7 @@ func TestCheckpointDocsMatchTheCode(t *testing.T) {
 		}
 	}
 	for _, f := range []string{
-		"../../docs/git-providers.md", "../../docs/gcp-setup.md", "../../docs/design/v1.md", "../../README.md",
+		"../../docs/git-providers.md", "../../docs/design/v1.md", "../../README.md",
 		"../../plugin/skills/working/SKILL.md", "../../plugin/skills/working/reference/launch.md",
 		"../../plugin/skills/working/reference/diagnose.md", "../config/config.go",
 		"../config/example.yaml", "prflow.go", "../../docs/gcp-live-checklist.md", "../../schemas/fugaro.schema.json",

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -274,5 +275,71 @@ func TestStoredFollowUpRefusesADifferentRigorRequest(t *testing.T) {
 	spec := readSpec(t, f, fuID)
 	if spec.Rigor != "startup" || !reflect.DeepEqual(spec.Paths, []string{"docs/x.md"}) {
 		t.Fatalf("stored task carries rigor %q and paths %v, want the first launch's", spec.Rigor, spec.Paths)
+	}
+}
+
+// rigorNoEffect is the note the launcher prints when --mode asks for a mode
+// the run's layers already meet.
+const rigorNoEffect = "it has no effect"
+
+// TestRunNotesAModeThatRaisesNothing: --mode may raise and never lower (D6),
+// so a request at or below what the layers resolve is accepted and does
+// nothing. The launcher says so once, on stderr, and still launches: the
+// request is recorded as asked, and the note is no error.
+//
+// Mutation (drop the note): the first two cases see nothing on stderr.
+func TestRunNotesAModeThatRaisesNothing(t *testing.T) {
+	cases := []struct {
+		name, rigorYAML, mode string
+		paths                 []string
+		want                  string // "" means no note
+	}{
+		{"hotfix under the default", "", "hotfix", nil,
+			"--mode hotfix is not higher than the repository's resolved mode pro: it has no effect"},
+		{"equal to the repository's", "rigor:\n  default: critical\n", "critical", nil,
+			"--mode critical is not higher than the repository's resolved mode critical: it has no effect"},
+		{"below an area the paths match", "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"payments/**\", mode: critical }\n", "pro", []string{"payments/x.go"},
+			"--mode pro is not higher than the repository's resolved mode critical: it has no effect"},
+		{"above the repository's", "rigor:\n  default: startup\n", "critical", nil, ""},
+	}
+	for i, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			writeBuildRecord(t, f, appSlug, "web", release0111)
+			checkoutWorkflows(t, c.rigorYAML, "  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+			id := fmt.Sprintf("20261025-13000%d-abcd", i)
+			args := []string{"run", "--repo", "acme/app", "--run-id", id, "--mode", c.mode}
+			for _, p := range c.paths {
+				args = append(args, "--path", p)
+			}
+			_, errOut, err := execute(t, append(args, "Fix it.")...)
+			if err != nil {
+				t.Fatalf("%v: %v", args, err)
+			}
+			if got := strings.Count(errOut, rigorNoEffect); c.want == "" && got != 0 || c.want != "" && got != 1 {
+				t.Fatalf("stderr has the note %d times:\n%s", got, errOut)
+			}
+			if c.want != "" && !strings.Contains(errOut, c.want) {
+				t.Errorf("stderr never says %q:\n%s", c.want, errOut)
+			}
+			if spec := readSpec(t, f, id); string(spec.Rigor) != c.mode {
+				t.Errorf("rigor = %q, want the request recorded as asked", spec.Rigor)
+			}
+		})
+	}
+}
+
+// TestRunAttemptsNotesAModeThatRaisesNothingOnce: a best-of-N batch is one
+// launcher's request, so the note is printed once, not once per attempt.
+func TestRunAttemptsNotesAModeThatRaisesNothingOnce(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", release0111)
+	checkoutWorkflows(t, "", "  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "--mode", "hotfix", "Fix it.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(errOut, rigorNoEffect); got != 1 {
+		t.Fatalf("stderr has the note %d times, want once:\n%s", got, errOut)
 	}
 }

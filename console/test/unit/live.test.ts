@@ -43,8 +43,10 @@ import {
   measured,
   unavailable,
 } from '../../src/shared/availability'
+import { TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
 import { decodeSnapshot } from '../../src/shared/schema'
 import type { JSONDoc } from '../../src/source/source'
+import { githubToken } from '../support/fakeSecrets'
 import type { LiveDocument, RunView } from '../../src/shared/schema'
 import {
   BurnHistory,
@@ -511,6 +513,34 @@ describe('the row model', () => {
     expect(all(blanks, 'live-run-started-by')).toHaveLength(0)
   })
 
+  it('takes a run\'s rigor from the join by id, and draws no chip without one', () => {
+    // Owner request 2026-10-25. **The mode is not in the live frame**: the frame
+    // is `JSONRun`, which carries no rigor block, so the row's mode is joined
+    // from `runs ls --json` by run id (`shared/rigor.ts`'s `rigorIndex`) and the
+    // caller is what makes the join. A run the index does not know is a run with
+    // no chip -- never another run's mode -- which is what the default argument
+    // (`NO_RIGOR`) gives every caller that has not made one.
+    const frame = theLastFrame()
+    const index = new Map([
+      [OAUTH_RUN, { mode: 'pro', from: 'repo', areas: [] }],
+      [QUEUED_RUN, { mode: 'critical', from: 'area', areas: [{ name: 'payments', mode: 'critical' }] }],
+    ])
+    const model = buildLiveModel(frame, new BurnHistory(), null, index)
+    const repo = model.repos[0]
+    if (repo === undefined) throw new Error('no repository row')
+    expect(repo.runs.find((row) => row.run === OAUTH_RUN)?.rigor?.mode).toBe('pro')
+    expect(repo.runs.find((row) => row.run === QUEUED_RUN)?.rigor?.mode).toBe('critical')
+    // The same frame with no join at all: every row's rigor is `null`, and no
+    // row draws a chip.
+    const plain = buildLiveModel(frame, new BurnHistory())
+    for (const row of plain.repos[0]?.runs ?? []) expect(row.rigor).toBeNull()
+    expect(all(renderLive(factory, plain, 'light'), 'live-run-mode')).toHaveLength(0)
+    // An index that knows the run but not its block -- a row the reader would
+    // not show, or an id the run list does not name -- is the same absence.
+    const partial = buildLiveModel(frame, new BurnHistory(), null, new Map([[OAUTH_RUN, { mode: 'pro', from: 'repo', areas: [] }]]))
+    expect(partial.repos[0]?.runs.find((row) => row.run === QUEUED_RUN)?.rigor).toBeNull()
+  })
+
   it('flags the runs the fixture went silent and then lost', () => {
     const silent = modelOf(frameAt('2026-10-15T12:01:40Z')).repos[0]
     if (silent === undefined) throw new Error('no repository row')
@@ -877,6 +907,42 @@ describe('the rendered screen', () => {
   it('draws the notional mark on an OAuth run\'s spend', () => {
     const tree = renderLive(factory, modelOf(frameAt('2026-10-15T12:00:05Z')), 'light')
     expect(texts(tree, 'live-run-spend')).toEqual([`${NOTIONAL_MARK}$12.54`])
+  })
+
+  it('draws the rigor mode as a chip on a run the join knows, and no chip for one it does not', () => {
+    // Owner request 2026-10-25: the mode on a Live row, as the one word the row
+    // has room for -- the whole answer, with the layer and the areas, is on the
+    // run's own screen (`run.ts`'s `rigorLine`). It is drawn in this build's own
+    // word for the mode, like the Projects cell and `runs ls`'s MODE column.
+    const frame = theLastFrame()
+    const index = new Map([
+      [OAUTH_RUN, { mode: 'poc', from: 'request', areas: [] }],
+      [QUEUED_RUN, { mode: 'hotfix', from: 'repo', areas: [] }],
+    ])
+    const tree = renderLive(factory, buildLiveModel(frame, new BurnHistory(), null, index), 'light')
+    expect(texts(tree, 'live-run-mode')).toEqual(['POC', 'Hotfix'])
+    // The chip is on the run's own row, not loose in the panel.
+    const rows = all(tree, 'live-run')
+    expect(rows.map((row) => texts(row, 'live-run-mode'))).toEqual([['POC'], ['Hotfix']])
+    // With no join the screen is the screen it always drew: no chip anywhere,
+    // and no empty span, which would add a flex gap to every row.
+    const plain = renderLive(factory, modelOf(frame), 'light')
+    expect(all(plain, 'live-run-mode')).toHaveLength(0)
+  })
+
+  it('draws a mode this build does not know as the bounded text it is', () => {
+    // The direction the reader fails in, on the chip: a mode a newer CLI
+    // resolved is kept and put through the text path rather than hidden, and a
+    // value shaped like a credential is masked in place.
+    const frame = theLastFrame()
+    const unknown = new Map([[OAUTH_RUN, { mode: 'standard', from: 'reached', areas: [] }]])
+    const tree = renderLive(factory, buildLiveModel(frame, new BurnHistory(), null, unknown), 'light')
+    expect(texts(tree, 'live-run-mode')).toEqual(['standard'])
+    const token = githubToken()
+    const shaped = new Map([[OAUTH_RUN, { mode: token, from: 'repo', areas: [] }]])
+    const masked = renderLive(factory, buildLiveModel(frame, new BurnHistory(), null, shaped), 'light')
+    expect(texts(masked, 'live-run-mode')).toEqual([TOKEN_PLACEHOLDER])
+    expect(drawn(masked)).not.toContain(token)
   })
 
   it('writes every cell as text and sets no attribute that could act', () => {
