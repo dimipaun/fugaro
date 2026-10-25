@@ -350,6 +350,20 @@ is stated where a reader meets it rather than here: D193's answer is **one read-
 token per repository**, so there is no single project-wide credential to steal, and whether an
 installation token may omit `repositories` at all is **U3**, still an owner check.
 
+**The follow-up of 2026-10-25 narrowed this part's credential and gave it an end, and the two
+are recorded here because the Scope line above says what was planned rather than what is.** The
+set is `{pull_requests: read, metadata: read}`, and those are the two reads the project-wide
+reader makes: every pull request is read one at a time through `gitprov.Provider.PullRequest`,
+and `metadata: read` is what GitHub requires of any request. `contents` and `issues` were asked
+for and never used — this reader opens no file and reads no issue, and a permission nobody uses
+is reach a stolen token would have for nothing; P5's aggregation job re-reads through this same
+reader, so it asks for no more. The token also has an end: the command revokes every token it
+minted when it is done (`DELETE /installation/token`,
+`internal/gitprov/github/apptoken.go`'s `RevokeInstallationToken`), in the order it minted them,
+best-effort and silent — a revoke that failed changes no exit code and prints nothing, because
+a credential that outlives the read it was minted for is the one thing this part's posture is
+against.
+
 ---
 
 ### P3 — The state: the nodes, the writer and the read grant (D194, D195)
