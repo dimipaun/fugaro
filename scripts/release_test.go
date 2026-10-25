@@ -47,6 +47,11 @@ func newReleaseRepo(t *testing.T) *releaseRepo {
 			t.Fatalf("copying %s: %v", name, err)
 		}
 	}
+	// scripts/release.sh reads the CLI stream out of docs/release-streams.yaml,
+	// so the fixture carries its own, pinned: the repository's own file moves
+	// with every release, and a test reading it would assert against whatever
+	// the last release left there (streamsFixture).
+	writeStreams(t, seed, streamsFixture)
 	// Releases from 0.4.0 need docs/releases/vX.Y.Z.md on main and an entry in
 	// website/data/release-summaries.yaml; give the versions these tests release
 	// both by default.
@@ -75,6 +80,99 @@ func writeHighlights(t *testing.T, dir, version, body string) {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// streamsFixture is the fixture checkout's docs/release-streams.yaml: the real
+// file's shape, with the CLI stream back at 0.0.1 "Badger one" with Camel next,
+// because a CLI release never goes below the stream's current (GV1.5) and the
+// versions this package's tests cut run from 0.0.1 up -- a fixture at the real
+// file's 0.11.1 would refuse nearly every one of them. Tests that need a stream
+// with a spent name (the release's spoken name, "Camel two" for 0.11.2) install
+// streamsFixtureReleased instead.
+const streamsFixture = `streams:
+  - name: cli
+    theme: animals
+    names: [Badger, Camel, Dolphin, Gecko, Hippo, Koala, Moose]
+    current: "0.0.1"
+    next: Camel
+    tag_prefix: v
+
+  - name: console
+    theme: fruits
+    names: [Cherry, Mango, Melon]
+    current: "0.111.0"
+    next: Melon
+    tag_prefix: console-v
+
+  - name: mobile
+    theme: birds
+    names: [Falcon, Pelican, Robin]
+    current: "0.0.0"
+    next: Falcon
+    tag_prefix: mobile-v
+`
+
+// streamsFixtureReleased is that catalogue with the CLI stream where the real
+// file has it: 0.11.1 "Camel one" shipped, Dolphin next. A test installing it
+// can release 0.11.2 and read both the name the catalogue gives it and the
+// version it writes back.
+const streamsFixtureReleased = `streams:
+  - name: cli
+    theme: animals
+    names: [Badger, Camel, Dolphin, Gecko, Hippo, Koala, Moose]
+    current: "0.11.1"
+    next: Dolphin
+    tag_prefix: v
+
+  - name: console
+    theme: fruits
+    names: [Cherry, Mango, Melon]
+    current: "0.111.0"
+    next: Melon
+    tag_prefix: console-v
+
+  - name: mobile
+    theme: birds
+    names: [Falcon, Pelican, Robin]
+    current: "0.0.0"
+    next: Falcon
+    tag_prefix: mobile-v
+`
+
+// writeStreams writes a streams catalogue into dir, at the path release.sh
+// reads it from.
+func writeStreams(t *testing.T, dir, body string) {
+	t.Helper()
+	path := filepath.Join(dir, "docs", "release-streams.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// rewriteFixtureStreams replaces the fixture checkout's catalogue with body and
+// commits it on main, so the clean-tree and main-equals-origin/main
+// preconditions still hold for a run that has to read it.
+func rewriteFixtureStreams(t *testing.T, r *releaseRepo, body string) {
+	t.Helper()
+	writeStreams(t, r.local, body)
+	testutil.Git(t, r.local, "add", "docs/release-streams.yaml")
+	testutil.Git(t, r.local, "commit", "--quiet", "-m", "fixture: streams catalogue")
+	testutil.Git(t, r.local, "push", "--quiet", "origin", "main")
+}
+
+// addReleaseNotes writes the Highlights and the end-user summary a release from
+// 0.4.0 on needs, commits them on main and pushes them, so a test can release a
+// version of its own.
+func addReleaseNotes(t *testing.T, r *releaseRepo, version string) {
+	t.Helper()
+	writeHighlights(t, r.local, version, "- Something a user sees.\n")
+	writeSummaries(t, r.local, map[string]string{version: "Something a user sees."})
+	testutil.Git(t, r.local, "add", "-A")
+	testutil.Git(t, r.local, "commit", "--quiet", "-m", "release notes")
+	testutil.Git(t, r.local, "push", "--quiet", "origin", "main")
 }
 
 // ghState is the directory backing scripts/testdata/fake-gh.sh's state
@@ -226,6 +324,62 @@ func fakeBinDir(t *testing.T) string {
 	return dir
 }
 
+// streamsBin is the compiled internal/streams/cmd/streams, the helper
+// release.sh reads the catalogue through.
+var streamsBin struct {
+	once sync.Once
+	dir  string
+	path string
+	err  error
+}
+
+// streamsHelper builds that helper once and returns its path. The fixture
+// checkout holds scripts/ and plugin/ and no go module, so release.sh's own
+// `go run ./internal/streams/cmd/streams` cannot run there -- the same reason
+// the plugin budget check is stubbed -- and every run in this package is handed
+// the compiled binary as RELEASE_SH_STREAMS_CMD instead: the code the default
+// runs, built from this checkout's module.
+func streamsHelper(t *testing.T) string {
+	t.Helper()
+	streamsBin.once.Do(func() {
+		dir, err := os.MkdirTemp("", "fugaro-streams-helper-")
+		if err != nil {
+			streamsBin.err = err
+			return
+		}
+		streamsBin.dir = dir
+		path := filepath.Join(dir, "streams")
+		cmd := exec.Command("go", "build", "-o", path, "./internal/streams/cmd/streams")
+		cmd.Dir = testutil.ModuleRoot()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			streamsBin.err = fmt.Errorf("go build ./internal/streams/cmd/streams: %v\n%s", err, out)
+			return
+		}
+		streamsBin.path = path
+	})
+	if streamsBin.err != nil {
+		t.Fatalf("every release.sh run reads the catalogue through this helper, and it did not build: %v", streamsBin.err)
+	}
+	return streamsBin.path
+}
+
+// releaseEnv is what a release.sh run needs on top of the process environment:
+// the streams helper, which the module-less fixture cannot run by itself.
+func releaseEnv(t *testing.T) []string {
+	t.Helper()
+	return []string{"RELEASE_SH_STREAMS_CMD=" + streamsHelper(t)}
+}
+
+// TestMain removes the directory the helper was built into: it is created once
+// for the whole package, so no single test can clean it up.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if streamsBin.dir != "" {
+		_ = os.RemoveAll(streamsBin.dir)
+	}
+	os.Exit(code)
+}
+
 // repoSlug is the owner/name release.sh derives from origin's URL: the last
 // two path components, minus ".git" (origin here is a local path).
 func repoSlug(bare string) string {
@@ -263,6 +417,7 @@ func runRelease(t *testing.T, r *releaseRepo, g *ghState, stdin string, args ...
 	cmd.Dir = r.local
 	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "RELEASE_SH_POLL_SECONDS=1")
 	cmd.Env = append(cmd.Env, g.env...)
+	cmd.Env = append(cmd.Env, releaseEnv(t)...)
 	cmd.Stdin = strings.NewReader(stdin)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
@@ -511,6 +666,7 @@ func TestGHNotInstalled(t *testing.T) {
 	realPath := os.Getenv("PATH")
 	cmd.Env = append(os.Environ(), "PATH="+realPath)
 	cmd.Env = append(cmd.Env, g.env...)
+	cmd.Env = append(cmd.Env, releaseEnv(t)...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	// Only meaningful if gh truly isn't already on PATH; skip otherwise.
@@ -819,6 +975,116 @@ func TestHappyPathAnsweringYes(t *testing.T) {
 	}
 }
 
+// TestReleaseRefusesVersionBelowStreamCurrent: docs/release-streams.yaml
+// records the version each stream is at, and a CLI release never goes behind it
+// (GV1.5). The fixture's CLI stream is at 0.11.1, so 0.11.0 and below are
+// refused in the preconditions, naming the file, before a branch, a pull
+// request or a tag exists -- the file is the stream's own record, and a version
+// under it is a release the stream has already spent. The version the stream is
+// already at is not below it: an interrupted release whose commit recorded the
+// version is finished by re-running it, and that run has to get past this check
+// (the tag check is what refuses a version that really did ship).
+func TestReleaseRefusesVersionBelowStreamCurrent(t *testing.T) {
+	for _, version := range []string{"0.11.0", "0.10.9", "0.0.1"} {
+		t.Run(version, func(t *testing.T) {
+			r := newReleaseRepo(t)
+			rewriteFixtureStreams(t, r, streamsFixtureReleased)
+			g := newGHState(t, r, greenChecks())
+
+			res := runRelease(t, r, g, "", version, "--dry-run")
+
+			res.requireFailureContaining(t, "is below the cli stream's current 0.11.1")
+			res.requireFailureContaining(t, "docs/release-streams.yaml")
+			if strings.Contains(res.out, "Dry run for") {
+				t.Errorf("a refused version must not print the plan:\n%s", res.out)
+			}
+			if countLog(t, g, "pr ") != 0 {
+				t.Errorf("a refused version must not touch a pull request:\n%s", res.out)
+			}
+			if out := testutil.Git(t, r.bare, "branch", "--list", "release/v"+version); out != "" {
+				t.Errorf("a refused version created a branch: %s", out)
+			}
+		})
+	}
+
+	t.Run("the version the stream is already at", func(t *testing.T) {
+		r := newReleaseRepo(t)
+		rewriteFixtureStreams(t, r, streamsFixtureReleased)
+		addReleaseNotes(t, r, "0.11.1")
+		g := newGHState(t, r, greenChecks())
+
+		res := runRelease(t, r, g, "", "0.11.1", "--dry-run")
+
+		res.requireSuccess(t)
+	})
+}
+
+// TestReleasePrintsStreamName: the release is spoken with the name the
+// catalogue gives its minor and the patch's word -- "Camel two" for 0.11.2 on a
+// stream at 0.11.1 -- so the operator reads which release they are cutting and
+// not only its number.
+func TestReleasePrintsStreamName(t *testing.T) {
+	r := newReleaseRepo(t)
+	rewriteFixtureStreams(t, r, streamsFixtureReleased)
+	addReleaseNotes(t, r, "0.11.2")
+	g := newGHState(t, r, greenChecks())
+
+	res := runRelease(t, r, g, "", "0.11.2", "--dry-run")
+
+	res.requireSuccess(t)
+	if !strings.Contains(res.out, "Dry run for v0.11.2 (Camel two)") {
+		t.Errorf("want the release spoken by its name, got:\n%s", res.out)
+	}
+}
+
+// TestReleaseBumpsStreamCurrent: step 2 records the version being released as
+// the CLI stream's current in docs/release-streams.yaml, in the release commit
+// itself, so the file the graph draws and the next release reads never
+// describes a version that has shipped.
+func TestReleaseBumpsStreamCurrent(t *testing.T) {
+	r := newReleaseRepo(t)
+	rewriteFixtureStreams(t, r, streamsFixtureReleased)
+	addReleaseNotes(t, r, "0.11.2")
+	g := newGHState(t, r, greenChecks())
+	initial := testutil.Git(t, r.bare, "rev-parse", "main")
+
+	res := runRelease(t, r, g, "", "0.11.2")
+
+	res.requireSuccess(t)
+	if n := testutil.Git(t, r.bare, "rev-list", "--count", initial+"..refs/heads/release/v0.11.2"); n != "1" {
+		t.Errorf("want the catalogue update in the release commit itself, got %s commits on the release branch", n)
+	}
+	catalogue := testutil.Git(t, r.bare, "show", "main:docs/release-streams.yaml")
+	if !strings.Contains(catalogue, `current: "0.11.2"`) {
+		t.Errorf("docs/release-streams.yaml on main does not record 0.11.2 as the cli stream's current:\n%s", catalogue)
+	}
+	if !strings.Contains(catalogue, `current: "0.111.0"`) || !strings.Contains(catalogue, `current: "0.0.0"`) {
+		t.Errorf("the console's and the mobile's rows moved, and a CLI release writes the cli row only:\n%s", catalogue)
+	}
+	if !strings.Contains(res.out, "name:    Camel two") {
+		t.Errorf("want the release summary to speak the release, got:\n%s", res.out)
+	}
+}
+
+// TestReleaseRefusesACatalogueItCannotRead: the file the release takes its own
+// floor and its name from is repository-written, and the reader refuses one
+// that is not the catalogue -- here a cli row whose tag prefix is not `v`, a
+// release no workflow of the stream's would pick up. Nothing is created: the
+// refusal is in the preconditions, before the branch.
+func TestReleaseRefusesACatalogueItCannotRead(t *testing.T) {
+	r := newReleaseRepo(t)
+	rewriteFixtureStreams(t, r, strings.Replace(streamsFixture, "tag_prefix: v\n", "tag_prefix: cli-v\n", 1))
+	g := newGHState(t, r, greenChecks())
+
+	res := runRelease(t, r, g, "", "1.0.0", "--dry-run")
+
+	res.requireFailureContaining(t, "docs/release-streams.yaml")
+	res.requireFailureContaining(t, "tag_prefix")
+	if countLog(t, g, "pr ") != 0 {
+		t.Errorf("an unreadable catalogue must not touch a pull request:\n%s", res.out)
+	}
+}
+
 // TestTagsWithoutPromptOrStdin checks the tag is created with no prompt and
 // no stdin at all, and that --yes is still accepted as a no-op.
 func TestTagsWithoutPromptOrStdin(t *testing.T) {
@@ -976,6 +1242,7 @@ func TestInterruptPrintsResumeInstructions(t *testing.T) {
 	cmd.Dir = r.local
 	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "RELEASE_SH_POLL_SECONDS=1")
 	cmd.Env = append(cmd.Env, g.env...)
+	cmd.Env = append(cmd.Env, releaseEnv(t)...)
 	var out lockedBuffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	cmd.WaitDelay = 5 * time.Second
@@ -1574,6 +1841,7 @@ func TestSignalsLeaveMain(t *testing.T) {
 			cmd.Dir = r.local
 			cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "RELEASE_SH_POLL_SECONDS=1")
 			cmd.Env = append(cmd.Env, g.env...)
+			cmd.Env = append(cmd.Env, releaseEnv(t)...)
 			var out bytes.Buffer
 			cmd.Stdout, cmd.Stderr = &out, &out
 			if err := cmd.Start(); err != nil {
