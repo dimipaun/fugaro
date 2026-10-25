@@ -136,11 +136,13 @@ function serveBundle(): void {
  * With one, its `binaryPath` -- when the store still carries that optional
  * override -- is the first candidate rule 4 asks about, and its project (and
  * config path, when stored) is the spawn target, so the bare `version` spawn
- * records which installation it was for. With none, the
- * console makes **no guess**: not `FUGARO_PROJECT`, not the working directory's
- * checkout, never the CLI's config -- `resolveHandshakeBinary` runs Task 3.3's
- * project-less read against rule 4's resolution, the dashboard answers
- * `NO_ACTIVE_INSTALLATION`, and the picker opens once.
+ * records which installation it was for. The installation is the one
+ * `openInstallation` settled: the remembered choice when the CLI's list says it
+ * can be read, else the first readable row of that list. With no installation
+ * at all the console makes **no guess**: not `FUGARO_PROJECT`, not the working
+ * directory's checkout -- `resolveHandshakeBinary` runs Task 3.3's project-less
+ * read against rule 4's resolution, the dashboard answers
+ * `NO_ACTIVE_INSTALLATION`, and the rail draws no row.
  *
  * **Two fields are not the store's answer to "which binary", and they are handed
  * on anyway** (T-D1, T-D3): `distro` and `checkout`. The first is the
