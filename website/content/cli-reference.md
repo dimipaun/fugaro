@@ -1367,7 +1367,8 @@ installation token for that repository, minted from the GitHub App the
 environment holds and carrying a named read-only permission set — pull
 requests and metadata, the two reads this view makes (Q3 answered (A)) —
 and cached for the token's life, so a second read of the same repository
-mints nothing.
+mints nothing. Every token the command minted is revoked when it is done,
+so the credential lives for the read and no longer.
 The coordinator reads github only: a bitbucket repository is refused, and the
 refusal names the reason, because its credential is one repository's access
 token and cannot be widened to a project (reconciliation Q12 (A), finding #30).

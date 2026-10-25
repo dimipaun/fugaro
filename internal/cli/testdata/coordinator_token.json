@@ -10,5 +10,7 @@
   {"method": "POST", "path": "/app/installations/778/access_tokens",
    "request": {"repositories": ["other"], "permissions": {"metadata": "read", "pull_requests": "read"}},
    "status": 201,
-   "response": {"token": "ghs_fixture/other", "expires_at": "2099-01-01T00:00:00Z", "repository_selection": "selected"}}
+   "response": {"token": "ghs_fixture/other", "expires_at": "2099-01-01T00:00:00Z", "repository_selection": "selected"}},
+  {"method": "DELETE", "path": "/installation/token", "auth": "Bearer ghs_fixture/app", "status": 204},
+  {"method": "DELETE", "path": "/installation/token", "auth": "Bearer ghs_fixture/other", "status": 204}
 ]

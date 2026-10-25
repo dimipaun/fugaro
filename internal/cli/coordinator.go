@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"text/tabwriter"
 	"time"
 
@@ -343,7 +344,8 @@ func newCoordinatorStatusCmd() *cobra.Command {
 			"environment holds and carrying a named read-only permission set — pull\n" +
 			"requests and metadata, the two reads this view makes (Q3 answered (A)) —\n" +
 			"and cached for the token's life, so a second read of the same repository\n" +
-			"mints nothing.\n" +
+			"mints nothing. Every token the command minted is revoked when it is done,\n" +
+			"so the credential lives for the read and no longer.\n" +
 			"The coordinator reads github only: a bitbucket repository is refused, and the\n" +
 			"refusal names the reason, because its credential is one repository's access\n" +
 			"token and cannot be widened to a project (reconciliation Q12 (A), finding #30).\n\n" +
@@ -381,10 +383,17 @@ func runCoordinatorStatus(cmd *cobra.Command, o *coordinatorOptions) error {
 	if err != nil {
 		return err
 	}
-	reader, err := coordinatorReader(warn)
+	reader, tokens, err := coordinatorReader(warn)
 	if err != nil {
 		return err
 	}
+	// Every token this read minted is taken back when the command is done, on
+	// every return and whatever happened on the way: the credential lives for
+	// the read and no longer (github.RevokeInstallationToken). A command that
+	// failed on its second repository has still left the first one's token
+	// behind, and that is the one nothing else would ever take back.
+	defer tokens.revoke(ctx)
+
 	views := make([]coordinator.View, 0, len(repos))
 	for _, repo := range repos {
 		view, err := coordinatorViewOf(ctx, env, reader, repo, coordinatorSince(window), warn)
@@ -565,22 +574,85 @@ func coordinatorRun(in runview.Input) coordinator.Run {
 // repository, cached for its life).
 //
 // The wiring is here and not at the call site so that it is one place to read
-// and one place to change, and so that a test replaces exactly the two things
-// that would reach GitHub — the opener and the mint — and leaves the cache,
-// the refusals and the redaction under test.
+// and one place to change, and so that a test replaces exactly the three things
+// that would reach GitHub — the opener, the mint and the revoke — and leaves
+// the cache, the refusals and the redaction under test.
 //
 // agent.Redact is the redactor: the same one the runner hands the agent, so a
 // credential cannot reach a failure by a path this command forgot about.
-func coordinatorReader(warn io.Writer) (coordinator.Reader, error) {
+//
+// The second return is the record of what this read minted, which the caller
+// revokes when the command is done (coordinatorTokens). It is returned rather
+// than deferred here because "the command is done" is the caller's fact and not
+// the reader's: the reader has no end of its own.
+func coordinatorReader(warn io.Writer) (coordinator.Reader, *coordinatorTokens, error) {
 	open, err := openCoordinatorProvider(os.Environ(), func(s string) { fmt.Fprintln(warn, multiLine(s)) })
 	if err != nil {
-		return nil, userErr("%v", err)
+		return nil, nil, userErr("%v", err)
 	}
 	// The mint runs on the first call a repository's provider makes, and that
 	// call happens only for a repository whose runs name a pull request: this
 	// read needs no App credential to look at a project with nothing in it, and
 	// nothing here reads one to find that out.
-	return &coordinator.Project{Mint: coordinatorMint, Open: open, Redact: agent.Redact}, nil
+	tokens := &coordinatorTokens{}
+	return &coordinator.Project{Mint: tokens.mint, Open: open, Redact: agent.Redact}, tokens, nil
+}
+
+// coordinatorTokens remembers the installation tokens one status run minted, so
+// that the run can take them back when it is done. GitHub revokes an
+// installation token at DELETE /installation/token, and this command's whole
+// posture is that it holds a credential for as long as it reads and no longer:
+// the tokens are minted per repository, cached for the read, and handed back at
+// the end.
+//
+// They are kept in MINT ORDER, which is also the order they are revoked in. A
+// set would take them back in whatever order Go walked it, so the same command
+// over the same project would send a different sequence every run — and the
+// fixture a test replays is strictly ordered, which is how that would be found
+// the expensive way.
+type coordinatorTokens struct {
+	mu     sync.Mutex
+	tokens []string
+}
+
+// mint is the TokenSource the reader is given: the command's own mint, with the
+// token kept for the revoke at the end.
+func (t *coordinatorTokens) mint(ctx context.Context, repo string) (string, time.Time, error) {
+	token, expires, err := coordinatorMint(ctx, repo)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	t.mu.Lock()
+	t.tokens = append(t.tokens, token)
+	t.mu.Unlock()
+	return token, expires, nil
+}
+
+// revoke takes back every token this run minted, and returns nothing: it is
+// best-effort by contract. A revoke that failed leaves a token to expire on its
+// own within the hour, and the read that used it has already succeeded or
+// already failed for a reason of its own — so there is no failure to report, no
+// exit code to change, and nothing to print. The token reaches neither an error
+// nor a log line here, which is the rule this whole path keeps.
+//
+// The mutex is held for the copy and not for the calls: revoking is a network
+// round trip per token, and the only other holder is a mint that has already
+// returned its answer.
+func (t *coordinatorTokens) revoke(ctx context.Context) {
+	t.mu.Lock()
+	tokens := slices.Clone(t.tokens)
+	t.mu.Unlock()
+	for _, token := range tokens {
+		_ = coordinatorRevoke(ctx, token)
+	}
+}
+
+// coordinatorRevoke revokes one installation token this command minted. It is a
+// package variable so that a test can watch it — or refuse it — without a
+// network, and its own call reads the API root from the same environment
+// variable the mint does, so the two cannot be pointed at different hosts.
+var coordinatorRevoke = func(ctx context.Context, token string) error {
+	return github.RevokeInstallationToken(ctx, os.Getenv(providers.EnvGitHubAPIURL), token, nil)
 }
 
 // coordinatorAppCredential is the App credential the coordinator's mint needs:

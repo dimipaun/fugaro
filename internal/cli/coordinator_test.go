@@ -221,10 +221,18 @@ func setCoordinatorProject(t *testing.T, hosts map[string]*fake.Provider, tokens
 // setCoordinatorMint replaces the command's mint for one test, so that a read
 // mints without reaching GitHub: the token is per repository, which is what the
 // coordinator's own mint is keyed by (D193(A)), and a test then asserts on the
-// tokens the reads were authenticated with.
-func setCoordinatorMint(t *testing.T, tokens map[string]string) {
+// tokens the reads were authenticated with. It returns the tokens the command
+// revoked, in the order it revoked them.
+//
+// The revoke goes with the mint, always, and that is not a convenience: a token
+// this fixture minted is not one GitHub knows, so a command that revoked it for
+// real would send a request no fixture recorded — out of the test container, on
+// a suite that must be hermetic. A test about the revoke replaces it again,
+// after this.
+func setCoordinatorMint(t *testing.T, tokens map[string]string) *[]string {
 	t.Helper()
-	prev := coordinatorMint
+	prevMint, prevRevoke := coordinatorMint, coordinatorRevoke
+	revoked := &[]string{}
 	coordinatorMint = func(_ context.Context, repo string) (string, time.Time, error) {
 		token := "ghs_fixture_" + strings.ReplaceAll(repo, "/", "_")
 		if tokens != nil {
@@ -232,7 +240,12 @@ func setCoordinatorMint(t *testing.T, tokens map[string]string) {
 		}
 		return token, time.Now().Add(time.Hour), nil
 	}
-	t.Cleanup(func() { coordinatorMint = prev })
+	coordinatorRevoke = func(_ context.Context, token string) error {
+		*revoked = append(*revoked, token)
+		return nil
+	}
+	t.Cleanup(func() { coordinatorMint, coordinatorRevoke = prevMint, prevRevoke })
+	return revoked
 }
 
 // coordinatorPR is one pull request in the fake host's state.
@@ -776,6 +789,90 @@ func TestCoordinatorStatusRefusesToMintWhenTheServiceHoldsTheKey(t *testing.T) {
 		!strings.Contains(err.Error(), providers.EnvCredentialsServiceURL) {
 		t.Errorf("the mint with the service holding the key: exit %d, %v, want exit %d naming %s",
 			ExitCode(err), err, ExitUserError, providers.EnvCredentialsServiceURL)
+	}
+}
+
+// The credential lives for the read and no longer: every token this command
+// minted is taken back when it is done, in the order it minted them, and the
+// revoke happens on EVERY return — a command that failed on its second
+// repository has still left the first one's token behind, and that is the one
+// nothing else would ever take back.
+//
+// The mint and the revoke are both replaced here (setCoordinatorMint), so what
+// this asserts is the command's own bookkeeping; the two fixture tests above
+// are what hold the request itself — the method, the path and the token's own
+// Authorization header — to GitHub's API.
+func TestCoordinatorStatusRevokesEveryTokenItMinted(t *testing.T) {
+	f := newCoordinatorFixture(t, append(coordinatorSeeds(),
+		coordinatorRunSeed{id: "20261013-150000-ffff", repo: "acme/other", pr: 21, prev: "20261012-090000-4444",
+			branch: "fugaro/20261013-150000-ffff", who: "someone@example.com",
+			status: runstore.StatusRunning, prRef: 21, base: "main", files: []string{"internal/api/handler.go"}},
+	), coordinatorPRs()...)
+	f.appendConfig(t, "  acme/other: { provider: github, base_branch: main, workflows: [web] }\n")
+	other := &fake.Provider{Repo: "acme/other", SelfID: "2"}
+	other.State.PRs = []fake.PRState{coordinatorPR(21, "fugaro/20261013-150000-ffff", gitprov.PROpen, false)}
+	setCoordinatorProject(t, map[string]*fake.Provider{"acme/app": f.host, "acme/other": other}, nil)
+	revoked := setCoordinatorMint(t, nil)
+
+	if _, _, err := execute(t, "coordinator", "status", "--all", "--since", "0"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"ghs_fixture_acme_app", "ghs_fixture_acme_other"}
+	if !slices.Equal(*revoked, want) {
+		t.Errorf("the command revoked %v, want every token it minted, in the order it minted them (%v)", *revoked, want)
+	}
+
+	// A project with nothing in flight mints nothing — a repository whose runs
+	// name no pull request is never opened, so the mint is never reached — and
+	// the command then revokes nothing: a revoke is a token taken back, never a
+	// call made for the look of it.
+	*revoked = nil
+	newCoordinatorFixture(t, nil)
+	if _, _, err := execute(t, "coordinator", "status", "--all", "--since", "0"); err != nil {
+		t.Fatal(err)
+	}
+	if len(*revoked) != 0 {
+		t.Errorf("a read with nothing in flight revoked %v, want nothing: no token was minted to take back", *revoked)
+	}
+}
+
+// A command that failed still revokes what it minted: the token of a repository
+// it read before the failure is the one nothing else would take back.
+func TestCoordinatorStatusRevokesAfterAFailedRead(t *testing.T) {
+	newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	// A host with no state: the first pull request the runs name is refused
+	// after the mint, so the read fails with the token already handed out.
+	setCoordinatorProject(t, map[string]*fake.Provider{"acme/app": {Repo: "acme/app", SelfID: "1"}}, nil)
+	revoked := setCoordinatorMint(t, nil)
+
+	if _, _, err := execute(t, "coordinator", "status", "--since", "0"); err == nil {
+		t.Fatal("the read failed and the command succeeded")
+	}
+	if !slices.Equal(*revoked, []string{"ghs_fixture_acme_app"}) {
+		t.Errorf("the failed command revoked %v, want the token it minted before the failure", *revoked)
+	}
+}
+
+// A revoke that fails is not a read that failed: the token is left to expire on
+// its own within the hour, the command exits as it would have, and nothing
+// about it is printed — neither the failure nor the token.
+func TestCoordinatorStatusSurvivesARefusedRevoke(t *testing.T) {
+	const refusal = "the host refused the revoke for ghs_0123456789abcdefghij"
+	f := newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	setCoordinatorProject(t, map[string]*fake.Provider{"acme/app": f.host}, nil)
+	setCoordinatorMint(t, nil)
+	prev := coordinatorRevoke
+	coordinatorRevoke = func(context.Context, string) error { return errors.New(refusal) }
+	t.Cleanup(func() { coordinatorRevoke = prev })
+
+	out, errOut, err := execute(t, "coordinator", "status", "--since", "0")
+	if err != nil {
+		t.Fatalf("the revoke was refused and the command failed: %v", err)
+	}
+	for _, got := range []string{out, errOut} {
+		if strings.Contains(got, "refused") || strings.Contains(got, "ghs_0123456789abcdefghij") {
+			t.Errorf("a refused revoke reached the output: %q", got)
+		}
 	}
 }
 

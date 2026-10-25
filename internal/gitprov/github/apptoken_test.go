@@ -227,6 +227,40 @@ func TestMintInstallationTokenBuildPermissions(t *testing.T) {
 // The set itself is pinned where it is used: token_refresh.json's two mint
 // bodies are exactly these four permissions, and the fixture server refuses a
 // request body that is not the one it holds.
+// TestRevokeInstallationToken: the token's own end. GitHub revokes an
+// installation token at DELETE /installation/token, authenticated with the
+// token itself -- the App's JWT is not needed, and the endpoint revokes the
+// token that carries it and no other -- and the fixture pins the whole of the
+// request: the method, the path and the Authorization header.
+//
+// The second half is the contract the caller depends on: a refused revoke is
+// returned as a failure, and the failure carries the status and never the
+// token. The command that calls this revokes best-effort and prints nothing, so
+// what it does with the failure is its own decision -- but the value reaching
+// an error or a log line is not a decision it gets to make.
+func TestRevokeInstallationToken(t *testing.T) {
+	srv := httpfixture.Serve(t, filepath.Join("testdata", "revoke_token.json"))
+	if err := RevokeInstallationToken(context.Background(), srv.URL, "ghs_fixture_revoked", nil); err != nil {
+		t.Fatalf("RevokeInstallationToken: %v", err)
+	}
+	// No token is nothing to revoke: a refusal rather than a DELETE under an
+	// empty Authorization header, which would revoke whatever the API read it
+	// as. No request is made, which the fixture's strict order is what proves.
+	if err := RevokeInstallationToken(context.Background(), srv.URL, "", nil); err == nil {
+		t.Error("RevokeInstallationToken with no token: want a refusal")
+	}
+	err := RevokeInstallationToken(context.Background(), srv.URL, "ghs_fixture_refused", nil)
+	if err == nil {
+		t.Fatal("a refused revoke: want the failure reported")
+	}
+	if strings.Contains(err.Error(), "ghs_fixture_refused") {
+		t.Errorf("the refused revoke's failure carries the token: %v", err)
+	}
+	if !strings.Contains(err.Error(), "404") {
+		t.Errorf("the refused revoke's failure is %v, want the status reported", err)
+	}
+}
+
 func TestRunTokenPermissionsAreTheRuns(t *testing.T) {
 	want := map[string]string{"contents": "write", "pull_requests": "write", "issues": "read", "metadata": "read"}
 	perms := RunTokenPermissions()
