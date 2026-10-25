@@ -250,10 +250,6 @@ document, release assignment later — so Slices 1–2 wait on no ruling; (e)
     URL pattern, the argv, the pinned host, the process group and the capped pipes stay the one
     spawn path this tree has; the alternative — a second `gh` invocation in `internal/cli` — would be
     a second answer to "which URLs may be handed to a subprocess".
-  - **`docs/release-streams.yaml`'s CLI row was stale** (`current: "0.10.4"`, `next: Camel`) and is
-    now `"0.11.1"` / `Dolphin`: 0.11.0 and 0.11.1 "Camel" have shipped (the owner's renumbering of
-    2026-10-24), so the file the graph reads for a release's name and version would otherwise date
-    every CLI release a minor behind. This is a corpus fix, not a change to GV1.4's reader.
   - **`plan.StatePlan` states its own figures** (`tasks`, `closed`, `open`), and each release box
     carries `total`, `done`, `closed` and `open` beside GD6's `closed` counter: `nodes` is filtered
     by `--all`, so a header or a totals line a screen draws cannot be added up from it. Additive,
@@ -268,13 +264,13 @@ document, release assignment later — so Slices 1–2 wait on no ruling; (e)
     it, with what each one does with the id. The two are display-only readers: the join matches ids,
     and no state, count or refusal depends on what a launcher wrote.
 - **Amended 2026-10-25, at GV1.6's review:**
-  - **The runs read are the runs the join reads.** `plan status` lists the runs the bucket still
-    holds (`followUpLookback`, ninety days — the bucket's own lifecycle, and the window `run --pr`
-    reads with), and then `plan.JoinedRuns` keeps those that join at least one plan here. Both the
-    listing and the merge lookup are scoped to that set: the lookup spawns the operator's `gh` once
-    per distinct pull request, so handing it the repository's whole run history is a cost that grows
-    with the history, for a read the console calls to draw the graph. `State` is handed the same set,
-    so no URL is looked up that the join did not read. The answers are not kept between invocations —
+  - **The lookups are scoped to the runs the join reads.** `plan status` lists every run the
+    bucket still holds (`followUpLookback`, ninety days — the bucket's own lifecycle, and the window
+    `run --pr` reads with), and then `plan.JoinedRuns` keeps those that join at least one plan here.
+    The merge lookup is scoped to that set: it spawns the operator's `gh` once per distinct pull
+    request, so handing it the repository's whole run history is a cost that grows with the history,
+    for a read the console calls to draw the graph. `State` is handed the same set, so no URL is
+    looked up that the join did not read. The answers are not kept between invocations —
     `internal/watch`'s cache lives in that process and this command is one process — so what bounds
     the spawns is the scoping itself. No `--since` flag was added: that is a new flag and a product
     decision, and the bound above already removes the unbounded cost.
@@ -295,6 +291,18 @@ document, release assignment later — so Slices 1–2 wait on no ruling; (e)
     `TestPlanStatusWarnsOnAnUnreadableOrigin` (the three warning paths, previously untested),
     `TestPlanStatusRefusesADuplicatePlanID`, `TestPlanStatusRefusesANonRegularArtifact`, and
     `TestPlanIDScopesTheJoinedRuns` in `internal/plan/state_test.go`.
+- **Amended 2026-10-25, at GV1.6's independent review:**
+  - **`plan status` is a console read** (`consoleReadPaths` in `internal/cli/project.go`): it
+    resolves the checkout to select the project, and a console spawn must not record the checkout it
+    looked at. `TestConsoleAllowListedReadsWriteNothing` runs it.
+  - **A job-written `pr_url` of another repository is never looked up** and answers "not merged":
+    a job must not mark its own task done by pointing its record at any merged pull request.
+    `watch.PRRepo` reads the URL's repository with `MergeNow`'s own pattern.
+  - **The lookups are capped at 32 per read**, the newest runs' first; a pull request past the cap
+    is `merge unknown`, with a warning.
+  - **A release's name is the reader's arithmetic** (`streams.FirstVersion`: the first name is the
+    named line's first minor), and "finished" is `streams.Version.AtLeast`, the reader's own
+    comparison, exported for it — no second copy of either in `internal/plan`.
 
 #### GV1.7 — The planning skill writes the graph (V2.8.1, with the stream)
 - **Files:** `plugin/skills/parallelism/SKILL.md`, new

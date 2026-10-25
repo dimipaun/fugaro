@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -20,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/streams"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/watch"
 )
 
@@ -65,14 +67,17 @@ func newPlanStatusCmd() *cobra.Command {
 			"is a run of this checkout's own repository: a run of another repository\n" +
 			"naming the same task is ignored. The join is display-only — nothing here\n" +
 			"makes another plan's task ready.\n\n" +
-			"The runs read are the ones the bucket still holds, and a run that claims no\n" +
-			"task of any plan here is not read at all: this is what the merge lookup\n" +
-			"below is asked about, so the read costs what the plans hold rather than\n" +
-			"what the repository's history holds.\n\n" +
+			"Every run the bucket still holds (ninety days) is listed. Only the runs that\n" +
+			"join a task of a plan here have their pull requests looked up, so the\n" +
+			"lookups cost what the plans hold rather than what the repository's history\n" +
+			"holds, and one read asks about at most 32 pull requests, the newest runs'\n" +
+			"first.\n\n" +
 			"Whether a pull request is merged is asked of your own gh, when it is\n" +
-			"installed; where it cannot answer (a Bitbucket repository, no gh, a lookup\n" +
-			"that failed) a task whose run recorded a ready pull request shows done with\n" +
-			"the mark \"merge unknown\" rather than nothing.\n\n" +
+			"installed, and only about a pull request of this checkout's own\n" +
+			"repository: a run that recorded another repository's pull request is not\n" +
+			"merged here. Where gh cannot answer (a Bitbucket repository, no gh, a\n" +
+			"lookup that failed, one past the 32) a task whose run recorded a ready pull\n" +
+			"request shows done with the mark \"merge unknown\" rather than nothing.\n\n" +
 			"Two artifacts that would be one plan id — docs/plans/foo.graph.json and\n" +
 			"docs/plans/foo/bar.graph.json both give plans/foo — cannot be joined apart,\n" +
 			"so the second is not listed and a warning names both.\n\n" +
@@ -104,6 +109,10 @@ const (
 	// past what a screen draws, and the bound is what stops a checkout that
 	// fills docs/ with artifacts from being read without end.
 	planMaxArtifacts = 64
+	// planMaxLookups bounds the gh processes one read spawns: one per distinct
+	// pull request, so a plan whose tasks carry many runs costs at most this
+	// many lookups, the newest runs' first.
+	planMaxLookups = 32
 )
 
 // planStatusDoc is plan status --json's document.
@@ -236,7 +245,10 @@ func runPlanStatus(cmd *cobra.Command, o *planStatusOptions) error {
 	// from costing what the plans hold rather than what the repository's whole
 	// history holds.
 	joined := plan.JoinedRuns(plans, facts, doc.Repo)
-	merge := planMerges(ctx, joined)
+	merge := planMerges(ctx, joined, doc.Repo, func(sentence string) {
+		fmt.Fprintf(errw, "warning: %s\n", sentence)
+		doc.Warnings = append(doc.Warnings, sentence)
+	})
 
 	for _, p := range plans {
 		path := paths[p.ID]
@@ -382,24 +394,46 @@ func planRunFacts(rows []runview.Row) []plan.RunFact {
 //
 // Nothing is refused when gh cannot answer: a lookup with no answer is exactly
 // the state the join shows as "merge unknown".
-func planMerges(ctx context.Context, facts []plan.RunFact) plan.MergeCheck {
+//
+// A run's pr_url is job-written, so a GitHub URL is asked about only when it
+// names the checkout's own repository: a job that pointed its record at some
+// other merged pull request would otherwise mark its own task done. Such a URL
+// answers "known, not merged", so it neither closes the task nor earns the
+// "merge unknown" mark. And the spawns are capped at planMaxLookups, newest
+// runs first: what is past the cap has no answer, which the read shows as
+// "merge unknown" and says in a warning.
+func planMerges(ctx context.Context, facts []plan.RunFact, repo string, warn func(string)) plan.MergeCheck {
+	type answer struct{ merged, known bool }
+	byURL := map[string]answer{}
+	ordered := slices.Clone(facts)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].RunID > ordered[j].RunID })
 	urls := []string{}
 	seen := map[string]bool{}
-	for _, f := range facts {
+	skipped := 0
+	for _, f := range ordered {
 		if f.PRURL == "" || seen[f.PRURL] {
 			continue
 		}
 		seen[f.PRURL] = true
+		if prRepo, ok := watch.PRRepo(f.PRURL); ok && !planSameRepo(prRepo, repo) {
+			byURL[f.PRURL] = answer{merged: false, known: true}
+			continue
+		}
+		if len(urls) == planMaxLookups {
+			skipped++
+			continue
+		}
 		urls = append(urls, f.PRURL)
 	}
-	type answer struct{ merged, known bool }
+	if skipped > 0 {
+		warn(fmt.Sprintf("%d more pull requests than the %d this read looks up: their tasks show merge unknown", skipped, planMaxLookups))
+	}
 	answers := make([]answer, len(urls))
 	pr := watch.NewPRState(watch.PRStateOptions{})
 	parallel(len(urls), func(i int) {
 		m, k := pr.MergeNow(ctx, urls[i])
 		answers[i] = answer{merged: m, known: k}
 	})
-	byURL := make(map[string]answer, len(urls))
 	for i, u := range urls {
 		byURL[u] = answers[i]
 	}
@@ -496,6 +530,15 @@ func releaseLabel(r plan.StateRelease) string {
 		label += " (shipped)"
 	}
 	return label
+}
+
+// planSameRepo compares two repositories the way the join does
+// (task.CanonicalRepo: the ASCII fold, a trailing .git trimmed). An unknown
+// repository matches nothing.
+func planSameRepo(a, b string) bool {
+	ca, errA := task.CanonicalRepo(a)
+	cb, errB := task.CanonicalRepo(b)
+	return errA == nil && errB == nil && ca == cb
 }
 
 // planDash is a cell for a value a task may not have: a dash is what the human

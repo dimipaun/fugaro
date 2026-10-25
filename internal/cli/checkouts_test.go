@@ -244,6 +244,9 @@ func TestConsoleAllowListedReadsWriteNothing(t *testing.T) {
 		{"budget", "show", "--json"},
 		{"report", "--json"},
 		{"secrets", "ls", "--json", "--repo", "acme/app"},
+		// The graph screen's read (GV1.6): a cloud read of this checkout's
+		// own repository, so it resolves the checkout like runs ls does.
+		{"plan", "status", "--json"},
 	} {
 		out, _, err := execute(t, args...)
 		if err != nil {

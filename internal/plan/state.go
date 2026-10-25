@@ -1,7 +1,6 @@
 package plan
 
 import (
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -825,46 +824,29 @@ func releaseBefore(a, b releaseVersion) bool {
 	return a.patch < b.patch
 }
 
-// releaseName is the name the catalogue gives a release version: the name a
-// minor spends, counted from the stream's own place. The catalogue says which
-// version a stream is at and which name is next, so the version the stream is at
-// carries the name before next, and each further minor is one name further along
-// the list. Nothing is guessed beyond that: a version past the list, or one of
-// another major line, has no name and gets none.
+// releaseName is the name the catalogue gives a release version, by the
+// reader's own rule (internal/streams): a stream's first name is its
+// FirstVersion's minor, and each further minor on that major spends the next
+// name. Nothing is guessed beyond that: a version below the named line, one of
+// another major, or one past the list has no name and gets none.
 func releaseName(s streamcat.Stream, version string) string {
 	v, ok := releaseNumbers(version)
-	if !ok || s.Current.IsZero() || v.major != s.Current.Major {
+	first := streamcat.FirstVersion(s.Name)
+	if !ok || v.major != first.Major || v.minor < first.Minor {
 		return ""
 	}
-	i := slices.Index(s.Names, s.Next)
-	if i < 0 {
-		return ""
+	if i := v.minor - first.Minor; i < len(s.Names) {
+		return s.Names[i]
 	}
-	i += v.minor - s.Current.Minor - 1
-	if i < 0 || i >= len(s.Names) {
-		return ""
-	}
-	return s.Names[i]
+	return ""
 }
 
 // releaseFinished is whether the stream has already shipped this release: the
 // catalogue's current version is at or past it.
-//
-// The comparison is written here rather than called from internal/streams
-// because that package's own is unexported — it compares the versions a
-// catalogue is validated with, and a catalogue this build accepted is the only
-// thing on either side of this one.
 func releaseFinished(s streamcat.Stream, version string) bool {
 	v, ok := releaseNumbers(version)
 	if !ok {
 		return false
 	}
-	cur := s.Current
-	switch {
-	case cur.Major != v.major:
-		return cur.Major > v.major
-	case cur.Minor != v.minor:
-		return cur.Minor > v.minor
-	}
-	return cur.Patch >= v.patch
+	return s.Current.AtLeast(streamcat.Version{Major: v.major, Minor: v.minor, Patch: v.patch})
 }

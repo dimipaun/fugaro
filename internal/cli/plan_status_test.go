@@ -76,9 +76,9 @@ const statusStreams = `streams:
     tag_prefix: v
   - name: console
     theme: fruits
-    names: [Cherry, Mango]
+    names: [Cherry, Mango, Melon]
     current: "0.111.0"
-    next: Mango
+    next: Melon
     tag_prefix: console-v
   - name: mobile
     theme: birds
@@ -456,7 +456,7 @@ func TestPlanStatusSumsEveryPlan(t *testing.T) {
 	if len(other.Nodes) != 1 || other.Nodes[0].ID != "X" || other.Nodes[0].State != plan.StateDone {
 		t.Errorf("the second plan's nodes = %+v, want the merged run joined to its task", other.Nodes)
 	}
-	if r := other.Releases[0]; r.Version != "0.112" || r.Name != "Mango" || r.Finished || r.Done != 1 {
+	if r := other.Releases[0]; r.Version != "0.112" || r.Name != "Melon" || r.Finished || r.Done != 1 {
 		t.Errorf("the second plan's release = %+v, want the console's next release, named and done", r)
 	}
 	human, _, err := execute(t, "plan", "status")
@@ -684,5 +684,55 @@ func TestPlanStatusRefusesANonRegularArtifact(t *testing.T) {
 	}
 	if _, err := planArtifacts(filepath.Join(dir, "docs")); err == nil || !strings.Contains(err.Error(), "not a regular file") {
 		t.Errorf("a fifo under docs/: err = %v, want a refusal naming what it is", err)
+	}
+}
+
+// TestPlanStatusAsksOnlyAboutItsOwnRepository: a run's pr_url is job-written,
+// so a job could point its record at any merged pull request and have its own
+// task shown done. A GitHub URL of another repository is never handed to gh,
+// and it answers "not merged" rather than "merge unknown": the task stays open
+// and unmarked. Mutation caught: dropping the repository check in planMerges.
+func TestPlanStatusAsksOnlyAboutItsOwnRepository(t *testing.T) {
+	calls := mergedGH(t)
+	f := planStatusRig(t, statusGraphOne)
+	seedPlanRun(t, f, runDay()+"-090000-aaaa", "plan/R", &runstore.Record{
+		Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeReady,
+		PR: &runstore.PRRef{Number: 5, URL: "https://github.com/someone/else/pull/5"},
+	})
+	doc, _ := planStatusJSON(t)
+	p := doc.Plans[0]
+	if len(p.Nodes) != 1 || p.Nodes[0].State != plan.StateNotStarted || p.Nodes[0].Mark != "" || p.Closed != 0 {
+		t.Errorf("plan = %+v, want the task open and unmarked: its run points at another repository's pull request", p)
+	}
+	if asked := ghLookups(t, calls); len(asked) != 0 {
+		t.Errorf("gh was asked %q, want nothing: the URL is not this checkout's repository", asked)
+	}
+}
+
+// TestPlanMergesCapsTheLookups: one read spawns at most planMaxLookups gh
+// processes, the newest runs' pull requests first; the rest have no answer
+// (merge unknown) and a warning says so. Mutation caught: dropping the cap.
+func TestPlanMergesCapsTheLookups(t *testing.T) {
+	calls := mergedGH(t)
+	facts := []plan.RunFact{}
+	for i := 1; i <= planMaxLookups+3; i++ {
+		facts = append(facts, plan.RunFact{
+			RunID: fmt.Sprintf("20261025-%06d-aaaa", i), Repo: "acme/app",
+			PRURL: fmt.Sprintf("https://github.com/acme/app/pull/%d", i),
+		})
+	}
+	var warnings []string
+	merge := planMerges(context.Background(), facts, "acme/app", func(s string) { warnings = append(warnings, s) })
+	if asked := ghLookups(t, calls); len(asked) != planMaxLookups {
+		t.Errorf("gh was asked %d times, want the cap, %d", len(asked), planMaxLookups)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "3 more pull requests") {
+		t.Errorf("warnings = %q, want one naming the three left unasked", warnings)
+	}
+	if merged, known := merge("https://github.com/acme/app/pull/1"); merged || known {
+		t.Errorf("the oldest run's pull request = %v, %v, want no answer: it is past the cap", merged, known)
+	}
+	if merged, known := merge(fmt.Sprintf("https://github.com/acme/app/pull/%d", planMaxLookups+3)); !merged || !known {
+		t.Errorf("the newest run's pull request = %v, %v, want merged: the newest are asked first", merged, known)
 	}
 }

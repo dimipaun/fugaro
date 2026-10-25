@@ -1218,7 +1218,7 @@ says.
 
 **Flags** (`newBacklogListCmd`): `--dir`, `--json`.
 
-### 6.12 `fugaro plan status --json` (**CLI 0.12.0**)
+### 6.12 `fugaro plan status --json` (**the CLI release after 0.11.4**)
 
 **Command:** `internal/cli/plan_status.go` `newPlanStatusCmd` / `runPlanStatus`.
 **Document:** `planStatusDoc`, indented (`printPlanStatus`), both in
@@ -1234,19 +1234,23 @@ carries `--project`, `--config`, `--gcp-project` and `--region` like `runs ls`,
 and the console must pass `--project <name>` on every spawn (§8). What it reads
 is the checkout's plans joined to **the checkout's own repository's** runs: the
 plans it prints are the working directory's, and a run of another repository
-naming the same task is not theirs to claim. It writes nothing.
+naming the same task is not theirs to claim. It writes nothing — the remembered
+checkouts included: `plan status` is one of the console's reads
+(`consoleReadPaths`), so resolving the checkout records nothing.
 
-**What it reads is bounded twice, and the second bound is the one a console
-pays for.** The runs it lists are the runs the bucket still holds — the
-ninety-day window `fugaro run --pr` reads with, which is the bucket's own
-lifecycle, since a run older than that has been deleted with its run and can
-join nothing. Of those, only the runs that **join at least one plan here** are
-read at all: the merge lookup below spawns the operator's `gh`, one spawn per
-distinct pull request, so it is asked about exactly the pull requests of the
-runs the join reads and about no others, and the answers are not kept between
-invocations (that cache lives in `internal/watch`'s process, and this command is
-one process). A repository whose history is full of runs naming no task of any
-plan in this checkout spends nothing on them.
+**What it reads is bounded, and the lookups are bounded more tightly, because
+they are what a console pays for.** The runs it lists are every run the bucket
+still holds — the ninety-day window `fugaro run --pr` reads with, which is the
+bucket's own lifecycle, since a run older than that has been deleted with its
+run and can join nothing. Every run in that window is read. What is scoped is
+the merge lookup below: it spawns the operator's `gh`, one spawn per distinct
+pull request, and it is asked only about the pull requests of the runs that
+**join at least one plan here**, at most **32** per read, the newest runs'
+first; a pull request past the cap has no answer (`merge unknown`, and a
+warning says how many). The answers are not kept between invocations (that
+cache lives in `internal/watch`'s process, and this command is one process). A
+repository whose history is full of runs naming no task of any plan in this
+checkout spends no lookup on them.
 
 The document:
 
@@ -1283,7 +1287,7 @@ one entry of `nodes`:
 | `level` | number | never | never | the same field §6.9's node carries |
 | `critical` | bool | never | never | the task is on the plan's critical path (§6.9's `critical_path.tasks`), so a screen can highlight the chain rather than recompute it |
 | `release` | string | **yes** | never | the target version, `MAJOR.MINOR` or `MAJOR.MINOR.PATCH`, as the artifact spells it; absent when the task names none |
-| `run` | string | **yes** | never | the **suffix** of the run this task is joined to — the four characters after the last dash of a run id, which is the part a person reads out loud, and what `runs ls` prints in its own run column |
+| `run` | string | **yes** | never | the **suffix** of the run this task is joined to — the four characters after the last dash of a run id, which is the part a person reads out loud, and the short form `fugaro watch` shows a run by (`internal/watch`'s `shortRun`); `runs ls` prints the whole id |
 | `stage` | string | **yes** | never | the stage that run is in. **Job-written display text**: it arrives sanitised (`safetext.Field`) and is rendered as text |
 | `pr_number` | number | **yes** | never | the pull request number this task shows, **whenever the run has recorded one** — running or finished. It is the run's `record_pr` (F9) when it has one, the run's own number otherwise, and it is absent rather than `0` when there is none: a repository that numbers its pull requests from 1 makes `0` no number at all. It is never a link (§5.1 rule 2) |
 | `mark` | string | **yes** | never | `"merge unknown"`, and nothing else today: the task's run recorded a ready pull request and no lookup could say whether it merged (below). A screen shows it beside the state, never instead of it |
@@ -1338,11 +1342,14 @@ merge answer comes from the operator's own authenticated `gh`
 (`internal/watch`, `PRState.MergeNow`), asked about exactly the URLs that match
 its anchored `https://github.com/<owner>/<repo>/pull/<n>` pattern; every other
 URL — a Bitbucket one, one with anything appended to it — is never handed to a
-subprocess. Where there is no answer (no `gh`, a Bitbucket repository, a failed
-or timed-out lookup), a task whose run's record says its pull request is ready
-shows `done` with the mark, rather than staying open forever: a screen that
-waited for an answer nobody can give would be a screen that never settles. A
-`done` **with** the mark is **not** counted closed — only a confirmed merge is
+subprocess. A URL that matches but names **another repository** than the
+checkout's is not asked about either, and answers *not merged*: a run's
+`pr_url` is job-written, and a job must not mark its own task done by pointing
+at somebody else's merged pull request. Where there is no answer (no `gh`, a
+Bitbucket repository, a failed or timed-out lookup, one past the cap), a task
+whose run's record says its pull request is ready shows `done` with the mark,
+rather than staying open forever: a screen that waited for an answer nobody can
+give would be a screen that never settles. A `done` **with** the mark is **not** counted closed — only a confirmed merge is
 (GD6).
 
 **The join rules, and they are the CLI's.** (i) A run joins a task by the

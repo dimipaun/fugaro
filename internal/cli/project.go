@@ -226,12 +226,14 @@ var consoleReadPaths = map[string]bool{
 	"fugaro accounts ls": true,
 	"fugaro version":     true,
 	"fugaro doctor":      true,
-	// The two the design names and §5.1 has not carried a row for yet (the
-	// console task adds them). Neither resolves a checkout today; they are
-	// named so that the day one does, it is still a read that changes
-	// nothing.
+	// The ones the design names and §5.1 has not carried a row for yet (the
+	// console task adds them). config list and plan graph resolve no checkout
+	// today; plan status does (it is a cloud read of the checkout's own
+	// repository's runs), and it writes nothing, the remembered checkouts
+	// included.
 	"fugaro config list": true,
 	"fugaro plan graph":  true,
+	"fugaro plan status": true,
 }
 
 // selectProject picks the project config a cloud command acts on

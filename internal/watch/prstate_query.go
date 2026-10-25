@@ -77,3 +77,16 @@ func (p *PRState) MergeNow(ctx context.Context, url string) (merged, known bool)
 	}
 	return state == prMerged, state != prUnknown
 }
+
+// PRRepo is the owner/name a GitHub pull request URL names, read with the same
+// anchored pattern MergeNow matches before it spawns anything; ok is false for
+// every URL MergeNow would not ask about. A caller that must not let a job point
+// at somebody else's pull request compares this with its own repository before
+// it asks.
+func PRRepo(url string) (repo string, ok bool) {
+	ref, ok := parseGHPRURL(url)
+	if !ok {
+		return "", false
+	}
+	return ref.owner + "/" + ref.repo, true
+}

@@ -58,6 +58,22 @@ func TestMergeNowNeverSpawnsOnAURLOurPatternRefuses(t *testing.T) {
 	}
 }
 
+// TestPRRepoReadsWhatMergeNowWouldAsk: PRRepo names the repository of exactly
+// the URLs MergeNow would ask about, and of no other.
+func TestPRRepoReadsWhatMergeNowWouldAsk(t *testing.T) {
+	if repo, ok := PRRepo("https://github.com/acme/app/pull/7"); !ok || repo != "acme/app" {
+		t.Errorf("PRRepo = %q, %v, want acme/app", repo, ok)
+	}
+	for _, url := range []string{
+		"", "https://bitbucket.org/acme/app/pull/1", "https://github.com/acme/../app/pull/1",
+		"https://evil.example/github.com/acme/app/pull/1",
+	} {
+		if repo, ok := PRRepo(url); ok {
+			t.Errorf("PRRepo(%q) = %q, want no repository", url, repo)
+		}
+	}
+}
+
 // TestMergeNowReadsTheCacheAndBoundsItself: an answer already in hand is that
 // answer rather than a second question, a disabled resolver and a nil one ask
 // nothing, and a gh that never answers ends the call at the resolver's own

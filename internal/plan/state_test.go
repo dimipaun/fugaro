@@ -254,6 +254,16 @@ func TestLatestRunWins(t *testing.T) {
 	if a := nodeOf(t, got, "A"); a.State != StateDone {
 		t.Errorf("A = %+v, want done: an earlier run's pull request is merged", a)
 	}
+	// The latest cancelled with a failed run behind it: the work was tried and
+	// settled nothing, so the task is not-started — never cancelled, which is
+	// the answer only for a task whose one run was dropped. No merge answers
+	// here, so this is the case that holds the "only run" rule on its own.
+	failed := runFact("r1", "100000", "the-plan/A", string(runstore.StatusFailed))
+	got = statePlan(t, joinDoc(), []RunFact{failed, runFact("r2", "110000", "the-plan/A", statusCancelled)},
+		StateOptions{All: true, Merge: mergedPRs(nil, nil)})
+	if a := nodeOf(t, got, "A"); a.State != StateNotStarted || a.Run != "r2" {
+		t.Errorf("A = %+v, want not-started on the latest run: a cancel after a failed run is not the task's end", a)
+	}
 }
 
 // TestFollowUpJoinsByPR: a follow-up inherits a plan task only when it was
@@ -427,6 +437,20 @@ func TestReleaseNamesAndFinished(t *testing.T) {
 		if rel.Name != w.name || rel.Finished != w.finished || rel.Stream != streamcat.Console {
 			t.Errorf("release %s = %+v, want %+v", rel.Version, rel, w)
 		}
+	}
+	// The name is the reader's own arithmetic, counted from the stream's first
+	// version rather than from where the stream is now: the first release of
+	// the line is named, and so is the first release of a stream that has
+	// shipped nothing (0.0.0) — its version still says which name it spends.
+	if got := releaseName(cat.Streams[0], "0.110"); got != "Cherry" {
+		t.Errorf("0.110's name = %q, want Cherry, the console line's first", got)
+	}
+	if got := releaseName(cat.Streams[0], "0.11"); got != "" {
+		t.Errorf("0.11's name = %q, want none: it is below the console's named line", got)
+	}
+	mobile := streamcat.Stream{Name: streamcat.Mobile, Theme: "birds", Names: []string{"Falcon", "Pelican"}, Next: "Falcon", TagPrefix: "mobile-v"}
+	if got, done := releaseName(mobile, "0.201"), releaseFinished(mobile, "0.201"); got != "Pelican" || done {
+		t.Errorf("the app's 0.201 = %q (finished %v), want Pelican, not shipped: a stream at 0.0.0 has shipped nothing", got, done)
 	}
 	// A plan that names no stream has no release name and nothing finished.
 	doc.Stream = nil
