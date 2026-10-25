@@ -58,7 +58,7 @@ Or ask your agent: the plugin's `working` skill launches, watches and diagnoses 
 
 ## How it works
 
-A run opens its pull request as a draft before it is done. The draft appears at the run's first checkpoint push (within about a minute of its first commit), marked not verified.
+Every run that pushed ends in a pull request, a draft one if it failed. The draft appears at the run's first checkpoint push (within about a minute of its first commit), marked not verified.
 
 ```
 your machine                        your Google Cloud project
