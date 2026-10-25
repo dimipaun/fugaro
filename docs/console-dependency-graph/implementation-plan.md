@@ -267,6 +267,34 @@ document, release assignment later — so Slices 1–2 wait on no ruling; (e)
     display allow-list — so `internal/plan/state.go` and `internal/cli/plan_status.go` are added to
     it, with what each one does with the id. The two are display-only readers: the join matches ids,
     and no state, count or refusal depends on what a launcher wrote.
+- **Amended 2026-10-25, at GV1.6's review:**
+  - **The runs read are the runs the join reads.** `plan status` lists the runs the bucket still
+    holds (`followUpLookback`, ninety days — the bucket's own lifecycle, and the window `run --pr`
+    reads with), and then `plan.JoinedRuns` keeps those that join at least one plan here. Both the
+    listing and the merge lookup are scoped to that set: the lookup spawns the operator's `gh` once
+    per distinct pull request, so handing it the repository's whole run history is a cost that grows
+    with the history, for a read the console calls to draw the graph. `State` is handed the same set,
+    so no URL is looked up that the join did not read. The answers are not kept between invocations —
+    `internal/watch`'s cache lives in that process and this command is one process — so what bounds
+    the spawns is the scoping itself. No `--since` flag was added: that is a new flag and a product
+    decision, and the bound above already removes the unbounded cost.
+  - **The walk refuses a non-regular artifact**, not only a symlink: a fifo, a socket or a device at
+    a `*.graph.json` name makes `os.Open` a read that may never return. The rule sits in the walk,
+    where the symlink rule is (as `internal/streams.Read`'s does), so `plan.ReadFile` — which
+    `plan graph` shares — is unchanged.
+  - **Two artifacts that would be one plan id are refused, not silently merged.** The id is the
+    artifact's path, so `docs/plans/foo.graph.json` and `docs/plans/foo/bar.graph.json` both give
+    `plans/foo`, and joining them would let the second's tasks share the first's runs and totals. The
+    first in path order keeps the id, the second is not listed, and a fixed sentence names both.
+    Additive: it changes what is listed only in a checkout that was already ambiguous.
+  - **Tests for the above**, beyond the list below: `TestPlanStatusLooksUpOnlyJoinedRuns` and
+    `TestPlanStatusReadsOnlyTheRunsTheBucketHolds` (the two bounds),
+    `TestPlanStatusSanitisesAJoinedStage` (a *joined* run's stage, which the misshapen-`plan_task`
+    test cannot reach — that run never joins), `TestPlanStatusSumsEveryPlan` (two artifacts at once),
+    `TestPlanStatusWarnsOnARefusedArtifact`, `TestPlanStatusWarnsOnAnUnreadableCatalogue` and
+    `TestPlanStatusWarnsOnAnUnreadableOrigin` (the three warning paths, previously untested),
+    `TestPlanStatusRefusesADuplicatePlanID`, `TestPlanStatusRefusesANonRegularArtifact`, and
+    `TestPlanIDScopesTheJoinedRuns` in `internal/plan/state_test.go`.
 
 #### GV1.7 — The planning skill writes the graph (V2.8.1, with the stream)
 - **Files:** `plugin/skills/parallelism/SKILL.md`, new

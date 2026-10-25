@@ -1236,12 +1236,24 @@ is the checkout's plans joined to **the checkout's own repository's** runs: the
 plans it prints are the working directory's, and a run of another repository
 naming the same task is not theirs to claim. It writes nothing.
 
+**What it reads is bounded twice, and the second bound is the one a console
+pays for.** The runs it lists are the runs the bucket still holds — the
+ninety-day window `fugaro run --pr` reads with, which is the bucket's own
+lifecycle, since a run older than that has been deleted with its run and can
+join nothing. Of those, only the runs that **join at least one plan here** are
+read at all: the merge lookup below spawns the operator's `gh`, one spawn per
+distinct pull request, so it is asked about exactly the pull requests of the
+runs the join reads and about no others, and the answers are not kept between
+invocations (that cache lives in `internal/watch`'s process, and this command is
+one process). A repository whose history is full of runs naming no task of any
+plan in this checkout spends nothing on them.
+
 The document:
 
 | Key | Type | Absent | Null | Notes |
 | --- | --- | --- | --- | --- |
 | `repo` | string | never | never | the checkout's own repository, `owner/name`, taken from its `origin`; this is what scopes the join. **`""` means unknown** — the checkout has no readable origin — and then no run is joined at all, which is why an empty string is never "every repository" |
-| `plans` | array | never | never | one entry per graph artifact found, in path order; `[]` when the checkout has no plan |
+| `plans` | array | never | never | one entry per graph artifact found, in path order; `[]` when the checkout has no plan. An artifact whose id another one already took is not here — it is a warning instead (below) |
 | `totals` | object | never | never | every plan's figures added up, below. A header line a screen draws before the plans |
 | `streams` | array | never | never | the release streams catalogue, in the file's own order, below; `[]` when the catalogue could not be read (`warnings` says why, and a release's name and version are then simply absent) |
 | `warnings` | array | never | never | the lines a human read prints before its table, below; `[]` when there is nothing to say |
@@ -1359,16 +1371,24 @@ read instead of being followed** (including a `docs/` that is itself a link out
 of the checkout), the artifact count is **capped at 64** so a checkout that
 fills the directory cannot be read without end, and the per-artifact limit is
 §6.9's mebibyte. A checkout that plants a link to another directory is refused,
-not read.
+not read. An artifact must be a **regular file** as well: a fifo, a socket or a
+device sitting at a `*.graph.json` name is refused rather than opened, because
+opening one is a read that may never return.
 
 **A refused plan is a warning, not an empty document.** A graph this build will
 not render — a future schema version, a malformed artifact, a cycle — is
 skipped: the refusal's own sentence goes to **stderr**, and `warnings` carries a
 fixed sentence of ours naming the artifact, so a screen has something to show
 without the document ever carrying text a job wrote. A read that finds no plan
-at all is `plans: []` and one sentence on stdout, not an error. A catalogue that
-cannot be read is a warning too, and then every release has no `name`: a
-catalogue dates a release, and it is not what a task's state is made of.
+at all is `plans: []` and one sentence on stdout, not an error. **Two artifacts
+that would be one plan id are refused the same way**: the id is the artifact's
+path, so `docs/plans/foo.graph.json` and `docs/plans/foo/bar.graph.json` both
+give `plans/foo`, and joining them as one plan would let the second's tasks
+share the first's runs and totals. The first artifact in path order keeps the
+id, the second is not listed, and a fixed sentence of ours names both. A
+catalogue that cannot be read is a warning too, and then every release has no
+`name`: a catalogue dates a release, and it is not what a task's state is made
+of.
 
 **Version skew.** Every field is additive: a console built before this section
 draws what it drew before, an older CLI has no `plan status` at all — the
