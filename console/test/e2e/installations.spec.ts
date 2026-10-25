@@ -233,26 +233,8 @@ test.describe('the installation picker, in the real window', () => {
   })
 })
 
-/** firstRunWindows answers the console's own window and the picker D13's first
- * run opens beside it -- in whichever order `firstWindow` and the window event
- * produced them. Both are identified by their document rather than by their
- * position, because which one opens first is the app's business and not this
- * spec's claim. */
-async function firstRunWindows(app: ElectronApplication): Promise<{ dashboard: Page; picker: Page }> {
-  const first = await app.firstWindow()
-  await first.waitForLoadState('domcontentloaded')
-  const second = app.windows().find((window) => window !== first) ?? (await app.waitForEvent('window'))
-  await second.waitForLoadState('domcontentloaded')
-  const pages = [first, second]
-  const picker = pages.find((page) => page.url() === PICKER_ENTRY_URL)
-  expect(picker, `the first run opened no picker: ${pages.map((page) => page.url()).join(', ')}`).toBeDefined()
-  const dashboard = pages.find((page) => page !== picker)
-  expect(dashboard?.url(), 'the first run opened something other than the dashboard').toBe(APP_ENTRY_URL)
-  return { dashboard: dashboard as Page, picker: picker as Page }
-}
-
 test.describe('the first run, in the real window', () => {
-  test('opens the picker on the empty list, and asks the operator for no binary and no config', async () => {
+  test('opens no picker by itself; the rail’s + opens it on the empty list, which asks for no binary and no config', async () => {
     // **The headline state of this console** (owner's ruling of 2026-10-20): a
     // machine with no installation at all. Nothing is seeded here -- no
     // `installations.json` in the profile, and no `installations.ndjson` either,
@@ -278,7 +260,19 @@ test.describe('the first run, in the real window', () => {
 
       const app = await launchConsole({ args: fresh.launchArgs(consoleDir), env: fresh.env })
       try {
-        const { dashboard, picker } = await firstRunWindows(app)
+        // The owner's design ruling of 2026-10-25: the console never shows a
+        // picker screen by itself. The dashboard is the one window, its rail has
+        // no row, and the rail's + is the door to the picker.
+        const dashboard = await app.firstWindow()
+        await dashboard.waitForLoadState('load')
+        expect(dashboard.url()).toBe(APP_ENTRY_URL)
+        expect(app.windows()).toHaveLength(1)
+        await expect(dashboard.locator('aside.console-rail button.console-rail-row')).toHaveCount(0)
+        const opened = app.waitForEvent('window')
+        await dashboard.locator('aside.console-rail button.console-rail-add').click()
+        const picker = await opened
+        await picker.waitForLoadState('load')
+        expect(picker.url()).toBe(PICKER_ENTRY_URL)
         // The console's own window, and its line: nothing has been chosen, and
         // the console says so rather than guessing (D13).
         const installation = await dashboard.evaluate(async () => {

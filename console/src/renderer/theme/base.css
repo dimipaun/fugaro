@@ -497,7 +497,7 @@ button.installation-issue-reveal,
 button.installation-issue-checkout {
   min-height: var(--row-height);
   padding: var(--space-2xs) var(--space-sm);
-  border: var(--rule-width) solid var(--border);
+  border: var(--rule-width) solid var(--border-strong);
   border-radius: var(--radius-sm);
   color: var(--text);
 }

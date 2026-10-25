@@ -581,6 +581,10 @@ async function main(): Promise<void> {
     // closes over.
     electron: { BrowserWindow, session: session.defaultSession, ipcMain, Menu, shell, app },
     appEnv: process.env,
+    // The rail's `config list --json` is a dashboard read since the owner's
+    // ruling of 2026-10-25, and rule 10's log is one line per child the console
+    // spawns: the picker's spawns are written to it like the source's.
+    spawnLog: createSpawnLog(process.env),
     // The picker awaits this inside its own serial chain (review S6), so a
     // second choose cannot start until the window this one asked for is up.
     onChosen: (chosen) => {
