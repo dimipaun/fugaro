@@ -32,6 +32,7 @@
 
 import { FUGARO_INSTALL_COMMAND } from '../source/cli'
 import type { ActiveInstallation } from './installations'
+import type { InstallationState } from './installationstate'
 
 /**
  * GETTING_STARTED_URL is the one external link the console opens, and it is the
@@ -122,6 +123,17 @@ export function firstInstallationState(): OnboardingState {
  * saying why. Such a row is **never hidden** -- and `listed` is false for a
  * record the CLI did not list at all, which is the ordinary case for a store
  * written by an older console whose CLI cannot enumerate.
+ *
+ * **`state` is the rail's mark for this row** (owner's design ruling of
+ * 2026-10-25): the issue it carries, whether a click opens it or its issue, the
+ * one plain sentence the issue view draws, the command to run, and the CLI's own
+ * lines for the disclosure. It is computed in `installationstate.ts` from the
+ * facts here plus the console's own, so a screen draws a classification it did
+ * not make.
+ *
+ * **`checkouts` is the list the console may offer**, which is not the CLI's list
+ * verbatim: a temporary or tool-owned directory is dropped, and the project's
+ * own recorded checkout comes first (`suggestedCheckouts`).
  */
 export interface InstallationsListRow {
   readonly project: string
@@ -134,6 +146,7 @@ export interface InstallationsListRow {
   readonly mode: 'ok' | 'reduced' | 'refused' | 'unknown'
   readonly checkout?: string
   readonly checkouts: readonly string[]
+  readonly state: InstallationState
 }
 
 /**

@@ -23,6 +23,7 @@
 // an add, a choose or a remove.** It never writes on a load, on a pick, or on a
 // failed validation, and it never deletes or rewrites a file it refused to read.
 
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
@@ -51,7 +52,10 @@ import type {
   ValidationDeps,
 } from './installations'
 import { parseInstallationsDocument } from './installlist'
+import { classifyInstallation, suggestedCheckouts } from './installationstate'
+import type { ConsoleFacts } from './installationstate'
 import {
+  FUGARO_INSTALL_COMMAND,
   GETTING_STARTED_URL,
   NO_ONBOARDING,
   firstInstallationState,
@@ -185,6 +189,15 @@ export interface InstallationPickerDeps {
    * answer. **The shipped app never passes it** -- `installInstallationPicker`
    * leaves it out, so the rule's own list is the one that runs. */
   readonly prefixes?: readonly string[] | undefined
+  /** tempDirectory is the machine's temporary directory, and it is a seam for
+   * the same reason `home` and `prefixes` are: the rule that keeps a checkout
+   * suggestion off a temporary or tool-owned path (`isToolOwnedPath`) is about
+   * *this* machine's temporary root, and a unit test must be able to name it.
+   * It defaults to `os.tmpdir()`, which is what the shipped app uses -- the
+   * literal roots the rule also refuses (`/tmp`, `/private/tmp`, `/var/folders`)
+   * are checked beside it, because a checkout recorded by a tool may spell the
+   * one `os.tmpdir()` does not answer. */
+  readonly tempDirectory?: (() => string) | undefined
   /**
    * onChosen is the seam the entry point consumes: it is called after a choose
    * has run the handshake and persisted `active`, and `src/main/index.ts` hands
@@ -466,30 +479,55 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
    * row per listed installation, and one more per record the CLI did not list --
    * which is the case that keeps a store written by an older console working
    * (its binary override and its checkout are still there, and it is still
-   * openable by name). */
+   * openable by name).
+   *
+   * **Every row carries its own state** (owner's design ruling of 2026-10-25):
+   * `classifyInstallation` turns the facts below into the mark the rail draws and
+   * the sentence its issue view shows, and `suggestedCheckouts` is what the row
+   * offers as a directory to use this installation from. Neither is a guess made
+   * here: the facts are the CLI's own document, the store's own refusal, the
+   * resolution's own sentence and the CLI's own warning lines.
+   */
   const rowsOf = (
     discovered: readonly { name: string; gcpProject: string; region: string; checkouts: readonly string[] }[],
+    warnings: readonly string[],
+    cliRefusal: string,
   ): readonly InstallationsListRow[] => {
     const stored = registry.rows()
+    const facts: ConsoleFacts = {
+      storeRefusal: registry.refusal ?? '',
+      storePath,
+      cliRefusal,
+      installCommand: FUGARO_INSTALL_COMMAND,
+      warnings,
+    }
+    const tempDirectory = deps.tempDirectory?.() ?? tmpdir()
     const rows: InstallationsListRow[] = discovered.map((installation) => {
       const held = stored.find((row) => row.project === installation.name)
+      const rowFacts = {
+        project: installation.name,
+        listed: true,
+        // The CLI's own signal: `gcp_project` is "" exactly when that config
+        // could not be read, and the document's warning says why.
+        configUnreadable: installation.gcpProject === '',
+      }
       return {
         project: installation.name,
         gcpProject: installation.gcpProject,
         region: installation.region,
-        // The CLI's own signal: `gcp_project` is "" exactly when that config
-        // could not be read, and the document's warning says why.
-        configUnreadable: installation.gcpProject === '',
+        configUnreadable: rowFacts.configUnreadable,
         listed: true,
         saved: held !== undefined,
         active: held?.active ?? false,
         mode: held?.mode ?? 'unknown',
         ...(held?.checkout === undefined ? {} : { checkout: held.checkout }),
-        checkouts: installation.checkouts,
+        checkouts: suggestedCheckouts(held?.checkout, installation.checkouts, tempDirectory),
+        state: classifyInstallation(rowFacts, facts),
       }
     })
     for (const row of stored) {
       if (discovered.some((installation) => installation.name === row.project)) continue
+      const rowFacts = { project: row.project, listed: false, configUnreadable: false }
       rows.push({
         project: row.project,
         gcpProject: '',
@@ -500,7 +538,8 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         active: row.active,
         mode: row.mode,
         ...(row.checkout === undefined ? {} : { checkout: row.checkout }),
-        checkouts: [],
+        checkouts: suggestedCheckouts(row.checkout, [], tempDirectory),
+        state: classifyInstallation(rowFacts, facts),
       })
     }
     return Object.freeze(rows)
@@ -508,11 +547,19 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
 
   /**
    * lastListed is the document the last successful `list` read, keyed by project
-   * name, and it is what a checkout is checked against: the console offers only
+   * name, and it is what a checkout is checked against: the console accepts only
    * the directories the CLI itself listed (installlist.ts rule 2), so a renderer
    * that sends a path this map does not hold has named a directory this process
    * never obtained. It is empty until a list has been read, and an empty map
    * offers nothing -- which is the safe direction.
+   *
+   * It is the CLI's own list and **not** the row's drawn `checkouts`, which is the
+   * narrower list the screen offers (`suggestedCheckouts`: tool-owned and
+   * temporary paths dropped, the project's own recorded checkout first). The two
+   * differ deliberately, and this is the wider one: membership here answers "did
+   * the CLI name this directory for this project", which is the question a
+   * checkout write has always been held to, while what the *screen* offers is a
+   * display decision that may only ever narrow it.
    */
   let lastListed: ReadonlyMap<string, readonly string[]> = new Map()
 
@@ -529,10 +576,17 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
       // A refusal still draws the rows the console itself has: a store entry is
       // the console's own record, and hiding it because the CLI would not list
       // would take away the one installation the operator can still open.
+      //
+      // The refusal is handed to the classification as `cliRefusal` only when it
+      // *is* one -- a resolution that found no binary. A CLI that exited non-zero
+      // or printed a document this console could not parse is a failure of this
+      // read and not a fact about the machine's CLI, so no row is marked
+      // "install the CLI" for it; the sentence is drawn as the list's own warning
+      // line instead, which is where it was drawn before.
       clearCheckouts()
       return Object.freeze({
         onboard: found.onboarding,
-        rows: rowsOf([]),
+        rows: rowsOf([], [], found.onboarding.kind === 'install-cli' ? found.reason : ''),
         warnings: Object.freeze(found.onboarding === NO_ONBOARDING && found.reason !== '' ? [found.reason] : []),
         ...base,
       })
@@ -541,7 +595,7 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
     // the previous read wholesale: a checkout the CLI has stopped listing is one
     // this console no longer holds.
     lastListed = new Map(found.installations.map((installation) => [installation.name, installation.checkouts]))
-    const rows = rowsOf(found.installations)
+    const rows = rowsOf(found.installations, found.warnings, '')
     if (rows.length === 0) {
       // "The CLI listed nothing and the console has nothing" is the one state
       // the first-installation screen is for. A document this console could not
