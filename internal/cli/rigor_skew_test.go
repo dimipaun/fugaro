@@ -2,15 +2,18 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // rigorSkewLayer is a project layer that writes defaults.rigor, parsed the way
@@ -233,5 +236,223 @@ func TestRigorSinceIsTheReleaseTheChecklistAndSchemasName(t *testing.T) {
 func TestRigorSinceIsTheReleaseRigorShipsIn(t *testing.T) {
 	if rigorSince != "0.11.0" {
 		t.Errorf("rigorSince = %q: the rigor modes ship in CLI 0.11.0", rigorSince)
+	}
+}
+
+// rigorSkewHead and rigorSkewWorkflow are the repository file the launch tests
+// below check out: the workflow svc, whose job the fixture has.
+const (
+	rigorSkewHead     = "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nagent: { auth: api-key }\n"
+	rigorSkewWorkflow = "workflows:\n  svc: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+)
+
+// rigorSkewCheckout makes the working directory a checkout of acme/other whose
+// fugaro.yaml is repoYAML.
+func rigorSkewCheckout(t *testing.T, f *cloudFixture, repoYAML string) {
+	t.Helper()
+	testutil.IsolateGit(t)
+	f.run.AddJob(gcp.JobName(mustSlug("github", "acme/other"), "svc"), "2", "4Gi")
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": repoYAML, "build.sh": "true\n", "test.sh": "true\n"})
+	t.Chdir(dir)
+}
+
+// TestRunRefusesRigorOnAnOlderBaseImage is rigorSince's launch gate, which
+// 0.11.0 shipped without: only fugaro update --repo judged the key (the
+// release note's own known limitation), so a launch from a repository whose
+// file writes a rigor: block onto a job image older than rigorSince was
+// deployed and then died at bootstrap, on a key nobody could do anything about
+// any more. The judge is the workflow's build record, as it is for every other
+// per-workflow image gate (checkImageSince), and the boundary is the
+// constant's own: one release below is refused, the constant and one above
+// pass.
+func TestRunRefusesRigorOnAnOlderBaseImage(t *testing.T) {
+	below, above := shiftRelease(t, rigorSince, -1), shiftRelease(t, rigorSince, 1)
+	for _, c := range []struct {
+		rel     string
+		refused bool
+	}{
+		{below, true},
+		{rigorSince, false},
+		{above, false},
+	} {
+		t.Run(c.rel, func(t *testing.T) {
+			f := newCloudFixture(t)
+			rigorSkewCheckout(t, f, rigorSkewHead+"rigor: { default: hotfix }\n"+rigorSkewWorkflow)
+			writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+c.rel)
+			_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+			if !c.refused {
+				if err != nil {
+					t.Fatalf("release %s: err = %v, want launched", c.rel, err)
+				}
+				return
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want the launch refused", err)
+			}
+			for _, want := range []string{
+				"fugaro.yaml's rigor: block of acme/other",
+				"fugaro " + rigorSince + " or later",
+				"ghcr.io/dimipaun/fugaro-base:" + c.rel + ", release " + c.rel,
+				"fugaro image refresh --repo acme/other --workflow svc",
+				"; or remove the rigor: block from fugaro.yaml",
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%v lacks %q", err, want)
+				}
+			}
+			if n := len(f.run.Executions()); n != 0 {
+				t.Errorf("%d executions, want none", n)
+			}
+		})
+	}
+}
+
+// TestRunRefusesANullRigorBlockOnAnOlderBaseImage: `rigor:` with nothing under
+// it writes the key and decodes to no block at all, so the gate has to judge
+// the key and not the value — an older runner's KnownFields reader refuses the
+// whole file either way, and a gate that read RepoRigor alone would launch a
+// run that dies at bootstrap on a line the operator did write.
+func TestRunRefusesANullRigorBlockOnAnOlderBaseImage(t *testing.T) {
+	f := newCloudFixture(t)
+	rigorSkewCheckout(t, f, rigorSkewHead+"rigor:\n"+rigorSkewWorkflow)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, rigorSince, -1))
+	wantRefused(t, f, "fugaro.yaml's rigor: block of acme/other needs a job image whose runner knows the rigor: block (fugaro "+rigorSince+" or later)",
+		"run", "--run-id", "20261008-100000-abcd", "A task")
+}
+
+// TestRunRefusesTheLayersRigorOnAnOlderBaseImage: the other layer the key can
+// come from is the project layer, and the subject says so — that block is the
+// operator's to remove, and it breaks every repository of the project whose
+// job image is older, while a repository's own file says nothing about it.
+func TestRunRefusesTheLayersRigorOnAnOlderBaseImage(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, layerWithDefaults("  rigor: { default: critical }\n"))
+	layerCheckout(t, f, minimalAnchored)
+	registerOtherLocally(t, f)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, rigorSince, -1))
+	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the launch refused", err)
+	}
+	for _, want := range []string{
+		"the project layer's defaults.rigor (read for acme/other)",
+		"knows the project layer's defaults.rigor",
+		"fugaro image refresh --repo acme/other --workflow " + config.ImplicitWorkflow,
+		"remove defaults.rigor from the project layer",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%v lacks %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "fugaro.yaml's rigor") {
+		t.Errorf("the refusal blames the repository's file, which writes no rigor: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
+
+// TestRunRefusesRigorOnACloneWorkflowsOlderBaseImage: a checkout: clone
+// workflow has no build record to judge (it runs the installation's base image
+// as it is), so the same gate is judged against base_images.base itself and
+// names the fix that image has: fugaro update --base base, not an image
+// refresh of a workflow that is never built.
+func TestRunRefusesRigorOnACloneWorkflowsOlderBaseImage(t *testing.T) {
+	f := newCloudFixture(t)
+	older := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, rigorSince, -1)
+	f.appendConfig(t, "base_images: {base: "+older+"}\n")
+	rigorSkewCheckout(t, f, rigorSkewHead+"rigor: { default: hotfix }\n"+
+		"workflows:\n  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n")
+	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the launch refused", err)
+	}
+	for _, want := range []string{"fugaro.yaml's rigor: block of acme/other", "Run fugaro update --base base", older} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%v lacks %q", err, want)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
+
+// TestRunDoesNotGateAFileThatWritesNoRigor: the gate is the key's, so a
+// repository that writes none is never held to rigorSince — the same shape the
+// title gate has (a launch with no --title carries no field to refuse).
+func TestRunDoesNotGateAFileThatWritesNoRigor(t *testing.T) {
+	f := newCloudFixture(t)
+	rigorSkewCheckout(t, f, rigorSkewHead+rigorSkewWorkflow)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, rigorSince, -1))
+	if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task"); err != nil {
+		t.Fatalf("a file that writes no rigor: block must not be gated: %v", err)
+	}
+}
+
+// validateRigor runs fugaro validate on a repository file whose top level
+// carries rigorLines, in a directory that is no checkout and has no project
+// config: the file's own key is all this judges.
+func validateRigor(t *testing.T, rigorLines string) (validateOutput, error) {
+	t.Helper()
+	isolateProjects(t, t.TempDir())
+	dir := t.TempDir()
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: example\ngit: { provider: github, base_branch: main }\nagent: { auth: api-key }\n" +
+		rigorLines + "workflows:\n  app: { commands: { build: go build ./..., test: go test ./... } }\n"})
+	out, _, err := execute(t, "validate", "--json", filepath.Join(dir, "fugaro.yaml"))
+	var doc validateOutput
+	if jerr := json.Unmarshal([]byte(out), &doc); jerr != nil {
+		t.Fatalf("output %q: %v", out, jerr)
+	}
+	return doc, err
+}
+
+// TestValidateWarnsThatRigorNeedsEveryJobImage: the file is valid — the skew is
+// the installation's, not the file's — so validate warns rather than refusing,
+// the shape usesProfiles' profile warning and cloneWorkflowWarnings have, and
+// names both ways to move an image (the installation's base, and a workflow's
+// own). An explicit null counts: it is the key an older runner refuses.
+func TestValidateWarnsThatRigorNeedsEveryJobImage(t *testing.T) {
+	for _, lines := range []string{"rigor: { default: hotfix }\n", "rigor:\n"} {
+		doc, err := validateRigor(t, lines)
+		if err != nil {
+			t.Fatalf("%q: err = %v, want a valid file", lines, err)
+		}
+		if !has(doc.Warnings, "rigor", "needs fugaro "+rigorSince) {
+			t.Errorf("%q: warnings = %+v, want the rigor warning", lines, doc.Warnings)
+		}
+		for _, want := range []string{"fugaro update --base base", "fugaro image refresh"} {
+			if !has(doc.Warnings, "rigor", want) {
+				t.Errorf("%q: the warning does not name %q: %+v", lines, want, doc.Warnings)
+			}
+		}
+		if has(doc.Problems, "rigor", "") {
+			t.Errorf("%q: the key was refused, and the file is valid: %+v", lines, doc.Problems)
+		}
+	}
+	if doc, err := validateRigor(t, ""); err != nil || has(doc.Warnings, "rigor", "") {
+		t.Errorf("a file that writes no rigor: block was warned about: %+v, %v", doc.Warnings, err)
+	}
+}
+
+// TestValidateWarnsWhenTheProjectLayerSetsRigor: the layer's key reaches every
+// repository of the project, so validate says which of the two wrote it and
+// that the fix is the layer's.
+func TestValidateWarnsWhenTheProjectLayerSetsRigor(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, layerWithDefaults("  rigor: { default: critical }\n"))
+	layerCheckout(t, f, minimalAnchored)
+	_, errOut, err := execute(t, "validate")
+	if err != nil {
+		t.Fatalf("a file that resolves over the layer is valid: %v", err)
+	}
+	for _, want := range []string{"project layer", "defaults.rigor", "needs fugaro " + rigorSince, "fugaro update --base base"} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr %q lacks %q", errOut, want)
+		}
 	}
 }
