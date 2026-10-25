@@ -786,6 +786,73 @@ describe('renderProjects', () => {
     const untouched = renderProjects(factory, buildProjectsModel(inputs()), 'light')
     expect(all(untouched, 'projects-job-started-by')).toHaveLength(0)
   })
+
+  it('draws no MODE column while no listed run carries a rigor block', () => {
+    // The column is conditional, and this is the case it exists for: the
+    // fixture's two runs are both older than the field, so the jobs list is the
+    // list it always drew -- **no cell at all**, rather than a row of dashes
+    // widening every row for a fact none of them has. `runs ls` writes the same
+    // rule for its own MODE column (`internal/cli/runs.go`'s `showMode`).
+    const tree = renderProjects(factory, buildProjectsModel(inputs()), 'light')
+    expect(all(tree, 'projects-job')).toHaveLength(2)
+    expect(all(tree, 'projects-job-mode')).toHaveLength(0)
+  })
+
+  it('draws the mode word on every row once one run carries a block, and the dash for a row without one', () => {
+    // Owner request 2026-10-25: the rigor mode in the run screens. Once the
+    // column is on, every row draws a cell -- the run that resolved a mode
+    // draws this build's own word for it (`POC`, `Startup`, `Pro`, `Critical`,
+    // `Hotfix`), and a run with no block draws the CLI's dash, which is "no
+    // record of this run's rigor" and never "it resolved nothing".
+    const runs = { ...RUNS, runs: [{ ...RUNS.runs[0], rigor: { mode: 'pro', from: 'repo' } }, RUNS.runs[1]] }
+    const tree = renderProjects(factory, buildProjectsModel(inputs({ runs })), 'light')
+    expect(all(tree, 'projects-job-mode').map((node) => node.textContent)).toEqual(['Pro', '-'])
+    // The word, not the record's lowercase enum: `pro` is the CLI's spelling of
+    // a setting and `Pro` is what a person reads.
+    expect(all(tree, 'projects-job-mode')[0]?.textContent).not.toBe('pro')
+    // Every mode this build knows draws its own word, and the block's other
+    // keys -- the layer, the areas, the moment, the revision -- are not this
+    // column's: the MODE cell is the mode and nothing else.
+    const each = ['poc', 'startup', 'pro', 'critical', 'hotfix'].map((mode) => {
+      const one_ = { ...RUNS, runs: [{ ...RUNS.runs[0], rigor: { mode, from: 'request', areas: [{ name: 'payments', mode: 'critical' }] } }] }
+      return all(renderProjects(factory, buildProjectsModel(inputs({ runs: one_ })), 'light'), 'projects-job-mode')[0]?.textContent
+    })
+    expect(each).toEqual(['POC', 'Startup', 'Pro', 'Critical', 'Hotfix'])
+  })
+
+  it('draws a mode this build does not know as the bounded text it is, never as a word', () => {
+    // The direction the reader fails in: a newer CLI may resolve a mode this
+    // console has never heard of, and a cell that hid it would be answering
+    // "what was this run's rigor" with nothing. It is job-written text, so it
+    // takes the text path -- escaped, bounded, and masked in place when it is
+    // shaped like a credential -- and never the console's own `literal` writer.
+    const unknown = { ...RUNS, runs: [{ ...RUNS.runs[0], rigor: { mode: 'standard', from: 'reached' } }, RUNS.runs[1]] }
+    const tree = renderProjects(factory, buildProjectsModel(inputs({ runs: unknown })), 'light')
+    expect(all(tree, 'projects-job-mode').map((node) => node.textContent)).toEqual(['standard', '-'])
+    // A value the sanitizer will not have is drawn as the console's `n/a` with
+    // the reason, and the reason is never the value.
+    const multiline = { ...RUNS, runs: [{ ...RUNS.runs[0], rigor: { mode: 'pro\ncritical', from: 'repo' } }] }
+    const refused = renderProjects(factory, buildProjectsModel(inputs({ runs: multiline })), 'light')
+    expect(all(refused, 'projects-job-mode')[0]?.textContent).toBe('n/a')
+    const token = githubToken()
+    const shaped = { ...RUNS, runs: [{ ...RUNS.runs[0], rigor: { mode: token, from: 'repo' } }] }
+    const masked = renderProjects(factory, buildProjectsModel(inputs({ runs: shaped })), 'light')
+    expect(all(masked, 'projects-job-mode')[0]?.textContent).toBe(TOKEN_PLACEHOLDER)
+    expect(drawn(masked)).not.toContain(token)
+  })
+
+  it('draws a rigor block the reader will not show as a run with no mode at all', () => {
+    // A block missing its mode or its layer is no block (`shared/rigor.ts`), so
+    // the row draws the dash -- and a project whose every run is in that state
+    // draws no column, which is the same answer as the runs being older than
+    // the field. The two are one case on purpose: neither is a mode.
+    const runs = {
+      ...RUNS,
+      runs: [{ ...RUNS.runs[0], rigor: { from: 'repo' } }, { ...RUNS.runs[1], rigor: { mode: 'pro' } }],
+    }
+    const tree = renderProjects(factory, buildProjectsModel(inputs({ runs })), 'light')
+    expect(all(tree, 'projects-job-mode')).toHaveLength(0)
+  })
 })
 
 /** drawnText is the text of one subtree, in document order. */
@@ -1072,6 +1139,30 @@ describe('buildRunModel', () => {
     expect(none.replay.from).toBeNull()
     expect(none.replay.to).toBeNull()
   })
+
+  it('reads a run\'s rigor block out of the row, and answers null without one', () => {
+    // Owner request 2026-10-25. The block is `row.rigor`, the same key the
+    // Projects screen's job rows read, through the same reader
+    // (`shared/rigor.ts`): the mode, the layer that decided it and the areas
+    // that matched. The record's two stamps -- the moment the block was written
+    // and the revision the configuration was read from -- are not carried,
+    // because this row draws what the run resolved.
+    const rigor = { mode: 'critical', from: 'area', areas: [{ name: 'payments', mode: 'critical' }], at: '2026-10-15T11:00:00Z', revision: 'origin/main' }
+    const withBlock = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, rigor } }
+    expect(buildRunModel(runInputs({ diagnosis: withBlock })).row.rigor).toEqual({
+      mode: 'critical',
+      from: 'area',
+      areas: [{ name: 'payments', mode: 'critical' }],
+    })
+    // The fixture's row is a run from before the field: no block, and the model
+    // says so with `null` rather than with an empty one, which is what the
+    // header reads to decide whether to draw the row at all.
+    expect(buildRunModel(runInputs()).row.rigor).toBeNull()
+    // A block the reader will not show is the same `null`: a mode with no layer
+    // is not a decision this console can describe.
+    const half = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, rigor: { mode: 'pro' } } }
+    expect(buildRunModel(runInputs({ diagnosis: half })).row.rigor).toBeNull()
+  })
 })
 
 describe('renderRun', () => {
@@ -1259,6 +1350,98 @@ describe('renderRun', () => {
     const element = new FakeScreen('span')
     putText(element, githubToken(), 'label', 'name')
     expect(element.textContent).toBe(TOKEN_PLACEHOLDER)
+  })
+
+  it('draws the run\'s rigor: the mode, the layer that decided it and the areas that matched', () => {
+    // Owner request 2026-10-25: the Rigor row, and the one screen with room for
+    // the whole answer -- `runs ls`'s MODE column and the Projects cell are one
+    // word in a table, and the Live chip is one word on a row. The CLI's
+    // `fugaro diagnose` prints the same three facts on its own `Rigor:` line
+    // (`internal/cli/diagnose.go`'s `rigorLine`).
+    const rigor = {
+      mode: 'critical',
+      from: 'area',
+      areas: [
+        { name: 'payments', mode: 'critical' },
+        { name: 'billing', mode: 'pro' },
+      ],
+      // The record's two stamps. This row is about what the run resolved, so
+      // neither is drawn -- and both are distinctive here, so a screen that
+      // started drawing one fails this test rather than passing quietly.
+      at: '2026-10-15T13:59:59Z',
+      revision: 'origin/main',
+    }
+    const diagnosis = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, rigor } }
+    const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis })), 'light')
+    const row = one(tree, 'run-rigor')
+    expect(one(row, 'run-rigor-word').textContent).toBe('RIGOR')
+    expect(one(row, 'run-rigor-mode').textContent).toBe('Critical')
+    expect(one(row, 'run-rigor-from-word').textContent).toBe('from')
+    // The layer in the console's words, not the record's enum: `area` is the
+    // CLI's spelling of a layer and `an area rule` is what a person reads.
+    expect(one(row, 'run-rigor-from').textContent).toBe('an area rule')
+    expect(texts(row, 'run-rigor-area-name')).toEqual(['payments', 'billing'])
+    expect(texts(row, 'run-rigor-area-mode')).toEqual(['Critical', 'Pro'])
+    // The two stamps are in the record and in no cell of this screen.
+    expect(drawnText(tree)).not.toContain('origin/main')
+    expect(drawnText(tree)).not.toContain('2026-10-15T13:59:59Z')
+  })
+
+  it('draws no Rigor row at all for a run whose record carries no block', () => {
+    // Absence is "no record of this run's rigor", and the answer is **no row**:
+    // the fixture's run is older than the field, and a row reading `-` here
+    // would be answering a question the record was never asked.
+    const tree = renderRun(factory, buildRunModel(runInputs()), 'light')
+    expect(all(tree, 'run-rigor')).toHaveLength(0)
+  })
+
+  it('draws a rigor value this build does not know as the bounded text it is', () => {
+    // The direction the reader fails in: a newer CLI may resolve a mode this
+    // console has never heard of, and a row that hid it would be hiding the
+    // run's rigor entirely. The five modes and the five layers have the
+    // console's words; everything else takes the text path.
+    const rigor = {
+      mode: 'standard',
+      from: 'reached',
+      areas: [{ name: 'payments\u0000ledger', mode: 'standard' }],
+    }
+    const diagnosis = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, rigor } }
+    const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis })), 'light')
+    const row = one(tree, 'run-rigor')
+    expect(one(row, 'run-rigor-mode').textContent).toBe('standard')
+    expect(one(row, 'run-rigor-from').textContent).toBe('reached')
+    // An area's name is a repository's own word, so it is text on every path:
+    // the control character is stripped rather than drawn.
+    expect(one(row, 'run-rigor-area-name').textContent).toBe('paymentsledger')
+    expect(one(row, 'run-rigor-area-mode').textContent).toBe('standard')
+  })
+
+  it('masks a rigor string shaped like a credential, and draws none of it', () => {
+    // Every string in the block is job-written text (SECURITY.md D4), so a
+    // token-shaped one is masked in place by the free-text rules -- in the mode
+    // cell, the layer cell and an area's name alike.
+    const token = githubToken()
+    const rigor = { mode: token, from: token, areas: [{ name: token, mode: token }] }
+    const diagnosis = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, rigor } }
+    const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis })), 'light')
+    const row = one(tree, 'run-rigor')
+    expect(one(row, 'run-rigor-mode').textContent).toBe(TOKEN_PLACEHOLDER)
+    expect(one(row, 'run-rigor-from').textContent).toBe(TOKEN_PLACEHOLDER)
+    expect(one(row, 'run-rigor-area-name').textContent).toBe(TOKEN_PLACEHOLDER)
+    expect(one(row, 'run-rigor-area-mode').textContent).toBe(TOKEN_PLACEHOLDER)
+    expect(drawnText(tree)).not.toContain(token)
+  })
+
+  it('draws a block with no matched area as the mode and the layer alone', () => {
+    // A run that resolved its mode from the repository's own `rigor.default`
+    // matched no rule: the row is the two facts it has, and no empty chip.
+    const rigor = { mode: 'pro', from: 'repo', areas: [] }
+    const diagnosis = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, rigor } }
+    const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis })), 'light')
+    const row = one(tree, 'run-rigor')
+    expect(one(row, 'run-rigor-mode').textContent).toBe('Pro')
+    expect(one(row, 'run-rigor-from').textContent).toBe('the repository')
+    expect(all(row, 'run-rigor-area')).toHaveLength(0)
   })
 })
 

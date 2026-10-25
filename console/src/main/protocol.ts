@@ -88,23 +88,35 @@ export const PICKER_ENTRY_URL = `${APP_ORIGIN}${PICKER_ENTRY_PATH}`
 
 /**
  * SERVED_FILES is the whole of what the served root holds (desktop-console plan
- * Task 3.4a, step 4; Task 3.4b's second entry; Task 6.2's stylesheet): the
- * dashboard's and the refusal's documents, the one script the dashboard loads
- * and the one stylesheet every document links, and the picker's document and its
- * own script.
+ * Task 3.4a, step 4; Task 3.4b's second entry; Task 6.2's stylesheet; GV2.2's
+ * layout worker): the dashboard's and the refusal's documents, the script the
+ * dashboard loads and the one the picker loads, the one stylesheet every
+ * document links, and elkjs's layout worker.
  *
  * The root itself is `dist/bundle/` (`rendererRoot` in `src/main/index.ts`),
- * and the six files are there because `npm run build` puts them there: `tsc`
+ * and the seven files are there because `npm run build` puts them there: `tsc`
  * compiles `src/renderer/entry.ts` and `src/renderer/installations.ts` and
  * everything they require, and `tools/bundle-renderer/index.ts` writes
- * `console.js`, `installations.js` and `console.css` and copies the three
- * documents verbatim. `test/unit/bundle.test.ts` holds this list and that
+ * `console.js`, `installations.js` and `console.css`, copies the three documents
+ * verbatim, and copies `elk-worker.min.js` verbatim out of the installed `elkjs`
+ * package. `test/unit/bundle.test.ts` holds this list and that
  * directory equal in both directions, so a file that appears beside the bundle
  * -- or a name dropped from this list -- is a failing test rather than a
  * document the console serves and nothing vouches for.
  *
- * **`/console.css` is the one entry Task 6.2 adds, and it is a stylesheet this
- * origin serves rather than a second policy.** `style-src 'self'` is already the
+ * **`/elk-worker.min.js` is the one third-party file this origin serves, and
+ * GV2.2 adds it as a file rather than as a policy.** It is elkjs 0.11.0's own
+ * `lib/elk-worker.min.js`, copied byte for byte by the build -- the digest is
+ * asserted in `test/unit/bundle.test.ts` -- so none of it is this project's code
+ * and none of it is editable here; its EPL-2.0 licence and its source are
+ * `console/THIRD_PARTY_NOTICES.md`, packed beside the app. A worker is governed
+ * by `script-src 'self'` while no `worker-src` is given, and
+ * `app://console/elk-worker.min.js` is this origin, so this entry is the whole
+ * of the change: no directive is added and none is loosened, which is what makes
+ * the absence of `'unsafe-eval'` (rule 3) hold *inside* the worker too.
+ *
+ * **Task 6.2's `/console.css` is a stylesheet this origin serves rather than a
+ * second policy.** `style-src 'self'` is already the
  * third directive of `CONTENT_SECURITY_POLICY` below, so a `<link
  * rel="stylesheet">` to `app://console/console.css` is admitted by a directive
  * that was always there: no directive is added, none is loosened, and
@@ -123,6 +135,7 @@ export const PICKER_ENTRY_URL = `${APP_ORIGIN}${PICKER_ENTRY_PATH}`
 export const SERVED_FILES: readonly string[] = Object.freeze([
   '/console.css',
   '/console.js',
+  '/elk-worker.min.js',
   '/index.html',
   '/installations.html',
   '/installations.js',

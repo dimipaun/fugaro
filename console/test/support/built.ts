@@ -58,12 +58,14 @@ const WAIT_LIMIT_MS = 120_000
 
 /** OUTPUTS are the files a build produces, as this suite reads them: the entry
  * points Electron loads (with the picker's preload and entry, Task 3.4b) and
- * the six served files -- the stylesheet among them since Task 6.2, because a
- * `console.css` that is missing or stale is exactly what the stylesheet cases
- * in `bundle.test.ts` read. */
+ * the seven served files -- the stylesheet among them since Task 6.2 and
+ * elkjs's worker since GV2.2, because a `console.css` or a worker that is
+ * missing or stale is exactly what the stylesheet and worker cases in
+ * `bundle.test.ts` read. */
 const OUTPUTS: readonly string[] = Object.freeze([
   join(DIST, 'bundle', 'console.css'),
   join(DIST, 'bundle', 'console.js'),
+  join(DIST, 'bundle', 'elk-worker.min.js'),
   join(DIST, 'bundle', 'index.html'),
   join(DIST, 'bundle', 'installations.html'),
   join(DIST, 'bundle', 'installations.js'),

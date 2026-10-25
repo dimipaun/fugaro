@@ -78,6 +78,10 @@ import {
 } from '../support/fakeDom'
 
 /** ENTRY is the compiled entry the build walks, and OUT the file it writes. */
+/** WORKER is the pinned elkjs worker as it stands in `node_modules`: the build
+ * copies it verbatim, so a planted root holds bytes of the same shape. */
+const WORKER = readFileSync(join(CONSOLE_ROOT, 'node_modules', 'elkjs', 'lib', 'elk-worker.min.js'), 'utf8')
+
 const PATHS = consoleBundlePaths(CONSOLE_ROOT)
 
 /** THEME_DIR is the theme directory the stylesheet step reads: the list
@@ -138,7 +142,7 @@ describe('the served root npm run build leaves', () => {
     // The non-vacuity guard first: an empty list would make the comparison
     // below pass against an empty directory, and the list is what the handler's
     // root is supposed to be.
-    expect(SERVED_FILES.length, 'SERVED_FILES names nothing: the comparison below would be vacuous').toBe(6)
+    expect(SERVED_FILES.length, 'SERVED_FILES names nothing: the comparison below would be vacuous').toBe(7)
     expect(builtListing('bundle')).toEqual(servedNames())
   })
 
@@ -262,8 +266,8 @@ describe('the served root npm run build leaves', () => {
     // served root's foreign-file refusal would reject the stylesheet the
     // documents link.
     expect(consoleBundles(CONSOLE_ROOT).map((bundle) => [bundle.out, bundle.siblings])).toEqual([
-      [join(CONSOLE_ROOT, 'dist', 'bundle', 'console.js'), ['installations.js', 'console.css']],
-      [join(CONSOLE_ROOT, 'dist', 'bundle', 'installations.js'), ['console.js', 'console.css']],
+      [join(CONSOLE_ROOT, 'dist', 'bundle', 'console.js'), ['installations.js', 'console.css', 'elk-worker.min.js']],
+      [join(CONSOLE_ROOT, 'dist', 'bundle', 'installations.js'), ['console.js', 'console.css', 'elk-worker.min.js']],
     ])
     // And the stylesheet's own paths are what this build writes: the theme
     // directory in, `dist/bundle/console.css` out.
@@ -357,7 +361,7 @@ describe('the bundle', () => {
     ]
     // Non-vacuity: an empty `SERVED_FILES` would make the loop below assert
     // nothing at all, and the loop is the whole claim.
-    expect(required.length, 'SERVED_FILES names nothing: the check below would be vacuous').toBe(8)
+    expect(required.length, 'SERVED_FILES names nothing: the check below would be vacuous').toBe(9)
     const files = pkg.build?.files
     if (files === undefined) {
       context.skip(
@@ -1283,6 +1287,9 @@ function plantedConsoleRoot(extra: Readonly<Record<string, string>> = {}): strin
   const root = mkdtempSync(join(tmpdir(), 'console-build-'))
   const files: Record<string, string> = {
     ...themeSources(),
+    // The worker is a *source* of the build -- elkjs's own file, copied verbatim --
+    // so a planted root must hold one, exactly as it holds the theme sources.
+    [join('node_modules', 'elkjs', 'lib', 'elk-worker.min.js')]: WORKER,
     [join('dist', 'renderer', 'entry.js')]: `'use strict';\n`,
     [join('dist', 'renderer', 'installations.js')]: `'use strict';\n`,
     ...extra,
@@ -1456,3 +1463,27 @@ describe('the order the build’s steps run in', () => {
     )
   })
 })
+
+describe('the copied worker (GV2.2)', () => {
+  it("is elkjs's own file, byte for byte, from the pinned version", () => {
+    // The worker is minified by *its* build and shipped as it came, so what is
+    // worth asserting is not that it looks right but that it is the pinned
+    // package's file: this digest is `elkjs@0.11.0`'s `lib/elk-worker.min.js`,
+    // and a different pin -- or a copy a later edit touched -- is a red test
+    // rather than a quiet line in node_modules. A patched worker would be
+    // unreviewed third-party code running under the console's CSP.
+    const source = readFileSync(join(CONSOLE_ROOT, 'node_modules', 'elkjs', 'lib', 'elk-worker.min.js'))
+    expect(createHash('sha256').update(source).digest('hex')).toBe(
+      'c0dc844ac1739a1e1e4f64d08a9ec4594818d5aa7e0cb26e5096b6d34b864e2b',
+    )
+    builtListing('bundle')
+    const copied = readFileSync(join(CONSOLE_ROOT, 'dist', 'bundle', 'elk-worker.min.js'))
+    expect(createHash('sha256').update(copied).digest('hex')).toBe(
+      'c0dc844ac1739a1e1e4f64d08a9ec4594818d5aa7e0cb26e5096b6d34b864e2b',
+    )
+    // and the CSP is unchanged: the worker is one served file, named once
+    expect(SERVED_FILES.filter((name) => name.includes('worker'))).toEqual(['/elk-worker.min.js'])
+  })
+})
+
+import { createHash } from 'node:crypto'

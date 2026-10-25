@@ -31,12 +31,14 @@
 //   - **a reduced console loads the dashboard, draws the banner, and refuses a
 //     withheld read** with the console's own sentence -- over real IPC, through
 //     the real preload, in a real window.
-//   - **the spawn log holds the handshake and the live watch, and no other
-//     read.** The log is the one place a spawn that should not have happened is
-//     visible, and since Task 3.4c the console makes exactly two: the
-//     handshake's own `version` probe, and the Live screen's `watch --json`,
-//     planned with the chosen installation's binary and `--project`. A refused
-//     console mounts nothing, so its log is the probe alone.
+//   - **the spawn log holds the handshake, the live watch and the Live
+//     screen's rigor join, and no other read.** The log is the one place a spawn
+//     that should not have happened is visible, and a healthy console makes three
+//     kinds: the handshake's own `version` probe, the Live screen's `watch
+//     --json`, and the Live screen's rigor join (`runs ls --json`, re-read at
+//     most once per `LIVE_RIGOR_TTL_MS`), each planned with the chosen
+//     installation's binary and `--project`. A refused console mounts nothing,
+//     so its log is the probe alone.
 //   - **the Live screen draws the synthetic recording.** The whole chain in one
 //     window: the entry mounts Live, the poll asks `live.watch`, the main
 //     process spawns the installation's own `fugaro watch --json`, and the
@@ -545,14 +547,16 @@ test.describe('the renderer entry, in the real window', () => {
     }
   })
 
-  test('the spawn log holds the handshake and the live watch, and no other read, in every mode', async () => {
+  test('the spawn log holds the handshake, the live watch and the rigor join, and no other read, in every mode', async () => {
     // The log is the evidence for what this console drives, and it is read in
-    // all three modes. Since Task 3.4c there are exactly two spawns a healthy
-    // console makes: the handshake's own `version` probe, and the Live screen's
-    // `watch --json` -- which the bound source plans with the installation's
-    // `--project` and the installation's binary. A `report`, a `budget`, a
-    // `runs` or a `diagnose` here is a read some screen made that it should not
-    // have, and this is where it is seen.
+    // all three modes. A healthy console makes three kinds of spawn: the
+    // handshake's own `version` probe, the Live screen's `watch --json`, and the
+    // Live screen's rigor join, `runs ls --json` (the mode on a Live row is
+    // joined by run id, since `watch --json` carries no rigor block) -- each
+    // planned by the bound source with the installation's `--project` and the
+    // installation's binary. A `report`, a `budget`, any other `runs` read or a
+    // `diagnose` here is a read some screen made that it should not have, and
+    // this is where it is seen.
     for (const [version, mode] of [
       [CLI_VERSION_BUILT_AGAINST, 'ok'],
       ['0.9.0', 'reduced'],
@@ -580,6 +584,7 @@ test.describe('the renderer entry, in the real window', () => {
             : [
                 ['version'],
                 ['watch', '--json', '--project', 'e2e'],
+                ['runs', 'ls', '--json', '--project', 'e2e'],
               ]
         // The watch is written by the entry's *first poll*, which is a message
         // round and a spawn behind the window's `domcontentloaded` -- so a mode
@@ -607,7 +612,7 @@ test.describe('the renderer entry, in the real window', () => {
           // reads both resolve through the installation the operator chose.
           expect(record.argv[0], `${mode}: a spawn used another binary`).toBe(join(stub.dir, 'fugaro'))
           expect(record.project, `${mode}: the spawn log lost the installation's project`).toBe('e2e')
-          // The argv after the binary is one of the two this console plans --
+          // The argv after the binary is one of the three this console plans --
           // compared whole, so a flag added to either is a failure here rather
           // than a substring nobody looked at.
           expect(expected, `${mode}: the console ran ${record.argv.join(' ')}`).toContainEqual(
@@ -806,9 +811,10 @@ test.describe('the renderer entry, in the real window', () => {
       )
       await expect(rail.locator('button.console-rail-add')).toHaveText('+ Add installation')
       await expect(rail.locator('p.console-rail-hint')).toHaveText('Switch with the shortcut keys 1 2 3')
-      // And the rail asked for nothing: the log holds the handshake's probe and
-      // the live watch, which is what a healthy console spawns -- a row per stored
-      // installation would have added a read here. The watch is written by the
+      // And the rail asked for nothing: the log holds the handshake's probe, the
+      // live watch and -- when it has landed -- the Live screen's rigor join
+      // (`runs ls --json`), which is what a healthy console spawns -- a row per
+      // stored installation would have added a read here. The watch is written by the
       // entry's *first poll*, which is a message round and a spawn behind the rail
       // being drawn -- the row's `running` is the word the rail opens with, not
       // evidence that a read has landed -- so this waits for the record the way
@@ -819,8 +825,24 @@ test.describe('the renderer entry, in the real window', () => {
           message: 'the live read never reached the spawn log',
         })
         .toBe(true)
-      const reads = [...new Set(launched.records().map((record) => record.argv[1]))].sort()
-      expect(reads, 'the rail made a read of its own').toEqual(['version', 'watch'])
+      // The rigor join is the Live screen's, asked for after its first frame, so
+      // whether it has reached the log yet is a race this case does not decide:
+      // it is admitted by its whole argv and by nothing shorter.
+      const records = launched.records()
+      const reads = [...new Set(records.map((record) => record.argv[1]))].sort()
+      expect(
+        reads.filter((read) => read !== 'runs'),
+        'the rail made a read of its own',
+      ).toEqual(['version', 'watch'])
+      for (const record of records.filter((each) => each.argv[1] === 'runs')) {
+        expect(record.argv.slice(1), 'the rail made a read of its own').toEqual([
+          'runs',
+          'ls',
+          '--json',
+          '--project',
+          'e2e',
+        ])
+      }
     } finally {
       await close(launched)
     }
