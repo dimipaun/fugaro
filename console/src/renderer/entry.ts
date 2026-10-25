@@ -811,8 +811,9 @@ export interface RailView {
  * rather than an invented one. A row per *stored* installation needs a bounded
  * list read on this bridge, which the design withholds (section 4.1, section
  * 11); this file does not add one, and the rail makes **no read of its own** --
- * which is also what keeps the entry spec's spawn log at the two spawns a
- * healthy console makes.
+ * which is also what keeps the entry spec's spawn log at the three kinds of
+ * spawn a healthy console makes (`version`, the Live `watch` and the Live
+ * screen's rigor join).
  *
  * **The row's state is the rail's own mark, not a field of any read**: the rail
  * knows whether the console is reading this installation now, so it opens at
