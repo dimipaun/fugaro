@@ -140,7 +140,8 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   pr_url: 'url',
   // The rest of `runview.Row`'s strings: the CLI's own identifiers and short
   // rendered fields, read off the struct (`internal/runview/runview.go:57`).
-  // `name` is `project_layer.name` -- the row carries no other `name` -- and
+  // `name` is `project_layer.name` and `rigor.areas[].name` -- the name a
+  // repository gave an area rule, which is a label it wrote -- and
   // `base_branch` and `previous_run` are a git ref and a run id, so they carry
   // the classes those are.
   name: 'label',
@@ -155,6 +156,11 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   // `config_sha256` already are.
   base_branch: 'branch',
   previous_run: 'runId',
+  // `rigor.revision`: the revision the run's mode was read from
+  // (`runstore.RigorRecord.Revision`, docs/rigor-modes D25) -- `origin/main`,
+  // the same kind of value as `base_branch` above and a string a branch name
+  // reached, so it is text and carries that class.
+  revision: 'branch',
   // `changed_files.paths[]`: repository-relative paths a run changed (`runstore.ChangedFiles`,
   // console v2 D27). A path can name a client or a person, so it is text a job
   // wrote and goes through the sanitizer; `total` and `truncated` are not strings.
@@ -195,6 +201,12 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
  */
 export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   'mode',
+  // `rigor.from`: which layer decided the mode (`internal/rigor`'s `Layer`,
+  // docs/rigor-modes D24) -- one of the words this build's own table writes,
+  // the same kind of value as `mode` beside it -- and `rigor.areas[].mode`,
+  // which is that same `mode` vocabulary again. `rigor.at` and the moments of
+  // `rigor.areas[]` are `at`, already below.
+  'from',
   'state',
   'health',
   'status',
@@ -836,7 +848,7 @@ const TOTALS_KEYS = ['runs', 'model_usd', 'model_notional_usd', 'compute_usd', '
  * refused -- which is the point of closing the shape: a document the console
  * does not fully understand becomes Task 3.2's skew state, not a half-drawn
  * list. Keys accepted and not read (`title`, `project_layer`,
- * `config_sha256`, `image_age_s`, `changed_files`, `artifact_count`, `artifact_bytes`,
+ * `config_sha256`, `image_age_s`, `changed_files`, `rigor`, `artifact_count`, `artifact_bytes`,
  * `task_pr`, `record_pr`, `pr`, `pushed_head`, `started_at`, `draft_fallback`,
  * `pr_status_at`, `stale_draft`, `execution`, `batch`, `halt`, `previous_run`,
  * `base_branch`, `derived`)
@@ -887,6 +899,18 @@ const TOTALS_KEYS = ['runs', 'model_usd', 'model_notional_usd', 'compute_usd', '
  * `runs ls --json` document whole, as `runs[0].plan_task`. It is accepted and
  * not read: no Runs-screen column draws it, and the screen that joins a run to
  * a node of its plan's graph is GV2.3's, on its own document.
+ *
+ * **`rigor` arrived with the rigor modes (0.11.0)**, between `changed_files`
+ * and `artifact_count` in the struct, and a run that resolved a mode writes it:
+ * the mode, the layer that decided it (`from`), the areas that matched -- each
+ * with the mode it sets and the moment it was applied at, strictest first
+ * (D23) -- the moment of the block and the revision the configuration was read
+ * from (`runstore.RigorRecord`, docs/rigor-modes D24, D25). It is accepted and not read -- no screen draws a run's mode yet -- and
+ * it is here for `launched_by`'s reason: a list without the key refuses a real
+ * `runs ls --json` document whole, as `runs[0].rigor`. Its string keys carry
+ * classes rather than exemptions: `from` is an enum this build may not know and
+ * `revision` is a git ref, so both go through the sanitizer if a later screen
+ * ever draws them.
  */
 export const RECORD_KEYS = [
   'run',
@@ -918,6 +942,7 @@ export const RECORD_KEYS = [
   'branch',
   'outcome',
   'changed_files',
+  'rigor',
   'artifact_count',
   'artifact_bytes',
   'task_pr',

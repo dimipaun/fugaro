@@ -7,7 +7,7 @@
     "source": "docs/design/desktop-console.md D1"
   },
   "released": {
-    "text": "The console ships for macOS only: one universal disk image and one archive, signed and notarised by Apple. Install the CLI first, because the CLI is the data plane. Windows and Linux builds do not exist yet.",
+    "text": "The console ships for macOS: one universal disk image and one archive, signed and notarised by Apple. Install the CLI first, because the CLI is the data plane. Windows builds do not exist yet.",
     "source": "docs/design/desktop-console.md D1 D4"
   },
   "not_released": {
@@ -37,7 +37,7 @@
   ],
   "release": {
     "tag_prefix": "console-v",
-    "version": "0.9.0",
+    "version": "0.110.0",
     "source": "docs/release.md"
   },
   "downloads": [
@@ -45,13 +45,35 @@
       "id": "macos-dmg",
       "platform": "macOS",
       "file": "Fugaro Console-{version}-universal.dmg",
-      "sha256": "3bde68eae6542886e5243c74f7137d58a05b8a6b349987c412bb42ba681abbfb"
+      "sha256": "d028f2ce99da3c753158ea20c0ca3a1e23238382806392661f49e65026837787"
     },
     {
       "id": "macos-zip",
       "platform": "macOS",
       "file": "Fugaro Console-{version}-universal-mac.zip",
-      "sha256": "af86fb8bd01464e63395e9473b0adea4b9f8eae610542d691f31bf2f13117f8a"
+      "sha256": "d2f7436541ffc9785fff422847f6fa7ba6122b3fe526d6e5be8e38c030aa155a"
+    },
+    {
+      "id": "linux-appimage",
+      "platform": "Linux",
+      "file": "Fugaro.Console-{version}-linux-x86_64.AppImage",
+      "sha256": "cd676da30db9b676f0245faf9c480fa41fb5121d8fbbe0d76a95d09ad46d6089"
+    },
+    {
+      "id": "linux-deb",
+      "platform": "Linux",
+      "file": "Fugaro.Console-{version}-linux-amd64.deb",
+      "sha256": "b9941d122060414821504734569659b585fff83800f6369617329c51a0c3d3a0"
     }
-  ]
+  ],
+  "linux": {
+    "text": "The Linux build is not signed at all: an AppImage is not code-signed, this project has no Linux signing key, and neither file here carries a signature of its own. What proves these bytes is the release's own console-sha256sums.txt, which covers every artifact of the release and is signed with a Sigstore bundle.",
+    "assets": ["linux-appimage", "linux-deb"],
+    "verify": [
+      "gh release download console-v{version} -R dimipaun/fugaro -p console-sha256sums.txt -p console-sha256sums.txt.sigstore.json -p \"Fugaro.Console-{version}-linux-*\"",
+      "cosign verify-blob console-sha256sums.txt --bundle console-sha256sums.txt.sigstore.json --certificate-identity \"https://github.com/dimipaun/fugaro/.github/workflows/console-release.yml@refs/tags/console-v{version}\" --certificate-oidc-issuer https://token.actions.githubusercontent.com",
+      "grep \"linux-\" console-sha256sums.txt | sha256sum -c --ignore-missing -"
+    ],
+    "source": "docs/design/desktop-console.md D10"
+  }
 }

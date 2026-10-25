@@ -180,7 +180,7 @@ drift from it.
 | `job` | string | — | **yes** | the Cloud Run job this run is in, from the run's own `launch.json` (`runstore.Launch.Job`) — the same read that produces the queued rows, so a live row has it too. Absent when the reader has no `launch.json` for the run. Under the project-centric model this is the **shared** job of a (profile, provider, account), not one repository's. **Display text, not an authority**: `launch.json` is writable by every launcher and, on a shared job, by every run (SECURITY.md, D4), so the value is what that object says, stripped of control characters — never a name to act on |
 | `profile` / `provider` / `account` | string | — | **yes** | the (profile, provider, account) the job's name was **computed from**, matched against the project's published policy — never parsed back out of the name (R2-5), so a `job` no profile computes gets none of them. `profile` and `provider` are present together or absent together; `account` is present only beside them and only for a job of a named Claude account — a profile that lists `claude_accounts` gets **one job per account** beside its no-account job (`config.ProjectJobAccounts`), so a run on a named account's job carries that account's name, and a run on the profile's no-account job carries none. An absent `account` is **not** "this job mounts no credential": the no-account job holds the default account's token when the profile lists `default` and none otherwise (`config.ProjectJobTokenAccount`), so what is empty is the account axis of the job's name, never a claim about the run's credential. All three are absent for a run on a **per-repository** job (a baked workflow, a Bitbucket repository, an installation that has not migrated), whose name is no project job's. `provider` here is the **profile's** provider, not a general stamp of the repository's: it is the reason the field exists on the two run shapes but does not close §7's gap 7 |
 | `launched_by` | string | — | **yes** | who started the run, from the run's own `launch.json` (`runstore.Launch.LaunchedBy`, **CLI 0.9.0**) — a person's address, or the identity an automated launch runs as (a service account, a CI runner). It is the **full recorded identity**: the text views show the short form a column has room for (`runview.LauncherShort` — the part before an address's `@`, the whole value for anything else). Absent when the record has none — one whose `launch.json` the reader does not have, or a launch built without a launcher (the recovery backfill from `result.json`, a local run with no cloud execution, or the synthetic launch `fugaro logs` builds) — **never a value the CLI invents**. **Display text, not an authority**: `launch.json` is writable by every launcher (SECURITY.md, D4), the value is sanitised and capped like every other bucket-derived string (`safetext.Field`, 512 runes), and no policy, admission or budget rule reads it |
-| `plan_task` | string | — | **yes** | which task of which plan the run says it works on, from the run's own `launch.json` (`runstore.Launch.PlanTask`): `<plan>/<task>`, the id the plan's own graph spells its node with, recorded at launch by `fugaro run`'s own plan-task flag (the CLI's launch flag: §8 lists the flags the console itself spawns, and this one is not among them). **CLI 0.11.0** — the release that ships it (`internal/cli/recipes_skew.go`'s `planTaskSince`), which the release checklist verifies before the tag. Absent when the launch recorded none. **Display text, not an authority**: `launch.json` is writable by every launcher (SECURITY.md, D4), so this is a **join hint the console's graph may use, never an authorization input** — no policy, admission or budget rule reads it, and a run whose id matches no node is shown unjoined rather than refused. Sanitised and capped like every other bucket-derived string (`safetext.Field`), and shape-checked where it is written (`task.PlanTaskProblem`) |
+| `plan_task` | string | — | **yes** | which task of which plan the run says it works on, from the run's own `launch.json` (`runstore.Launch.PlanTask`): `<plan>/<task>`, the id the plan's own graph spells its node with, recorded at launch by `fugaro run`'s own plan-task flag (the CLI's launch flag: §8 lists the flags the console itself spawns, and this one is not among them). **CLI 0.11.2** — the release that ships it (`internal/cli/recipes_skew.go`'s `planTaskSince`), which the release checklist verifies before the tag. Absent when the launch recorded none. **Display text, not an authority**: `launch.json` is writable by every launcher (SECURITY.md, D4), so this is a **join hint the console's graph may use, never an authorization input** — no policy, admission or budget rule reads it, and a run whose id matches no node is shown unjoined rather than refused. Sanitised and capped like every other bucket-derived string (`safetext.Field`), and shape-checked where it is written (`task.PlanTaskProblem`) |
 | `credential` | string | — | **yes** | the **name** — never the value — of the credential the run's cascade is currently spending on (`budget.AgentEntry.Credential`, written by the run itself under the rules of C1.3; the credentials service chooses it). **CLI 0.10.0.** Absent when the run has not reported one, which is **"not recorded", never "no credential"**: a run that has not written the field is one this reader cannot account for, not one spending on nothing. A name a run wrote, so it is sanitised like every other database-derived string here, and **never an authority** — no policy, admission or budget rule reads it. A console that wants to say which account a run is on must not treat the field as proof that the run is on that account now (the run reports it as it switches) |
 | `waiting_until` | string | RFC 3339, UTC | **yes** | when a run waiting for a credential expects to resume at (`budget.AgentEntry.WaitingUntil`, epoch ms, D152's "waiting, expected resume time"). **CLI 0.10.0.** Present **only while the run is still waiting**: presence is the state, so a reader that sees the field knows the run is held up rather than spending, and one that wants a countdown compares it with `now`. The text views show the same fact: the plain table as `waiting for a credential, expected resume T`, and the screen's FLAGS column as `waiting` with the instant on the run's detail lines (its column is 30 columns wide at its widest, and the sentence is 59 — a clip would eat the instant and any flag behind it) |
 
@@ -204,7 +204,7 @@ detail is open.
 | `job` | string | — | **yes** | as on `JSONRun`: a finished run's row is a run's row, and a reader following a run from `runs[]` into `finished[]`/`ready[]` (`jsonFinished`) must not lose the job it ran on |
 | `profile` / `provider` / `account` | string | — | **yes** | as on `JSONRun` (`account` present only on a named account's job, absent on the profile's no-account job and, with the other two, on a per-repository job) |
 | `launched_by` | string | — | **yes** | as on `JSONRun` (**CLI 0.9.0**): a finished run's row is a run's row, and a reader following a run from `runs[]` into `finished[]`/`ready[]` (`jsonFinished`) must not lose who launched it either. Absent when the launch record has none |
-| `plan_task` | string | — | **yes** | as on `JSONRun` (**CLI 0.11.0**): a finished run's row is a run's row, so a reader following a run from `runs[]` into `finished[]`/`ready[]` (`jsonFinished`) keeps the plan task it claims. Absent when the launch record has none |
+| `plan_task` | string | — | **yes** | as on `JSONRun` (**CLI 0.11.2**): a finished run's row is a run's row, so a reader following a run from `runs[]` into `finished[]`/`ready[]` (`jsonFinished`) keeps the plan task it claims. Absent when the launch record has none |
 | `age_seconds` | float64 | seconds | no | measured |
 
 ### The three facts the whole feed turns on
@@ -388,7 +388,7 @@ reads:
 | `halt` | `*runstore.Halt` | **yes** | why a run halted |
 | `batch`, `requested_by` | string | **yes** | `requested_by` is a person's address |
 | `launched_by` | string | **yes** | who started the run, from its `launch.json` (**CLI 0.9.0**); absent when the record has none. The same value `JSONRun`/`JSONFinished` carry, and display text only — see `JSONRun`'s row |
-| `plan_task` | string | **yes** | the plan task the run claims, from its `launch.json` (**CLI 0.11.0**); absent when the record has none. The same value `JSONRun`/`JSONFinished` carry, and display text only — see `JSONRun`'s row |
+| `plan_task` | string | **yes** | the plan task the run claims, from its `launch.json` (**CLI 0.11.2**); absent when the record has none. The same value `JSONRun`/`JSONFinished` carry, and display text only — see `JSONRun`'s row |
 | `pr_url` | string | **yes** | the URL as the host gave it |
 | `execution`, `log_url` | string | **yes** | `log_url` is what `logs RUN --url` prints |
 | `created` | time.Time | no | RFC 3339 |
@@ -407,6 +407,40 @@ reads:
 | `artifact_count` | int | **yes** | what an artifact run's record says it delivered; absent for every run that has none, and the count `runs ls`'s `ARTIFACTS` column shows — its total is `artifact_bytes` |
 | `artifact_bytes` | int64 | **yes** | the recorded total size of those artifacts (a negative recorded size counts as none) |
 | `changed_files` | `*runstore.ChangedFiles` | **yes** | the paths the run changed, as the run itself recorded them (design D27, console v2 plan V2.1.2): `paths`, `total` and `truncated` below. **Absent for a run that recorded none** — every record written before the field existed, and every run that died before finalize — and absence means **"no record of what this run changed"**, never "it changed nothing" (the `-` cell of `runs ls`'s `FILES` column) |
+| `rigor` | `*runstore.RigorRecord` | **yes** | the mode the run resolved, the layer that won and the areas that matched (docs/rigor-modes D22, D24, D25): `mode`, `from`, `areas`, `at` and `revision` below. **Absent for a run that resolved none** — a record written before the field existed, a run that died before bootstrap, or a block that cannot be read as a decision — and absence means **"no record of this run's rigor"**, never "it resolved nothing" (the `-` cell of `runs ls`'s `MODE` column) |
+
+**`rigor` is the mode the run resolved, and it is read from the base branch.**
+The block is one decision (docs/rigor-modes D24), carrying the mode, the layer
+that decided it (`area`, `repo`, `project`, `default` or `request` — never
+`reached`, which is the resolver's answer to a later moment asking again and
+which the fold replaces with the earlier, narrower reason), every area rule
+that matched with the mode it sets and the moment it was first applied at
+(`bootstrap`, `round` or `finalize` — D22's three moments) and the revision the
+configuration was read from. The mode's configuration comes from the **base
+branch** for every run kind (D25), so a run's other keys may come from the
+checked-out ref while its rigor comes from what it will merge into: `revision`
+is how a reader tells those apart, and it is written either way. The block is
+D22's monotone fold — a later moment never lowers the mode, and the moment it
+names is the last one that changed the block.
+
+| Field | Type | omitempty | Note |
+|---|---|---|---|
+| `mode` | string | no | the resolved mode: `poc`, `startup`, `pro`, `critical` or `hotfix` (`pro` is Fugaro's built-in default, D19) |
+| `from` | string | no | the layer that decided it; **never `reached`**, which is the resolver holding an earlier moment's mode (D22) — the fold keeps the layer that actually set it (D24's "the layer that won"), so a block that says `reached` is not one this runner writes and `Bounded` refuses it |
+| `areas` | `[]object` | **yes** | every rule that matched, **strictest first** (D23) and at most `rigor.MaxAreas` = **100** of them, each `name` (the rule's own name), `mode` (the mode that rule sets) and `at` (the moment it was first applied). **Absent when none matched** — a reader must not see "there were rules" where the answer is "there were none". The order is one the record establishes, not one it is handed: `Applied` sorts when it folds a moment in and `Bounded` sorts a block the job wrote, so the first entry is the rule whose mode decided — the one `runs ls`'s `MODE` column names |
+| `at` | string | no | the moment of the resolution the block records: the last one that changed it |
+| `revision` | string | **yes** | where the configuration was read from, `origin/<base branch>`; absent when the run could not name it |
+
+**The reader bounds it again.** The block is job-writable, so `runview.Join`
+does not pass it through as written: `RigorRecord.Bounded` refuses a block
+whose mode, layer or moment is outside its vocabulary — the row then carries no
+block, the same answer as a record that has none — and re-applies the caps
+(`rigor.MaxAreas` rules, `rigor.MaxAreaName` = 40 runes a name, 120 runes of
+revision), dropping an area whose own mode or moment is unreadable, and sorting
+the rules strictest first before it caps them, so the rules that survive are the
+strictest ones and the first of them is the rule a reader names. A tampered
+`result.json` therefore reaches the console as no block or as a bounded one,
+never as a value no reader can check.
 
 **The derived status (`derived`), and why it is not a status.** A Cloud Batch
 run on a Spot VM can be preempted: the platform reclaims the VM, the job ends
@@ -1127,6 +1161,51 @@ behind **both** `rows` and `totals`; the counts are an embedded `Counts`
 
 **Flags** (`newRunsStatsCmd`): `--by`, `--repo`, `--all`, `--since`,
 `--max-runs`, `--all-users`, `--json`, plus the cloud flags.
+
+### 6.11 `fugaro backlog list --json` (**CLI 0.11.0**)
+
+**Command:** `internal/cli/backlog.go` `newBacklogListCmd` / `runBacklogList`.
+**Document:** `backlogListDoc`, indented (`runBacklogList`), both in
+`internal/cli/backlog.go` — cited by symbol, not by line: an indented document
+is written by one function and a line number here rots at the next insertion
+above it. This is the second command in this document the console **does not
+spawn yet**: it is the data behind the backlog screen (CLI 0.11.0), and the
+section is here so the screen that follows has a shape read off the code rather
+than assumed from a design.
+
+It is read-only, and in the strongest sense this document uses: the rows come
+from the Markdown item files under the folder `--dir` names (`docs/backlog/` by
+default), never from a network, a database, a credential or an installation,
+and `list` **writes nothing at all**. The command that writes is
+`fugaro backlog index`, and it is not in the console's set: it rewrites the
+folder's own `README.md`, which is derived state a pull request regenerates
+rather than merges (rigor modes D26–D28).
+
+| Field | Type | omitempty | Availability state |
+|---|---|---|---|
+| `dir` | string | no | the folder the items were read from, exactly as `--dir` named it (`docs/backlog` by default). The document echoes the argument rather than resolving it, so a screen can show which folder it is looking at |
+| `items` | `[]backlogRow` | no | `[]` when the folder holds no item. One row per item, in the index's own order — sorted by `id`, which is to say by the day the item was filed |
+| `open` | int | no | the open items' count: the first figure of the index's count line |
+| `closed` | int | no | the closed items' count: the second figure |
+| `dropped` | int | no | the dropped items' count: the third figure. The three are the index's own figures, so a screen's totals and the Markdown's count line cannot disagree |
+
+`backlogRow` is one item as the index lists it. The names are the index's own
+columns, so the Markdown and the document cannot drift apart about what a row
+says.
+
+| Field | Type | omitempty | Note |
+|---|---|---|---|
+| `id` | string | no | the item's id: the day it was filed (`YYYYMMDD`) and a two-digit sequence that day, so two pull requests filing at once mint two ids rather than one conflict. It is also the first two segments of the file's name, so an id resolves to a file without a lookup |
+| `title` | string | no | the filer's own words, one line. **Untrusted display text**: a filer writes it, nothing is authorised by it, and a screen renders it as text |
+| `mode` | string | no | the resolved mode the filing run ran under; `"none"` for an item a person filed by hand, which is not a mode the CLI knows — it is the absence of one |
+| `area` | string | no | the matched areas, strictest first, comma-separated; `"project"` or `"repo"` for an item about a whole layer |
+| `status` | string | no | `"open"`, `"closed"` or `"dropped"` — the three words the format allows and no fourth |
+| `filed_by` | string | no | the filing run's launcher, or the login of the person who filed it by hand. **Untrusted display text**, like `title` |
+| `filed_in` | string | no | `"run:<run id>"`, `"pr:<number>"` or `"hand"`. The third is a person's filing, which has no run and no recorded pull request behind it and says so rather than spelling a run id nobody minted |
+| `date` | string | no | the item's own `date` field, a UTC day (`YYYY-MM-DD`), never a timestamp and never a clock read at render time — so the same folder renders to the same bytes |
+| `path` | string | no | the file the row was read from, `<dir>/<id>-<slug>.md`. It is a path in the checkout the CLI was run in, not a URL: a screen must not link it as one |
+
+**Flags** (`newBacklogListCmd`): `--dir`, `--json`.
 
 ## 7. The CLI gaps, settled against the code
 

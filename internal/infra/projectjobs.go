@@ -250,6 +250,26 @@ const githubProvider = "github"
 // path asks for at the repository stage ("is on GitHub and has no GitHub App
 // ID: pass --github-app-id"): record it, in the local config, once.
 func projectJobGitHubAppID(lc *localcfg.Config) (string, error) {
+	id, err := recordedGitHubAppID(lc)
+	if err != nil {
+		return "", err
+	}
+	if id == "" {
+		return "", userErr("this project's local config declares job profiles and records no GitHub App ID: a shared project job therefore cannot be deployed. A project job runs on the github provider, and the runner builds that provider from %s (the App's ID, which is not a secret), refusing to start without it — so a job deployed without it would halt every run it started. Record the App's ID by onboarding the repository the App serves (fugaro update --repo <owner/name> --github-app-id <id>), which writes it to the local config, then run fugaro update again",
+			providers.EnvGitHubAppID)
+	}
+	return id, nil
+}
+
+// recordedGitHubAppID is the one GitHub App ID the local config records, and
+// the refusal of a config that records two. It is projectJobGitHubAppID's
+// resolution without that function's refusal of "none": the coordinator's
+// aggregation job carries the ID too (Coordinator), but a project whose
+// repositories are all on bitbucket simply has no job to deploy rather than a
+// config to fix, and it is the caller that decides which of the two answers it
+// is looking at. Two IDs stay refused for both callers: either job holds one
+// App's ID and one App key, so a project that uses two Apps cannot run one.
+func recordedGitHubAppID(lc *localcfg.Config) (string, error) {
 	id, holder := "", ""
 	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {
 		r := lc.Repos[name]
@@ -264,10 +284,6 @@ func projectJobGitHubAppID(lc *localcfg.Config) (string, error) {
 			return "", userErr("the local config records two GitHub Apps: %s has %s and %s has %s. A shared project job runs every repository admitted to its profile on one job, and that job holds one App's ID and one github-app-key secret, so a project that uses several Apps cannot share jobs (design docs/design/project-centric.md §4.5): put the repositories a profile admits on one App, or keep the others on per-repository jobs (a profile is what a repository with checkout: clone selects, so a profile left out of the repository's fugaro.yaml keeps its own job)",
 				holder, id, name, r.GitHubAppID)
 		}
-	}
-	if id == "" {
-		return "", userErr("this project's local config declares job profiles and records no GitHub App ID: a shared project job therefore cannot be deployed. A project job runs on the github provider, and the runner builds that provider from %s (the App's ID, which is not a secret), refusing to start without it — so a job deployed without it would halt every run it started. Record the App's ID by onboarding the repository the App serves (fugaro update --repo <owner/name> --github-app-id <id>), which writes it to the local config, then run fugaro update again",
-			providers.EnvGitHubAppID)
 	}
 	return id, nil
 }

@@ -265,8 +265,13 @@ const pullRequestsSentence = ci.pullRequest
           <a href={sourceHref('LICENSE')} rel="noopener">Licence</a>
         </h3>
         <p class="community-card-note">
-          the {licence} licence, stated here because it is a fact about the source rather than
-          a claim about anyone
+          the {licence} licence for the core;{' '}
+          {/* The space after the link is explicit (`{' '}`), the way it is in the `#licence`
+              band below: Astro drops the whitespace between a closing tag and the text on the
+              next line, and the built card would read "LICENSING.mdsays which parts are not"
+              (website/test/faq-community.mjs refuses a link that runs into the word after it). */}
+          <a href={sourceHref('LICENSING.md')} rel="noopener">LICENSING.md</a>{' '}
+          says which parts are not
         </p>
       </li>
     </ul>
@@ -315,13 +320,11 @@ const pullRequestsSentence = ci.pullRequest
     <h2 class="community-heading display-lg">Licence</h2>
     <div class="card community-panel">
       <p>
-        Fugaro is released under the {licence} licence:{' '}
-        {/* The space after the link is explicit (`{' '}`): Astro drops the whitespace between a
-            closing tag and the text on the next line, and the built page would read
-            "LICENSEis the whole of it". website/test/faq-community.mjs refuses a link that runs
-            into the word after it, on both pages. */}
-        <a href={sourceHref('LICENSE')} rel="noopener">LICENSE</a>{' '}is the whole of it, and it
-        is the only text that governs what you may do with the code.
+        Fugaro's core is released under the {licence} licence in{' '}
+        <a href={sourceHref('LICENSE')} rel="noopener">LICENSE</a>;{' '}
+        <a href={sourceHref('LICENSING.md')} rel="noopener">LICENSING.md</a>{' '}
+        says which parts of the repository are not, and the reserved <code>ee/</code> directory is
+        one.
       </p>
     </div>
   </section>

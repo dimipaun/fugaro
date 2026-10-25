@@ -130,6 +130,7 @@ The table is `config.Scopes` in code; `docs/project-layer.md` prints it, and a d
 | `workflows.*.dockerfile` | | | yes | | it names a file in the repository |
 | `workflows.*.secrets` | | | yes | | secrets belong to one repository's Secret Manager entries |
 | `followup.trusted`, `followup.allow_public` | | | yes | | they decide whose comments steer a run with the repository's credentials |
+| `rigor.default`, `rigor.areas` | yes | | yes | | the mode is a default and not a floor, so either layer may set it and a narrower layer may lower a wider one (D21); the two `areas` lists are a union, not a replacement, so a repository's own rules never switch off the project's (D20c) |
 
 **Secrets and tokens.** No `fugaro.yaml` key holds a secret value: `workflows.*.secrets` maps names to variables. The project layer additionally refuses any value shaped like a credential (`sk-ant-…`, `ghp_…`, `github_pat_…`, a PEM private key, and the like), since nothing in it is secret (decision L18).
 

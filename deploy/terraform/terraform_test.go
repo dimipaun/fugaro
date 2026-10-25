@@ -157,6 +157,7 @@ func TestEmbeddedTree(t *testing.T) {
 		"gcp/roots/installation/tests/project_job.tftest.hcl",
 		"gcp/roots/repo/tests/testdata/github-vertex.tfvars.json",
 		"gcp/modules/installation/history.tf",
+		"gcp/modules/installation/coordinator.tf",
 		"gcp/modules/firebase/versions.tf",
 		"gcp/modules/firebase/variables.tf",
 		"gcp/modules/firebase/apis.tf",
@@ -524,8 +525,11 @@ func TestCredentialsServiceOptOutIsTwoSteps(t *testing.T) {
 	}
 }
 
-// The token signer holds no roles, and no job or build account is granted
-// anything on the Firebase project. The plan assertions check the values;
+// The token signer holds no roles, and no run's job or build account is
+// granted anything on the Firebase project — the one account of a job's that
+// is, the coordinator's writer, is granted the FP's database admin by name,
+// and only once coordinator_account is set (coordinator plan task P3; the
+// account is created in P5). The plan assertions check the values;
 // this text check catches a grant written to either by reference, which no
 // input could ever reveal.
 func TestFirebaseModuleGrantsNothingToSignerOrJobs(t *testing.T) {
@@ -539,7 +543,7 @@ func TestFirebaseModuleGrantsNothingToSignerOrJobs(t *testing.T) {
 		for _, typ := range []string{"google_project_iam_member", "google_service_account_iam_member", "google_project_iam_custom_role"} {
 			for _, blk := range resourceBlocks(t, path, b, typ) {
 				for _, bad := range []string{"google_service_account.signer.member", "google_service_account.signer.email", "serviceAccount:", "roles/storage", "roles/run."} {
-					if strings.Contains(blk.body, bad) && !(strings.Contains(blk.name, "history_") && bad == "serviceAccount:") {
+					if strings.Contains(blk.body, bad) && !(bad == "serviceAccount:" && (strings.Contains(blk.name, "history_") || strings.Contains(blk.name, "coordinator_"))) {
 						t.Errorf("%s: %s mentions %s", path, blk.name, bad)
 					}
 				}
@@ -1229,6 +1233,123 @@ func TestHistorySchedulerHoldsJobRunnerOnTheJob(t *testing.T) {
 	}
 }
 
+// TestTheCoordinatorJobTakesItsCredentialFromASecretAndNothingElse is P5's
+// third red step ("the plan's generated diff carries no credential material in
+// the job's environment"). The aggregation job's environment is the one place
+// its credential could reach a plan, a `terraform show` and a log line, and
+// the App key is the one credential it holds: its GitHub read is P2's
+// read-only installation token, minted from this key, and its database write
+// is its own account (D194). So the key is a secret_key_ref to the
+// project-wide container and never a value, every other entry is the plain
+// environment internal/cli/coordinator.go's sweep requires, and the job runs
+// as the account the Firebase root grants the FP's database admin to — the
+// account and no default Compute account.
+//
+// Mutation (run, restore): replace the value_source with a literal value — a
+// plan, a `terraform show` and the job's own describe would then carry the
+// App's private key, and this fails on the entry that has no value_source.
+func TestTheCoordinatorJobTakesItsCredentialFromASecretAndNothingElse(t *testing.T) {
+	const path = "gcp/modules/installation/coordinator.tf"
+	b, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatalf("%s: %v (P5's aggregation job is declared there)", path, err)
+	}
+	jobs := resourceBlocks(t, path, b, "google_cloud_run_v2_job")
+	if len(jobs) != 1 || jobs[0].name != "google_cloud_run_v2_job.coordinator" {
+		t.Fatalf("%s declares %d google_cloud_run_v2_job blocks (%v), want the coordinator's one", path, len(jobs), blockNames(jobs))
+	}
+	job := jobs[0]
+	if !hasAttr(job.body, "service_account", "google_service_account.coordinator[0].email") {
+		t.Errorf("%s: the aggregation job does not run as the coordinator account. Unset it runs as the default Compute Engine account, which is not the account the Firebase root grants the database admin to, and the sweep would then write nothing at all.", job.name)
+	}
+	for _, want := range [][2]string{
+		{"command", `["/usr/local/bin/fugaro"]`},
+		{"args", `["coordinator", "sweep"]`},
+		// One tick is bounded and a failure is the next tick's job: nothing
+		// retries a sweep into a second pass of its own (the plan's security
+		// review asks for exactly this).
+		{"max_retries", "0"},
+		{"timeout", `"600s"`},
+		{"deletion_protection", "true"},
+	} {
+		if !hasAttr(job.body, want[0], want[1]) {
+			t.Errorf("%s: %s does not set %s = %s", path, job.name, want[0], want[1])
+		}
+	}
+
+	// Every env entry of the container: one is the key through a secret, and
+	// the rest are the plain environment the command reads.
+	envs := nestedBlocks(job.body, "env")
+	if len(envs) == 0 {
+		t.Fatalf("%s: %s declares no env blocks", path, job.name)
+	}
+	plain := map[string]string{}
+	mounted := 0
+	for _, env := range envs {
+		name := strings.Trim(firstAttr(env, "name"), `"`)
+		if strings.Contains(env, "value_source") {
+			mounted++
+			if name != "FUGARO_GITHUB_APP_PRIVATE_KEY" {
+				t.Errorf("%s: %s mounts %s through a secret: the App key is the one credential this job holds", path, job.name, name)
+			}
+			for _, want := range []string{
+				`(?m)^\s*secret_key_ref\s*\{`,
+				// The project-wide container of the logical name the local
+				// config records (config.GitHubAppKeySecret), never a path.
+				`(?m)^\s*secret\s*=\s*var\.project_secrets\[var\.coordinator\.app_key_secret\]\s*$`,
+				`(?m)^\s*version\s*=\s*"latest"\s*$`,
+			} {
+				if !regexp.MustCompile(want).MatchString(env) {
+					t.Errorf("%s: %s mounts the App key without %s:\n%s", path, job.name, want, env)
+				}
+			}
+			continue
+		}
+		if name == "FUGARO_GITHUB_APP_PRIVATE_KEY" {
+			t.Errorf("%s: %s carries the App's private key as a plain environment value:\n%s", path, job.name, env)
+		}
+		plain[name] = firstAttr(env, "value")
+	}
+	if mounted != 1 {
+		t.Errorf("%s: %s mounts %d entries through a secret, want the App key's one", path, job.name, mounted)
+	}
+	for _, want := range []string{
+		"FUGARO_PROJECT", "FUGARO_FIREBASE_PROJECT", "FUGARO_RTDB_URL",
+		"FUGARO_RUNS_BUCKET", "FUGARO_COORDINATOR_REPOS", "FUGARO_GITHUB_APP_ID",
+	} {
+		if _, ok := plain[want]; !ok {
+			t.Errorf("%s: %s does not set %s, which the sweep refuses to run without (internal/cli/coordinator.go's runCoordinatorSweep)", path, job.name, want)
+		}
+	}
+	if len(plain) != 6 {
+		t.Errorf("%s: %s sets %d plain environment values (%v), want the six the command reads", path, job.name, len(plain), slices.Sorted(maps.Keys(plain)))
+	}
+	// And no plain value is key material, whatever its entry is called: a PEM
+	// in a plan is the leak this test exists for.
+	for name, value := range plain {
+		if strings.Contains(value, "PRIVATE KEY") || strings.Contains(value, "BEGIN ") {
+			t.Errorf("%s: %s's value looks like key material: %s", path, name, value)
+		}
+	}
+}
+
+// nestedBlocks returns the bodies of the blocks of type typ at any depth of
+// body: resourceBlocks reads resource headers only, and a job's env blocks sit
+// inside its container.
+func nestedBlocks(body, typ string) []string {
+	re := regexp.MustCompile(`(?m)^\s*` + typ + `\s*\{`)
+	var out []string
+	for _, m := range re.FindAllStringIndex(body, -1) {
+		open := strings.LastIndex(body[m[0]:m[1]], "{") + m[0]
+		end := matchBrace(body, open)
+		if end < 0 {
+			return out
+		}
+		out = append(out, body[open+1:end])
+	}
+	return out
+}
+
 // The same-project layout (design D3, revised 2026-10-04): the installation
 // and the Firebase budget backend can live in one GCP project, so the budget
 // backend's separation from the jobs rests on the IAM in this tree (and on
@@ -1265,7 +1386,14 @@ var (
 	// The member expressions an IAM member may use. google_service_account
 	// .credentials[0] is the credentials service's own account (C1.18): the
 	// one member its bundle's secretAccessor grant names.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials)\[0\]\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|installation\.scheduler_service_account)\}")$`)
+	// google_service_account.coordinator[0] is the coordinator's writer (P5):
+	// the aggregation job's account, whose own grants are objectViewer on the
+	// runs bucket and secretAccessor on the App key's one container, both on
+	// the account and nothing wider. var.coordinator_account is the same
+	// account as the Firebase root reads it (P3): the installation root
+	// outputs it and that root grants it the FP's database admin, as it grants
+	// var.history_account's.
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator)\[0\]\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|installation\.scheduler_service_account)\}")$`)
 
 	// A custom role of one of this run's projects, spelled as the literal path
 	// "projects/${var.<project>}/roles/<id>" rather than read from the role

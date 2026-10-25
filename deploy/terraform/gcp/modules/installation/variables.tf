@@ -283,6 +283,49 @@ variable "history" {
   }
 }
 
+variable "coordinator" {
+  description = "The coordinator's aggregation job (P5, D194), used only with enable_budget: the scheduled sweep that re-reads each repository's runs and pull requests and writes the view. Its job name must not start with fugaro-, which fugaro runs ls and max_parallel count as workflow jobs. deploy_job stays false in the first apply and is set once the Firebase root has output rtdb_url (the third apply), the job's image exists and a GitHub App ID is recorded — without the App credential the sweep could read no repository at all."
+  type = object({
+    account_id       = string
+    job              = string
+    image            = string
+    scheduler_job    = string
+    scheduler_region = string
+    app_key_secret   = optional(string, "github-app-key")
+    github_app_id    = optional(string, "")
+    repos = optional(list(object({
+      provider = string
+      repo     = string
+    })), [])
+    deploy_job       = optional(bool, false)
+    firebase_project = optional(string)
+    rtdb_url         = optional(string)
+  })
+  default = null
+
+  validation {
+    condition = var.coordinator == null ? true : (
+      can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.coordinator.account_id)) &&
+      can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.coordinator.job)) &&
+      !startswith(var.coordinator.job, "fugaro-") &&
+      can(regex("^[a-zA-Z][a-zA-Z0-9_-]{0,62}$", var.coordinator.scheduler_job)) &&
+      can(regex("^[a-z]+-[a-z]+[0-9]+$", var.coordinator.scheduler_region)) &&
+      length(var.coordinator.image) > 0
+    )
+    error_message = "coordinator needs a service account ID, a job name that doesn't start with fugaro- (ls counts those), a Scheduler job name and region, and an image."
+  }
+
+  validation {
+    condition = var.coordinator == null ? true : (!var.coordinator.deploy_job || (
+      try(var.coordinator.firebase_project, null) != null && try(var.coordinator.rtdb_url, null) != null &&
+      can(regex("^https://[a-z0-9.-]+$", coalesce(var.coordinator.rtdb_url, "-"))) &&
+      var.coordinator.github_app_id != "" &&
+      length(var.coordinator.repos) > 0
+    ))
+    error_message = "coordinator.deploy_job needs the Firebase root's firebase_project and rtdb_url (an https://<instance>.firebasedatabase.app or .firebaseio.com URL, without a path), the App ID its read mints its own token with, and at least one repository to reconcile."
+  }
+}
+
 variable "project_secrets" {
   description = "Project-wide secret containers: logical name -> secret ID (gcp.ProjectSecretID), fugaro update creates/adopts each; values are never set by Terraform."
   type        = map(string)

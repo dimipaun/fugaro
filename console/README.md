@@ -93,8 +93,8 @@ runtime dependency today; see below):
 | `vitest` | `5.0.5` | `devDependencies` | `npm run test:unit` |
 | `@playwright/test` | `1.64.1` | `devDependencies` | `npm run test:e2e`, Electron driven by `electron.launch` (Task 1.1) |
 | `@types/node` | `22.20.5` | `devDependencies` | the Node the main process and the tests run on |
-| `@electron/fuses` | `2.0.0` | `devDependencies` | the `afterPack` hook's fuse writer (Task 4.1) |
-| `electron-builder` | `26.17.0` | `devDependencies` | the packer, run from its local binary by `npm run package` (Task 4.1) |
+| `@electron/fuses` | `2.1.3` | `devDependencies` | the `afterPack` hook's fuse writer (Task 4.1) |
+| `electron-builder` | `26.18.0` | `devDependencies` | the packer, run from its local binary by `npm run package` (Task 4.1) |
 
 `dependencies` is empty, and that is a decision rather than a symptom: the
 renderer bundles no framework runtime and no charting library (design D9), and
@@ -1993,10 +1993,10 @@ contents; Check 59a — owner-run, on a Mac with a Developer ID certificate — 
 where it becomes a measurement, and `codesign -d --entitlements -` on the built
 bundle is the command that prints what was actually granted.
 
-### The six fuses, and the two left alone
+### The six fuses, and the three left alone
 
-Flipped in `afterPack` over `@electron/fuses` 2.0.0, and these are the six the
-design's §5.1 rule 4 names — with the two this build does *not* touch named too,
+Flipped in `afterPack` over `@electron/fuses` 2.1.3, and these are the six the
+design's §5.1 rule 4 names — with the three this build does *not* touch named too,
 because "left at its upstream default" is a decision and not an oversight:
 
 | Fuse | Value | Why |
@@ -2009,7 +2009,7 @@ because "left at its upstream default" is a decision and not an oversight:
 | `GrantFileProtocolExtraPrivileges` | **disabled** | `file://` keeps no extra privileges; the console serves itself over `app://` (Task 1.1). |
 | `EnableCookieEncryption` | *left alone* | The console keeps no cookie store: no sign-in is stored. |
 | `LoadBrowserProcessSpecificV8Snapshot` | *left alone* | A startup optimisation for a browser process that loads web content. |
-| `WasmTrapHandlers` (index 8) | *left alone, enabled* | Beyond the pin: Electron 44.7.2's wire holds **nine** fuses and `@electron/fuses` 2.0.0 names eight, so this one cannot be set through the pinned package at all. It is V8's WebAssembly bounds-check strategy: it loads no code, reads no environment variable or flag, and the console runs no WebAssembly. `BEYOND_PIN_FUSES` in `fuses.ts` records it with its default, and the hook verifies the default. |
+| `WasmTrapHandlers` (index 8) | *left alone, enabled* | Upstream default kept: V8's WebAssembly bounds-check strategy loads no code, reads no environment variable or flag, and the console runs no WebAssembly. It was beyond the pin until `@electron/fuses` 2.1 named it; `BEYOND_PIN_FUSES` is now empty, because Electron 44.7.2's nine fuses are all named by the package. |
 
 Three properties of the hook are worth stating here, because they are what make
 the six a fact rather than an intention:
@@ -2043,10 +2043,10 @@ the six a fact rather than an intention:
   for both platforms.
 - **It refuses a wire it has not accounted for.** After the flips, the hook
   compares the wire's length with the fuses `fuses.ts` decides about (six
-  flipped, two left alone, one beyond the pin: nine) and stops the build if they
+  flipped, three left alone, none beyond the pin: nine) and stops the build if they
   differ, so an Electron bump that adds a fuse cannot reach the signer
   unexamined. The three fuses it leaves alone are checked **by value** too: the
-  two left-alone fuses must still be disabled and `WasmTrapHandlers` enabled,
+  cookie and snapshot fuses must still be disabled and `WasmTrapHandlers` enabled,
   the defaults the pinned Electron 44.7.2 ships, or the build stops.
   `fuses.test.ts` also reads the real binary's wire when
   `node_modules/electron/dist` is installed, and on macOS runs the real hook over
@@ -2255,7 +2255,7 @@ with an injected platform could only assert one platform's answer.
 
 ### The packer is a pinned devDependency, and nothing it installs runs
 
-`electron-builder` `26.17.0` is in `devDependencies`, recorded in
+`electron-builder` `26.18.0` is in `devDependencies`, recorded in
 `package-lock.json` with its whole tree (exact versions, integrity hashes, every
 entry from `https://registry.npmjs.org/`), and `npm run package` runs its local
 binary — never `npx`, which resolves a tree outside the lockfile and runs its
@@ -2263,7 +2263,7 @@ install scripts in the shell the signing secrets are exported into. An earlier
 revision did exactly that (`npx --yes electron-builder@26.0.12`), because the
 26.0 line's tree carried a git-sourced `@electron/node-gyp` that
 `lockfile.test.ts` refuses; from the 26.1 line the packer depends on `@electron/rebuild`
-4, whose `node-gyp` comes from the registry, so the 26.17.0 tree passes the
+4, whose `node-gyp` comes from the registry, so the 26.18.0 tree passes the
 lockfile test with no exception and none was added. Three settings keep the
 packer from reaching outside what is pinned:
 
@@ -2368,7 +2368,7 @@ nobody should trust:
 | the `package` script back to `npx --yes electron-builder@26.0.12 …`, or `--publish always` | "packages with the pinned local electron-builder, universal, and never publishing" |
 | `dist/renderer/**/*.js` added to `build.files`, or `!dist/source/fixture.js` removed | the exact-list test and "ships every module the main process and the preload load, and neither excluded file" |
 | a zeroed Electron x64 hash in `electronDownload`; `npmRebuild: true` | the checksum test (and, at pack time, electron-builder's own "did not match expected checksum"); the rebuild test |
-| `BEYOND_PIN_FUSES` emptied (WasmTrapHandlers undecided) | five tests, including both real-binary tests: the wire holds 9 fuses and the file accounts for 8 |
+| `WasmTrapHandlers` dropped from `LEFT_ALONE_FUSES` (undecided) | eight tests, including both real-binary tests: the wire holds 9 fuses and the file accounts for 8 |
 
 ## The signing and notarisation pipeline, staged (Task 4.2)
 
@@ -4384,7 +4384,7 @@ this file's say unsigned rather than leaving it to be deduced.
 | | |
 |---|---|
 | Targets | `AppImage` and `deb`, **x64**, pinned in `build.linux.target` rather than passed on a command line |
-| Artifact names | `Fugaro.Console-<version>-linux-x64.AppImage` and `…-linux-x64.deb` — `build.linux.artifactName` is `Fugaro.Console-${version}-linux-${arch}.${ext}`, so the name comes from the tag's X.Y.Z and never from a file name typed into a workflow |
+| Artifact names | `Fugaro.Console-<version>-linux-x86_64.AppImage` and `Fugaro.Console-<version>-linux-amd64.deb` — `build.linux.artifactName` is `Fugaro.Console-${version}-linux-${arch}.${ext}`, so the name comes from the tag's X.Y.Z and never from a file name typed into a workflow. **The packer writes the target's own word for the architecture and not the build's `x64`**: the AppImage is `x86_64` and the `.deb` is `amd64`, and those two spellings are what the release serves and what its `console-sha256sums.txt` lists — a page or a command that looks for `linux-x64` matches neither (this file, `docs/release.md`'s "Verifying the console's release" and `docs/design/desktop-console.md` §7.6's artifact sentence said `linux-x64` until 2026-10-24, which is what a published release corrected; **the workflow comments still say it**, in three places — `console-release.yml`'s staged and applied copies and `console-linux.yml` — and are not corrected here, because no agent run may edit `.github/workflows/`: `docs/pending-workflows/README.md` is where the owner reads what to correct, and when) |
 | Icon | `console/build/icon.png` — **the same file `build.mac.icon` names**, so the two platforms cannot show different marks |
 | Desktop entry | `executableName: fugaro-console`, `category: "Development;Monitor"`, a `synopsis` and a `description`; the deb's `maintainer` is required rather than decorative — this `package.json` has no `author` with an email, so without it the deb leg fails at pack time |
 | Command | `npm run package:linux` — `electron-builder --linux --publish never`, the pinned local packer, never `npx`, and never publishing |
@@ -4497,19 +4497,34 @@ release tag, and that is the owner's call. `docs/pending-workflows/README.md`'s
 `## console-linux.yml` section carries the three edits it would take, and the
 copy-in commands for both files.
 
-### The website says nothing about Linux yet, and that is deliberate
+### The website offers the Linux pair, and says they are unsigned (2026-10-24)
 
-`website/content/downloads.json` may carry an optional per-platform block, and
-the reader that validates it (`website/src/lib/console-downloads.mjs`) holds it
-to the file's own assets: the block names the ids of the downloads it links, and
-every id must resolve to an entry of the file's `downloads` list — which is
-itself held to the release's published names and its sums file. So **a download
-link can only exist for an asset the data file names**, and **the block renders
-only when it is there** (`Downloads.astro` draws nothing for it otherwise: no
-heading, no sentence, no link, not even a word saying which platform is
-missing). The shipped file carries **no** Linux block, so both pages still say
-macOS only, exactly as they did before this ruling — the entry lands when a
-release actually carries a Linux asset, and not before.
+**The site shipped macOS only until the release that carried a Linux asset, and
+that is what the ruling waited for.** `website/content/downloads.json` carries an
+optional per-platform block, and the reader that validates it
+(`website/src/lib/console-downloads.mjs`) holds it to the file's own assets: the
+block names the ids of the downloads it links, and every id must resolve to an
+entry of the file's `downloads` list — which is itself held to the release's
+published names and to the checksum its own `console-sha256sums.txt` records. So
+**a download link can only exist for an asset the data file names**, and **the
+block renders only when it is there** (`Downloads.astro` draws nothing for it
+otherwise: no heading, no sentence, no link, not even a word saying which
+platform is missing).
+
+`console-v0.110.0` publishes `Fugaro.Console-0.110.0-linux-x86_64.AppImage` and
+`Fugaro.Console-0.110.0-linux-amd64.deb`, so the file carries the block: the
+sentence a Linux reader is owed (**the build is not signed at all** — an AppImage
+is not code-signed, this project has no Linux signing key, and neither file has a
+signature of its own), the steps that stand behind an unsigned download (the
+release's own `console-sha256sums.txt`, verified against its Sigstore bundle with
+`cosign verify-blob`, then the Linux entries checked against it — the commands
+`docs/release.md`'s "Verifying the console's release" gives) and the two ids. The
+console page's Downloads section renders the block — the sentence, the steps and
+the two rows — and Getting Started's console option renders the same sentence and
+the same two rows from the same reader, without the steps, as it renders a macOS
+link without its checksum. The data file's `linux.verify` is the one place those
+commands are written, and the version in them is the same `{version}` placeholder
+the asset names carry, so a bump moves them together.
 
 ### What was verified here, and what was not
 
@@ -4526,9 +4541,12 @@ release actually carries a Linux asset, and not before.
 - **Not verified here, and not verifiable in this container**: no
   `electron-builder` run at all — this task's own rule is that the packaging is
   unit-tested as a configuration rather than executed, and a real Linux pack
-  needs a Linux runner with a display-less AppImage toolchain. So **nothing in
-  this repository has yet produced an AppImage or a `.deb`**; the first one is
-  the staged `console-linux.yml` job's, and the first that ships is the tag's.
+  needs a Linux runner with a display-less AppImage toolchain. **Nothing in this
+  container has produced an AppImage or a `.deb`**, and every claim above about
+  what the packer writes is a claim about its configuration. The pair the website
+  now links came off the Linux job of the release that published them: both names
+  and both checksums in `website/data/console-sha256sums.txt` are that release's
+  own, and the `x86_64`/`amd64` spellings above are what it served.
 
 ### What is not here
 

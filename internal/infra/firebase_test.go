@@ -100,6 +100,106 @@ func TestFirebaseTfvarsGolden(t *testing.T) {
 	}
 }
 
+// The coordinator ON (coordinator plan P5): the owner's opt-in, and the two
+// fixtures the golden plans of that state are made from — the installation
+// root with the coordinator's account, job and schedule, and the Firebase root
+// with the account's one database grant. They are fixtures of their own, and
+// not cases of the ones above, because the opt-in is off by default: every
+// installation that has not asked plans exactly the fixtures above, byte for
+// byte what it planned before the job existed.
+func TestCoordinatorTfvarsGolden(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectProfilesLCBlock)
+	spec, err := Installation(lc, InstallOptions{BudgetBackend: true, Coordinator: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Coordinator == nil {
+		t.Fatal("the opt-in planned no coordinator")
+	}
+	spec.History.DeployJob, spec.History.FirebaseProject, spec.History.RTDBURL = true, "aurora-fp", "https://aurora-fp-default-rtdb.firebaseio.com"
+	spec.Coordinator.DeployJob, spec.Coordinator.FirebaseProject, spec.Coordinator.RTDBURL = true, "aurora-fp", "https://aurora-fp-default-rtdb.firebaseio.com"
+	data, err := InstallationVars(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkGolden(t, "installation-coordinator.tfvars.json", data)
+
+	inst := installationSpec(t)
+	inst.Launchers = []string{"user:launcher@example.com"}
+	inst.Operators = []string{"user:operator@example.com", "user:launcher@example.com"}
+	cs, err := Coordinator(lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst.Coordinator = &cs
+	fs, err := Firebase(inst, FirebaseInputs{FP: "aurora-fp",
+		Admins:             []string{"user:owner@example.com", "group:editors@example.com", "user:owner@example.com"},
+		BudgetAdmins:       []string{"user:extra@example.com"},
+		HistoryAccount:     "fugaro-history@proj-1234.iam.gserviceaccount.com",
+		CoordinatorAccount: "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err = FirebaseVars(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkGolden(t, "firebase-coordinator.tfvars.json", data)
+}
+
+// TestTheCoordinatorIsOffByDefault is the security review's first finding
+// (MAJOR-1): a budget installation that has not opted in gets no coordinator
+// account, so no grant, no job and no schedule — and the Firebase root is
+// handed no account to grant the database's admin to, even when the caller
+// passes one. Only InstallOptions.Coordinator turns it on.
+//
+// Fails when Installation sets the coordinator for every budget backend, or
+// Firebase derives the account without one.
+func TestTheCoordinatorIsOffByDefault(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectProfilesLCBlock)
+	spec, err := Installation(lc, InstallOptions{BudgetBackend: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Coordinator != nil {
+		t.Fatalf("a budget installation that did not opt in plans the coordinator: %+v", spec.Coordinator)
+	}
+	data, err := InstallationVars(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "coordinator") {
+		t.Errorf("the installation's tfvars name the coordinator without the opt-in:\n%s", data)
+	}
+	for _, in := range []FirebaseInputs{
+		{FP: "aurora-fp"},
+		{FP: "aurora-fp", CoordinatorAccount: "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"},
+	} {
+		fs, err := Firebase(spec, in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fs.CoordinatorAccount != "" {
+			t.Errorf("the Firebase root grants the database's admin to %q without the opt-in", fs.CoordinatorAccount)
+		}
+	}
+	on, err := Installation(lc, InstallOptions{BudgetBackend: true, Coordinator: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if on.Coordinator == nil {
+		t.Fatal("the opt-in planned no coordinator")
+	}
+	if fs, err := Firebase(on, FirebaseInputs{FP: "aurora-fp"}); err != nil || fs.CoordinatorAccount != "fugaro-coordinator@proj-1234.iam.gserviceaccount.com" {
+		t.Errorf("with the opt-in the Firebase root's account = %q (err %v), want the coordinator's", fs.CoordinatorAccount, err)
+	}
+	// And the opt-in needs the budget backend: it is the account the
+	// Firebase root grants, and an installation without one has no root.
+	if off, err := Installation(lc, InstallOptions{Coordinator: true}); err != nil || off.Coordinator != nil {
+		t.Errorf("an installation without a budget backend planned the coordinator: %+v (err %v)", off.Coordinator, err)
+	}
+}
+
 // An installation without the budget backend writes the tfvars it always did:
 // no enable_budget, no history.
 func TestInstallationVarsWithoutBudgetBackend(t *testing.T) {

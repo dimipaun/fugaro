@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -413,9 +414,20 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 	// what makes the repeat idempotent. The plan task follows the same rule:
 	// an explicit --plan-task must be the stored one, and none repeats the
 	// stored task whatever it claims.
+	//
+	// The run's own rigor request (--mode, --path) is compared the same way,
+	// and the case for it is stronger than the title's: the stored task is
+	// what the job reads, so a raise this launch asked for that the list did
+	// not check would be dropped from a spec reused as it is, while the
+	// launch reported the run as already launched — a mode nobody resolved,
+	// reported as success. The same shape as the title: a flag that is given
+	// must be the stored one, and a launch that gives none makes no claim
+	// (the stored request stands, exactly as the stored title does).
 	if have.PR != o.pr[0] || have.Task != text || have.Batch != o.batch || (o.title != "" && have.Title != o.title) || string(a) != string(b) || (o.recipe != "" && o.recipe != haveRecipe) ||
 		(o.token != "" && o.token != cmp.Or(have.OAuthToken, config.DefaultClaudeAccount)) ||
-		(o.planTask != "" && have.PlanTask != o.planTask) {
+		(o.planTask != "" && have.PlanTask != o.planTask) ||
+		(o.rigor != "" && string(have.Rigor) != o.rigor) ||
+		(len(o.paths) > 0 && !slices.Equal(have.Paths, o.paths)) {
 		return nil, userErr("run ID %s already holds a different task", o.runID)
 	}
 	// have is stored bucket data nobody vouches for (review finding A): its
@@ -556,7 +568,8 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: c.Ref, Workflow: workflow, Task: text,
 		Title:    cmp.Or(o.title, c.Title),
 		PlanTask: o.planTask,
-		Branch:   c.Branch, PR: o.pr[0], PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch, Recipe: rcp}
+		Branch:   c.Branch, PR: o.pr[0], PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch, Recipe: rcp,
+		Rigor: rigor.Mode(o.rigor), Paths: o.paths}
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()
 	}

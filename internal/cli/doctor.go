@@ -2433,10 +2433,17 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// operator to redeploy after a policy that already governs (the review
 		// finding on P2.1); reporting nothing at all would leave the missing
 		// mailbox grant — the state the operator's app meets — unexplained.
+		// The fix names what the redeploy adds over the deployed generation, as
+		// rulesMarkerOlderText does: a device-generation marker already has the
+		// mailbox, and only the coordinator's read grant is new to it.
+		adds := "the mailbox, the device binding and the coordinator's read grant"
+		if gen >= rulesDeviceGeneration {
+			adds = "the coordinator's read grant"
+		}
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 			Problem: rulesMarkerOlderText(gen),
-			Fix: fmt.Sprintf("re-run 'fugaro update --firebase-project' in your own terminal from a Fugaro that deploys generation %d or newer: it deploys this release's document — the rules a policy is read under, plus the mailbox — and records its generation in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
-				projectpolicy.RulesVersion)}}
+			Fix: fmt.Sprintf("re-run 'fugaro update --firebase-project' in your own terminal from a Fugaro that deploys generation %d or newer: it deploys this release's document, which adds %s, and records its generation in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
+				projectpolicy.RulesVersion, adds)}}
 	}
 	live, err := db.Rules(ctx)
 	if err != nil {

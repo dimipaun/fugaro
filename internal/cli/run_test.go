@@ -1200,7 +1200,7 @@ func launchRecordOf(t *testing.T, f *cloudFixture, id string) *runstore.Launch {
 // it, and the assertions here fail.
 func TestLaunchCarriesPlanTask(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release0110)
+	writeBuildRecord(t, f, appSlug, "web", release0112)
 	id := time.Now().UTC().Format("20060102") + "-120000-abcd"
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", id, "--plan-task", "setup-wizard/W1.3", "Add a feature"); err != nil {
 		t.Fatal(err)
@@ -1312,7 +1312,7 @@ func TestRecoveredLaunchKeepsPlanTask(t *testing.T) {
 // retried run loses its node while its task keeps the id.
 func TestRetryKeepsPlanTask(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release0110)
+	writeBuildRecord(t, f, appSlug, "web", release0112)
 	t.Chdir(t.TempDir())
 	ctx := context.Background()
 	b, _ := blob.OpenBucket(ctx, f.bucket)
@@ -1331,9 +1331,9 @@ func TestRetryKeepsPlanTask(t *testing.T) {
 	}
 }
 
-// release0110 is the first job image whose runner reads a task's plan task
+// release0112 is the first job image whose runner reads a task's plan task
 // id (planTaskSince) — the release this branch belongs to.
-const release0110 = "ghcr.io/dimipaun/fugaro-base:0.11.0"
+const release0112 = "ghcr.io/dimipaun/fugaro-base:0.11.2"
 
 // A launch carrying a plan task is gated on the image that can read it:
 // task.Parse decodes with DisallowUnknownFields, so a runner older than
@@ -1358,7 +1358,7 @@ func TestRunPlanTaskGatesOnTheImageThatKnowsIt(t *testing.T) {
 		t.Fatalf("a launch with no --plan-task must not be gated: %v", err)
 	}
 	// And the release that ships the reader accepts it.
-	writeBuildRecord(t, f, appSlug, "web", release0110)
+	writeBuildRecord(t, f, appSlug, "web", release0112)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261024-130000-abcd", "--plan-task", "setup-wizard/W1.3", "Add a feature"); err != nil {
 		t.Fatalf("a launch at "+planTaskSince+" must be accepted: %v", err)
 	}
@@ -1366,7 +1366,7 @@ func TestRunPlanTaskGatesOnTheImageThatKnowsIt(t *testing.T) {
 
 // A checkout: clone workflow has no build record to judge, so the plan
 // task's floor is judged against base_images.base itself: 0.7.5 is
-// cloneSince, so the clone floor passes and the plan task's floor (0.11.0)
+// cloneSince, so the clone floor passes and the plan task's floor (0.11.2)
 // is what refuses.
 //
 // Mutation (drop the spec.PlanTask block from finishLaunch's clone branch):
@@ -1429,7 +1429,7 @@ func TestFollowUpCarriesItsOwnPlanTask(t *testing.T) {
 	rec.StartedAt = time.Now().Add(-72 * time.Hour)
 	writeRecord(t, f, rootID, rec)
 
-	writeBuildRecord(t, f, appSlug, "web", release0110)
+	writeBuildRecord(t, f, appSlug, "web", release0112)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--plan-task", "setup-wizard/W2.1", "also rename x"); err != nil {
 		t.Fatal(err)
 	}
@@ -1448,7 +1448,7 @@ func TestFollowUpCarriesItsOwnPlanTask(t *testing.T) {
 func TestStoredFollowUpRefusesADifferentPlanTask(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
-	writeBuildRecord(t, f, appSlug, "web", release0110)
+	writeBuildRecord(t, f, appSlug, "web", release0112)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--plan-task", "setup-wizard/W1.3", "also rename x"); err != nil {
 		t.Fatal(err)
 	}

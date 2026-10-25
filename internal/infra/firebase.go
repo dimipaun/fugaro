@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"google.golang.org/api/googleapi"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -29,10 +31,21 @@ const (
 	APIKeyID        = "fugaro-web"
 
 	HistoryAccountID = "fugaro-history"
+	// CoordinatorAccountID is the coordinator's writer account (D194): the
+	// aggregation job's own, which the installation root creates in
+	// coordinator part P5, as it creates the history account's. Once it
+	// exists the Firebase root grants it roles/firebasedatabase.admin on the
+	// FP, so it can write the coordinator's subtree under the rules' floor.
+	CoordinatorAccountID = "fugaro-coordinator"
 	// HistoryJob must not start with fugaro-: ls and max_parallel count
 	// every fugaro-* job as a workflow's.
 	HistoryJob          = "fugarohist"
 	HistorySchedulerJob = "fugaro-history-sweep"
+	// CoordinatorJob is the aggregation job's name (P5), and it must not
+	// start with fugaro- for HistoryJob's reason. The Scheduler job's name
+	// may: no listing counts a Scheduler job.
+	CoordinatorJob          = "fugarocoord"
+	CoordinatorSchedulerJob = "fugaro-coordinator-sweep"
 	// HistoryImagePackage is the history image's package in the base
 	// registry (<registry host>/fugaro-base/history:latest).
 	HistoryImagePackage = "history"
@@ -82,6 +95,20 @@ func History(lc *localcfg.Config) (HistorySpec, error) {
 // HistoryImageExists reports whether the history image's latest tag exists
 // in the base registry.
 func HistoryImageExists(ctx context.Context, c *Clients, lc *localcfg.Config, h HistorySpec) (bool, error) {
+	return baseImageExists(ctx, c, lc, h.Image, "history")
+}
+
+// CoordinatorImageExists is HistoryImageExists for the aggregation job, whose
+// image IS the history image (Coordinator): one CLI binary serves both jobs,
+// so the two jobs are deployed and refused together, and neither can be
+// deployed against an image that does not exist.
+func CoordinatorImageExists(ctx context.Context, c *Clients, lc *localcfg.Config, cs CoordinatorSpec) (bool, error) {
+	return baseImageExists(ctx, c, lc, cs.Image, "coordinator")
+}
+
+// baseImageExists reports whether image's latest tag exists in the
+// installation's base registry. what names the image in a failure message.
+func baseImageExists(ctx context.Context, c *Clients, lc *localcfg.Config, image, what string) (bool, error) {
 	host, err := RegistryHost(lc)
 	if err != nil {
 		return false, err
@@ -90,8 +117,8 @@ func HistoryImageExists(ctx context.Context, c *Clients, lc *localcfg.Config, h 
 	if m == nil {
 		return false, userErr("registry host %q is not <region>-docker.pkg.dev/<project>", host)
 	}
-	if h.Image != HistoryImage(host) {
-		return false, fmt.Errorf("the history image %s is not %s", h.Image, HistoryImage(host))
+	if image != HistoryImage(host) {
+		return false, fmt.Errorf("the %s image %s is not %s", what, image, HistoryImage(host))
 	}
 	name := "projects/" + m[2] + "/locations/" + m[1] + "/repositories/" + BaseRegistry + "/packages/" + HistoryImagePackage + "/tags/latest"
 	_, err = c.AR.Projects.Locations.Repositories.Packages.Tags.Get(name).Context(ctx).Do()
@@ -104,6 +131,95 @@ func HistoryImageExists(ctx context.Context, c *Clients, lc *localcfg.Config, h 
 	return true, nil
 }
 
+// CoordinatorSpec is the installation root's coordinator variable (P5): the
+// aggregation job, and the account it runs as (D194).
+type CoordinatorSpec struct {
+	AccountID       string            `json:"account_id"`
+	Job             string            `json:"job"`
+	Image           string            `json:"image"`
+	SchedulerJob    string            `json:"scheduler_job"`
+	SchedulerRegion string            `json:"scheduler_region"`
+	AppKeySecret    string            `json:"app_key_secret"`
+	GitHubAppID     string            `json:"github_app_id"`
+	Repos           []CoordinatorRepo `json:"repos"`
+	// DeployJob is set once the Firebase root's outputs are known, the image
+	// exists and an App ID is recorded: the job needs all three, and without
+	// the credential the sweep could read no repository at all.
+	DeployJob       bool   `json:"deploy_job"`
+	FirebaseProject string `json:"firebase_project,omitempty"`
+	RTDBURL         string `json:"rtdb_url,omitempty"`
+}
+
+// CoordinatorRepo is one repository a sweep reconciles, as the job's
+// FUGARO_COORDINATOR_REPOS carries it: the provider kind and the name the host
+// spells it with. The slug is deliberately not here — it is a function of the
+// two (task.Slug), and the command derives it where it knows both, which is
+// also what keeps the runs bucket's layout in one place.
+type CoordinatorRepo struct {
+	Provider string `json:"provider"`
+	Repo     string `json:"repo"`
+}
+
+// Coordinator is the aggregation job's spec for lc, with the job not yet
+// deployed. Its image is the history image's: one CLI binary serves both jobs
+// (fugaro budget history and fugaro coordinator sweep are two commands of it),
+// so the coordinator needs no image of its own, no second push and no second
+// entry in the mirror that fills the base registry.
+func Coordinator(lc *localcfg.Config) (CoordinatorSpec, error) {
+	host, err := RegistryHost(lc)
+	if err != nil {
+		return CoordinatorSpec{}, err
+	}
+	region := lc.SchedulerRegion
+	if region == "" {
+		if region, err = gcp.SchedulerRegion(lc.Region); err != nil {
+			return CoordinatorSpec{}, userErr("%v", err)
+		}
+	}
+	appID, err := recordedGitHubAppID(lc)
+	if err != nil {
+		return CoordinatorSpec{}, err
+	}
+	c := CoordinatorSpec{
+		AccountID:       CoordinatorAccountID,
+		Job:             CoordinatorJob,
+		Image:           HistoryImage(host),
+		SchedulerJob:    CoordinatorSchedulerJob,
+		SchedulerRegion: region,
+		AppKeySecret:    config.GitHubAppKeySecret,
+		GitHubAppID:     appID,
+		Repos:           CoordinatorRepos(lc),
+	}
+	if b := lc.Budget; b != nil {
+		c.FirebaseProject, c.RTDBURL = b.FirebaseProject, b.RTDBURL
+	}
+	return c, nil
+}
+
+// CoordinatorRepos are the repositories one sweep reconciles: every repository
+// the local config records a provider kind for, in the config's own order.
+//
+// A repository the config records no provider for is left out, and it is the
+// one thing here that is not simply "every repository": the job runs with no
+// checkout, so nothing on its machine can read a provider out of fugaro.yaml,
+// and the sweep derives each repository's slug from the provider and the name
+// together (task.Slug). A provider the config does not name is therefore a
+// repository the job could not address at all.
+//
+// Every other provider is carried, bitbucket included: the project-wide read
+// serves github only (Q12 A, finding #30), and the sweep records such a
+// repository as one this installation cannot reconcile rather than dropping it
+// from the view.
+func CoordinatorRepos(lc *localcfg.Config) []CoordinatorRepo {
+	out := make([]CoordinatorRepo, 0, len(lc.Repos))
+	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {
+		if p := lc.Repos[name].Provider; slices.Contains(config.Providers, p) {
+			out = append(out, CoordinatorRepo{Provider: p, Repo: name})
+		}
+	}
+	return out
+}
+
 // FirebaseSpec is the Firebase root's tfvars: exactly its variables.
 type FirebaseSpec struct {
 	// Project is the Firebase project's ID (the FP).
@@ -114,11 +230,19 @@ type FirebaseSpec struct {
 	// Launchers and Operators mint run tokens and read the database;
 	// Admins (the GCP project's owners and editors) and BudgetAdmins write
 	// it. The history account is the sweeper's, which holds its own roles.
-	Launchers      []string `json:"launchers"`
-	Operators      []string `json:"operators"`
-	Admins         []string `json:"admins"`
-	BudgetAdmins   []string `json:"budget_admins"`
-	HistoryAccount string   `json:"history_account"`
+	// CoordinatorAccount is the aggregation job's (D194, P5): the account
+	// the installation root creates and this root grants
+	// roles/firebasedatabase.admin to, because the coordinator's records are
+	// written under the rules' floor and a path cannot be expressed as an
+	// IAM binding. It is empty, and nothing is granted, on an installation
+	// whose owner has not opted in to the coordinator (InstallOptions.
+	// Coordinator), which is every installation by default.
+	Launchers          []string `json:"launchers"`
+	Operators          []string `json:"operators"`
+	Admins             []string `json:"admins"`
+	BudgetAdmins       []string `json:"budget_admins"`
+	HistoryAccount     string   `json:"history_account"`
+	CoordinatorAccount string   `json:"coordinator_account"`
 	// SkipAPIs are the APIs the Firebase root leaves to the installation
 	// root: set (to SharedAPIs) only when the Firebase project is the
 	// installation's own project, and left out of the tfvars otherwise.
@@ -150,6 +274,12 @@ type FirebaseInputs struct {
 	// installation's first apply. Empty (print-vars before any apply) is
 	// the account's address in the installation's project.
 	HistoryAccount string
+	// CoordinatorAccount is the coordinator's writer account's email, the
+	// same kind of output of the same apply (P5 creates it once the owner
+	// opts in). It is read only when the installation spec carries the
+	// coordinator, and empty is then the same address derivation
+	// HistoryAccount's is.
+	CoordinatorAccount string
 }
 
 // Firebase is the Firebase root's spec for the installation spec, which
@@ -163,16 +293,32 @@ func Firebase(inst InstallationSpec, in FirebaseInputs) (FirebaseSpec, error) {
 	if history == "" {
 		history = serviceAccountEmail(HistoryAccountID, inst.Project)
 	}
+	// The coordinator's account exists only on an installation whose owner
+	// opted in (inst.Coordinator, P5): the installation root's first apply
+	// creates it, which every path to this root runs first, so this is then
+	// the address of an account that exists by the time the grant is planned
+	// — the same claim history's is. Without the opt-in it stays empty and
+	// the Firebase root grants nothing: IAM refuses a grant to a member that
+	// does not exist, and an installation that did not ask for the database
+	// admin's writer must not get one.
+	coordinator := ""
+	if inst.Coordinator != nil {
+		coordinator = in.CoordinatorAccount
+		if coordinator == "" {
+			coordinator = serviceAccountEmail(CoordinatorAccountID, inst.Project)
+		}
+	}
 	s := FirebaseSpec{
-		Project:        in.FP,
-		FugaroProject:  inst.FugaroProject,
-		Names:          FirebaseNames{SignerAccountID: SignerAccountID, MinterRoleID: MinterRoleID, APIKey: APIKeyID},
-		ManageAPIs:     inst.ManageAPIs,
-		Launchers:      members(inst.Launchers, nil),
-		Operators:      members(inst.Operators, nil),
-		Admins:         sortedUnique(in.Admins),
-		BudgetAdmins:   sortedUnique(in.BudgetAdmins),
-		HistoryAccount: history,
+		Project:            in.FP,
+		FugaroProject:      inst.FugaroProject,
+		Names:              FirebaseNames{SignerAccountID: SignerAccountID, MinterRoleID: MinterRoleID, APIKey: APIKeyID},
+		ManageAPIs:         inst.ManageAPIs,
+		Launchers:          members(inst.Launchers, nil),
+		Operators:          members(inst.Operators, nil),
+		Admins:             sortedUnique(in.Admins),
+		BudgetAdmins:       sortedUnique(in.BudgetAdmins),
+		HistoryAccount:     history,
+		CoordinatorAccount: coordinator,
 	}
 	if in.FP == inst.Project {
 		// One project holds the installation and the Firebase backend (design

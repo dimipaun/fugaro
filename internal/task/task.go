@@ -16,6 +16,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -158,6 +159,44 @@ type Spec struct {
 	// launcher's own image gate refuses an artifact launch before this
 	// field is ever set at such a job.
 	Mode string `json:"mode,omitempty"`
+	// Rigor is the mode the run's own launcher asked for (fugaro run
+	// --mode, docs/rigor-modes implementation-plan T1.6): the one input
+	// that may raise the mode the run's layers resolve and never lower it
+	// (D6, F14). "" asks for none, which is every launch that passes no
+	// flag and every spec written before this release — the resolution then
+	// falls to the layers alone, exactly as it did before the flag existed.
+	//
+	// It is called rigor and not mode because Spec.Mode is already taken: it
+	// is the *recipe's* mode (implement, review, artifact), a different
+	// question with a different vocabulary, and a spec that wrote this one
+	// under `mode` would be read as a recipe by a runner that resolves one.
+	// The runner reads it as rigor.Request.Mode, and the record keeps the
+	// answer under the record's own `mode` field (D24).
+	//
+	// A runner before the release that reads this field refuses the whole
+	// spec (Parse decodes with DisallowUnknownFields), so the launcher gates
+	// a launch that would set it (rigorRequestSince, internal/cli/
+	// recipes_skew.go) rather than let the run fail at bootstrap after the
+	// task was written. A spec that asks for nothing carries neither field
+	// and is byte-identical to what the previous release wrote.
+	//
+	// The vocabulary is closed (D20): a value outside it is refused by
+	// Validate below, by the launcher before it writes anything, and by the
+	// resolver's own Known — a near miss is a launcher's bug, not a run's
+	// opinion about its own rigor.
+	Rigor rigor.Mode `json:"rigor,omitempty"`
+	// Paths are the paths the run declares it will touch (fugaro run --path,
+	// repeatable): D22's first moment, where the area rules are matched
+	// before any of the work is done. Nil for every launch that declares
+	// none, which is the common case and the one D22 describes as "a run
+	// that declares no path starts at its repository's value".
+	//
+	// They are the launcher's own claim about its work, so they decide
+	// nothing on their own: the runner matches them against the areas the
+	// base branch's configuration declares (rigor.Select) and a path that
+	// matches nothing changes nothing. Each is bounded and non-blank below,
+	// since every one of them is matched against every rule.
+	Paths []string `json:"paths,omitempty"`
 	// Inputs are the files the launching CLI attached (fugaro run
 	// --attach; design artifact-runs.md §4): what it uploaded, under
 	// runs/<slug>/<run>/inputs/<name>, with the size and the hash it read
@@ -174,6 +213,23 @@ type Spec struct {
 	// this field is ever set (plan P9).
 	Inputs []InputFile `json:"inputs,omitempty"`
 }
+
+// MaxDeclaredPaths bounds the paths one launch may declare (Spec.Paths,
+// fugaro run --path): every one of them is matched against every area rule
+// the base branch's configuration declares, and the list is what a
+// hand-written task.json can make arbitrarily long. The cap is deliberately
+// generous — a caller declaring more than this is describing a change nobody
+// reviews as one area — and a list over it is a refusal rather than a
+// truncation: the paths that were cut off are exactly the ones that would
+// have raised the mode.
+const MaxDeclaredPaths = 100
+
+// MaxDeclaredPathBytes bounds one declared path, and it is the same 200 the
+// area rules' own patterns are bounded by (rigor.MaxAreaPattern): a declared
+// path and the glob it is matched against are the same kind of string, and a
+// path longer than any pattern that could name it can only ever match
+// nothing.
+const MaxDeclaredPathBytes = 200
 
 // MaxTitleRunes bounds a task's own title (Spec.Title, fugaro run
 // --title): a title is one line naming a run in a terminal and in a pull
@@ -629,6 +685,26 @@ func (s *Spec) Validate() error {
 		bad("task spec: oauth_token %q must be at most %d characters", s.OAuthToken, config.MaxClaudeAccountNameLen)
 	case !config.ClaudeAccountNameRE.MatchString(s.OAuthToken):
 		bad("task spec: oauth_token %q is not a Claude account name", s.OAuthToken)
+	}
+	// The run's own rigor request: the mode it asks for, and the paths it
+	// declares. Both are the launcher's, both are checked here as well as at
+	// the launcher (the rule TitleProblem follows: a request the launcher
+	// accepts has to be one the runner accepts, or the launch writes a task
+	// the run then refuses at bootstrap), and an absent request is legal —
+	// it is what every launch without the flags carries.
+	if s.Rigor != "" && !rigor.Known(s.Rigor) {
+		bad("task spec: rigor %q must be one of %s or empty", s.Rigor, rigor.ModeList())
+	}
+	if len(s.Paths) > MaxDeclaredPaths {
+		bad("task spec: paths must name at most %d paths", MaxDeclaredPaths)
+	}
+	for i, p := range s.Paths {
+		switch {
+		case strings.TrimSpace(p) == "":
+			bad("task spec: paths[%d] is empty", i)
+		case len(p) > MaxDeclaredPathBytes:
+			bad("task spec: paths[%d] is longer than %d bytes", i, MaxDeclaredPathBytes)
+		}
 	}
 	// Mode is the recipe's mode, so the only values a spec may carry are
 	// the recipe modes; "" (the launcher could not resolve a recipe, or the

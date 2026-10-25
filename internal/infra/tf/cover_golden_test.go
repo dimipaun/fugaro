@@ -60,8 +60,14 @@ func TestGoldenPlansAreCovered(t *testing.T) {
 		// real plan. TestGoldenCredentialsServiceCarriesItsSevenNames reads
 		// their values back against the fixture.
 		"installation-credentials": nil,
+		// The coordinator's opt-in ON (coordinator plan P5): its account, the
+		// account's two reads, its job and schedule, and the Firebase root's
+		// database grant to it. TestTheCoordinatorIsInTheOptInGoldensOnly
+		// holds the other goldens to planning none of it.
+		"installation-coordinator": nil,
 		"repo":                     {"user:launcher@example.com", "user:operator@example.com"},
 		"firebase":                 {"user:launcher@example.com", "user:operator@example.com", "user:extra@example.com", "user:owner@example.com", "group:editors@example.com"},
+		"firebase-coordinator":     {"user:launcher@example.com", "user:operator@example.com", "user:extra@example.com", "user:owner@example.com", "group:editors@example.com"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := goldenPlan(t, name)
@@ -547,6 +553,37 @@ func TestGoldenInstallationPlanCarriesTheDeployer(t *testing.T) {
 					t.Fatalf("the golden with %s's condition changed (%s): %q, want that binding alone refused", role, name, got)
 				}
 			})
+		}
+	}
+}
+
+// TestTheCoordinatorIsInTheOptInGoldensOnly: the coordinator is the owner's
+// opt-in (P5, the security review's MAJOR-1), so the goldens of the default
+// state — what every existing installation plans — hold no coordinator
+// resource at all, and the two opt-in goldens hold all of them.
+func TestTheCoordinatorIsInTheOptInGoldensOnly(t *testing.T) {
+	want := map[string][]string{
+		"installation-coordinator": {
+			"module.installation.google_cloud_run_v2_job.coordinator[0]",
+			"module.installation.google_cloud_run_v2_job_iam_member.coordinator_runner[0]",
+			"module.installation.google_cloud_scheduler_job.coordinator_sweep[0]",
+			"module.installation.google_secret_manager_secret_iam_member.coordinator_app_key[0]",
+			"module.installation.google_service_account.coordinator[0]",
+			"module.installation.google_storage_bucket_iam_member.coordinator_runs_reader[0]",
+		},
+		"firebase-coordinator": {"module.firebase.google_project_iam_member.coordinator_database[0]"},
+	}
+	for _, name := range []string{"installation", "installation-accounts", "installation-managed", "installation-credentials", "installation-adopt",
+		"installation-coordinator", "firebase", "firebase-same-project", "firebase-adopt", "firebase-coordinator"} {
+		var got []string
+		for _, rc := range goldenPlan(t, name).ResourceChanges {
+			if strings.Contains(rc.Address, "coordinator") {
+				got = append(got, rc.Address)
+			}
+		}
+		slices.Sort(got)
+		if !slices.Equal(got, want[name]) {
+			t.Errorf("%s plans the coordinator resources %v, want %v", name, got, want[name])
 		}
 	}
 }

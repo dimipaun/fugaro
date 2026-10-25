@@ -300,6 +300,34 @@ a.skip-link:focus {
    * a menu hanging over the page is a thing laid on the page, and the step between the ground
    * and the surface is what says so. */
   background: var(--surface);
+  transform-origin: top;
+}
+
+/* An opened group's panel grows out of its trigger (owner-approved motion opportunities
+ * 2026-10-23): enter only, and nothing for a reader who asked for less motion. A closed group's
+ * panel is not drawn at all, so the close is instant whatever its values do. The panel's resting
+ * values while closed and `@starting-style` are the same small, transparent frame: the first is
+ * the transition's start when the browser has already styled the hidden panel, the second when
+ * it has not. The phone's drawer hangs across the header and grows from its top edge; the wide
+ * block below moves the origin to the label's corner the dropdown hangs from. */
+@media (prefers-reduced-motion: no-preference) {
+  .site-nav-group > details > ul {
+    transition:
+      opacity var(--duration-enter) var(--ease-out),
+      transform var(--duration-enter) var(--ease-out);
+  }
+
+  .site-nav-group > details:not([open]) > ul {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+
+  @starting-style {
+    .site-nav-group > details[open] > ul {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+  }
 }
 
 .site-nav-group > details > summary:focus-visible {
@@ -380,6 +408,7 @@ a.skip-link:focus {
     min-width: max-content;
     padding: var(--space-2xs);
     border-radius: var(--radius-md);
+    transform-origin: top right;
   }
 }
 
@@ -530,6 +559,7 @@ a.skip-link:focus {
  * of the reversed row above, so its `justify-content` only settles where a confirmation sits
  * within the box it shares with the button. */
 .command-controls {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -537,37 +567,109 @@ a.skip-link:focus {
   gap: var(--space-2xs);
 }
 
-/* Deliberately no `display` here. The `hidden` attribute is the whole mechanism that keeps
- * the control out of a reader's way until the script has revealed it, and an author `display`
- * would win over the user agent's `[hidden]` rule and put the button back on the page. */
+/* The `display` is set only on a button that is not `hidden`. The `hidden` attribute is the
+ * whole mechanism that keeps the control out of a reader's way until the script has revealed
+ * it, and an author `display` on the plain class would win over the user agent's `[hidden]`
+ * rule and put the button back on the page. */
 .copy-button {
-  padding: var(--space-3xs) var(--space-2xs);
+  /* An icon button (the owner's feedback of 2026-10-24): an 18px glyph in a 44px target, so it
+     is small to the eye and easy to the finger. The two glyphs share one cell; the clipboard
+     shows until a copy lands, then the checkmark for `COPIED_MS` (site.js). */
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  place-items: center;
   border: 0;
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--accent-on-dark);
-  font-family: var(--font-sans);
-  font-size: var(--font-size-sm);
-  font-weight: var(--weight-semibold);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
   cursor: pointer;
-  transition: background-color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
+  transition: background-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
+}
+
+.copy-button:not([hidden]) {
+  display: grid;
+}
+
+.copy-icon {
+  grid-area: 1 / 1;
+  transition:
+    opacity var(--duration-enter) var(--ease-out),
+    transform var(--duration-enter) var(--ease-out);
+}
+
+.copy-button .copy-icon-check,
+.copy-button[data-copied='true'] .copy-icon-clipboard {
+  opacity: 0;
+  transform: scale(0.8);
+}
+
+.copy-button[data-copied='true'] .copy-icon-check {
+  opacity: 1;
+  transform: none;
 }
 
 .copy-button:active {
   transform: scale(0.96);
 }
 
+/* The ring hugs the button rather than standing off it: still the accent at the token's width,
+   and lighter on a small control than the site's offset ring. */
+.copy-button:focus-visible {
+  outline-offset: 0;
+  color: var(--text);
+}
+
 @media (hover: hover) and (pointer: fine) {
   .copy-button:hover {
-    background: var(--border);
+    background: var(--surface);
+    color: var(--text);
   }
 }
 
-/* What the control says: the live region the markup carries, and the visible half of the
- * "copied" state. It is empty until the script writes into it, so it takes no space. */
+/* The checkmark is the success tone whatever else is true of the button (focused, hovered). */
+.copy-button[data-copied='true'],
+.copy-button[data-copied='true']:focus-visible,
+.copy-button[data-copied='true']:hover {
+  color: var(--ok);
+}
+
+/* What the control says: the live region the markup carries. "Copied" is for a screen reader
+ * only — the checkmark is what a sighted reader sees — so in that tone it is visually hidden and
+ * still in the accessibility tree. A refused copy is said to everyone: drawn over the button, out
+ * of the flow, growing leftwards from its right edge on one line, so it never moves the block. */
 .copy-status {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 100%;
+  padding-inline: var(--space-2xs);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.copy-status:empty {
+  opacity: 0;
+}
+
+.copy-status[data-tone='ok'] {
+  width: 1px;
+  min-width: 0;
+  height: 1px; /* taste-skill-ignore: the visually-hidden pattern, not a drawn rule */
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
 }
 
 /* ---- 2c. the bold look (redesign part P1) ------------------------------------------------
@@ -719,6 +821,35 @@ a.skip-link:focus {
 [data-reveal]:not([data-revealed]) {
   opacity: 0;
   transform: translateY(12px);
+}
+
+/* The inner pages' header (the owner's question of 2026-10-24, "same easing animation as the
+ * Home page on the rest of the pages", then "too fast to see"): the title rises 18px and fades
+ * in over 550ms on the site's `--ease-out` as the page loads, and the line under it follows
+ * 100ms later. It is a marketing entrance a reader is meant to see, so it is longer than the
+ * site's UI motion. CSS only (`@starting-style`, the first frame the header is drawn in) and
+ * never scroll-triggered, so a page with no script, or a browser without `@starting-style`,
+ * shows the header as it is. A reader who asked for less motion gets no movement: the layout's
+ * reduce rule makes any transition 1ms. The home page's own headline is not one of these. */
+@media (prefers-reduced-motion: no-preference) {
+  main h1.display-xl:not(.hero-tagline),
+  main h1.display-xl:not(.hero-tagline) + p {
+    transition:
+      opacity var(--duration-entrance) var(--ease-out),
+      transform var(--duration-entrance) var(--ease-out);
+  }
+
+  main h1.display-xl:not(.hero-tagline) + p {
+    transition-delay: 100ms;
+  }
+
+  @starting-style {
+    main h1.display-xl:not(.hero-tagline),
+    main h1.display-xl:not(.hero-tagline) + p {
+      opacity: 0;
+      transform: translateY(18px);
+    }
+  }
 }
 
 /* A printed page shows every part, whether or not it was scrolled to (the failsafe the

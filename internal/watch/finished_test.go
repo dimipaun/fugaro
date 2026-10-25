@@ -108,6 +108,45 @@ func TestCleanURLRefusesNonHTTPSAndOverlongURL(t *testing.T) {
 	}
 }
 
+// A finished run's whole id is not on the interactive screen (owner request
+// 2026-10-24: its row names the run in the short form every other row shows,
+// and a finished row is a one-liner that cannot be expanded), so `--plain` and
+// `--json` are that run's route to the id `fugaro logs RUN` and `fugaro
+// diagnose RUN` want (design generic-tool §10.3). A short fixture id would
+// pass either way, so this pins a real one, where shortRun drops the stamp.
+func TestFinishedWholeRunIDAwayFromTheScreenIsInPlainAndJSON(t *testing.T) {
+	const full = "20261023-021512-abcd"
+	v := fixture()
+	v = MergeFinished(v, Config{}, []FinishedRun{
+		{Run: full, Slug: "acme__app", Title: "Fix the login bug", Status: "succeeded",
+			FinishedAt: t0.Add(-time.Minute)},
+	}, t0)
+	sel := Cursor{Slug: "acme__app", Run: full}
+	got := frame(v, 120, 0, func(o *RenderOptions) {
+		o.Selected, o.Expanded = sel, map[Cursor]bool{sel: true}
+	})
+	if strings.Contains(got, full) {
+		t.Fatalf("the screen shows the whole id for a finished run:\n%s", got)
+	}
+	if !strings.Contains(got, shortRun(full)) {
+		t.Fatalf("the screen lost the finished run's short id:\n%s", got)
+	}
+	if strings.Contains(got, "    run ") {
+		t.Fatalf("a finished row drew a detail, so the whole id would be reachable there instead:\n%s", got)
+	}
+	var b strings.Builder
+	if err := RenderPlain(&b, "aurora", v, nil, PlainOptions{ASCII: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), full) {
+		t.Fatalf("--plain dropped the finished run's whole id:\n%s", b.String())
+	}
+	fin := BuildJSON("aurora", v).Finished
+	if len(fin) != 1 || fin[0].Run != full {
+		t.Fatalf("--json's finished runs = %+v, want one row with the whole id %q", fin, full)
+	}
+}
+
 // A finished run's age is never negative, even if its FinishedAt is after
 // now (clock skew between the writer and the reader).
 func TestFinishedRowAgeNeverNegative(t *testing.T) {

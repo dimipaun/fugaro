@@ -93,6 +93,51 @@
   // one a reader cannot tell from a fresh one.
   var CLEARS_AFTER_MS = 4000
 
+  // How long the copy button shows its checkmark before it is a clipboard again.
+  var COPIED_MS = 1600
+
+  // A short line that changes its words (the copy confirmation, the hero card's stages)
+  // crossfades instead of snapping (owner-approved motion opportunities 2026-10-23): the old
+  // words fade out and the new ones in, 120 ms in all (`--duration-fast`), on the site's
+  // `--ease-out`. Opacity only, through the element's own `animate()`, so a browser without it
+  // and a reader who asked for less motion get the plain swap.
+  var SWAP_MS = 120
+  var SWAP_EASE = 'cubic-bezier(0.22, 1, 0.36, 1)'
+
+  function swaps(el) {
+    if (typeof el.animate !== 'function' || !window.matchMedia) return false
+    return !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  }
+
+  // `then` runs at the moment the words change. A newer swap on the same element wins: an older
+  // fade that finishes after it does not write its words over the newer ones.
+  function swapText(el, text, then) {
+    var turn = (el.fugaroSwap || 0) + 1
+    el.fugaroSwap = turn
+    function apply() {
+      el.textContent = text
+      if (then) then()
+    }
+    if (!swaps(el) || el.textContent === text) {
+      apply()
+      return
+    }
+    // From nothing, the new words only fade in; otherwise half the time out, half in.
+    if (!el.textContent) {
+      apply()
+      el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: SWAP_MS, easing: SWAP_EASE })
+      return
+    }
+    var out = el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: SWAP_MS / 2, easing: SWAP_EASE, fill: 'forwards' })
+    out.onfinish = function () {
+      if (el.fugaroSwap === turn) {
+        apply()
+        if (text) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: SWAP_MS / 2, easing: SWAP_EASE })
+      }
+      out.cancel()
+    }
+  }
+
   // The menu, and everything that is open in it (P3).
   var OPEN_MENUS = '.site-nav details[open]'
 
@@ -135,12 +180,15 @@
   // previous message's timer is not cancelled but guarded instead: a second copy replaces
   // the text, and the older timer no longer matches it, so the newer message keeps its own
   // full time on screen.
-  function say(block, message) {
+  function say(block, message, tone) {
     var status = block.querySelector('[data-copy-status]')
     if (!status) return
-    status.textContent = message
+    // `ok` is said to a screen reader only (the checkmark is the sighted reader's); anything
+    // else, a refused copy, is shown as well.
+    status.setAttribute('data-tone', tone || 'error')
+    swapText(status, message)
     window.setTimeout(function () {
-      if (status.textContent === message) status.textContent = ''
+      if (status.textContent === message) swapText(status, '')
     }, CLEARS_AFTER_MS)
   }
 
@@ -149,7 +197,18 @@
     if (!source) return
     navigator.clipboard.writeText(source.textContent || '').then(
       function () {
-        say(block, 'Copied')
+        say(block, 'Copied', 'ok')
+        // The clipboard icon becomes a checkmark for a moment; the status line is what a screen
+        // reader is told. A newer copy restarts the moment rather than being cut short by an
+        // older timer.
+        var button = block.querySelector('[data-copy-button]')
+        if (!button) return
+        var turn = (button.fugaroCopied || 0) + 1
+        button.fugaroCopied = turn
+        button.setAttribute('data-copied', 'true')
+        window.setTimeout(function () {
+          if (button.fugaroCopied === turn) button.setAttribute('data-copied', 'false')
+        }, COPIED_MS)
       },
       function () {
         // A browser that refuses the write — an unfocused document, a permission the reader
@@ -746,6 +805,10 @@
   var STATUS_ID = 'consent-banner-status'
   var MAIN_ID = 'main'
 
+  // How long the bar's collapse may take before it is hidden anyway: the stylesheet's 200 ms
+  // (`--duration-collapse`) with room to spare, so the timer only ever catches a missed event.
+  var COLLAPSE_FLOOR_MS = 320
+
   // The two choices, as the markup names them, and the one answer that loads anything.
   var GRANTED = 'granted'
   var DENIED = 'denied'
@@ -959,13 +1022,39 @@
     if (!banner) return
 
     var status = document.getElementById(STATUS_ID)
+    var closing = false
 
-    function dismiss() {
+    function gone() {
       banner.hidden = true
+      if (closing) banner.removeAttribute('data-consent-closing')
       // The early decision's mark (`consent-early.js`) is what draws the banner in the flow from
       // the first frame; the decision is made, so the mark goes with the banner.
       if (document.documentElement && document.documentElement.removeAttribute) {
         document.documentElement.removeAttribute('data-consent-ask')
+      }
+    }
+
+    function dismiss() {
+      // The bar collapses before it is hidden (owner-approved motion opportunities 2026-10-23):
+      // the stylesheet runs the collapse from `data-consent-closing`, and `hidden` follows when
+      // it ends. The decision is already stored and announced by then; only the drawing waits.
+      // A browser with no `matchMedia` is too old for the collapse and is answered at once, and
+      // the timer is the floor for a `transitionend` that never comes (a bar not being drawn).
+      if (window.matchMedia && banner.removeAttribute) {
+        closing = true
+        var done = false
+        var finish = function () {
+          if (done) return
+          done = true
+          gone()
+        }
+        banner.addEventListener('transitionend', function (event) {
+          if (event && event.target === banner && event.propertyName === 'opacity') finish()
+        })
+        window.setTimeout(finish, COLLAPSE_FLOOR_MS)
+        banner.setAttribute('data-consent-closing', '')
+      } else {
+        gone()
       }
       // Focus goes to the content, not back to the top of the page and not to a control
       // that has just disappeared. `tabindex="-1"` makes <main> a focus target without
@@ -978,6 +1067,9 @@
     }
 
     function choose(decision) {
+      // One decision per banner: a second press or an Escape while the bar collapses is not a
+      // new choice, exactly as it could not be once the bar was gone.
+      if (closing) return
       if (!keep(banner, decision)) {
         // The answer cannot be kept, so it is not honoured: nothing is loaded, the banner
         // stays, and the status line says why.
@@ -1087,9 +1179,16 @@
     // the rows do not tick in lockstep.
     function advance(entry, step, delay) {
       entry.timers.push(window.setTimeout(function () {
-        entry.stage.textContent = LIVE_STAGES[step]
-        if (step === LIVE_STAGES.length - 1) entry.item.removeAttribute('data-stage')
-        else {
+        var last = step === LIVE_STAGES.length - 1
+        // The stage's words crossfade, and the row's finished look arrives with its last word:
+        // `data-settled` is what settles the row's icon into place, once, since a row reaches
+        // its last stage once (the owner-approved motion opportunities of 2026-10-23).
+        swapText(entry.stage, LIVE_STAGES[step], function () {
+          if (!last) return
+          entry.item.removeAttribute('data-stage')
+          entry.item.setAttribute('data-settled', '')
+        })
+        if (!last) {
           entry.item.setAttribute('data-stage', 'working')
           advance(entry, step + 1, 400 + Math.floor(Math.random() * 300))
         }
@@ -1157,6 +1256,197 @@
       waiting = window.setTimeout(draw, 250)
     })
     draw()
+  }
+
+  // ---- the four levels on How it works, as a slider (owner's preview feedback, 2026-10-24) --
+  //
+  // The section is four stills in the markup; this makes it a slider and nothing without it
+  // does. It advances by itself every LEVELS_ADVANCE_MS, and only while the reader is not
+  // reading: not under the pointer, not with the focus inside, not with the tab hidden, not off
+  // screen, and never for a reader who asked for less motion (it starts paused for them). Any
+  // press of Previous, Next or a dot pauses it, and Pause/Play is always on the bar. While it
+  // advances by itself the slides are not announced (`aria-live="off"`); paused, a change is.
+  //
+  // Four seconds is the time to read a slide's headline: each board's name and the line under
+  // it (at most 12 words, under three seconds at an ordinary 250 words a minute), plus about a
+  // second to find one's place in the drawing. Two seconds would move on mid-sentence. The
+  // board's longer note under the drawing (up to about 45 words) is for a reader who stops it,
+  // which the pointer, the focus or Pause each do.
+  var LEVELS = '[data-levels]'
+  var LEVELS_ADVANCE_MS = 4000
+  var LEVELS_SWIPE_PX = 40
+
+  function levels() {
+    if (typeof document.querySelector !== 'function') return
+    var root = document.querySelector(LEVELS)
+    if (!root) return
+    var slides = root.querySelectorAll('[data-levels-slide]')
+    var track = root.querySelector('[data-levels-track]')
+    var bar = root.querySelector('[data-levels-controls]')
+    var toggle = root.querySelector('[data-levels-toggle]')
+    var prev = root.querySelector('[data-levels-prev]')
+    var next = root.querySelector('[data-levels-next]')
+    var dots = root.querySelectorAll('[data-levels-dot]')
+    var count = slides.length
+    if (count < 2 || !track || !bar || !toggle || !prev || !next) return
+    var quiet = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null
+    var current = 0
+    var playing = !(quiet && quiet.matches)
+    var hovered = false
+    var focused = false
+    var onScreen = !('IntersectionObserver' in window)
+    var timer = null
+
+    function show(index) {
+      current = (index + count) % count
+      for (var i = 0; i < count; i++) {
+        slides[i].setAttribute('data-current', i === current ? 'true' : 'false')
+        slides[i].setAttribute('aria-hidden', i === current ? 'false' : 'true')
+      }
+      for (var d = 0; d < dots.length; d++) {
+        dots[d].setAttribute('aria-current', d === current ? 'true' : 'false')
+      }
+    }
+
+    function advancing() {
+      return playing && !hovered && !focused && onScreen && !document.hidden
+    }
+
+    // The interval starts again from zero whenever the slider resumes, so a reader who looks
+    // away from a slide is given its full time when they look back.
+    function schedule() {
+      if (timer) window.clearInterval(timer)
+      timer = null
+      track.setAttribute('aria-live', advancing() ? 'off' : 'polite')
+      if (advancing()) {
+        timer = window.setInterval(function () {
+          show(current + 1)
+        }, LEVELS_ADVANCE_MS)
+      }
+    }
+
+    function setPlaying(value) {
+      playing = value
+      toggle.textContent = value ? 'Pause' : 'Play'
+      toggle.setAttribute('aria-label', value ? 'Pause the levels' : 'Play the levels')
+      schedule()
+    }
+
+    function go(index) {
+      show(index)
+      setPlaying(false)
+    }
+
+    toggle.addEventListener('click', function () {
+      setPlaying(!playing)
+    })
+    prev.addEventListener('click', function () {
+      go(current - 1)
+    })
+    next.addEventListener('click', function () {
+      go(current + 1)
+    })
+    for (var d = 0; d < dots.length; d++) {
+      ;(function (dot) {
+        dot.addEventListener('click', function () {
+          go(parseInt(dot.getAttribute('data-levels-dot'), 10) || 0)
+        })
+      })(dots[d])
+    }
+    root.addEventListener('keydown', function (event) {
+      if (event.key === 'ArrowLeft') go(current - 1)
+      else if (event.key === 'ArrowRight') go(current + 1)
+    })
+    root.addEventListener('mouseenter', function () {
+      hovered = true
+      schedule()
+    })
+    root.addEventListener('mouseleave', function () {
+      hovered = false
+      schedule()
+    })
+    root.addEventListener('focusin', function () {
+      focused = true
+      schedule()
+    })
+    root.addEventListener('focusout', function (event) {
+      if (event && event.relatedTarget && root.contains(event.relatedTarget)) return
+      focused = false
+      schedule()
+    })
+    document.addEventListener('visibilitychange', schedule)
+    if (quiet && quiet.addEventListener) {
+      quiet.addEventListener('change', function (event) {
+        if (event.matches) setPlaying(false)
+      })
+    }
+
+    // A swipe on a touch screen is a press of Previous or Next.
+    var startX = null
+    track.addEventListener('pointerdown', function (event) {
+      startX = event.pointerType === 'touch' ? event.clientX : null
+    })
+    track.addEventListener('pointerup', function (event) {
+      if (startX === null) return
+      var dx = event.clientX - startX
+      startX = null
+      if (Math.abs(dx) >= LEVELS_SWIPE_PX) go(dx < 0 ? current + 1 : current - 1)
+    })
+
+    if (!onScreen) {
+      new window.IntersectionObserver(function (entries) {
+        onScreen = entries[entries.length - 1].isIntersecting
+        schedule()
+      }, { threshold: 0.3 }).observe(root)
+    }
+
+    // A link to one level (`#level-3`) opens on it, paused.
+    var start = 0
+    var hash = window.location && window.location.hash ? window.location.hash.slice(1) : ''
+    for (var h = 0; h < count; h++) {
+      if (hash && slides[h].getAttribute('id') === hash) {
+        start = h
+        playing = false
+      }
+    }
+    window.addEventListener('hashchange', function () {
+      var id = window.location.hash.slice(1)
+      for (var k = 0; k < count; k++) if (slides[k].getAttribute('id') === id) go(k)
+    })
+
+    root.setAttribute('data-levels-ready', '')
+    bar.hidden = false
+    show(start)
+    setPlaying(playing)
+  }
+
+  // ---- the run picture on How it works: its four steps arrive once, in view -----------------
+  //
+  // The stylesheet holds the steps at their first frame from the first paint (paused, filling
+  // backwards) wherever scripts run and motion is welcome; this only starts them, by marking the
+  // picture `play` once it is in view. A picture already in view starts at once (the observer
+  // reports it on its first callback), and a browser with no IntersectionObserver starts at once
+  // too. A print shows the picture whole.
+  function runReveal() {
+    if (typeof document.querySelector !== 'function') return
+    var figure = document.querySelector('.run-diagram')
+    if (!figure) return
+    function play() {
+      figure.setAttribute('data-run-reveal', 'play')
+    }
+    window.addEventListener('beforeprint', play)
+    if (!('IntersectionObserver' in window)) {
+      play()
+      return
+    }
+    var seen = new IntersectionObserver(function (entries) {
+      for (var e = 0; e < entries.length; e++) {
+        if (!entries[e].isIntersecting) continue
+        play()
+        seen.disconnect()
+      }
+    }, { threshold: 0.35 })
+    seen.observe(figure)
   }
 
   // ---- entrances (the redesign's motion layer, step 9) ------------------------------------
@@ -1227,6 +1517,8 @@
     }
     // The hero's live card and the entrances, before the clipboard gate for the same reason.
     liveRun()
+    levels()
+    runReveal()
     entrances()
     var blocks = document.querySelectorAll('[data-copy]')
     if (blocks.length === 0) return
