@@ -321,13 +321,6 @@ type run struct {
 	// top of, "" when the run wrote no item at all: the report names it as
 	// the commit the suite ran on (report.go's testsLine).
 	filedFrom string
-	// closedBacklog is the ids of the backlog items this run closed as the
-	// follow-up that fixed them (D31, plan T4.7), in the order it closed
-	// them: the pull request body's status section names them beside the
-	// ids it filed. It is not a record field: the record's own Backlog is
-	// what the run *filed*, and a reader of the branch has the closed
-	// items themselves, whose `## Closed by` names this run's pull request.
-	closedBacklog []string
 	// ckpt is the checkpoint pushes' state (checkpoint.go).
 	ckpt checkpointState
 	// skipPR is set when the check gate already ended the run (clean, or an
@@ -2978,7 +2971,12 @@ func (r *run) fileOpenItems(ctx context.Context) bool {
 		return false
 	}
 	r.rec.Backlog = append(r.rec.Backlog, ids...)
-	r.closedBacklog = append(r.closedBacklog, closed...)
+	// The record's list is bounded; the closed items on the branch are the
+	// whole account whatever it holds.
+	r.rec.BacklogClosed = append(r.rec.BacklogClosed, closed...)
+	if len(r.rec.BacklogClosed) > runstore.MaxBacklogClosed {
+		r.rec.BacklogClosed = r.rec.BacklogClosed[:runstore.MaxBacklogClosed]
+	}
 	return true
 }
 
