@@ -3,6 +3,7 @@ package watch
 import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // What a run's launch.json says about it: the job it executes on, the identity
@@ -79,10 +80,11 @@ type RunFacts struct {
 	// launch.json for the run, or the one it has recorded none — never a
 	// value this package invents.
 	//
-	// UNTRUSTED display text a launcher wrote, sanitised like the launcher
-	// beside it (safetext.Field, so one launch.json reads the same in watch
-	// --json and fugaro runs ls --json), and never an authority: nothing
-	// decides anything by it.
+	// UNTRUSTED display text a launcher wrote, dropped by MergeFacts unless
+	// it passes task.PlanTaskProblem and sanitised like the launcher beside
+	// it (safetext.Field), exactly as runview.Join does, so one launch.json
+	// reads the same in watch --json and fugaro runs ls --json; never an
+	// authority: nothing decides anything by it.
 	PlanTask string
 }
 
@@ -114,7 +116,10 @@ func MergeFacts(v View, facts Facts) View {
 				rows[j].Job, rows[j].Profile = clean(f.Job), clean(f.Profile)
 				rows[j].Provider, rows[j].Account = clean(f.Provider), clean(f.Account)
 				rows[j].LaunchedBy = safetext.Field(f.LaunchedBy)
-				rows[j].PlanTask = safetext.Field(f.PlanTask)
+				rows[j].PlanTask = ""
+				if task.PlanTaskProblem(f.PlanTask) == "" {
+					rows[j].PlanTask = safetext.Field(f.PlanTask)
+				}
 			}
 		}
 	}

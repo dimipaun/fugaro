@@ -90,3 +90,36 @@ func TestWatchJSONPlanTask(t *testing.T) {
 			strings.Count(string(data), `"plan_task"`), data)
 	}
 }
+
+// TestMergeFactsDropsAPlanTaskThatIsNotOne: launch.json is writable by the
+// run's own service account, so MergeFacts keeps a plan task only when it
+// passes the launcher's shape check (task.PlanTaskProblem), as runview.Join
+// does for runs ls --json: a traversal, spaces or 500 characters reach
+// neither a live row nor a finished one.
+//
+// Mutation caught: sanitising and capping only.
+func TestMergeFactsDropsAPlanTaskThatIsNotOne(t *testing.T) {
+	v := View{Now: t0, Day: "2026-10-03", Mode: "enforce", Conn: Connection{Kind: ConnLive},
+		Repos: []RepoBlock{{Slug: "acme__app", Name: "acme/app", Runs: []RunRow{
+			mkRun("r-dots", "a", "implement", nil),
+			mkRun("r-spaces", "b", "implement", nil),
+			mkRun("r-long", "c", "implement", nil),
+		}}}}
+	v = MergeFinished(v, Config{}, []FinishedRun{
+		{Run: "r-done", Slug: "acme__app", Title: "Old work", Status: "succeeded", Outcome: "ready",
+			FinishedAt: t0.Add(-time.Hour)},
+	}, t0)
+	v = MergeFacts(v, Facts{
+		{Slug: "acme__app", Run: "r-dots"}:   {PlanTask: "../x"},
+		{Slug: "acme__app", Run: "r-spaces"}: {PlanTask: "setup wizard/W 1.3"},
+		{Slug: "acme__app", Run: "r-long"}:   {PlanTask: "plan/" + strings.Repeat("x", 495)},
+		{Slug: "acme__app", Run: "r-done"}:   {PlanTask: "../../etc/x"},
+	})
+	data, err := json.Marshal(BuildJSON("aurora", v))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"plan_task"`) {
+		t.Fatalf("a misshapen plan task reached watch --json:\n%s", data)
+	}
+}

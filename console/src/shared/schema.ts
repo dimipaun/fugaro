@@ -116,8 +116,10 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   launched_by: 'person',
   // GV1.2's key on the live run shapes and on `runview.Row`: the plan task the
   // run says it works on, as its own `launch.json` recorded it. An **id** the
-  // plan's document spells a node with (`<plan>/<task>`, its shape checked where
-  // it is written and where it is read), so a label -- the class `job`,
+  // plan's document spells a node with (`<plan>/<task>`, its shape checked by
+  // `task.PlanTaskProblem` where it is written, and where the CLI reads it back:
+  // `runview.Join` and `watch.MergeFacts` drop an id that fails it, so the key
+  // is absent), so a label -- the class `job`,
   // `profile`, `provider` and `workflow` carry -- and not `person` and not
   // `sentence`: nothing here is prose, and a value that is not an id draws the
   // free-text rules' refusal rather than a link or a path.

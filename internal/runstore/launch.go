@@ -31,8 +31,10 @@ type Launch struct {
 	// launch.json carrying one is read by a CLI older than the field, and
 	// every launch.json written before it reads back with none. Untrusted
 	// display text a launcher wrote — the run's service account can write
-	// this object — shape-checked at both ends (task.PlanTaskProblem) and
-	// never an authorization input (the plan's constraint C3).
+	// this object — shape-checked at both ends by task.PlanTaskProblem
+	// (fugaro run refuses the flag; runview.Join and watch.MergeFacts drop
+	// an id that fails it) and never an authorization input (the plan's
+	// constraint C3).
 	PlanTask string `json:"plan_task,omitempty"`
 }
 

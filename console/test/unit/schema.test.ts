@@ -539,6 +539,19 @@ describe('both document shapes decode', () => {
     expect(RECORD_KEYS).toContain('derived')
   })
 
+  it('accepts a runs list whose rows carry plan_task, classed as a label', () => {
+    // GV1.2: `runs ls --json` writes `plan_task` on a row whose launch.json
+    // recorded a well-formed one. A list carrying it must decode, not read as
+    // skew, and the key must sit beside `launched_by` and `rigor` in the shape.
+    const withPlanTask = patched(DEGRADED_REAL, ['runs', 0, 'plan_task'], 'setup-wizard/W1.3')
+    const result = decodeDocument(withPlanTask, 'a runs list with plan_task')
+    expect(result.ok, result.ok ? '' : result.skew.because).toBe(true)
+    expect(RECORD_KEYS).toContain('plan_task')
+    expect(RECORD_KEYS).toContain('rigor')
+    expect(RECORD_KEYS.indexOf('plan_task')).toBe(RECORD_KEYS.indexOf('launched_by') + 1)
+    expect(wireTextClass('plan_task')).toBe('label')
+  })
+
   it('decodes a live document carrying every key `JSONRun` and `JSONFinished` can write', () => {
     // The same finding, on the shape the console actually consumes: `runs[]`,
     // `finished[]` and `ready[]` are closed too, and 0.9.0's five new keys on

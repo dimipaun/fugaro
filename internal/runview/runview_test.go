@@ -907,38 +907,36 @@ func TestJoinPlanTaskIsTheLaunchRecordsOwn(t *testing.T) {
 	}
 }
 
-// TestJoinPlanTaskIsSanitisedAndOmittedWhenAbsent: the id is text a
-// launcher wrote, so what reaches the JSON (and so the console) carries no
-// escape sequence, no control, no bidi override and no newline; and a run
-// whose launch.json recorded none emits no key at all, never "".
+// TestJoinPlanTaskDropsAnIDThatIsNotOne: the id is text whoever writes
+// launch.json chose, and the run's own service account can write it, so Join
+// keeps it only when it passes the launcher's own shape check
+// (task.PlanTaskProblem): an escape sequence, a bidi override, a newline, a
+// traversal, spaces or a value past the 128-byte bound yields no plan_task at
+// all, never a sanitised remnant the console could join by. A run whose
+// launch.json recorded none emits no key either, never "".
 //
-// Mutation caught: assigning in.Launch.PlanTask raw, or dropping omitempty
-// from the row's json tag.
-func TestJoinPlanTaskIsSanitisedAndOmittedWhenAbsent(t *testing.T) {
-	l := *launch
-	l.PlanTask = "setup-wizard/\x1b[2JW1.3" + string(rune(0x202e)) + "\nsetup-wizard/W9.9"
-	row := Join(Input{Task: spec, Launch: &l}, prices, now)
-	if strings.ContainsAny(row.PlanTask, "\x1b\n\r\t\x00\x07") {
-		t.Errorf("hostile control survived: %q", row.PlanTask)
-	}
-	for _, r := range row.PlanTask {
-		if r == 0x202e || r == 0x2028 || r == 0x2029 {
-			t.Errorf("hostile rune %U survived: %q", r, row.PlanTask)
+// Mutation caught: sanitising and capping only (the previous read side), or
+// dropping omitempty from the row's json tag.
+func TestJoinPlanTaskDropsAnIDThatIsNotOne(t *testing.T) {
+	for _, id := range []string{
+		"setup-wizard/\x1b[2JW1.3" + string(rune(0x202e)) + "\nsetup-wizard/W9.9",
+		"../x",
+		"setup wizard/W 1.3",
+		"plan/" + strings.Repeat("x", 495),
+	} {
+		l := *launch
+		l.PlanTask = id
+		row := Join(Input{Task: spec, Launch: &l}, prices, now)
+		if row.PlanTask != "" {
+			t.Errorf("launch.json plan_task %q reads as %q, want none", id, row.PlanTask)
 		}
-	}
-	if !strings.Contains(row.PlanTask, "setup-wizard") {
-		t.Errorf("the value was destroyed rather than sanitised: %q", row.PlanTask)
-	}
-	data, err := json.Marshal(row)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
-		t.Fatal(err)
-	}
-	if m["plan_task"] != row.PlanTask {
-		t.Errorf("plan_task = %v, want %q", m["plan_task"], row.PlanTask)
+		data, err := json.Marshal(row)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), "plan_task") {
+			t.Errorf("a dropped plan task still emitted the key: %s", data)
+		}
 	}
 	empty, err := json.Marshal(Join(Input{Task: spec, Launch: launch}, prices, now))
 	if err != nil {

@@ -147,8 +147,10 @@ type Row struct {
 	// in from the task, which carries it for the recovery path and --retry
 	// rather than for display.
 	//
-	// UNTRUSTED display text, sanitised here for the same reason the
-	// launcher is (safetext.Field): a launcher writes it, and both documents
+	// UNTRUSTED display text, dropped here unless it passes the launcher's
+	// own shape check (task.PlanTaskProblem: the run's service account can
+	// write launch.json too) and sanitised for the same reason the launcher
+	// is (safetext.Field): a launcher writes it, and both documents
 	// this row appears in — runs ls --json and the console that reads it —
 	// are rendered as they are. It is a DISPLAY-ONLY join hint (the plan's
 	// constraint C3): nothing decides anything by it, it is never joined
@@ -308,7 +310,11 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 	if in.Launch != nil {
 		row.Execution, row.LogURL = in.Launch.Execution, in.Launch.LogURL
 		row.LaunchedBy = safetext.Field(in.Launch.LaunchedBy)
-		row.PlanTask = safetext.Field(in.Launch.PlanTask)
+		// The run's own service account can write launch.json, so an id the
+		// launcher could never have accepted is dropped, not shown.
+		if task.PlanTaskProblem(in.Launch.PlanTask) == "" {
+			row.PlanTask = safetext.Field(in.Launch.PlanTask)
+		}
 	}
 	r, e := in.Record, in.Exec
 	followUpFields(&row, in.Task, r)
