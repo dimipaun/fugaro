@@ -176,17 +176,13 @@ describe('the replies it will not draw', () => {
     })
   }
 
-  it('refuses an edge the engine routed no sections for, by drawing it straight', async () => {
-    // The one arm that is *not* a refusal: ELK omits `sections` for an edge it
-    // routes as a straight line, and the client draws it from the two points it
-    // has rather than inventing a route.
+  it('accepts an edge the engine routed no sections for, with no route', async () => {
+    // The one arm that is *not* a refusal: ELK can omit `sections` for an edge,
+    // and the client answers it with an empty route rather than inventing one.
     const { worker, client: layoutClient } = client()
     const pending = layoutClient.layout(GRAPH)
-    worker.answer({
-      id: 2,
-      data: { ...PLACED, edges: [{ id: 'a->b', sections: [{ startPoint: { x: 0, y: 0 }, endPoint: { x: 0, y: 1 } }] }] },
-    })
-    await expect(pending).resolves.toMatchObject({ edges: [{ id: 'a->b' }] })
+    worker.answer({ id: 2, data: { ...PLACED, edges: [{ id: 'a->b' }] } })
+    await expect(pending).resolves.toMatchObject({ edges: [{ id: 'a->b', sections: [] }] })
   })
 
   it('refuses a reply for a request this client never made', async () => {

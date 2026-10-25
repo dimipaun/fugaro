@@ -6,10 +6,19 @@
 // bytes; `test/unit/layout-client.test.ts` holds the protocol. Neither can say
 // that a **browser** starts the worker from `app://console/elk-worker.min.js`
 // -- that is `script-src 'self'` doing its job with no `worker-src` directive
-// -- or that the CSP still refuses `new Function` *inside the worker's own
-// realm*. That second one is the point of the task: the served file is
-// minified third-party code, and the single relaxation that would make it
-// dangerous is eval, so the directive is asserted where the code would use it.
+// -- or that the console's CSP is **enforced inside the worker's own realm**.
+//
+// That second claim is witnessed with a fetch, not with eval. Code that
+// Playwright runs through `evaluate` arrives over the DevTools protocol, and
+// CDP-evaluated code is not subject to the eval check: `new Function` and
+// `(0, eval)` succeed that way even in the document, whose CSP has no
+// `'unsafe-eval'`, so an eval probe here would pass or fail on Playwright's
+// plumbing rather than on the policy. A fetch is checked whoever started it,
+// so the worker's `fetch('data:...')` is refused by `connect-src 'none'` and the
+// worker's own realm reports the violation. The absence of `'unsafe-eval'`
+// itself is pinned where it is a string: `test/unit/window.test.ts` and
+// `test/unit/csp-document.test.ts` hold the policy every served file, the
+// worker included, carries in its header.
 
 import { join } from 'node:path'
 
@@ -118,16 +127,31 @@ test.describe('the layout worker', () => {
     expect([placed.width, placed.height]).toEqual([100, 40])
   })
 
-  test('refuses new Function inside the worker (no unsafe-eval)', async () => {
+  test("enforces the console's CSP inside the worker: a fetch is refused by connect-src", async () => {
     const worker = await started()
-    const refused = await worker.evaluate(() => {
-      try {
-        new Function('return 1')()
-        return false
-      } catch {
-        return true
+    const witness = await worker.evaluate(async () => {
+      const violations: string[] = []
+      const listener = (event: Event): void => {
+        violations.push((event as SecurityPolicyViolationEvent).effectiveDirective)
       }
+      globalThis.addEventListener('securitypolicyviolation', listener)
+      let refused = false
+      try {
+        await fetch('data:text/plain,x')
+      } catch {
+        refused = true
+      }
+      // The report is queued as a task of its own, so it can land after the
+      // rejection: wait for it, boundedly, rather than reading too early.
+      for (let tries = 0; tries < 50 && violations.length === 0; tries += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      globalThis.removeEventListener('securitypolicyviolation', listener)
+      return { refused, violations }
     })
-    expect(refused, 'the CSP permits eval inside the worker, which is the one relaxation C5 forbids').toBe(true)
+    expect(witness.refused, 'the worker fetched a data: URL, so connect-src is not enforced in its realm').toBe(true)
+    expect(witness.violations, 'the worker reported no connect-src violation for the refused fetch').toContain(
+      'connect-src',
+    )
   })
 })

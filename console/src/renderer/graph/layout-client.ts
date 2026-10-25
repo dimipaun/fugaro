@@ -10,9 +10,11 @@
  * Every reply is validated before a coordinate reaches a transform. The worker
  * is minified third-party code behind one `SERVED_FILES` entry: a truncated, stale
  * or not-yet-registered worker still answers *something*, and a node placed at
- * `NaN` is a blank diagram rather than a failure. An id this client did not ask
- * about, or a coordinate that is not a finite number, is refused here, with the
- * reason, and the worker is dropped rather than asked again.
+ * `NaN` is a blank diagram rather than a failure. A coordinate that is not a
+ * finite number, or a node or edge this layout did not ask about, refuses that
+ * one layout, with the reason. A reply whose request id this client never sent
+ * cannot be matched to any layout, so it drops the worker: every outstanding
+ * layout is refused and the worker is not asked again.
  */
 
 export interface LayoutNode {
