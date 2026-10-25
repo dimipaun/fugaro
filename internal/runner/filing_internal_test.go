@@ -42,6 +42,7 @@ var openRound = runstore.ReviewSummary{Round: 2, Tier: runstore.TierSenior, Verd
 // is a repository that configures no rigor at all, which is D19's case.
 func modeBase(t *testing.T, block string) string {
 	t.Helper()
+	testutil.IsolateGit(t)
 	const head = "version: 1\nproject: aurora\ngit: { provider: github }\n"
 	const tail = "workflows:\n  server: { commands: { build: make, test: make test } }\n"
 	return testutil.NewRemote(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": head + block + tail})
