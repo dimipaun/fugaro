@@ -391,7 +391,7 @@ describe('rigorIndex', () => {
     const document = { runs: [{ run: 'run-1', rigor: { mode: 'pro', from: 'repo', areas: [] } }] }
     const index = rigorIndex(document)
     expect(index.get('run-1')).toEqual({ mode: 'pro', from: 'repo', areas: [] })
-    document.runs[0].rigor.mode = 'hotfix'
+    ;(document.runs[0] as { rigor: { mode: string } }).rigor.mode = 'hotfix'
     expect(index.get('run-1')?.mode).toBe('pro')
   })
 })

@@ -43,6 +43,7 @@ import { loadFixture } from '../../src/source/fixture'
 import {
   CONSOLE_THEME,
   LIVE_POLL_MS,
+  LIVE_RIGOR_TTL_MS,
   RAIL_ADD_CLASS,
   RAIL_CLASS,
   RAIL_COLLAPSE_CLASS,
@@ -561,6 +562,79 @@ describe('the dashboard the entry mounts', () => {
       buttonFor(document, 'live').click()
       await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
       expect(calls.filter((call) => call.name === 'subscribeLive')).toHaveLength(2)
+    })
+
+    it('reads the rigor join on entry and then no more often than its own TTL', async () => {
+      // The Live screen's rows draw a mode the live frame does not carry, so the
+      // entry makes a second read -- `runs ls --json` -- and joins it by run id
+      // (`shared/rigor.ts`). **That read is not on the poll's clock**: a block is
+      // written once at bootstrap and the only thing a fresh read adds is a run
+      // that started since, so it is made on entry and then at most once per
+      // `LIVE_RIGOR_TTL_MS`. On the poll's 1 s clock it would be sixty
+      // invocations a minute of a command the Live screen does not otherwise
+      // need.
+      const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
+      const { bridge, calls } = fakeBridge({
+        replies: {
+          subscribeLive: () => snapshotReply(frame),
+          listRuns: () => ({ ok: true, data: { document: { project: 'example-project', runs: [], warnings: [] } } }),
+        },
+      })
+      await boot(bridge, new FakeDocument())
+      expect(calls.map((call) => call.name)).toEqual(['subscribeLive', 'listRuns'])
+
+      // Five polls, five seconds: the watch is read five more times and the join
+      // is not read again.
+      await vi.advanceTimersByTimeAsync(LIVE_POLL_MS * 5)
+      expect(calls.filter((call) => call.name === 'subscribeLive')).toHaveLength(6)
+      expect(calls.filter((call) => call.name === 'listRuns')).toHaveLength(1)
+
+      // Past the TTL the next tick refreshes it -- once, however many ticks the
+      // advance covers, because the read's own start is what the TTL is measured
+      // from.
+      await vi.advanceTimersByTimeAsync(LIVE_RIGOR_TTL_MS * 3)
+      expect(calls.filter((call) => call.name === 'listRuns').length).toBeGreaterThan(1)
+      expect(calls.filter((call) => call.name === 'listRuns').length).toBeLessThanOrEqual(5)
+    })
+
+    it('keeps the last rigor join when a later read of it is refused', async () => {
+      // A refused read is not a reason to take the chips off the rows: the map
+      // stays as it was, so a console whose `runs ls` fails for one tick draws
+      // the modes it already knew rather than a screen with no mode on it.
+      const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
+      let refusals = 0
+      const { bridge, calls } = fakeBridge({
+        replies: {
+          subscribeLive: () => snapshotReply(frame),
+          listRuns: () => {
+            refusals += 1
+            if (refusals === 1) {
+              return {
+                ok: true,
+                data: {
+                  document: {
+                    project: 'example-project',
+                    runs: [{ run: '20261015-120000-aa01', rigor: { mode: 'pro', from: 'repo' } }],
+                    warnings: [],
+                  },
+                },
+              }
+            }
+            return { ok: false, reason: 'the CLI refused this read' }
+          },
+        },
+      })
+      const document = await boot(bridge, new FakeDocument())
+      // The join answers a turn after the first drawing, so the chip lands on
+      // the next poll -- which is the same order every other read lands in.
+      await flush()
+      await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
+      expect(classed(panelOf(document), 'live-run-mode').map((node) => node.textContent)).toEqual(['Pro'])
+
+      await vi.advanceTimersByTimeAsync(LIVE_RIGOR_TTL_MS + LIVE_POLL_MS)
+      expect(calls.filter((call) => call.name === 'listRuns').length).toBeGreaterThan(1)
+      // The refused read drew no refusal screen and took no chip away.
+      expect(classed(panelOf(document), 'live-run-mode').map((node) => node.textContent)).toEqual(['Pro'])
     })
   })
 
