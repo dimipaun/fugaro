@@ -688,20 +688,27 @@ export function isMacPlatform(navigator: unknown): boolean {
 // The installation rail (desktop-console plan Task 6.3; design section 4.1).
 // ---------------------------------------------------------------------------
 
-/** RAIL_CLASS and the eleven below it are the rail's **twelve hooks on thirteen
- * elements** (design sections 2.1 and 4.1): `RAIL_ADD_CLASS` names the foot row
- * and the button inside it both, because a row and the control in it are one
- * region and the class names the region. The rules that select them are
- * `theme/base.css`'s, and they land in this task's commit with these elements --
- * a hook and the rule that selects it move together, because a stylesheet
- * written against a tree nothing draws is a rule nothing can see. */
+/** RAIL_CLASS and the thirteen below it are the rail's **fourteen hooks** (design
+ * sections 2.1 and 4.1): `RAIL_ADD_CLASS` names the foot row and the button
+ * inside it both, because a row and the control in it are one region and the
+ * class names the region. The rules that select them are `theme/base.css`'s, and
+ * they land in this task's commit with these elements -- a hook and the rule that
+ * selects it move together, because a stylesheet written against a tree nothing
+ * draws is a rule nothing can see.
+ *
+ * `RAIL_NAMELINE_CLASS` and `RAIL_WARNING_CLASS` are the owner's design ruling of
+ * 2026-10-25: a row's name line holds the installation's name **and the warning
+ * mark beside it**, which is why the name and the mark share a line element
+ * rather than sitting in the row's column one above the other. */
 export const RAIL_CLASS = 'console-rail'
 export const RAIL_HEAD_CLASS = 'console-rail-head'
 export const RAIL_TITLE_CLASS = 'console-rail-title'
 export const RAIL_COLLAPSE_CLASS = 'console-rail-collapse'
 export const RAIL_LIST_CLASS = 'console-rail-list'
 export const RAIL_ROW_CLASS = 'console-rail-row'
+export const RAIL_NAMELINE_CLASS = 'console-rail-nameline'
 export const RAIL_NAME_CLASS = 'console-rail-name'
+export const RAIL_WARNING_CLASS = 'console-rail-warning'
 export const RAIL_PROJECT_CLASS = 'console-rail-project'
 export const RAIL_STATE_CLASS = 'console-rail-state'
 export const RAIL_SPEND_CLASS = 'console-rail-spend'
@@ -754,6 +761,171 @@ export const RAIL_STATE_GLYPHS: Readonly<Record<RailState, string>> = Object.fre
  * figure** -- `n/a` and never `$0.00`, which would be a spend nobody measured. */
 export const RAIL_SPEND_UNREAD = 'no budget show document was read'
 
+/** RAIL_WARNING_GLYPH is the character the warning mark draws, and
+ * RAIL_WARNING_LABEL is the word it is announced with. The two are the mark's
+ * two halves and neither is the only one (design section 3.5): the glyph is what
+ * an operator sees beside the name, and the accessible name is the row's own
+ * sentence -- `railWarningName` below -- so the fact survives a screenshot that
+ * loses the tone, a reader that never draws the glyph, and a collapsed rail. */
+export const RAIL_WARNING_GLYPH = '⚠'
+export const RAIL_WARNING_LABEL = 'warning'
+
+/** railWarningName is the warning mark's accessible name: the word, and the
+ * issue view's own sentence for the row. The sentence is the main process's
+ * (`src/main/installationstate.ts` composes it) and goes through the sanitizer
+ * like every other string a document or the CLI wrote. */
+export function railWarningName(row: { readonly sentence: string }): string {
+  return `${RAIL_WARNING_LABEL}: ${textOf(row.sentence, 'the installation’s issue')}`
+}
+
+/** RAIL_ISSUE_UNREAD is this file's own sentence for a row whose state it could
+ * not read. It is the renderer's word and not the main process's, because the
+ * main process classifies every row it sends: a row whose `state` is missing or
+ * is not a state at all is a row this build does not understand, and the honest
+ * answer is the console's own "could not read" -- never `readable`, which would
+ * open an installation nothing has classified. */
+export const RAIL_ISSUE_UNREAD = 'the console could not read this installation’s state'
+
+/**
+ * RailIssue is the four issues the main process classifies an installation with
+ * (`InstallationIssue`, `src/main/installationstate.ts`), plus `'unknown'`: this
+ * file's own word for a state it could not read. `'unknown'` is deliberately not
+ * one of the main process's four -- a fifth issue would be a claim about the
+ * machine rather than about this document -- and it is the one value that is
+ * never `readable`.
+ */
+export type RailIssue = 'none' | 'store' | 'config' | 'binary' | 'stale' | 'unknown'
+
+/** RAIL_ISSUES is the vocabulary `railRows` accepts from the wire, and it is the
+ * main process's four: a fifth word from a newer console is a state this build
+ * does not know, and it is drawn as `'unknown'` -- a warning the operator can
+ * read rather than a row this build would open on a guess. */
+const RAIL_ISSUES: readonly RailIssue[] = Object.freeze(['none', 'store', 'config', 'binary', 'stale'])
+
+/**
+ * RailRow is one installation as this document draws it: what the CLI listed and
+ * the console recorded, reduced to the fields the rail and the issue view use.
+ *
+ * It is **not** `InstallationsListRow`. That type is the main process's
+ * (`src/main/onboarding.ts`), it carries facts this document draws nowhere (the
+ * GCP project, the region, the mode), and a sandboxed renderer cannot import it:
+ * what crosses is JSON, and `railRows` is the one place it is read -- so a row
+ * this file cannot read is a row it refuses to open rather than one it opens
+ * with fields defaulted.
+ */
+export interface RailRow {
+  readonly project: string
+  readonly issue: RailIssue
+  /** `readable` is the main process's own answer to "does a click open this
+   * installation": true for every issue but the three refusals, and true for
+   * `stale` (the owner's ruling of 2026-10-25: an installation whose shared
+   * config is overdue is still opened, because the reader returned its fields).
+   * It is **false** for `'unknown'`, which is this file's refusal to open a row
+   * nothing has classified. */
+  readonly readable: boolean
+  /** `sentence` is the issue view's one plain sentence, and the warning mark's
+   * accessible name. Empty when the row has no issue. */
+  readonly sentence: string
+  /** `command` is the exact command the sentence names, for the issue view's
+   * own line. Empty when there is none to run. */
+  readonly command: string
+  /** `details` is the CLI's own text about this installation, verbatim, for the
+   * issue view's disclosure. */
+  readonly details: readonly string[]
+  /** `open` is the one row the console is open on, and the rail's selected row
+   * (the main process decides it: `openProject`). */
+  readonly open: boolean
+  /** `active` is the operator's remembered choice in the store, which this
+   * document never rewrites and which differs from `open` in exactly the case
+   * the owner's ruling names. */
+  readonly active: boolean
+  /** `saved` is whether this console holds a record of the installation at all,
+   * which is what decides whether there is anything to remove: the main
+   * process's removal refuses a project it has no entry for. */
+  readonly saved: boolean
+  readonly checkout: string | null
+  readonly checkouts: readonly string[]
+}
+
+/**
+ * railRows reads one `installation.list` answer: every row, in the order the
+ * main process sent them, or `null` when the answer is not a list at all.
+ *
+ * **It is a door, not a cast.** The renderer's other reads hand a document to
+ * `schema.ts`; this one is small enough to read here, and every field is checked
+ * because the answer is the *console's own* main process only in the shipped
+ * app: a bridge is a seam, a test drives it with a fake, and a row read as
+ * `undefined` and drawn as `undefined` is a rail that says an installation is
+ * called nothing. A row with no name is dropped -- it names no installation and
+ * nothing could be asked about it -- and a row whose `state` cannot be read is
+ * kept with `'unknown'`, because a row that exists and cannot be opened is
+ * exactly what the rail exists to show.
+ *
+ * `null` is the answer for a reply that is not a reply, or one whose `rows` is
+ * not an array: the caller draws its refusal and keeps the rows it had, which is
+ * the same direction every other read in this file fails in.
+ */
+export function railRows(reply: unknown): readonly RailRow[] | null {
+  const answer = replyData(reply)
+  if (!answer.ok) return null
+  const data = answer.data
+  const document =
+    typeof data === 'object' && data !== null && !Array.isArray(data)
+      ? (data as Record<string, unknown>)
+      : null
+  const listed = document === null ? null : document['rows']
+  if (!Array.isArray(listed)) return null
+  const rows: RailRow[] = []
+  for (const raw of listed) {
+    const row =
+      typeof raw === 'object' && raw !== null && !Array.isArray(raw)
+        ? (raw as Record<string, unknown>)
+        : null
+    if (row === null) continue
+    const project = row['project']
+    if (typeof project !== 'string' || project === '') continue
+    const state = row['state']
+    const held =
+      typeof state === 'object' && state !== null && !Array.isArray(state)
+        ? (state as Record<string, unknown>)
+        : null
+    const issue = held === null ? 'unknown' : railIssueOf(held['issue'])
+    rows.push(
+      Object.freeze({
+        project,
+        issue,
+        readable: issue !== 'unknown' && held?.['readable'] === true,
+        sentence: held === null ? RAIL_ISSUE_UNREAD : textOf(held['sentence'], 'the installation’s issue'),
+        command: held === null ? '' : textOf(held['command'], 'the installation’s command'),
+        details: held === null ? Object.freeze([]) : stringsOf(held['details']),
+        open: row['open'] === true,
+        active: row['active'] === true,
+        saved: row['saved'] === true,
+        checkout: typeof row['checkout'] === 'string' && row['checkout'] !== '' ? row['checkout'] : null,
+        checkouts: stringsOf(row['checkouts']),
+      }),
+    )
+  }
+  return Object.freeze(rows)
+}
+
+/** railIssueOf is one wire word as this file's vocabulary: the main process's
+ * four, or `'unknown'` for anything else -- a word from a newer console, a
+ * number, a missing field. */
+function railIssueOf(raw: unknown): RailIssue {
+  return RAIL_ISSUES.includes(raw as RailIssue) ? (raw as RailIssue) : 'unknown'
+}
+
+/** stringsOf is a list of strings as this file draws it: each one through
+ * `textOf`, and anything that is not a string dropped rather than drawn as
+ * `undefined`. */
+function stringsOf(raw: unknown): readonly string[] {
+  if (!Array.isArray(raw)) return Object.freeze([])
+  return Object.freeze(
+    raw.filter((one): one is string => typeof one === 'string').map((one) => textOf(one, 'the CLI’s own line')),
+  )
+}
+
 /**
  * railSpend is the one figure the rail's row draws: `global.counted_usd` from a
  * `budget.show` document, which is the figure the caps panel counts its caps
@@ -773,22 +945,29 @@ export function railSpend(raw: unknown): Reading {
   return readNumber(block === null ? undefined : block['counted_usd'], 'global.counted_usd')
 }
 
-/** RailView is the drawn rail and the four writes this file makes to it. The
- * rail is drawn once and updated in place, rather than redrawn on every frame:
- * it is chrome, and a rail rebuilt under the operator's pointer is a rail that
- * loses its focus. */
+/** RailView is the drawn rail and the writes this file makes to it. The rail's
+ * own regions are drawn once and updated in place, rather than redrawn on every
+ * frame: it is chrome, and a rail rebuilt under the operator's pointer is a rail
+ * that loses its focus. Its *rows* are the one part that is rebuilt, because a
+ * row is a fact about the machine rather than about this document -- a choose, a
+ * removal and a checkout all end in a fresh list read (`setRows`). */
 export interface RailView {
   readonly root: DomElement
-  /** setState writes the state word and its glyph. */
+  /** setState writes the state word and its glyph, on the row the console is
+   * open on. Every other row is `idle`, which is the vocabulary's own word for
+   * "it is stored, and nothing is being read from it". */
   setState(state: RailState): void
-  /** setSpend writes the row's spend, from the console's own budget read. */
+  /** setSpend writes the open row's spend, from the console's own budget read. */
   setSpend(reading: Reading): void
-  /** selectAt selects the row at a position -- the write the shortcut keys make
-   * (design section 4.1: "the shortcut keys select by position"). It moves the
-   * keyboard to that row as well, because a selection the operator's next arrow
-   * key would move away from is a selection that does not agree with the focus;
-   * an index no row is drawn at selects nothing, and a rail of one row answers
-   * the first shortcut key and no other. */
+  /** setRows draws a fresh list: every installation the main process answered
+   * with, in its own order, and the row it marks `open` selected. */
+  setRows(rows: readonly RailRow[]): void
+  /** selectAt activates the row at a position -- the write the shortcut keys make
+   * (design section 4.1: "the shortcut keys select by position", and the hint's
+   * own sentence is "Switch with the shortcut keys 1 2 3"). It moves the keyboard
+   * to that row as well, because a switch the operator's next arrow key would
+   * move away from is a switch that does not agree with the focus; an index no
+   * row is drawn at addresses nothing. */
   selectAt(index: number): void
 }
 
@@ -800,39 +979,36 @@ export interface RailView {
  * to the same mount first. It is appended before the installation line so the
  * tab order is the order a reader sees.
  *
- * **It draws one row per installation the dashboard can read, which is one
- * row.** `installation.current` is the only installation read this document
- * has, it takes no argument and names no id, and its answer is the installation
- * the operator chose -- so the row's name and project are that answer's one
- * label, drawn twice (the canvas's two-line identity), and a console with no
- * installation chosen, or one whose store could not be read, draws **no row**
- * rather than an invented one. A row per *stored* installation needs a bounded
- * list read on this bridge, which the design withholds (section 4.1, section
- * 11); this file does not add one, and the rail makes **no read of its own** --
- * which is also what keeps the entry spec's spawn log at the two spawns a
- * healthy console makes.
+ * **It draws one row per installation the main process listed, readable or
+ * not** (owner's design ruling of 2026-10-25). Every row is a tab of the list:
+ * its name and its project, its state word and its spend -- and, when the row
+ * has an issue, the warning mark beside its name. A row with an issue carries
+ * the mark **and** the issue's sentence as its accessible name (`railWarningName`),
+ * so the fact is never the tone alone (design section 3.5).
  *
- * **The row's state is the rail's own mark, not a field of any read**: the rail
- * knows whether the console is reading this installation now, so it opens at
- * `running` and goes `silent` when that read was refused or the feed has gone
- * quiet. `setState` is how the Live half of this file tells it.
+ * **A click activates the row**, and what that means is the ruling's own rule:
+ * a readable row switches the console to it, and a row with an issue opens that
+ * issue in the main area. `activate` is the caller's -- `mountDashboard` owns
+ * both halves, because both are reads and this function makes none.
  *
- * **The foot row is drawn and not wired.** "+ Add installation" is the design's
- * control, and the flow it opens is the picker window, which this document
- * cannot open: the picker is reached from the application menu's `Installations…`
- * item (ruling C9), the dashboard's fifteen-operation bridge has no operation
- * that opens a window, and both the design (section 11: no Phase-6 task owns the
- * preload or the IPC allow-list) and this task's Files keep it that way. So the
- * control is drawn where the design draws it, with the label the design gives
- * it, and the click that would open the picker is the one thing this task
- * cannot add -- said here rather than papered over with a handler that does
- * nothing. The rows are the same shape for a different reason: a row's
- * `aria-selected` and its keys are Task 6.5's, and **what a row selects is the
- * row** -- the rail's own mark of which row is active (design section 4.1) --
- * because the console's one choose operation is the picker's, which this
- * document cannot reach.
+ * **The open row's state is the rail's own mark, not a field of any read**: the
+ * rail knows whether the console is reading that installation now, so it opens
+ * at `running` and goes `silent` when that read was refused or the feed has gone
+ * quiet (`setState`). Every other row is `idle` -- stored, and nothing being read
+ * from it -- and a row the console cannot open is `idle` too, which is the
+ * honest word for an installation this run is not reading.
+ *
+ * **The foot row opens the picker window**, which is the one thing the owner's
+ * ruling leaves the picker for: adding an installation by checkout path. It is
+ * `installation.open`, and the window it opens is the existing picker document
+ * (`src/main/picker.ts`), not a second flow.
  */
-export function drawRail(surface: DomSurface, reply: unknown): RailView {
+export function drawRail(
+  surface: DomSurface,
+  rows: readonly RailRow[],
+  activate: (row: RailRow) => void,
+  openPicker: () => void,
+): RailView {
   const factory = surface.factory
   const rail = factory.create('aside')
   rail.setAttribute('class', RAIL_CLASS)
@@ -867,103 +1043,145 @@ export function drawRail(surface: DomSurface, reply: unknown): RailView {
   add.setAttribute('type', 'button')
   add.textContent = RAIL_ADD_LABEL
   foot.append(add)
+  surface.nodeOf(add).addEventListener('click', openPicker)
 
   const hint = factory.create('p')
   hint.setAttribute('class', RAIL_HINT_CLASS)
   hint.textContent = RAIL_HINT
 
-  // The one row, when the dashboard can read an installation to draw one for.
-  // Its spans exist either way, so the two setters below are the same code in
-  // both cases -- a rail with no row has nothing to write to, and writing to a
-  // span that is not in the tree is a no-op rather than a branch.
-  const row = factory.create('button')
-  row.setAttribute('class', RAIL_ROW_CLASS)
-  row.setAttribute('type', 'button')
-  row.setAttribute('role', 'tab')
-  const name = factory.create('span')
-  name.setAttribute('class', RAIL_NAME_CLASS)
-  const project = factory.create('span')
-  project.setAttribute('class', RAIL_PROJECT_CLASS)
-  const state = factory.create('span')
-  state.setAttribute('class', RAIL_STATE_CLASS)
-  const spend = factory.create('span')
-  spend.setAttribute('class', RAIL_SPEND_CLASS)
+  // The drawn rows, in the order they are drawn: the shortcut keys address them
+  // by position and the arrows move between them. Each entry keeps the row's
+  // four writable spans beside the row it was drawn for, so a setter below
+  // writes to the row it is about rather than to "the row".
+  const drawn: { readonly row: RailRow; readonly element: DomElement; readonly state: DomElement; readonly spend: DomElement }[] = []
 
-  const envelope = typeof reply === 'object' && reply !== null ? (reply as Record<string, unknown>) : null
-  const data = envelope !== null && envelope['ok'] === true ? envelope['data'] : null
-  const value = typeof data === 'object' && data !== null && !Array.isArray(data) ? (data as Record<string, unknown>) : null
-  const readable = value !== null && value['chosen'] === true
-
+  /** word is the state of the installation the console is reading. It is
+   * `running` from the first paint, because a console that has just mounted is
+   * about to make its first read of it. */
   let word: RailState = 'running'
+
+  /**
+   * mark writes the two attributes a tablist needs on every row: `aria-selected`
+   * -- which the design's rule selects for the 3 px `--accent` border
+   * (`base.css`, design section 4.1) -- and the roving `tabindex`.
+   *
+   * **The selected row is the one the main process marked `open`**, and the tab
+   * stop falls back to the first row when no row is open -- the same fallback
+   * `markButtons` makes for the navigation, and for the same reason: a tablist
+   * whose every tab is at `-1` is a tablist the keyboard cannot enter at all.
+   * The two are one row in every answer this console sends (the main process
+   * marks exactly one row open whenever it lists one), so the fallback is a
+   * shape the reply cannot produce today rather than a state the rail is in.
+   */
+  const mark = (): void => {
+    const openIndex = drawn.findIndex((entry) => entry.row.open)
+    const stop = openIndex >= 0 ? openIndex : 0
+    drawn.forEach((entry, index) => {
+      entry.element.setAttribute('aria-selected', index === openIndex ? 'true' : 'false')
+      entry.element.setAttribute('tabindex', tabStop(index === stop))
+    })
+  }
+
+  /** writeState writes the state word and its glyph on every row: the open row
+   * carries `word` when it can be read, and `idle` is what everything else is. */
   const writeState = (): void => {
-    if (!readable) return
-    state.textContent = `${RAIL_STATE_GLYPHS[word]} ${word}`
-    state.setAttribute('data-state', word)
-  }
-  writeState()
-
-  // rows is the rail's drawn rows, in the order they are drawn: the shortcut
-  // keys address them by position and the arrows move between them, and both are
-  // the list's own behaviour rather than a property of the one row a console can
-  // read today.
-  const rows: DomElement[] = []
-
-  /** select marks one row as the rail's selected row: the attribute the design's
-   * rule selects for the 3 px `--accent` border (`base.css`, design section 4.1)
-   * and the list's single tab stop. The rows beside it are unmarked in both, so
-   * "exactly one row is selected" is a fact this function keeps rather than a
-   * property of there being one row. */
-  const select = (wanted: DomElement): void => {
-    for (const each of rows) {
-      const selected = each === wanted
-      each.setAttribute('aria-selected', selected ? 'true' : 'false')
-      each.setAttribute('tabindex', tabStop(selected))
-    }
+    const openIndex = drawn.findIndex((entry) => entry.row.open)
+    drawn.forEach((entry, index) => {
+      const shown: RailState = index === openIndex && entry.row.readable ? word : 'idle'
+      entry.state.textContent = `${RAIL_STATE_GLYPHS[shown]} ${shown}`
+      entry.state.setAttribute('data-state', shown)
+    })
   }
 
-  if (readable && value !== null) {
+  /** rowElement draws one installation's row, with the two spans a setter
+   * writes to kept beside the element that holds them. */
+  const rowElement = (
+    row: RailRow,
+  ): { readonly element: DomElement; readonly state: DomElement; readonly spend: DomElement } => {
+    const element = factory.create('button')
+    element.setAttribute('class', RAIL_ROW_CLASS)
+    element.setAttribute('type', 'button')
+    element.setAttribute('role', 'tab')
+    const nameline = factory.create('div')
+    nameline.setAttribute('class', RAIL_NAMELINE_CLASS)
+    const name = factory.create('span')
+    name.setAttribute('class', RAIL_NAME_CLASS)
     // One label, two spans: `ActiveInstallation` carries no display name, so the
     // row's identity is the project it names, drawn as the name and again as the
     // small-text line under it.
-    putText(name, value['project'], 'label', 'the installation’s project')
-    putText(project, value['project'], 'label', 'the installation’s project')
+    putText(name, row.project, 'label', 'the installation’s project')
+    nameline.append(name)
+    if (row.issue !== 'none') {
+      const warning = factory.create('span')
+      warning.setAttribute('class', RAIL_WARNING_CLASS)
+      // `role="img"` with an `aria-label` is what makes the mark a thing with a
+      // name rather than a stray character: a bare span's `aria-label` is not
+      // announced by every reader, and the mark has to carry the sentence
+      // somewhere the tone cannot (design section 3.5).
+      warning.setAttribute('role', 'img')
+      warning.setAttribute('aria-label', railWarningName(row))
+      warning.setAttribute('title', railWarningName(row))
+      warning.textContent = RAIL_WARNING_GLYPH
+      nameline.append(warning)
+    }
+    const project = factory.create('span')
+    project.setAttribute('class', RAIL_PROJECT_CLASS)
+    putText(project, row.project, 'label', 'the installation’s project')
+    const state = factory.create('span')
+    state.setAttribute('class', RAIL_STATE_CLASS)
+    const spend = factory.create('span')
+    spend.setAttribute('class', RAIL_SPEND_CLASS)
     putReading(spend, unavailable(RAIL_SPEND_UNREAD), 'usd')
-    row.append(name)
-    row.append(project)
-    row.append(state)
-    row.append(spend)
-    list.append(row)
-    rows.push(row)
-    // The one row this console can read is the installation it is reading, so it
-    // is the selected row from the first paint -- which is also what gives the
-    // list its tab stop.
-    select(row)
+    element.append(nameline)
+    element.append(project)
+    element.append(state)
+    element.append(spend)
+    return { element, state, spend }
+  }
 
-    // The row's keys, which are the rail's half of Task 6.5 (design section
-    // 4.1): **the arrows move the focus and Enter selects** -- the pattern's
-    // manual-activation form, because a row's selection is the rail's own mark of
-    // which row is active and choosing an installation is the picker's command,
-    // which this document cannot reach. So the arrows move the keyboard between
-    // the rows and change no mark, and Enter changes the mark on the row the
-    // operator is standing on.
-    keydownOn(surface.nodeOf(row), (event: KeyEventLike) => {
-      const target = tabTarget(event.key, rows.indexOf(row), rows.length, 'y')
-      if (target !== null) {
-        event.preventDefault()
-        rows[target]?.focus()
-        return
-      }
-      if (event.key === 'Enter') {
-        event.preventDefault()
-        select(row)
-      }
-    })
+  /**
+   * setRows draws a fresh list and wires each row. The rows are **replaced
+   * wholesale** rather than patched: a row that is gone from the answer is gone
+   * from the rail, and the row the reply marks `open` is the selected one.
+   *
+   * Each row's keys are the rail's half of Task 6.5 (design section 4.1): the
+   * arrows move the focus between the rows and change no mark, and **Enter
+   * activates** the row the operator is standing on -- the pattern's
+   * manual-activation form, whose "select" is the click the row already answers.
+   */
+  const setRows = (next: readonly RailRow[]): void => {
+    drawn.length = 0
+    const elements: DomElement[] = []
+    for (const row of next) {
+      const { element, state, spend } = rowElement(row)
+      elements.push(element)
+      drawn.push({ row, element, state, spend })
+      surface.nodeOf(element).addEventListener('click', () => {
+        activate(row)
+      })
+      keydownOn(surface.nodeOf(element), (event: KeyEventLike) => {
+        const target = tabTarget(event.key, elements.indexOf(element), elements.length, 'y')
+        if (target !== null) {
+          event.preventDefault()
+          elements[target]?.focus()
+          return
+        }
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          activate(row)
+        }
+      })
+    }
+    surface.nodeOf(list).replaceChildren(...elements.map((element) => surface.nodeOf(element)))
+    mark()
+    writeState()
   }
 
   rail.append(head)
   rail.append(list)
   rail.append(foot)
   rail.append(hint)
+  setRows(rows)
 
   // The collapse control is this task's, so its behaviour is too: it flips the
   // rail's `data-collapsed`, which is the one rule the 216 px and 56 px widths
@@ -986,24 +1204,190 @@ export function drawRail(surface: DomSurface, reply: unknown): RailView {
       writeState()
     },
     setSpend: (reading: Reading): void => {
-      if (!readable) return
+      const open = drawn.find((entry) => entry.row.open)
+      if (open === undefined || !open.row.readable) return
       // The title is cleared first: `putReading` writes one only for a reading
       // with no value, and the rail is the one drawing this file *updates* in
       // place rather than redrawing -- so a reason left over from the `n/a` this
       // span drew a moment ago would sit under a figure that is now measured.
-      spend.removeAttribute('title')
-      putReading(spend, reading, 'usd')
+      open.spend.removeAttribute('title')
+      putReading(open.spend, reading, 'usd')
     },
+    setRows,
     selectAt: (index: number): void => {
-      const wanted = rows[index]
+      const wanted = drawn[index]
       if (wanted === undefined) return
-      select(wanted)
-      // The focus follows the selection, and it is the same move the row's own
-      // Enter makes: a shortcut that marked a row the keyboard was not on would
-      // leave the operator's next arrow key acting somewhere else.
-      wanted.focus()
+      // The focus follows, and it is the same move the row's own Enter makes: a
+      // shortcut that switched the console while the keyboard stayed where it
+      // was would leave the operator's next arrow key acting somewhere else.
+      wanted.element.focus()
+      activate(wanted.row)
     },
   }
+}
+
+// ---------------------------------------------------------------------------
+// The issue view (owner's design ruling of 2026-10-25).
+// ---------------------------------------------------------------------------
+
+/** The issue view's hooks. It is chrome -- `entry.ts` draws it, not a screen --
+ * because it is about the installation rather than about anything the CLI
+ * measured, and because it is the one drawing in the main area that carries
+ * controls of its own (design section 2.1's rail row is the same shape). */
+export const ISSUE_CLASS = 'installation-issue'
+export const ISSUE_HEADLINE_CLASS = 'installation-issue-headline'
+export const ISSUE_SENTENCE_CLASS = 'installation-issue-sentence'
+export const ISSUE_COMMAND_CLASS = 'installation-issue-command'
+export const ISSUE_DETAILS_CLASS = 'installation-issue-details'
+export const ISSUE_SUMMARY_CLASS = 'installation-issue-summary'
+export const ISSUE_LINES_CLASS = 'installation-issue-lines'
+export const ISSUE_ACTIONS_CLASS = 'installation-issue-actions'
+export const ISSUE_CHOOSE_CLASS = 'installation-issue-choose'
+export const ISSUE_REMOVE_CLASS = 'installation-issue-remove'
+export const ISSUE_CHECKOUT_LEAD_CLASS = 'installation-issue-checkout-lead'
+export const ISSUE_CHECKOUT_CLASS = 'installation-issue-checkout'
+export const ISSUE_REVEAL_CLASS = 'installation-issue-reveal'
+
+/** ISSUE_DETAILS_LABEL is the disclosure's summary: the CLI's own lines are one
+ * click away and never in the way. The ruling asks for exactly this -- "the CLI's
+ * full text behind a 'details' disclosure" -- and the word is the disclosure's,
+ * not a paraphrase of what is behind it. */
+export const ISSUE_DETAILS_LABEL = 'details'
+
+/** ISSUE_CHOOSE_LABEL is the switch a **readable** row's issue offers. Only a
+ * warning that is not a refusal can be openable (`stale`), and the operator
+ * still has to be able to act on the row they clicked -- so the issue view
+ * carries the old Installations screen's "Choose", under a label that says what
+ * it does to the console rather than what it does to the row. */
+export const ISSUE_CHOOSE_LABEL = 'Use this installation'
+
+/** ISSUE_REMOVE_LABEL, ISSUE_CHECKOUT_LEAD, ISSUE_CHECKOUT_LABEL and
+ * ISSUE_REVEAL_LABEL are the three actions the owner's ruling names -- "the
+ * 'Remove from this console' / 'Choose a checkout' actions that the old
+ * Installations screen offered, now inside that issue view" -- with the old
+ * screen's own words wherever it had them. */
+export const ISSUE_REMOVE_LABEL = 'Remove from this console'
+export const ISSUE_CHECKOUT_LEAD = 'Choose a checkout'
+export const ISSUE_CHECKOUT_LABEL = 'Use this directory'
+export const ISSUE_CHECKOUT_STOP_LABEL = 'Stop using this checkout'
+export const ISSUE_REVEAL_LABEL = 'Open the checkout folder'
+
+/** IssueActions is what the issue view's controls send. Every one of them is the
+ * caller's (`mountDashboard`), which is where the read and the redrawing are:
+ * this function draws one row's issue and decides nothing. */
+export interface IssueActions {
+  readonly choose: (project: string) => void
+  readonly remove: (project: string) => void
+  readonly checkout: (project: string, checkout: string | null) => void
+  readonly reveal: (project: string) => void
+}
+
+/**
+ * drawIssue draws one installation's issue, which is what the main area holds
+ * when the console cannot read the installation it is open on -- and what a
+ * click on a warned row opens (owner's design ruling of 2026-10-25).
+ *
+ * The order is the ruling's own: **one plain sentence first**, the exact command
+ * it names drawn beneath it as a `code` line, the CLI's own text behind a
+ * `details` disclosure, and the actions the old Installations screen offered --
+ * now here, and nowhere else. There is no banner and no dismissible notice: the
+ * panel *is* the issue while it is up, and the rail beside it is how the operator
+ * leaves.
+ *
+ * Every string is the main process's, already through `textOf` in `railRows`
+ * (which is why the writes below are `textContent` and not a second sanitizer
+ * pass), and no path is invented here: the checkouts offered are the row's own
+ * list, and the main process checks membership against the document it read.
+ */
+export function drawIssue(surface: DomSurface, row: RailRow, actions: IssueActions): SkewElement {
+  const factory = surface.factory
+  const section = factory.create('section')
+  section.setAttribute('class', ISSUE_CLASS)
+  // `data-issue` is the classification the main process made, repeated as a hook
+  // no rule selects today: a stylesheet that wants to tell a stale warning from a
+  // refusal adds it to §2.1 first (design §2's licence rule).
+  section.setAttribute('data-issue', row.issue)
+
+  const headline = factory.create('h1')
+  headline.setAttribute('class', ISSUE_HEADLINE_CLASS)
+  putText(headline, row.project, 'label', 'the installation’s project')
+  section.append(headline)
+
+  const sentence = factory.create('p')
+  sentence.setAttribute('class', ISSUE_SENTENCE_CLASS)
+  sentence.textContent = row.sentence
+  section.append(sentence)
+
+  if (row.command !== '') {
+    const command = factory.create('code')
+    command.setAttribute('class', ISSUE_COMMAND_CLASS)
+    command.textContent = row.command
+    section.append(command)
+  }
+
+  if (row.details.length > 0) {
+    const details = factory.create('details')
+    details.setAttribute('class', ISSUE_DETAILS_CLASS)
+    const summary = factory.create('summary')
+    summary.setAttribute('class', ISSUE_SUMMARY_CLASS)
+    summary.textContent = ISSUE_DETAILS_LABEL
+    details.append(summary)
+    const lines = factory.create('pre')
+    lines.setAttribute('class', ISSUE_LINES_CLASS)
+    lines.textContent = row.details.join('\n')
+    details.append(lines)
+    section.append(details)
+  }
+
+  const controls = factory.create('div')
+  controls.setAttribute('class', ISSUE_ACTIONS_CLASS)
+  const button = (className: string, label: string, onClick: () => void): void => {
+    const element = factory.create('button')
+    element.setAttribute('class', className)
+    element.setAttribute('type', 'button')
+    element.textContent = label
+    surface.nodeOf(element).addEventListener('click', onClick)
+    controls.append(element)
+  }
+
+  // The switch comes first when there is one: it is the action that leaves the
+  // issue, and every other action below keeps the operator in it.
+  if (row.readable) button(ISSUE_CHOOSE_CLASS, ISSUE_CHOOSE_LABEL, () => actions.choose(row.project))
+  if (row.saved) button(ISSUE_REMOVE_CLASS, ISSUE_REMOVE_LABEL, () => actions.remove(row.project))
+  if (row.checkout !== null) {
+    button(ISSUE_REVEAL_CLASS, ISSUE_REVEAL_LABEL, () => actions.reveal(row.project))
+  }
+
+  const offered = row.checkouts.filter((candidate) => candidate !== row.checkout)
+  if (offered.length > 0 || row.checkout !== null) {
+    const lead = factory.create('p')
+    lead.setAttribute('class', ISSUE_CHECKOUT_LEAD_CLASS)
+    lead.textContent = ISSUE_CHECKOUT_LEAD
+    controls.append(lead)
+    for (const checkout of offered) {
+      const element = factory.create('button')
+      element.setAttribute('class', ISSUE_CHECKOUT_CLASS)
+      element.setAttribute('type', 'button')
+      element.textContent = `${ISSUE_CHECKOUT_LABEL}: ${checkout}`
+      surface.nodeOf(element).addEventListener('click', () => {
+        actions.checkout(row.project, checkout)
+      })
+      controls.append(element)
+    }
+    if (row.checkout !== null) {
+      const element = factory.create('button')
+      element.setAttribute('class', ISSUE_CHECKOUT_CLASS)
+      element.setAttribute('type', 'button')
+      element.textContent = ISSUE_CHECKOUT_STOP_LABEL
+      surface.nodeOf(element).addEventListener('click', () => {
+        actions.checkout(row.project, null)
+      })
+      controls.append(element)
+    }
+  }
+
+  section.append(controls)
+  return section
 }
 
 // ---------------------------------------------------------------------------
