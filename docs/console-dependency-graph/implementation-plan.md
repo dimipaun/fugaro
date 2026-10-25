@@ -262,6 +262,11 @@ document, release assignment later — so Slices 1–2 wait on no ruling; (e)
     (`internal/cli/docs_desktop_console_test.go`: the two field lists and
     `consoleContractCommands`), and `website/content/cli-reference.md` is regenerated — a new
     command is a page the generator writes.
+  - **One guard file is amended: `internal/runview/plan_task_test.go`.** Constraint C3 is enforced
+    by a walk over the module — any non-test Go file naming `PlanTask`/`plan_task` must be on its
+    display allow-list — so `internal/plan/state.go` and `internal/cli/plan_status.go` are added to
+    it, with what each one does with the id. The two are display-only readers: the join matches ids,
+    and no state, count or refusal depends on what a launcher wrote.
 
 #### GV1.7 — The planning skill writes the graph (V2.8.1, with the stream)
 - **Files:** `plugin/skills/parallelism/SKILL.md`, new
