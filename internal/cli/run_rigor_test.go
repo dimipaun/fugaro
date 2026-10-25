@@ -98,6 +98,37 @@ func TestRunRefusesAModeOutsideTheVocabulary(t *testing.T) {
 	}
 }
 
+// TestRunAcceptsHotfix: hotfix is in the vocabulary and off the axis — it
+// ranks below every on-axis mode (internal/rigor's Rank), so the launcher
+// accepts it and it is the resolver that refuses to let it lower anything.
+// A launcher that refused the word would make D12's one route to it, an
+// operator asking for it, unreachable from the CLI.
+func TestRunAcceptsHotfix(t *testing.T) {
+	f := newCloudFixture(t)
+	spec := runWithRigor(t, f, "20261025-120200-abcd", []string{"--mode", "hotfix"}, "Fix production.")
+	if spec.Rigor != "hotfix" {
+		t.Fatalf("rigor = %q, want the flag's mode", spec.Rigor)
+	}
+}
+
+// TestRunRefusesTooManyDeclaredPaths: the list is bounded (task.
+// MaxDeclaredPaths) because every path in it is matched against every area
+// rule the base branch declares, and the bound is a refusal rather than a
+// truncation: the paths a truncation dropped are exactly the ones that would
+// have raised the mode.
+func TestRunRefusesTooManyDeclaredPaths(t *testing.T) {
+	newCloudFixture(t)
+	args := []string{"run", "--repo", "acme/app"}
+	for range task.MaxDeclaredPaths + 1 {
+		args = append(args, "--path", "internal/x.go")
+	}
+	args = append(args, "Fix the flaky test.")
+	_, _, err := execute(t, args...)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "path") {
+		t.Fatalf("err = %v, want exit 1 refusing a list over the bound", err)
+	}
+}
+
 // TestRunRigorRequestIsGatedOnTheJobImage: the request is a new task field,
 // and task.Parse decodes with DisallowUnknownFields, so a runner older than
 // rigorRequestSince refuses the whole spec at bootstrap — bytes in the bucket
