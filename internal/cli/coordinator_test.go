@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -1936,6 +1937,48 @@ func TestCoordinatorSweepNeverPrintsACredentialOrTheHostsText(t *testing.T) {
 	}
 	if raw := fmt.Sprint(f.db.Value(coordinator.PathRepo(appSlug))); strings.Contains(raw, secret) || strings.Contains(raw, "401") {
 		t.Errorf("the repository's node carries the host's own text: %s", raw)
+	}
+}
+
+// TestCoordinatorSweepRevokesEveryTokenItMinted: the scheduled sweep holds a
+// repository's read-only token for the tick and no longer, exactly as status
+// does. It drives the command's own opener, mint and revoke against a hermetic
+// host, and the fixture's last exchange is the revoke: a tick that left its
+// token behind leaves that DELETE unused, which fails the test.
+func TestCoordinatorSweepRevokesEveryTokenItMinted(t *testing.T) {
+	srv := httpfixture.Serve(t, filepath.Join("testdata", "coordinator_read_token.json"))
+	realOpen, realMint, realRevoke := openCoordinatorProvider, coordinatorMint, coordinatorRevoke
+	newCoordinatorSweepFixture(t, []coordinatorRunSeed{{
+		id: "20261013-100000-aaaa", pr: 12, prev: "20261012-090000-1111",
+		branch: "fugaro/20261013-100000-aaaa", who: "someone@example.com",
+		status: runstore.StatusSucceeded, prRef: 12, base: "main",
+		files: []string{"internal/cli/exec.go"},
+	}})
+	setCoordinatorHost(t, realOpen)
+	coordinatorMint, coordinatorRevoke = realMint, realRevoke
+	t.Setenv(providers.EnvGitHubAPIURL, srv.URL)
+	t.Setenv(providers.EnvCredentialsServiceURL, "")
+
+	if _, _, err := execute(t, "coordinator", "sweep"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestCoordinatorSweepWithAnInjectedReader: a sweep handed its reader builds no
+// token record of its own, and the revoke at the end of the tick has nothing
+// to take back rather than a nil record to fail on.
+func TestCoordinatorSweepWithAnInjectedReader(t *testing.T) {
+	f := newCoordinatorSweepFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	reader, _, err := coordinatorReader(io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinatorSweepTest.reader = reader
+	if _, _, err := execute(t, "coordinator", "sweep"); err != nil {
+		t.Fatal(err)
+	}
+	if view, _ := f.view(); view == nil {
+		t.Errorf("the sweep with an injected reader wrote no view")
 	}
 }
 

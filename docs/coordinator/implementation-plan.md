@@ -362,7 +362,10 @@ minted when it is done (`DELETE /installation/token`,
 `internal/gitprov/github/apptoken.go`'s `RevokeInstallationToken`), in the order it minted them,
 best-effort and silent — a revoke that failed changes no exit code and prints nothing, because
 a credential that outlives the read it was minted for is the one thing this part's posture is
-against.
+against. P5's sweep takes back the tokens of its tick the same way. With
+`FUGARO_CREDENTIALS_SERVICE_URL` set, the service holds the App's key and this process holds
+none, so `coordinator status` refuses: exit 1, before it reads the App ID or the key, because the
+service mints a run's token and this read is not a run.
 
 ---
 

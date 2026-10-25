@@ -390,11 +390,16 @@ func runCoordinatorSweep(ctx context.Context, cmd *cobra.Command, getenv func(st
 
 	warn := cmd.ErrOrStderr()
 	var reader coordinator.Reader
+	var tokens *coordinatorTokens
 	if test != nil && test.reader != nil {
 		reader = test.reader
-	} else if reader, err = coordinatorReader(warn); err != nil {
+	} else if reader, tokens, err = coordinatorReader(warn); err != nil {
 		return err
 	}
+	// The tick holds each repository's token for as long as it reads and no
+	// longer, as status does: a scheduled job that left them behind would leave
+	// one per repository every tick.
+	defer tokens.revoke(ctx)
 	sw := &coordinator.Sweeper{
 		Reader: reader,
 		Runs:   coordinatorRunsSource{env: &cloudEnv{bucket: bucket}, warn: warn},
@@ -578,6 +583,12 @@ func newCoordinatorStatusCmd() *cobra.Command {
 			"and cached for the token's life, so a second read of the same repository\n" +
 			"mints nothing. Every token the command minted is revoked when it is done,\n" +
 			"so the credential lives for the read and no longer.\n" +
+			"With FUGARO_CREDENTIALS_SERVICE_URL set, the installation's credentials\n" +
+			"service holds the App's key and this command holds none, so it refuses (exit 1)\n" +
+			"before it reads the App's ID or key: the service mints a run's token, and this\n" +
+			"read is not a run.\n" +
+			"Exit codes: 1 for a missing or malformed App credential (or the refusal above),\n" +
+			"2 for a failure of the host.\n" +
 			"The coordinator reads github only: a bitbucket repository is refused, and the\n" +
 			"refusal names the reason, because its credential is one repository's access\n" +
 			"token and cannot be widened to a project (reconciliation Q12 (A), finding #30).\n\n" +
@@ -865,7 +876,13 @@ const coordinatorRevokeTimeout = 30 * time.Second
 // The mutex is held for the copy and not for the calls: revoking is a network
 // round trip per token, and the only other holder is a mint that has already
 // returned its answer.
+//
+// A nil record is a read that minted through no record of this command's (the
+// sweep's injected reader), so there is nothing of its to take back.
 func (t *coordinatorTokens) revoke(ctx context.Context) {
+	if t == nil {
+		return
+	}
 	t.mu.Lock()
 	tokens := slices.Clone(t.tokens)
 	t.mu.Unlock()
