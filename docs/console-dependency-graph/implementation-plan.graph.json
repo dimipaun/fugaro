@@ -1,0 +1,146 @@
+{
+  "schema_version": 2,
+  "plan": "docs/console-dependency-graph/implementation-plan.md",
+  "stream": "console",
+  "nodes": [
+    {
+      "id": "GV0.1",
+      "title": "Dated amendment notes in the console designs",
+      "run": null,
+      "version": null,
+      "footprint": {"prediction": true, "paths": ["docs/design/desktop-console-v2.md", "docs/design/desktop-console.md", "docs/design/console-styling.md", "docs/plans/2026-10-15-desktop-console-v2.md"]}
+    },
+    {
+      "id": "GV1.1",
+      "title": "Levels, downstream counts and the critical path",
+      "run": null,
+      "version": null,
+      "footprint": {"prediction": true, "paths": ["internal/plan/levels.go", "internal/plan/levels_test.go", "internal/plan/testdata/hub.json"]}
+    },
+    {
+      "id": "GV1.2",
+      "title": "The plan-task join key (GD5)",
+      "run": null,
+      "version": null,
+      "footprint": {"prediction": true, "paths": ["internal/task/task.go", "internal/task/task_test.go", "internal/runstore/launch.go", "internal/runstore/launch_test.go", "internal/cli/run.go", "internal/cli/run_test.go", "internal/runview/runview.go", "internal/runview/runview_test.go", "internal/watch/json.go", "internal/watch/json_test.go"]}
+    },
+    {
+      "id": "GV1.3",
+      "title": "Graph schema v2: the stream",
+      "run": null,
+      "version": null,
+      "footprint": {"prediction": true, "paths": ["internal/plan/document.go", "internal/plan/read.go", "internal/plan/read_test.go", "internal/plan/testdata/graph-v2.json", "console/docs/json-contract.md"]}
+    },
+    {
+      "id": "GV1.4",
+      "title": "The streams data file (GD7)",
+      "run": null,
+      "version": null,
+      "footprint": {"prediction": true, "paths": ["docs/release-streams.yaml", "internal/streams/streams.go", "internal/streams/streams_test.go"]}
+    },
+    {
+      "id": "GV1.5",
+      "title": "The release script reads the CLI stream",
+      "run": null,
+      "version": null,
+      "footprint": {"prediction": true, "paths": ["scripts/release.sh", "scripts/release_test.go", "internal/streams/cmd/streams/main.go"]}
+    },
+    {
+      "id": "GV1.6",
+      "title": "`fugaro plan status --json`: the graph joined to runs",
+      "run": null,
+      "version": null,
+      "footprint": {"prediction": true, "paths": ["internal/plan/state.go", "internal/plan/state_test.go", "internal/cli/plan_status.go", "internal/cli/plan_status_test.go", "internal/cli/plan.go", "console/docs/json-contract.md"]}
+    },
+    {
+      "id": "GV1.7",
+      "title": "The planning skill writes the graph (V2.8.1, with the stream)",
+      "run": null,
+      "version": null,
+      "footprint": {"prediction": true, "paths": ["plugin/skills/parallelism/SKILL.md", "docs/console-dependency-graph/implementation-plan.graph.json"]}
+    },
+    {
+      "id": "GV2.1",
+      "title": "The `plan.status` operation",
+      "run": null,
+      "version": "0.112",
+      "footprint": {"prediction": true, "paths": ["console/src/main/ipc.ts", "console/src/main/spawn.ts", "console/src/preload/index.ts", "console/src/source/source.ts", "console/src/source/cli.ts", "console/src/source/fixture.ts", "console/src/shared/schema.ts", "console/test/unit/ipc.test.ts", "console/test/unit/spawn.test.ts", "console/test/unit/preload-surface.test.ts", "console/test/unit/schema.test.ts", "console/test/fixtures/plan-status.json"]}
+    },
+    {
+      "id": "GV2.2",
+      "title": "elkjs in a worker (GD3)",
+      "run": null,
+      "version": "0.112",
+      "footprint": {"prediction": true, "paths": ["console/package.json", "console/package-lock.json", "console/tools/bundle-renderer/index.ts", "console/src/renderer/graph/layout-client.ts", "console/src/main/protocol.ts", "console/README.md", "console/THIRD_PARTY_NOTICES.md", "console/test/unit/bundle.test.ts", "console/test/unit/build-files.test.ts", "console/test/unit/window.test.ts", "console/test/unit/csp-document.test.ts", "console/test/unit/lockfile.test.ts", "console/test/unit/layout-client.test.ts", "console/test/e2e/graph-worker.spec.ts"]}
+    },
+    {
+      "id": "GV2.3",
+      "title": "The graph screen, static",
+      "run": null,
+      "version": "0.112",
+      "footprint": {"prediction": true, "paths": ["console/src/renderer/screens/graph.ts", "console/src/renderer/graph/model.ts", "console/src/renderer/graph/layout.ts", "console/src/renderer/entry.ts", "console/src/renderer/theme/screens.css", "console/test/unit/graph.test.ts", "console/test/unit/graph-model.test.ts", "console/test/e2e/graph.spec.ts"]}
+    },
+    {
+      "id": "GV2.4",
+      "title": "Motion (GD4)",
+      "run": null,
+      "version": "0.112",
+      "footprint": {"prediction": true, "paths": ["console/src/renderer/theme/screens.css", "console/src/renderer/screens/graph.ts", "console/test/unit/graph-motion.test.ts", "console/test/e2e/graph.spec.ts"]}
+    },
+    {
+      "id": "GV2.5",
+      "title": "A live run's PR number in the watch feed (optional)",
+      "run": null,
+      "version": null,
+      "footprint": {"prediction": true, "paths": ["internal/watch/json.go", "internal/watch/json_test.go", "console/docs/json-contract.md", "console/src/shared/schema.ts", "console/test/unit/schema.test.ts"]}
+    },
+    {
+      "id": "GV2.6",
+      "title": "Check 123: the graph in the packed, signed app (OWNER-RUN)",
+      "run": null,
+      "version": null,
+      "footprint": {"prediction": true, "paths": ["docs/gcp-live-checklist.md"]}
+    },
+    {
+      "id": "GV3.1",
+      "title": "The roadmap write command (blocked: the coordinator's record)",
+      "run": null,
+      "version": null,
+      "footprint": {"prediction": true, "paths": ["internal/plan/move.go", "internal/plan/move_test.go", "internal/cli/plan_move.go", "internal/coordinator/**", "internal/cli/roadmap.go", "internal/cli/root.go"]}
+    },
+    {
+      "id": "GV3.2",
+      "title": "Drag, preview, confirm, undo",
+      "run": null,
+      "version": null,
+      "footprint": {"prediction": true, "paths": ["console/src/renderer/screens/graph.ts", "console/src/renderer/graph/move.ts", "console/src/main/ipc.ts", "console/src/main/spawn.ts", "console/src/preload/index.ts", "console/src/source/cli.ts", "console/test/unit/graph-move.test.ts", "console/test/unit/ipc.test.ts", "console/test/unit/spawn.test.ts", "docs/design/desktop-console-v2.md"]}
+    },
+    {
+      "id": "GV4.1",
+      "title": "Cross-plan and cross-stream edges from the coordinator's record (blocked: the record carries no tasks yet)",
+      "run": null,
+      "version": null,
+      "footprint": {"prediction": true, "paths": ["internal/cli/plan_status.go", "console/src/renderer/graph/model.ts", "console/src/renderer/screens/graph.ts", "console/test/unit/graph-model.test.ts"]}
+    }
+  ],
+  "edges": [
+    {"task": "GV1.5", "needs": "GV1.4", "reason": "the release script reads the CLI stream out of the catalogue GV1.4 adds"},
+    {"task": "GV1.6", "needs": "GV1.1", "reason": "each node's level and whether it is on the critical path are GV1.1's answers"},
+    {"task": "GV1.6", "needs": "GV1.2", "reason": "the join is through plan_task, the id GV1.2 records at launch"},
+    {"task": "GV1.6", "needs": "GV1.3", "reason": "the plan's stream is a schema version 2 field, and the status read prints it"},
+    {"task": "GV1.6", "needs": "GV1.4", "reason": "the per-release counters and a release being finished are read from GV1.4's catalogue"},
+    {"task": "GV1.7", "needs": "GV1.3", "reason": "the artifact the skill writes is schema version 2 with a stream, which the v1 read refuses"},
+    {"task": "GV2.1", "needs": "GV1.6", "reason": "the operation spawns plan status and decodes the document it prints"},
+    {"task": "GV2.2", "needs": "GV0.1", "reason": "the dated licence and CSP notes GV0.1 writes are the ruling that lets elkjs in"},
+    {"task": "GV2.3", "needs": "GV2.1", "reason": "the screen draws the document source.planStatus() returns"},
+    {"task": "GV2.3", "needs": "GV2.2", "reason": "the screen positions its nodes through the worker's layout client"},
+    {"task": "GV2.4", "needs": "GV0.1", "reason": "the styling amendment GV0.1 writes is where this screen's motion is allowed at all"},
+    {"task": "GV2.4", "needs": "GV2.3", "reason": "motion animates the states the static screen draws"},
+    {"task": "GV2.5", "needs": "GV1.6", "reason": "a live run's PR number is the field plan status already prints from the run's record"},
+    {"task": "GV2.5", "needs": "GV2.1", "reason": "the feed's field joins the decoder GV2.1 adds"},
+    {"task": "GV2.6", "needs": "GV2.4", "reason": "the check looks at the animated screen under reduced motion"},
+    {"task": "GV3.2", "needs": "GV2.4", "reason": "a drop is drawn on the finished screen, states and motion alike"},
+    {"task": "GV3.2", "needs": "GV3.1", "reason": "the drag issues the move command GV3.1 adds"},
+    {"task": "GV4.1", "needs": "GV2.3", "reason": "cross-plan edges are drawn by the screen GV2.3 builds"}
+  ]
+}
