@@ -23,6 +23,7 @@
 version: 1
 
 summaries:
+  v0.11.1: A run can now ask for a stricter rigor mode with --mode and --path, a launch warns before it starts on an image too old for a rigor setting, and follow-up runs close the backlog items they fix. The coordinator's token is narrower and is revoked after use, and the coordinator's background sweep ships switched off until an owner opts in.
   v0.11.0: Every repository now runs in a rigor mode that sets how much a run may spend, Pro by default, and reviewers score each finding so later releases can decide what blocks. Runs can file what they leave open into a backlog, a first coordinator view shows work in flight across a project, and the project now states which parts are open source and which are reserved.
   v0.10.4: fugaro setup now creates a fresh project and no longer offers to adopt an existing one. When billing cannot be linked, setup pauses instead of failing, writes your local configuration and prints one ready-to-forward message for whoever administers billing, and a rerun picks up where it stopped. A project created by setup is marked managed by default.
   v0.10.3: fugaro setup now says in one plain line what to ask your organization for when it cannot create the project or link billing, and the setup page describes a single path, a new project.
