@@ -22,12 +22,41 @@
 //     be inventing them.
 package plan
 
-// SchemaVersion is the graph schema this build reads, and the only one it
-// reads. The field is on the document rather than in this package's head
-// because the console has to be able to tell "this graph is from a newer CLI"
-// from "this graph is broken", and it can only do that if the number is in the
-// document it was handed.
-const SchemaVersion = 1
+// SchemaVersion is the graph schema this build writes, and the newest it reads.
+// It is 2 since the plan's graph learned the stream its plan ships in and the
+// shape a node's target version has (GV1.3). The field is on the document rather
+// than in this package's head because the console has to be able to tell "this
+// graph is from a newer CLI" from "this graph is broken", and it can only do
+// that if the number is in the document it was handed.
+const SchemaVersion = 2
+
+// FirstSchemaVersion is the graph schema this build reads beside the current
+// one. A v1 artifact names no stream and spells a node's target version in the
+// planner's own words, and it stays a document this build renders: the second
+// schema added fields rather than changing one, so a plan written before it is
+// not invalidated by it.
+const FirstSchemaVersion = 1
+
+// readsSchemaVersion reports whether this build reads a document written in
+// schema version v. Two are read rather than one because the second only added
+// fields: a v1 artifact is a graph this build draws, not one it refuses.
+func readsSchemaVersion(v int) bool { return v >= FirstSchemaVersion && v <= SchemaVersion }
+
+// streams are the release streams a plan may name (GD7): the CLI's, the
+// console's and the mobile app's, in the order the JSON contract lists them.
+// The list is what the schema allows, so a value outside it is refused by name
+// rather than drawn as a column whose heading nothing can fill.
+var streams = []string{"cli", "console", "mobile"}
+
+// validStream reports whether name is one of them.
+func validStream(name string) bool {
+	for _, s := range streams {
+		if s == name {
+			return true
+		}
+	}
+	return false
+}
 
 // ArtifactSuffix is what a graph artifact is called beside its plan: the plan
 // `docs/plans/2026-10-15-desktop-console-v2.md` is described by
@@ -45,8 +74,15 @@ const ArtifactSuffix = ".graph.json"
 type Document struct {
 	SchemaVersion int    `json:"schema_version"`
 	Plan          string `json:"plan"`
-	Nodes         []Node `json:"nodes"`
-	Edges         []Edge `json:"edges"`
+	// Stream is the release stream this plan ships in — one of cli, console or
+	// mobile — and it is optional: absent, or null, is a plan that does not say,
+	// which is a different statement from naming a stream nothing knows (that
+	// one is refused). It is a display input, so it is written with omitempty
+	// and a v1 artifact, which cannot carry one, prints no such key at all. What
+	// a task actually ships in comes from the project record (ruling (d)).
+	Stream *string `json:"stream,omitempty"`
+	Nodes  []Node  `json:"nodes"`
+	Edges  []Edge  `json:"edges"`
 }
 
 // Node is one task of the plan. ID is the planner's own name for it and is what
@@ -59,8 +95,11 @@ type Node struct {
 	// than an empty string.
 	Run *string `json:"run"`
 	// Version is the target version this task ships in, null when the plan
-	// does not say. It is the version roadmap's source of truth until the
-	// project record carries one (D29).
+	// does not say. A schema-2 artifact spells it MAJOR.MINOR, optionally with
+	// a patch — 0.10, or the patch box 0.10.1 a release such as 0.10.1 is — so
+	// a release box can be drawn from it; a v1 artifact's version is free text
+	// and is read as written. It is the version roadmap's source of truth until
+	// the project record carries one (D29).
 	Version *string `json:"version"`
 	// Footprint is the planner's expected set of paths, advisory and always
 	// labelled a prediction (D28, footprint.go).

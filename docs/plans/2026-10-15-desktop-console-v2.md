@@ -114,6 +114,7 @@ The planner's expected footprint per task, in the shape D28 recommends: glob-sha
 *Files:* `internal/plan/`, `internal/cli/plan.go`, `console/docs/json-contract.md`.
 *Verification:* `GOFLAGS=-p=2 go test ./internal/plan -run 'Ready|CriticalPath' -count=1` — table-driven, with a graph whose raw-count hub is *not* the critical-path bottleneck, since that is the case the feature exists for.
 *Independent merge:* yes; it depends on V2.2.1's schema and on nothing else.
+**Amended 2026-10-24 by the console dependency graph work (GV0.1): the read this task landed is absorbed, not deleted.** [That plan](../console-dependency-graph/implementation-plan.md) builds readiness from the graph joined to runs — GV1.6 computes it in Go and prints it as `fugaro plan status --json`, and GV1.1 computes the levels, the downstream counts and the critical path beside it — which is the answer D26's fallback and F7's rule already asked for. The `--done` flag the landed paragraph describes is the part that goes away: a run's own record answers what the read had to be told. The artifact stays `schema_version` 1 in both plans.
 
 ### Phase V2.3 — the graph on screen
 
@@ -122,6 +123,7 @@ The console renders the graph document: the four colours (done, running, ready, 
 *Files:* `console/` (the screen, its fixture, its test), `console/docs/json-contract.md` if a field is added.
 *Verification:* the console's own test command for the view, plus `GOFLAGS=-p=2 go test ./internal/cli -run 'ConsoleBoundary' -count=1` so the boundary still holds.
 *Independent merge:* yes.
+**Superseded 2026-10-24 by the console dependency graph work (GV0.1): GV2.3 draws the screen and GV2.4 its motion.** The screen is that work's, read-only, drawn from `plan status` with the states GV1.6 computes instead of four colours the screen applies — which is F4's rule kept, since every colour is a field the document carries. Its layout comes from `elkjs`'s worker (GV2.2) and its animation from GV2.4, whose reduced-motion rule is a dated amendment to the console styling design's §3.9. The task keeps its number and nothing above is deleted.
 
 ### Phase V2.4 — overlap
 
@@ -148,6 +150,7 @@ The console shows the exact command that would change a task's target version; t
 *Files:* `console/`, `docs/design/desktop-console-v2.md`.
 *Verification:* the console's own test command, plus a test that the app holds no path into the checkout.
 *Independent merge:* yes.
+**Superseded 2026-10-24 by the console dependency graph work (GV0.1): GV3.2 is the roadmap move, and it is blocked rather than scheduled.** The owner's answer of 2026-10-22 (GD2, confirmed by ruling (b)) has the console write the roadmap itself once the **coordinator's project record** exists — 0.11.0 at the earliest — and until then the read-only affordance above is what the console does instead of a write. The write waits on a route into that record that the app holds no credential for (F30, ruling (a)); GV3.1 is the command that would make the change. **V2.5.3's own requirement stands exactly as written: the app holds no path into the operator's checkout.**
 
 ### Unscheduled and unapproved: the cancel-and-retry spawns (V2.5.2)
 
@@ -165,11 +168,13 @@ Spawns of `fugaro cancel RUN` and `fugaro run --retry RUN`, with **the app's own
 The version lives in the graph document beside the task today (D29's recommendation), and moves into the project record when the project-centric plan's phase 6 (`fugaro project export`, Check 56) lands — with the console reading it through the CLI in both cases, so the view does not change when the source does.
 *Files:* `internal/plan/`, `console/`, `docs/design/desktop-console-v2.md`.
 *Verification:* `GOFLAGS=-p=2 go test ./internal/plan -run 'Version' -count=1`, plus the console's own test command.
+**Amended 2026-10-24 by the console dependency graph work (GV0.1).** The version becomes a release box on the graph screen (GV2.3), the stream it belongs to comes from GV1.3's `stream` field, and the source of truth this task waits for is the **coordinator's project record** rather than `fugaro project export` — F31 records that two different things in this tree answer to that name. **One fact to correct while reading this task: the stream numbers were settled after this plan was written.** The console's stream starts at `0.110.0` and the mobile app's at `0.200.0` ([docs/release.md](../release.md)), so a release box headed "Console · Cherry" is the console's own first minor and not a CLI number, and a version read from the plan artifact is a stream-scoped version rather than the CLI's. GV4.1 is where the authoritative assignment arrives, with that record.
 
 **V2.6.2 — the dependency-aware warning. (needs V2.2.1 and V2.6.1)**
 "Flags a task scheduled earlier than something it depends on, and offers to pull the dependency forward" — a pure function of the graph and the version column (design F24), computed where the graph is read. The "pull it forward" half changes the operator's plan and is therefore V2.5.3's shape — the console prints the exact command and the operator runs it — not a new mechanism.
 *Files:* `internal/plan/`, `console/`, `console/docs/json-contract.md`.
 *Verification:* `GOFLAGS=-p=2 go test ./internal/plan -run 'Roadmap' -count=1`.
+**Amended 2026-10-24 by the console dependency graph work (GV0.1): the warning is kept as written; the pull-forward half follows GV3.2.** The warning is a pure function of the graph and the version column, and GV1.6's read carries both; the pull-forward changes the operator's plan, so it prints the exact command exactly as above and then waits on the coordinator's project record like V2.5.3. Nothing above is deleted.
 
 ### Phase V2.7 — the rest of the spec
 
@@ -197,6 +202,7 @@ Derived from the watch feed by the console's own long-lived reader, **off by def
 *Verification:* the **skill lint**, which lives in its own package — `GOFLAGS=-p=2 go test ./plugin -run 'PluginSkillsLintClean|LintSizeBudget|LintByteBudget|LintChecksReferenceFiles' -count=1` (`plugin/skills_lint_test.go`, package `plugin_test`) — plus the docs tests that read `docs/design/*.md`, `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs' -count=1`. The skill lint is what decides new-file-versus-inline, so the test is the verification and not a formality; a `-run` pattern aimed at `./internal/cli` cannot reach it.
 *Independent merge:* yes, and it is the **cheapest useful task in this plan**: its output is a file a person can read, so it pays for itself before any console reads it.
 **Landed 2026-10-23, inline in `SKILL.md`** (81 of the lint's 400 lines, 6078 of its 24576 bytes), so the optional reference file was not needed — and `plugin/parallelism_skill_test.go` parses the skill's own example with `internal/plan`'s parser, so a renamed json tag fails a named test instead of leaving the skill wrong with every test green.
+**Extended 2026-10-24 by the console dependency graph work (GV0.1): GV1.7 adds the `stream` field to the format.** The graph screen draws one release box per stream, so the skill that writes the graph writes one more key per task; the rest of what landed above stands, parser test included.
 
 ## 4. The owner-run check: Check 62
 
