@@ -10,9 +10,9 @@
 # precondition below still runs. --dry-run applies the version bump to a
 # scratch worktree and runs the plugin tests there (the bump rewrites two
 # version stamps in every skill file, so it can push one over its byte budget
-# on its own; `go` has to be on PATH, as it does for the stream read below, and
-# its absence is a refusal like a missing `gh`), then stops after printing the
-# plan for step 2 (branch/PR),
+# on its own; `go` has to be on PATH for it, as it does for the stream read
+# below, and its absence is a refusal like a missing `gh`), then stops after
+# printing the plan for step 2 (branch/PR),
 # creating nothing outside that worktree, which it removes however it ends.
 # The plan says what that check did, including that it did not run when the
 # checkout holds no module. --timeout-minutes (default 45, a whole number
@@ -22,10 +22,10 @@
 #
 # The release reads the CLI stream from docs/release-streams.yaml through a
 # small Go helper, internal/streams/cmd/streams (GD7: one file, the graph's
-# reader and this one): it refuses a version the stream has already spent,
-# prints the release's spoken name, and writes the new version back into the
-# file in the release commit, so the file the graph draws never describes a
-# version that has shipped (GV1.5, docs/console-dependency-graph).
+# reader and this one): it refuses a version below the stream's current, prints
+# the release's spoken name, and records the version being released in the file
+# in its release commit, so the file the graph draws never describes a version
+# that has shipped (GV1.5, docs/console-dependency-graph).
 #
 # Re-running after an interruption is safe: the script re-derives its state
 # from git and gh (an existing release/vX.Y.Z PR, merged or open, is found
@@ -162,7 +162,7 @@ branch="release/$tag"
 # same reason RELEASE_SH_PLUGIN_TEST_CMD exists).
 streams_cmd=${RELEASE_SH_STREAMS_CMD:-go run ./internal/streams/cmd/streams}
 if [ -z "${RELEASE_SH_STREAMS_CMD:-}" ] && ! command -v go >/dev/null 2>&1; then
-  echo "go is not on PATH, and the release reads the CLI stream (docs/release-streams.yaml) through internal/streams/cmd/streams to learn the version it must not go behind and the name it is spoken with. Install go (https://go.dev/dl)." >&2
+  echo "go is not on PATH, and the release reads the CLI stream (docs/release-streams.yaml) through internal/streams/cmd/streams with it, for the version it must not go behind and the name it is spoken with (--dry-run's plugin budget check needs go too). Install go (https://go.dev/dl)." >&2
   exit 1
 fi
 if ! stream_fields=$($streams_cmd get cli 2>&1); then

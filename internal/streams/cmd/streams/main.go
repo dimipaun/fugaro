@@ -166,7 +166,11 @@ var (
 	currentRE     = regexp.MustCompile(`^(\s*)current:\s*".*"\s*$`)
 )
 
-// setCurrent records v as the stream's current version in the file.
+// setCurrent records v as the stream's current version in the file. `next` is
+// left where it is: it is the name the minor after the current one takes, so a
+// release that stays inside the current minor does not move it, and the release
+// that opens a new minor is where it is advanced (docs/release-streams.yaml's
+// header; the release notes for a minor release are hand-written anyway).
 func setCurrent(name string, v streams.Version) error {
 	// Read vets the path before anything is written through it: a symlink and a
 	// file that is not the catalogue are refused, as they are for every reader.
