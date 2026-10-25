@@ -75,13 +75,13 @@ func TestPrompts(t *testing.T) {
 			t.Errorf("system prompt lacks %q", want)
 		}
 	}
-	if got := ReviewPrompt("/review", "", "main", DiffSize{}, false); !strings.HasPrefix(got, "/review ") || !strings.Contains(got, "origin/main") {
+	if got := ReviewPrompt("/review", "", "origin/main", DiffSize{}, false); !strings.HasPrefix(got, "/review ") || !strings.Contains(got, "origin/main") {
 		t.Errorf("skill review prompt = %q", got)
 	}
-	if got := ReviewPrompt("", "Check the SQL.", "develop", DiffSize{}, false); !strings.HasPrefix(got, "Check the SQL.") || !strings.Contains(got, "origin/develop") {
+	if got := ReviewPrompt("", "Check the SQL.", "origin/develop", DiffSize{}, false); !strings.HasPrefix(got, "Check the SQL.") || !strings.Contains(got, "origin/develop") {
 		t.Errorf("file review prompt = %q", got)
 	}
-	if got := ReviewPrompt("", "", "main", DiffSize{}, false); !strings.Contains(got, "correctness bugs") {
+	if got := ReviewPrompt("", "", "origin/main", DiffSize{}, false); !strings.Contains(got, "correctness bugs") {
 		t.Errorf("default review prompt = %q", got)
 	}
 	fix := FixPrompt(Verdict{Verdict: "changes", Findings: []Finding{{Severity: "major", File: "a.go", Summary: "nil deref"}, {Summary: "add a test"}}})
@@ -255,9 +255,9 @@ func countWord(s, word string) int {
 
 func TestPromptScoringAnchors(t *testing.T) {
 	for name, p := range map[string]string{
-		"the default review prompt": ReviewPrompt("", "", "main", DiffSize{}, false),
-		"a skill review prompt":     ReviewPrompt("/review", "", "main", DiffSize{}, false),
-		"a prompt-file review":      ReviewPrompt("", "Check the SQL.", "main", DiffSize{}, false),
+		"the default review prompt": ReviewPrompt("", "", "origin/main", DiffSize{}, false),
+		"a skill review prompt":     ReviewPrompt("/review", "", "origin/main", DiffSize{}, false),
+		"a prompt-file review":      ReviewPrompt("", "Check the SQL.", "origin/main", DiffSize{}, false),
 		"a pick prompt":             PickPrompt("", "", []int{9, 7}, []string{"/review/9", "/review/7"}),
 	} {
 		for _, ax := range promptScoringAxes {

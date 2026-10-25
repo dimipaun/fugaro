@@ -77,6 +77,8 @@ import { putReading, putText, startConsole } from './app'
 import type { CompatibilityBridge, MountLike, ScreenGate } from './app'
 import { readNumber, unavailable } from '../shared/availability'
 import type { Reading } from '../shared/availability'
+import { rigorIndex } from '../shared/rigor'
+import type { RigorView } from '../shared/rigor'
 import { decodeSnapshot } from '../shared/schema'
 import { sanitizeRefusal } from '../shared/sanitize'
 import { LIVE_STALE_AFTER_SECONDS, BurnHistory, buildLiveModel, renderLive } from './screens/live'
@@ -1463,6 +1465,27 @@ export function drawIssue(surface: DomSurface, row: RailRow, actions: IssueActio
  */
 export const LIVE_POLL_MS = 1000
 
+/**
+ * LIVE_RIGOR_TTL_MS is how long the Live screen's rigor join is kept: 15,000 ms.
+ *
+ * The mode on a Live row is a **join**, not a frame field: `watch --json`
+ * answers `JSONRun`, which carries no rigor block, so the mode comes from
+ * `runs ls --json` and is matched to the row by run id (`rigorIndex`,
+ * `shared/rigor.ts`). That read is a CLI invocation of its own, and it is
+ * deliberately **not** the poll's: the poll runs at `LIVE_POLL_MS`, and a
+ * `runs ls` every second would be sixty invocations a minute for a fact that is
+ * written once, at the run's bootstrap.
+ *
+ * A block never changes after it is written, so the only thing a fresh read can
+ * add is a **run that started since** -- and this TTL is how long that can go
+ * unnoticed. The join is re-read when the Live view is entered and, while it is
+ * on screen, when the map is older than this. A read that refuses leaves the map
+ * it had (the first read leaves it empty): a run the join does not know about is
+ * drawn with **no chip at all**, which is the cell a run with no block draws,
+ * and never a mode taken from another run.
+ */
+export const LIVE_RIGOR_TTL_MS = 15_000
+
 /** VIEW_BUTTON_CLASS, VIEW_PANEL_CLASS and VIEW_NAV_CLASS are the console's own
  * names for the three elements the navigation is made of. They are constants
  * because a spec reads them. */
@@ -1730,7 +1753,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     drawn: Drawn | null
     inFlight: boolean
     timer: ReturnType<typeof setInterval> | null
-  } = { drawn: null, inFlight: false, timer: null }
+    /** the rigor join: `runs ls --json`'s blocks by run id (`rigorIndex`), the
+     * stamp the read that built it started at, and whether one is in flight. */
+    rigor: ReadonlyMap<string, RigorView>
+    rigorAt: number
+    rigorInFlight: boolean
+  } = { drawn: null, inFlight: false, timer: null, rigor: new Map(), rigorAt: 0, rigorInFlight: false }
 
   /** panel is where every screen is drawn. It is created here and appended
    * after the navigation below, so the page reads nav-then-screens. */
@@ -1855,11 +1883,16 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
 
   /** show switches the panel to one view. The Live screen is not re-read here --
    * its model is the one the last poll drew, which is the point of a live
-   * screen -- and the other two read on entry. */
+   * screen -- and the other two read on entry. The Live screen's **rigor join**
+   * is not its frame and is not re-read by the poll either, so it is asked for
+   * here: entering the view is the moment a reader is looking at run rows, and
+   * `maybeRefreshRigor` decides whether the map is old enough to be worth a
+   * read. */
   const show = (id: string): void => {
     markCurrent(id)
     rail.view(null)
     if (id === 'live') {
+      maybeRefreshRigor()
       // A console that opened on an issue has made no Live read yet.
       if (live.drawn !== null) replace(live.drawn)
       else void pollLive()
@@ -1920,17 +1953,66 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   // ---- Live -------------------------------------------------------------
 
   /**
+   * refreshRigor makes one `runs ls --json` read and keeps the join it answers
+   * with (`LIVE_RIGOR_TTL_MS` says why the Live screen needs one at all).
+   *
+   * **At most one call is in flight**, the rule `pollLive` keeps and for the
+   * same reason: the flag is set before the await and cleared in a `finally`, so
+   * a slow read cannot be overtaken by the next tick. `rigorAt` is stamped
+   * **before** the read, so a read that refuses waits a whole TTL rather than
+   * being retried on the next tick of a one-second poll.
+   *
+   * A refusal is **not** a refusal screen. The mode is one cell of a row and the
+   * rows are the frame's: replacing a live screen with "this read failed"
+   * because the run list could not be read would hide the run that is spending
+   * money now, which is the one thing this screen exists to show. So the map
+   * stays as it was -- empty, if this was the first read -- and the rows draw no
+   * chips.
+   */
+  const refreshRigor = async (): Promise<void> => {
+    if (live.rigorInFlight) return
+    live.rigorInFlight = true
+    live.rigorAt = Date.now()
+    try {
+      const answer = documentOf(await bridge.listRuns({}))
+      if (answer.ok) live.rigor = rigorIndex(answer.data)
+    } catch {
+      // `readBridgeFrom` answers `null` rather than rejecting, so reaching here
+      // is a bridge that threw where it should not have: the map stays as it
+      // was, which is the same cell a refused read draws.
+    } finally {
+      live.rigorInFlight = false
+    }
+  }
+
+  /** maybeRefreshRigor is the one place the TTL is applied, so entering the view
+   * and the poll cannot disagree about when the join is due. */
+  const maybeRefreshRigor = (): void => {
+    if (Date.now() - live.rigorAt < LIVE_RIGOR_TTL_MS) return
+    void refreshRigor()
+  }
+
+  /**
    * pollLive makes one `live.watch` read and draws it. **At most one call is in
    * flight**: the flag is set before the await and cleared in a `finally`, so a
    * slow read cannot be overtaken by the next tick of the interval. The flag is
    * this file's rather than the bridge's because the bridge is `invoke`-only and
    * an unanswered call is invisible to it.
+   *
+   * The tick also asks whether the rigor join is due. It is asked here and not
+   * from a second interval because this is the only thing that runs while the
+   * view is on screen, and `syncPolling` is already the one place that decides
+   * whether anything should be running at all.
    */
   const pollLive = async (): Promise<void> => {
     if (live.inFlight) return
     live.inFlight = true
     try {
       drawLive(await bridge.subscribeLive({}))
+      // The rigor join is asked for **after** the frame is drawn, so a read that
+      // refuses cannot keep a frame off the screen: what the poll is for is the
+      // frame, and the join is one cell of a row that the next frame draws with.
+      maybeRefreshRigor()
     } catch {
       // The same rule `drawLive` keeps: a poll that fails while another view is
       // on screen does not replace the view the operator chose.
@@ -1973,7 +2055,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // which is the second of the two conditions the design gives `silent`
     // (section 4.1). A read that was refused sets it above.
     rail.setState(feed.stale ? 'silent' : 'running')
-    const model = buildLiveModel(decoded.value, history, feed)
+    const model = buildLiveModel(decoded.value, history, feed, live.rigor)
     // The kill banner is the `kill` view. It is asked for through the gate --
     // the one door -- with an empty drawing, because what a reduced console
     // withholds here is not a screen but one panel of the Live screen: the

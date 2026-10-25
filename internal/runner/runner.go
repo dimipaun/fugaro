@@ -300,6 +300,14 @@ type run struct {
 	// values (checkpoint.go). They differ when the run starts from another
 	// ref than its base branch (--ref develop with base_branch main).
 	baseSHA, startSHA string
+	// narrowBase is the commit a first run's review range starts from when
+	// it was narrowed to the run's own commits (diffbase.go,
+	// narrowReviewRange), "" when the range is origin/<diffBase>. It is set
+	// once, between stages, so no checkpoint goroutine reads it mid-write.
+	narrowBase string
+	// narrowText is narrowSummary's line, read once at finalize for both the
+	// status section and the report.
+	narrowText string
 	// rigorCfg is the run's rigor configuration *as the base branch has it*
 	// (docs/rigor-modes D25), read once at bootstrap and reused at every
 	// later moment (rigor.go); rigorRev is the revision it was read from, ""
@@ -313,13 +321,6 @@ type run struct {
 	// top of, "" when the run wrote no item at all: the report names it as
 	// the commit the suite ran on (report.go's testsLine).
 	filedFrom string
-	// closedBacklog is the ids of the backlog items this run closed as the
-	// follow-up that fixed them (D31, plan T4.7), in the order it closed
-	// them: the pull request body's status section names them beside the
-	// ids it filed. It is not a record field: the record's own Backlog is
-	// what the run *filed*, and a reader of the branch has the closed
-	// items themselves, whose `## Closed by` names this run's pull request.
-	closedBacklog []string
 	// ckpt is the checkpoint pushes' state (checkpoint.go).
 	ckpt checkpointState
 	// skipPR is set when the check gate already ended the run (clean, or an
@@ -2003,8 +2004,11 @@ func (r *run) agentLoop(ctx context.Context) {
 	// The base is the run's own base of work, not the branch its
 	// configuration came from (diffbase.go, diffBase): a run started from
 	// another ref must review its own change, not the whole of that ref's
-	// divergence from the default branch.
-	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.reviewPromptBase(), r.reviewDiffSize(ctx), r.baseUnreadable())
+	// divergence from the default branch — and a first run whose work was
+	// cut from another branch than its ref is narrowed to its own commits
+	// here, once, before the prompt and every round's input read the range.
+	r.narrowReviewRange(ctx)
+	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.reviewRev(ctx), r.reviewDiffSize(ctx), r.baseUnreadable())
 	if f := r.follow; f != nil {
 		if add := followup.ReviewAddendum(f.sel, f.nonce); add != "" {
 			reviewPrompt += "\n\n" + add
@@ -2789,7 +2793,11 @@ func (r *run) finalize(ctx context.Context) error {
 		r.rec.Status, r.rec.Outcome = runstore.StatusFailed, runstore.OutcomeDraft
 	}
 	r.updateCost()
+	r.narrowText = r.narrowSummary(ctx)
 	notes, gone := r.settlePR(ctx, pr, ready, reason, records)
+	if r.narrowText != "" {
+		notes = append(notes, r.narrowText)
+	}
 	if gone {
 		r.endUnchanged(ctx, fmt.Sprintf("PR #%d was %s during the run; the branch was pushed", pr.Number, r.closedWord(ctx, pr.Number)), records)
 		return nil
@@ -2963,7 +2971,12 @@ func (r *run) fileOpenItems(ctx context.Context) bool {
 		return false
 	}
 	r.rec.Backlog = append(r.rec.Backlog, ids...)
-	r.closedBacklog = append(r.closedBacklog, closed...)
+	// The record's list is bounded; the closed items on the branch are the
+	// whole account whatever it holds.
+	r.rec.BacklogClosed = append(r.rec.BacklogClosed, closed...)
+	if len(r.rec.BacklogClosed) > runstore.MaxBacklogClosed {
+		r.rec.BacklogClosed = r.rec.BacklogClosed[:runstore.MaxBacklogClosed]
+	}
 	return true
 }
 

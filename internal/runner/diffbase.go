@@ -11,7 +11,8 @@ import (
 )
 
 // diffBase is the branch every diff this run takes is measured against:
-// `origin/<diffBase>...HEAD` is the range the review prompt names, the range
+// `origin/<diffBase>...HEAD` (reviewRev, unless a first run's range was
+// narrowed to its own commits) is the range the review prompt names, the range
 // the review input is built over, what the prefetch fills the checkout in
 // for, and what the follow-up's own diff stat is read against.
 //
@@ -95,6 +96,161 @@ func (r *run) reviewPromptBase() string {
 		return r.reviewBase(r.reviewHeads[0])
 	}
 	return r.diffBase()
+}
+
+// narrowed is the commit a first run's range was narrowed to
+// (narrowReviewRange), "" for every other run: the one place both readers —
+// reviewRev and guardBounds — take the follow-up and review-run conditions
+// from, so the review range and the guard can never disagree about them.
+func (r *run) narrowed() string {
+	if r.follow != nil || r.review {
+		return ""
+	}
+	return r.narrowBase
+}
+
+// reviewRev is the revision the review stage's range starts from,
+// `<reviewRev>...HEAD`: the review prompt, the input built for it, the size
+// it is warned about and the follow-up's diff stat all read this one value,
+// and guardBounds subtracts the same narrowed commit. It is
+// origin/<reviewPromptBase>, except for a first run whose range was narrowed
+// to its own commits (narrowReviewRange), where it is the commit before them.
+//
+// The narrowed commit is used only while it is still an ancestor of HEAD. A
+// fix round that rebases the run's commits elsewhere (onto origin/main, say)
+// leaves it behind, and `<it>...HEAD` would then start at its merge base
+// with HEAD — the integration branch's fork point, which can be a larger
+// range than the recorded one. That round reads the recorded range instead,
+// which is what it would have read before narrowing existed; the prompt's
+// scope line, built once before the first round, still names the commit,
+// so that round's prompt says the range moved (narrowLeftNote), and the
+// input's own header names the range it was built over.
+func (r *run) reviewRev(ctx context.Context) string {
+	if nb := r.narrowed(); nb != "" && r.repo != nil {
+		head, err := r.repo.HeadSHA(ctx)
+		if err == nil {
+			var ok bool
+			if ok, err = r.repo.IsAncestor(ctx, nb, head); err == nil && ok {
+				return nb
+			}
+		}
+		r.d.Log.Warn("the run's own range no longer leads to HEAD; this diff uses the recorded range",
+			"narrowed", nb, "err", r.redactErr(err))
+	}
+	return "origin/" + r.reviewPromptBase()
+}
+
+// narrowReviewRange narrows a first run's review range to the commits the
+// run made itself, when its recorded base says otherwise. It is called once,
+// after implement and before the review stage's prompt is built, so every
+// review round and the writeback read the same range.
+//
+// A run launched without --ref has main as its base (refBase) whatever its
+// agent then does, and briefs that say `git fetch origin <integration> &&
+// git checkout -b <b> origin/<integration>` cut the work from a branch
+// nothing recorded: `origin/main...HEAD` is then the whole integration
+// branch, and the reviewer was handed it every round — the cost this file's
+// diffBase comment measures, back by another door. The run's own commits
+// need no branch name to be found (gitops.OwnCommits): they are the ones no
+// branch on origin holds but the run's own. The range then starts at the
+// first one's parent.
+//
+// It only ever narrows: the range is kept when the run has no commits of its
+// own yet, when the first one has no parent, when anything cannot be read,
+// and whenever the narrowed range holds no fewer commits than the recorded
+// one (a run on main, a run that merged another branch in: the two are the
+// same range, or the merge's content is part of the change). A follow-up and
+// a review run keep theirs: their base is the pull request's, read from the
+// provider, and their prefetch has already fetched for it at bootstrap.
+//
+// A git older than 2.44 keeps the range too: it ignores GIT_NO_LAZY_FETCH,
+// so reading which branches' commits the checkout holds would fetch every
+// missing one in a blobless clone (gitops.NoLazyFetch). The base image's git
+// is newer (images/base_docker_test.go); a repository's own image may not be.
+func (r *run) narrowReviewRange(ctx context.Context) {
+	if r.follow != nil || r.review || r.repo == nil || r.rec == nil {
+		return
+	}
+	def := "origin/" + r.diffBase()
+	if v, err := r.repo.GitVersion(ctx); err != nil || !gitops.NoLazyFetch(v) {
+		r.d.Log.Warn("this git cannot read origin's branches without fetching them (GIT_NO_LAZY_FETCH needs git 2.44); the review range is the run's recorded base",
+			"git", v, "range", r.redact(def)+"...HEAD", "err", r.redactErr(err))
+		return
+	}
+	base, why := ownCommitsBase(ctx, r.repo, r.rec.Branch, def)
+	if base == "" {
+		r.d.Log.Info("the review range is the run's recorded base", "range", r.redact(def)+"...HEAD", "why", r.redact(why))
+		return
+	}
+	r.narrowBase = base
+	r.d.Log.Info("the review range is narrowed to the run's own commits", "range", base+"...HEAD",
+		"instead_of", r.redact(def)+"...HEAD", "why", r.redact(why))
+}
+
+// ownCommitsBase is narrowReviewRange's decision: the parent of the run's
+// first own commit when the range from it holds fewer commits than def's,
+// else "". why says which, for the log.
+func ownCommitsBase(ctx context.Context, repo *gitops.Repo, runBranch, def string) (base, why string) {
+	own, err := repo.OwnCommits(ctx, runBranch)
+	if err != nil {
+		return "", "the run's own commits could not be read: " + err.Error()
+	}
+	if len(own) == 0 {
+		return "", "the run has no commits of its own"
+	}
+	parent, err := repo.FirstParent(ctx, own[0])
+	if err != nil {
+		return "", "the parent of the run's first own commit could not be read: " + err.Error()
+	}
+	if parent == "" {
+		return "", "the run's first own commit has no parent"
+	}
+	narrow, err := repo.CommitsAhead(ctx, parent)
+	if err != nil {
+		return "", "the narrowed range could not be counted: " + err.Error()
+	}
+	recorded, err := repo.CommitsAhead(ctx, def)
+	if err != nil {
+		return "", "the recorded range could not be counted: " + err.Error()
+	}
+	if narrow >= recorded {
+		return "", fmt.Sprintf("the recorded range holds %d commits, the run's own range %d: nothing to narrow", recorded, narrow)
+	}
+	return parent, fmt.Sprintf("%d own commits; the recorded range holds %d commits, the run's own range %d", len(own), recorded, narrow)
+}
+
+// narrowSummary is the line the run report and the pull request's status
+// section carry when the review range was narrowed (narrowReviewRange): a
+// person reading the pull request sees the whole of its diff, the reviewer
+// saw only the run's own commits, and without this line nothing says so. It
+// is read at finalize, over the final HEAD, so the counts include every fix
+// round's commits; "" when the range was not narrowed or cannot be counted.
+// Its parts are a commit SHA, counts and a validated branch name, so it is
+// bounded and needs no escaping.
+func (r *run) narrowSummary(ctx context.Context) string {
+	nb := r.narrowed()
+	if nb == "" || r.repo == nil {
+		return ""
+	}
+	short := "`" + shortSHA(nb) + "`"
+	if rev := r.reviewRev(ctx); rev != nb {
+		return fmt.Sprintf("review covered commits after %s until a fix round moved the branch off it; later rounds covered %s...HEAD", short, rev)
+	}
+	own, err := r.repo.CommitsAhead(ctx, nb)
+	if err != nil {
+		r.d.Log.Warn("counting the run's own commits for the report failed", "err", r.redact(err.Error()))
+		return ""
+	}
+	line := fmt.Sprintf("review covered commits after %s (%s)", short, Plural(own, "commit"))
+	all, err := r.repo.CommitsAhead(ctx, "origin/"+r.cfg.Git.BaseBranch)
+	if err != nil {
+		r.d.Log.Warn("counting the pull request's commits for the report failed", "err", r.redact(err.Error()))
+		return line
+	}
+	if other := all - own; other > 0 {
+		line += fmt.Sprintf("; this PR also carries %s from other branches", Plural(other, "commit"))
+	}
+	return line
 }
 
 // diffRange is one range the run's diffs are taken over: head, measured
@@ -213,7 +369,7 @@ func (r *run) reviewDiffSize(ctx context.Context) DiffSize {
 	if r.repo == nil || (r.review && len(r.reviewHeads) != 1) {
 		return DiffSize{}
 	}
-	size, err := diffSize(ctx, r.repo, "origin/"+r.reviewPromptBase()+"...HEAD")
+	size, err := diffSize(ctx, r.repo, r.reviewRev(ctx)+"...HEAD")
 	if err != nil {
 		r.d.Log.Warn("measuring the diff under review failed; the review prompt carries no size", "err", r.redact(err.Error()))
 		return DiffSize{}

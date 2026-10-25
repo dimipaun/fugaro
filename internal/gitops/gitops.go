@@ -250,10 +250,24 @@ func (r *Repo) gitRaw(ctx context.Context, args ...string) ([]byte, error) {
 // at all (a diff run only for the lazy object fetches it performs —
 // io.Discard, since that output may be far too large to hold in memory).
 func (r *Repo) gitTo(ctx context.Context, out io.Writer, args ...string) error {
+	return r.gitIO(ctx, nil, out, args...)
+}
+
+// gitIn is git for a command fed its input on stdin (`--stdin`,
+// `--batch-check`): one process for a list whatever its length, and a list
+// that never reaches the command line, where ARG_MAX would cap it.
+func (r *Repo) gitIn(ctx context.Context, in string, args ...string) (string, error) {
+	var stdout bytes.Buffer
+	err := r.gitIO(ctx, strings.NewReader(in), &stdout, args...)
+	return strings.TrimSpace(stdout.String()), err
+}
+
+func (r *Repo) gitIO(ctx context.Context, in io.Reader, out io.Writer, args ...string) error {
 	cmd := exec.CommandContext(ctx, "git", append(slices.Clone(noHooks), args...)...)
 	cmd.Dir = r.Dir
 	cmd.Env = r.processEnv()
 	cmd.WaitDelay = gitWaitDelay
+	cmd.Stdin = in
 	var stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = out, &stderr
 	err := cmd.Run()
@@ -565,6 +579,167 @@ func (r *Repo) CommitsAhead(ctx context.Context, since string, except ...string)
 		return 0, err
 	}
 	return strconv.Atoi(out)
+}
+
+// OriginHeads returns the commits origin's branches point at now, read
+// from origin itself (`ls-remote --heads`), other than runBranch — the
+// run's own branch, which the run's pushes fill with its own commits — and
+// only those this checkout already holds. It is never the checkout's
+// remote-tracking refs: the agent's own git can create or repoint those
+// without pushing anything (`git update-ref refs/remotes/origin/x <its
+// commit>`), and "a branch on origin holds it" must mean a real branch on
+// origin. A head the checkout lacks is left out, and it is checked with
+// lazy fetches off: in a blobless partial clone a plain check would fetch
+// every missing branch's commit from the promisor remote. GIT_NO_LAZY_FETCH
+// is git 2.44's (NoLazyFetch): an older git ignores it, which is why the
+// runner asks GitVersion before it narrows anything.
+//
+// Two processes whatever the branch count: the presence of every head is
+// one `cat-file --batch-check`, which answers each `<sha>^{commit}` line in
+// order, "<sha> commit <size>" when the checkout holds the commit and
+// "<line> missing" when it does not.
+func (r *Repo) OriginHeads(ctx context.Context, runBranch string) ([]string, error) {
+	if runBranch == "" {
+		return nil, errors.New("refusing to read origin's branches without the run's own branch to leave out")
+	}
+	out, err := r.git(ctx, "ls-remote", "--heads", "origin")
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var candidates []string
+	var in strings.Builder
+	for _, line := range strings.Split(out, "\n") {
+		sha, name, ok := strings.Cut(strings.TrimSpace(line), "\t")
+		if !ok || name == "refs/heads/"+runBranch || !IsFullSHA(sha) || seen[sha] {
+			continue
+		}
+		seen[sha] = true
+		candidates = append(candidates, sha)
+		in.WriteString(sha + "^{commit}\n")
+	}
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	local := *r
+	local.Env = append(slices.Clone(r.Env), "GIT_NO_LAZY_FETCH=1")
+	res, err := local.gitIn(ctx, in.String(), "cat-file", "--batch-check")
+	if err != nil {
+		return nil, err
+	}
+	answers := strings.Split(res, "\n")
+	if len(answers) != len(candidates) {
+		return nil, fmt.Errorf("reading origin's branches: cat-file answered %d of %d heads", len(answers), len(candidates))
+	}
+	var heads []string
+	for i, a := range answers {
+		if f := strings.Fields(a); len(f) == 3 && f[1] == "commit" {
+			heads = append(heads, candidates[i])
+		}
+	}
+	return heads, nil
+}
+
+// HeldBy reports whether any of heads holds commit (is it or has it as an
+// ancestor), in one process whatever their number: `rev-list --count
+// <commit>` with every head subtracted on stdin counts 0 exactly when one of
+// them reaches it. The heads go in as "^<sha>" lines rather than after a
+// command-line --not, which git does not apply to what --stdin reads. commit
+// must be a full commit SHA, and heads are OriginHeads', which the checkout
+// holds.
+func (r *Repo) HeldBy(ctx context.Context, commit string, heads []string) (bool, error) {
+	if !IsFullSHA(commit) {
+		return false, fmt.Errorf("refusing to look for %q on origin's branches: not a full commit SHA", commit)
+	}
+	if len(heads) == 0 {
+		return false, nil
+	}
+	out, err := r.gitIn(ctx, notLines(heads), "--no-replace-objects", "rev-list", "--count", "--stdin", "--end-of-options", commit)
+	if err != nil {
+		return false, err
+	}
+	n, err := strconv.Atoi(out)
+	return err == nil && n == 0, err
+}
+
+// notLines is heads as `rev-list --stdin` subtracts them, one "^<sha>" line
+// each. Every head is a full SHA (OriginHeads), so no line is read as an
+// option.
+func notLines(heads []string) string {
+	var b strings.Builder
+	for _, h := range heads {
+		b.WriteString("^" + h + "\n")
+	}
+	return b.String()
+}
+
+// OwnCommits lists, oldest first (parents before children), the commits
+// HEAD has that no branch on origin holds (OriginHeads) other than
+// runBranch. It answers "which commits did this run make" without knowing
+// which branch the work was cut from: an agent told to `git fetch origin
+// <integration> && git checkout -b <b> FETCH_HEAD` starts from a branch
+// nothing recorded and, in a single-branch clone, no remote-tracking ref
+// names. A branch on origin whose tip the checkout never fetched subtracts
+// nothing, which only ever makes the list longer. The heads are read on
+// stdin, so a repository with tens of thousands of branches stays one
+// process under ARG_MAX.
+func (r *Repo) OwnCommits(ctx context.Context, runBranch string) ([]string, error) {
+	heads, err := r.OriginHeads(ctx, runBranch)
+	if err != nil {
+		return nil, err
+	}
+	out, err := r.gitIn(ctx, notLines(heads), "--no-replace-objects", "rev-list", "--topo-order", "--reverse", "--stdin", "--end-of-options", "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	return strings.Fields(out), nil
+}
+
+// GitVersion is `git --version` as git prints it ("git version 2.47.3").
+func (r *Repo) GitVersion(ctx context.Context) (string, error) {
+	return r.git(ctx, "--version")
+}
+
+// NoLazyFetch reports whether the git that printed version (GitVersion)
+// honours GIT_NO_LAZY_FETCH, which git 2.44 added: an older one ignores the
+// variable, and OriginHeads' presence check would then fetch every missing
+// branch's commit in a blobless clone. Anything unparseable is a "no".
+func NoLazyFetch(version string) bool {
+	rest, ok := strings.CutPrefix(version, "git version ")
+	if !ok {
+		return false
+	}
+	words := strings.Fields(rest)
+	if len(words) == 0 {
+		return false
+	}
+	f := strings.SplitN(words[0], ".", 3)
+	if len(f) < 2 {
+		return false
+	}
+	major, err1 := strconv.Atoi(f[0])
+	minor, err2 := strconv.Atoi(f[1])
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return major > 2 || major == 2 && minor >= 44
+}
+
+// FirstParent returns sha's first parent, "" for a root commit. sha must be
+// a full commit SHA, so it is never read as an option or a moving ref.
+func (r *Repo) FirstParent(ctx context.Context, sha string) (string, error) {
+	if !IsFullSHA(sha) {
+		return "", fmt.Errorf("refusing to read the parent of %q: not a full commit SHA", sha)
+	}
+	out, err := r.git(ctx, "--no-replace-objects", "rev-list", "--parents", "--max-count=1", "--end-of-options", sha)
+	if err != nil {
+		return "", err
+	}
+	fields := strings.Fields(out)
+	if len(fields) < 2 {
+		return "", nil
+	}
+	return fields[1], nil
 }
 
 // RunBranchPrefix starts every branch the runner pushes.

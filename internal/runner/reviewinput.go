@@ -362,18 +362,37 @@ func reviewBatches(paths []string, n int) [][]string {
 // appended. Every review round builds it again, never once for the whole
 // loop: a fix between two rounds changes the branch, and a diff that no
 // longer matches the checkout under review is worse than no diff at all.
+// The range is read once per round (reviewRev), for the input and for the
+// note a round gets when a fix moved the branch off the narrowed commit the
+// prompt's scope line names (narrowLeftNote).
 func (r *run) reviewPromptWithInput(ctx context.Context, prompt string) string {
-	if input := r.reviewInputBlock(ctx); strings.TrimSpace(input) != "" {
+	if r.repo == nil {
+		return prompt
+	}
+	rev := r.reviewRev(ctx)
+	if nb := r.narrowed(); nb != "" && rev != nb {
+		prompt += "\n\n" + narrowLeftNote(nb, rev)
+	}
+	if input := r.reviewInputBlock(ctx, rev); strings.TrimSpace(input) != "" {
 		return prompt + "\n\n" + input
 	}
 	return prompt
 }
 
-// reviewInputBlock is the review stage's input as the prompt carries it, and
-// "" when it cannot be built. A build that fails warns and appends nothing:
-// the reviewer then reads the diff itself, as it did before this existed,
-// which is worth a warning but not a failed run.
-func (r *run) reviewInputBlock(ctx context.Context) string {
+// narrowLeftNote is the line a review round's prompt carries when the scope
+// line, built once before the first round, names a narrowed commit a fix
+// round has since moved the branch off (diffbase.go, reviewRev): that round
+// reads rev instead, and the reviewer is told which range is the real one.
+func narrowLeftNote(nb, rev string) string {
+	return fmt.Sprintf("A fix round moved this branch off %s, so the range named above no longer leads to HEAD: "+
+		"this round reviews %s...HEAD instead, the range the input below is built over.", nb, rev)
+}
+
+// reviewInputBlock is the review stage's input over rev...HEAD as the
+// prompt carries it, and "" when it cannot be built. A build that fails
+// warns and appends nothing: the reviewer then reads the diff itself, as it
+// did before this existed, which is worth a warning but not a failed run.
+func (r *run) reviewInputBlock(ctx context.Context, rev string) string {
 	if r.repo == nil {
 		return ""
 	}
@@ -381,7 +400,7 @@ func (r *run) reviewInputBlock(ctx context.Context) string {
 	// the prompt was built over. Building it against the configuration's
 	// base instead handed the reviewer the whole of another branch's
 	// divergence: 33,000 lines in run 865e, out of a $10 run cap.
-	in, err := buildReviewInput(ctx, r.repo, "origin/"+r.reviewPromptBase(), "HEAD")
+	in, err := buildReviewInput(ctx, r.repo, rev, "HEAD")
 	if err != nil {
 		r.d.Log.Warn("the review input could not be built; the reviewer reads the diff itself",
 			"err", r.redact(err.Error()))
