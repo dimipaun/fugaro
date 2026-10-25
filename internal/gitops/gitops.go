@@ -567,27 +567,63 @@ func (r *Repo) CommitsAhead(ctx context.Context, since string, except ...string)
 	return strconv.Atoi(out)
 }
 
-// OwnCommits lists, oldest first (parents before children), the commits
-// HEAD has that no branch on origin holds — as this checkout's
-// remote-tracking refs last saw origin — other than runBranch, the run's
-// own branch, which the run's pushes fill with exactly those commits. It
-// answers "which commits did this run make" without knowing which branch
-// the work was cut from: an agent told to `git checkout -b <b>
-// origin/<integration>` starts from a branch nothing recorded.
-//
-// --exclude must come before the --remotes it narrows, and for --remotes
-// its pattern is matched without the refs/remotes/ prefix. runBranch is a
-// pattern there, so one that carries glob characters is refused rather
-// than allowed to exclude other branches too. The refs are the checkout's,
-// so the answer is only as good as what the checkout fetched: a branch
-// fetched to FETCH_HEAD alone counts its commits as the run's, which only
-// ever makes the list longer.
-func (r *Repo) OwnCommits(ctx context.Context, runBranch string) ([]string, error) {
-	if runBranch == "" || strings.HasPrefix(runBranch, "-") || strings.ContainsAny(runBranch, "*?[\\ \t\n") {
-		return nil, fmt.Errorf("refusing to read the commits of run branch %q: not a plain branch name", runBranch)
+// OriginHeads returns the commits origin's branches point at now, read
+// from origin itself (`ls-remote --heads`), other than runBranch — the
+// run's own branch, which the run's pushes fill with its own commits — and
+// only those this checkout already holds. It is never the checkout's
+// remote-tracking refs: the agent's own git can create or repoint those
+// without pushing anything (`git update-ref refs/remotes/origin/x <its
+// commit>`), and "a branch on origin holds it" must mean a real branch on
+// origin. A head the checkout lacks is left out, and it is checked with
+// lazy fetches off: in a blobless partial clone a plain check would fetch
+// every missing branch's commit from the promisor remote.
+func (r *Repo) OriginHeads(ctx context.Context, runBranch string) ([]string, error) {
+	if runBranch == "" {
+		return nil, errors.New("refusing to read origin's branches without the run's own branch to leave out")
 	}
-	out, err := r.git(ctx, "--no-replace-objects", "rev-list", "--topo-order", "--reverse", "HEAD",
-		"--not", "--exclude=origin/"+runBranch, "--remotes=origin")
+	out, err := r.git(ctx, "ls-remote", "--heads", "origin")
+	if err != nil {
+		return nil, err
+	}
+	local := *r
+	local.Env = append(slices.Clone(r.Env), "GIT_NO_LAZY_FETCH=1")
+	seen := map[string]bool{}
+	var heads []string
+	for _, line := range strings.Split(out, "\n") {
+		sha, name, ok := strings.Cut(strings.TrimSpace(line), "\t")
+		if !ok || name == "refs/heads/"+runBranch || !IsFullSHA(sha) || seen[sha] {
+			continue
+		}
+		seen[sha] = true
+		if _, err := local.git(ctx, "cat-file", "-e", "--end-of-options", sha+"^{commit}"); err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			continue
+		}
+		heads = append(heads, sha)
+	}
+	return heads, nil
+}
+
+// OwnCommits lists, oldest first (parents before children), the commits
+// HEAD has that no branch on origin holds (OriginHeads) other than
+// runBranch. It answers "which commits did this run make" without knowing
+// which branch the work was cut from: an agent told to `git fetch origin
+// <integration> && git checkout -b <b> FETCH_HEAD` starts from a branch
+// nothing recorded and, in a single-branch clone, no remote-tracking ref
+// names. A branch on origin whose tip the checkout never fetched subtracts
+// nothing, which only ever makes the list longer.
+func (r *Repo) OwnCommits(ctx context.Context, runBranch string) ([]string, error) {
+	heads, err := r.OriginHeads(ctx, runBranch)
+	if err != nil {
+		return nil, err
+	}
+	args := []string{"--no-replace-objects", "rev-list", "--topo-order", "--reverse", "--end-of-options", "HEAD"}
+	for _, h := range heads {
+		args = append(args, "^"+h)
+	}
+	out, err := r.git(ctx, args...)
 	if err != nil {
 		return nil, err
 	}

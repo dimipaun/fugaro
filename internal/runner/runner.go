@@ -2012,7 +2012,7 @@ func (r *run) agentLoop(ctx context.Context) {
 	// cut from another branch than its ref is narrowed to its own commits
 	// here, once, before the prompt and every round's input read the range.
 	r.narrowReviewRange(ctx)
-	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.reviewRev(), r.reviewDiffSize(ctx), r.baseUnreadable())
+	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.reviewRev(ctx), r.reviewDiffSize(ctx), r.baseUnreadable())
 	if f := r.follow; f != nil {
 		if add := followup.ReviewAddendum(f.sel, f.nonce); add != "" {
 			reviewPrompt += "\n\n" + add

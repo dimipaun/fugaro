@@ -130,7 +130,8 @@ func baseUnreadNote(rev string) string {
 // instead.
 func ownRangeNote(rev string) string {
 	return fmt.Sprintf("%s is the commit this run's own commits start after, not a branch: "+
-		"the branch also carries commits another branch on origin already holds, which this run did not make and which are not under review.", rev)
+		"the commits before it are another branch's, already on origin, and are not under review. "+
+		"The range is this run's commits and whatever they merged in: a branch merged into this one brings its changes into the range.", rev)
 }
 
 // hugeDiffNote is what the review prompt says before anything else when the

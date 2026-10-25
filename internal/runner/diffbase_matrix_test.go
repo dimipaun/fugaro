@@ -42,7 +42,12 @@ import (
 //	    the integration branch itself: the run's base is main as far as
 //	    anything recorded knows, so every diff must be narrowed to the
 //	    run's own commits — the parent of the first one is the base — or
-//	    the reviewer is handed the whole integration branch every round.
+//	    the reviewer is handed the whole integration branch every round;
+//	(g) the same in the production layout: a blobless --single-branch clone,
+//	    where `git fetch origin <integration>` writes FETCH_HEAD alone and
+//	    the agent cuts its branch from FETCH_HEAD, so no remote-tracking ref
+//	    names the integration branch and only origin itself can say its
+//	    commits are not the run's.
 //
 // Every cell names the base it must use (want) and a base a wrong answer
 // would name instead (stale): a diff measured against the stale base shows
@@ -287,6 +292,64 @@ var baseCells = []baseCell{
 			return baseRun{rec: rec, err: err, prompt: reviewPromptOf(t, h.agent.calls), provider: h.provider, wantRev: tip}
 		},
 	},
+	{
+		name:        "(g) the same from FETCH_HEAD in a single-branch blobless clone",
+		stale:       "main",
+		recordHolds: []string{"own1.txt", "own2.txt", "feature.txt"},
+		promptOmits: []string{"integration.txt", "more-integration.txt", ".github/workflows/integration.yml"},
+		wantPRBase:  "main",
+		run: func(t *testing.T) baseRun {
+			h := newHarness(t, cloneYAML, nil)
+			bloblessRemote(t, h)
+			h.cloneJob(t)
+			addBaseBranch(t, h, integrationBranch)
+			advanceBranch(t, h.remote, integrationBranch, map[string]string{".github/workflows/integration.yml": "on: push\n"})
+			tip := advanceBranch(t, h.remote, integrationBranch, map[string]string{"more-integration.txt": "more\n"})
+			cutFromFetchHead := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+				shell(t, req, "git fetch -q origin "+integrationBranch+
+					" && ! git rev-parse -q --verify refs/remotes/origin/"+integrationBranch+
+					" && git checkout -q -b work FETCH_HEAD"+
+					" && echo 1 > own1.txt && git add -A && git commit -qm own1"+
+					" && echo 2 > own2.txt && git add -A && git commit -qm own2")
+				return implement("feature")(t, ctx, req)
+			}
+			rec, err := h.run(t, cutFromFetchHead, review("ship", 0))
+			return baseRun{rec: rec, err: err, prompt: reviewPromptOf(t, h.agent.calls), provider: h.provider, wantRev: tip}
+		},
+	},
+}
+
+// TestAForgedOriginRefNeitherNarrowsNorHidesAWorkflowFile: the agent commits
+// a workflow file, then a harmless commit, then points a remote-tracking ref
+// it wrote itself (no push) at the workflow commit. Nothing on origin holds
+// that commit, so it is the run's own: the range is not narrowed past it,
+// and the guard still refuses the push for it. Measured from the checkout's
+// remote-tracking refs, the forged ref made the workflow commit "another
+// branch's", narrowed the range to the harmless commit and took the
+// workflow file out of the guard.
+//
+// Mutation (read --remotes=origin in gitops.OwnCommits): this test fails,
+// and so does cell (g). The guard's own check of the narrowed commit is
+// pinned apart (TestGuardSubtractsTheNarrowedCommitOnlyWhileOriginHoldsIt).
+func TestAForgedOriginRefNeitherNarrowsNorHidesAWorkflowFile(t *testing.T) {
+	h := newHarness(t, "", nil)
+	forge := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "mkdir -p .github/workflows && echo 'on: push' > .github/workflows/e.yml && git add -A && git commit -qm workflow")
+		res, err := implement("feature")(t, ctx, req)
+		shell(t, req, "git update-ref refs/remotes/origin/decoy HEAD~1")
+		return res, err
+	}
+	rec, err := h.run(t, forge, review("ship", 0))
+	if err == nil || rec == nil || !strings.Contains(rec.Reason, ".github/workflows/e.yml") {
+		t.Fatalf("the push was not refused for the run's own workflow file: rec = %+v, err = %v", rec, err)
+	}
+	prompt := reviewPromptOf(t, h.agent.calls)
+	if !strings.Contains(prompt, "Review the changes on this branch against origin/main") {
+		t.Fatalf("the forged ref narrowed the review range:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, ".github/workflows/e.yml") {
+		t.Fatalf("the reviewer is not handed the run's own workflow file:\n%s", prompt)
+	}
 }
 
 // TestTheReviewStageAndTheWritebackUseTheSameBase is the matrix: every cell
