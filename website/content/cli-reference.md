@@ -2117,10 +2117,19 @@ is a run of this checkout's own repository: a run of another repository
 naming the same task is ignored. The join is display-only — nothing here
 makes another plan's task ready.
 
+The runs read are the ones the bucket still holds, and a run that claims no
+task of any plan here is not read at all: this is what the merge lookup
+below is asked about, so the read costs what the plans hold rather than
+what the repository's history holds.
+
 Whether a pull request is merged is asked of your own gh, when it is
 installed; where it cannot answer (a Bitbucket repository, no gh, a lookup
 that failed) a task whose run recorded a ready pull request shows done with
 the mark "merge unknown" rather than nothing.
+
+Two artifacts that would be one plan id — docs/plans/foo.graph.json and
+docs/plans/foo/bar.graph.json both give plans/foo — cannot be joined apart,
+so the second is not listed and a warning names both.
 
 Merged and cancelled tasks are counted per release and not listed; --all
 lists them too. This command writes nothing.
