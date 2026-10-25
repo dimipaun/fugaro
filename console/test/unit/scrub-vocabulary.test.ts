@@ -429,6 +429,7 @@ describe('the scrub: the keys the live run shapes write', () => {
     workflow: 'example-workflow', requested_by: 'redacted@example.invalid',
     job: 'x-job', profile: 'x-profile', provider: 'x-provider', account: 'x-account',
     launched_by: 'x-launcher', credential: 'x-credential', waiting_until: WAITING,
+    plan_task: 'x-plan/x-task',
     status: 'succeeded', outcome: 'ready', failed: false,
     pr_url: 'https://example.invalid/example-owner/example-repo/pull/1', pr_number: 1,
   }
