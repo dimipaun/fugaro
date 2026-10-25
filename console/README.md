@@ -3343,8 +3343,9 @@ one. A row per *stored* installation would need a bounded list read on the dashb
 bridge, which the design withholds (§4.1, §11) and this task adds no operation for.
 
 So the rail makes **no read of its own**, and that is a test rather than a promise: the
-entry spec's spawn-log case holds a healthy console to exactly two spawns (`version`,
-`watch --json --project P`), and a read at mount would be a third. The two figures the row
+entry spec's spawn-log case holds a healthy console to three kinds of spawn (`version`,
+`watch --json --project P`, and the Live screen's rigor join `runs ls --json --project P`),
+and a read at mount would be a fourth. The two figures the row
 carries come from reads the console was already making:
 
 - the **state** from the Live feed (`rail.setState`), which is the same read the panel draws;

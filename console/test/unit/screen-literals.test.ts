@@ -105,6 +105,11 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
       'a ready run\'s pull request number, filtered by `prNumberAt` to a positive integer (`schema.ts`\'s `optionalInt` guarantees a finite number and not a whole one) -- the same rule and the same entry `run.ts` keeps for `#${String(model.number)}`, and the review inbox draws the fact the same way: as text, this screen\'s own mark in front of a number the document carried',
     '`${LIVE_REVIEW_TITLE} (${formatReading(measured(model.reviewCount), \'count\')})`':
       'the review inbox\'s heading, and the interpolation is the count and nothing else: `LIVE_REVIEW_TITLE` is a console constant (the CLI\'s own words, `readyForReview` in `internal/watch/render.go`) and `reviewCount` is a number this console counted off the frame (`buildLiveModel`: `review.length`), drawn through `formatReading`, the only formatter, as `measured` because a frame that carried no `ready` list at all is refused by `schema.ts` before a screen sees it -- so no document *string* reaches the sink, which is why the heading is one text run rather than four slots (spend.ts\'s `note` is the same shape: a console sentence with a count the console computed)',
+    word: {
+      within: 'modeChip',
+      reason:
+        '`rigorModeWord(rigor.mode)`, which answers one of the console\'s five mode words or `null`; `null` is the branch that hands the document\'s own value to `putText` (the `label` class, the `runs[].rigor.mode` field), so only the console\'s word reaches the sink',
+    },
   },
   'spend.ts': {
     'entry.dimension': 'the switch is `SPEND_DIMENSIONS.map(...)`: the seven words are the console\'s table, and an unknown document dimension is drawn as "an unknown breakdown"',
@@ -128,6 +133,12 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     'row.perRunCapSource': '`capSourceAt` keeps a word only when it is on `CAP_SOURCES`, else `unknown`',
     'panel.because':
       'every panel constructor draws its reason through `sanitizeRefusal` (`drawnRefusal`) before it is stored, or it is one of the two console constants (`POLICY_BECAUSE`, `ENROLLMENT_BECAUSE`); a document\'s own `note` takes the `putText` branch instead (`becauseKind`)',
+    RIGOR_ABSENT: 'the dash `runs ls`\'s MODE column draws for a run whose record carries no rigor block (`shared/rigor.ts`), a console constant',
+    word: {
+      within: 'rigorCell',
+      reason:
+        '`rigorModeWord(view.mode)`, which answers one of the console\'s five mode words or `null`; `null` is the branch that hands the document\'s own value to `textCell` (the `label` class, the `runs[].rigor.mode` field), so only the console\'s word reaches the sink',
+    },
   },
   // The one drawer outside `src/renderer/screens`: `src/shared/version.ts` draws
   // the version skew banner and the refusal screen (Task 3.2), because the main
@@ -155,6 +166,11 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     '`#${String(model.number)}`': 'a pull request number the model read as a finite integer (`prNumberOf`)',
     'model.because': 'one of two console sentences (`PR_NO_LINK_REASON` or the no-pull-request one)',
     'model.linkBecause': '`LOG_NO_LINK`, a console constant',
+    known: {
+      within: 'rigorWord',
+      reason:
+        'the answer of the vocabulary the caller passed in (`rigorModeWord` or `rigorLayerWord`, both `shared/rigor.ts`), which is one of the console\'s own words or `null`; `null` is the branch that hands the document\'s own mode or layer to `putText` as text',
+    },
   },
 })
 
@@ -747,6 +763,7 @@ describe('a screen writes only its own vocabulary through literal', () => {
       '../../shared/availability.ts',
       '../../shared/launcher.ts',
       '../../shared/replay.ts',
+      '../../shared/rigor.ts',
       '../../shared/sanitize.ts',
       '../../shared/schema.ts',
       '../../shared/stringify.ts',

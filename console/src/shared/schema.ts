@@ -907,12 +907,16 @@ const TOTALS_KEYS = ['runs', 'model_usd', 'model_notional_usd', 'compute_usd', '
  * the mode, the layer that decided it (`from`), the areas that matched -- each
  * with the mode it sets and the moment it was applied at, strictest first
  * (D23) -- the moment of the block and the revision the configuration was read
- * from (`runstore.RigorRecord`, docs/rigor-modes D24, D25). It is accepted and not read -- no screen draws a run's mode yet -- and
- * it is here for `launched_by`'s reason: a list without the key refuses a real
+ * from (`runstore.RigorRecord`, docs/rigor-modes D24, D25). **It is read now**
+ * -- `shared/rigor.ts` parses it for the Live chip, the Projects MODE cell and
+ * the Run screen's Rigor row (owner request 2026-10-25) -- and it is here for
+ * `launched_by`'s reason: a list without the key refuses a real
  * `runs ls --json` document whole, as `runs[0].rigor`. Its string keys carry
  * classes rather than exemptions: `from` is an enum this build may not know and
  * `revision` is a git ref, so both go through the sanitizer if a later screen
- * ever draws them.
+ * ever draws them. The reader drops a key it does not know the class of; the
+ * `mode` word is drawn only when this build's own table names it, and
+ * otherwise as bounded text.
  */
 export const RECORD_KEYS = [
   'run',

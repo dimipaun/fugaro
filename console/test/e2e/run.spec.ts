@@ -120,6 +120,7 @@ const MODULES: readonly string[] = Object.freeze([
   'shared/availability.js',
   'shared/sanitize.js',
   'shared/launcher.js',
+  'shared/rigor.js',
   'shared/version.js',
   'shared/stringify.js',
   'shared/replay.js',
@@ -248,6 +249,12 @@ interface Screen {
   readonly stageSpendReasons: readonly (string | null)[]
   readonly stageDeadlines: readonly string[]
   readonly stageDeadlineReasons: readonly (string | null)[]
+  /** the Rigor row's cells: empty strings and no areas for a record whose row
+   * carries no block, which is the case the row is conditional on */
+  readonly rigorMode: string
+  readonly rigorFrom: string
+  readonly rigorAreaNames: readonly string[]
+  readonly rigorAreaModes: readonly string[]
   readonly prRepo: string
   readonly prNumber: string
   readonly prUrl: string
@@ -302,6 +309,10 @@ function screen(page: Page): Promise<Screen> {
       stageSpendReasons: all('.run-stages .run-stage-spend').map((one) => one.getAttribute('title')),
       stageDeadlines: texts('.run-stages .run-stage-deadline'),
       stageDeadlineReasons: all('.run-stages .run-stage-deadline').map((one) => one.getAttribute('title')),
+      rigorMode: text('.run-rigor-mode'),
+      rigorFrom: text('.run-rigor-from'),
+      rigorAreaNames: texts('.run-rigor-area-name'),
+      rigorAreaModes: texts('.run-rigor-area-mode'),
       prRepo: text('.run-pr-repo'),
       prNumber: text('.run-pr-number'),
       prUrl: text('.run-pr-url'),
@@ -504,6 +515,50 @@ test.describe('the Run detail screen', () => {
     // The terminal/settled pair is what says whether these numbers can move.
     expect(drawn.flags).toContain('terminal')
     expect(drawn.flags).toContain('settled')
+  })
+
+  test('draws the run\'s rigor row, and no row at all for a record with no block', async () => {
+    // Owner request 2026-10-25: the run detail is the one screen with room for
+    // the whole answer -- the mode, the layer that decided it and every rule
+    // that matched -- where the Projects cell and the Live chip are one word.
+    await mount(DIAGNOSIS, logLines(3), LOG_LINK, ARRIVALS, null, 'light')
+    const plain = await screen(page)
+    expect(plain.rigorMode).toBe('')
+    expect(plain.rigorAreaNames).toEqual([])
+    expect(plain.text).not.toContain('RIGOR')
+
+    // `DIAGNOSIS`'s row is a run from before the field, so the block is added
+    // to it the way a 0.11.0 runner writes it -- the record's own two stamps
+    // included, because a real block carries them and the row draws neither.
+    const row = DIAGNOSIS['row'] as JSONDoc
+    const withRigor: JSONDoc = {
+      ...DIAGNOSIS,
+      row: {
+        ...row,
+        rigor: {
+          mode: 'critical',
+          from: 'area',
+          areas: [
+            { name: 'payments', mode: 'critical', at: '2026-10-15T11:00:05Z' },
+            { name: 'billing', mode: 'pro', at: '2026-10-15T11:00:05Z' },
+          ],
+          at: '2026-10-15T11:00:05Z',
+          revision: 'origin/main',
+        },
+      },
+    }
+    await mount(withRigor, logLines(3), LOG_LINK, ARRIVALS, null, 'light')
+    const drawn = await screen(page)
+    expect(drawn.rigorMode).toBe('Critical')
+    // The layer in the console's words, not the record's enum, and the areas as
+    // the repository named them.
+    expect(drawn.rigorFrom).toBe('an area rule')
+    expect(drawn.rigorAreaNames).toEqual(['payments', 'billing'])
+    expect(drawn.rigorAreaModes).toEqual(['Critical', 'Pro'])
+    expect(drawn.text).toContain('RIGOR')
+    // The two stamps are in the record and in no cell of the screen.
+    expect(drawn.text).not.toContain('origin/main')
+    expect(drawn.text).not.toContain('2026-10-15T11:00:05Z')
   })
 
   test('draws the stage timeline, with the spend and deadline no document carries', async () => {
