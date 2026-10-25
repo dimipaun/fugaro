@@ -6568,7 +6568,7 @@ SA=$(sed -n 's|^ *token_signer: *||p' "$C" | tr -d "\"'" | head -1)
 # FP is the Firebase project id, which is what Identity Toolkit's
 # accounts:signInWithCustomToken and the Restore's accounts:batchDelete address,
 # and the project
-# the token signer below is an account of (docs/gcp-setup.md: token_signer is
+# the token signer below is an account of (docs/design/m9-budget-and-dashboard.md: token_signer is
 # fugaro-token-signer@<fp>.iam.gserviceaccount.com, and internal/localcfg
 # requires exactly that shape) — NOT the GCP project id P above (an
 # installation's Firebase project is its own, and the two are the same only by

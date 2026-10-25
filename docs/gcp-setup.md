@@ -20,7 +20,7 @@
 fugaro setup
 ```
 
-It asks for one thing: a name for the project. The GCP project ID (`fugaro-<name>`) and the region (`us-east5`) come with defaults that Enter takes, and the project's ID is what you type at each confirmation. Fugaro only starts fresh: it creates the project, and refuses an ID that already exists.
+The one thing it needs from you is a name for the project: the GCP project ID (`fugaro-<name>`), the region (`us-east5`) and the name itself are each asked once with a suggestion that Enter takes. Each confirmation says what to type: the project ID to create the project, the billing account's ID to link it, the project's name to apply a plan. Fugaro only starts fresh: it creates the project, and refuses an ID that already exists.
 
 **If billing cannot be linked it pauses**, rather than failing: the project and its Firebase exist, the run ends with one `gcloud billing projects link <id> --billing-account=<account-id>` block to forward to whoever administers billing, and rerunning the same `fugaro setup` resumes the project it created.
 
@@ -40,4 +40,4 @@ It reads and changes nothing: the environment, Terraform, billing and the projec
 - **The billing picker lists no account, or the link is refused.** Your account is missing **Billing Account User** (`roles/billing.user`) on the billing account the link needs. Forward the block `fugaro setup` printed: whoever administers billing runs the `gcloud billing projects link` line with their account's id (`gcloud billing accounts list` shows it), you run the rerun line after them.
 - **`terraform` is missing, or outside 1.9 to 2.0.** Install a supported version and rerun.
 - **`gcloud` is missing, or its credentials are not found.** Install it, then run `gcloud auth application-default login` in the environment that runs `fugaro` (a Windows `gcloud` and a WSL one write two different files: [windows-cli/wsl.md](windows-cli/wsl.md)).
-- **`GOOGLE_IMPERSONATE_SERVICE_ACCOUNT is set`, or a `GOOGLE_PROJECT` variable names another project.** Unset it and rerun (`Remove-Item Env:GOOGLE_PROJECT` on PowerShell, `set GOOGLE_PROJECT=` in `cmd.exe`).
+- **`GOOGLE_IMPERSONATE_SERVICE_ACCOUNT is set`, or `GOOGLE_PROJECT`, `GOOGLE_CLOUD_PROJECT` or `CLOUDSDK_CORE_PROJECT` names another project.** Unset that variable and rerun: `unset <NAME>` in a POSIX shell, `Remove-Item Env:<NAME>` in PowerShell, `set <NAME>=` in `cmd.exe`.

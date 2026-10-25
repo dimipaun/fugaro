@@ -11,10 +11,27 @@ import (
 // internal/cli/init_project.go), and a refused billing link sends the reader to
 // the same anchor. The page keeps that anchor and the roles a reader asks for,
 // named as their administrators name them: those are the words the reader
-// repeats. The Windows forms and the other sections the page used to carry are
-// gone with the fresh-setup-only page; docs/windows-cli/wsl.md is where the
-// shell-dependent commands live now.
+// repeats.
 const gcpSetupDoc = "docs/gcp-setup.md"
+
+// internal/preflight prints a POSIX `unset` as the fix for the environment
+// checks (windows-cli finding F6), so the page states each shell's own form
+// and names every variable the project check reads, in its words.
+func TestDocsGCPSetupNamesEachShellsUnset(t *testing.T) {
+	sec := docSection(t, gcpSetupDoc, readDoc(t, gcpSetupDoc), "## If it fails")
+	for _, want := range []string{
+		"GOOGLE_IMPERSONATE_SERVICE_ACCOUNT is set",
+		"`GOOGLE_PROJECT`", "`GOOGLE_CLOUD_PROJECT`", "`CLOUDSDK_CORE_PROJECT`",
+		"`unset <NAME>`", "`Remove-Item Env:<NAME>`", "`set <NAME>=`",
+		"PowerShell", "`cmd.exe`",
+		"gcloud auth application-default login",
+		"windows-cli/wsl.md",
+	} {
+		if !strings.Contains(sec, want) {
+			t.Errorf("%s's \"If it fails\" section lacks %q", gcpSetupDoc, want)
+		}
+	}
+}
 
 func TestDocsGCPSetupNotAnOwnerSaysWhatCreatingAndLinkingNeed(t *testing.T) {
 	doc := readDoc(t, gcpSetupDoc)

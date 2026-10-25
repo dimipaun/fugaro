@@ -58,7 +58,7 @@ Or ask your agent: the plugin's `working` skill launches, watches and diagnoses 
 
 ## How it works
 
-The draft appears at the run's first checkpoint push (within about a minute of its first commit), marked not verified.
+A run opens its pull request as a draft before it is done. The draft appears at the run's first checkpoint push (within about a minute of its first commit), marked not verified.
 
 ```
 your machine                        your Google Cloud project
@@ -81,7 +81,7 @@ The engine is generic: everything specific to a repository lives in its `fugaro.
 
 ## Safety and cost controls
 
-A run halts when its next call's worst case would pass the cap.
+The model budget (below) can cap what one run spends on the model. A run halts when its next call's worst case would pass the cap.
 
 **What a run's agent cannot reach**
 - **Your machine.** Your laptop runs the `fugaro` CLI, Terraform and `gcloud` (during `fugaro setup`) and your own agent; the run's agent is in a Cloud Run container.
@@ -104,7 +104,7 @@ A run halts when its next call's worst case would pass the cap.
 - **Log isolation.** Run logs carry agent output, so by default they go to Fugaro's own log bucket, which only launchers and operators (and the project's owners and editors) can read.
 - **Pinned releases.** Release checksums are signed with cosign; `fugaro setup` resolves the base image's release tag on ghcr.io, verifies the cosign signature the release attached to that exact digest, and pins the digest through the installation's own Artifact Registry remote repository — nothing is copied and nothing is pushed; `--expect-digest` cross-checks the verified digest. It pins the plugin to the binary's release.
 
-The full model, with its residual risks: [design §6](docs/design/v1.md#6-security-model). Budget setup: `fugaro update --firebase-project <gcp-project-id> --budget-mode observe` turns it on counting-only, `fugaro budget set` writes the caps, `--budget-mode enforce` is what refuses a call, and `off` turns it back off; the model and its residual risks are in [design/m9-budget-and-dashboard.md](docs/design/m9-budget-and-dashboard.md).
+The full model, with its residual risks: [design §6](docs/design/v1.md#6-security-model). Budget setup: `fugaro update --firebase-project <gcp-project-id> --budget-mode observe` turns it on counting-only, `fugaro budget set` writes the caps, `--budget-mode enforce` is what refuses a call, and `off` turns it back off ([design/m9-budget-and-dashboard.md](docs/design/m9-budget-and-dashboard.md)).
 
 ## Per-repository configuration
 
