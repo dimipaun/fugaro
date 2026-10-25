@@ -161,6 +161,26 @@ variable "history" {
   default = null
 }
 
+variable "coordinator" {
+  type = object({
+    account_id       = string
+    job              = string
+    image            = string
+    scheduler_job    = string
+    scheduler_region = string
+    app_key_secret   = optional(string, "github-app-key")
+    github_app_id    = optional(string, "")
+    repos = optional(list(object({
+      provider = string
+      repo     = string
+    })), [])
+    deploy_job       = optional(bool, false)
+    firebase_project = optional(string)
+    rtdb_url         = optional(string)
+  })
+  default = null
+}
+
 variable "credentials_service" {
   type = object({
     account_id       = string

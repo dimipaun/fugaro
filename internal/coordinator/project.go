@@ -130,6 +130,8 @@ func (p *Project) now() time.Time {
 //     number order, so the failure is the first number that failed whatever
 //     finished first, and the slice is in the order asked for however the
 //     goroutines interleave (P1's own rule, kept here: pullWorkers at a time).
+//     The failure is a *PartialError, which still carries what was read and
+//     which numbers were not, for the caller that records them one by one.
 //   - Nothing this returns names a credential: the provider's own error text
 //     goes through Redact with the values its Opener held and the token this
 //     reader minted for the repository.
@@ -176,15 +178,49 @@ func (p *Project) PullRequests(ctx context.Context, kind, repo string, numbers [
 		}()
 	}
 	wg.Wait()
+	var partial *PartialError
 	for i, err := range errs {
-		if err != nil {
-			secrets = append(secrets, p.minted(repo)...)
-			return nil, redactedError{err: err,
-				text: fmt.Sprintf("reading pull request %d of %s: %s", numbers[i], repo, p.Redact(err.Error(), secrets))}
+		if err == nil {
+			continue
 		}
+		if partial == nil {
+			secrets = append(secrets, p.minted(repo)...)
+			partial = &PartialError{err: redactedError{err: err,
+				text: fmt.Sprintf("reading pull request %d of %s: %s", numbers[i], repo, p.Redact(err.Error(), secrets))}}
+		}
+		partial.Failed = append(partial.Failed, numbers[i])
+	}
+	if partial != nil {
+		for i, err := range errs {
+			if err == nil {
+				partial.Read = append(partial.Read, out[i])
+			}
+		}
+		return nil, partial
 	}
 	return out, nil
 }
+
+// PartialError is PullRequests' failure once the provider was opened: the
+// numbers that could not be read, and the pull requests that were. Its text is
+// the first failure's, redacted, and Unwrap reaches that failure's kind.
+//
+// A caller that renders one view (status) reads it as the failure it is, which
+// is the all-or-nothing rule above. The sweep reads it number by number
+// instead: the numbers a repository's runs name are written by those runs,
+// from inside their containers, so one number the host refuses is something a
+// single run can put there, and a repository whose whole view failed on it
+// would be a repository one run can keep stale forever.
+type PartialError struct {
+	// Read is the pull requests that were read, in the order asked for, and
+	// Failed the numbers that were not, in the same order.
+	Read   []PullRequest
+	Failed []int
+	err    error
+}
+
+func (e *PartialError) Error() string { return e.err.Error() }
+func (e *PartialError) Unwrap() error { return e.err }
 
 // minted is the installation token this reader holds for repo, if any. The
 // opener's secrets do not include it — the source mints it on the provider's

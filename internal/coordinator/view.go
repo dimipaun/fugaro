@@ -182,6 +182,18 @@ type View struct {
 	// The two sections of the view are then read the same way, and a
 	// reader can predict the order without running the code.
 	Collisions []Collision `json:"collisions"`
+	// Unread, Omitted and OmittedCollisions are written by the sweep alone
+	// (sweep.go) and are absent from a view status computes. Unread is every
+	// pull request whose host state this view could not read on this pass,
+	// sorted by number, each with why and with whether the state shown is
+	// the last one a sweep did read. Omitted is how many records the
+	// document's bound left out and OmittedCollisions how many collisions
+	// (MaxViewRecords, MaxViewCollisions): the records dropped are the
+	// finished ones whose newest run is oldest, never one in flight while a
+	// finished one is kept.
+	Unread            []Unread `json:"unread,omitempty"`
+	Omitted           int      `json:"omitted,omitempty"`
+	OmittedCollisions int      `json:"omitted_collisions,omitempty"`
 }
 
 // InFlight is how many of the view's records are still in flight.
@@ -259,6 +271,26 @@ func ServiceOf(path string) string {
 		return first
 	}
 	return path
+}
+
+// Numbers is the pull requests the runs name, each once, sorted.
+//
+// gitprov.Provider reads one pull request by number and has no call that
+// lists a repository's (reconciliation finding #10), so this is the whole of
+// what a reader can be asked for however it reads them: each run's task or
+// record names the pull request it is on, and a pull request no run names is
+// never asked for. It is a function of the runs alone — the same runs ask for
+// the same numbers in the same order — so a reader that caches, and the
+// sweep that re-reads what has not changed, ask the same question twice.
+func Numbers(runs []Run) []int {
+	out := make([]int, 0, len(runs))
+	for _, run := range runs {
+		if run.PR != 0 && !slices.Contains(out, run.PR) {
+			out = append(out, run.PR)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // Join builds the view of one repository from its pull requests and its runs.

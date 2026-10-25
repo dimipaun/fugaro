@@ -81,6 +81,7 @@ type initOptions struct {
 	nonInteractive                      bool
 	provisionBatch                      bool   // --provision-batch: provision the Batch backend's installation-level root (owner-run, typed confirmation)
 	provisionCredentials                bool   // --provision-credentials: turn the credentials service on in the installation root (owner-run, typed confirmation)
+	coordinator                         bool   // --coordinator: opt the installation in to the coordinator's aggregation job (owner-run, at a terminal, never --yes)
 	onboardRepo                         string // --onboard-repo owner/name: the explicit opt-in to onboard the checkout's repository
 	allowFork                           bool   // --allow-fork: the plugin-wiring stage may move a fork's marketplace ref
 	allowDelete                         []string
@@ -406,6 +407,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — "+covers+" — and it never covers "+never+": each of those is typed at a real terminal, and no door relaxes them. Under a coding agent's environment variable (CLAUDECODE and the like) "+d.name+" applies nothing, --yes included (except "+d.name+" --anchor, which only edits the checkout's fugaro.yaml and honours --yes there); that is a mitigation, not a barrier: an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint")
 	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes also covers onboarding such a repository, and neither it nor this flag is honoured in a coding agent's session; any other origin takes the typed confirmation)")
 	f.BoolVar(&o.provisionCredentials, "provision-credentials", false, "after the installation's ordinary steps, turn ON the credentials service in the installation root (docs/credentials-service, D146): a Cloud Run service (its own account, one Secret Manager bundle secret) running this release's image pinned by digest through the installation's remote repository. It is the identity the REPOSITORY jobs' model credentials move to: every workflow job of every repository root re-applied after this drops its model credential — in every agent.auth mode, oauth and api-key as much as cascade — and its account's accessor on it, and gets an invoker grant on the service instead. It does NOT reach the shared project jobs, which keep mounting their provider keys and CLAUDE_CODE_OAUTH_TOKEN with their grants (C3.9 moves those). And it is wired from this run on: the service's address is recorded in the project's config and put on every per-repository launch, so a cascade run takes its model credential from the service and a GitHub run has its installation token minted there rather than in the job. A repository job in another agent.auth mode has no model credential to use and nothing yet to replace it (that half is not in this release), so a project that opts in runs its workflows with agent.auth: cascade; and the bundle has to hold the GitHub App's key (fugaro creds set github-app-key) before any GitHub run of the installation can mint. It needs the installation's Firebase rules (fugaro "+d.name+" --firebase-project) at the credentials generation first. --yes never covers it and it is typed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor), and it does NOT exclude --provision-batch: they are two applies of different roots, each with its own typed confirmation, and naming both means both")
+	f.BoolVar(&o.coordinator, "coordinator", false, "with --firebase-project, opt the installation in to the coordinator's aggregation job (docs/coordinator, P5): the fugaro-coordinator service account, its roles/firebasedatabase.admin on the Firebase project (IAM cannot scope it to the coordinator's subtree; the job's own code does), roles/storage.objectViewer on the runs bucket, and — once the history image exists and the local config records a GitHub App ID — the Cloud Run job that holds the App key, its accessor on that one secret and a Scheduler job that runs it every 15 minutes. Nothing creates any of it by default. The opt-in is recorded in the local config (terraform.coordinator) once the apply has created the account, so later runs keep it. --yes never covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor)")
 	f.BoolVar(&o.allowFork, "allow-fork", false, "let the plugin-wiring stage move the ref of a fugaro marketplace in .claude/settings.json that names a repository other than dimipaun/fugaro (a fork you host); never done otherwise")
 	// The flags --non-interactive only stops from prompting, worded for this
 	// door: --forget is fugaro update's, and setup's help must not describe
@@ -445,14 +447,16 @@ type initRun struct {
 
 	// update --firebase-project: the Firebase root's outputs once known (the history
 	// job's environment), a change to the local config the run makes, the
-	// text appended to the installation apply's confirmation, and whether
-	// the history job's missing image has been said.
-	fb           *infra.FirebaseOutputs
-	mutate       func(*localcfg.Config)
-	installLabel string
-	historyNoted bool
-	printed      bool // the --json result has been printed
-	anchorNoted  bool // update --repo's pointer at --anchor has been said
+	// text appended to the installation apply's confirmation, whether the
+	// history job's missing image has been said, and whether the
+	// coordinator's missing App ID has.
+	fb               *infra.FirebaseOutputs
+	mutate           func(*localcfg.Config)
+	installLabel     string
+	historyNoted     bool
+	coordinatorNoted bool
+	printed          bool // the --json result has been printed
+	anchorNoted      bool // update --repo's pointer at --anchor has been said
 	// notedOpenProviders is the once-per-run guard on the note about the
 	// providers every repository may use: the converge's repository stage
 	// runs the repo engine too, and the note belongs once.
@@ -587,6 +591,11 @@ func runInit(r *initRun) error {
 	}
 	if err := o.check(); err != nil {
 		return err
+	}
+	if o.coordinator {
+		if err := r.refuseCoordinatorUnattended(); err != nil {
+			return err
+		}
 	}
 	r.warnTempXDG()
 	if !o.printVars {
@@ -1245,6 +1254,11 @@ func (o *initOptions) check() error {
 			return userErr("%s %s, which is an apply: it excludes %s", flags, what, strings.Join(set, ", "))
 		}
 	}
+	if o.coordinator {
+		if err := o.checkCoordinator(); err != nil {
+			return err
+		}
+	}
 	if o.forget && len(o.allowDelete) > 0 {
 		return userErr("--forget allows exactly the log isolation's deletes; it takes no --allow-delete")
 	}
@@ -1437,6 +1451,9 @@ func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec
 	// sweeper's job) from the first --firebase-project on, and a plain fugaro update
 	// keeps them while the config records the Firebase project.
 	opts.BudgetBackend = o.firebase != "" || lc.Terraform.BudgetBackend || (lc.Budget != nil && lc.Budget.FirebaseProject != "")
+	// The coordinator is the owner's opt-in and nothing else's: this run's
+	// --coordinator, or a local config that recorded an earlier one.
+	opts.Coordinator = o.coordinator || lc.Terraform.Coordinator
 	if o.budget > 0 {
 		opts.Budget = &infra.Budget{BillingAccount: o.billingAccount, Amount: o.budget, CurrencyCode: o.budgetCurrency}
 	}
@@ -1998,6 +2015,9 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	if spec, err = r.historyJob(ctx, c, lc, spec); err != nil {
 		return outs, false, err
 	}
+	if spec, err = r.coordinatorJob(ctx, c, lc, spec); err != nil {
+		return outs, false, err
+	}
 	im, err := infra.DiscoverInstallation(ctx, c, spec)
 	if err != nil {
 		return outs, false, initErr(err)
@@ -2401,6 +2421,14 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	// person to write this value by hand, because there is no way for them to
 	// know it (Cloud Run's URL carries the project number).
 	next.CredentialsService = credentialsServiceBlock(outs.CredentialsService)
+	// The coordinator's opt-in, from the installation's own record as well:
+	// an account in the outputs is an installation whose owner opted in, and
+	// a config that did not say so would plan its removal on the next run.
+	// It is never cleared here; turning the coordinator off is the owner's
+	// edit of this key, and the next run's plan shows the removal.
+	if outs.CoordinatorServiceAccount != "" {
+		next.Terraform.Coordinator = true
+	}
 	if r.mutate != nil {
 		r.mutate(&next)
 	}
@@ -2853,8 +2881,53 @@ func (r *initRun) printResult() error {
 	return enc.Encode(r.res)
 }
 
+// checkCoordinator refuses the --coordinator opt-in where it cannot be what
+// the owner reads and confirms. It follows --provision-credentials: an apply
+// of the installation's own root, never covered by --yes, and excluding the
+// flags that only read or only stop. It also needs --firebase-project,
+// because the account's one database grant is the Firebase root's and the job
+// is deployed by that run.
+func (o *initOptions) checkCoordinator() error {
+	if o.firebase == "" {
+		return userErr("--coordinator opts the installation in to the coordinator's aggregation job, whose account the Firebase root grants the database's admin: it needs --firebase-project (fugaro update --firebase-project <id> --coordinator)")
+	}
+	if o.yes {
+		return userErr("--yes never covers --coordinator: the opt-in creates an account that holds the Firebase project's database admin and a job that holds the GitHub App's key, so it is confirmed at a real terminal (run it again without --yes)")
+	}
+	var set []string
+	for _, f := range []struct {
+		name string
+		on   bool
+	}{{"--repo", o.repo}, {"--forget", o.forget}, {"--print-vars", o.printVars},
+		{"--config-only", o.configOnly}, {"--publish-config", o.publishConfig}, {"--anchor", o.anchor}} {
+		if f.on {
+			set = append(set, f.name)
+		}
+	}
+	if len(set) > 0 {
+		return userErr("--coordinator turns the coordinator's aggregation job on, which is an apply: it excludes %s", strings.Join(set, ", "))
+	}
+	return nil
+}
+
+// refuseCoordinatorUnattended is the rest of --coordinator's gate, the part
+// that reads the environment: a coding agent's session is refused, and so is
+// a run with no terminal to confirm at.
+func (r *initRun) refuseCoordinatorUnattended() error {
+	if m := agentMarker(os.Getenv); m != "" {
+		return userErr("--coordinator opts the installation in to the coordinator's aggregation job: %s", initflow.AgentRefusal(m))
+	}
+	if r.cmd == nil || !stdinIsTerminal(r.cmd.InOrStdin()) {
+		return userErr("--coordinator is confirmed at a real terminal: run it from one")
+	}
+	return nil
+}
+
 // checkRepo refuses flag combinations that mean nothing for --repo.
 func (o *initOptions) checkRepo() error {
+	if o.coordinator {
+		return userErr("--coordinator opts the installation in to the coordinator's aggregation job, which is an apply of the installation's own root: it excludes --repo (run fugaro update --firebase-project <id> --coordinator for the installation)")
+	}
 	if o.provisionCredentials {
 		// Like --provision-batch, and for the same reason: this run validates
 		// here and never reaches check(). --repo onboards a repository's own

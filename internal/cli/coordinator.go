@@ -15,8 +15,11 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/oauth2/google"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/coordinator"
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -27,6 +30,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // fugaro coordinator status (docs/coordinator/implementation-plan.md, parts
@@ -256,6 +260,233 @@ func coordinatorCellList(vals []string) string {
 	return clipRunes(strings.Join(out, ", "), coordinatorMaxCellRunes*2)
 }
 
+// fugaro coordinator sweep (docs/coordinator/implementation-plan.md, part P5):
+// the aggregation job's entry point — the scheduled Cloud Run job the
+// installation root creates, on the pattern the history job runs — and the
+// manual invocation of it an owner's live check uses.
+//
+// It is the one command of the coordinator's that writes, and it writes as the
+// coordinator's own account: the job runs as fugaro-coordinator, whose account
+// holds roles/firebasedatabase.admin on the Firebase project (D194) because IAM
+// cannot express a path. So what keeps it to coordinator/** is the store's own
+// check, which every write here goes through — not the rules, which the account
+// bypasses, and not IAM, which cannot say "this prefix".
+//
+// The job has no project config file: Terraform gives it the plain environment
+// below, and the account's identity is its only credential. The GitHub read is
+// P2's, unchanged: the coordinator's own read-only installation token per
+// repository, minted from the App the environment carries.
+const (
+	// envCoordinatorRepos is the repositories one tick reconciles, as JSON:
+	// [{"provider":"github","repo":"owner/name"}, ...]. Terraform writes it
+	// from the installation's own repository list.
+	envCoordinatorRepos = "FUGARO_COORDINATOR_REPOS"
+	// coordinatorSweepTimeout bounds one tick. The job's own timeout is longer
+	// (600s), so a pass that runs out of time ends cleanly and the next tick
+	// continues rather than the platform killing it mid-write.
+	coordinatorSweepTimeout = 8 * time.Minute
+)
+
+// coordinatorSweepWiring points the sweep at fakes; tests only.
+type coordinatorSweepWiring struct {
+	// noAuth sends no credentials to the database, which is the fake's.
+	noAuth bool
+	// reader is the project-wide read, in place of the one the App credential
+	// in the environment builds.
+	reader coordinator.Reader
+	// bucket opens the runs bucket, in place of "gs://" + FUGARO_RUNS_BUCKET.
+	bucket func(ctx context.Context, name string) (*blobx.Bucket, error)
+	now    func() time.Time
+}
+
+var coordinatorSweepTest *coordinatorSweepWiring
+
+func newCoordinatorSweepCmd() *cobra.Command {
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:    "sweep",
+		Short:  "Recompute the coordinator's views (internal)",
+		Hidden: true,
+		Long: "Recompute every repository's view from what GitHub and the runs bucket say,\n" +
+			"write it into the coordinator's state, and mark the repositories it could not\n" +
+			"reconcile instead of writing half a view.\n\n" +
+			"This is the aggregation job's entry point: a scheduled Cloud Run job runs it\n" +
+			"as the coordinator's own account, which holds the database's admin role\n" +
+			"because IAM cannot scope a grant to a path. It writes the coordinator's\n" +
+			"subtree and nothing else, and that is the store's own check rather than the\n" +
+			"database's rules.\n\n" +
+			"The job has no project config file: it reads its repositories, its database,\n" +
+			"its runs bucket and its GitHub App from the environment Terraform sets on it.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), coordinatorSweepTimeout)
+			defer cancel()
+			return runCoordinatorSweep(ctx, cmd, os.Getenv, asJSON)
+		},
+	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the tick's result as JSON")
+	return cmd
+}
+
+func runCoordinatorSweep(ctx context.Context, cmd *cobra.Command, getenv func(string) string, asJSON bool) error {
+	env := map[string]string{}
+	for _, k := range []string{envProject, envFirebaseFP, envRTDBURL, envRunsBucket, envCoordinatorRepos} {
+		if env[k] = getenv(k); env[k] == "" {
+			return userErr("the coordinator's sweep needs %s in its environment (Terraform sets it on the job)", k)
+		}
+	}
+	if strings.ContainsAny(env[envRunsBucket], "/: ") {
+		return userErr("%s must be a bucket name", envRunsBucket)
+	}
+	repos, err := coordinatorSweepRepos(env[envCoordinatorRepos])
+	if err != nil {
+		return err
+	}
+	test := coordinatorSweepTest
+	if err := rtdb.ValidateURL(env[envRTDBURL], test != nil && test.noAuth); err != nil {
+		return userErr("%s: %v", envRTDBURL, err)
+	}
+	// The account may hold admin rights on several databases; write only to
+	// this Fugaro project's own (plan R-9, the history sweep's own check).
+	if err := checkDatabaseHost(env[envRTDBURL], env[envFirebaseFP]); err != nil {
+		return userErr("%v", err)
+	}
+
+	var dbAuth rtdb.Auth
+	if test != nil && test.noAuth {
+		dbAuth = rtdb.Auth{IDToken: func() string { return "" }}
+	} else {
+		ts, err := google.DefaultTokenSource(ctx, budgetScopes...)
+		if err != nil {
+			return remote(fmt.Errorf("no credentials for the coordinator's database: %w", err))
+		}
+		dbAuth = rtdb.Auth{Source: ts}
+	}
+	db, err := rtdb.New(env[envRTDBURL], dbAuth)
+	if err != nil {
+		return userErr("%s: %v", env[envRTDBURL], err)
+	}
+	var raw json.RawMessage
+	found, err := db.Get(ctx, budget.PathProject, &raw)
+	if err != nil {
+		return remote(err)
+	}
+	var mark string
+	if !found || json.Unmarshal(raw, &mark) != nil || mark != env[envProject] {
+		return userErr("the database at %s is not project %s's budget database (its /fugaro/project does not name the project); nothing was swept", env[envRTDBURL], oneLine(env[envProject]))
+	}
+
+	openBkt := func(ctx context.Context, name string) (*blobx.Bucket, error) { return blobx.Open(ctx, "gs://"+name) }
+	if test != nil && test.bucket != nil {
+		openBkt = test.bucket
+	}
+	bucket, err := openBkt(ctx, env[envRunsBucket])
+	if err != nil {
+		return remote(err)
+	}
+	defer bucket.Close()
+
+	warn := cmd.ErrOrStderr()
+	var reader coordinator.Reader
+	if test != nil && test.reader != nil {
+		reader = test.reader
+	} else if reader, err = coordinatorReader(warn); err != nil {
+		return err
+	}
+	sw := &coordinator.Sweeper{
+		Reader: reader,
+		Runs:   coordinatorRunsSource{env: &cloudEnv{bucket: bucket}, warn: warn},
+		Store:  coordinator.NewStore(db),
+	}
+	if test != nil && test.now != nil {
+		sw.Now = test.now
+	}
+	res, err := sw.Sweep(ctx, repos)
+	out := cmd.OutOrStdout()
+	if asJSON {
+		if werr := writeCoordinatorJSON(out, res); werr != nil {
+			return werr
+		}
+	} else if werr := writeCoordinatorSweep(out, res); werr != nil {
+		return werr
+	}
+	// A repository that could not be reconciled is not a failed tick: it is
+	// recorded (the stale marker) and the exit code stays 0. A store that
+	// refused a write is the sweep's own failure, and it is the job's exit
+	// code, which is where an operator reads it.
+	return remote(err)
+}
+
+// coordinatorSweepRepos parses envCoordinatorRepos into the repositories one
+// tick reconciles. The slug is derived here rather than carried, because it is
+// a function of the provider and the name (task.Slug) and the runs bucket's
+// tree is keyed by it: a second spelling in the environment would be a second
+// thing to keep in step with that tree.
+func coordinatorSweepRepos(raw string) ([]coordinator.Repo, error) {
+	var in []struct {
+		Provider string `json:"provider"`
+		Repo     string `json:"repo"`
+	}
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
+		return nil, userErr("%s is not the JSON list of the repositories this job reconciles (%v)", envCoordinatorRepos, err)
+	}
+	out := make([]coordinator.Repo, 0, len(in))
+	for _, r := range in {
+		slug, err := task.Slug(r.Provider, r.Repo)
+		if err != nil {
+			return nil, userErr("%s: %v", envCoordinatorRepos, err)
+		}
+		out = append(out, coordinator.Repo{Provider: r.Provider, Name: r.Repo, Slug: slug})
+	}
+	return out, nil
+}
+
+// coordinatorRunsSource is the runs bucket as the sweep's RunsReader: the
+// command's own read (coordinatorRuns), so the sweep and the view cannot
+// disagree about what a repository's runs are.
+//
+// The window is the sweep's (coordinator.RunsWindow, 30 days), wider than
+// status's: a tick reconciles the repository, and a view computed from the
+// last 36 hours of runs would forget every pull request older than that. It
+// is still a window, because a tick that read every run a repository ever had
+// would grow with the repository's history every 15 minutes.
+type coordinatorRunsSource struct {
+	env  *cloudEnv
+	warn io.Writer
+}
+
+func (s coordinatorRunsSource) Runs(ctx context.Context, repo coordinator.Repo, since time.Time) ([]coordinator.Run, error) {
+	return coordinatorRuns(ctx, s.env, repo.Slug, since, s.warn)
+}
+
+// writeCoordinatorSweep prints one line per repository and the tick's own
+// count. It is a report of what was written, and never advice: the view
+// (status) is where a person reads what is in flight and what collides.
+func writeCoordinatorSweep(w io.Writer, res coordinator.Result) error {
+	for _, r := range res.Repos {
+		if r.Stale {
+			fmt.Fprintf(w, "%s: stale: %s\n", oneLine(r.Repo), oneLine(r.Reason))
+			continue
+		}
+		fmt.Fprintf(w, "%s: %d records, %d in flight, %d collisions, %d pull requests read, %d unread, %d records pruned\n",
+			oneLine(r.Repo), r.Records, r.InFlight, r.Collisions, r.Read, r.Unread, r.Pruned)
+		if r.Omitted > 0 {
+			fmt.Fprintf(w, "%s: %d records left out of the view (its bound is %d)\n", oneLine(r.Repo), r.Omitted, coordinator.MaxViewRecords)
+		}
+		if r.Undecodable > 0 {
+			fmt.Fprintf(w, "%s: %d documents did not decode and were stepped over\n", oneLine(r.Repo), r.Undecodable)
+		}
+	}
+	fmt.Fprintf(w, "swept %d repositories: %d reconciled, %d stale\n",
+		len(res.Repos), len(res.Repos)-res.StaleRepos(), res.StaleRepos())
+	if res.Stopped != "" {
+		fmt.Fprintf(w, "the tick stopped early on %s; the next one starts with %s\n", res.Stopped, oneLine(res.Next))
+	}
+	return nil
+}
+
 // coordinatorDefaultSince is status's default window, and it is runs ls's:
 // the two read the same objects over the same span, and a person comparing
 // them must not have to remember that one of them looked further back.
@@ -314,6 +545,7 @@ func newCoordinatorCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newCoordinatorStatusCmd())
 	cmd.AddCommand(newCoordinatorReportCmd())
+	cmd.AddCommand(newCoordinatorSweepCmd())
 	return cmd
 }
 
@@ -452,7 +684,7 @@ func coordinatorViewOf(ctx context.Context, env *cloudEnv, reader coordinator.Re
 	if err != nil {
 		return coordinator.View{}, err
 	}
-	prs, err := reader.PullRequests(ctx, env.repoProvider(repo, co), repo, coordinatorNumbers(runs))
+	prs, err := reader.PullRequests(ctx, env.repoProvider(repo, co), repo, coordinator.Numbers(runs))
 	if err != nil {
 		// The refusal of a project this read does not serve is the
 		// configuration's (reconciliation Q12 (A), finding #30). Everything else
@@ -467,24 +699,6 @@ func coordinatorViewOf(ctx context.Context, env *cloudEnv, reader coordinator.Re
 		return coordinator.View{}, remote(err)
 	}
 	return coordinator.Join(repo, prs, runs), nil
-}
-
-// coordinatorNumbers is the pull requests the runs name, each once, in the
-// order the runs list them.
-//
-// gitprov.Provider reads one pull request by number and has no call that lists
-// a repository's (reconciliation finding #10), so this is the whole of what a
-// reader can be asked for however it reads them: each run's task or record
-// names the pull request it is on, and a pull request no run names is never
-// asked for.
-func coordinatorNumbers(runs []coordinator.Run) []int {
-	var numbers []int
-	for _, run := range runs {
-		if run.PR != 0 && !slices.Contains(numbers, run.PR) {
-			numbers = append(numbers, run.PR)
-		}
-	}
-	return numbers
 }
 
 // coordinatorRuns reads the runs the view holds: every run of slug minted
