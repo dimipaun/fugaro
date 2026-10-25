@@ -82,6 +82,13 @@ type InstallOptions struct {
 	// is whether the fence works: Check 68 has not been run
 	// (deployer.tf's header, docs/design/managed-deployer-fence.md).
 	ManagedDeployerScoped bool
+	// Coordinator is the owner's opt-in to the coordinator's aggregation job
+	// (P5, D194): with BudgetBackend, the installation declares the
+	// coordinator's account, its read of the runs bucket and, once it can,
+	// the job and its schedule. It is off unless fugaro update --coordinator
+	// or a local config that records the opt-in sets it, so an installation
+	// that never asked plans exactly what it planned before the job existed.
+	Coordinator bool
 }
 
 // Budget is an optional budget on the project, in whole units of currency.
@@ -121,9 +128,13 @@ type InstallationSpec struct {
 	LogIsolation *bool `json:"log_isolation,omitempty"`
 	// EnableBudget and History give the installation the history account
 	// and, with History.DeployJob, the sweeper's job (M9b); both are left
-	// out of an installation without a budget backend.
-	EnableBudget bool         `json:"enable_budget,omitempty"`
-	History      *HistorySpec `json:"history,omitempty"`
+	// out of an installation without a budget backend. Coordinator is the
+	// aggregation job and the writer account beside them (P5, D194), left
+	// out the same way and also whenever the owner has not opted in
+	// (InstallOptions.Coordinator).
+	EnableBudget bool             `json:"enable_budget,omitempty"`
+	History      *HistorySpec     `json:"history,omitempty"`
+	Coordinator  *CoordinatorSpec `json:"coordinator,omitempty"`
 	// ProjectSecrets are the installation module's project-wide secret
 	// containers (logical name -> gcp.ProjectSecretID), which fugaro update
 	// creates or adopts; their values are never set by Terraform (design
@@ -684,6 +695,13 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 			return InstallationSpec{}, err
 		}
 		s.EnableBudget, s.History = true, &h
+		if o.Coordinator {
+			c, err := Coordinator(lc)
+			if err != nil {
+				return InstallationSpec{}, err
+			}
+			s.Coordinator = &c
+		}
 	}
 	if e := firstOf(o.AlertEmail, lc.Terraform.AlertEmail); e != "" {
 		s.AlertEmail = &e
