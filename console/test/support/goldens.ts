@@ -84,7 +84,7 @@ import type { Locator, Page, TestInfo } from '@playwright/test'
 
 /** STYLESHEET is the one stylesheet every document links and the served root
  * holds: `/console.css`, written by `tools/bundle-renderer/index.ts` from the
- * theme directory, and one of the six names in `SERVED_FILES`
+ * theme directory, and one of the seven names in `SERVED_FILES`
  * (`src/main/protocol.ts`, design section 5.3). */
 export const STYLESHEET = 'console.css'
 

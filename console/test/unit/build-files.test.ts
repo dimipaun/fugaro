@@ -64,16 +64,21 @@ const documents = filesNamed('src/renderer', '.html').map((name) => `src/rendere
 const preloads = filesNamed('src/preload', '.ts').map((name) => `dist/preload/${name.slice(0, -3)}.js`)
 
 /** compiled is the whole build output the main process and the renderer run
- * from, and the bundler's three outputs are what the documents actually load:
- * the dashboard's entry, the picker's entry, and -- since Task 6.2 -- the
- * stylesheet every document links. The stylesheet is the one this list catches
- * by name, and that is the whole point of naming it here: a `build.files` that
- * carried the two bundles and not `console.css` would package an app that opens
- * a window with no style in it, which is the failure this test exists for. */
+ * from, and the bundler's four outputs are what the documents actually load:
+ * the dashboard's entry, the picker's entry, the stylesheet every document
+ * links (Task 6.2), and elkjs's layout worker (GV2.2). The stylesheet and the
+ * worker are the ones this list catches by name, and that is the whole point of
+ * naming them here: a `build.files` that carried the two bundles and not
+ * `console.css` would package an app that opens a window with no style in it,
+ * which is the failure this test exists for. The notices file is not a build
+ * output, but it ships beside the worker whose licence it carries, so it is
+ * named here too. */
 const compiled = compiledModules()
 const bundlerOutputs = [
+  'THIRD_PARTY_NOTICES.md',
   'dist/bundle/console.css',
   'dist/bundle/console.js',
+  'dist/bundle/elk-worker.min.js',
   'dist/bundle/installations.js',
 ]
 

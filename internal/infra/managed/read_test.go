@@ -372,7 +372,7 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 		// there and perfect, and nothing has ever written the label. It is
 		// the regression the change carries (decisions §5) and it is the
 		// fail-closed direction, so it is a row rather than a note: the
-		// owner-run backfill of docs/gcp-setup.md is what turns it back into
+		// owner-run backfill of docs/design/managed-projects.md is what turns it back into
 		// a managed project, and this is the reason a person reads first.
 		"a project with no fugaro_managed label": {
 			world: func(t *testing.T) (*storage.Service, *crm.Service) {
@@ -385,12 +385,12 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 				return s, c
 			},
 			// The condition, whole: both marks, this one missing, and the
-			// guidance left to docs/gcp-setup.md — no command is named here
+			// guidance left to docs/design/managed-projects.md — no command is named here
 			// (decisions §5, and TestTheNoLabelReasonNamesNoCommand pins
 			// that half). It attributes the label to neither writer alone,
 			// which is what the round-2 review found in the sentence this
 			// replaced.
-			reason: "carries no fugaro_managed label, so " + testFugaroProject + " is not managed: a managed project carries both marks, the creation fact in its runs bucket and the label on the project itself, and a project that has the fact without the label is marked again by hand, on the account that owns it (docs/gcp-setup.md)",
+			reason: "carries no fugaro_managed label, so " + testFugaroProject + " is not managed: a managed project carries both marks, the creation fact in its runs bucket and the label on the project itself, and a project that has the fact without the label is marked again by hand, on the account that owns it (docs/design/managed-projects.md)",
 		},
 		// The label is missing AND the object read fails: the label alone
 		// decides this project (read.go's last return), and the read's error
@@ -408,7 +408,7 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 				c, _ := labelledCRM(t, map[string]string{"environment": "prod"})
 				return s, c
 			},
-			reason: "carries no fugaro_managed label, so " + testFugaroProject + " is not managed: a managed project carries both marks, the creation fact in its runs bucket and the label on the project itself, and a project that has the fact without the label is marked again by hand, on the account that owns it (docs/gcp-setup.md)",
+			reason: "carries no fugaro_managed label, so " + testFugaroProject + " is not managed: a managed project carries both marks, the creation fact in its runs bucket and the label on the project itself, and a project that has the fact without the label is marked again by hand, on the account that owns it (docs/design/managed-projects.md)",
 		},
 		"a project whose fugaro_managed label says something else": {
 			world: func(t *testing.T) (*storage.Service, *crm.Service) {
@@ -836,7 +836,7 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 // that reaches a coding agent's session, and a sentence naming the write
 // (gcloud projects update, or the owner's flag) invites the boundary write
 // from the side that must never make it. The guidance stays in
-// docs/gcp-setup.md, which the reason names — so this test asserts both
+// docs/design/managed-projects.md, which the reason names — so this test asserts both
 // halves: the condition is stated, and no command is.
 func TestTheNoLabelReasonNamesNoCommand(t *testing.T) {
 	s, f := newStorage(t)
@@ -848,7 +848,7 @@ func TestTheNoLabelReasonNamesNoCommand(t *testing.T) {
 	if err != nil || ok {
 		t.Fatalf("IsManaged = %v, %q, %v; want false, a reason, and no failure", ok, reason, err)
 	}
-	if !strings.Contains(reason, ProjectLabelKey) || !strings.Contains(reason, "docs/gcp-setup.md") {
+	if !strings.Contains(reason, ProjectLabelKey) || !strings.Contains(reason, "docs/design/managed-projects.md") {
 		t.Errorf("reason = %q, want the condition (the missing %s label) and where a person reads the guidance", reason, ProjectLabelKey)
 	}
 	// The commands that write the label, and the one that removes it, by the
@@ -1077,7 +1077,7 @@ func TestReadBudgetAnswerInvalidAndProjectFirst(t *testing.T) {
 // FIGURE — Invalid, with the refused figure handed back — and not for the
 // missing label. Both halves hold, and the figure's reason is the more
 // specific one, which is the one to win: the label's sentence sends the owner
-// to the backfill in docs/gcp-setup.md, and a backfill would leave them with a
+// to the backfill in docs/design/managed-projects.md, and a backfill would leave them with a
 // managed project whose recorded amount nothing can be compared against.
 //
 // Every other state of the object keeps the label's reason. It is the verdict

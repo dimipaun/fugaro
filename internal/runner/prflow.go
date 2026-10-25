@@ -456,8 +456,8 @@ func (r *run) backlogPart() string {
 	if len(r.rec.Backlog) > 0 {
 		parts = append(parts, "filed "+backlogIDs(r.rec.Backlog))
 	}
-	if len(r.closedBacklog) > 0 {
-		parts = append(parts, "closed "+backlogIDs(r.closedBacklog))
+	if len(r.rec.BacklogClosed) > 0 {
+		parts = append(parts, "closed "+backlogIDs(r.rec.BacklogClosed))
 	}
 	return strings.Join(parts, ", ")
 }
@@ -598,7 +598,7 @@ func (r *run) finalSection(ready bool, reason string, records []verify.Record) s
 	case r.rec.Status == runstore.StatusCancelled:
 		head = "**Cancelled**"
 	}
-	return r.sectionLines(head, why, r.rigorPart(), verifyPart(records), reviewsPart(r.rec.Reviews), r.backlogPart(), r.costPart(), r.updated("finished"))
+	return r.sectionLines(head, why, r.rigorPart(), verifyPart(records), reviewsPart(r.rec.Reviews), r.narrowText, r.backlogPart(), r.costPart(), r.updated("finished"))
 }
 
 // ---- finalize ----

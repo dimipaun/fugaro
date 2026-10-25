@@ -839,6 +839,57 @@ export function pickerBundlePaths(consoleRoot: string): { readonly entry: string
   }
 }
 
+/** WORKER_FILE is the one file in the served root that this build neither
+ * compiles nor writes: elkjs's layout worker, copied byte for byte out of the
+ * pinned package (GV2.2). It is a devDependency rather than a dependency
+ * because nothing requires it at runtime -- the renderer reaches it through
+ * `new Worker`, and the 8 MB package stays out of the asar because only this
+ * one file is copied. Serving it verbatim is the point: it is minified by its
+ * own build, so anything this build did to it would be a second, unreviewed
+ * artefact under the console's CSP (`script-src 'self'`, unchanged). */
+export const WORKER_FILE = 'elk-worker.min.js'
+
+/** consoleWorker is the worker's source and destination: from the installed
+ * `elkjs` package into the served root, where `SERVED_FILES` lists it. */
+export function consoleWorker(consoleRoot: string): { readonly source: string; readonly out: string } {
+  return {
+    source: join(consoleRoot, 'node_modules', 'elkjs', 'lib', WORKER_FILE),
+    out: join(consoleRoot, 'dist', 'bundle', WORKER_FILE),
+  }
+}
+
+/** refuseMissingSource refuses the worker's source when it is not a file, in the
+ * shape the rest of this tool refuses in: a sentence rather than `readFileSync`'s
+ * bare `ENOENT`. The ordinary way this happens is a tree that has not run
+ * `npm ci` (the worker is copied out of the installed `elkjs` package), and the
+ * failure that matters is the *order*: without this refusal the build would stop
+ * with the missing input **after** `console.css` had been written, which is the
+ * half-a-bundle shape review M3 asked `buildConsole`'s pre-write pass to
+ * prevent. `bundleWorker` asks it again itself, one step before the bytes. */
+function refuseMissingSource(source: string): void {
+  let stats: Stats | undefined
+  try {
+    stats = lstatSync(source)
+  } catch {
+    stats = undefined
+  }
+  if (stats === undefined || !stats.isFile()) {
+    throw new BundleRefusal(
+      `${source} is not a file: this build copies elkjs's worker out of the installed package, so run npm ci in console/ first`,
+    )
+  }
+}
+
+/** bundleWorker copies the worker verbatim, re-checking its source and its
+ * destination as the other writers do, so a tree without the package or a link
+ * planted between `buildConsole`'s refusal pass and this write is refused here
+ * rather than followed. */
+export function bundleWorker(worker: { readonly source: string; readonly out: string }): void {
+  refuseMissingSource(worker.source)
+  refuseSymlinkedOutput(worker.out)
+  writeFileSync(worker.out, readFileSync(worker.source))
+}
+
 /** consoleBundles is every bundle `npm run build` writes, each told the others'
  * names -- and the stylesheet's -- so the served root's foreign-file refusal
  * still holds for anything else. `console.css` is written by
@@ -852,18 +903,20 @@ export function consoleBundles(consoleRoot: string): readonly BundleOptions[] {
     siblings: [
       ...all.filter((other) => other !== bundle).map((other) => basename(other.out)),
       stylesheet,
+      WORKER_FILE,
     ],
   }))
 }
 
 /**
  * buildConsole is the whole bundle step of `npm run build`, in its order, and it
- * is a function rather than three lines in the entry point below because the
+ * is a function rather than four lines in the entry point below because the
  * **order** is a claim a test has to be able to make (review M3).
  *
  * The order is: **every refusal this build can make**, then the stylesheet, then
- * the two renderer bundles. They come first because they are the ones that can
- * stop the build, and a build that stops must not have written anything: with
+ * elkjs's worker (GV2.2), then the two renderer bundles. The refusals come
+ * first because they are the ones that can stop the build, and a build that
+ * stops must not have written anything: with
  * the stylesheet first, a foreign file in `dist/bundle/` was a build failure that
  * nonetheless left a fresh `console.css` behind. That was harmless -- a failed
  * build is not packaged -- but "a refusal must not leave half a bundle behind"
@@ -872,8 +925,8 @@ export function consoleBundles(consoleRoot: string): readonly BundleOptions[] {
  * **The pre-write phase asks all of them, and not only the two the served root
  * owns** (review M4, left open by #701). The pair the directory owns
  * (`refuseSymlinkedDirectory`, `refuseForeignFilesIn`) was here; beside them
- * are now `refuseSymlinkedOutput` for **every name this build is about to
- * write** -- the stylesheet, each bundle, and each served document each bundle
+ * are now `refuseMissingSource` for the worker the build copies and
+ * `refuseSymlinkedOutput` for **every name this build is about to write** -- the stylesheet, each bundle, and each served document each bundle
  * copies -- and `moduleClosure` for each entry, whose walk is where a bare
  * specifier, a computed one and a module the build did not emit are refused. A
  * symlinked `dist/bundle/console.js`, a symlinked `dist/bundle/index.html` and a
@@ -902,8 +955,9 @@ export function buildConsole(consoleRoot: string): void {
   }
   const directory = dirname(resolve(first.out))
   const stylesheet = consoleStylesheet(consoleRoot)
-  const owned = new Set<string>()
-  const outputs: string[] = [resolve(stylesheet.out)]
+  const worker = consoleWorker(consoleRoot)
+  const owned = new Set<string>([WORKER_FILE])
+  const outputs: string[] = [resolve(stylesheet.out), resolve(worker.out)]
   for (const bundle of bundles) {
     const documents = documentsOf(bundle.entry)
     for (const name of ownedInRoot(bundle, documents)) owned.add(name)
@@ -913,10 +967,12 @@ export function buildConsole(consoleRoot: string): void {
 
   refuseSymlinkedDirectory(directory)
   refuseForeignFilesIn(directory, owned)
+  refuseMissingSource(worker.source)
   for (const output of outputs) refuseSymlinkedOutput(output)
   for (const bundle of bundles) moduleClosure(bundle.entry)
 
   bundleStylesheet(stylesheet)
+  bundleWorker(worker)
   for (const bundle of bundles) bundleRenderer(bundle)
 }
 

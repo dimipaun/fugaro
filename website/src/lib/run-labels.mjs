@@ -5,7 +5,7 @@
  * **Every label here is a line a document of this repository writes.** The box names, the
  * lines under them, the stage names and the cap facts are the repository's own words — the
  * README's `## How it works`, `## Why Fugaro`, `## Getting started` and `## Safety and cost
- * controls`, `docs/gcp-setup.md`'s budget and checkpoint sentences, the `parallelism` skill and
+ * controls`, the budget and checkpoint sentences the README carries, the `parallelism` skill and
  * the changes spec's own example request. Nothing here paraphrases: each label goes through
  * `comparable()` and `holdLabels()` below stops the build, naming the file, when it is not in
  * the document it cites (Global Constraint 6).
@@ -26,8 +26,8 @@ export const README_HOW = 'README.md#How it works'
 export const README_WHY = 'README.md#Why Fugaro'
 export const README_SAFETY = 'README.md#Safety and cost controls'
 export const README_START = 'README.md#Getting started'
-export const GCP_BUDGET = 'docs/gcp-setup.md#Turning the model budget on'
-export const GCP_RUN = 'docs/gcp-setup.md#Run, watch, diagnose'
+export const GCP_BUDGET = 'README.md#Safety and cost controls'
+export const GCP_RUN = 'README.md#How it works'
 export const DESIGN = 'docs/design/v1.md'
 
 export const SOURCES = {
@@ -37,8 +37,6 @@ export const SOURCES = {
   [README_WHY]: section('README.md', 'Why Fugaro'),
   [README_SAFETY]: section('README.md', 'Safety and cost controls'),
   [README_START]: section('README.md', 'Getting started'),
-  [GCP_BUDGET]: section('docs/gcp-setup.md', 'Turning the model budget on'),
-  [GCP_RUN]: section('docs/gcp-setup.md', 'Run, watch, diagnose'),
   [DESIGN]: wholeFile(DESIGN),
 }
 

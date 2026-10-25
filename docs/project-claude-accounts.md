@@ -1,6 +1,6 @@
 # Project Claude accounts: one OAuth token per (profile, account)
 
-Status: **0.9.0, released.** The released Fugaro is 0.11.1, and 0.9.0 is the first release any of this page works on:
+Status: **0.9.0, released.** The released Fugaro is 0.11.3, and 0.9.0 is the first release any of this page works on:
 the `claude_accounts` field inside a profile, the `accounts` block in the published policy and the
 jobs they name all ship in 0.9.0 (policy version 3,
 [`internal/projectpolicy/version.go`](../internal/projectpolicy/version.go)), and a 0.8.x binary
@@ -506,5 +506,5 @@ radius (§1), and `accounts.<name>.allow_repos` plus the two gates are what boun
 - [design/named-oauth-tokens.md](design/named-oauth-tokens.md) — the repository-level feature this
   one carries to the project job.
 - [project-layer.md](project-layer.md) — profiles, `job_profile` and the project layer.
-- [gcp-setup.md](gcp-setup.md) — the cloud runbook, and where the version-3 rollout is a step.
+- [gcp-setup.md](gcp-setup.md) — the page that creates the GCP project a shared job runs in.
 - [SECURITY.md](../SECURITY.md) — what a project job holds, stated as this feature's cost.

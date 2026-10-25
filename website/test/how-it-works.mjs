@@ -121,7 +121,7 @@ function section(document, heading) {
 
 /**
  * The documents the page's labels cite, by the name each group carries, read the way a reader
- * of the repository would: README.md's own sections, `docs/gcp-setup.md`'s budget and checkpoint
+ * of the repository would: README.md's own sections, its budget and checkpoint
  * sections, the `parallelism` skill, the design document and the changes spec.
  */
 function sources() {
@@ -130,8 +130,6 @@ function sources() {
     'README.md#Why Fugaro': section('README.md', 'Why Fugaro'),
     'README.md#Safety and cost controls': section('README.md', 'Safety and cost controls'),
     'README.md#Getting started': section('README.md', 'Getting started'),
-    'docs/gcp-setup.md#Turning the model budget on': section('docs/gcp-setup.md', 'Turning the model budget on'),
-    'docs/gcp-setup.md#Run, watch, diagnose': section('docs/gcp-setup.md', 'Run, watch, diagnose'),
     'docs/design/v1.md': repoFile('docs/design/v1.md'),
     'plugin/skills/parallelism/SKILL.md': repoFile('plugin/skills/parallelism/SKILL.md'),
     'docs/website/redesign/changes-spec-2026-10-18.md': repoFile('docs/website/redesign/changes-spec-2026-10-18.md'),

@@ -100,8 +100,10 @@ func (r *run) reachedRigor() rigor.Mode {
 // where `fugaro run --path` (repeatable) and the task's own list land. The
 // spec is where the launcher's flags travelled, and it is the whole of the
 // input: the run's configuration is not consulted, and a path no area rule
-// matches changes nothing, so a declaration can only raise the mode an area
-// rule sets.
+// matches changes nothing. A path one does match sets the area's mode, which
+// may be below the repository's: areas are defaults, not floors
+// (docs/project-layer.md §2), so a declaration can lower the bootstrap mode,
+// and finalize resolves again from the paths the run really changed.
 //
 // A run that declared none — every launch without the flag — starts at its
 // repository's or its project's value, which is what D22 says a run that

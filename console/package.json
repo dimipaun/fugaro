@@ -31,6 +31,7 @@
     },
     "asar": true,
     "files": [
+      "THIRD_PARTY_NOTICES.md",
       "dist/main/**/*.js",
       "!dist/main/fuses.js",
       "dist/preload/index.js",
@@ -40,6 +41,7 @@
       "!dist/source/fixture.js",
       "dist/bundle/console.css",
       "dist/bundle/console.js",
+      "dist/bundle/elk-worker.min.js",
       "dist/bundle/index.html",
       "dist/bundle/installations.html",
       "dist/bundle/installations.js",
@@ -95,6 +97,7 @@
     "@types/node": "26.6.5",
     "electron": "44.7.2",
     "electron-builder": "26.18.0",
+    "elkjs": "0.11.0",
     "typescript": "7.0.2",
     "vitest": "5.0.5"
   }

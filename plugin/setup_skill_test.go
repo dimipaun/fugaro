@@ -596,7 +596,7 @@ func TestSetupSkillGitHubApp(t *testing.T) {
 // same name guidance as the skill.
 func TestDocsGitHubAppGuidance(t *testing.T) {
 	perms := githubAppPermissions(t)
-	for _, doc := range []string{"docs/git-providers.md", "docs/gcp-setup.md", "README.md"} {
+	for _, doc := range []string{"docs/git-providers.md", "README.md"} {
 		data, err := os.ReadFile(filepath.Join("..", filepath.FromSlash(doc)))
 		if err != nil {
 			t.Fatal(err)

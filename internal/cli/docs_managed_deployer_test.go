@@ -1142,26 +1142,30 @@ func TestChecklistCheck68HardStopCountsAgree(t *testing.T) {
 	}
 }
 
-// TestGcpSetupSaysTheManagedPathShipsUnmeasured: the operator guide's managed
-// note carried the disabled-mode reason — the deployer's scoped role "is not an
-// IAM condition GCP accepts yet", with the redesign still ahead ("after the
-// fence is redesigned") — while the paragraph two above it, docs/release.md's
-// bullet and docs/design/managed-projects.md's 0.10.0 note all state what this
-// tree actually has: the redesign is written and in the tree, 0.10.0 ships it
-// (the owner's ruling of 2026-10-22), and what is missing is the live
-// measurement (Check 68, written and NOT RUN). An operator reading the note is
-// deciding whether to turn managed projects on, so the note has to say both
-// halves: the path is available, and the fence's protection is unproved.
+// TestGcpSetupSaysTheManagedPathShipsUnmeasured: the managed-entry note used to
+// live on docs/gcp-setup.md's managed section, beside the entry points. That
+// page is the short setup path now and the note moved with the entry points into
+// the setup skill's own reference, plugin/skills/setup/reference/managed.md,
+// which is what a user's agent reads before turning managed projects on. The
+// note on the old page carried the disabled-mode reason — the deployer's scoped
+// role "is not an IAM condition GCP accepts yet", with the redesign still ahead
+// ("after the fence is redesigned") — while docs/release.md's bullet and
+// docs/design/managed-projects.md's 0.10.0 note state what this tree actually
+// has: the redesign is written and in the tree, 0.10.0 ships it (the owner's
+// ruling of 2026-10-22), and what is missing is the live measurement (Check 68,
+// written and NOT RUN). An operator reading the note is deciding whether to turn
+// managed projects on, so the note has to say both halves: the path is
+// available, and the fence's protection is unproved.
 //
 // Mutations (verified, run and restored): the old reason sentence put back into
 // the note, and "after the fence is redesigned" put back — both fail here.
 func TestGcpSetupSaysTheManagedPathShipsUnmeasured(t *testing.T) {
-	const path = "docs/gcp-setup.md"
+	const path = "plugin/skills/setup/reference/managed.md"
 	doc := readDoc(t, path)
-	const lead = "**Available since 0.10.0, and the fence has not been measured live.**"
+	const lead = "**Open as of 0.10.0, with the fence not yet measured live.**"
 	i := strings.Index(doc, lead)
 	if i < 0 {
-		t.Fatalf("%s no longer has the managed-path note (%q): it is where the guide says where the gate stands and what is unproved", path, lead)
+		t.Fatalf("%s no longer has the managed-path note (%q): it is where the agent reads where the gate stands and what is unproved", path, lead)
 	}
 	note := doc[i:]
 	if end := strings.Index(note, "\n\n"); end >= 0 {
@@ -1169,11 +1173,11 @@ func TestGcpSetupSaysTheManagedPathShipsUnmeasured(t *testing.T) {
 	}
 	for _, want := range []string{
 		"0.10.0",
-		"owner-run after the release",
-		"measured live",
+		"owner-run **after** the release",
+		"has not been measured live",
 		"Check 68",
 		"NOT RUN",
-		"opt-in per project",
+		"`--create-project --managed`",
 	} {
 		if !strings.Contains(note, want) {
 			t.Errorf("%s's managed note does not say %q: 0.10.0 ships the path with the fence unmeasured (Check 68 is written, owner-run after the release and NOT RUN), and the note is where an operator reads that", path, want)

@@ -60,6 +60,8 @@ import { measured, readNumber, unavailable } from '../../shared/availability'
 import type { Reading } from '../../shared/availability'
 import type { OperationName } from '../../main/ipc'
 import { launcherCell } from '../../shared/launcher'
+import { RIGOR_ABSENT, readRigor, rigorModeWord } from '../../shared/rigor'
+import type { RigorView } from '../../shared/rigor'
 import type { KillView } from '../../shared/schema'
 import { sanitizeRefusal, sanitizeText } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
@@ -260,6 +262,11 @@ export interface ProjectJob {
   readonly branch: string | null
   readonly created: string | null
   readonly cost: ProjectJobCost
+  /** the row's rigor block, or `null` for a record that carries none this
+   * reader can show (`shared/rigor.ts`). The MODE column draws it, and it is
+   * drawn **only when some listed run carries one** -- the conditional column
+   * `runs ls` itself writes (`internal/cli/runs.go`'s `showMode`) */
+  readonly rigor: RigorView | null
 }
 
 /** ProjectJobs is the job list, its bound, and what the bound left out. */
@@ -752,6 +759,7 @@ export function buildProjectsModel(inputs: ProjectsInputs): ProjectsModel {
     branch: textAt(row['branch']),
     created: textAt(row['created']),
     cost: costOf(row['cost'], 'runs[].cost'),
+    rigor: readRigor(row['rigor']),
   }))
 
   // The accounts: `accountsListDoc`. `complete: false` means the project config
@@ -959,6 +967,27 @@ function numberCell(
   return element
 }
 
+/**
+ * rigorCell is one row's MODE cell: the mode's own word for the five modes this
+ * build knows, the **raw value through `putText`** for one it does not, and
+ * `RIGOR_ABSENT` for a run whose record carries no block.
+ *
+ * The third case is the reason this is a function rather than a lookup: a mode
+ * string this build has never heard of is job-written text, so it takes the
+ * text path -- bounded, escaped, and `n/a` with the reason in the `title` when
+ * the sanitizer refuses it -- and never the console's own `literal` writer. A
+ * cell that wrote it as vocabulary would be putting a value no reader can check
+ * into the document under the console's own name.
+ */
+function rigorCell(parent: ScreenElement, factory: ScreenFactory, view: RigorView | null): ScreenElement {
+  const drawn = cell(parent, factory, 'span', 'projects-job-mode')
+  if (view === null) return literal(drawn, RIGOR_ABSENT)
+  const word = rigorModeWord(view.mode)
+  if (word !== null) return literal(drawn, word)
+  putText(drawn, view.mode, 'label', 'runs[].rigor.mode')
+  return drawn
+}
+
 /** sanitizedKey is a document string bound for an **attribute value** rather
  * than a text cell -- the same door `putText` uses (`live.ts` has the twin), or
  * null when the sanitizer refuses the string. */
@@ -1120,6 +1149,14 @@ function repositoriesPanel(factory: ScreenFactory, model: ProjectRepositories): 
 function jobsPanel(factory: ScreenFactory, model: ProjectJobs): ScreenElement {
   const element = make(factory, 'div', 'projects-jobs')
   const list = cell(element, factory, 'ol', 'projects-job-list')
+  // **The MODE column appears only when some listed run carries a block.** It
+  // is the conditional column `runs ls` writes (`internal/cli/runs.go`'s
+  // `showMode`): a run from before the field, or one that died before
+  // bootstrap, has no block and does not widen every other run's row for it --
+  // and a project whose runs are all older than the field draws the list it
+  // always drew. Once one row carries a block the column is on every row, and
+  // the rows without one say so with `RIGOR_ABSENT` rather than with a blank.
+  const showMode = model.rows.some((job) => job.rigor !== null)
   for (const job of model.rows) {
     const line = cell(list, factory, 'li', 'projects-job')
     textCell(line, factory, 'span', job.run, 'runId', 'runs[].run', 'projects-job-run')
@@ -1141,6 +1178,7 @@ function jobsPanel(factory: ScreenFactory, model: ProjectJobs): ScreenElement {
       textCell(line, factory, 'span', startedBy, 'label', 'runs[].launched_by', 'projects-job-started-by')
     }
     if (job.created !== null) textCell(line, factory, 'span', job.created, 'label', 'runs[].created', 'projects-job-created')
+    if (showMode) rigorCell(line, factory, job.rigor)
     // The three accounts, apart: a subscription's model dollars are notional.
     numberCell(line, factory, 'span', job.cost.model, 'usd', 'projects-job-model')
     numberCell(line, factory, 'span', job.cost.compute, 'usd', 'projects-job-compute')

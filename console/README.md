@@ -95,9 +95,10 @@ runtime dependency today; see below):
 | `@types/node` | `22.20.5` | `devDependencies` | the Node the main process and the tests run on |
 | `@electron/fuses` | `2.1.3` | `devDependencies` | the `afterPack` hook's fuse writer (Task 4.1) |
 | `electron-builder` | `26.18.0` | `devDependencies` | the packer, run from its local binary by `npm run package` (Task 4.1) |
+| `elkjs` | `0.11.0` | `devDependencies` | the graph view's layout engine: the build copies its `elk-worker.min.js` verbatim into the served root (GV2.2); its EPL-2.0 licence is `THIRD_PARTY_NOTICES.md` |
 
 `dependencies` is empty, and that is a decision rather than a symptom: the
-renderer bundles no framework runtime and no charting library (design D9), and
+renderer bundles no framework runtime and no charting library (design D9); its one third-party file is elkjs's layout worker, a devDependency whose `elk-worker.min.js` the build copies verbatim into the served root and whose EPL-2.0 licence is `console/THIRD_PARTY_NOTICES.md`, and
 everything a `dependencies` entry names is packed into the shipped asar. Task 1.0
 pinned `electron-updater` there for Task 4.4's auto-update; Task 4.1's review
 found it shipped in the bundle with nothing importing it, so it was removed, and
@@ -2290,24 +2291,28 @@ console needs `src/renderer` on disk". Task 4.1 settles it by naming the file
 rather than moving it: `build.files` is
 
 ```json
-["dist/main/**/*.js", "!dist/main/fuses.js", "dist/preload/index.js",
- "dist/preload/installations.js", "dist/shared/**/*.js", "dist/source/**/*.js",
- "!dist/source/fixture.js", "dist/bundle/console.css", "dist/bundle/console.js",
- "dist/bundle/index.html", "dist/bundle/installations.html",
- "dist/bundle/installations.js", "dist/bundle/refusal.html"]
+["THIRD_PARTY_NOTICES.md", "dist/main/**/*.js", "!dist/main/fuses.js",
+ "dist/preload/index.js", "dist/preload/installations.js",
+ "dist/shared/**/*.js", "dist/source/**/*.js", "!dist/source/fixture.js",
+ "dist/bundle/console.css", "dist/bundle/console.js",
+ "dist/bundle/elk-worker.min.js", "dist/bundle/index.html",
+ "dist/bundle/installations.html", "dist/bundle/installations.js",
+ "dist/bundle/refusal.html"]
 ```
 
 (as amended when Task 3.4a moved the served root to `dist/bundle/`, Task 3.4b
-added the picker's document, script and preload, and Task 6.2 added the served
-stylesheet; the paragraph below is Task 4.1's record of its own first list)
+added the picker's document, script and preload, Task 6.2 added the served
+stylesheet, and GV2.2 added the pinned worker the build copies verbatim and the
+notices file packed beside the app; the paragraph below is Task 4.1's record of its own first list)
 
 — the compiled main process, preload, shared and source modules, the document
 the window actually loads, and nothing else. Two compiled files are excluded by
 name because the app never loads them: `dist/main/fuses.js` is the packing hook
 (the packer loads it from the project directory, and it needs a devDependency)
 and `dist/source/fixture.js` is the fixture loader the tests and the recorder
-use. No source map ships (every include names `.js` or one `.html` file, and a
-map in the asar is a second copy of the sources with a pointer to it).
+use. No source map ships (every include names `.js`, one `.html` file or the notices
+`.md`, and a map in the asar is a second copy of the sources with a pointer to
+it).
 `fuses.test.ts` walks the import closure of `src/main/index.ts` and
 `src/preload/index.ts` and asserts every module in it is shipped and the two
 excluded files are not. The
@@ -3338,8 +3343,9 @@ one. A row per *stored* installation would need a bounded list read on the dashb
 bridge, which the design withholds (§4.1, §11) and this task adds no operation for.
 
 So the rail makes **no read of its own**, and that is a test rather than a promise: the
-entry spec's spawn-log case holds a healthy console to exactly two spawns (`version`,
-`watch --json --project P`), and a read at mount would be a third. The two figures the row
+entry spec's spawn-log case holds a healthy console to three kinds of spawn (`version`,
+`watch --json --project P`, and the Live screen's rigor join `runs ls --json --project P`),
+and a read at mount would be a fourth. The two figures the row
 carries come from reads the console was already making:
 
 - the **state** from the Live feed (`rail.setState`), which is the same read the panel draws;

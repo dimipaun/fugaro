@@ -245,7 +245,7 @@ changed**. A page that prints "disposable" unqualified contradicts `docs/design/
 
 ### ZF16 — **Wrong** — "it never runs Terraform or cloud ops against existing infrastructure"
 
-Fugaro's provisioning model **is** Terraform: `docs/gcp-setup.md:75` describes the typed-confirmation
+Fugaro's provisioning model **is** Terraform: `e924481:docs/gcp-setup.md:75` (the page before its rewrite) describes the typed-confirmation
 applies, and `internal/infra/tf/cover.go` is the type allow-list for the resources those
 applies may create. A **managed** project is one Fugaro created
 (`docs/design/managed-projects-spec.md:27`), but even there Terraform **is** run — the
@@ -266,7 +266,7 @@ lists them among the shipped ones, with the fence unmeasured (Check 68).
 
 ### ZF18 — **Wrong** — "so there is no extra setup"
 
-`fugaro init` provisions all of it: `docs/gcp-setup.md:9-10` (an installation gets APIs, a
+`fugaro init` provisions all of it: `e924481:docs/gcp-setup.md:9-10` (the page before its rewrite) (an installation gets APIs, a
 runs bucket, custom roles, a scheduler and log isolation; a repository gets secret
 containers, registries, job accounts, a Cloud Run job and a Scheduler job), and
 `deploy/terraform/gcp/modules/firebase/apis.tf:8-17` enables `firebase`, `firebasedatabase`,
@@ -286,7 +286,7 @@ key at `deploy/terraform/gcp/modules/firebase/firebase.tf:36-47`; mobile at
 `docs/mobile-auth/spec.md:14,32`), and Firestore for history (`internal/firestore/client.go:1-3`).
 
 But they are the **budget, dashboard and history control plane**, and it is optional:
-`README.md:99` — "The budget is off by default" — and `docs/gcp-setup.md:464` documents a
+`README.md:99` — "The budget is off by default" — and `e924481:docs/gcp-setup.md:464` (the page before its rewrite) documents a
 degraded mode with no Firebase at all. A run needs none of the three. And Firebase Auth is
 **not** the identity provider for the console (which holds no credential,
 `docs/design/desktop-console.md:13,96`) nor for the CLI, which signs in with

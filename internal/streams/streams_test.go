@@ -28,7 +28,7 @@ const validYAML = `streams:
     tag_prefix: v
   - name: console
     theme: fruits
-    names: [Cherry, Mango]
+    names: [Cherry, Mango, Melon]
     current: "0.110.0"
     next: Mango
     tag_prefix: console-v
@@ -100,7 +100,7 @@ func TestCatalogueValid(t *testing.T) {
 	want := []Stream{
 		{Name: "cli", Theme: "animals", Names: []string{"Badger", "Camel", "Dolphin"},
 			Current: Version{Major: 0, Minor: 10, Patch: 4}, Next: "Camel", TagPrefix: "v"},
-		{Name: "console", Theme: "fruits", Names: []string{"Cherry", "Mango"},
+		{Name: "console", Theme: "fruits", Names: []string{"Cherry", "Mango", "Melon"},
 			Current: Version{Major: 0, Minor: 110, Patch: 0}, Next: "Mango", TagPrefix: "console-v"},
 		{Name: "mobile", Theme: "birds", Names: []string{"Falcon", "Pelican"},
 			Current: Version{Major: 0, Minor: 0, Patch: 0}, Next: "Falcon", TagPrefix: "mobile-v"},
@@ -139,6 +139,7 @@ func TestCatalogueValid(t *testing.T) {
 		{"a next name that is not in the list", rewrite(t, "next: Camel", "next: Moose"), "not one of its names"},
 		{"a next name that is already spent", rewrite(t, "next: Camel", "next: Badger"), "has already spent"},
 		{"a next name with nothing spent", rewrite(t, "next: Falcon", "next: Pelican"), "released nothing"},
+		{"a stream with no names", rewrite(t, "names: [Falcon, Pelican]", "names: []"), "the mobile stream names no release names"},
 		{"an anchor", rewrite(t, "names: [Badger, Camel, Dolphin]", "names: &n [Badger, Camel, Dolphin]"), "anchor or alias"},
 		{"a merge key", rewrite(t, "    theme: animals\n", "    <<: {theme: animals}\n"), "merge key"},
 	} {
@@ -188,7 +189,7 @@ func TestNamesAlphabetical(t *testing.T) {
 func TestNoNameInTwoStreams(t *testing.T) {
 	t.Run("a shared name", func(t *testing.T) {
 		body := rewrite(t, "names: [Badger, Camel, Dolphin]", "names: [Badger, Camel, Dolphin, Moose]")
-		body = strings.Replace(body, "names: [Cherry, Mango]", "names: [Cherry, Mango, Moose]", 1)
+		body = strings.Replace(body, "names: [Cherry, Mango, Melon]", "names: [Cherry, Mango, Melon, Moose]", 1)
 		_, err := parseFixture(body)
 		if err == nil || !strings.Contains(err.Error(), "belongs to one") {
 			t.Errorf("refusal = %v, want the shared name refused", err)
@@ -216,16 +217,19 @@ func TestNoNameInTwoStreams(t *testing.T) {
 func TestConsoleFloor(t *testing.T) {
 	for _, tc := range []struct {
 		current string
+		next    string
 		refused bool
 	}{
-		{"0.110.0", false},
-		{"0.111.0", false},
-		{"0.109.9", true},
-		{"0.11.0", true},
-		{"0.9.7", true},
+		{"0.110.0", "Mango", false},
+		{"0.111.0", "Melon", false},
+		{"0.109.9", "Mango", true},
+		{"0.11.0", "Mango", true},
+		{"0.9.7", "Mango", true},
+		{"0.0.0", "Cherry", true},
 	} {
 		t.Run(tc.current, func(t *testing.T) {
 			body := rewrite(t, `current: "0.110.0"`, fmt.Sprintf("current: %q", tc.current))
+			body = strings.Replace(body, "next: Mango", "next: "+tc.next, 1)
 			_, err := parseFixture(body)
 			if !tc.refused {
 				if err != nil {
@@ -259,11 +263,11 @@ func TestConsoleFloor(t *testing.T) {
 // releases"; GD7). The list is refused at the file rather than caught in review.
 func TestForbiddenConsoleNames(t *testing.T) {
 	for _, tc := range []struct{ name, list string }{
-		{"Apple", "[Apple, Cherry, Mango]"},
-		{"Lemon", "[Cherry, Lemon, Mango]"},
+		{"Apple", "[Apple, Cherry, Mango, Melon]"},
+		{"Lemon", "[Cherry, Lemon, Mango, Melon]"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := parseFixture(rewrite(t, "names: [Cherry, Mango]", "names: "+tc.list))
+			_, err := parseFixture(rewrite(t, "names: [Cherry, Mango, Melon]", "names: "+tc.list))
 			if err == nil {
 				t.Fatalf("a console list carrying %s parsed, want a refusal", tc.name)
 			}
@@ -318,14 +322,78 @@ func TestRealFileParses(t *testing.T) {
 		t.Errorf("the CLI's next name is %q and its names are %v: the CLI has shipped a release, so its next name cannot be the first of its list", cli.Next, cli.Names)
 	}
 
+	// The app's stream is at the 0.0.0 placeholder until its first release and at
+	// a version on its own line from then on, so either is what the file may say:
+	// pinning the placeholder would break on the commit that cuts Falcon.
 	mobile, _ := c.Lookup(Mobile)
-	if !mobile.Current.IsZero() {
-		t.Errorf("the mobile stream is at %s: nothing has shipped on it, and 0.0.0 is how the file says so", mobile.Current)
+	if first := FirstVersion(Mobile); !mobile.Current.IsZero() && !mobile.Current.atLeast(first) {
+		t.Errorf("the mobile stream is at %s: want the 0.0.0 placeholder or a version on the app's own line, %s or later", mobile.Current, first)
 	}
 	for _, name := range mobile.Names {
 		if slices.Contains(cli.Names, name) {
 			t.Errorf("%q is in the CLI's list and the mobile app's: the CLI's names carry no bird, because Falcon moved to the app", name)
 		}
+	}
+}
+
+// TestNextIsFirstUnspent: names are spent one per minor from the stream's first
+// minor (the CLI's Badger is 0.10, the console's Cherry 0.110, the app's Falcon
+// 0.200), so the version a stream is at says how many names it has spent, and
+// its next name is the one after them: not one already spent, and not one
+// further down the list that skips a name nobody released under.
+func TestNextIsFirstUnspent(t *testing.T) {
+	for _, tc := range []struct {
+		name, current, next, want string
+	}{
+		{"the first minor spent its first name", "0.10.4", "Camel", ""},
+		{"the second minor spent its second name", "0.11.2", "Dolphin", ""},
+		{"a name skipped", "0.10.4", "Dolphin", `next name is "Camel"`},
+		{"a name already spent", "0.11.0", "Camel", "has already spent"},
+		{"the first name already spent", "0.11.0", "Badger", "has already spent"},
+		{"every name spent", "0.12.0", "Dolphin", "has spent every name"},
+		{"a version before the named line", "0.9.7", "Camel", "0.10.0"},
+		{"a major the line does not have", "1.10.0", "Camel", "0.10.0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := rewrite(t, `current: "0.10.4"`, fmt.Sprintf("current: %q", tc.current))
+			body = strings.Replace(body, "next: Camel", "next: "+tc.next, 1)
+			_, err := parseFixture(body)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("the CLI at %s with next %s was refused: %v", tc.current, tc.next, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("refusal = %v, want it to carry %q", err, tc.want)
+			}
+		})
+	}
+	t.Run("the shipped file", func(t *testing.T) {
+		for _, s := range shipped(t).Streams {
+			if s.Current.IsZero() {
+				if s.Next != s.Names[0] {
+					t.Errorf("the %s stream has shipped nothing and its next name is %q, want %q", s.Name, s.Next, s.Names[0])
+				}
+				continue
+			}
+			spent := s.Current.Minor - FirstVersion(s.Name).Minor
+			if spent < 0 || spent+1 >= len(s.Names) || s.Names[spent+1] != s.Next {
+				t.Errorf("the %s stream is at %s and its next name is %q; its names are %v", s.Name, s.Current, s.Next, s.Names)
+			}
+		}
+	})
+}
+
+// TestVersionScalar: a version that YAML reads as a number is refused, because
+// what it means depends on the reader's schema; one that no YAML schema reads as
+// a number is the string it looks like, quoted or not.
+func TestVersionScalar(t *testing.T) {
+	if _, err := parseFixture(rewrite(t, `current: "0.10.4"`, "current: 0.10.4")); err != nil {
+		t.Errorf("an unquoted 0.10.4 was refused: %v; YAML reads it as a string in every schema", err)
+	}
+	if _, err := parseFixture(rewrite(t, `current: "0.10.4"`, "current: 0.10")); err == nil || !strings.Contains(err.Error(), "quoted") {
+		t.Errorf("refusal = %v, want an unquoted 0.10 refused as a number", err)
 	}
 }
 
