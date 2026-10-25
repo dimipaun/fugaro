@@ -266,7 +266,7 @@ rigor:
 		{"no request at all", "", rigor.Startup, rigor.FromRepo},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r, _ := rigorRun(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": base}, nil, &task.Spec{Rigor: tc.req})
+			r, _ := rigorRun(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": base}, nil, &task.Spec{Rigor: rigor.Mode(tc.req)})
 
 			r.bootstrapRigor(context.Background())
 

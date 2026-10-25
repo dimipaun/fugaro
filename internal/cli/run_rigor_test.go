@@ -85,7 +85,7 @@ func TestRunWithoutAModeAsksForNone(t *testing.T) {
 // never a value the resolver reads as an unknown mode and quietly ignores,
 // which is the fail-open direction.
 func TestRunRefusesAModeOutsideTheVocabulary(t *testing.T) {
-	f := newCloudFixture(t)
+	newCloudFixture(t)
 	for _, mode := range []string{"Poc", "PRO", "critical ", "sizzle", "none"} {
 		_, _, err := execute(t, "run", "--repo", "acme/app", "--mode", mode, "Fix the flaky test.")
 		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "mode") {

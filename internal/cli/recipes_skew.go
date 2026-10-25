@@ -345,6 +345,32 @@ const cascadeSince = "0.10.0"
 // tag") has the checklist verify it equals the release that ships the key.
 const rigorSince = "0.11.0"
 
+// rigorRequestSince is the first fugaro release whose runner reads a task's
+// own rigor request (task.Spec.Rigor and task.Spec.Paths, fugaro run --mode
+// and --path): an older runner refuses both fields outright, since
+// task.Parse decodes with DisallowUnknownFields, and the run would fail at
+// bootstrap on a task nobody can read. It must equal the release that ships
+// task.Spec.Rigor and task.Spec.Paths: docs/release.md ("Before you tag")
+// has the release checklist verify it.
+//
+// It is not rigorSince, which is older and answers a different question:
+// that one names the release whose *config reader* knows fugaro.yaml's
+// rigor: block, judged against the installation's base image by fugaro
+// update --repo. This one names the release whose *task reader* knows the
+// two fields the flags write, and it is judged against the job's own build
+// record by the launch, exactly as titlesSince is; a launch that asks for
+// nothing writes neither field and is never gated.
+const rigorRequestSince = "0.11.1"
+
+// asksForRigor reports whether a launch asks for a rigor mode or declares a
+// path: the two task fields a runner older than rigorRequestSince refuses
+// outright, and so the condition the launch's own gate is written on. A
+// launch that asks for nothing carries neither field (both are omitempty) and
+// its spec is byte-identical to what the previous release wrote.
+func asksForRigor(spec *task.Spec) bool {
+	return spec.Rigor != "" || len(spec.Paths) > 0
+}
+
 // needsRecipeImage reports whether a launch needs a runner that knows
 // recipes: the task carries one, or the checkout's fugaro.yaml sets
 // agent.recipe (an unknown key to an older runner).

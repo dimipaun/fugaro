@@ -27,7 +27,7 @@ func TestSpecRigorRequest(t *testing.T) {
 			t.Errorf("rigor %q: %v", mode, err)
 			continue
 		}
-		if spec.Rigor != mode {
+		if string(spec.Rigor) != mode {
 			t.Errorf("rigor %q parsed as %q", mode, spec.Rigor)
 		}
 	}

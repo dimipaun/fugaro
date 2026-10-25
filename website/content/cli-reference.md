@@ -2694,6 +2694,15 @@ start with the same preamble all read alike. A follow-up (--pr) keeps its run's
 title unless --title is given, and --retry takes none (the stored task keeps its
 own).
 
+--mode MODE asks for a rigor mode for this run: poc, startup, pro, critical, hotfix.
+It may raise the mode the run resolves from its own configuration
+(rigor.default and rigor.areas in fugaro.yaml, the project layer's defaults)
+and never lower it, so a launch that asks for less cannot outvote a repository
+that asked for more. --path PATH declares a path this run will touch,
+repeatable, matched against those area rules before the run starts; without
+either flag the run resolves from its configuration alone. Both are recorded
+in the run's record and named in the pull request's status line.
+
 Usage: `fugaro run [TEXT]`
 
 Flags:
@@ -2707,7 +2716,9 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for run |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--mode` | string | "" | no | the rigor mode to ask for: poc, startup, pro, critical, hotfix; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it; without it the run resolves from those layers alone |
 | `--no-budget-check` | bool | `false` | no | skip the launch pre-check of the budget (kill switches, missing caps, no headroom); the run is held to the same limits when it starts |
+| `--path` | stringArray | `[]` | no | declare a path this run will touch, matched against the repository's rigor.areas rules: repeatable; a run that declares none resolves from its configuration alone |
 | `--pr` | intSlice | `[]` | no | continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--recipe` | string | "" | no | the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's (default, lint-fix, pick, premium, review-only, solo, standard, test-and-fix); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's |
