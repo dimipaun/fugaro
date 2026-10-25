@@ -23,6 +23,7 @@
 version: 1
 
 summaries:
+  v0.11.3: A run's review now looks only at the run's own commits even when it was cut from a long-lived branch without naming it, which stops reviews from reading a whole integration branch and spending the budget on it. fugaro run also takes its base from the branch you launch it from, and says so.
   v0.11.2: A run can now carry the id of the plan task it implements, recorded on the launch and shown in the runs list and in watch output, which the console's coming dependency graph reads. Fugaro also says when a requested rigor mode has no effect, and the setup guide is now one short page.
   v0.11.1: A run can now ask for a stricter rigor mode with --mode and --path, a launch warns before it starts on an image too old for a rigor setting, and follow-up runs close the backlog items they fix. The coordinator's token is narrower and is revoked after use, and the coordinator's background sweep ships switched off until an owner opts in.
   v0.11.0: Every repository now runs in a rigor mode that sets how much a run may spend, Pro by default, and reviewers score each finding so later releases can decide what blocks. Runs can file what they leave open into a backlog, a first coordinator view shows work in flight across a project, and the project now states which parts are open source and which are reserved.
