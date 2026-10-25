@@ -194,11 +194,32 @@ const (
 // Unread is one pull request a view could not read on this pass: its number,
 // why, and whether the state the view shows for it is the last one a sweep did
 // read (Carried) rather than none at all.
+//
+// Failures and RetryAfter are the view's memory of a number the host keeps
+// refusing. Such a number is never read, so nothing else would stop the next
+// tick asking for it again — first, because a number no sweep has read sorts
+// ahead of the rest — and a run that wrote a bogus one would spend its
+// repository's share of the read budget on every tick. Failures counts the
+// consecutive ticks the host refused it, up to MaxReadFailures; once it gets
+// there RetryAfter is when it is asked for again, and until then it is carried
+// as unread without a read.
 type Unread struct {
-	Number  int    `json:"number"`
-	Reason  string `json:"reason"`
-	Carried bool   `json:"carried,omitempty"`
+	Number     int       `json:"number"`
+	Reason     string    `json:"reason"`
+	Carried    bool      `json:"carried,omitempty"`
+	Failures   int       `json:"failures,omitempty"`
+	RetryAfter time.Time `json:"retry_after,omitzero"`
 }
+
+// MaxReadFailures is how many consecutive ticks the host may refuse one pull
+// request before the sweep stops asking for it every tick, and ReadRetryAfter
+// how long it then waits before asking once more. Three refusals is past a
+// transient error on any one tick; a day is how long a number that is really
+// a pull request (one the token cannot read yet, say) waits to be seen.
+const (
+	MaxReadFailures = 3
+	ReadRetryAfter  = 24 * time.Hour
+)
 
 // Unread's reasons.
 const (
@@ -472,17 +493,22 @@ func (s *Sweeper) recompute(ctx context.Context, repo Repo, budget *int, row *Re
 	if err != nil {
 		return View{}, StaleRuns, nil
 	}
-	known, err := s.previous(ctx, repo, row)
+	now := s.now()
+	known, before, err := s.previous(ctx, repo, now, row)
 	if err != nil {
 		return View{}, "", err
 	}
-	ask, carried := []int{}, []PullRequest{}
+	ask, carried, backedOff := []int{}, []PullRequest{}, []int{}
 	for _, n := range Numbers(runs) {
 		if pr, ok := known[n]; ok && pr.State == StateMerged {
 			// Merged is final on the host, so the state the last sweep read
 			// is the state, and re-reading it every tick would spend the
 			// shared rate limit on an answer that cannot change.
 			carried = append(carried, pr)
+			continue
+		}
+		if u, ok := before[n]; ok && now.Before(u.RetryAfter) {
+			backedOff = append(backedOff, n)
 			continue
 		}
 		ask = append(ask, n)
@@ -527,11 +553,21 @@ func (s *Sweeper) recompute(ctx context.Context, repo Repo, budget *int, row *Re
 	for _, set := range []struct {
 		numbers []int
 		reason  string
-	}{{failed, UnreadFailed}, {deferred, UnreadDeferred}} {
+	}{{failed, UnreadFailed}, {backedOff, UnreadFailed}, {deferred, UnreadDeferred}} {
 		for _, n := range set.numbers {
 			u := Unread{Number: n, Reason: set.reason}
 			if pr, ok := known[n]; ok {
 				prs, u.Carried = append(prs, pr), true
+			}
+			// A number that was not asked for keeps the count it had; one the
+			// host refused again adds to it, and backs off once it reaches the
+			// bound.
+			u.Failures, u.RetryAfter = before[n].Failures, before[n].RetryAfter
+			if slices.Contains(failed, n) {
+				u.Failures = min(u.Failures+1, MaxReadFailures)
+				if u.Failures >= MaxReadFailures {
+					u.RetryAfter = now.Add(ReadRetryAfter)
+				}
 			}
 			unread = append(unread, u)
 		}
@@ -542,19 +578,20 @@ func (s *Sweeper) recompute(ctx context.Context, repo Repo, budget *int, row *Re
 }
 
 // previous is the host state the last written view holds for each pull
-// request it read: the answer a pull request that is not read again carries.
-// A view that does not decode is a view with no answers, counted and stepped
-// over — the next write replaces it.
-func (s *Sweeper) previous(ctx context.Context, repo Repo, row *RepoResult) (map[int]PullRequest, error) {
+// request it read — the answer a pull request that is not read again carries —
+// and the unread entries it recorded, which hold each refused number's failure
+// count and retry-after. A view that does not decode is a view with no
+// answers, counted and stepped over — the next write replaces it.
+func (s *Sweeper) previous(ctx context.Context, repo Repo, now time.Time, row *RepoResult) (map[int]PullRequest, map[int]Unread, error) {
 	var raw json.RawMessage
 	_, found, err := s.Store.Read(ctx, PathView(repo.Slug), &raw)
 	if err != nil || !found {
-		return nil, err
+		return nil, nil, err
 	}
 	var v View
 	if json.Unmarshal(raw, &v) != nil {
 		row.Undecodable++
-		return nil, nil
+		return nil, nil, nil
 	}
 	out := map[int]PullRequest{}
 	for _, r := range v.Records {
@@ -562,7 +599,19 @@ func (s *Sweeper) previous(ctx context.Context, repo Repo, row *RepoResult) (map
 			out[r.PR.Number] = *r.PR
 		}
 	}
-	return out, nil
+	unread := map[int]Unread{}
+	for _, u := range v.Unread {
+		// The count is the view's own, but the view is a document in a
+		// database other writers could reach: a count outside the bound is
+		// held to it, and a retry further off than one back-off is due now
+		// rather than a number never asked for again.
+		u.Failures = max(0, min(u.Failures, MaxReadFailures))
+		if u.RetryAfter.After(now.Add(ReadRetryAfter)) {
+			u.RetryAfter = time.Time{}
+		}
+		unread[u.Number] = u
+	}
+	return out, unread, nil
 }
 
 // bound holds a view to maxRecords records and maxCollisions collisions,

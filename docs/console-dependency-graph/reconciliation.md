@@ -264,9 +264,10 @@ sanitized in the console, never used to authorize anything; and it is stored in 
 
 **F33 — Gap: the console stream's first number.** `console-v0.10.0` is already released (GitHub
 release "Fugaro Console 0.10.0"), and auto-update is planned (console Task 4.4, `console/README.md`).
-*Consequence:* with GD7's floor, the console stream's first own minor ("Cherry") is **0.11.0 or
-later**, never 0.10.x reused under a new name; the data file's validator pins `console ≥ 0.10.0`
-(plan GV1.4).
+*Consequence:* with GD7's floor, the console stream's first own minor ("Cherry") is **0.110.0**,
+never 0.10.x reused under a new name and never 0.11.0, which is the CLI's Camel (the owner's
+renumbering ruling of 2026-10-24); the data file's validator pins `console ≥ 0.110.0`
+(plan GV1.4, `streams.ConsoleFloor`).
 
 **F34 — Exists: the console already writes files, but only its own.**
 `console/src/main/installations.ts` writes `installations.json` into the app's own directory
@@ -307,7 +308,7 @@ design conflict; noted for whoever syncs `main` into `coordinator`.
 | **GD4** | Motion | Allow comet/pulse/flow with a text mark on every coloured state and a `prefers-reduced-motion` static fallback | Keep §3.9: static states only | **2026-10-22: the recommendation.** *Why:* the motion carries meaning on this one screen, and the marks keep it accessible. Amends console-styling §3.9 for this screen only. |
 | **GD5** | Join key node → run | `fugaro run` records an optional plan task id in `launch.json` (additive, skew-safe) | Match on title: not unique, free text | **2026-10-22: the recommendation.** *Why:* the only exact join that needs no commit per launch. Stored in `task.json` too (F32). |
 | **GD6** | Scope | Open work by default, a toggle for everything, merged/cancelled collapse into a per-release counter | All ~800 tasks always | **2026-10-22: the recommendation.** *Why:* the useful view is what is still moving. |
-| **GD7** | Stream names and tag prefixes | One data file in the repository (stream, next name, current version, tag prefix), read by the graph and the release scripts; proposed path `docs/releases/streams.yaml` | Names hard-coded in two places | **2026-10-22: the recommendation.** *Why:* one list, two readers. Names: CLI animals, no birds (Badger 0.10, Camel 0.11, Dolphin, Gecko, Hippo, Koala, Moose); Console fruits (Cherry, Mango, Melon; avoid Apple, Lemon); Mobile birds (Falcon, Pelican, Robin). Console never below 0.10.0. ***Path amended after review:*** `docs/release-streams.yaml`, because `docs/releases/` breaks the website build (F29); **accepted by the owner 2026-10-22** (§4 (e)). |
+| **GD7** | Stream names and tag prefixes | One data file in the repository (stream, next name, current version, tag prefix), read by the graph and the release scripts; proposed path `docs/releases/streams.yaml` | Names hard-coded in two places | **2026-10-22: the recommendation.** *Why:* one list, two readers. Names: CLI animals, no birds (Badger 0.10, Camel 0.11, Dolphin, Gecko, Hippo, Koala, Moose); Console fruits (Cherry, Mango, Melon; avoid Apple, Lemon); Mobile birds (Falcon, Pelican, Robin). Console never below 0.110.0 (amended from 0.10.0 by the renumbering ruling of 2026-10-24; F33). ***Path amended after review:*** `docs/release-streams.yaml`, because `docs/releases/` breaks the website build (F29); **accepted by the owner 2026-10-22** (§4 (e)). |
 | **GD8** | Numbering | Own prefix `GD` in this folder | Take a block of the global `D` series | **2026-10-22: the recommendation.** *Why:* the folder's numbers cannot collide with console v2's D21–D38 or anyone's block. |
 
 ## 4. Tensions and open items, with the owner's rulings

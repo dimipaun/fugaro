@@ -51,7 +51,7 @@ func TestOnePoisonedPullRequestDoesNotStaleTheRepository(t *testing.T) {
 	if _, found, err := s.Store.Read(ctx, PathView(slug), &v); err != nil || !found {
 		t.Fatalf("no view written: found=%v err=%v", found, err)
 	}
-	if want := []Unread{{Number: 999999, Reason: UnreadFailed}}; !slices.Equal(v.Unread, want) {
+	if want := []Unread{{Number: 999999, Reason: UnreadFailed, Failures: 1}}; !slices.Equal(v.Unread, want) {
 		t.Errorf("unread = %+v, want %+v", v.Unread, want)
 	}
 	states := map[int]string{}
@@ -74,7 +74,7 @@ func TestOnePoisonedPullRequestDoesNotStaleTheRepository(t *testing.T) {
 	if _, _, err := s.Store.Read(ctx, PathView(slug), &v); err != nil {
 		t.Fatal(err)
 	}
-	want := []Unread{{Number: 8, Reason: UnreadFailed, Carried: true}, {Number: 999999, Reason: UnreadFailed}}
+	want := []Unread{{Number: 8, Reason: UnreadFailed, Carried: true, Failures: 1}, {Number: 999999, Reason: UnreadFailed, Failures: 2}}
 	if !slices.Equal(v.Unread, want) {
 		t.Errorf("unread = %+v, want %+v", v.Unread, want)
 	}
@@ -82,6 +82,130 @@ func TestOnePoisonedPullRequestDoesNotStaleTheRepository(t *testing.T) {
 		if r.PR != nil && r.PR.Number == 8 && r.PR.State != StateOpen {
 			t.Errorf("pull request 8 lost the state the last sweep read: %+v", r.PR)
 		}
+	}
+}
+
+// TestAPoisonedNumberBacksOff: a number the host keeps refusing is a number a
+// run wrote and no pull request has, and it is never "seen", so without a
+// memory of its failures it would be asked for on every tick — ahead of the
+// rest, because a number no sweep has read sorts first — and spend the
+// repository's share of the read budget forever. After MaxReadFailures
+// consecutive failures it is asked for once per ReadRetryAfter instead, and a
+// read that succeeds clears it.
+//
+// Fails without the failure count and the retry-after in recompute.
+func TestAPoisonedNumberBacksOff(t *testing.T) {
+	s, _, src := testSweeper(t)
+	ctx := testCtx(t)
+	slug := testRepo().Slug
+	now := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	s.Now = func() time.Time { return now }
+	src.runs = []Run{
+		{ID: "20261024-100000-aaaa", PR: 7, Files: []string{"a.go"}},
+		{ID: "20261024-101000-cccc", PR: 999999, Files: []string{"c.go"}},
+	}
+	src.prs = []PullRequest{{Number: 7, State: StateOpen}}
+	src.fail = map[int]bool{999999: true}
+
+	tick := func() (RepoResult, Unread) {
+		t.Helper()
+		src.asked = nil
+		res, err := s.Sweep(ctx, []Repo{testRepo()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var v View
+		if _, _, err := s.Store.Read(ctx, PathView(slug), &v); err != nil {
+			t.Fatal(err)
+		}
+		for _, u := range v.Unread {
+			if u.Number == 999999 {
+				return res.Repos[0], u
+			}
+		}
+		return res.Repos[0], Unread{}
+	}
+
+	for i := 1; i <= MaxReadFailures; i++ {
+		now = now.Add(15 * time.Minute)
+		row, u := tick()
+		if !slices.Contains(src.asked, 999999) || row.Read != 2 {
+			t.Fatalf("tick %d asked for %v (read %d), want the poisoned number asked while it has failed fewer than %d times", i, src.asked, row.Read, MaxReadFailures)
+		}
+		if u.Reason != UnreadFailed || u.Failures != i {
+			t.Errorf("tick %d: unread = %+v, want %q with %d failures", i, u, UnreadFailed, i)
+		}
+		wantRetry := time.Time{}
+		if i == MaxReadFailures {
+			wantRetry = now.Add(ReadRetryAfter)
+		}
+		if !u.RetryAfter.Equal(wantRetry) {
+			t.Errorf("tick %d: retry after %s, want %s", i, u.RetryAfter, wantRetry)
+		}
+	}
+	retry := now.Add(ReadRetryAfter)
+
+	for i := range 4 {
+		now = now.Add(15 * time.Minute)
+		row, u := tick()
+		if slices.Contains(src.asked, 999999) || row.Read != 1 {
+			t.Errorf("backed-off tick %d asked for %v (read %d), want only [7]: a poisoned number spends no budget until its retry", i, src.asked, row.Read)
+		}
+		if u.Reason != UnreadFailed || u.Failures != MaxReadFailures || !u.RetryAfter.Equal(retry) {
+			t.Errorf("backed-off tick %d: unread = %+v, want it still recorded with its retry at %s", i, u, retry)
+		}
+	}
+
+	now = retry
+	if row, u := tick(); !slices.Contains(src.asked, 999999) || row.Read != 2 {
+		t.Errorf("at the retry the tick asked for %v, want the poisoned number asked once more", src.asked)
+	} else if u.Failures != MaxReadFailures || !u.RetryAfter.Equal(now.Add(ReadRetryAfter)) {
+		t.Errorf("a retry that failed again = %+v, want %d failures and the next retry a day on", u, MaxReadFailures)
+	}
+
+	now = now.Add(ReadRetryAfter)
+	src.fail = nil
+	src.prs = append(src.prs, PullRequest{Number: 999999, State: StateOpen})
+	if row, u := tick(); !slices.Contains(src.asked, 999999) || row.Unread != 0 || u != (Unread{}) {
+		t.Errorf("a retry the host answered: asked %v, unread %d (%+v), want it read and no longer unread", src.asked, row.Unread, u)
+	}
+	now = now.Add(15 * time.Minute)
+	if _, u := tick(); !slices.Contains(src.asked, 999999) || u != (Unread{}) {
+		t.Errorf("after recovering the number was asked %v and unread %+v, want it read like any other", src.asked, u)
+	}
+}
+
+// TestAFarRetryAfterIsDue: the view is a document in a database, so a retry
+// stamped further off than one back-off is not believed — it would be a number
+// the sweep never asks for again — and the number is asked for now.
+//
+// Fails without the clamp in previous.
+func TestAFarRetryAfterIsDue(t *testing.T) {
+	s, _, src := testSweeper(t)
+	ctx := testCtx(t)
+	src.runs = []Run{{ID: "20261024-101000-cccc", PR: 999999}}
+	src.fail = map[int]bool{999999: true}
+	far := s.Now().Add(365 * ReadRetryAfter)
+	if err := s.Store.Write(ctx, PathView(testRepo().Slug), View{
+		Repo:    testRepo().Name,
+		Records: []Record{{PR: &PullRequest{Number: 999999}, Runs: []Run{}, Files: []string{}, Services: []string{}}},
+		Unread:  []Unread{{Number: 999999, Reason: UnreadFailed, Failures: 99, RetryAfter: far}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Sweep(ctx, []Repo{testRepo()}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(src.asked, []int{999999}) {
+		t.Errorf("asked for %v, want the number with a retry a year off asked now", src.asked)
+	}
+	var v View
+	if _, _, err := s.Store.Read(ctx, PathView(testRepo().Slug), &v); err != nil {
+		t.Fatal(err)
+	}
+	want := []Unread{{Number: 999999, Reason: UnreadFailed, Failures: MaxReadFailures, RetryAfter: s.Now().Add(ReadRetryAfter)}}
+	if len(v.Unread) != 1 || v.Unread[0].Failures != want[0].Failures || !v.Unread[0].RetryAfter.Equal(want[0].RetryAfter) {
+		t.Errorf("unread = %+v, want %+v", v.Unread, want)
 	}
 }
 

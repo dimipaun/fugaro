@@ -456,8 +456,8 @@ func (r *run) backlogPart() string {
 	if len(r.rec.Backlog) > 0 {
 		parts = append(parts, "filed "+backlogIDs(r.rec.Backlog))
 	}
-	if len(r.closedBacklog) > 0 {
-		parts = append(parts, "closed "+backlogIDs(r.closedBacklog))
+	if len(r.rec.BacklogClosed) > 0 {
+		parts = append(parts, "closed "+backlogIDs(r.rec.BacklogClosed))
 	}
 	return strings.Join(parts, ", ")
 }
