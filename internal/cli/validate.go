@@ -76,11 +76,23 @@ func ceilingLayer(lc *localcfg.Config) policy.Layer {
 
 // clampWarning says in words what the runner will do with one value of the
 // file that is looser than what sits above it.
+//
+// The dollar cap's line names the ceiling the run starts from and says that a
+// rigor mode may lower it further (D16, plan T6.1: a mode's per-run default is
+// a fraction of the deployed cap and applies where no layer set one). That
+// qualifier is not a hedge: the mode a run resolves is its *default branch's*
+// (D25), which no checkout can read offline — the same reason branchNote
+// exists — so this command reports the ceiling it can know rather than
+// scaling by a mode the run may not use. Everything else the run merges is
+// unscaled, so the rest of the sentence is exact.
 func clampWarning(ig policy.Ignored) config.Problem {
 	var msg string
 	switch ig.Key {
 	case policy.KeyPerRunUSD, policy.KeyMaxRunTokens:
 		msg = fmt.Sprintf("%s is above the project's ceiling of %s; the runner will use %s", ig.Value, ig.Effective, ig.Effective)
+		if ig.Key == policy.KeyPerRunUSD {
+			msg += ", or less: a run's rigor mode only lowers the ceiling"
+		}
 	case policy.KeyMode:
 		msg = fmt.Sprintf("%s is looser than the project's %s; the runner will use %s", ig.Value, ig.Effective, ig.Effective)
 	case policy.KeyAllowedModels:
@@ -116,7 +128,12 @@ func ceilingText(l policy.Layer) string {
 // budgetProblems are the rules a repository under a budget must meet, when
 // the project config selected for this command is cfg's own project: the
 // project config is the ceiling, the file in hand the tightening layer
-// (policy.Merge, the runner's own merge, so the two can't disagree). Every
+// (policy.Merge, the runner's own merge, so the two agree on every key but
+// the run's rigor mode: the runner scales the ceiling's own cap by the mode it
+// resolved — D16, plan T6.1 — and this command does not, because that mode is
+// the default branch's and a checkout cannot read it offline (see
+// clampWarning; the warning says the mode may lower the ceiling, which is the
+// part it cannot resolve). Every
 // model must be on the allow-list; with the effective mode on, every model is
 // an explicit priced ID and Vertex isn't under enforce. A key the file would
 // loosen is a warning, as is an enforce with no cap anywhere (the run would

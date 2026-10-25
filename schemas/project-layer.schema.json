@@ -51,6 +51,20 @@
             "first_line_rounds": { "type": "integer", "minimum": 1, "maximum": 3 },
             "recipe": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$" }
           }
+        },
+        "rigor": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The rigor mode every repository of this project runs at, and the area rules in effect for all of them (docs/rigor-modes/spec.md D20). Both keys may also be set in a repository's own rigor: block, and the two areas lists are a union, not a replacement: a repository's own rules never switch the project's off. Fugaro before 0.11.0 refuses the key, in every repository of the project.",
+          "properties": {
+            "default": { "$ref": "#/$defs/rigorMode", "description": "The mode a run of any repository of this project resolves to when the repository sets none. Needs fugaro 0.11.0." },
+            "areas": {
+              "type": ["array", "null"],
+              "maxItems": 100,
+              "description": "The project's named path rules, in effect beside each repository's own. Needs fugaro 0.11.0.",
+              "items": { "$ref": "#/$defs/rigorArea" }
+            }
+          }
         }
       }
     },
@@ -72,6 +86,22 @@
     }
   },
   "$defs": {
+    "rigorMode": {
+      "type": "string",
+      "enum": ["poc", "startup", "pro", "critical", "hotfix"],
+      "description": "A rigor mode, spelled exactly as fugaro's own vocabulary spells it (internal/rigor). See fugaro.schema.json's rigorMode; the two layers' blocks carry the same keys and the same values."
+    },
+    "rigorArea": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "match", "mode"],
+      "description": "One rigor.areas rule: a name to print, a doublestar path glob relative to the repository root, and the mode it sets. The same shape as fugaro.schema.json's.",
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]*$", "description": "The rule's name, which the run record, the pull request body and fugaro watch print when they say which rule decided. 1 to 40 characters of letters, digits, space, dash, underscore and dot, starting with a letter or a digit." },
+        "match": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^/\\s]", "not": { "pattern": "(^|/)\\.\\.(/|$)" }, "description": "A doublestar path glob relative to the repository root. Not empty, not absolute, no \"..\" component, and a pattern doublestar validates." },
+        "mode": { "$ref": "#/$defs/rigorMode", "description": "The mode this rule sets for the paths it matches." }
+      }
+    },
     "duration": { "type": "string", "minLength": 2, "pattern": "^([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?$" },
     "profile": {
       "type": "object",

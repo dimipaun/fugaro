@@ -109,7 +109,7 @@ func TestIgnoredValuesRecordedAndReported(t *testing.T) {
 // A key two layers both loosen is warned about and reported once, but
 // result.json keeps each attempt.
 func TestIgnoredOncePerKeyAcrossLayers(t *testing.T) {
-	main := gwConfig(t, "") + "budget:\n  per_run_usd: 20\n"
+	main := gwConfig(t, critRigor) + "budget:\n  per_run_usd: 20\n"
 	g := newGW(t, main, "enforce", "5")
 	g.deps.Project = "aurora"
 	pushBranch(t, g.harness, "feature", gwConfig(t, "")+"budget:\n  per_run_usd: 500\n")
@@ -185,7 +185,7 @@ func bigOutput() anthropicfake.Reply {
 // cross $5 is refused and the run halts with run_cap.
 func TestBranchRaisesCapIsClamped(t *testing.T) {
 	cfg := strings.ReplaceAll(gwConfig(t, ""), "4096", "128000")
-	g := newGW(t, cfg, "enforce", "5", bigOutput(), bigOutput(), bigOutput())
+	g := newGW(t, cfg+critRigor, "enforce", "5", bigOutput(), bigOutput(), bigOutput())
 	g.deps.Project = "aurora"
 	pushBranch(t, g.harness, "feature", cfg+"budget:\n  per_run_usd: 500\n")
 	setRef(t, g.harness, task.Spec{Ref: "feature"})
@@ -297,7 +297,7 @@ func TestOAuthStaysBudgetOff(t *testing.T) {
 // says nothing about it) is reported without "on this branch": the author of
 // the branch didn't write it.
 func TestDefaultBranchOnlyIgnoredWording(t *testing.T) {
-	g := newGW(t, gwConfig(t, "")+"budget:\n  per_run_usd: 20\n", "enforce", "5")
+	g := newGW(t, gwConfig(t, critRigor)+"budget:\n  per_run_usd: 20\n", "enforce", "5")
 	g.deps.Project = "aurora"
 	pushBranch(t, g.harness, "feature", gwConfig(t, ""))
 	setRef(t, g.harness, task.Spec{Ref: "feature"})

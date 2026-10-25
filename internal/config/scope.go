@@ -108,6 +108,13 @@ var Scopes = []ScopeRow{
 	{Key: "workflows.*.inputs.max_total_bytes", In: InProfile | InRepo},
 	{Key: "followup.trusted", In: InRepo, Why: whyFollowup},
 	{Key: "followup.allow_public", In: InRepo, Why: whyFollowup},
+	// Both rigor keys are settable in both layers (D20, D20c): the project
+	// sets defaults.rigor.default as the mode every repository of the project
+	// runs at, and either layer may name area rules. A repository cannot
+	// loosen the project's area rules by writing its own: the two lists are a
+	// union, not a replacement (D20c).
+	{Key: "rigor.default", In: InProject | InRepo},
+	{Key: "rigor.areas", In: InProject | InRepo},
 }
 
 // ExecutableKeys are the profile keys whose values run as shell, or control

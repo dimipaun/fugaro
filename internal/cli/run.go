@@ -27,6 +27,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -2204,9 +2205,13 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	// — a project with no database to declare to is skipped, and a report that
 	// fails is a warning on stderr — and it is bounded well inside the hold,
 	// because the launch's own work must not wait on it (spec §3: the
-	// coordinator never blocks anything).
-	if err := reportLaunchIntent(hctx, env, slug, spec); err != nil {
-		fmt.Fprintf(launchWarn, "warning: the launch was not reported to the coordinator: %v\n", err)
+	// coordinator never blocks anything). A write the rules refuse is quiet:
+	// only budget admins may write the record, so a refusal is what most
+	// launchers get on every run, and a warning each time would be noise about
+	// something they cannot change (owner ruling 2026-10-24). The error text can
+	// quote what the database answered, so it goes through oneLine.
+	if err := reportLaunchIntent(hctx, env, slug, spec); err != nil && !errors.Is(err, rtdb.ErrPermission) {
+		fmt.Fprintf(launchWarn, "warning: the launch was not reported to the coordinator: %s\n", oneLine(err.Error()))
 	}
 	// The run's budget identity: minted, sealed under a key drawn for this
 	// launch and left in the bucket before the execution can start, by the
@@ -2409,7 +2414,9 @@ const claimRounds = 3
 //     simply not declared.
 //   - Nothing else can fail the launch: the caller turns a failure into a
 //     warning, because the coordinator is advisory and a run must not wait on
-//     it (spec §3).
+//     it (spec §3), and drops a refusal of the write (rtdb.ErrPermission)
+//     without one, because a launcher who is not a budget admin is refused on
+//     every launch.
 //
 // A package variable, so a test replaces exactly the one thing that would
 // reach a database and reads the declaration it was handed.

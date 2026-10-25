@@ -3037,6 +3037,11 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := r.gateCascadeAuth(o, repo, lc, cfg, rf.Res.SourceOf("agent.auth")); err != nil {
 		return err
 	}
+	// The rigor: block and defaults.rigor are the same kind of break: keys a
+	// strict decoder older than rigorSince refuses at bootstrap.
+	if err := r.gateRigor(o, repo, lc, cfg); err != nil {
+		return err
+	}
 	if !o.forget {
 		w := r.w
 		if o.printVars {
@@ -3396,6 +3401,20 @@ func (r *initRun) gateCascadeAuth(o *initOptions, repo string, lc *localcfg.Conf
 		auth = cfg.Agent.Auth
 	}
 	return refuseCascadeSkew(repo, auth, authSource, lc.BaseImage(config.BaseKind), w)
+}
+
+// gateRigor is fugaro update --repo's gate for rigorSince: refuseRigorSkew,
+// with the same escapes as gateCascadeAuth (--forget and --plan-only deploy
+// nothing; --print-vars is judged, its warnings on stderr).
+func (r *initRun) gateRigor(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseRigorSkew(repo, cfg.RepoRigor != nil, cfg.Layer.SetsRigor(), lc.BaseImage(config.BaseKind), w)
 }
 
 // checkVertexBudget refuses a repository whose fugaro.yaml authenticates

@@ -617,6 +617,9 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !strings.Contains(c.Fix, "fugaro update --firebase-project") {
 			t.Errorf("the check does not name the owner's fix: %+v", c)
 		}
+		if !strings.Contains(c.Fix, "coordinator") || strings.Contains(c.Fix, "mailbox") {
+			t.Errorf("the fix for a generation-%d marker does not name what the redeploy adds (the coordinator's read grant): %q", rulesDeviceGeneration, c.Fix)
+		}
 	})
 
 	t.Run("a marker that is a negative generation", func(t *testing.T) {

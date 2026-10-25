@@ -133,17 +133,17 @@ export function workflowTagShape() {
 
 /**
  * The naming rule the console's release job enforces on the assets it uploads, read out of that
- * job rather than remembered: `dmgs=(./*.dmg)` and `zips=(./*.zip)` are the shapes it takes, and
- * `case "$f" in *"-$VERSION-"*)` refuses any asset not named for the version. The data file's
- * names are held to both (`console.mjs`), so the day the release's own rule changes, the site
- * fails there rather than publishing buttons that 404.
+ * job rather than remembered: `dmgs=(./*.dmg)`, `zips=(./*.zip)`, `appimages=(./*.AppImage)` and
+ * `debs=(./*.deb)` are the shapes it takes, and `case "$f" in *"-$VERSION-"*)` refuses any asset
+ * not named for the version. The data file's names are held to both (`console.mjs`), so the day
+ * the release's own rule changes, the site fails there rather than publishing buttons that 404.
  */
 export function workflowAssetRule() {
   const workflow = repoFile(RELEASE_WORKFLOW)
-  const extensions = [...new Set([...workflow.matchAll(/\*\.(dmg|zip)\b/g)].map((match) => match[1]))].sort()
+  const extensions = [...new Set([...workflow.matchAll(/\*\.(dmg|zip|AppImage|deb)\b/g)].map((match) => match[1]))].sort()
   if (extensions.length === 0) {
     throw new Error(
-      `${RELEASE_WORKFLOW} no longer takes the console's assets by extension (\`dmgs=(./*.dmg)\`, \`zips=(./*.zip)\`), and ${DOWNLOADS_JSON}'s assets are those shapes`,
+      `${RELEASE_WORKFLOW} no longer takes the console's assets by extension (\`dmgs=(./*.dmg)\`, \`zips=(./*.zip)\`, \`appimages=(./*.AppImage)\`, \`debs=(./*.deb)\`), and ${DOWNLOADS_JSON}'s assets are those shapes`,
     )
   }
   return { extensions, versioned: /\*"-\$VERSION-"\*/.test(workflow) }
@@ -152,13 +152,22 @@ export function workflowAssetRule() {
 /**
  * The names the console's release publishes, as the release's own documentation prints them:
  * `console/README.md`'s `release/Fugaro Console-<version>-universal.dmg` and
- * `…-universal-mac.zip`, with the version put in for the placeholder. Read from that document
- * rather than substituted out of `downloads.json`, so the data file and the built page are both
- * held to the release's own account of what it ships.
+ * `…-universal-mac.zip` for macOS, and `Fugaro.Console-<version>-linux-x86_64.AppImage` and
+ * `…-linux-amd64.deb` for Linux, with the version put in for the placeholder. Read from that
+ * document rather than substituted out of `downloads.json`, so the data file and the built page
+ * are both held to the release's own account of what it ships.
+ *
+ * The two spellings of the product name are the release's own and not a tolerance here: the
+ * packer's macOS names carry a space (`Fugaro Console-…`, which GitHub serves with a dot) and
+ * `console/package.json`'s `build.linux.artifactName` spells Linux's with a dot. So the pattern
+ * takes either, and the order it reads them in is the order `console/README.md` documents them
+ * — macOS's pair, then Linux's — which is the order the data file lists them in.
  */
 export function publishedAssets(data = downloadsData()) {
   const documented = [
-    ...repoFile(CONSOLE_README).matchAll(/Fugaro Console-<version>-universal(?:-mac)?\.(?:dmg|zip)/g),
+    ...repoFile(CONSOLE_README).matchAll(
+      /Fugaro[ .]Console-<version>-(?:universal(?:-mac)?\.(?:dmg|zip)|linux-(?:x86_64|amd64)\.(?:AppImage|deb))/g,
+    ),
   ].map((match) => match[0].replace('<version>', data.release.version))
   const names = [...new Set(documented)]
   if (names.length === 0) {
@@ -172,9 +181,11 @@ export function publishedAssets(data = downloadsData()) {
 /**
  * The name the release SERVES an asset under, which is the name a reader's link carries and the
  * name the browser saves the file as: GitHub rewrites a space in an uploaded asset's name to a
- * dot, so the build's `Fugaro Console-0.9.0-universal.dmg` — the name `console/README.md`
+ * dot, so the build's `Fugaro Console-<version>-universal.dmg` — the name `console/README.md`
  * documents and the name the release's own `console-sha256sums.txt` lists — is served as
- * `Fugaro.Console-0.9.0-universal.dmg`.
+ * `Fugaro.Console-<version>-universal.dmg`. A name with no space in it — the Linux pair, which
+ * the packer writes with a dot already — is served as it is written, and the rule is applied to
+ * every asset rather than to the ones it changes.
  *
  * It is written out again here rather than imported from `src/lib/console-downloads.mjs` on
  * purpose, and this is the one place in this file where a second spelling is the point: a test
@@ -221,6 +232,24 @@ export function publishedDownloads(data = downloadsData()) {
       label: `${entry.platform} ${name.slice(name.lastIndexOf('.'))}`,
     }
   })
+}
+
+/**
+ * The verification commands a page renders for a platform whose build is unsigned, with the
+ * release's version put in for the placeholder: `downloads.json`'s per-platform block carries
+ * `verify` as the commands a reader runs (they are the steps `docs/release.md`'s "Verifying the
+ * console's release" gives), each with `{version}` where the version goes, and the reader that
+ * serves the build substitutes it — the same placeholder, substituted the same way, as an
+ * asset's `file` name. So the version is written in one place, and a version bump moves the
+ * commands with it.
+ *
+ * Returned for the case that holds every sentence a built page renders to the data file: a
+ * command is a line of the page's own text, and the rendered form is what the page carries.
+ */
+export function renderedVerifyCommands(data = downloadsData()) {
+  const commands = data.linux?.verify
+  if (commands === undefined) return []
+  return commands.map((command) => command.split('{version}').join(data.release.version))
 }
 
 /**
