@@ -387,6 +387,15 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		// §6.11, the backlog index's rows (CLI 0.11.0).
 		reflect.TypeOf(backlogListDoc{}),
 		reflect.TypeOf(backlogRow{}),
+		// §6.12, the graph joined to the runs (GV1.6): the plan's own figures
+		// and the three shapes under them, plus this read's document and its
+		// totals.
+		reflect.TypeOf(plan.StatePlan{}),
+		reflect.TypeOf(plan.StateNode{}),
+		reflect.TypeOf(plan.StateRelease{}),
+		reflect.TypeOf(plan.StateStream{}),
+		reflect.TypeOf(planStatusDoc{}),
+		reflect.TypeOf(planStatusTotals{}),
 	}
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
 		if !strings.Contains(doc, "`"+name+"`") {
@@ -551,6 +560,10 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		// §6.11, the backlog index's rows (CLI 0.11.0).
 		reflect.TypeOf(backlogListDoc{}),
 		reflect.TypeOf(backlogRow{}),
+		// §6.12, the plan's graph joined to its runs (GV1.6).
+		reflect.TypeOf(plan.StatePlan{}), reflect.TypeOf(plan.StateNode{}),
+		reflect.TypeOf(plan.StateRelease{}), reflect.TypeOf(plan.StateStream{}),
+		reflect.TypeOf(planStatusDoc{}), reflect.TypeOf(planStatusTotals{}),
 	}
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
 		real[name] = true
@@ -814,6 +827,11 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// follows -- but the document describes its flags, so they are checked
 	// against this constructor like any other command's.
 	"backlog list": newBacklogListCmd,
+	// §6.12 documents the graph joined to the runs (GV1.6, CLI 0.12.0). The
+	// console does not spawn it yet either, and its flags — including the cloud
+	// ones, which this command carries and `plan graph` does not — are checked
+	// against this constructor like any other command's.
+	"plan status": newPlanStatusCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document

@@ -1218,6 +1218,170 @@ says.
 
 **Flags** (`newBacklogListCmd`): `--dir`, `--json`.
 
+### 6.12 `fugaro plan status --json` (**CLI 0.12.0**)
+
+**Command:** `internal/cli/plan_status.go` `newPlanStatusCmd` / `runPlanStatus`.
+**Document:** `planStatusDoc`, indented (`printPlanStatus`), both in
+`internal/cli/plan_status.go` — cited by symbol, not by line, for §6.11's
+reason. This is the third command in this document the console **does not spawn
+yet**: it is the data behind the graph screen's per-task state (console v2 plan
+GV1.6), and the section is here so the screen that follows reads a shape off the
+code rather than assuming one from a design.
+
+**It is a cloud read, unlike `plan graph`.** A task's state is a *run's* state,
+and a run lives in the runs bucket of the selected project — so this command
+carries `--project`, `--config`, `--gcp-project` and `--region` like `runs ls`,
+and the console must pass `--project <name>` on every spawn (§8). What it reads
+is the checkout's plans joined to **the checkout's own repository's** runs: the
+plans it prints are the working directory's, and a run of another repository
+naming the same task is not theirs to claim. It writes nothing.
+
+The document:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `repo` | string | never | never | the checkout's own repository, `owner/name`, taken from its `origin`; this is what scopes the join. **`""` means unknown** — the checkout has no readable origin — and then no run is joined at all, which is why an empty string is never "every repository" |
+| `plans` | array | never | never | one entry per graph artifact found, in path order; `[]` when the checkout has no plan |
+| `totals` | object | never | never | every plan's figures added up, below. A header line a screen draws before the plans |
+| `streams` | array | never | never | the release streams catalogue, in the file's own order, below; `[]` when the catalogue could not be read (`warnings` says why, and a release's name and version are then simply absent) |
+| `warnings` | array | never | never | the lines a human read prints before its table, below; `[]` when there is nothing to say |
+
+one entry of `plans`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | string | never | never | the join's plan id, derived from where the artifact sits: the artifact's directory under `docs/` — `docs/setup-wizard/implementation-plan.graph.json` is `setup-wizard` — or, for `docs/plans/`, the file's stem: that one is `plans/2026-10-15-desktop-console-v2`. It is the half of `plan_task` before the slash |
+| `artifact` | string | never | never | the file the graph was read from, relative to the working directory. A checkout path, not a URL: a screen must not link it as one |
+| `plan` | string | never | never | the plan the artifact names for itself, which is not the id: the id is a path and this is the planner's own words. **Untrusted display text** |
+| `stream` | string | **yes** | **yes** | the stream the plan ships in (`cli`, `console`, `mobile`), as §6.9's artifact carries it — absent or null when the plan does not say |
+| `nodes` | array | never | never | the tasks, below. **Merged and cancelled tasks are not here unless `--all`**, and the three figures below count them either way |
+| `releases` | array | never | never | one entry per target version the graph names, oldest first, below; `[]` when no task carries a version |
+| `tasks` | number | never | never | how many tasks the plan carries, listed or collapsed |
+| `closed` | number | never | never | the tasks a screen collapses by default: **merged** (`done` with a confirmed merge) and `cancelled`. A task whose merge is unknown is **not** closed — the screen keeps asking about it |
+| `open` | number | never | never | `tasks - closed`. The three are stated here rather than left to a renderer to add up: `nodes` is filtered by `--all`, and a header drawn from it would read differently in the two reads |
+
+one entry of `nodes`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | string | never | never | the task's id in the graph, which is the half of `plan_task` after the slash |
+| `title` | string | never | never | what a person reads. **Untrusted display text** (repository content) |
+| `state` | string | never | never | one of the six words below. **The whole answer**, so a screen colours a node from this and not from a rule of its own |
+| `closed` | bool | never | never | this task is one of the plan's `closed` |
+| `level` | number | never | never | the same field §6.9's node carries |
+| `critical` | bool | never | never | the task is on the plan's critical path (§6.9's `critical_path.tasks`), so a screen can highlight the chain rather than recompute it |
+| `release` | string | **yes** | never | the target version, `MAJOR.MINOR` or `MAJOR.MINOR.PATCH`, as the artifact spells it; absent when the task names none |
+| `run` | string | **yes** | never | the **suffix** of the run this task is joined to — the four characters after the last dash of a run id, which is the part a person reads out loud, and what `runs ls` prints in its own run column |
+| `stage` | string | **yes** | never | the stage that run is in. **Job-written display text**: it arrives sanitised (`safetext.Field`) and is rendered as text |
+| `pr_number` | number | **yes** | never | the pull request number this task shows, **whenever the run has recorded one** — running or finished. It is the run's `record_pr` (F9) when it has one, the run's own number otherwise, and it is absent rather than `0` when there is none: a repository that numbers its pull requests from 1 makes `0` no number at all. It is never a link (§5.1 rule 2) |
+| `mark` | string | **yes** | never | `"merge unknown"`, and nothing else today: the task's run recorded a ready pull request and no lookup could say whether it merged (below). A screen shows it beside the state, never instead of it |
+
+one entry of `releases`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `version` | string | never | never | the target version, as the artifact spells it |
+| `name` | string | **yes** | never | the release name the catalogue spends on this version (`Camel`), counted from the stream's own place — the version the stream is at carries the name before `next`, and each further minor is one name further along. Absent for a version past the list, one of another major line, or a plan whose stream is unknown |
+| `stream` | string | **yes** | never | the stream the name comes from, when one was found |
+| `finished` | bool | never | never | the stream has already shipped this release: the catalogue's `current` is at or past it |
+| `total` | number | never | never | how many tasks target this version |
+| `done` | number | never | never | how many of them are `done` with a confirmed merge |
+| `closed` | number | never | never | how many are closed (the plan's own rule, above) |
+| `open` | number | never | never | `total - closed` |
+
+one entry of `streams` (the catalogue, GV1.4 — the same file
+`scripts/release.sh` reads):
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `name` | string | never | never | `cli`, `console` or `mobile` |
+| `theme` | string | never | never | `animals`, `fruits` or `birds`: the theme the stream's names come from |
+| `names` | array | never | never | the names, in the order they are spent |
+| `current` | string | never | never | the version the stream is at; `0.0.0` says it has shipped nothing |
+| `next` | string | never | never | the name its next minor takes |
+| `tag_prefix` | string | never | never | `v`, `console-v` or `mobile-v` |
+
+**`totals`**: `plans`, `tasks`, `closed` and `open`, the same four figures over
+every plan the read printed.
+
+**The six states, defined.** `state` is the whole answer for a task, and it is
+the CLI's, not a screen's rule:
+
+- `running` — a live run is joined to the task (a status of `running`, `pending`
+  or `launching`), and `stage` comes from it. The task is being worked on now.
+- `done` — a joined run's pull request is **merged**, according to the
+  operator's own `gh` (GitHub only, fail-open); or a finished run recorded a
+  ready or reviewed pull request and **no lookup could answer at all**, and then
+  `mark` is `merge unknown`. Either way the work is in.
+- `cancelled` — the latest run was cancelled **and it is the task's only run**.
+  The work was dropped.
+- `blocked` — at least one task it needs is not `done`. It cannot start yet.
+- `ready` — every task it needs is `done` and no run has claimed it. **This is
+  the field a launch may act on** (design F7).
+- `not-started` — everything else: the needs are `done` and a run exists that
+  settled nothing. It has been started and is not running.
+
+**Merged means merged — and where nothing can say, the read fails open.** The
+merge answer comes from the operator's own authenticated `gh`
+(`internal/watch`, `PRState.MergeNow`), asked about exactly the URLs that match
+its anchored `https://github.com/<owner>/<repo>/pull/<n>` pattern; every other
+URL — a Bitbucket one, one with anything appended to it — is never handed to a
+subprocess. Where there is no answer (no `gh`, a Bitbucket repository, a failed
+or timed-out lookup), a task whose run's record says its pull request is ready
+shows `done` with the mark, rather than staying open forever: a screen that
+waited for an answer nobody can give would be a screen that never settles. A
+`done` **with** the mark is **not** counted closed — only a confirmed merge is
+(GD6).
+
+**The join rules, and they are the CLI's.** (i) A run joins a task by the
+`plan_task` its `launch.json` recorded — never by a title, and never by the
+plan's own `run` field, which is the planner's note rather than a launch's
+claim — and only when that value names *this* plan and a task of it. (ii) A run
+joins only a plan of **its own repository**: a run from another repository
+naming the same id is ignored. (iii) Of several runs on one task, the latest
+launched wins for `state`; a follow-up that was given no `plan_task` of its own
+joins through the pull request it follows, because it is the same work
+continued. (iv) The join is **display-only**: it never makes another plan's node
+`ready`, and nothing in this document authorises anything.
+
+**`plan_task` is display text and this read treats it as such.** The value
+arrives from `internal/runview` already shape-checked and sanitised (§2's row:
+`runview.Join` drops an id `task.PlanTaskProblem` refuses), so this command never
+opens `launch.json`, never reads a raw job-written string, and never prints one.
+`launch.json` is writable by every launcher (SECURITY.md, D4), which is why a
+run whose claim names no plan task of this checkout joins nothing rather than
+being trusted with a path, a command or an identity.
+
+**The walk stays inside `docs/`, and that is a rule of this read rather than an
+implementation detail** (the plan's constraint C2, probed by GV2.1): the
+artifacts are read where they sit, **a symlink anywhere under `docs/` ends the
+read instead of being followed** (including a `docs/` that is itself a link out
+of the checkout), the artifact count is **capped at 64** so a checkout that
+fills the directory cannot be read without end, and the per-artifact limit is
+§6.9's mebibyte. A checkout that plants a link to another directory is refused,
+not read.
+
+**A refused plan is a warning, not an empty document.** A graph this build will
+not render — a future schema version, a malformed artifact, a cycle — is
+skipped: the refusal's own sentence goes to **stderr**, and `warnings` carries a
+fixed sentence of ours naming the artifact, so a screen has something to show
+without the document ever carrying text a job wrote. A read that finds no plan
+at all is `plans: []` and one sentence on stdout, not an error. A catalogue that
+cannot be read is a warning too, and then every release has no `name`: a
+catalogue dates a release, and it is not what a task's state is made of.
+
+**Version skew.** Every field is additive: a console built before this section
+draws what it drew before, an older CLI has no `plan status` at all — the
+console shows the screen as unavailable (the availability rule, §1) rather than
+an error loop — and the `streams` array is the one part that changes meaning
+with the *repository* rather than with the CLI: a CLI older than the catalogue
+reads no `plan status` at all, and the file's own refusals are the CLI's to
+report.
+
+**Flags** (`newPlanStatusCmd`): `--all` (list the closed tasks too instead of
+counting them per release), `--json`, and the cloud flags `--project`,
+`--config`, `--gcp-project`, `--region`.
+
 ## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded
@@ -1275,6 +1439,7 @@ and **not** off this document or the design:
 | **`version`** | **no — it takes no flags at all** (`internal/cli/root.go`; the root's `--version`/`-v` is the root's own, not this subcommand's — §6.7) |
 | **`config list`** | **no — it reads the operator's local project configs, not a cloud** (`internal/cli/config_list.go`, §6.8) |
 | **`plan graph`** | **no — it reads the graph artifact in the checkout, not a cloud** (`internal/cli/plan.go`, §6.9) |
+| `plan status` | yes (`newPlanStatusCmd`, §6.12) — a task's state is a *run's* state, so it reads the runs bucket too |
 
 So the console passes `--project <name>` (and `--config <path>` when the
 installation is not the ambient one) on **every spawn except the handshake**,

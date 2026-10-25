@@ -2063,6 +2063,7 @@ Flags:
 Subcommands:
 
 - `fugaro plan graph` -- Print a plan's graph: its tasks, their dependencies and their footprints
+- `fugaro plan status` -- Print every plan's tasks, joined to the runs working on them
 
 ## `fugaro plan graph`
 
@@ -2094,6 +2095,49 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for graph |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--plan` | string | "" | no | the plan document the graph sits beside (default: the one graph artifact under docs/plans) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro plan status`
+
+Print every plan's tasks, joined to the runs working on them
+
+Print every plan's graph under docs/, with each task's state from the runs.
+
+A task's state joins the graph to the runs bucket of the selected project:
+running with the stage of the run working on it, done when the run's pull
+request is merged, cancelled when the task's only run was, blocked while a
+task it needs is not done, ready when the work can start (the task a launch
+may act on), and not-started otherwise.
+
+A run joins a task by the --plan-task its launch recorded, and only when it
+is a run of this checkout's own repository: a run of another repository
+naming the same task is ignored. The join is display-only — nothing here
+makes another plan's task ready.
+
+Whether a pull request is merged is asked of your own gh, when it is
+installed; where it cannot answer (a Bitbucket repository, no gh, a lookup
+that failed) a task whose run recorded a ready pull request shows done with
+the mark "merge unknown" rather than nothing.
+
+Merged and cancelled tasks are counted per release and not listed; --all
+lists them too. This command writes nothing.
+
+Usage: `fugaro plan status`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--all` | bool | `false` | no | list the closed tasks too (merged and cancelled) instead of counting them per release |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for status |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
