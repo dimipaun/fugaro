@@ -39,6 +39,16 @@
       "enum": ["implement", "review", "artifact"],
       "description": "The resolved recipe's mode, written by the launching CLI (\"artifact\" today; an implement or review recipe writes nothing, so those specs are unchanged). The runner selects the run's shape from it at bootstrap, before the recipe is resolved, and cross-checks it against the resolved recipe afterwards. Needs a 0.8.0 runner, which is why an artifact launch at a job image older than that is refused at launch."
     },
+    "rigor": {
+      "enum": ["poc", "startup", "pro", "critical", "hotfix"],
+      "description": "The rigor mode the launching CLI asked for (fugaro run --mode, docs/rigor-modes implementation-plan T1.6): the run's own request, which may raise the mode its layers resolve and never lower it (D6). Absent asks for none, which is every launch without the flag, and the run then resolves from fugaro.yaml's rigor block and the project layer alone. It is not `mode` above: that one is the recipe's mode, a different question with a different vocabulary. Needs a 0.11.1 runner, which is why a launch that would set it at an older job image is refused at launch."
+    },
+    "paths": {
+      "type": "array",
+      "description": "The paths the launching CLI declared this run will touch (fugaro run --path, repeatable), in the order --path named them: the runner matches them against the base branch's rigor.areas rules at D22's first moment, and a path matching no rule changes nothing. Absent for every launch that declared none. A blank path is no path (the same rule as task.InputNameBlank's, expressed as the pattern), and both bounds are task.MaxDeclaredPaths and task.MaxDeclaredPathBytes. Needs a 0.11.1 runner, the same gate `rigor` above has.",
+      "items": { "type": "string", "pattern": "\\S", "maxLength": 200 },
+      "maxItems": 100
+    },
     "inputs": {
       "type": "array",
       "description": "The files the launching CLI attached (fugaro run --attach, docs/design/artifact-runs.md §4), in the order --attach named them: each one is stored under runs/<slug>/<run>/inputs/<name> and downloaded by a mode: artifact run into <checkout>/inputs/. Absent for every launch that attached nothing. The name's own shape is checked where it becomes a filesystem path (the launcher's, then the runner's), never here. Needs a 0.8.0 runner, which is why an --attach launch at an older job image is refused at launch.",

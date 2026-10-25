@@ -23,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
@@ -411,6 +412,67 @@ func TestTaskSchemaCorpus(t *testing.T) {
 		if err := sch.Validate(jsonInstance(f)); err == nil {
 			t.Errorf("%s: schema accepts an invalid task", f)
 		}
+	}
+}
+
+// TestTaskSchemaRigorRequestMatchesTheGoRules ties the task schema's `rigor`
+// and `paths` properties to the Go rules they mirror (rigor.Modes,
+// task.MaxDeclaredPaths, task.MaxDeclaredPathBytes): the schema's enum and
+// bounds are separate copies of both, so without this a mode added to the
+// vocabulary, or a bound moved, would drift from the published schema with
+// only the corpus fixtures noticing — and a task.json the launcher writes is
+// exactly what this schema is for.
+//
+// The paths bounds are what the schema can express and the decoder also
+// applies: Spec.Validate refuses a blank path with strings.TrimSpace, so the
+// pattern below asks for at least one non-whitespace character, as the
+// inputs' name property does for the same reason.
+func TestTaskSchemaRigorRequestMatchesTheGoRules(t *testing.T) {
+	data, err := os.ReadFile("task.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var mode struct {
+		Enum []string `json:"enum"`
+	}
+	if raw, ok := doc.Properties["rigor"]; !ok {
+		t.Fatal("task.schema.json has no rigor property")
+	} else if err := json.Unmarshal(raw, &mode); err != nil {
+		t.Fatal(err)
+	}
+	want := make([]string, 0, len(rigor.Modes))
+	for _, m := range rigor.Modes {
+		want = append(want, string(m))
+	}
+	if !slices.Equal(mode.Enum, want) {
+		t.Errorf("schema rigor enum %v != rigor.Modes %v", mode.Enum, want)
+	}
+	var paths struct {
+		MaxItems int `json:"maxItems"`
+		Items    struct {
+			Pattern   string `json:"pattern"`
+			MaxLength int    `json:"maxLength"`
+		} `json:"items"`
+	}
+	if raw, ok := doc.Properties["paths"]; !ok {
+		t.Fatal("task.schema.json has no paths property")
+	} else if err := json.Unmarshal(raw, &paths); err != nil {
+		t.Fatal(err)
+	}
+	if paths.MaxItems != task.MaxDeclaredPaths {
+		t.Errorf("schema paths maxItems %d != task.MaxDeclaredPaths %d", paths.MaxItems, task.MaxDeclaredPaths)
+	}
+	if paths.Items.MaxLength != task.MaxDeclaredPathBytes {
+		t.Errorf("schema paths items maxLength %d != task.MaxDeclaredPathBytes %d", paths.Items.MaxLength, task.MaxDeclaredPathBytes)
+	}
+	if paths.Items.Pattern != `\S` {
+		t.Errorf("schema paths items pattern %q does not refuse a blank path, which Spec.Validate does", paths.Items.Pattern)
 	}
 }
 
