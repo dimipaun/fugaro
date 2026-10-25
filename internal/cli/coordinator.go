@@ -339,9 +339,10 @@ func newCoordinatorStatusCmd() *cobra.Command {
 			"command today.\n\n" +
 			"Every repository is read through the coordinator's own credential: an\n" +
 			"installation token for that repository, minted from the GitHub App the\n" +
-			"environment holds and carrying a named read-only permission set — contents,\n" +
-			"issues, metadata and pull requests, all read (Q3 answered (A)) — and cached\n" +
-			"for the token's life, so a second read of the same repository mints nothing.\n" +
+			"environment holds and carrying a named read-only permission set — pull\n" +
+			"requests and metadata, the two reads this view makes (Q3 answered (A)) —\n" +
+			"and cached for the token's life, so a second read of the same repository\n" +
+			"mints nothing.\n" +
 			"The coordinator reads github only: a bitbucket repository is refused, and the\n" +
 			"refusal names the reason, because its credential is one repository's access\n" +
 			"token and cannot be widened to a project (reconciliation Q12 (A), finding #30).\n\n" +
@@ -663,8 +664,8 @@ func installCoordinatorSource(p gitprov.Provider, src gitprov.TokenSource) error
 }
 
 // coordinatorMint mints the coordinator's installation token for one
-// repository: github.CoordinatorTokenPermissions — contents, issues, metadata
-// and pull requests, every one of them read — through
+// repository: github.CoordinatorTokenPermissions — pull requests and metadata,
+// the two reads the project-wide reader makes — through
 // github.MintInstallationToken, with the App credential the environment
 // carries. One repository at a time (D193(A)): the token is scoped to the
 // repository it was minted for, and a second repository mints its own.

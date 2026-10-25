@@ -241,8 +241,15 @@ func TestRunTokenPermissionsAreTheRuns(t *testing.T) {
 
 // TestAppTokenCoordinatorPermissionsHoldNoWrite is Q3's hard rule made
 // mechanical (P2 of docs/coordinator/implementation-plan.md, D193(A)): the
-// installation token a coordinator mints carries the four reads the project
-// view needs and no write anywhere.
+// installation token a coordinator mints carries the reads the project view
+// makes and no write anywhere.
+//
+// The set is exactly the two reads the reader makes -- a pull request is read
+// one at a time (gitprov.Provider.PullRequest), and metadata: read is what
+// GitHub requires of any request -- and it is asserted as an equality rather
+// than as "no write" alone: a permission asked for and never used is reach a
+// stolen token would have for nothing, which is the half of Q3's rule that a
+// write-only check cannot see.
 //
 // The set is read twice, because the two are not the same claim: the accessor
 // is what the caller asks with, and testdata/coordinator_token.json holds the
@@ -250,7 +257,7 @@ func TestRunTokenPermissionsAreTheRuns(t *testing.T) {
 // is not the one it holds, so a permission added to the set after that file
 // was written fails here rather than reaching GitHub.
 func TestAppTokenCoordinatorPermissionsHoldNoWrite(t *testing.T) {
-	want := map[string]string{"contents": "read", "pull_requests": "read", "issues": "read", "metadata": "read"}
+	want := map[string]string{"pull_requests": "read", "metadata": "read"}
 	perms := CoordinatorTokenPermissions()
 	if !maps.Equal(perms, want) {
 		t.Fatalf("CoordinatorTokenPermissions() = %v, want %v", perms, want)
@@ -260,7 +267,7 @@ func TestAppTokenCoordinatorPermissionsHoldNoWrite(t *testing.T) {
 			t.Errorf("the coordinator's token asks GitHub for %s: %s", name, level)
 		}
 	}
-	perms["contents"] = "write"
+	perms["pull_requests"] = "write"
 	if again := CoordinatorTokenPermissions(); !maps.Equal(again, want) {
 		t.Errorf("CoordinatorTokenPermissions() after a caller mutated its copy = %v, want %v", again, want)
 	}

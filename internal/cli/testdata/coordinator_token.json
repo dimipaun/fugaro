@@ -2,13 +2,13 @@
   {"method": "GET", "path": "/repos/acme/app/installation", "status": 200,
    "response": {"id": 777, "app_id": 12345, "target_type": "Organization"}},
   {"method": "POST", "path": "/app/installations/777/access_tokens",
-   "request": {"repositories": ["app"], "permissions": {"contents": "read", "issues": "read", "metadata": "read", "pull_requests": "read"}},
+   "request": {"repositories": ["app"], "permissions": {"metadata": "read", "pull_requests": "read"}},
    "status": 201,
    "response": {"token": "ghs_fixture/app", "expires_at": "2099-01-01T00:00:00Z", "repository_selection": "selected"}},
   {"method": "GET", "path": "/repos/acme/other/installation", "status": 200,
    "response": {"id": 778, "app_id": 12345, "target_type": "Organization"}},
   {"method": "POST", "path": "/app/installations/778/access_tokens",
-   "request": {"repositories": ["other"], "permissions": {"contents": "read", "issues": "read", "metadata": "read", "pull_requests": "read"}},
+   "request": {"repositories": ["other"], "permissions": {"metadata": "read", "pull_requests": "read"}},
    "status": 201,
    "response": {"token": "ghs_fixture/other", "expires_at": "2099-01-01T00:00:00Z", "repository_selection": "selected"}}
 ]

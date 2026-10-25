@@ -1364,9 +1364,10 @@ command today.
 
 Every repository is read through the coordinator's own credential: an
 installation token for that repository, minted from the GitHub App the
-environment holds and carrying a named read-only permission set — contents,
-issues, metadata and pull requests, all read (Q3 answered (A)) — and cached
-for the token's life, so a second read of the same repository mints nothing.
+environment holds and carrying a named read-only permission set — pull
+requests and metadata, the two reads this view makes (Q3 answered (A)) —
+and cached for the token's life, so a second read of the same repository
+mints nothing.
 The coordinator reads github only: a bitbucket repository is refused, and the
 refusal names the reason, because its credential is one repository's access
 token and cannot be widened to a project (reconciliation Q12 (A), finding #30).

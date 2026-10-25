@@ -98,12 +98,21 @@ var buildTokenPermissions = map[string]string{"contents": "read", "metadata": "r
 
 // coordinatorTokenPermissions is what the coordinator's token asks for (P2 of
 // docs/coordinator/implementation-plan.md, reconciliation Q3 answered (A)):
-// the four reads a project view is built from, and no value carrying a write
+// the reads the project-wide view is built from, and no value carrying a write
 // anywhere. A coordinator that could write would be a coordinator that could
 // answer a merge (Q10 C, refused), which is why this set is a set of its own
 // rather than a level taken off the run's.
+//
+// Two permissions, because two are what this read uses: every pull request is
+// read one at a time through gitprov.Provider.PullRequest -- GET
+// /repos/{owner}/{repo}/pulls/{number} -- which is pull_requests: read, and
+// metadata: read, which GitHub requires of any request at all. contents and
+// issues were asked for and never used: this reader opens no file and reads no
+// issue, and a permission nobody uses is reach a stolen token would have for
+// nothing. P5's aggregation job re-reads through this same reader, so it asks
+// for no more than these two.
 var coordinatorTokenPermissions = map[string]string{
-	"contents": "read", "pull_requests": "read", "issues": "read", "metadata": "read",
+	"pull_requests": "read", "metadata": "read",
 }
 
 // BuildTokenPermissions are the permissions of an image build's token, a

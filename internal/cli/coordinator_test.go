@@ -626,7 +626,7 @@ func TestCoordinatorStatusMintsAReadOnlyTokenPerRepository(t *testing.T) {
 // wiring — no opener replaced and no mint replaced — against a hermetic host,
 // and holds the read to the credential P2 mints for it.
 //
-// The fixture is the whole assertion: the mint's request body is the four-read
+// The fixture is the whole assertion: the mint's request body is the two-read
 // set, and the pull-request read that follows carries that token's own
 // Authorization header. A read authenticated with the run's set — what the
 // provider's own mint asks for, two writes among them — fails here on the
