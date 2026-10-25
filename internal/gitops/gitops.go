@@ -567,6 +567,86 @@ func (r *Repo) CommitsAhead(ctx context.Context, since string, except ...string)
 	return strconv.Atoi(out)
 }
 
+// OriginHeads returns the commits origin's branches point at now, read
+// from origin itself (`ls-remote --heads`), other than runBranch — the
+// run's own branch, which the run's pushes fill with its own commits — and
+// only those this checkout already holds. It is never the checkout's
+// remote-tracking refs: the agent's own git can create or repoint those
+// without pushing anything (`git update-ref refs/remotes/origin/x <its
+// commit>`), and "a branch on origin holds it" must mean a real branch on
+// origin. A head the checkout lacks is left out, and it is checked with
+// lazy fetches off: in a blobless partial clone a plain check would fetch
+// every missing branch's commit from the promisor remote.
+func (r *Repo) OriginHeads(ctx context.Context, runBranch string) ([]string, error) {
+	if runBranch == "" {
+		return nil, errors.New("refusing to read origin's branches without the run's own branch to leave out")
+	}
+	out, err := r.git(ctx, "ls-remote", "--heads", "origin")
+	if err != nil {
+		return nil, err
+	}
+	local := *r
+	local.Env = append(slices.Clone(r.Env), "GIT_NO_LAZY_FETCH=1")
+	seen := map[string]bool{}
+	var heads []string
+	for _, line := range strings.Split(out, "\n") {
+		sha, name, ok := strings.Cut(strings.TrimSpace(line), "\t")
+		if !ok || name == "refs/heads/"+runBranch || !IsFullSHA(sha) || seen[sha] {
+			continue
+		}
+		seen[sha] = true
+		if _, err := local.git(ctx, "cat-file", "-e", "--end-of-options", sha+"^{commit}"); err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			continue
+		}
+		heads = append(heads, sha)
+	}
+	return heads, nil
+}
+
+// OwnCommits lists, oldest first (parents before children), the commits
+// HEAD has that no branch on origin holds (OriginHeads) other than
+// runBranch. It answers "which commits did this run make" without knowing
+// which branch the work was cut from: an agent told to `git fetch origin
+// <integration> && git checkout -b <b> FETCH_HEAD` starts from a branch
+// nothing recorded and, in a single-branch clone, no remote-tracking ref
+// names. A branch on origin whose tip the checkout never fetched subtracts
+// nothing, which only ever makes the list longer.
+func (r *Repo) OwnCommits(ctx context.Context, runBranch string) ([]string, error) {
+	heads, err := r.OriginHeads(ctx, runBranch)
+	if err != nil {
+		return nil, err
+	}
+	args := []string{"--no-replace-objects", "rev-list", "--topo-order", "--reverse", "--end-of-options", "HEAD"}
+	for _, h := range heads {
+		args = append(args, "^"+h)
+	}
+	out, err := r.git(ctx, args...)
+	if err != nil {
+		return nil, err
+	}
+	return strings.Fields(out), nil
+}
+
+// FirstParent returns sha's first parent, "" for a root commit. sha must be
+// a full commit SHA, so it is never read as an option or a moving ref.
+func (r *Repo) FirstParent(ctx context.Context, sha string) (string, error) {
+	if !IsFullSHA(sha) {
+		return "", fmt.Errorf("refusing to read the parent of %q: not a full commit SHA", sha)
+	}
+	out, err := r.git(ctx, "--no-replace-objects", "rev-list", "--parents", "--max-count=1", "--end-of-options", sha)
+	if err != nil {
+		return "", err
+	}
+	fields := strings.Fields(out)
+	if len(fields) < 2 {
+		return "", nil
+	}
+	return fields[1], nil
+}
+
 // RunBranchPrefix starts every branch the runner pushes.
 const RunBranchPrefix = "fugaro/"
 

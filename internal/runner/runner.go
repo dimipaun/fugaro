@@ -300,6 +300,11 @@ type run struct {
 	// values (checkpoint.go). They differ when the run starts from another
 	// ref than its base branch (--ref develop with base_branch main).
 	baseSHA, startSHA string
+	// narrowBase is the commit a first run's review range starts from when
+	// it was narrowed to the run's own commits (diffbase.go,
+	// narrowReviewRange), "" when the range is origin/<diffBase>. It is set
+	// once, between stages, so no checkpoint goroutine reads it mid-write.
+	narrowBase string
 	// rigorCfg is the run's rigor configuration *as the base branch has it*
 	// (docs/rigor-modes D25), read once at bootstrap and reused at every
 	// later moment (rigor.go); rigorRev is the revision it was read from, ""
@@ -2003,8 +2008,11 @@ func (r *run) agentLoop(ctx context.Context) {
 	// The base is the run's own base of work, not the branch its
 	// configuration came from (diffbase.go, diffBase): a run started from
 	// another ref must review its own change, not the whole of that ref's
-	// divergence from the default branch.
-	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.reviewPromptBase(), r.reviewDiffSize(ctx), r.baseUnreadable())
+	// divergence from the default branch — and a first run whose work was
+	// cut from another branch than its ref is narrowed to its own commits
+	// here, once, before the prompt and every round's input read the range.
+	r.narrowReviewRange(ctx)
+	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.reviewRev(ctx), r.reviewDiffSize(ctx), r.baseUnreadable())
 	if f := r.follow; f != nil {
 		if add := followup.ReviewAddendum(f.sel, f.nonce); add != "" {
 			reviewPrompt += "\n\n" + add
