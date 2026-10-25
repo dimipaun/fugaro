@@ -30,7 +30,7 @@ func planGraphFixture(t *testing.T, graph string) (dir, planPath string) {
 }
 
 const planGraphDoc = `{
-  "schema_version": 1,
+  "schema_version": 2,
   "plan": "docs/plans/2026-10-15-desktop-console-v2.md",
   "nodes": [
     {"id": "V2.2.1", "title": "the graph document and the read that prints it",
@@ -121,6 +121,44 @@ func TestPlanGraphPrintsTheArtifact(t *testing.T) {
 	}
 }
 
+// TestPlanGraphPrintsTheStream: the read carries the artifact's stream through
+// to the document it prints, which is what a console draws the release columns
+// from (GV1.3, GD7) -- and a v1 artifact, which carries no such field, prints
+// no stream key at all rather than an empty one.
+func TestPlanGraphPrintsTheStream(t *testing.T) {
+	const streamed = `{
+	  "schema_version": 2,
+	  "plan": "docs/plans/2026-10-15-desktop-console-v2.md",
+	  "stream": "console",
+	  "nodes": [
+	    {"id": "a", "title": "one", "run": null, "version": "0.11",
+	     "footprint": {"prediction": true, "paths": []}}
+	  ],
+	  "edges": []
+	}`
+	_, planPath := planGraphFixture(t, streamed)
+	out, _, err := execute(t, "plan", "graph", "--plan", planPath, "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var g plan.Graph
+	if err := json.Unmarshal([]byte(out), &g); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if g.Stream == nil || *g.Stream != "console" {
+		t.Errorf("stream = %v, want the artifact's console", g.Stream)
+	}
+
+	_, v1Path := planGraphFixture(t, `{"schema_version": 1, "plan": "p.md", "nodes": [], "edges": []}`)
+	out, _, err = execute(t, "plan", "graph", "--plan", v1Path, "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "stream") {
+		t.Errorf("a v1 artifact's document carries a stream key:\n%s", out)
+	}
+}
+
 // TestPlanGraphRefusesWhatItCannotRender: the three refusals the design names,
 // through the command rather than through the package -- a malformed artifact,
 // one from a future schema version, and a cycle, which is a refusal and not a
@@ -133,7 +171,7 @@ func TestPlanGraphRefusesWhatItCannotRender(t *testing.T) {
 	}{
 		{"malformed", `{"schema_version": 1, "plan": "p.md", "nodes": [`, "not JSON"},
 		{"a future schema version", `{"schema_version": 9, "plan": "p.md", "nodes": [], "edges": []}`,
-			"schema version 9 and this build reads version 1"},
+			"schema version 9 and this build reads version 2"},
 		{"a cycle", `{"schema_version": 1, "plan": "p.md", "nodes": [
 			{"id": "a", "title": "one", "footprint": {"prediction": true, "paths": []}},
 			{"id": "b", "title": "two", "footprint": {"prediction": true, "paths": []}}],
@@ -247,7 +285,7 @@ func TestPlanGraphTextIsTerminalSafe(t *testing.T) {
 // written here as the command's own document so the CLI tests exercise the read
 // rather than the package.
 const planDiamondDoc = `{
-  "schema_version": 1,
+  "schema_version": 2,
   "plan": "docs/plans/diamond.md",
   "nodes": [
     {"id": "a", "title": "the base", "run": null, "version": "0.9.0",

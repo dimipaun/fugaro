@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "plan": "docs/plans/hub.md",
+  "nodes": [
+    {"id": "h", "title": "the hub six leaves wait on", "run": null, "version": null,
+     "footprint": {"prediction": true, "paths": ["internal/hub/**"]}},
+    {"id": "l1", "title": "a leaf of the hub", "run": null, "version": null,
+     "footprint": {"prediction": true, "paths": []}},
+    {"id": "l2", "title": "another leaf of the hub", "run": null, "version": null,
+     "footprint": {"prediction": true, "paths": []}},
+    {"id": "l3", "title": "a third leaf of the hub", "run": null, "version": null,
+     "footprint": {"prediction": true, "paths": []}},
+    {"id": "l4", "title": "a fourth leaf of the hub", "run": null, "version": null,
+     "footprint": {"prediction": true, "paths": []}},
+    {"id": "l5", "title": "a fifth leaf of the hub", "run": null, "version": null,
+     "footprint": {"prediction": true, "paths": []}},
+    {"id": "l6", "title": "a sixth leaf of the hub", "run": null, "version": null,
+     "footprint": {"prediction": true, "paths": []}},
+    {"id": "a1", "title": "the chain's first link", "run": null, "version": "0.11.0",
+     "footprint": {"prediction": true, "paths": []}},
+    {"id": "a2", "title": "the chain's second link", "run": null, "version": "0.11.0",
+     "footprint": {"prediction": true, "paths": []}},
+    {"id": "a3", "title": "the chain's third link", "run": null, "version": "0.11.0",
+     "footprint": {"prediction": true, "paths": []}},
+    {"id": "a4", "title": "the chain's fourth link", "run": null, "version": "0.11.0",
+     "footprint": {"prediction": true, "paths": []}},
+    {"id": "a5", "title": "the chain's last link", "run": null, "version": "0.11.0",
+     "footprint": {"prediction": true, "paths": []}}
+  ],
+  "edges": [
+    {"task": "l1", "needs": "h", "reason": "the first leaf waits for the hub"},
+    {"task": "l2", "needs": "h", "reason": "the second leaf waits for the hub"},
+    {"task": "l3", "needs": "h", "reason": "the third leaf waits for the hub"},
+    {"task": "l4", "needs": "h", "reason": "the fourth leaf waits for the hub"},
+    {"task": "l5", "needs": "h", "reason": "the fifth leaf waits for the hub"},
+    {"task": "l6", "needs": "h", "reason": "the sixth leaf waits for the hub"},
+    {"task": "a2", "needs": "a1", "reason": "the second link builds on the first"},
+    {"task": "a3", "needs": "a2", "reason": "the third link builds on the second"},
+    {"task": "a4", "needs": "a3", "reason": "the fourth link builds on the third"},
+    {"task": "a5", "needs": "a4", "reason": "the last link builds on the fourth"}
+  ]
+}
