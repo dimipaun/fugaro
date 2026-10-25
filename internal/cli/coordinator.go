@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"crypto/rsa"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"text/tabwriter"
 	"time"
 
@@ -388,11 +390,16 @@ func runCoordinatorSweep(ctx context.Context, cmd *cobra.Command, getenv func(st
 
 	warn := cmd.ErrOrStderr()
 	var reader coordinator.Reader
+	var tokens *coordinatorTokens
 	if test != nil && test.reader != nil {
 		reader = test.reader
-	} else if reader, err = coordinatorReader(warn); err != nil {
+	} else if reader, tokens, err = coordinatorReader(warn); err != nil {
 		return err
 	}
+	// The tick holds each repository's token for as long as it reads and no
+	// longer, as status does: a scheduled job that left them behind would leave
+	// one per repository every tick.
+	defer tokens.revoke(ctx)
 	sw := &coordinator.Sweeper{
 		Reader: reader,
 		Runs:   coordinatorRunsSource{env: &cloudEnv{bucket: bucket}, warn: warn},
@@ -571,9 +578,17 @@ func newCoordinatorStatusCmd() *cobra.Command {
 			"command today.\n\n" +
 			"Every repository is read through the coordinator's own credential: an\n" +
 			"installation token for that repository, minted from the GitHub App the\n" +
-			"environment holds and carrying a named read-only permission set — contents,\n" +
-			"issues, metadata and pull requests, all read (Q3 answered (A)) — and cached\n" +
-			"for the token's life, so a second read of the same repository mints nothing.\n" +
+			"environment holds and carrying a named read-only permission set — pull\n" +
+			"requests and metadata, the two reads this view makes (Q3 answered (A)) —\n" +
+			"and cached for the token's life, so a second read of the same repository\n" +
+			"mints nothing. Every token the command minted is revoked when it is done,\n" +
+			"so the credential lives for the read and no longer.\n" +
+			"With FUGARO_CREDENTIALS_SERVICE_URL set, the installation's credentials\n" +
+			"service holds the App's key and this command holds none, so it refuses (exit 1)\n" +
+			"before it reads the App's ID or key: the service mints a run's token, and this\n" +
+			"read is not a run.\n" +
+			"Exit codes: 1 for a missing or malformed App credential (or the refusal above),\n" +
+			"2 for a failure of the host.\n" +
 			"The coordinator reads github only: a bitbucket repository is refused, and the\n" +
 			"refusal names the reason, because its credential is one repository's access\n" +
 			"token and cannot be widened to a project (reconciliation Q12 (A), finding #30).\n\n" +
@@ -611,10 +626,17 @@ func runCoordinatorStatus(cmd *cobra.Command, o *coordinatorOptions) error {
 	if err != nil {
 		return err
 	}
-	reader, err := coordinatorReader(warn)
+	reader, tokens, err := coordinatorReader(warn)
 	if err != nil {
 		return err
 	}
+	// Every token this read minted is taken back when the command is done, on
+	// every return and whatever happened on the way: the credential lives for
+	// the read and no longer (github.RevokeInstallationToken). A command that
+	// failed on its second repository has still left the first one's token
+	// behind, and that is the one nothing else would ever take back.
+	defer tokens.revoke(ctx)
+
 	views := make([]coordinator.View, 0, len(repos))
 	for _, repo := range repos {
 		view, err := coordinatorViewOf(ctx, env, reader, repo, coordinatorSince(window), warn)
@@ -777,39 +799,156 @@ func coordinatorRun(in runview.Input) coordinator.Run {
 // repository, cached for its life).
 //
 // The wiring is here and not at the call site so that it is one place to read
-// and one place to change, and so that a test replaces exactly the two things
-// that would reach GitHub — the opener and the mint — and leaves the cache,
-// the refusals and the redaction under test.
+// and one place to change, and so that a test replaces exactly the three things
+// that would reach GitHub — the opener, the mint and the revoke — and leaves
+// the cache, the refusals and the redaction under test.
 //
 // agent.Redact is the redactor: the same one the runner hands the agent, so a
 // credential cannot reach a failure by a path this command forgot about.
-func coordinatorReader(warn io.Writer) (coordinator.Reader, error) {
+//
+// The second return is the record of what this read minted, which the caller
+// revokes when the command is done (coordinatorTokens). It is returned rather
+// than deferred here because "the command is done" is the caller's fact and not
+// the reader's: the reader has no end of its own.
+func coordinatorReader(warn io.Writer) (coordinator.Reader, *coordinatorTokens, error) {
 	open, err := openCoordinatorProvider(os.Environ(), func(s string) { fmt.Fprintln(warn, multiLine(s)) })
 	if err != nil {
-		return nil, userErr("%v", err)
+		return nil, nil, userErr("%v", err)
 	}
 	// The mint runs on the first call a repository's provider makes, and that
 	// call happens only for a repository whose runs name a pull request: this
 	// read needs no App credential to look at a project with nothing in it, and
 	// nothing here reads one to find that out.
-	return &coordinator.Project{Mint: coordinatorMint, Open: open, Redact: agent.Redact}, nil
+	tokens := &coordinatorTokens{}
+	return &coordinator.Project{Mint: tokens.mint, Open: open, Redact: agent.Redact}, tokens, nil
+}
+
+// coordinatorTokens remembers the installation tokens one status run minted, so
+// that the run can take them back when it is done. GitHub revokes an
+// installation token at DELETE /installation/token, and this command's whole
+// posture is that it holds a credential for as long as it reads and no longer:
+// the tokens are minted per repository, cached for the read, and handed back at
+// the end.
+//
+// They are kept in MINT ORDER, which is also the order they are revoked in. A
+// set would take them back in whatever order Go walked it, so the same command
+// over the same project would send a different sequence every run — and the
+// fixture a test replays is strictly ordered, which is how that would be found
+// the expensive way.
+type coordinatorTokens struct {
+	mu     sync.Mutex
+	tokens []string
+}
+
+// mint is the TokenSource the reader is given: the command's own mint, with the
+// token kept for the revoke at the end.
+func (t *coordinatorTokens) mint(ctx context.Context, repo string) (string, time.Time, error) {
+	token, expires, err := coordinatorMint(ctx, repo)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	t.mu.Lock()
+	t.tokens = append(t.tokens, token)
+	t.mu.Unlock()
+	return token, expires, nil
+}
+
+// coordinatorRevokeTimeout bounds the revoke as a whole. It is the bound the
+// launch's own report at the end of a run takes (internal/cli/run.go): a few
+// short calls to one host, which answers in milliseconds when it answers at
+// all, and a host that answers none of them must not hold the process after the
+// command has finished its work.
+const coordinatorRevokeTimeout = 30 * time.Second
+
+// revoke takes back every token this run minted, and returns nothing: it is
+// best-effort by contract. A revoke that failed leaves a token to expire on its
+// own within the hour, and the read that used it has already succeeded or
+// already failed for a reason of its own — so there is no failure to report, no
+// exit code to change, and nothing to print. The token reaches neither an error
+// nor a log line here, which is the rule this whole path keeps.
+//
+// The context is the command's, detached and bounded. Detached, because the one
+// moment a credential is most likely to be left behind is the moment the person
+// interrupts the read: they have still been handed a token per repository, and
+// those are the ones nobody would ever take back. Bounded, because the command
+// is over and nothing here may hold it.
+//
+// The mutex is held for the copy and not for the calls: revoking is a network
+// round trip per token, and the only other holder is a mint that has already
+// returned its answer.
+//
+// A nil record is a read that minted through no record of this command's (the
+// sweep's injected reader), so there is nothing of its to take back.
+func (t *coordinatorTokens) revoke(ctx context.Context) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	tokens := slices.Clone(t.tokens)
+	t.mu.Unlock()
+	if len(tokens) == 0 {
+		return
+	}
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), coordinatorRevokeTimeout)
+	defer cancel()
+	for _, token := range tokens {
+		if rctx.Err() != nil {
+			// Out of budget: what is left expires on its own within the hour,
+			// which is where a revoke that failed already leaves it.
+			return
+		}
+		_ = coordinatorRevoke(rctx, token)
+	}
+}
+
+// coordinatorRevoke revokes one installation token this command minted. It is a
+// package variable so that a test can watch it — or refuse it — without a
+// network, and its own call reads the API root from the same environment
+// variable the mint does, so the two cannot be pointed at different hosts.
+var coordinatorRevoke = func(ctx context.Context, token string) error {
+	return github.RevokeInstallationToken(ctx, os.Getenv(providers.EnvGitHubAPIURL), token, nil)
 }
 
 // coordinatorAppCredential is the App credential the coordinator's mint needs:
-// the App's ID, and its private key PEM read the way the opener reads it
+// the App's ID, and its private key read the way the opener reads it
 // (providers.AppKey, so the mint and the opener cannot disagree about where the
-// key is). Each is named when it is missing, and the failure is the user's own
-// rather than the host's.
-func coordinatorAppCredential() (appID, pemData string, err error) {
+// key is) and parsed into the key the mint signs with. Each failure names what
+// is missing or malformed, and every one of them is the user's own rather than
+// the host's.
+//
+// The parse is here, and not left to the caller that mints, because this
+// function is what BOTH halves of the command ask for the credential: a key
+// that is there and is not a key has to be the caller's failure from either,
+// and a parse left to providers.FromEnv would answer the same environment
+// twice — exit 1 through the mint, which parses the key itself, and exit 2
+// through the opener, whose plain error travels as a failure through the host.
+// A person holding a key that is not a key would be told GitHub failed and
+// would retry it.
+func coordinatorAppCredential() (appID string, key *rsa.PrivateKey, pemData string, err error) {
+	// With the installation's credentials service on, the App's key is the
+	// service's (C2.2, D145) and this process holds none: reading one here would
+	// be reaching for a key the platform meant to withhold, which is the rule
+	// providers.FromEnv keeps for the run path and the one the coordinator's own
+	// mint has to keep too. The service mints a RUN's token and this read is not
+	// a run, so there is nothing to ask it for either: the command is refused
+	// rather than served the wrong credential. A key that is somehow in the
+	// environment anyway changes nothing, exactly as it changes nothing there.
+	if os.Getenv(providers.EnvCredentialsServiceURL) != "" {
+		return "", nil, "", userErr("%s is set, so the installation's credentials service holds the GitHub App's key and this command holds none: the project-wide read mints its own read-only token from the App's key, and the service mints a run's. Run the read where the key is", providers.EnvCredentialsServiceURL)
+	}
 	appID = os.Getenv(providers.EnvGitHubAppID)
 	if appID == "" {
-		return "", "", userErr("%s is not set: the project-wide read mints the coordinator's own token and needs the GitHub App's ID (see docs/git-providers.md)", providers.EnvGitHubAppID)
+		return "", nil, "", userErr("%s is not set: the project-wide read mints the coordinator's own token and needs the GitHub App's ID (see docs/git-providers.md)", providers.EnvGitHubAppID)
 	}
 	pemData, err = providers.AppKey(os.Environ())
 	if err != nil {
-		return "", "", userErr("%v", err)
+		return "", nil, "", userErr("%v", err)
 	}
-	return appID, pemData, nil
+	key, err = github.ParsePrivateKey([]byte(pemData))
+	if err != nil {
+		return "", nil, "", userErr("%v", err)
+	}
+	return appID, key, pemData, nil
 }
 
 // openCoordinatorProvider opens the git providers the view is read through. It
@@ -827,12 +966,13 @@ func coordinatorAppCredential() (appID, pemData string, err error) {
 // the second half of the decision. providers.FromEnv reports a variable it does
 // not find as a plain error, and a failure through the host is a remote one
 // (exit 2) — so without this check a person who simply has not exported the
-// App's ID would be told the host failed and would retry it, when the refusal
-// is theirs to fix and the same condition is already a user error where the
-// mint asks for the credential (coordinatorAppCredential, exec 1). Asking here
-// is also what makes that wording reachable: the opener refuses before the mint
-// is reached, so the mint's own message could never be the one a person saw.
-// It costs a repository whose runs name a pull request the same two values read
+// App's ID, or whose key is not a key, would be told the host failed and would
+// retry it, when the refusal is theirs to fix and the same condition is already
+// a user error where the mint asks for the credential
+// (coordinatorAppCredential, exit 1). Asking here is also what makes that
+// wording reachable: the opener refuses before the mint is reached, so the
+// mint's own message could never be the one a person saw.
+// It costs a repository whose runs name a pull request the same credential read
 // a second time, and nothing at all for one without: Project.PullRequests
 // returns before opening when the runs name no pull request, so a project with
 // nothing in it is still read with no App credential anywhere.
@@ -842,7 +982,7 @@ var openCoordinatorProvider = func(env []string, warn func(string)) (coordinator
 		return nil, err
 	}
 	return func(ctx context.Context, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
-		if _, _, err := coordinatorAppCredential(); err != nil {
+		if _, _, _, err := coordinatorAppCredential(); err != nil {
 			return nil, nil, err
 		}
 		p, secrets, err := open(ctx, gitprov.KindGitHub, repo)
@@ -877,30 +1017,26 @@ func installCoordinatorSource(p gitprov.Provider, src gitprov.TokenSource) error
 }
 
 // coordinatorMint mints the coordinator's installation token for one
-// repository: github.CoordinatorTokenPermissions — contents, issues, metadata
-// and pull requests, every one of them read — through
+// repository: github.CoordinatorTokenPermissions — pull requests and metadata,
+// the two reads the project-wide reader makes — through
 // github.MintInstallationToken, with the App credential the environment
 // carries. One repository at a time (D193(A)): the token is scoped to the
 // repository it was minted for, and a second repository mints its own.
 //
-// The credential — the App's ID and its key PEM — is read through
-// coordinatorAppCredential, which reads it the same way the opener does, so
-// where the key comes from is one rule. A failure this returns carries no key:
-// what it reports is redacted with the PEM it read (agent.Redact), because the
-// mint's own error text can quote what it was handed. Tests replace it, so a
-// read never reaches GitHub.
+// The credential — the App's ID and its key — is read through
+// coordinatorAppCredential, which reads and parses it the same way the opener
+// does, so where the key comes from and what counts as a key are one rule. A
+// failure this returns carries no key: what it reports is redacted with the PEM
+// it read (agent.Redact), because the mint's own error text can quote what it
+// was handed. Tests replace it, so a read never reaches GitHub.
 var coordinatorMint = func(ctx context.Context, repo string) (string, time.Time, error) {
 	owner, name, ok := gitprov.SplitRepo(repo)
 	if !ok {
 		return "", time.Time{}, userErr("repository %q must look like owner/name", repo)
 	}
-	appID, pemData, err := coordinatorAppCredential()
+	appID, key, pemData, err := coordinatorAppCredential()
 	if err != nil {
 		return "", time.Time{}, err
-	}
-	key, err := github.ParsePrivateKey([]byte(pemData))
-	if err != nil {
-		return "", time.Time{}, userErr("%v", err)
 	}
 	token, expires, err := github.MintInstallationToken(ctx, github.Options{
 		Owner:      owner,
