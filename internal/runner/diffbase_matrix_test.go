@@ -470,3 +470,31 @@ func contains(paths []string, want string) bool {
 	}
 	return false
 }
+
+// TestANarrowedReviewIsShownOnThePullRequest: cell (f)'s reviewer saw the
+// run's three commits, while the pull request against main also carries the
+// integration branch's three. A person reading the pull request is told so,
+// in its status section and in the run report.
+//
+// Mutation (drop narrowText from finalSection, or from the report's notes):
+// this test fails.
+func TestANarrowedReviewIsShownOnThePullRequest(t *testing.T) {
+	var cell *baseCell
+	for i := range baseCells {
+		if strings.HasPrefix(baseCells[i].name, "(f)") {
+			cell = &baseCells[i]
+		}
+	}
+	got := cell.run(t)
+	if got.err != nil || got.rec == nil {
+		t.Fatalf("the run did not finish: rec = %+v, err = %v", got.rec, got.err)
+	}
+	want := "review covered commits after `" + got.wantRev[:7] + "` (3 commits); this PR also carries 3 commits from other branches"
+	pr := onlyPR(t, got.provider)
+	if !strings.Contains(pr.Body, want) {
+		t.Errorf("the status section does not say the review was narrowed (want %q):\n%s", want, pr.Body)
+	}
+	if len(pr.Comments) == 0 || !strings.Contains(pr.Comments[len(pr.Comments)-1], "**Note:** "+want) {
+		t.Errorf("the run report does not say the review was narrowed (want %q): %q", want, pr.Comments)
+	}
+}

@@ -111,3 +111,88 @@ func TestOriginHeadsSkipsWhatTheCheckoutLacksAndFailsWithoutOrigin(t *testing.T)
 		t.Fatal("OwnCommits answered with origin unreadable")
 	}
 }
+
+// TestOwnCommitsCostOneProcessPerStepWhateverTheBranchCount: with 250
+// branches on origin, reading the run's own commits is one ls-remote, one
+// cat-file for every head's presence and one rev-list fed the heads on
+// stdin — never a process per branch, and never the heads on the command
+// line, where ARG_MAX caps them — and asking whether origin holds a commit
+// is one rev-list more.
+//
+// Mutation (go back to a cat-file -e per head, or a merge-base per head in
+// HeldBy): the counts below fail.
+func TestOwnCommitsCostOneProcessPerStepWhateverTheBranchCount(t *testing.T) {
+	repo, remote := setup(t)
+	main := testutil.ManyBranches(t, remote, 250)
+	testutil.Git(t, repo.Dir, "fetch", "--quiet", "origin", "+refs/heads/*:refs/remotes/origin/*")
+	testutil.Git(t, repo.Dir, "checkout", "--quiet", "-b", "work", "origin/b007")
+	b007 := testutil.Git(t, repo.Dir, "rev-parse", "HEAD")
+	var mine []string
+	for _, m := range []string{"a", "b"} {
+		if err := repo.CommitEmpty(ctx, "the run's "+m); err != nil {
+			t.Fatal(err)
+		}
+		mine = append(mine, testutil.Git(t, repo.Dir, "rev-parse", "HEAD"))
+	}
+
+	calls := testutil.RecordGit(t, "")
+	got, err := repo.OwnCommits(ctx, "fugaro/x")
+	if err != nil || !slices.Equal(got, mine) {
+		t.Fatalf("OwnCommits = %v, %v; want the run's two: %v", got, err, mine)
+	}
+	lines := testutil.GitCalls(t, calls)
+	if n := testutil.GitSubcommands(lines); len(lines) != 3 || n["ls-remote"] != 1 || n["cat-file"] != 1 || n["rev-list"] != 1 {
+		t.Fatalf("OwnCommits over 250 branches ran %d git processes (%v), want one ls-remote, one cat-file and one rev-list", len(lines), n)
+	}
+
+	heads, err := repo.OriginHeads(ctx, "fugaro/x")
+	if err != nil || len(heads) != 251 {
+		t.Fatalf("OriginHeads = %d heads, %v; want 250 branches and main", len(heads), err)
+	}
+	testutil.GitCalls(t, calls)
+	for _, c := range []struct {
+		commit string
+		want   bool
+	}{{b007, true}, {main, true}, {mine[0], false}, {mine[1], false}} {
+		held, err := repo.HeldBy(ctx, c.commit, heads)
+		if err != nil || held != c.want {
+			t.Errorf("HeldBy(%s) = %v, %v; want %v", c.commit, held, err, c.want)
+		}
+		if lines := testutil.GitCalls(t, calls); len(lines) != 1 || testutil.GitSubcommands(lines)["rev-list"] != 1 {
+			t.Errorf("HeldBy over 251 heads ran %v, want one rev-list", lines)
+		}
+	}
+	if held, err := repo.HeldBy(ctx, b007, nil); err != nil || held {
+		t.Errorf("HeldBy with no heads = %v, %v; want false", held, err)
+	}
+	if _, err := repo.HeldBy(ctx, "HEAD", heads); err == nil {
+		t.Error("HeldBy accepted a ref name, want a full commit SHA")
+	}
+}
+
+// TestNoLazyFetchNeedsGit244: GIT_NO_LAZY_FETCH, which keeps OriginHeads
+// from fetching every missing branch's commit, exists from git 2.44 on; an
+// older git ignores it.
+func TestNoLazyFetchNeedsGit244(t *testing.T) {
+	for v, want := range map[string]bool{
+		"git version 2.44.0":                 true,
+		"git version 2.47.3":                 true,
+		"git version 3.0.0":                  true,
+		"git version 2.55.0.windows.1":       true,
+		"git version 2.43.0":                 false,
+		"git version 2.39.5 (Apple Git-154)": false,
+		"git version 1.99.9":                 false,
+		"":                                   false,
+		"not git":                            false,
+		"git version two":                    false,
+	} {
+		if got := NoLazyFetch(v); got != want {
+			t.Errorf("NoLazyFetch(%q) = %v, want %v", v, got, want)
+		}
+	}
+	repo, _ := setup(t)
+	testutil.RecordGit(t, "2.43.0")
+	if v, err := repo.GitVersion(ctx); err != nil || v != "git version 2.43.0" || NoLazyFetch(v) {
+		t.Errorf("GitVersion under a 2.43 git = %q, %v", v, err)
+	}
+}
