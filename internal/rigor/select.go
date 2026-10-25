@@ -62,8 +62,11 @@ func matches(pattern string, paths []string) bool {
 }
 
 // NamesOf is the names of areas, in order. It is for a reader that wants
-// only the names — the pull request body's line (T1.6) — while a caller that
-// also needs the modes, like the run record's fold, reads the Areas whole.
+// only the names while a caller that also needs the modes, like the run
+// record's fold, reads the Areas whole. The pull request's status line reads
+// the names it shows from the record's own block (internal/runner's
+// rigorPart) rather than from a second resolution: the mode is one value
+// carried to every surface, never recomputed per surface (D24).
 func NamesOf(areas []Area) []string {
 	if len(areas) == 0 {
 		return nil
