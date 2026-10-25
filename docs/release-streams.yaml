@@ -20,9 +20,9 @@ streams:
     theme: animals
     # Badger is 0.10, Camel 0.11, and one name per minor after that.
     names: [Badger, Camel, Dolphin, Gecko, Hippo, Koala, Moose]
-    # The last CLI release, v0.10.4 "Badger four"; 0.11.0 "Camel" is next.
-    current: "0.10.4"
-    next: Camel
+    # The last CLI release, v0.11.1 "Camel one"; 0.12.0 "Dolphin" is next.
+    current: "0.11.1"
+    next: Dolphin
     tag_prefix: v
 
   - name: console
