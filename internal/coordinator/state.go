@@ -68,6 +68,23 @@ func PathIntents(slug string) string { return PathRepo(slug) + "/intents" }
 // PathIntent is one intent record.
 func PathIntent(slug, id string) string { return PathIntents(slug) + "/" + id }
 
+// PathView is one repository's view — the document the sweep (P5) replaces in
+// place, holding the join of the runs behind the repository and the pull
+// requests those runs name (View).
+//
+// It is named rather than derived, like PathIntents beside it and for the
+// same reason: the ID's rule (DocumentID) is that the same thing described
+// twice is one node, and what this node describes is the repository's own
+// view, of which there is one at a time and no history. A derived ID would
+// have to be a function of the view's content, which is the one thing a
+// reader cannot know before reading it.
+func PathView(slug string) string { return PathRepo(slug) + "/view" }
+
+// PathStale is the marker the sweep writes when it could not reconcile a
+// repository (Stale): it says since when and why, and the view at PathView is
+// left exactly as the last sweep that could read everything wrote it.
+func PathStale(slug string) string { return PathRepo(slug) + "/stale" }
+
 // DocumentID is the database key of one coordinator document, derived from the
 // parts that describe the thing it is about — the caller and the declaration
 // for an intent report, the repository and the sweep's own inputs for a view —

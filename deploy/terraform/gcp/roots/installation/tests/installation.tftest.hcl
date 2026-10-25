@@ -956,6 +956,374 @@ run "history_account_first" {
   }
 }
 
+# The coordinator is the owner's opt-in (P5): a budget installation with the
+# history job deployed and no coordinator block — every installation until its
+# owner runs fugaro update --firebase-project --coordinator — plans no
+# coordinator account, grant, job or schedule, and outputs no account for the
+# Firebase root to grant the database's admin to.
+run "coordinator_off_by_default" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  override_resource {
+    target          = google_service_account.history[0]
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-history@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-history@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  variables {
+    enable_budget = true
+    history = {
+      account_id       = "fugaro-history"
+      job              = "fugarohist"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/history:latest"
+      scheduler_job    = "fugaro-history-sweep"
+      scheduler_region = "us-east1"
+      deploy_job       = true
+      firebase_project = "fp-1234"
+      rtdb_url         = "https://fp-1234-default-rtdb.firebaseio.com"
+    }
+  }
+
+  assert {
+    condition = (length(google_service_account.coordinator) == 0 &&
+      length(google_storage_bucket_iam_member.coordinator_runs_reader) == 0 &&
+      length(google_secret_manager_secret_iam_member.coordinator_app_key) == 0 &&
+      length(google_cloud_run_v2_job.coordinator) == 0 &&
+      length(google_cloud_run_v2_job_iam_member.coordinator_runner) == 0 &&
+    length(google_cloud_scheduler_job.coordinator_sweep) == 0)
+    error_message = "without the coordinator opt-in there is no coordinator account, grant, job or schedule"
+  }
+  assert {
+    condition     = output.coordinator_service_account == null && output.coordinator_job == null
+    error_message = "without the coordinator opt-in the coordinator outputs are null"
+  }
+}
+
+# The coordinator's account, which the Firebase root grants the FP's database
+# admin from (coordinator plan P5, D194): the first apply creates it and its
+# read of the runs bucket, and nothing else — the job, the App key's grant and
+# the schedule wait for deploy_job, the history account's own shape. A run that
+# records no coordinator plans neither (coordinator_off_by_default), which is
+# what keeps every installation that has not opted in byte for byte where it
+# was.
+run "coordinator_account_first" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  override_resource {
+    target          = google_service_account.coordinator[0]
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-coordinator@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-coordinator@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  variables {
+    enable_budget = true
+    history = {
+      account_id       = "fugaro-history"
+      job              = "fugarohist"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/history:latest"
+      scheduler_job    = "fugaro-history-sweep"
+      scheduler_region = "us-east1"
+    }
+    coordinator = {
+      account_id       = "fugaro-coordinator"
+      job              = "fugarocoord"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/history:latest"
+      scheduler_job    = "fugaro-coordinator-sweep"
+      scheduler_region = "us-east1"
+    }
+  }
+
+  assert {
+    condition     = google_service_account.coordinator[0].account_id == "fugaro-coordinator" && google_service_account.coordinator[0].display_name == "Fugaro coordinator"
+    error_message = "the coordinator account's ID is the input and its display name is the mark"
+  }
+  assert {
+    condition     = output.coordinator_service_account == "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"
+    error_message = "the coordinator account's email is an output, for the Firebase root"
+  }
+  assert {
+    condition     = length(google_storage_bucket_iam_member.coordinator_runs_reader) == 1 && google_storage_bucket_iam_member.coordinator_runs_reader[0].role == "roles/storage.objectViewer"
+    error_message = "the account reads the runs bucket, read-only: the view is computed from the runs, and the coordinator writes no object"
+  }
+  assert {
+    condition     = length(google_cloud_run_v2_job.coordinator) == 0 && length(google_cloud_scheduler_job.coordinator_sweep) == 0 && length(google_secret_manager_secret_iam_member.coordinator_app_key) == 0
+    error_message = "the first apply deploys only the account: the job, the App key's grant and the Scheduler job wait for deploy_job"
+  }
+  assert {
+    condition     = length(google_service_account_iam_member.scheduler_user) == 1 && !contains(keys(google_service_account_iam_member.scheduler_user), "user:launcher@example.com")
+    error_message = "the only actAs grants stay the scheduler account's, to operators: nobody may act as the coordinator's writer, which holds the FP's database admin"
+  }
+}
+
+run "coordinator_job" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  override_resource {
+    target          = google_service_account.coordinator[0]
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-coordinator@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-coordinator@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+  override_resource {
+    target          = google_service_account.scheduler
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+  override_resource {
+    target          = google_project_iam_custom_role.job_runner
+    override_during = plan
+    values = {
+      name = "projects/proj-1234/roles/fugaroJobRunner"
+    }
+  }
+
+  variables {
+    enable_budget = true
+    history = {
+      account_id       = "fugaro-history"
+      job              = "fugarohist"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/history:latest"
+      scheduler_job    = "fugaro-history-sweep"
+      scheduler_region = "us-east1"
+    }
+    project_secrets = {
+      "github-app-key" = "fugaro-project-aurora-github-app-key-440b21d6e639db12"
+    }
+    coordinator = {
+      account_id       = "fugaro-coordinator"
+      job              = "fugarocoord"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/history:latest"
+      scheduler_job    = "fugaro-coordinator-sweep"
+      scheduler_region = "us-east1"
+      deploy_job       = true
+      firebase_project = "fp-1234"
+      rtdb_url         = "https://fp-1234-default-rtdb.firebaseio.com"
+      github_app_id    = "123456789"
+      repos = [
+        { provider = "github", repo = "acme/webapp" },
+        { provider = "bitbucket", repo = "acme/sandbox" },
+      ]
+    }
+  }
+
+  assert {
+    condition     = google_cloud_run_v2_job.coordinator[0].name == "fugarocoord" && !startswith(google_cloud_run_v2_job.coordinator[0].name, "fugaro-")
+    error_message = "the coordinator job's name must not start with fugaro-, which ls and max_parallel count as workflow jobs"
+  }
+  assert {
+    condition     = one(one(google_cloud_run_v2_job.coordinator[0].template).template).service_account == "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"
+    error_message = "the coordinator job runs as the coordinator account, the one identity that writes the coordinator's subtree"
+  }
+  assert {
+    condition = (one(one(one(google_cloud_run_v2_job.coordinator[0].template).template).containers).command == tolist(["/usr/local/bin/fugaro"]) &&
+    one(one(one(google_cloud_run_v2_job.coordinator[0].template).template).containers).args == tolist(["coordinator", "sweep"]))
+    error_message = "command replaces the image's ENTRYPOINT: it must be the binary's absolute path, and the args are the sweep"
+  }
+  assert {
+    condition     = one(one(google_cloud_run_v2_job.coordinator[0].template).template).max_retries == 0
+    error_message = "the sweep is never retried: the next tick is the retry, so two passes of one repository cannot run at once"
+  }
+  assert {
+    condition     = one(one(google_cloud_run_v2_job.coordinator[0].template).template).timeout == "600s"
+    error_message = "the sweep's own deadline is 600s, above the 8 minutes internal/cli stops a tick at"
+  }
+  assert {
+    condition = (toset([for e in one(one(one(google_cloud_run_v2_job.coordinator[0].template).template).containers).env : e.name if length(coalesce(e.value_source, [])) == 0]) == toset([
+      "FUGARO_PROJECT", "FUGARO_FIREBASE_PROJECT", "FUGARO_RTDB_URL", "FUGARO_RUNS_BUCKET",
+      "FUGARO_COORDINATOR_REPOS", "FUGARO_GITHUB_APP_ID",
+    ]))
+    error_message = "the job's whole configuration is those six environment variables and the App key's reference, and no other entry"
+  }
+  assert {
+    condition = (toset([for e in one(one(one(google_cloud_run_v2_job.coordinator[0].template).template).containers).env : "${e.name}=${e.value}" if length(coalesce(e.value_source, [])) == 0]) == toset([
+      "FUGARO_PROJECT=aurora", "FUGARO_FIREBASE_PROJECT=fp-1234",
+      "FUGARO_RTDB_URL=https://fp-1234-default-rtdb.firebaseio.com",
+      "FUGARO_RUNS_BUCKET=fugaro-runs-proj-1234", "FUGARO_GITHUB_APP_ID=123456789",
+      "FUGARO_COORDINATOR_REPOS=[{\"provider\":\"github\",\"repo\":\"acme/webapp\"},{\"provider\":\"bitbucket\",\"repo\":\"acme/sandbox\"}]",
+    ]))
+    error_message = "the six plain entries carry the project, the FP, the database, the runs bucket, the App's ID and the repositories one tick reconciles"
+  }
+  assert {
+    condition = (length([for e in one(one(one(google_cloud_run_v2_job.coordinator[0].template).template).containers).env : e if length(coalesce(e.value_source, [])) == 1]) == 1 &&
+    one([for e in one(one(one(google_cloud_run_v2_job.coordinator[0].template).template).containers).env : e if length(coalesce(e.value_source, [])) == 1]).name == "FUGARO_GITHUB_APP_PRIVATE_KEY")
+    error_message = "the App's private key is the one entry taken from a source, so no plan and no job describe carries it"
+  }
+  assert {
+    condition = (google_secret_manager_secret_iam_member.coordinator_app_key[0].secret_id == var.project_secrets["github-app-key"] &&
+      google_secret_manager_secret_iam_member.coordinator_app_key[0].role == "roles/secretmanager.secretAccessor" &&
+    google_secret_manager_secret_iam_member.coordinator_app_key[0].member == "serviceAccount:fugaro-coordinator@proj-1234.iam.gserviceaccount.com")
+    error_message = "the App key's grant is the accessor on that one container, to the coordinator account and nobody else"
+  }
+  assert {
+    condition = (google_cloud_run_v2_job_iam_member.coordinator_runner[0].role == "projects/proj-1234/roles/fugaroJobRunner" &&
+    google_cloud_run_v2_job_iam_member.coordinator_runner[0].member == "serviceAccount:fugaro-scheduler@proj-1234.iam.gserviceaccount.com")
+    error_message = "the scheduler account may run this job and no other identity may: fugaroJobRunner on the job alone, never roles/run.invoker on the project"
+  }
+  assert {
+    condition     = google_cloud_scheduler_job.coordinator_sweep[0].schedule == "*/15 * * * *" && one(google_cloud_scheduler_job.coordinator_sweep[0].retry_config).retry_count == 0
+    error_message = "the sweep ticks every 15 minutes and is not retried: a failed tick logs its failure and the next tick is the retry"
+  }
+  assert {
+    condition     = google_cloud_scheduler_job.coordinator_sweep[0].http_target[0].uri == "https://run.googleapis.com/v2/projects/proj-1234/locations/us-east5/jobs/fugarocoord:run"
+    error_message = "the Scheduler job starts the coordinator job through the Cloud Run Admin API, naming the job's own region"
+  }
+  assert {
+    condition     = output.coordinator_job == "fugarocoord"
+    error_message = "the coordinator job's name is an output"
+  }
+}
+
+run "coordinator_deploy_needs_firebase_outputs" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    enable_budget = true
+    history = {
+      account_id       = "fugaro-history"
+      job              = "fugarohist"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/history:latest"
+      scheduler_job    = "fugaro-history-sweep"
+      scheduler_region = "us-east1"
+    }
+    coordinator = {
+      account_id       = "fugaro-coordinator"
+      job              = "fugarocoord"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/history:latest"
+      scheduler_job    = "fugaro-coordinator-sweep"
+      scheduler_region = "us-east1"
+      deploy_job       = true
+      github_app_id    = "123456789"
+      repos            = [{ provider = "github", repo = "acme/webapp" }]
+    }
+  }
+
+  expect_failures = [var.coordinator]
+}
+
+run "coordinator_job_name_must_not_be_a_workflow_job" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    enable_budget = true
+    history = {
+      account_id       = "fugaro-history"
+      job              = "fugarohist"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/history:latest"
+      scheduler_job    = "fugaro-history-sweep"
+      scheduler_region = "us-east1"
+    }
+    coordinator = {
+      account_id       = "fugaro-coordinator"
+      job              = "fugaro-coordinator"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/history:latest"
+      scheduler_job    = "fugaro-coordinator-sweep"
+      scheduler_region = "us-east1"
+    }
+  }
+
+  expect_failures = [var.coordinator]
+}
+
+run "coordinator_job_needs_a_repository" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    enable_budget = true
+    history = {
+      account_id       = "fugaro-history"
+      job              = "fugarohist"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/history:latest"
+      scheduler_job    = "fugaro-history-sweep"
+      scheduler_region = "us-east1"
+    }
+    coordinator = {
+      account_id       = "fugaro-coordinator"
+      job              = "fugarocoord"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/history:latest"
+      scheduler_job    = "fugaro-coordinator-sweep"
+      scheduler_region = "us-east1"
+      deploy_job       = true
+      firebase_project = "fp-1234"
+      rtdb_url         = "https://fp-1234-default-rtdb.firebaseio.com"
+      github_app_id    = "123456789"
+    }
+  }
+
+  expect_failures = [var.coordinator]
+}
+
+run "coordinator_app_key_must_be_a_container_this_run_creates" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    enable_budget = true
+    history = {
+      account_id       = "fugaro-history"
+      job              = "fugarohist"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/history:latest"
+      scheduler_job    = "fugaro-history-sweep"
+      scheduler_region = "us-east1"
+    }
+    coordinator = {
+      account_id       = "fugaro-coordinator"
+      job              = "fugarocoord"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/history:latest"
+      scheduler_job    = "fugaro-coordinator-sweep"
+      scheduler_region = "us-east1"
+      deploy_job       = true
+      firebase_project = "fp-1234"
+      rtdb_url         = "https://fp-1234-default-rtdb.firebaseio.com"
+      github_app_id    = "123456789"
+      repos            = [{ provider = "github", repo = "acme/webapp" }]
+    }
+  }
+
+  expect_failures = [google_secret_manager_secret_iam_member.coordinator_app_key]
+}
+
 run "TestHistoryAccountGrants" {
   command = plan
 

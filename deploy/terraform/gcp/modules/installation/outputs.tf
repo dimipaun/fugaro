@@ -81,6 +81,16 @@ output "history_job" {
   value       = local.deploy_history ? google_cloud_run_v2_job.history[0].name : null
 }
 
+output "coordinator_service_account" {
+  description = "The coordinator's writer account email (D194), or null on a run that records no coordinator. fugaro update passes it to the Firebase root, which grants it the FP's database admin — the one role that lets it write the coordinator's subtree."
+  value       = local.coordinator_on ? google_service_account.coordinator[0].email : null
+}
+
+output "coordinator_job" {
+  description = "The coordinator's aggregation job name, or null while it isn't deployed."
+  value       = local.deploy_coordinator ? google_cloud_run_v2_job.coordinator[0].name : null
+}
+
 output "credentials_service" {
   description = "The credentials service's Cloud Run service name and region, or null while the installation has not opted in (D147). A repository root grants each job account roles/run.invoker on it from these, and drops the job's model-secret accessors with it. url is the service's own URL as Cloud Run assigned it (the resource's uri), which is the audience a caller's Google ID token is minted for: it is what C1.20's stage writes back into var.credentials_service.url, because nothing inside the service resource can read its own uri (credentials.tf)."
   value = var.credentials_service == null ? null : {

@@ -129,8 +129,11 @@ resource "google_project_iam_member" "history_usage" {
 # signed-in reader alone. The role bypasses the rules, so the writer's code is
 # what keeps it to that subtree — IAM cannot, and this account can write the
 # whole database, /config included. The installation root creates the account
-# in P5, as it creates the history account's; IAM refuses a member that does
-# not exist, so until then coordinator_account is empty and nothing is granted.
+# (P5, modules/installation/coordinator.tf) and hands it here as
+# coordinator_account, so this grant exists exactly when the account does: an
+# installation whose owner has not opted in to the coordinator (fugaro update
+# --firebase-project <id> --coordinator), which is every installation by
+# default, passes an empty account and nothing is granted.
 #trivy:ignore:AVD-GCP-0007
 resource "google_project_iam_member" "coordinator_database" {
   count   = var.coordinator_account == "" ? 0 : 1
