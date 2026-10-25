@@ -165,3 +165,45 @@ func TestSetsRigorReadsTheKeyNotTheValue(t *testing.T) {
 		t.Error("a nil layer sets nothing")
 	}
 }
+
+// TestRepoRigorSetReadsTheKeyNotTheValue: the repository's own file gets the
+// same answer SetsRigor gives a project layer, and for the same reason — a
+// runner before 0.11.0 decodes fugaro.yaml with KnownFields, so what it
+// refuses is the key being written at all, an explicit null included. RepoRigor
+// is a value and cannot answer (`rigor:` decodes to a nil pointer), and it is
+// what RigorConfig reads for the mode and the area rules (D20c), where a block
+// that sets nothing and a key that is written are two different things: the
+// skew gates read this field, filing's opt-in reads that one.
+func TestRepoRigorSetReadsTheKeyNotTheValue(t *testing.T) {
+	layer := mustLayer(t, testLayer)
+	for _, c := range []struct {
+		text string
+		want bool
+	}{
+		{minimalRepo + "rigor: { default: hotfix }\n", true},
+		{minimalRepo + "rigor: {}\n", true},
+		{minimalRepo + "rigor:\n", true},
+		{minimalRepo + "git: { pr: { labels: [mine] } }\n", false},
+		{minimalRepo, false},
+	} {
+		cfg, _, ps := Resolve([]byte(c.text), layer)
+		if len(ps) > 0 {
+			t.Fatalf("%s: %v", c.text, ps)
+		}
+		if cfg.RepoRigorSet != c.want {
+			t.Errorf("RepoRigorSet = %v, want %v for\n%s", cfg.RepoRigorSet, c.want, c.text)
+		}
+	}
+	// The answer is the file's own key, never the merged one: a file that
+	// writes the key over a layer that sets nothing still counts.
+	null, _, ps := Resolve([]byte(minimalRepo+"rigor:\n"), layer)
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	if !null.RepoRigorSet {
+		t.Error("a file that writes rigor: over a project layer lost its own key")
+	}
+	if null.RepoRigor != nil {
+		t.Errorf("a null block resolved a value: %+v", null.RepoRigor)
+	}
+}
