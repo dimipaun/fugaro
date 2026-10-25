@@ -22,7 +22,7 @@ func TestDocsNameUpgrade(t *testing.T) {
 	// unrelated prose) so it never reaches past the command's own usage.
 	flagRE := regexp.MustCompile(`\x60fugaro upgrade((?:\s+(?:\[[^\]]*\]\.*|--[a-z][a-z-]*))*)`)
 	flagTokenRE := regexp.MustCompile(`--[a-z][a-z-]*`)
-	for _, path := range []string{"../../README.md", "../../docs/gcp-setup.md", "../../docs/release.md", "../../.claude/skills/new-release/SKILL.md", "../../docs/design/v1.md"} {
+	for _, path := range []string{"../../README.md", "../../docs/release.md", "../../.claude/skills/new-release/SKILL.md", "../../docs/design/v1.md"} {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)

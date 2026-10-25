@@ -232,16 +232,14 @@ func TestDocsCheck82RulesDeployComesBeforeTheMarker(t *testing.T) {
 	}
 
 	// The support the sentence cites: the parenthesis after "never before".
-	// docs/gcp-setup.md's "Deploying the rules is an owner step" states the
-	// step's order the other way round -- it called the rules the last write of
-	// the database step -- so it cannot be the support for this one; the
-	// review of PR #580 found the preamble citing it for exactly that, and an
-	// owner who followed the citation landed on the inverted order. The
-	// paragraph now names the code for the order and warns about the page in
-	// its own words. The page itself is corrected in this round and pinned by
-	// TestGcpSetupDatabaseStepOrderIsTheCodes, so this clause is now about the
-	// citation rather than about a page that disagrees: the order belongs in
-	// the check, next to the steps it governs.
+	// It has to name the code rather than a page. The step's order was once
+	// stated the other way round in docs/gcp-setup.md's "Deploying the rules is
+	// an owner step" bullet -- the rules as the database step's last write --
+	// and the review of PR #580 found the preamble citing it for exactly that,
+	// so an owner who followed the citation landed on the inverted order. That
+	// bullet's page is the short setup path now and carries no step at all,
+	// which leaves the order where the paragraph already puts it: in the check,
+	// next to the steps it governs.
 	_, cited, ok := strings.Cut(section, "the marker is written **after** the rules, never before (")
 	if !ok {
 		t.Fatalf("## Check 82: the preamble no longer carries the sentence stating that the marker is written after the rules: this test reads the support it cites from it, and the check needs the sentence")
@@ -251,7 +249,7 @@ func TestDocsCheck82RulesDeployComesBeforeTheMarker(t *testing.T) {
 		t.Fatalf("## Check 82: the sentence stating the order has no closing parenthesis after it, so the support it cites cannot be read")
 	}
 	if strings.Contains(support, "docs/gcp-setup.md") {
-		t.Errorf("## Check 82: the order sentence's support cites docs/gcp-setup.md:\n%s\nits \"Deploying the rules is an owner step\" paragraph calls the rules the database step's last write, where the marker is, so it supports the opposite of the claim it is cited for and the owner who follows it lands on the inverted order", support)
+		t.Errorf("## Check 82: the order sentence's support cites docs/gcp-setup.md:\n%s\nthat page's \"Deploying the rules is an owner step\" paragraph called the rules the database step's last write, where the marker is, so it supports the opposite of the claim it is cited for and the owner who follows it lands on the inverted order", support)
 	}
 
 	// The order the sentence describes, read out of the file it names.
@@ -348,31 +346,13 @@ func TestDocsMarkerOrderIsNotAFailClosedClaim(t *testing.T) {
 		}
 	}
 
-	for _, c := range []struct{ text, where string }{
-		{section, "## Check 82:"},
-		{gcpSetupRulesBullet(t), "docs/gcp-setup.md's rules-deploy bullet"},
-	} {
-		if strings.Contains(c.text, "fails closed") || strings.Contains(c.text, "fail closed") {
-			t.Errorf("%s claims a runner fails closed on a marker that is absent or above this binary's generation: an absent marker is generation 0, the legacy path (the policy nodes are simply not read, and nothing is refused), and a marker above this generation reads as deployed, so the policy under it is read and enforced -- what fails closed is a policy node that exists and cannot be read or decoded (`internal/runner/projectpolicy.go`'s `unreadablePolicy`)", c.where)
-		}
+	// The setup page's rules-deploy bullet was checked here too, as the second
+	// text stating the same order. That page is the short setup path now and the
+	// bullet is gone with it, so the check's own preamble is the text left to
+	// hold.
+	if strings.Contains(section, "fails closed") || strings.Contains(section, "fail closed") {
+		t.Errorf("## Check 82: claims a runner fails closed on a marker that is absent or above this binary's generation: an absent marker is generation 0, the legacy path (the policy nodes are simply not read, and nothing is refused), and a marker above this generation reads as deployed, so the policy under it is read and enforced -- what fails closed is a policy node that exists and cannot be read or decoded (`internal/runner/projectpolicy.go`'s `unreadablePolicy`)")
 	}
-}
-
-// gcpSetupRulesBullet is the "Deploying the rules is an owner step" bullet of
-// docs/gcp-setup.md, the page check 82's preamble is held to.
-func gcpSetupRulesBullet(t *testing.T) string {
-	t.Helper()
-	data, err := os.ReadFile("../../docs/gcp-setup.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.Contains(line, "Deploying the rules is an owner step") {
-			return line
-		}
-	}
-	t.Fatalf("docs/gcp-setup.md has no line saying \"Deploying the rules is an owner step\": this test holds that bullet's account of the marker to the code")
-	return ""
 }
 
 // TestDocsCheck81StepsNameTheIdsTheyInherit: check 81's steps mint ids into
@@ -442,86 +422,14 @@ func TestDocsCheck81StepsNameTheIdsTheyInherit(t *testing.T) {
 	}
 }
 
-// TestGcpSetupDatabaseStepOrderIsTheCodes: the third finding of the PR #580
-// review, on the page check 82's preamble had cited for the deploy order.
-// docs/gcp-setup.md's "Deploying the rules is an owner step" bullet called the
-// rules the database step's **last write**, where the marker is, and said a
-// database whose rules already match "reports `No changes`" -- a line
-// `applyRoot` prints for an empty Terraform root, not this step's sentence.
-// Both claims were the reverse of the code, and an owner who read the page
-// before running the step expected a plan without a marker write and a settled
-// database that prints a line it never prints.
-//
-// The bullet is now written from the code, and this test holds it there: the
-// order it states is read against `DB.Plan` in internal/infra/firebasedb.go,
-// the two lines it distinguishes against internal/cli/init_firebase.go's
-// `deployDatabase` (the settled line and its `len(acts) == 0 && !idp.missing &&
-// !fs.Pending()` guard) and `applyRoot`'s "No changes", and the act line it
-// quotes against the format `DB.Plan` prints.
-func TestGcpSetupDatabaseStepOrderIsTheCodes(t *testing.T) {
-	const path = "../../docs/gcp-setup.md"
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var bullet string
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.Contains(line, "Deploying the rules is an owner step") {
-			bullet = line
-			break
-		}
-	}
-	if bullet == "" {
-		t.Fatalf("%s has no line saying \"Deploying the rules is an owner step\": this test holds that bullet's account of the database step to the code, so it cannot check a page that no longer carries it", path)
-	}
-
-	// The order, as the plan makes it.
-	src := readSrc(t, "../infra/firebasedb.go")
-	rules := strings.Index(src, `Path: "rules"`)
-	marker := strings.Index(src, "d.put(projectpolicy.PathRulesMarker()")
-	if rules < 0 || marker < 0 {
-		t.Fatalf("internal/infra/firebasedb.go no longer plans the rules action and the marker (got %d and %d): the page's account of the order is written against them", rules, marker)
-	}
-	if rules > marker {
-		t.Errorf("DB.Plan plans the marker write (%d) before the rules action (%d): docs/gcp-setup.md says the rules go first and the marker after, and this test holds the sentence to the code -- if the order really changed, rewrite the page with it", marker, rules)
-	}
-	for _, want := range []string{
-		"then the rules, and **then the generation marker**",
-		"the marker is written **after** the rules and never before",
-	} {
-		if !strings.Contains(bullet, want) {
-			t.Errorf("%s: the \"Deploying the rules is an owner step\" bullet does not say %q: `DB.Plan` appends the rules action and then plans the marker with its `d.put(projectpolicy.PathRulesMarker(), ...)` call, and the marker being last is what makes its presence a statement about the document under it -- the page an owner reads before the step has to say the same thing", path, want)
-		}
-	}
-	if strings.Contains(bullet, "last write") {
-		t.Errorf("%s: the bullet calls a write the database step's \"last write\": the marker is the last one, and a page that names the rules there has the owner read a missing marker as a deploy that landed", path)
-	}
-
-	// The two lines the bullet distinguishes: the stage's "No changes" and the
-	// database step's settled sentence.
-	const settled = "The database already has the rules, mark, project name and mode."
-	if !strings.Contains(readSrc(t, "init_firebase.go"), settled) {
-		t.Errorf("internal/cli/init_firebase.go no longer prints %q: the page quotes it as what a database step with nothing pending prints", settled)
-	}
-	if !strings.Contains(bullet, settled) {
-		t.Errorf("%s: the bullet does not quote %q, the line a database step with nothing pending prints: it is the line the reader is told to expect, and the page's account of the step is what they compare their run against", path, settled)
-	}
-	if !strings.Contains(bullet, "`No changes` is `fugaro setup`'s line for a stage with nothing to do, not this step's") {
-		t.Errorf("%s: the bullet does not say that `No changes` is a stage's line rather than the database step's (internal/cli's `init_firebase.go` prints it for a Terraform root with an empty plan, and the database step's own no-op sentence is %q): the sentence it replaced said a database whose rules match \"reports `No changes`\", which no run of the step prints", path, settled)
-	}
-	if !strings.Contains(bullet, "**no rules line**") || !strings.Contains(bullet, "the **marker** write") {
-		t.Errorf("%s: the bullet does not say that a database whose rules already match prints no rules line but still plans the marker write when the marker is absent or holds another generation (`DB.Plan` plans the marker whenever `!markerFound || markerGen != RulesVersion`): that run is the one an owner of a pre-generation-3 installation is about to see, and the page has to describe it", path)
-	}
-
-	// The act line the bullet tells the reader to look for, as the plan prints
-	// it.
-	if !strings.Contains(src, "deploys the security rules (%d bytes, generated)") {
-		t.Errorf("internal/infra/firebasedb.go no longer prints the rules act line as \"deploys the security rules (%%d bytes, generated)\": docs/gcp-setup.md tells the owner to confirm the step when it lists that line")
-	}
-	if !strings.Contains(bullet, "deploys the security rules (… bytes, generated)") {
-		t.Errorf("%s: the bullet does not name the act line the reader confirms the step on (\"deploys the security rules (… bytes, generated)\", `DB.Plan`'s own wording with the byte count elided): the page tells them what to look for, so it has to be the line the CLI prints", path)
-	}
-}
+// The database step's order and the two lines it distinguishes were pinned here
+// against docs/gcp-setup.md's "Deploying the rules is an owner step" bullet.
+// That page is the short setup path now and the bullet is gone with it (this
+// review's finding: the page carries the fresh-setup path only, and the steps
+// moved to the checks that govern them). The order is still held to the code:
+// check 82's own preamble states it and TestDocsCheck82RulesDeployComesBeforeTheMarker
+// reads `DB.Plan` for it, and TestDocsCheck82PrintVarsKeys below holds the
+// database step's settled line to init_firebase.go.
 
 // TestDocsCheck82PrintVarsKeys: check 82 step 2 tells the owner to read the
 // resolved Firebase project and the region out of `fugaro update
