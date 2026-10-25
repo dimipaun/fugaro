@@ -35,8 +35,14 @@ func rigorSkewLayer(t *testing.T) *config.ProjectLayer {
 // and fugaro update --repo refuses to deploy a job that would. The boundary is
 // the constant's own: one release below is refused, the constant and one above
 // pass, a base that is not a release only warns, and no base at all passes.
+//
+// The repository's half is the key being written (RepoRigorSet), not the block
+// being set: `rigor:` with nothing under it is a line an older runner's
+// KnownFields decoder refuses, so it is refused here too, while a file that
+// writes no key at all asks nothing of the image.
 func TestUpdateRepoRefusesRigorOnOlderBaseImage(t *testing.T) {
-	withBlock := &config.Config{RepoRigor: &config.Rigor{Default: rigor.Hotfix}}
+	withBlock := &config.Config{RepoRigor: &config.Rigor{Default: rigor.Hotfix}, RepoRigorSet: true}
+	nullBlock := &config.Config{RepoRigorSet: true}
 	below, above := shiftRelease(t, rigorSince, -1), shiftRelease(t, rigorSince, 1)
 	lc := func(ref string) *localcfg.Config {
 		if ref == "" {
@@ -51,22 +57,24 @@ func TestUpdateRepoRefusesRigorOnOlderBaseImage(t *testing.T) {
 	r := &initRun{o: &initOptions{}, cmd: cmd, w: &out}
 
 	older := "ghcr.io/dimipaun/fugaro-base:" + below
-	err := r.gateRigor(r.o, "acme/app", lc(older), withBlock)
-	if err == nil || ExitCode(err) != ExitUserError {
-		t.Fatalf("err = %v, want refused", err)
-	}
-	for _, want := range []string{
-		"fugaro " + rigorSince + " or later",
-		older + ", release " + below,
-		"fugaro update --base base",
-		"fugaro.yaml's rigor: block of acme/app",
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("%v lacks %q", err, want)
+	for _, cfg := range []*config.Config{withBlock, nullBlock} {
+		err := r.gateRigor(r.o, "acme/app", lc(older), cfg)
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("%+v: err = %v, want refused", cfg, err)
 		}
-	}
-	if errOut.Len() != 0 {
-		t.Errorf("stderr = %q, want none (refused, not warned)", errOut.String())
+		for _, want := range []string{
+			"fugaro " + rigorSince + " or later",
+			older + ", release " + below,
+			"fugaro update --base base",
+			"fugaro.yaml's rigor: block of acme/app",
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%+v: %v lacks %q", cfg, err, want)
+			}
+		}
+		if errOut.Len() != 0 {
+			t.Errorf("stderr = %q, want none (refused, not warned)", errOut.String())
+		}
 	}
 
 	for _, ref := range []string{"ghcr.io/dimipaun/fugaro-base:" + rigorSince, "ghcr.io/dimipaun/fugaro-base:" + above, ""} {
@@ -122,9 +130,9 @@ func TestRigorSkewNamesTheLayerThatWroteIt(t *testing.T) {
 		subject string
 		absent  string
 	}{
-		{"repo", &config.Config{RepoRigor: &config.Rigor{}}, "fugaro.yaml's rigor: block of acme/app", "defaults.rigor"},
+		{"repo", &config.Config{RepoRigorSet: true}, "fugaro.yaml's rigor: block of acme/app", "defaults.rigor"},
 		{"layer", &config.Config{Layer: layer}, "the project layer's defaults.rigor (read for acme/app)", "fugaro.yaml's rigor"},
-		{"both", &config.Config{Layer: layer, RepoRigor: &config.Rigor{}}, "fugaro.yaml's rigor: block and the project layer's defaults.rigor of acme/app", ""},
+		{"both", &config.Config{Layer: layer, RepoRigorSet: true}, "fugaro.yaml's rigor: block and the project layer's defaults.rigor of acme/app", ""},
 	} {
 		err := r.gateRigor(r.o, "acme/app", older, c.cfg)
 		if err == nil || !strings.Contains(err.Error(), c.subject) {
@@ -247,8 +255,15 @@ const (
 )
 
 // rigorSkewCheckout makes the working directory a checkout of acme/other whose
-// fugaro.yaml is repoYAML.
-func rigorSkewCheckout(t *testing.T, f *cloudFixture, repoYAML string) {
+// fugaro.yaml is repoYAML, committed at the ref a launch of it resolves
+// (rigorSkewHead's git.base_branch: develop), and returns the directory.
+//
+// The commit is the point: rigorLaunchSources' judge is the file the run
+// checks out rather than the launcher's working tree (cascadeRefConfig), and a
+// checkout with nothing committed leaves readFugaroYAMLAtRef failing, so every
+// test that used one fell back to checkoutConfig and exercised the ref read
+// nowhere.
+func rigorSkewCheckout(t *testing.T, f *cloudFixture, repoYAML string) string {
 	t.Helper()
 	testutil.IsolateGit(t)
 	f.run.AddJob(gcp.JobName(mustSlug("github", "acme/other"), "svc"), "2", "4Gi")
@@ -256,7 +271,19 @@ func rigorSkewCheckout(t *testing.T, f *cloudFixture, repoYAML string) {
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
 	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": repoYAML, "build.sh": "true\n", "test.sh": "true\n"})
+	commitRef(t, dir, "develop")
 	t.Chdir(dir)
+	return dir
+}
+
+// commitRef commits everything in dir and points refs/remotes/origin/<ref> at
+// the commit, the ref a launch resolves when no --ref is given and the local
+// config registers none: checkoutFugaroYAMLAtRef's first candidate.
+func commitRef(t *testing.T, dir, ref string) {
+	t.Helper()
+	testutil.Git(t, dir, "add", "-A")
+	testutil.Git(t, dir, "commit", "-q", "-m", "the ref's files")
+	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/"+ref, "HEAD")
 }
 
 // TestRunRefusesRigorOnAnOlderBaseImage is rigorSince's launch gate, which
@@ -331,8 +358,11 @@ func TestRunRefusesTheLayersRigorOnAnOlderBaseImage(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
 	publishedLayer(t, f, layerWithDefaults("  rigor: { default: critical }\n"))
-	layerCheckout(t, f, minimalAnchored)
+	dir := layerCheckout(t, f, minimalAnchored)
 	registerOtherLocally(t, f)
+	// Committed at the ref the launch resolves (the local config's base_branch
+	// for acme/other, main): the gate reads the ref's own file.
+	commitRef(t, dir, "main")
 	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, rigorSince, -1))
 	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
 	if ExitCode(err) != ExitUserError {
@@ -391,6 +421,36 @@ func TestRunDoesNotGateAFileThatWritesNoRigor(t *testing.T) {
 	if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task"); err != nil {
 		t.Fatalf("a file that writes no rigor: block must not be gated: %v", err)
 	}
+}
+
+// TestRunJudgesTheRefsFileNotTheWorkingTree: the judge is the file the run
+// checks out, not the launcher's tree (cascadeRefConfig's own reason, which the
+// auth read has always followed). The checkout below commits one document and
+// leaves another in the working tree, once each way round: a gate that read the
+// tree would refuse a run that carries no rigor at all, and launch one that
+// dies at bootstrap on the key.
+func TestRunJudgesTheRefsFileNotTheWorkingTree(t *testing.T) {
+	older := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, rigorSince, -1)
+	withBlock := rigorSkewHead + "rigor: { default: hotfix }\n" + rigorSkewWorkflow
+	t.Run("the ref writes it", func(t *testing.T) {
+		f := newCloudFixture(t)
+		dir := rigorSkewCheckout(t, f, withBlock)
+		testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": rigorSkewHead + rigorSkewWorkflow})
+		writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", older)
+		_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro.yaml's rigor: block of acme/other") {
+			t.Fatalf("err = %v, want the launch refused on the ref's file", err)
+		}
+	})
+	t.Run("the working tree writes it", func(t *testing.T) {
+		f := newCloudFixture(t)
+		dir := rigorSkewCheckout(t, f, rigorSkewHead+rigorSkewWorkflow)
+		testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": withBlock})
+		writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", older)
+		if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task"); err != nil {
+			t.Fatalf("the ref writes no rigor: block, so the launch must not be gated: %v", err)
+		}
+	})
 }
 
 // validateRigor runs fugaro validate on a repository file whose top level

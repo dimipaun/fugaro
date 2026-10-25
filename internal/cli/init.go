@@ -3400,7 +3400,11 @@ func (r *initRun) gateCascadeAuth(o *initOptions, repo string, lc *localcfg.Conf
 
 // gateRigor is fugaro update --repo's gate for rigorSince: refuseRigorSkew,
 // with the same escapes as gateCascadeAuth (--forget and --plan-only deploy
-// nothing; --print-vars is judged, its warnings on stderr).
+// nothing; --print-vars is judged, its warnings on stderr). The repository's
+// half is RepoRigorSet rather than RepoRigor != nil: an explicit null
+// (`rigor:`) writes the key and decodes to no block, and a runner older than
+// rigorSince refuses the key, so a nil-pointer test would deploy a job that
+// dies at bootstrap on a line the operator did write.
 func (r *initRun) gateRigor(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
 	if o.forget || o.planOnly || cfg == nil {
 		return nil
@@ -3409,7 +3413,7 @@ func (r *initRun) gateRigor(o *initOptions, repo string, lc *localcfg.Config, cf
 	if o.printVars {
 		w = r.cmd.ErrOrStderr()
 	}
-	return refuseRigorSkew(repo, cfg.RepoRigor != nil, cfg.Layer.SetsRigor(), lc.BaseImage(config.BaseKind), w)
+	return refuseRigorSkew(repo, cfg.RepoRigorSet, cfg.Layer.SetsRigor(), lc.BaseImage(config.BaseKind), w)
 }
 
 // checkVertexBudget refuses a repository whose fugaro.yaml authenticates
