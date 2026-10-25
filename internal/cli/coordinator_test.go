@@ -734,6 +734,51 @@ func TestCoordinatorStatusRefusesAMalformedAppKeyAsTheCallers(t *testing.T) {
 	}
 }
 
+// With the installation's credentials service on, the App's key is the
+// service's (C2.2, D145) and this process holds none. This command mints its
+// own read-only token from that key, so there is no credential here to work
+// with -- and a key read anyway would be one the environment says is not this
+// process's to hold, which is the rule providers.FromEnv keeps for the run path
+// and the one the coordinator's own mint has to keep too. The service mints a
+// RUN's token and this read is not a run, so there is nothing to ask it for
+// either: the command is refused rather than served the wrong credential.
+//
+// The refusal is the caller's (exit 1), because the environment they are
+// running in is theirs, and it happens before anything is opened or minted --
+// the empty fixture is here to prove that: a key present in the environment
+// beside the service URL changes nothing.
+func TestCoordinatorStatusRefusesToMintWhenTheServiceHoldsTheKey(t *testing.T) {
+	srv := httpfixture.Serve(t, filepath.Join("testdata", "coordinator_no_requests.json"))
+	realOpen := openCoordinatorProvider
+	t.Setenv(providers.EnvGitHubAppID, "12345")
+	t.Setenv(providers.EnvGitHubAppKey, appKeyPEM(t))
+	t.Setenv(providers.EnvGitHubAPIURL, srv.URL)
+	t.Setenv(providers.EnvCredentialsServiceURL, "https://credentials.example")
+
+	newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	setCoordinatorHost(t, realOpen)
+	_, _, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--since", "0")
+	if err == nil {
+		t.Fatalf("the credentials service holds the App's key and the command read one anyway")
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("the service holds the key: exit %d, want %d: the environment the caller is running in is the caller's to fix",
+			ExitCode(err), ExitUserError)
+	}
+	if !strings.Contains(err.Error(), providers.EnvCredentialsServiceURL) {
+		t.Errorf("the service holds the key: %v, want a failure naming %s", err, providers.EnvCredentialsServiceURL)
+	}
+
+	// The mint is the second place the credential is read, and it answers the
+	// same way: the opener's refusal above is what a person meets, and this is
+	// the assertion that the two halves of the command cannot disagree.
+	if _, _, err := coordinatorMint(context.Background(), "acme/app"); ExitCode(err) != ExitUserError ||
+		!strings.Contains(err.Error(), providers.EnvCredentialsServiceURL) {
+		t.Errorf("the mint with the service holding the key: exit %d, %v, want exit %d naming %s",
+			ExitCode(err), err, ExitUserError, providers.EnvCredentialsServiceURL)
+	}
+}
+
 // coordinatorSource is a TokenSource whose answer a test decides.
 type coordinatorSource struct{ token string }
 

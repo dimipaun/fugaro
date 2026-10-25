@@ -599,6 +599,17 @@ func coordinatorReader(warn io.Writer) (coordinator.Reader, error) {
 // A person holding a key that is not a key would be told GitHub failed and
 // would retry it.
 func coordinatorAppCredential() (appID string, key *rsa.PrivateKey, pemData string, err error) {
+	// With the installation's credentials service on, the App's key is the
+	// service's (C2.2, D145) and this process holds none: reading one here would
+	// be reaching for a key the platform meant to withhold, which is the rule
+	// providers.FromEnv keeps for the run path and the one the coordinator's own
+	// mint has to keep too. The service mints a RUN's token and this read is not
+	// a run, so there is nothing to ask it for either: the command is refused
+	// rather than served the wrong credential. A key that is somehow in the
+	// environment anyway changes nothing, exactly as it changes nothing there.
+	if os.Getenv(providers.EnvCredentialsServiceURL) != "" {
+		return "", nil, "", userErr("%s is set, so the installation's credentials service holds the GitHub App's key and this command holds none: the project-wide read mints its own read-only token from the App's key, and the service mints a run's. Run the read where the key is", providers.EnvCredentialsServiceURL)
+	}
 	appID = os.Getenv(providers.EnvGitHubAppID)
 	if appID == "" {
 		return "", nil, "", userErr("%s is not set: the project-wide read mints the coordinator's own token and needs the GitHub App's ID (see docs/git-providers.md)", providers.EnvGitHubAppID)
