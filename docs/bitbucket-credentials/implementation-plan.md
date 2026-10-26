@@ -32,8 +32,16 @@ written to the owner's answers of 2026-10-26:
 - **O7, answered.** Review-only and artifact runs get **no** write token. This is moot while runs
   keep per-repository tokens, and it is the rule for whenever S3 returns.
 - **O3** (the per-repository flip of T3.6) is parked with S3.
-- **O4** makes Check 145 a precondition of T2.3, the only mint left in the active plan.
-- **O6** is the read mint's custody, recorded as a residual risk.
+- **Still waiting on the owner:**
+  - **O4** makes Check 145 a precondition of T2.3, the only mint left in the active plan. The plan
+    is written to it.
+  - **O6** is the read mint's custody. The plan is written to "accept and document" (T2.11).
+- **To ask the owner (from the amendment review):** the read half of Check 148 is parked with the
+  rest of Check 148. That half is the stop, rotation and transfer drill for the read consumer, and
+  U13. Should it come back into S2? D367 asks for rotation and ownership transfer to be a task
+  **and** a check.
+- **Recorded reading of O2:** "two consumers" is read as the design, so only the read kind is built
+  now.
 
 **The active plan is S0–S2.** S3 is kept below as a parked slice. Its tasks keep their numbers, and
 none of them may start until the owner unparks S3.
@@ -302,7 +310,11 @@ unchanged, and `textContent` only.
 - **Tests:**
   - `TestCoordinatorCallerOnlyOnReadRoute`;
   - `TestCoordinatorCallerRefusedOtherAccounts`;
-  - `TestReadMintNeverUsesRunConsumer`;
+  - `TestReadMintUsesOnlyTheReadKind`: the read route reads only the read kind's key. The G3
+    cross-use test returns with S3;
+  - `TestReadMintRefusesWriteScopes`: when the token response lists scopes (U11), a token carrying
+    any write scope is refused and audited. This holds even if the installing person created the
+    "read" consumer with write scopes;
   - `TestReadMintAuditedOnce`;
   - `TestReadMintFailsClosedUnaudited`;
   - `TestReadMintRefusedWithoutReadConsumer`;
@@ -435,7 +447,7 @@ deploy it (F23, F24).**
   - whether the sandbox's plan admits consumers (U4);
   - the seat count before and after (U5);
   - whether IP allowlisting applies (U8). If the sandbox's plan offers no allowlisting, U8 stays
-    UNVERIFIED, and T3.4 says so in SECURITY.md;
+    UNVERIFIED, and T2.11 says so in SECURITY.md;
   - whether the scopes appear in the response (U11);
   - whether two grants return distinct tokens (U12);
   - whether the creator must be an admin, and whether the token reaches admin endpoints (U14);
@@ -457,7 +469,9 @@ deploy it (F23, F24).**
 - **What the owner types:** `scripts/live-checks/check145.sh --consumer-file <path> --workspace <sandbox> --second-workspace <sandbox-2>`.
 - **Depends on:** T2.7 and T0.2.
 - **Gate:** T2.3 and T3.1 do not merge before this check passes.
-- **If U3 shows reach beyond the workspace:** D363 goes back to the owner (O4).
+- **If U3 shows reach beyond the workspace:** D360 and D361, the read consumer's reach, go back to
+  the owner before T2.3 merges (O4, amended 2026-10-26).
+- **Also shows:** that a write with the read token is refused (see T2.3's read-only guard).
 
 **T2.9 The Check 146 script.**
 
@@ -480,6 +494,7 @@ deploy it (F23, F24).**
 **T2.11 SECURITY.md for S2.**
 
 - **What it says:**
+  - whether IP allowlisting applies to the read token (U8), or that it is unknown;
   - the coordinator's caller class at the credentials service;
   - the read consumer's reach: everything the installing person can read in the workspace, or
     beyond it if U3 says so;
@@ -579,7 +594,7 @@ deferred until a push and pull-request proxy exists (D363(d)), and it is not can
   - `TestRunMintRefusedWhenStopped` (global and per repository);
   - `TestCoordinatorRefusedOnRunMint`.
 - **Command:** `go test ./internal/credsvc -run 'RunMint|CoordinatorRefusedOnRunMint' -count=1`.
-- **Depends on:** T2.3 (same files), T2.8 (Check 145) and O1.
+- **Depends on:** T2.3 (same files), T2.8 (Check 145) and the unparking of S3 (O1 answered 2026-10-26: parked).
 - **Red step:** run `TestRunMintRefusesGitHubJobWithSameName` against a mint that strips the
   provider prefix and matches `<owner>/<name>` against the allow-list; it must fail.
 - **Reviewer:** **opus + mandatory independent review**. **Owner-run:** no.
@@ -617,7 +632,7 @@ deferred until a push and pull-request proxy exists (D363(d)), and it is not can
   - `TestRunnerNeverInstallsGitHubSourceOnBitbucket`;
   - `TestBitbucketRunTokenRedacted`.
 - **Command:** `go test ./internal/gitprov/... -run 'BitbucketRunToken|NoFallback|RunPathUnchanged|APIRootOverride' -count=1 && go test -timeout 40m ./internal/runner -run 'RefreshGitAuthBitbucketService|NeverInstallsGitHubSource|BitbucketRunTokenRedacted' -count=1`.
-- **Depends on:** T3.1, T2.5 (same `service.go`), T3.0 and O1.
+- **Depends on:** T3.1, T2.5 (same `service.go`), T3.0 and the unparking of S3 (O1 answered 2026-10-26: parked).
 - **Red step:** run `TestBitbucketNoFallbackToMountedToken` against an opener that reads
   `FUGARO_BITBUCKET_TOKEN` first; it must fail.
 - **Reviewer:** **opus + mandatory independent review**. **Owner-run:** no.
@@ -629,7 +644,7 @@ deferred until a push and pull-request proxy exists (D363(d)), and it is not can
   - An allow-list entry without the switch still exposes the token (T3.0).
 - **Commit:** `runner: Bitbucket run tokens from the credentials service`.
 
-**T3.3 Comment identity and the cross-repository trust paths (F19, F28). HELD on O1.**
+**T3.3 Comment identity and the cross-repository trust paths (F19, F28). PARKED with S3.**
 
 - **What it does:** implements O1's chosen option.
 - **Its tests hold under every option:**
@@ -647,7 +662,7 @@ deferred until a push and pull-request proxy exists (D363(d)), and it is not can
   - `internal/followup/trust.go`, `internal/followup/select.go` and their existing tests;
   - `internal/runner/reviewmode.go` and `internal/runner/reviewmode_test.go`.
 - **Command:** `go test ./internal/followup ./internal/gitprov/bitbucket -run 'Self|Steer|PRAuthor|NoAccountScope' -count=1 && go test -timeout 40m ./internal/runner -run ReviewModeSameRepo -count=1`.
-- **Depends on:** O1.
+- **Depends on:** the unparking of S3 (O1 answered 2026-10-26: parked).
 - **Red step:** `TestAgentCommentAsPersonNeverSteers` fails against a `Self` that counts marked
   comments only.
 - **Reviewer:** **opus + mandatory independent review**. **Owner-run:** no.
@@ -663,8 +678,8 @@ deferred until a push and pull-request proxy exists (D363(d)), and it is not can
     (F20). They can set off any repository's Pipelines with its secured variables and deploy
     identity, and push to any protected branch the person is exempt from (F26).
   - The allow-list decides who receives a token, not what the token reaches.
-  - Artifact and review runs in an allow-listed repository also receive a write token, unless O7
-    rules otherwise (F33).
+  - Artifact and review runs never receive a write token. O7 was answered on 2026-10-26, and its
+    rule binds S3 when it returns (F33).
   - Advice: keep the owner out of required approvers, merge checks and branch-restriction
     exemptions, and out of deployment environments' permitted users.
 - **Sentences to replace:** today's SECURITY.md sentences that S3 makes false. These are §"Narrow
@@ -724,7 +739,7 @@ deferred until a push and pull-request proxy exists (D363(d)), and it is not can
 - **Reviewer:** **opus + mandatory independent review**. **Owner-run:** no.
 - **Commit:** `credsvc: the Bitbucket run token's scopes are the minimum`.
 
-**T3.6 The per-repository drop of the job's own `bitbucket-token` (F22, O3). HELD on O1.**
+**T3.6 The per-repository drop of the job's own `bitbucket-token` (F22, O3). PARKED with S3.**
 
 - **What it builds:** a repository's `bitbucket_via_service` switch becomes a per-repository module
   input. When that input is on **and** the owner's flip (`bitbucket_token_service_held`) is set, the repository's workflow job loses its `bitbucket-token` mount and
@@ -751,7 +766,7 @@ deferred until a push and pull-request proxy exists (D363(d)), and it is not can
 - **Tests:** tftest runs for: the switch off; the switch on without the flip; the switch on with the
   flip, where the build grant survives. Also the `internal/infra` spec tests.
 - **Command:** as in T2.4, in the `repo` root, plus `go test ./deploy/terraform -run ServiceHeld -count=1`.
-- **Depends on:** T3.0 (same module files), T3.1, T2.4 (same golden plans and `cover.go`) and O1.
+- **Depends on:** T3.0 (same module files), T3.1, T2.4 (same golden plans and `cover.go`) and the unparking of S3 (O1 answered 2026-10-26: parked).
 - **Red step:** the "build grant survives" run fails against a drop that removes it.
 - **Reviewer:** **opus + mandatory independent review**. **Owner-run:** the flip.
 - **Commit:** `terraform: the per-repository, owner-flipped drop of the job's bitbucket-token`.
@@ -818,6 +833,11 @@ changes.
 | File | Writers (level) |
 | --- | --- |
 | `internal/cli/coordinator.go` | T1.1 (L0), T2.5 (L3) |
+| `internal/cli/coordinator_view.go`, `coordinator_view_test.go`, `internal/coordinator/state.go`, `state_test.go` | T1.1 (L0) |
+| `scripts/live-checks/check145.sh`, `check145_test.sh` | T2.7 (L0) |
+| `scripts/live-checks/check146.sh`, `check146_test.sh` | T2.9 (L4) |
+| `internal/cli/coordinator_sweep_bitbucket_test.go`, `internal/gitprov/bitbucket/service_test.go`, `internal/coordinator/project_test.go` | T2.5 (L3) |
+| `internal/cli/docs_bitbucket_runbook_test.go` | T2.6 (L2) |
 | `website/content/cli-reference.md` | T1.1 (L0), T2.2 (L1) |
 | `internal/credsvc/bundle.go`, `schemas/creds-bundle.schema.json`, `internal/cli/creds.go` | T2.2 (L1) |
 | `internal/credsvc/bitbucket.go`, `auth.go`, `server.go`, `audit.go`, `wire.go`, `internal/cli/credentials_serve.go` | T2.3 (L2) |
@@ -869,6 +889,8 @@ These go in the `### For operators` section of the release notes, in the PR that
     an older service still reads halts every model call and every GitHub mint.
   - **Then** create the read consumer as the installing person, with read scopes only, and run
     `fugaro creds set bitbucket-read-consumer`.
+  - Never write a `bitbucket-run-consumer` entry by hand. That kind is unknown until S3 returns.
+    The loader refuses the whole bundle on it, and every model call and every GitHub mint halts.
 - **Parked with S3. These are not release actions until S3 returns.**
 - **T3.0 and T3.2**, per repository:
   - First rebuild the repository's image, so that its runner knows the service path.

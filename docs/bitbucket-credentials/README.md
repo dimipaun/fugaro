@@ -15,8 +15,12 @@ answers approve the reconciliation. Each task of the plan still needs the owner'
 - **T1 is moot** until S3 returns.
 - The active plan is **S0–S2**: the key-free stored-view read, and Bitbucket in the coordinator
   job through the service's read consumer.
-- O4 makes Check 145 a precondition of the read mint. O6 is a recorded residual risk, O5 a record,
-  and O3 is parked with S3.
+- **Still waiting on the owner:**
+  - O4, which makes Check 145 a precondition of the read mint;
+  - O6, the read mint's custody;
+  - whether the read half of Check 148 (the read consumer's rotation drill) should come back into
+    S2.
+- O5 is a record, and O3 is parked with S3.
 
 **Spec owner:** the Fugaro owner. **Date:** 2026-10-26. **Base:** `main` at `ce991d88d`.
 
