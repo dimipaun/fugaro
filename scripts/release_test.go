@@ -47,15 +47,20 @@ func newReleaseRepo(t *testing.T) *releaseRepo {
 			t.Fatalf("copying %s: %v", name, err)
 		}
 	}
+	// scripts/release.sh reads the CLI stream out of docs/release-streams.yaml,
+	// so the fixture carries its own, pinned: the repository's own file moves
+	// with every release, and a test reading it would assert against whatever
+	// the last release left there (streamsFixture).
+	writeStreams(t, seed, streamsFixture)
 	// Releases from 0.4.0 need docs/releases/vX.Y.Z.md on main and an entry in
 	// website/data/release-summaries.yaml; give the versions these tests release
 	// both by default.
-	for _, v := range []string{"1.0.0", "1.0.10"} {
+	for _, v := range []string{"0.12.0", "0.12.10"} {
 		writeHighlights(t, seed, v, "- A user-facing change.\n")
 	}
 	writeSummaries(t, seed, map[string]string{
-		"1.0.0":  "A user-facing change.",
-		"1.0.10": "A user-facing change.",
+		"0.12.0":  "A user-facing change.",
+		"0.12.10": "A user-facing change.",
 	})
 	testutil.Git(t, seed, "add", "-A")
 	testutil.Git(t, seed, "commit", "--quiet", "-m", "seed")
@@ -75,6 +80,100 @@ func writeHighlights(t *testing.T, dir, version, body string) {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// streamsFixture is the fixture checkout's docs/release-streams.yaml: the real
+// file's shape, with the CLI stream at 0.0.0 (nothing shipped) and Badger next,
+// so every version on the CLI's named line (0.10 and up) is above its floor.
+// The versions this package's release tests cut are on that line -- 0.12.0
+// "Dolphin" is the default -- because the release refuses one the catalogue
+// cannot record (a major bump, a minor below 0.10). Tests that need a stream
+// with a spent name (the release's spoken name, "Camel two" for 0.11.2) install
+// streamsFixtureReleased instead.
+const streamsFixture = `streams:
+  - name: cli
+    theme: animals
+    names: [Badger, Camel, Dolphin, Gecko, Hippo, Koala, Moose]
+    current: "0.0.0"
+    next: Badger
+    tag_prefix: v
+
+  - name: console
+    theme: fruits
+    names: [Cherry, Mango, Melon]
+    current: "0.111.0"
+    next: Melon
+    tag_prefix: console-v
+
+  - name: mobile
+    theme: birds
+    names: [Falcon, Pelican, Robin]
+    current: "0.0.0"
+    next: Falcon
+    tag_prefix: mobile-v
+`
+
+// streamsFixtureReleased is that catalogue with the CLI stream where the real
+// file has it: 0.11.1 "Camel one" shipped, Dolphin next. A test installing it
+// can release 0.11.2 and read both the name the catalogue gives it and the
+// version it writes back.
+const streamsFixtureReleased = `streams:
+  - name: cli
+    theme: animals
+    names: [Badger, Camel, Dolphin, Gecko, Hippo, Koala, Moose]
+    current: "0.11.1"
+    next: Dolphin
+    tag_prefix: v
+
+  - name: console
+    theme: fruits
+    names: [Cherry, Mango, Melon]
+    current: "0.111.0"
+    next: Melon
+    tag_prefix: console-v
+
+  - name: mobile
+    theme: birds
+    names: [Falcon, Pelican, Robin]
+    current: "0.0.0"
+    next: Falcon
+    tag_prefix: mobile-v
+`
+
+// writeStreams writes a streams catalogue into dir, at the path release.sh
+// reads it from.
+func writeStreams(t *testing.T, dir, body string) {
+	t.Helper()
+	path := filepath.Join(dir, "docs", "release-streams.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// rewriteFixtureStreams replaces the fixture checkout's catalogue with body and
+// commits it on main, so the clean-tree and main-equals-origin/main
+// preconditions still hold for a run that has to read it.
+func rewriteFixtureStreams(t *testing.T, r *releaseRepo, body string) {
+	t.Helper()
+	writeStreams(t, r.local, body)
+	testutil.Git(t, r.local, "add", "docs/release-streams.yaml")
+	testutil.Git(t, r.local, "commit", "--quiet", "-m", "fixture: streams catalogue")
+	testutil.Git(t, r.local, "push", "--quiet", "origin", "main")
+}
+
+// addReleaseNotes writes the Highlights and the end-user summary a release from
+// 0.4.0 on needs, commits them on main and pushes them, so a test can release a
+// version of its own.
+func addReleaseNotes(t *testing.T, r *releaseRepo, version string) {
+	t.Helper()
+	writeHighlights(t, r.local, version, "- Something a user sees.\n")
+	writeSummaries(t, r.local, map[string]string{version: "Something a user sees."})
+	testutil.Git(t, r.local, "add", "-A")
+	testutil.Git(t, r.local, "commit", "--quiet", "-m", "release notes")
+	testutil.Git(t, r.local, "push", "--quiet", "origin", "main")
 }
 
 // ghState is the directory backing scripts/testdata/fake-gh.sh's state
@@ -226,6 +325,62 @@ func fakeBinDir(t *testing.T) string {
 	return dir
 }
 
+// streamsBin is the compiled internal/streams/cmd/streams, the helper
+// release.sh reads the catalogue through.
+var streamsBin struct {
+	once sync.Once
+	dir  string
+	path string
+	err  error
+}
+
+// streamsHelper builds that helper once and returns its path. The fixture
+// checkout holds scripts/ and plugin/ and no go module, so release.sh's own
+// `go run ./internal/streams/cmd/streams` cannot run there -- the same reason
+// the plugin budget check is stubbed -- and every run in this package is handed
+// the compiled binary as RELEASE_SH_STREAMS_CMD instead: the code the default
+// runs, built from this checkout's module.
+func streamsHelper(t *testing.T) string {
+	t.Helper()
+	streamsBin.once.Do(func() {
+		dir, err := os.MkdirTemp("", "fugaro-streams-helper-")
+		if err != nil {
+			streamsBin.err = err
+			return
+		}
+		streamsBin.dir = dir
+		path := filepath.Join(dir, "streams")
+		cmd := exec.Command("go", "build", "-o", path, "./internal/streams/cmd/streams")
+		cmd.Dir = testutil.ModuleRoot()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			streamsBin.err = fmt.Errorf("go build ./internal/streams/cmd/streams: %v\n%s", err, out)
+			return
+		}
+		streamsBin.path = path
+	})
+	if streamsBin.err != nil {
+		t.Fatalf("every release.sh run reads the catalogue through this helper, and it did not build: %v", streamsBin.err)
+	}
+	return streamsBin.path
+}
+
+// releaseEnv is what a release.sh run needs on top of the process environment:
+// the streams helper, which the module-less fixture cannot run by itself.
+func releaseEnv(t *testing.T) []string {
+	t.Helper()
+	return []string{"RELEASE_SH_STREAMS_CMD=" + streamsHelper(t)}
+}
+
+// TestMain removes the directory the helper was built into: it is created once
+// for the whole package, so no single test can clean it up.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if streamsBin.dir != "" {
+		_ = os.RemoveAll(streamsBin.dir)
+	}
+	os.Exit(code)
+}
+
 // repoSlug is the owner/name release.sh derives from origin's URL: the last
 // two path components, minus ".git" (origin here is a local path).
 func repoSlug(bare string) string {
@@ -262,6 +417,9 @@ func runRelease(t *testing.T, r *releaseRepo, g *ghState, stdin string, args ...
 	cmd := exec.Command("bash", append([]string{filepath.Join(r.local, "scripts", "release.sh")}, args...)...)
 	cmd.Dir = r.local
 	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "RELEASE_SH_POLL_SECONDS=1")
+	// The helper first and the test's own environment after it, so a test can
+	// unset RELEASE_SH_STREAMS_CMD (an empty value is the default `go run`).
+	cmd.Env = append(cmd.Env, releaseEnv(t)...)
 	cmd.Env = append(cmd.Env, g.env...)
 	cmd.Stdin = strings.NewReader(stdin)
 	var out bytes.Buffer
@@ -413,13 +571,13 @@ func TestPreconditionFailures(t *testing.T) {
 	}{
 		{
 			name:    "not strict semver (leading v)",
-			version: "v1.0.0",
+			version: "v0.12.0",
 			mutate:  func(t *testing.T, r *releaseRepo, g *ghState) {},
 			want:    "not strict SemVer",
 		},
 		{
 			name:    "not strict semver (pre-release)",
-			version: "1.0.0-rc1",
+			version: "0.12.0-rc1",
 			mutate:  func(t *testing.T, r *releaseRepo, g *ghState) {},
 			want:    "not strict SemVer",
 		},
@@ -431,7 +589,7 @@ func TestPreconditionFailures(t *testing.T) {
 		},
 		{
 			name:    "dirty working tree",
-			version: "1.0.0",
+			version: "0.12.0",
 			mutate: func(t *testing.T, r *releaseRepo, g *ghState) {
 				if err := os.WriteFile(filepath.Join(r.local, "dirty.txt"), []byte("x"), 0o644); err != nil {
 					t.Fatal(err)
@@ -441,7 +599,7 @@ func TestPreconditionFailures(t *testing.T) {
 		},
 		{
 			name:    "not on main",
-			version: "1.0.0",
+			version: "0.12.0",
 			mutate: func(t *testing.T, r *releaseRepo, g *ghState) {
 				testutil.Git(t, r.local, "switch", "--quiet", "-c", "other")
 			},
@@ -449,7 +607,7 @@ func TestPreconditionFailures(t *testing.T) {
 		},
 		{
 			name:    "main diverged from origin",
-			version: "1.0.0",
+			version: "0.12.0",
 			mutate: func(t *testing.T, r *releaseRepo, g *ghState) {
 				testutil.Git(t, r.local, "commit", "--quiet", "--allow-empty", "-m", "local only")
 			},
@@ -457,7 +615,7 @@ func TestPreconditionFailures(t *testing.T) {
 		},
 		{
 			name:    "gh not authenticated",
-			version: "1.0.0",
+			version: "0.12.0",
 			mutate: func(t *testing.T, r *releaseRepo, g *ghState) {
 				g.env = append(g.env, "FAKE_GH_UNAUTH=1")
 			},
@@ -465,15 +623,15 @@ func TestPreconditionFailures(t *testing.T) {
 		},
 		{
 			name:    "tag already exists",
-			version: "1.0.0",
+			version: "0.12.0",
 			mutate: func(t *testing.T, r *releaseRepo, g *ghState) {
-				testutil.Git(t, r.local, "tag", "-a", "v1.0.0", "-m", "x")
+				testutil.Git(t, r.local, "tag", "-a", "v0.12.0", "-m", "x")
 			},
 			want: "already exists",
 		},
 		{
 			name:    "version not greater than latest tag",
-			version: "1.0.0",
+			version: "0.12.0",
 			mutate: func(t *testing.T, r *releaseRepo, g *ghState) {
 				testutil.Git(t, r.local, "tag", "-a", "v2.0.0", "-m", "x")
 			},
@@ -481,7 +639,7 @@ func TestPreconditionFailures(t *testing.T) {
 		},
 		{
 			name:    "red check",
-			version: "1.0.0",
+			version: "0.12.0",
 			mutate: func(t *testing.T, r *releaseRepo, g *ghState) {
 				g.env = append(g.env, "FAKE_GH_CHECK_TEST=failed")
 			},
@@ -505,12 +663,13 @@ func TestPreconditionFailures(t *testing.T) {
 func TestGHNotInstalled(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks())
-	cmd := exec.Command("bash", filepath.Join(r.local, "scripts", "release.sh"), "1.0.0")
+	cmd := exec.Command("bash", filepath.Join(r.local, "scripts", "release.sh"), "0.12.0")
 	cmd.Dir = r.local
 	// A PATH with no gh at all (just enough for git, bash's builtins, etc).
 	realPath := os.Getenv("PATH")
 	cmd.Env = append(os.Environ(), "PATH="+realPath)
 	cmd.Env = append(cmd.Env, g.env...)
+	cmd.Env = append(cmd.Env, releaseEnv(t)...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	// Only meaningful if gh truly isn't already on PATH; skip otherwise.
@@ -528,18 +687,18 @@ func TestGHNotInstalled(t *testing.T) {
 func TestDryRunCreatesNothing(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks())
-	res := runRelease(t, r, g, "", "1.0.0", "--dry-run")
+	res := runRelease(t, r, g, "", "0.12.0", "--dry-run")
 	res.requireSuccess(t)
-	if !strings.Contains(res.out, "Dry run for v1.0.0") {
+	if !strings.Contains(res.out, "Dry run for v0.12.0") {
 		t.Fatalf("expected a dry-run plan, got:\n%s", res.out)
 	}
 	if countLog(t, g, "pr ") != 0 {
 		t.Errorf("dry-run must not touch any pull request; got:\n%s", g.log(t))
 	}
-	if out := testutil.Git(t, r.bare, "branch", "--list", "release/v1.0.0"); out != "" {
+	if out := testutil.Git(t, r.bare, "branch", "--list", "release/v0.12.0"); out != "" {
 		t.Errorf("dry-run created a branch: %s", out)
 	}
-	if out := testutil.Git(t, r.bare, "tag", "--list", "v1.0.0"); out != "" {
+	if out := testutil.Git(t, r.bare, "tag", "--list", "v0.12.0"); out != "" {
 		t.Errorf("dry-run created a tag: %s", out)
 	}
 }
@@ -589,9 +748,9 @@ func TestDryRunChecksThePluginBudgetOnABumpedTree(t *testing.T) {
 			log := filepath.Join(t.TempDir(), "stub.log")
 			g := newGHState(t, r, greenChecks()).with(
 				"RELEASE_SH_PLUGIN_TEST_CMD=bash "+writePluginTestStub(t),
-				"STUB_LOG="+log, "STUB_WANT=1.0.0", "STUB_RC="+tc.rc)
+				"STUB_LOG="+log, "STUB_WANT=0.12.0", "STUB_RC="+tc.rc)
 
-			res := runRelease(t, r, g, "", "1.0.0", "--dry-run")
+			res := runRelease(t, r, g, "", "0.12.0", "--dry-run")
 
 			// The stub's one line says where it ran: a worktree of the tree
 			// being released, carrying the bump, and removed when the script
@@ -605,7 +764,7 @@ func TestDryRunChecksThePluginBudgetOnABumpedTree(t *testing.T) {
 				t.Fatalf("want one plugin test run, got %q:\n%s", lines, res.out)
 			}
 			scratch := strings.TrimPrefix(strings.Fields(lines[0])[0], "tree=")
-			if !strings.Contains(lines[0], "version=1.0.0") {
+			if !strings.Contains(lines[0], "version=0.12.0") {
 				t.Errorf("the plugin tests did not run on a bumped tree: %s", lines[0])
 			}
 			if _, err := os.Stat(scratch); !os.IsNotExist(err) {
@@ -619,17 +778,17 @@ func TestDryRunChecksThePluginBudgetOnABumpedTree(t *testing.T) {
 			}
 
 			if tc.wantFail {
-				res.requireFailureContaining(t, "the plugin tests fail on a tree with the 1.0.0 bump applied")
-				if strings.Contains(res.out, "Dry run for v1.0.0") {
+				res.requireFailureContaining(t, "the plugin tests fail on a tree with the 0.12.0 bump applied")
+				if strings.Contains(res.out, "Dry run for v0.12.0") {
 					t.Errorf("a failed plugin check must not print the plan:\n%s", res.out)
 				}
 				return
 			}
 			res.requireSuccess(t)
-			if !strings.Contains(res.out, "the plugin tests pass on a tree with the 1.0.0 bump applied") {
+			if !strings.Contains(res.out, "the plugin tests pass on a tree with the 0.12.0 bump applied") {
 				t.Errorf("want the plugin check reported, got:\n%s", res.out)
 			}
-			if !strings.Contains(res.out, "Dry run for v1.0.0") {
+			if !strings.Contains(res.out, "Dry run for v0.12.0") {
 				t.Errorf("expected a dry-run plan, got:\n%s", res.out)
 			}
 		})
@@ -645,7 +804,7 @@ func TestDryRunReportsASkippedPluginBudgetCheck(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks())
 
-	res := runRelease(t, r, g, "", "1.0.0", "--dry-run")
+	res := runRelease(t, r, g, "", "0.12.0", "--dry-run")
 
 	res.requireSuccess(t)
 	if !strings.Contains(res.out, "the plugin budget check did not run (this checkout holds no go.mod)") {
@@ -654,7 +813,7 @@ func TestDryRunReportsASkippedPluginBudgetCheck(t *testing.T) {
 	if strings.Contains(res.out, "the plugin tests pass on a tree") {
 		t.Errorf("a check that did not run must not read as a pass:\n%s", res.out)
 	}
-	if !strings.Contains(res.out, "Dry run for v1.0.0") {
+	if !strings.Contains(res.out, "Dry run for v0.12.0") {
 		t.Errorf("a skipped check is not a refusal, so the plan still prints:\n%s", res.out)
 	}
 }
@@ -669,10 +828,10 @@ func TestDryRunRefusesWhenGoIsMissing(t *testing.T) {
 	writeFixtureFile(t, r.local, "go.mod", "module example.com/fixture\n")
 	g := newGHState(t, r, greenChecks()).with("PATH=" + pathWithoutGo(t, fakeBinDir(t)))
 
-	res := runRelease(t, r, g, "", "1.0.0", "--dry-run")
+	res := runRelease(t, r, g, "", "0.12.0", "--dry-run")
 
 	res.requireFailureContaining(t, "go is not on PATH")
-	if strings.Contains(res.out, "Dry run for v1.0.0") {
+	if strings.Contains(res.out, "Dry run for v0.12.0") {
 		t.Errorf("a refused dry run must not print the plan:\n%s", res.out)
 	}
 }
@@ -760,7 +919,7 @@ func TestDryRunRemovesTheScratchWorktreeOnASignal(t *testing.T) {
 		"STUB_LOG="+log,
 		"STUB_SCRIPT="+filepath.Join(r.local, "scripts", "release.sh"))
 
-	res := runRelease(t, r, g, "", "1.0.0", "--dry-run")
+	res := runRelease(t, r, g, "", "0.12.0", "--dry-run")
 
 	if res.err == nil {
 		t.Fatalf("the interrupted run succeeded:\n%s", res.out)
@@ -790,32 +949,264 @@ func TestHappyPathAnsweringYes(t *testing.T) {
 	g := newGHState(t, r, greenChecks())
 	initialMain := testutil.Git(t, r.bare, "rev-parse", "main")
 
-	res := runRelease(t, r, g, "", "1.0.0")
+	res := runRelease(t, r, g, "", "0.12.0")
 	res.requireSuccess(t)
 
 	if n := countLog(t, g, "pr create"); n != 1 {
 		t.Errorf("want exactly one 'pr create', got %d:\n%s", n, g.log(t))
 	}
-	branchCommits := testutil.Git(t, r.bare, "rev-list", "--count", initialMain+"..refs/heads/release/v1.0.0")
+	branchCommits := testutil.Git(t, r.bare, "rev-list", "--count", initialMain+"..refs/heads/release/v0.12.0")
 	if branchCommits != "1" {
 		t.Errorf("want exactly one commit on the release branch, got %s", branchCommits)
 	}
-	subject := testutil.Git(t, r.bare, "log", "-1", "--format=%s", "refs/heads/release/v1.0.0")
-	if subject != "release: v1.0.0" {
+	subject := testutil.Git(t, r.bare, "log", "-1", "--format=%s", "refs/heads/release/v0.12.0")
+	if subject != "release: v0.12.0" {
 		t.Errorf("unexpected commit subject: %s", subject)
 	}
-	body := testutil.Git(t, r.bare, "log", "-1", "--format=%b", "refs/heads/release/v1.0.0")
+	body := testutil.Git(t, r.bare, "log", "-1", "--format=%b", "refs/heads/release/v0.12.0")
 	if !strings.Contains(body, "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>") {
 		t.Errorf("commit body is missing the attribution trailer:\n%s", body)
 	}
 
-	tagSHA := testutil.Git(t, r.bare, "rev-parse", "v1.0.0^{commit}")
+	tagSHA := testutil.Git(t, r.bare, "rev-parse", "v0.12.0^{commit}")
 	mainSHA := testutil.Git(t, r.bare, "rev-parse", "main")
 	if tagSHA != mainSHA {
-		t.Errorf("tag v1.0.0 (%s) does not point at main (%s)", tagSHA, mainSHA)
+		t.Errorf("tag v0.12.0 (%s) does not point at main (%s)", tagSHA, mainSHA)
 	}
 	if mainSHA == initialMain {
 		t.Errorf("main did not advance past the merge")
+	}
+}
+
+// TestReleaseRefusesVersionBelowStreamCurrent: docs/release-streams.yaml
+// records the version each stream is at, and a CLI release never goes behind it
+// (GV1.5). The fixture's CLI stream is at 0.11.1, so 0.11.0 and below are
+// refused in the preconditions, naming the file, before a branch, a pull
+// request or a tag exists -- the file is the stream's own record, and a version
+// under it is a release the stream has already spent. The version the stream is
+// already at is not below it: an interrupted release whose commit recorded the
+// version is finished by re-running it, and that run has to get past this check
+// (the tag check is what refuses a version that really did ship).
+func TestReleaseRefusesVersionBelowStreamCurrent(t *testing.T) {
+	for _, version := range []string{"0.11.0", "0.10.9", "0.0.1"} {
+		t.Run(version, func(t *testing.T) {
+			r := newReleaseRepo(t)
+			rewriteFixtureStreams(t, r, streamsFixtureReleased)
+			// The notes precondition comes before the streams check; the
+			// version's own notes are on main so the refusal is the floor's.
+			addReleaseNotes(t, r, version)
+			g := newGHState(t, r, greenChecks())
+
+			res := runRelease(t, r, g, "", version, "--dry-run")
+
+			res.requireFailureContaining(t, "is below the cli stream's current 0.11.1")
+			res.requireFailureContaining(t, "docs/release-streams.yaml")
+			if strings.Contains(res.out, "Dry run for") {
+				t.Errorf("a refused version must not print the plan:\n%s", res.out)
+			}
+			if countLog(t, g, "pr ") != 0 {
+				t.Errorf("a refused version must not touch a pull request:\n%s", res.out)
+			}
+			if out := testutil.Git(t, r.bare, "branch", "--list", "release/v"+version); out != "" {
+				t.Errorf("a refused version created a branch: %s", out)
+			}
+		})
+	}
+
+	t.Run("the version the stream is already at", func(t *testing.T) {
+		r := newReleaseRepo(t)
+		rewriteFixtureStreams(t, r, streamsFixtureReleased)
+		addReleaseNotes(t, r, "0.11.1")
+		g := newGHState(t, r, greenChecks())
+
+		res := runRelease(t, r, g, "", "0.11.1", "--dry-run")
+
+		res.requireSuccess(t)
+	})
+}
+
+// TestReleaseRefusesWhatStepTwoWouldRefuse: step 1 runs step 2's catalogue
+// write in memory (`streams set --check`), so a version the write would refuse
+// is refused before a branch, a pull request or a tag exists -- in the dry run
+// too, which is how the dry run predicts step 2. A major bump and a minor below
+// 0.10 are off the CLI's named line (the reader refuses a file that records
+// them), a version past the last name leaves no name for `next`, and an unquoted
+// `current:` is one the line-targeted rewrite cannot find.
+func TestReleaseRefusesWhatStepTwoWouldRefuse(t *testing.T) {
+	unquoted := strings.Replace(streamsFixtureReleased, `current: "0.11.1"`, "current: 0.11.1", 1)
+	for _, c := range []struct {
+		name, catalogue, version, want string
+	}{
+		{"a major bump", streamsFixture, "1.0.0", "is not on the line"},
+		{"a minor below the named line", streamsFixture, "0.9.0", "is not on the line"},
+		{"no name left after it", streamsFixtureReleased, "0.16.0", "no name for the minor after it"},
+		{"an unquoted current", unquoted, "0.11.2", "no current version"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := newReleaseRepo(t)
+			if c.catalogue != streamsFixture {
+				rewriteFixtureStreams(t, r, c.catalogue)
+			}
+			addReleaseNotes(t, r, c.version)
+			g := newGHState(t, r, greenChecks())
+
+			res := runRelease(t, r, g, "", c.version, "--dry-run")
+
+			res.requireFailureContaining(t, "docs/release-streams.yaml cannot record "+c.version)
+			res.requireFailureContaining(t, c.want)
+			if strings.Contains(res.out, "Dry run for") {
+				t.Errorf("a refused version must not print the plan:\n%s", res.out)
+			}
+			if countLog(t, g, "pr ") != 0 {
+				t.Errorf("a refused version must not touch a pull request:\n%s", res.out)
+			}
+			if out := testutil.Git(t, r.bare, "branch", "--list", "release/v"+c.version); out != "" {
+				t.Errorf("a refused version created a branch: %s", out)
+			}
+		})
+	}
+}
+
+// TestReleaseReadsTheStreamWithGoRunByDefault: every other test hands release.sh
+// the compiled helper; without RELEASE_SH_STREAMS_CMD the script runs
+// `go run ./internal/streams/cmd/streams` itself. A stand-in `go` records its
+// arguments and runs the helper, so the default command line is what is pinned.
+func TestReleaseReadsTheStreamWithGoRunByDefault(t *testing.T) {
+	r := newReleaseRepo(t)
+	goDir := t.TempDir()
+	log := filepath.Join(goDir, "go.log")
+	stub := "#!/bin/sh\necho \"$*\" >> " + log + "\n" +
+		"if [ \"$1\" = run ] && [ \"$2\" = ./internal/streams/cmd/streams ]; then shift 2; exec " + streamsHelper(t) + " \"$@\"; fi\n" +
+		"exit 97\n"
+	if err := os.WriteFile(filepath.Join(goDir, "go"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	g := newGHState(t, r, greenChecks()).with(
+		"RELEASE_SH_STREAMS_CMD=", "PATH="+goDir+":"+fakeBinDir(t)+":"+os.Getenv("PATH"))
+
+	res := runRelease(t, r, g, "", "0.12.0", "--dry-run")
+
+	res.requireSuccess(t)
+	if !strings.Contains(res.out, "Dry run for v0.12.0 (Dolphin)") {
+		t.Errorf("want the plan to name the release, got:\n%s", res.out)
+	}
+	calls, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatalf("go was never run: %v\n%s", err, res.out)
+	}
+	for _, want := range []string{
+		"run ./internal/streams/cmd/streams set --check cli 0.12.0",
+		"run ./internal/streams/cmd/streams name cli 0.12.0",
+	} {
+		if !strings.Contains(string(calls), want) {
+			t.Errorf("go was not run as %q; it ran:\n%s", want, calls)
+		}
+	}
+}
+
+// TestReleaseRefusesWhenGoIsMissingForTheStream: with the default `go run` and
+// no go on PATH the release refuses, naming the stream read, even in a checkout
+// with no go.mod (where the plugin budget check would only be skipped).
+func TestReleaseRefusesWhenGoIsMissingForTheStream(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := newGHState(t, r, greenChecks()).with(
+		"RELEASE_SH_STREAMS_CMD=", "PATH="+pathWithoutGo(t, fakeBinDir(t)))
+
+	res := runRelease(t, r, g, "", "0.12.0", "--dry-run")
+
+	res.requireFailureContaining(t, "go is not on PATH, and the release reads the CLI stream")
+	if strings.Contains(res.out, "Dry run for") {
+		t.Errorf("a refused dry run must not print the plan:\n%s", res.out)
+	}
+}
+
+// TestReleasePrintsStreamName: the release is spoken with the name the
+// catalogue gives its minor and the patch's word -- "Camel two" for 0.11.2 on a
+// stream at 0.11.1 -- so the operator reads which release they are cutting and
+// not only its number.
+func TestReleasePrintsStreamName(t *testing.T) {
+	r := newReleaseRepo(t)
+	rewriteFixtureStreams(t, r, streamsFixtureReleased)
+	addReleaseNotes(t, r, "0.11.2")
+	g := newGHState(t, r, greenChecks())
+
+	res := runRelease(t, r, g, "", "0.11.2", "--dry-run")
+
+	res.requireSuccess(t)
+	if !strings.Contains(res.out, "Dry run for v0.11.2 (Camel two)") {
+		t.Errorf("want the release spoken by its name, got:\n%s", res.out)
+	}
+}
+
+// TestReleaseBumpsStreamCurrent: step 2 records the version being released as
+// the CLI stream's current in docs/release-streams.yaml, in the release commit
+// itself, so the file the graph draws and the next release reads never
+// describes a version that has shipped.
+func TestReleaseBumpsStreamCurrent(t *testing.T) {
+	r := newReleaseRepo(t)
+	rewriteFixtureStreams(t, r, streamsFixtureReleased)
+	addReleaseNotes(t, r, "0.11.2")
+	g := newGHState(t, r, greenChecks())
+	initial := testutil.Git(t, r.bare, "rev-parse", "main")
+
+	res := runRelease(t, r, g, "", "0.11.2")
+
+	res.requireSuccess(t)
+	if n := testutil.Git(t, r.bare, "rev-list", "--count", initial+"..refs/heads/release/v0.11.2"); n != "1" {
+		t.Errorf("want the catalogue update in the release commit itself, got %s commits on the release branch", n)
+	}
+	catalogue := testutil.Git(t, r.bare, "show", "main:docs/release-streams.yaml")
+	if !strings.Contains(catalogue, `current: "0.11.2"`) {
+		t.Errorf("docs/release-streams.yaml on main does not record 0.11.2 as the cli stream's current:\n%s", catalogue)
+	}
+	if !strings.Contains(catalogue, `current: "0.111.0"`) || !strings.Contains(catalogue, `current: "0.0.0"`) {
+		t.Errorf("the console's and the mobile's rows moved, and a CLI release writes the cli row only:\n%s", catalogue)
+	}
+	if !strings.Contains(res.out, "name:    Camel two") {
+		t.Errorf("want the release summary to speak the release, got:\n%s", res.out)
+	}
+}
+
+// TestReleaseMovesStreamNextOnANewMinor: the release that opens a new minor
+// spends the name the catalogue's `next` holds, so the same commit moves `next`
+// on to the name after it. `next` is the name the minor after the current one
+// takes, so a file left at current 0.12.0 with next Dolphin would contradict its
+// own header -- Dolphin is 0.12.0's own name -- and every later release would be
+// spoken one minor behind: 0.12.1 "Camel one", 0.13.0 "Dolphin".
+func TestReleaseMovesStreamNextOnANewMinor(t *testing.T) {
+	r := newReleaseRepo(t)
+	rewriteFixtureStreams(t, r, streamsFixtureReleased)
+	addReleaseNotes(t, r, "0.12.0")
+	g := newGHState(t, r, greenChecks())
+
+	res := runRelease(t, r, g, "", "0.12.0")
+
+	res.requireSuccess(t)
+	catalogue := testutil.Git(t, r.bare, "show", "main:docs/release-streams.yaml")
+	if !strings.Contains(catalogue, `current: "0.12.0"`) || !strings.Contains(catalogue, "next: Gecko") {
+		t.Errorf("0.12.0 opens a new minor, so the release commit should leave the cli row at current 0.12.0 with Gecko next:\n%s", catalogue)
+	}
+	if !strings.Contains(res.out, "name:    Dolphin") {
+		t.Errorf("0.12.0 is the minor Dolphin, so the release should be spoken with it, got:\n%s", res.out)
+	}
+}
+
+// TestReleaseRefusesACatalogueItCannotRead: the file the release takes its own
+// floor and its name from is repository-written, and the reader refuses one
+// that is not the catalogue -- here a cli row whose tag prefix is not `v`, a
+// release no workflow of the stream's would pick up. Nothing is created: the
+// refusal is in the preconditions, before the branch.
+func TestReleaseRefusesACatalogueItCannotRead(t *testing.T) {
+	r := newReleaseRepo(t)
+	rewriteFixtureStreams(t, r, strings.Replace(streamsFixture, "tag_prefix: v\n", "tag_prefix: cli-v\n", 1))
+	g := newGHState(t, r, greenChecks())
+
+	res := runRelease(t, r, g, "", "0.12.0", "--dry-run")
+
+	res.requireFailureContaining(t, "docs/release-streams.yaml")
+	res.requireFailureContaining(t, "tag_prefix")
+	if countLog(t, g, "pr ") != 0 {
+		t.Errorf("an unreadable catalogue must not touch a pull request:\n%s", res.out)
 	}
 }
 
@@ -825,12 +1216,12 @@ func TestTagsWithoutPromptOrStdin(t *testing.T) {
 	for _, extra := range [][]string{nil, {"--yes"}} {
 		r := newReleaseRepo(t)
 		g := newGHState(t, r, greenChecks())
-		res := runRelease(t, r, g, "", append([]string{"1.0.0"}, extra...)...)
+		res := runRelease(t, r, g, "", append([]string{"0.12.0"}, extra...)...)
 		res.requireSuccess(t)
 		if strings.Contains(res.out, "[y/N]") {
 			t.Errorf("no prompt expected:\n%s", res.out)
 		}
-		if out := testutil.Git(t, r.bare, "tag", "--list", "v1.0.0"); out == "" {
+		if out := testutil.Git(t, r.bare, "tag", "--list", "v0.12.0"); out == "" {
 			t.Errorf("tag missing (args %v); output:\n%s", extra, res.out)
 		}
 	}
@@ -848,13 +1239,13 @@ func TestResumeAfterMerge(t *testing.T) {
 	// merge would have.
 	clone := filepath.Join(t.TempDir(), "premerge")
 	testutil.Git(t, filepath.Dir(clone), "clone", "--quiet", r.bare, clone)
-	bumpCmd := exec.Command("bash", filepath.Join(clone, "scripts", "bump-plugin-version.sh"), "1.0.0")
+	bumpCmd := exec.Command("bash", filepath.Join(clone, "scripts", "bump-plugin-version.sh"), "0.12.0")
 	bumpCmd.Dir = clone
 	if out, err := bumpCmd.CombinedOutput(); err != nil {
 		t.Fatalf("bump: %v\n%s", err, out)
 	}
 	testutil.Git(t, clone, "add", "-A")
-	testutil.Git(t, clone, "commit", "--quiet", "-m", "release: v1.0.0", "-m", "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>")
+	testutil.Git(t, clone, "commit", "--quiet", "-m", "release: v0.12.0", "-m", "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>")
 	testutil.Git(t, clone, "push", "--quiet", "origin", "HEAD:refs/heads/main")
 	mergeSHA := testutil.Git(t, clone, "rev-parse", "HEAD")
 
@@ -868,15 +1259,15 @@ func TestResumeAfterMerge(t *testing.T) {
 	g.write(t, "pr_state", "MERGED")
 	g.write(t, "pr_merge_sha", mergeSHA)
 
-	res := runRelease(t, r2, g, "y\n", "1.0.0")
+	res := runRelease(t, r2, g, "y\n", "0.12.0")
 	res.requireSuccess(t)
 
 	if n := countLog(t, g, "pr create"); n != 0 {
 		t.Errorf("resuming an already-merged PR must not create a new one, got %d:\n%s", n, g.log(t))
 	}
-	tagSHA := testutil.Git(t, r.bare, "rev-parse", "v1.0.0^{commit}")
+	tagSHA := testutil.Git(t, r.bare, "rev-parse", "v0.12.0^{commit}")
 	if tagSHA != mergeSHA {
-		t.Errorf("tag v1.0.0 (%s) does not point at the pre-merged commit (%s)", tagSHA, mergeSHA)
+		t.Errorf("tag v0.12.0 (%s) does not point at the pre-merged commit (%s)", tagSHA, mergeSHA)
 	}
 }
 
@@ -888,7 +1279,7 @@ func TestResumeAfterMerge(t *testing.T) {
 func TestResumeRebuildsStaleLocalBranch(t *testing.T) {
 	r := newReleaseRepo(t)
 
-	testutil.Git(t, r.local, "switch", "--quiet", "-c", "release/v1.0.0")
+	testutil.Git(t, r.local, "switch", "--quiet", "-c", "release/v0.12.0")
 	testutil.Git(t, r.local, "switch", "--quiet", "main")
 
 	// Main advances independently of the stale local branch above.
@@ -904,18 +1295,18 @@ func TestResumeRebuildsStaleLocalBranch(t *testing.T) {
 	testutil.Git(t, r.local, "merge", "--quiet", "--ff-only", "origin/main")
 
 	g := newGHState(t, r, greenChecks())
-	res := runRelease(t, r, g, "y\n", "1.0.0")
+	res := runRelease(t, r, g, "y\n", "0.12.0")
 	res.requireSuccess(t)
 
 	if !strings.Contains(res.out, "predates main") {
 		t.Errorf("expected a message about rebuilding the stale branch, got:\n%s", res.out)
 	}
-	branchCommits := testutil.Git(t, r.bare, "rev-list", "--count", newMain+"..refs/heads/release/v1.0.0")
+	branchCommits := testutil.Git(t, r.bare, "rev-list", "--count", newMain+"..refs/heads/release/v0.12.0")
 	if branchCommits != "1" {
 		t.Errorf("want exactly one commit on the rebuilt release branch on top of the new main, got %s", branchCommits)
 	}
-	if base := testutil.Git(t, r.bare, "merge-base", "v1.0.0", newMain); base != newMain {
-		t.Errorf("tag v1.0.0 is not based on the new main (%s); merge-base was %s", newMain, base)
+	if base := testutil.Git(t, r.bare, "merge-base", "v0.12.0", newMain); base != newMain {
+		t.Errorf("tag v0.12.0 is not based on the new main (%s); merge-base was %s", newMain, base)
 	}
 }
 
@@ -926,17 +1317,17 @@ func TestPRClosedUnmerged(t *testing.T) {
 	g := newGHState(t, r, greenChecks())
 	g.write(t, "pr_number", "7")
 	g.write(t, "pr_state", "CLOSED")
-	pushReleaseBranch(t, r, "1.0.0")
-	g.write(t, "pr_branch", "release/v1.0.0")
+	pushReleaseBranch(t, r, "0.12.0")
+	g.write(t, "pr_branch", "release/v0.12.0")
 
-	res := runRelease(t, r, g, "", "1.0.0")
+	res := runRelease(t, r, g, "", "0.12.0")
 	res.requireFailureContaining(t, "#7")
 	res.requireFailureContaining(t, "closed without merging")
-	res.requireFailureContaining(t, "git push origin --delete release/v1.0.0")
+	res.requireFailureContaining(t, "git push origin --delete release/v0.12.0")
 	if countLog(t, g, "pr merge") != 0 {
 		t.Errorf("a closed PR must never reach 'gh pr merge':\n%s", g.log(t))
 	}
-	if out := testutil.Git(t, r.bare, "tag", "--list", "v1.0.0"); out != "" {
+	if out := testutil.Git(t, r.bare, "tag", "--list", "v0.12.0"); out != "" {
 		t.Errorf("a closed PR must not lead to a tag: %s", out)
 	}
 }
@@ -948,9 +1339,9 @@ func TestPRFailedCheckStopsWaiting(t *testing.T) {
 	g := newGHState(t, r, greenChecks())
 	g.write(t, "pr_check_fail", "rules FAILURE")
 
-	res := runRelease(t, r, g, "", "1.0.0")
+	res := runRelease(t, r, g, "", "0.12.0")
 	res.requireFailureContaining(t, "check 'rules' failed")
-	if out := testutil.Git(t, r.bare, "tag", "--list", "v1.0.0"); out != "" {
+	if out := testutil.Git(t, r.bare, "tag", "--list", "v0.12.0"); out != "" {
 		t.Errorf("a failed check must not lead to a tag: %s", out)
 	}
 }
@@ -972,10 +1363,11 @@ func TestInterruptPrintsResumeInstructions(t *testing.T) {
 	// loop's sleep (not exited already) when the signal arrives.
 	g.env = append(g.env, "FAKE_GH_MERGE_DELAY_CALLS=1000000")
 	bin := fakeBinDir(t)
-	cmd := exec.Command("bash", filepath.Join(r.local, "scripts", "release.sh"), "1.0.0", "--yes")
+	cmd := exec.Command("bash", filepath.Join(r.local, "scripts", "release.sh"), "0.12.0", "--yes")
 	cmd.Dir = r.local
 	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "RELEASE_SH_POLL_SECONDS=1")
 	cmd.Env = append(cmd.Env, g.env...)
+	cmd.Env = append(cmd.Env, releaseEnv(t)...)
 	var out lockedBuffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	cmd.WaitDelay = 5 * time.Second
@@ -1035,19 +1427,20 @@ func TestInterruptPrintsResumeInstructions(t *testing.T) {
 	}
 }
 
-// TestVersionComparisonIsNumeric checks 1.0.10 is accepted as greater than
-// an existing v1.0.9 tag: a lexicographic (not numeric) comparison would
-// wrongly block this release, since "1.0.10" < "1.0.9" as strings.
+// TestVersionComparisonIsNumeric checks 0.12.10 is accepted as greater than
+// an existing v0.12.9 tag: a lexicographic (not numeric) comparison would
+// wrongly block this release, since "0.12.10" < "0.12.9" as strings.
 func TestVersionComparisonIsNumeric(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks())
-	testutil.Git(t, r.local, "tag", "-a", "v1.0.9", "-m", "x")
-	res := runRelease(t, r, g, "", "1.0.10", "--dry-run")
+	testutil.Git(t, r.local, "tag", "-a", "v0.12.9", "-m", "x")
+	res := runRelease(t, r, g, "", "0.12.10", "--dry-run")
 	res.requireSuccess(t)
 }
 
 // pushReleaseBranch stands in for an earlier interrupted run: it pushes
-// release/vVERSION to origin, already carrying the bump commit.
+// release/vVERSION to origin, already carrying the plugin bump commit but not
+// the catalogue's cli row.
 func pushReleaseBranch(t *testing.T, r *releaseRepo, version string) {
 	t.Helper()
 	clone := filepath.Join(t.TempDir(), "earlier")
@@ -1098,7 +1491,7 @@ func (g *ghState) with(env ...string) *ghState {
 
 func requireNoTag(t *testing.T, r *releaseRepo, res runResult) {
 	t.Helper()
-	if out := testutil.Git(t, r.bare, "tag", "--list", "v1.0.0"); out != "" {
+	if out := testutil.Git(t, r.bare, "tag", "--list", "v0.12.0"); out != "" {
 		t.Errorf("no tag may exist on origin, got %s\n%s", out, res.out)
 	}
 }
@@ -1108,12 +1501,12 @@ func requireNoTag(t *testing.T, r *releaseRepo, res runResult) {
 func TestWaitsForPostMergeChecks(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks()).with("FAKE_GH_MISSING_CALLS=2")
-	res := runRelease(t, r, g, "", "1.0.0", "--yes")
+	res := runRelease(t, r, g, "", "0.12.0", "--yes")
 	res.requireSuccess(t)
 	if !strings.Contains(res.out, "still waiting: check 'test' is missing") {
 		t.Errorf("expected the pending check to be named:\n%s", res.out)
 	}
-	if out := testutil.Git(t, r.bare, "tag", "--list", "v1.0.0"); out == "" {
+	if out := testutil.Git(t, r.bare, "tag", "--list", "v0.12.0"); out == "" {
 		t.Errorf("tag missing after the checks went green:\n%s", res.out)
 	}
 }
@@ -1123,12 +1516,12 @@ func TestWaitsForPostMergeChecks(t *testing.T) {
 func TestPreconditionWaitsForPendingChecksOnMain(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks()).with("FAKE_GH_PRE_PENDING_CALLS=2")
-	res := runRelease(t, r, g, "", "1.0.0", "--yes")
+	res := runRelease(t, r, g, "", "0.12.0", "--yes")
 	res.requireSuccess(t)
 	if !strings.Contains(res.out, "still waiting: check 'test' is pending") {
 		t.Errorf("expected the pending check to be named:\n%s", res.out)
 	}
-	if out := testutil.Git(t, r.bare, "tag", "--list", "v1.0.0"); out == "" {
+	if out := testutil.Git(t, r.bare, "tag", "--list", "v0.12.0"); out == "" {
 		t.Errorf("tag missing after the checks went green:\n%s", res.out)
 	}
 }
@@ -1138,7 +1531,7 @@ func TestPreconditionWaitsForPendingChecksOnMain(t *testing.T) {
 func TestPreconditionPendingChecksOnMainTimeOut(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks()).with("FAKE_GH_CHECK_RULES=pending", "RELEASE_SH_TIMEOUT_SECONDS=2")
-	res := runRelease(t, r, g, "y\n", "1.0.0")
+	res := runRelease(t, r, g, "y\n", "0.12.0")
 	res.requireFailureContaining(t, "required check 'rules' is pending")
 	if n := countLog(t, g, "pr create"); n != 0 {
 		t.Errorf("a pull request was created despite pending checks on main")
@@ -1155,7 +1548,7 @@ func TestPostMergeConsoleCheckFailsFast(t *testing.T) {
 	// A long timeout: a conclusive failure must not be waited out.
 	g := newGHState(t, r, greenChecks()).with("FAKE_GH_POST_CONSOLE=failed")
 	start := time.Now()
-	res := runRelease(t, r, g, "y\n", "1.0.0")
+	res := runRelease(t, r, g, "y\n", "0.12.0")
 	res.requireFailureContaining(t, "required check 'console (ubuntu-latest)' is failed")
 	if time.Since(start) > 30*time.Second {
 		t.Errorf("a red check was waited out")
@@ -1168,7 +1561,7 @@ func TestPostMergeCheckFailsFast(t *testing.T) {
 	// A long timeout: a conclusive failure must not be waited out.
 	g := newGHState(t, r, greenChecks()).with("FAKE_GH_POST_TERRAFORM=failed")
 	start := time.Now()
-	res := runRelease(t, r, g, "y\n", "1.0.0")
+	res := runRelease(t, r, g, "y\n", "0.12.0")
 	res.requireFailureContaining(t, "required check 'terraform' is failed")
 	if time.Since(start) > 30*time.Second {
 		t.Errorf("a red check was waited out")
@@ -1181,7 +1574,7 @@ func TestPostMergeCheckStillPendingTimesOut(t *testing.T) {
 		t.Run(state, func(t *testing.T) {
 			r := newReleaseRepo(t)
 			g := newGHState(t, r, greenChecks()).with("FAKE_GH_POST_RULES="+state, "RELEASE_SH_TIMEOUT_SECONDS=2")
-			res := runRelease(t, r, g, "y\n", "1.0.0")
+			res := runRelease(t, r, g, "y\n", "0.12.0")
 			res.requireFailureContaining(t, "required check 'rules' is "+state)
 			requireNoTag(t, r, res)
 		})
@@ -1206,16 +1599,16 @@ func TestIdenticalTreeHeadChecksEndTheWait(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := identicalTreeEnv(newGHState(t, r, greenChecks()))
 	start := time.Now()
-	res := runRelease(t, r, g, "", "1.0.0", "--yes")
+	res := runRelease(t, r, g, "", "0.12.0", "--yes")
 	res.requireSuccess(t)
-	head := testutil.Git(t, r.bare, "rev-parse", "refs/heads/release/v1.0.0")
+	head := testutil.Git(t, r.bare, "rev-parse", "refs/heads/release/v0.12.0")
 	if !strings.Contains(res.out, "using the checks of "+head+" (identical tree)") {
 		t.Errorf("expected the head's checks to be named:\n%s", res.out)
 	}
 	if strings.Contains(res.out, "still waiting") || time.Since(start) > 30*time.Second {
 		t.Errorf("an identical-tree green head must not wait:\n%s", res.out)
 	}
-	if out := testutil.Git(t, r.bare, "tag", "--list", "v1.0.0"); out == "" {
+	if out := testutil.Git(t, r.bare, "tag", "--list", "v0.12.0"); out == "" {
 		t.Errorf("tag missing:\n%s", res.out)
 	}
 }
@@ -1225,7 +1618,7 @@ func TestIdenticalTreeHeadChecksEndTheWait(t *testing.T) {
 func TestIdenticalTreeOwnChecksPreferred(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks()).with("FAKE_GH_IDENTICAL_PR=1")
-	res := runRelease(t, r, g, "", "1.0.0", "--yes")
+	res := runRelease(t, r, g, "", "0.12.0", "--yes")
 	res.requireSuccess(t)
 	if strings.Contains(res.out, "identical tree") || countLog(t, g, "api repos/") == 0 {
 		t.Errorf("own green checks must be used without a lookup:\n%s", res.out)
@@ -1259,7 +1652,7 @@ func TestIdenticalTreeNotAccepted(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			r := newReleaseRepo(t)
 			g := identicalTreeEnv(newGHState(t, r, greenChecks()), c.extra...)
-			res := runRelease(t, r, g, "", "1.0.0", "--yes")
+			res := runRelease(t, r, g, "", "0.12.0", "--yes")
 			res.requireFailureContaining(t, "required check 'test' is missing")
 			if strings.Contains(res.out, "identical tree") {
 				t.Errorf("the candidate must not be used:\n%s", res.out)
@@ -1279,7 +1672,7 @@ func TestIdenticalTreeLookupFailureNeverPasses(t *testing.T) {
 		t.Run(c.env, func(t *testing.T) {
 			r := newReleaseRepo(t)
 			g := identicalTreeEnv(newGHState(t, r, greenChecks()), c.env)
-			res := runRelease(t, r, g, "", "1.0.0", "--yes")
+			res := runRelease(t, r, g, "", "0.12.0", "--yes")
 			res.requireFailureContaining(t, "required check 'test' is missing")
 			if n := strings.Count(res.out, "identical-tree lookup unavailable ("+c.call); n != 1 {
 				t.Errorf("want the note exactly once, got %d:\n%s", n, res.out)
@@ -1294,9 +1687,9 @@ func TestIdenticalTreeLookupFailureNeverPasses(t *testing.T) {
 func TestIdenticalTreeSecondPRCanVouch(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := identicalTreeEnv(newGHState(t, r, greenChecks()), "FAKE_GH_BAD_PR_FIRST=1")
-	res := runRelease(t, r, g, "", "1.0.0", "--yes")
+	res := runRelease(t, r, g, "", "0.12.0", "--yes")
 	res.requireSuccess(t)
-	head := testutil.Git(t, r.bare, "rev-parse", "refs/heads/release/v1.0.0")
+	head := testutil.Git(t, r.bare, "rev-parse", "refs/heads/release/v0.12.0")
 	if !strings.Contains(res.out, "using the checks of "+head+" (identical tree)") {
 		t.Errorf("expected the second PR's head to be used:\n%s", res.out)
 	}
@@ -1307,7 +1700,7 @@ func TestIdenticalTreeSecondPRCanVouch(t *testing.T) {
 func TestIdenticalTreeNeverOverridesTargetFailure(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := identicalTreeEnv(newGHState(t, r, greenChecks()), "FAKE_GH_POST_RULES=failed")
-	res := runRelease(t, r, g, "", "1.0.0", "--yes")
+	res := runRelease(t, r, g, "", "0.12.0", "--yes")
 	res.requireFailureContaining(t, "required check 'rules' is failed")
 	if strings.Contains(res.out, "identical tree") {
 		t.Errorf("the head's checks must not override a failure:\n%s", res.out)
@@ -1320,7 +1713,7 @@ func TestIdenticalTreeNeverOverridesTargetFailure(t *testing.T) {
 func TestHeadNotMergeCommit(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks()).with("FAKE_GH_ADVANCE_AFTER_MERGE=1")
-	res := runRelease(t, r, g, "y\n", "1.0.0", "--yes")
+	res := runRelease(t, r, g, "y\n", "0.12.0", "--yes")
 	res.requireFailureContaining(t, "is not the release merge commit")
 	requireNoTag(t, r, res)
 }
@@ -1328,8 +1721,8 @@ func TestHeadNotMergeCommit(t *testing.T) {
 func TestBumpCheckFailsAfterMerge(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks()).with("FAKE_GH_CORRUPT_MERGE=1")
-	res := runRelease(t, r, g, "y\n", "1.0.0", "--yes")
-	res.requireFailureContaining(t, "want 1.0.0")
+	res := runRelease(t, r, g, "y\n", "0.12.0", "--yes")
+	res.requireFailureContaining(t, "want 0.12.0")
 	requireNoTag(t, r, res)
 }
 
@@ -1338,9 +1731,9 @@ func TestRemoteOnlyExistingTag(t *testing.T) {
 	g := newGHState(t, r, greenChecks())
 	other := filepath.Join(t.TempDir(), "other")
 	testutil.Git(t, filepath.Dir(other), "clone", "--quiet", r.bare, other)
-	testutil.Git(t, other, "tag", "-a", "v1.0.0", "-m", "x")
-	testutil.Git(t, other, "push", "--quiet", "origin", "refs/tags/v1.0.0")
-	res := runRelease(t, r, g, "y\n", "1.0.0")
+	testutil.Git(t, other, "tag", "-a", "v0.12.0", "-m", "x")
+	testutil.Git(t, other, "push", "--quiet", "origin", "refs/tags/v0.12.0")
+	res := runRelease(t, r, g, "y\n", "0.12.0")
 	res.requireFailureContaining(t, "already exists on origin")
 	if countLog(t, g, "pr create") != 0 {
 		t.Errorf("no PR may be created:\n%s", res.out)
@@ -1352,15 +1745,15 @@ func TestTimeoutMinutesEdgeCases(t *testing.T) {
 		name string
 		args []string
 	}{
-		{"no value", []string{"1.0.0", "--timeout-minutes"}},
-		{"empty", []string{"1.0.0", "--timeout-minutes", ""}},
-		{"zero", []string{"1.0.0", "--timeout-minutes", "0"}},
-		{"negative", []string{"1.0.0", "--timeout-minutes", "-5"}},
-		{"non-numeric", []string{"1.0.0", "--timeout-minutes", "abc"}},
-		{"fraction", []string{"1.0.0", "--timeout-minutes", "1.5"}},
-		{"leading zero", []string{"1.0.0", "--timeout-minutes", "05"}},
-		{"multi-line", []string{"1.0.0", "--timeout-minutes", "5\nx"}},
-		{"swallows the next flag", []string{"--timeout-minutes", "--yes", "1.0.0"}},
+		{"no value", []string{"0.12.0", "--timeout-minutes"}},
+		{"empty", []string{"0.12.0", "--timeout-minutes", ""}},
+		{"zero", []string{"0.12.0", "--timeout-minutes", "0"}},
+		{"negative", []string{"0.12.0", "--timeout-minutes", "-5"}},
+		{"non-numeric", []string{"0.12.0", "--timeout-minutes", "abc"}},
+		{"fraction", []string{"0.12.0", "--timeout-minutes", "1.5"}},
+		{"leading zero", []string{"0.12.0", "--timeout-minutes", "05"}},
+		{"multi-line", []string{"0.12.0", "--timeout-minutes", "5\nx"}},
+		{"swallows the next flag", []string{"--timeout-minutes", "--yes", "0.12.0"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -1378,7 +1771,7 @@ func TestTimeoutMinutesEdgeCases(t *testing.T) {
 	t.Run("valid", func(t *testing.T) {
 		r := newReleaseRepo(t)
 		g := newGHState(t, r, greenChecks())
-		runRelease(t, r, g, "", "1.0.0", "--timeout-minutes", "7", "--dry-run").requireSuccess(t)
+		runRelease(t, r, g, "", "0.12.0", "--timeout-minutes", "7", "--dry-run").requireSuccess(t)
 	})
 }
 
@@ -1388,9 +1781,9 @@ func TestArgumentErrors(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"unknown flag", []string{"1.0.0", "--bogus"}, "unknown flag: --bogus"},
-		{"unknown short flag", []string{"-y", "1.0.0"}, "unknown flag: -y"},
-		{"two versions", []string{"1.0.0", "1.0.1"}, "unexpected argument"},
+		{"unknown flag", []string{"0.12.0", "--bogus"}, "unknown flag: --bogus"},
+		{"unknown short flag", []string{"-y", "0.12.0"}, "unknown flag: -y"},
+		{"two versions", []string{"0.12.0", "0.12.1"}, "unexpected argument"},
 		{"no version", nil, "usage:"},
 	}
 	for _, c := range cases {
@@ -1516,13 +1909,13 @@ func TestLatestTagIgnoresNonStrictTags(t *testing.T) {
 	for _, tg := range []string{"v9.0.0-rc1", "v9.0.0.1", "v09.0.0", "vfoo"} {
 		testutil.Git(t, r.local, "tag", "-a", tg, "-m", "x")
 	}
-	runRelease(t, r, g, "", "1.0.0", "--dry-run").requireSuccess(t)
+	runRelease(t, r, g, "", "0.12.0", "--dry-run").requireSuccess(t)
 }
 
 func TestOriginMustMatchGHRepo(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks()).with("FAKE_GH_REPO=other/thing")
-	res := runRelease(t, r, g, "", "1.0.0")
+	res := runRelease(t, r, g, "", "0.12.0")
 	res.requireFailureContaining(t, "gh targets other/thing")
 	if countLog(t, g, "pr create") != 0 {
 		t.Errorf("no PR may be created:\n%s", res.out)
@@ -1533,14 +1926,14 @@ func TestFailedBranchPushLeavesMainAndResumes(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks())
 	installHook(t, r, `while read old new ref; do case "$ref" in refs/heads/release/*) echo "rejected" >&2; exit 1;; esac; done`)
-	res := runRelease(t, r, g, "", "1.0.0", "--yes")
-	res.requireFailureContaining(t, "pushing release/v1.0.0 failed")
+	res := runRelease(t, r, g, "", "0.12.0", "--yes")
+	res.requireFailureContaining(t, "pushing release/v0.12.0 failed")
 	if b := currentBranch(t, r); b != "main" {
 		t.Fatalf("checkout left on %q, want main", b)
 	}
 	removeHook(t, r)
-	runRelease(t, r, g, "", "1.0.0", "--yes").requireSuccess(t)
-	if out := testutil.Git(t, r.bare, "tag", "--list", "v1.0.0"); out == "" {
+	runRelease(t, r, g, "", "0.12.0", "--yes").requireSuccess(t)
+	if out := testutil.Git(t, r.bare, "tag", "--list", "v0.12.0"); out == "" {
 		t.Errorf("the re-run did not finish the release")
 	}
 }
@@ -1548,12 +1941,12 @@ func TestFailedBranchPushLeavesMainAndResumes(t *testing.T) {
 func TestFailedPRCreateLeavesMainAndResumes(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks())
-	res := runRelease(t, r, g.with("FAKE_GH_PR_CREATE_FAIL=1"), "", "1.0.0", "--yes")
+	res := runRelease(t, r, g.with("FAKE_GH_PR_CREATE_FAIL=1"), "", "0.12.0", "--yes")
 	res.requireFailureContaining(t, "'gh pr create' failed")
 	if b := currentBranch(t, r); b != "main" {
 		t.Fatalf("checkout left on %q, want main", b)
 	}
-	res = runRelease(t, r, g, "", "1.0.0", "--yes")
+	res = runRelease(t, r, g, "", "0.12.0", "--yes")
 	res.requireSuccess(t)
 	if !strings.Contains(res.out, "resuming pushed branch") {
 		t.Errorf("expected to resume the pushed branch:\n%s", res.out)
@@ -1570,10 +1963,11 @@ func TestSignalsLeaveMain(t *testing.T) {
 			marker := filepath.Join(t.TempDir(), "in-push")
 			installHook(t, r, fmt.Sprintf(`touch %s; sleep 2`, marker))
 			bin := fakeBinDir(t)
-			cmd := exec.Command("bash", filepath.Join(r.local, "scripts", "release.sh"), "1.0.0", "--yes")
+			cmd := exec.Command("bash", filepath.Join(r.local, "scripts", "release.sh"), "0.12.0", "--yes")
 			cmd.Dir = r.local
 			cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "RELEASE_SH_POLL_SECONDS=1")
 			cmd.Env = append(cmd.Env, g.env...)
+			cmd.Env = append(cmd.Env, releaseEnv(t)...)
 			var out bytes.Buffer
 			cmd.Stdout, cmd.Stderr = &out, &out
 			if err := cmd.Start(); err != nil {
@@ -1590,7 +1984,7 @@ func TestSignalsLeaveMain(t *testing.T) {
 				}
 				time.Sleep(20 * time.Millisecond)
 			}
-			if b := currentBranch(t, r); b != "release/v1.0.0" {
+			if b := currentBranch(t, r); b != "release/v0.12.0" {
 				t.Fatalf("expected to be on the release branch mid-push, on %q", b)
 			}
 			if err := cmd.Process.Signal(sig); err != nil {
@@ -1613,15 +2007,15 @@ func failedTagPush(t *testing.T) (*releaseRepo, *ghState) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks())
 	installHook(t, r, `while read old new ref; do case "$ref" in refs/tags/*) echo "rejected" >&2; exit 1;; esac; done`)
-	res := runRelease(t, r, g, "", "1.0.0", "--yes")
-	res.requireFailureContaining(t, "git push origin refs/tags/v1.0.0")
+	res := runRelease(t, r, g, "", "0.12.0", "--yes")
+	res.requireFailureContaining(t, "git push origin refs/tags/v0.12.0")
 	if b := currentBranch(t, r); b != "main" {
 		t.Fatalf("checkout left on %q, want main", b)
 	}
-	if strings.Contains(res.out, "tag v1.0.0 pushed") {
+	if strings.Contains(res.out, "tag v0.12.0 pushed") {
 		t.Errorf("must not claim the tag was pushed:\n%s", res.out)
 	}
-	if out := testutil.Git(t, r.local, "tag", "--list", "v1.0.0"); out == "" {
+	if out := testutil.Git(t, r.local, "tag", "--list", "v0.12.0"); out == "" {
 		t.Errorf("the local tag should remain for a retry")
 	}
 	removeHook(t, r)
@@ -1630,13 +2024,13 @@ func failedTagPush(t *testing.T) (*releaseRepo, *ghState) {
 
 func TestFailedTagPushThenRerunPushesLocalTag(t *testing.T) {
 	r, g := failedTagPush(t)
-	res := runRelease(t, r, g, "", "1.0.0")
+	res := runRelease(t, r, g, "", "0.12.0")
 	res.requireSuccess(t)
 	if !strings.Contains(res.out, "exists locally at this commit but is not on origin") {
 		t.Errorf("expected the local-tag notice:\n%s", res.out)
 	}
 	merge := testutil.Git(t, r.bare, "rev-parse", "main")
-	if tag := testutil.Git(t, r.bare, "rev-parse", "v1.0.0^{commit}"); tag != merge {
+	if tag := testutil.Git(t, r.bare, "rev-parse", "v0.12.0^{commit}"); tag != merge {
 		t.Errorf("origin's tag is at %s, want the merge commit %s", tag, merge)
 	}
 	if countLog(t, g, "pr create") != 1 {
@@ -1648,9 +2042,9 @@ func TestLocalTagWrongCommit(t *testing.T) {
 	r, g := failedTagPush(t)
 
 	// A local tag on some other commit is refused, never pushed.
-	testutil.Git(t, r.local, "tag", "-d", "v1.0.0")
-	testutil.Git(t, r.local, "tag", "-a", "v1.0.0", "-m", "x", "HEAD~1")
-	res := runRelease(t, r, g, "", "1.0.0")
+	testutil.Git(t, r.local, "tag", "-d", "v0.12.0")
+	testutil.Git(t, r.local, "tag", "-a", "v0.12.0", "-m", "x", "HEAD~1")
+	res := runRelease(t, r, g, "", "0.12.0")
 	res.requireFailureContaining(t, "not the verified merge commit")
 	requireNoTag(t, r, res)
 }
@@ -1658,16 +2052,16 @@ func TestLocalTagWrongCommit(t *testing.T) {
 func TestResumeOpenPR(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks())
-	pushReleaseBranch(t, r, "1.0.0")
+	pushReleaseBranch(t, r, "0.12.0")
 	g.write(t, "pr_number", "4")
 	g.write(t, "pr_state", "OPEN")
-	g.write(t, "pr_branch", "release/v1.0.0")
-	res := runRelease(t, r, g, "", "1.0.0", "--yes")
+	g.write(t, "pr_branch", "release/v0.12.0")
+	res := runRelease(t, r, g, "", "0.12.0", "--yes")
 	res.requireSuccess(t)
 	if countLog(t, g, "pr create") != 0 || countLog(t, g, "pr merge --auto --squash 4") != 1 {
 		t.Errorf("want auto-merge on the open PR #4 and no new PR:\n%s", g.log(t))
 	}
-	if out := testutil.Git(t, r.bare, "tag", "--list", "v1.0.0"); out == "" {
+	if out := testutil.Git(t, r.bare, "tag", "--list", "v0.12.0"); out == "" {
 		t.Errorf("tag missing:\n%s", res.out)
 	}
 }
@@ -1676,17 +2070,66 @@ func TestExistingRemoteBranchWithoutPR(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks())
 	initial := testutil.Git(t, r.bare, "rev-parse", "main")
-	pushReleaseBranch(t, r, "1.0.0")
-	res := runRelease(t, r, g, "", "1.0.0", "--yes")
+	pushReleaseBranch(t, r, "0.12.0")
+	res := runRelease(t, r, g, "", "0.12.0", "--yes")
 	res.requireSuccess(t)
-	if !strings.Contains(res.out, "resuming pushed branch release/v1.0.0") {
+	if !strings.Contains(res.out, "resuming pushed branch release/v0.12.0") {
 		t.Errorf("expected the pushed branch to be reused:\n%s", res.out)
 	}
-	if n := testutil.Git(t, r.bare, "rev-list", "--count", initial+"..refs/heads/release/v1.0.0"); n != "1" {
-		t.Errorf("want exactly one commit on the branch, got %s", n)
+	if n := testutil.Git(t, r.bare, "rev-list", "--count", initial+"..refs/heads/release/v0.12.0"); n != "2" {
+		t.Errorf("want the pushed bump commit and the catalogue commit on the branch, got %s", n)
+	}
+	if files := testutil.Git(t, r.bare, "diff-tree", "--no-commit-id", "--name-only", "-r", "refs/heads/release/v0.12.0"); files != "docs/release-streams.yaml" {
+		t.Errorf("the commit on top of the pushed bump should touch the catalogue only, got:\n%s", files)
 	}
 	if countLog(t, g, "pr create") != 1 {
 		t.Errorf("want one PR:\n%s", g.log(t))
+	}
+}
+
+// TestResumedBranchWithTheBumpStillRecordsTheStream: a release branch pushed by
+// hand (or by an earlier script that predates the catalogue) already carries
+// the plugin bump, so the bump is skipped; the catalogue's cli row must still
+// move, or main keeps describing the release before this one.
+func TestResumedBranchWithTheBumpStillRecordsTheStream(t *testing.T) {
+	r := newReleaseRepo(t)
+	rewriteFixtureStreams(t, r, streamsFixtureReleased)
+	addReleaseNotes(t, r, "0.11.2")
+	g := newGHState(t, r, greenChecks())
+	pushReleaseBranch(t, r, "0.11.2")
+
+	res := runRelease(t, r, g, "", "0.11.2", "--yes")
+
+	res.requireSuccess(t)
+	catalogue := testutil.Git(t, r.bare, "show", "main:docs/release-streams.yaml")
+	if !strings.Contains(catalogue, `current: "0.11.2"`) {
+		t.Errorf("docs/release-streams.yaml on main does not record 0.11.2 as the cli stream's current:\n%s", catalogue)
+	}
+}
+
+// TestResumedBranchWhoseCatalogueRefusesTheVersion: the precondition read main's
+// catalogue, but a hand-pushed branch may carry its own; one that already
+// records a later release is refused before anything is committed or opened.
+func TestResumedBranchWhoseCatalogueRefusesTheVersion(t *testing.T) {
+	r := newReleaseRepo(t)
+	rewriteFixtureStreams(t, r, streamsFixtureReleased)
+	addReleaseNotes(t, r, "0.11.2")
+	g := newGHState(t, r, greenChecks())
+	clone := filepath.Join(t.TempDir(), "earlier")
+	testutil.Git(t, filepath.Dir(clone), "clone", "--quiet", r.bare, clone)
+	testutil.Git(t, clone, "switch", "--quiet", "-c", "release/v0.11.2")
+	writeStreams(t, clone, strings.Replace(streamsFixtureReleased, `current: "0.11.1"`, `current: "0.11.3"`, 1))
+	testutil.Git(t, clone, "commit", "--quiet", "-am", "release: v0.11.2")
+	testutil.Git(t, clone, "push", "--quiet", "origin", "release/v0.11.2")
+
+	res := runRelease(t, r, g, "", "0.11.2", "--yes")
+
+	res.requireFailureContaining(t, "on release/v0.11.2 cannot record 0.11.2")
+	if countLog(t, g, "pr create") != 0 {
+		t.Errorf("a refused branch must not reach 'gh pr create':\n%s", g.log(t))
+	}
+	if b := currentBranch(t, r); b != "main" {
+		t.Errorf("want the checkout back on main, got %s", b)
 	}
 }
 
@@ -1695,7 +2138,7 @@ func TestClosedPRWithBranchDeletedOpensNewOne(t *testing.T) {
 	g := newGHState(t, r, greenChecks())
 	g.write(t, "pr_number", "7")
 	g.write(t, "pr_state", "CLOSED")
-	res := runRelease(t, r, g, "", "1.0.0", "--yes")
+	res := runRelease(t, r, g, "", "0.12.0", "--yes")
 	res.requireSuccess(t)
 	if countLog(t, g, "pr create") != 1 {
 		t.Errorf("the documented recovery (branch deleted) must open a fresh PR:\n%s", g.log(t))
@@ -1705,7 +2148,7 @@ func TestClosedPRWithBranchDeletedOpensNewOne(t *testing.T) {
 func TestAutoMergeUnavailable(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks()).with("FAKE_GH_AUTOMERGE_FAIL=1")
-	res := runRelease(t, r, g, "", "1.0.0", "--yes")
+	res := runRelease(t, r, g, "", "0.12.0", "--yes")
 	res.requireFailureContaining(t, "could not enable auto-merge")
 	res.requireFailureContaining(t, "Merge the pull request yourself, then re-run")
 	requireNoTag(t, r, res)
@@ -1720,7 +2163,7 @@ func TestCancelledCheckIsRetriedOnce(t *testing.T) {
 		g := newGHState(t, r, greenChecks())
 		g.write(t, "pr_check_fail", "rules CANCELLED")
 		g.write(t, "pr_check_once", "")
-		res := runRelease(t, r, g, "", "1.0.0", "--yes")
+		res := runRelease(t, r, g, "", "0.12.0", "--yes")
 		res.requireSuccess(t)
 		if !strings.Contains(res.out, "was cancelled") {
 			t.Errorf("expected a retry notice:\n%s", res.out)
@@ -1730,7 +2173,7 @@ func TestCancelledCheckIsRetriedOnce(t *testing.T) {
 		r := newReleaseRepo(t)
 		g := newGHState(t, r, greenChecks())
 		g.write(t, "pr_check_fail", "rules CANCELLED")
-		res := runRelease(t, r, g, "", "1.0.0", "--yes")
+		res := runRelease(t, r, g, "", "0.12.0", "--yes")
 		res.requireFailureContaining(t, "check 'rules' failed (CANCELLED)")
 		if countLog(t, g, "pr checks") < 2 {
 			t.Errorf("a cancelled check must be given one more poll:\n%s", g.log(t))
@@ -1749,12 +2192,14 @@ func TestHighlightsRequiredFrom040(t *testing.T) {
 		want    string // "" means the dry run must succeed
 	}{
 		{"missing for 0.4.0", "0.4.0", "-", "docs/releases/v0.4.0.md"},
-		{"missing for 1.2.3", "1.2.3", "-", "docs/releases/v1.2.3.md"},
+		{"missing for 0.14.3", "0.14.3", "-", "docs/releases/v0.14.3.md"},
 		{"missing for 0.10.0 (numeric compare)", "0.10.0", "-", "docs/releases/v0.10.0.md"},
 		{"empty for 0.4.0", "0.4.0", "  \n", "is empty"},
-		{"present for 0.4.0", "0.4.0", "- Something.\n", ""},
-		{"not needed for 0.3.2", "0.3.2", "-", ""},
-		{"not needed for 0.0.1", "0.0.1", "-", ""},
+		// A release below 0.10 is refused by the streams check (the CLI's
+		// named line starts there), so the dry runs that pass are on the line;
+		// "not needed below 0.4.0" is release-policy.sh's own rule, pinned by
+		// TestCheckHighlights and TestReleasePolicy.
+		{"present for 0.10.0", "0.10.0", "- Something.\n", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -1826,13 +2271,13 @@ func TestSummariesRequiredFrom040(t *testing.T) {
 		want    string            // "" means the dry run must succeed
 	}{
 		{"missing file for 0.4.0", "0.4.0", nil, "website/data/release-summaries.yaml"},
-		{"missing entry for 1.2.3", "1.2.3", map[string]string{"1.2.2": "An older release."}, "carries no entry for v1.2.3"},
+		{"missing entry for 0.14.3", "0.14.3", map[string]string{"0.14.2": "An older release."}, "carries no entry for v0.14.3"},
 		{"blank entry for 0.4.0", "0.4.0", map[string]string{"0.4.0": ""}, "carries no entry for v0.4.0"},
 		{"spaces-only entry for 0.10.0 (numeric compare)", "0.10.0", map[string]string{"0.10.0": "   "}, "carries no entry for v0.10.0"},
-		{"only a longer tag's entry counts as another version", "1.2.3", map[string]string{"1.2.30": "A different release."}, "carries no entry for v1.2.3"},
-		{"present for 0.4.0", "0.4.0", map[string]string{"0.4.0": "Something a user sees."}, ""},
-		{"not needed for 0.3.2", "0.3.2", nil, ""},
-		{"not needed for 0.0.1", "0.0.1", nil, ""},
+		{"only a longer tag's entry counts as another version", "0.14.3", map[string]string{"0.14.30": "A different release."}, "carries no entry for v0.14.3"},
+		// As in TestHighlightsRequiredFrom040: a passing dry run is on the
+		// CLI's named line, and the below-0.4.0 rule is release-policy.sh's.
+		{"present for 0.10.0", "0.10.0", map[string]string{"0.10.0": "Something a user sees."}, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

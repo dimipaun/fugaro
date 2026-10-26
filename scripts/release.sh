@@ -10,14 +10,24 @@
 # precondition below still runs. --dry-run applies the version bump to a
 # scratch worktree and runs the plugin tests there (the bump rewrites two
 # version stamps in every skill file, so it can push one over its byte budget
-# on its own; `go` has to be on PATH for it, and its absence is a refusal like
-# a missing `gh`), then stops after printing the plan for step 2 (branch/PR),
+# on its own; `go` has to be on PATH for it, as it does for the stream read
+# below, and its absence is a refusal like a missing `gh`), then stops after
+# printing the plan for step 2 (branch/PR),
 # creating nothing outside that worktree, which it removes however it ends.
 # The plan says what that check did, including that it did not run when the
 # checkout holds no module. --timeout-minutes (default 45, a whole number
 # >= 1) bounds each of the two waits: step 3 (the release PR
 # merging) and step 4 (CI's test, terraform, rules and both console checks finishing on the merge
 # commit).
+#
+# The release reads the CLI stream from docs/release-streams.yaml through a
+# small Go helper, internal/streams/cmd/streams (GD7: one file, the graph's
+# reader and this one): step 1 runs step 2's write in memory (`set --check`) and
+# refuses whatever it would refuse -- a version below the stream's current, one
+# off the stream's named line, one with no name after it -- prints the release's
+# spoken name, and step 2 records the version being released in the file in its
+# release commit, so the file the graph draws never describes a version that has
+# shipped (GV1.5, docs/console-dependency-graph).
 #
 # Re-running after an interruption is safe: the script re-derives its state
 # from git and gh (an existing release/vX.Y.Z PR, merged or open, is found
@@ -229,6 +239,48 @@ if [ -n "$latest" ] && ! version_gt "$version" "$latest"; then
   exit 1
 fi
 
+# The CLI stream's own record of where the line is at, docs/release-streams.yaml
+# (GD7: one file, read by the console's dependency graph and by this script):
+# the release takes the version it must not go behind, the name it is spoken
+# with, and the version it writes back into the file from it. It is read through
+# internal/streams/cmd/streams, which is the package's reader, so this script
+# carries no YAML reader of its own and the file is refused here exactly as the
+# graph refuses it -- a symlink, an anchor, a tag prefix that is not this
+# stream's, a console version below the floor the console has shipped. It runs
+# after the clean-tree and main == origin/main checks, so `go run` builds the
+# helper from the checkout those checks verified.
+#
+# `set --check` is step 2's write computed in memory: the floor (a version below
+# the stream's current is refused; the version it is already at is allowed, since
+# an interrupted release re-runs with it and the tag check above refuses one that
+# really did ship), the next name (a version with no name after it is refused),
+# the line-targeted rewrite (a `current:` it cannot find is refused) and the
+# reader's re-read of the result (a version off the stream's named line -- a
+# major bump, a minor below 0.10 -- is refused). So the dry run refuses whatever
+# step 2 would, before a branch exists.
+#
+# RELEASE_SH_STREAMS_CMD exists for the tests only: the fixture checkout holds no
+# go module, so they substitute a helper binary built from this checkout (the
+# same reason RELEASE_SH_PLUGIN_TEST_CMD exists).
+streams_cmd=${RELEASE_SH_STREAMS_CMD:-go run ./internal/streams/cmd/streams}
+if [ -z "${RELEASE_SH_STREAMS_CMD:-}" ] && ! command -v go >/dev/null 2>&1; then
+  echo "go is not on PATH, and the release reads the CLI stream (docs/release-streams.yaml) through internal/streams/cmd/streams with it, for the version it must not go behind and the name it is spoken with (--dry-run's plugin budget check needs go too). Install go (https://go.dev/dl)." >&2
+  exit 1
+fi
+if ! stream_check=$($streams_cmd set --check cli "$version" 2>&1); then
+  echo "docs/release-streams.yaml cannot record $version as the cli stream's current, which step 2 writes in the release commit (docs/console-dependency-graph/reconciliation.md, GD7):
+$stream_check" >&2
+  exit 1
+fi
+# The name the release is spoken with: the name of the minor it falls in and the
+# patch's word ("Camel two" for 0.11.2), as docs/release-streams.yaml's header
+# writes it. A version the check above accepted always has one.
+if ! stream_name=$($streams_cmd name cli "$version" 2>&1); then
+  echo "docs/release-streams.yaml names no release for $version:
+$stream_name" >&2
+  exit 1
+fi
+
 # Checks still running on main (a just-merged PR) are waited for, up to
 # --timeout-minutes; a failed check fails at once.
 echo "checking that main's checks are green at $local_main (waiting up to ${timeout_minutes}m for any still running)..."
@@ -293,21 +345,21 @@ if [ "$dry_run" = 1 ]; then
   plugin_budget_check "$version" || exit 1
   cat <<EOF
 
-Dry run for $tag: every precondition above passed; $plugin_check_line.
+Dry run for $tag ($stream_name): every precondition above passed; $plugin_check_line.
 Nothing else was changed.
 Without --dry-run this would:
-  2. create $branch from main, bump the plugin to $version (scripts/bump-plugin-version.sh), commit "release: $tag", push it, open a PR to main, and enable squash auto-merge
+  2. create $branch from main, bump the plugin to $version (scripts/bump-plugin-version.sh), record $version as the cli stream's current in docs/release-streams.yaml (moving its next name when the release opens a new minor), commit "release: $tag", push it, open a PR to main, and enable squash auto-merge
   3. wait up to ${timeout_minutes}m for that PR to merge
   4. wait up to ${timeout_minutes}m for the merge commit's test, terraform, rules and console checks, and require them to pass (the release gate)
-  5. ask to create and push the tag $tag
+  5. create and push the tag $tag (no prompt: the green release gate on the verified merge commit is the safeguard)
 EOF
   exit 0
 fi
 
-commit_body="Bump the plugin version and every skill header to $version (scripts/bump-plugin-version.sh) so the release gate's version check passes once this merges to main.
+commit_body="Bump the plugin version and every skill header to $version (scripts/bump-plugin-version.sh) so the release gate's version check passes once this merges to main, and record $version as the cli stream's current in docs/release-streams.yaml so the file the console's dependency graph draws describes what has shipped.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
-pr_body="Bumps plugin/.claude-plugin/plugin.json and every skill header to $version (scripts/bump-plugin-version.sh), per docs/release.md. Opened by scripts/release.sh; auto-merge (squash) is enabled."
+pr_body="Bumps plugin/.claude-plugin/plugin.json and every skill header to $version (scripts/bump-plugin-version.sh), per docs/release.md, and records $version as the cli stream's current in docs/release-streams.yaml. Opened by scripts/release.sh; auto-merge (squash) is enabled."
 
 closed_message() {
   echo "pull request #$1 ($2) for $branch was closed without merging.
@@ -360,6 +412,13 @@ else
   if [ -n "$base_ref" ] && [ "$(git merge-base "$base_ref" origin/main)" = "$origin_main" ]; then
     echo "resuming $base_desc"
     git switch --quiet -C "$branch" "$base_ref"
+    # The precondition read main's catalogue; a branch pushed by hand may carry
+    # its own, and that is the one the release commit writes from.
+    if ! stream_check=$($streams_cmd set --check cli "$version" 2>&1); then
+      echo "docs/release-streams.yaml on $branch cannot record $version as the cli stream's current; delete the branch (git push origin --delete $branch; git branch -D $branch) and re-run:
+$stream_check" >&2
+      exit 1
+    fi
   else
     [ -n "$base_ref" ] && echo "$base_desc predates main ($origin_main); rebuilding $branch from origin/main" >&2
     git switch --quiet -C "$branch" origin/main
@@ -367,6 +426,19 @@ else
 
   if ! scripts/bump-plugin-version.sh --check "$version" >/dev/null 2>&1; then
     scripts/bump-plugin-version.sh "$version" >/dev/null
+  fi
+  # The catalogue's cli row moves with the release, in the release commit
+  # itself: the file is what the graph draws and what the next release's floor
+  # is read from, so it never describes a version that has shipped (GV1.5).
+  # `set` writes both halves of the row -- `current`, and `next` moved on when
+  # the release opens a new minor, since `next` is the name the minor after the
+  # current one takes -- and refuses a write that does not read back, so a
+  # commit carrying a catalogue this build cannot parse, or one that names the
+  # release after it wrongly, cannot be made. It runs even when the bump is
+  # already on a resumed branch, which may have been pushed without the row
+  # moved; at an equal version it rewrites the file byte for byte.
+  $streams_cmd set cli "$version"
+  if [ -n "$(git status --porcelain)" ]; then
     git add -A
     git commit --quiet -m "release: $tag" -m "$commit_body"
   fi
@@ -475,6 +547,7 @@ cat <<EOF
 
 Release summary
   tag:     $tag
+  name:    $stream_name
   commit:  $head_sha ($subject)
   checks:  test, terraform, rules and both console checks (console (ubuntu-latest), console (macos-latest)) all succeeded, on $head_sha or on the identical-tree head of the merged PR (scripts/release-gate.sh says which, above)
 
