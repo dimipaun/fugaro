@@ -533,6 +533,15 @@ describe('the committed synthetic fixture', () => {
       // own README says what is in it and `test/unit/screenshots.test.ts` holds
       // every document in it to the console's decoders.
       'screenshots',
+      // `plan-status.json` is not a recording either (plan GV2.1): it is one
+      // `plan status --json` document, written from the structs
+      // (`internal/cli/plan_status.go`, `internal/plan/state.go`) so the plan
+      // graph's decoder and its string-leaf walk have a document to run over.
+      // It is JSON and not `.ndjson`, so the loader sweep above never reads it,
+      // and it carries no redactor header to verify -- it is invented rather
+      // than recorded, and `test/unit/schema.test.ts` is where its keys are
+      // held to the Go structs.
+      'plan-status.json',
       ...FIXTURE_CASES.map((name) => `${name}.ndjson`),
     ])
     const present = readdirSync(FIXTURE_DIRECTORY)

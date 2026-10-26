@@ -1,4 +1,4 @@
-// The two document shapes the console admits, and nothing else (desktop-console
+// The document shapes the console admits, and nothing else (desktop-console
 // plan Task 2.0; design section 5.1 rules 3 and 7; console/docs/json-contract.md
 // sections 2 and 5).
 //
@@ -13,9 +13,10 @@
 //     or a repository block, because none of those exist without the database.
 //
 // The two are discriminated on the **`degraded` key**, and that is the whole of
-// this module's structure: a document that carries `degraded: true` is the
-// second shape, a document that carries none of the live keys is neither, and
-// neither is admitted by accident. A screen that rendered the degraded document
+// the feed's half of this module's structure: a document that carries
+// `degraded: true` is the second shape, a document that carries none of the live
+// keys is neither, and neither is admitted by accident. A screen that rendered
+// the degraded document
 // as a live one would draw a `0` for every field the degraded shape cannot
 // carry, which is the design's first UI rule broken in the worst possible way:
 // it would say a project had spent nothing all day when what happened is that
@@ -38,6 +39,14 @@
 // *inside* `runstore.Cost` are not closed, because that struct is versioned
 // independently of this one and the console reads six fields of it; the live
 // half of this file closes every object it decodes. Everything else is closed.
+//
+// **A one-shot read's document is not a shape of the feed.** `plan status
+// --json` is the first of those to be decoded here (GV2.1), and it gets its own
+// door rather than a third member of `ConsoleDocument`: the two documents carry
+// no common marker, so a feed document is refused by this door for the keys it
+// is missing and a plan document is refused as an unknown shape by the feed's.
+// The section at the end of this file is that document, and it follows the same
+// rules -- closed objects, refusals by name, quantities as readings.
 //
 // **Nothing here imports anything at runtime**, for the same reason
 // `sanitize.ts` does not: the renderer loads this module and has no Node, no
@@ -184,6 +193,28 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   notice: 'sentence',
   // `warnings[]`: the lines a human listing prints before its table.
   warnings: 'sentence',
+  // The plan status document (GV2.1). Every one of these is repository content
+  // -- a graph artifact and the plan, tasks, releases and streams it names --
+  // so each is text a job or a checkout wrote and goes through the sanitizer
+  // like any other drawn string. `id` is an id the CLI derived from where an
+  // artifact sits (a plan) or the artifact's own node key (a task), `artifact`
+  // is a path under `docs/`, and the rest are short rendered fields: labels,
+  // which is the class `job`, `profile` and the artifact's own `plan` name
+  // carry. `mark` is the exception and is a `sentence`: it is the one reason a
+  // state is not what its word alone says (`plan.MergeUnknown`), a sentence the
+  // CLI fixes rather than composes, and it is drawn as one.
+  id: 'label',
+  artifact: 'path',
+  plan: 'label',
+  stream: 'label',
+  release: 'label',
+  version: 'label',
+  theme: 'label',
+  names: 'label',
+  current: 'label',
+  next: 'label',
+  tag_prefix: 'label',
+  mark: 'sentence',
 })
 
 /**
@@ -287,6 +318,10 @@ export type SchemaRefusalName =
   | 'not-a-boolean'
   /** a key that must be an RFC 3339 timestamp is not one */
   | 'not-a-timestamp'
+  /** a key that must be a number is not one */
+  | 'not-a-number'
+  /** a key whose value must be one of a closed set of words carries none of them */
+  | 'unknown-value'
   /** a live document was expected where a degraded one arrived */
   | 'wrong-shape'
 
@@ -434,6 +469,17 @@ function optionalText(raw: Record<string, unknown>, key: string, field: string, 
 function optionalInt(raw: Record<string, unknown>, key: string): number | null {
   const value = raw[key]
   return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+/** intAt is the strict axis, for a number that is **structure rather than a
+ * quantity**: a key the document must carry and that must be a whole number.
+ * A plan node's `level` is the one such key today -- a level is a place in a
+ * dependency chain, not a figure anyone reads, so an absent or fractional one
+ * is a document this console cannot draw rather than a reading it withholds.
+ * Every number a *screen* prints goes through `readingOf` instead. */
+function intAt(raw: unknown, field: string, where: string): number {
+  if (typeof raw !== 'number' || !Number.isInteger(raw)) return refuse('not-a-number', field, where)
+  return raw
 }
 
 /** optionalBool reads a key the shape may leave out (`queued`, `stuck`,
@@ -1249,4 +1295,313 @@ export function decodeSnapshot(raw: unknown, where = 'the snapshot'): Decoded<Li
  */
 export function knownTopLevelKeys(shape: ConsoleDocument['shape']): readonly string[] {
   return shape === 'live' ? LIVE_KEYS : DEGRADED_KEYS
+}
+
+// ---------------------------------------------------------------------------
+// The plan status document (plan GV2.1).
+// ---------------------------------------------------------------------------
+
+/**
+ * `fugaro plan status --json` is a **third** document, and it is not a shape of
+ * the feed: it is one plan graph per plan under the checkout's `docs/`, each
+ * joined to the runs of that checkout's repository (`internal/cli/plan_status.go`,
+ * `planStatusDoc`; `internal/plan/state.go`, `StatePlan`). So it has its own
+ * door, `decodePlanStatus`, and the feed's door does not admit it -- the two
+ * documents share no marker, and a screen that read one as the other would draw
+ * an empty graph or an empty feed.
+ *
+ * **`state` is the closed word, and it is why this decoder exists.** A task's
+ * state is one of six the CLI writes from its own table (`plan.StateNode.State`),
+ * and every field beside it is read in that word's light: `closed`, `mark`,
+ * `level` and `critical` are the state's own qualifiers rather than independent
+ * facts. A seventh word is a CLI whose rules this build does not know, so it is
+ * refused by name -- `unknown-value` -- rather than drawn in whatever colour a
+ * screen keeps for "not one of mine".
+ *
+ * **The counts are readings and the level is not.** `tasks`, `closed`, `open`
+ * and a release box's four figures are quantities a header prints, so they go
+ * through `readingOf` and a screen can only draw them through
+ * `formatReading` (the availability rule); a node's `level` is a place in a
+ * dependency chain, so it is a number the document must carry or the document
+ * is one this console cannot draw.
+ */
+
+/** PLAN_STATES is `plan.StateNode.State`'s closed set, in the CLI's own order
+ * (`internal/plan/state.go`). */
+export const PLAN_STATES: readonly string[] = Object.freeze([
+  'running',
+  'done',
+  'cancelled',
+  'blocked',
+  'ready',
+  'not-started',
+])
+
+/** PlanState is one of them, as a type: a screen switches on it and the switch
+ * is exhaustive, which is what `PLAN_STATES` being the whole list buys. */
+export type PlanState = (typeof PLAN_STATES)[number]
+
+/** The exact key sets of the plan status document and of each object in it, in
+ * the structs' declaration order. A test reads the same fields off
+ * `internal/cli/plan_status.go` and `internal/plan/state.go`, so a key one side
+ * gains without the other is a failing test rather than an unread field. */
+export const PLAN_STATUS_KEYS: readonly string[] = Object.freeze([
+  'repo',
+  'plans',
+  'totals',
+  'streams',
+  'warnings',
+])
+
+export const PLAN_KEYS: readonly string[] = Object.freeze([
+  'id',
+  'artifact',
+  'plan',
+  'stream',
+  'nodes',
+  'releases',
+  'tasks',
+  'closed',
+  'open',
+])
+
+export const PLAN_NODE_KEYS: readonly string[] = Object.freeze([
+  'id',
+  'title',
+  'state',
+  'closed',
+  'level',
+  'critical',
+  'release',
+  'run',
+  'stage',
+  'pr_number',
+  'mark',
+])
+
+export const PLAN_RELEASE_KEYS: readonly string[] = Object.freeze([
+  'version',
+  'name',
+  'stream',
+  'finished',
+  'total',
+  'done',
+  'closed',
+  'open',
+])
+
+export const PLAN_TOTALS_KEYS: readonly string[] = Object.freeze(['plans', 'tasks', 'closed', 'open'])
+
+export const PLAN_STREAM_KEYS: readonly string[] = Object.freeze([
+  'name',
+  'theme',
+  'names',
+  'current',
+  'next',
+  'tag_prefix',
+])
+
+/** PlanNodeView is one task: the plan's own node, and what the join said about
+ * it. `state` is the whole of the colouring -- see `PLAN_STATES` -- and `mark`
+ * is the one reason a state is not what its word alone says (`merge unknown`). */
+export interface PlanNodeView {
+  readonly id: string
+  readonly title: string
+  readonly state: PlanState
+  readonly closed: boolean
+  /** the longest dependency chain ending at this task */
+  readonly level: number
+  readonly critical: boolean
+  /** the target version the plan gives it, empty when it gives none */
+  readonly release: string
+  /** the run's short suffix, empty when no run joins the task */
+  readonly run: string
+  readonly stage: string
+  readonly prNumber: number | null
+  readonly mark: string
+}
+
+/** PlanReleaseView is one target version's box: what it is called, whether the
+ * stream's catalogue says it has shipped, and how its tasks stand. */
+export interface PlanReleaseView {
+  readonly version: string
+  readonly name: string
+  readonly stream: string
+  readonly finished: boolean
+  readonly total: Reading
+  readonly done: Reading
+  readonly closed: Reading
+  readonly open: Reading
+}
+
+/** PlanView is one plan. `nodes` holds every task with `--all` and the open
+ * ones alone without it, while `tasks`/`closed`/`open` count every task either
+ * way -- so a header drawn from those three reads the same in both reads. */
+export interface PlanView {
+  readonly id: string
+  readonly artifact: string
+  readonly plan: string
+  readonly stream: string
+  readonly nodes: readonly PlanNodeView[]
+  readonly releases: readonly PlanReleaseView[]
+  readonly tasks: Reading
+  readonly closed: Reading
+  readonly open: Reading
+}
+
+/** PlanTotalsView is every plan's figures added up: the header line a screen
+ * draws before the plans. */
+export interface PlanTotalsView {
+  readonly plans: Reading
+  readonly tasks: Reading
+  readonly closed: Reading
+  readonly open: Reading
+}
+
+/** PlanStreamView is one row of the release streams catalogue, in the shape a
+ * console draws a column from. */
+export interface PlanStreamView {
+  readonly name: string
+  readonly theme: string
+  readonly names: readonly string[]
+  readonly current: string
+  readonly next: string
+  readonly tagPrefix: string
+}
+
+/** PlanStatusView is the whole document. `repo` is the checkout's own
+ * repository and is what scopes the join: `''` is a checkout whose origin could
+ * not be read, and then no run is joined at all. `warnings` are the CLI's own
+ * sentences about what it could not read -- never a word a run wrote. */
+export interface PlanStatusView {
+  readonly repo: string
+  readonly plans: readonly PlanView[]
+  readonly totals: PlanTotalsView
+  readonly streams: readonly PlanStreamView[]
+  readonly warnings: readonly string[]
+}
+
+/** planStateAt is the closed word, refused by name when it is not one of the
+ * six: a screen colours a node from this value and applies no rule of its own,
+ * so a word this build does not know is a node it cannot draw. */
+function planStateAt(raw: unknown, field: string, where: string): PlanState {
+  const state = stringAt(raw, field, where)
+  const known = PLAN_STATES.find((candidate) => candidate === state)
+  if (known === undefined) return refuse('unknown-value', field, where)
+  return known as PlanState
+}
+
+function planNodeAt(raw: unknown, index: number, plan: string, where: string): PlanNodeView {
+  const field = `${plan}.nodes[${String(index)}]`
+  const node = objectAt(raw, field, where)
+  closed(node, PLAN_NODE_KEYS, field, where)
+  return {
+    id: stringAt(required(node, 'id', field, where), `${field}.id`, where),
+    title: stringAt(required(node, 'title', field, where), `${field}.title`, where),
+    state: planStateAt(required(node, 'state', field, where), `${field}.state`, where),
+    closed: boolAt(required(node, 'closed', field, where), `${field}.closed`, where),
+    level: intAt(required(node, 'level', field, where), `${field}.level`, where),
+    critical: boolAt(required(node, 'critical', field, where), `${field}.critical`, where),
+    // The five `omitempty` keys of the node. Absent and `null` both mean the
+    // CLI had nothing to say: no target version, no run joined, no stage, no
+    // pull request recorded, no mark -- and the last is what makes a `done`
+    // node unqualified rather than unknown.
+    release: optionalText(node, 'release', field, where),
+    run: optionalText(node, 'run', field, where),
+    stage: optionalText(node, 'stage', field, where),
+    prNumber: optionalInt(node, 'pr_number'),
+    mark: optionalText(node, 'mark', field, where),
+  }
+}
+
+function planReleaseAt(raw: unknown, index: number, plan: string, where: string): PlanReleaseView {
+  const field = `${plan}.releases[${String(index)}]`
+  const release = objectAt(raw, field, where)
+  closed(release, PLAN_RELEASE_KEYS, field, where)
+  return {
+    version: stringAt(required(release, 'version', field, where), `${field}.version`, where),
+    name: optionalText(release, 'name', field, where),
+    stream: optionalText(release, 'stream', field, where),
+    finished: boolAt(required(release, 'finished', field, where), `${field}.finished`, where),
+    total: readingOf(release, 'total', `${field}.total`),
+    done: readingOf(release, 'done', `${field}.done`),
+    closed: readingOf(release, 'closed', `${field}.closed`),
+    open: readingOf(release, 'open', `${field}.open`),
+  }
+}
+
+function planAt(raw: unknown, index: number, where: string): PlanView {
+  const field = `plans[${String(index)}]`
+  const plan = objectAt(raw, field, where)
+  closed(plan, PLAN_KEYS, field, where)
+  return {
+    id: stringAt(required(plan, 'id', field, where), `${field}.id`, where),
+    artifact: stringAt(required(plan, 'artifact', field, where), `${field}.artifact`, where),
+    plan: stringAt(required(plan, 'plan', field, where), `${field}.plan`, where),
+    stream: optionalText(plan, 'stream', field, where),
+    nodes: arrayAt(required(plan, 'nodes', field, where), `${field}.nodes`, where).map((item, at) =>
+      planNodeAt(item, at, field, where),
+    ),
+    releases: arrayAt(required(plan, 'releases', field, where), `${field}.releases`, where).map((item, at) =>
+      planReleaseAt(item, at, field, where),
+    ),
+    tasks: readingOf(plan, 'tasks', `${field}.tasks`),
+    closed: readingOf(plan, 'closed', `${field}.closed`),
+    open: readingOf(plan, 'open', `${field}.open`),
+  }
+}
+
+function planTotalsAt(raw: unknown, field: string, where: string): PlanTotalsView {
+  const totals = objectAt(raw, field, where)
+  closed(totals, PLAN_TOTALS_KEYS, field, where)
+  return {
+    plans: readingOf(totals, 'plans', `${field}.plans`),
+    tasks: readingOf(totals, 'tasks', `${field}.tasks`),
+    closed: readingOf(totals, 'closed', `${field}.closed`),
+    open: readingOf(totals, 'open', `${field}.open`),
+  }
+}
+
+function planStreamAt(raw: unknown, index: number, where: string): PlanStreamView {
+  const field = `streams[${String(index)}]`
+  const stream = objectAt(raw, field, where)
+  closed(stream, PLAN_STREAM_KEYS, field, where)
+  return {
+    name: stringAt(required(stream, 'name', field, where), `${field}.name`, where),
+    theme: stringAt(required(stream, 'theme', field, where), `${field}.theme`, where),
+    names: arrayAt(required(stream, 'names', field, where), `${field}.names`, where).map((item, at) =>
+      stringAt(item, `${field}.names[${String(at)}]`, where),
+    ),
+    current: stringAt(required(stream, 'current', field, where), `${field}.current`, where),
+    next: stringAt(required(stream, 'next', field, where), `${field}.next`, where),
+    tagPrefix: stringAt(required(stream, 'tag_prefix', field, where), `${field}.tag_prefix`, where),
+  }
+}
+
+function planStatusAt(raw: Record<string, unknown>, where: string): PlanStatusView {
+  closed(raw, PLAN_STATUS_KEYS, '', where)
+  return {
+    repo: stringAt(required(raw, 'repo', '', where), 'repo', where),
+    plans: arrayAt(required(raw, 'plans', '', where), 'plans', where).map((item, index) =>
+      planAt(item, index, where),
+    ),
+    totals: planTotalsAt(required(raw, 'totals', '', where), 'totals', where),
+    streams: arrayAt(required(raw, 'streams', '', where), 'streams', where).map((item, index) =>
+      planStreamAt(item, index, where),
+    ),
+    warnings: arrayAt(required(raw, 'warnings', '', where), 'warnings', where).map((item, index) =>
+      stringAt(item, `warnings[${String(index)}]`, where),
+    ),
+  }
+}
+
+/**
+ * decodePlanStatus admits `plan status --json` and nothing else. It is a
+ * separate door rather than a third shape of `decodeDocument` because the two
+ * documents carry no common marker: a feed document handed to this door is
+ * refused for the keys it is missing, and a plan document handed to the feed's
+ * door is refused as an unknown shape. Neither is read as the other.
+ */
+export function decodePlanStatus(raw: unknown, where = 'the plan status document'): Decoded<PlanStatusView> {
+  return at(where, () => planStatusAt(objectAt(raw, 'the document', where), where))
 }
