@@ -84,7 +84,7 @@ describe('classifyInstallation', () => {
       row({ configUnreadable: true }),
       facts({
         warnings: [
-          '~/.config/fugaro/projects/aurora.yaml could not be read: base_images.java-services: the go, web-node and java-services bases were removed in 0.7.0',
+          '~/.config/fugaro/projects/aurora.yaml could not be read: field base_imagez not found in type config.Project',
         ],
       }),
     )
@@ -92,7 +92,7 @@ describe('classifyInstallation', () => {
     expect(state.readable).toBe(false)
     expect(state.command).toBe('fugaro doctor --project aurora')
     expect(state.sentence).toContain('edit ~/.config/fugaro/projects/aurora.yaml:')
-    expect(state.sentence).toContain('base_images.java-services')
+    expect(state.sentence).toContain('field base_imagez not found')
     expect(state.sentence).toContain('fugaro doctor --project aurora')
     expect(state.details).toHaveLength(1)
   })
