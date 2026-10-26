@@ -1,0 +1,7 @@
+# Spec: Bitbucket support through the credentials service
+
+Owner: the project owner, 2026-10-26 (near verbatim, as relayed).
+
+"The coordinator must work with the repository of whoever runs Fugaro — their own GitHub or Bitbucket, not Fugaro's. We need to support Bitbucket as well, for sure. Why don't we store these credentials in the credentials service as well? Maybe we can store a more generic Bitbucket credential in the credentials service and get more specific ones (per repository, per run) through that key."
+
+Context: today the coordinator (`fugaro coordinator status`, internal/cli/coordinator.go) reads pull requests through a read-only GitHub App installation token minted from the user's own App key, and refuses Bitbucket (reconciliation Q12(A), finding #30) because Bitbucket's credential is one repository access token; docs/git-providers.md says Bitbucket stays per repository (owner ruling 2026-10-15, design §4.5, docs/design/project-centric.md D5 'Bitbucket in phase 3'); the credentials service (docs/credentials-service/, internal/creds, internal/credsvc) holds model credentials and, since D145, the GitHub App key; D145 left Bitbucket and workflow secrets untouched. The console must never hold a secret in a child process (.claude/rules/console.md, desktop-console.md §5.1 rule 8), which is why the console cannot run `coordinator status` today: a related question to settle is a runs-only / no-key coordinator read, and the P6 coordinator project view's dependency on it (docs/coordinator/implementation-plan.md P6).
