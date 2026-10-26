@@ -53,7 +53,7 @@ not exist. Recording them here so the next reader does not repeat them.
 | **"Firestore's real-time listeners drive live updates in the console"** (§5) | Wrong twice: the Firestore client has no listeners (hand-written REST: `Get`, `Patch`, `Delete`, `Query`, `GetDatabase`, `CreateDatabase`), and the console renderer's CSP is `connect-src 'none'` (`console/src/main/protocol.ts:132`) — it never talks to the network at all. See **#7**. |
 | **GitHub as ground truth** (§6) | `gitprov.Provider` reads `Repository`, `PullRequest`, `Comments`, `FetchPRHead` (`internal/gitprov/gitprov.go:208-270`), and `github.MintInstallationToken(ctx, o, perms)` mints a token **scoped to one repository** (`internal/gitprov/github/apptoken.go`'s `tokenSource.Token`, whose body names one). See **#9**, **#10**. |
 | **Intent signals from local orchestrators, before code exists** (§6) | No channel exists. The only per-person fact written today is `launch.json`'s `launched_by` (`internal/runstore/launch.go`), a **self-declared email** (`internal/cli/run.go:1731`, from `localcfg.Config.Me`). See **#11**. |
-| **MCP server over HTTP** (§7) | No MCP server, no MCP dependency. The only HTTP server in the repository is the per-run budget gateway, bound to loopback (`internal/gateway/gateway.go:220-232`, `127.0.0.1:0`). See **#8**. |
+| **MCP server over HTTP** (§7) | No MCP server, no MCP dependency. The only HTTP server in the repository is the per-run budget gateway, bound to loopback (`internal/gateway/gateway.go:230-242`, `127.0.0.1:0`). See **#8**. |
 | **Two model tiers; "reuses the project's existing key management and security service"** (§8) | The security service does not exist (`docs/credentials-service/README.md:3` — *"plan only; nothing is implemented"*). Model configuration today is per **slot**, not per tier (`agent.models.coder|reviewer|background`, `docs/design/m10-multi-model.md`) plus the routing switch (`internal/config/routing.go:42-61`). See **#21**, **#22**, **#23**. |
 | **Concurrency: Firestore transactions or a per-project lock** (§9) | The Firestore client has **no transactions**; the only lock is per-branch, in GCS (`internal/lock/lock.go:1-5`, key `locks/<slug>/<branch-hash>`). The repo's concurrency idiom is generation-matched GCS writes (`internal/blobx/blobx.go:238,334,365`), RTDB `PutIfMatch` ETag CAS (`internal/budget/kill.go:141`) and deterministic doc IDs with update-time preconditions (`internal/budget/rollover.go:511,526`). See **#16**, **#17**. |
 | **Daily token-spend cap that "counts toward the project's existing spend caps"** (§9) | The existing caps are **per run**, keyed to a run's Firebase identity (`internal/budget/token/token.go:83-88 Claims`; `internal/budget/evaluate.go:135 Evaluate`). A long-lived service has no run identity. See **#25**. |
@@ -220,7 +220,7 @@ coordinator stores, the console sees it only if a `fugaro` command can read it. 
 
 **#8 — There is no MCP server, no MCP dependency, and one loopback HTTP server in the whole repository. — Gap.**
 `internal/gateway/gateway.go:1-7` is the only HTTP server: *"a loopback proxy between
-Claude Code and the model API"*, started at `:259 Start`, bound at `:269` to
+Claude Code and the model API"*, started at `:272 Start`, bound at `:282` to
 `127.0.0.1:0`. Its routes are `HEAD /api/hello`, `POST /v1/messages`,
 `POST /v1/messages/count_tokens`. Nothing else in the tree serves a request.
 The spec's own claims about the protocol also need care: **MCP authorization is

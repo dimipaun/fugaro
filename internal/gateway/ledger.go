@@ -91,6 +91,10 @@ type charge struct {
 	violation    string         // a surprise pricing dimension
 	route        string         // the provider route the call went to; "" is Anthropic
 	reported     pricing.Micros // the cost the provider reported, never charged
+	// agentID is Claude Code's x-claude-code-agent-id for this call: the
+	// sub-agent that made it, or "" for the main session. The stage's
+	// report counts the distinct ones.
+	agentID string
 	// tier is the credentials service's tier for this call (TierA, TierB,
 	// TierC), read off the answer that served it (C1.15); "" for every call
 	// that did not go through the service, which settles as it always did.
@@ -155,6 +159,14 @@ func (s *Server) settle(st *stageState, w pricing.Micros, c charge) {
 	r := &st.rep
 	if c.sent {
 		r.Calls++
+	}
+	// A call the gateway couldn't send still names an agent that asked for
+	// it, and a sub-agent is spawned whether or not its call left.
+	if c.agentID != "" {
+		if _, seen := st.agents[c.agentID]; !seen {
+			st.agents[c.agentID] = struct{}{}
+			r.Agents = len(st.agents)
+		}
 	}
 	if real {
 		r.Used = satAdd(r.Used, c.amount)
