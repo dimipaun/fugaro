@@ -92,7 +92,7 @@ or doc), **Open** (the spec's own unanswered question).
 ### Expectations, checkpoints, escalation (G§3, G§4)
 
 - **F8 — Gap / Rule.** Two dials would act on the same per-run cap: rigor modes already scale it
-  (`config.RigorBudgetFractions`: hotfix 0.4, poc 0.55, startup 0.7, pro 0.85, critical 1.0,
+  (`config.RigorBudgetFractions`: hotfix 0.4, poc 0.55, startup 0.7, pro 0.85; critical is absent from the map, which means the whole cap;
   floored at `RigorBudgetFloorUSD`, applied in `internal/runner/policy.go` via
   `config.RigorBudgetCap`), and G§3's tiers would set an expected cost. **Consequence:** a tier
   must be an *expectation* (what triggers a checkpoint) and never a second cap, or the two
@@ -327,7 +327,9 @@ forces (F35–F38):
   read every run record of its own repository and none of another's. On a **project job** the
   condition is `gcp.ProjectBucketCondition`, slug-less, and reaches every repository's `runs/` — a
   reach the owner accepted on 2026-10-17 (`deploy/terraform/gcp/modules/project/sa.tf`) — so there
-  D322's "this repository only" rests on the digest step's own slug check, which the plan tests. No
+  D322's "this repository only" rests on the digest step's own slug check, which the plan tests.
+  Project jobs are the **default** for new deployments, so this is the normal case, not the
+  exception; see O7 for forged figures. No
   new grant. **Listing** the prefix is most likely refused (a list is a bucket-level call; the
   condition matches object names; `docs/design/bucket-iam.md` V7 leaves a prefix-limited list
   unverified): U8. The plan never lists in the job: the launcher, which already lists runs for
@@ -378,7 +380,20 @@ data every later governance step (G§7.3–7.9) and self-calibration read. G§7.
   the recorded branch name, which is free text a task could steer (plan G1). G§2's fix-up budget is
   "a fraction of implementation budget": the plan makes the fix stage's budget a fraction of the
   implement stage's budget, as the spec says, and the other stages fractions of the per-run cap
-  (plan T7.1).
+  (plan T7.1). D332's "stop on fan-out" is applied to untiered runs too, with a default of 5
+  sub-agents per stage (3 on trivial and small tiers), so the spec's own incident stops.
+- **O7 — Forged figures on project jobs.** Project jobs are the default for new deployments
+  (`docs/plans/2026-10-14-project-centric.md`: the per-repository path is "unreachable for new
+  deployments"; `docs/git-providers.md` for Bitbucket), and on a project job any run can write a
+  record under another repository's prefix (`SECURITY.md`; the reach the owner accepted on
+  2026-10-17). The digest renders no text from a record (plan G1), but a planted record's **numbers**
+  would reach a public report (D324). The plan does not detect forged records; the owner's
+  acceptance of that reach is read here as extending to the report's figures, for the owner to
+  confirm.
+- **O8 — Continue after a checkpoint.** D329's Continue is a `--pr N` follow-up, which gets fresh
+  stage budgets and a fresh per-run cap like any run; `fugaro run` has no flag to raise them for one
+  run, and nothing counts a "second overrun" (G§4 requires a person then). The plan documents both
+  in the skill (T6.2) and builds neither; for the owner to confirm or ask for them.
 - **O5 — Left out of the plan, for the owner to confirm.** G§4's optional 50% soft check-in (a job
   cannot pause, and a halt at half the expectation would stop every slow medium task; the `working`
   skill's half-cap look stays the manual form), and G§5's idle-spin and edits-back-and-forth

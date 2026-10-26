@@ -71,7 +71,7 @@ register line in the same commit.
 | **135** | Read-only: a per-repository job account reads its own repository's run record by name and is refused a sibling repository's; whether it may list its prefix is recorded for U8 (the plan never lists) | T3.5 | the owner, sandbox installation only |
 | **136** | A `run-digest` run in the sandbox repository opens a pull request adding the due `docs/fugaro-reviews/<YYYY>/` files; no address in them; the figures equal `fugaro runs ls --json` for the same day | T3.5 | the owner, sandbox only |
 | **137** | A sandbox run with a deliberately tiny review stage budget halts with `stage_budget`, a draft PR and a checkpoint report on the record and in the PR | T7.5 | the owner, sandbox only |
-| **138** | A sandbox run under `governance.max_subagents: 3` whose review fans out to four sub-agents halts with `fanout` | T7.5 | the owner, sandbox only |
+| **138** | A sandbox run under `governance.max_subagents: 1` whose task asks its implement stage for two parallel sub-agents halts with `fanout` | T7.5 | the owner, sandbox only |
 | **139** | Read-only, before T7.2 merges (U4): in an existing sandbox gateway run's logs, the main session's `model call` lines carry an empty `agent_id`, each sub-agent a distinct one, and background-model calls none — so a distinct-agent count is a sub-agent count | T3.5 | the owner, sandbox only |
 
 **140–144** stay reserved and unused.
@@ -110,7 +110,7 @@ Only the ones this plan's areas trigger; `CLAUDE.md` and the rules files hold th
 | # | Constraint | Pinned by |
 | --- | --- | --- |
 | G1 | **No person in a report.** No digest output, Markdown or JSON, carries an address, account name, task text or log line; the report types have no field for one, and **no free-text field of a record is ever rendered** (`Halt.Detail`, `Reason`, `Branch`, `BaseBranch`, `OAuthAccount`, titles): only enums checked against their known sets (an unknown value renders as `other`), bounded numbers, dates, run IDs and PR numbers validated by shape; the diff base renders as yes/no ("the review read the pull request's own base"), never as a branch name (reconciliation O6). **Records are untrusted input**: any run of the repository (on a project job, any run) can write one | T2.1's structural test and planted-text test, T2.3, Check 136 |
-| G2 | **One repository per report.** The digest reads only the repository it is pointed at. On a per-repository job the grant also enforces it (Check 135); **on a project job it does not** — the project job's `ProjectBucketCondition` reaches every repository's `runs/`, a reach the owner accepted on 2026-10-17 (`deploy/terraform/gcp/modules/project/sa.tf`) — so there the runner's own slug check is the only guard, and T3.2 tests it | T2.3, T3.2, Check 135 |
+| G2 | **One repository per report.** The digest reads only the repository it is pointed at. On a per-repository job the grant also enforces it (Check 135); **on a project job, the default for new deployments, it does not** — the project job's `ProjectBucketCondition` reaches every repository's `runs/`, a reach the owner accepted on 2026-10-17 (`deploy/terraform/gcp/modules/project/sa.tf`) — so there the runner's own slug check is the only guard, and T3.2 tests it | T2.3, T3.2, Check 135 |
 | G3 | **Deterministic figures.** The same records give byte-identical Markdown; no model writes or edits a figure (D320's consequence) | T2.1 golden test, T3.1 |
 | G4 | **Closed periods only**, UTC, a run in the period it finished (R3) | T2.1 |
 | G5 | **Absent, never zero.** A stage with no call count (an oauth run) has `calls` absent and the digest prints `n/a` | T1.1, T2.1 |
@@ -149,9 +149,12 @@ repositories (G2), so the slug check is tested, not assumed. Stage budgets (T7.2
 - **Commit.** `runstore: a stage records its model calls and sub-agents`
 
 **T1.2 — the gateway counts distinct agents per stage**
-- **Files.** `internal/gateway/gateway.go` (`StageReport.Agents int`), the per-stage accumulator in
-  the same package that fills `Calls` (keyed on `callLog.agentID` from `x-claude-code-agent-id`).
-- **Interfaces.** Produces `StageReport.Agents`; consumed by T1.3 and T7.2.
+- **Files.** `internal/gateway/gateway.go` (`StageReport.Agents int`), `internal/gateway/ledger.go`
+  (the per-stage accumulator that fills `Calls`, keyed on `callLog.agentID` from
+  `x-claude-code-agent-id`).
+- **Interfaces.** Produces `StageReport.Agents`; consumed by T7.2's fan-out stop only, which waits for
+  Check 139 (U4). The record's `agents` is the relay's count (T1.3), for every auth mode, so the
+  record and the digest never rest on the agent-ID assumption.
 - **Tests.** `TestStageReportCountsDistinctAgents`: three calls from two agent IDs plus the main
   session count 2 sub-agents; an empty agent ID is the main session.
 - **Command.** `GOFLAGS=-p=2 go test ./internal/gateway -run StageReport -count=1`
@@ -164,7 +167,9 @@ repositories (G2), so the slug check is tested, not assumed. Stage budgets (T7.2
   `internal/runner/runner.go` (the one `stageTiming` call passes it), `internal/agent/relay.go` and
   `internal/agent/agent.go` (`Result.SubAgents`: tool-use blocks naming the sub-agent tool, counted
   by the relay for every auth mode).
-- **Interfaces.** Consumes T1.1, T1.2.
+- **Interfaces.** Consumes T1.1, T1.2 (`StageReport.Calls`). `agents` on the record is always the
+  relay's count of sub-agent tool calls, gateway or not; the gateway's distinct-ID count is never
+  recorded.
 - **Tests.** `TestStageTimingRecordsGatewayCalls`, `TestStageTimingOAuthHasNoCalls` (calls absent,
   agents from the relay), `TestRelayCountsSubAgents`.
 - **Command.** `GOFLAGS=-p=2 go test ./internal/runner ./internal/agent -run 'StageTiming|SubAgents' -count=1 -timeout 30m`
@@ -192,11 +197,12 @@ repositories (G2), so the slug check is tested, not assumed. Stage budgets (T7.2
 - **Interfaces.** `Build(recs []runstore.Record, p Period) Digest`; `Period` reuses
   `report.PeriodKey`'s clock; `Markdown(d) []byte` with a fenced `json` summary block; the `Digest`
   type has **no field for a person** (G1).
-- **Rules.** Selection: dearest 15% by billed + notional cost, at least 3, at most 10 rows (D321,
-  D325). Flags: review calls > 5 × max(implement calls, 20); a stage with more than 3 sub-agents; a
+- **Rules.** Selection (D325): **every flagged run is selected**, whatever its cost; the dearest 15%
+  by billed + notional cost (at least 3) fill the rest, up to 10 rows plus the flagged ones (D321).
+  Flags: review calls > 5 × max(implement calls, 20); a stage with more than 3 sub-agents; a
   halt (its reason enum, never its detail); more than one fix round. The review-scope and
   repeated-command flags come with T1.4, the scope-drift flag with T8.3. Billed and notional in
-  separate columns. Size cap 8 KiB, rows dropped from the cheapest with a note.
+  separate columns. Size cap 8 KiB, unflagged rows dropped first, cheapest first, with a note.
 - **Tests.** `TestDigestGolden` (fixed records → byte-identical file), `TestDigestHasNoPersonField`
   (reflect over the types), `TestDigestRendersNoRecordText` (**reflect-driven over every string
   field of `runstore.Record`, nested ones included**, so a field added later is covered: each is set
@@ -266,10 +272,12 @@ routine launches it: `fugaro run --recipe run-digest "periodic run review"` (R8)
 - **Files.** `internal/recipe/recipe.go` (`StepDigest` = `"digest"`: allowed only first, only in
   `mode: implement`, only followed by `review`), new `internal/recipe/catalog/run-digest.yaml`
   (`steps: [digest: {}, review: {max_rounds: 1}]`), `schemas/recipe.schema.json`,
-  `internal/recipe/recipe_test.go`.
+  `internal/recipe/recipe_test.go`, `internal/cli/recipes_test.go` (its pinned catalog list gains
+  `run-digest`). The recipe's `use_when` says it is for scheduled run reviews only, so the routing
+  skill never picks it for a task.
 - **Tests.** `TestDigestStepFirstOnly`, `TestDigestStepNeedsReview`, `TestRunDigestInCatalog`,
-  the recipe schema test.
-- **Command.** `GOFLAGS=-p=2 go test ./internal/recipe ./schemas -run 'Digest|Catalog|Schema' -count=1`
+  the recipe schema test, the `fugaro recipes` catalog test.
+- **Command.** `GOFLAGS=-p=2 go test ./internal/recipe ./schemas ./internal/cli -run 'Digest|Catalog|Schema|Recipes' -count=1 -timeout 30m`
 - **Red step.** `digest` is an unknown step kind.
 - **Depends on.** nothing. **Reviewer.** standard.
 - **Commit.** `recipe: a digest step and the run-digest recipe`
@@ -296,7 +304,7 @@ routine launches it: `fugaro run --recipe run-digest "periodic run review"` (R8)
   `TestDigestStepCountsDroppedRecords`.
 - **Command.** `GOFLAGS=-p=2 go test ./internal/runner -run DigestStep -count=1 -timeout 30m`
 - **Red step.** The runner refuses the unknown step.
-- **Depends on.** T3.1, T2.2, T3.6.
+- **Depends on.** T3.1, T2.2, T3.6, T5.2 (the `review_scope` it sets to not applicable).
 - **Reviewer.** opus + mandatory independent review (a new read path inside the job).
 - **Commit.** `runner: the digest step writes the due reports and skips implement`
 
@@ -341,7 +349,8 @@ routine launches it: `fugaro run --recipe run-digest "periodic run review"` (R8)
 - **Commit.** `docs(recipes): run-digest, a report run you schedule yourself`
 
 **T3.5 — Checks 135, 136 and 139**
-- **Files.** `docs/gcp-live-checklist.md` (two sections), `docs/coordinator/README.md` (register line).
+- **Files.** `docs/gcp-live-checklist.md` (three sections and their three rows in the register's
+  index table, where Check 130's row is), `docs/coordinator/README.md` (register line).
 - **OWNER-RUN.** **Check 135**, read-only on the bucket, on a **per-repository** job: the owner first
   grants themself `roles/iam.serviceAccountTokenCreator` on the job account (the same step the
   register's earlier impersonation checks take) and removes it at the end; impersonating the sandbox
@@ -439,7 +448,9 @@ routine launches it: `fugaro run --recipe run-digest "periodic run review"` (R8)
   by construction. It is **not applicable**, recorded with the reason and never as a mismatch, when
   `narrowReviewRange` keeps the wide range by design (git older than 2.44, its own commits
   unreadable, no fewer commits), for a follow-up and a review run (they keep the pull request's
-  range), and for a run that skipped implement (an autofix `Fixed` gate; the digest run, T3.2).
+  range), and for a run that skipped implement (an autofix `Fixed` gate; the digest run, T3.2). Where
+  there is an implement set but the range was kept wide, the comparison is still recorded, report
+  only (G§1's "log the mismatch"); only the stop (T7.3) is withheld.
 - **Tests.** `TestReviewScopeRecordsOutsideFiles`, `TestReviewScopeEqualRecordsNothingOutside`,
   `TestReviewScopeNotApplicableWhenRangeKeptWide` (old git, unreadable commits),
   `TestReviewScopeNotApplicableToFollowUpReviewAndAutofix`.
@@ -458,11 +469,11 @@ routine launches it: `fugaro run --recipe run-digest "periodic run review"` (R8)
   opens the draft), `internal/runner/prflow.go` (the checkpoint in the PR's status section),
   `internal/runner/prompts.go` (the short instruction the stopping agent answers to fill
   `done`/`next`/`hard_instructions`). The runner fills `trigger`, `why_over` and `estimate_usd` from
-  the record itself; the agent's one answer is a single call through the gateway's checkpoint
-  allowance (T7.2), so a run halted by the **per-run cap** or a daily cap gets no model call and those
-  three fields stay empty; a failed call leaves them empty and never blocks the halt.
+  the record itself. This task builds the halt with the runner-filled fields only; the agent's one
+  answer (the dedicated checkpoint stage of T7.2) is wired in T7.3, so a run halted by the **per-run
+  cap** or a daily cap, or before T7.3, has those three fields empty.
 - **Tests.** `TestGovernanceHaltWritesCheckpoint`, `TestGovernanceHaltDraftsPR`,
-  `TestCheckpointCallFailureStillHalts`, `TestResultSchemaHaltReasonsAgreeWithGo`.
+  `TestResultSchemaHaltReasonsAgreeWithGo`.
 - **Command.** `GOFLAGS=-p=2 go test ./internal/runner ./internal/runstore ./schemas -run 'Governance|Checkpoint|HaltReasons' -count=1 -timeout 30m`
 - **Red step.** No governance halt reason exists; the schema test fails once the Go enum grows.
 - **Depends on.** T5.2 (same files, later level). **Reviewer.** opus + mandatory independent
@@ -492,11 +503,12 @@ routine launches it: `fugaro run --recipe run-digest "periodic run review"` (R8)
   as review for the budget and the ratio), `.fix` (default 0.5 **of the implement stage's budget**,
   G§2's "a fraction of implementation budget"); `governance.stage_tokens.*` and
   `governance.stage_timeout.*` (optional, unset by default, the latter under `timeouts.stage`);
-  `governance.max_subagents` (**unset by default: no fan-out stop until a value or a tier sets one**;
-  T8.1 sets 3 for `trivial` and `small`, D332). An artifact run's `plan` and `render` stages have no
+  `governance.max_subagents` (**default 5 for every stage of an untiered run**, so the spec's own
+  incident, a review fanning out to about ten sub-agents, stops; T8.1 sets 3 for `trivial` and
+  `small` and leaves medium and large at the default; reconciliation O6). An artifact run's `plan` and `render` stages have no
   governance budget. Project layer sets, repository may only tighten; no recipe key (D331).
 - **Tests.** `TestGovernanceTightenOnly`, `TestGovernanceStrictDecode`, `TestGovernanceDefaults`
-  (no stage default reaches the cap; no fan-out stop by default), schema tests.
+  (no stage default reaches the cap; the fan-out default is 5), schema tests.
 - **Command.** `GOFLAGS=-p=2 go test ./internal/config ./internal/policy ./internal/projectpolicy ./schemas -run 'Governance|Schema' -count=1`
 - **Red step.** Unknown key `governance`.
 - **Depends on.** nothing. **Reviewer.** standard.
@@ -504,7 +516,9 @@ routine launches it: `fugaro run --recipe run-digest "periodic run review"` (R8)
 
 **T7.2 — the gateway enforces them**
 - **Files.** `internal/gateway/gateway.go` (`Stage` gains the limits; counters in the stage state),
-  `internal/gateway/forward.go` (the refusal path the cap uses), `internal/gateway/lease.go` if the
+  `internal/gateway/ledger.go` (`reserve`, the refusal path the cap uses: its `s.halt` is run-wide,
+  so a governance stop is a **stage-scoped** halt that refuses the stopped stage and leaves the
+  checkpoint stage admissible), `internal/gateway/forward.go`, `internal/gateway/lease.go` if the
   stage budget is a sub-lease, `internal/runner/gateway.go` (`beginGatewayStage` passes the
   resolved `governance.*` limits into `gateway.Stage`: the wiring from the config to the gateway).
 - **Behaviour.** Per stage: refuse and raise a halt when the stage's dollars, calls or tokens pass
@@ -516,7 +530,9 @@ routine launches it: `fugaro run --recipe run-digest "periodic run review"` (R8)
   summary (bounded input, small `max_output_tokens`), reserved like any call and refused if the
   per-run cap has no room; never after a cap halt. Gateway runs only: an oauth run's governance
   halts (`review_scope`, a stage timeout) get no checkpoint call, and the runner-filled fields stand
-  alone. Oauth runs are flagged by the digest.
+  alone. Oauth runs are flagged by the digest. Residual, accepted as low: the loopback gateway has
+  no caller identity, so a process that escaped the stage's process group could spend the one
+  checkpoint call; the cost is only empty checkpoint fields.
 - **Tests.** `TestStageBudgetHalts`, `TestStageTokensHalt`, `TestReviewRatioHaltsAboveFloorOnly`,
   `TestFanoutHalts`, `TestReviewOnlyRunHasNoRatio` (F6), `TestCheckpointAllowanceOneCallWithinCap`,
   `TestNoCheckpointAllowanceAfterCapHalt`, `TestCheckpointStageRefusesStoppedStageCalls`,
@@ -527,10 +543,13 @@ routine launches it: `fugaro run --recipe run-digest "periodic run review"` (R8)
 - **Commit.** `gateway: stage budgets, the review ratio and the fan-out stop`
 
 **T7.3 — the runner turns gateway stops and the review-scope mismatch into checkpoints**
-- **Files.** `internal/runner/gateway.go` (map the new gateway halts), `internal/runner/diffbase.go`
+- **Files.** `internal/runner/gateway.go` (map the new gateway halts; after one, stop the agent and
+  run the dedicated checkpoint stage that fills `done`/`next`/`hard_instructions`),
+  `internal/runner/diffbase.go`
   (a non-empty `review_scope.outside` before review halts with `review_scope`; a not-applicable
   scope (T5.2) never halts).
-- **Tests.** `TestGatewayStageHaltBecomesCheckpoint`, `TestReviewScopeMismatchHaltsBeforeReview`,
+- **Tests.** `TestGatewayStageHaltBecomesCheckpoint`, `TestCheckpointCallFailureStillHalts`,
+  `TestReviewScopeMismatchHaltsBeforeReview`,
   `TestReviewScopeNotApplicableNeverHalts` (wide range kept by design, follow-up, review run,
   autofix `Fixed`; the digest run's case is T3.2's),
   `TestReportOnlyTripwiresDoNotHalt` (G8: a stage with the repeated-command flag of T1.4 runs on).
@@ -542,19 +561,20 @@ routine launches it: `fugaro run --recipe run-digest "periodic run review"` (R8)
 
 **T7.4 — operators and docs**
 - **Files.** `docs/releases/` next notes (`### For operators`: the defaults now stop runs; how to
-  loosen in the project layer, per installation), `docs/recipes.md` (budgets are not a recipe key),
+  loosen in the project layer and publish it with `fugaro config publish FILE`, per installation), `docs/recipes.md` (budgets are not a recipe key),
   `plugin/skills/setup/reference/decisions.md` (the governance block).
 - **Tests.** `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1`; the plugin lint.
 - **Depends on.** T7.3. **Reviewer.** standard.
 - **Commit.** `docs: governance budgets, for operators`
 
 **T7.5 — Checks 137 and 138**
-- **Files.** `docs/gcp-live-checklist.md` (two sections), `docs/coordinator/README.md` (register
+- **Files.** `docs/gcp-live-checklist.md` (two sections and their two index-table rows), `docs/coordinator/README.md` (register
   line).
 - **OWNER-RUN.** The owner runs, in the sandbox repository only: `fugaro run --task-file
   <a task file for a review-heavy change, under a project layer with a tiny review stage budget>`,
   waits for it to settle (`fugaro runs ls`), and `fugaro diagnose RUN`; then a task whose review is
-  asked to fan out to four sub-agents, under `governance.max_subagents: 3` (no tier needed). No
+  asks its implement stage for two parallel sub-agents, under `governance.max_subagents: 1` (no
+  tier needed). No
   agent runs any step.
 - **Depends on.** T7.3. **Reviewer.** standard.
 - **Commit.** `docs(checks): 137 and 138, the stage budget and the fan-out stop`
@@ -587,8 +607,8 @@ routine launches it: `fugaro run --recipe run-digest "periodic run review"` (R8)
 - **Commit.** `task: an optional tier, an expectation and never a cap`
 
 **T8.2 — the expected-cost checkpoint**
-- **Files.** `internal/gateway/gateway.go` (a run-level expectation threshold beside T7.2's
-  budgets), `internal/runner/gateway.go`.
+- **Files.** `internal/gateway/gateway.go` and `internal/gateway/ledger.go` (a run-level expectation
+  threshold beside T7.2's budgets), `internal/runner/gateway.go`.
 - **Behaviour.** At 100% of the tier's expected cost the run halts with `expected_exceeded` and a
   checkpoint (D329); no tier, no threshold.
 - **Tests.** `TestExpectedCostHalts`, `TestNoTierNoExpectation`.
@@ -621,7 +641,7 @@ routine launches it: `fugaro run --recipe run-digest "periodic run review"` (R8)
 | T2.1 | T1.1 |
 | T2.2 | T2.1 |
 | T2.3 | T2.1, T2.2 |
-| T3.2 | T3.1, T2.2, T3.6 |
+| T3.2 | T3.1, T2.2, T3.6, T5.2 |
 | T3.3 | T3.2 |
 | T3.4, T3.5, T3.6 | T3.1 |
 | T4.1, T4.2 | T2.3 |
@@ -664,6 +684,7 @@ dependencies.
 | --- | --- |
 | `internal/runstore/runstore.go`, `schemas/result.schema.json` | T1.1 (L0), T5.2 (L1), T6.1 (L2), T1.4 (L3), T8.1 (L4) |
 | `internal/gateway/gateway.go` | T1.2 (L0), T7.2 (L2), T8.2 (L5) |
+| `internal/gateway/ledger.go` | T1.2 (L0), T7.2 (L2), T8.2 (L5) |
 | `internal/gateway/forward.go`, `internal/gateway/lease.go` | T7.2 (L2) |
 | `internal/runner/gateway.go` | T7.2 (L2), T7.3 (L4), T8.2 (L5) |
 | `internal/runner/cost.go`, `internal/agent/relay.go`, `internal/agent/agent.go` | T1.3 (L1), T1.4 (L3) |
@@ -694,6 +715,7 @@ dependencies.
 | `docs/recipes.md`, `docs/releases/<next>.md` | T3.4 (L1), T7.4 (L5) |
 | `docs/gcp-live-checklist.md`, `docs/coordinator/README.md` | T3.5 (L1), T7.5 (L5) |
 | `docs/dogfooding.md` | T4.4 (L5) |
+| `internal/cli/recipes_test.go` | T3.1 (L0) |
 | `.github/ISSUE_TEMPLATE/skill_learning.yml` (new), `CONTRIBUTING.md`, `internal/cli/docs_skill_learning_test.go` (new) | T4.3 (L0) |
 
 A change to any task's **Files** re-checks this table.
@@ -703,7 +725,7 @@ A change to any task's **Files** re-checks this table.
 - Slice 3 (T3.4): per repository, the user schedules `fugaro run --recipe run-digest` themselves;
   each run costs one senior review stage. No installation step: the job's grant is unchanged.
 - Slice 7 (T7.4): per installation, the governance defaults now stop runs; the project layer
-  loosens them up to the per-run cap, and `fugaro update` publishes it.
+  loosens them up to the per-run cap, and `fugaro config publish FILE` publishes it.
 - Every other slice changes no deployed resource.
 
 ## 8. Risks
@@ -715,5 +737,6 @@ A change to any task's **Files** re-checks this table.
 - **Report-run cost** (D320): a daily run's review stage is a model cost per repository per day;
   the digest of those runs shows it, and the owner may revisit D320 with that figure.
 - **False halts** from stage budgets (T7.2) on legitimately large tasks: the defaults (T7.1:
-  implement 0.7 and review 0.5 of the per-run cap, fix 0.5 of implement's budget, no fan-out stop
-  without a value or a tier) leave no stage able to spend the whole cap alone, the checkpoint keeps the work on a draft, and Checks 137–138 exercise them.
+  implement 0.7 and review 0.5 of the per-run cap, fix 0.5 of implement's budget, a fan-out
+  stop above 5 sub-agents) leave no stage able to spend the whole cap alone; the checkpoint keeps
+  the work on a draft, and Checks 137–138 exercise them.
