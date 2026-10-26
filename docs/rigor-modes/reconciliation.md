@@ -1033,6 +1033,20 @@ run that spends nothing on review — is available inside the recommendation by
 making the mode's reviewer shallow rather than absent, which is what D1 gives the
 knobs for.
 
+**Amended 2026-10-26, by the owner's ruling of that date: Hotfix has the fewest
+gates of any mode, so out of the severity override its row of the threshold table
+keeps the security gate alone.** A finding whose class is `security` blocks at
+Hotfix whatever its axes say; a finding whose class is `data_loss` or whose impact
+is 5 is tolerated there and filed as advisory by the mode's own filing row (D30),
+which is where a Hotfix run's record of them belongs. Every other mode's row is
+untouched — POC still blocks both classes the spec names, and an impact of 5 —
+and an unscored finding still blocks in every mode: that is D4's rule, and the
+ruling does not lift it. What makes a hotfix's fix *wrong* is still
+not a finding at all, which is D14's answer: the deterministic diff rule gates the
+run, and the agent's own confidence number is recorded and never trusted. The row
+is `internal/rigor/table.go` (plan T2.3), and it carries the mode's reading of the
+override as data in the row rather than testing the mode's name inside the rule.
+
 ### D8 — Who may lower a floor: the trusted list, acting through a merged config change
 
 **Answered 2026-10-20: only a merged change to the base branch's
