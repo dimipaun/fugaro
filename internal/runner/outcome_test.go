@@ -23,15 +23,23 @@ var optedIn = rigor.Config{RepoBlock: true}
 // axes and a class (D2). Risk is likelihood × impact, which is the axis every
 // mode's floor is stated against.
 var (
-	// risk 4: below Startup's floor, at Pro's, and the one case Pro's own
-	// escape lets through on fix cost.
+	// risk 3: below Startup's floor and below Pro's, so both tolerate it on
+	// the risk axis alone. Its fix cost is 1, so it never reaches Pro's escape
+	// — that case is rareExpensive, not this one.
 	tiny = rigor.Score{Likelihood: 1, Impact: 3, FixCost: 1, Class: rigor.Correctness}
-	// risk 4 at the top of the likelihood scale Pro's escape names.
+	// risk 4, which Pro blocks at, and the one finding Pro's escape is for:
+	// likelihood 1 and fix cost 4 are the edges that sentence names, "at most
+	// 1" and "4 or more" (table.go).
 	rareExpensive = rigor.Score{Likelihood: 1, Impact: 4, FixCost: 4, Class: rigor.Correctness}
-	// risk 4: Pro's floor itself, with no escape to reach.
+	// risk 4: Pro's floor itself, at a likelihood the escape does not reach.
 	small = rigor.Score{Likelihood: 2, Impact: 2, FixCost: 1, Class: rigor.Correctness}
 	// risk 9: above every on-axis floor.
 	big = rigor.Score{Likelihood: 3, Impact: 3, FixCost: 2, Class: rigor.Correctness}
+	// risk 1 with an ordinary class: the same axes as catastrophic below, so
+	// the pair of rows says the override reads the class and not the numbers.
+	// It is the mildest finding the scale carries, which is what Hotfix's rows
+	// use — Hotfix tolerates the set POC does.
+	benign = rigor.Score{Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Correctness}
 	// the spec's severity override: risk 1, and catastrophic by its class.
 	catastrophic = rigor.Score{Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Security}
 	// a finding the reviewer left unscored, which is the zero Score (D3, D4).
@@ -72,6 +80,16 @@ func TestDecideByMode(t *testing.T) {
 		{"pro tolerates below its floor", []verify.Record{pass}, rigor.Pro, 2, "changes", []rigor.Score{tiny}, true, "review round 2 left 1 finding, tolerated at pro"},
 		{"pro tolerates the rare expensive case", []verify.Record{pass}, rigor.Pro, 2, "changes", []rigor.Score{rareExpensive}, true, "review round 2 left 1 finding, tolerated at pro"},
 		{"pro blocks at its floor", []verify.Record{pass}, rigor.Pro, 2, "changes", []rigor.Score{small}, false, "review round 2 still has 1 finding"},
+
+		// Hotfix's row is empty like POC's — "only findings that make the fix
+		// wrong or unsafe block" is the same set once catastrophic is read the
+		// way the spec reads it — so a benign finding is tolerated there too.
+		// Its row is the only one that is both Tolerated and Deferred (D30),
+		// which is why the run-level test beside this one is about Hotfix: the
+		// tolerated round makes the pull request ready *and* is the second item
+		// the run files.
+		{"hotfix tolerates a benign finding", []verify.Record{pass}, rigor.Hotfix, 2, "changes", []rigor.Score{benign}, true, "review round 2 left 1 finding, tolerated at hotfix"},
+		{"hotfix blocks the severity override", []verify.Record{pass}, rigor.Hotfix, 2, "changes", []rigor.Score{catastrophic}, false, "review round 2 still has 1 finding"},
 
 		// POC files nothing — its account is its pull request body's own
 		// line (D30) — so D9 leaves it nothing to tolerate.
@@ -131,6 +149,7 @@ func TestDecideToleratesOnlyWhatTheRunCanFile(t *testing.T) {
 	}{
 		{"a repository that configured a mode", optedIn, rigor.Startup, true},
 		{"a repository that configured pro", optedIn, rigor.Pro, true},
+		{"a repository that configured hotfix", optedIn, rigor.Hotfix, true},
 		{"a project layer that set a rigor default", rigor.Config{Project: rigor.Pro}, rigor.Pro, true},
 		{"a repository that configured poc", optedIn, rigor.POC, false},
 		{"a repository that configured critical", optedIn, rigor.Critical, false},

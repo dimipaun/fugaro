@@ -22,6 +22,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/backlog"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/rigor"
@@ -392,6 +393,59 @@ func TestDecideToleratedRoundOpensAReadyPR(t *testing.T) {
 	}
 	if len(rec.Backlog) != 1 {
 		t.Errorf("the record's items = %v; want the item the tolerated round was filed as (D9)", rec.Backlog)
+	}
+	if pr := onlyPR(t, h.provider); pr.Draft {
+		t.Errorf("the pull request is a draft: %+v", pr)
+	}
+}
+
+// TestDecideToleratedHotfixRoundFilesBothItems: Hotfix is the one mode whose
+// rigor.Files row is both Tolerated and Deferred (D30), so the tolerated round
+// this change newly allows is a ready run that owes two items rather than one:
+// the proper fix the expedient one deferred, and the round it left open. The
+// deferral leads the record's ids (fileOpenItems), and both are written into
+// the run's own branch — the ready pull request carries them.
+func TestDecideToleratedHotfixRoundFilesBothItems(t *testing.T) {
+	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "agent:\n", "rigor:\n  default: hotfix\nagent:\n", 1)
+	h := newHarness(t, cfg, nil)
+	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
+		verifyTest(t, ctx, req)
+		return agent.Result{}, nil
+	}
+	// The mildest finding the scale carries: Hotfix tolerates everything but
+	// what would make the fix wrong or unsafe, so this is one it tolerates and
+	// an unscored or catastrophic finding would not be.
+	tolerated := reviewScored("changes", map[string]any{"summary": "fix it", "likelihood": 1, "impact": 1, "fix_cost": 1, "class": "correctness"})
+	rec, err := h.run(t, implement("feature"), tolerated, fix, tolerated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Outcome != runstore.OutcomeReady || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("record = %+v; want a ready run: the round's only finding is one a hotfix tolerates", rec)
+	}
+	if rec.Reason != "review round 2 left 1 finding, tolerated at hotfix" {
+		t.Errorf("reason = %q; want the mode and the count the round was tolerated at (D7)", rec.Reason)
+	}
+	if len(rec.Backlog) != 2 {
+		t.Fatalf("the record's items = %v; want the deferral and the tolerated round (D30)", rec.Backlog)
+	}
+	items, err := backlog.LoadDir(h.deps.WorkDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var deferral, round bool
+	for _, it := range items {
+		if it.ID == rec.Backlog[0] && strings.Contains(it.Title, "revisit this hotfix") {
+			deferral = true
+		}
+		if it.ID == rec.Backlog[1] && strings.Contains(it.Title, "review round 2") {
+			round = true
+		}
+	}
+	if !deferral || !round {
+		t.Errorf("the branch holds %+v; want the deferral %s first and the round %s second (fileOpenItems)",
+			items, rec.Backlog[0], rec.Backlog[1])
 	}
 	if pr := onlyPR(t, h.provider); pr.Draft {
 		t.Errorf("the pull request is a draft: %+v", pr)
