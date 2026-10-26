@@ -139,6 +139,13 @@ type Stage struct {
 // gateway refused.
 type StageReport struct {
 	Calls int // calls sent upstream
+	// Agents is the stage's distinct sub-agents: the agent IDs its calls
+	// carried, each counted once. Claude Code sends an agent ID only for a
+	// sub-agent's calls, so an empty one is the main session, which is no
+	// sub-agent and is not counted. The ID is Claude Code's own claim and
+	// nothing here verifies it: it is what the gateway's log lines already
+	// say, counted instead of printed.
+	Agents int
 	// Used is the money this stage's calls settled: tiers B and C, and
 	// every call of a run with no cascade, which has no tier at all.
 	Used pricing.Micros
@@ -252,6 +259,9 @@ type stageState struct {
 	st    Stage
 	calls sync.WaitGroup
 	rep   StageReport // guarded by Server.mu
+	// agents is the agent IDs the stage's calls carried so far, so the
+	// report can count them distinctly; the report's Agents is its size.
+	agents map[string]struct{} // guarded by Server.mu
 }
 
 // Start listens on 127.0.0.1 on a free port and serves until Close. The
@@ -473,7 +483,7 @@ func (s *Server) ledgerLocked() Ledger {
 func (s *Server) BeginStage(st Stage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.stage = &stageState{st: st, rep: StageReport{
+	s.stage = &stageState{st: st, agents: map[string]struct{}{}, rep: StageReport{
 		ByTier:  map[string]pricing.Micros{},
 		ByModel: map[string]pricing.Micros{},
 		ByRoute: map[string]pricing.Micros{},

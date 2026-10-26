@@ -1145,3 +1145,44 @@ func TestStageReportCountsWaitedCalls(t *testing.T) {
 		t.Errorf("Waited = %d, want 2", rep.Waited)
 	}
 }
+
+// A stage's report counts the distinct sub-agents that called it: the
+// agent IDs its calls carried, each once. The main session's calls carry
+// no agent ID, so a stage only it called counts no sub-agent.
+func TestStageReportCountsDistinctAgents(t *testing.T) {
+	body := msg(sonnet, 1000)
+	h := newHarness(t, okReplies(9)...)
+	main := func() {
+		if resp, b := h.post(body); resp.StatusCode != 200 {
+			t.Fatalf("main session call: status %d: %s", resp.StatusCode, b)
+		}
+	}
+	sub := func(id string) {
+		if resp, b := h.post(body, "x-claude-code-agent-id", id); resp.StatusCode != 200 {
+			t.Fatalf("sub-agent %s call: status %d: %s", id, resp.StatusCode, b)
+		}
+	}
+
+	main()
+	sub("agent-a")
+	sub("agent-b")
+	sub("agent-a") // the same agent again: one sub-agent
+	main()
+	if rep := h.gw.EndStage(); rep.Agents != 2 || rep.Calls != 5 {
+		t.Errorf("Agents = %d, Calls = %d, want 2 and 5", rep.Agents, rep.Calls)
+	}
+
+	h.gw.BeginStage(defaultStage)
+	main()
+	sub("agent-a")
+	if rep := h.gw.EndStage(); rep.Agents != 1 {
+		t.Errorf("Agents = %d, want 1: the next stage counts its own agents", rep.Agents)
+	}
+
+	h.gw.BeginStage(defaultStage)
+	main()
+	main()
+	if rep := h.gw.EndStage(); rep.Agents != 0 {
+		t.Errorf("Agents = %d, want 0: the main session is no sub-agent", rep.Agents)
+	}
+}

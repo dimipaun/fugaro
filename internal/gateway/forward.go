@@ -691,7 +691,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request, rt route
 	// pays for at the tier it was served from.
 	var served string
 	out = s.forward(w, r, rt, body, p, known, w0, &cl.status, &served, &probed)
-	out.charge.tier = served
+	out.charge.tier, out.charge.agentID = served, cl.agentID
 }
 
 // outcome is how a forwarded call settles, and what its log line says.
