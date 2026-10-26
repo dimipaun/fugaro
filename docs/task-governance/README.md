@@ -1,7 +1,8 @@
 # Task governance and periodic run reviews
 
-**Status: DRAFT. Plan only; nothing is implemented; no task approved.** The reconciliation is a
-draft whose decisions are not yet answered, and the implementation plan is not written yet.
+**Status: plan only; nothing is implemented; no task approved.** The owner answered decisions
+D320–D333 on 2026-10-26 (D320 not the recommendation), which approves the reconciliation; each task
+of the plan still needs the owner's own explicit go.
 
 **Spec owner:** the Fugaro owner. **Dates:** governance spec 2026-10-22; periodic-reviews request
 2026-10-25. **Base:** `main` at `d5898f9b8` (`release: v0.11.4`).
@@ -13,8 +14,8 @@ outcome, review rounds and halt) and overlap the same existing commands and skil
 | --- | --- |
 | [spec.md](spec.md) | The task governance spec (2026-10-22), **verbatim** |
 | [spec-periodic-reviews.md](spec-periodic-reviews.md) | The periodic run-review request (2026-10-25, dictated), **verbatim** |
-| [reconciliation.md](reconciliation.md) | DRAFT. Findings F1–F34 against the code, resolutions R1–R8, decisions D320–D333 (unanswered), open items, UNVERIFIED. **Where it disagrees with either spec, it wins** |
-| `implementation-plan.md` | Not written: it follows the owner's answers |
+| [reconciliation.md](reconciliation.md) | Findings F1–F38 against the code, resolutions R1–R8, decisions D320–D333 with the owner's answers of 2026-10-26, D320 followed through (§5.1), tensions T1–T3, items O1–O4, UNVERIFIED U1–U8. **Where it disagrees with either spec, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Eight slices, 26 tasks, six parallel levels, the critical path, the shared-files table, Checks 135–138. Nothing in it is approved |
 
 ## Typos fixed in the specs
 
@@ -24,8 +25,8 @@ None. Both are byte for byte as received.
 
 | Block | Use |
 | --- | --- |
-| **D320–D359** | this work's decision block. **D320–D333** are written in the draft reconciliation; **D334–D359** are reserved and unused. Taken above the highest decision on `main` (D311, inside the licensing block D300–D319, which is reserved through D319) and in every open PR's docs (D260). D272–D299 stay unused as the licensing work left them |
-| **Checks 135–144** | this work's check block, reserved and unused so far. The highest check on `main` is 134 (licensing's reserved 130–134); open PRs reach 124 |
+| **D320–D359** | this work's decision block. **D320–D333** are written and answered; **D334–D359** are reserved and unused. Taken above the highest decision on `main` (D311, inside the licensing block D300–D319, which is reserved through D319) and in every open PR's docs (D260). D272–D299 stay unused as the licensing work left them |
+| **Checks 135–144** | this work's check block. **135–138** are proposed by the plan (written by tasks T3.5 and T7.5, run by the owner, NOT RUN); **139–144** reserved and unused. The highest check on `main` is 134 (licensing's reserved 130–134); open PRs reach 124 |
 
 The owner's ruling of 2026-10-25 on the shape of the periodic reviews is recorded in the
 reconciliation (§1): a user's reports land in their own repository, redacted; central submission

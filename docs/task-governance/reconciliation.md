@@ -1,7 +1,10 @@
-# Task governance and periodic run reviews — reconciliation (DRAFT)
+# Task governance and periodic run reviews — reconciliation
 
-**Status: DRAFT. Decisions D320–D333 are unanswered. Nothing is implemented and no task is
-approved.** Checked against `main` at `d5898f9b8` (`release: v0.11.4`) on 2026-10-25. Where this
+**Status: decisions D320–D333 answered by the owner on 2026-10-26 (D320 not the recommendation);
+the answers are the approval of this reconciliation. Nothing is implemented and no task is
+approved:** each task of [implementation-plan.md](implementation-plan.md) needs its own explicit go.
+Checked against `main` at `d5898f9b8` (`release: v0.11.4`) on 2026-10-25, re-checked after merging
+`main` at `dbce05608` on 2026-10-26. Where this
 document disagrees with [spec.md](spec.md) (task governance, 2026-10-22) or
 [spec-periodic-reviews.md](spec-periodic-reviews.md) (periodic reviews, 2026-10-25), this
 document wins.
@@ -228,6 +231,26 @@ or doc), **Open** (the spec's own unanswered question).
   ruling, the product ships a command and the skill tells the user how to schedule it (their cron,
   CI or agent routine); no installation-side scheduler is added (R8).
 
+### Found after the owner's answers (2026-10-26)
+
+- **F35 — Gap.** A recipe step never runs an arbitrary command: `recipe.Step.Command` is a
+  `CheckCommand` (`build`, `test` or `lint`, a `commands.*` key of `fugaro.yaml`), and
+  `docs/recipes.md` says a recipe never names a command. **Consequence:** D320's run needs a new step
+  kind, not a recipe of existing ones.
+- **F36 — Rule.** Every recipe ends in exactly one senior `review` step
+  (`internal/recipe/recipe.go`; "a recipe cannot produce a ready pull request without a senior
+  review"), so no pull request is opened without a model review stage. Artifact runs, the one mode
+  with no model stage, never commit or push (`docs/artifact-runs.md`). **Consequence:** a report run
+  costs one review stage; D320's model part is that review.
+- **F37 — Exists.** A deterministic step that commits and skips implement already exists: the
+  autofix gate (`internal/runner/gate.go` `runAutofix`, `gateResult.Fixed`; `gateResult.Clean`
+  ends with no PR). **Consequence:** the `digest` step follows that shape.
+- **F38 — Exists / Gap.** The job's account reads and writes its own repository's `runs/<slug>/`
+  prefix (`sa.tf`, `gcp.BucketCondition`); project jobs get the slug-less condition
+  (`ProjectBucketCondition`). Job accounts get nothing in the Firebase project
+  (`deploy/terraform/gcp/modules/firebase/iam.tf`), so no `spendDaily` read. **Consequence:** no
+  new grant; the report's figures come from run records only; listing is U8.
+
 ## 4. Resolutions (one defensible answer; not questions)
 
 - **R1 — Record calls and sub-agents per stage.** Add `calls` and `agents` to
@@ -257,29 +280,63 @@ or doc), **Open** (the spec's own unanswered question).
 
 ## 5. Decisions for the owner (D320–D333)
 
-Owner's answer cells are empty: this draft has not been put to the owner.
+The owner answered every row on 2026-10-26. D320's answer is **not the recommendation**; its
+consequences are followed through in §5.1 and in the plan's Slice 3.
 
 | # | Question | Recommendation and reason | Alternative and its cost | Owner's answer |
 | --- | --- | --- | --- | --- |
-| **D320** | Who generates and commits a periodic report? | **A deterministic, read-only CLI command (`fugaro review --period day\|week\|month\|year`, name to settle) writes the Markdown file locally; a person, or their agent under the skill, commits it through an ordinary PR.** No model call, so a report costs nothing; it runs where the person's credentials are; the agent may run it (it prints no email, D323). | **A Fugaro run produces the report PR.** Costs a model run for deterministic work, and the job's service account would need read access to other runs' records (UNVERIFIED U2). **A model-written report.** Richer diagnosis, but non-reproducible and paid. | |
-| **D321** | Where do reports live in a user's repository, and how is growth bounded? | **`docs/fugaro-reviews/<YYYY>/` with one file per period (`2026-10-25.md`, `2026-W43.md`, `2026-10.md`, `2026.md`) and a generated index, like `docs/backlog/`; a daily report is capped (top 10 runs, under ~8 KiB).** About 420 small files a year; reviewable in PRs; greppable by the next agent. | **An orphan branch `fugaro-reviews`.** No PR noise, but unreviewed and invisible to agents reading the default branch. **Commit weekly and up only, daily printed.** Fewer files, but departs from the spec's "each … committed". | |
-| **D322** | What does a report committed into one repository cover? | **That repository's runs only, by default.** A project-wide report (all repositories) is printed, or committed only with an explicit flag into a repository the person names. A public repository must not name a project's private repositories. | **Project-wide by default.** One file shows the whole project, but leaks other repositories' names and costs into whichever repository receives it. | |
-| **D323** | What may a committed report contain? | **Allowed:** run IDs, PR numbers, statuses, halt reasons, recipe, rigor mode, stage durations, calls and sub-agents, dollars (billed and notional apart), review rounds and verdicts, the diff base. **Never:** emails or account names (the launcher becomes `person-1`, `person-2` within one report, or `automated`), task text, log excerpts, credential names, other repositories' names (D322). Tested like `fugaro stats runs`' no-identifier test. | **Include the launcher's address.** Lets a team see who spends, but commits personal data into history forever. **Drop run IDs too.** Safer, but the reader can no longer open the run with `fugaro diagnose`. | |
-| **D324** | Do Fugaro's own reports go into this public repository? | **Yes, under `docs/fugaro-reviews/`, with D323's rules and dollars kept**: it dogfoods the feature and the figures already inform `website/data/typical-costs.yaml`. | **No; keep them in a private repository of the owner's.** Keeps spend private, but the product's main example of the feature is invisible and the website's figures lose their source. | |
-| **D325** | What selects a run into the daily report (the outlier rule)? | **Start with the skill's rule (dearest 10–20% by cost, at least 3) plus fixed flags: review calls > 5 × max(implement calls, 20), sub-agents > 3 in a stage, a halt, more than one fix round.** Simple, explainable, no history needed. Add G§6's 3-MAD rule per tier once 20+ runs per tier exist. | **3 MAD per tier from day one.** Robust in principle, but there are no tiers yet (D330) and small samples make MAD noisy. | |
-| **D326** | What is a "pattern", and where is its state? | **A pattern is a fixed, documented rule over consecutive periods** (e.g. a flag that recurs in 3 of the last 4 weekly reports; review share of cost rising 3 months running), computed by the command from the **committed reports' machine-readable block** (a fenced JSON summary in each file). The weekly, monthly and yearly reports list the patterns found. No separate state file. | **A `trends.json` state file.** One place to read, but a second artifact to keep in sync and merge-conflict on. **Model-detected patterns.** Finds more, costs money, not reproducible. | |
-| **D327** | What is the central submission channel? | **`fugaro review --submit-draft` prints a redacted learning draft; the person opens it with `gh issue create --web` against a new "Skill learning" issue form.** Never automatic; a person reads and sends. Spam is handled by GitHub's own tools and a label for triage. | **A Discussions category.** Lower ceremony, but no required fields (consent, redaction confirmation). **Accept PRs to `plugin/skills`.** Direct, but needs the CLA and still exposes the injection path (R7). | |
-| **D328** | Under what licence is a submitted learning used? | **The issue form carries a required checkbox: the submitter licenses the text under MIT and confirms it holds nothing confidential; maintainers rewrite rather than paste (R7).** The owner confirms the legal reading. | **Require the CLA for submissions.** Clean, but a heavy step for a tip, so few will submit. **Treat issues as ideas, no grant.** Easiest, but leaves the incorporated text's provenance unclear. | |
-| **D329** | What is a "checkpoint" when a job cannot pause? | **Halt + checkpoint report + follow-up:** the run stops with a draft PR and writes the G§4 report (done, why over, plan, estimate, hard instructions) into the record and the PR; Continue/Redirect = a `--pr N` follow-up with a raised budget or new instructions; Stop = nothing; escalation is the halted row in `runs ls`, `watch` and the console. | **An in-job pause awaiting input.** Matches the spec's words, but needs the central orchestrator's prompt and claim machinery (planned, part P7), bills the job while idle, and meets the job's timeout. | |
-| **D330** | How does the expectation envelope relate to rigor modes and caps? | **A tier (`trivial\|small\|medium\|large`, optional, set by the launcher) sets the *expected* cost and time that trigger the checkpoint (D329); the cap stays the rigor-scaled per-run cap.** Defaults from G§3 live in the project layer, tightenable per repository; G open question 1 (model vs history) is answered by self-calibration from records (F33) once tiers are recorded. | **Tier sets the cap.** One dial, but it fights rigor's budget fractions and makes a mis-tiered task fail at a cap meant as a backstop. | |
-| **D331** | Where are phase budgets and the ratio guardrail enforced? | **In the gateway, per stage, in dollars and calls; time by a per-stage timeout.** Gateway runs only; oauth runs get the same rules as report flags (F5). Budgets configurable in the project layer, tightenable per repository, not per recipe (recipes cannot loosen caps). | **In the runner from the agent's result line.** Covers oauth, but only after the stage ends: too late to stop a runaway stage. | |
-| **D332** | Which tripwires stop a run, and which only report? | **Stop (halt with D329's report): sub-agents per stage over the cap (3 on trivial/small) and the review-scope mismatch (F2). Report only, for now: loops, idle spin, scope drift.** Promote a heuristic to a stop after reports show it is reliable. | **All tripwires stop from the start.** Matches the spec, but heuristic loop detection will halt legitimate runs, and a gate that fires wrongly gets switched off. | |
-| **D333** | Is instruction pre-flight built, and when? | **Defer until D329's halt-with-report exists; then a short pre-implement check on `small` and larger tiers only.** One extra model call per run, and no channel to use before D329. | **Build it now as a prompt line in implement.** Cheap, but the agent has nowhere to send the flag, so it is advice, not a gate. | |
+| **D320** | Who generates and commits a periodic report? | **A deterministic, read-only CLI command (`fugaro review --period day\|week\|month\|year`, name to settle) writes the Markdown file locally; a person, or their agent under the skill, commits it through an ordinary PR.** No model call, so a report costs nothing; it runs where the person's credentials are; the agent may run it (it prints no email, D323). | **A Fugaro run produces the report PR.** Costs a model run for deterministic work, and the job's service account would need read access to other runs' records (UNVERIFIED U2). **A model-written report.** Richer diagnosis, but non-reproducible and paid. || **2026-10-26: a Fugaro run makes the PR — not the recommendation.** Why: the owner wants the report delivered as a run's pull request. Followed through in §5.1. |
+| **D321** | Where do reports live in a user's repository, and how is growth bounded? | **`docs/fugaro-reviews/<YYYY>/` with one file per period (`2026-10-25.md`, `2026-W43.md`, `2026-10.md`, `2026.md`) and a generated index, like `docs/backlog/`; a daily report is capped (top 10 runs, under ~8 KiB).** About 420 small files a year; reviewable in PRs; greppable by the next agent. | **An orphan branch `fugaro-reviews`.** No PR noise, but unreviewed and invisible to agents reading the default branch. **Commit weekly and up only, daily printed.** Fewer files, but departs from the spec's "each … committed". || **2026-10-26: the recommendation** — `docs/fugaro-reviews/<YYYY>/`, one file per period, a generated index, the daily cap. Why: reviewable and greppable on the default branch, like `docs/backlog/`. |
+| **D322** | What does a report committed into one repository cover? | **That repository's runs only, by default.** A project-wide report (all repositories) is printed, or committed only with an explicit flag into a repository the person names. A public repository must not name a project's private repositories. | **Project-wide by default.** One file shows the whole project, but leaks other repositories' names and costs into whichever repository receives it. || **2026-10-26: the recommendation** — this repository's runs only. Why: a report never names another repository of the project. |
+| **D323** | What may a committed report contain? | **Allowed:** run IDs, PR numbers, statuses, halt reasons, recipe, rigor mode, stage durations, calls and sub-agents, dollars (billed and notional apart), review rounds and verdicts, the diff base. **Never:** emails or account names (the launcher becomes `person-1`, `person-2` within one report, or `automated`), task text, log excerpts, credential names, other repositories' names (D322). Tested like `fugaro stats runs`' no-identifier test. | **Include the launcher's address.** Lets a team see who spends, but commits personal data into history forever. **Drop run IDs too.** Safer, but the reader can no longer open the run with `fugaro diagnose`. || **2026-10-26: the recommendation** — IDs and numbers, no people. Why: run IDs keep `diagnose` usable; a person never enters history. |
+| **D324** | Do Fugaro's own reports go into this public repository? | **Yes, under `docs/fugaro-reviews/`, with D323's rules and dollars kept**: it dogfoods the feature and the figures already inform `website/data/typical-costs.yaml`. | **No; keep them in a private repository of the owner's.** Keeps spend private, but the product's main example of the feature is invisible and the website's figures lose their source. || **2026-10-26: the recommendation** — yes, in this public repository under D323's rules. Why: dogfood the feature and source the website's figures. |
+| **D325** | What selects a run into the daily report (the outlier rule)? | **Start with the skill's rule (dearest 10–20% by cost, at least 3) plus fixed flags: review calls > 5 × max(implement calls, 20), sub-agents > 3 in a stage, a halt, more than one fix round.** Simple, explainable, no history needed. Add G§6's 3-MAD rule per tier once 20+ runs per tier exist. | **3 MAD per tier from day one.** Robust in principle, but there are no tiers yet (D330) and small samples make MAD noisy. || **2026-10-26: the recommendation** — top cost plus the fixed flags; MAD per tier later. Why: explainable, needs no history. |
+| **D326** | What is a "pattern", and where is its state? | **A pattern is a fixed, documented rule over consecutive periods** (e.g. a flag that recurs in 3 of the last 4 weekly reports; review share of cost rising 3 months running), computed by the command from the **committed reports' machine-readable block** (a fenced JSON summary in each file). The weekly, monthly and yearly reports list the patterns found. No separate state file. | **A `trends.json` state file.** One place to read, but a second artifact to keep in sync and merge-conflict on. **Model-detected patterns.** Finds more, costs money, not reproducible. || **2026-10-26: the recommendation** — fixed rules; state in the committed reports' JSON block. Why: one artifact, reproducible. |
+| **D327** | What is the central submission channel? | **`fugaro review --submit-draft` prints a redacted learning draft; the person opens it with `gh issue create --web` against a new "Skill learning" issue form.** Never automatic; a person reads and sends. Spam is handled by GitHub's own tools and a label for triage. | **A Discussions category.** Lower ceremony, but no required fields (consent, redaction confirmation). **Accept PRs to `plugin/skills`.** Direct, but needs the CLA and still exposes the injection path (R7). || **2026-10-26: the recommendation** — a redacted draft plus a "Skill learning" issue form opened by the person. Why: never automatic, required fields. |
+| **D328** | Under what licence is a submitted learning used? | **The issue form carries a required checkbox: the submitter licenses the text under MIT and confirms it holds nothing confidential; maintainers rewrite rather than paste (R7).** The owner confirms the legal reading. | **Require the CLA for submissions.** Clean, but a heavy step for a tip, so few will submit. **Treat issues as ideas, no grant.** Easiest, but leaves the incorporated text's provenance unclear. || **2026-10-26: the recommendation** — an MIT checkbox on the form plus a maintainer rewrite; the legal reading stays the owner's to confirm (U6). Why: light for the submitter, clear provenance. |
+| **D329** | What is a "checkpoint" when a job cannot pause? | **Halt + checkpoint report + follow-up:** the run stops with a draft PR and writes the G§4 report (done, why over, plan, estimate, hard instructions) into the record and the PR; Continue/Redirect = a `--pr N` follow-up with a raised budget or new instructions; Stop = nothing; escalation is the halted row in `runs ls`, `watch` and the console. | **An in-job pause awaiting input.** Matches the spec's words, but needs the central orchestrator's prompt and claim machinery (planned, part P7), bills the job while idle, and meets the job's timeout. || **2026-10-26: the recommendation** — halt + checkpoint report + follow-up. Why: no pause exists and an idle job bills. |
+| **D330** | How does the expectation envelope relate to rigor modes and caps? | **A tier (`trivial\|small\|medium\|large`, optional, set by the launcher) sets the *expected* cost and time that trigger the checkpoint (D329); the cap stays the rigor-scaled per-run cap.** Defaults from G§3 live in the project layer, tightenable per repository; G open question 1 (model vs history) is answered by self-calibration from records (F33) once tiers are recorded. | **Tier sets the cap.** One dial, but it fights rigor's budget fractions and makes a mis-tiered task fail at a cap meant as a backstop. || **2026-10-26: the recommendation** — the tier is an expectation only; the cap stays rigor-scaled. Why: one cap, no second dial on it. |
+| **D331** | Where are phase budgets and the ratio guardrail enforced? | **In the gateway, per stage, in dollars and calls; time by a per-stage timeout.** Gateway runs only; oauth runs get the same rules as report flags (F5). Budgets configurable in the project layer, tightenable per repository, not per recipe (recipes cannot loosen caps). | **In the runner from the agent's result line.** Covers oauth, but only after the stage ends: too late to stop a runaway stage. || **2026-10-26: the recommendation** — in the gateway per stage, gateway runs only; oauth runs get report flags. Why: the only place that can stop a stage live. |
+| **D332** | Which tripwires stop a run, and which only report? | **Stop (halt with D329's report): sub-agents per stage over the cap (3 on trivial/small) and the review-scope mismatch (F2). Report only, for now: loops, idle spin, scope drift.** Promote a heuristic to a stop after reports show it is reliable. | **All tripwires stop from the start.** Matches the spec, but heuristic loop detection will halt legitimate runs, and a gate that fires wrongly gets switched off. || **2026-10-26: the recommendation** — stop on fan-out and on the review-scope mismatch; report loops, idle spin and scope drift. Why: no false halts from heuristics. |
+| **D333** | Is instruction pre-flight built, and when? | **Defer until D329's halt-with-report exists; then a short pre-implement check on `small` and larger tiers only.** One extra model call per run, and no channel to use before D329. | **Build it now as a prompt line in implement.** Cheap, but the agent has nowhere to send the flag, so it is advice, not a gate. || **2026-10-26: the recommendation** — deferred until D329 exists. Why: a flag needs somewhere to go. |
+
+### 5.1 D320 followed through
+
+The owner chose the alternative: a Fugaro run makes the report's pull request. What the tree then
+forces (F35–F38):
+
+- **The figures stay deterministic.** No recipe step can run an arbitrary command (F35) and no model
+  may write a figure (G§6, D323), so the report is produced by a **new runner-side `digest` step**
+  (the plan's T3.1–T3.3) that calls the same `internal/digest` library the CLI uses, commits with the
+  runner's identity and skips implement, as the autofix gate does today. The model's part is not
+  committing (the runner commits and opens the PR) but the **one senior review every recipe must end
+  with** (F36). A later stage that edits a report file is reverted to the generated bytes.
+- **A model cost per report run.** One review stage per run, per repository, per day the user
+  schedules it. That conflicts with the recommendation's "no model call"; the owner accepted it with
+  this answer, and the digest of those runs will show the figure (open item O3).
+- **What the run can read.** U2 is resolved: the job's account already holds
+  `roles/storage.objectUser` on its own repository's `runs/`, `cache/` and `locks/` prefixes
+  (`deploy/terraform/gcp/modules/workflow/sa.tf` `google_storage_bucket_iam_member.job`, condition
+  from `gcp.BucketCondition` over `gcp.JobBucketPrefixes`), so it can read every run record of its
+  own repository and none of another's. No new grant. Whether the conditional grant allows
+  **listing** the prefix is not shown by the tree (the runner lists nothing today): U8, settled by
+  the owner-run Check 135 before the step merges. The job has no Firestore access (F38), so the
+  report's dollars come from the run records, not `spendDaily`.
+- **Who triggers it.** R8 stands: no Fugaro-side scheduler. The trigger is the user's own routine,
+  cron, CI job or agent session running `fugaro run --recipe run-digest "periodic run review"`; the
+  step writes every closed period not yet in the tree (with a seven-day catch-up), so a missed day
+  is filled by the next run.
+- **The command's name.** D320's and D327's rows called it `fugaro review`; the plan names it
+  `fugaro runs digest` (and `--submit-draft`), because "review" already means a code review in
+  Fugaro (`mode: review`, the review stage). The name is a plan choice, not a decision.
+- **The terminal path stays.** `fugaro runs digest` (plan T2.3) writes the same file locally, so a
+  user who does not want a model cost per report can commit it by hand; the skill names both.
 
 ### The smallest useful first slice
 
-R1 (calls and sub-agents per stage on the record) + D320/D321/D323 (the daily report command
-writing a redacted file in the repository) + R2/R6 (the `working` skill rewritten around it). It
+R1 (calls and sub-agents per stage on the record) + D321/D323 (the digest command writing a
+redacted file in the repository) + R2/R6 (the `working` skill rewritten around it); D320's report
+run (plan Slice 3) is built on top of the same library. It
 needs no runner behaviour change beyond recording, replaces the owner's private script, and is the
 data every later governance step (G§7.3–7.9) and self-calibration read. G§7.1's remaining check
 (F2) and R5's warning are small and can ride in parallel.
@@ -296,14 +353,22 @@ data every later governance step (G§7.3–7.9) and self-calibration read. G§7.
   matters now is #1073/#1082. The product text should cite the current mechanism.
 - **O2 — `bootstrapRigor`'s comment says the mode "acts on nothing yet"**, stale since T6.1
   (reported by research; not this work's to fix).
+- **T3 — D320 vs "no model call".** The owner's answer puts a model review stage on every report
+  run (F36). The plan keeps the figures deterministic and keeps the terminal path (`fugaro runs
+  digest`) so the owner can compare. For the owner to confirm once the figure is known (O3).
+- **O3 — The report run's cost and budget.** Each run pays one review stage under the repository's
+  per-run cap; the owner may want the run-digest recipe's review on a cheaper model or first-line
+  tier. Not decided here.
+- **O4 — Who triggers.** The user's own routine (R8). The skill (plan T4.1) says how; nothing in the
+  product reminds a user who never schedules it.
 
 ## 7. UNVERIFIED
 
 - **U1** — The brief's "`fugaro watch` COST WATCH": no section of that name was found in
   `internal/watch` or anywhere in the tree. `watch` shows a project TOTAL bar (counted, spent,
   notional, burn rate), per-repository rows and a per-run `SPENT` column.
-- **U2** — Whether a run's service account can read other runs' records in the runs bucket (it
-  matters only for D320's alternative).
+- **U2 — resolved 2026-10-26.** The job's account reads its own repository's `runs/<slug>/` prefix
+  (F38); not another repository's.
 - **U3** — Whether Claude Code's `result` line reports a call or sub-agent count usable for oauth
   runs (R1's oauth half).
 - **U4** — That `x-claude-code-agent-id` distinguishes every sub-agent from the main session
@@ -311,5 +376,8 @@ data every later governance step (G§7.3–7.9) and self-calibration read. G§7.
 - **U5** — The Cloud Run job's maximum task timeout, which bounds D329's alternative.
 - **U6** — Whether a required checkbox on an issue form is a sufficient licence grant (D328): the
   owner's, and counsel's, to confirm.
+- **U8** — Whether the conditional `objectUser` grant lets a job **list** `runs/<slug>/` (a list is
+  a bucket-level call, and the runner lists nothing today). Settled by Check 135 before plan T3.2
+  merges.
 - **U7** — The owner's private cost-lessons log was not readable; findings rely on `docs/`, the
   skills and the owner's prototype script and its 2026-10-25 report.
