@@ -15,6 +15,9 @@
 # pull request's head count if its tree is identical (see identical_tree_checks);
 # this applies to the tag workflows too, with the same rules.
 set -eu
+# A dropped connection to GitHub while polling is retried, a bounded number of
+# times, rather than failing the gate (scripts/retry.sh).
+. "$(dirname "$0")/retry.sh"
 tag=${1:-}
 # The version under the stream's own prefix, and the whole tag when there is
 # none: the mobile app is its own artifact with its own tag (D125), and its
@@ -28,7 +31,7 @@ if ! [[ $version =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; the
   echo "::error::tag '$tag' is not a strict vX.Y.Z or mobile-vX.Y.Z release tag" >&2
   exit 1
 fi
-git fetch --quiet origin main
+retry_read git fetch --quiet origin main
 if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
   echo "::error::$tag ($GITHUB_SHA) is not on main; tag a commit that is reachable from main" >&2
   exit 1
@@ -68,7 +71,7 @@ names=("test" "terraform" "rules" "console (ubuntu-latest)" "console (macos-late
 # gate. Cancelled runs (superseded by a newer one) are ignored while another
 # run of the name exists; every other run must have completed successfully.
 check_state() {
-  gh api "repos/$GITHUB_REPOSITORY/commits/$1/check-runs?per_page=100" \
+  retry_read gh api "repos/$GITHUB_REPOSITORY/commits/$1/check-runs?per_page=100" \
     --jq "[.check_runs[] | select(.name == \"$2\" and .app.slug == \"github-actions\")] as \$r | if (\$r | length) == 0 then \"missing\" else [\$r[] | select(.conclusion != \"cancelled\")] as \$live | if (\$live | length) == 0 then \"cancelled\" elif any(\$live[]; .status == \"completed\" and .conclusion != \"success\") then \"failed\" elif any(\$live[]; .status != \"completed\") then \"pending\" else \"success\" end end"
 }
 
