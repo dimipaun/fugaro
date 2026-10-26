@@ -977,6 +977,9 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
     if (open === undefined || !open.state.readable) return
     const probed = await probeFor(open.project)
     if (!probed.ok) return
+    // As a choose does: the handshake's answer is what `installation.current`
+    // reports the mode and the version from. It is held in memory only.
+    registry.remember(open.project, probed.value.compatibility)
     await deps.onChosen?.({
       project: open.project,
       compatibility: probed.value.compatibility,
