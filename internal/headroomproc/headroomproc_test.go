@@ -21,6 +21,10 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
+
+	"github.com/dimipaun/fugaro/internal/logtail"
 )
 
 // The fake sidecar is this test binary, re-executed with helperEnv set: no nc,
@@ -117,9 +121,19 @@ func serve(answerOnce bool) {
 	go func() { _ = srv.Serve(ln) }()
 }
 
-// balloon allocates past whatever MemoryLimitAS allows, touching every page so
-// the runtime cannot hand back untouched memory, until the limit kills it.
+// raisedMarker is what balloon prints when it manages to lift its own cap: the
+// test fails on it, so a cap that is only a soft limit cannot pass.
+const raisedMarker = "helper: raised its own address-space limit"
+
+// balloon first tries to raise its own cap back to infinity — a soft limit
+// alone lets the sidecar do exactly that — and then allocates past whatever
+// MemoryLimitAS allows, touching every page so the runtime cannot hand back
+// untouched memory, until the limit kills it.
 func balloon() {
+	if err := unix.Setrlimit(unix.RLIMIT_AS, &unix.Rlimit{Cur: unix.RLIM_INFINITY, Max: unix.RLIM_INFINITY}); err == nil {
+		fmt.Fprintln(os.Stderr, raisedMarker)
+		os.Exit(4)
+	}
 	var keep [][]byte
 	for {
 		b := make([]byte, 1<<20)
@@ -294,11 +308,18 @@ func TestMemoryLimitKillsAnOverBudgetSidecar(t *testing.T) {
 		t.Skip("RLIMIT_AS enforcement is Linux-specific; Cloud Run is Linux, so this still covers the real target")
 	}
 	bin, args, env := helper(t, "balloon")
-	p := start(t, Options{Bin: bin, Args: args, Env: env, ReadyPath: "/healthz", ReadyTimeout: 2 * time.Second, MemoryLimitAS: 64 << 20})
+	tail := logtail.New(20, 200)
+	p := start(t, Options{Bin: bin, Args: args, Env: env, ReadyPath: "/healthz", ReadyTimeout: 2 * time.Second, MemoryLimitAS: 64 << 20, LogTail: tail})
 	select {
 	case <-p.Dead():
 	case <-time.After(10 * time.Second):
 		t.Fatal("an over-budget sidecar was not killed by MemoryLimitAS")
+	}
+	// The cap must be a hard limit too: a soft one is what the sidecar lifts
+	// with a single setrlimit, which is what the helper does before it
+	// allocates. Mutation: Max: old.Max in limitAddressSpace, and this fails.
+	if strings.Contains(tail.String(), raisedMarker) {
+		t.Fatal("the sidecar raised its own address-space limit back to infinity: the cap is a soft limit only")
 	}
 	// Not a guarantee for every runtime (design §2: RLIMIT_AS is unreliable
 	// for Python/GC'd Rust); this pins the mechanism for a plain allocator,

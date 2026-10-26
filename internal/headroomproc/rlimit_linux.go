@@ -17,6 +17,11 @@ import (
 // A hard limit below the requested one is an error rather than a silent clamp:
 // a bound that quietly becomes a smaller number is not the bound the caller
 // asked for.
+//
+// Both limits are set, not just the soft one: a soft limit alone is no bound at
+// all, because the sidecar — or any other process running as the same user,
+// the agent included — can raise it back with one setrlimit call. The hard
+// limit is what makes the cap hold.
 func limitAddressSpace(pid int, bytes int64) error {
 	var old unix.Rlimit
 	if err := unix.Prlimit(pid, unix.RLIMIT_AS, nil, &old); err != nil {
@@ -25,7 +30,7 @@ func limitAddressSpace(pid int, bytes int64) error {
 	if old.Max != unix.RLIM_INFINITY && old.Max < uint64(bytes) {
 		return fmt.Errorf("RLIMIT_AS hard limit is %d bytes, below the requested %d", old.Max, bytes)
 	}
-	limit := unix.Rlimit{Cur: uint64(bytes), Max: old.Max}
+	limit := unix.Rlimit{Cur: uint64(bytes), Max: uint64(bytes)}
 	if err := unix.Prlimit(pid, unix.RLIMIT_AS, &limit, nil); err != nil {
 		return fmt.Errorf("set RLIMIT_AS: %w", err)
 	}
