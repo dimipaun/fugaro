@@ -96,6 +96,7 @@ import {
   isConsoleSenderUrl,
   isSenderOnDocument,
   isNeverReachable,
+  operationFor,
   readStoredCompatibility,
   reducedModeHandlers,
   registerConsoleHandlers,
@@ -1320,6 +1321,50 @@ describe('the argument schemas', () => {
         JSON.stringify(name),
       ).toBe(false)
     }
+  })
+
+  it('refuses a directory in `plan.status`’s payload, and the refusal is this schema’s own key list', () => {
+    // **The security claim of plan GV2.1 (constraint C1), as a test.** The plan
+    // read is *about* the installation's checkout: the CLI resolves `docs/` from
+    // the child's working directory, so a payload that could name a directory
+    // would be a renderer choosing what the console reads -- and a document
+    // would then describe a tree the operator never chose. The directory is not
+    // a key of this schema, and the operation's argv cannot carry one
+    // (`src/main/spawn.ts`'s row has no `--dir` and no positional word).
+    //
+    // The refusal is the key list's and not a rule about paths anywhere: a
+    // payload may carry a path on the operation that *means* to take one
+    // (`installation.checkout`, the rail's own door), and that control is below.
+    // A mutation that added a `path`, `dir`, `checkout` or `cwd` key to
+    // `CONSOLE_OPERATIONS['plan.status'].args` makes this case fail on that
+    // word, which is what "the console cannot be asked to read a directory it
+    // was handed" means as a test rather than as a review.
+    for (const key of ['path', 'dir', 'checkout', 'cwd', 'directory', 'docs']) {
+      const decision = validateArguments('plan.status', { ...WELL_FORMED['plan.status'], [key]: '/etc' })
+      expect(decision.ok, `plan.status accepted a ${key}`).toBe(false)
+      // The *reason* is half the claim: a refusal that came from the value's
+      // grammar would still pass the line above while the key was there to be
+      // filled in with a directory that happened to parse.
+      expect(decision.ok ? '' : decision.reason, key).toBe(`plan.status takes no ${key}`)
+    }
+    // And the whole of what this operation declares, so a key that *is* admitted
+    // and that could carry a directory fails here by name rather than needing a
+    // reader to notice it above.
+    expect(operationFor('plan.status').args.map((spec) => spec.key)).toEqual(['all'])
+    // The near-miss that matters more than the six above: the declared key, with
+    // a path in it. `all` is a boolean the argv builder turns into `--all`, and
+    // a string here must not become a word.
+    expect(validateArguments('plan.status', { all: '/etc' }).ok).toBe(false)
+    expect(validateArguments('plan.status', { all: '--all' }).ok).toBe(false)
+    // ...and the control, so the refusals above read as this operation's schema
+    // rather than as a surface that refuses every path: `installation.checkout`
+    // takes one, and its payload is the one place a renderer may spell it.
+    expect(
+      validateArguments('installation.checkout', {
+        project: 'aurora',
+        checkout: '/home/operator/src/aurora',
+      }).ok,
+    ).toBe(true)
   })
 
   it('takes no key it does not declare, for every operation', () => {
