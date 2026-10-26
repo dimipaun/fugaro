@@ -238,6 +238,71 @@ document, release assignment later — so Slices 1–2 wait on no ruling; (e)
   `TestJoinIgnoresOtherRepo` fails against a join on the id alone.
 - **Reviewer:** **opus + mandatory independent review** (filesystem confinement; a cloud read joined
   to repository files; a job-writable join key). **OWNER-RUN:** no.
+- **Amended 2026-10-25, as GV1.6 shipped:**
+  - **The contract section is §6.12, not §6.11.** `console/docs/json-contract.md` gained §6.11 as
+    `backlog list` after this plan was written (CLI 0.11.0), so the graph-joined-to-runs section is
+    §6.12 and the `plan status` row in §8 says so. `plan_task` was already in §2 and §5 (GV1.2).
+  - **One file is added: `internal/watch/prstate_query.go`** (with
+    `internal/watch/prstate_query_test.go`). This task's state table needs the merge answer
+    synchronously, and `internal/watch`'s `PRState` answers asynchronously — `Filter` starts lookups
+    off the render loop and the answer lands in a cache for the next frame. `PRState.MergeNow` asks
+    the same question and returns it, and it lives in `internal/watch` rather than in the CLI so the
+    URL pattern, the argv, the pinned host, the process group and the capped pipes stay the one
+    spawn path this tree has; the alternative — a second `gh` invocation in `internal/cli` — would be
+    a second answer to "which URLs may be handed to a subprocess".
+  - **`plan.StatePlan` states its own figures** (`tasks`, `closed`, `open`), and each release box
+    carries `total`, `done`, `closed` and `open` beside GD6's `closed` counter: `nodes` is filtered
+    by `--all`, so a header or a totals line a screen draws cannot be added up from it. Additive,
+    and the contract's §6.12 states them.
+  - **The console contract's own tests learned the shapes**
+    (`internal/cli/docs_desktop_console_test.go`: the two field lists and
+    `consoleContractCommands`), and `website/content/cli-reference.md` is regenerated — a new
+    command is a page the generator writes.
+  - **One guard file is amended: `internal/runview/plan_task_test.go`.** Constraint C3 is enforced
+    by a walk over the module — any non-test Go file naming `PlanTask`/`plan_task` must be on its
+    display allow-list — so `internal/plan/state.go` and `internal/cli/plan_status.go` are added to
+    it, with what each one does with the id. The two are display-only readers: the join matches ids,
+    and no state, count or refusal depends on what a launcher wrote.
+- **Amended 2026-10-25, at GV1.6's review:**
+  - **The lookups are scoped to the runs the join reads.** `plan status` lists every run the
+    bucket still holds (`followUpLookback`, ninety days — the bucket's own lifecycle, and the window
+    `run --pr` reads with), and then `plan.JoinedRuns` keeps those that join at least one plan here.
+    The merge lookup is scoped to that set: it spawns the operator's `gh` once per distinct pull
+    request, so handing it the repository's whole run history is a cost that grows with the history,
+    for a read the console calls to draw the graph. `State` is handed the same set, so no URL is
+    looked up that the join did not read. The answers are not kept between invocations —
+    `internal/watch`'s cache lives in that process and this command is one process — so what bounds
+    the spawns is the scoping itself. No `--since` flag was added: that is a new flag and a product
+    decision, and the bound above already removes the unbounded cost.
+  - **The walk refuses a non-regular artifact**, not only a symlink: a fifo, a socket or a device at
+    a `*.graph.json` name makes `os.Open` a read that may never return. The rule sits in the walk,
+    where the symlink rule is (as `internal/streams.Read`'s does), so `plan.ReadFile` — which
+    `plan graph` shares — is unchanged.
+  - **Two artifacts that would be one plan id are refused, not silently merged.** The id is the
+    artifact's path, so `docs/plans/foo.graph.json` and `docs/plans/foo/bar.graph.json` both give
+    `plans/foo`, and joining them would let the second's tasks share the first's runs and totals. The
+    first in path order keeps the id, the second is not listed, and a fixed sentence names both.
+    Additive: it changes what is listed only in a checkout that was already ambiguous.
+  - **Tests for the above**, beyond the list below: `TestPlanStatusLooksUpOnlyJoinedRuns` and
+    `TestPlanStatusReadsOnlyTheRunsTheBucketHolds` (the two bounds),
+    `TestPlanStatusSanitisesAJoinedStage` (a *joined* run's stage, which the misshapen-`plan_task`
+    test cannot reach — that run never joins), `TestPlanStatusSumsEveryPlan` (two artifacts at once),
+    `TestPlanStatusWarnsOnARefusedArtifact`, `TestPlanStatusWarnsOnAnUnreadableCatalogue` and
+    `TestPlanStatusWarnsOnAnUnreadableOrigin` (the three warning paths, previously untested),
+    `TestPlanStatusRefusesADuplicatePlanID`, `TestPlanStatusRefusesANonRegularArtifact`, and
+    `TestPlanIDScopesTheJoinedRuns` in `internal/plan/state_test.go`.
+- **Amended 2026-10-25, at GV1.6's independent review:**
+  - **`plan status` is a console read** (`consoleReadPaths` in `internal/cli/project.go`): it
+    resolves the checkout to select the project, and a console spawn must not record the checkout it
+    looked at. `TestConsoleAllowListedReadsWriteNothing` runs it.
+  - **A job-written `pr_url` of another repository is never looked up** and answers "not merged":
+    a job must not mark its own task done by pointing its record at any merged pull request.
+    `watch.PRRepo` reads the URL's repository with `MergeNow`'s own pattern.
+  - **The lookups are capped at 32 per read**, the newest runs' first; a pull request past the cap
+    is `merge unknown`, with a warning.
+  - **A release's name is the reader's arithmetic** (`streams.FirstVersion`: the first name is the
+    named line's first minor), and "finished" is `streams.Version.AtLeast`, the reader's own
+    comparison, exported for it — no second copy of either in `internal/plan`.
 
 #### GV1.7 — The planning skill writes the graph (V2.8.1, with the stream)
 - **Files:** `plugin/skills/parallelism/SKILL.md`, new
