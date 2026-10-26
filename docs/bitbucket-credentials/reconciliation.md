@@ -1,8 +1,14 @@
 # Bitbucket support through the credentials service: reconciliation
 
-**Draft. The decisions below are open: the owner has answered none of them.** This document is
-checked against `main` at `ce991d88d` and against Bitbucket's own documentation as read on
-2026-10-26. Where it disagrees with [spec.md](spec.md), this document wins.
+**The owner answered decisions D360–D367 on 2026-10-26.** D360, D362, D363 and D367 were answered
+against the recommendation. This document is checked against `main` at `ce991d88d` and against
+Bitbucket's own documentation as read on 2026-10-26. Where it disagrees with [spec.md](spec.md),
+this document wins.
+
+- §1–§4 are the findings as first written, before the answers. F19–F22 were added when the answers
+  were followed through.
+- §5 holds the decisions with the owner's answers.
+- §6 follows the answers through.
 
 ## 1. Summary
 
@@ -24,7 +30,7 @@ is not acceptable for a run. A run's git credential reaches its agent (F7). So a
 workspace-wide token would widen what a hostile agent can write from one repository to the whole
 workspace. Today that agent can write to one repository only.
 
-The recommended shape:
+The shape this document recommended:
 
 - **The coordinator reads Bitbucket** through one read-only credential, held by the coordinator's
   own job the way it already holds the GitHub App key (D361, D362).
@@ -32,6 +38,16 @@ The recommended shape:
 - **The console's project view reads what the coordinator job already stored**, so neither the
   console nor a person's CLI needs any key (D364). That read needs no credential at all, and it
   is the smallest useful first slice (§6).
+
+**The owner ruled otherwise on 2026-10-26** (§5):
+
+- The credentials service holds the Bitbucket credentials (D362).
+- The service mints run tokens as well (D363).
+- A run's Bitbucket token is therefore accepted as workspace-wide for 1–2 hours (D360). The
+  mitigation is policy and audit in the service (T1).
+- The tokens come from OAuth consumers owned by the installing person (D367).
+
+The key-free stored-view read (D364) stands as recommended, and it is still the first slice.
 
 ## 2. What the spec names, and what the repository already has
 
@@ -212,81 +228,206 @@ nothing. *Consequence:* the docs must never offer app passwords as an option. AP
 replacement, but they are person-owned and cannot be narrowed below a workspace, so they are not a
 platform credential either.
 
-## 5. Decisions (open, recommendation first)
+### Findings added when the answers were followed through (2026-10-26)
+
+**F19, Gap (security). Comments from the installing person would be taken as Fugaro's own, and
+the agent could write as that person.** This follows from D363 and D367 together.
+
+- **What the code does.** `internal/gitprov/bitbucket/comments.go` (`selfUser`) treats every
+  comment by the token's own user, read with `GET /user`, as Fugaro's (`gitprov.Comment.Self`).
+  `internal/followup/trust.go` (`Trust.Allows`, `isSelf`) never lets a `Self` comment steer a
+  follow-up, and `internal/followup/select.go` drops it as `omitSelf`.
+- **First consequence.** A `client_credentials` token acts as the consumer's owner, which D367
+  makes the installing person. Every comment that person writes by hand on a Bitbucket pull request
+  becomes `Self`. **The installing person can then never steer a follow-up.** Every pull request
+  Fugaro opens is also authored by that person (`Trust.PRAuthorID`).
+- **Second consequence.** Today the agent's token is a bot's. Under D363 it is the person's, so a
+  hostile or prompt-injected agent can write comments **as the installing person**.
+- **Why the obvious fix is a vulnerability.** The obvious repair is to count a comment as `Self`
+  only when it carries Fugaro's run marker. That would make the agent's unmarked comments look like
+  the person's own trusted instructions to the next follow-up run. That is a lasting
+  prompt-injection path that today's bot identity rules out.
+- **Status.** No repair keeps both behaviours, so this is a product decision. It is open item **O1**,
+  and plan task T3.3 is held on it.
+
+**F20, Gap (security). The agent could approve and merge as a human, anywhere in the workspace.**
+
+- **What the run needs.** The run consumer needs `pullrequest:write`. That scope gives *"access to
+  create, comment, approve, decline, and merge pull requests"* (§3).
+- **Consequence.** Under D360, D363 and D367, a run's agent can approve or merge **any** pull
+  request in the workspace, **as the installing person**, for the token's life. Branch
+  restrictions and merge checks that count that person's approval are satisfied by the agent.
+- **How it compares with today.** A repository token can approve as well, but only on one
+  repository and only as a bot.
+- **Mitigations, outside Fugaro's code.** Do not make the consumer's owner a required approver, or
+  a member of any merge-check group. Keep them out of default reviewers.
+- **Where it goes.** SECURITY.md (T3.4) must say this plainly, and Check 147 shows it on the
+  sandbox. It is part of open item **O1**.
+
+**F21, Resolution. Two consumers are needed, not one.** Bitbucket fixes the scopes on the consumer
+and ignores a per-request `scope` (§3). D361 gives the coordinator a **read** consumer, and D363
+needs a **write** consumer for runs. One consumer cannot serve both without giving the coordinator
+write reach. So the service holds two:
+
+- `bitbucket-read-consumer`, used only for the coordinator's mint;
+- `bitbucket-run-consumer`, used only for the run mint.
+
+Both are owned by the installing person (D367). This is the only shape that keeps both answers.
+Open item **O2** asks the owner to confirm it.
+
+**F22, Gap (security). Until the per-repository token leaves the job, S3 widens and shortens
+nothing.**
+
+- **The token stays in the job.** The job's `bitbucket-token` mount, read by
+  `internal/gitprov/providers/providers.go` (`EnvBitbucketToken`), stays in the job until it is
+  dropped. The same is true of the App key: `config.ServiceHeldSecretNames` is empty, and the
+  credentials-service rules file keeps it empty until the owner's checks pass.
+- **Consequence.** A run on S3 holds **both** a long-lived token for one repository (through
+  `/proc`) and a short-lived token for the whole workspace.
+- **Why the drop is not enough.** The image build needs the per-repository token whatever happens
+  (F8), so the token cannot simply be deleted.
+- **What the plan does.** Task T3.6 writes the gated drop, and the owner flips it after Check 147.
+  Open item **O3**.
+
+## 5. Decisions, with the owner's answers
 
 | D | Question | Recommendation, and why | Alternative, and what it costs | Owner's answer |
 | --- | --- | --- | --- | --- |
-| **D360** | Reopen the 2026-10-15 "Bitbucket stays per repository" ruling? (F4) | **Only for read-only use by the coordinator.** A project-wide view needs a project-wide read, and a read-only credential cannot push | **(b) Reopen it for runs too.** That is F7's widening of an agent's reach. **(c) Keep it, and never support Bitbucket in the coordinator.** That contradicts the spec's "for sure" | |
-| **D361** | Which Bitbucket credential does the coordinator read with? | **An OAuth consumer created with only `repository` and `pullrequest` read scopes, using the `client_credentials` grant.** It is read-only and short-lived (1 to 2 hours), no plan requirement is stated, and it is the spec's "general credential, specific tokens through it" | **(b) A read-only workspace or project access token.** It needs Premium, lives long, and gives the same read reach. **(c) Grant the coordinator account `secretAccessor` on every repository's `bitbucket-token`.** It needs nothing new from the user, but the coordinator then holds **write** tokens, and the grants cross from the installation root into each repository root | |
-| **D362** | Where is the coordinator's Bitbucket credential held? | **Held by the coordinator job itself**, as one project secret mounted only on `fugaro-coordinator`, exactly as `coordinator_app_key` holds the App key. It works without the service (F13) and adds no caller to the service (F11) | **(b) Held in the service bundle**, with a new non-run caller class: a coordinator account allow-list, a read-only mint and a new audit purpose. That is a security-sensitive change to `auth.go`, it works only where the service is on, and the coordinator then depends on the service | |
-| **D363** | How do runs get their Bitbucket credential? (F5 to F8) | **Unchanged: one repository access token per repository, mounted as today.** No Bitbucket credential can be narrowed per run, so minting adds nothing a run can safely use | **(b) The service holds each repository's token and hands the run its own.** That is a vault only: the job loses its Secret Manager grant, but the reach and lifetime are the same and the token still reaches the agent. **(c) The service mints from the consumer for runs.** It gives the agent workspace-wide write for 1 to 2 hours (F7). **(d) A push and pull-request proxy in the service.** It is the only shape that narrows below today's reach, and it is a large build. Deferred, as D145 deferred it | |
-| **D364** | How do the console and a person's CLI read the project view with no key? (F2, F9, F10) | **A new CLI read of the view the sweep stored** (`coordinator/repos/<slug>/`, signed-in reader), with a runs-only fallback when the coordinator is off. Coordinator P6 is rewritten onto it. It needs no key and is the same for GitHub and Bitbucket | **(b) A runs-only `coordinator status`, with no pull-request half.** It is simpler, but the console shows no pull requests. **(c) The console waits for the coordinator's resident service (P7, P8).** That is later, and it needs a front-door credential | |
-| **D365** | With the service on, is the coordinator job's own App key grant kept? (F3) | **Kept, and documented as the second holder** (the sweep runs no agent, so its mount is not an agent-reachable copy). The local `coordinator status` stops needing a key under D364 | **(b) The coordinator mints through the service.** That is D362(b)'s new caller class, for GitHub as well | |
-| **D366** | Is Bitbucket Data Center in scope? (F15) | **No.** The code is Cloud-only, and Data Center is a different API | **(b) Include it.** That needs a second adapter for the 1.0 REST API | |
-| **D367** | Whose account owns the OAuth consumer? (F14) | **A dedicated workspace member account kept for Fugaro**, so that the read does not stop when a person leaves. Whether that account costs a seat is **UNVERIFIED** | **(b) The installing person's own account.** It is free, but the read stops if that person leaves or loses access | |
+| **D360** | Reopen the 2026-10-15 "Bitbucket stays per repository" ruling? (F4) | **Only for read-only use by the coordinator.** A project-wide view needs a project-wide read, and a read-only credential cannot push | **(b) Reopen it for runs too.** That is F7's widening of an agent's reach. **(c) Keep it, and never support Bitbucket in the coordinator.** That contradicts the spec's "for sure" | **2026-10-26: (b), reopened for runs too. Not the recommendation.** The owner wants one Bitbucket path through the service. Accepted consequence: a hostile agent's Bitbucket token reaches the whole workspace for 1–2 hours instead of one repository (F7, F20). Followed through in T1 and in S3 |
+| **D361** | Which Bitbucket credential does the coordinator read with? | **An OAuth consumer created with only `repository` and `pullrequest` read scopes, using the `client_credentials` grant.** It is read-only and short-lived (1 to 2 hours), no plan requirement is stated, and it is the spec's "general credential, specific tokens through it" | **(b) A read-only workspace or project access token.** It needs Premium, lives long, and gives the same read reach. **(c) Grant the coordinator account `secretAccessor` on every repository's `bitbucket-token`.** It needs nothing new from the user, but the coordinator then holds **write** tokens, and the grants cross from the installation root into each repository root | **2026-10-26: the recommendation**, a read-scoped OAuth consumer. It is read-only and needs no Premium. Because D363 needs a second consumer with write scopes, see F21 |
+| **D362** | Where is the coordinator's Bitbucket credential held? | **Held by the coordinator job itself**, as one project secret mounted only on `fugaro-coordinator`, exactly as `coordinator_app_key` holds the App key. It works without the service (F13) and adds no caller to the service (F11) | **(b) Held in the service bundle**, with a new non-run caller class: a coordinator account allow-list, a read-only mint and a new audit purpose. That is a security-sensitive change to `auth.go`, it works only where the service is on, and the coordinator then depends on the service | **2026-10-26: (b), held by the credentials service. Not the recommendation.** The answer reached this document labelled "recommended". It is recorded here as it was given, and it differs from §5's recommendation (open item O5). Why: one place holds every Bitbucket credential. Consequences: a new coordinator caller class at the service (F11, task T2.3), and a Bitbucket coordinator read only where the optional service is deployed (F13, tension T2) |
+| **D363** | How do runs get their Bitbucket credential? (F5 to F8) | **Unchanged: one repository access token per repository, mounted as today.** No Bitbucket credential can be narrowed per run, so minting adds nothing a run can safely use | **(b) The service holds each repository's token and hands the run its own.** That is a vault only: the job loses its Secret Manager grant, but the reach and lifetime are the same and the token still reaches the agent. **(c) The service mints from the consumer for runs.** It gives the agent workspace-wide write for 1 to 2 hours (F7). **(d) A push and pull-request proxy in the service.** It is the only shape that narrows below today's reach, and it is a large build. Deferred, as D145 deferred it | **2026-10-26: (c), the service mints run tokens from the consumer. Not the recommendation.** Why: the spec's "per run" tokens, made from one general credential. Mitigation (T1): the service mints only for allow-listed repositories, writes an audit line for every mint, and SECURITY.md and the docs say plainly that a Bitbucket run token is workspace-wide for the consumer's owner. The run consumer's scopes are the minimum runs need, set in a task and proven by a check (T3.5, Check 147). Followed through in F19–F22 |
+| **D364** | How do the console and a person's CLI read the project view with no key? (F2, F9, F10) | **A new CLI read of the view the sweep stored** (`coordinator/repos/<slug>/`, signed-in reader), with a runs-only fallback when the coordinator is off. Coordinator P6 is rewritten onto it. It needs no key and is the same for GitHub and Bitbucket | **(b) A runs-only `coordinator status`, with no pull-request half.** It is simpler, but the console shows no pull requests. **(c) The console waits for the coordinator's resident service (P7, P8).** That is later, and it needs a front-door credential | **2026-10-26: the recommendation.** The read is key-free for both providers. Console P6 is rebuilt on it: this folder's plan amends P6's plan text, and the coordinator's own files are not edited |
+| **D365** | With the service on, is the coordinator job's own App key grant kept? (F3) | **Kept, and documented as the second holder** (the sweep runs no agent, so its mount is not an agent-reachable copy). The local `coordinator status` stops needing a key under D364 | **(b) The coordinator mints through the service.** That is D362(b)'s new caller class, for GitHub as well | **2026-10-26: the recommendation.** The grant is kept and documented as the second holder of the key |
+| **D366** | Is Bitbucket Data Center in scope? (F15) | **No.** The code is Cloud-only, and Data Center is a different API | **(b) Include it.** That needs a second adapter for the 1.0 REST API | **2026-10-26: the recommendation.** Out of scope |
+| **D367** | Whose account owns the OAuth consumer? (F14) | **A dedicated workspace member account kept for Fugaro**, so that the read does not stop when a person leaves. Whether that account costs a seat is **UNVERIFIED** | **(b) The installing person's own account.** It is free, but the read stops if that person leaves or loses access | **2026-10-26: (b), the installing person. Not the recommendation.** Recorded consequences: every token acts as that person, so pull requests, comments, approvals and merges show their name (F19, F20). Both consumers stop working when the person leaves or loses access. Rotation and ownership transfer must be a documented operator step and a task (T2.6, Check 148) |
 
-The spec's own open question ("maybe … more specific ones per repository, per run") is answered by
-§3 and D363: Bitbucket offers no such narrowing, so the specific tokens can exist only for the
-coordinator's read-only reach.
+The spec's own open question asked whether there could be "more specific ones per repository, per
+run". §3 and D363 answer it. Bitbucket offers no such narrowing, so a "per-run" token is
+per-run only in **who receives it and when**, which the service enforces and audits. It is not
+per-run in **what it can reach**.
 
-## 6. Smallest useful first slice
+## 6. The answers followed through
 
-1. **S1, no credential (D364).** Add a CLI read of the stored view, wire coordinator P6's console
-   operation to it, and add a runs-only fallback. This unblocks the console project view for every
-   installation with the coordinator on, and it removes the local key requirement. Bitbucket
-   repositories show their recorded `StaleUnsupported` state until S2.
-2. **S2, Bitbucket in the sweep (D360 to D362, D367).** Add the consumer secret as a project
-   secret, the coordinator grant and mount, a `client_credentials` token source in
-   `internal/gitprov/bitbucket` for read-only use, and `supported` admitting Bitbucket for the
-   sweep's reader only. Docs and a runbook entry cover creating the consumer and rotating it. An
-   owner-run live check proves the read on a sandbox workspace.
-3. **Later, only if the owner asks:** S3, the service bundle path (D362(b)). S4, the push and
-   pull-request proxy (D363(d)).
+**Shape.** The service's bundle holds two OAuth consumers (F21), both owned by the installing
+person (D367). The service gives out two kinds of short-lived token:
 
-**Migration.** Under the recommendations, nothing existing moves. Per-repository tokens stay as
-they are. The consumer is a new, optional project secret, and an installation without it keeps
-today's `StaleUnsupported` rows.
+- **Read tokens for the coordinator job.** This is a new caller class at the service, for the
+  coordinator's account only (D362, F11).
+- **Write tokens for runs.** These go only to an allow-listed repository's own job with a live run
+  identity, and every mint is audited (D363, T1).
 
-**Threat model (recommended shape).**
+The console and the CLI read the stored view and hold no key (D364). The coordinator job keeps its
+own App key grant for GitHub (D365).
 
-- **What a leak gives:** the consumer secret gives read access to every repository and pull
-  request its owner can see in the workspace.
-- **Who holds it:** the coordinator account, through one `secretAccessor`, and the sweep container
-  that mounts it. The sweep runs no agent and no model.
-- **Who can ask for a token:** nobody else. There is no endpoint.
-- **How it is revoked:** a workspace admin deletes the consumer or regenerates its secret, after
-  which a new secret version is written. A minted token expires within 1 to 2 hours.
-- **What changes for a hostile agent:** nothing. The consumer never enters a run's job.
+**Slices.** The full plan is in [implementation-plan.md](implementation-plan.md).
+
+- **S1** needs no credential: the stored-view read, and console P6 rebuilt on it.
+- **S2** brings Bitbucket into the coordinator job through the service's read consumer.
+- **S3** has the service mint Bitbucket run tokens, with an allow-list, an audit line per mint, the
+  minimum scopes, SECURITY.md, and the gated drop of the job's own per-repository token.
+- **Owner-run checks** are Checks 145–149.
+
+**Migration.** Per-repository `bitbucket-token` secrets stay in place:
+
+- Image builds keep using them (F8).
+- Runs on an installation without the service keep using them.
+- Runs on an installation with the service keep the mounted copy until the owner flips T3.6's gate.
+
+To opt in, a repository is added to the bundle's allow-list and the two consumers are written to
+the bundle with `fugaro creds set`. An installation that has not opted in sees no change.
+
+**Threat model, as answered.**
+
+| Asset | Who can obtain it | What it reaches | How it is revoked |
+| --- | --- | --- | --- |
+| Read consumer (key and secret) | The service, from the bundle. The owner writes it | Read access to every repository and pull request the installing person can see (U3: maybe beyond the workspace) | A workspace admin deletes the consumer or regenerates its secret, then writes it again with `fugaro creds set` |
+| Write consumer (key and secret) | The service, from the bundle | **Write access to everything the installing person can write**, within the consumer's scopes, including approving and merging (F20) | The same |
+| Read token (1–2 hours) | The coordinator's account through the service's new caller class, audited | The same as the read consumer | It expires. Whether a single token can be revoked is U2 |
+| Run token (1–2 hours) | The job of an **allow-listed** repository with a **live run identity**, audited per mint. **Its agent can read it** (F7) | **The whole workspace, as the installing person**, for its life | It expires. U2. Rotating the consumer is the emergency stop |
+
+**What a hostile agent can do, precisely.** Take an agent in an allow-listed repository's run.
+For up to 1–2 hours, and as the installing person, it can:
+
+- push to any branch the person may push to, in any repository of the workspace;
+- open, comment on, approve, decline and merge pull requests there (F20);
+- write comments that read as the person's own (F19).
+
+The service's allow-list decides **which runs** receive such a token. It does not decide **what
+the token does**. The audit line names the run that received each token, so misuse can be traced
+to a run but not prevented. Neither the per-repository policy nor the audit narrows what a token
+can reach.
 
 ## 7. Open tensions and items for the owner
 
-- **T1, the spec against F7.** The spec wants the service to mint per-run Bitbucket tokens, and §3
-  shows that any such token is workspace-wide. Ruling for the spec as written means ruling for
-  D363(c), which accepts F7's widening of an agent's reach.
-- **T2, D362(b) against F13.** Holding the credential in the service makes Bitbucket support depend
-  on an optional, dormant component that has not been checked live (Checks 94 to 99 not run).
-- **T3, D364 against coordinator Q8(A).** Q8(A) has the console reach data only through CLI reads.
-  D364 keeps that rule, but it changes which read P6 uses, so P6's plan text has to be amended.
+- **T1, now accepted with mitigation (D360, D363, 2026-10-26).** The spec's per-run tokens are
+  workspace-wide. The owner accepted the widening. The mitigation is: an allow-list at the
+  service, an audit line per mint, minimum scopes (T3.5, Check 147), plain statements in SECURITY.md
+  and the docs (T3.4), and the job token's gated drop (T3.6). **The mitigation decides who
+  receives a token. It does not narrow what the token reaches.**
+- **T2, open (D362 against F13).** Bitbucket support in the coordinator and in runs depends on the
+  optional credentials service, which ships dormant. Its live Checks 94–99 have not been run, and
+  91, 92, 94, 95, 96 and 99 are written and NOT RUN. S2 and S3 are useless to an installation that
+  has not opted in, and the plan does not ask for those checks to run first. The owner may want to
+  make Check 99 a precondition of S3.
+- **T3, open (D364 against coordinator Q8(A)).** Q8(A) puts the console's data behind CLI reads,
+  and D364 keeps that rule, but P6 now reads the stored view and not `coordinator status`. This
+  folder's plan carries the amended P6 text (task T1.2). `docs/coordinator/` is not edited.
+- **O1, confirmation request (F19, F20).** D363 and D367 together let a run's agent write as the
+  installing person. That person's own comments can then never steer a follow-up, and the agent
+  can approve or merge as them across the workspace. A fix that counts only marked comments as
+  `Self` would open a prompt-injection path. **Options:**
+  - (a) Keep `Self` as the token's user, and document that the installing person cannot steer a
+    Bitbucket follow-up.
+  - (b) Use a dedicated account for the run consumer only, which reverses D367 for runs.
+  - (c) Keep D363 off until (a) or (b) is chosen.
+
+  Task T3.3 is held on this.
+- **O2, confirmation request (F21).** Two consumers, read and run, both owned by the installing
+  person.
+- **O3, owner gate (F22).** The job's own `bitbucket-token` stays mounted until the owner flips
+  T3.6's gate after Check 147. Image builds keep it in any case (F8).
+- **O4, a precondition for any mint.** Check 145 (U1, U2, U3, U5, U8) runs on a sandbox workspace
+  before T3.1 merges. If it shows that a `client_credentials` token reaches beyond its workspace
+  (U3), the owner rules again on D363 before S3 continues.
+- **O5, recorded.** D362's answer was relayed to this document as "recommended", but it is
+  option (b) and not this document's recommendation. It is recorded as given, marked as not the
+  recommendation.
 
 ## 8. Numbers this work holds
 
 **D360–D389** and **Checks 145–154**, taken above the highest on `main` (task governance's
 D320–D359 and Checks 135–144) and above every open pull request's docs, none of which writes D334
-or higher, or Check 135 or higher. **D360–D367** are written above and open. **D368–D389** and
-**Checks 145–154** are reserved and unused. The likely first check is the S2 live read.
+or higher, or Check 135 or higher.
+
+- **D360–D367** are written and answered on 2026-10-26. **D368–D389** are reserved and unused.
+- **Checks 145–149** are proposed by the plan; all are owner-run and NOT RUN. **150–154** are
+  reserved and unused.
 
 ## 9. UNVERIFIED
 
-- **U1.** Whether an OAuth token lasts one hour (swagger) or two hours (support page).
+Every item below that matters for minting is settled by **Check 145** on a sandbox workspace before
+the first slice that mints (S2's T2.3 and S3's T3.1).
+
+- **U1.** Whether an OAuth token lasts one hour (swagger) or two hours (support page). Check 145.
 - **U2.** Whether the `client_credentials` grant returns a refresh token, and whether a single
-  minted token can be revoked.
+  minted token can be revoked. Check 145.
 - **U3.** Whether a `client_credentials` token reaches only the consumer's own workspace or every
-  workspace its owner can reach.
-- **U4.** Whether OAuth consumers and repository access tokens need any paid plan.
-- **U5.** Whether an access token or a consumer's owner uses a paid seat.
-- **U6.** Whether a project access token covers repositories added after it was created.
-- **U7.** Whether a Forge app can get a token narrowed to a repository.
-- **U8.** Whether IP allowlisting applies to access tokens.
-- **U9.** Whether a console child can make the D364 read through the operator's own Google
-  sign-in, given only `CHILD_ENV_KEYS`. The runs reads the console already makes suggest it can,
-  but this is not checked.
+  workspace its owner can reach. Check 145, using a second sandbox workspace the person belongs to.
+- **U4.** Whether OAuth consumers and repository access tokens need any paid plan. Check 145 runs
+  on the sandbox's plan.
+- **U5.** Whether an access token or a consumer's owner uses a paid seat. Check 145 records the
+  workspace's seat count before and after.
+- **U6.** Whether a project access token covers repositories added after it was created. Not on
+  the plan's path.
+- **U7.** Whether a Forge app can get a token narrowed to a repository. Not on the plan's path; if
+  it can, that would be a narrower alternative to D363.
+- **U8.** Whether IP allowlisting applies to OAuth tokens. Check 145 records it, if the sandbox
+  plan offers allowlisting.
+- **U9.** Whether a console child can make the D364 read. The CLI half uses the person's ADC
+  (`internal/cli/cloud.go` `newBudgetClient`), so the open question is whether a console child has
+  ADC. Check 149.
+- **U10.** Whether `git` accepts an OAuth access token with the username `x-token-auth`. Bitbucket
+  documents this form for access tokens, but not for OAuth tokens on this page. Check 147.
+- **U11.** Whether the token endpoint's response lists the granted scopes, which T3.5 would assert.
+  If it does not, T3.5 falls back to the consumer's configured scopes. Check 145.
