@@ -139,11 +139,15 @@ type StageTiming struct {
 	Name      string    `json:"name"`
 	StartedAt time.Time `json:"started_at"`
 	DurationS float64   `json:"duration_s"`
-	// Calls is how many model calls the stage made and Agents how many
-	// sub-agents it ran, as whatever observed them counted (the gateway's
-	// stage report, or an oauth run's own result line). Both are pointers
-	// because a stage nobody counted has the field absent, and that is not
-	// the same fact as a stage that made no calls (0).
+	// Calls is how many model calls the stage made, and Agents how many
+	// sub-agent tool calls its own stream carried. Calls is the gateway's
+	// stage report, or, on an oauth run, what the agent's result line
+	// reported; Agents is the relay's count of the sub-agent tool calls the
+	// stream named, for every auth mode, gateway or not. The gateway's count
+	// of distinct agent IDs is a different figure and is never recorded: it
+	// rests on the agent ID a client claims, which nothing verifies. Both are
+	// pointers because a stage nobody counted has the field absent, and that
+	// is not the same fact as a stage counted at zero.
 	Calls  *int `json:"calls,omitempty"`
 	Agents *int `json:"agents,omitempty"`
 	// ModelUSD is what this stage's calls cost, in USD, whatever model they

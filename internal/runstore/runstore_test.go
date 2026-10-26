@@ -286,8 +286,9 @@ func TestRecordFollowUpRoundTrip(t *testing.T) {
 
 // TestStageTimingCallsRoundTrip pins the record's own contract for the two
 // stage counters (docs/task-governance constraint G5): absent is not zero.
-// A stage that reported no count -- an oauth run, whose agent reports none --
-// keeps the field absent, while a stage that made no calls carries 0.
+// A stage nobody counted -- an oauth run's calls, when its result line
+// carried no figure -- keeps the field absent, while a stage counted at
+// zero carries 0.
 func TestStageTimingCallsRoundTrip(t *testing.T) {
 	s := newStore(t)
 	at := time.Date(2026, 10, 26, 10, 0, 0, 0, time.UTC)
