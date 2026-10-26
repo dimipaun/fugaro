@@ -52,6 +52,10 @@ func newReleaseRepo(t *testing.T) *releaseRepo {
 	// with every release, and a test reading it would assert against whatever
 	// the last release left there (streamsFixture).
 	writeStreams(t, seed, streamsFixture)
+	// The release commit rewrites the two doc lines that name the released
+	// version (releasedVersionDocs), so the fixture carries both, at the shape
+	// the real files have.
+	writeReleasedVersionDocs(t, seed, "0.11.4")
 	// Releases from 0.4.0 need docs/releases/vX.Y.Z.md on main and an entry in
 	// website/data/release-summaries.yaml; give the versions these tests release
 	// both by default.
@@ -416,7 +420,7 @@ func runRelease(t *testing.T, r *releaseRepo, g *ghState, stdin string, args ...
 	bin := fakeBinDir(t)
 	cmd := exec.Command("bash", append([]string{filepath.Join(r.local, "scripts", "release.sh")}, args...)...)
 	cmd.Dir = r.local
-	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "RELEASE_SH_POLL_SECONDS=1")
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "RELEASE_SH_POLL_SECONDS=1", "RELEASE_RETRY_SECONDS=0")
 	// The helper first and the test's own environment after it, so a test can
 	// unset RELEASE_SH_STREAMS_CMD (an empty value is the default `go run`).
 	cmd.Env = append(cmd.Env, releaseEnv(t)...)
@@ -2077,10 +2081,13 @@ func TestExistingRemoteBranchWithoutPR(t *testing.T) {
 		t.Errorf("expected the pushed branch to be reused:\n%s", res.out)
 	}
 	if n := testutil.Git(t, r.bare, "rev-list", "--count", initial+"..refs/heads/release/v0.12.0"); n != "2" {
-		t.Errorf("want the pushed bump commit and the catalogue commit on the branch, got %s", n)
+		t.Errorf("want the pushed bump commit and the catalogue and docs commit on the branch, got %s", n)
 	}
-	if files := testutil.Git(t, r.bare, "diff-tree", "--no-commit-id", "--name-only", "-r", "refs/heads/release/v0.12.0"); files != "docs/release-streams.yaml" {
-		t.Errorf("the commit on top of the pushed bump should touch the catalogue only, got:\n%s", files)
+	// The catalogue and the two doc lines that name the released version
+	// (releasedVersionDocs), sorted as git lists them.
+	want := "docs/design/project-named-oauth-tokens.md\ndocs/project-claude-accounts.md\ndocs/release-streams.yaml"
+	if files := testutil.Git(t, r.bare, "diff-tree", "--no-commit-id", "--name-only", "-r", "refs/heads/release/v0.12.0"); files != want {
+		t.Errorf("the commit on top of the pushed bump should touch the catalogue and the released-version docs only, got:\n%s", files)
 	}
 	if countLog(t, g, "pr create") != 1 {
 		t.Errorf("want one PR:\n%s", g.log(t))
@@ -2409,5 +2416,272 @@ func TestReleasePolicy(t *testing.T) {
 				t.Errorf("exit %d, want %d:\n%s", got, c.want, out)
 			}
 		})
+	}
+}
+
+// releasedVersionDocs are the two doc lines internal/cli's docs tests pin to
+// the version the tree carries (TestDocsProjectNamedOAuthTokensStatusNamesTheReleasedCLI,
+// TestDocsProjectClaudeAccountsOperatorGuide), as fixture text: the file, the
+// line with the version left as %s, and the lines around it, which the release
+// must leave alone.
+var releasedVersionDocs = []struct{ path, before, line, after string }{
+	{
+		path:   "docs/design/project-named-oauth-tokens.md",
+		before: "# Project-level named Claude OAuth tokens\n\n",
+		line:   "Status: **built, release 0.9.0 (released; the released CLI is %s)**, 2026-10-19. Was: design,\n",
+		after:  "2026-10-18, **RULED** (release 0.9.0).\n",
+	},
+	{
+		path:   "docs/project-claude-accounts.md",
+		before: "# Project Claude accounts: one OAuth token per (profile, account)\n\n",
+		line:   "Status: **0.9.0, released.** The released Fugaro is %s, and 0.9.0 is the first release any of this page works on:\n",
+		after:  "the `claude_accounts` field inside a profile.\n",
+	},
+}
+
+func releasedVersionDoc(i int, version string) string {
+	d := releasedVersionDocs[i]
+	return d.before + fmt.Sprintf(d.line, version) + d.after
+}
+
+func writeReleasedVersionDocs(t *testing.T, dir, version string) {
+	t.Helper()
+	for i, d := range releasedVersionDocs {
+		writeDoc(t, dir, d.path, releasedVersionDoc(i, version))
+	}
+}
+
+// writeDoc writes content at dir/name, creating its directory, and commits
+// nothing.
+func writeDoc(t *testing.T, dir, name, content string) {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestReleaseRewritesTheReleasedVersionDocLines: the two doc lines that name
+// the released version move to the new version in the release commit itself,
+// since a docs test pins them to the tree's version and so they can change in
+// no other commit (0.9.5's first bump went red on main for want of them). The
+// rewrite is idempotent: a line that already names the version is left as is.
+func TestReleaseRewritesTheReleasedVersionDocLines(t *testing.T) {
+	for _, from := range []string{"0.11.4", "0.12.0"} {
+		t.Run("from "+from, func(t *testing.T) {
+			r := newReleaseRepo(t)
+			if from != "0.11.4" {
+				writeReleasedVersionDocs(t, r.local, from)
+				testutil.Git(t, r.local, "add", "-A")
+				testutil.Git(t, r.local, "commit", "--quiet", "-m", "fixture: docs at "+from)
+				testutil.Git(t, r.local, "push", "--quiet", "origin", "main")
+			}
+			g := newGHState(t, r, greenChecks())
+			initial := testutil.Git(t, r.bare, "rev-parse", "main")
+
+			res := runRelease(t, r, g, "", "0.12.0")
+
+			res.requireSuccess(t)
+			if n := testutil.Git(t, r.bare, "rev-list", "--count", initial+"..refs/heads/release/v0.12.0"); n != "1" {
+				t.Errorf("want the doc lines in the release commit itself, got %s commits on the release branch", n)
+			}
+			for i, d := range releasedVersionDocs {
+				got := testutil.Git(t, r.bare, "show", "main:"+d.path) + "\n"
+				if want := releasedVersionDoc(i, "0.12.0"); got != want {
+					t.Errorf("%s on main after releasing 0.12.0:\n%s\nwant:\n%s", d.path, got, want)
+				}
+			}
+		})
+	}
+}
+
+// TestReleaseRefusesAReleasedVersionDocLineOfAnotherShape: a doc line that no
+// longer reads the way the rewrite expects (reworded, or gone) is a refusal at
+// step 1, naming the file, before any branch exists -- not a release commit that
+// leaves the line behind and goes red on main.
+func TestReleaseRefusesAReleasedVersionDocLineOfAnotherShape(t *testing.T) {
+	for i, d := range releasedVersionDocs {
+		t.Run(d.path, func(t *testing.T) {
+			r := newReleaseRepo(t)
+			reworded := strings.Replace(releasedVersionDoc(i, "0.11.4"), "released", "shipped", -1)
+			writeDoc(t, r.local, d.path, reworded)
+			testutil.Git(t, r.local, "add", "-A")
+			testutil.Git(t, r.local, "commit", "--quiet", "-m", "fixture: reworded")
+			testutil.Git(t, r.local, "push", "--quiet", "origin", "main")
+			g := newGHState(t, r, greenChecks())
+
+			res := runRelease(t, r, g, "", "0.12.0", "--dry-run")
+
+			res.requireFailureContaining(t, d.path)
+			if out := testutil.Git(t, r.bare, "branch", "--list", "release/v0.12.0"); out != "" {
+				t.Errorf("a refused doc line must not leave a release branch on origin:\n%s", res.out)
+			}
+		})
+	}
+}
+
+// writeFlakyStub writes a command that fails with a transient network error on
+// its first fails calls and prints "ok" after, counting its calls in a file
+// beside it; it returns the command's path and the count file's.
+func writeFlakyStub(t *testing.T, fails int, message string) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	count := filepath.Join(dir, "calls")
+	stub := filepath.Join(dir, "flaky")
+	body := fmt.Sprintf(`#!/bin/sh
+n=$(($(cat %[1]q 2>/dev/null || echo 0) + 1))
+echo "$n" >%[1]q
+if [ "$n" -le %[2]d ]; then
+  echo "partial"
+  echo %[3]q >&2
+  exit 1
+fi
+echo ok
+`, count, fails, message)
+	if err := os.WriteFile(stub, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return stub, count
+}
+
+// runRetryRead runs scripts/retry.sh's retry_read on cmd with no sleep.
+func runRetryRead(t *testing.T, cmd ...string) (string, string, error) {
+	t.Helper()
+	script := `. "$1"; shift; retry_read "$@"`
+	args := append([]string{"-c", script, "bash", filepath.Join(testutil.ModuleRoot(), "scripts", "retry.sh")}, cmd...)
+	c := exec.Command("bash", args...)
+	c.Env = append(os.Environ(), "RELEASE_RETRY_SECONDS=0")
+	var stdout, stderr bytes.Buffer
+	c.Stdout, c.Stderr = &stdout, &stderr
+	err := c.Run()
+	return stdout.String(), stderr.String(), err
+}
+
+func readCount(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// TestRetryReadSucceedsAfterTwoTransientFailures: a read that fails twice with
+// a network error and then answers is retried, and the caller sees only the
+// answer -- not the failed tries' partial output.
+func TestRetryReadSucceedsAfterTwoTransientFailures(t *testing.T) {
+	for _, msg := range []string{
+		"net/http: TLS handshake timeout",
+		"unexpected EOF",
+		"dial tcp 140.82.112.6:443: i/o timeout",
+		"read: connection reset by peer",
+		"fatal: unable to access 'https://github.com/o/r/': Recv failure: Connection reset by peer",
+	} {
+		t.Run(msg, func(t *testing.T) {
+			stub, count := writeFlakyStub(t, 2, msg)
+			out, errOut, err := runRetryRead(t, stub)
+			if err != nil {
+				t.Fatalf("retry_read failed: %v\n%s", err, errOut)
+			}
+			if out != "ok\n" {
+				t.Errorf("stdout = %q, want only the successful try's %q", out, "ok\n")
+			}
+			if n := readCount(t, count); n != "3" {
+				t.Errorf("the stub ran %s times, want 3", n)
+			}
+		})
+	}
+}
+
+// TestRetryReadIsBounded: three transient failures in a row end it, with the
+// last error passed on and the command's exit status kept.
+func TestRetryReadIsBounded(t *testing.T) {
+	stub, count := writeFlakyStub(t, 5, "net/http: TLS handshake timeout")
+	_, errOut, err := runRetryRead(t, stub)
+	if exitCode(err) != 1 {
+		t.Fatalf("want the stub's exit status 1, got %v\n%s", err, errOut)
+	}
+	if n := readCount(t, count); n != "3" {
+		t.Errorf("the stub ran %s times, want 3", n)
+	}
+	if !strings.Contains(errOut, "TLS handshake timeout") {
+		t.Errorf("the last error is not passed on:\n%s", errOut)
+	}
+}
+
+// TestRetryReadDoesNotRetryAPermanentError: an answer that is not a network
+// error (a 404, a refusal) is final on the first try.
+func TestRetryReadDoesNotRetryAPermanentError(t *testing.T) {
+	stub, count := writeFlakyStub(t, 5, "HTTP 404: Not Found")
+	if _, errOut, err := runRetryRead(t, stub); err == nil {
+		t.Fatalf("retry_read succeeded on a permanent error\n%s", errOut)
+	}
+	if n := readCount(t, count); n != "1" {
+		t.Errorf("the stub ran %s times, want 1", n)
+	}
+}
+
+// TestRetryReleaseRidesOutTransientGHErrors: a release whose gh calls fail
+// twice with a network error -- the repository read, the pull request's state,
+// the release gate's check polling, and the auto-merge request -- still tags.
+// The auto-merge request is not read-only: before it is repeated the pull
+// request's state is read again.
+func TestRetryReleaseRidesOutTransientGHErrors(t *testing.T) {
+	for _, c := range []struct{ prefix, count string }{
+		{"repo view", "2"},
+		{"pr view", "2"},
+		{"api", "2"},
+		{"pr merge", "2"},
+	} {
+		t.Run(c.prefix, func(t *testing.T) {
+			r := newReleaseRepo(t)
+			g := newGHState(t, r, greenChecks()).with("FAKE_GH_FLAKY="+c.prefix, "FAKE_GH_FLAKY_CALLS="+c.count)
+			res := runRelease(t, r, g, "", "0.12.0")
+			res.requireSuccess(t)
+			if !strings.Contains(res.out, "retrying") {
+				t.Errorf("want the retry noted:\n%s", res.out)
+			}
+			if out := testutil.Git(t, r.bare, "tag", "--list", "v0.12.0"); out == "" {
+				t.Errorf("tag missing:\n%s", res.out)
+			}
+			if c.prefix == "pr merge" {
+				if n := countLog(t, g, "pr merge"); n != 3 {
+					t.Errorf("want 3 'pr merge' calls, got %d:\n%s", n, g.log(t))
+				}
+			}
+		})
+	}
+}
+
+// TestRetryReleaseGivesUpOnAPersistentGHError: the retry is bounded, so a gh
+// read that keeps failing still stops the release with its own message.
+func TestRetryReleaseGivesUpOnAPersistentGHError(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := newGHState(t, r, greenChecks()).with("FAKE_GH_FLAKY=repo view", "FAKE_GH_FLAKY_CALLS=9")
+	res := runRelease(t, r, g, "", "0.12.0")
+	res.requireFailureContaining(t, "'gh repo view' failed")
+	if n := countLog(t, g, "repo view"); n != 3 {
+		t.Errorf("want 3 'repo view' calls, got %d", n)
+	}
+}
+
+// TestRetryTagPushAfterATransientFailure: a tag push that fails with a network
+// error is repeated only after origin has been read and found without the tag.
+func TestRetryTagPushAfterATransientFailure(t *testing.T) {
+	r := newReleaseRepo(t)
+	marker := filepath.Join(t.TempDir(), "rejected-once")
+	installHook(t, r, fmt.Sprintf(`while read old new ref; do case "$ref" in refs/tags/*) if [ ! -e %[1]q ]; then touch %[1]q; echo "unexpected EOF" >&2; exit 1; fi;; esac; done`, marker))
+	g := newGHState(t, r, greenChecks())
+	res := runRelease(t, r, g, "", "0.12.0")
+	res.requireSuccess(t)
+	if !strings.Contains(res.out, "retrying") {
+		t.Errorf("want the retry noted:\n%s", res.out)
+	}
+	tagSHA := testutil.Git(t, r.bare, "rev-parse", "v0.12.0^{commit}")
+	if mainSHA := testutil.Git(t, r.bare, "rev-parse", "main"); tagSHA != mainSHA {
+		t.Errorf("tag v0.12.0 (%s) does not point at main (%s)", tagSHA, mainSHA)
 	}
 }

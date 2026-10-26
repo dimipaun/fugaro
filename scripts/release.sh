@@ -34,10 +34,17 @@
 # and continued) rather than keeping any state of its own. It never force-
 # pushes, never pushes to main directly, and never deletes a tag. However it
 # exits, it leaves the checkout on main.
+#
+# A dropped connection to GitHub does not end it: read-only gh and git calls,
+# and the release gate's polling, are retried a bounded number of times
+# (scripts/retry.sh); the auto-merge request and the tag push are repeated only
+# after the state they would change has been read again, and the branch push
+# and the pull request's creation not at all (a re-run resumes from them).
 set -eu
 
 repo_root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$repo_root"
+. scripts/retry.sh
 
 yes=0
 dry_run=0
@@ -133,6 +140,44 @@ latest_released_version() {
   git tag -l 'v*' | grep -E '^v(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*)){2}$' | grep -vxF "$tag" | sed 's/^v//' | awk -F. '{printf "%020d%020d%020d %s\n", $1, $2, $3, $0}' | sort | tail -1 | awk '{print $2}'
 }
 
+# released_version_docs check|write X.Y.Z handles the two doc lines that name
+# the released version: internal/cli's docs tests
+# (TestDocsProjectNamedOAuthTokensStatusNamesTheReleasedCLI,
+# TestDocsProjectClaudeAccountsOperatorGuide) pin each to the version
+# plugin/.claude-plugin/plugin.json carries, so they can change in no commit but
+# the release commit, and a release commit without them goes red on main (0.9.5's
+# first bump, 280b2270). Each entry is the file, then the line's fixed text
+# around the version, as a prefix and a suffix. `check` refuses a file that does
+# not hold exactly one such line -- a reworded line must be noticed, not left
+# behind -- and `write` rewrites it to X.Y.Z, byte for byte the same when it
+# already says X.Y.Z.
+released_version_docs_list=(
+  "docs/design/project-named-oauth-tokens.md" "(released; the released CLI is " ")"
+  "docs/project-claude-accounts.md" "The released Fugaro is " ","
+)
+released_version_docs() {
+  local mode=$1 want=$2 i file prefix suffix n tmp
+  for ((i = 0; i < ${#released_version_docs_list[@]}; i += 3)); do
+    file=${released_version_docs_list[i]}
+    prefix=${released_version_docs_list[i + 1]}
+    suffix=${released_version_docs_list[i + 2]}
+    n="no file"
+    [ ! -f "$file" ] || n=$(awk -v p="$prefix" -v s="$suffix" '
+      { i = index($0, p); if (i && substr($0, i + length(p)) ~ /^[0-9]+\.[0-9]+\.[0-9]+/) { rest = substr($0, i + length(p)); sub(/^[0-9]+\.[0-9]+\.[0-9]+/, "", rest); if (index(rest, s) == 1) n++ } }
+      END { print n + 0 }' "$file")
+    if [ "$n" != 1 ]; then
+      echo "$file must hold exactly one line naming the released version as \"${prefix}X.Y.Z${suffix}\" (the release commit rewrites it to $want, and a docs test in internal/cli pins it to the tree's version); found $n. Restore the sentence, or change it here (released_version_docs_list) and in its docs test together." >&2
+      return 1
+    fi
+    [ "$mode" = write ] || continue
+    tmp=$(mktemp)
+    awk -v p="$prefix" -v s="$suffix" -v v="$want" '
+      { i = index($0, p); if (i) { rest = substr($0, i + length(p)); if (match(rest, /^[0-9]+\.[0-9]+\.[0-9]+/) && index(substr(rest, RLENGTH + 1), s) == 1) $0 = substr($0, 1, i - 1) p v substr(rest, RLENGTH + 1) } print }' "$file" >"$tmp"
+    cat "$tmp" >"$file"
+    rm -f "$tmp"
+  done
+}
+
 poll_seconds=${RELEASE_SH_POLL_SECONDS:-30}
 # RELEASE_SH_TIMEOUT_SECONDS exists for the tests only (--timeout-minutes has
 # a one-minute floor).
@@ -159,7 +204,7 @@ fi
 trap 'cleanup_plugin_scratch; restore_main' EXIT
 trap on_signal INT TERM HUP
 
-git fetch --quiet origin main --tags --prune
+retry_read git fetch --quiet origin main --tags --prune
 local_main=$(git rev-parse main)
 origin_main=$(git rev-parse origin/main)
 if [ "$local_main" != "$origin_main" ]; then
@@ -200,11 +245,11 @@ if ! command -v gh >/dev/null 2>&1; then
   echo "gh is not installed; see https://cli.github.com" >&2
   exit 1
 fi
-if ! gh auth status >/dev/null 2>&1; then
+if ! retry_read --any gh auth status >/dev/null 2>&1; then
   echo "gh is not authenticated; run 'gh auth login'" >&2
   exit 1
 fi
-repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner) || {
+repo=$(retry_read gh repo view --json nameWithOwner --jq .nameWithOwner) || {
   echo "'gh repo view' failed; run this from inside the fugaro checkout" >&2
   exit 1
 }
@@ -221,7 +266,7 @@ if [ "$(printf '%s' "$url_repo" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s'
   exit 1
 fi
 
-if [ -n "$(git ls-remote --tags origin "refs/tags/$tag")" ]; then
+if [ -n "$(retry_read git ls-remote --tags origin "refs/tags/$tag")" ]; then
   echo "tag $tag already exists on origin; a release is never re-tagged (ship the fix as the next patch instead, see docs/release.md#rolling-back)" >&2
   exit 1
 fi
@@ -280,6 +325,10 @@ if ! stream_name=$($streams_cmd name cli "$version" 2>&1); then
 $stream_name" >&2
   exit 1
 fi
+
+# The two doc lines the release commit rewrites must still read the way the
+# rewrite expects, so a reworded one is refused here, before a branch exists.
+released_version_docs check "$version" || exit 1
 
 # Checks still running on main (a just-merged PR) are waited for, up to
 # --timeout-minutes; a failed check fails at once.
@@ -348,7 +397,7 @@ if [ "$dry_run" = 1 ]; then
 Dry run for $tag ($stream_name): every precondition above passed; $plugin_check_line.
 Nothing else was changed.
 Without --dry-run this would:
-  2. create $branch from main, bump the plugin to $version (scripts/bump-plugin-version.sh), record $version as the cli stream's current in docs/release-streams.yaml (moving its next name when the release opens a new minor), commit "release: $tag", push it, open a PR to main, and enable squash auto-merge
+  2. create $branch from main, bump the plugin to $version (scripts/bump-plugin-version.sh), record $version as the cli stream's current in docs/release-streams.yaml (moving its next name when the release opens a new minor), rewrite the two doc lines that name the released version, commit "release: $tag", push it, open a PR to main, and enable squash auto-merge
   3. wait up to ${timeout_minutes}m for that PR to merge
   4. wait up to ${timeout_minutes}m for the merge commit's test, terraform, rules and console checks, and require them to pass (the release gate)
   5. create and push the tag $tag (no prompt: the green release gate on the verified merge commit is the safeguard)
@@ -356,17 +405,17 @@ EOF
   exit 0
 fi
 
-commit_body="Bump the plugin version and every skill header to $version (scripts/bump-plugin-version.sh) so the release gate's version check passes once this merges to main, and record $version as the cli stream's current in docs/release-streams.yaml so the file the console's dependency graph draws describes what has shipped.
+commit_body="Bump the plugin version and every skill header to $version (scripts/bump-plugin-version.sh) so the release gate's version check passes once this merges to main, and record $version as the cli stream's current in docs/release-streams.yaml so the file the console's dependency graph draws describes what has shipped. Name $version as the released version in docs/design/project-named-oauth-tokens.md and docs/project-claude-accounts.md, whose status lines a docs test pins to the tree's version.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
-pr_body="Bumps plugin/.claude-plugin/plugin.json and every skill header to $version (scripts/bump-plugin-version.sh), per docs/release.md, and records $version as the cli stream's current in docs/release-streams.yaml. Opened by scripts/release.sh; auto-merge (squash) is enabled."
+pr_body="Bumps plugin/.claude-plugin/plugin.json and every skill header to $version (scripts/bump-plugin-version.sh), per docs/release.md, and records $version as the cli stream's current in docs/release-streams.yaml and as the released version in the two docs that name it. Opened by scripts/release.sh; auto-merge (squash) is enabled."
 
 closed_message() {
   echo "pull request #$1 ($2) for $branch was closed without merging.
 To retry: delete the release branch (git push origin --delete $branch, and git branch -D $branch if it exists locally), then re-run scripts/release.sh $version; a fresh pull request is opened. Or reopen the pull request on GitHub and re-run." >&2
 }
 
-pr_line=$(gh pr list --base main --head "$branch" --state all --limit 1 --json number,state --jq '.[0] | select(.) | "\(.number) \(.state)"')
+pr_line=$(retry_read gh pr list --base main --head "$branch" --state all --limit 1 --json number,state --jq '.[0] | select(.) | "\(.number) \(.state)"')
 pr_number=""
 pr_listed_state=""
 if [ -n "$pr_line" ]; then
@@ -374,7 +423,7 @@ if [ -n "$pr_line" ]; then
   pr_listed_state=${pr_line#* }
 fi
 remote_branch=0
-if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+if retry_read git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
   remote_branch=1
 fi
 if [ "$pr_listed_state" = CLOSED ]; then
@@ -398,7 +447,7 @@ else
   base_ref=""
   base_desc=""
   if [ "$remote_branch" = 1 ]; then
-    git fetch --quiet origin "$branch"
+    retry_read git fetch --quiet origin "$branch"
     base_ref="origin/$branch"
     base_desc="pushed branch $branch (no pull request yet)"
   elif git show-ref --quiet --verify "refs/heads/$branch"; then
@@ -438,6 +487,9 @@ $stream_check" >&2
   # already on a resumed branch, which may have been pushed without the row
   # moved; at an equal version it rewrites the file byte for byte.
   $streams_cmd set cli "$version"
+  # And the two doc lines a docs test pins to the tree's version, for the same
+  # reason: only the release commit may move them.
+  released_version_docs write "$version"
   if [ -n "$(git status --porcelain)" ]; then
     git add -A
     git commit --quiet -m "release: $tag" -m "$commit_body"
@@ -464,10 +516,10 @@ poll_pr() {
   deadline=$(($(date +%s) + timeout_seconds))
   cancelled_seen=""
   while :; do
-    state=$(gh pr view "$n" --json state --jq .state)
+    state=$(retry_read gh pr view "$n" --json state --jq .state)
     case "$state" in
       MERGED)
-        gh pr view "$n" --json mergeCommit --jq .mergeCommit.oid
+        retry_read gh pr view "$n" --json mergeCommit --jq .mergeCommit.oid
         return 0
         ;;
       CLOSED)
@@ -480,7 +532,7 @@ poll_pr() {
     # --timeout-minutes, instead of stopping right away and naming it. A
     # CANCELLED check is retryable once (a superseded or re-triggered run is
     # the usual cause); seen again on a later poll, it is a failure.
-    bad=$(gh pr checks "$n" --json name,state --jq '([.[] | select(.state == "FAILURE" or .state == "ERROR" or .state == "CANCELLED" or .state == "TIMED_OUT" or .state == "ACTION_REQUIRED" or .state == "STARTUP_FAILURE" or .state == "STALE")][0] | select(.) | "\(.name) \(.state)") // empty' 2>/dev/null || true)
+    bad=$(retry_read gh pr checks "$n" --json name,state --jq '([.[] | select(.state == "FAILURE" or .state == "ERROR" or .state == "CANCELLED" or .state == "TIMED_OUT" or .state == "ACTION_REQUIRED" or .state == "STARTUP_FAILURE" or .state == "STALE")][0] | select(.) | "\(.name) \(.state)") // empty' 2>/dev/null || true)
     if [ -n "$bad" ]; then
       bad_name=${bad% *}
       bad_state=${bad##* }
@@ -500,10 +552,10 @@ poll_pr() {
   done
 }
 
-pr_state=$(gh pr view "$pr_number" --json state --jq .state)
+pr_state=$(retry_read gh pr view "$pr_number" --json state --jq .state)
 case "$pr_state" in
   MERGED)
-    merge_sha=$(gh pr view "$pr_number" --json mergeCommit --jq .mergeCommit.oid)
+    merge_sha=$(retry_read gh pr view "$pr_number" --json mergeCommit --jq .mergeCommit.oid)
     ;;
   CLOSED)
     # Before any 'gh pr merge': a closed pull request cannot be merged.
@@ -511,11 +563,24 @@ case "$pr_state" in
     exit 1
     ;;
   *)
-    if ! merge_err=$(gh pr merge --auto --squash "$pr_number" 2>&1 >/dev/null); then
+    # Not read-only, so not retry_read: a request that failed on a dropped
+    # connection may still have reached GitHub, so the pull request is read
+    # again before the request is repeated, and a merged or closed one is left
+    # to the wait below.
+    merge_try=1
+    while ! merge_err=$(gh pr merge --auto --squash "$pr_number" 2>&1 >/dev/null); do
+      if [ "$merge_try" -lt "$retry_tries" ] && retry_is_transient "$merge_err"; then
+        echo "'gh pr merge' failed (try $merge_try of $retry_tries): $merge_err; reading the pull request again, then retrying in $((retry_seconds * merge_try))s" >&2
+        sleep $((retry_seconds * merge_try))
+        merge_try=$((merge_try + 1))
+        recheck=$(retry_read gh pr view "$pr_number" --json state --jq .state) || recheck=""
+        [ "$recheck" != MERGED ] && [ "$recheck" != CLOSED ] || break
+        continue
+      fi
       echo "could not enable auto-merge on pull request #$pr_number ($pr_url): $merge_err
 Auto-merge may be off for this repository. Merge the pull request yourself, then re-run scripts/release.sh $version to continue." >&2
       exit 1
-    fi
+    done
     echo "waiting for $pr_url to merge (checking every ${poll_seconds}s, giving up after ${timeout_minutes}m)..."
     if ! merge_sha=$(poll_pr "$pr_number"); then
       exit 1
@@ -526,7 +591,7 @@ esac
 # 4. Verify the merged commit on main.
 echo "pull request #$pr_number merged as $merge_sha; verifying main"
 git switch --quiet main
-git pull --quiet --ff-only origin main
+retry_read git pull --quiet --ff-only origin main
 head_sha=$(git rev-parse HEAD)
 if [ "$head_sha" != "$merge_sha" ]; then
   echo "HEAD ($head_sha) is not the release merge commit ($merge_sha); something else landed on main first, inspect before tagging" >&2
@@ -568,17 +633,29 @@ fi
 if [ "$local_tag" != 1 ]; then
   git tag -a "$tag" -m "Fugaro $tag" "$head_sha"
 fi
-if ! git push origin "refs/tags/$tag"; then
-  remote_sha=$(git ls-remote origin "refs/tags/$tag^{}" | cut -f1)
+# A failed push is repeated only on a dropped connection, and only once origin
+# has been read again and found without the tag: a push that reached origin
+# before the connection dropped is not pushed twice.
+push_try=1
+while ! push_out=$(git push origin "refs/tags/$tag" 2>&1); do
+  printf '%s\n' "$push_out" >&2
+  remote_sha=$(retry_read git ls-remote origin "refs/tags/$tag^{}" | cut -f1)
   if [ "$remote_sha" = "$head_sha" ]; then
     echo "tag $tag is already on origin at $head_sha; nothing to push."
     exit 0
+  fi
+  if [ -z "$remote_sha" ] && [ "$push_try" -lt "$retry_tries" ] && retry_is_transient "$push_out"; then
+    echo "pushing tag $tag failed (try $push_try of $retry_tries) and origin does not have it; retrying in $((retry_seconds * push_try))s" >&2
+    sleep $((retry_seconds * push_try))
+    push_try=$((push_try + 1))
+    continue
   fi
   echo "pushing tag $tag failed. It exists locally at $head_sha; once the cause is fixed, push it with:
   git push origin refs/tags/$tag
 or re-run scripts/release.sh $version, which pushes it." >&2
   exit 1
-fi
+done
+printf '%s\n' "$push_out"
 
 cat <<EOF
 tag $tag pushed. Watch:
