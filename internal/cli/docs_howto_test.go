@@ -48,7 +48,8 @@ func TestDocsHowToPagesAreShort(t *testing.T) {
 		if !strings.Contains(doc, "fugaro ") {
 			t.Errorf("%s names no fugaro command, and it is a how-to", path)
 		}
-		if !strings.Contains(doc, "**per installation**") && !strings.Contains(doc, "**per repository**") {
+		lower := strings.ToLower(doc)
+		if !strings.Contains(lower, "**per installation") && !strings.Contains(lower, "**per repository") {
 			t.Errorf("%s labels no command per installation or per repository, so a reader cannot tell how often to run it", path)
 		}
 	}
