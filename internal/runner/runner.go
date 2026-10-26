@@ -317,6 +317,12 @@ type run struct {
 	// review, and the mode must not come from there.
 	rigorCfg rigor.Config
 	rigorRev string
+	// lastSenior is the last senior review round as the loop read it: the
+	// findings the record's summary only counts, kept because the mode's
+	// threshold table reads their scores (outcome.go, T3.1). It is the round
+	// seniorReview(r.rec.Reviews) returns, which is the only one readiness
+	// reads.
+	lastSenior seniorRound
 	// filedFrom is the commit finalize's backlog filing was committed on
 	// top of, "" when the run wrote no item at all: the report names it as
 	// the commit the suite ran on (report.go's testsLine).
@@ -2052,6 +2058,10 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 			return
 		}
 		v := ParseVerdict(res)
+		// The round is kept whole as well as counted: the mode's threshold
+		// table reads the findings' scores, which the summary does not carry
+		// (outcome.go, T3.1).
+		r.lastSenior = seniorRound{Round: round, Findings: v.Findings}
 		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: v.Verdict, Findings: len(v.Findings)})
 		r.save(ctx)
 		if r.capReached() || v.Verdict == "ship" || round == st.Rounds {
@@ -2656,7 +2666,7 @@ func (r *run) finalize(ctx context.Context) error {
 	r.rec.HeadSHA, r.rec.Verify = sha, records
 	r.uploadVerifyRecords(ctx, records)
 
-	ready, reason := Decide(records, decided, seniorReview(r.rec.Reviews))
+	ready, reason := Decide(records, decided, seniorReview(r.rec.Reviews), r.findingsPolicy())
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"
 	}
