@@ -12,7 +12,7 @@
 //
 // The picker is a *separate window* (C9) and not a panel in the dashboard's
 // header, and the reason is the surface rather than the layout: the dashboard's
-// document is exposed to twenty-one operations -- the CLI reads, the handshake,
+// document is exposed to twenty-two operations -- the CLI reads, the handshake,
 // the link handover, `installation.current` and the rail's six -- and the
 // picker's job is to add an installation by checkout path. Two documents, two preloads, two channel prefixes, and a sender
 // gate narrowed to one document each (`isSenderOnDocument` in `src/main/ipc.ts`) --

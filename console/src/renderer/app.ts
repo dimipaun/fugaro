@@ -186,7 +186,7 @@ export function putLink(element: ElementLike, raw: unknown, field = 'the link'):
  * structural type rather than `src/preload/index.ts`'s `ConsoleBridge` because
  * the preload is a *value* module the renderer cannot import (the sandboxed
  * preload may not require a relative path, and a bundler is a later task's
- * dependency), and because this file needs exactly one method of the twenty-one:
+ * dependency), and because this file needs exactly one method of the twenty-two:
  * naming that one is what makes "the entry point asks for the handshake and
  * nothing else" readable here.
  */

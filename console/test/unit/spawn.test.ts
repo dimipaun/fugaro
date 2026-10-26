@@ -135,10 +135,12 @@ const PROJECT = 'fugaro'
 const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
 
 /**
- * COMMANDS_TAKING_PROJECT is the plan's own list, hard-coded: the eleven
+ * COMMANDS_TAKING_PROJECT is the plan's own list, hard-coded: the twelve
  * operations `addCloudFlags` gives `--project` to (`internal/cli/cloud.go:51`,
  * called from each of those constructors), including the two log operations
- * that share the `logs` command -- console L5b's `runs.stats` is the eleventh. The complement -- the commands that take no
+ * that share the `logs` command -- console L5b's `runs.stats` is the eleventh,
+ * and plan GV2.1's `plan.status` the twelfth. The complement -- the commands
+ * that take no
  * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
  * command words the CLI itself uses (`version` and the rail's `config list`),
  * which is the same list `assertSpawnSurface` holds the table to; this file
@@ -150,6 +152,7 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'spend.report',
   'runs.list',
   'runs.stats',
+  'plan.status',
   'run.diagnose',
   'run.logs',
   'run.logLink',
@@ -415,22 +418,24 @@ describe('the spawn table and the argv it builds', () => {
     }).toThrow(/does not start with config list/)
   })
 
-  it('fixes the design allow-list exactly: thirteen argvs, twelve commands, eleven of them with --project', () => {
+  it('fixes the design allow-list exactly: fourteen argvs, thirteen commands, twelve of them with --project', () => {
     // The design's §5.1 rule 6 table is the whole allow-list, and **the table
-    // and the document are now the same thirteen argvs**: the rail's read
+    // and the document are now the same fourteen argvs**: the rail's read
     // (`config list --json`, the case above) used to be the picker's own row in
     // a second table, and the owner's ruling of 2026-10-25 moved it onto this
-    // one. The two are held in step by hand on purpose: the Go side pins the
-    // document's thirteen
+    // one; plan GV2.1's `plan status --json` is the fourteenth. The two are held
+    // in step by hand on purpose: the Go side pins the
+    // document's fourteen
     // (`internal/cli/docs_desktop_console_test.go`,
     // TestDocsDesktopConsoleDesignAllowListIsExactArgv) and this case pins the
-    // console's thirteen.
+    // console's fourteen.
     expect([...SPAWN_COMMANDS].map((row) => row.words.join(' '))).toEqual([
       'watch --json',
       'budget show --json',
       'report --json',
       'runs ls --json',
       'runs stats --json',
+      'plan status --json',
       'diagnose --json',
       'logs --json',
       'logs --url',
@@ -440,8 +445,8 @@ describe('the spawn table and the argv it builds', () => {
       'doctor --json',
       'config list --json',
     ])
-    // The ten *commands* that take the flag (addCloudFlags, internal/cli/
-    // cloud.go:51) are ten rows plus one: `logs` has two rows, `--json` and
+    // The eleven *commands* that take the flag (addCloudFlags, internal/cli/
+    // cloud.go:51) are eleven rows plus one: `logs` has two rows, `--json` and
     // `--url`, and neither of them may be the one that forgets --project.
     const commandsWithProject = SPAWN_COMMANDS.filter((row) => row.takesProject).map((row) =>
       row.words.filter((word) => !word.startsWith('--')).join(' '),
@@ -453,6 +458,7 @@ describe('the spawn table and the argv it builds', () => {
         'report',
         'runs ls',
         'runs stats',
+        'plan status',
         'diagnose',
         'logs',
         'secrets ls',
@@ -460,7 +466,7 @@ describe('the spawn table and the argv it builds', () => {
         'doctor',
       ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(11)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(12)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))
