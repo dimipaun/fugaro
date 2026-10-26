@@ -2175,6 +2175,37 @@ against the committed file is six things:
   publishes it, `fugaro-credentials` has to be made public by hand, or this
   job fails the next release and every one after it.
 
+**Also in the staged file: the `publish-base` fix that v0.11.5 needs.** The
+v0.11.4 tag's `publish-base` failed twice (run 40234606942) and
+`fugaro-base:0.11.4` was never published, because `ubuntu-latest` became
+ubuntu-26.04 between the v0.11.3 and v0.11.4 runs. That image's docker uses the
+containerd image store: the amd64 build saved an index with a provenance
+attestation (pushed as `0.11.4-amd64`, an OCI index), and after the push
+`docker image inspect --format '{{index .RepoDigests 0}}'` returned the loaded
+local name `fugaro-base@sha256:...` before the `ghcr.io/dimipaun/fugaro-base@`
+one, so `docker buildx imagetools create` asked Docker Hub for
+`docker.io/library/fugaro-base` and was refused with `insufficient_scope`. The
+fix is four hunks: the amd64 build leg and `publish-base` run on `ubuntu-24.04`
+instead of `ubuntu-latest`, the base build sets
+`BUILDX_NO_DEFAULT_ATTESTATIONS=1` so each architecture is one plain manifest,
+and `publish-base` takes the digest listed under `ghcr.io/dimipaun/fugaro-base@`
+rather than the first one. **The fix alone, without the credentials leg, is
+`docs/pending-workflows/images-publish-base-fix.patch`**, a patch against the
+running file; it must be on `main` before the 0.11.5 version-bump merge commit,
+so that the tagged tree carries it:
+
+```sh
+git apply docs/pending-workflows/images-publish-base-fix.patch
+git rm docs/pending-workflows/images-publish-base-fix.patch
+git add .github/workflows/images.yml
+git commit -m "images: publish-base on pinned ubuntu-24.04 runners"
+```
+
+Copying the whole staged file in (above) also carries the fix, and then the
+patch is removed with it. `images/base_workflow_test.go` reads the staged file
+while it exists and asserts the pinned runners, so the running file is checked
+only after that copy-in.
+
 **What the copy-in has to leave true.** After the copy and the `git rm`, the
 real `.github/workflows/images.yml` is what `images/base_workflow_test.go`'s
 `readWorkflow` reads, and it must hold the base jobs *and* the credentials
