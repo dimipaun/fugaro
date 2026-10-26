@@ -1439,7 +1439,8 @@ func TestVersionComparisonIsNumeric(t *testing.T) {
 }
 
 // pushReleaseBranch stands in for an earlier interrupted run: it pushes
-// release/vVERSION to origin, already carrying the bump commit.
+// release/vVERSION to origin, already carrying the plugin bump commit but not
+// the catalogue's cli row.
 func pushReleaseBranch(t *testing.T, r *releaseRepo, version string) {
 	t.Helper()
 	clone := filepath.Join(t.TempDir(), "earlier")
@@ -2075,11 +2076,60 @@ func TestExistingRemoteBranchWithoutPR(t *testing.T) {
 	if !strings.Contains(res.out, "resuming pushed branch release/v0.12.0") {
 		t.Errorf("expected the pushed branch to be reused:\n%s", res.out)
 	}
-	if n := testutil.Git(t, r.bare, "rev-list", "--count", initial+"..refs/heads/release/v0.12.0"); n != "1" {
-		t.Errorf("want exactly one commit on the branch, got %s", n)
+	if n := testutil.Git(t, r.bare, "rev-list", "--count", initial+"..refs/heads/release/v0.12.0"); n != "2" {
+		t.Errorf("want the pushed bump commit and the catalogue commit on the branch, got %s", n)
+	}
+	if files := testutil.Git(t, r.bare, "diff-tree", "--no-commit-id", "--name-only", "-r", "refs/heads/release/v0.12.0"); files != "docs/release-streams.yaml" {
+		t.Errorf("the commit on top of the pushed bump should touch the catalogue only, got:\n%s", files)
 	}
 	if countLog(t, g, "pr create") != 1 {
 		t.Errorf("want one PR:\n%s", g.log(t))
+	}
+}
+
+// TestResumedBranchWithTheBumpStillRecordsTheStream: a release branch pushed by
+// hand (or by an earlier script that predates the catalogue) already carries
+// the plugin bump, so the bump is skipped; the catalogue's cli row must still
+// move, or main keeps describing the release before this one.
+func TestResumedBranchWithTheBumpStillRecordsTheStream(t *testing.T) {
+	r := newReleaseRepo(t)
+	rewriteFixtureStreams(t, r, streamsFixtureReleased)
+	addReleaseNotes(t, r, "0.11.2")
+	g := newGHState(t, r, greenChecks())
+	pushReleaseBranch(t, r, "0.11.2")
+
+	res := runRelease(t, r, g, "", "0.11.2", "--yes")
+
+	res.requireSuccess(t)
+	catalogue := testutil.Git(t, r.bare, "show", "main:docs/release-streams.yaml")
+	if !strings.Contains(catalogue, `current: "0.11.2"`) {
+		t.Errorf("docs/release-streams.yaml on main does not record 0.11.2 as the cli stream's current:\n%s", catalogue)
+	}
+}
+
+// TestResumedBranchWhoseCatalogueRefusesTheVersion: the precondition read main's
+// catalogue, but a hand-pushed branch may carry its own; one that already
+// records a later release is refused before anything is committed or opened.
+func TestResumedBranchWhoseCatalogueRefusesTheVersion(t *testing.T) {
+	r := newReleaseRepo(t)
+	rewriteFixtureStreams(t, r, streamsFixtureReleased)
+	addReleaseNotes(t, r, "0.11.2")
+	g := newGHState(t, r, greenChecks())
+	clone := filepath.Join(t.TempDir(), "earlier")
+	testutil.Git(t, filepath.Dir(clone), "clone", "--quiet", r.bare, clone)
+	testutil.Git(t, clone, "switch", "--quiet", "-c", "release/v0.11.2")
+	writeStreams(t, clone, strings.Replace(streamsFixtureReleased, `current: "0.11.1"`, `current: "0.11.3"`, 1))
+	testutil.Git(t, clone, "commit", "--quiet", "-am", "release: v0.11.2")
+	testutil.Git(t, clone, "push", "--quiet", "origin", "release/v0.11.2")
+
+	res := runRelease(t, r, g, "", "0.11.2", "--yes")
+
+	res.requireFailureContaining(t, "on release/v0.11.2 cannot record 0.11.2")
+	if countLog(t, g, "pr create") != 0 {
+		t.Errorf("a refused branch must not reach 'gh pr create':\n%s", g.log(t))
+	}
+	if b := currentBranch(t, r); b != "main" {
+		t.Errorf("want the checkout back on main, got %s", b)
 	}
 }
 

@@ -412,6 +412,13 @@ else
   if [ -n "$base_ref" ] && [ "$(git merge-base "$base_ref" origin/main)" = "$origin_main" ]; then
     echo "resuming $base_desc"
     git switch --quiet -C "$branch" "$base_ref"
+    # The precondition read main's catalogue; a branch pushed by hand may carry
+    # its own, and that is the one the release commit writes from.
+    if ! stream_check=$($streams_cmd set --check cli "$version" 2>&1); then
+      echo "docs/release-streams.yaml on $branch cannot record $version as the cli stream's current; delete the branch (git push origin --delete $branch; git branch -D $branch) and re-run:
+$stream_check" >&2
+      exit 1
+    fi
   else
     [ -n "$base_ref" ] && echo "$base_desc predates main ($origin_main); rebuilding $branch from origin/main" >&2
     git switch --quiet -C "$branch" origin/main
@@ -419,15 +426,19 @@ else
 
   if ! scripts/bump-plugin-version.sh --check "$version" >/dev/null 2>&1; then
     scripts/bump-plugin-version.sh "$version" >/dev/null
-    # The catalogue's cli row moves with the release, in the release commit
-    # itself: the file is what the graph draws and what the next release's floor
-    # is read from, so it never describes a version that has shipped (GV1.5).
-    # `set` writes both halves of the row -- `current`, and `next` moved on when
-    # the release opens a new minor, since `next` is the name the minor after the
-    # current one takes -- and refuses a write that does not read back, so a
-    # commit carrying a catalogue this build cannot parse, or one that names the
-    # release after it wrongly, cannot be made.
-    $streams_cmd set cli "$version"
+  fi
+  # The catalogue's cli row moves with the release, in the release commit
+  # itself: the file is what the graph draws and what the next release's floor
+  # is read from, so it never describes a version that has shipped (GV1.5).
+  # `set` writes both halves of the row -- `current`, and `next` moved on when
+  # the release opens a new minor, since `next` is the name the minor after the
+  # current one takes -- and refuses a write that does not read back, so a
+  # commit carrying a catalogue this build cannot parse, or one that names the
+  # release after it wrongly, cannot be made. It runs even when the bump is
+  # already on a resumed branch, which may have been pushed without the row
+  # moved; at an equal version it rewrites the file byte for byte.
+  $streams_cmd set cli "$version"
+  if [ -n "$(git status --porcelain)" ]; then
     git add -A
     git commit --quiet -m "release: $tag" -m "$commit_body"
   fi
