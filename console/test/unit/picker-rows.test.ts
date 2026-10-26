@@ -477,6 +477,9 @@ describe('removing the installation the console is open on', () => {
     // installation's: no source is left bound to the record that went.
     expect(chosen).toEqual(['orbit'])
     expect(bound).toEqual(['orbit'])
+    // The handshake's answer is remembered for it, as a choose's is, so the
+    // header reads the mode and the version rather than 'version not read'.
+    expect(picker.installation()).toMatchObject({ mode: 'ok' })
     expect(picker.installation()).toMatchObject({ chosen: true, project: 'orbit' })
     if (removed.ok) {
       const data = removed.data as { rows: readonly InstallationsListRow[] }
