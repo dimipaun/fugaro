@@ -31,11 +31,11 @@ const ReasonNoVerifiedTest = "no verified test run on the final commit"
 // as succeeded with outcome none before any PR exists, and a fixed one goes on
 // to review as usual.
 //
-// pol is the mode's findings policy, and the one thing it can change is a
+// pol is the mode's findings policy, and the one answer it can change is a
 // `changes` verdict whose every finding it tolerates (D9). Every other answer
 // is the one this function gave before modes existed, reason string included:
-// the four reasons above the tolerance are the gates, and a mode cannot make
-// an unverified or unreviewed run ready.
+// the reasons above the tolerance are the gates, and a mode cannot make an
+// unverified or unreviewed run ready.
 func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSummary, pol FindingsPolicy) (bool, string) {
 	latest := latestVerifiedTest(records, finalSHA)
 	switch {
@@ -52,21 +52,6 @@ func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSumma
 		return false, fmt.Sprintf("review round %d still has %s", last.Round, Plural(last.Findings, "finding"))
 	}
 	return true, ""
-}
-
-// tolerates reports whether the mode lets the whole round through: the split
-// Decide was given is the one that round produced, every finding the record
-// counts sits in its tolerated half, and there is at least one.
-//
-// The count is checked against the record rather than trusted, and a round
-// that left no finding is not tolerated: a `changes` verdict that names
-// nothing is a review which failed to say what it wanted, and D4's rule is
-// that a policy which cannot decide blocks.
-func (pol FindingsPolicy) tolerates(last *runstore.ReviewSummary) bool {
-	return last.Findings > 0 &&
-		pol.Round == last.Round &&
-		len(pol.Blocking) == 0 &&
-		len(pol.Tolerated) == last.Findings
 }
 
 // FindingsPolicy is the mode's findings policy as Decide is given it
@@ -90,6 +75,21 @@ type FindingsPolicy struct {
 	// tolerate nothing at all: one that configured no rigor, or a mode whose
 	// rigor.Files row files no tolerated finding (D9).
 	Blocking, Tolerated []rigor.Score
+}
+
+// tolerates reports whether the mode lets the whole round through: the split
+// Decide was given is the one that round produced, every finding the record
+// counts sits in its tolerated half, and there is at least one.
+//
+// The count is checked against the record rather than trusted, and a round
+// that left no finding is not tolerated: a `changes` verdict that names
+// nothing is a review which failed to say what it wanted, and D4's rule is
+// that a policy which cannot decide blocks.
+func (pol FindingsPolicy) tolerates(last *runstore.ReviewSummary) bool {
+	return last.Findings > 0 &&
+		pol.Round == last.Round &&
+		len(pol.Blocking) == 0 &&
+		len(pol.Tolerated) == last.Findings
 }
 
 // findingsPolicyOf is the policy Decide is given for one review round: the
