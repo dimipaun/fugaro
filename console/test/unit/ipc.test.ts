@@ -660,12 +660,16 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * `--dir D` on doctor is main-process state rather than a renderer argument, so
  * both are absent from these strings.
  *
- * **The list and this surface are the same thirteen argvs.** Until the owner's
- * design ruling of 2026-10-25 there were twelve here and the thirteenth
- * (`config list --json`, the installations picker's own read) was pinned where
- * the picker's table was; the installation rail made that read the dashboard's
- * own operation, so the document and `CONSOLE_OPERATIONS` are now compared
- * argv for argv with nothing held back.
+ * **It is thirteen argvs, and this surface is fourteen.** The thirteenth is
+ * `config list --json`, the rail's own read (owner's design ruling of
+ * 2026-10-25): until that ruling there were twelve here and it was pinned where
+ * the picker's table was, and the ruling made the read the dashboard's own
+ * operation. The fourteenth is GV2.1's `plan status --json`, which the design
+ * has **not carried**: the read is named for the console (the console-v2 plan's
+ * GV1.6, which ships the document, and GV2.1, which is this operation, and
+ * `console/docs/json-contract.md` §6.12) but neither section 2.1's thirteen rows
+ * nor §5.1 rule 6's table has grown a row for it, so it is owed to both and is
+ * pinned separately below.
  */
 const DESIGN_ARGV: readonly string[] = [
   'watch --json',
@@ -681,8 +685,17 @@ const DESIGN_ARGV: readonly string[] = [
   'version',
   'doctor --json',
   'config list --json',
-  'plan status --json',
 ]
+
+/**
+ * DESIGN_ARGV_OWED is the one argv this surface spawns that the design's table
+ * does not carry yet, named on its own so that the gap is a pinned fact rather
+ * than a row that quietly passed for an allowed one. The test below is the union
+ * of the two, so the surface still cannot grow an argv the design does not name
+ * -- and the day §5.1's table gains the row, the mutation this list exists for
+ * (move it into `DESIGN_ARGV`) is the whole edit.
+ */
+const DESIGN_ARGV_OWED: readonly string[] = ['plan status --json']
 
 /** argvOf is an operation's command and the flags it fixes, as one string. */
 function argvOf(operation: ConsoleOperation): string | null {
@@ -700,7 +713,13 @@ function operationsDriving(command: string): readonly ConsoleOperation[] {
 describe("the allow-list's read-only invariant", () => {
   it('is exactly the design section 3.4 rule 2 allow-list, argv for argv', () => {
     const driven = CONSOLE_OPERATIONS.map(argvOf).filter((argv): argv is string => argv !== null)
-    expect([...driven].sort()).toEqual([...DESIGN_ARGV].sort())
+    // The design's thirteen, plus the one argv the design names for the console
+    // that its §5.1 table has not grown a row for yet. Written as a union rather
+    // than as one fourteen-entry list so that the owed row cannot pass for an
+    // allowed one: an argv on neither list fails here, and so does one that
+    // moves between them without the design.
+    expect([...driven].sort()).toEqual([...DESIGN_ARGV, ...DESIGN_ARGV_OWED].sort())
+    expect(driven).toHaveLength(DESIGN_ARGV.length + DESIGN_ARGV_OWED.length)
   })
 
   it('has exactly eight operations spawn nothing at all, and names each of them', () => {
@@ -1829,9 +1848,9 @@ describe('the spend read’s arguments', () => {
  * and the five writers are the picker's own operations reached from the
  * dashboard's document instead of the picker window's. Read that as a diff
  * against the previous version of this list: six rows, in one place, and no
- * method renamed. **Plan GV2.1 added the sixteenth** (`plan.status` /
+ * method renamed. **Plan GV2.1 added the twenty-second** (`plan.status` /
  * `planStatus`, the plan graph joined to the runs working on it -- the read
- * L5b's reasoning covers, one command further) and left the other fifteen
+ * L5b's reasoning covers, one command further) and left the other twenty-one
  * exactly where they were.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [

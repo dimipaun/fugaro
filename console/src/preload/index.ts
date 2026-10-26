@@ -115,7 +115,7 @@ export const BRIDGE_VERSION = 1
  * `fugaro runs stats --json` and not `report` (design §5.1 rule 6), and a method
  * that took the operation as an argument is the shape rule 5 forbids.
  *
- * **GV2.1 added the sixteenth row and no method of its own invention**:
+ * **GV2.1 added the twenty-second row and no method of its own invention**:
  * `plan.status` / `planStatus`, the plan graph joined to the runs working on it,
  * which is the thirteenth CLI command this surface can reach and the second
  * whose subject is an installation's checkout rather than a project alone. The

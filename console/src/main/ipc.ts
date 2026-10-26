@@ -335,27 +335,38 @@ export interface ConsoleOperation {
  * is the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
- * The fourteen CLI argvs are design section 2.1's list -- its thirteenth row,
+ * The thirteen CLI argvs are design section 2.1's list -- its thirteenth row,
  * `fugaro config list --json`, arrived with the installation rail (owner's
  * design ruling of 2026-10-25) and was §5.1 rule 6's thirteenth argv before
- * that, and the fourteenth is GV2.1's `plan status --json` -- and that list is
- * `docs/json-contract.md`'s, read off the cobra commands. The twelfth of those
- * commands is `runs.stats` (console L5b, the Spend screen's by-person view),
- * which the table narrowed to this task's own argument: see its comment below.
- * The thirteenth is `plan status` (GV2.1), whose own comment below says why the
- * directory it reads in never reaches its argv. The thirteenth operation is the startup
+ * that -- and that list is `docs/json-contract.md`'s, read off the cobra
+ * commands. The twelfth of those commands is `runs.stats` (console L5b, the
+ * Spend screen's by-person view), which the table narrowed to this task's own
+ * argument: see its comment below.
+ *
+ * **GV2.1's `plan status --json` is this surface's fourteenth argv, and the one
+ * the design has not carried yet.** The read is named for the console -- the
+ * console-v2 plan's GV1.6, which ships the document, and GV2.1, which is this
+ * operation, and `console/docs/json-contract.md` §6.12, which describes it --
+ * but neither section 2.1's thirteen rows nor §5.1 rule 6's table has grown a
+ * row for it, so the row is **owed to both** and the console is one argv ahead
+ * of the design's allow-list until it lands. `internal/cli/project.go`'s
+ * `consoleReadPaths` and `docs_desktop_console_test.go` record the same gap from
+ * the Go side. Until then this table is the whole statement of that argv, and
+ * `plan.status`'s own comment below says why the directory it reads in never
+ * reaches it.
+ *
+ * The thirteenth **operation** (the row, not an argv) is the startup
  * handshake's answer (`startup.compatibility`, the console's own state, which
- * no CLI command can be asked for); the fourteenth is the one path that is not
- * a command: `openExternal`, whose URL argument goes through
- * `validateExternalUrl` -- `https:` only, no credentials, no port, host on
- * `ALLOWED_EXTERNAL_HOSTS` -- so the renderer's only way out of the console is
- * a link the console would have opened anyway. The fifteenth
- * (`installation.current`) is the dashboard's read of the installation the
- * operator chose, or D13's no-installation state; its handler is
- * `handlersFor`'s **optional** `installation` dep, so a build without a store
- * answers it with that state rather than failing to register. The last six are
- * the rail's own (see their comment below): one read of the CLI's list and five
- * operations on the console's own store and window.
+ * no CLI command can be asked for). `openExternal` is the one operation that is
+ * not a command at all and the only way out of the console: its URL argument
+ * goes through `validateExternalUrl` -- `https:` only, no credentials, no port,
+ * host on `ALLOWED_EXTERNAL_HOSTS` -- so the renderer can open a link the
+ * console would have opened anyway. `installation.current` is the dashboard's
+ * read of the installation the operator chose, or D13's no-installation state;
+ * its handler is `handlersFor`'s **optional** `installation` dep, so a build
+ * without a store answers it with that state rather than failing to register.
+ * The rail's six (see their comment below) are one read of the CLI's list and
+ * five operations on the console's own store and window.
  *
  * Two operations share one command and differ by their flags, deliberately:
  * `run.logs` is `logs RUN --json` and `run.logLink` is `logs RUN --url`. They
@@ -531,6 +542,11 @@ export const CONSOLE_OPERATIONS = [
   // checkout's own `docs/` and joins them to the runs of that checkout's
   // repository, so the child has to run *in* the checkout.
   //
+  // It is also the **one argv the design's §5.1 rule 6 table does not carry**
+  // (the paragraph above says what is owed): the flags below are the command's
+  // own, read off `newPlanStatusCmd` the way every other row's are, and §5.1's
+  // `--all` allowance is one the row is owed rather than one it already has.
+  //
   // **The directory is therefore not a key of this schema, and never a word of
   // its argv.** The main process sets the child's working directory from the
   // installation's recorded checkout (`createBoundSource`, `src/source/cli.ts`),
@@ -558,7 +574,7 @@ export const CONSOLE_OPERATIONS = [
         key: 'all',
         kind: 'flag',
         required: false,
-        why: 'the design allow-list admits `--all` on this command: it lists the tasks the read otherwise counts per release, and it is the screen’s own control rather than a way to widen what the read reaches.',
+        why: '`newPlanStatusCmd` has this flag, and it is the screen’s own control: it lists the tasks the read otherwise counts per release, which is narrower than the count the screen already has. It is the one argument this operation declares, and the design’s §5.1 table has not carried a row for the command yet.',
       },
     ],
   },

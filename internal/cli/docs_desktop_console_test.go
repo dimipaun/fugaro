@@ -827,8 +827,9 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// follows -- but the document describes its flags, so they are checked
 	// against this constructor like any other command's.
 	"backlog list": newBacklogListCmd,
-	// §6.12 documents the graph joined to the runs (GV1.6, the CLI release after 0.11.4). The
-	// console does not spawn it yet either, and its flags — including the cloud
+	// §6.12 documents the graph joined to the runs (GV1.6, the CLI release after 0.11.4), and the
+	// console spawns it since GV2.1 — the design's §5.1 table still has not grown a row for it,
+	// which is what `namedNotAllowed` above records. Its flags — including the cloud
 	// ones, which this command carries and `plan graph` does not — are checked
 	// against this constructor like any other command's.
 	"plan status": newPlanStatusCmd,
