@@ -233,6 +233,23 @@ type Agent struct {
 	// neither the project layer nor a profile may set it (design §3 T2).
 	// Binaries before 0.6.5 refuse this key (fugaro.yaml's strict decoder).
 	OAuthToken string `yaml:"oauth_token,omitempty" json:"OAuthToken,omitempty"`
+	// Compression names the context-compression proxy this workflow's model
+	// calls route through: "" (off, the default) or "headroom"
+	// (docs/design/headroom-compression.md). Reserved and refused (the plan's
+	// P11): Validate knows the key and refuses every value with "not yet
+	// implemented" rather than leaving a repository that tries it with a
+	// strict-parse unknown-field error, so no run ever has the key set and
+	// nothing reads this field yet. The lift is a later change that admits
+	// "headroom" here and in schemas/fugaro.schema.json together. Once
+	// implemented it is also refused together with agent.auth: oauth or
+	// vertex — an ordinary Validate rule (P9), since Resolve calls Validate on
+	// the merged config, not on one raw file. The budget-gateway requirement
+	// cannot live here, because no fugaro.yaml resolution knows the
+	// installation's ceiling; the runner's bootstrap checks that instead.
+	// Repo and override scope only (Scopes), for the reason agent.oauth_token
+	// is: the project layer and a profile are the same launcher-writable
+	// bucket object. Binaries before this key's release refuse it outright.
+	Compression string `yaml:"compression,omitempty" json:"Compression,omitempty"`
 }
 
 // First-line review settings (Agent.FirstLineReview).

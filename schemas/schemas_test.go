@@ -2000,6 +2000,26 @@ func TestFugaroSchemaOAuthTokenMatchesTheGoRules(t *testing.T) {
 	}
 }
 
+// TestFugaroSchemaAgentCompression is TestFugaroSchemaAgentOAuthToken's shape
+// for agent.compression while the key is reserved (headroom-compression plan
+// P11): the enum admits "" and nothing else, so the schema refuses the real
+// value for the same reason config.Validate does, and the two move together
+// when the lift admits "headroom".
+func TestFugaroSchemaAgentCompression(t *testing.T) {
+	sch := compile(t, "fugaro.schema.json")
+	head := "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+	for text, valid := range map[string]bool{
+		head + "agent: { compression: \"\" }\n":     true,
+		head + "agent: { auth: api-key }\n":         true,
+		head + "agent: { compression: headroom }\n": false,
+		head + "agent: { compression: \"off\" }\n":  false,
+	} {
+		if err := sch.Validate(yamlInstance(t, []byte(text))); (err == nil) != valid {
+			t.Errorf("%q: valid = %v, want %v (%v)", text, err == nil, valid, err)
+		}
+	}
+}
+
 // TestFugaroSchemaAgentOAuthToken is TestFugaroSchemaProfileKeys's shape for
 // agent.oauth_token: "default" is reserved (the empty value already means
 // it), and the schema's maxLength must refuse what the pattern alone would

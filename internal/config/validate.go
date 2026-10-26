@@ -152,6 +152,21 @@ func Validate(c *Config) []Problem {
 	case !ClaudeAccountNameRE.MatchString(c.Agent.OAuthToken):
 		add("agent.oauth_token", "must be a Claude account name")
 	}
+	// agent.compression is reserved and refused until the sidecar that reads it
+	// ships: every value but "" is refused here, naming itself, so a repository
+	// that tries the key gets this message and not a strict-parse unknown-field
+	// error. Nothing reads the field, so no value may reach a run. The lift
+	// replaces this branch with the closed-set shape check and leaves the auth
+	// rule below standing (docs/design/headroom-compression.md §4).
+	if c.Agent.Compression != "" {
+		add("agent.compression", "is not yet implemented: this Fugaro accepts only the empty value (off), and the context-compression proxy the key will name is refused until it ships")
+	}
+	// The proxy sits in front of api-key model calls only. oauth and vertex
+	// route their own way and are refused outright rather than run without the
+	// compression the repository asked for (design §4).
+	if c.Agent.Compression != "" && (c.Agent.Auth == "oauth" || c.Agent.Auth == "vertex") {
+		add("agent.compression", "cannot be combined with agent.auth: %s: the proxy is refused for that auth (docs/design/headroom-compression.md §4)", c.Agent.Auth)
+	}
 	ps = append(ps, validateAgentModels(c.Agent)...)
 	ps = append(ps, validateCascadeFollowup(c.Agent, c.Followup)...)
 	ps = append(ps, validateBudget(c.Budget)...)

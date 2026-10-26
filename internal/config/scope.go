@@ -66,6 +66,7 @@ var Scopes = []ScopeRow{
 	{Key: "agent.first_line_rounds", In: InProject | InRepo},
 	{Key: "agent.recipe", In: InProject | InRepo | InOverride},
 	{Key: "agent.oauth_token", In: InRepo | InOverride, Why: "it names a credential identity that only the repository's own, PR-reviewed fugaro.yaml may choose among names the local config (never the project layer) allow-lists"},
+	{Key: "agent.compression", In: InRepo | InOverride, Why: "it changes what the model sees on every call; the project layer and a profile are the same launcher-writable bucket object agent.oauth_token already distrusts for the identical reason"},
 	{Key: "budget.mode", In: InRepo, Why: whyPolicy},
 	{Key: "budget.per_run_usd", In: InRepo, Why: whyPolicy},
 	{Key: "budget.allowed_models", In: InRepo, Why: whyPolicy},
