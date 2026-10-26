@@ -125,8 +125,14 @@ func TestImagesWorkflowPublishesAMultiArchBase(t *testing.T) {
 	for _, inc := range b.Strategy.Matrix.Include {
 		runners[inc["arch"]] = inc["runner"]
 	}
-	if runners["amd64"] != "ubuntu-latest" || runners["arm64"] != "ubuntu-24.04-arm" {
-		t.Errorf("the base builds on %v, want native amd64 and arm64 runners", runners)
+	// Pinned runner images, not ubuntu-latest: ubuntu-26.04's containerd
+	// image store changed what the build saves and what publish-base pushes,
+	// and v0.11.4's index was never published.
+	if runners["amd64"] != "ubuntu-24.04" || runners["arm64"] != "ubuntu-24.04-arm" {
+		t.Errorf("the base builds on %v, want native amd64 and arm64 runners on pinned images", runners)
+	}
+	if p := wf.Jobs["publish-base"].RunsOn; p != "ubuntu-24.04" {
+		t.Errorf("publish-base runs on %q, want the pinned ubuntu-24.04 the amd64 build uses", p)
 	}
 	if b.Permissions["packages"] != "" {
 		t.Error("the build job has a packages permission")
