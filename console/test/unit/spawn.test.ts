@@ -55,8 +55,6 @@ import {
   FUGARO_BINARY_NAME,
   INSTALLATION_LIST_COMMAND,
   LINUX_LOCATIONS,
-  PICKER_COMMANDS,
-  PICKER_OPERATION_NAMES,
   PLATFORM_LOCATIONS,
   SPAWN_COMMANDS,
   SPAWN_FLAGS,
@@ -142,15 +140,11 @@ const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
  * called from each of those constructors), including the two log operations
  * that share the `logs` command -- console L5b's `runs.stats` is the eleventh. The complement -- the commands that take no
  * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
- * command words the CLI itself uses (`version`, and the picker's `config list`),
+ * command words the CLI itself uses (`version` and the rail's `config list`),
  * which is the same list `assertSpawnSurface` holds the table to; this file
  * imports it rather than spelling it twice.
- *
- * `installation.list` is a *spawn* row the console's own operation table does
- * not have -- its `OperationName` is the dashboard's -- so the list below names
- * it as itself plus that one name.
  */
-const COMMANDS_TAKING_PROJECT: readonly (OperationName | 'installation.list')[] = [
+const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'live.watch',
   'budget.show',
   'spend.report',
@@ -389,51 +383,48 @@ describe('the spawn table and the argv it builds', () => {
     expect(names).not.toContain('link.openExternal')
   })
 
-  it('has the picker’s own read as its own row, and the two tables agree', () => {
-    // The picker's table is exactly one row -- the local `fugaro config list
-    // --json` (`console/docs/json-contract.md` §6.8), which is how the console
+  it('carries the installation rail’s read as an ordinary row of the one table', () => {
+    // The rail's read is the local `fugaro config list --json`
+    // (`console/docs/json-contract.md` §6.8), which is how the console
     // discovers the installations on this machine without asking the operator
-    // anything -- and `assertSpawnSurface` is what holds it to that.
-    expect([...PICKER_COMMANDS].map((row) => [row.operation, row.words.join(' ')])).toEqual([
-      ['installation.list', 'config list --json'],
-    ])
-    expect([...PICKER_OPERATION_NAMES]).toEqual(['installation.list'])
-    const first = PICKER_COMMANDS[0]
-    expect(first?.words.slice(0, 2).join(' ')).toBe(INSTALLATION_LIST_COMMAND)
+    // anything. Until the owner's design ruling of 2026-10-25 it was the picker
+    // window's own row in a second table; the rail made it the dashboard's
+    // operation, so it is a row of `SPAWN_COMMANDS` like any other and
+    // `assertSpawnSurface` holds it to the same one-for-one rule.
+    const row = SPAWN_COMMANDS.find((candidate) => candidate.operation === 'installation.list')
+    expect(row?.words.join(' ')).toBe('config list --json')
+    expect(row?.words.slice(0, 2).join(' ')).toBe(INSTALLATION_LIST_COMMAND)
     // No `--project`, no `--dir`, no arguments: it is a local read that needs
     // no project selected and opens no bucket (`internal/cli/config_list.go`).
     expect(COMMANDS_WITHOUT_PROJECT).toContain(INSTALLATION_LIST_COMMAND)
-    expect(() => {
-      assertSpawnSurface(SPAWN_COMMANDS, PICKER_COMMANDS)
-    }).not.toThrow()
+    expect(row?.takesProject).toBe(false)
+    expect(row?.dirFlag).toBe(false)
+    expect(row?.args).toEqual([])
     expect([...argvFor('installation.list', {}, { target: { project: 'acme' }, directory: '/tmp' })]).toEqual([
       'config',
       'list',
       '--json',
     ])
-    // ...and the read that names an installation the picker never asked for is
-    // refused, so the table cannot grow a second command without this failing.
+    // ...and the read that names another command is refused, so the table
+    // cannot grow a second one without this failing.
     expect(() => {
-      assertSpawnSurface(SPAWN_COMMANDS, [
+      assertSpawnSurface([
+        ...SPAWN_COMMANDS.filter((candidate) => candidate.operation !== 'installation.list'),
         { operation: 'installation.list', words: ['config', 'show', '--json'], takesProject: false, args: [], dirFlag: false },
       ])
-    }).toThrow(/config show/)
-    expect(() => {
-      assertSpawnSurface(SPAWN_COMMANDS, [
-        { operation: 'config.list', words: ['config', 'list', '--json'], takesProject: false, args: [], dirFlag: false },
-      ] as never)
-    }).toThrow(/picker/)
+    }).toThrow(/does not start with config list/)
   })
 
-  it('fixes the design allow-list’s dashboard half: twelve argvs, eleven commands, ten of them with --project', () => {
-    // The design's §5.1 rule 6 table is the whole allow-list -- thirteen argvs
-    // since round 5 and console L5b, because the picker's own read
-    // (`config list --json`, the case above) is on it too -- and this table is
-    // the twelve the dashboard spawns. The two are held in step by hand on
-    // purpose: the Go side pins the document's thirteen
+  it('fixes the design allow-list exactly: thirteen argvs, twelve commands, eleven of them with --project', () => {
+    // The design's §5.1 rule 6 table is the whole allow-list, and **the table
+    // and the document are now the same thirteen argvs**: the rail's read
+    // (`config list --json`, the case above) used to be the picker's own row in
+    // a second table, and the owner's ruling of 2026-10-25 moved it onto this
+    // one. The two are held in step by hand on purpose: the Go side pins the
+    // document's thirteen
     // (`internal/cli/docs_desktop_console_test.go`,
-    // TestDocsDesktopConsoleDesignAllowListIsExactArgv) and these cases pin the
-    // console's twelve plus the picker's one.
+    // TestDocsDesktopConsoleDesignAllowListIsExactArgv) and this case pins the
+    // console's thirteen.
     expect([...SPAWN_COMMANDS].map((row) => row.words.join(' '))).toEqual([
       'watch --json',
       'budget show --json',
@@ -447,6 +438,7 @@ describe('the spawn table and the argv it builds', () => {
       'accounts ls --json',
       'version',
       'doctor --json',
+      'config list --json',
     ])
     // The ten *commands* that take the flag (addCloudFlags, internal/cli/
     // cloud.go:51) are ten rows plus one: `logs` has two rows, `--json` and

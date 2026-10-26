@@ -57,6 +57,8 @@ import type { BoundInstallation } from '../source/cli'
 import { withResolvedBinary } from './installations'
 import type { ActiveInstallation } from './installations'
 import type { CliCompatibility } from '../shared/version'
+import { NO_INSTALLATION_SURFACE } from '../source/source'
+import type { InstallationSurface } from '../source/source'
 
 // Before `whenReady` resolves, which is the only window Electron gives for it:
 // a scheme registered later is not a standard or secure one.
@@ -134,11 +136,13 @@ function serveBundle(): void {
  * With one, its `binaryPath` -- when the store still carries that optional
  * override -- is the first candidate rule 4 asks about, and its project (and
  * config path, when stored) is the spawn target, so the bare `version` spawn
- * records which installation it was for. With none, the
- * console makes **no guess**: not `FUGARO_PROJECT`, not the working directory's
- * checkout, never the CLI's config -- `resolveHandshakeBinary` runs Task 3.3's
- * project-less read against rule 4's resolution, the dashboard answers
- * `NO_ACTIVE_INSTALLATION`, and the picker opens once.
+ * records which installation it was for. The installation is the one
+ * `openInstallation` settled: the remembered choice when the CLI's list says it
+ * can be read, else the first readable row of that list. With no installation
+ * at all the console makes **no guess**: not `FUGARO_PROJECT`, not the working
+ * directory's checkout -- `resolveHandshakeBinary` runs Task 3.3's project-less
+ * read against rule 4's resolution, the dashboard answers
+ * `NO_ACTIVE_INSTALLATION`, and the rail draws no row.
  *
  * **Two fields are not the store's answer to "which binary", and they are handed
  * on anyway** (T-D1, T-D3): `distro` and `checkout`. The first is the
@@ -206,6 +210,19 @@ let handshakeProject: string | null = null
  */
 async function readCliVersion(): Promise<VersionRead> {
   const log = createSpawnLog(process.env)
+  // The owner's open-first-readable rule, before anything is resolved (ruling of
+  // 2026-10-25): the console opens the installation it can read -- the remembered
+  // choice when the CLI's own document says so, the first readable one otherwise
+  // -- and the handshake below is then the handshake of **that** installation.
+  // Doing it here rather than in the renderer is what makes the whole run agree:
+  // the header's binary, the source the screens read through and the rail's
+  // selected row are one decision.
+  //
+  // It is awaited before `handshakeInstallation`, which reads the session the
+  // call settles, and it never throws (`openInstallation`): a list read that
+  // failed leaves the console on the store's own answer, which is what it did
+  // before this rule existed.
+  await picker?.openInstallation()
   const chosen = handshakeInstallation()
   try {
     const resolution = await resolveHandshakeBinary({
@@ -426,8 +443,37 @@ const gated: ConsoleHandlers = {
     // `installationState`). Before the picker exists the answer is
     // `handlersFor`'s own no-installation state.
     installation: () => installationState(),
+    // The installation rail's own surface (owner's design ruling of
+    // 2026-10-25): the picker module's dispatcher, read at message time for the
+    // same reason `installation` is -- this constant is built before
+    // `whenReady` and the picker is built after it.
+    installations: () => railSurface(),
   }),
   'startup.compatibility': startupCompatibility(storedCompatibility),
+}
+
+/**
+ * railSurface is the rail's half of the surface as `handlersFor` reaches it:
+ * the picker module's own answers, so the dashboard's document and the picker
+ * window's are one implementation rather than two.
+ *
+ * A console whose picker was never built -- a unit test's, a build with no
+ * store -- gets a surface that refuses every one of the six with
+ * `NO_INSTALLATION_SURFACE`, which is a state and not a guess, and is what
+ * `handlersFor` answers with when the dep is absent altogether.
+ */
+function railSurface(): InstallationSurface {
+  const built = picker
+  if (built === null) {
+    const absent = async (): Promise<never> => {
+      throw new Error(NO_INSTALLATION_SURFACE)
+    }
+    return { answer: absent, open: absent }
+  }
+  return {
+    answer: (name, args) => built.answer(name, args),
+    open: () => built.open(),
+  }
 }
 
 /** registered is whether this process has put the surface on `ipcMain`. */
@@ -537,6 +583,10 @@ async function main(): Promise<void> {
     // closes over.
     electron: { BrowserWindow, session: session.defaultSession, ipcMain, Menu, shell, app },
     appEnv: process.env,
+    // The rail's `config list --json` is a dashboard read since the owner's
+    // ruling of 2026-10-25, and rule 10's log is one line per child the console
+    // spawns: the picker's spawns are written to it like the source's.
+    spawnLog: createSpawnLog(process.env),
     // The picker awaits this inside its own serial chain (review S6), so a
     // second choose cannot start until the window this one asked for is up.
     onChosen: (chosen) => {
@@ -558,13 +608,14 @@ async function main(): Promise<void> {
   // hid the door would be a console with no way back.
   picker.installMenu()
   await lifecycle.start()
-  // D13's first run: with no installation chosen the console makes no guess,
-  // says so, and opens the picker once. A picker that fails to open is logged
-  // and is not a reason to quit a console whose own window is already up: the
-  // menu item is still there.
-  await picker.openOnFirstRun().catch((error: unknown) => {
-    console.error('[console] the installation picker could not be opened:', error)
-  })
+  // **The console does not open the picker window here, and that is the
+  // owner's design ruling of 2026-10-25**: there is no picker screen. D13's
+  // first run -- no installation chosen -- is drawn by the dashboard's own
+  // rail, which lists every installation the CLI found and opens the issue
+  // view of the first one when none of them can be read. The picker window is
+  // left where the ruling puts it: behind the rail's `+` door
+  // (`installation.open`) and the menu item, both of which the operator asks
+  // for.
 }
 
 app.whenReady().then(main).catch(reportAndQuit)

@@ -172,8 +172,9 @@ export interface CliStub {
    * which is the document with no installations at all: the machine has none, and
    * it is the state the "set up your first installation" screen is drawn for.
    * (Not "no output": a CLI that printed nothing is text the console refuses, and
-   * the picker draws its warning line instead of that screen.) */
-  seedInstallationsList(projects: readonly string[]): void
+   * the picker draws its warning line instead of that screen.) `warnings` are
+   * further lines the CLI prints after its own, verbatim. */
+  seedInstallationsList(projects: readonly string[], warnings?: readonly string[]): void
   /** setVersion rewrites the line the stub prints (`'0.8.1\n'`, `'banana\n'`, a
    * hostile line), in both places the stub was installed. */
   setVersion(line: string): void
@@ -284,7 +285,7 @@ export function installCliStub(line: string): CliStub {
       writeFileSync(join(where, 'frames.ndjson'), frames)
       return join(where, 'fugaro')
     },
-    seedInstallationsList(projects: readonly string[]): void {
+    seedInstallationsList(projects: readonly string[], extra: readonly string[] = []): void {
       // The document, as `internal/cli/config_list.go` marshals it: the
       // installations in the CLI's order, and the warning lines beside them. A
       // name prefixed `unreadable:` is the state that matters most here -- the
@@ -296,9 +297,12 @@ export function installCliStub(line: string): CliStub {
           ? { name: name.slice('unreadable:'.length), gcp_project: '', region: '', shared_merged: false }
           : { name, gcp_project: `fugaro-${name}-123456`, region: 'europe-west4', shared_merged: true },
       )
-      const warnings = projects
-        .filter((name) => name.startsWith('unreadable:'))
-        .map((name) => `/Users/owner/.config/fugaro/projects/${name.slice('unreadable:'.length)}.yaml could not be read: permission denied`)
+      const warnings = [
+        ...projects
+          .filter((name) => name.startsWith('unreadable:'))
+          .map((name) => `/Users/owner/.config/fugaro/projects/${name.slice('unreadable:'.length)}.yaml could not be read: permission denied`),
+        ...extra,
+      ]
       installationsList = `${JSON.stringify({ installations, warnings })}\n`
       writeSupport()
     },

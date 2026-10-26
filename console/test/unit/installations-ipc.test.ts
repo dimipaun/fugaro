@@ -22,7 +22,7 @@
 // that reads `node:fs`) and a duplicate nobody compares is a duplicate that
 // drifts.
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -45,6 +45,7 @@ import {
   invokeOperation,
 } from '../../src/preload/installations'
 import { createInstallationPicker } from '../../src/main/picker'
+import { TEMP_ROOTS } from '../../src/main/installationstate'
 import {
   INSTALLATIONS_MENU_LABEL,
   OPEN_EXTERNAL_FAILED,
@@ -182,6 +183,10 @@ function pickerOver(
     readonly appEnv?: Readonly<Record<string, string | undefined>>
     readonly home?: string
     readonly prefixes?: readonly string[]
+    /** tempRoots is the picker's temporary-root rule. It defaults to none here,
+     * because these cases create their checkouts under the OS's temporary
+     * directory; the case that pins the rule passes the real one. */
+    readonly tempRoots?: readonly string[]
     readonly spawnLog?: unknown
     readonly onChosen?: Parameters<typeof createInstallationPicker>[0]['onChosen']
     readonly onRemoved?: Parameters<typeof createInstallationPicker>[0]['onRemoved']
@@ -232,6 +237,9 @@ function pickerOver(
     userData: options.userData ?? freshDirectory(),
     home: options.home ?? freshDirectory(),
     prefixes: options.prefixes ?? [],
+    ...(options.tempRoots === undefined
+      ? { tempDirectory: () => '/nonexistent-console-temp', tempRoots: [] }
+      : { tempDirectory: () => tmpdir(), tempRoots: options.tempRoots }),
     appPath: '/work/repo/console',
     appEnv: options.appEnv ?? {},
     ...(options.onChosen === undefined ? {} : { onChosen: options.onChosen }),
@@ -680,7 +688,18 @@ describe('the picker’s choose', () => {
     expect(reply.ok).toBe(false)
     if (!reply.ok) expect(reply.reason).toContain('0.5.0')
     expect(handed).toEqual([])
-    expect(picker.installation()).toEqual({ chosen: false, sentence: NO_ACTIVE_INSTALLATION })
+    // **Nothing was chosen**, and the store says so: the row the console just
+    // listed is still `saved: false` with no `active`, which is what "the choose
+    // wrote nothing" means from the renderer's side. What changed with the
+    // owner's design ruling of 2026-10-25 is that the console is nonetheless
+    // **open** on it -- the first readable installation is opened without being
+    // chosen (`openProject`, `installationstate.ts`) -- so `installation()`
+    // answers that session and not "no installation has been chosen".
+    const relisted = await answer(ipcMain, 'list')
+    if (!relisted.ok) throw new Error(relisted.reason)
+    const data = relisted.data as { rows: readonly { project: string; active: boolean; saved: boolean }[] }
+    expect(data.rows.find((row) => row.project === 'old')).toMatchObject({ active: false, saved: false })
+    expect(picker.installation()).toMatchObject({ chosen: true, project: 'old' })
   })
 
   it('refuses a project the console never listed', async () => {
@@ -741,6 +760,50 @@ describe('the picker’s checkout', () => {
     })
     return { directory: stub.directory, checkout }
   }
+
+  it('refuses a checkout the CLI listed under a temporary root, as the screen never offers it', async () => {
+    // The renderer is not trusted to keep to the drawn list: the write is held to
+    // the same list the rail offers, so a temporary or tool-owned directory the
+    // CLI listed is refused here as well as left off the screen.
+    const { directory, checkout } = withCheckouts()
+    const { picker, ipcMain } = pickerOver({ prefixes: [directory], tempRoots: TEMP_ROOTS })
+    void picker
+    const listed = (await answer(ipcMain, 'list')) as ConsoleReply
+    expect(listed.ok).toBe(true)
+    if (listed.ok) {
+      const data = listed.data as { rows: readonly { project: string; checkouts: readonly string[] }[] }
+      expect(data.rows.find((row) => row.project === 'sandbox')?.checkouts).toEqual([])
+    }
+    const refused = (await answer(ipcMain, 'checkout', { project: 'sandbox', checkout })) as ConsoleReply
+    expect(refused.ok).toBe(false)
+    if (!refused.ok) expect(refused.reason).toContain('not one of the checkouts the CLI listed')
+  })
+
+  it('refuses a listed checkout that is a symlink into a tool-owned directory, offer and write both (review m1)', async () => {
+    const target = join(freshDirectory(), 'scratchpad', 'real')
+    mkdirSync(target, { recursive: true })
+    const link = join(freshDirectory(), 'link')
+    symlinkSync(target, link)
+    const stub = installStub(join(freshDirectory(), 'bin'), {
+      commands: {
+        version: { stdout: `${CLOCKED}\n` },
+        doctor: { stdout: '{"ok":true,"checks":[]}\n' },
+        'config list': {
+          stdout: `${JSON.stringify({ installations: [{ name: 'sandbox', gcp_project: 'p', region: 'r', checkouts: [{ repository: 'github/o/r', path: link, enrolled: true, valid: true }] }], warnings: [] })}\n`,
+        },
+      },
+    })
+    const { picker, ipcMain } = pickerOver({ prefixes: [stub.directory] })
+    void picker
+    const listed = (await answer(ipcMain, 'list')) as ConsoleReply
+    expect(listed.ok).toBe(true)
+    if (listed.ok) {
+      const data = listed.data as { rows: readonly { project: string; checkouts: readonly string[] }[] }
+      expect(data.rows.find((row) => row.project === 'sandbox')?.checkouts).toEqual([])
+    }
+    const refused = (await answer(ipcMain, 'checkout', { project: 'sandbox', checkout: link })) as ConsoleReply
+    expect(refused.ok).toBe(false)
+  })
 
   it('offers only what the CLI listed: a directory it never named is refused', async () => {
     const { directory, checkout } = withCheckouts()
@@ -908,7 +971,17 @@ describe('the picker’s remove', () => {
     const reply = await answer(ipcMain, 'remove', { project: 'sandbox' })
     expect(reply.ok).toBe(true)
     expect(removed).toEqual([active.chosen ? active.id : ''])
-    expect(picker.installation()).toEqual({ chosen: false, sentence: NO_ACTIVE_INSTALLATION })
+    // The console's own record for `sandbox` is gone -- the removal re-reads, and
+    // the row comes back with no `saved` and no `active`, which is the fact the
+    // screen draws. The installation itself is still on the machine (the CLI lists
+    // it), so the open rule of 2026-10-25 opens it again as this run's **session**:
+    // the console reads from an installation it keeps no record of, which is what
+    // "every discovered installation is listed in the rail, and one of them is
+    // open" means once the operator drops the record for the one that was.
+    if (!reply.ok) throw new Error(reply.reason)
+    const data = reply.data as { rows: readonly { project: string; active: boolean; saved: boolean }[] }
+    expect(data.rows.find((row) => row.project === 'sandbox')).toMatchObject({ active: false, saved: false })
+    expect(picker.installation()).toMatchObject({ chosen: true, project: 'sandbox' })
   })
 })
 
@@ -1074,19 +1147,22 @@ describe('the picker’s reveal', () => {
 })
 
 describe('the picker’s window', () => {
-  it('opens its own document, once, on the first run', async () => {
+  it('opens its own document when it is asked to, and focuses the window it already has', async () => {
+    // **Nothing opens this window by itself** (owner's design ruling of
+    // 2026-10-25): the console never shows a picker screen, so the only two
+    // callers are the rail's `+` door (`installation.open`) and the menu item.
+    // What is asserted here is that `open` is the one door and that it is
+    // idempotent -- a second call focuses rather than building a second window.
     const { picker, windows } = pickerOver()
-    await picker.openOnFirstRun()
-    await picker.openOnFirstRun()
+    expect(windows).toHaveLength(0)
+    await picker.open()
+    await picker.open()
     expect(windows).toHaveLength(1)
     // The picker's own document, on the console's own origin, and the preload is
     // the picker's -- a window that got the dashboard's preload would expose
-    // fifteen operations to a document whose whole job is to draw a list.
+    // twenty-one operations to a document whose whole job is to draw a list.
     expect(windows[0]?.loaded).toEqual([PICKER_ENTRY_URL])
     expect(PICKER_ENTRY_URL).toBe('app://console/installations.html')
-    // A second `open()` focuses rather than building a second window.
-    await picker.open()
-    expect(windows).toHaveLength(1)
   })
 
   it('is built through the same hardened path as the dashboard (buildHardenedWindow)', async () => {
@@ -1109,14 +1185,15 @@ describe('the picker’s window', () => {
   })
 
   it('treats a picker closed while it loads as dismissed, not as a failure', async () => {
-    // The first run awaits `openOnFirstRun()` inside `main`, whose catch quits
-    // the console: a load aborted because the operator closed the picker must not
-    // reach it. Any other load failure still does.
+    // A load aborted because the operator closed the picker must not be
+    // reported as a failure -- the door that opened it (the rail's `+`, the menu
+    // item) is not a screen anybody is waiting on. Any other load failure still
+    // is.
     const dismissed = pickerOver({ loadFails: 'closed' })
-    await expect(dismissed.picker.openOnFirstRun()).resolves.toBeUndefined()
+    await expect(dismissed.picker.open()).resolves.toBeUndefined()
     expect(dismissed.windows).toHaveLength(1)
     const closing = pickerOver({ loadFails: 'closing' })
-    await expect(closing.picker.openOnFirstRun()).resolves.toBeUndefined()
+    await expect(closing.picker.open()).resolves.toBeUndefined()
     const broken = pickerOver({ loadFails: 'error' })
     await expect(broken.picker.open()).rejects.toThrow(/ERR_FAILED/)
   })

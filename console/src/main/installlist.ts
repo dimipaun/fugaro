@@ -101,6 +101,19 @@ export type InstallationsParse =
   | { readonly ok: false; readonly reason: string }
 
 /**
+ * CLI_PROJECT_NAME is the CLI's own grammar for a project name
+ * (`config.ProjectNameRE`, `internal/config/project.go`). A name outside it is
+ * not one the CLI writes a config for, and the console builds commands from the
+ * name (`fugaro doctor --project <name>` in the issue view), so a row whose name
+ * is not this shape is not used at all (review m3).
+ */
+const CLI_PROJECT_NAME = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/
+
+export function isCliProjectName(name: string): boolean {
+  return CLI_PROJECT_NAME.test(name)
+}
+
+/**
  * parseInstallationsDocument reads the printed document. It is a *document*
  * parser and not a decoder for a payload: the text arrived from the CLI's stdout
  * through `runToCompletion`, and everything here is about refusing a shape the
@@ -122,11 +135,18 @@ export function parseInstallationsDocument(text: string): InstallationsParse {
     return { ok: false, reason: `the CLI listed more than ${String(MAX_DISCOVERED_INSTALLATIONS)} installations` }
   }
   const installations: DiscoveredInstallation[] = []
+  const unnamed: string[] = []
   for (const entry of listed) {
     if (!isRecord(entry)) return { ok: false, reason: 'the CLI listed an installation that is not an object' }
     const name = entry['name']
     if (typeof name !== 'string' || name === '' || name.length > MAX_DOCUMENT_STRING) {
       return { ok: false, reason: 'the CLI listed an installation without a usable name' }
+    }
+    if (!isCliProjectName(name)) {
+      // Named rather than dropped in silence (rule 3): the line says which row
+      // the console left out and why.
+      unnamed.push(`the CLI listed ${JSON.stringify(name)}, which is not a project name, so the console will not use it`)
+      continue
     }
     const gcpProject = textField(entry, 'gcp_project')
     const region = textField(entry, 'region')
@@ -177,6 +197,7 @@ export function parseInstallationsDocument(text: string): InstallationsParse {
   // a document with more warning lines than the console draws says so, rather
   // than arriving on a screen shortened without a word.
   if (dropped > 0) warnings.push(droppedWarningLines(dropped))
+  warnings.push(...unnamed)
   return { ok: true, document: Object.freeze({ installations: Object.freeze(installations), warnings: Object.freeze(warnings) }) }
 }
 

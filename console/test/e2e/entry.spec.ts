@@ -99,7 +99,7 @@ import {
 import { EXPOSED_OPERATIONS } from '../../src/preload/index'
 import { installCliStub, resolveConsoleBinary } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
-import { dismissFirstRunPicker } from '../support/firstRun'
+import { expectNoFirstRunPicker } from '../support/firstRun'
 import { launchConsole } from '../support/launch'
 import { INSTALLATIONS_MENU_LABEL, PICKER_ENTRY_URL } from '../../src/main/picker'
 import { sanitizeRefusal } from '../../src/shared/sanitize'
@@ -111,7 +111,7 @@ const consoleDir = join(__dirname, '..', '..')
 
 /**
  * SHIPPED_KEYS is what `window.fugaro` must carry, read out of the preload's own
- * table: the fifteen methods, plus `version` and `operations`. Read rather than
+ * table: the twenty-one methods, plus `version` and `operations`. Read rather than
  * spelled, because the claim here is "the bridge in the page is the surface this
  * console ships" -- a retyped list would only prove the retyping.
  */
@@ -145,8 +145,8 @@ async function launch(
   const scratch = mkdtempSync(join(tmpdir(), 'fugaro-console-entry-'))
   const spawnLog = join(scratch, 'spawn.jsonl')
   // The seeded profile (see the header), or -- for the first-run case -- an
-  // unseeded one, whose picker opens beside the window under test and is
-  // dismissed before any assertion about that window (`dismissFirstRunPicker`).
+  // unseeded one, which opens no picker beside the window under test
+  // (`expectNoFirstRunPicker`, owner's design ruling of 2026-10-25).
   const profile = options.firstRun ?? stub
   const app = await launchConsole({
     args: profile.launchArgs(consoleDir),
@@ -160,7 +160,7 @@ async function launch(
     )
   })
   await page.waitForLoadState('domcontentloaded')
-  if (options.firstRun !== undefined) await dismissFirstRunPicker(app, page)
+  if (options.firstRun !== undefined) await expectNoFirstRunPicker(app, page)
   return {
     app,
     page,
@@ -317,7 +317,7 @@ test.describe('the renderer entry, in the real window', () => {
       expect(shape.scriptUrls).toEqual([`${APP_ORIGIN}/console.js`])
       expect(SERVED_FILES).toContain('/console.js')
       // The bridge `src/preload/index.ts` exposes, as the renderer received it:
-      // the fifteen methods and the two fields, frozen, at the shipped version.
+      // the twenty-one methods and the two fields, frozen, at the shipped version.
       // Two files have to be right for this to hold -- the preload that exposed
       // it and the entry that ran beside it -- because the preload only reaches
       // the dashboard window (`dashboardWebPreferences`).
@@ -427,11 +427,18 @@ test.describe('the renderer entry, in the real window', () => {
       expect(shape.bridgeKeys).toEqual([])
       expect(shape.globals['require']).toBe('undefined')
       // **And the log holds no read.** A refused console drives nothing: the
-      // handshake's own `version` probe is the one spawn, and no screen's read
-      // follows it (Task 3.4c -- a console that mounted a screen here would
-      // have to read through a source it never built).
+      // handshake's own `version` probe is the one spawn for the installation,
+      // and no screen's read follows it (Task 3.4c -- a console that mounted a
+      // screen here would have to read through a source it never built). The
+      // rail's boot read comes before the handshake and names no project
+      // (`version` to find the binary, then `config list --json`).
       const records = launched.records()
-      expect(records.map((record) => record.argv.slice(1))).toEqual([['version']])
+      expect(
+        records.filter((record) => record.project === '').map((record) => record.argv.slice(1)),
+      ).toEqual([['version'], ['config', 'list', '--json']])
+      expect(
+        records.filter((record) => record.project !== '').map((record) => record.argv.slice(1)),
+      ).toEqual([['version']])
     } finally {
       await close(launched)
     }
@@ -549,7 +556,12 @@ test.describe('the renderer entry, in the real window', () => {
 
   test('the spawn log holds the handshake, the live watch and the rigor join, and no other read, in every mode', async () => {
     // The log is the evidence for what this console drives, and it is read in
-    // all three modes. A healthy console makes three kinds of spawn: the
+    // all three modes. Before the handshake the console makes the installation
+    // rail's one boot read (owner's design ruling of 2026-10-25): `config list
+    // --json`, after the `version` probe that finds the binary to ask, both with
+    // no project because the list is what names one -- in every mode, since the
+    // read decides which installation the handshake is for. Then a healthy
+    // console makes three kinds of spawn: the
     // handshake's own `version` probe, the Live screen's `watch --json`, and the
     // Live screen's rigor join, `runs ls --json` (the mode on a Live row is
     // joined by run id, since `watch --json` carries no rigor block) -- each
@@ -598,8 +610,15 @@ test.describe('the renderer entry, in the real window', () => {
             })
             .toBe(true)
         }
-        const records = launched.records()
-        expect(records.length, `${mode}: the handshake read is not in the log`).toBeGreaterThan(0)
+        const all = launched.records()
+        expect(all.length, `${mode}: the handshake read is not in the log`).toBeGreaterThan(0)
+        const boot = all.filter((record) => record.project === '')
+        expect(
+          boot.map((record) => record.argv.slice(1)),
+          `${mode}: the rail's boot read is not one version probe and one config list`,
+        ).toEqual([['version'], ['config', 'list', '--json']])
+        for (const record of boot) expect(record.argv[0]).toBe(join(stub.dir, 'fugaro'))
+        const records = all.filter((record) => record.project !== '')
         for (const record of records) {
           expect(Object.keys(record).sort(), `${mode}: the record has extra keys`).toEqual([
             'argv',
@@ -778,14 +797,13 @@ test.describe('the renderer entry, in the real window', () => {
   })
 
   test('the installation rail draws a row for the installation it can read, and none for one it cannot', async () => {
-    // Design section 4.1's rail, in a real window: the active installation's row
-    // -- the one `installation.current` answers with -- carrying its name, its
-    // project, its state word and its glyph; and, on a profile where nothing has
-    // been chosen, **no row at all** while the rail itself is still drawn. A row
-    // for every *stored* installation would need a bounded list read on the
-    // dashboard's bridge, which the design withholds (sections 4.1 and 11) and
-    // this task adds no operation for -- so the rail makes no read of its own,
-    // and the spawn log below is where that is visible.
+    // Design section 4.1's rail, in a real window: one row per installation the
+    // CLI listed or this console holds -- here the stored `e2e`, which the
+    // stub's empty list does not name -- carrying its name, its project, its
+    // state word and its glyph; and, on a profile with nothing at all, **no row**
+    // while the rail itself is still drawn. The rail's one read is the boot read
+    // (`config list --json`, before the handshake), and the spawn log below is
+    // where that is visible.
     stub.setVersion(CLI_VERSION_BUILT_AGAINST)
     const launched = await launch(stub.env)
     try {
@@ -828,7 +846,12 @@ test.describe('the renderer entry, in the real window', () => {
       // The rigor join is the Live screen's, asked for after its first frame, so
       // whether it has reached the log yet is a race this case does not decide:
       // it is admitted by its whole argv and by nothing shorter.
-      const records = launched.records()
+      const all = launched.records()
+      expect(
+        all.filter((record) => record.argv[1] === 'config').map((record) => record.argv.slice(1)),
+        'the rail read the list more than once',
+      ).toEqual([['config', 'list', '--json']])
+      const records = all.filter((record) => record.project !== '')
       const reads = [...new Set(records.map((record) => record.argv[1]))].sort()
       expect(
         reads.filter((read) => read !== 'runs'),
@@ -847,9 +870,9 @@ test.describe('the renderer entry, in the real window', () => {
       await close(launched)
     }
 
-    // The other half: a first run with no installation chosen. The dashboard can
-    // read an answer and the answer names no installation, so there is no row to
-    // draw -- and an invented one would be a lie about what this console knows.
+    // The other half: a first run on a machine with no installation. The CLI's
+    // list is empty and the console holds no record, so there is no row to draw
+    // -- and an invented one would be a lie about what this console knows.
     const fresh = installCliStub(CLI_VERSION_BUILT_AGAINST)
     try {
       const blank = await launch(fresh.env, { firstRun: fresh })
@@ -1022,7 +1045,7 @@ test.describe('the renderer entry, in the real window', () => {
     }
   })
 
-  test('the first run reads no ambient project, and opens the picker once', async () => {
+  test('the first run reads no ambient project, and opens no picker', async () => {
     // An unseeded profile: D13's first run. `FUGARO_PROJECT` is planted in the
     // app's environment and must not reach the handshake (plan 3.4b, tests).
     // Which `fugaro` the machine resolves is not asserted -- only what the
@@ -1031,12 +1054,13 @@ test.describe('the renderer entry, in the real window', () => {
     try {
       const launched = await launch(fresh.env, { firstRun: fresh, env: { FUGARO_PROJECT: 'planted-ambient-project' } })
       try {
-        // `launch` asserted the picker opened, once, and closed it.
+        // `launch` asserted that no picker opened beside this window.
         expect(launched.app.windows()).toHaveLength(1)
         const records = launched.records()
         expect(records.length).toBeGreaterThan(0)
         for (const record of records) {
-          expect(record.argv[1]).toBe('version')
+          // The handshake's probe, and the rail's boot read of the (empty) list.
+          expect([['version'], ['config', 'list', '--json']]).toContainEqual(record.argv.slice(1))
           expect(record.project, 'the handshake took a project nobody chose').toBe('')
         }
         if (launched.page.url() === APP_ENTRY_URL) {

@@ -84,6 +84,8 @@
 //     before there is anything behind it. The wiring is one line in
 //     `src/main/window.ts` and belongs with the task that brings the handlers.
 
+import { isAbsolute } from 'node:path'
+
 import { invisibleRe, isInvisibleCodePoint, isSeparatorCodePoint } from '../shared/sanitize'
 import { REDUCED_VIEWS, hidesView, unreadableCompatibility } from '../shared/version'
 import type { CliCompatibility, ReducedView } from '../shared/version'
@@ -157,6 +159,22 @@ export const MAX_RUN_ID_LENGTH = 64
 export const MAX_URL_LENGTH = 2048
 
 /**
+ * MAX_INSTALLATION_NAME_LENGTH and MAX_INSTALLATION_CHECKOUT_LENGTH bound the
+ * rail's two kinds, and they are the same two numbers the store's own field
+ * bounds use (`MAX_INSTALLATION_PROJECT_LENGTH` and
+ * `MAX_INSTALLATION_PATH_LENGTH` in `src/main/installations.ts`).
+ *
+ * They are **spelled here rather than imported**: `installations.ts` imports
+ * this module (`NO_ACTIVE_INSTALLATION`), so importing it back would be a cycle
+ * -- and the grammar is the store's, which is why a test
+ * (`test/unit/ipc.test.ts`) holds the two spellings to the same number and the
+ * two validators to the same verdict, value for value, rather than this file
+ * promising it in prose.
+ */
+export const MAX_INSTALLATION_NAME_LENGTH = 200
+export const MAX_INSTALLATION_CHECKOUT_LENGTH = 1024
+
+/**
  * REPORT_MAX_DAYS is `report --since`'s own bound on a range -- the CLI's
  * `reportMaxDays` (`internal/cli/report.go:40`), which exists because a query
  * reads a document per repository per day. A window past it is a value `report`
@@ -206,7 +224,31 @@ export const REPORT_MAX_WEEKS = 522
  *   - `secretScope` -- `secrets ls`'s two mutually exclusive scopes;
  *   - `pullRequest` -- a pull request number, a positive integer;
  *   - `flag` -- a boolean, for the flags the allow-list admits;
- *   - `link` -- the one URL, and it must pass `validateExternalUrl`.
+ *   - `link` -- the one URL, and it must pass `validateExternalUrl`;
+ *   - `installationName` -- one installation's project name, the handle the CLI
+ *     itself printed for it (`isProjectName`, `src/main/installations.ts`): not
+ *     empty, at most `MAX_INSTALLATION_NAME_LENGTH`, no whitespace, no control
+ *     character, no leading `-`. It is a bare word, and **what makes it a name
+ *     rather than a path is the store and not this grammar**: the value is
+ *     looked up among the records this console holds and one it does not hold
+ *     is refused (`picker.ts`), so a path-shaped string the grammar admits has
+ *     no record to reach anything through;
+ *   - `installationCheckout` -- a directory **the rail offered** for that
+ *     installation (`isAbsolutePath`): an absolute path, at most
+ *     `MAX_INSTALLATION_PATH_LENGTH`, no control character, no leading `-`. The
+ *     shape is all this grammar can decide; whether the rail offered the
+ *     directory -- one the CLI listed, or the console's own recorded checkout,
+ *     and in either case not a temporary or tool-owned path -- is the main
+ *     process's check (`offeredCheckouts`, `picker.ts`), because a validator
+ *     that guessed would be the place a made-up path got through.
+ *
+ * The last two are the only path-shaped kinds on this surface, and they are the
+ * installation rail's (owner's design ruling of 2026-10-25). Both are the
+ * grammar `src/main/installations.ts` already applied to the picker's own
+ * operations: they are moved onto the dashboard's table with the rail, not
+ * invented here, and `test/unit/installationstate.test.ts`'s sibling
+ * `test/unit/ipc.test.ts` holds the two implementations to the same verdicts
+ * value for value.
  */
 export type ArgumentKind =
   | 'repository'
@@ -219,6 +261,8 @@ export type ArgumentKind =
   | 'pullRequest'
   | 'flag'
   | 'link'
+  | 'installationName'
+  | 'installationCheckout'
 
 /** ArgumentSpec is one field of an operation's closed argument schema. */
 export interface ArgumentSpec {
@@ -262,9 +306,11 @@ export interface ConsoleOperation {
   readonly method: string
   /**
    * `command` is the CLI command path this operation drives -- and it is `null`
-   * for exactly two operations, neither of which spawns anything:
-   * `link.openExternal` (it opens a link) and `startup.compatibility` (it
-   * answers the handshake this process already ran).
+   * for every operation that spawns nothing: the two reads of the console's own
+   * state (`link.openExternal`, `startup.compatibility`), the active
+   * installation (`installation.current`), and the rail's five store-and-window
+   * operations (`installation.choose`, `.checkout`, `.remove`, `.reveal`,
+   * `.open`).
    * It is a constant: no renderer, no argument and no job-written string ever
    * reaches it, and `registerConsoleHandlers` refuses a table that names
    * anything on `NEVER_REACHABLE`.
@@ -285,27 +331,29 @@ export interface ConsoleOperation {
 }
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Fifteen operations, and the table is
- * the reviewable artifact: a new read is a new entry here, with its argument
+ * CONSOLE_OPERATIONS is the whole surface. Twenty-one operations, and the table
+ * is the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
- * The twelve CLI commands are the dashboard's half of design section 2.1's list
- * -- its thirteenth row, the picker's own `fugaro config list --json`, is the
- * installations picker's read and is not an operation of this table -- and that
- * half is `docs/json-contract.md`'s list, read off the cobra commands. The
- * twelfth of those commands is `runs.stats` (console L5b, the Spend screen's
- * by-person view), which the table narrowed to this task's own argument: see its
- * comment below. The thirteenth operation is the startup handshake's answer
- * (`startup.compatibility`, the console's own state, which no CLI command can be
- * asked for); the fourteenth is the one path that is not a command:
- * `openExternal`, whose URL argument goes through `validateExternalUrl` --
- * `https:` only, no credentials, no port, host on `ALLOWED_EXTERNAL_HOSTS` -- so
- * the renderer's only way out of the console is a link the console would have
- * opened anyway. The fifteenth (`installation.current`) is the dashboard's read
- * of the installation the operator chose in the picker window, or D13's
- * no-installation state; its handler is `handlersFor`'s **optional**
- * `installation` dep, so a build without a picker answers it with that state
- * rather than failing to register.
+ * The thirteen CLI argvs are design section 2.1's list -- its thirteenth row,
+ * `fugaro config list --json`, arrived with the installation rail (owner's
+ * design ruling of 2026-10-25) and was §5.1 rule 6's thirteenth argv before
+ * that -- and that list is `docs/json-contract.md`'s, read off the cobra
+ * commands. The twelfth of those commands is `runs.stats` (console L5b, the
+ * Spend screen's by-person view), which the table narrowed to this task's own
+ * argument: see its comment below. The thirteenth operation is the startup
+ * handshake's answer (`startup.compatibility`, the console's own state, which
+ * no CLI command can be asked for); the fourteenth is the one path that is not
+ * a command: `openExternal`, whose URL argument goes through
+ * `validateExternalUrl` -- `https:` only, no credentials, no port, host on
+ * `ALLOWED_EXTERNAL_HOSTS` -- so the renderer's only way out of the console is
+ * a link the console would have opened anyway. The fifteenth
+ * (`installation.current`) is the dashboard's read of the installation the
+ * operator chose, or D13's no-installation state; its handler is
+ * `handlersFor`'s **optional** `installation` dep, so a build without a store
+ * answers it with that state rather than failing to register. The last six are
+ * the rail's own (see their comment below): one read of the CLI's list and five
+ * operations on the console's own store and window.
  *
  * Two operations share one command and differ by their flags, deliberately:
  * `run.logs` is `logs RUN --json` and `run.logLink` is `logs RUN --url`. They
@@ -595,6 +643,113 @@ export const CONSOLE_OPERATIONS = [
     command: null,
     flags: [],
     summary: 'the installation the operator chose, or D13’s no-installation state',
+    args: [],
+  },
+  // The rail's own surface (owner's design ruling of 2026-10-25). **The
+  // console never shows a picker screen**: the dashboard's rail lists every
+  // installation the CLI found, a click on a row switches the console to it,
+  // and a row that cannot be read opens its issue in the main area. That is a
+  // read and four writes of the console's own store plus one window, and all
+  // six of them are the operations `src/main/installations.ts` already
+  // declared for the picker window -- moved onto this table with the rail, so
+  // that the dashboard's document can reach them.
+  //
+  // `installation.list` is the one of the six that spawns: `fugaro config
+  // list --json`, the read §5.1 rule 6's allow-list already carries as its
+  // thirteenth argv (`internal/cli/config_list.go`; `console/docs/json-
+  // contract.md` §6.8). It is a read of the machine and not of a project, so
+  // its spawn row takes no `--project` and no `--dir`.
+  //
+  // The other five spawn nothing at all: they read and write
+  // `<userData>/installations.json` (`installation.choose`, `.remove`), run
+  // the console's own `doctor` against the CLI's list of checkouts
+  // (`.checkout`), hand a directory this process computed to the file manager
+  // (`.reveal`), or open the picker window the rail's `+` door is
+  // (`.open`). None of them takes a path a renderer chose: `.checkout` takes a
+  // directory **the rail offered** -- one the CLI listed in the document it last
+  // read, or the console's own recorded checkout, never a temporary or
+  // tool-owned path -- and `.reveal` takes a project name and computes the path
+  // itself.
+  {
+    name: 'installation.list',
+    method: 'listInstallations',
+    command: 'config list',
+    flags: ['--json'],
+    summary: 'every installation this machine has, with the rail’s own mark for each',
+    args: [],
+  },
+  {
+    name: 'installation.choose',
+    method: 'chooseInstallation',
+    command: null,
+    flags: [],
+    summary: 'switch the console to one installation the rail lists',
+    args: [
+      {
+        key: 'project',
+        kind: 'installationName',
+        required: true,
+        why: 'the handle the CLI printed for the row the operator clicked; the store is keyed by it, and no id crosses the boundary.',
+      },
+    ],
+  },
+  {
+    name: 'installation.checkout',
+    method: 'setInstallationCheckout',
+    command: null,
+    flags: [],
+    summary: 'pair one installation with a checkout directory, and check it',
+    args: [
+      {
+        key: 'project',
+        kind: 'installationName',
+        required: true,
+        why: 'the installation the checkout belongs to, by the name the CLI printed.',
+      },
+      {
+        key: 'checkout',
+        kind: 'installationCheckout',
+        required: false,
+        why: 'a directory out of that installation’s own `checkouts` list (what the CLI listed, plus the console’s own recorded checkout, minus temporary and tool-owned paths), which the main process checks for membership. Absent means "no checkout", which is a state an installation may be in (design section 3.4 rule 5).',
+      },
+    ],
+  },
+  {
+    name: 'installation.remove',
+    method: 'removeInstallation',
+    command: null,
+    flags: [],
+    summary: 'drop this console’s own record of one installation',
+    args: [
+      {
+        key: 'project',
+        kind: 'installationName',
+        required: true,
+        why: 'the row the operator asked to forget. It removes the console’s record and nothing on disk.',
+      },
+    ],
+  },
+  {
+    name: 'installation.reveal',
+    method: 'revealInstallation',
+    command: null,
+    flags: [],
+    summary: 'open one installation’s directory in the file manager',
+    args: [
+      {
+        key: 'project',
+        kind: 'installationName',
+        required: true,
+        why: 'a project name and **not a path**: the directory the file manager is handed is computed in this process from its own record (`explorerPathFor`), so a renderer cannot name a directory for it to open.',
+      },
+    ],
+  },
+  {
+    name: 'installation.open',
+    method: 'openInstallations',
+    command: null,
+    flags: [],
+    summary: 'the rail’s + door: the window that adds an installation by checkout path',
     args: [],
   },
   {
@@ -1344,9 +1499,64 @@ function validateValue(
       if (!decision.ok) return refuse(`${spec.key} ${decision.reason}`)
       return { ok: true, value: decision.url }
     }
+    case 'installationName':
+      // `isProjectName` (`src/main/installations.ts`), spelled here for the
+      // reason the two bounds above give: the store's own rule, which is what
+      // the file is keyed by, and stricter than `isSafeInstallationValue`.
+      if (!isInstallationName(value)) return refuse(`${spec.key} must be an installation’s project name`)
+      return { ok: true, value }
+    case 'installationCheckout':
+      // A shape check and nothing more, exactly as the store's own validator
+      // says: whether the CLI actually listed this directory is checked against
+      // the document the main process last read, which this grammar cannot know.
+      if (!isInstallationCheckout(value)) {
+        return refuse(`${spec.key} must be an absolute directory path`)
+      }
+      return { ok: true, value }
     default:
       return refuse(`${operation} does not take ${spec.key}`)
   }
+}
+
+/**
+ * isInstallationName and isInstallationCheckout are the rail's two grammars,
+ * and they are `src/main/installations.ts`'s `isProjectName` and
+ * `isAbsolutePath(value, MAX_INSTALLATION_PATH_LENGTH)` written out: a project
+ * name is non-empty, bounded, free of whitespace and of control characters and
+ * does not begin with `-`; a checkout is an absolute path under the same rules.
+ *
+ * They are duplicated rather than imported because `installations.ts` imports
+ * this module, and a test holds the two implementations to the same verdict on
+ * the same values so the duplication cannot drift in silence.
+ */
+function isInstallationName(value: string): boolean {
+  return (
+    value !== '' &&
+    value.length <= MAX_INSTALLATION_NAME_LENGTH &&
+    isSafeInstallationValue(value) &&
+    !/\s/.test(value)
+  )
+}
+
+function isInstallationCheckout(value: string): boolean {
+  return (
+    value !== '' &&
+    value.length <= MAX_INSTALLATION_CHECKOUT_LENGTH &&
+    isSafeInstallationValue(value) &&
+    isAbsolute(value)
+  )
+}
+
+/** isSafeInstallationValue is `spawn.ts`'s own guard, spelled here for the same
+ * reason: a string the operator's machine produced -- a project name, a
+ * directory -- may carry a space, and a space is harmless with `shell: false`
+ * and an array argv; what it may not carry is a NUL, a control character, an
+ * absurd length or a leading `-`. */
+function isSafeInstallationValue(value: string): boolean {
+  if (value === '' || value.length > 4096) return false
+  if (value.startsWith('-')) return false
+  // eslint-disable-next-line no-control-regex
+  return !/[\u0000-\u001f\u007f]/.test(value)
 }
 
 /** kindLimit is each kind's length bound, checked before any grammar runs so
@@ -1375,6 +1585,10 @@ function kindLimit(kind: ArgumentKind): number {
       return 12
     case 'link':
       return MAX_URL_LENGTH
+    case 'installationName':
+      return MAX_INSTALLATION_NAME_LENGTH
+    case 'installationCheckout':
+      return MAX_INSTALLATION_CHECKOUT_LENGTH
     default:
       return 0
   }

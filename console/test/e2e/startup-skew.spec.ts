@@ -53,7 +53,7 @@ import { CLI_VERSION_BUILT_AGAINST, SKEW_HEADLINES, classifyCliVersion } from '.
 import type { CliCompatibilityMode } from '../../src/shared/version'
 import { installCliStub, resolveConsoleBinary } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
-import { dismissFirstRunPicker } from '../support/firstRun'
+import { expectNoFirstRunPicker } from '../support/firstRun'
 import { launchConsole } from '../support/launch'
 import type { BinaryResolution } from '../../src/main/spawn'
 
@@ -140,13 +140,13 @@ interface Launched {
  * (or the machine's, when a case wants the machine's own binary). */
 async function launch(env: Record<string, string>): Promise<Launched> {
   // A scratch profile with no installation (Task 3.4b): this spec's subject is
-  // the first run's handshake, rule 4's resolution with nothing chosen, so the
-  // picker opens beside the window under test and is dismissed before any
-  // assertion about that window (`dismissFirstRunPicker`).
+  // the first run's handshake, rule 4's resolution with nothing chosen, and
+  // since the owner's ruling of 2026-10-25 that run opens no picker beside the
+  // window under test (`expectNoFirstRunPicker`).
   const app = await launchConsole({ args: stub.launchArgs(consoleDir), env })
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
-  await dismissFirstRunPicker(app, page)
+  await expectNoFirstRunPicker(app, page)
   return { app, page }
 }
 
