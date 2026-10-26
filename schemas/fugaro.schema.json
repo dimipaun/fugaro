@@ -85,6 +85,7 @@
           "not": { "const": "default" },
           "description": "The named Claude account (claude_accounts in the local config) this workflow's agent.auth: oauth uses; absent means the repository's default account, the existing claude-oauth-token secret (docs/design/named-oauth-tokens.md). fugaro run --token NAME overrides it per run. The local config's claude_accounts.<name>.allow_data_to must list this repository, checked at launch, not by this schema. Fugaro before 0.6.5 refuses this key."
         },
+        "compression": { "enum": [""], "description": "The context-compression proxy this workflow's model calls route through (docs/design/headroom-compression.md). The key is reserved and refused: the only value this schema admits is \"\" (off, the default), and the real value is admitted by the same change that implements the proxy. A repository that sets it is refused with \"not yet implemented\", not as an unknown key." },
         "max_budget_usd": { "type": "number", "minimum": 0 },
         "instructions": { "type": "string" },
         "review": { "type": "string" }

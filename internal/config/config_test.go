@@ -687,6 +687,95 @@ func TestAgentOAuthToken(t *testing.T) {
 	}
 }
 
+// TestValidateCompressionReservedAndRefused pins decision P11: agent.compression
+// is a known key from the moment it exists, so a repository that tries it gets
+// a refusal naming it "not yet implemented" rather than a strict-parse
+// "unknown field" error, and the only value Validate accepts is "" (off).
+func TestValidateCompressionReservedAndRefused(t *testing.T) {
+	base := "version: 1\nproject: example\ngit: { provider: github, base_branch: main }\nagent:\n  auth: api-key\n%s" +
+		"workflows:\n  app: { commands: { build: go build ./..., test: go test ./... } }\n"
+	for _, val := range []string{"headroom", "anything"} {
+		_, ps := Parse([]byte(fmt.Sprintf(base, "  compression: "+val+"\n")))
+		if len(ps) == 0 {
+			t.Fatalf("compression=%q was accepted before it is implemented", val)
+		}
+		if !slices.ContainsFunc(ps, func(p Problem) bool { return strings.Contains(p.Message, "not yet implemented") }) {
+			t.Errorf("compression=%q: refusal message doesn't say why: %+v", val, ps)
+		}
+	}
+	if cfg, ps := Parse([]byte(fmt.Sprintf(base, ""))); len(ps) > 0 || cfg.Agent.Compression != "" {
+		t.Fatalf("unset compression was refused: %+v, %v", cfg, ps)
+	}
+	if cfg, ps := Parse([]byte(fmt.Sprintf(base, "  compression: \"\"\n"))); len(ps) > 0 || cfg.Agent.Compression != "" {
+		t.Fatalf("the empty compression was refused: %+v, %v", cfg, ps)
+	}
+}
+
+// TestOldConfigParserRefusesCompressionKey is the version-skew half of the
+// strict-decode claim: a decoder shaped like this package's Agent struct
+// before this task (every field it had then, none of the new one) refuses
+// agent.compression outright, which is why a repository may not set the key
+// against an image built before the feature shipped.
+func TestOldConfigParserRefusesCompressionKey(t *testing.T) {
+	type oldAgent struct {
+		Auth            string     `yaml:"auth"`
+		Model           string     `yaml:"model"`
+		ReviewRounds    int        `yaml:"review_rounds"`
+		MaxBudgetUSD    float64    `yaml:"max_budget_usd"`
+		Instructions    string     `yaml:"instructions"`
+		Review          string     `yaml:"review"`
+		Models          ModelRoles `yaml:"models"`
+		MaxOutputTokens RoleTokens `yaml:"max_output_tokens"`
+		MaxRunTokens    int64      `yaml:"max_run_tokens"`
+		FirstLineReview string     `yaml:"first_line_review"`
+		FirstLineRounds int        `yaml:"first_line_rounds"`
+		Recipe          string     `yaml:"recipe"`
+		OAuthToken      string     `yaml:"oauth_token,omitempty"`
+	}
+	dec := yaml.NewDecoder(bytes.NewReader([]byte("auth: api-key\ncompression: headroom\n")))
+	dec.KnownFields(true)
+	var old oldAgent
+	if err := dec.Decode(&old); err == nil {
+		t.Fatal("an Agent decoder shaped like config.go before this task accepted agent.compression silently")
+	}
+}
+
+// TestValidateRefusesCompressionWithOAuth and its vertex twin pin decision P9's
+// Validate rule. Both cases are also refused as "not yet implemented" while the
+// key is reserved (P11), so each asserts the auth reason specifically: the rule
+// must already be there for the lift (Task 10) to leave it standing alone.
+func TestValidateRefusesCompressionWithOAuth(t *testing.T) {
+	base := "version: 1\nproject: example\ngit: { provider: github, base_branch: main }\nagent:\n  auth: oauth\n  compression: headroom\n" +
+		"workflows:\n  app: { commands: { build: go build ./..., test: go test ./... } }\n"
+	_, ps := Parse([]byte(base))
+	if !slices.ContainsFunc(ps, func(p Problem) bool { return p.Path == "agent.compression" && strings.Contains(p.Message, "oauth") }) {
+		t.Fatalf("compression + oauth was not refused for the auth reason: %+v", ps)
+	}
+}
+
+func TestValidateRefusesCompressionWithVertex(t *testing.T) {
+	base := "version: 1\nproject: example\ngit: { provider: github, base_branch: main }\nagent:\n  auth: vertex\n  compression: headroom\n" +
+		"workflows:\n  app: { commands: { build: go build ./..., test: go test ./... } }\n"
+	_, ps := Parse([]byte(base))
+	if !slices.ContainsFunc(ps, func(p Problem) bool { return p.Path == "agent.compression" && strings.Contains(p.Message, "vertex") }) {
+		t.Fatalf("compression + vertex was not refused for the auth reason: %+v", ps)
+	}
+}
+
+// TestAgentCompressionCorpus is TestAgentRecipe's shape for the corpus half of
+// P11: the fixture exercising the real value stays in invalid/ until the lift
+// moves it, and is refused by Parse as well as by the schema.
+func TestAgentCompressionCorpus(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/config/invalid/agent-compression-headroom.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, ps := Parse(data)
+	if cfg != nil || len(ps) == 0 {
+		t.Fatalf("the reserved-value fixture parsed: %+v, %v", cfg, ps)
+	}
+}
+
 // TestAgentOf is the reader internal/cli judges a launch's Claude account with
 // (agentAtRef: the fugaro.yaml at the ref a run checks out, read out of the
 // launcher's git objects). It reads the document's own agent block, applies the
