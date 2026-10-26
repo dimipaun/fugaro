@@ -528,6 +528,7 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	sch := compile(t, "result.schema.json")
 	at := time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
 	deadline, finished := at.Add(time.Hour), at.Add(10*time.Minute)
+	calls, agents := 12, 2
 	cost := runstore.NewCost(4.12, 0.38, runstore.BasisAPIList).WithNotional(0.42)
 	// A VM-backed run's estimate carries the price table it was priced from,
 	// which a record has to be able to store (design compute-backend.md
@@ -549,7 +550,7 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			Warning: "w", StartedAt: at, DurationS: 1.5,
 		}},
 		CostUSD: 4.12, Cost: &cost,
-		Stages: []runstore.StageTiming{{Name: "implement", StartedAt: at, DurationS: 61, ModelUSD: 0.42, ModelNotionalUSD: 0.12, Model: "claude-sonnet-5-5"}},
+		Stages: []runstore.StageTiming{{Name: "implement", StartedAt: at, DurationS: 61, ModelUSD: 0.42, ModelNotionalUSD: 0.12, Model: "claude-sonnet-5-5", Calls: &calls, Agents: &agents}},
 		// The switch log (C1.16, D140): the service's record of a credential
 		// change beside the cache-miss estimate only the gateway can compute,
 		// including the one a tier's unmeasured cache behaviour leaves
@@ -989,6 +990,48 @@ func TestResultSchemaOAuthAccount(t *testing.T) {
 		}
 		if got := sch.Validate(long) == nil; got != tc.want {
 			t.Errorf("oauth_account of %d runes: schema accepts = %v, want %v", tc.n, got, tc.want)
+		}
+	}
+}
+
+// TestResultSchemaStageCallsAndAgents pins the schema half of the record's
+// two stage counters (docs/task-governance constraint G5): both are optional
+// non-negative integers, and absent stays distinct from zero.
+func TestResultSchemaStageCallsAndAgents(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	validate := func(stage string) error {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(
+			`{"version":1,"run_id":"20261026-100000-abcd","status":"running","stage":"implement",` +
+				`"outcome":"none","cost_usd":0,"started_at":"2026-10-26T10:00:00Z","stages":[` + stage + `]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	const head = `{"name":"implement","started_at":"2026-10-26T10:00:00Z","duration_s":61`
+	for _, tc := range []struct {
+		name  string
+		stage string
+	}{
+		{"both counts", head + `,"calls":12,"agents":2}`},
+		{"neither count", head + `}`},
+		{"zero is a count", head + `,"calls":0,"agents":0}`},
+	} {
+		if err := validate(tc.stage); err != nil {
+			t.Errorf("schema rejects a stage with %s: %v", tc.name, err)
+		}
+	}
+	for _, tc := range []struct {
+		name  string
+		stage string
+	}{
+		{"negative calls", head + `,"calls":-1}`},
+		{"negative agents", head + `,"agents":-1}`},
+		{"fractional calls", head + `,"calls":1.5}`},
+		{"string agents", head + `,"agents":"2"}`},
+	} {
+		if err := validate(tc.stage); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, tc.stage)
 		}
 	}
 }

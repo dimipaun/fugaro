@@ -284,6 +284,55 @@ func TestRecordFollowUpRoundTrip(t *testing.T) {
 	}
 }
 
+// TestStageTimingCallsRoundTrip pins the record's own contract for the two
+// stage counters (docs/task-governance constraint G5): absent is not zero.
+// A stage that reported no count -- an oauth run, whose agent reports none --
+// keeps the field absent, while a stage that made no calls carries 0.
+func TestStageTimingCallsRoundTrip(t *testing.T) {
+	s := newStore(t)
+	at := time.Date(2026, 10, 26, 10, 0, 0, 0, time.UTC)
+	calls, agents, zero := 12, 2, 0
+	rec := &Record{Version: 1, RunID: runID, Status: StatusSucceeded, Outcome: OutcomeReady, StartedAt: at,
+		Stages: []StageTiming{
+			{Name: "implement", StartedAt: at, DurationS: 61, Calls: &calls, Agents: &agents},
+			{Name: "review", StartedAt: at, DurationS: 30},
+			{Name: "fix", StartedAt: at, DurationS: 9, Calls: &zero, Agents: &zero},
+		}}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Stages) != 3 {
+		t.Fatalf("ReadRecord stages = %+v", got.Stages)
+	}
+	if got.Stages[0].Calls == nil || *got.Stages[0].Calls != 12 || got.Stages[0].Agents == nil || *got.Stages[0].Agents != 2 {
+		t.Fatalf("stage with counts = %+v", got.Stages[0])
+	}
+	if got.Stages[1].Calls != nil || got.Stages[1].Agents != nil {
+		t.Fatalf("stage with no count gained one: %+v", got.Stages[1])
+	}
+	if got.Stages[2].Calls == nil || *got.Stages[2].Calls != 0 || got.Stages[2].Agents == nil || *got.Stages[2].Agents != 0 {
+		t.Fatalf("stage with zero counts = %+v", got.Stages[2])
+	}
+
+	data, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"name":"implement","started_at":"2026-10-26T10:00:00Z","duration_s":61,"calls":12,"agents":2`) {
+		t.Fatalf("counted stage encoded = %s", data)
+	}
+	if !strings.Contains(string(data), `"name":"review","started_at":"2026-10-26T10:00:00Z","duration_s":30}`) {
+		t.Fatalf("uncounted stage encoded = %s", data)
+	}
+	if !strings.Contains(string(data), `"name":"fix","started_at":"2026-10-26T10:00:00Z","duration_s":9,"calls":0,"agents":0}`) {
+		t.Fatalf("zero-count stage encoded = %s", data)
+	}
+}
+
 func TestRecordPushedHead(t *testing.T) {
 	s := newStore(t)
 	head := "0123456789abcdef0123456789abcdef01234567"
