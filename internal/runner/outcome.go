@@ -25,10 +25,17 @@ func latestVerifiedTest(records []verify.Record, sha string) *verify.Record {
 const ReasonNoVerifiedTest = "no verified test run on the final commit"
 
 // Decide applies the PR outcome rule (design §4.2): ready only if the latest
-// test record on finalSHA with a clean tree passed and the last review
-// shipped. A clean or fixed check gate (gate.go) never reaches Decide: a
-// clean gate ends the run as succeeded with outcome none before any PR
-// exists, and a fixed one goes on to review as usual.
+// test record on finalSHA with a clean tree passed and the last review either
+// shipped or left nothing the run's mode blocks on (T3.1, D7). A clean or
+// fixed check gate (gate.go) never reaches Decide: a clean gate ends the run
+// as succeeded with outcome none before any PR exists, and a fixed one goes on
+// to review as usual.
+//
+// pol is the mode's findings policy, and the one thing it can change is a
+// `changes` verdict whose every finding it tolerates (D9). Every other answer
+// is the one this function gave before modes existed, reason string included:
+// the four reasons above the tolerance are the gates, and a mode cannot make
+// an unverified or unreviewed run ready.
 func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSummary, pol FindingsPolicy) (bool, string) {
 	latest := latestVerifiedTest(records, finalSHA)
 	switch {
@@ -39,9 +46,27 @@ func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSumma
 	case last == nil:
 		return false, "no review verdict"
 	case last.Verdict != "ship":
+		if pol.tolerates(last) {
+			return true, fmt.Sprintf("review round %d left %s, tolerated at %s", last.Round, Plural(len(pol.Tolerated), "finding"), pol.Mode)
+		}
 		return false, fmt.Sprintf("review round %d still has %s", last.Round, Plural(last.Findings, "finding"))
 	}
 	return true, ""
+}
+
+// tolerates reports whether the mode lets the whole round through: the split
+// Decide was given is the one that round produced, every finding the record
+// counts sits in its tolerated half, and there is at least one.
+//
+// The count is checked against the record rather than trusted, and a round
+// that left no finding is not tolerated: a `changes` verdict that names
+// nothing is a review which failed to say what it wanted, and D4's rule is
+// that a policy which cannot decide blocks.
+func (pol FindingsPolicy) tolerates(last *runstore.ReviewSummary) bool {
+	return last.Findings > 0 &&
+		pol.Round == last.Round &&
+		len(pol.Blocking) == 0 &&
+		len(pol.Tolerated) == last.Findings
 }
 
 // FindingsPolicy is the mode's findings policy as Decide is given it

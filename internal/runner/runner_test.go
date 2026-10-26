@@ -228,6 +228,15 @@ func review(verdict string, findings int) step {
 	}
 }
 
+// reviewScored is review with findings the mode's threshold table can read:
+// each one's JSON, so a case says what the reviewer scored (T3.1).
+func reviewScored(verdict string, findings ...map[string]any) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		b, _ := json.Marshal(map[string]any{"verdict": verdict, "findings": findings})
+		return agent.Result{Structured: b, CostUSD: 0.5}, nil
+	}
+}
+
 func blockUntilDone(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 	<-ctx.Done()
 	return agent.Result{}, ctx.Err()
@@ -352,6 +361,40 @@ func TestReviewRoundsExhausted(t *testing.T) {
 	}
 	if rec.Outcome != runstore.OutcomeDraft || rec.Reason != "review round 2 still has 1 finding" {
 		t.Fatalf("record = %+v", rec)
+	}
+}
+
+// TestDecideToleratedRoundOpensAReadyPR: T3.1's whole feature at the loop. The
+// repository opted in with a rigor: block and runs at Startup, whose floor is
+// above the finding the reviewer scored, so the round the run left open is
+// tolerated: the pull request is opened ready rather than as a draft, the
+// record's reason names the mode and the count, and the round is filed as an
+// item of its own (D7, D9, D30). The unscored findings the other cases use are
+// deliberately not this: an unscored finding blocks in every mode (D4).
+func TestDecideToleratedRoundOpensAReadyPR(t *testing.T) {
+	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "agent:\n", "rigor:\n  default: startup\nagent:\n", 1)
+	h := newHarness(t, cfg, nil)
+	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
+		verifyTest(t, ctx, req)
+		return agent.Result{}, nil
+	}
+	tolerated := reviewScored("changes", map[string]any{"summary": "fix it", "likelihood": 2, "impact": 2, "fix_cost": 1, "class": "correctness"})
+	rec, err := h.run(t, implement("feature"), tolerated, fix, tolerated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Outcome != runstore.OutcomeReady || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("record = %+v; want a ready run: the round's only finding is below startup's floor", rec)
+	}
+	if rec.Reason != "review round 2 left 1 finding, tolerated at startup" {
+		t.Errorf("reason = %q; want the mode and the count the round was tolerated at (D7)", rec.Reason)
+	}
+	if len(rec.Backlog) != 1 {
+		t.Errorf("the record's items = %v; want the item the tolerated round was filed as (D9)", rec.Backlog)
+	}
+	if pr := onlyPR(t, h.provider); pr.Draft {
+		t.Errorf("the pull request is a draft: %+v", pr)
 	}
 }
 
