@@ -60,8 +60,12 @@ or doc), **Open** (the spec's own unanswered question).
   implement edited. The changed-file list exists but is recorded at finalize
   (`recordChangedFiles`), after review. **Consequence:** the check needs implement's file set
   taken at the end of implement (cheap: `git diff --name-only` over the run's own commits) and a
-  rule for "much larger". Because the range is now the run's own commits, a mismatch after #1073
-  means a bug in the narrowing, so the check is a cheap invariant, not a heuristic.
+  rule for "much larger". Where the range was narrowed to the run's own commits, a mismatch means a
+  bug in the narrowing, so the check is a cheap invariant there. But `narrowReviewRange` keeps the
+  wide range **by design** on a git older than 2.44 (a repository's own image), when its own
+  commits cannot be read, and when the narrowed range holds no fewer commits; a follow-up and a
+  review run keep the pull request's range. In those cases the comparison is not applicable and must
+  never stop a run (plan T5.2, T7.3).
 - **F3 — Gap.** The spec says "pause and send a checkpoint report". There is no pause (F10). The
   only stopping action a running job has is a halt with a draft PR. **Consequence:** the check's
   action is *record + skip or narrow* or *halt*, decided in D329.
@@ -369,6 +373,12 @@ data every later governance step (G§7.3–7.9) and self-calibration read. G§7.
   tier. Not decided here.
 - **O4 — Who triggers.** The user's own routine (R8). The skill (plan T4.1) says how; nothing in the
   product reminds a user who never schedules it.
+- **O6 — Two readings the plan makes of answered decisions, for the owner to confirm.** D323's
+  "the diff base" is rendered as a yes/no ("the review read the pull request's own base"), never as
+  the recorded branch name, which is free text a task could steer (plan G1). G§2's fix-up budget is
+  "a fraction of implementation budget": the plan makes the fix stage's budget a fraction of the
+  implement stage's budget, as the spec says, and the other stages fractions of the per-run cap
+  (plan T7.1).
 - **O5 — Left out of the plan, for the owner to confirm.** G§4's optional 50% soft check-in (a job
   cannot pause, and a halt at half the expectation would stop every slow medium task; the `working`
   skill's half-cap look stays the manual form), and G§5's idle-spin and edits-back-and-forth
