@@ -8,29 +8,47 @@ explicit go, and answering a decision does not approve a task.
 The plan builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md), and it is
 written to the owner's answers of 2026-10-26:
 
-- **D360**, reopened for runs too: not the recommendation.
+- **D360**, reopened for runs too: not the recommendation. **Amended 2026-10-26: narrowed back to
+  coordinator reads only, which is the recommendation.**
 - **D361**, a read-scoped OAuth consumer for the coordinator.
 - **D362**, the credentials service holds the credentials: not the recommendation.
-- **D363**, the service mints run tokens from a consumer: not the recommendation.
+- **D363**, the service mints run tokens from a consumer: not the recommendation. **Amended
+  2026-10-26: reversed by the owner (O1). Runs keep their per-repository tokens.**
 - **D364**, the console and the CLI read the stored view, with no key.
 - **D365**, the coordinator job keeps its own App key grant, documented as the second holder.
 - **D366**, Data Center is out of scope.
-- **D367**, the consumers are owned by the installing person: not the recommendation.
-- **T1** is accepted, with policy and audit in the service as the mitigation.
+- **D367**, the consumers are owned by the installing person: not the recommendation. While S3
+  is parked, this applies to the read consumer only.
+- **T1** was accepted, with policy and audit in the service as the mitigation. **It is moot until
+  S3 returns.**
 
-**Some tasks wait on items the owner has not yet ruled on** (reconciliation §7):
+**The owner's rulings of 2026-10-26, after #1104** (reconciliation §7):
 
-- **O1** holds T3.1, T3.2, T3.3 and T3.6. Its option (c) keeps D363 off until (a) or (b) is
-  chosen.
-- **O2** holds T2.2.
-- **O6** is the read mint's custody, recorded as a residual risk.
-- **O7** asks whether artifact and review runs get a write token. The plan is written to (c),
-  accept and document, until the owner rules.
-- **O3** is the owner's per-repository flip of T3.6.
-- **O4** makes Check 145 a precondition of T2.3 and T3.1.
+- **O1, answered.** D363 is revisited, and runs keep their per-repository access tokens. **S3 is
+  parked**: it is deferred until a push and pull-request proxy exists, not cancelled. S1 and S2
+  stay.
+- **O2, answered.** Two consumers is the design. Only the read consumer is built now, in T2.2. The
+  run consumer's bundle kind and its allow-list return with S3.
+- **O7, answered.** Review-only and artifact runs get **no** write token. This is moot while runs
+  keep per-repository tokens, and it is the rule for whenever S3 returns.
+- **O3** (the per-repository flip of T3.6) is parked with S3.
+- **Still waiting on the owner:**
+  - **O4** makes Check 145 a precondition of T2.3, the only mint left in the active plan. The plan
+    is written to it.
+  - **O6** is the read mint's custody. The plan is written to "accept and document" (T2.11).
+- **To ask the owner (from the amendment review):** the read half of Check 148 is parked with the
+  rest of Check 148. That half is the stop, rotation and transfer drill for the read consumer, and
+  U13. Should it come back into S2? D367 asks for rotation and ownership transfer to be a task
+  **and** a check.
+- **Recorded reading of O2:** "two consumers" is read as the design, so only the read kind is built
+  now.
 
-**D366 lands in no task by design.** Nothing is built for Data Center. T2.5 and T3.2 pin the API
-root for the service-minted paths, which also keeps them on Bitbucket Cloud.
+**The active plan is S0–S2.** S3 is kept below as a parked slice. Its tasks keep their numbers, and
+none of them may start until the owner unparks S3.
+
+**D366 lands in no task by design.** Nothing is built for Data Center. T2.5 pins the API root for
+the service-minted read path, which also keeps it on Bitbucket Cloud. T3.2, which is parked, does
+the same for runs.
 
 ## Conventions every part follows
 
@@ -73,6 +91,9 @@ root for the service-minted paths, which also keeps them on Bitbucket Cloud.
 
 ## Global constraints and review focus
 
+**G1, G7 and G9 apply to the parked S3 only.** In G2, G3, G5, G8 and G10, the clauses about the
+run mint apply when S3 returns.
+
 | # | Constraint | Pinned by |
 | --- | --- | --- |
 | G1 | A Bitbucket run token goes **only** to a per-repository job bound to a **Bitbucket** repository on the bundle's allow-list, with a live run identity. The repository and provider come from the verified binding and never from the caller | T3.1 (`TestRunMintRefusesGitHubJobWithSameName`) |
@@ -88,8 +109,9 @@ root for the service-minted paths, which also keeps them on Bitbucket Cloud.
 
 **Review focus: attack the new boundaries.**
 
-- **Agents and launchers.** A hostile agent holding a run token, and a launcher who controls the
-  task and the environment (F7, F19, F20, F26–F29).
+- **Agents and launchers.** While S3 is parked, no run holds a consumer token. Runs keep their
+  per-repository access token, as on `main`. The S3 probes (F7, F19, F20, F26–F29) apply when S3
+  returns.
 - **Caller identity.** Someone who forges the coordinator's identity, or overrides the coordinator
   job's environment (G4, G10).
 - **Allow-list edges:**
@@ -119,17 +141,17 @@ root for the service-minted paths, which also keeps them on Bitbucket Cloud.
 - **Reviewer:** standard. **Owner-run:** no.
 - **Commit:** `docs(bitbucket-credentials): pin the folder`.
 
-**T0.2 Register Checks 145–149.**
+**T0.2 Register Checks 145, 146 and 149.**
 
-- **Files:** `docs/gcp-live-checklist.md`, with rows and sections for 145–149, each marked NOT
-  RUN.
+- **Files:** `docs/gcp-live-checklist.md`, with rows and sections for 145, 146 and 149, each
+  marked NOT RUN. Checks 147 and 148 are parked with S3 and stay reserved.
 - **Tests:** the existing register pins.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1`.
 - **Depends on:** none.
 - **Red step:** a section without its row must fail the register pin. If no pin catches that,
   T0.2 adds one in its own new file, `internal/cli/docs_checks_145_149_test.go`.
 - **Reviewer:** standard. **Owner-run:** no.
-- **Commit:** `docs: register checks 145-149 (Bitbucket through the credentials service)`.
+- **Commit:** `docs: register checks 145, 146 and 149 (Bitbucket through the credentials service)`.
 
 ### S1: the stored-view read, with no key (D364)
 
@@ -240,13 +262,14 @@ unchanged, and `textContent` only.
 - **Reviewer:** **opus + mandatory independent review**. **Owner-run:** no.
 - **Commit:** `gitprov/bitbucket: a token source and the client_credentials exchange`.
 
-**T2.2 Two consumers in the bundle, with the allow-list (F21). HELD on O2.**
+**T2.2 The read consumer in the bundle (F21; O2 answered 2026-10-26).**
 
 - **What changes:**
-  - Two new bundle kinds, `bitbucket-read-consumer` and `bitbucket-run-consumer`. Each holds a
-    key, a secret and a workspace.
-  - The run consumer also holds `repositories`, the allow-list.
-  - `fugaro creds set` accepts both, from stdin only.
+  - A new bundle kind, `bitbucket-read-consumer`, holding a key, a secret and a workspace.
+  - `fugaro creds set` accepts it, from stdin only.
+  - The second kind, `bitbucket-run-consumer`, and its `repositories` allow-list are parked with
+    S3. The owner confirmed two consumers as the design (O2), but building the run kind now would
+    be dead code.
 - **Files:**
   - `internal/credsvc/bundle.go` and `internal/credsvc/bundle_test.go`;
   - `schemas/creds-bundle.schema.json`;
@@ -254,16 +277,15 @@ unchanged, and `textContent` only.
   - `website/content/cli-reference.md`, if the help text changes (regenerated).
 - **Schema change:** yes. Unknown fields are refused.
 - **Tests:**
-  - `TestBundleBitbucketConsumers`;
+  - `TestBundleBitbucketReadConsumer`;
+  - `TestBundleRefusesRunConsumerUntilS3`, which pins the parked kind as unknown;
   - `TestBundleRefusesConsumerWithoutWorkspace`;
   - `TestCredsSetBitbucketConsumerFromStdin`.
 - **Command:** `go test ./internal/credsvc -run Bundle -count=1 && GOFLAGS=-p=2 go test ./internal/cli -run CredsSet -count=1`.
-- **Depends on:** O2, and T1.1 (which also writes the generated `website/content/cli-reference.md`).
+- **Depends on:** T1.1, which also writes the generated `website/content/cli-reference.md`.
 - **Red step:** an entry with an unknown field must fail to decode.
 - **Reviewer:** **opus + mandatory independent review**. **Owner-run:** no.
-- **Note:** a change to the allow-list is audited by Secret Manager's version history, not by the
-  service.
-- **Commit:** `credsvc: the bundle holds a read and a run Bitbucket consumer`.
+- **Commit:** `credsvc: the bundle holds the Bitbucket read consumer`.
 
 **T2.3 The coordinator caller class, and the read mint (D362, F11).**
 
@@ -288,7 +310,11 @@ unchanged, and `textContent` only.
 - **Tests:**
   - `TestCoordinatorCallerOnlyOnReadRoute`;
   - `TestCoordinatorCallerRefusedOtherAccounts`;
-  - `TestReadMintNeverUsesRunConsumer`;
+  - `TestReadMintUsesOnlyTheReadKind`: the read route reads only the read kind's key. The G3
+    cross-use test returns with S3;
+  - `TestReadMintRefusesWriteScopes`: when the token response lists scopes (U11), a token carrying
+    any write scope is refused and audited. This holds even if the installing person created the
+    "read" consumer with write scopes;
   - `TestReadMintAuditedOnce`;
   - `TestReadMintFailsClosedUnaudited`;
   - `TestReadMintRefusedWithoutReadConsumer`;
@@ -385,30 +411,31 @@ deploy it (F23, F24).**
 - **Reviewer:** **opus + mandatory independent review**. **Owner-run:** no.
 - **Commit:** `coordinator: the sweep reads Bitbucket through the credentials service`.
 
-**T2.6 Runbook: create, rotate, stop and transfer the consumers (D367).**
+**T2.6 Runbook: create, rotate, stop and transfer the read consumer (D367).**
 
 - **What it documents:**
-  - creating both consumers under the installing person's account;
+  - creating the read consumer under the installing person's account, with read scopes only;
+  - that its token acts as that person, read-only, and stops working when the person leaves;
   - whether a consumer must be private, once Check 145 has said (U15);
   - writing them with `fugaro creds set`;
-  - **the stop switch** for each kind: take the consumer out of the bundle;
+  - **the stop switch**: take the consumer out of the bundle;
   - **rotation**: regenerate the secret, write a new bundle version, confirm a mint;
-  - **ownership transfer** when the person leaves: a new owner creates new consumers and writes
-    them, and the old ones are deleted.
+  - **ownership transfer** when the person leaves: a new owner creates a new consumer and writes
+    it, and the old one is deleted.
   - In `docs/git-providers.md`: the coordinator's Bitbucket paragraph (D361, D362), and the App key's
     second holder (D365).
-  - The scope sets are added later, by T3.5.
+  - The run consumer's scopes come with S3 (T3.5).
 - **Files:**
   - `docs/credentials-service/runbook.md`;
   - `docs/git-providers.md`;
   - `internal/cli/docs_bitbucket_runbook_test.go` (new).
-- **Tests:** `TestDocsBitbucketRunbook*` checks that both consumers are named, and that the
-  creation, stop, rotation and transfer steps are present.
+- **Tests:** `TestDocsBitbucketRunbook*` checks that the read consumer and its read scopes are
+  named, and that the creation, stop, rotation and transfer steps are present.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1`.
 - **Depends on:** T2.8, whose results the runbook states (U14, U15).
 - **Red step:** the new test fails before the text lands.
 - **Reviewer:** **opus + independent review** (a credential procedure). **Owner-run:** no.
-- **Commit:** `docs: Bitbucket consumers, creation, stop, rotation and ownership transfer`.
+- **Commit:** `docs: the Bitbucket read consumer: creation, stop, rotation and ownership transfer`.
 
 **T2.7 The Check 145 script.**
 
@@ -420,7 +447,7 @@ deploy it (F23, F24).**
   - whether the sandbox's plan admits consumers (U4);
   - the seat count before and after (U5);
   - whether IP allowlisting applies (U8). If the sandbox's plan offers no allowlisting, U8 stays
-    UNVERIFIED, and T3.4 says so in SECURITY.md;
+    UNVERIFIED, and T2.11 says so in SECURITY.md;
   - whether the scopes appear in the response (U11);
   - whether two grants return distinct tokens (U12);
   - whether the creator must be an admin, and whether the token reaches admin endpoints (U14);
@@ -442,7 +469,9 @@ deploy it (F23, F24).**
 - **What the owner types:** `scripts/live-checks/check145.sh --consumer-file <path> --workspace <sandbox> --second-workspace <sandbox-2>`.
 - **Depends on:** T2.7 and T0.2.
 - **Gate:** T2.3 and T3.1 do not merge before this check passes.
-- **If U3 shows reach beyond the workspace:** D363 goes back to the owner (O4).
+- **If U3 shows reach beyond the workspace:** D360 and D361, the read consumer's reach, go back to
+  the owner before T2.3 merges (O4, amended 2026-10-26).
+- **Also shows:** that a write with the read token is refused (see T2.3's read-only guard).
 
 **T2.9 The Check 146 script.**
 
@@ -465,6 +494,7 @@ deploy it (F23, F24).**
 **T2.11 SECURITY.md for S2.**
 
 - **What it says:**
+  - whether IP allowlisting applies to the read token (U8), or that it is unknown;
   - the coordinator's caller class at the credentials service;
   - the read consumer's reach: everything the installing person can read in the workspace, or
     beyond it if U3 says so;
@@ -484,7 +514,18 @@ deploy it (F23, F24).**
 - **Reviewer:** **opus + mandatory independent review**. **Owner-run:** no.
 - **Commit:** `SECURITY: the coordinator's Bitbucket read through the credentials service`.
 
-### S3: the service mints Bitbucket run tokens (D360, D363, T1). T3.1, T3.2, T3.3 and T3.6 are held on O1
+### S3, PARKED: the service mints Bitbucket run tokens (D360, D363, T1)
+
+**Parked by the owner on 2026-10-26 (O1).** Runs keep their per-repository access tokens. S3 is
+deferred until a push and pull-request proxy exists (D363(d)), and it is not cancelled.
+
+- No task in this slice may start until the owner unparks it.
+- When it returns, it is re-planned against the proxy. The tasks below were written for direct
+  minting and are kept as the record of that design and of its review findings.
+- **O7's rule binds S3 when it returns:** review-only and artifact runs get **no** write token
+  (F33, U16).
+- The parked parts are: T3.0–T3.8, Checks 147 and 148, the run consumer (F21), and the SECURITY.md
+  statements of T3.4.
 
 **T3.0 The per-repository switch, rendered into the job (F25, G9).**
 
@@ -553,7 +594,7 @@ deploy it (F23, F24).**
   - `TestRunMintRefusedWhenStopped` (global and per repository);
   - `TestCoordinatorRefusedOnRunMint`.
 - **Command:** `go test ./internal/credsvc -run 'RunMint|CoordinatorRefusedOnRunMint' -count=1`.
-- **Depends on:** T2.3 (same files), T2.8 (Check 145) and O1.
+- **Depends on:** T2.3 (same files), T2.8 (Check 145) and the unparking of S3 (O1 answered 2026-10-26: parked).
 - **Red step:** run `TestRunMintRefusesGitHubJobWithSameName` against a mint that strips the
   provider prefix and matches `<owner>/<name>` against the allow-list; it must fail.
 - **Reviewer:** **opus + mandatory independent review**. **Owner-run:** no.
@@ -591,7 +632,7 @@ deploy it (F23, F24).**
   - `TestRunnerNeverInstallsGitHubSourceOnBitbucket`;
   - `TestBitbucketRunTokenRedacted`.
 - **Command:** `go test ./internal/gitprov/... -run 'BitbucketRunToken|NoFallback|RunPathUnchanged|APIRootOverride' -count=1 && go test -timeout 40m ./internal/runner -run 'RefreshGitAuthBitbucketService|NeverInstallsGitHubSource|BitbucketRunTokenRedacted' -count=1`.
-- **Depends on:** T3.1, T2.5 (same `service.go`), T3.0 and O1.
+- **Depends on:** T3.1, T2.5 (same `service.go`), T3.0 and the unparking of S3 (O1 answered 2026-10-26: parked).
 - **Red step:** run `TestBitbucketNoFallbackToMountedToken` against an opener that reads
   `FUGARO_BITBUCKET_TOKEN` first; it must fail.
 - **Reviewer:** **opus + mandatory independent review**. **Owner-run:** no.
@@ -603,7 +644,7 @@ deploy it (F23, F24).**
   - An allow-list entry without the switch still exposes the token (T3.0).
 - **Commit:** `runner: Bitbucket run tokens from the credentials service`.
 
-**T3.3 Comment identity and the cross-repository trust paths (F19, F28). HELD on O1.**
+**T3.3 Comment identity and the cross-repository trust paths (F19, F28). PARKED with S3.**
 
 - **What it does:** implements O1's chosen option.
 - **Its tests hold under every option:**
@@ -621,7 +662,7 @@ deploy it (F23, F24).**
   - `internal/followup/trust.go`, `internal/followup/select.go` and their existing tests;
   - `internal/runner/reviewmode.go` and `internal/runner/reviewmode_test.go`.
 - **Command:** `go test ./internal/followup ./internal/gitprov/bitbucket -run 'Self|Steer|PRAuthor|NoAccountScope' -count=1 && go test -timeout 40m ./internal/runner -run ReviewModeSameRepo -count=1`.
-- **Depends on:** O1.
+- **Depends on:** the unparking of S3 (O1 answered 2026-10-26: parked).
 - **Red step:** `TestAgentCommentAsPersonNeverSteers` fails against a `Self` that counts marked
   comments only.
 - **Reviewer:** **opus + mandatory independent review**. **Owner-run:** no.
@@ -637,8 +678,8 @@ deploy it (F23, F24).**
     (F20). They can set off any repository's Pipelines with its secured variables and deploy
     identity, and push to any protected branch the person is exempt from (F26).
   - The allow-list decides who receives a token, not what the token reaches.
-  - Artifact and review runs in an allow-listed repository also receive a write token, unless O7
-    rules otherwise (F33).
+  - Artifact and review runs never receive a write token. O7 was answered on 2026-10-26, and its
+    rule binds S3 when it returns (F33).
   - Advice: keep the owner out of required approvers, merge checks and branch-restriction
     exemptions, and out of deployment environments' permitted users.
 - **Sentences to replace:** today's SECURITY.md sentences that S3 makes false. These are §"Narrow
@@ -698,7 +739,7 @@ deploy it (F23, F24).**
 - **Reviewer:** **opus + mandatory independent review**. **Owner-run:** no.
 - **Commit:** `credsvc: the Bitbucket run token's scopes are the minimum`.
 
-**T3.6 The per-repository drop of the job's own `bitbucket-token` (F22, O3). HELD on O1.**
+**T3.6 The per-repository drop of the job's own `bitbucket-token` (F22, O3). PARKED with S3.**
 
 - **What it builds:** a repository's `bitbucket_via_service` switch becomes a per-repository module
   input. When that input is on **and** the owner's flip (`bitbucket_token_service_held`) is set, the repository's workflow job loses its `bitbucket-token` mount and
@@ -725,7 +766,7 @@ deploy it (F23, F24).**
 - **Tests:** tftest runs for: the switch off; the switch on without the flip; the switch on with the
   flip, where the build grant survives. Also the `internal/infra` spec tests.
 - **Command:** as in T2.4, in the `repo` root, plus `go test ./deploy/terraform -run ServiceHeld -count=1`.
-- **Depends on:** T3.0 (same module files), T3.1, T2.4 (same golden plans and `cover.go`) and O1.
+- **Depends on:** T3.0 (same module files), T3.1, T2.4 (same golden plans and `cover.go`) and the unparking of S3 (O1 answered 2026-10-26: parked).
 - **Red step:** the "build grant survives" run fails against a drop that removes it.
 - **Reviewer:** **opus + mandatory independent review**. **Owner-run:** the flip.
 - **Commit:** `terraform: the per-repository, owner-flipped drop of the job's bitbucket-token`.
@@ -747,96 +788,91 @@ deploy it (F23, F24).**
 
 ## Parallel execution
 
-**Edges** (one per "Depends on"):
+**Re-derived 2026-10-26 for the active plan, S0–S2.** S3 is parked, and its edges, levels and
+files are kept at the end of this section for when it returns.
+
+**Edges** (from each "Depends on"):
 
 - T1.1 → T1.2 → T1.3
-- T1.1 → T2.2; T2.1 → T2.3; T2.2 → T2.3; T2.8 → T2.3
-- T2.8 → T2.6
-- T2.3 and T2.5 → T2.11
+- T1.1 → T2.2
+- T2.1, T2.2 and T2.8 → T2.3
 - T2.3 → T2.4
 - T2.1, T2.3 and T1.1 → T2.5
+- T2.8 → T2.6
+- T2.3 and T2.5 → T2.11
 - T2.4 and T2.5 → T2.9 → T2.10
 - T2.7 → T2.8
-- T2.3 and T2.8 → T3.1
-- T3.1, T2.5 and T3.0 → T3.2
-- T3.1 → T3.5
-- T3.0, T3.1 and T2.4 → T3.6
-- T2.6 → T3.5
-- T3.2, T3.5, T2.6 and T2.11 → T3.4
-- T3.2 and T3.5 → T3.7
-- T2.6, T2.4 and T2.5 → T3.8
 - T0.2 → every owner-run check
-- **Owner holds:** O2 → T2.2; O1 → T3.1, T3.2, T3.3, T3.6
 
 **Levels** (the tasks in one level run concurrently):
 
 | Level | Tasks |
 | --- | --- |
-| L0 | T0.1, T0.2, T1.1, T2.1, T2.7, T3.0, T3.3 (held on O1) |
-| L1 | T1.2, T2.2 (held on O2), T2.8 (owner) |
+| L0 | T0.1, T0.2, T1.1, T2.1, T2.7 |
+| L1 | T1.2, T2.2, T2.8 (owner) |
 | L2 | T1.3 (owner), T2.3, T2.6 |
-| L3 | T2.4, T2.5, T3.1 (held on O1) |
-| L4 | T2.9, T2.11, T3.2, T3.5, T3.6, T3.8 (owner) |
-| L5 | T2.10 (owner), T3.4, T3.7 (owner) |
+| L3 | T2.4, T2.5 |
+| L4 | T2.9, T2.11 |
+| L5 | T2.10 (owner) |
 
-**Critical path:** T2.7 → T2.8 (Check 145) → T2.3 → T3.1 → T3.2 → T3.7 (Check 147). It ties with
-T2.7 → T2.8 → T2.3 → T2.4 → T2.9 → T2.10. **The real long pole is the owner's ruling on O1**,
-which holds T3.1 onward. Then the owner decides T3.6's flip. S1 is off the critical path and ships first. It is
-the smallest useful slice, and it needs no credential.
+**Critical path:** T2.7 → T2.8 (Check 145) → T2.3 → T2.4 / T2.5 → T2.9 → T2.10 (Check 146).
 
-**What must be sequential, and why:**
+- **The long pole is the owner's Check 145.** It is no longer O1, which is answered.
+- S1 is off the critical path and ships first. It is the smallest useful slice, and it needs no
+  credential.
 
-- T2.3 → T3.1 → T3.5 share `internal/credsvc/bitbucket.go`.
-- T2.3 → T3.1 also share `server.go` and `audit.go`.
-- T2.5 → T3.2 share `internal/gitprov/bitbucket/service.go`.
+**Must be sequential, and why:**
+
 - T1.1 → T2.5 share `internal/cli/coordinator.go`.
-- T2.6 → T3.5 share the runbook, and T2.6 → T3.4 share `docs/git-providers.md`.
-- T2.11 → T3.4 share `SECURITY.md`, the generated security page and their pin file.
 - T1.1 → T2.2 share the generated `website/content/cli-reference.md`.
-- T3.0 → T2.4 → T3.6 all regenerate the golden plans. T3.0 is at L0 and T2.4 at L3, so the
-  levels keep them apart. T2.4 → T3.6 is also an edge.
-- O4 requires Check 145 before any mint.
+- Check 145 comes before the read mint (O4).
 
-**Shared files:** no level has two writers of one file. Re-check this table whenever a task's
-Files line changes. Files with a single writer are listed only when they are security-sensitive.
+**Shared files.** No level has two writers of one file. Recheck this whenever a task's Files line
+changes.
 
 | File | Writers (level) |
 | --- | --- |
 | `internal/cli/coordinator.go` | T1.1 (L0), T2.5 (L3) |
-| `internal/credsvc/bitbucket.go`, `bitbucket_test.go` | T2.3 (L2), T3.1 (L3), T3.5 (L4) |
-| `internal/credsvc/server.go`, `audit.go`, `audit_test.go` | T2.3 (L2), T3.1 (L3) |
-| `internal/credsvc/auth.go`, `wire.go` | T2.3 (L2) |
-| `internal/credsvc/bundle.go`, `schemas/creds-bundle.schema.json`, `internal/cli/creds.go` | T2.2 (L1) |
-| `internal/gitprov/bitbucket/bitbucket.go` | T2.1 (L0) |
-| `internal/gitprov/bitbucket/service.go`, `service_test.go` | T2.5 (L3), T3.2 (L4) |
-| `internal/gitprov/bitbucket/bitbucket_test.go` | T2.1 (L0) |
-| `internal/gitprov/bitbucket/comments.go`, `comments_test.go`, `internal/followup/*`, `internal/runner/reviewmode.go`, `reviewmode_test.go` | T3.3 (L0) |
+| `internal/cli/coordinator_view.go`, `coordinator_view_test.go`, `internal/coordinator/state.go`, `state_test.go` | T1.1 (L0) |
+| `scripts/live-checks/check145.sh`, `check145_test.sh` | T2.7 (L0) |
+| `scripts/live-checks/check146.sh`, `check146_test.sh` | T2.9 (L4) |
+| `internal/cli/coordinator_sweep_bitbucket_test.go`, `internal/gitprov/bitbucket/service_test.go`, `internal/coordinator/project_test.go` | T2.5 (L3) |
+| `internal/cli/docs_bitbucket_runbook_test.go` | T2.6 (L2) |
 | `website/content/cli-reference.md` | T1.1 (L0), T2.2 (L1) |
-| `internal/cli/credentials_serve.go` | T2.3 (L2) |
-| `internal/gitprov/gitprov.go` | T3.2 (L4) |
-| `internal/runner/runner.go`, `git_service_internal_test.go`, `internal/gitprov/providers/providers.go` | T3.2 (L4) |
-| `internal/localcfg/localcfg.go` | T3.0 (L0) |
-| `internal/cli/init_firebase.go`, `internal/infra/projectjobs.go` | T2.4 (L3) |
-| `docs/credentials-service/runbook.md` | T2.6 (L2), T3.5 (L4) |
-| `docs/git-providers.md` | T2.6 (L2), T3.4 (L5) |
+| `internal/credsvc/bundle.go`, `schemas/creds-bundle.schema.json`, `internal/cli/creds.go` | T2.2 (L1) |
+| `internal/credsvc/bitbucket.go`, `auth.go`, `server.go`, `audit.go`, `wire.go`, `internal/cli/credentials_serve.go` | T2.3 (L2) |
+| `internal/gitprov/bitbucket/bitbucket.go`, `bitbucket_test.go`, `oauth.go` | T2.1 (L0) |
+| `internal/gitprov/bitbucket/service.go`, `internal/coordinator/project.go` | T2.5 (L3) |
+| `docs/credentials-service/runbook.md`, `docs/git-providers.md` | T2.6 (L2) |
 | `docs/gcp-live-checklist.md` | T0.2 (L0) |
-| `deploy/terraform/gcp/modules/installation/*`, `roots/installation/*`, `internal/infra/firebase.go`, `internal/infra/tfvars.go`, `internal/infra/testdata/*.tfvars.json` | T2.4 (L3) |
-| `deploy/terraform/gcp/modules/workflow/*`, `modules/repo/*`, `roots/repo/*`, `internal/infra/spec.go`, `spec_test.go` | T3.0 (L0), T3.6 (L4) |
-| `internal/infra/readiness.go`, `deploy/terraform/terraform_test.go` | T3.6 (L4) |
-| `internal/infra/tf/testdata/golden/*` | T3.0 (L0), T2.4 (L3), T3.6 (L4) |
-| `internal/infra/tf/cover.go` | T2.4 (L3), T3.6 (L4) |
-| `SECURITY.md`, `website/content/security.md`, `internal/cli/docs_bitbucket_security_test.go` | T2.11 (L4), T3.4 (L5) |
-| `internal/cli/docs_checks_145_149_test.go` (only if needed) | T0.2 (L0) |
+| `deploy/terraform/gcp/modules/installation/*`, `roots/installation/*`, `internal/infra/firebase.go`, `projectjobs.go`, `tfvars.go`, `internal/cli/init_firebase.go`, `internal/infra/tf/cover.go`, `internal/infra/tf/testdata/golden/*` | T2.4 (L3) |
+| `SECURITY.md`, `website/content/security.md`, `internal/cli/docs_bitbucket_security_test.go` | T2.11 (L4) |
 | `console/**`, `console/docs/json-contract.md`, `docs/design/desktop-console.md` | T1.2 (L1) |
+
+**Kept for when S3 returns (parked, not scheduled).** These are the edges written for direct
+minting:
+
+- T3.0, T3.1 and T2.4 → T3.6
+- T2.6 → T3.5
+- T2.3 and T2.8 → T3.1
+- T3.1, T2.5 and T3.0 → T3.2
+- T3.1 → T3.5
+- T3.2, T3.5, T2.6 and T2.11 → T3.4
+- T3.2 and T3.5 → T3.7
+- T2.6, T2.4 and T2.5 → T3.8
+
+When S3 is re-planned against the proxy, its levels and its shared-files rows are derived again.
+T3.4 is the second writer of `SECURITY.md` and `docs/git-providers.md`. T3.5 is the second writer
+of the runbook. T3.0 and T3.6 write the golden plans and the workflow module.
 
 ## Checks this plan takes (Checks 145–154)
 
 | Check | What it measures | Run by | Written by |
 | --- | --- | --- | --- |
-| 145 | The consumer facts: U1–U5, U8, U11, U12, U14 and U15. **It gates every mint (O4)** | owner | T0.2 (section), T2.7 (script) |
+| 145 | The consumer facts: U1–U5, U8, U11, U12, U14 and U15. **It gates the read mint (O4)** | owner | T0.2 (section), T2.7 (script) |
 | 146 | The coordinator sweep reads a Bitbucket repository through the service, and its GitHub views are unchanged | owner | T0.2, T2.9 |
-| 147 | A sandbox run on a minted token works with exactly the minimum scopes. It records the token's reach into a second repository, the pipeline trigger, and U10 | owner | T0.2, T3.5 |
-| 148 | The stop, rotation and ownership-transfer drill, with U13 | owner | T0.2, T2.6 (runbook) |
+| 147, **parked with S3** | A sandbox run on a minted token works with exactly the minimum scopes. It records the token's reach into a second repository, the pipeline trigger, and U10 | owner | T0.2, T3.5 |
+| 148, **parked with S3** | The stop, rotation and ownership-transfer drill, with U13 | owner | reserved |
 | 149 | The console shows the stored view on the owner's own machine (U9, end to end) | owner | T0.2 |
 
 Checks 150–154 are reserved and unused.
@@ -846,13 +882,16 @@ Checks 150–154 are reserved and unused.
 These go in the `### For operators` section of the release notes, in the PR that ships each part.
 
 - **T2.4**, per installation: `fugaro update`.
-- **T2.2, T2.6 and T3.1**, per installation:
+- **T2.2 and T2.6**, per installation:
   - **First** run `fugaro update`, so the deployed credentials service is a version that knows
-    the new bundle kinds. The bundle loader refuses the whole bundle on an unknown key
+    the new bundle kind. The bundle loader refuses the whole bundle on an unknown key
     (`internal/credsvc/bundle.go`, `ErrBundleUnknownKey`). Writing a consumer into a bundle that
     an older service still reads halts every model call and every GitHub mint.
-  - **Then** create the two consumers as the installing person, and run `fugaro creds set` for
-    both, with the allow-list.
+  - **Then** create the read consumer as the installing person, with read scopes only, and run
+    `fugaro creds set bitbucket-read-consumer`.
+  - Never write a `bitbucket-run-consumer` entry by hand. That kind is unknown until S3 returns.
+    The loader refuses the whole bundle on it, and every model call and every GitHub mint halts.
+- **Parked with S3. These are not release actions until S3 returns.**
 - **T3.0 and T3.2**, per repository:
   - First rebuild the repository's image, so that its runner knows the service path.
   - Then add the allow-list entry, set `bitbucket_via_service` in the operator's local config,
