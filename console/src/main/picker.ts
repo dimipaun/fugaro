@@ -12,9 +12,9 @@
 //
 // The picker is a *separate window* (C9) and not a panel in the dashboard's
 // header, and the reason is the surface rather than the layout: the dashboard's
-// document is exposed to fifteen operations -- the CLI reads, the handshake,
-// the link handover and `installation.current` -- and the picker's job is to
-// write a file. Two documents, two preloads, two channel prefixes, and a sender
+// document is exposed to twenty-one operations -- the CLI reads, the handshake,
+// the link handover, `installation.current` and the rail's six -- and the
+// picker's job is to add an installation by checkout path. Two documents, two preloads, two channel prefixes, and a sender
 // gate narrowed to one document each (`isSenderOnDocument` in `src/main/ipc.ts`) --
 // so a frame on the dashboard cannot reach `fugaro:installations/remove`, and a
 // frame on the picker cannot reach `runs.list`.
@@ -23,6 +23,8 @@
 // an add, a choose or a remove.** It never writes on a load, on a pick, or on a
 // failed validation, and it never deletes or rewrites a file it refused to read.
 
+import { realpathSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
@@ -42,6 +44,7 @@ import {
 import type { InstallationCandidate } from '../source/cli'
 import type {
   ActiveInstallation,
+  StoredInstallation,
   InstallationArguments,
   InstallationFileStore,
   InstallationFs,
@@ -51,7 +54,10 @@ import type {
   ValidationDeps,
 } from './installations'
 import { parseInstallationsDocument } from './installlist'
+import { TEMP_ROOTS, classifyInstallation, openProject, suggestedCheckouts } from './installationstate'
+import type { ConsoleFacts } from './installationstate'
 import {
+  FUGARO_INSTALL_COMMAND,
   GETTING_STARTED_URL,
   NO_ONBOARDING,
   firstInstallationState,
@@ -64,7 +70,6 @@ import type { ConsoleEventLike, IpcMainLike } from './ipc'
 import { PICKER_ENTRY_PATH, PICKER_ENTRY_URL } from './protocol'
 import { verifyCandidate } from '../source/cli'
 import {
-  PICKER_COMMANDS,
   assertSpawnSurface,
   binDirectories,
   planFor,
@@ -185,6 +190,20 @@ export interface InstallationPickerDeps {
    * answer. **The shipped app never passes it** -- `installInstallationPicker`
    * leaves it out, so the rule's own list is the one that runs. */
   readonly prefixes?: readonly string[] | undefined
+  /** tempDirectory is the machine's temporary directory, and it is a seam for
+   * the same reason `home` and `prefixes` are: the rule that keeps a checkout
+   * suggestion off a temporary or tool-owned path (`isToolOwnedPath`) is about
+   * *this* machine's temporary root, and a unit test must be able to name it.
+   * It defaults to `os.tmpdir()`, which is what the shipped app uses -- the
+   * literal roots the rule also refuses (`/tmp`, `/private/tmp`, `/var/folders`)
+   * are checked beside it, because a checkout recorded by a tool may spell the
+   * one `os.tmpdir()` does not answer. */
+  readonly tempDirectory?: (() => string) | undefined
+  /** tempRoots replaces `TEMP_ROOTS`, the literal temporary roots refused beside
+   * `tempDirectory`, for the same reason: a unit test that sets a real checkout
+   * has to create it under the OS's temporary directory. **The shipped app never
+   * passes it.** */
+  readonly tempRoots?: readonly string[] | undefined
   /**
    * onChosen is the seam the entry point consumes: it is called after a choose
    * has run the handshake and persisted `active`, and `src/main/index.ts` hands
@@ -212,15 +231,51 @@ export interface InstallationPickerDeps {
 export interface InstallationPicker {
   /** installation is the read `handlersFor` answers `installation.current`
    * with. It is a function so the answer is the store's *now*, not the one it
-   * had when the handlers were registered. */
+   * had when the handlers were registered.
+   *
+   * It answers the **session installation** when this run has one -- the row the
+   * console is open on, which is not the store's `active` when the operator's
+   * choice cannot be read (`openInstallation` below) -- and the store's own
+   * answer otherwise. */
   installation(): ActiveInstallation
+  /**
+   * openInstallation is the owner's open-first-readable rule (ruling of
+   * 2026-10-25), run **once at startup, before the handshake**: it reads the list
+   * the rail draws from, decides which installation this console is open on
+   * (`openProject`: the remembered choice when the CLI's document says it can be
+   * read, the first readable row otherwise, the first row when nothing is), and
+   * holds that decision as this run's session installation.
+   *
+   * **It writes nothing.** The store keeps the operator's choice -- "never drop
+   * the remembered choice from the saved store" -- so the session's record is the
+   * store's own when there is one and an in-memory one otherwise
+   * (`registry.sessionRecordFor`).
+   *
+   * The read it makes is the rail's own, and the first `list` answers it rather
+   * than spawning `config list --json` a second time in the same instant
+   * (`bootReply`). It never throws: a console whose list read failed has nothing
+   * worse to do than open what the store says, which is what a session of `null`
+   * leaves it doing.
+   */
+  openInstallation(): Promise<void>
   /** open shows the picker, focusing the window that is already there rather
-   * than opening a second one. */
+   * than opening a second one. Since the owner's design ruling of 2026-10-25 it
+   * is the rail's `+` door (`installation.open` on the dashboard's surface) as
+   * well as the menu item: **the console no longer opens it by itself**, which
+   * is what "the console never shows a picker screen" means here. */
   open(): Promise<void>
-  /** openOnFirstRun is D13's "the picker opens once, automatically, on that
-   * first run": it opens only when no installation has been chosen, and only
-   * once per process. */
-  openOnFirstRun(): Promise<void>
+  /** answer is the picker's own dispatcher, exposed so the dashboard's surface
+   * can reach the same six answers from the console's document
+   * (`handlersFor`'s `installations` dep, `src/source/source.ts`). It answers in
+   * this module's reply shape, and the join to the dashboard's is one place:
+   * `rail` in `src/source/source.ts`.
+   *
+   * The validated arguments are the picker's own (`InstallationArguments`), so
+   * a caller has already been through one closed schema before it gets here --
+   * the dashboard's schema for the dashboard's document, the picker's for the
+   * picker's. Both admit the same values, which is what
+   * `test/unit/ipc.test.ts` holds them to. */
+  answer(name: InstallationOperationName, args: InstallationArguments): Promise<unknown>
   /** installMenu puts `Installations…` in the application menu. It is called in
    * **every** mode, `refused` included: choosing an installation is how an
    * operator gets out of a refusal. */
@@ -318,13 +373,14 @@ export function pickerPreloadPath(appPath: string): string {
  * with no installation, and an add is refused until the operator fixes the file.
  */
 export function createInstallationPicker(deps: InstallationPickerDeps): InstallationPicker {
-  // The spawn surface is asserted here as well as in the dashboard, and the
-  // picker's own table is the second argument: `installation.list` is a row the
-  // dashboard's fifteen operations do not have, and `assertSpawnSurface` holds
-  // it to the picker's one command (`config list --json`, no `--project`, no
-  // `--dir`, no declared arguments). A row that grew an argument, or a name
-  // outside `INSTALLATION_OPERATION_NAMES`, is refused before a window exists.
-  assertSpawnSurface(SPAWN_COMMANDS, PICKER_COMMANDS)
+  // The spawn surface is asserted here as well as in the dashboard: there is
+  // **one** table since the owner's design ruling of 2026-10-25 (the rail's
+  // `installation.list` is the dashboard's own operation now, so the picker's
+  // second table went with it), and `assertSpawnSurface` holds every row to the
+  // operation it serves -- `config list --json` with no `--project`, no `--dir`
+  // and no declared argument among them. A row that grew an argument is refused
+  // before a window exists.
+  assertSpawnSurface(SPAWN_COMMANDS)
   // A `userData` the path rule refuses -- `$FUGARO_CONFIG` in the home directory
   // makes every `userData` "inside" the CLI's configuration -- is **not** a
   // reason to quit at startup (review S7). The console starts with no store: the
@@ -380,7 +436,6 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
   registry.load()
 
   let window: BrowserWindow | null = null
-  let openedOnFirstRun = false
 
   /** workingDirectory is where a probe without a checkout runs (rule 5). */
   const workingDirectory = (): string => privateWorkingDirectory()
@@ -466,30 +521,84 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
    * row per listed installation, and one more per record the CLI did not list --
    * which is the case that keeps a store written by an older console working
    * (its binary override and its checkout are still there, and it is still
-   * openable by name). */
+   * openable by name).
+   *
+   * **Every row carries its own state** (owner's design ruling of 2026-10-25):
+   * `classifyInstallation` turns the facts below into the mark the rail draws and
+   * the sentence its issue view shows, and `suggestedCheckouts` is what the row
+   * offers as a directory to use this installation from. Neither is a guess made
+   * here: the facts are the CLI's own document, the store's own refusal, the
+   * resolution's own sentence and the CLI's own warning lines.
+   */
+  /**
+   * session is the record of the installation this console is **open on**
+   * without having chosen one: `null` when the open row is the store's own active
+   * installation, and an in-memory record otherwise (`registry.sessionRecordFor`,
+   * which is where the "never written down" rule lives). `markOpen` assigns it on
+   * every list read.
+   */
+  let session: StoredInstallation | null = null
+
+  const tempDirectory = (): string => deps.tempDirectory?.() ?? tmpdir()
+  /** realPathOf is a directory as the file system resolves it, so a symlink
+   * into a temporary or tool-owned directory is judged by where it leads. A
+   * path that does not resolve (gone, unreadable) is judged as spelled. */
+  const realPathOf = (path: string): string => {
+    try {
+      return realpathSync(path)
+    } catch {
+      return path
+    }
+  }
+  /** offeredCheckouts is the one list a checkout is offered from and accepted
+   * from: the screen draws it, and a checkout write is held to it. */
+  const offeredCheckouts = (recorded: string | undefined, listed: readonly string[]): readonly string[] =>
+    suggestedCheckouts(recorded, listed, tempDirectory(), deps.tempRoots ?? TEMP_ROOTS, realPathOf)
+
   const rowsOf = (
     discovered: readonly { name: string; gcpProject: string; region: string; checkouts: readonly string[] }[],
+    warnings: readonly string[],
+    cliRefusal: string,
   ): readonly InstallationsListRow[] => {
+    // The session is re-decided on every read, because it is a function of what
+    // the read found and of the store's own answer -- which a choose, a checkout
+    // or a removal may have just changed. It is assigned at the foot of this
+    // function, once the rows are the rows.
     const stored = registry.rows()
+    const facts: ConsoleFacts = {
+      storeRefusal: registry.refusal ?? '',
+      storePath,
+      cliRefusal,
+      installCommand: FUGARO_INSTALL_COMMAND,
+      warnings,
+    }
     const rows: InstallationsListRow[] = discovered.map((installation) => {
       const held = stored.find((row) => row.project === installation.name)
+      const rowFacts = {
+        project: installation.name,
+        listed: true,
+        // The CLI's own signal: `gcp_project` is "" exactly when that config
+        // could not be read, and the document's warning says why.
+        configUnreadable: installation.gcpProject === '',
+      }
       return {
         project: installation.name,
         gcpProject: installation.gcpProject,
         region: installation.region,
-        // The CLI's own signal: `gcp_project` is "" exactly when that config
-        // could not be read, and the document's warning says why.
-        configUnreadable: installation.gcpProject === '',
+        configUnreadable: rowFacts.configUnreadable,
         listed: true,
         saved: held !== undefined,
         active: held?.active ?? false,
         mode: held?.mode ?? 'unknown',
         ...(held?.checkout === undefined ? {} : { checkout: held.checkout }),
-        checkouts: installation.checkouts,
+        checkouts: offeredCheckouts(held?.checkout, installation.checkouts),
+        state: classifyInstallation(rowFacts, facts),
+        open: false,
       }
     })
     for (const row of stored) {
       if (discovered.some((installation) => installation.name === row.project)) continue
+      const rowFacts = { project: row.project, listed: false, configUnreadable: false }
       rows.push({
         project: row.project,
         gcpProject: '',
@@ -500,48 +609,121 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         active: row.active,
         mode: row.mode,
         ...(row.checkout === undefined ? {} : { checkout: row.checkout }),
-        checkouts: [],
+        checkouts: offeredCheckouts(row.checkout, []),
+        state: classifyInstallation(rowFacts, facts),
+        open: false,
       })
     }
-    return Object.freeze(rows)
+    return markOpen(rows)
+  }
+
+  /**
+   * markOpen marks the one row the console is open on and settles the session
+   * installation from it (`openProject`, `installationstate.ts`). It is the only
+   * place either is written, so the rail's selected row and the installation this
+   * process drives cannot disagree.
+   *
+   * The session record is `null` when the open row is the store's own active
+   * installation: `installation()` then answers the store, which is the answer it
+   * would have given anyway, and the file's record keeps its id.
+   */
+  const markOpen = (rows: readonly InstallationsListRow[]): readonly InstallationsListRow[] => {
+    const decided = openProject(rows)
+    const chosen = registry.active()
+    session =
+      decided === null || decided === chosen?.project ? null : registry.sessionRecordFor(decided)
+    return Object.freeze(rows.map((row) => (row.project === decided ? { ...row, open: true } : row)))
   }
 
   /**
    * lastListed is the document the last successful `list` read, keyed by project
-   * name, and it is what a checkout is checked against: the console offers only
+   * name, and it is what a checkout is checked against: the console accepts only
    * the directories the CLI itself listed (installlist.ts rule 2), so a renderer
    * that sends a path this map does not hold has named a directory this process
    * never obtained. It is empty until a list has been read, and an empty map
    * offers nothing -- which is the safe direction.
+   *
+   * A checkout write is held to `suggestedCheckouts` over this list -- the same
+   * list the screen draws, tool-owned and temporary paths dropped -- and not to
+   * this map alone: a directory the CLI listed under a temporary root is still
+   * one the console never offers, so it is not one a renderer may set either.
    */
   let lastListed: ReadonlyMap<string, readonly string[]> = new Map()
+
+  /**
+   * bootReply is the answer `openInstallation` read, kept for the first `list`
+   * the renderer asks. It is one-shot and nothing else reads it: the startup's
+   * read and the rail's first read are the same question asked in the same
+   * instant, and a console that spawned `config list --json` twice at every
+   * launch would be paying for a document it already had. Every later `list`
+   * reads (a removal, a checkout or the picker window's own refresh), so nothing
+   * here can go stale behind a screen.
+   */
+  let bootReply: InstallationsListReply | null = null
+  let bootRead = false
+
+  /**
+   * openInstallation is the owner's open-first-readable rule, run once at
+   * startup: one list read, and the session installation it settles (see the
+   * interface's own comment for the rule and for why nothing is written).
+   *
+   * A read that throws leaves the session as it was -- `null` on a boot, so the
+   * console opens what the store says -- because a console whose `config list`
+   * failed is a console that should still open, with its own issue view, rather
+   * than one that never draws a window.
+   */
+  const openInstallation = async (): Promise<void> => {
+    // Once per process: the handshake that calls this runs again on a retry or
+    // after a choose, and re-reading there would spawn `config list` again and
+    // re-decide the session behind the operator's back. A later decision is an
+    // explicit one -- a rail `list`, a choose, a checkout or a removal.
+    if (bootRead) return
+    bootRead = true
+    try {
+      bootReply = await listReply()
+    } catch {
+      bootReply = null
+    }
+  }
 
   /** listReply is D13's list: the onboarding state, the rows, the CLI's own
    * warning lines and the console's view of the active installation. */
   const listReply = async (): Promise<InstallationsListReply> => {
     const found = await discover()
-    const base = {
+    // A function, and spread **last** in each answer below: `active` is the
+    // session installation, and the session is settled by `rowsOf` (through
+    // `markOpen`) from the rows of this very read. A value read here would be the
+    // answer of the *previous* read -- at a boot, the store's, before the open
+    // rule had run at all.
+    const base = (): Pick<InstallationsListReply, 'path' | 'active'> & { readonly refusal?: string } => ({
       ...(registry.refusal === null ? {} : { refusal: registry.refusal }),
       path: storePath,
       active: current(),
-    }
+    })
     if (!found.ok) {
       // A refusal still draws the rows the console itself has: a store entry is
       // the console's own record, and hiding it because the CLI would not list
       // would take away the one installation the operator can still open.
+      //
+      // The refusal is handed to the classification as `cliRefusal` only when it
+      // *is* one -- a resolution that found no binary. A CLI that exited non-zero
+      // or printed a document this console could not parse is a failure of this
+      // read and not a fact about the machine's CLI, so no row is marked
+      // "install the CLI" for it; the sentence is drawn as the list's own warning
+      // line instead, which is where it was drawn before.
       clearCheckouts()
       return Object.freeze({
         onboard: found.onboarding,
-        rows: rowsOf([]),
+        rows: rowsOf([], [], found.onboarding.kind === 'install-cli' ? found.reason : ''),
         warnings: Object.freeze(found.onboarding === NO_ONBOARDING && found.reason !== '' ? [found.reason] : []),
-        ...base,
+        ...base(),
       })
     }
     // What this read listed is what a checkout may be set from, and it replaces
     // the previous read wholesale: a checkout the CLI has stopped listing is one
     // this console no longer holds.
     lastListed = new Map(found.installations.map((installation) => [installation.name, installation.checkouts]))
-    const rows = rowsOf(found.installations)
+    const rows = rowsOf(found.installations, found.warnings, '')
     if (rows.length === 0) {
       // "The CLI listed nothing and the console has nothing" is the one state
       // the first-installation screen is for. A document this console could not
@@ -550,14 +732,14 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         onboard: firstInstallationState(),
         rows,
         warnings: Object.freeze([...found.warnings]),
-        ...base,
+        ...base(),
       })
     }
     return Object.freeze({
       onboard: NO_ONBOARDING,
       rows,
       warnings: Object.freeze([...found.warnings]),
-      ...base,
+      ...base(),
     })
   }
 
@@ -619,7 +801,10 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
   }
 
   const rows = (): readonly InstallationRow[] => registry.rows()
-  const current = (): ActiveInstallation => registry.current()
+  /** current is `installation()`: the session installation's answer when this run
+   * has one, and the store's own otherwise. */
+  const current = (): ActiveInstallation =>
+    session === null ? registry.current() : registry.currentFor(session)
 
   /** clearCheckouts drops the document a checkout is checked against. It is
    * called when a read refused, so a refusal cannot be followed by a checkout
@@ -649,7 +834,32 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
     if (held === null && !lastListed.has(project)) {
       return { ok: false, reason: `no installation is named ${JSON.stringify(project)}` }
     }
-    const probed = await probeInstallation(
+    const probed = await probeFor(project)
+    if (!probed.ok) return { ok: false, reason: probed.reason }
+    // The compatibility first, so a row drawn by the list this choose returns
+    // already carries the mode the handshake just read.
+    registry.remember(project, probed.value.compatibility)
+    registry.choose(project)
+    // The store now names the chosen installation, so the session decided for
+    // an earlier row must not answer any more: the window `onChosen` reopens runs
+    // its handshake and binds its source through `installation()` before any
+    // list re-reads and `markOpen` settles the session again (review M1).
+    session = null
+    // Awaited inside the chain: the next mutation waits for the window this
+    // choose asked for.
+    await deps.onChosen?.({
+      project,
+      compatibility: probed.value.compatibility,
+      resolvedBinaryPath: probed.value.path,
+    })
+    return { ok: true, data: await listReply() }
+  }
+
+  /** probeFor runs one installation's handshake with its record's own override,
+   * config and checkout -- what a choose and a rebind after a removal both ask. */
+  const probeFor = (project: string): ReturnType<typeof probeInstallation> => {
+    const held = registry.entry(project)
+    return probeInstallation(
       {
         project,
         ...(held?.binaryPath === undefined ? {} : { binaryPath: held.binaryPath }),
@@ -661,26 +871,15 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
       // stats nothing -- a checkout was checked when it was set).
       validationDeps(),
     )
-    if (!probed.ok) return { ok: false, reason: probed.reason }
-    // The compatibility first, so a row drawn by the list this choose returns
-    // already carries the mode the handshake just read.
-    registry.remember(project, probed.value.compatibility)
-    registry.choose(project)
-    // Awaited inside the chain: the next mutation waits for the window this
-    // choose asked for.
-    await deps.onChosen?.({
-      project,
-      compatibility: probed.value.compatibility,
-      resolvedBinaryPath: probed.value.path,
-    })
-    return { ok: true, data: await listReply() }
   }
 
   /**
    * setInstallationCheckout is the one place a repository is asked for, and the
    * screen asks at the moment it needs one (requirement 3): the directories the
-   * CLI itself listed for that installation are the only ones this accepts, and
-   * an absent `checkout` clears the one that was there.
+   * rail offers for that installation (`offeredCheckouts`: what the CLI listed,
+   * plus the console's own recorded checkout, minus temporary and tool-owned
+   * paths) are the only ones this accepts, and an absent `checkout` clears the
+   * one that was there.
    *
    * Setting one runs the pairing check (`validateInstallation`, which is rule
    * 7's `doctor --json` from that directory with that project). Clearing one
@@ -709,10 +908,13 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
       if (held !== null) registry.setCheckout(project, undefined)
       return { ok: true, data: await listReply() }
     }
-    // Membership of the list the CLI printed, and not a shape check: a path that
-    // is absolute and well-formed but was never listed is a directory this
-    // console did not obtain, and it is refused by name.
-    const offered = lastListed.get(project) ?? []
+    // Membership of the list the screen offers, and not a shape check: a path
+    // that is absolute and well-formed but was never listed is a directory this
+    // console did not obtain, and one the CLI listed under a temporary or
+    // tool-owned root is one the console never offers (`suggestedCheckouts`
+    // drops it). The write is held to the same list the screen draws, so a
+    // renderer cannot set a directory the screen would not have shown.
+    const offered = offeredCheckouts(held?.checkout, lastListed.get(project) ?? [])
     if (!offered.includes(checkout)) {
       return {
         ok: false,
@@ -747,24 +949,61 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
    * the removal took the active one away -- firing it for a non-active row would
    * tell the dashboard it has nothing to drive while `active` still names an
    * installation the operator can use. */
-  const removeInstallation = (project: string): unknown => {
+  const removeInstallation = async (project: string): Promise<unknown> => {
     if (registry.entry(project) === null) return { ok: false, reason: 'no such installation' }
     const before = current()
     registry.remove(project)
-    if (before.chosen && before.project === project) deps.onRemoved?.(before.id)
-    return { ok: true, data: { rows: rows(), active: current() } }
+    const wasOpen = before.chosen && before.project === project
+    if (wasOpen) deps.onRemoved?.(before.id)
+    // A removal re-reads, so the answer the screen draws from and the session it
+    // leaves behind are one decision: the record that went is gone from the rows
+    // (`saved`), and the console is open on whichever row the open rule names now.
+    const reply = await listReply()
+    if (wasOpen) await rebindAfterRemoval(reply)
+    return { ok: true, data: { rows: reply.rows, active: reply.active, onboard: reply.onboard } }
+  }
+
+  /**
+   * rebindAfterRemoval is what keeps a removal of the open installation from
+   * leaving the dashboard on a source and a handshake for a record that is gone:
+   * when the open rule now names a readable installation, that installation's
+   * handshake runs and `onChosen` reopens the window on it -- a choose in all but
+   * the store, which keeps no new `active` (the operator chose nothing). An
+   * unreadable or absent next row needs no handshake: the dashboard draws its
+   * issue, or the onboarding, and reads nothing.
+   */
+  const rebindAfterRemoval = async (reply: InstallationsListReply): Promise<void> => {
+    const open = reply.rows.find((row) => row.open)
+    if (open === undefined || !open.state.readable) return
+    const probed = await probeFor(open.project)
+    if (!probed.ok) return
+    // As a choose does: the handshake's answer is what `installation.current`
+    // reports the mode and the version from. It is held in memory only.
+    registry.remember(open.project, probed.value.compatibility)
+    await deps.onChosen?.({
+      project: open.project,
+      compatibility: probed.value.compatibility,
+      resolvedBinaryPath: probed.value.path,
+    })
   }
 
   const answerFor = async (name: InstallationOperationName, args: InstallationArguments): Promise<unknown> => {
     switch (name) {
-      case 'list':
-        return { ok: true, data: await listReply() }
+      case 'list': {
+        // The startup's own read, when it is still unclaimed: the rail's first
+        // ask and the session's decision are one read (`bootReply`). It is taken
+        // here rather than in `listReply` so a mutation's own re-read never
+        // consumes it.
+        const kept = bootReply
+        bootReply = null
+        return { ok: true, data: kept ?? (await listReply()) }
+      }
       case 'choose':
         return serially(() => chooseInstallation(args['project'] ?? ''))
       case 'checkout':
         return serially(() => setInstallationCheckout(args['project'] ?? '', args['checkout']))
       case 'remove':
-        return serially(async () => removeInstallation(args['project'] ?? ''))
+        return serially(() => removeInstallation(args['project'] ?? ''))
       case 'reveal':
         // The renderer names a project and nothing else. The path the file
         // manager is handed is this process's own `explorerPath` for that record
@@ -824,12 +1063,8 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
   return {
     installation: current,
     open,
-    async openOnFirstRun(): Promise<void> {
-      if (openedOnFirstRun) return
-      openedOnFirstRun = true
-      if (registry.current().chosen) return
-      await open()
-    },
+    openInstallation,
+    answer: answerFor,
     installMenu(): void {
       deps.menu.setApplicationMenu(
         deps.menu.buildFromTemplate(
@@ -869,11 +1104,15 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
  *
  *   1. passes `picker.installation` to `handlersFor` as its `installation` dep,
  *      which is what answers `installation.current` (Task 3.4a's join), and
- *   2. calls `picker.installMenu()` once the app is ready and
- *      `picker.openOnFirstRun()` when the handshake has settled.
+ *      `picker.answer`/`picker.open` as its `installations` dep, which is what
+ *      answers the rail's six operations (owner's design ruling of
+ *      2026-10-25), and
+ *   2. calls `picker.installMenu()` once the app is ready.
  *
  * Both of those are the entry point's because both need the lifecycle it owns;
- * neither is a second copy of anything here.
+ * neither is a second copy of anything here. **It no longer opens the window**:
+ * the rail's `+` door and the menu item are the two ways in, and neither is
+ * something the console does by itself.
  */
 export function installInstallationPicker(options: {
   readonly electron: {

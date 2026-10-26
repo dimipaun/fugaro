@@ -387,6 +387,15 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		// §6.11, the backlog index's rows (CLI 0.11.0).
 		reflect.TypeOf(backlogListDoc{}),
 		reflect.TypeOf(backlogRow{}),
+		// §6.12, the graph joined to the runs (GV1.6): the plan's own figures
+		// and the three shapes under them, plus this read's document and its
+		// totals.
+		reflect.TypeOf(plan.StatePlan{}),
+		reflect.TypeOf(plan.StateNode{}),
+		reflect.TypeOf(plan.StateRelease{}),
+		reflect.TypeOf(plan.StateStream{}),
+		reflect.TypeOf(planStatusDoc{}),
+		reflect.TypeOf(planStatusTotals{}),
 	}
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
 		if !strings.Contains(doc, "`"+name+"`") {
@@ -551,6 +560,10 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		// §6.11, the backlog index's rows (CLI 0.11.0).
 		reflect.TypeOf(backlogListDoc{}),
 		reflect.TypeOf(backlogRow{}),
+		// §6.12, the plan's graph joined to its runs (GV1.6).
+		reflect.TypeOf(plan.StatePlan{}), reflect.TypeOf(plan.StateNode{}),
+		reflect.TypeOf(plan.StateRelease{}), reflect.TypeOf(plan.StateStream{}),
+		reflect.TypeOf(planStatusDoc{}), reflect.TypeOf(planStatusTotals{}),
 	}
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
 		real[name] = true
@@ -814,6 +827,11 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// follows -- but the document describes its flags, so they are checked
 	// against this constructor like any other command's.
 	"backlog list": newBacklogListCmd,
+	// §6.12 documents the graph joined to the runs (GV1.6, the CLI release after 0.11.4). The
+	// console does not spawn it yet either, and its flags — including the cloud
+	// ones, which this command carries and `plan graph` does not — are checked
+	// against this constructor like any other command's.
+	"plan status": newPlanStatusCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document
@@ -1070,9 +1088,9 @@ func firstBacktick(cell string) string {
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
 // §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
-// the twelve argvs and nothing else -- the console's dashboard table
-// (SPAWN_COMMANDS) and its picker table (PICKER_COMMANDS) are together the
-// eleven it fixes, and a review of an earlier revision found the picker's own
+// the thirteen argvs and nothing else -- the console's one spawn table
+// (SPAWN_COMMANDS) since the installation rail took the picker's read onto the
+// dashboard's surface -- and a review of an earlier revision found the picker's own
 // read, `config list --json`, absent here, which left the specification
 // forbidding the one read the picker depends on -- and the "never" table still
 // names the two entries that make a name-based list a hole.
@@ -1096,9 +1114,8 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		"accounts ls --json",
 		"version",
 		"doctor --json",
-		// The picker's own read: the twelfth argv, and the only one that
-		// belongs to the installations picker rather than the dashboard. It
-		// carries no --project and no --config, so it is absent from the
+		// The installation rail's read (`installation.list`), which the picker
+		// window shares. It carries no --project and no --config, so it is absent from the
 		// contract document's flag inventory below, which is about flags.
 		"config list --json",
 	}
@@ -1158,7 +1175,7 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 // that knowledge, and this test reads it back off the design's own table, so
 // the two cannot drift. Adding an argv to §5.1 without adding its command
 // here fails, and so does a command on the list that the design does not
-// allow (bar the one read the design names for the console and §5.1 has no
+// allow (bar the reads the design names for the console and §5.1 has no
 // row for yet).
 func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	const path = "docs/design/desktop-console.md"
@@ -1193,14 +1210,14 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 12 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
-	// except the one read the design names for the console and §5.1 has not
-	// grown a row for yet (V2.2.1, the graph document). A second name is a
-	// command someone decided the console spawns, and that is a design change,
-	// not a table entry.
-	namedNotAllowed := map[string]bool{"fugaro plan graph": true}
+	// except the reads the design names for the console and §5.1 has not
+	// grown a row for yet (V2.2.1, the graph document, and GV1.6, the graph
+	// joined to its runs). Another name is a command someone decided the
+	// console spawns, and that is a design change, not a table entry.
+	namedNotAllowed := map[string]bool{"fugaro plan graph": true, "fugaro plan status": true}
 	for cmdPath := range consoleReadPaths {
 		if !allowed[cmdPath] && !namedNotAllowed[cmdPath] {
-			t.Errorf("consoleReadPaths carries %q, which is neither an argv §5.1 allows nor the one read the design names for the console (%v): the read-only list is the design's, not this file's", cmdPath, namedNotAllowed)
+			t.Errorf("consoleReadPaths carries %q, which is neither an argv §5.1 allows nor a read the design names for the console (%v): the read-only list is the design's, not this file's", cmdPath, namedNotAllowed)
 		}
 	}
 }

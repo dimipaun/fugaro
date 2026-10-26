@@ -56,6 +56,12 @@ var planTaskReaders = map[string]string{
 	"internal/watch/facts.go":      "stamps the id a scan read onto the rows a frame draws",
 	"internal/watch/json.go":       "the watch --json key",
 	"internal/cli/watch_queued.go": "reads launch.json for the rows the watch scan produces, and carries the fact into the frame",
+	// The graph joined to the runs (GV1.6): the join matches a plan's task
+	// ids against the id the row already carries, and both sides are display
+	// only -- the id decides nothing, and the state it produces is a word a
+	// screen draws.
+	"internal/plan/state.go":      "joins the id the row published to a plan's task, for the states a screen draws",
+	"internal/cli/plan_status.go": "turns the read's own sanitised rows into the facts the join reads; it never opens launch.json",
 }
 
 // TestPlanTaskIsDisplayTextOnly walks every non-test Go file of the module

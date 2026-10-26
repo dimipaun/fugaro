@@ -301,8 +301,25 @@ button.console-rail-row[aria-selected='true'] {
   border-left-color: var(--accent);
 }
 
+/* The name line holds the name and, for an installation with an issue, the
+ * warning mark beside it (owner's design ruling of 2026-10-25). */
+div.console-rail-nameline {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2xs);
+  max-width: 100%;
+}
+
 span.console-rail-name {
   color: var(--text);
+}
+
+/* The warning mark is a glyph with an accessible name (design section 3.5): the
+ * glyph and the name carry the fact, and `--warn` is the second channel. It
+ * stays in sight in the collapsed rail, because it is the one mark that says an
+ * installation needs the operator. */
+span.console-rail-warning {
+  color: var(--warn);
 }
 
 span.console-rail-project {
@@ -350,6 +367,13 @@ button.console-rail-add:hover {
   color: var(--text);
 }
 
+/* The line the rail draws when it has no row; the add row below it stays. */
+p.console-rail-empty {
+  padding: var(--space-xs) var(--space-md);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
 p.console-rail-hint {
   padding: var(--space-2xs) var(--space-md) var(--space-sm);
   color: var(--text-muted);
@@ -367,6 +391,7 @@ aside.console-rail[data-collapsed='true'] span.console-rail-name,
 aside.console-rail[data-collapsed='true'] span.console-rail-project,
 aside.console-rail[data-collapsed='true'] span.console-rail-spend,
 aside.console-rail[data-collapsed='true'] p.console-rail-title,
+aside.console-rail[data-collapsed='true'] p.console-rail-empty,
 aside.console-rail[data-collapsed='true'] p.console-rail-hint {
   position: absolute;
   width: 1px;
@@ -397,6 +422,143 @@ aside.console-rail[data-collapsed='true'] button.console-rail-add {
   padding: 0 var(--space-md);
   overflow: hidden;
   white-space: nowrap;
+}
+
+/* ---- The installation issue view -----------------------------------------
+ *
+ * What the panel holds when the rail's row cannot be read (owner's design
+ * ruling of 2026-10-25): one plain sentence first, the exact command beneath
+ * it, the CLI's own text behind a disclosure, and the row's actions. No
+ * banner: the `--warn` left rule is the same mark the refusal screens carry,
+ * and the sentence carries the fact without it. */
+section.installation-issue {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  border-left: 3px solid var(--warn);
+  color: var(--text);
+}
+
+h1.installation-issue-headline {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: var(--weight-semibold);
+}
+
+p.installation-issue-sentence {
+  margin: 0;
+  font-size: var(--font-size-base);
+  line-height: var(--leading-normal);
+}
+
+code.installation-issue-command {
+  display: inline-block;
+  padding: var(--space-2xs) var(--space-xs);
+  background: var(--surface-alt);
+  border: var(--rule-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+}
+
+details.installation-issue-details {
+  max-width: 100%;
+}
+
+summary.installation-issue-summary {
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+pre.installation-issue-lines {
+  margin: var(--space-xs) 0 0;
+  padding: var(--space-xs);
+  max-width: 100%;
+  overflow-x: auto;
+  background: var(--surface-alt);
+  border: var(--rule-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+div.installation-issue-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-xs) var(--space-sm);
+}
+
+p.installation-issue-checkout-lead {
+  flex-basis: 100%;
+  margin: var(--space-xs) 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+button.installation-issue-choose,
+button.installation-issue-remove,
+button.installation-issue-reveal,
+button.installation-issue-checkout {
+  min-height: var(--row-height);
+  padding: var(--space-2xs) var(--space-sm);
+  border: var(--rule-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+}
+
+button.installation-issue-choose {
+  border-color: var(--accent);
+}
+
+button.installation-issue-checkout {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+/* ---- The onboarding view --------------------------------------------------
+ *
+ * The panel of a console with no installation at all: the picker's own words
+ * for the screen, and the one command. Nothing is wrong, so no `--warn` rule. */
+section.installation-onboarding {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  color: var(--text);
+}
+
+h1.installation-onboarding-title {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: var(--weight-semibold);
+}
+
+p.installation-onboarding-body {
+  margin: 0;
+  font-size: var(--font-size-base);
+  line-height: var(--leading-normal);
+}
+
+p.installation-onboarding-reason {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+code.installation-onboarding-command {
+  display: inline-block;
+  padding: var(--space-2xs) var(--space-xs);
+  background: var(--surface-alt);
+  border: var(--rule-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
 }
 
 /* ---- The installation line, the nav and the panel ------------------------- */
@@ -566,5 +728,22 @@ div.console-panel {
   span.console-rail-state[data-state='running'],
   span.console-rail-state[data-state='silent'] {
     color: CanvasText;
+  }
+
+  /* The warning glyph and the issue view's rule keep their boundary when the
+   * system takes the tones away: the glyph is text and the rule is a border. */
+  span.console-rail-warning {
+    color: CanvasText;
+  }
+
+  section.installation-issue,
+  code.installation-issue-command,
+  code.installation-onboarding-command,
+  pre.installation-issue-lines,
+  button.installation-issue-choose,
+  button.installation-issue-remove,
+  button.installation-issue-reveal,
+  button.installation-issue-checkout {
+    border-color: CanvasText;
   }
 }

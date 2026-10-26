@@ -193,10 +193,12 @@ rule does not allow. **A fifth child precedes these four whenever the mode is no
 
 | Region | Element and hooks | What it holds |
 |---|---|---|
-| Installation rail | `aside.console-rail` (with its own `data-collapsed`) → `div.console-rail-head` (`p.console-rail-title`, `button.console-rail-collapse`), `div.console-rail-list` → one `button.console-rail-row` per installation it draws (`span.console-rail-name`, `span.console-rail-project`, `span.console-rail-state` with `data-state`, `span.console-rail-spend`), `div.console-rail-add` → `button.console-rail-add`, `p.console-rail-hint`; the ARIA is `role="tablist"` on the list, `role="tab"` and `aria-selected` on its rows, `aria-controls`/`aria-expanded` on the collapse control | the canvas's structural addition (§4.1): the header row and its collapse control, one tab per row, **one row per installation the dashboard can read** (§4.1), the add row and the hint. The first `role=` in the renderer. **Twelve hooks on thirteen elements** — `console-rail-add` names the foot row and its button both — and a rule selects no other: the tree, the tokens and the keyboard are §4.1's. The two `data-*` hooks are Task 6.3's, added here in the PR that wrote the rules that select them (§2's licence rule): `data-collapsed` on the rail is which of the two widths it is drawn at, and `data-state` on the state span is the word it already draws, repeated as the tone's hook |
+| Installation rail | `aside.console-rail` (with its own `data-collapsed`) → `div.console-rail-head` (`p.console-rail-title`, `button.console-rail-collapse`), `div.console-rail-list` → one `button.console-rail-row` per installation it draws (`div.console-rail-nameline` → `span.console-rail-name` and, for an installation with an issue, `span.console-rail-warning` with `role="img"` and an `aria-label`; `span.console-rail-project`, `span.console-rail-state` with `data-state`, `span.console-rail-spend`), `p.console-rail-empty` (the line drawn, unhidden, when the rail has no row), `div.console-rail-add` → `button.console-rail-add`, `p.console-rail-hint`; the ARIA is `role="tablist"` on the list, `role="tab"` and `aria-selected` on its rows, `aria-controls`/`aria-expanded` on the collapse control | the canvas's structural addition (§4.1): the header row and its collapse control, one tab per row, **one row per installation the CLI listed or this console holds, readable or not** (§4.1, owner's design ruling of 2026-10-25), the add row and the hint. The first `role=` in the renderer. **Fifteen hooks on sixteen elements** — `console-rail-add` names the foot row and its button both — and a rule selects no other: the tree, the tokens and the keyboard are §4.1's. The two `data-*` hooks are Task 6.3's, added here in the PR that wrote the rules that select them (§2's licence rule): `data-collapsed` on the rail is which of the two widths it is drawn at, and `data-state` on the state span is the word it already draws, repeated as the tone's hook |
 | Installation line | `section.console-installation`, `data-installation`, `data-mode` | `data-installation="chosen"` with `p.installation-project`, `p.installation-binary`, `p.installation-version` and `data-mode`; `data-installation="none"` with `p.installation-none`; `data-installation="unreadable"` with `p.installation-unreadable`; and `p.installation-store-refusal` |
 | Navigation | `nav.console-views` → one `button.console-view` per view | `type="button"`, `data-view="live\|spend\|projects"`, `aria-current="true\|false"`, label as text |
-| Panel | `div.console-panel` | the mounted screen's root |
+| Panel | `div.console-panel` | the mounted screen's root, the installation issue view, or the onboarding view |
+| Onboarding | `section.installation-onboarding` → `h1.installation-onboarding-title`, `p.installation-onboarding-body`, `p.installation-onboarding-reason` (the CLI resolution's own sentence, only when no CLI was found), `code.installation-onboarding-command` | drawn by `drawOnboarding` into the panel when the machine has no installation at all: the picker's own words for the two onboarding screens (`ONBOARDING_COPY`) and the command the main process names (`src/main/onboarding.ts`). Nothing is read |
+| Installation issue | `section.installation-issue` → `h1.installation-issue-headline`, `p.installation-issue-sentence`, `code.installation-issue-command`, `details.installation-issue-details` (`summary.installation-issue-summary`, `pre.installation-issue-lines`), `div.installation-issue-actions` (`button.installation-issue-choose`, `button.installation-issue-remove`, `button.installation-issue-reveal`, `p.installation-issue-checkout-lead`, `button.installation-issue-checkout`) | drawn by `drawIssue` into the panel when a rail row with an issue is clicked, or at boot when no installation can be read (§4.1): the installation's name, **one plain sentence first** with the exact command, the CLI's own text behind the `details` disclosure, and the row's actions. No banner. The `data-issue` it carries is the main process's classification and no rule selects it |
 | Reduced/refused banner | `section.console-skew`, drawn by `renderVersionSkew` into the mount, **first of all** — before the rail and the installation line as well as the nav | see §2.8 |
 
 - **`VIEWS`** is `live` (label `Live`, never withheld), `spend` (label `Spend`, view
@@ -204,7 +206,8 @@ rule does not allow. **A fifth child precedes these four whenever the mode is no
   **not offered**: no button is created for it.
 - **Run detail has no button.** `currentView` may be `'run'`, reached from a `live-run`
   row; when it is, every nav button is `aria-current="false"`, "which is the truth about
-  the navigation: none of the offered views is the one on screen".
+  the navigation: none of the offered views is the one on screen". The installation issue
+  view is the same kind of view (`currentView` is `'issue'`), reached from a rail row.
 - **There is no keyboard handling in `entry.ts` at all**: no `keydown`, no roving tabindex,
   no focus management. Interaction is `click` plus one `visibilitychange` listener. Tab
   order is implicit DOM order. **This is the gap [§4.3](#43-keyboard-and-focus) has to
@@ -1240,11 +1243,11 @@ and Run detail — are reached as [§2](#2-screen-inventory) says: three from th
 detail from a run row. The rail adds no tab of its own, and the console gains no view.
 
 The rail itself is `aside.console-rail` — the one element the entry appends for it — and its
-tree is **thirteen classed elements**, each element's class a hook a rule may select. Those
-thirteen elements carry **twelve classes**: the foot row and its button share
+tree is **sixteen classed elements**, each element's class a hook a rule may select. Those
+sixteen elements carry **fifteen classes**: the foot row and its button share
 `console-rail-add` (a row and the control inside it are one region, and the class names the
-region), so a stylesheet selects twelve distinct hooks and
-[§2.1](#21-the-dashboards-chrome--srcrendererentryts) lists the same twelve. **The count is
+region), so a stylesheet selects fifteen distinct hooks and
+[§2.1](#21-the-dashboards-chrome--srcrendererentryts) lists the same fifteen. **The count is
 stated here and in §2.1 because it is what a reader checks the tree against**, and the tree
 below is the list:
 
@@ -1255,10 +1258,13 @@ aside.console-rail                        the rail — the grid's first column
 │   └─ button.console-rail-collapse       the collapse control
 ├─ div.console-rail-list  role="tablist"  the installation rows, one tab each
 │   └─ button.console-rail-row  role="tab"
-│       ├─ span.console-rail-name         the installation's name
+│       ├─ div.console-rail-nameline      the name, and the warning mark beside it
+│       │   ├─ span.console-rail-name     the installation's name
+│       │   └─ span.console-rail-warning  "⚠", role="img", only when it has an issue
 │       ├─ span.console-rail-project      its GCP project, in small text
 │       ├─ span.console-rail-state        the state glyph **and** the state word
 │       └─ span.console-rail-spend        the spend
+├─ p.console-rail-empty                   "No installations yet", only when there is no row
 ├─ div.console-rail-add                   the foot row, with a top divider above it
 │   └─ button.console-rail-add            "+ Add installation"
 └─ p.console-rail-hint                    "Switch with the shortcut keys 1 2 3"
@@ -1312,67 +1318,62 @@ aside.console-rail                        the rail — the grid's first column
   the collapse removes no fact. The add row keeps its label and its accessible name, the
   hint is hidden, and the rail's width is the **56 px** the width bullet above states — a
   second literal beside the 216 px one and not a second token.
-- **The foot row is an entrance to the flow the console already has.** "+ Add installation"
-  opens the **existing** flow — the installation picker window of §2.2, built by the main
-  process's picker module (ruling C9), which lists the installations the CLI finds and, with
-  no `fugaro` at all, sends the operator to the getting-started page. (Until the owner's
-  ruling of 2026-10-20 this said "add form"; the form is gone, and the flow it named is the
-  picker window, which is what "Add installation" still opens.) The rail adds **no inline
-  form, no second add path, no new store operation and no new file**, and it is not a second
-  way to remove or edit anything.
-- **What the rail draws, and the read the console does not have.** The rail draws **one row
-  per installation the dashboard can read**, and today that is **one row: the installation
-  the operator chose**, with its name, its project, its state and its spend. **A row carries
-  four fields and no one read answers all four**, so this document names the read behind
-  each rather than implying one. The **name and the project** are what `installation.current`
-  answers, for that installation and no other: it **takes no argument at all and names no
-  id**, so a renderer cannot ask about an installation other than the one this console is
-  running (`src/main/ipc.ts`, the fourteenth operation). **Its payload keeps one label,
-  `project`** — `ActiveInstallation` carries `id`, `project`, `binary`, `config`, `checkout`,
-  the handshake's version and `mode`, and **no display name** — so the row's name span draws
-  that label and the small-text project span draws the same one: the canvas's two-line
-  identity, drawn from the one label the store keeps. The **state word is the rail's own mark
-  and not a field of any read**: the rail knows whether it is reading this installation now —
-  which is why its one row says `running`, or `silent` when that read was refused or the feed
-  has gone quiet — while `idle`, the stored installation nothing is read from, is the word
-  for a row the read the next bullet names would draw. The **spend is the console's own
-  budget read** — `budget.show` on the dashboard's channel, whose counted and spent dollars
-  §2.4's caps panel already draws — and **no field is added to it for the rail**. The stored
-  list is the picker's own
-  read (§2.2): `INSTALLATION_OPERATIONS` is registered in `src/main/picker.ts` and each
-  channel is gated on **the picker's own document**, so a frame on the dashboard is answered
-  `SENDER_REFUSAL` and the two documents cannot reach each other's surface.
-- **A row per stored installation needs a read this design does not add.** The canvas draws
-  the rail with an installation per row; **this phase draws the rows it can read**, and the
-  read that would fill the rest is **a surface addition — a bounded, schema-checked list read
-  on the dashboard's bridge** — which is exactly what [§11](#11-what-this-document-does-not-decide)
-  withholds: this document does not change the preload or the IPC allow-list, and no task in
-  Phase 6 owns those files. **So no task draws a row for an installation the dashboard cannot
-  read**, and nothing here invents one: the spans in the tree are the shape every row has,
-  the three state words are the rail's vocabulary with `running` the active row's, and the
-  shortcut keys address the rows the rail draws — a rail of one row has one tab stop in its
-  list. **The canvas settled the shape of a row; it did not settle where a non-active row's
-  figures come from, and landing that read is a decision for the owner** (it is a second
-  installations read on a bridge C9 keeps read-only, and the ruling that authorizes it is not
-  this document's to make).
-- **The rail adds no write action, and the console stays READ ONLY.** **The rail cannot
-  choose an installation, and this section does not pretend otherwise**: the console's one
-  choose operation is the picker's (`fugaro:installations/choose`, ruling C9) on the picker's
-  own channel, and a frame on this document cannot reach it — so choosing an installation
-  stays where it is today, in the picker window the header, the degraded screen and this
-  rail's foot row all open. A row's `aria-selected` is the rail's own mark of which row is
-  the active one, and it selects nothing. Nothing on the rail adds, removes or edits an
-  installation, no renderer ever sends a path, and the only file a choose writes is the
-  installations file the picker already writes — the console design's rule 10, as C8's
-  answer amended it, is what keeps that list closed.
+- **The console never shows a picker screen** (owner's design ruling of 2026-10-25). Every
+  installation is listed in the rail, readable or not, the first readable one is open in the
+  main area, and switching is a click on the rail. "+ Add installation" opens the **existing**
+  picker window of §2.2 (`installation.open`), which is left for exactly one job: adding an
+  installation by checkout path. The console never opens that window by itself.
+- **What the rail draws.** The rail draws **one row per installation the CLI listed or this
+  console holds, readable or not**: `installation.list` on the dashboard's surface is
+  `fugaro config list --json` (`src/main/picker.ts` answers it, the same dispatcher the picker
+  window uses), joined with the console's own store. **A row carries four fields and no one
+  read answers all four**, so this document names the read behind each rather than implying
+  one. The **name and the project** are the list row's `project`: the CLI's installations
+  carry **no display name**, so the row's name span draws that label and the small-text
+  project span draws the same one. The **state word is the rail's own mark and not a field of
+  any read**: the open row says `running`, or `silent` when its read was refused or its feed
+  has gone quiet, and every other row is `idle`. The **spend is the console's own budget
+  read** — `budget.show` on the dashboard's channel, whose counted and spent dollars §2.4's
+  caps panel already draws — for the open row only, and **no field is added to it for the
+  rail**.
+- **The warning mark, and the issue view.** An installation the console cannot read — its
+  config is refused, the saved store is unreadable, the CLI is missing, or its shared config
+  is stale — carries `span.console-rail-warning` beside its name: the `⚠` glyph in `--warn`,
+  with `role="img"` and the issue's own sentence as its accessible name, so the fact is never
+  the tone alone ([§3.5](#35-never-colour-alone)). The main process classifies each row
+  (`src/main/installationstate.ts`); a stale row is still readable and still opens. Clicking a
+  row with an issue opens that issue **in the main area** (`section.installation-issue`, §2.1):
+  **one plain sentence first** — what is wrong and the exact command, `fugaro doctor --project
+  <name>` where a command fixes it — the CLI's full text behind a `details` disclosure, and the
+  actions the old Installations screen offered (use this installation when it is readable,
+  remove from this console, choose a checkout, open the checkout folder). **No banner.** When
+  no installation can be read, the console opens on the first row's issue and makes no read.
+  The remembered choice is never dropped from the saved store: when it cannot be read the
+  console opens the first readable row for this run only, and the remembered row keeps its
+  place and its mark. **Removing the open installation rebinds at once**: the open rule
+  picks again, a readable next row gets its own handshake and the window reopens on it, an
+  unreadable one opens its issue, and with no row left the main area is the onboarding.
+- **No installation at all.** The rail draws no row and `p.console-rail-empty` in their
+  place, with "+ Add installation" still below it, and the main area is the **onboarding
+  view** (`section.installation-onboarding`, §2.1): "Set up your first installation" with
+  `fugaro setup`, or "Install the Fugaro CLI first" with the install command, as the list
+  answer's `onboard` says. Nothing is read, so no Live refusal is drawn.
+- **The console stays READ ONLY.** The rail's writes are the console's own: a click on a
+  readable row with no issue switches the console to it (`installation.choose`, which writes
+  `installations.json` and reopens the window), and the issue view can remove the console's
+  record of an installation or pair it with a checkout. **No renderer names a path it made
+  up**: a checkout is accepted only from the directories the rail offers for that installation
+  (the ones the CLI listed, plus the console's own recorded checkout), with temporary and
+  tool-owned paths (and symlinks into them) refused in the main process as well as left off the
+  screen, and the folder the file manager opens is computed from the console's own record.
+  Nothing on the rail writes to the cloud or to the CLI's configuration.
 - **The keyboard** — the detail is [§4.3](#43-keyboard-and-focus): the rail's list is **a
   tablist in its own right**, `div.console-rail-list` with `role="tablist"` and one
   `role="tab"` row each; it uses a **roving `tabindex`** (the selected row is `0`, the rest
   `-1`), Arrow Up and Arrow Down move between the rows, **Home** and **End** go to the first
   and the last, and **Enter selects** — the arrow keys move focus and the key that chooses is
-  Enter, which is the pattern's manual-activation form; **what Enter selects is the row**
-  (the rail's own mark of which row is active), since the command that changes which
-  installation the console reads is the picker's and is unreachable from this document. The
+  Enter, which is the pattern's manual-activation form; **selecting a row is the click**: it
+  switches the console to that installation, or opens its issue. The
   **shortcut keys** select by position: **Command-1** to **Command-3** on macOS and
   **Control-1** to **Control-3** elsewhere address the first three rows **the rail draws**,
   which is the hint's own sentence. The collapse
@@ -1386,8 +1387,9 @@ aside.console-rail                        the rail — the grid's first column
    `silent` installation — the rail's own attention state — raises no separate badge when it
    is not the selected row, and neither would a fourth word if the rail ever gains one (a
    `halted` installation, say): a badge would be a second mark for a fact already written in
-   the row, and a count of them would be a number nobody asked the console for. A later
-   design that wants one adds it as a mark on the row rather than as a second word.
+   the row, and a count of them would be a number nobody asked the console for. The warning
+   mark (owner's ruling of 2026-10-25) is that shape: a mark on the row beside its name, not a
+   badge and not a count.
 2. **The shortcut keys and the platform.** They are Command + digit on macOS and Control +
    digit elsewhere, as the bullet above states. macOS reserves neither form inside an
    application window, and **the console has no other keyboard shortcut to collide with**:
