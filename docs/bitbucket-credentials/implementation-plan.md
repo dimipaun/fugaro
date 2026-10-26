@@ -24,6 +24,8 @@ written to the owner's answers of 2026-10-26:
   chosen.
 - **O2** holds T2.2.
 - **O6** is the read mint's custody, recorded as a residual risk.
+- **O7** asks whether artifact and review runs get a write token. The plan is written to (c),
+  accept and document, until the owner rules.
 - **O3** is the owner's per-repository flip of T3.6.
 - **O4** makes Check 145 a precondition of T2.3 and T3.1.
 
@@ -81,7 +83,7 @@ root for the service-minted paths, which also keeps them on Bitbucket Cloud.
 | G6 | The console child gets no new environment key, and its CSP stays `connect-src 'none'` | T1.2 |
 | G7 | The run consumer's scopes are the minimum set from T3.5. The service can enforce this only if the token response lists scopes (U11); otherwise Check 147 is the only enforcement | T3.5, Check 147 |
 | G8 | Without the service, every Bitbucket path and the GitHub sweep behave exactly as they do on `main` | T2.5 (`TestSweepGitHubUnchangedWithService`, `TestSweepBitbucketUnchangedWithoutService`), T3.2 (`TestRunPathUnchangedWithoutService`) |
-| G9 | With the service on, only repositories whose `bitbucket_via_service` switch is on use the service path or lose their mounted token. Every other Bitbucket repository is unchanged | T3.0, T3.2, T3.6 |
+| G9 | With the service on, only repositories whose `bitbucket_via_service` switch is on (set by Terraform on the job) use the service path or lose their mounted token. Every other Bitbucket repository is unchanged. The switch is a code path; the allow-list entry is the exposure | T3.0, T3.2, T3.6 |
 | G10 | A service-minted token is never sent to an overridden API root (`FUGARO_BITBUCKET_API_URL`) | T2.5, T3.2 (`TestServicePathRefusesAPIRootOverride`) |
 
 **Review focus: attack the new boundaries.**
@@ -140,10 +142,13 @@ root for the service-minted paths, which also keeps them on Bitbucket Cloud.
     `coordinator` is a device user.
   - The read uses ADC through `internal/cli/cloud.go` `newBudgetClient` and
     `coordinator.Store.Read`.
-  - When no node is stored, or the local config says the coordinator is off, the same command
-    prints the runs half with `"stored": false`. That is the runs-only fallback, so a console needs
-    only one argv.
-  - A node left over after the coordinator was turned off is therefore never shown as current.
+  - When no node is stored, the same command prints the runs half with `"stored": false`. That is
+    the runs-only fallback, so a console needs only one argv.
+  - The fallback does not consult the local config. `localcfg.Config.Shared` drops `Terraform`,
+    which is where the coordinator setting lives, so on a teammate's machine it would always read
+    as off.
+  - A node left over after the coordinator was turned off is printed as the last stored view, and
+    the console labels it that way (open item in the PR).
   - The stored view carries no time by design (`internal/coordinator/sweep.go`), so the output does
     not claim an age it cannot know.
   - It reads no App ID, no key and no Bitbucket credential.
@@ -162,10 +167,10 @@ root for the service-minted paths, which also keeps them on Bitbucket Cloud.
   - `TestCoordinatorStatusFromStoreNeedsNoKey`;
   - `TestCoordinatorStatusFromStoreWithService`;
   - `TestCoordinatorStatusFromStoreFallsBackToRuns`;
-  - `TestCoordinatorStatusFromStoreIgnoresNodeWhenOff`;
+  - `TestCoordinatorStatusFromStoreWithSharedConfigOnly`;
   - `TestReadRepoView`;
   - `TestCliReferenceIsCurrent`.
-- **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'CoordinatorStatusFromStore|DocsWebsiteCliref' -count=1 && go test ./internal/coordinator -run ReadRepoView -count=1 && go test ./internal/clidoc -count=1`.
+- **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'CoordinatorStatusFromStore' -count=1 && go test ./internal/coordinator -run ReadRepoView -count=1 && go test ./internal/clidoc -count=1`.
 - **Depends on:** none.
 - **Red step:** implement `--from-store` in a scratch tree by delegating to `coordinatorReader`.
   `TestCoordinatorStatusFromStoreWithService` must then fail on the `coordinatorAppCredential`
@@ -290,7 +295,12 @@ unchanged, and `textContent` only.
   - `TestReadMintNeverForwardsRefreshToken`;
   - `TestRunIdentityRefusedOnReadRoute`;
   - `TestReadMintTakesNoTokenURLFromCaller`, which pins that the token endpoint is the service's
-    own constant.
+    own constant;
+  - `TestReadMintRefusedWhenStopped`: the global kill switch (`Kills.Stop`) also stops the
+    coordinator class, which has no slug;
+  - `TestCoordinatorClassEmptyEmailAdmitsNobody`, for the service on with the coordinator off;
+  - `TestNewRoutesAuditConsumerKind`: `routeAct` and the route list name the new paths, so a
+    refusal before the branch audits the consumer kind, never the App key's name.
 - **Command:** `go test ./internal/credsvc -run 'CoordinatorCaller|ReadMint|RunIdentityRefusedOnRead' -count=1 && GOFLAGS=-p=2 go test ./internal/cli -run CredentialsServe -count=1`.
 - **Depends on:** T2.1, T2.2 and T2.8 (Check 145 passed, O4).
 - **Red step:** run `TestCoordinatorCallerOnlyOnReadRoute` against an admission that returns a
@@ -315,7 +325,10 @@ deploy it (F23, F24).**
     `variables.tf`;
   - `deploy/terraform/gcp/roots/installation/variables.tf` and `main.tf`;
   - `deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl`;
-  - `internal/infra/firebase.go` (`Coordinator`, `recordedGitHubAppID`);
+  - `internal/infra/firebase.go` (`Coordinator`) and `internal/infra/projectjobs.go`
+    (`recordedGitHubAppID`);
+  - `internal/cli/init_firebase.go` (`coordinatorJob`, which today forces `DeployJob = false`
+    without a GitHub App ID) and its test;
   - `internal/infra/tfvars.go` and `internal/infra/testdata/*.tfvars.json`, where the
     `coordinator` and `credentials_service` objects are serialised;
   - `internal/infra/tf/cover.go` and `internal/infra/tf/cover_golden_test.go`;
@@ -473,33 +486,44 @@ deploy it (F23, F24).**
 
 ### S3: the service mints Bitbucket run tokens (D360, D363, T1). T3.1, T3.2, T3.3 and T3.6 are held on O1
 
-**T3.0 The per-repository switch (F25, G9).**
+**T3.0 The per-repository switch, rendered into the job (F25, G9).**
 
-- **What it adds:** `bitbucket_via_service` on a repository, off by default.
-  - It lives in the **published shared config** (`internal/localcfg` `MergeShared`), so every
-    launcher's config carries the same value. T3.6's per-repository flip,
-    `bitbucket_token_service_held`, lives there too.
-  - A teammate's launch therefore never lacks the switch for a repository whose token was dropped.
+- **What it adds:** `bitbucket_via_service`, a per-repository field in the **operator's local
+  config**, off by default.
+  - It reaches the run as a **job-level environment variable that Terraform writes**:
+    `FUGARO_BITBUCKET_VIA_SERVICE=1` on that repository's workflow jobs. Nothing is decided at
+    launch.
+  - Every launcher's run therefore sees the same value, whatever their own local config holds.
+  - It is applied with `fugaro update --repo .` in the repository's checkout.
+- **Why it is not in the shared config (corrected in review round 3):**
+  - A teammate's own local entry wins over the published one (`localcfg.MergeShared`), so the
+    switch would not reach every launcher.
+  - The shared config is writable by any launcher with `objectAdmin` on it. That is no place for
+    an operator's gate (`internal/localcfg/shared.go`).
 - **What it is not:** it selects the code path. It is **not** the security boundary. An agent in an
   allow-listed repository can call the run mint itself, whatever the switch says (F29). **The
   allow-list entry is the exposure.**
-- **What the launch does:** `credentialsServiceLaunchEnv` sets `FUGARO_BITBUCKET_VIA_SERVICE=1`
-  only for a Bitbucket repository whose switch is on, and only when the service URL is set.
+- **What a launcher's override does:** if a launcher overrides the variable off, that launcher's
+  own run fails once T3.6 has dropped the token. That is a denial of service to themselves only.
 - **Files:**
-  - `internal/localcfg/localcfg.go` and its test;
-  - `internal/cli/run.go` (`credentialsServiceLaunchEnv`);
-  - `internal/cli/run_bitbucket_service_test.go` (new).
+  - `internal/localcfg/localcfg.go` (the `Repo` field) and its test;
+  - `internal/infra/spec.go` and `internal/infra/spec_test.go`;
+  - `deploy/terraform/gcp/modules/workflow/job.tf` and `variables.tf`;
+  - `deploy/terraform/gcp/modules/repo/workflows.tf` and `variables.tf`;
+  - `deploy/terraform/gcp/roots/repo/variables.tf` and `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl`;
+  - the regenerated `internal/infra/tf/testdata/golden/*`.
 - **Tests:**
-  - `TestLaunchEnvBitbucketSwitchOff`;
-  - `TestLaunchEnvBitbucketSwitchOn`;
-  - `TestLaunchEnvGitHubUnaffected`;
-  - `TestSharedConfigCarriesBitbucketSwitch`.
-- **Command:** `go test ./internal/localcfg -count=1 -run 'BitbucketViaService|SharedConfigCarriesBitbucket' && GOFLAGS=-p=2 go test ./internal/cli -run LaunchEnv -count=1`.
+  - `TestRepoSpecBitbucketViaService`;
+  - tftest runs: the switch off (no variable), the switch on (the variable on that repository's
+    jobs only), and a GitHub repository (never).
+- **Command:** `go test ./internal/localcfg ./internal/infra -run 'BitbucketViaService' -count=1`,
+  then in the `repo` root `terraform init -backend=false -lockfile=readonly`, `validate` and
+  `test`, then `scripts/gen-golden-plans.sh`, `tflint` and `sh deploy/terraform/scan.sh`.
 - **Depends on:** none.
-- **Red step:** `TestLaunchEnvBitbucketSwitchOff` fails against a launch that sets the variable for
-  every Bitbucket job.
+- **Red step:** the "GitHub repository" tftest run fails against a module that sets the variable
+  on every job.
 - **Reviewer:** **opus + mandatory independent review**. **Owner-run:** no.
-- **Commit:** `cli: a per-repository switch for Bitbucket through the credentials service`.
+- **Commit:** `terraform: a per-repository switch for Bitbucket through the credentials service`.
 
 **T3.1 The run mint, with an allow-list and an audit line.**
 
@@ -526,6 +550,7 @@ deploy it (F23, F24).**
   - `TestRunMintSharedJobRefused`;
   - `TestRunMintNeverForwardsRefreshToken`;
   - `TestRunMintTakesNoTokenURLFromCaller`;
+  - `TestRunMintRefusedWhenStopped` (global and per repository);
   - `TestCoordinatorRefusedOnRunMint`.
 - **Command:** `go test ./internal/credsvc -run 'RunMint|CoordinatorRefusedOnRunMint' -count=1`.
 - **Depends on:** T2.3 (same files), T2.8 (Check 145) and O1.
@@ -565,14 +590,15 @@ deploy it (F23, F24).**
   - `TestRefreshGitAuthBitbucketService`;
   - `TestRunnerNeverInstallsGitHubSourceOnBitbucket`;
   - `TestBitbucketRunTokenRedacted`.
-- **Command:** `go test ./internal/gitprov/... -run 'BitbucketRunToken|NoFallback|RunPathUnchanged|APIRootOverride' -count=1 && go test -timeout 40m ./internal/runner -run RefreshGitAuthBitbucketService -count=1`.
+- **Command:** `go test ./internal/gitprov/... -run 'BitbucketRunToken|NoFallback|RunPathUnchanged|APIRootOverride' -count=1 && go test -timeout 40m ./internal/runner -run 'RefreshGitAuthBitbucketService|NeverInstallsGitHubSource|BitbucketRunTokenRedacted' -count=1`.
 - **Depends on:** T3.1, T2.5 (same `service.go`), T3.0 and O1.
 - **Red step:** run `TestBitbucketNoFallbackToMountedToken` against an opener that reads
   `FUGARO_BITBUCKET_TOKEN` first; it must fail.
 - **Reviewer:** **opus + mandatory independent review**. **Owner-run:** no.
 - **Release note:** `### For operators`, per repository:
-  - Add the repository to the allow-list (`fugaro creds set bitbucket-run-consumer`), set
-    `bitbucket_via_service` in the project config, and publish it with `fugaro update`, which republishes the shared config (`internal/cli/init.go`, `publishSharedWarn`).
+  - Add the repository to the allow-list (`fugaro creds set bitbucket-run-consumer`).
+  - Then set `bitbucket_via_service` in the operator's local config and run `fugaro update --repo .`
+    in the checkout.
   - The switch without an allow-list entry halts the repository's runs.
   - An allow-list entry without the switch still exposes the token (T3.0).
 - **Commit:** `runner: Bitbucket run tokens from the credentials service`.
@@ -594,7 +620,7 @@ deploy it (F23, F24).**
     (new; not `bitbucket_test.go`, which T2.1 writes);
   - `internal/followup/trust.go`, `internal/followup/select.go` and their existing tests;
   - `internal/runner/reviewmode.go` and `internal/runner/reviewmode_test.go`.
-- **Command:** `go test ./internal/followup ./internal/gitprov/bitbucket -run 'Self|Steer|PRAuthor' -count=1 && go test -timeout 40m ./internal/runner -run ReviewModeSameRepo -count=1`.
+- **Command:** `go test ./internal/followup ./internal/gitprov/bitbucket -run 'Self|Steer|PRAuthor|NoAccountScope' -count=1 && go test -timeout 40m ./internal/runner -run ReviewModeSameRepo -count=1`.
 - **Depends on:** O1.
 - **Red step:** `TestAgentCommentAsPersonNeverSteers` fails against a `Self` that counts marked
   comments only.
@@ -611,6 +637,8 @@ deploy it (F23, F24).**
     (F20). They can set off any repository's Pipelines with its secured variables and deploy
     identity, and push to any protected branch the person is exempt from (F26).
   - The allow-list decides who receives a token, not what the token reaches.
+  - Artifact and review runs in an allow-listed repository also receive a write token, unless O7
+    rules otherwise (F33).
   - Advice: keep the owner out of required approvers, merge checks and branch-restriction
     exemptions, and out of deployment environments' permitted users.
 - **Sentences to replace:** today's SECURITY.md sentences that S3 makes false. These are §"Narrow
@@ -665,7 +693,7 @@ deploy it (F23, F24).**
   - `check147_test.sh`;
   - `TestDocsBitbucketRunbook*`, extended with the scope sets.
 - **Command:** `go test ./internal/credsvc -run WiderScopes -count=1 && bash scripts/live-checks/check147_test.sh && GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1`.
-- **Depends on:** T3.1 (same `bitbucket.go`).
+- **Depends on:** T3.1 (same `bitbucket.go`) and T2.6 (same runbook).
 - **Red step:** `TestRunMintRefusesWiderScopes` fails against a mint that ignores scopes.
 - **Reviewer:** **opus + mandatory independent review**. **Owner-run:** no.
 - **Commit:** `credsvc: the Bitbucket run token's scopes are the minimum`.
@@ -673,9 +701,12 @@ deploy it (F23, F24).**
 **T3.6 The per-repository drop of the job's own `bitbucket-token` (F22, O3). HELD on O1.**
 
 - **What it builds:** a repository's `bitbucket_via_service` switch becomes a per-repository module
-  input. When that input is on **and** the owner's flip (`bitbucket_token_service_held`, in the
-  published config) is set, the repository's workflow job loses its `bitbucket-token` mount and
-  accessor. The flip is applied with `fugaro update --repo <owner/name>`.
+  input. When that input is on **and** the owner's flip (`bitbucket_token_service_held`) is set, the repository's workflow job loses its `bitbucket-token` mount and
+  accessor.
+  - The flip lives in the operator's local config, never in the shared config, for T3.0's reasons.
+  - It is applied with `fugaro update --repo .` in the repository's checkout.
+  - Before the flip, the repository's image must carry a runner that understands
+    `FUGARO_BITBUCKET_VIA_SERVICE` (see Release actions).
 - **What stays the same:**
   - The repository's build account keeps its grant (F8).
   - `config.ServiceHeldSecretNames` is not touched, as the rules file requires.
@@ -693,8 +724,8 @@ deploy it (F23, F24).**
   - the regenerated `internal/infra/tf/testdata/golden/*`.
 - **Tests:** tftest runs for: the switch off; the switch on without the flip; the switch on with the
   flip, where the build grant survives. Also the `internal/infra` spec tests.
-- **Command:** as in T2.4, in the `repo` root.
-- **Depends on:** T3.0, T3.1 and O1.
+- **Command:** as in T2.4, in the `repo` root, plus `go test ./deploy/terraform -run ServiceHeld -count=1`.
+- **Depends on:** T3.0 (same module files), T3.1, T2.4 (same golden plans and `cover.go`) and O1.
 - **Red step:** the "build grant survives" run fails against a drop that removes it.
 - **Reviewer:** **opus + mandatory independent review**. **Owner-run:** the flip.
 - **Commit:** `terraform: the per-repository, owner-flipped drop of the job's bitbucket-token`.
@@ -729,7 +760,8 @@ deploy it (F23, F24).**
 - T2.3 and T2.8 → T3.1
 - T3.1, T2.5 and T3.0 → T3.2
 - T3.1 → T3.5
-- T3.0 and T3.1 → T3.6
+- T3.0, T3.1 and T2.4 → T3.6
+- T2.6 → T3.5
 - T3.2, T3.5, T2.6 and T2.11 → T3.4
 - T3.2 and T3.5 → T3.7
 - T2.6, T2.4 and T2.5 → T3.8
@@ -761,7 +793,8 @@ the smallest useful slice, and it needs no credential.
 - T2.6 → T3.5 share the runbook, and T2.6 → T3.4 share `docs/git-providers.md`.
 - T2.11 → T3.4 share `SECURITY.md`, the generated security page and their pin file.
 - T1.1 → T2.2 share the generated `website/content/cli-reference.md`.
-- T2.4 → T3.6 both regenerate the golden plans.
+- T3.0 → T2.4 → T3.6 all regenerate the golden plans. T3.0 is at L0 and T2.4 at L3, so the
+  levels keep them apart. T2.4 → T3.6 is also an edge.
 - O4 requires Check 145 before any mint.
 
 **Shared files:** no level has two writers of one file. Re-check this table whenever a task's
@@ -773,7 +806,7 @@ Files line changes. Files with a single writer are listed only when they are sec
 | `internal/credsvc/bitbucket.go`, `bitbucket_test.go` | T2.3 (L2), T3.1 (L3), T3.5 (L4) |
 | `internal/credsvc/server.go`, `audit.go`, `audit_test.go` | T2.3 (L2), T3.1 (L3) |
 | `internal/credsvc/auth.go`, `wire.go` | T2.3 (L2) |
-| `internal/credsvc/bundle.go`, `schemas/creds-bundle.schema.json`, `internal/cli/creds.go` | T2.2 (L0) |
+| `internal/credsvc/bundle.go`, `schemas/creds-bundle.schema.json`, `internal/cli/creds.go` | T2.2 (L1) |
 | `internal/gitprov/bitbucket/bitbucket.go` | T2.1 (L0) |
 | `internal/gitprov/bitbucket/service.go`, `service_test.go` | T2.5 (L3), T3.2 (L4) |
 | `internal/gitprov/bitbucket/bitbucket_test.go` | T2.1 (L0) |
@@ -782,13 +815,16 @@ Files line changes. Files with a single writer are listed only when they are sec
 | `internal/cli/credentials_serve.go` | T2.3 (L2) |
 | `internal/gitprov/gitprov.go` | T3.2 (L4) |
 | `internal/runner/runner.go`, `git_service_internal_test.go`, `internal/gitprov/providers/providers.go` | T3.2 (L4) |
-| `internal/cli/run.go`, `internal/localcfg/localcfg.go` | T3.0 (L0) |
+| `internal/localcfg/localcfg.go` | T3.0 (L0) |
+| `internal/cli/init_firebase.go`, `internal/infra/projectjobs.go` | T2.4 (L3) |
 | `docs/credentials-service/runbook.md` | T2.6 (L2), T3.5 (L4) |
 | `docs/git-providers.md` | T2.6 (L2), T3.4 (L5) |
 | `docs/gcp-live-checklist.md` | T0.2 (L0) |
 | `deploy/terraform/gcp/modules/installation/*`, `roots/installation/*`, `internal/infra/firebase.go`, `internal/infra/tfvars.go`, `internal/infra/testdata/*.tfvars.json` | T2.4 (L3) |
-| `deploy/terraform/gcp/modules/workflow/*`, `modules/repo/*`, `roots/repo/*`, `internal/infra/spec.go`, `readiness.go`, `deploy/terraform/terraform_test.go` | T3.6 (L4) |
-| `internal/infra/tf/cover.go`, `internal/infra/tf/testdata/golden/*` | T2.4 (L3), T3.6 (L4) |
+| `deploy/terraform/gcp/modules/workflow/*`, `modules/repo/*`, `roots/repo/*`, `internal/infra/spec.go`, `spec_test.go` | T3.0 (L0), T3.6 (L4) |
+| `internal/infra/readiness.go`, `deploy/terraform/terraform_test.go` | T3.6 (L4) |
+| `internal/infra/tf/testdata/golden/*` | T3.0 (L0), T2.4 (L3), T3.6 (L4) |
+| `internal/infra/tf/cover.go` | T2.4 (L3), T3.6 (L4) |
 | `SECURITY.md`, `website/content/security.md`, `internal/cli/docs_bitbucket_security_test.go` | T2.11 (L4), T3.4 (L5) |
 | `internal/cli/docs_checks_145_149_test.go` (only if needed) | T0.2 (L0) |
 | `console/**`, `console/docs/json-contract.md`, `docs/design/desktop-console.md` | T1.2 (L1) |
@@ -810,10 +846,17 @@ Checks 150–154 are reserved and unused.
 These go in the `### For operators` section of the release notes, in the PR that ships each part.
 
 - **T2.4**, per installation: `fugaro update`.
-- **T2.2, T2.6 and T3.1**, per installation: create the two consumers as the installing person,
-  then `fugaro creds set` both, with the allow-list.
-- **T3.0 and T3.2**, per repository: add the allow-list entry, set `bitbucket_via_service`, then
-  run `fugaro update`, which republishes the shared config.
-- **T3.6**, per repository and only when the owner decides: set `bitbucket_token_service_held`,
-  then run `fugaro update --repo <owner/name>`. That republishes the shared config and applies the
-  repository root.
+- **T2.2, T2.6 and T3.1**, per installation:
+  - **First** run `fugaro update`, so the deployed credentials service is a version that knows
+    the new bundle kinds. The bundle loader refuses the whole bundle on an unknown key
+    (`internal/credsvc/bundle.go`, `ErrBundleUnknownKey`). Writing a consumer into a bundle that
+    an older service still reads halts every model call and every GitHub mint.
+  - **Then** create the two consumers as the installing person, and run `fugaro creds set` for
+    both, with the allow-list.
+- **T3.0 and T3.2**, per repository:
+  - First rebuild the repository's image, so that its runner knows the service path.
+  - Then add the allow-list entry, set `bitbucket_via_service` in the operator's local config,
+    and run `fugaro update --repo .` in the checkout.
+- **T3.6**, per repository and only when the owner decides: confirm that the repository's image
+  carries T3.2's runner, then set `bitbucket_token_service_held`, then run `fugaro update --repo .`
+  in the checkout.

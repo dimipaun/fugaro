@@ -6,7 +6,8 @@ Bitbucket's own documentation as read on 2026-10-26. Where it disagrees with [sp
 this document wins.
 
 - §1–§4 are the findings as first written, before the answers. F19–F22 were added when the answers
-  were followed through, F23–F29 in review round 1, and F30–F32 in review round 2.
+  were followed through, F23–F29 in review round 1, F30–F32 in review round 2, and
+  F33–F34 in review round 3.
 - §5 holds the decisions with the owner's answers.
 - §6 follows the answers through.
 
@@ -244,7 +245,7 @@ the agent could write as that person.** This follows from D363 and D367 together
   comment by the token's own user, read with `GET /user`, as Fugaro's (`gitprov.Comment.Self`).
   `internal/followup/trust.go` (`Trust.Allows`, `isSelf`) never lets a `Self` comment steer a
   follow-up, and `internal/followup/select.go` drops it as `omitSelf`.
-- **First consequence.** A `client_credentials` token acts as the consumer's owner, which D367
+- **First consequence** (only with the `account` scope; F32). A `client_credentials` token acts as the consumer's owner, which D367
   makes the installing person. Every comment that person writes by hand on a Bitbucket pull request
   becomes `Self`. **The installing person can then never steer a follow-up.** Every pull request
   Fugaro opens is also authored by that person (`Trust.PRAuthorID`).
@@ -313,8 +314,9 @@ nothing.**
 
 - **The code.** `modules/installation/variables.tf`'s `coordinator` validation requires
   `github_app_id != ""` for `deploy_job`. The `coordinator_app_key` precondition requires the App
-  key's container. `internal/infra/firebase.go` reads `recordedGitHubAppID`. The job always mounts
-  the App key.
+  key's container. `internal/infra/firebase.go` `Coordinator` calls `recordedGitHubAppID`
+  (`internal/infra/projectjobs.go`). `internal/cli/init_firebase.go` `coordinatorJob` sets
+  `DeployJob` to false when there is no GitHub App ID. The job always mounts the App key.
 - **Consequence.** The spec says "their own GitHub **or** Bitbucket". Task T2.4 relaxes the GitHub
   requirements when the installation has no GitHub repository.
 
@@ -327,12 +329,17 @@ nothing.**
   only some repositories allow-listed, halts its other Bitbucket runs. T3.6's drop
   (`modules/workflow/sa.tf`, installation-wide by `var.credentials_service`) would strip their
   token too.
-- **Resolution.** A **per-repository switch**, `bitbucket_via_service`, default off (task T3.0).
-  It lives in the published shared config (`localcfg.MergeShared`), so every launcher carries the
-  same value. The launch sets `FUGARO_BITBUCKET_VIA_SERVICE=1` only for repositories with the
-  switch on. The Terraform drop follows the same switch.
-- **Why an override does not matter.** A launcher who overrides the switch off gets the mounted
-  token, which that launcher's run already holds. One who overrides it on, for a repository that is
+- **Resolution (corrected in review round 3).** A **per-repository switch**,
+  `bitbucket_via_service`, default off (task T3.0).
+  - It lives in the operator's local config, and Terraform writes it onto that repository's jobs
+    as `FUGARO_BITBUCKET_VIA_SERVICE=1`. Every launcher's run therefore sees the same value.
+  - An earlier draft put it in the published shared config. That was wrong for two reasons: a
+    teammate's own local entry wins over it (`localcfg.MergeShared`), and any launcher can write
+    the shared config.
+  - The Terraform drop follows the same switch.
+- **Why an override does not matter.** Before T3.6's drop, a launcher who overrides the switch
+  off gets the mounted token, which that launcher's run already holds. After the drop, the
+  override only fails that launcher's own run. One who overrides it on, for a repository that is
   not allow-listed, is refused by the service. Global constraint G9 pins this.
 - **What the switch is not (corrected in review round 2).** The switch selects a code path. It is
   not the security boundary. An agent in an allow-listed repository can call the run mint itself
@@ -419,12 +426,40 @@ nothing.**
   - T2.5 keeps Bitbucket tokens out of `coordinatorTokens`
     (`TestSweepNeverRevokesBitbucketTokenAtGitHub`).
 
-**F32, Gap (security). Dropping the `account` scope widens follow-up trust.**
+**F32, Gap (security). The `account` scope decides which identity behaviour a run gets (corrected
+in review round 3).**
 
-- **The code.** Without the `account` scope, `selfUser` cannot read the token's user, so every
-  comment is `SelfKnown=false`. `internal/followup/select.go` then honours run markers from any
-  author (`MarkersFromAnyone`). `Trust.PRAuthorID` still drops the person's own comments.
-- **Status.** Scope minimisation (T3.5) and identity (T3.3) are decided together, under O1.
+- **Today.** A repository access token gets HTTP 403 on `GET /user`
+  (`internal/gitprov/bitbucket/comments.go`). So on `main` every Bitbucket comment is already
+  `SelfKnown=false`, and `internal/followup/select.go` already honours run markers from any author
+  (`MarkersFromAnyone`).
+- **Without `account`.** A consumer token without the `account` scope keeps exactly today's
+  behaviour.
+- **With `account`.** A consumer token with it makes the installing person `Self` (F19).
+- **In both cases.** `Trust.PRAuthorID` drops the person's own comments, because Fugaro's pull
+  requests are now authored by the person.
+- **Status.** Scope minimisation (T3.5) and identity (T3.3) are decided together, under O1. F19's
+  "first consequence" applies only with `account`.
+
+### Findings added in review round 3 (2026-10-26)
+
+**F33, Gap (security). Runs that never push still receive a write token.**
+
+- **The code.** `internal/runner/runner.go` `refreshGitAuth` notes that an artifact run's
+  deliverable goes to the runs bucket and is never pushed. Review runs do not push either.
+- **The gap.** The run mint, as planned, does not tell run kinds apart. So in an allow-listed
+  repository, those runs also receive a workspace-wide **write** token.
+- **Options.** Refuse the mint for kinds that never push, or mint for them from the read consumer.
+  Either needs the run's kind at the service, and whether the run identity carries it is **U16**.
+- **Status.** Open item **O7**. T3.4 states it either way.
+
+**F34, Gap. The operator's kill switch must cover the new mints.**
+
+- **The code.** `internal/credsvc/server.go` `ServeHTTP` gates every route on `Kills.Stop` (global
+  and per repository). It calls this "the kill switch they already have".
+- **Consequence.** The read mint has no slug, so it is stopped by the global switch only. Both
+  mints are pinned by T2.3 and T3.1 (`TestReadMintRefusedWhenStopped`,
+  `TestRunMintRefusedWhenStopped`).
 
 ## 5. Decisions, with the owner's answers
 
@@ -482,7 +517,7 @@ the bundle with `fugaro creds set`. An installation that has not opted in sees n
 | Read consumer (key and secret) | The service, from the bundle. The owner writes it | Read access to every repository and pull request the installing person can see (U3: maybe beyond the workspace) | A workspace admin deletes the consumer or regenerates its secret, then writes it again with `fugaro creds set` |
 | Write consumer (key and secret) | The service, from the bundle | **Write access to everything the installing person can write**, within the consumer's scopes, including approving and merging (F20) | The same |
 | Read token (1–2 hours) | The coordinator's account through the service's new caller class, audited. Anyone who may override the coordinator job's env could redirect it, unless the API root is pinned (T2.5) | The same as the read consumer | It expires. Whether a single token can be revoked is U2. Stop: remove the read consumer from the bundle (T2.3, T2.6) |
-| Run token (1–2 hours per mint, re-minted for the whole run) | The job of an **allow-listed** repository with a **live run identity** and the per-repository switch on, audited per mint. **Its agent and its launcher can obtain it** (F7, F27) | **The whole workspace, as the installing person**, including pushes that trigger other repositories' Pipelines and pushes to protected branches the person is exempt from (F26) | It expires. U2. Whether rotating the consumer kills tokens already minted is U13, and Check 148 settles it |
+| Run token (1–2 hours per mint, re-minted for the whole run) | The job of an **allow-listed** repository with a **live run identity** , audited per mint (the per-repository switch selects the code path only, F25). **Its agent and its launcher can obtain it** (F7, F27) | **The whole workspace, as the installing person**, including pushes that trigger other repositories' Pipelines and pushes to protected branches the person is exempt from (F26) | It expires. U2. Whether rotating the consumer kills tokens already minted is U13, and Check 148 settles it |
 
 **What a hostile agent can do, precisely.** Take an agent in an allow-listed repository's run.
 For **the life of the run, plus up to 1–2 hours after the last mint** (F29), and as the installing
@@ -546,6 +581,10 @@ can reach.
 - **O5, recorded.** D362's answer was relayed to this document as "recommended", but it is
   option (b) and not this document's recommendation. It is recorded as given, marked as not the
   recommendation.
+- **O7, a decision (F33).** Should artifact and review runs get no Bitbucket write token? The
+  options: (a) refuse those kinds at the run mint; (b) mint for them from the read consumer;
+  (c) accept it and document it. This depends on U16, and the plan is written to (c) until the
+  owner rules.
 - **O6, a residual risk to acknowledge (F30).** Whoever may run the coordinator job with overrides
   can make it read any repository the installing person can see, and publish what it finds to
   every launcher. The options:
@@ -601,4 +640,6 @@ the first slice that mints (S2's T2.3 and S3's T3.1).
   carries admin reach beyond its scopes. Check 145.
 - **U15.** Whether the `client_credentials` grant needs the consumer marked "private". This is a
   reviewer's recollection, not a page. Check 145; the runbook (T2.6) says so once it is known.
+- **U16.** Whether the run identity (the Firebase token for `r~<slug>~<run>`) or anything else the
+  service can verify carries the run's kind (artifact, review, follow-up). This bears on O7.
 
