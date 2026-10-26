@@ -60,7 +60,7 @@ const TMP = '/private/var/folders/x1/T'
 /** The refused config's own line, spelled the way `internal/cli/config_list.go`
  * prints it: the path first, then ` could not be read: `, then the CLI's reason. */
 const CONFIG_LINE =
-  '~/.config/fugaro/projects/aurora.yaml could not be read: base_images.java-services: the java-services base was removed in 0.7.0'
+  '~/.config/fugaro/projects/aurora.yaml could not be read: field base_imagez not found in type config.Project'
 
 /** The staleness line, likewise: the CLI's own sentence with its own windows. */
 const STALE_LINE = "orbit's shared config was last checked 83h2m41s ago, over the 24h0m0s the reader refreshes it within"
@@ -194,7 +194,7 @@ describe('the rows the rail draws', () => {
     expect(aurora.state.readable).toBe(false)
     expect(aurora.state.command).toBe(`${DOCTOR_COMMAND} --project aurora`)
     expect(aurora.state.sentence).toContain('edit ~/.config/fugaro/projects/aurora.yaml:')
-    expect(aurora.state.sentence).toContain('base_images.java-services')
+    expect(aurora.state.sentence).toContain('field base_imagez not found')
     expect(aurora.state.details).toEqual([CONFIG_LINE])
     // ...and the CLI read `orbit` and returned its fields: no issue at all.
     expect(rowOf(reply, 'orbit').state.issue).toBe('none')
