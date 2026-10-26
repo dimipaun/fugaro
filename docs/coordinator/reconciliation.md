@@ -220,7 +220,7 @@ coordinator stores, the console sees it only if a `fugaro` command can read it. 
 
 **#8 — There is no MCP server, no MCP dependency, and one loopback HTTP server in the whole repository. — Gap.**
 `internal/gateway/gateway.go:1-7` is the only HTTP server: *"a loopback proxy between
-Claude Code and the model API"*, started at `:259 Start`, bound at `:269` to
+Claude Code and the model API"*, started at `:269 Start`, bound at `:279` to
 `127.0.0.1:0`. Its routes are `HEAD /api/hello`, `POST /v1/messages`,
 `POST /v1/messages/count_tokens`. Nothing else in the tree serves a request.
 The spec's own claims about the protocol also need care: **MCP authorization is
