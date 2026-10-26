@@ -750,9 +750,7 @@ opens `~/.config/fugaro` (§3.4 rule 7).
 
 **Who reads it.** Since the owner's design ruling of 2026-10-25 it is the
 installation rail's read: the dashboard's `installation.list` operation (one of
-the surface's twenty-two, `CONSOLE_OPERATIONS` in `src/main/ipc.ts` — twenty-one
-when the rail was ruled on 2026-10-25, twenty-two since `plan.status` joined it
-on 2026-10-26, §6.12), answered by
+the surface's twenty-one, `CONSOLE_OPERATIONS` in `src/main/ipc.ts`), answered by
 the same dispatcher the picker window uses. The console reads two of the
 `warnings` lines by their wording, to mark the rail's rows
 (`src/main/installationstate.ts`): `<path> could not be read: <reason>`, matched
@@ -1241,17 +1239,18 @@ says.
 **Command:** `internal/cli/plan_status.go` `newPlanStatusCmd` / `runPlanStatus`.
 **Document:** `planStatusDoc`, indented (`printPlanStatus`), both in
 `internal/cli/plan_status.go` — cited by symbol, not by line, for §6.11's
-reason. **Added 2026-10-26: the console spawns it now** — the `plan.status`
-operation, console v2 plan GV2.1 — with the exact argv `plan status --json`: at
-most `--all` (GD6's "everything" toggle), plus `--project <name>` and
-`--config <path>` like every other cloud row, and **no path** in the argv, since
-the checkout reaches the CLI as the spawn's own working directory, from the
-installation tuple and never from the renderer (the plan's constraint C1). An
-earlier revision of this section said the console **did not spawn it yet** — the
-third such command in this document, after `plan graph` (§6.9) and
-`backlog list` (§6.11). It is the data behind the graph screen's per-task state
-(console v2 plan GV1.6), and the section is here so the screen reads a shape off
-the code rather than assuming one from a design.
+reason. This is the third command in this document the console **does not spawn
+yet**: it is the data behind the graph screen's per-task state (console v2 plan
+GV1.6), and the section is here so the screen that follows reads a shape off the
+code rather than assuming one from a design. **Added 2026-10-26: GV2.1 (console
+v2 plan) is the task that spawns it**, as the `plan.status` operation, with the
+exact argv `plan status --json` — at most `--all` (GD6's "everything" toggle),
+plus `--project <name>` and `--config <path>` like every other cloud row, and
+**no path** in the argv, since the checkout reaches the CLI as the spawn's own
+working directory, from the installation tuple and never from the renderer (the
+plan's constraint C1). **The console issues it no more than it does `plan graph`
+or `backlog list` until that task's code lands**, and this document's §6.8 count
+and design §5.1's table stay the shipped console's until then.
 
 **It is a cloud read, unlike `plan graph`.** A task's state is a *run's* state,
 and a run lives in the runs bucket of the selected project — so this command

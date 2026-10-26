@@ -828,9 +828,10 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// against this constructor like any other command's.
 	"backlog list": newBacklogListCmd,
 	// §6.12 documents the graph joined to the runs (GV1.6, the CLI release after 0.11.4). The
-	// console does not spawn it yet either, and its flags — including the cloud
-	// ones, which this command carries and `plan graph` does not — are checked
-	// against this constructor like any other command's.
+	// console does not spawn it yet either — GV2.1 is the task that adds the
+	// operation, and §6.12 records the argv it will carry — and its flags —
+	// including the cloud ones, which this command carries and `plan graph`
+	// does not — are checked against this constructor like any other command's.
 	"plan status": newPlanStatusCmd,
 }
 
@@ -1088,7 +1089,7 @@ func firstBacktick(cell string) string {
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
 // §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
-// the fourteen argvs and nothing else -- the console's one spawn table
+// the thirteen argvs and nothing else -- the console's one spawn table
 // (SPAWN_COMMANDS) since the installation rail took the picker's read onto the
 // dashboard's surface -- and a review of an earlier revision found the picker's own
 // read, `config list --json`, absent here, which left the specification
@@ -1108,9 +1109,6 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// may not widen with --all-users.
 		"runs stats --json",
 		"diagnose RUN --json",
-		// The graph screen's per-task state (GV2.1): the checkout reaches the
-		// CLI as the spawn's working directory, never as a path in the argv.
-		"plan status --json",
 		"logs RUN --json",
 		"logs RUN --url",
 		"secrets ls --json",
@@ -1207,17 +1205,19 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Thirteen commands: the twelve dashboard reads (logs has two argvs) and the
+	// Twelve commands: the eleven dashboard reads (logs has two argvs) and the
 	// picker's `config list --json` (D13's amendment of 2026-10-20).
-	if len(allowed) != 13 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 13 (logs has two argvs)", path, argvs, len(allowed))
+	if len(allowed) != 12 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 12 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the reads the design names for the console and §5.1 has not
-	// grown a row for yet (V2.2.1, the graph document). Another name is a
-	// command someone decided the console spawns, and that is a design change,
-	// not a table entry.
-	namedNotAllowed := map[string]bool{"fugaro plan graph": true}
+	// grown a row for yet (V2.2.1, the graph document, and GV1.6, the graph
+	// joined to its runs -- GV2.1's operation, which §5.1 records as
+	// specified and not yet issued). Another name is a command someone
+	// decided the console spawns, and that is a design change, not a table
+	// entry.
+	namedNotAllowed := map[string]bool{"fugaro plan graph": true, "fugaro plan status": true}
 	for cmdPath := range consoleReadPaths {
 		if !allowed[cmdPath] && !namedNotAllowed[cmdPath] {
 			t.Errorf("consoleReadPaths carries %q, which is neither an argv §5.1 allows nor a read the design names for the console (%v): the read-only list is the design's, not this file's", cmdPath, namedNotAllowed)
