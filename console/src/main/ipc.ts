@@ -331,17 +331,19 @@ export interface ConsoleOperation {
 }
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Twenty-one operations, and the table
+ * CONSOLE_OPERATIONS is the whole surface. Twenty-two operations, and the table
  * is the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
- * The thirteen CLI argvs are design section 2.1's list -- its thirteenth row,
+ * The fourteen CLI argvs are design section 2.1's list -- its thirteenth row,
  * `fugaro config list --json`, arrived with the installation rail (owner's
  * design ruling of 2026-10-25) and was §5.1 rule 6's thirteenth argv before
- * that -- and that list is `docs/json-contract.md`'s, read off the cobra
- * commands. The twelfth of those commands is `runs.stats` (console L5b, the
- * Spend screen's by-person view), which the table narrowed to this task's own
- * argument: see its comment below. The thirteenth operation is the startup
+ * that, and the fourteenth is GV2.1's `plan status --json` -- and that list is
+ * `docs/json-contract.md`'s, read off the cobra commands. The twelfth of those
+ * commands is `runs.stats` (console L5b, the Spend screen's by-person view),
+ * which the table narrowed to this task's own argument: see its comment below.
+ * The thirteenth is `plan status` (GV2.1), whose own comment below says why the
+ * directory it reads in never reaches its argv. The thirteenth operation is the startup
  * handshake's answer (`startup.compatibility`, the console's own state, which
  * no CLI command can be asked for); the fourteenth is the one path that is not
  * a command: `openExternal`, whose URL argument goes through
@@ -520,6 +522,43 @@ export const CONSOLE_OPERATIONS = [
         kind: 'runSince',
         required: false,
         why: 'the design allow-list admits `--since` on this command, in `runs stats`’s own forms (parseSince): 7d, 36h, 90m or 0 — never a date, and never `report`’s `12w`.',
+      },
+    ],
+  },
+  // The Plan screen's read (plan GV2.1). It is the thirteenth CLI command the
+  // console spawns, and the one read whose subject is the **checkout** rather
+  // than the project: `plan status` walks the graph artifacts under the
+  // checkout's own `docs/` and joins them to the runs of that checkout's
+  // repository, so the child has to run *in* the checkout.
+  //
+  // **The directory is therefore not a key of this schema, and never a word of
+  // its argv.** The main process sets the child's working directory from the
+  // installation's recorded checkout (`createBoundSource`, `src/source/cli.ts`),
+  // and an installation that has none is refused before a child exists: a
+  // renderer-supplied path would be a way for a document to name a directory the
+  // operator never chose (the plan's constraint C1, "the renderer never sends a
+  // path"). `argvFor` builds every word of the argv from the spawn table, and no
+  // row can emit `--dir` for this command.
+  //
+  // **`all` and nothing else.** `--all` is the screen's own control: it lists
+  // the closed tasks (merged and cancelled) that the read otherwise counts per
+  // release. It is a boolean and never a string, so a payload cannot spell a
+  // flag with it, and the cloud flags (`--project`, `--config`) are the
+  // installation's, exactly as `runs ls` carries them -- never `--gcp-project`
+  // or `--region`, which are no part of this surface. There is no positional
+  // argument: `newPlanStatusCmd` is cobra's `NoArgs`.
+  {
+    name: 'plan.status',
+    method: 'planStatus',
+    command: 'plan status',
+    flags: ['--json'],
+    summary: "every plan's tasks under the checkout's docs/, joined to the runs working on them",
+    args: [
+      {
+        key: 'all',
+        kind: 'flag',
+        required: false,
+        why: 'the design allow-list admits `--all` on this command: it lists the tasks the read otherwise counts per release, and it is the screen’s own control rather than a way to widen what the read reaches.',
       },
     ],
   },

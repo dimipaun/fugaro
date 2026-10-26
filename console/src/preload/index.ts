@@ -87,7 +87,7 @@ export const BRIDGE_VERSION = 1
  * nothing failing, because the runtime tests in `test/unit/ipc.test.ts` pin the
  * same sets against the table and the object is built from that table anyway.
  * `satisfies` checks each row's shape without widening anything, so a row that
- * is not a name and a method is still a compile error, and the twenty-one names
+ * is not a name and a method is still a compile error, and the twenty-two names
  * stay literal -- which is what makes `ExposedName`, `ExposedMethod` and
  * `ConsoleBridge` below the closed things their comments say they are.
  *
@@ -115,6 +115,17 @@ export const BRIDGE_VERSION = 1
  * `fugaro runs stats --json` and not `report` (design §5.1 rule 6), and a method
  * that took the operation as an argument is the shape rule 5 forbids.
  *
+ * **GV2.1 added the sixteenth row and no method of its own invention**:
+ * `plan.status` / `planStatus`, the plan graph joined to the runs working on it,
+ * which is the thirteenth CLI command this surface can reach and the second
+ * whose subject is an installation's checkout rather than a project alone. The
+ * row is here for the same reason L5b's is: the read is `fugaro plan status
+ * --json`, and a method that took the operation as an argument is the shape rule
+ * 5 forbids. That checkout is the *argument no renderer supplies* -- the row
+ * declares one optional flag, `all`, and the directory the child runs in is the
+ * installation's, which is why `src/main/ipc.ts`'s comment on the operation says
+ * so at length.
+ *
  * **Two of the first fifteen rows are not spawns.** Task 3.3 added
  * `startup.compatibility` / `getCompatibility`: the handshake's answer, which the
  * renderer asks for once at load and draws nothing until it has. Task 3.4a makes
@@ -129,7 +140,7 @@ export const BRIDGE_VERSION = 1
  * `ConsoleMethod`'s optional argument object is simply not sent, so there is
  * nothing for a renderer to name.
  *
- * **The installation rail added six more, for twenty-one** (owner's design
+ * **The installation rail added six more, for twenty-two** (owner's design
  * ruling of 2026-10-25): `installation.list` spawns `config list --json`, and
  * the other five act on the console's own store and window.
  */
@@ -139,6 +150,7 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   ['spend.report', 'runReport'],
   ['runs.list', 'listRuns'],
   ['runs.stats', 'statsRuns'],
+  ['plan.status', 'planStatus'],
   ['run.diagnose', 'diagnoseRun'],
   ['run.logs', 'readRunLogs'],
   ['run.logLink', 'runLogLink'],
@@ -167,7 +179,7 @@ export const EXPOSED_OPERATIONS = Object.freeze([
 
 /**
  * ExposedName is the closed union of the operation names this file exposes --
- * twenty-one string literals, not `string`. It is the type of the `operations` list
+ * twenty-two string literals, not `string`. It is the type of the `operations` list
  * a screen switches on, so the closure is what lets a screen be exhaustive.
  */
 export type ExposedName = (typeof EXPOSED_OPERATIONS)[number][0]
@@ -287,9 +299,9 @@ async function invokeOperation(
  *
  * The returned object is not cast into `ConsoleBridge`: it is checked against
  * it, like any other value, and that is the point of the accumulator's type. It
- * is `Record<ExposedMethod, ConsoleMethod>` -- twenty-one *named* properties,
+ * is `Record<ExposedMethod, ConsoleMethod>` -- twenty-two *named* properties,
  * because `ExposedMethod` is a union of literals -- so spreading it gives the
- * object literal those twenty-one properties as properties rather than as an index
+ * object literal those twenty-two properties as properties rather than as an index
  * signature. (Before that type was literal, this line needed `as ConsoleBridge`
  * to silence the compiler, which is what made the claim untested rather than
  * checked.) The loop is what actually writes them, and a loop is a thing the
@@ -318,7 +330,7 @@ export function createConsoleBridge(ipcRenderer: RendererLike): ConsoleBridge {
  * `exposeInMainWorld` is what keeps rule 5's promise concrete: the renderer gets
  * a copy of this object, in its own world, with `contextIsolation` in between.
  * It cannot reach the preload's scope, `ipcRenderer`, or Node -- only these
- * twenty-one methods.
+ * twenty-two methods.
  */
 export function exposeConsoleBridge(
   contextBridge: ContextBridgeLike,
