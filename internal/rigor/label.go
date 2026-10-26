@@ -18,9 +18,12 @@ type Label string
 
 // The five words, most serious first.
 const (
-	// Blocker is a finding no mode tolerates: the catastrophic class or the
-	// top of the impact scale, and — fail closed, like the table — a finding
-	// whose score cannot be read at all (D4).
+	// Blocker is a finding of the severity the spec calls catastrophic: the
+	// class it names or the top of the impact scale, and — fail closed, like
+	// the table — a finding whose score cannot be read at all (D4). Every mode
+	// but Hotfix blocks one; Hotfix's row keeps the security gate alone (owner
+	// ruling 2026-10-26), so a data loss finding and an impact of 5 are
+	// tolerated there while the word stays the same.
 	Blocker Label = "blocker"
 	// High is a finding above the floor of every mode that has one: Startup,
 	// Pro and Critical all block it, and only POC and Hotfix, which block

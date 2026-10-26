@@ -95,17 +95,54 @@ func (s Score) Scored() bool {
 		KnownClass(s.Class)
 }
 
-// catastrophic reports whether the finding is one no mode tolerates: the
-// spec's severity override, stated once. Its class is one the spec names as
-// catastrophic — data loss, security — or its impact is the top of the scale,
-// the crash the severity axis names, which is what makes a rare finding block
-// in Startup.
+// catastrophic reports whether the finding is one the spec's severity override
+// covers: its class is one the spec names as catastrophic — data loss,
+// security — or its impact is the top of the scale, the crash the severity axis
+// names, which is what makes a rare finding block in Startup.
+//
+// It is the override stated once, and it is what the label derives from
+// (label.go) and what every mode's row applies whole but Hotfix's; a mode that
+// reads the override differently does so in its own row (override below)
+// rather than by a second copy of this.
 func (s Score) catastrophic() bool {
 	return s.Class == Security || s.Class == DataLoss || s.Impact == 5
 }
 
-// threshold is one mode's findings policy, as data: where on the risk axis the
-// mode starts to block, and the one escape its spec sentence names.
+// override is one mode's reading of the spec's severity override — "rare but
+// catastrophic findings (data loss, security) block even in Startup mode" — as
+// the mode's own row rather than as a condition beside it: the table is data
+// and Blocks is its one reader (D2, D7).
+type override int
+
+const (
+	// overrideCatastrophic is the override as the spec states it: a Security or
+	// DataLoss class, or an impact of the top of the scale. It is the zero
+	// value, so a row that says nothing about the override keeps all of it — a
+	// mode can only give part of it up by naming the part it keeps, which is
+	// D4's fail-closed rule read at the table's own data.
+	overrideCatastrophic override = iota
+	// overrideSecurity is the security gate alone. Hotfix's row is the one that
+	// reads its own sentence — "only findings that make the fix wrong or unsafe
+	// block" — this way, by the owner's ruling of 2026-10-26: a finding of
+	// class security blocks there whatever its axes say, and a finding whose
+	// class is data_loss or whose impact is 5 is tolerated like any other.
+	overrideSecurity
+)
+
+// blocks reports whether this reading of the override blocks s whatever its
+// axes say. A value outside the two above is read as the whole override, the
+// way an unknown mode blocks everything: a value this code cannot place gets
+// the strict answer and never the lenient one.
+func (o override) blocks(s Score) bool {
+	if o == overrideSecurity {
+		return s.Class == Security
+	}
+	return s.catastrophic()
+}
+
+// threshold is one mode's findings policy, as data: how it reads the severity
+// override, where on the risk axis the mode starts to block, and the one escape
+// its spec sentence names.
 type threshold struct {
 	// Risk is the smallest likelihood × impact that blocks. Zero means the
 	// axes never block in this mode, so only the override and an unscored
@@ -117,6 +154,11 @@ type threshold struct {
 	// cost.
 	Rare      int
 	Expensive int
+	// Override is how this mode reads the spec's severity override: the whole
+	// of it unless the row names the narrower reading. It is beside Risk rather
+	// than inside a condition because it is the one part of the rule that two
+	// modes read differently (D2).
+	Override override
 }
 
 // thresholds is the table, one row per mode, each row the mode's own sentence
@@ -149,28 +191,33 @@ var thresholds = map[Mode]threshold{
 	// releases before it, apart from the mode line every run's body carries
 	// (D18).
 	Critical: {Risk: 1},
-	// "Hotfix — Only findings that make the fix wrong or unsafe block": the
-	// same set POC blocks, because the two sentences name one set once
-	// catastrophic is read as the spec reads it. What makes a hotfix's fix
-	// *wrong* is not a finding at all: D14's deterministic diff rule gates the
-	// run, and the agent's own confidence number is recorded and never trusted.
-	Hotfix: {},
+	// "Hotfix — Only findings that make the fix wrong or unsafe block", read
+	// against the owner's ruling of 2026-10-26: the fewest gates of any mode,
+	// so out of the severity override the row keeps the security gate and
+	// nothing else — a data loss finding and an impact of 5 are tolerated and
+	// filed as advisory by the mode's own filing row (D30), which is where a
+	// hotfix's record of them belongs. What makes a hotfix's fix *wrong* is not
+	// a finding at all: D14's deterministic diff rule gates the run, and the
+	// agent's own confidence number is recorded and never trusted.
+	Hotfix: {Override: overrideSecurity},
 }
 
 // Blocks reports whether a finding blocks at mode m.
 //
 // The order is the rule. An unscored finding blocks before any threshold is
-// read (D4); the override is asked next, so it holds in every mode including
-// POC and Hotfix; the mode's own row is asked last. A mode the table does not
-// hold blocks on everything — the zero Mode a record written before the mode
-// existed carries, and a name that reached here without having been parsed —
-// because a value the table cannot place must never be the lenient answer.
+// read (D4); the override is asked next, as the mode's own reading of it, so
+// it holds in every mode including POC and — as the security gate alone, by the
+// owner's ruling of 2026-10-26 — Hotfix; the mode's own row is asked last. A
+// mode the table does not hold blocks on everything — the zero Mode a record
+// written before the mode existed carries, and a name that reached here without
+// having been parsed — because a value the table cannot place must never be the
+// lenient answer.
 func Blocks(m Mode, s Score) bool {
 	row, known := thresholds[m]
 	if !known {
 		return true
 	}
-	if !s.Scored() || s.catastrophic() {
+	if !s.Scored() || row.Override.blocks(s) {
 		return true
 	}
 	if row.Risk == 0 || s.Risk() < row.Risk {

@@ -635,7 +635,10 @@ before.
   `internal/rigor/label.go` (new: the five-word label derived from the axes).
 - **Tests.** `internal/rigor/table_test.go`: the spec's own two examples — "rare
   but catastrophic" blocks in Startup, "common but cosmetic" does not — are table
-  cases, and so is the security override in **every** mode below Critical; an
+  cases, and so is the security override in **every** mode, Hotfix included, whose
+  row the owner's ruling of 2026-10-26 (D7's amendment) leaves the security gate
+  alone: a `data_loss` finding and an impact of 5 are tolerated there, so the
+  Hotfix cases are the ruling's and the four on-axis modes' are the override's; an
   unscored finding blocks in every mode (D4's fail-closed rule, asserted mode by
   mode rather than once); and Critical blocks on every finding, scored or not.
 - **Red step.** The table does not exist; the spec's two examples are the first

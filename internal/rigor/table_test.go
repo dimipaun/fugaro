@@ -68,13 +68,22 @@ func TestThresholdsAreTheSpecsTwoExamples(t *testing.T) {
 // scale can express with the most expensive fix, so no mode's own threshold
 // would block it and only the override can — which is what makes each case
 // fail if the override is dropped rather than passing on a floor.
+//
+// Security is the half of the override every mode applies, Hotfix included by
+// the owner's ruling of 2026-10-26; data loss is the half the four on-axis
+// modes apply, and the ruling is that Hotfix does not, which
+// TestTableHotfixKeepsOnlyTheSecurityGate holds from the other side.
 func TestTableBlocksTheSecurityOverrideInEveryMode(t *testing.T) {
 	for _, m := range Modes {
-		for _, class := range []Class{Security, DataLoss} {
-			s := Score{Likelihood: 1, Impact: 1, FixCost: 5, Class: class}
-			if !Blocks(m, s) {
-				t.Errorf("%s tolerates a %s finding at the lowest risk: the override is not applied in every mode", m, class)
-			}
+		s := Score{Likelihood: 1, Impact: 1, FixCost: 5, Class: Security}
+		if !Blocks(m, s) {
+			t.Errorf("%s tolerates a security finding at the lowest risk: the override is not applied in every mode", m)
+		}
+	}
+	for _, m := range Modes[:len(Modes)-1] {
+		s := Score{Likelihood: 1, Impact: 1, FixCost: 5, Class: DataLoss}
+		if !Blocks(m, s) {
+			t.Errorf("%s tolerates a data loss finding at the lowest risk: the override is not applied in every on-axis mode", m)
 		}
 	}
 	// And it is the class that carries it rather than the axes: the same score
@@ -196,19 +205,79 @@ func TestTheTableTightensWithTheAxis(t *testing.T) {
 	}
 }
 
-// TestTablePOCAndHotfixTolerateTheSameFindings states as intent what two
-// identical rows would otherwise make an accident. The spec gives POC "Ignore
-// (except catastrophic)" and Hotfix "Only findings that make the fix wrong or
-// unsafe block"; read with the spec's own parenthetical — data loss and
-// security — and an impact of 5 for the crash the severity axis names, the two
-// sentences name one set. What separates the modes is everything else the spec
-// says about them: the loop, the diff gate, what they file and what they may
-// spend, and mode.go's Rank is about which mode wins a resolution rather than
-// about the size of this set.
-func TestTablePOCAndHotfixTolerateTheSameFindings(t *testing.T) {
+// TestTableHotfixKeepsOnlyTheSecurityGate is the owner's ruling of 2026-10-26:
+// Hotfix has the fewest gates, and out of the spec's severity override it keeps
+// the security gate alone. Every finding in the tolerated half is one the whole
+// override blocks, so a row that still applied it — as Hotfix's did before the
+// ruling, reading its sentence as POC's — fails each case rather than passing
+// on the axes: a floor of 0 in that row already tolerates everything the
+// override does not reach.
+func TestTableHotfixKeepsOnlyTheSecurityGate(t *testing.T) {
+	blocking := []struct {
+		what string
+		s    Score
+	}{
+		{"a security finding at the lowest risk", Score{Likelihood: 1, Impact: 1, FixCost: 5, Class: Security}},
+		{"a security finding with a trivial fix and the worst score", Score{Likelihood: 5, Impact: 5, FixCost: 1, Class: Security}},
+		{"an unscored finding", Score{}},
+		{"a class outside the vocabulary", Score{Likelihood: 1, Impact: 1, FixCost: 1, Class: "style"}},
+		{"an axis outside the scale", Score{Likelihood: 6, Impact: 1, FixCost: 1, Class: Cosmetic}},
+	}
+	for _, c := range blocking {
+		if !Blocks(Hotfix, c.s) {
+			t.Errorf("Hotfix tolerates %s: %+v", c.what, c.s)
+		}
+	}
+
+	tolerated := []struct {
+		what string
+		s    Score
+	}{
+		{"a data loss finding", Score{Likelihood: 5, Impact: 5, FixCost: 1, Class: DataLoss}},
+		{"a rare but catastrophic data loss finding", Score{Likelihood: 1, Impact: 5, FixCost: 5, Class: DataLoss}},
+		{"an impact-5 finding in a class the spec does not call catastrophic", Score{Likelihood: 5, Impact: 5, FixCost: 1, Class: Correctness}},
+		{"the worst score the scale can express in a class the spec does not name", Score{Likelihood: 5, Impact: 5, FixCost: 5, Class: Maintainability}},
+	}
+	for _, c := range tolerated {
+		if Blocks(Hotfix, c.s) {
+			t.Errorf("Hotfix blocks %s: %+v; the security gate is the only one left at Hotfix", c.what, c.s)
+		}
+	}
+
+	// The ruling narrowed one row and left the override the label is derived
+	// from alone: the first finding above is what the label calls `blocker` and
+	// what POC blocks, and it stays both of those at Hotfix.
+	if !Blocks(POC, tolerated[0].s) {
+		t.Errorf("POC tolerates %+v; the cases above are about Hotfix's row and not about the override", tolerated[0].s)
+	}
+	if got := tolerated[0].s.Label(); got != Blocker {
+		t.Errorf("a data loss finding is labelled %q; the ruling moved a mode's row, not the vocabulary", got)
+	}
+}
+
+// TestTableHotfixToleratesEverythingPOCDoes: the ruling narrows Hotfix's row
+// below POC's rather than moving the mode off the table's axis. Hotfix ranks
+// below POC (mode.go's Rank), so the table's own tightening rule — a stricter
+// mode may tolerate nothing a weaker one blocks — has to hold in this direction
+// too. It is a strict narrowing, and that is the ruling rather than an accident:
+// the two modes disagreed about data loss and about an impact of 5 before
+// 2026-10-26 and they keep disagreeing, which is what "the fewest gates" means.
+func TestTableHotfixToleratesEverythingPOCDoes(t *testing.T) {
+	var onlyPOC []Score
 	for _, s := range everyScore() {
-		if Blocks(POC, s) != Blocks(Hotfix, s) {
-			t.Fatalf("POC and Hotfix disagree about %+v", s)
+		switch {
+		case Blocks(Hotfix, s) && !Blocks(POC, s):
+			t.Fatalf("Hotfix blocks %+v and POC, the stricter mode, tolerates it", s)
+		case Blocks(POC, s) && !Blocks(Hotfix, s):
+			onlyPOC = append(onlyPOC, s)
+		}
+	}
+	for _, s := range []Score{
+		{Likelihood: 1, Impact: 1, FixCost: 5, Class: DataLoss},
+		{Likelihood: 1, Impact: 5, FixCost: 5, Class: Correctness},
+	} {
+		if !slices.Contains(onlyPOC, s) {
+			t.Errorf("Hotfix tolerates nothing POC blocks about %+v; its row is still POC's", s)
 		}
 	}
 }
@@ -365,9 +434,17 @@ func TestLabelsAreTheFiveWordsD2Names(t *testing.T) {
 // enough for that mode is one it blocks on. A one-way check would let the bands
 // drift away from the floors and still read as a green test, which is the drift
 // this test exists to catch.
+//
+// Hotfix is asked one way and not both, by the owner's ruling of 2026-10-26:
+// its row keeps the security gate alone, so a finding the label calls `blocker`
+// — data loss, or any impact of 5 — is one Hotfix tolerates. The label is still
+// the severity of the score and not of the mode, so the direction that has to
+// hold there is the first one, and the second is stated below for that mode
+// alone.
 func TestTheLabelAndTheTableAgree(t *testing.T) {
-	// Each mode's set is the bands its floor reaches: POC and Hotfix block only
-	// what no mode tolerates, Startup starts at the medium band, Pro at the low
+	// Each mode's set is the bands its floor reaches, or is narrower than them
+	// where the ruling left it a gate rather than a floor: POC blocks only what
+	// the override reaches, Startup starts at the medium band, Pro at the low
 	// one, and Critical at every finding.
 	allowed := map[Mode][]Label{
 		POC:      {Blocker},
@@ -383,11 +460,19 @@ func TestTheLabelAndTheTableAgree(t *testing.T) {
 			}
 		}
 	}
-	for _, m := range []Mode{POC, Hotfix, Startup, Critical} {
+	for _, m := range []Mode{POC, Startup, Critical} {
 		for _, s := range everyScore() {
 			if got, want := Blocks(m, s), slices.Contains(allowed[m], s.Label()); got != want {
 				t.Fatalf("%s blocks %+v = %v and labels it %q", m, s, got, s.Label())
 			}
+		}
+	}
+	// Hotfix's set is no band of the label's: it is the security gate the ruling
+	// left there, so the word it must not contradict is the one-way check above
+	// and this is the other half of the statement.
+	for _, s := range everyScore() {
+		if got, want := Blocks(Hotfix, s), !s.Scored() || s.Class == Security; got != want {
+			t.Fatalf("Hotfix blocks %+v = %v; only an unscored finding and a security one block there", s, got)
 		}
 	}
 	// Pro's floor is the label's own low band, and the one finding its band
