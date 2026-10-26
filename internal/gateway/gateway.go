@@ -140,11 +140,14 @@ type Stage struct {
 type StageReport struct {
 	Calls int // calls sent upstream
 	// Agents is the stage's distinct sub-agents: the agent IDs its calls
-	// carried, each counted once. Claude Code sends an agent ID only for a
-	// sub-agent's calls, so an empty one is the main session, which is no
-	// sub-agent and is not counted. The ID is Claude Code's own claim and
-	// nothing here verifies it: it is what the gateway's log lines already
-	// say, counted instead of printed.
+	// carried into settle, each counted once. Claude Code sends an agent ID
+	// only for a sub-agent's calls, so an empty one is the main session,
+	// which is no sub-agent and is not counted. The ID is Claude Code's own
+	// claim and nothing here verifies it. A call refused before it reserves
+	// -- a parse error, a pin violation, a halt, a 429 -- carries its agent
+	// ID in its log line but never settles, so it is in no count here: this
+	// is the sub-agents whose calls the stage admitted, not every one the
+	// stage spawned.
 	Agents int
 	// Used is the money this stage's calls settled: tiers B and C, and
 	// every call of a run with no cascade, which has no tier at all.
