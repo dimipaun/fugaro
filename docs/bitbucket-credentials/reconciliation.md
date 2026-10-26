@@ -6,7 +6,7 @@ Bitbucket's own documentation as read on 2026-10-26. Where it disagrees with [sp
 this document wins.
 
 - §1–§4 are the findings as first written, before the answers. F19–F22 were added when the answers
-  were followed through, and F23–F29 in review round 1.
+  were followed through, F23–F29 in review round 1, and F30–F32 in review round 2.
 - §5 holds the decisions with the owner's answers.
 - §6 follows the answers through.
 
@@ -43,7 +43,8 @@ The shape this document recommended:
 
 - The credentials service holds the Bitbucket credentials (D362).
 - The service mints run tokens as well (D363).
-- A run's Bitbucket token is therefore accepted as workspace-wide for 1–2 hours (D360). The
+- A run's Bitbucket token is therefore accepted as workspace-wide, for the life of the run plus
+  1–2 hours (D360, F29). The
   mitigation is policy and audit in the service (T1).
 - The tokens come from OAuth consumers owned by the installing person (D367).
 
@@ -56,7 +57,10 @@ The key-free stored-view read (D364) stands as recommended, and it is still the 
 | The coordinator reads the user's own GitHub, not Fugaro's | Yes. A read-only installation token is minted per repository from the **user's** App (`FUGARO_GITHUB_APP_ID` plus the user's key), cached, and revoked at the end | `internal/cli/coordinator.go` `coordinatorReader`, `coordinatorTokens`, `coordinatorAppCredential`; D193 |
 | The coordinator refuses Bitbucket | Yes, `coordinator.ErrBitbucket`. The sweep records such a repository as `StaleUnsupported` | `internal/coordinator/project.go` `supported`; `internal/coordinator/sweep.go` |
 | A server-side coordinator read | Yes: the aggregation job `fugaro coordinator sweep`, run as `fugaro-coordinator`, with `secretAccessor` on the project's App key container. Its key is mounted through `secret_key_ref` | `deploy/terraform/gcp/modules/installation/coordinator.tf` `coordinator_app_key`; `internal/cli/coordinator.go` `envCoordinatorRepos` |
-| The stored project view | Yes: `coordinator/repos/<slug>/` in the installation's RTDB (P3, D195), readable by a signed-in reader. **No CLI command reads it**: `coordinator.Store.Read` has no caller in `internal/cli` | `internal/coordinator/state.go` |
+| The stored project view | Yes: `coordinator/repos/<slug>/` in the installation's RTDB (P3, D195). A person reads it through `roles/firebasedatabase.viewer`,
+which `modules/firebase/iam.tf` grants to launchers and operators. The rules' reader on
+`coordinator` is a device user, so this is an IAM read, not a rules read (corrected in review
+round 2). **No CLI command reads it**: `coordinator.Store.Read` has no caller in `internal/cli` | `internal/coordinator/state.go` |
 | The service holds the GitHub App key and mints from it | Yes, for **runs only**: `POST /v1/github/installation-token` (`credsvc.MintPath`), audited (`PurposeMint`), fail-closed (`ErrMintNoAppKey`, `ErrMintUnaudited`), with no repository field | `internal/credsvc/github.go` |
 | Who may call the service | Only an installation's **per-repository job** service account presenting a **live run identity**. Shared project jobs are refused (Global Constraint 6) | `internal/credsvc/auth.go` `Authenticator.Verify`, `verifyJob`, `verifyRun`, `checkLive` |
 | The Bitbucket credential | One repository access token per repository: `bitbucket-token`, mounted as `FUGARO_BITBUCKET_TOKEN` | `internal/gitprov/providers/providers.go` `EnvBitbucketToken`; `internal/config/project_secrets.go` `PerRepositorySecret` |
@@ -175,8 +179,8 @@ exactly the 11 keys in `CHILD_ENV_KEYS` (`console/src/main/spawn.ts`). Rule 8 of
 `docs/design/desktop-console.md` §5.1 says no secret goes in an environment variable the app
 writes, so no App key reaches the child. `console/src` names no coordinator operation, and the
 console 0.112.0 notes say the project view *"… and the coordinator's project view are not in this release"*. *Consequence:* coordinator
-P6 depends on a read that needs no key. The sweep's stored view (`coordinator/`, readable by a
-signed-in reader) is that read, but no CLI command reads it yet (`coordinator.Store.Read` has no CLI
+P6 depends on a read that needs no key. The sweep's stored view (`coordinator/`, readable
+through `roles/firebasedatabase.viewer`) is that read, but no CLI command reads it yet (`coordinator.Store.Read` has no CLI
 caller). Building that read makes the console view the same for both providers, and Bitbucket then
 becomes purely the sweep's concern. → D364.
 
@@ -323,12 +327,17 @@ nothing.**
   only some repositories allow-listed, halts its other Bitbucket runs. T3.6's drop
   (`modules/workflow/sa.tf`, installation-wide by `var.credentials_service`) would strip their
   token too.
-- **Resolution.** A **per-repository switch** in the local config, `bitbucket_via_service`, default
-  off (task T3.0). The launch sets `FUGARO_BITBUCKET_VIA_SERVICE=1` only for repositories with the
+- **Resolution.** A **per-repository switch**, `bitbucket_via_service`, default off (task T3.0).
+  It lives in the published shared config (`localcfg.MergeShared`), so every launcher carries the
+  same value. The launch sets `FUGARO_BITBUCKET_VIA_SERVICE=1` only for repositories with the
   switch on. The Terraform drop follows the same switch.
 - **Why an override does not matter.** A launcher who overrides the switch off gets the mounted
   token, which that launcher's run already holds. One who overrides it on, for a repository that is
   not allow-listed, is refused by the service. Global constraint G9 pins this.
+- **What the switch is not (corrected in review round 2).** The switch selects a code path. It is
+  not the security boundary. An agent in an allow-listed repository can call the run mint itself
+  with the run identity and the job's metadata token, whatever the switch says (F29). **The
+  allow-list entry is the exposure.**
 
 **F26, Gap (security). What a push as the person sets off.**
 
@@ -382,15 +391,50 @@ nothing.**
   but it does not show who **used** it. Whether repeated grants return distinct tokens is U12. If
   they do not, the line cannot even tell runs apart.
 
+### Findings added in review round 2 (2026-10-26)
+
+**F30, Gap (security). Who controls the read mint.**
+
+- **The code.** The read mint has no repository binding. Whoever may run the coordinator job with
+  overrides decides what it reads: `job_runner` in `coordinator.tf` gives the scheduler account
+  run and `runWithOverrides`, and project Owners and Editors have both.
+- **The attack.** Such a person can set `FUGARO_COORDINATOR_REPOS` so that the sweep reads any
+  repository the installing person can see. The sweep then publishes those pull requests into
+  `coordinator/`, which every launcher and operator can read through IAM.
+- **Status.** No code in this plan narrows it, because the consumer token is workspace-wide. It is
+  recorded as a residual risk, **O6**, and stated in SECURITY.md (T2.11).
+
+**F31, Gap (security). A credential can be sent to the wrong provider.**
+
+- **A GitHub token sent to Bitbucket.** `internal/runner/runner.go` `openProvider` installs the
+  GitHub service source (`github.ServiceTokens`) on **any** provider that implements
+  `gitprov.ServiceTokenSetter`. Today that is only GitHub. If the Bitbucket provider implemented
+  the same interface, a Bitbucket run on an installation with the service on would send a GitHub
+  installation token to Bitbucket.
+- **A Bitbucket token sent to GitHub.** The sweep records every token it minted in
+  `coordinatorTokens` and revokes each one at GitHub (`github.RevokeInstallationToken`). A
+  Bitbucket read token recorded there would be sent to GitHub.
+- **Resolution.**
+  - T3.2 uses a Bitbucket-specific setter (`TestRunnerNeverInstallsGitHubSourceOnBitbucket`).
+  - T2.5 keeps Bitbucket tokens out of `coordinatorTokens`
+    (`TestSweepNeverRevokesBitbucketTokenAtGitHub`).
+
+**F32, Gap (security). Dropping the `account` scope widens follow-up trust.**
+
+- **The code.** Without the `account` scope, `selfUser` cannot read the token's user, so every
+  comment is `SelfKnown=false`. `internal/followup/select.go` then honours run markers from any
+  author (`MarkersFromAnyone`). `Trust.PRAuthorID` still drops the person's own comments.
+- **Status.** Scope minimisation (T3.5) and identity (T3.3) are decided together, under O1.
+
 ## 5. Decisions, with the owner's answers
 
 | D | Question | Recommendation, and why | Alternative, and what it costs | Owner's answer |
 | --- | --- | --- | --- | --- |
-| **D360** | Reopen the 2026-10-15 "Bitbucket stays per repository" ruling? (F4) | **Only for read-only use by the coordinator.** A project-wide view needs a project-wide read, and a read-only credential cannot push | **(b) Reopen it for runs too.** That is F7's widening of an agent's reach. **(c) Keep it, and never support Bitbucket in the coordinator.** That contradicts the spec's "for sure" | **2026-10-26: (b), reopened for runs too. Not the recommendation.** The owner wants one Bitbucket path through the service. Accepted consequence: a hostile agent's Bitbucket token reaches the whole workspace for 1–2 hours instead of one repository (F7, F20). Followed through in T1 and in S3 |
+| **D360** | Reopen the 2026-10-15 "Bitbucket stays per repository" ruling? (F4) | **Only for read-only use by the coordinator.** A project-wide view needs a project-wide read, and a read-only credential cannot push | **(b) Reopen it for runs too.** That is F7's widening of an agent's reach. **(c) Keep it, and never support Bitbucket in the coordinator.** That contradicts the spec's "for sure" | **2026-10-26: (b), reopened for runs too. Not the recommendation.** The owner wants one Bitbucket path through the service. Accepted consequence: a hostile agent's Bitbucket token reaches the whole workspace, for the life of the run plus 1–2 hours (F29, corrected in review round 2), instead of one repository (F7, F20). Followed through in T1 and in S3 |
 | **D361** | Which Bitbucket credential does the coordinator read with? | **An OAuth consumer created with only `repository` and `pullrequest` read scopes, using the `client_credentials` grant.** It is read-only and short-lived (1 to 2 hours), no plan requirement is stated, and it is the spec's "general credential, specific tokens through it" | **(b) A read-only workspace or project access token.** It needs Premium, lives long, and gives the same read reach. **(c) Grant the coordinator account `secretAccessor` on every repository's `bitbucket-token`.** It needs nothing new from the user, but the coordinator then holds **write** tokens, and the grants cross from the installation root into each repository root | **2026-10-26: the recommendation**, a read-scoped OAuth consumer. It is read-only and needs no Premium. Because D363 needs a second consumer with write scopes, see F21 |
 | **D362** | Where is the coordinator's Bitbucket credential held? | **Held by the coordinator job itself**, as one project secret mounted only on `fugaro-coordinator`, exactly as `coordinator_app_key` holds the App key. It works without the service (F13) and adds no caller to the service (F11) | **(b) Held in the service bundle**, with a new non-run caller class: a coordinator account allow-list, a read-only mint and a new audit purpose. That is a security-sensitive change to `auth.go`, it works only where the service is on, and the coordinator then depends on the service | **2026-10-26: (b), held by the credentials service. Not the recommendation.** The answer reached this document labelled "recommended". It is recorded here as it was given, and it differs from §5's recommendation (open item O5). Why: one place holds every Bitbucket credential. Consequences: a new coordinator caller class at the service (F11, task T2.3), and a Bitbucket coordinator read only where the optional service is deployed (F13, tension T2) |
 | **D363** | How do runs get their Bitbucket credential? (F5 to F8) | **Unchanged: one repository access token per repository, mounted as today.** No Bitbucket credential can be narrowed per run, so minting adds nothing a run can safely use | **(b) The service holds each repository's token and hands the run its own.** That is a vault only: the job loses its Secret Manager grant, but the reach and lifetime are the same and the token still reaches the agent. **(c) The service mints from the consumer for runs.** It gives the agent workspace-wide write for 1 to 2 hours (F7). **(d) A push and pull-request proxy in the service.** It is the only shape that narrows below today's reach, and it is a large build. Deferred, as D145 deferred it | **2026-10-26: (c), the service mints run tokens from the consumer. Not the recommendation.** Why: the spec's "per run" tokens, made from one general credential. Mitigation (T1): the service mints only for allow-listed repositories, writes an audit line for every mint, and SECURITY.md and the docs say plainly that a Bitbucket run token is workspace-wide for the consumer's owner. The run consumer's scopes are the minimum runs need, set in a task and proven by a check (T3.5, Check 147). Followed through in F19–F22 |
-| **D364** | How do the console and a person's CLI read the project view with no key? (F2, F9, F10) | **A new CLI read of the view the sweep stored** (`coordinator/repos/<slug>/`, signed-in reader), with a runs-only fallback when the coordinator is off. Coordinator P6 is rewritten onto it. It needs no key and is the same for GitHub and Bitbucket | **(b) A runs-only `coordinator status`, with no pull-request half.** It is simpler, but the console shows no pull requests. **(c) The console waits for the coordinator's resident service (P7, P8).** That is later, and it needs a front-door credential | **2026-10-26: the recommendation.** The read is key-free for both providers. Console P6 is rebuilt on it: this folder's plan amends P6's plan text. The coordinator's own files are not edited, except to add
+| **D364** | How do the console and a person's CLI read the project view with no key? (F2, F9, F10) | **A new CLI read of the view the sweep stored** (`coordinator/repos/<slug>/`, read through `roles/firebasedatabase.viewer`; corrected in review round 2, where it said "signed-in reader"), with a runs-only fallback when the coordinator is off. Coordinator P6 is rewritten onto it. It needs no key and is the same for GitHub and Bitbucket | **(b) A runs-only `coordinator status`, with no pull-request half.** It is simpler, but the console shows no pull requests. **(c) The console waits for the coordinator's resident service (P7, P8).** That is later, and it needs a front-door credential | **2026-10-26: the recommendation.** The read is key-free for both providers. Console P6 is rebuilt on it: this folder's plan amends P6's plan text. The coordinator's own files are not edited, except to add
 a pointer if a docs test requires one |
 | **D365** | With the service on, is the coordinator job's own App key grant kept? (F3) | **Kept, and documented as the second holder** (the sweep runs no agent, so its mount is not an agent-reachable copy). The local `coordinator status` stops needing a key under D364 | **(b) The coordinator mints through the service.** That is D362(b)'s new caller class, for GitHub as well | **2026-10-26: the recommendation.** The grant is kept and documented as the second holder of the key |
 | **D366** | Is Bitbucket Data Center in scope? (F15) | **No.** The code is Cloud-only, and Data Center is a different API | **(b) Include it.** That needs a second adapter for the 1.0 REST API | **2026-10-26: the recommendation.** Out of scope |
@@ -496,12 +540,20 @@ can reach.
   person. T2.2 is held on it.
 - **O3, owner gate (F22).** The job's own `bitbucket-token` stays mounted until the owner flips
   T3.6's gate after Check 147. Image builds keep it in any case (F8).
-- **O4, a precondition for any mint.** Check 145 (U1–U3, U5, U8, U11, U12, U14, U15) runs on a sandbox workspace
+- **O4, a precondition for any mint.** Check 145 (U1–U5, U8, U11, U12, U14, U15) runs on a sandbox workspace
   before T3.1 merges. If it shows that a `client_credentials` token reaches beyond its workspace
   (U3), the owner rules again on D363 before S3 continues.
 - **O5, recorded.** D362's answer was relayed to this document as "recommended", but it is
   option (b) and not this document's recommendation. It is recorded as given, marked as not the
   recommendation.
+- **O6, a residual risk to acknowledge (F30).** Whoever may run the coordinator job with overrides
+  can make it read any repository the installing person can see, and publish what it finds to
+  every launcher. The options:
+  - (a) Accept it and document it (T2.11).
+  - (b) Take `runWithOverrides` away from the scheduler account, and accept that project Owners and
+    Editors keep it.
+
+  The plan is written to (a).
 
 ## 8. Numbers this work holds
 
@@ -532,10 +584,10 @@ the first slice that mints (S2's T2.3 and S3's T3.1).
 - **U7.** Whether a Forge app can get a token narrowed to a repository. Not on the plan's path; if
   it can, that would be a narrower alternative to D363.
 - **U8.** Whether IP allowlisting applies to OAuth tokens. Check 145 records it, if the sandbox
-  plan offers allowlisting.
-- **U9.** Whether a console child can make the D364 read. The CLI half uses the person's ADC
-  (`internal/cli/cloud.go` `newBudgetClient`), so the open question is whether a console child has
-  ADC. Check 149.
+  plan offers allowlisting. If it does not, U8 stays UNVERIFIED, and SECURITY.md says so (T3.4).
+- **U9.** Whether a console child can make the D364 read. Largely settled by the code: the console
+  already spawns reads that depend on ADC (`console/src/main/spawn.ts` `budget.show`), and
+  `CHILD_ENV_KEYS` carries `HOME`. Check 149 confirms the new view end to end.
 - **U10.** Whether `git` accepts an OAuth access token with the username `x-token-auth`. Bitbucket
   documents this form for access tokens, but not for OAuth tokens on this page. Check 147.
 - **U11.** Whether the token endpoint's response lists the granted scopes, which T3.5 would assert.

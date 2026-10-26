@@ -4,7 +4,8 @@
 D360–D367 on 2026-10-26. D360, D362, D363 and D367 went against the recommendation. Those answers
 approve the reconciliation. Each task of the plan still needs the owner's own explicit go.
 
-Items O1–O5 are open (reconciliation §7):
+Items O1, O2, O4 and O6 wait on the owner, O3 is the owner's per-repository flip, and O5 is a
+record (reconciliation §7):
 
 - **O1** holds tasks T3.1, T3.2, T3.3 and T3.6.
 - **O2** holds task T2.2.
@@ -15,8 +16,8 @@ Items O1–O5 are open (reconciliation §7):
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The owner's request (2026-10-26) and the context it was relayed with, **verbatim** |
-| [reconciliation.md](reconciliation.md) | What the repository already has (§2); Bitbucket Cloud's credential types, verified against Atlassian's own pages (§3); findings F1–F29 (§4); decisions D360–D367 with the owner's answers of 2026-10-26 (§5); the answers followed through, including the threat model (§6); tensions T1–T3 and open items O1–O5 (§7); UNVERIFIED U1–U15 (§9). **Where it disagrees with the spec, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Slices S0–S3 and tasks T0.1–T3.8 (with T3.0), each with its files, tests, red step and reviewer tier. It also gives six parallel levels, the critical path, the shared-files table and owner-run Checks 145–149. **Nothing in it is approved** |
+| [reconciliation.md](reconciliation.md) | What the repository already has (§2); Bitbucket Cloud's credential types, verified against Atlassian's own pages (§3); findings F1–F32 (§4); decisions D360–D367 with the owner's answers of 2026-10-26 (§5); the answers followed through, including the threat model (§6); tensions T1–T3 and open items O1–O6 (§7); UNVERIFIED U1–U15 (§9). **Where it disagrees with the spec, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Slices S0–S3 and tasks T0.1–T3.8 (with T2.11 and T3.0), each with its files, tests, red step and reviewer tier. It also gives six parallel levels, the critical path, the shared-files table and owner-run Checks 145–149. **Nothing in it is approved** |
 
 ## Typos fixed in the spec
 
