@@ -15,7 +15,7 @@ outcome, review rounds and halt) and overlap the same existing commands and skil
 | [spec.md](spec.md) | The task governance spec (2026-10-22), **verbatim** |
 | [spec-periodic-reviews.md](spec-periodic-reviews.md) | The periodic run-review request (2026-10-25, dictated), **verbatim** |
 | [reconciliation.md](reconciliation.md) | Findings F1–F38 against the code, resolutions R1–R8, decisions D320–D333 with the owner's answers of 2026-10-26, D320 followed through (§5.1), tensions T1–T3, items O1–O4, UNVERIFIED U1–U8. **Where it disagrees with either spec, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Eight slices, 26 tasks, six parallel levels, the critical path, the shared-files table, Checks 135–138. Nothing in it is approved |
+| [implementation-plan.md](implementation-plan.md) | Eight slices, 30 tasks, six parallel levels, the critical path, the shared-files table, Checks 135–138. Nothing in it is approved |
 
 ## Typos fixed in the specs
 
