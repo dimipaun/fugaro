@@ -20,7 +20,9 @@ fugaro update --registry-cleanup on          # only fugaro-base's dry-run flag c
 fugaro update --repo                         # no flag: the repository copies the installation's setting
 ```
 
-The repository step copies the installation's `registry_cleanup_dry_run` output into that repository's registry, so it takes no flag of its own. Both registries and `fugaro-base` end with the dry run off. The setting is recorded in the local config, so a later `fugaro setup` or `fugaro update` keeps it.
+The repository step copies the installation's `registry_cleanup_dry_run` output into that repository's registry, so it takes no flag of its own. Both registries and `fugaro-base` end with the dry run off.
+
+**The change is not remembered on this machine.** The flag falls back to `terraform.registry_cleanup` in the local config, and the only path that writes that line is a machine adopting an existing installation ([teammates.md](teammates.md)), so a later `fugaro setup` or `fugaro update` without the flag plans the dry run back — and warns that it does. Pass `--registry-cleanup on` (or `off`) every time.
 
 ## What it deletes, and what it never does
 

@@ -2,14 +2,14 @@
 
 Two budgets exist here, and neither one is the other.
 
-- **The monthly billing budget** on the GCP project is an alert: it emails the billing account's administrators at 50%, 90% and 100% of the amount, and it stops nothing.
+- **The monthly billing budget** on the GCP project is an alert: it emails the billing account's administrators and users at 50%, 90% and 100% of the amount, and it stops nothing.
 - **The model budget** is the guard on what a run may spend on the model. A gateway inside the run holds the model credential, prices every call against the built-in table (or the `model_prices` you set), and refuses or halts a run that would pass its cap. It lives in a Firebase Realtime Database in the installation's own GCP project.
 
 The project config is `$XDG_CONFIG_HOME/fugaro/projects/<name>.yaml`, else under `~/.config`.
 
 ## The monthly billing budget
 
-**Per installation.** `fugaro setup --budget 100 --budget-currency USD --billing-account <account-id>` creates it; it needs Billing Account User on that account.
+**Per installation.** `fugaro setup --budget 100 --budget-currency USD --billing-account <account-id>` creates it. Creating it needs `billing.budgets.create` on the billing account — **Billing Account Administrator** (`roles/billing.admin`) or **Billing Account Costs Manager** (`roles/billing.costsManager`). **Billing Account User** (`roles/billing.user`) is what *linking* the account to the project needs ([gcp-setup.md](../gcp-setup.md)), and it is not enough to create the budget.
 
 The amount, the currency and the account are recorded nowhere, so **pass the same three flags on every later `fugaro setup` and `fugaro update`**: a plan without them deletes the budget, and the guard refuses that plan and names the flags.
 
