@@ -391,3 +391,38 @@ func TestNarrowSummary(t *testing.T) {
 		t.Fatalf("after a rebase away narrowSummary = %q, want %q", got, want)
 	}
 }
+
+// TestNarrowSummaryCountsAfterAFixRoundMergedTheBase: a fix round that merges
+// the pull request's base, moved on since, into the branch keeps the narrowed
+// commit an ancestor of HEAD, so the review range still starts after it and
+// now holds the base's new commit and the merge too. What the pull request
+// carries from other branches is still exactly the integration branch's
+// commits: the ones its base lacks up to the narrowed commit, never a
+// difference of the two counts, which the base's own commit throws off.
+//
+// Mutation (count the other branches' commits as all minus the review's):
+// the line says 4 where the integration branch carries 5.
+func TestNarrowSummaryCountsAfterAFixRoundMergedTheBase(t *testing.T) {
+	ctx := context.Background()
+	repo, remote, tip := ownRangeRepo(t, 5)
+	testutil.Git(t, repo.Dir, "checkout", "--quiet", "-b", "work", "origin/integration")
+	commitFiles(t, repo.Dir, "a.txt", "b.txt", "c.txt")
+	seed := filepath.Join(t.TempDir(), "seed")
+	testutil.Git(t, filepath.Dir(seed), "clone", "--quiet", remote, seed)
+	commitFiles(t, seed, "main.txt")
+	testutil.Git(t, seed, "push", "--quiet", "origin", "HEAD:refs/heads/main")
+	testutil.Git(t, repo.Dir, "fetch", "--quiet", "origin", "+refs/heads/*:refs/remotes/origin/*")
+	testutil.Git(t, repo.Dir, "merge", "--quiet", "--no-edit", "origin/main")
+	r := &run{
+		d:          Deps{Log: slog.New(slog.DiscardHandler)},
+		spec:       &task.Spec{Ref: "main"},
+		cfg:        &config.Config{Git: config.Git{BaseBranch: "main"}},
+		repo:       repo,
+		narrowBase: tip,
+	}
+	inRange := testutil.Git(t, repo.Dir, "rev-list", "--count", tip+"..HEAD")
+	want := "review covered commits after `" + tip[:7] + "` (" + inRange + " commits); this PR also carries 5 commits from other branches"
+	if got := r.narrowSummary(ctx); got != want {
+		t.Fatalf("narrowSummary = %q, want %q", got, want)
+	}
+}

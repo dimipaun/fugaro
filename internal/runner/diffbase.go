@@ -225,6 +225,10 @@ func ownCommitsBase(ctx context.Context, repo *gitops.Repo, runBranch, def strin
 // saw only the run's own commits, and without this line nothing says so. It
 // is read at finalize, over the final HEAD, so the counts include every fix
 // round's commits; "" when the range was not narrowed or cannot be counted.
+// What the pull request carries from other branches is counted up to the
+// narrowed commit (origin/<base>..<it>), not as the pull request's count less
+// the review's: a fix round that merges the base in puts the base's own
+// commits in the review's range, and the difference then comes out short.
 // Its parts are a commit SHA, counts and a validated branch name, so it is
 // bounded and needs no escaping.
 func (r *run) narrowSummary(ctx context.Context) string {
@@ -242,12 +246,12 @@ func (r *run) narrowSummary(ctx context.Context) string {
 		return ""
 	}
 	line := fmt.Sprintf("review covered commits after %s (%s)", short, Plural(own, "commit"))
-	all, err := r.repo.CommitsAhead(ctx, "origin/"+r.cfg.Git.BaseBranch)
+	other, err := r.repo.CountAhead(ctx, r.cfg.Git.BaseBranch, nb)
 	if err != nil {
 		r.d.Log.Warn("counting the pull request's commits for the report failed", "err", r.redact(err.Error()))
 		return line
 	}
-	if other := all - own; other > 0 {
+	if other > 0 {
 		line += fmt.Sprintf("; this PR also carries %s from other branches", Plural(other, "commit"))
 	}
 	return line

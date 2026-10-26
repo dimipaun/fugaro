@@ -4,6 +4,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -167,6 +168,15 @@ func TestOwnCommitsCostOneProcessPerStepWhateverTheBranchCount(t *testing.T) {
 	}
 	if _, err := repo.HeldBy(ctx, "HEAD", heads); err == nil {
 		t.Error("HeldBy accepted a ref name, want a full commit SHA")
+	}
+	// A full SHA that names no commit is never held: rev-list walks no
+	// commit from a tree or a blob and counts 0, which reads as "held".
+	tree := testutil.Git(t, repo.Dir, "rev-parse", "HEAD^{tree}")
+	blob := testutil.Git(t, repo.Dir, "rev-parse", "HEAD:README.md")
+	for _, c := range []string{tree, blob, strings.Repeat("e", 40)} {
+		if held, err := repo.HeldBy(ctx, c, heads); err == nil || held {
+			t.Errorf("HeldBy(%s, not a commit here) = %v, %v; want an error", c, held, err)
+		}
 	}
 }
 

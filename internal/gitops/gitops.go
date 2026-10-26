@@ -646,7 +646,9 @@ func (r *Repo) OriginHeads(ctx context.Context, runBranch string) ([]string, err
 // them reaches it. The heads go in as "^<sha>" lines rather than after a
 // command-line --not, which git does not apply to what --stdin reads. commit
 // must be a full commit SHA, and heads are OriginHeads', which the checkout
-// holds.
+// holds. It is resolved as "<commit>^{commit}": rev-list walks no commit from
+// a tree or a blob and counts 0, which would read as held, so a full SHA that
+// names anything but a commit here is an error instead.
 func (r *Repo) HeldBy(ctx context.Context, commit string, heads []string) (bool, error) {
 	if !IsFullSHA(commit) {
 		return false, fmt.Errorf("refusing to look for %q on origin's branches: not a full commit SHA", commit)
@@ -654,7 +656,7 @@ func (r *Repo) HeldBy(ctx context.Context, commit string, heads []string) (bool,
 	if len(heads) == 0 {
 		return false, nil
 	}
-	out, err := r.gitIn(ctx, notLines(heads), "--no-replace-objects", "rev-list", "--count", "--stdin", "--end-of-options", commit)
+	out, err := r.gitIn(ctx, notLines(heads), "--no-replace-objects", "rev-list", "--count", "--stdin", "--end-of-options", commit+"^{commit}")
 	if err != nil {
 		return false, err
 	}
