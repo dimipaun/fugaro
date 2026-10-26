@@ -525,8 +525,10 @@ GV2.3→GV2.4; GV0.1→GV2.4; GV2.4→GV2.6; GV3.1→GV3.2; GV2.4→GV3.2; GV2.3
 | L5 | GV2.6 (OWNER-RUN) |
 | blocked | GV3.1 → GV3.2 and GV4.1 (the coordinator's record, rulings (a) and (d)) |
 
-**Critical path:** GV1.2 → GV1.6 → GV2.1 → GV2.3 → GV2.4 → GV2.6 (six levels; GV1.2 is the
-longest L0 task). The schema task GV1.3 and the streams file GV1.4 are on equal-length paths.
+**Critical path:** GV1.1 → GV1.6 → GV2.1 → GV2.3 → GV2.4 → GV2.6 (six tasks). GV1.2, GV1.3 and
+GV1.4 start chains of the same length into GV1.6; the smallest id decides the tie (C8), so the
+computed path starts at GV1.1. The longest L0 task in effort is GV1.2, which the count does not
+see.
 
 **What must be sequential, and why:** GV1.6 needs the four L0 data tasks' interfaces; GV2.1 needs
 GV1.6's contract; GV2.3 needs the operation and the worker; GV2.4 animates GV2.3's states. GV2.5
