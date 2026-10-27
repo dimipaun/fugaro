@@ -91,31 +91,31 @@ type FindingsPolicy struct {
 }
 
 // RigorRaise is the raise a run's mode took during the run (T3.5, D22): the
-// mode the run ends at, the rule that raised it when the record names one, and
-// whether the raise came at the moment a run cannot buy rounds with it any
-// more. A run whose mode never rose has none, which is D19.
+// mode it rose to, the rule the moment that raised it matched when it matched
+// one, and D22's moment it rose at. The moment that took it records it
+// (noteRigorRaise, rigor.go), because the block keeps no per-moment history and
+// the moment is what says whether any review round was held at the mode the run
+// ends at. A run whose mode never rose has none, which is D19.
 type RigorRaise struct {
-	// Mode is the mode the run's block ends at (D24), which is the mode the
-	// reason names.
+	// Mode is the mode this raise reached, which is the mode the reason names.
 	Mode rigor.Mode
-	// Area is the rule that raised it — the strictest matched rule, which D23
-	// makes the deciding one — and "" when the block's layer is not an area: a
-	// built-in floor is outside every layer (D18) and the record carries no
-	// path for it (T1.5).
+	// Area is the rule the raising moment matched — its own strictest, which
+	// D23 makes the deciding one — and "" when the layer that decided it is not
+	// an area: a raise by a layer, or by a built-in floor outside every layer
+	// (D18), has no rule to name.
 	Area string
-	// AfterReview is true when the raise came after the last review round:
-	// D22's third moment, before the pull request is marked ready, where no
-	// review was held at the mode the run ends at. A raise between rounds is
-	// held at by every round that follows it, so it is not this.
-	AfterReview bool
+	// At is D22's moment the raise happened at: a round, or finalize, the one
+	// moment no review round follows.
+	At string
 }
 
-// raisedAfterReview reports whether the mode rose after the last review round.
-// Tolerating that round's findings would make the pull request ready on a
-// review nobody held at the mode the run is judged by, which is what D22's
-// "too late to buy rounds" forbids.
+// raisedAfterReview reports whether the mode rose after the last review round:
+// D22's third moment, before the pull request is marked ready. Tolerating that
+// round's findings would make the pull request ready on a review nobody held at
+// the mode the run is judged by, which is what D22's "too late to buy rounds"
+// forbids.
 func (pol FindingsPolicy) raisedAfterReview() bool {
-	return pol.Raised != nil && pol.Raised.AfterReview
+	return pol.Raised != nil && pol.Raised.At == runstore.RigorAtFinalize
 }
 
 // raiseReason is Decide's reason for a run its raised mode keeps a draft: the
@@ -128,7 +128,7 @@ func (pol FindingsPolicy) raiseReason(last *runstore.ReviewSummary) string {
 	if pol.Raised.Area != "" {
 		reason += fmt.Sprintf(" by area %s", pol.Raised.Area)
 	}
-	if pol.Raised.AfterReview {
+	if pol.Raised.At == runstore.RigorAtFinalize {
 		reason += " at finalize, after the last review round"
 	} else {
 		reason += " after a review round"
@@ -176,70 +176,12 @@ func findingsPolicyOf(cfg rigor.Config, mode rigor.Mode, round int, findings []r
 
 // findingsPolicy is findingsPolicyOf for this run: the last senior review
 // round as the loop read it, the mode the run resolved, the rigor
-// configuration that mode was read from, and the raise the run's own work took
-// during it.
+// configuration that mode was read from, and the raise the run's mode took
+// during it (noteRigorRaise, rigor.go).
 func (r *run) findingsPolicy() FindingsPolicy {
 	pol := findingsPolicyOf(r.rigorCfg, r.reachedRigor(), r.lastSenior.Round, scoresOf(r.lastSenior.Findings))
-	pol.Raised = r.rigorRaise()
+	pol.Raised = r.rigorRaise
 	return pol
-}
-
-// rigorRaise is the raise this run's mode took during the run — its own diff
-// matching an area rule, or a built-in floor (T1.5) — read from the block T1.4
-// records, or nil for a run whose mode never rose (T3.5, D19).
-//
-// Both comparisons it makes are against the resolver's own answers rather than
-// a second rule about modes, and the record is all either needs:
-//
-//   - The mode this run's configuration and the paths its caller declared
-//     alone give is bootstrap's own answer, asked again with bootstrap's own
-//     inputs (bootstrapRigorMode, rigor.go), because the block keeps no
-//     per-moment history. A block that resolves higher than that was raised by
-//     the run's own work: D22's fold never falls, so "not equal" is "higher".
-//   - The mode the run held before D22's third moment is that answer plus every
-//     rule the block says was applied before finalize, which is the mode its
-//     last review round was held at. A block that resolves higher than that was
-//     raised after the last review round.
-//
-// The rule that raised it is the block's strictest matched rule, which is the
-// one D23 orders first and every surface names. A raise whose layer is not an
-// area — a floor, which is outside every layer — is reported without one: the
-// block carries a rule's name and no path, so nothing in this tree can name the
-// path a floor matched. T1.5's floors have not landed either, which is why the
-// reason names a floor's mode and moment but never its path (see the pull
-// request's "Noticed, not done").
-func (r *run) rigorRaise() *RigorRaise {
-	rg := r.rec.Rigor
-	if rg == nil || !rigor.Known(rg.Mode) {
-		return nil
-	}
-	boot := r.bootstrapRigorMode()
-	if rg.Mode == boot {
-		return nil
-	}
-	held := boot
-	for _, a := range rg.Areas {
-		if a.At == runstore.RigorAtFinalize {
-			continue
-		}
-		held = rigor.Strictest(held, a.Mode)
-	}
-	raise := &RigorRaise{Mode: rg.Mode}
-	if rg.From == rigor.FromArea && len(rg.Areas) > 0 {
-		raise.Area = rg.Areas[0].Name
-	}
-	raise.AfterReview = rg.Mode != held
-	return raise
-}
-
-// bootstrapRigorMode is the mode this run resolved before its own work could
-// raise it: the resolver's answer for the configuration the run read and the
-// paths its caller declared, which is the call bootstrapRigor makes at D22's
-// first moment (rigor.go). A run reads its configuration once and its declared
-// paths never change, so asking the resolver again here asks exactly the
-// question the block's first moment answered.
-func (r *run) bootstrapRigorMode() rigor.Mode {
-	return rigor.Resolve(r.rigorCfg, rigor.Request{Mode: r.spec.Rigor, Paths: r.declaredPaths()}).Mode
 }
 
 // toleratedRecord is what the run's record keeps of the findings the mode let

@@ -337,6 +337,12 @@ type run struct {
 	// review, and the mode must not come from there.
 	rigorCfg rigor.Config
 	rigorRev string
+	// rigorRaise is the last raise the run's mode took during the run, set by
+	// the moment that took it (noteRigorRaise, rigor.go) and nil while the mode
+	// has never risen above the one bootstrap resolved. It is kept here because
+	// the record's block carries no per-moment history: which moment raised the
+	// mode is what readiness reads (T3.5, outcome.go).
+	rigorRaise *RigorRaise
 	// lastSenior is the last senior review round as the loop read it: the
 	// findings the record's summary only counts, kept because the mode's
 	// threshold table reads their scores (outcome.go, T3.1). It is the round
