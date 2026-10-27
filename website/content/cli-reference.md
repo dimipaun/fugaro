@@ -2852,8 +2852,80 @@ Flags:
 
 Subcommands:
 
+- `fugaro runs digest` -- Write a closed period's report of this repository into its own docs tree
 - `fugaro runs ls` -- List runs with their status, stage, cost and PR
 - `fugaro runs stats` -- Aggregate run records by the person who started each run
+
+## `fugaro runs digest`
+
+Write a closed period's report of this repository into its own docs tree
+
+Write one closed period's report of this repository, from its run records, into
+the repository's own docs tree: <dir>/<YYYY>/<key>.md, plus the index
+<dir>/README.md regenerated from the files there (D321).
+
+The report is internal/digest's: the period's runs, the flagged ones and the
+dearest of the rest, the stage figures, the summary block a later report reads,
+and the fixed pattern rules (D326) read over that block and the committed ones.
+A yearly report has no runs of its own to read -- the records are kept 90 days
+(F24) -- so it is that year's monthly reports added up, and the report says how
+many of the twelve it added up, so a partial year is not read as a whole one.
+
+--date names any day inside the period. Without it the most recent closed period
+is reported: the day, week, month or year before the one today falls in. A period
+holding today is still receiving runs -- a run counts in the period it finished,
+in UTC (G4) -- so it is refused and nothing is written for it.
+
+The report is of this repository and of no other (G2, D322): --repo names it, and
+without --repo it is the checkout's own origin. There is no --all. A record under
+the repository's prefix whose own repository is another is not read into the
+report, and no report names another repository.
+
+Nothing in a report is a person or a task's own words (G1, D323): the flags,
+recipes and figures are internal/digest's own closed vocabulary, and a report is
+committed into a repository that may be public. Nothing here refuses in a coding
+agent's session, which is what makes the scheduled report run possible.
+
+The committed reports under --dir are the ones the pattern rules read, and each is
+re-checked by shape before it is used: a report a person edited by hand, or a
+markdown file whose name is not <YYYY>/<key>.md, is named on stderr by its own path
+and left out of the patterns and of the index's figures, and the report being
+written goes on. Nothing else in the folder is read, and the folder is never edited
+except for the report and the index.
+
+The read is the repository's runs bucket listing, newest first, capped at the bound
+runs stats uses, and a listing longer than that says so on stderr. The listing is not
+narrowed to the period: a run counts in the period it finished (G4), so a run that
+started before the period and finished inside it is one of its runs. The bucket's
+lifecycle age keeps the listing small, and F24's retention means a period older than
+it has no records left -- which is why a yearly report rolls the committed monthly
+ones up rather than reading records.
+
+--stdout prints the report instead of writing it, and --json prints the summary
+block and the patterns as {repo, period, summary, patterns[], skipped[]}. Neither
+writes a file, so a caller can read a report before committing it.
+
+Usage: `fugaro runs digest`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--date` | string | "" | no | any day inside the period (YYYY-MM-DD); default: the most recent closed period |
+| `--dir` | string | `docs/fugaro-reviews` | no | the folder the reports live in, relative to the working directory |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for digest |
+| `--json` | bool | `false` | no | print the summary block and the patterns as JSON |
+| `--period` | string | `day` | no | the period to report: day, week, month or year |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | the repository to report (owner/name); default: this checkout's origin |
+| `--stdout` | bool | `false` | no | print the report instead of writing it |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro runs ls`
 
