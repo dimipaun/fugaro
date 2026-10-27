@@ -531,6 +531,17 @@ GitHub with its links working. It reads GitHub and nothing else — no cloud pro
 and no write of any kind — it is owner-run, and it is **NOT RUN**: its third step reads a file task
 **L1.3** writes, so it is run in full by task **L1.11**, after L1.3 has merged.
 
+**Check 123 is the console dependency-graph work's, and it is the only number that work takes**
+(`docs/console-dependency-graph/README.md`, "Numbers this work holds": "Check **123** (the highest in
+use on `main` and in open pull requests was 122)" — that is the work's own reading of the register at
+its base rather than a reservation taken here, and
+`docs/console-dependency-graph/implementation-plan.md` §6, "Checks", writes the check as task
+**GV2.6**). Its subject is the **console's dependency graph in the packed, signed macOS app**: that
+the elkjs worker loads from `app://` under the Electron fuses (the plan's **U5**), that the graph
+renders for the sandbox installation's checkout, and that with **Reduce motion** on every state is
+static and keeps its text label. It builds the console **locally** and opens it on the sandbox installation `fugaro`; the app's own Graph read spawns `fugaro plan status --json` there, a **read** of the run records, and nothing is written, no credential is handed over — and it is owner-run: **no agent runs any step of it**, and
+it is **NOT RUN**.
+
 **That is the end of the register.** The paragraph below is not another
 reservation: it introduces the check that owns 57, whose row is in the table
 below.
@@ -712,6 +723,7 @@ probe account carries predefined grants only).
 | 111 | The billing picker's failure modes (setup-wizard plan Task W0.3; D3 and D6): the Cloud Billing API disabled on the quota project — in D3's two cases, the quota project **being** the project set up and the quota project being **another** one — a caller without `billing.accounts.list` on a project whose API **is** enabled (so the API answers **403** rather than the disabled-API refusal), and the three sessions that never list anything at all (no TTY, `--json`, an agent session) — each asserting the guided `gcloud billing projects link` line, that **nothing was enabled**, and that **no account list appears in any output** (the one run where a list *is* expected is the `gcloud` fallback answering an API that refused) | See "Check 111" below; **you** run it at your own terminal, on installation `fugaro` (never `belong`), and **no agent runs any step of it** (an agent session is one of the five modes it observes). | Three throwaway projects of your own — `P` (the installation's), `Q` (API off) and `S` (API on) — and the ADC quota project is repointed by three of the runs. Every step is a refusal, and nothing is created, enabled or linked by the check itself. **NOT RUN.** |
 | 112 | The four zoom levels, drawn once and drawn as stills (zoom-diagrams plan §3, Part 4; D237, D244, D245, D247): the section sits on `/how-it-works/`, **under "The run, end to end" and its diagram** (D237); the four levels are four `<figure>`s in the owner's boards' order, each named by its own `<figcaption>`; **every entity is one `<symbol>` of one `<defs>`, drawn through `<use>`** (D244) — seventeen of them, the job tile, the orchestrator, the developer and its planned form, the person and its planned form, the plain, accent and planned cards, the laptop, the phone, the project, the loop, the draft pull request, the Firebase card, the cloud and the level's own box — so a job tile is the same tile at every level, and no level draws its own copy of one; every label of every level is a string of the board it is drawn from, held word for word in both directions; the four markers are one `<nav>` of anchors with accessible names (D245), each jumping to its own level by keyboard and by pointer; the four levels and every label are in the document **with JavaScript off** (the section ships no script of its own); and the drawings are legible — labels at the palette's own contrast, nothing clipped, nothing drawn as an empty box — on a desktop and at 360, 390 x 844 and 320 (ZU4) | See "Check 112" below; **you** run it, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the live site — read-only, no account, no cloud project touched, no `fugaro` command, and **No agent runs any step of it**. The pinned scroll-driven zoom is **Part 5** and is not in this tree: that step of the section is written and cannot be run yet, and an unrun step is not a pass | One browser, a hard reload, one look at the section with script on and one with it off, and one narrow viewport. Nothing is created, enabled, linked or written. **USER-RUN, NOT RUN.** |
 | 113 | The phone app's page, and every claim on it marked shipped or planned (zoom-diagrams plan §3, Part 3; D239, D240, D241, D242): `/mobile/` is the app's own page and it is a **"coming soon"** page, so it carries a **preview badge** over its headline reading "Coming soon" (D240's third condition) and **no date anywhere** — no year, no month, no season, in the page's text, its title or its description (D240's first condition) — and **every bullet is marked**: the claims of `website/data/mobile-claims.yaml` render as two lists under two headings, *What the app does today* and *What is still to come*, each card carrying its own word, **Shipped** or **Planned**, so the mark is a word and not a colour alone (D240's second condition, D241's answer: shipped is status and spend, planned is the roster, switching by name, the wake word, QR pairing and the three roles); the **wake word's bullet says the listening and the recognition happen on the phone** and the page names no speech service and no cloud (D242); **nothing asks a reader for anything** — no form, no field, no button, no `mailto:`, no third party, no waitlist (D239) — and the page shows **no empty frame**: with no row in `website/data/mobile-screens.yaml` there is no slider, no heading and no picture-shaped hole, and when your captures land the slider appears with this page's own slot and ids (D251); and the page reads at a phone's width, with the marks and the badge legible at 360, 390 x 844 and 320 | See "Check 113" below; **you** run it, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the live site — read-only, no account, no cloud project touched, no `fugaro` command, and **No agent runs any step of it**. The pictures are yours and are **not** in this tree: step 6's second half is written and cannot be run until they land, and an unrun step is not a pass | One browser, a hard reload, one look at the page, one look at the menu, and one narrow viewport. Nothing is created, enabled, linked or written, and no address is entered anywhere. **USER-RUN, NOT RUN.** |
+| 123 | The console's **dependency graph in the packed, signed macOS app** (the console dependency-graph work: `docs/console-dependency-graph/README.md` "Numbers this work holds" — 123 is the only number it takes — and `docs/console-dependency-graph/implementation-plan.md` §6, "Checks", task **GV2.6**): the **elkjs worker loads from `app://`** in the packaged build, under the Electron fuses (the plan's **U5**) — the graph draws, with no blank frame and no worker or CSP error in the app; the **graph renders** for the sandbox installation's checkout, its nodes carrying their state words; and with **Reduce motion** on, every state is **static** and **keeps its text label** (the reduced-motion style GV2.4 landed) — no comet, no pulse, no flow along an edge, and no state left unlabelled | See "Check 123" below; **you** run it, on your own Mac, on installation `fugaro` (never `belong`) and the sandbox checkout only — one local build and one local launch, and the one read the app makes itself: it spawns that installation's `fugaro plan status --json`, so the check reads the sandbox project's runs bucket (`fugaro-dev`) with your CLI's own credentials — a **read**, and the only cloud project it touches; **No agent performs any step of it** | One local build (`cd console && npm ci && npm run package`), one app launch, one look at the graph, and one look again with Reduce motion on. Nothing is created, enabled, linked or written anywhere in the cloud. **USER-RUN, NOT RUN.** |
 | 124 | The Cloud Batch backend's own live check (compute-backend plan `docs/plans/2026-10-19-compute-backend.md`, its Task 12; design `docs/design/compute-backend.md` — **57 is this backend's reserved number and 124 is a second one taken above it**, which the claim paragraph above states with the overlap named: 57's section is Task 12's and this check's parts are the owner's, so the two are read together rather than one replacing the other; the opt-in `--provision-batch` backend, shipped in 0.9.5, whose live check was never written — 57a measured it in hand-made scripts and 57b lives inside that plan): **four owner-run parts.** **124a** — `fugaro setup --provision-batch --project fugaro`: the plan the compute root prints (the two APIs, the run accounts' IAM, the reaper's and the preload's accounts and their two custom roles, the Cloud NAT and its router, the preload's scheduled rebuild, the reaper's job), the typed confirmation nothing is applied before, the apply's `provisioned; the preloaded boot image …` line, the second run's `No changes: the compute backend's provisioning matches the plan.`, and the two read-backs — the lines `fugaro doctor`'s Batch half prints, which is the one `info batch-artifact-boundary: …` line it always prints for an installation carrying a `batch:` block and `fugaro doctor: everything checked is ok`; the other seven ids print nothing while their read is OK, so a `warning batch-…: …` line is the finding — and `fugaro validate`'s refusal, which is the pass today and `<path> is valid` after **the enable task**. **This part is the only one runnable now**: `internal/localcfg` refuses `backend: cloud-batch` (`backend "cloud-batch" is not enabled yet (this build runs cloud-run)`) until the plan's Task 10, so **124b, 124c and 124d are written and cannot be run yet**. **124b** — one ordinary sandbox task through a Batch job to its **draft pull request**, then declined and its branch deleted (Bitbucket, the sandbox's own repository). **124c** — a forced preemption: the run's own VM, selected by the label value the **job itself** records (`fugaro_run=<slug>-<run-id>`, never a typed name, and the step refuses a VM whose label is not its own job's), deleted by hand; the job must end `FAILED` with the task's exit code equal to the value read out of the tree (`grep -n 'preemptExitCode =' internal/backend/batch/run.go` — the number has one home and is written nowhere under `docs/`), and `fugaro runs ls` must read `failed (preempted)` — a **derived** reading, because nothing writes a preempted run's record; the reaper then reports what it would reap and what it reaped. **no Fugaro run is Spot today**, so this is a **simulated** reclaim and the design's §7.2 step 7 stays unrun. **124d** — the check's own cost and the cleanup: the runs' dollars, the budget lease released, and `gcloud batch jobs list` / `gcloud compute instances list` diffed against the before-state the check recorded, with the installation's own provisioning — **the installation's own, never deleted**: the preload image family, the reaper's and the preload's service accounts, **the two custom roles**, the Cloud NAT and its router, the preload rebuild's and the reaper sweep's scheduler jobs, the reaper job — named as what no restore here may touch | See "Check 124a"–"Check 124d" below; **you** run it, on installation `fugaro` (GCP project `fugaro-dev`, never `belong`), a sandbox checkout only, at your own terminal, with the guard block re-run before every part; the apply's confirmation and `fugaro setup` are refused a coding agent's session, and **no agent performs any step of the check** | 124a: one installation-root apply and the compute root's, one Cloud Build for the preload image and the scheduled rebuilds after it, and nothing else; 124b and 124c: **two** small sandbox runs on Batch (one ordinary, one preempted by hand), the check's own dollars recorded in 124d, with the batch jobs' own records kept. Nothing in the register is deleted by the check except 124b's declined pull request and its branch, and **the installation's own provisioning is never deleted**. **USER-RUN, NOT RUN — and 124b, 124c and 124d are written and cannot be run yet**, for the reason the sections record in as many words: `backend: cloud-batch` is refused by `internal/localcfg` until the enable task (the plan's Task 10, "to build"). |
 | 130 | The licence detectors after the open-core skeleton ([`docs/licensing/`](licensing/implementation-plan.md), its Check 130, task L1.10, and the reconciliation's F8 and U1 under the owner's **O2** answer of 2026-10-24; the block **130–134** is that work's and only 130 is written): that GitHub **still reports MIT** for the repository with the skeleton's new root `LICENSING.md` beside an untouched `LICENSE` — read twice and recorded both times, as the repository page's own licence label and the file it opens, and as the licence API's machine-readable reading (`spdx_id: MIT`, `key: mit`, and **`path: LICENSE`**, so the file GitHub classified is the untouched one and not the new statement file, which is what a `path` of `LICENSING.md` would mean) — and that **`LICENSING.md` renders on GitHub** as a page whose every relative link works: `LICENSE`, `ee/README.md`, the vendored skills' `.agents/LICENSE` and the README's trademark paragraph anchor. **What it is not:** pkg.go.dev's classification (U2, not this check's after O2) and the release labels — the plugin manifest's, the Homebrew cask's and the archive's — which stay `MIT` at 0.11.0 because the release build sets no `ee` tag (D303 as amended) and move together in the release that first sets it (plan slice L5) | See "Check 130" below; **you** run it, read-only, in a browser and with three `curl` calls against `api.github.com` — the repository read out of the checkout's origin and cross-checked against `go.mod`, so the tree and the page are the same repository — on no cloud project and no installation, never `belong`, holding no credential and writing nothing anywhere, and **no agent runs any step of it**. Its guard stops until task L1.3's `LICENSING.md` is in the tree, so it is run in full by task L1.11, after L1.3 merges | Nothing: three anonymous API reads, which spend part of the anonymous rate limit and change nothing; no image, no bucket, no model call, no Terraform, no node and no file. **USER-RUN, NOT RUN.** |
 | 145 | The Bitbucket read consumer's facts ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 145, task T2.8 and the script T2.7 writes; the reconciliation's U1–U5, U8, U11, U12, U14 and U15): the sandbox consumer read from a file **you** name and never printed — the token's lifetime (U1); whether the `client_credentials` grant returns a refresh token and whether a single minted token can be revoked (U2); whether the token reaches a second workspace you belong to (U3); whether the sandbox's plan admits consumers (U4); the workspace's seat count before and after (U5); whether IP allowlisting applies to OAuth tokens, and U8 stays **UNVERIFIED** if the plan offers none (U8); whether the token response lists the granted scopes (U11); whether two grants return distinct tokens (U12); whether creating a consumer needs workspace-admin rights and whether the token then reaches admin endpoints (U14); and whether the consumer must be marked private (U15). **It gates the read mint (O4):** tasks T2.3 and T3.1 do not merge before this check passes, and if U3 shows reach beyond the workspace, D360 and D361 go back to the owner before T2.3 merges. It also shows that a write with the read token is refused | See "Check 145" below; **you** run it at your own terminal, on sandbox workspaces only, never `belong`, with the consumer file you name and the script never printing it, and **no agent runs any step of it**. The script lands with task **T2.7**; this section is task **T0.2**'s and carries no steps of its own until then | A sandbox workspace and a second one you belong to, one read consumer created as the installing person, and two `client_credentials` grants; the script's own Restore says what it leaves behind. **USER-RUN, NOT RUN.** |
@@ -9174,6 +9186,122 @@ yet, that step 6's second half was not run. Until it has been, this row stays **
 - **Never touch `belong`, EdgeWeb or EdgeServer**: no step here reads or writes a project at all,
   and the only host this check fetches is the built artifact on localhost or the canonical origin
   the site's own `site.yaml` names.
+
+## Check 123: the dependency graph in the packed, signed macOS app — the worker under the fuses, the render, and Reduce motion (installation `fugaro`, the sandbox checkout only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written for the **console dependency-graph work** (`docs/console-dependency-graph/README.md`,
+its "Numbers this work holds" — 123 is the only number it takes — and
+`docs/console-dependency-graph/implementation-plan.md` §6, "Checks", task **GV2.6**), and written
+here rather than left to that plan because this is the file the owner runs live checks out of. It is
+the half of the graph work no hermetic test can take: `console/test/unit/graph-motion.test.ts` reads
+the reduced-motion **rule** out of the stylesheet, `console/test/e2e/graph-worker.spec.ts` starts the
+worker from `app://console/elk-worker.min.js` in a real Electron page, and `graph.spec.ts` drives the
+graph — but all three run the renderer from the **sources**, and none opens the **packaged** app: the
+one where the renderer and the worker load out of the **asar**, under the fuses. **No agent runs any
+step of it**: every step below is run by you, at your own terminal, on your own Mac.
+
+**What this check measures, and why a local build is enough.** Three readings, all of them about the
+**packed** app rather than the sources. **First, the worker under the fuses** (the plan's **U5**): the
+graph's layout runs in a **Web Worker**, and in the packaged build that worker has to construct itself
+and load its own bundle over the app's `app://` scheme — a worker that cannot be constructed leaves a
+blank frame and prints a worker or CSP error, and that is the failure this reading exists to catch.
+**Second, the render**: the graph is **drawn** for the sandbox installation's checkout — nodes with
+their state words and the edges between them, rather than an empty canvas. **Third, Reduce motion**:
+with the setting on, every state is **static** and **keeps its text label** (the reduced-motion style
+**GV2.4** landed), so the graph stays readable with the motion gone.
+
+**What this check is not.** It is not the **dev-build** readings — `npm run dev`, the e2e specs, the
+unit test that reads the rule out of the stylesheet: those run the renderer from the **sources**.
+`console/test/e2e/graph-worker.spec.ts` does witness a real Electron page starting the worker from
+`app://console/elk-worker.min.js` under the console's CSP, so what is left to this check is the
+**packed** app alone — the worker's bundle inside the **asar**, under the **fuses**, in the app a
+person double-clicks. It is not a reading of the graph's **content** — which nodes and which edges a
+plan produces is the rest of this work's, measured by its own tests. And it is not the **signature**:
+`npm run package` signs and notarises the bundle when your Developer ID material is in the build's
+environment and produces an unsigned one when it is not (`console/README.md`, Task 4.2), and this
+check asks what the app **draws** either way — the signature, the ticket and the staple are Check
+59a's reading.
+
+**Method.** One local build, one app launch, and the one read the app makes itself. Nothing is
+created anywhere, and nothing is written outside the checkout's own `release/` and
+`console/node_modules/` directories and the packer's own cache:
+
+```bash
+# What this check needs, read out of the tree rather than remembered: the packaging
+# script, the app it produces, the worker bundle the packager ships and the
+# reduced-motion rule the last step turns on. Every read refuses rather than
+# printing and carrying on, so a pass below is a pass about an app that can be
+# packed and a rule that is there to read.
+[ -d console ] || { echo "Check 123 stopped: there is no console/ directory in this checkout" >&2; exit 1; }
+grep -q '"package":' console/package.json || { echo "Check 123 stopped: console/package.json carries no \"package\" script, so there is no app to pack" >&2; exit 1; }
+grep -q 'elk-worker' console/package.json || { echo "Check 123 stopped: the packer's file list no longer ships elk-worker, so the worker step 3 reads is not in the app" >&2; exit 1; }
+grep -q 'prefers-reduced-motion' console/src/renderer/theme/base.css || { echo "Check 123 stopped: base.css carries no prefers-reduced-motion rule, so step 4 has nothing to read" >&2; exit 1; }
+```
+
+1. **Build and pack the app.** `cd console && npm ci && npm run package`. **FACT:** the build ends
+   without an error and `release/mac-universal/Fugaro Console.app` exists. This is the only build
+   step: `npm ci` fetches the pinned dependencies into `console/node_modules/`, and `electron-builder`
+   packs the universal macOS app into the checkout's own `release/`, downloading the two pinned
+   Electron archives into its own cache the first time. **Whether that bundle is signed depends on
+   your environment**: electron-builder signs and notarises when your Developer ID material is
+   exported into the build's environment, and produces an unsigned bundle when it is not
+   (`console/README.md`, Task 4.2). This check asks what the app **draws**, either way.
+2. **Open the packed app and choose the sandbox installation.** Open
+   `release/mac-universal/Fugaro Console.app`, and in it choose installation **`fugaro`**. **FACT:**
+   the app opens, and the installation it is pointed at is `fugaro`. **Choosing an installation is
+   what points the console at a project**: it spawns that installation's own `fugaro plan status
+   --json` with the installation's project and the recorded checkout as the working directory, so the
+   app **reads** the sandbox project's runs bucket (`fugaro-dev`) with your CLI's own credentials —
+   that read is the only cloud project this check touches, and it writes nothing. **Never `belong`**:
+   no step of this check points the console at it, and no other installation is opened.
+3. **Open Graph and look at it.** Go to the graph view. **FACT:** a **drawn graph** — nodes carrying
+   their state words, and edges between them — and **no blank screen**. The words are the ones the
+   app's own `plan status --json` read (step 2) returned, so a graph drawn from a read that failed
+   reads differently from one drawn from the sandbox checkout's plan. **What failing looks like:**
+   an empty frame, or a frame that stays empty, with a **worker** or **CSP** error where the app
+   prints one (its own error surface, or the DevTools console); that is the failure the fuses make
+   possible and the one this step is for. **What failing is not:** a graph whose content differs from
+   what you expected — this step measures that the graph **renders**, not which plan it shows.
+4. **Turn Reduce motion on, and look again.** System Settings → Accessibility → Display → **Reduce
+   motion** on. Return to the graph and look at it. **FACT:** every state is **static** — no comet, no
+   pulse, no flow along an edge — and each state **still carries its word**. **What failing looks
+   like:** motion that continues with the setting on, or a state that has gone still and **lost its
+   word**: the labels are the reading, and the motion is the decoration.
+
+**Passes when:** the build packs `release/mac-universal/Fugaro Console.app`; the app opens on
+installation `fugaro`; Graph draws a graph with its nodes and state words, with no blank frame and no
+worker or CSP error; and with Reduce motion on, every state is static and still labelled.
+
+**Fails when:** `npm run package` fails, or the app bundle is not produced; Graph draws nothing, or
+the frame stays empty with a worker or CSP error; or Reduce motion leaves a state unlabelled, or the
+motion continues with the setting on.
+
+**Paste back** (no secret, no account, nothing from any project): the build's last lines and whether
+`release/mac-universal/Fugaro Console.app` exists; the installation the app opened on; what Graph
+drew — a sentence, and a screenshot if you have one — and any error the app printed; and the same
+again with Reduce motion on, saying whether any state lost its word. Plus your macOS version, the
+date, and the commit you built from. Until this check runs, **U5** — that the worker loads from
+`app://` under the fuses in the packed app — is **UNVERIFIED**, and its row stays **NOT RUN**.
+
+**Restore.** Nothing is created in the cloud, so there is nothing to undo there: no project, no
+installation, no bucket and no run — the app's own `plan status` read is a read and writes nothing.
+The check's footprint is the checkout's own `release/` and `console/node_modules/` directories, and
+the Electron archives `electron-builder` caches **outside** the checkout (`~/Library/Caches/electron`
+on macOS, with `~/Library/Caches/electron-builder` for the tools it fetches).
+
+- **Remove the packed app and the build output** if you would rather not keep them:
+  `rm -rf console/release`, and `rm -rf console/node_modules` to leave the tree as you found it.
+  Nothing else in the checkout is written.
+- **The packer's cache is yours to keep or delete**: it is outside the checkout, it holds only the
+  pinned Electron archives, and deleting it costs the next pack one download.
+- **Turn Reduce motion back** to the setting you had, and forget the app: nothing depends on either.
+- **Never touch `belong`, EdgeWeb or EdgeServer**: no step here reads or writes any project but the
+  sandbox installation's own (`fugaro-dev`, read-only through the app's `plan status`), and the
+  installation this check chooses is the sandbox's `fugaro`.
+
+**Cost.** No run, no job, no write and no dollar: the app's `plan status` read is a read of the
+sandbox project's own runs bucket. One local `npm ci` and one local `npm run package`, one app
+launch, and the time it takes to look twice.
 
 ## Check 124a: the plan, the two read-backs, and the two refusals an owner meets today (installation `fugaro`, the sandbox checkout only, never `belong`; run by you; NOT RUN)
 
