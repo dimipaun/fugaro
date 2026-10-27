@@ -55,7 +55,18 @@ type Relay struct {
 	// Dir is unset). Never required for Write to work; only actionSummary
 	// reads it.
 	Dir string
+
+	// SubAgents counts the sub-agent tool calls this stream carried: the
+	// tool_use blocks naming the sub-agent tool. The runner records it as
+	// the stage's agents, gateway or not (task-governance T1.3).
+	SubAgents int
 }
+
+// subAgentTools are the tool names Claude Code spawns a sub-agent with: the
+// Agent tool and its Task alias. Counting by name is the stage's own figure;
+// the gateway's count of distinct agent IDs is a different figure and rests
+// on an ID a client claims and nothing verifies.
+var subAgentTools = set("Agent", "Task")
 
 // NewRelay returns a Relay logging to log, redacting secrets.
 func NewRelay(log *slog.Logger, secrets []string) *Relay {
@@ -141,6 +152,9 @@ func (r *Relay) line(raw []byte) {
 					r.log.Info(r.msg(t, relayTextBytes), "event", "text")
 				}
 			case "tool_use":
+				if subAgentTools[c.Name] {
+					r.SubAgents++
+				}
 				s := "tool " + r.redact(c.Name) + ": " + r.toolSummary(c.Input)
 				r.log.Info(r.msg(s, relayToolBytes), "event", "tool")
 				if r.OnTool != nil {

@@ -2433,7 +2433,11 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.rec.CostUSD += res.CostUSD
 	}
 	r.updateCost()
-	r.rec.Stages = append(r.rec.Stages, r.stageTiming(name, started, res.CostUSD))
+	// The relay has seen the whole stream by now, so its count of the
+	// stage's sub-agent tool calls is final: the record carries it as the
+	// stage's agents, for every auth mode (task-governance T1.3).
+	res.SubAgents = relay.SubAgents
+	r.rec.Stages = append(r.rec.Stages, r.stageTiming(name, started, res.CostUSD, res.SubAgents))
 	var errText any // the agent's error may carry a key an upstream echoed
 	if err != nil {
 		errText = r.redact(err.Error())

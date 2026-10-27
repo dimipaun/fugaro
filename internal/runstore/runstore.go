@@ -233,8 +233,8 @@ type StageTiming struct {
 	DurationS float64   `json:"duration_s"`
 	// Calls is how many model calls the stage made, and Agents how many
 	// sub-agent tool calls its own stream carried. Calls is the gateway's
-	// stage report, or, on an oauth run, what the agent's result line
-	// reported; Agents is the relay's count of the sub-agent tool calls the
+	// stage report, absent without a gateway (an oauth run has no call
+	// count); Agents is the relay's count of the sub-agent tool calls the
 	// stream named, for every auth mode, gateway or not. The gateway's count
 	// of distinct agent IDs is a different figure and is never recorded: it
 	// rests on the agent ID a client claims, which nothing verifies. Both are

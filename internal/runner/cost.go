@@ -30,12 +30,17 @@ import (
 // the stage was pinned to, never what the upstream served, and a gateway
 // stage may also have made background-model calls: both are inside this
 // stage's ModelUSD, so it is the stage's spend, not the pinned model's.
-func (r *run) stageTiming(name string, started time.Time, claudeUSD float64) runstore.StageTiming {
+func (r *run) stageTiming(name string, started time.Time, claudeUSD float64, subAgents int) runstore.StageTiming {
 	st := runstore.StageTiming{
 		Name:      name,
 		StartedAt: started.UTC(),
 		DurationS: r.d.Now().Sub(started).Seconds(),
 		Model:     r.cfg.Agent.ModelFor(config.StageRole(name)),
+		// The stage's sub-agent tool calls, counted by the relay from its
+		// own stream for every auth mode. Always set: the relay counts even
+		// a stage that spawned none, and 0 sub-agents is a figure, unlike an
+		// absent call count (G5).
+		Agents: &subAgents,
 	}
 	r.mu.Lock()
 	gateway, rep := r.gw != nil, r.lastStage
@@ -53,6 +58,11 @@ func (r *run) stageTiming(name string, started time.Time, claudeUSD float64) run
 		return st
 	}
 	if rep != nil {
+		// How many model calls the stage made, as the gateway counted the
+		// calls it forwarded. It is absent without a gateway: an oauth run
+		// has no call count, and that is not the same fact as zero (G5).
+		calls := rep.Calls
+		st.Calls = &calls
 		// The stage's whole model figure and the notional part of it, as
 		// the gateway settled them (C1.16, D140): Used is the money its
 		// calls paid and Notional the tier-A calls, and the two are
