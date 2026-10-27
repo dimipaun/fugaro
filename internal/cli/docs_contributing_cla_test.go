@@ -7,8 +7,11 @@ import (
 
 // TestDocsContributingCLA (D304): an outside pull request is merged only after
 // its author has signed the Contributor License Agreement, which a bot asks for
-// on the first one, and the reserved `ee/` directory takes no contributions at
-// all. The section is what a contributor reads before opening the first pull
+// on the first one, and a contribution to the three directories under the
+// business licence (the desktop console's, the mobile app's and `ee/`; D311
+// and the contribution rule of 2026-10-26) also accepts that licence's terms.
+// The sentences are pinned without the console's path, which no Go file
+// outside docs_console_boundary_test.go's allow-list names. The section is what a contributor reads before opening the first pull
 // request, so the terms are stated there rather than left to the app the owner
 // installs (O3: the wording holds before that install).
 //
@@ -24,10 +27,14 @@ func TestDocsContributingCLA(t *testing.T) {
 	section := flattenDoc(docSection(t, path, doc, "## Licensing of contributions"))
 	for _, want := range []string{
 		// The three facts the section carries, in its own words: who signs,
-		// who asks, and that `ee/` is closed while it is reserved.
+		// who asks, and what a contribution to the business-licensed
+		// directories accepts on top of the agreement.
 		"an outside pull request is merged only after its author signs the Contributor License Agreement",
 		"which a bot asks for on the first one",
-		"`ee/` is reserved, so it takes no contributions",
+		"`mobile/` and `ee/` are under a business licence of their own",
+		"who accepts that licence's terms",
+		"grants the relicensing rights for those directories too",
+		"waits until the bot is live",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("%s's `## Licensing of contributions` section never says %q: the contribution terms are stated there, and a reader who has to guess them is one the CLA bot has to refuse", path, want)

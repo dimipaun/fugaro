@@ -1,14 +1,15 @@
-# `ee/` is reserved
+# `ee/` is the Fugaro Enterprise Edition
 
-This directory is reserved for **net-new organisation features**, which will ship under their own
-licence rather than under the MIT licence the rest of the repository carries. It is not a place for
-anything that lives in the core today: what is already published under MIT stays there.
+This directory is reserved for **net-new organisation features**, which ship under their own
+licence rather than under the MIT licence the core carries. It is not a place for anything that
+lives in the core today: what is already published under MIT stays there.
 
-**Nothing here is licensed yet.** The folder holds no code and no licence file, and `ee/LICENSE`
-lands only once counsel's text for it is approved. Until then there is no grant to use anything
-placed here, which is why nothing is placed here.
+**Everything here is under [`ee/LICENSE`](LICENSE)**, the Fugaro Enterprise Edition licence. Its
+text is a **draft that counsel has not read yet**: the owner adopted it on 2026-10-26 ahead of
+that review, and the status line at the top of the file comes off when counsel has read it. The
+folder holds no code yet, and nothing under it has ever been released.
 
-Three rules hold while the folder is reserved:
+Three rules hold for everything placed here:
 
 - **Nothing outside `ee/` imports anything under `ee/`.** The core builds and tests with this
   directory deleted, and a build-tagged assembly file is the only place a future feature may reach
@@ -19,5 +20,5 @@ Three rules hold while the folder is reserved:
 - **A release carries no `ee/` code until it sets the `ee` build tag**, and that tag obliges the
   release to label the binary as carrying code under the enterprise licence.
 
-Nothing else changes with the reservation: the rest of the repository stays under the MIT licence in
-[`LICENSE`](../LICENSE), and this folder takes nothing away from it.
+Nothing else changes: the core stays under the MIT licence in [`LICENSE`](../LICENSE), and this
+folder takes nothing away from it.

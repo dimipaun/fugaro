@@ -492,13 +492,15 @@ describe('the packaging configuration the fuses belong to', () => {
     // `dist/preload/index.js` and the picker's window
     // `dist/preload/installations.js` (Task 3.4b), and nothing else under that
     // directory ships. Only `.js`, the documents, the served stylesheet (Task
-    // 6.2, which every document links) and the worker's notices file
-    // (`THIRD_PARTY_NOTICES.md`, GV2.2) are shipped, so no source map is;
+    // 6.2, which every document links), the worker's notices file
+    // (`THIRD_PARTY_NOTICES.md`, GV2.2) and the console's own licence
+    // (`LICENSE.md`, D311) are shipped, so no source map is;
     // `dist/renderer` is the bundler's input, not served, so it
     // is not shipped; and the two compiled files the app never loads -- the
     // packing hook (it needs a devDependency) and the fixture loader (tests and
     // the recorder) -- are excluded by name.
     expect(build.files).toEqual([
+      'LICENSE.md',
       'THIRD_PARTY_NOTICES.md',
       'dist/main/**/*.js',
       '!dist/main/fuses.js',
@@ -527,7 +529,7 @@ describe('the packaging configuration the fuses belong to', () => {
     const patterns = build.files ?? []
     for (const pattern of patterns) {
       expect(pattern, `${pattern} is not a shape this test can read`).toMatch(
-        /^!?(?:[a-z]+\/[a-z]+\/\*\*\/\*\.js|[a-z]+(?:\/[a-z]+)*\/[a-z][a-z.-]*\.(?:js|html|css)|THIRD_PARTY_NOTICES\.md)$/,
+        /^!?(?:[a-z]+\/[a-z]+\/\*\*\/\*\.js|[a-z]+(?:\/[a-z]+)*\/[a-z][a-z.-]*\.(?:js|html|css)|THIRD_PARTY_NOTICES\.md|LICENSE\.md)$/,
       )
     }
     const ships = (file: string): boolean => {
