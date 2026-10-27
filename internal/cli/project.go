@@ -230,6 +230,11 @@ var consoleReadPaths = map[string]bool{
 	// own repository's runs) and writes nothing, the remembered checkouts
 	// included.
 	"fugaro plan status": true,
+	// The project view (Bitbucket credentials T1.2): `--from-store` reads the
+	// caller's own database node and no host credential, and the command
+	// writes nothing -- but it is a cloud read like the rest, so it goes
+	// through the resolver every cloud command does and has to be here.
+	"fugaro coordinator status": true,
 	// The one the design names and §5.1 has not carried a row for yet (the
 	// console task adds it); it resolves no checkout today.
 	"fugaro plan graph": true,

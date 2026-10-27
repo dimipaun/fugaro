@@ -1437,6 +1437,156 @@ report.
 counting them per release), `--json`, and the cloud flags `--project`,
 `--config`, `--gcp-project`, `--region`.
 
+### 6.13 `fugaro coordinator status --from-store --all --json` (Bitbucket credentials T1.2)
+
+**Command:** `internal/cli/coordinator.go` `newCoordinatorStatusCmd` / `runCoordinatorStatus`.
+**Document:** `coordinator.StoredProjectView`, indented (`writeCoordinatorJSON`), with
+the read itself in `runCoordinatorStatusFromStore` and `coordinatorStoredView`
+(`internal/cli/coordinator_view.go`) — cited by symbol, not by line, for §6.11's
+reason. This is the console's own read (`coordinator.status` in
+`console/src/main/ipc.ts`) and design §5.1 rule 6's
+`coordinator status --from-store --all --json` row: `--from-store` and `--all`
+are **words of the row and not arguments**, so no renderer value reaches them,
+and `--repo` and `--since` are deliberately out — the repository set and the
+window are the CLI's answers rather than the screen's. The console asks for it
+once per project view, plus `--project <name>` and `--config <path>` like every
+other cloud row (§8).
+
+**It is the one read of this set that asks nothing of the host.** Without
+`--from-store` the same command reads each repository through the coordinator's
+own credential — an installation token minted from the installation's GitHub App
+— and it refuses outright under `FUGARO_CREDENTIALS_SERVICE_URL`. With
+`--from-store` it opens no host and holds no App ID, no App key and no Bitbucket
+credential: it reads the view the sweep already stored under
+`coordinator/repos/<slug>/` in the project's database, through the caller's own
+credentials — `roles/firebasedatabase.viewer` is what admits that read, the IAM
+role launchers and operators hold. Everything such a document says about a pull
+request is what the sweep read **once**, which is a fact a screen must not
+present as current (below).
+
+**And it is the one read here that answers rather than refusing for a repository
+the coordinator has never touched.** A repository with no stored node is not a
+failure and not an empty document: the command joins the runs bucket alone
+(`coordinator.Join` with no pull requests) and the document says `"stored":
+false`. What decides between the two halves is **the database and never the
+local config**: a teammate's config is the *published* one, and
+`localcfg.Config.Shared` drops Terraform, which is where the coordinator's
+switch lives — so a read gated on the config would report the coordinator off on
+every machine but the owner's.
+
+**The envelope is the selection.** With `--all` the document is
+`{"repos": [ … ]}`, one entry per repository the local config lists, and the
+views are **not** compared across repositories: a service is a path's shape in
+one tree, so two repositories' paths say nothing about each other
+(`coordinatorRepos`). Without `--all` the document is the single `RepoView`
+itself, with no wrapper — a reader that always expects `repos` would fail on
+the one-repository read, and §8's argv is the `--all` form.
+
+The document:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `repos` | array | never | never | one `RepoView` per selected repository, in the order `coordinatorRepos` produced them (sorted, so the same config gives the same document). `[]` when the local config lists no repository at all |
+
+one entry of `repos`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `repo` | string | never | never | the repository this node is about, `owner/name`. **Untrusted display text**: it comes from the local config, and a screen draws it as text and never as a link, a path or an attribute |
+| `stored` | bool | never | never | **the flag this whole read turns on.** `true` means the document's `view` is what the sweep last stored; `false` means the coordinator has never reconciled this repository and `view` is the runs half alone. It is a bool and not the presence of `view`, because both halves carry one |
+| `view` | object | never | never | the view itself, below |
+| `stale` | object | **yes** | **yes** | the sweep's marker for this repository, as stored, below. Absent on a view `status` computes and on a repository whose last sweep was clean. **Absent and null both mean "no marker"**, and a screen has one branch for the two |
+
+one `view`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `repo` | string | never | never | the same repository path as the node's own `repo`, carried by the view because the view is also written where the node is not |
+| `records` | array | never | never | one `Record` per pull request the join found and per in-flight run that opened none, in a **fixed order** the view sets rather than the reader: work still in flight first, then by pull request number, then by run ID. `[]` is a fact — either the repository has no work, or (with `stored: false`) the window in `--since` held no run — and the two are told apart by `stored`, never by this array's length |
+| `collisions` | array | never | never | every pair of in-flight records that share a file or a service, in `records`' own order rather than sorted by label: by the earlier record, then by the later. `[]` means no two in-flight records touch the same path or service |
+| `unread` | array | **yes** | **yes** | every pull request whose host state this pass could not read, sorted by number, below. Written by the sweep alone: **absent from a view `status` computes**, and absent means the empty list rather than a gap |
+| `omitted` | number | **yes** | **yes** | how many records the document's bound left out, and `omitted_collisions` how many collisions. Both are the sweep's keys and are absent from a computed view. The records dropped are the **finished** ones whose newest run is oldest — never one in flight while a finished one is kept |
+| `omitted_collisions` | number | **yes** | **yes** | see `omitted` |
+
+one entry of `records`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `pr` | object | **yes** | **yes** | the pull request this record is about, below; **nil for an in-flight run that has opened none**. Absent and null are the same answer, and a screen draws "no pull request" rather than an empty one |
+| `runs` | array | never | never | the runs behind it, newest first, below. **`[]` is a fact and is never dropped**: a pull request the store holds no run for is still a pull request somebody has open, and the view lists it as having no run behind it |
+| `branch` | string | **yes** | **yes** | the branch the record declares: the pull request's source branch when the host answered, else the newest run's own branch. `""` is a record that declares none |
+| `release` | string | **yes** | **yes** | the target release the record declares, read from a branch that names one (`coordinator.ReleaseOf`). `""` is the ordinary case and not a gap: most work targets no release |
+| `in_flight` | bool | never | never | whether the work is still in flight, and **the only thing a collision is computed over** |
+| `files` | array | never | never | every path the runs behind the record say they changed |
+| `services` | array | never | never | every service those paths belong to (`coordinator.ServiceOf`) |
+
+one entry of `runs`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | string | never | never | the run's id, as `fugaro run` wrote it. **Untrusted display text** and never a path |
+| `pr` | number | **yes** | **yes** | the pull request number the run is on, **`0` when it is on none** — a run that has not opened one yet, or one that produced none at all |
+| `status` | string | **yes** | **yes** | the run record's own word (`"running"`, `"succeeded"`, …). **`""` for a run whose object the store does not hold**, which is not the same as a status the console does not know |
+| `outcome` | string | **yes** | **yes** | the record's outcome word, absent when the run has not written one |
+| `terminal` | bool | **yes** | **yes** | whether the run has finished. A run with no readable record is **not** terminal, which is the safe direction: it is still in flight, and the view says so rather than guessing |
+| `branch` | string | **yes** | **yes** | the run's own branch; `base_branch` the branch its pull request targets |
+| `base_branch` | string | **yes** | **yes** | see `branch` |
+| `declared_by` | string | **yes** | **yes** | the launcher the run's own launch record wrote at launch time — the local config's `user:`, else git's `user.email`, which a launcher writes about itself and nothing verifies. It is carried as a **declaration** and is never an identity: no field of this document promises the string names the person, the account or the machine the run actually ran as, and **nothing may authorise or admit anything by it** |
+| `files` | array | never | never | the paths the run's record says it changed. **An empty list is the answer "no path", never a missing answer** — the store tells "recorded no set" from "recorded an empty one" and this view does not, because both answer the one question it asks of a run's paths — may two records collide on one? — with no |
+| `files_truncated` | bool | **yes** | **yes** | the record's own admission that the set it stored is short of the set it changed (`runstore.ChangedFiles`). **A truncated set is not a whole one**, and a view that presented it as one would under-report a collision |
+
+the `pr` of a record:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `number` | number | never | never | the pull request's own number. It is a number to **show**: no screen builds a link from it (design §5.1 rule 2, §4.3's gap 7) |
+| `url` | string | **yes** | **yes** | the host's URL for it, which the sweep read once. **Carried as data and never as a link**: the console draws it as text like every other string here, because it is a hostile field like any other |
+| `title` | string | **yes** | **yes** | **untrusted text written by whoever opened the pull request.** It is carried as data and is never a decision: a renderer sanitises it before it reaches a line or a cell (`safetext`), the way every other surface that draws a pull request's own words does |
+| `branch` | string | **yes** | **yes** | the source branch the host reports |
+| `draft` | bool | **yes** | **yes** | whether the host says the pull request is a draft |
+| `state` | string | **yes** | **yes** | the host's own answer (`"open"`, `"merged"`, `"closed"`). **`""` is the host not answering** — a pull request a run names and the reader did not return — and the record then falls back to whether the runs behind it have finished |
+
+one entry of `collisions`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `a`, `b` | string | never | never | the two labels of the pair, in the order the view produced them. They are labels a person reads, not ids: a record's label is its pull request reference or its newest run's id (`coordinator.recordLabel`) |
+| `files` | array | never | never | the paths both records touch |
+| `services` | array | never | never | the services both records touch |
+
+one entry of `unread` (the sweep's):
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `number` | number | never | never | the pull request whose host state could not be read |
+| `reason` | string | never | never | **why, as the console's own sentence**: the sweep writes it, and it names no credential and no job-written string |
+| `carried` | bool | **yes** | **yes** | whether the state shown beside it is the **last one a sweep did read**, rather than nothing. It is the difference "stale but known" and "unknown", and a screen that dropped it would present a carried state as a fresh one |
+| `failures` | number | **yes** | **yes** | how many consecutive passes have failed to read it |
+| `retry_after` | string | **yes** | **yes** | an RFC 3339 instant, written `omitzero`: the host's own back-off, absent when it gave none. It is a **stamp**, and a screen must not turn it into a countdown this document does not carry |
+
+the `stale` of a repository (the sweep's):
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `since` | string | never | never | an RFC 3339 instant: when the marker was written. **It is printed exactly as stored, with no age computed from it.** The stored view carries no time by design (`coordinator.Stale` is a function of its inputs), so the view beside this marker and the marker itself are not on a common scale, and "stale for three hours" would be a claim about when the sweep last ran that the document cannot support |
+| `reason` | string | never | never | why the sweep could not keep the view current, as the sweep's own sentence |
+
+**Version skew.** Every field is additive: a console built before this section
+draws what it drew before, and a CLI older than the `--from-store` flag has no
+such read at all — the console shows the screen as unavailable (the availability
+rule, §1) rather than an error loop. The one part that changes meaning with the
+**repository** rather than with the CLI is `unread`, `omitted` and
+`omitted_collisions`: they are the sweep's, so a view `status` computes and a
+view an older sweep stored simply do not carry them, and absent is the empty
+list rather than a gap.
+
+**Flags** (`newCoordinatorStatusCmd`): `--from-store` (print the view the sweep
+stored, with no host read and no key, falling back to the runs alone when none
+is stored), `--all` (every repository the local config lists, one view each),
+`--repo` and `--since` (the single-repository read and the runs window, which
+the console does not pass), `--json`, and the cloud flags `--project`,
+`--config`, `--gcp-project` and `--region`.
+
 ## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded
@@ -1497,6 +1647,7 @@ and **not** off this document or the design:
 | **`config list`** | **no — it reads the operator's local project configs, not a cloud** (`internal/cli/config_list.go`, §6.8) |
 | **`plan graph`** | **no — it reads the graph artifact in the checkout, not a cloud** (`internal/cli/plan.go`, §6.9) |
 | `plan status` | yes (`newPlanStatusCmd`, §6.12) — a task's state is a *run's* state, so it reads the runs bucket too |
+| `coordinator status` | yes (`newCoordinatorStatusCmd`, §6.13) — with `--from-store` it is the one read here that asks nothing of the host (the stored view, through the caller's own credentials), and it is a cloud read all the same: the view lives in the project's database, so it carries `--project` and `--config` like the rest |
 
 So the console passes `--project <name>` (and `--config <path>` when the
 installation is not the ambient one) on **every spawn except the handshake**,
