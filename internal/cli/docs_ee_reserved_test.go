@@ -2,7 +2,7 @@ package cli
 
 // ee/ carries its licence from 2026-10-26 (licensing plan L4.1, brought
 // forward by the owner's ruling D311): the folder holds a README that says what
-// it is for, the draft `ee/LICENSE` that counsel has not read yet, and no code.
+// it is for, `ee/LICENSE` (counsel's text), and no code.
 // It is still reserved for net-new organisation features, which is the
 // sentence the website's licence band and LICENSING.md lean on.
 //
@@ -15,14 +15,12 @@ import (
 	"testing"
 )
 
-// eeDraftStatusLine is the first line of `ee/LICENSE` until counsel has read
-// the text. The owner removes it then, and this constant goes with it in the
-// same commit, so a licence that quietly lost its status line while still a
-// draft fails here.
-const eeDraftStatusLine = "DRAFT FOR COUNSEL REVIEW: not yet reviewed by counsel"
+// eeLicenceTitle is the first line of `ee/LICENSE`: counsel's text carries no
+// draft banner, so a banner that comes back means an older draft was restored.
+const eeLicenceTitle = "Fugaro Enterprise Edition Licence"
 
 // TestDocsEELicensed: the README says what the folder is and that the licence
-// is a draft, the licence names the Software, the seats and the SPDX
+// says the licence's Subscription Terms are not published yet, the licence names the Software, the seats and the SPDX
 // identifier every ee/ file's notice carries, and ee/ holds nothing else.
 func TestDocsEELicensed(t *testing.T) {
 	flat := strings.ToLower(flattenDoc(readRealEE(t, "README.md")))
@@ -31,7 +29,7 @@ func TestDocsEELicensed(t *testing.T) {
 		"net-new organisation features",
 		"their own licence",
 		"](license)",
-		"counsel has not read",
+		"not published yet",
 		"no code",
 		"nothing outside `ee/` imports anything under `ee/`",
 		"spdx-license-identifier: licenseref-fugaro-enterprise",
@@ -42,17 +40,19 @@ func TestDocsEELicensed(t *testing.T) {
 	}
 
 	licence := strings.ReplaceAll(readRealEE(t, "LICENSE"), "\r\n", "\n")
-	if first, _, _ := strings.Cut(licence, "\n"); first != eeDraftStatusLine {
-		t.Errorf("ee/LICENSE's first line is %q, want %q: the text is a draft counsel has not read (D311), and the status line comes off only when counsel has", first, eeDraftStatusLine)
+	if first, _, _ := strings.Cut(licence, "\n"); first != eeLicenceTitle {
+		t.Errorf("ee/LICENSE's first line is %q, want %q: counsel's text of 2026-10-27 starts with its title and carries no draft banner (D311)", first, eeLicenceTitle)
 	}
 	flatLicence := flattenDoc(licence)
 	for _, want := range []string{
 		"Fugaro Enterprise Edition",
 		"LicenseRef-Fugaro-Enterprise",
-		"<URL TO BE PUBLISHED>",
+		"[URL TO BE PUBLISHED]",
+		"[CLA URL TO BE PUBLISHED]",
+		"every file under the ee/, console/ and mobile/ directories",
 		"correct number of user seats",
 		"development and testing purposes without a subscription",
-		"Nothing under ee/ has ever been released",
+
 		`THE SOFTWARE IS PROVIDED "AS IS"`,
 	} {
 		if !strings.Contains(flatLicence, want) {

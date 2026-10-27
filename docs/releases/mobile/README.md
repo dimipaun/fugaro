@@ -66,6 +66,5 @@ GitHub release for it.
 
 **The first release ships under the app's business licence**, [`mobile/LICENSE.md`](../../../mobile/LICENSE.md)
 (the owner's ruling D311 of 2026-10-26, [`LICENSING.md`](../../../LICENSING.md)), and its notes say
-so. The text is a draft counsel has not read, and it names Subscription Terms that are not
-published yet: the first release waits until the owner has published those terms or replaced that
+so. The text is counsel's, and it names Subscription Terms that are not published yet: the first release waits until the owner has published those terms or replaced that
 sentence. How the licence sits beside each store's own end-user terms is an open item for counsel.

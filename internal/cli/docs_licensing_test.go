@@ -85,14 +85,14 @@ func TestDocsLicensingStatement(t *testing.T) {
 		"every release before 0.11.0 is MIT",
 		// D311: the console, the mobile app and ee/ under the business
 		// licence, the console from 0.113.0 with what came before staying MIT,
-		// and the text a draft counsel has not read. The console's own path is
+		// and counsel's text with its two unpublished documents. The console's own path is
 		// left out of this file on purpose: no Go file outside
 		// docs_console_boundary_test.go's allow-list names it.
 		"the desktop console",
 		"`mobile/`",
 		"0.113.0",
 		"up to and including 0.112.0",
-		"not yet reviewed by counsel",
+		"not published yet",
 	} {
 		if !strings.Contains(flat, strings.ToLower(want)) {
 			t.Errorf("%s never says %q: the statement exists to name the parts the MIT licence does not cover, and a reader who has to infer them from the directory listing is the reader it is written for", path, want)
@@ -122,9 +122,9 @@ func TestDocsLicensingStatement(t *testing.T) {
 	// reader at a page contradicting it would read as correct on both sides.
 	// This read is why the test's name is in eeReadingTests.
 	reserved := strings.ToLower(flattenDoc(readRealEE(t, "README.md")))
-	for _, want := range []string{"reserved", "counsel has not read"} {
+	for _, want := range []string{"reserved", "not published yet"} {
 		if !strings.Contains(reserved, want) {
-			t.Errorf("ee/README.md, the page %s links for what `ee/` is, never says %q: the statement and the page it points at have to agree on what the folder is for and on its licence being a draft, or one of the two is describing a directory that does not exist", path, want)
+			t.Errorf("ee/README.md, the page %s links for what `ee/` is, never says %q: the statement and the page it points at have to agree on what the folder is for and on the licence naming documents that are not published yet, or one of the two is describing a directory that does not exist", path, want)
 		}
 	}
 }
