@@ -733,25 +733,26 @@ func TestBuildEnvUnchangedWithNoCompression(t *testing.T) {
 	}
 }
 
-// Compression chains in front of the gateway, so it needs one, and needs an
-// auth that gives Claude Code a gateway token to present to the sidecar.
-// oauth has no gateway at all, and a vertex run writes
+// Compression needs an auth that gives Claude Code a gateway token to present
+// to the sidecar: oauth has none, and a vertex run routes by
 // ANTHROPIC_VERTEX_BASE_URL -- a base-URL shape Compression never touches --
-// so admitting it would silently skip the sidecar rather than refuse it,
-// the opposite of failing closed (P3).
+// so admitting it would silently skip the sidecar rather than refuse it, the
+// opposite of failing closed (P3). Both specs carry a gateway, so the auth
+// rule is the only refusal left: without it a vertex run would succeed
+// outright and an oauth one would be refused with the gateway's own message.
 func TestBuildEnvRefusesCompressionWithOAuth(t *testing.T) {
 	parent := []string{"CLAUDE_CODE_OAUTH_TOKEN=oauth-token-for-tests-1234"}
-	if _, _, err := BuildEnv(parent, EnvSpec{Auth: "oauth", Compression: &CompressionProxy{BaseURL: "http://127.0.0.1:9100"}}); err == nil ||
-		!strings.Contains(err.Error(), "agent.compression") {
-		t.Fatalf("oauth + compression: err = %v, want a refusal naming agent.compression", err)
+	spec := EnvSpec{Auth: "oauth", Gateway: &Gateway{BaseURL: "http://127.0.0.1:9000", Token: "gateway-token-abcdef"}, Compression: &CompressionProxy{BaseURL: "http://127.0.0.1:9100"}}
+	if _, _, err := BuildEnv(parent, spec); err == nil || !strings.Contains(err.Error(), "agent.compression") || !strings.Contains(err.Error(), "auth: oauth") {
+		t.Fatalf("oauth + compression: err = %v, want a refusal naming agent.compression and auth: oauth", err)
 	}
 }
 
 func TestBuildEnvRefusesCompressionWithVertex(t *testing.T) {
 	parent := []string{"CLOUD_ML_REGION=us-east5", "ANTHROPIC_VERTEX_PROJECT_ID=p"}
-	if _, _, err := BuildEnv(parent, EnvSpec{Auth: "vertex", Compression: &CompressionProxy{BaseURL: "http://127.0.0.1:9100"}}); err == nil ||
-		!strings.Contains(err.Error(), "agent.compression") {
-		t.Fatalf("vertex + compression: err = %v, want a refusal naming agent.compression", err)
+	spec := EnvSpec{Auth: "vertex", Gateway: &Gateway{BaseURL: "http://127.0.0.1:9000", Token: "gateway-token-abcdef"}, Compression: &CompressionProxy{BaseURL: "http://127.0.0.1:9100"}}
+	if _, _, err := BuildEnv(parent, spec); err == nil || !strings.Contains(err.Error(), "agent.compression") || !strings.Contains(err.Error(), "auth: vertex") {
+		t.Fatalf("vertex + compression: err = %v, want a refusal naming agent.compression and auth: vertex", err)
 	}
 }
 

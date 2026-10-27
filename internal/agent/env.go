@@ -49,9 +49,12 @@ type EnvSpec struct {
 	// could forward, and a vertex run routes by ANTHROPIC_VERTEX_BASE_URL,
 	// which Compression never touches -- and an error without a Gateway:
 	// the sidecar holds no credential of its own, so the run would have to
-	// send it the real key. config.Validate and the runner's own bootstrap
-	// refuse both combinations earlier; BuildEnv refuses them again at the
-	// point closest to the credential.
+	// send it the real key. config.Validate refuses the auth combination for
+	// a repository's own file, but nothing populates this field yet: the
+	// config key is still refused there, and starting the sidecar is a later
+	// change, so no run reaches these refusals. They are here for the same
+	// reason the existing oauth-vs-gateway refusal is -- the point closest
+	// to the real credential refuses the combination itself.
 	Compression *CompressionProxy
 	// Docker is whether this run's workflow asked for `docker: true`
 	// (design compute-backend.md §4.2): the one fact that lets DOCKER_HOST

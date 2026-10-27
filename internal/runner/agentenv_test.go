@@ -142,8 +142,9 @@ func TestManagedSettingsBeforeEveryStage(t *testing.T) {
 
 // The managed settings take precedence over the agent's environment, so a
 // file still naming the gateway would route Claude Code around the sidecar
-// however right the environment is (P5). Both are written once, by the same
-// call, and both name the sidecar when compression is on.
+// however right the environment is (P5). Both name the sidecar when
+// compression is on -- the file from writeManagedSettings, the environment
+// from the EnvSpec the runner builds -- and the file carries no real key.
 func TestWriteManagedSettingsCarriesCompressionURL(t *testing.T) {
 	h := newGW(t, gwConfig(t, ""), "observe", "", anthropicfake.MessageOK(sonnet, pricing.Usage{Output: 1})).harness
 	sidecar := &agent.CompressionProxy{BaseURL: "http://127.0.0.1:9100"}
@@ -156,6 +157,9 @@ func TestWriteManagedSettingsCarriesCompressionURL(t *testing.T) {
 			}
 			if strings.Contains(raw, plantedKey) {
 				t.Errorf("the real key is in the managed settings: %s", raw)
+			}
+			if got := envValue(req.Env, "ANTHROPIC_BASE_URL"); got != sidecar.BaseURL {
+				t.Errorf("the agent's environment ANTHROPIC_BASE_URL = %q, want the sidecar's %q", got, sidecar.BaseURL)
 			}
 			return inner(t, ctx, req)
 		}
