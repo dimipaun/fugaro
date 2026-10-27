@@ -1413,20 +1413,7 @@ func TestResultSchemaHalted(t *testing.T) {
 // Mutation (run, restored): drop a value from the enum, or add one to
 // runstore.go, and this names the side that has it.
 func TestResultSchemaHaltReasonsAgreeWithGo(t *testing.T) {
-	var want []string
-	for _, vs := range haltReasonSpecs(t) {
-		for _, v := range vs.Values {
-			lit, ok := v.(*ast.BasicLit)
-			if !ok || lit.Kind != token.STRING {
-				t.Fatalf("a HaltReason constant's value is not a string literal: %v", v)
-			}
-			s, err := strconv.Unquote(lit.Value)
-			if err != nil {
-				t.Fatal(err)
-			}
-			want = append(want, s)
-		}
-	}
+	want := runstoreConstValues(t, haltReasonSpec)
 	if len(want) == 0 {
 		t.Fatal("no HaltReason constants found in ../internal/runstore/runstore.go: this test proves nothing")
 	}
@@ -1459,16 +1446,87 @@ func TestResultSchemaHaltReasonsAgreeWithGo(t *testing.T) {
 	}
 }
 
-// haltReasonSpecs returns every value spec in runstore.go whose declared type
-// is HaltReason.
-func haltReasonSpecs(t *testing.T) []*ast.ValueSpec {
+// TestResultSchemaReviewScopeReasonsAgreeWithGo pins result.schema.json's
+// review_scope.why_not enum to the ReviewScope* constants in
+// internal/runstore, in both directions: a reason the runner can write but
+// the enum lacks is a result.json a consumer validating against the published
+// schema refuses, and a value only the enum knows is a reason no run can
+// produce. The enum is a hand-written copy of the constants, so nothing but
+// this test keeps the two from drifting (TestResultSchemaHaltReasonsAgreeWithGo
+// is the same pin for halt.reason).
+//
+// The Go constants are read from the source rather than listed here, so a
+// reason added to runstore.go without the schema fails this test instead of
+// silently widening the gap the next time someone reads the list above.
+//
+// Mutation (run, restored): drop a value from the enum, or add one to
+// runstore.go, and this names the side that has it.
+func TestResultSchemaReviewScopeReasonsAgreeWithGo(t *testing.T) {
+	want := runstoreConstValues(t, reviewScopeSpec)
+	if len(want) == 0 {
+		t.Fatal("no ReviewScope* constants found in ../internal/runstore/runstore.go: this test proves nothing")
+	}
+	data, err := os.ReadFile("result.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	node, _ := doc["properties"].(map[string]any)
+	node, _ = node["review_scope"].(map[string]any)
+	node, _ = node["properties"].(map[string]any)
+	node, _ = node["why_not"].(map[string]any)
+	raw, ok := node["enum"].([]any)
+	if !ok {
+		t.Fatal(`result.schema.json: review_scope.why_not has no enum`)
+	}
+	var got []string
+	for _, v := range raw {
+		s, ok := v.(string)
+		if !ok {
+			t.Fatalf("result.schema.json: review_scope.why_not enum entry %v is not a string", v)
+		}
+		got = append(got, s)
+	}
+	if !sameStrings(got, want) {
+		t.Errorf("result.schema.json review_scope.why_not = %v, internal/runstore's ReviewScope* constants = %v", got, want)
+	}
+}
+
+// reviewScopeSpec reports whether a const spec in runstore.go declares a
+// ReviewScope* reason. The constants are untyped, so their names are the only
+// handle on them.
+func reviewScopeSpec(vs *ast.ValueSpec) bool {
+	for _, name := range vs.Names {
+		if strings.HasPrefix(name.Name, "ReviewScope") {
+			return true
+		}
+	}
+	return false
+}
+
+// haltReasonSpec reports whether a const spec in runstore.go declares a
+// HaltReason.
+func haltReasonSpec(vs *ast.ValueSpec) bool {
+	id, ok := vs.Type.(*ast.Ident)
+	return ok && id.Name == "HaltReason"
+}
+
+// runstoreConstValues returns the string value of every constant in
+// runstore.go whose spec keep accepts, in source order. Both enum pins above
+// read their Go side through it: one parse and one walk, so the two cannot
+// drift apart, and a constant that is not a string literal fails either the
+// same way.
+func runstoreConstValues(t *testing.T, keep func(*ast.ValueSpec) bool) []string {
 	t.Helper()
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "../internal/runstore/runstore.go", nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var out []*ast.ValueSpec
+	var out []string
 	for _, decl := range f.Decls {
 		gd, ok := decl.(*ast.GenDecl)
 		if !ok || gd.Tok != token.CONST {
@@ -1476,11 +1534,22 @@ func haltReasonSpecs(t *testing.T) []*ast.ValueSpec {
 		}
 		for _, spec := range gd.Specs {
 			vs, ok := spec.(*ast.ValueSpec)
-			if !ok {
+			if !ok || !keep(vs) {
 				continue
 			}
-			if id, ok := vs.Type.(*ast.Ident); ok && id.Name == "HaltReason" {
-				out = append(out, vs)
+			for i, name := range vs.Names {
+				if i >= len(vs.Values) {
+					t.Fatalf("%s has no value in its spec: this test cannot read it", name.Name)
+				}
+				lit, ok := vs.Values[i].(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					t.Fatalf("%s's value is not a string literal: %v", name.Name, vs.Values[i])
+				}
+				s, err := strconv.Unquote(lit.Value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				out = append(out, s)
 			}
 		}
 	}

@@ -430,7 +430,7 @@
           "description": "The paths in review_files that are not in implement_files: what the reviewer was handed that implement never wrote (F2). Absent when there are none.",
           "items": { "type": "string", "minLength": 1, "maxLength": 512, "description": "One repository-relative path, clipped to 512 runes." }
         },
-        "truncated": { "type": "boolean", "description": "Set when one of the lists was capped at 200 paths, or one of its paths clipped at 512 runes: the stored sets are then not the whole ones." }
+        "truncated": { "type": "boolean", "description": "Set when one of the lists was capped at 200 paths, at 16 KiB of path between the two (runstore.MaxReviewScopeBytes), or one of its paths clipped at 512 runes: the stored sets are then not the whole ones." }
       }
     },
     "backlog_closed": {

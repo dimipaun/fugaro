@@ -221,8 +221,11 @@ func (r *run) narrowReviewRange(ctx context.Context) {
 // reviewScopeNotOwnCommits is why this run's review range is not its own
 // commits by definition and is not narrowed at all, "" when it is: a
 // follow-up and a review run review the pull request's range, which their
-// prefetch has already fetched for at bootstrap, and neither has an implement
-// stage, so neither has an implement set to compare it with.
+// prefetch has already fetched for at bootstrap. A follow-up runs implement
+// as any other run does, but its range is the pull request's rather than the
+// run's own commits, and a review run has no implement stage at all: for
+// neither is the comparison a statement about the narrowing, which is why
+// neither records one.
 //
 // No production call reaches the review-run case: review mode goes through
 // runReviewMode, which never narrows. It is kept so that a review run's
@@ -302,8 +305,10 @@ func (r *run) readReviewScope(ctx context.Context, or ownRange) *runstore.Review
 // ownRange is narrowReviewRange's reading of the run's own commits: the
 // commit before the first of them (Base — the base the range is narrowed
 // to), whether the recorded range holds more commits than they do (Narrow,
-// the decision to cut it), WhyNot when there is no such commit (one of
-// runstore's ReviewScope* reasons) and Why, what was read, for the log.
+// the decision to cut it), WhyNot — one of runstore's ReviewScope* reasons,
+// set whenever the comparison does not apply, which is when there is no such
+// commit or when the recorded range holds no more commits than the run's own
+// — and Why, what was read, for the log.
 type ownRange struct {
 	Base   string
 	Narrow bool
