@@ -503,6 +503,7 @@ func TestPRStateBoundsConcurrency(t *testing.T) {
 	dir := t.TempDir()
 	live := filepath.Join(dir, "live")
 	peak := filepath.Join(dir, "peak")
+	gate := filepath.Join(dir, "gate")
 	// The script counts how many copies of itself are running at once, the
 	// only way to see the bound from outside. The counter is updated under a
 	// mkdir mutex: the reads and writes race otherwise, and a lost increment
@@ -511,12 +512,31 @@ func TestPRStateBoundsConcurrency(t *testing.T) {
 	with := func(body string) string {
 		return "while ! mkdir " + lock + " 2>/dev/null; do sleep 0.01; done\n" + body + "\nrmdir " + lock + "\n"
 	}
+	// Every call holds its slot until the test opens the gate, so the overlap
+	// is a handshake and not a race against the clock: on a loaded machine the
+	// second process could otherwise start only after the first one's fixed
+	// sleep was over, and the peak would read one. The wait is bounded below
+	// the lookup timeout so a gate that never opens fails the test, not hangs it.
 	calls := fakeGH(t,
 		with("n=$(cat "+live+" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "+live+"\n"+
 			"p=$(cat "+peak+" 2>/dev/null || echo 0); [ \"$n\" -gt \"$p\" ] && echo $n > "+peak)+
-			"sleep 0.2\n"+
+			"i=0; while [ ! -e "+gate+" ] && [ $i -lt 2500 ]; do sleep 0.01; i=$((i+1)); done\n"+
 			with("n=$(cat "+live+" 2>/dev/null || echo 0); echo $((n-1)) > "+live)+
 			"echo OPEN\n")
+	readPeak := func() int {
+		b, err := os.ReadFile(peak)
+		if os.IsNotExist(err) {
+			return 0
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(string(b)))
+		if err != nil {
+			return 0
+		}
+		return n
+	}
 
 	p := NewPRState(PRStateOptions{Concurrency: 2, Timeout: prStateTestTimeout})
 	var rows []ReadyRow
@@ -526,6 +546,26 @@ func TestPRStateBoundsConcurrency(t *testing.T) {
 	if got := p.Filter(rows); len(got) != len(rows) {
 		t.Fatalf("kept %d rows, want all of them listed while unknown", len(got))
 	}
+	// The bound has to be *reached*: with the gate shut, two lookups must end
+	// up inside gh at once however slowly the processes start. A peak that
+	// never reaches two means the test no longer sees the overlap it exists for.
+	deadline := time.Now().Add(20 * time.Second)
+	for readPeak() < 2 {
+		if time.Now().After(deadline) {
+			t.Fatalf("peak concurrency = %d after 20s with the gate shut, want 2: the overlap the semaphore exists to allow", readPeak())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// Both slots are now held until the gate opens, so a third lookup must be
+	// waiting on the semaphore: give it time to show up if the bound leaked.
+	// Load can only hide a leak here, never fail a correct semaphore.
+	time.Sleep(300 * time.Millisecond)
+	if n := len(ghCalls(t, calls)); n != 2 {
+		t.Fatalf("calls with both slots held = %d, want 2: a third lookup ran outside the bound", n)
+	}
+	if err := os.WriteFile(gate, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	waitLookups(p)
 	if got := p.Filter(rows); len(got) != len(rows) {
 		t.Fatalf("kept %d rows, want every open one", len(got))
@@ -533,21 +573,9 @@ func TestPRStateBoundsConcurrency(t *testing.T) {
 	if n := len(ghCalls(t, calls)); n != len(rows) {
 		t.Fatalf("calls = %d, want %d", n, len(rows))
 	}
-	// The peak is read exactly. Two is the semaphore's bound, so a higher
-	// reading is a lookup that ran outside it; and the bound has to be
-	// *reached*: eight rows with a gh that holds its slot for 0.2s must put
-	// two lookups in flight at once, and a peak of one would mean this test no
-	// longer sees the overlap it exists for. A one-sided check would let that
-	// pass as a quiet machine.
-	b, err := os.ReadFile(peak)
-	if err != nil {
-		t.Fatal(err)
-	}
-	n, err := strconv.Atoi(strings.TrimSpace(string(b)))
-	if err != nil {
-		t.Fatalf("peak concurrency = %q, want a number", b)
-	}
-	if n != 2 {
+	// The peak is read exactly: two is the semaphore's bound, so a higher
+	// reading is a lookup that ran outside it.
+	if n := readPeak(); n != 2 {
 		t.Fatalf("peak concurrency = %d, want exactly 2: the semaphore's bound, and the overlap it exists to allow", n)
 	}
 }

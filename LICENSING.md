@@ -12,7 +12,7 @@ where the file type has no comment syntax, in a sibling `<name>.license` carryin
 lines — and the only files without one are each directory's own licence file and its `README`,
 which the licence and the page belong to instead. The text the
 identifier resolves to is [`LICENSES/LicenseRef-Fugaro-Enterprise.txt`](LICENSES/LicenseRef-Fugaro-Enterprise.txt),
-a byte-for-byte copy of [`ee/LICENSE`](ee/LICENSE). **Two things it names are not published yet**: the Subscription Terms and the contributor licence agreement, each shown as a bracketed placeholder in the text. The licence allows copying and modifying for development and testing,
+a byte-for-byte copy of [`ee/LICENSE`](ee/LICENSE). **It names two documents**: the Subscription Terms, at https://fugaro.dev/legal/subscription-terms (the page is published once counsel has approved the text), and the contributor licence agreement, which is **not published yet** and is shown as a bracketed placeholder in the text until its Gist exists. The licence allows copying and modifying for development and testing,
 and needs a subscription for the correct number of user seats (one seat per person who uses it)
 for production use, under those Subscription Terms.
 A first draft of the Subscription Terms, written for counsel, is at

@@ -556,6 +556,7 @@ reads, stores or knows about keys (D308 with D303 as amended).
 - **Commit:** `docs(licensing): the Subscription Terms, amended to the owner's answers (for counsel)`
 
 #### L4.4 — Fill the Subscription Terms URL in the licence files
+- **Status 2026-10-27:** the URL (`https://fugaro.dev/legal/subscription-terms`, the owner's choice) is filled in `ee/LICENSE`, `console/LICENSE.md`, `mobile/LICENSE.md` and the `LICENSES/` copy, and the docs test pins it; the page itself (L4.3) is still to be published after counsel approves the text. The CLA placeholder stays until the owner has created the Gist.
 - **Files:** `ee/LICENSE`, `console/LICENSE.md`, `mobile/LICENSE.md` (`[URL TO BE PUBLISHED]`
   becomes L4.3's URL, the only change), `internal/cli/docs_ee_reserved_test.go` (its pinned
   placeholder follows), `LICENSING.md` and `ee/README.md` (they stop saying the Subscription Terms
