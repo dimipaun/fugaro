@@ -45,11 +45,14 @@ a source and a date. The pages carry a figure from the variant config only once 
 until then the config holds the sentinel `unmeasured` and the page refuses to build with a figure that
 is not backed (task G2.1).
 
-**F7 (Wrong): `opus-4.5`.** The agenda's demo command (`fugaro estimate --pr N --model opus-4.5`, in the business agenda) names a model
-the price table does not have. `internal/pricing/table.go` has `claude-opus-5-5` and `claude-opus-5`;
-`internal/pricing/canonical.go` maps the canonical ID `claude-opus-5-5` to the route ID
-`anthropic/claude-opus-5.5`. The command takes a canonical ID or a route ID the table knows and refuses
-any other with the list of known IDs.
+**F7 (Wrong, settled): `opus-4.5` is a nickname, not an ID.** The agenda's demo command
+(`fugaro estimate --pr N --model opus-4.5`, in the business agenda) names a spelling the price table does
+not have. The owner confirmed on 2026-10-26 that it means `claude-opus-5-5`, which `internal/pricing/table.go`
+has (beside `claude-opus-5`), and `internal/pricing/canonical.go` maps it to the route ID
+`anthropic/claude-opus-5.5`. The command takes a canonical ID or a route ID the table knows, so the demo
+line is `fugaro estimate --pr N --repo owner/name --model claude-opus-5-5`; it refuses any other spelling
+with the list of known IDs and adds no alias table (a nickname map would be a second place to keep in step
+with the catalog).
 
 **F8 (Gap): tokens per model are not on the run record.** `pricing.Usage` (input, output, cache read,
 cache write 5m and 1h, web searches) is what the gateway prices; `agent.Usage` (`internal/agent/agent.go`)
@@ -132,6 +135,8 @@ console is left out.
 | **D404** | What does the plan gate on, given "1.0"? | A named launch gate, "launch-ready", on whatever release the owner cuts. Cost: no fixed date | **2026-10-26: as recommended.** The owner picks the version number at the cut |
 | **D405** | GitHub stars on the pages? | Owner-run refresh file. Cost: can go stale | **2026-10-26: NOT the recommendation.** Omit stars until the number is worth showing. *Why:* no data file to keep fresh. The social-proof section ships with design-partner logos only, hidden until one exists |
 | **D406** | Does the per-file `ee/` notice (D400) go in now, or with counsel's licence text? | With counsel's text (T1 option b): the notice then names a licence that exists. Cost: files stay unmarked until L4.1 | **2026-10-26: not the recommendation (neither option).** The owner says the question is moot: a new licence is about to land as `ee/LICENSE.md`, so the notice can name it. *Why:* counsel's text arrives shortly. No task here writes the notice; it follows the licence, in the licensing work |
+| **D407** | T1: when do the console, mobile app, coordinator and orchestrator files get their `ee/` notice? | With `ee/LICENSE.md`, in the same change that lands it. Cost: unmarked until then; counsel confirms the owner can relicense contributions | **2026-10-26: as recommended.** *Why:* the notice then names a text that exists. Copies already released stay MIT. The notice is the licensing work's change, not a task here |
+| **D408** | T2: what does a Team seat buy while the code stays in the public tree? | The `ee/` licence for the marked files, enforced by the licence key (D308), plus a support promise, from the version that carries the notice. Cost: depends on D407's notice landing before Team opens | **2026-10-26: as recommended.** *Why:* earlier MIT releases stay free; the seat is the commercial licence and support. The price and plan live in `fugaro-business` |
 
 **Resolutions (one defensible answer, not questions):**
 
@@ -149,19 +154,13 @@ console is left out.
 
 ## Open tensions and open items for the owner
 
-**T1 (D400 against D302 and the licensing reconciliation; D406 answered).** Files in a repository whose `LICENSE` is
-MIT cannot be marked "covered by the `ee/` licence" until that licence text exists (L4.1 waits on
-counsel), and the console has already been released under MIT, which those copies keep. Choices: (a) mark
-them now with a neutral notice that names `LICENSING.md` and says the licence of these files is
-expected to change from a stated future version, with counsel's wording later; (b) wait for L4.1 and mark
-them in the same change that moves them. Option (a) holds back no code but makes a promise the owner may
-not be able to keep for contributions already accepted under MIT; option (b) holds back the notice until
-counsel is done. **The owner rules.** The plan has no task that writes a notice (task G5.1 only adds the
-"move later" note to `docs/licensing/`).
+**T1 (closed 2026-10-26 by D407).** Files in a repository whose `LICENSE` is MIT could not be marked
+"covered by the `ee/` licence" before that licence existed, and the console is already released under MIT,
+which those copies keep. D406 said the licence is about to land as `ee/LICENSE.md`; D407 settles the
+timing: the notice goes in with it.
 
-**T2 (D400 against the Team price).** If the console, mobile app and coordinator stay MIT and in the
-public tree, a seat cannot be enforced by a licence key on them until they move. What a $39.99 seat buys
-before the move is the owner's to rule and sits in `fugaro-business`; no task here depends on it.
+**T2 (closed 2026-10-26 by D408).** While those areas stay in the public tree, what a Team seat buys:
+D408 answers it. The price stays in `fugaro-business`.
 
 **O1.** The business sections are committed locally in `fugaro-business` (`docs/`); pushing them is the owner's.
 

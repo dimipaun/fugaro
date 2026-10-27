@@ -10,10 +10,10 @@ explicit go; answering a decision approved none of them.
 
 The owner's answers of 2026-10-26 that shape it:
 
-- **D406** (the notice's timing): moot; a new licence lands as `ee/LICENSE.md` and the notice follows it in the licensing work.
+- **D406** (the notice's timing): moot; a new licence lands as `ee/LICENSE.md`. **D407:** the notice goes in with it. **D408:** a Team seat buys the `ee/` licence for the marked files, enforced by the licence key, plus support.
 - **D400** (not the recommendation): the console, mobile app, coordinator and orchestrators stay where
   they are, to be marked as covered by the `ee/` licence and moved later. Only the note (G5.1) is a task
-  here; the notice itself waits on T1.
+  here; the notice itself goes in with `ee/LICENSE.md` in the licensing work (D407).
 - **D401** the Meta Pixel, LinkedIn Insight Tag and Calendly embed load only after a separate marketing
   consent (F17), and only on `/save`, `/control`, `/scale` and `/crew` by the loader's path check; the CSP
   widens site-wide because it is one header (F18, O2).
@@ -43,7 +43,7 @@ The owner's answers of 2026-10-26 that shape it:
 - Numbers: decisions **D400-D429** and checks **160-169** are this work's block, taken above the highest
   decision written (D367) and reserved (up to D389 by the Bitbucket credentials plan) under `docs/` on
   `main` and in open PRs, and above the highest check reserved (154).
-  D400-D406 are written and answered; D407-D429 and checks 163-169 are reserved and unused.
+  D400-D408 are written and answered; D409-D429 and checks 163-169 are reserved and unused.
 
 ## Global constraints and review focus
 
@@ -227,7 +227,7 @@ upstream response carries.
 ### G5.1 The "move later" note
 
 - **Files:** `docs/licensing/README.md` (one paragraph: D400's note that the console, mobile app,
-  coordinator and orchestrators are to move into `ee/` later, T1 open, and the four stale statements F19
+  coordinator and orchestrators are to move into `ee/` later, D407's timing, and the four stale statements F19
   lists, to be amended with the notice).
 - **Tests:** `go test ./internal/cli/ -run Docs -count=1`
 - **Depends on:** none.
@@ -296,6 +296,6 @@ owner), G6.1 and Check 162. The funnel metrics of spec §13 are the GA4 key even
 ## Not in this plan
 
 SSO, audit logs, the contract and DPA (D402, the owner's legal part), the support promise and SOC 2 (the spec defers SOC 2), the per-file `ee/` notice and the
-four stale statements (T1, F19), the price and what a seat buys (T2), the estimate shown beside each
+four stale statements (D407, F19), the price and plan of a seat (D408: a seat is the `ee/` licence plus support; the price is in `fugaro-business`), the estimate shown beside each
 job's cost (F21), the X drafting agent, lead lists, outreach, the videos and every other item of the
 agenda's action table (D403, R5).
