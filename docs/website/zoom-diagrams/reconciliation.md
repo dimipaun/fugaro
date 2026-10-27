@@ -146,10 +146,10 @@ job (`deploy/terraform/gcp/modules/installation/history.tf:70`).
 ### ZF7 — **Rule** — the loop is a recipe's, so the drawing must not present it as the product's
 
 Everything in ZF1–ZF5 is selected by `recipes:` and `agent:` keys, not fixed by the runner.
-`docs/recipes.md` lists eight shipped recipes; `internal/recipe/recipe.go:44-46` gives three
+`docs/recipes.md` lists nine shipped recipes; `internal/recipe/recipe.go:44-46` gives three
 modes (`implement`, `review`, `artifact`), and `mode: review` never changes a pull request's
-draft state at all (`docs/recipes.md:44`). A diagram whose *caption* is a sequence is a
-diagram that is wrong for six of the eight recipes. The four levels may show the shape; the
+draft state at all (`docs/recipes.md:45`). A diagram whose *caption* is a sequence is a
+diagram that is wrong for seven of the nine recipes. The four levels may show the shape; the
 page must say which recipe it is drawing.
 
 ### ZF8 — **Wrong** — "central orchestrators", "coordinator (advisory)" and "security service" are not built
