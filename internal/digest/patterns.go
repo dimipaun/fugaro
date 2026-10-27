@@ -62,20 +62,23 @@ const (
 // name, a period key, a flag's name, a catalog recipe's name or "other", and
 // figures as exact decimal strings. A name outside those sets is in no
 // pattern (G1).
+// The json keys are the document's own, not Go's field names: fugaro runs
+// digest prints a pattern under --json, beside a summary block whose keys are
+// snake_case, so a consumer reads one shape rather than two.
 type Pattern struct {
 	// Rule is the rule that fired, one of RuleNames.
-	Rule string
+	Rule string `json:"rule"`
 	// Subject is what the rule counted, for the rules that count one thing: a
 	// flag's name, or a recipe's name -- a catalog recipe's own, "other" for
 	// the runs no catalog recipe names. It is empty for the rules that count
-	// a whole period.
-	Subject string
+	// a whole period, and the key is then absent rather than empty.
+	Subject string `json:"subject,omitempty"`
 	// Periods are the period keys the rule read, oldest first, and Figures
 	// are its figures, one per period, as exact decimal strings: whether a
 	// week raised the flag, the review share of a month's cost, a recipe's
 	// median cost in dollars, or a week's halts over its runs.
-	Periods []string
-	Figures []string
+	Periods []string `json:"periods"`
+	Figures []string `json:"figures"`
 }
 
 // Patterns is the fixed rules (D326) read over the summaries of the reports
@@ -432,6 +435,11 @@ func ReadSummaries(reports [][]byte) ([]Summary, []string) {
 // key this package writes, whose figures are not ones this package writes, or
 // which repeats a month another one already named, is likewise not one of the
 // year's months (G1, G5).
+//
+// The block carries the period's own dates whatever the months are, so it also
+// carries how many months it added up: fewer than twelve is a partial year,
+// and a reader of the committed file is told so rather than left to count the
+// rows of a table (G5).
 func RollUp(year string, months []Summary) Summary {
 	if !yearKeyRE.MatchString(year) {
 		return Summary{}
@@ -445,7 +453,7 @@ func RollUp(year string, months []Summary) Summary {
 	if len(kept) == 0 {
 		return Summary{}
 	}
-	s := Summary{Period: year, Start: year + "-01-01", End: year + "-12-31"}
+	s := Summary{Period: year, Start: year + "-01-01", End: year + "-12-31", Months: len(kept)}
 
 	var billed, notional, review budget.Micros
 	medians := map[string][]budget.Micros{}
@@ -499,6 +507,17 @@ func (s Summary) check() error {
 	p, err := NewPeriod(dim, s.Start)
 	if err != nil || p.Key != s.Period || p.Start != s.Start || p.End != s.End {
 		return errors.New("the period is not one this report writes, from its first day to its last")
+	}
+	// A year's block is its months added up (F24), so it says how many of
+	// them it added up: a year that does not, or another period that does, is
+	// not a block this report wrote, and a reader is never left to take a
+	// partial year for a whole one (G5).
+	if dim == report.ByYear {
+		if s.Months < 1 || s.Months > 12 {
+			return errors.New("a year does not say how many months it added up")
+		}
+	} else if s.Months != 0 {
+		return errors.New("a period that is not a year says how many months it added up")
 	}
 	if !s.figuresOK() {
 		return errors.New("a figure or a count is not one this report writes")

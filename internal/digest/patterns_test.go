@@ -1,7 +1,9 @@
 package digest
 
 import (
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -333,6 +335,11 @@ func TestYearlyRollsUpMonthlySummaries(t *testing.T) {
 	if len(got.Flags) != 1 || got.Flags[FlagHalt] != 12 {
 		t.Errorf("the year's flags = %v, want one flag of 12", got.Flags)
 	}
+	// The block says how many months it added up, so a later reader does not
+	// take a partial year for a whole one (G5).
+	if got.Months != 12 {
+		t.Errorf("the year says it added up %d months, want 12", got.Months)
+	}
 	// The months' medians run 0.01 to 0.12, so the year's is the mean of the
 	// two middle ones.
 	if len(got.Recipes) != 1 || got.Recipes["standard"] != "0.065000" {
@@ -356,6 +363,9 @@ func TestYearlyRollsUpOnlyItsOwnMonths(t *testing.T) {
 	}
 	if got.Runs != 8 {
 		t.Errorf("the year holds %d runs, want the two months' 8", got.Runs)
+	}
+	if got.Months != 2 {
+		t.Errorf("the year says it added up %d months, want the two committed ones", got.Months)
 	}
 	if got.Billed != "4.000000" {
 		t.Errorf("the year billed %s, want the two months' 4.000000", got.Billed)
@@ -446,6 +456,74 @@ func TestPatternsRenderNoRecordText(t *testing.T) {
 	again := Patterns(reports(forged), weekBlock("2026-W44", 5, 0, forged))
 	if string(PatternsMarkdown(again)) != out {
 		t.Errorf("the section is not byte-identical:\n%s\nwant:\n%s", PatternsMarkdown(again), out)
+	}
+}
+
+// TestPatternJSONKeys pins a pattern's wire keys: fugaro runs digest prints
+// these under --json, so the shape a consumer reads is the document's own --
+// snake_case, like every other key it prints -- and not Go's field names. The
+// decoder is case-insensitive, so a test that reads the document back into
+// this type cannot tell the two apart.
+func TestPatternJSONKeys(t *testing.T) {
+	b, err := json.Marshal(Pattern{
+		Rule: RuleFlagRecurs, Subject: FlagHalt,
+		Periods: []string{"2026-W42", "2026-W43"}, Figures: []string{"1", "1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	keys := make([]string, 0, len(got))
+	for k := range got {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	if want := "figures,periods,rule,subject"; strings.Join(keys, ",") != want {
+		t.Errorf("a pattern's json keys are %v, want %s: %s", keys, want, b)
+	}
+
+	// A rule that counts a whole period has no subject, and the key is left
+	// out rather than printed empty.
+	b, err = json.Marshal(Pattern{Rule: RuleReviewShare, Periods: []string{"2026-10"}, Figures: []string{"0.100000"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "subject") {
+		t.Errorf("a pattern with no subject carries one: %s", b)
+	}
+}
+
+// TestReadSummaryChecksRolledUpMonths pins a year block's own statement of
+// what it is: a year's report is its months added up (F24), so a year block
+// that does not say how many it added up -- or another period's that does --
+// is not one this report wrote, and a reader does not take a partial year for
+// a whole one (G5).
+func TestReadSummaryChecksRolledUpMonths(t *testing.T) {
+	const year = `{"period":"2026","start":"2026-01-01","end":"2026-12-31","runs":48,"shown":0,` +
+		`"flagged":0,"billed":"12.000000","notional":"0.000000","review":"0.000000","halts":0,"months":12}`
+	const month = `{"period":"2026-10","start":"2026-10-01","end":"2026-10-31","runs":4,"shown":4,` +
+		`"flagged":0,"billed":"1.000000","notional":"0.000000","review":"0.100000","halts":0}`
+
+	if _, err := ReadSummary(reportFile(year)); err != nil {
+		t.Errorf("a year block saying it added up twelve months was refused: %v", err)
+	}
+	for _, tc := range []struct {
+		name  string
+		block string
+	}{
+		{"a year that does not say how many months", strings.Replace(year, `,"months":12`, "", 1)},
+		{"a year of no months at all", strings.Replace(year, `"months":12`, `"months":0`, 1)},
+		{"a year of more months than a year holds", strings.Replace(year, `"months":12`, `"months":13`, 1)},
+		{"a month that counts months", strings.Replace(month, `"halts":0`, `"halts":0,"months":3`, 1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := ReadSummary(reportFile(tc.block)); err == nil {
+				t.Errorf("a block was read: %s", tc.block)
+			}
+		})
 	}
 }
 

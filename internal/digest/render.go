@@ -64,18 +64,23 @@ func Markdown(d Digest) []byte {
 // micro-dollars, never a float, so two readers of one file agree to the
 // micro-dollar.
 type Summary struct {
-	Period   string         `json:"period"`
-	Start    string         `json:"start"`
-	End      string         `json:"end"`
-	Runs     int            `json:"runs"`
-	Shown    int            `json:"shown"`
-	Flagged  int            `json:"flagged"`
-	Dropped  int            `json:"dropped,omitempty"`
-	Billed   string         `json:"billed"`
-	Notional string         `json:"notional"`
-	Review   string         `json:"review"`
-	Halts    int            `json:"halts"`
-	Flags    map[string]int `json:"flags,omitempty"`
+	Period   string `json:"period"`
+	Start    string `json:"start"`
+	End      string `json:"end"`
+	Runs     int    `json:"runs"`
+	Shown    int    `json:"shown"`
+	Flagged  int    `json:"flagged"`
+	Dropped  int    `json:"dropped,omitempty"`
+	Billed   string `json:"billed"`
+	Notional string `json:"notional"`
+	Review   string `json:"review"`
+	Halts    int    `json:"halts"`
+	// Months is how many monthly reports a year's block added up (F24): a
+	// year is its months, and a year of fewer than twelve says so rather than
+	// let a reader take a partial year's figures for a whole one (G5). No
+	// other period writes it.
+	Months int            `json:"months,omitempty"`
+	Flags  map[string]int `json:"flags,omitempty"`
 	// Recipes is each recipe's median cost over the period's runs, by the
 	// name the report writes: a catalog recipe's own, "other" for the runs no
 	// catalog recipe names. The pattern rules read it month over month, and a
