@@ -119,6 +119,22 @@ type JSONRun struct {
 	// launch record has none — never a value this package invents, and never
 	// an identifier anything acts on.
 	PlanTask string `json:"plan_task,omitempty"`
+	// PRNumber is the pull request number the run has recorded, once it has
+	// one: a draft PR opens early in a run (design generic-tool G24), so a
+	// live row carries the number long before the run finishes, and the
+	// console's graph screen shows it without waiting for a `plan status`
+	// refresh (console dependency graph plan, task GV2.5). It is the number
+	// the run's own record holds — runview.Row.RecordPR, the value `runs ls
+	// --json` prints as record_pr — read from the registry entry's prUrl,
+	// which the run writes from that same record, with this package's own
+	// anchored GitHub pattern (internal/watch/prstate.go) rather than by a
+	// second parse of the URL's text.
+	//
+	// Absent when the run has recorded no pull request — never 0, which no
+	// repository numbering from 1 ever issues. Display-only, like the row's
+	// other hints: no policy, admission or budget rule reads it, and a reader
+	// builds no link from it (design §5.1 rule 2).
+	PRNumber int `json:"pr_number,omitempty"`
 	// Credential is the name — never the value — of the credential the run's
 	// cascade is currently using (budget.AgentEntry.Credential, written by the
 	// run itself under C1.3's rules; the credentials service chooses it). It is
@@ -248,6 +264,7 @@ func BuildJSON(project string, v View) JSONDoc {
 				Account:     run.Account,
 				LaunchedBy:  run.LaunchedBy,
 				PlanTask:    run.PlanTask,
+				PRNumber:    run.PRNumber,
 				Credential:  run.Credential}
 			if run.Waiting {
 				j.WaitingUntil = time.UnixMilli(run.WaitingUntil).UTC().Format(time.RFC3339)
