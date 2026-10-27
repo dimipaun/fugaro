@@ -7,7 +7,70 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
+
+// intp is a task override's review_rounds, which is a pointer because a task
+// that sets none must be told apart from one that sets zero.
+func intp(n int) *int { return &n }
+
+// TestPlanRoundCeilingPrecedence: the mode's ceiling sits *under* F6's
+// precedence rather than beside it (T3.2, D7b). The precedence is asserted
+// through planOf's own answer — the task's override, else the repository's
+// agent.review_rounds, else the recipe's max_rounds — and every mode's ceiling
+// only lowers it: a cheaper mode spends fewer rounds than the precedence agreed
+// on, a mode whose ceiling does not bite leaves the precedence's answer alone,
+// and a repository that configured no rigor keeps today's rounds whatever mode
+// it resolved (D19's ruling).
+func TestPlanRoundCeilingPrecedence(t *testing.T) {
+	// A review step pinning six rounds, so the recipe outranks agent.* and the
+	// precedence is asserted rather than restated.
+	six := parseRecipe(t, "version: 1\nname: six\nsteps:\n  - review: { max_rounds: 6 }\n")
+	a := config.Agent{ReviewRounds: 5}
+	for _, tc := range []struct {
+		name       string
+		override   *int
+		mode       rigor.Mode
+		configured bool
+		wantRounds int
+		wantPrec   int
+	}{
+		{"the recipe outranks agent.*", nil, rigor.Critical, true, 6, 6},
+		{"a cheaper mode spends fewer", nil, rigor.Pro, true, 3, 6},
+		{"the override outranks the recipe", intp(7), rigor.Critical, true, 7, 7},
+		{"the ceiling sits under the override", intp(7), rigor.POC, true, 2, 7},
+		{"hotfix's one round is clamped to two", nil, rigor.Hotfix, true, 2, 6},
+		{"critical does not lower", intp(2), rigor.Critical, true, 2, 2},
+		{"an unconfigured repository keeps its rounds", nil, rigor.Pro, false, 6, 6},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := planOf(six, false, a, nil, tc.override, tc.mode, tc.configured)
+			want := []planStep{{Kind: recipe.StepReview, Rounds: tc.wantRounds, Precedence: tc.wantPrec}}
+			if !slices.Equal(got, want) {
+				t.Fatalf("plan = %+v, want %+v", got, want)
+			}
+		})
+	}
+	// The first-line step keeps its own bound: D7 names no first-line ceiling,
+	// so the mode touches the review step's rounds and nothing else.
+	first := parseRecipe(t, "version: 1\nname: first\nsteps:\n  - first_line: { max_rounds: 3 }\n  - review: { max_rounds: 6 }\n")
+	got := planOf(first, false, a, nil, nil, rigor.POC, true)
+	if got[0].Rounds != 3 || got[0].Precedence != 3 {
+		t.Fatalf("the first-line step = %+v; want its own three rounds, whatever the mode", got[0])
+	}
+}
+
+// TestPlanRoundCeilingIsNeverAboveTheRecipeBound: no mode's ceiling reaches
+// above MaxReviewRounds, which is the most a review step may carry at all
+// (T3.2). The ceiling is a lower bound only — a mode cannot buy a run more
+// rounds than the recipe itself allows.
+func TestPlanRoundCeilingIsNeverAboveTheRecipeBound(t *testing.T) {
+	for _, m := range rigor.Modes {
+		if got := reviewRoundCeiling(m, true); got > recipe.MaxReviewRounds {
+			t.Errorf("reviewRoundCeiling(%s) = %d; want at most %d", m, got, recipe.MaxReviewRounds)
+		}
+	}
+}
 
 func catalogRecipe(t *testing.T, name string) *recipe.Recipe {
 	t.Helper()
