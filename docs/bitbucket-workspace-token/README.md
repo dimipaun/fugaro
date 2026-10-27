@@ -34,6 +34,11 @@ In a later round the same day the owner answered the rest:
 
 No decision is pending. Each task still needs the owner's own explicit go.
 
+**Amended 2026-10-27:** S2 is re-planned against the credentials-service proxy of
+[../secrets-brokering/](../secrets-brokering/README.md) (its D493, D505); T1.1 and T1.2 stay
+approved for 0.12.1, and T1.1 gains one pointer sentence (its D490). The release table below is
+superseded for 0.13.0 by that plan's "The re-planned Bitbucket S2".
+
 **Spec owner:** the Fugaro owner. **Date:** 2026-10-27. **Base:** `main` at `a5f521f1c`.
 
 | Release | Tasks |

@@ -35,6 +35,16 @@ references decisions by `D#` and findings by `F#`.
   - **D476 = no** (not the recommendation). T2.10 is off, and the risk is stated.
   - **T2 = Cloud-compatible API roots only.** Data Center stays out (D366).
 - **No decision is pending.** Answering a decision approves no task.
+- **Amended 2026-10-27 (docs/secrets-brokering D490, D492, D493, D505).** The owner ruled that a
+  credentials-service proxy keeps the Bitbucket token out of the job (0.14.0), and that **S2 is
+  re-planned against it**: the block and `bitbucket_api_roots` stay as data, enforcement moves to the
+  service (T2.9 is replaced), and the policy version is bumped once. Shared Bitbucket jobs (T2.2,
+  T2.4, T2.6, T2.7) wait until the service admits shared jobs. Which S2 tasks ship in which release
+  is open item O2 there; until it is ruled, that plan moves T2.1, T2.3, T2.8 and T2.11 to 0.14.0.
+  See [../secrets-brokering/implementation-plan.md](../secrets-brokering/implementation-plan.md),
+  "The re-planned Bitbucket S2". **T1.1 and T1.2 stay as approved for 0.12.1**, and T1.1 gains one
+  sentence: a proxy that keeps the token out of the job is designed in docs/secrets-brokering and
+  not built (D490).
 - **T1.1 and T1.2 launch only after run dc73 merges.** T1.2 edits `internal/config/project_secrets.go`,
   dc73's file, and both tasks document the wildcard dc73 ships.
 - **Review round 1 (2026-10-27)** amended D465's recommendation before any answer, added F17,
@@ -169,7 +179,8 @@ references decisions by `D#` and findings by `F#`.
   - **The reach, in plain words.** Every allow-listed run's agent holds the token's value. **So does
     every launcher of an allow-listed repository**, and launchers are trusted as before (F7, D475):
     a malicious launcher can use the agent to write across the token's reach. In 0.12.1 the docs
-    also say the API URL lock (D474) comes in 0.13.0.
+    also say the API URL lock (D474) comes in a later release, and that a proxy keeping the token
+    out of the job is designed in docs/secrets-brokering and not built (amended 2026-10-27, D490 there).
     Through pushes to another repository's base or Fugaro branches, an agent also reaches **every
     other credential** that repository's runs and builds hold. A hostile agent or launcher can push,
     open and comment on pull requests, and trigger Pipelines in every repository the token reaches,
