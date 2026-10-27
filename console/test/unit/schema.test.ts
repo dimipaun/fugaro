@@ -1251,6 +1251,12 @@ describe('the plan status document (plan GV2.1)', () => {
     // counted it with, not a rule the screen re-derives from the state.
     expect(graph?.nodes[3]?.closed).toBe(true)
     expect(graph?.nodes[1]?.closed).toBe(false)
+    // A node's `needs` is the plan's own edge, in the plan's own ids, and a node
+    // that needs nothing carries an empty list rather than a missing one: the
+    // graph screen walks this list for every node it draws.
+    expect(graph?.nodes[1]?.needs).toEqual(['task-one'])
+    expect(graph?.nodes[4]?.needs).toEqual(['task-two', 'task-three'])
+    expect(graph?.nodes[0]?.needs).toEqual([])
     // A plan that names no stream has no stream, and a plan with no versioned
     // task has no release box at all -- both are facts about the document
     // rather than missing values.
@@ -1336,6 +1342,44 @@ describe('the plan status document (plan GV2.1)', () => {
       const accepted = patched(PLAN_STATUS, ['plans', 0, 'nodes', 0, 'state'], state)
       expect(planDecoded(accepted).plans[0]?.nodes[0]?.state, `${state} at ${String(index)}`).toBe(state)
     }
+  })
+
+  it('reads a node needs as a list of task ids, absent as none, and refuses anything else', () => {
+    // `needs` is the plan's own edge: the ids of the tasks this one waits on.
+    // The ids are the same kind of value as the node's own `id` -- read as any
+    // non-empty string, since a plan names its tasks and this build does not
+    // know the naming rules of every plan -- so the one thing refused here is a
+    // member that could not be an id at all.
+    const node = ['plans', 0, 'nodes', 0] as const
+    expect(planDecoded(patched(PLAN_STATUS, [...node, 'needs'], ['task-two', 'task-three'])).plans[0]?.nodes[0]?.needs).toEqual([
+      'task-two',
+      'task-three',
+    ])
+    // Absent and null are the same fact: this task needs nothing. Both are an
+    // empty list rather than `undefined`, so no screen has to guard.
+    const withNeeds = ['plans', 0, 'nodes', 1] as const
+    expect(planDecoded(without(PLAN_STATUS, [...withNeeds, 'needs'])).plans[0]?.nodes[1]?.needs).toEqual([])
+    expect(planDecoded(patched(PLAN_STATUS, [...node, 'needs'], null)).plans[0]?.nodes[0]?.needs).toEqual([])
+    expect(planDecoded(patched(PLAN_STATUS, [...node, 'needs'], [])).plans[0]?.nodes[0]?.needs).toEqual([])
+    // A non-array, a non-string member and an empty member are three different
+    // mistakes and are named as three different refusals.
+    for (const bad of ['task-two', 7, {}, true]) {
+      const refusal = planRefusal(patched(PLAN_STATUS, [...node, 'needs'], bad))
+      expect(refusal.name, JSON.stringify(bad)).toBe('not-an-array')
+      expect(refusal.field, JSON.stringify(bad)).toBe('plans[0].nodes[0].needs')
+    }
+    for (const [bad, index] of [
+      [['task-two', 7], 1],
+      [['task-two', ['task-three']], 1],
+      [[null], 0],
+    ] as const) {
+      const refusal = planRefusal(patched(PLAN_STATUS, [...node, 'needs'], bad))
+      expect(refusal.name, JSON.stringify(bad)).toBe('not-a-string')
+      expect(refusal.field, JSON.stringify(bad)).toBe(`plans[0].nodes[0].needs[${String(index)}]`)
+    }
+    const empty = planRefusal(patched(PLAN_STATUS, [...node, 'needs'], ['task-two', '']))
+    expect(empty.name).toBe('not-a-string')
+    expect(empty.field).toBe('plans[0].nodes[0].needs[1]')
   })
 
   it('lists every key of the document and of each object in it, read off the structs', () => {

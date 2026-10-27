@@ -204,6 +204,11 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   // state is not what its word alone says (`plan.MergeUnknown`), a sentence the
   // CLI fixes rather than composes, and it is drawn as one.
   id: 'label',
+  // A node's `needs` members are the task ids of the same plan, so they are the
+  // same kind of value as `id` beside them and carry the same class: a member
+  // is drawn as a label if a screen ever draws one, and the graph screen uses
+  // it to join two nodes rather than to spell anything.
+  needs: 'label',
   artifact: 'path',
   plan: 'label',
   stream: 'label',
@@ -1372,6 +1377,7 @@ export const PLAN_NODE_KEYS: readonly string[] = Object.freeze([
   'closed',
   'level',
   'critical',
+  'needs',
   'release',
   'run',
   'stage',
@@ -1412,6 +1418,10 @@ export interface PlanNodeView {
   /** the longest dependency chain ending at this task */
   readonly level: number
   readonly critical: boolean
+  /** the ids of the tasks it needs, from the plan's own edges, sorted; `[]`
+   * when it needs nothing. Every needed task is here whether or not it is in
+   * `nodes` in this read: this is the edge, and the graph is drawn from it */
+  readonly needs: readonly string[]
   /** the target version the plan gives it, empty when it gives none */
   readonly release: string
   /** the run's short suffix, empty when no run joins the task */
@@ -1514,6 +1524,27 @@ function planPrNumberAt(raw: Record<string, unknown>, key: string, field: string
   return value
 }
 
+/** planNeedsAt is a node's `needs`: the ids of the tasks it needs, which is the
+ * field the graph screen's edges are drawn from. Absent and `null` both mean the
+ * task needs nothing, which is the empty list rather than a list of one empty
+ * id — a document that spells `[""]` names an edge to no task at all.
+ *
+ * A member must be a non-empty string and nothing else. There is no further
+ * shape to hold it to: the plan's own `id` is read as any string a node could
+ * carry, so "shaped like a task id this plan's ids could be" is exactly "a
+ * non-empty string". An id of another shape is a refusal rather than an edge the
+ * screen would silently never draw, because a graph missing an edge is a graph
+ * that says a task has no dependencies. */
+function planNeedsAt(raw: Record<string, unknown>, key: string, field: string, where: string): readonly string[] {
+  const value = raw[key]
+  if (value === undefined || value === null) return []
+  const at = `${field}.${key}`
+  return arrayAt(value, at, where).map((item, index) => {
+    const id = stringAt(item, `${at}[${String(index)}]`, where)
+    return id === '' ? refuse('not-a-string', `${at}[${String(index)}]`, where) : id
+  })
+}
+
 function planNodeAt(raw: unknown, index: number, plan: string, where: string): PlanNodeView {
   const field = `${plan}.nodes[${String(index)}]`
   const node = objectAt(raw, field, where)
@@ -1525,6 +1556,7 @@ function planNodeAt(raw: unknown, index: number, plan: string, where: string): P
     closed: boolAt(required(node, 'closed', field, where), `${field}.closed`, where),
     level: planLevelAt(required(node, 'level', field, where), `${field}.level`, where),
     critical: boolAt(required(node, 'critical', field, where), `${field}.critical`, where),
+    needs: planNeedsAt(node, 'needs', field, where),
     // The five `omitempty` keys of the node. Absent and `null` both mean the
     // CLI had nothing to say: no target version, no run joined, no stage, no
     // pull request recorded, no mark -- and the last is what makes a `done`

@@ -1309,6 +1309,7 @@ one entry of `nodes`:
 | `closed` | bool | never | never | this task is one of the plan's `closed` |
 | `level` | number | never | never | the same field §6.9's node carries |
 | `critical` | bool | never | never | the task is on the plan's critical path (§6.9's `critical_path.tasks`), so a screen can highlight the chain rather than recompute it |
+| `needs` | array of strings | **yes** | never | the ids of the tasks this task needs, from the plan's own edges (`edges[]`'s `task`/`needs` pairs of §6.9), **sorted by id and de-duplicated**; absent when the task needs nothing. It lists every needed task **whether or not that task is in `nodes` in this read** — a closed task is filtered out without `--all` — because it is the graph's edge and not a statement about the read. **The graph screen's edges come from here**, so this is the field a cross-release or a critical-path edge is drawn from |
 | `release` | string | **yes** | never | the target version, `MAJOR.MINOR` or `MAJOR.MINOR.PATCH`, as the artifact spells it; absent when the task names none |
 | `run` | string | **yes** | never | the **suffix** of the run this task is joined to — the four characters after the last dash of a run id, which is the part a person reads out loud, and the short form `fugaro watch` shows a run by (`internal/watch`'s `shortRun`); `runs ls` prints the whole id |
 | `stage` | string | **yes** | never | the stage that run is in. **Job-written display text**: it arrives sanitised (`safetext.Field`) and is rendered as text |
