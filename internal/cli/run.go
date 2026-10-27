@@ -578,11 +578,19 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		// nothing in the bucket under a run id that never gets a task. A
 		// launch with no --attach does nothing here at all.
 		agentRecipe, kind, clone := "", "", false
+		// mode is the same answer for baseBranchSkew, and nil where clone is
+		// false for the other gates because nothing was read: a launch for
+		// another repository from a checkout that is not its own reads no
+		// workflow of it, and baseBranchSkew asks both judges there rather
+		// than take the one a derived workflow would use (its comment has why).
+		var mode *bool
 		if co := checkoutConfig(ctx, spec.Repo); co != nil {
 			agentRecipe = co.Agent.Recipe
 			if w, ok := co.Workflows[spec.Workflow]; ok {
 				kind = w.BaseKind()
 				clone = w.Checkout == config.CheckoutClone
+				m := clone
+				mode = &m
 			}
 		}
 		caps, err := attachLaunch(ctx, env, slug, spec, s.Prefix(), o.attach, kind, clone, warn)
@@ -594,7 +602,7 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		// the whole task, so the field is dropped rather than the launch
 		// (baseBranchSkew). Here, and not with the gates below, because it
 		// decides what the task createTask writes.
-		baseBranchSkew(ctx, env, slug, spec, clone, warn)
+		baseBranchSkew(ctx, env, slug, spec, mode, warn)
 		// checkRecipeImage and checkImageSince judge a workflow's derived
 		// image by its build record, which a checkout: clone workflow never
 		// has (it runs the installation's base image directly, not a

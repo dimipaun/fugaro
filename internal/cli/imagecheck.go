@@ -495,8 +495,19 @@ func (e jobEnv) repoSpec(cfg *config.Config) (infra.RepoSpec, *localcfg.Config, 
 		Build: localcfg.Build{MachineType: s.MachineType, Region: s.BuildRegion},
 		Repos: map[string]localcfg.Repo{s.Repo: {Provider: s.Provider, BaseBranch: s.BaseBranch, GitHubAppID: os.Getenv(providers.EnvGitHubAppID)}},
 	}
+	// The base branch is the job's own, and never head's file: the check read
+	// head at s.BaseBranch (imagecheck.Clone), and the rebuild submits that
+	// same branch to Cloud Build, so the file's git.base_branch says where
+	// this repository's *runs* are cut from rather than what is being built.
+	// head's resolved value is main whenever its file writes no
+	// git.base_branch at all, which is the ordinary case, so letting the file
+	// decide would have an installation on develop examined at develop and
+	// rebuilt from main. readJobEnv refuses a spec with no s.BaseBranch, so
+	// the local entry below is always the one that answers.
+	fileSets := false
 	rs, err := infra.Repo(infra.Inputs{LC: lc, Repo: s.Repo, Cfg: cfg, RepoURL: s.RepoURL,
-		Installation: infra.InstallationOutputs{RegistryHost: host + "/" + e.gcpProject}})
+		FileSetsBaseBranch: &fileSets,
+		Installation:       infra.InstallationOutputs{RegistryHost: host + "/" + e.gcpProject}})
 	return rs, lc, err
 }
 

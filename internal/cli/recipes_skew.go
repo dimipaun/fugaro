@@ -618,30 +618,52 @@ func releaseOf(ref string) (string, bool) {
 // The judge is the one the other gates use: a checkout: clone job runs the
 // installation's base image itself (checkCloneImageSince's judge, the ref
 // base_images.base names), and a derived image runs the binary of the base its
-// build record was built FROM (checkImageSince's). An image neither judge can
-// show — no build record, a record without a base_ref, a base with no release
-// tag — is left carrying the field: what the image reads cannot be shown, and
-// the alternative, dropping a project default on a development image whose
-// runner does read it, is a silent change of the branch the run targets, which
-// nothing in the run reports. The read's own failure is dropped for the same
-// reason: this gate's only power is to omit a field, and a launch is not worth
-// refusing over a database read that the launch's other gates make anyway.
-func baseBranchSkew(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, clone bool, warn io.Writer) {
+// build record was built FROM (checkImageSince's). clone is that workflow's
+// checkout mode, nil when the launch could not read it — a launch for another
+// repository from a checkout that is not its own, where checkoutConfig answers
+// nil. Neither judge is then known to be the job's, so both are asked and
+// either one predating drops the field: a clone workflow has no build record
+// at all (it is never built, so the other judge would find nothing and keep a
+// field the image cannot read), while a derived one is refused by
+// checkImageSince before the task is written when its record is missing. An
+// image neither judge can show — a base with no release tag, a record without
+// a base_ref, a record that cannot be read — is left carrying the field: what
+// the image reads cannot be shown, and the alternative, dropping a project
+// default on a development image whose runner does read it, is a silent change
+// of the branch the run targets, which nothing in the run reports. The read's
+// own failure is dropped for the same reason: this gate's only power is to
+// omit a field, and a launch is not worth refusing over a database read that
+// the launch's other gates make anyway.
+func baseBranchSkew(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, clone *bool, warn io.Writer) {
 	b := spec.BaseBranch
 	if b == "" {
 		return
 	}
-	rel, known := "", false
-	if clone {
-		rel, known = releaseOf(env.lc.BaseImage(config.BaseKind))
-	} else {
-		rel, known = recordBaseRelease(ctx, env, slug, spec)
+	drop := func() {
+		spec.BaseBranch = ""
+		fmt.Fprintf(warn, "the job image predates %s and ignores the project's base branch %s; refresh it with fugaro image refresh\n", baseBranchSince, b)
 	}
-	if !known || !imagePredates(rel, baseBranchSince) {
+	predates := func(rel string, known bool) bool { return known && imagePredates(rel, baseBranchSince) }
+	if clone == nil {
+		rel, known := releaseOf(env.lc.BaseImage(config.BaseKind))
+		if predates(rel, known) {
+			drop()
+			return
+		}
+		if rel, known = recordBaseRelease(ctx, env, slug, spec); predates(rel, known) {
+			drop()
+		}
 		return
 	}
-	spec.BaseBranch = ""
-	fmt.Fprintf(warn, "the job image predates %s and ignores the project's base branch %s; refresh it with fugaro image refresh\n", baseBranchSince, b)
+	if *clone {
+		if rel, known := releaseOf(env.lc.BaseImage(config.BaseKind)); predates(rel, known) {
+			drop()
+		}
+		return
+	}
+	if rel, known := recordBaseRelease(ctx, env, slug, spec); predates(rel, known) {
+		drop()
+	}
 }
 
 // recordBaseRelease is the release of the base image the build record of slug

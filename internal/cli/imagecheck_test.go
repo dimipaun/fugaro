@@ -1126,6 +1126,50 @@ func TestCheckJobBackfillsFromAPreCutLegacySpec(t *testing.T) {
 	}
 }
 
+// TestCheckJobSpecKeepsTheJobsOwnBaseBranch: the check examines head at the
+// branch the job's own spec was installed with — imagecheck.Clone is cut from
+// s.BaseBranch, and the rebuild submits that same branch to Cloud Build — so
+// that branch is the spec's base branch whatever head's fugaro.yaml writes.
+// head's resolved value is main whenever its file writes no git.base_branch
+// at all, which is the ordinary case and what the fixture's own file does, so
+// a spec that let the file decide would have an installation on develop
+// examined at develop and rebuilt from main. regression: this spec's base
+// branch used to be the file's whenever the local entry was not consulted.
+func TestCheckJobSpecKeepsTheJobsOwnBaseBranch(t *testing.T) {
+	newCheckJob(t, checkFiles(), bitbucketYAML)
+	e, err := readJobEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.spec.BaseBranch = "develop"
+	writesMain := strings.Replace(bitbucketYAML, "provider: bitbucket", "provider: bitbucket, base_branch: main", 1)
+	for _, tc := range []struct{ name, yaml string }{
+		{"the file writes no base branch", bitbucketYAML},
+		{"the file writes the default", writesMain},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, problems := config.Parse([]byte(tc.yaml))
+			if len(problems) > 0 {
+				t.Fatal(problems)
+			}
+			rs, _, err := e.repoSpec(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rs.BaseBranch != "develop" {
+				t.Fatalf("base branch = %q, want develop: the job read head at the branch its own spec names", rs.BaseBranch)
+			}
+			var job infra.CheckJobSpec
+			if err := json.Unmarshal([]byte(rs.Check.Env[infra.CheckSpecEnv]), &job); err != nil {
+				t.Fatal(err)
+			}
+			if job.BaseBranch != "develop" {
+				t.Fatalf("the check job's own spec names base branch %q, want develop: that is the branch its clone is cut from", job.BaseBranch)
+			}
+		})
+	}
+}
+
 // executeJob runs a command as the Cloud Run check job does: its environment
 // names the job.
 func executeJob(t *testing.T, args ...string) (string, string, error) {

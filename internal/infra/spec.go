@@ -116,12 +116,18 @@ type Inputs struct {
 	// the file's value above the local config's entry and the project's
 	// default (config.EffectiveBaseBranch). A resolved config cannot answer
 	// it — Resolve fills main in, so a file that writes nothing and one that
-	// writes main resolve alike — so the caller that read the file passes it.
+	// writes main resolve alike — so a caller that read the file passes the
+	// answer, true or false. False is not the same as nil: it says the file
+	// names no base and the local entry below it is the spec's, which is what
+	// a caller reads head's file for.
 	//
-	// The field is a pointer because there is a third answer: a caller
-	// holding only a resolved config did not read the file at all, and nil
-	// then leaves the spec's base branch as Cfg's own resolved value, which
-	// is what this spec computed before the field existed.
+	// The field is a pointer because there is a third answer: a caller that
+	// did not read the file at all. nil means the file decides — it is the
+	// same as FileSetsBaseBranch pointing at true — so such a caller gets
+	// Cfg's own resolved value, main included. That is *not* what this spec
+	// computed before the field existed, where a non-empty repos.<r>.base_branch
+	// entry won over Cfg's value: a caller holding only a resolved config and
+	// a local entry that differs must pass false, or the entry is lost.
 	FileSetsBaseBranch *bool
 	// GitHubAppID overrides the local config's github_app_id.
 	GitHubAppID string

@@ -230,6 +230,17 @@ func TestBaseBranchSkew(t *testing.T) {
 		return &task.Spec{Version: 1, RunID: "20261027-100000-abcd", Repo: "acme/app", Ref: "master", BaseBranch: "master", Workflow: "web", Task: "x"}
 	}
 	wantSkew := "the job image predates " + baseBranchSince + " and ignores the project's base branch master; refresh it with fugaro image refresh"
+	cloneOf := func(v bool) *bool { return &v }
+	baseImageOf := func(e *cloudEnv, ref string) *cloudEnv {
+		lc := *e.lc
+		lc.BaseImages = map[string]string{}
+		if ref != "" {
+			lc.BaseImages[config.BaseKind] = ref
+		}
+		out := *e
+		out.lc = &lc
+		return &out
+	}
 	for _, tc := range []struct {
 		name, baseImage, wantBase, wantWarn string
 	}{
@@ -240,16 +251,10 @@ func TestBaseBranchSkew(t *testing.T) {
 		{"a dev ref", "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c", "master", ""},
 	} {
 		t.Run("clone: "+tc.name, func(t *testing.T) {
-			lc := *env.lc
-			lc.BaseImages = map[string]string{}
-			if tc.baseImage != "" {
-				lc.BaseImages[config.BaseKind] = tc.baseImage
-			}
-			e := *env
-			e.lc = &lc
+			e := baseImageOf(env, tc.baseImage)
 			spec := newSpec()
 			var warn bytes.Buffer
-			baseBranchSkew(t.Context(), &e, appSlug, spec, true, &warn)
+			baseBranchSkew(t.Context(), e, appSlug, spec, cloneOf(true), &warn)
 			if spec.BaseBranch != tc.wantBase {
 				t.Errorf("base_branch = %q, want %q", spec.BaseBranch, tc.wantBase)
 			}
@@ -262,7 +267,7 @@ func TestBaseBranchSkew(t *testing.T) {
 		writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.12.0")
 		spec := newSpec()
 		var warn bytes.Buffer
-		baseBranchSkew(t.Context(), env, appSlug, spec, false, &warn)
+		baseBranchSkew(t.Context(), env, appSlug, spec, cloneOf(false), &warn)
 		if spec.BaseBranch != "" {
 			t.Errorf("base_branch = %q, want none: the record's base predates %s", spec.BaseBranch, baseBranchSince)
 		}
@@ -274,7 +279,7 @@ func TestBaseBranchSkew(t *testing.T) {
 		writeBuildRecord(t, f, appSlug, "web", "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:"+baseBranchSince)
 		spec := newSpec()
 		var warn bytes.Buffer
-		baseBranchSkew(t.Context(), env, appSlug, spec, false, &warn)
+		baseBranchSkew(t.Context(), env, appSlug, spec, cloneOf(false), &warn)
 		if spec.BaseBranch != "master" || warn.Len() != 0 {
 			t.Errorf("base_branch = %q, stderr %q; want the field kept and nothing said", spec.BaseBranch, warn.String())
 		}
@@ -284,9 +289,47 @@ func TestBaseBranchSkew(t *testing.T) {
 		// the subtests above stored one.
 		spec := newSpec()
 		var warn bytes.Buffer
-		baseBranchSkew(t.Context(), fileEnv(t, newCloudFixture(t)), appSlug, spec, false, &warn)
+		baseBranchSkew(t.Context(), fileEnv(t, newCloudFixture(t)), appSlug, spec, cloneOf(false), &warn)
 		if spec.BaseBranch != "master" || warn.Len() != 0 {
 			t.Errorf("base_branch = %q, stderr %q; want the field kept and nothing said without a record", spec.BaseBranch, warn.String())
+		}
+	})
+	// A launch for another repository from a checkout that is not its own reads
+	// no workflow of it, so the mode is unknown and both judges are asked. The
+	// clone judge is what matters there: a checkout: clone workflow is never
+	// built, so judging the record alone finds nothing and keeps a field the
+	// job image cannot read — the failure this gate exists to prevent.
+	t.Run("an unknown mode takes the base image's answer", func(t *testing.T) {
+		e := baseImageOf(fileEnv(t, newCloudFixture(t)), "ghcr.io/dimipaun/fugaro-base:0.12.0")
+		spec := newSpec()
+		var warn bytes.Buffer
+		baseBranchSkew(t.Context(), e, appSlug, spec, nil, &warn)
+		if spec.BaseBranch != "" || !strings.Contains(warn.String(), wantSkew) {
+			t.Errorf("base_branch = %q, stderr %q; want the field dropped with %q", spec.BaseBranch, warn.String(), wantSkew)
+		}
+	})
+	t.Run("an unknown mode takes the build record's answer", func(t *testing.T) {
+		// The base image is current, so the record is the judge that shows the
+		// derived image's own base.
+		f := newCloudFixture(t)
+		e := baseImageOf(fileEnv(t, f), "ghcr.io/dimipaun/fugaro-base:"+baseBranchSince)
+		writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.12.0")
+		spec := newSpec()
+		var warn bytes.Buffer
+		baseBranchSkew(t.Context(), e, appSlug, spec, nil, &warn)
+		if spec.BaseBranch != "" || !strings.Contains(warn.String(), wantSkew) {
+			t.Errorf("base_branch = %q, stderr %q; want the field dropped with %q", spec.BaseBranch, warn.String(), wantSkew)
+		}
+	})
+	t.Run("an unknown mode with two current judges keeps the field", func(t *testing.T) {
+		f := newCloudFixture(t)
+		e := baseImageOf(fileEnv(t, f), "ghcr.io/dimipaun/fugaro-base:"+baseBranchSince)
+		writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+baseBranchSince)
+		spec := newSpec()
+		var warn bytes.Buffer
+		baseBranchSkew(t.Context(), e, appSlug, spec, nil, &warn)
+		if spec.BaseBranch != "master" || warn.Len() != 0 {
+			t.Errorf("base_branch = %q, stderr %q; want the field kept and nothing said", spec.BaseBranch, warn.String())
 		}
 	})
 }
