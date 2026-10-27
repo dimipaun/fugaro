@@ -103,7 +103,7 @@ import {
  * and the built tree are read from. */
 const CONSOLE_ROOT = join(__dirname, '..', '..')
 
-/** READ_METHODS is the eight reads `entry.ts` may reach for, by the name the
+/** READ_METHODS is the nine reads `entry.ts` may reach for, by the name the
  * preload exposes. Every one of them is on the fake bridge below, and every one
  * records its call -- so "this read was never made" is a claim this suite can
  * make about any of them. */
@@ -116,13 +116,14 @@ const READ_METHODS = [
   'diagnoseRun',
   'readRunLogs',
   'runLogLink',
+  'planStatus',
 ] as const
 
 /** A_REPLY is a bridge method's answer. */
 type AReply = (args: unknown) => unknown
 
 /** FakeBridge is the preload seam, recorded: the handshake, the installation,
- * and the eight reads, each answering what the case told it to and appending its
+ * and the nine reads, each answering what the case told it to and appending its
  * own call to `calls`. */
 interface FakeBridge {
   readonly bridge: Record<string, unknown>
@@ -249,12 +250,19 @@ describe('the dashboard the entry mounts', () => {
   it('offers only the views the gate would draw, and never asks for a withheld one', async () => {
     const { bridge, calls } = fakeBridge({ compatibility: aReducedCompatibility() })
     const document = await boot(bridge, new FakeDocument())
-    // The banner is drawn, and the navigation offers Live alone: `spend` is
+    // The banner is drawn, and the navigation offers Live and Graph: `spend` is
     // withheld and `projects` is the `caps` view, which a reduced mode withholds
     // with it. A Spend entry here would be a door to a screen that cannot read.
+    // The Graph is offered because `plan.status` is not a view this mode
+    // withholds (GV2.1's decision, and `VIEWS`' own `null`): it draws no spend
+    // and no caps, so a reduced console keeps it.
     expect(document.body.children[0]?.attributes.get('data-mode')).toBe('reduced')
-    expect(navButtons(document).map((button) => button.attributes.get('data-view'))).toEqual(['live'])
+    expect(navButtons(document).map((button) => button.attributes.get('data-view'))).toEqual([
+      'live',
+      'graph',
+    ])
     expect(navButtons(document).map((button) => button.attributes.get('class'))).toEqual([
+      VIEW_BUTTON_CLASS,
       VIEW_BUTTON_CLASS,
     ])
     // And the two reads behind the withheld views are not made -- not on the
@@ -1179,6 +1187,7 @@ describe('the view navigation’s keyboard', () => {
     const document = await boot(bridge, new FakeDocument())
     const nav = navOf(document)
     const live = buttonFor(document, 'live')
+    const graph = buttonFor(document, 'graph')
     const spend = buttonFor(document, 'spend')
     const projects = buttonFor(document, 'projects')
 
@@ -1187,16 +1196,16 @@ describe('the view navigation’s keyboard', () => {
     // emitted before this task and `base.css` already selects, and `aria-selected` is the
     // same fact in the vocabulary a tablist is read with.
     expect(nav.attributes.get('role')).toBe('tablist')
-    for (const button of [live, spend, projects]) {
+    for (const button of [live, graph, spend, projects]) {
       expect(button.attributes.get('role')).toBe('tab')
       expect(button.attributes.get('type')).toBe('button')
     }
     expect(live.attributes.get('aria-current')).toBe('true')
     expect(live.attributes.get('aria-selected')).toBe('true')
     expect(live.attributes.get('tabindex')).toBe('0')
-    // The roving half: the other two are out of the tab order, so the whole navigation is
-    // one stop rather than three.
-    for (const other of [spend, projects]) {
+    // The roving half: the others are out of the tab order, so the whole navigation is one
+    // stop rather than four.
+    for (const other of [graph, spend, projects]) {
       expect(other.attributes.get('aria-current')).toBe('false')
       expect(other.attributes.get('aria-selected')).toBe('false')
       expect(other.attributes.get('tabindex')).toBe('-1')
@@ -1204,18 +1213,26 @@ describe('the view navigation’s keyboard', () => {
 
     // Right moves to the next tab **and shows it**: a nav button's selection *is* the view
     // it puts on screen (design section 4.3), so the read behind the view is made and no
-    // second key is needed.
+    // second key is needed. The second tab is the Graph, whose screen opens by reading the
+    // plan -- so a handler that moved the marks without calling `show` leaves this list
+    // empty, which is the same claim the Spend step below makes about the budget.
     const pressed = live.press('ArrowRight')
     await flush()
     expect(pressed.defaultPrevented, 'the arrow key was left to the window').toBe(true)
-    expect(spend.attributes.get('aria-current')).toBe('true')
-    expect(spend.attributes.get('aria-selected')).toBe('true')
-    expect(spend.attributes.get('tabindex')).toBe('0')
+    expect(graph.attributes.get('aria-current')).toBe('true')
+    expect(graph.attributes.get('aria-selected')).toBe('true')
+    expect(graph.attributes.get('tabindex')).toBe('0')
     expect(live.attributes.get('aria-current')).toBe('false')
     expect(live.attributes.get('tabindex')).toBe('-1')
-    expect(document.activeElement, 'the ring did not follow the arrow').toBe(spend)
-    // The view was *shown* and not merely marked: Spend is the screen that reads the budget,
-    // so a handler that moved the marks without calling `show` would leave this list empty.
+    expect(document.activeElement, 'the ring did not follow the arrow').toBe(graph)
+    expect(calls.filter((call) => call.name === 'planStatus')).toHaveLength(1)
+
+    // And on to Spend, which is the view that reads the budget.
+    graph.press('ArrowRight')
+    await flush()
+    expect(spend.attributes.get('aria-current')).toBe('true')
+    expect(spend.attributes.get('tabindex')).toBe('0')
+    expect(document.activeElement).toBe(spend)
     expect(calls.filter((call) => call.name === 'showBudget')).toHaveLength(1)
 
     // End goes to the last tab, Home to the first, and Left wraps back from the first --

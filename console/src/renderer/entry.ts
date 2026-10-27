@@ -80,7 +80,7 @@ import { readNumber, unavailable } from '../shared/availability'
 import type { Reading } from '../shared/availability'
 import { rigorIndex } from '../shared/rigor'
 import type { RigorView } from '../shared/rigor'
-import { decodeSnapshot } from '../shared/schema'
+import { decodePlanStatus, decodeSnapshot } from '../shared/schema'
 import { sanitizeRefusal } from '../shared/sanitize'
 import { LIVE_STALE_AFTER_SECONDS, BurnHistory, buildLiveModel, renderLive } from './screens/live'
 import type { FeedHealth, LiveModel } from './screens/live'
@@ -89,6 +89,17 @@ import type { PeopleReader, SpendControls, SpendReader } from './screens/spend'
 import { buildProjectsModel, renderProjects } from './screens/projects'
 import { buildRunModel, renderRun } from './screens/run'
 import { refusedState, renderUnavailable } from './screens/degraded'
+import {
+  GRAPH_PINCH_STEP,
+  GRAPH_REFRESH_MS,
+  GRAPH_ZOOM_STEP,
+  SVG_NAMESPACE_URI,
+  graphScreen,
+  runIdsIn,
+  tabKey,
+  tabOf,
+} from './screens/graph'
+import type { GraphScreen } from './screens/graph'
 import { hidesView } from '../shared/version'
 import type { ReducedView, SkewElement, SkewFactory, SkewTheme } from '../shared/version'
 
@@ -150,9 +161,15 @@ export interface DomElement extends SkewElement {
 
 /** DomScreenFactory is a `SkewFactory` whose elements are wrapped nodes. It is
  * assignable to every screen's own `ScreenFactory`, which is the point: one
- * factory draws all four screens. */
+ * factory draws all five screens.
+ *
+ * `createNS` is the second namespace and not a flag on `create`: the graph screen
+ * draws its picture as SVG geometry (GV2.3b), and an element made with
+ * `createElement` is in the HTML namespace and is not drawn inside an `<svg>` at
+ * all. It is the graph's own `GraphFactory` this answers. */
 export interface DomScreenFactory {
   create(tag: string): DomElement
+  createNS(tag: string): DomElement
 }
 
 /** DomSurface is everything this file needs from a real document: the factory
@@ -212,10 +229,11 @@ export function domSurface(document: Document): DomSurface {
       },
       childNodes: () => [...node.children].map((child) => wrap(child)),
       focus: (): void => {
-        // Every element this factory makes comes from `createElement`, so it is
-        // an `HTMLElement` -- and `focus` is the one member this file needs that
-        // `Element`, which is what `nodeOf` answers with, does not declare.
-        const focusable = node as HTMLElement
+        // Both elements this factory makes -- `createElement`'s and
+        // `createElementNS`'s -- implement `focus` (`HTMLElement` and
+        // `SVGElement` each do), and `focus` is the one member this file needs
+        // that `Element`, which is what `nodeOf` answers with, does not declare.
+        const focusable = node as Element & { focus(): void }
         focusable.focus()
       },
     }
@@ -224,7 +242,10 @@ export function domSurface(document: Document): DomSurface {
   }
 
   return {
-    factory: { create: (tag: string) => wrap(document.createElement(tag)) },
+    factory: {
+      create: (tag: string) => wrap(document.createElement(tag)),
+      createNS: (tag: string) => wrap(document.createElementNS(SVG_NAMESPACE_URI, tag)),
+    },
     mount: {
       append(child: SkewElement): void {
         document.body.appendChild(nodeOf(child))
@@ -297,8 +318,8 @@ function methodOf(fugaro: unknown, name: string): ((args: unknown) => unknown) |
 }
 
 /**
- * ReadBridge is the eight reads the screens make (Task 3.4c; console L5b added
- * `statsRuns`), named one by one
+ * ReadBridge is the nine reads the screens make (Task 3.4c; console L5b added
+ * `statsRuns`, GV2.3b added `planStatus`), named one by one
  * for the reason `CompatibilityBridge` names one: this file should reach for
  * exactly the operations it draws, and a reader should be able to see which
  * those are without reading the preload.
@@ -317,6 +338,7 @@ export interface ReadBridge {
   diagnoseRun(args: Readonly<Record<string, unknown>>): Promise<unknown>
   readRunLogs(args: Readonly<Record<string, unknown>>): Promise<unknown>
   runLogLink(args: Readonly<Record<string, unknown>>): Promise<unknown>
+  planStatus(args: Readonly<Record<string, unknown>>): Promise<unknown>
 }
 
 /** readBridgeFrom is the eight reads over the structural bridge. A missing
@@ -350,6 +372,7 @@ export function readBridgeFrom(fugaro: unknown): ReadBridge {
     diagnoseRun: (args) => ask('diagnoseRun', args),
     readRunLogs: (args) => ask('readRunLogs', args),
     runLogLink: (args) => ask('runLogLink', args),
+    planStatus: (args) => ask('planStatus', args),
   }
 }
 
@@ -576,6 +599,32 @@ export interface KeyEventLike {
  */
 function keydownOn(node: Element, listener: (event: KeyEventLike) => void): void {
   node.addEventListener('keydown', listener as unknown as EventListener)
+}
+
+/**
+ * WheelEventLike is the three fields the graph's zoom reads off a wheel event:
+ * the direction of the scroll (`deltaY`, whose sign is what says in or out) and
+ * `ctrlKey`, which a browser sets when the gesture that produced the event was a
+ * **pinch** rather than a wheel -- one listener covers both for that reason, and
+ * the two differ only in the step they take. `deltaY`'s magnitude is deliberately
+ * not read: a trackpad reports a stream of small deltas and a wheel reports one
+ * big one, and a zoom that scaled with either would be a different zoom on every
+ * machine.
+ *
+ * Structural, for the reason `KeyEventLike` is: a case drives this under
+ * `vitest` with an object it built.
+ */
+export interface WheelEventLike {
+  readonly deltaY: number
+  readonly ctrlKey: boolean
+  preventDefault(): void
+}
+
+/** wheelOn attaches a wheel listener to a real node, with the same cast and for
+ * the same reason `keydownOn` documents: `Element`'s own signature types the
+ * argument as `Event`, which declares none of the fields this handler reads. */
+function wheelOn(node: Element, listener: (event: WheelEventLike) => void): void {
+  node.addEventListener('wheel', listener as unknown as EventListener, { passive: false })
 }
 
 /**
@@ -1600,6 +1649,11 @@ export const VIEWS: readonly {
   readonly view: ReducedView | null
 }[] = Object.freeze([
   { id: 'live', label: 'Live', view: null },
+  // The graph is never withheld either, and for the same reason the Live screen
+  // is not: GV2.1 decided `plan.status` shows no spend and no cap, so a reduced
+  // console has nothing to hide in it. It is `null` here rather than a fourth
+  // `ReducedView`, which would be a mode that hides a view no mode hides.
+  { id: 'graph', label: 'Graph', view: null },
   { id: 'spend', label: 'Spend', view: 'spend' },
   { id: 'projects', label: 'Projects', view: 'caps' },
 ])
@@ -1886,13 +1940,18 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
 
   /**
    * syncPolling is the one place the interval is started and stopped, so the two
-   * conditions -- the Live view is the one on screen, and the window is visible
-   * -- cannot be applied in one place and forgotten in the other. A hidden view
-   * or a hidden window is not a reason to keep spawning reads nobody is looking
-   * at.
+   * conditions -- a view that polls is the one on screen, and the window is
+   * visible -- cannot be applied in one place and forgotten in the other. A
+   * hidden view or a hidden window is not a reason to keep spawning reads nobody
+   * is looking at.
+   *
+   * **Two views poll**: Live, because a live screen is a poll, and Graph, because
+   * a graph draws the same feed's stages (GV2.3b). The graph's *plan* is a
+   * different read at a different cadence, and `maybeRefreshGraph` is where that
+   * one is decided.
    */
   const syncPolling = (): void => {
-    const wanted = currentView === 'live' && scopeVisible()
+    const wanted = (currentView === 'live' || currentView === 'graph') && scopeVisible()
     if (wanted && live.timer === null) {
       live.timer = setInterval(() => {
         void pollLive()
@@ -1994,6 +2053,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       else void pollLive()
       return
     }
+    if (id === 'graph') void showGraph()
     if (id === 'spend') void showSpend()
     if (id === 'projects') void showProjects()
   }
@@ -2104,11 +2164,19 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     if (live.inFlight) return
     live.inFlight = true
     try {
-      drawLive(await bridge.subscribeLive({}))
+      const frame = await bridge.subscribeLive({})
+      // One read feeds two views. The frame is the Live screen's, and it is also
+      // the graph's: a node's stage is the frame's stage for the run the plan
+      // joined it to (GV2.3b), so the graph takes the same rows rather than a
+      // second `live.watch` of its own.
+      if (currentView === 'graph') await frameGraph(frame)
+      else drawLive(frame)
       // The rigor join is asked for **after** the frame is drawn, so a read that
       // refuses cannot keep a frame off the screen: what the poll is for is the
       // frame, and the join is one cell of a row that the next frame draws with.
       maybeRefreshRigor()
+      // The plan is the graph's other input, and it is read on its own cadence.
+      if (currentView === 'graph') maybeRefreshGraph()
     } catch {
       // The same rule `drawLive` keeps: a poll that fails while another view is
       // on screen does not replace the view the operator chose.
@@ -2197,6 +2265,262 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     }
     door('live-run', 'live-run-id')
     door('live-review-row', 'live-review-run-id')
+  }
+
+  // ---- The graph (GV2.3b) -----------------------------------------------
+
+  /**
+   * graph is the Graph view's own state: the screen (and with it the layout
+   * cache and the worker, built when the view is first opened and dropped when
+   * the installation changes), when the plan was last read, and whether a plan
+   * read is in flight.
+   *
+   * The **read is the entry's**, not the screen's: a screen is a function of the
+   * documents it is handed, and which document to read and how often is this
+   * file's business -- the same division `showSpend` and `showRun` keep.
+   */
+  const graph: { screen: GraphScreen | null; readAt: number; inFlight: boolean } = {
+    screen: null,
+    readAt: 0,
+    inFlight: false,
+  }
+
+  /** graphScreenNow is the screen, built on first use. The worker is started
+   * here and nowhere else, and `forgetLive` disposes of it. */
+  const graphScreenNow = (): GraphScreen => {
+    if (graph.screen === null) graph.screen = graphScreen(factory, theme)
+    return graph.screen
+  }
+
+  /**
+   * readGraph makes one `plan.status` read and draws it.
+   *
+   * **At most one call in flight**, the rule every other read here keeps: the
+   * flag is set before the await and cleared in a `finally`. `readAt` is stamped
+   * **before** the read, so a read that refuses waits a whole interval rather
+   * than being retried on the next tick of the one-second poll.
+   *
+   * A refusal is a refusal screen, and here that is the right answer: the graph
+   * *is* the plan, and a plan the console cannot read is a screen with nothing on
+   * it. That is not the Live screen's rule -- a frame that fails leaves the last
+   * frame up -- because a frame is a moment and a plan is the whole picture.
+   */
+  const readGraph = async (mine: number): Promise<void> => {
+    if (graph.inFlight) return
+    graph.inFlight = true
+    graph.readAt = Date.now()
+    try {
+      const plan = documentOf(await bridge.planStatus({ all: true }))
+      if (stale(mine)) return
+      if (!plan.ok) {
+        refuse('plan.status', plan.sentence)
+        return
+      }
+      const decoded = decodePlanStatus(plan.data, 'plan.status')
+      if (!decoded.ok) {
+        refuse('plan.status', decoded.skew.because)
+        return
+      }
+      // The console's run list, read the same way the Live screen's rigor join
+      // reads it and **not** through that join: `rigorIndex` drops every row it
+      // cannot show a rigor block for, and a node's door must not depend on a
+      // field that has nothing to do with it.
+      const listed = documentOf(await bridge.listRuns({}))
+      if (stale(mine)) return
+      const runs = listed.ok ? runIdsIn(listed.data) : []
+      const drawn = await graphScreenNow().load(decoded.value, runs)
+      if (stale(mine) || drawn === null) return
+      replace(drawn)
+      wireGraph(drawn)
+    } catch {
+      // `readBridgeFrom` answers `null` rather than rejecting, so reaching here
+      // is a bridge that threw where it should not have.
+      if (!stale(mine)) refuse('plan.status', READ_UNREADABLE)
+    } finally {
+      graph.inFlight = false
+    }
+  }
+
+  /** maybeRefreshGraph is the one place the plan's cadence is applied, so
+   * entering the view, the poll and the operator's refresh cannot disagree about
+   * when a read is due. */
+  const maybeRefreshGraph = (): void => {
+    if (graph.inFlight) return
+    if (Date.now() - graph.readAt < GRAPH_REFRESH_MS) return
+    void readGraph(claim())
+  }
+
+  /**
+   * showGraph opens the Graph view: the screen is built if it is not up yet, the
+   * picture the last read drew goes back up (the Live screen's own rule -- a
+   * screen whose model this file already holds is not blank while a read is on
+   * its way), and the plan is read on entry. That read is the first of the three
+   * moments the read is made at; the others are the cadence and the operator's
+   * own refresh.
+   */
+  const showGraph = async (): Promise<void> => {
+    const mine = claim()
+    const last = graph.screen?.redraw() ?? null
+    if (last !== null) {
+      replace(last)
+      wireGraph(last as Drawn)
+    }
+    await readGraph(mine)
+  }
+
+  /**
+   * frameGraph draws one live frame into the graph. The stages move and the
+   * structure does not, so the screen folds them into the document it already
+   * has and the layout cache answers the same graph -- which is the whole reason
+   * the graph can be polled at all (GV2.3a's `structureHash` excludes state).
+   *
+   * A frame the console cannot read is **ignored**: the graph is a picture of the
+   * plan, and a `live.watch` read that failed says nothing about the plan. The
+   * plan's own read is where a refusal belongs, and it has one.
+   */
+  const frameGraph = async (reply: unknown): Promise<void> => {
+    if (graph.screen === null) return
+    const answer = replyData(reply)
+    if (!answer.ok) return
+    const envelope = answer.data as Record<string, unknown>
+    const decoded = decodeSnapshot(envelope['document'], 'live.watch')
+    if (!decoded.ok) return
+    const drawn = await graph.screen.frame(decoded.value.runs)
+    // The frame that changed nothing answers nothing, and a frame that landed
+    // after the operator moved on draws nothing.
+    if (drawn === null || currentView !== 'graph') return
+    replace(drawn)
+    wireGraph(drawn)
+  }
+
+  /**
+   * wireGraph makes the drawn graph a screen a person can drive: the tabs narrow
+   * the stream, a chip opens a finished release, a node selects (and, once
+   * selected, opens its run), the two controls zoom and switch the drawing, and
+   * the arrow keys walk the picture.
+   *
+   * **A node opens a run only through the entry's own runs list.** The screen
+   * resolves the node's four-character suffix against the console's current runs
+   * and writes the run it found into `data-run-id`; a node whose suffix no run
+   * ends with, or one two runs end with, carries none -- and this function opens
+   * nothing for it, because there is no run to open. The sentence saying why is
+   * on the element's own tooltip, drawn by the screen.
+   *
+   * A **pull request** is a number and no destination (design section 5.1 rule 2
+   * and its gap 7: no document names a provider), so nothing here reads one. The
+   * console's one door to the outside is `link.openExternal`, and this screen
+   * offers it nothing to open.
+   */
+  const wireGraph = (drawn: Drawn): void => {
+    const screen = graph.screen
+    if (screen === null) return
+    const redraw = (element: SkewElement | null): void => {
+      if (element === null) return
+      replace(element)
+      wireGraph(element as Drawn)
+    }
+
+    for (const button of classed(drawn, 'graph-tab')) {
+      const tab = tabOf(button.getAttribute('data-tab') ?? tabKey(null))
+      if (tab === screen.current.tab) continue
+      surface.nodeOf(button).addEventListener('click', () => {
+        // A tab is a different graph, not a different drawing of one: the screen
+        // re-lays it out, so this door is the asynchronous one.
+        void screen.narrow(tab).then(redraw)
+      })
+    }
+
+    for (const button of classed(drawn, 'graph-chip')) {
+      const key = button.getAttribute('data-chip') ?? ''
+      surface.nodeOf(button).addEventListener('click', () => {
+        const open = screen.current.expanded
+        redraw(screen.change({ expanded: open.includes(key) ? open.filter((each) => each !== key) : [...open, key] }))
+      })
+    }
+
+    // A node and a list row are the same door: the card's `g` and the row's `li`
+    // both carry `data-key` and both carry `data-run-id` when there is a run.
+    const doors = [...classed(drawn, 'graph-node'), ...classed(drawn, 'graph-row')]
+    for (const door of doors) {
+      const key = door.getAttribute('data-key') ?? ''
+      const run = door.getAttribute('data-run-id')
+      const node = surface.nodeOf(door)
+      node.addEventListener('click', () => {
+        // The first click selects -- which is what highlights the edges that
+        // touch the task -- and a second click on the task already selected is
+        // the gesture that opens it. A card with no run is selected like any
+        // other and opens nothing, and its tooltip says why.
+        if (screen.current.selected === key) {
+          if (run !== null) void showRun(run)
+          return
+        }
+        redraw(screen.change({ selected: key }))
+        focusIn(drawn, key)
+      })
+      keydownOn(node, (event: KeyEventLike) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          if (run === null) return
+          event.preventDefault()
+          void showRun(run)
+          return
+        }
+        const target = tabTarget(event.key, doors.indexOf(door), doors.length, 'y')
+        const wanted = target === null ? undefined : doors[target]
+        if (wanted === undefined) return
+        event.preventDefault()
+        redraw(screen.change({ selected: wanted.getAttribute('data-key') ?? '' }))
+        focusIn(drawn, wanted.getAttribute('data-key') ?? '')
+      })
+    }
+
+    const refresh = classed(drawn, 'graph-refresh')[0]
+    if (refresh !== undefined) {
+      surface.nodeOf(refresh).addEventListener('click', () => {
+        void readGraph(claim())
+      })
+    }
+
+    const fit = classed(drawn, 'graph-fit')[0]
+    if (fit !== undefined) {
+      surface.nodeOf(fit).addEventListener('click', () => {
+        redraw(screen.change({ zoom: 1 }))
+      })
+    }
+
+    const view = classed(drawn, 'graph-view')[0]
+    if (view !== undefined) {
+      surface.nodeOf(view).addEventListener('click', () => {
+        redraw(screen.change({ view: screen.current.view === 'graph' ? 'list' : 'graph' }))
+      })
+    }
+
+    // Zoom and pinch are one gesture in a browser: a wheel event, with
+    // `ctrlKey` set when what produced it was a pinch. The two differ only in
+    // the step, which is why they are one listener.
+    const canvas = classed(drawn, 'graph-canvas')[0]
+    if (canvas !== undefined) {
+      wheelOn(surface.nodeOf(canvas), (event: WheelEventLike) => {
+        if (event.deltaY === 0) return
+        event.preventDefault()
+        const step = event.ctrlKey ? GRAPH_PINCH_STEP : GRAPH_ZOOM_STEP
+        const zoom = screen.current.zoom * (event.deltaY < 0 ? step : 1 / step)
+        redraw(screen.change({ zoom }))
+      })
+    }
+  }
+
+  /** focusIn moves the keyboard to the drawn node or row a key or a click just
+   * selected. The roving `tabindex` is what makes the stop reachable and the
+   * focus is what makes the ring follow it: a selection that moved the attribute
+   * and left the keyboard where it was is a picture a keyboard reader cannot
+   * find their way around (design section 4.3). */
+  const focusIn = (drawn: Drawn, key: string): void => {
+    const found = [...classed(drawn, 'graph-node'), ...classed(drawn, 'graph-row')].find(
+      (element) => element.getAttribute('data-key') === key,
+    )
+    if (found === undefined) return
+    const focusable = found as Drawn & { focus?(): void }
+    focusable.focus?.()
   }
 
   // ---- Spend ------------------------------------------------------------
@@ -2414,6 +2738,13 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     live.rigor = new Map()
     live.rigorAt = 0
     history = new BurnHistory()
+    // The graph is a picture of **one installation's** plan, laid out by a worker
+    // this console started for it: both are dropped here, so the next
+    // installation is drawn from its own document by its own engine rather than
+    // from positions computed for a checkout that is gone.
+    graph.screen?.dispose()
+    graph.screen = null
+    graph.readAt = 0
   }
 
   /** showIssue puts one installation's issue in the main area (owner's design

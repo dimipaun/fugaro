@@ -224,12 +224,33 @@ export const GRAPH_LIST_LABEL = 'the dependency graph, drawn as a list'
  * the list is where a reader goes for the whole sentence. */
 export const GRAPH_NODE_TITLE_CODE_POINTS = 26
 
-/** GRAPH_ZOOM_STEP is what one scroll or pinch step multiplies the zoom by, and
- * GRAPH_ZOOM_MIN/GRAPH_ZOOM_MAX bound it -- a graph zoomed to nothing is a graph
- * a person cannot find their way back from with one gesture. */
+/** GRAPH_ZOOM_STEP is what one scroll step multiplies the zoom by, and
+ * GRAPH_PINCH_STEP the finer one a trackpad's pinch arrives as -- a pinch is a
+ * continuous gesture a browser reports as many small steps, so the step it is
+ * read with is small. GRAPH_ZOOM_MIN/GRAPH_ZOOM_MAX bound the result: a graph
+ * zoomed past either end is a graph a person cannot find their way back from
+ * with one gesture. */
 export const GRAPH_ZOOM_STEP = 1.25
+export const GRAPH_PINCH_STEP = 1.05
 export const GRAPH_ZOOM_MIN = 0.5
 export const GRAPH_ZOOM_MAX = 8
+
+/**
+ * GRAPH_REFRESH_MS is how often the plan is re-read while the graph is on screen:
+ * 60,000 ms, which is **the cadence GV2.1 gave this read** -- `cli.ts`'s
+ * `PLAN_STATUS_MIN_INTERVAL_MS` is how long `plan.status` serves the document it
+ * already read, and re-reading it more often than that would ask for a document
+ * the source is going to hand back anyway. A second copy of the number rather
+ * than an import, for the reason `live.ts`'s `LIVE_STALE_AFTER_SECONDS` is one:
+ * the renderer does not reach into the main process's source module (which holds
+ * the child-process machinery), and `graph.test.ts` holds the two equal so the
+ * copies cannot drift.
+ *
+ * The **feed** is a different read and keeps its own cadence (`LIVE_POLL_MS` in
+ * the entry): a stage is the thing that moves, and the plan is the thing that
+ * does not.
+ */
+export const GRAPH_REFRESH_MS = 60_000
 
 /** GRAPH_PAD is the room between a release box and the tasks in it, and between
  * the picture's own edge and the outermost box. */
@@ -429,6 +450,16 @@ function feedStages(feed: readonly RunView[]): ReadonlyMap<string, string> {
   const stages = new Map<string, string>()
   for (const [suffix, stage] of seen) if (stage !== null) stages.set(suffix, stage)
   return stages
+}
+
+/** stagesKey is a frame's own answer as one string, sorted so two frames that
+ * say the same thing about the same suffixes have the same key however the rows
+ * were ordered. */
+function stagesKey(stages: ReadonlyMap<string, string>): string {
+  return [...stages]
+    .map(([suffix, stage]) => `${suffix}=${stage}`)
+    .sort()
+    .join(',')
 }
 
 function stageFor(node: PlanNodeView, stages: ReadonlyMap<string, string>): string | null {
@@ -682,13 +713,28 @@ export function viewBoxOf(bounds: Rect, zoom: number): string {
   return `${coord(x)} ${coord(y)} ${coord(width)} ${coord(height)}`
 }
 
-/** tabKey is a tab as an attribute value: the stream's name, the empty string
- * for the plans that name no stream, or `all` for the All tab. `all` is the one
- * word here that a stream could also be called, and the model's own `tab`
- * distinguishes them (`null` against `'all'`), so the attribute is read against
- * what the console drew rather than as an identity. */
+/** TAB_ALL is the All tab's key, and TAB_STREAM_PREFIX qualifies a stream's own
+ * name as a stream's.
+ *
+ * The prefix is not decoration: a stream is called whatever a checkout likes,
+ * `all` included, and a key that could name two tabs is a key the entry would be
+ * reading as a guess. With the prefix the two are disjoint -- All's key never
+ * begins with `stream:` and a stream's always does -- so the map is a bijection
+ * and `tabOf` is its inverse. */
+export const TAB_ALL = 'all'
+export const TAB_STREAM_PREFIX = 'stream:'
+
+/** tabKey is a tab as an attribute value. */
 export function tabKey(tab: GraphTab): string {
-  return tab === null ? 'all' : tab
+  return tab === null ? TAB_ALL : `${TAB_STREAM_PREFIX}${tab}`
+}
+
+/** tabOf is `tabKey`'s inverse, and the entry is its only caller. A key that is
+ * neither All nor a prefixed stream is All: the key is read off a button this
+ * console drew, and a key this build does not know is not a tab it will invent. */
+export function tabOf(key: string): GraphTab {
+  if (key === TAB_ALL) return null
+  return key.startsWith(TAB_STREAM_PREFIX) ? key.slice(TAB_STREAM_PREFIX.length) : null
 }
 
 // ---------------------------------------------------------------------------
@@ -1192,6 +1238,9 @@ export class GraphScreen {
   private positions: Positions | null = null
   private asked = 0
   private disposed = false
+  /** drawnStages is what the last frame said about the graph's stages, as one
+   * string, so an identical frame is answered without drawing anything. */
+  private drawnStages = ''
   private readonly layout: GraphLayout
 
   constructor(private readonly deps: GraphScreenDeps) {
@@ -1215,13 +1264,24 @@ export class GraphScreen {
     this.document = document
     this.runs = runs
     this.feed = []
+    this.drawnStages = ''
     return this.build()
   }
 
-  /** frame takes one live frame's rows: the stages change, the structure does
-   * not, and the cache is what makes that free. */
+  /**
+   * frame takes one live frame's rows: the stages change, the structure does
+   * not, and the cache is what makes that free.
+   *
+   * A frame that says exactly what the last one said answers **nothing**: the
+   * poll runs once a second and most frames repeat themselves, and redrawing an
+   * identical tree every second would replace the picture a reader is looking at
+   * with a copy of it -- losing, among other things, where the focus was.
+   */
   async frame(feed: readonly RunView[]): Promise<ScreenElement | null> {
     if (this.document === null) return null
+    const key = stagesKey(feedStages(feed))
+    if (key === this.drawnStages) return null
+    this.drawnStages = key
     this.feed = feed
     return this.build()
   }

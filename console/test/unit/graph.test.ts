@@ -33,6 +33,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { measured } from '../../src/shared/availability'
+import { PLAN_STATUS_MIN_INTERVAL_MS } from '../../src/source/cli'
 import { decodePlanStatus } from '../../src/shared/schema'
 import type { PlanStatusView, RunView } from '../../src/shared/schema'
 import { nodeKey } from '../../src/renderer/graph/layout'
@@ -47,6 +48,7 @@ import {
   GRAPH_NO_PLANS,
   GRAPH_NOT_SHOWN_SINGULAR,
   GRAPH_PR_NO_LINK_REASON,
+  GRAPH_REFRESH_MS,
   GRAPH_RUN_AMBIGUOUS,
   GRAPH_ZOOM_MAX,
   GRAPH_ZOOM_MIN,
@@ -58,6 +60,7 @@ import {
   runForSuffix,
   runIdsIn,
   tabKey,
+  tabOf,
   viewBoxOf,
   withFeedStages,
 } from '../../src/renderer/screens/graph'
@@ -735,7 +738,7 @@ describe('the graph screen and its navigation', () => {
     const element = screen.redraw()
     if (element === null) throw new Error('no drawing')
     const tabs = everyNode(mounted(element)).filter((each) => each.getAttribute('role') === 'tab')
-    expect(tabs.map((each) => each.getAttribute('data-tab'))).toEqual(['example', '', 'all'])
+    expect(tabs.map((each) => each.getAttribute('data-tab'))).toEqual(['stream:example', 'stream:', 'all'])
     expect(tabs.map((each) => each.getAttribute('aria-selected'))).toEqual(['false', 'false', 'true'])
     // The roving tabindex the design's §4.3 gives a tablist: one tab is in the
     // tab order and the rest are not.
@@ -759,11 +762,36 @@ describe('the graph screen and its navigation', () => {
     expect(viewBoxOf(bounds, 1000)).toBe(viewBoxOf(bounds, GRAPH_ZOOM_MAX))
   })
 
-  it('names a tab as an attribute value, and starts on All with the canvas up', () => {
+  it('names a tab as an attribute value, and reads it back as the tab it was', () => {
+    // The key is a bijection, `all` included: a stream is called whatever a
+    // checkout likes, and a stream called `all` must not read back as All.
+    for (const tab of [null, '', 'example', 'all', 'stream:all'] as const) {
+      expect(tabOf(tabKey(tab))).toBe(tab)
+    }
     expect(tabKey(null)).toBe('all')
-    expect(tabKey('example')).toBe('example')
-    expect(tabKey('')).toBe('')
+    expect(tabKey('')).toBe('stream:')
+    // A key this build does not know is All rather than an invented stream.
+    expect(tabOf('nonsense')).toBeNull()
     expect(GRAPH_INITIAL_STATE).toEqual({ tab: null, view: 'graph', selected: null, expanded: [], zoom: 1 })
+  })
+
+  it('answers an identical frame with nothing, and a changed one with a drawing', async () => {
+    const { screen, worker } = screenWith()
+    await screen.load(DOCUMENT, RUNS)
+    const frame = [runRow('20261025-121805-aa02', 'fix')]
+    expect(await screen.frame(frame)).not.toBeNull()
+    expect(await screen.frame(frame)).toBeNull()
+    // The order the rows arrive in is not part of what a frame says.
+    expect(
+      await screen.frame([runRow('20261025-121805-aa01', 'implement'), runRow('20261025-121805-aa02', 'fix')]),
+    ).not.toBeNull()
+    expect(await screen.frame([runRow('20261025-121805-aa02', 'fix'), runRow('20261025-121805-aa01', 'implement')])).toBeNull()
+    expect(worker.placements).toBe(1)
+  })
+
+  it('re-reads the plan at the cadence GV2.1 gave the read, and no oftener', () => {
+    // Two copies of one number: this screen's and `cli.ts`'s. They cannot drift.
+    expect(GRAPH_REFRESH_MS).toBe(PLAN_STATUS_MIN_INTERVAL_MS)
   })
 
   it('draws the second plan, which names no stream and no release', async () => {
