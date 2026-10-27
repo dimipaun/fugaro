@@ -14,13 +14,15 @@
 // **What the hash is, and what it is not.** It is a canonical string, not a
 // digest: a collision would draw one graph's coordinates over another's, which
 // is a wrong picture rather than a slow one, and the string is small enough
-// that the honesty costs nothing. Every part is length-prefixed (`part`), so no
-// plan id, task id, version or stream name can forge a boundary and make two
-// different graphs hash alike. What goes in is everything that decides where a
-// box sits: the tab, the box sizes, each plan, each node's id and release, and
-// each edge. What stays out is everything the engine never sees -- a node's
-// state, stage, mark, pull request number, run suffix, its title, and how many
-// nodes a bound dropped.
+// that the honesty costs nothing. Two things make it a serialization rather than
+// a concatenation, and both are load-bearing: every part is length-prefixed
+// (`part`), so no plan id, task id, version or stream name can forge a boundary
+// from the inside, and every list writes its own length first, so no boundary
+// can be *moved* between two graphs (`structureHash` carries the worked example).
+// What goes in is everything that decides where a box sits: the tab, the box
+// sizes, each plan, each node's id and release, and each edge. What stays out is
+// everything the engine never sees -- a node's state, stage, mark, pull request
+// number, run suffix, its title, and how many nodes a bound dropped.
 //
 // **Why the box sizes are in it.** They are two constants today
 // (`GRAPH_NODE_WIDTH`, `GRAPH_NODE_HEIGHT`), and they are in the key anyway: a
@@ -71,17 +73,31 @@ const REQUEST: LayoutRequest = Object.freeze({ layoutOptions: LAYOUT_OPTIONS })
  * structureHash is the key the cache is kept by: everything the picture's
  * *positions* depend on, and nothing else. Two models with the same hash draw
  * the same boxes in the same places, whatever their text says.
+ *
+ * It is **injective over structures**, and that takes two things, not one. The
+ * length prefix (`part`) stops a value from forging a boundary from the inside;
+ * the **counts** stop a boundary from being *moved*. Lengths alone do not make
+ * the sequence self-delimiting, because the parts are a flat run of values with
+ * nothing saying where one level ends and the next begins: a plan `p` (stream
+ * `s`) holding one node whose id and release are both `1.4`, followed by an
+ * empty plan `1.4`, is the same run of parts as plan `p` empty followed by plan
+ * `1.4` holding that node -- and the two draw different graphs (`1:p:1.4`
+ * against `3:1.4:1.4` in `graphOf`). A cache hit would then hand one graph the
+ * other's positions, and the screen would find no entry for its own node key. So
+ * every list writes its own length first (columns, plans in a column, nodes and
+ * edges in a plan), and the run is a serialization rather than a concatenation.
  */
 export function structureHash(model: GraphModel): string {
   const parts: string[] = [
     part(model.tab ?? 'all'),
     part(String(GRAPH_NODE_WIDTH)),
     part(String(GRAPH_NODE_HEIGHT)),
+    part(String(model.columns.length)),
   ]
   for (const column of model.columns) {
-    parts.push(part(column.stream))
+    parts.push(part(column.stream), part(String(column.plans.length)))
     for (const plan of column.plans) {
-      parts.push(part(plan.id))
+      parts.push(part(plan.id), part(String(plan.nodes.length)), part(String(plan.edges.length)))
       for (const node of plan.nodes) parts.push(part(node.id), part(node.release))
       for (const edge of plan.edges) parts.push(part(edge.from), part(edge.to))
     }

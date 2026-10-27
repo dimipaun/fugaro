@@ -369,16 +369,25 @@ describe('the graph model', () => {
   })
 
   it('cuts a long title at the code-point bound and never splits a surrogate pair', () => {
-    // A title of astronomical symbols: each is one code point and two UTF-16
-    // units, which is the pair a `slice` on the string would split.
-    const title = '☄'.repeat(GRAPH_MAX_TITLE_CODE_POINTS + 10)
+    // An astral character: **two UTF-16 units and one code point**, which is the
+    // pair a `slice` on the string would split -- a `slice(0, 200)` would take
+    // 100 of these and leave the last one's high half behind. A BMP character
+    // would satisfy every assertion below without the code-point iteration
+    // `cutTitle` does, which is why this test is built from one of these.
+    const astral = '\u{1F600}'
+    expect(astral).toHaveLength(2)
+    const title = astral.repeat(GRAPH_MAX_TITLE_CODE_POINTS + 10)
     const cut = nodeOf(built(['plans', 0, 'nodes', 0, 'title'], title), 'task-one')?.title
     expect(cut?.ok).toBe(true)
     const drawn = text(cut)
     expect([...drawn]).toHaveLength(GRAPH_MAX_TITLE_CODE_POINTS + 1)
     expect(drawn.endsWith('…')).toBe(true)
-    expect(drawn.slice(0, -1)).toBe('☄'.repeat(GRAPH_MAX_TITLE_CODE_POINTS))
-    // A lone surrogate would be a string that cannot round-trip through JSON.
+    expect(drawn.slice(0, -1)).toBe(astral.repeat(GRAPH_MAX_TITLE_CODE_POINTS))
+    // Every code point is one of the two the title is made of: a cut through the
+    // middle of a pair would leave a lone half, which is a string no screen
+    // draws and no JSON round-trip keeps.
+    const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+    expect(lone.test(drawn)).toBe(false)
     expect(drawn.includes('�')).toBe(false)
     // A title inside the bound is drawn whole and unmarked.
     const short = nodeOf(built(['plans', 0, 'nodes', 0, 'title'], 'a short title'), 'task-one')?.title
@@ -506,6 +515,28 @@ describe('the graph layout cache', () => {
     // What does reach it is the id of every node, plan-qualified: ids are a
     // plan's own, and two plans may name the same one.
     for (const child of graph.children) expect(wire).toContain(child.id)
+  })
+
+  it('tells two structures apart when a part boundary could be moved', () => {
+    // The parts of the hash are a flat run of values, and a run of lengths alone
+    // does not say where one level ends: a plan `p` (stream `s`) holding a node
+    // whose id and release are both `1.4`, followed by an empty plan `1.4`, is
+    // the same sequence of parts as plan `p` empty followed by plan `1.4`
+    // holding that node. The two are different pictures -- the engine's own ids
+    // differ -- so a hash that could not tell them apart would hand one of them
+    // the other's positions.
+    const base = rawPlan(1)
+    const node = rawNodes(base)[0]
+    if (node === undefined) throw new Error('the fixture has no second plan')
+    const plans = (first: boolean) => [
+      { ...base, id: 'p', stream: 's', nodes: first ? [{ ...node, id: '1.4', release: '1.4' }] : [] },
+      { ...base, id: '1.4', stream: 's', nodes: first ? [] : [{ ...node, id: '1.4', release: '1.4' }] },
+    ]
+    const here = built(['plans'], plans(true))
+    const there = built(['plans'], plans(false))
+    expect(graphOf(here).children.map((child) => child.id)).toEqual(['1:p:1.4'])
+    expect(graphOf(there).children.map((child) => child.id)).toEqual(['3:1.4:1.4'])
+    expect(structureHash(here)).not.toBe(structureHash(there))
   })
 
   it('keeps two plans apart when an id and its prefix could be split two ways', () => {
