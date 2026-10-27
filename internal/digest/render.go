@@ -76,6 +76,11 @@ type Summary struct {
 	Review   string         `json:"review"`
 	Halts    int            `json:"halts"`
 	Flags    map[string]int `json:"flags,omitempty"`
+	// Recipes is each recipe's median cost over the period's runs, by the
+	// name the report writes: a catalog recipe's own, "other" for the runs no
+	// catalog recipe names. The pattern rules read it month over month, and a
+	// table has no room for it.
+	Recipes map[string]string `json:"recipes,omitempty"`
 }
 
 // Summary is d's block, as the report writes it.
@@ -91,6 +96,12 @@ func (d Digest) Summary() Summary {
 			s.Flags = map[string]int{}
 		}
 		s.Flags[f.Name] = f.Count
+	}
+	for name, med := range d.Recipes {
+		if s.Recipes == nil {
+			s.Recipes = map[string]string{}
+		}
+		s.Recipes[name] = report.USD6(med)
 	}
 	return s
 }
