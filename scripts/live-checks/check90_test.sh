@@ -30,7 +30,7 @@ fail() {
 expect_contains() { # haystack needle what
   case "$1" in
   *"$2"*) ;;
-  *) fail "$3: expected to contain '$2'; got: $(printf '%s' "$1" | head -c 400)" ;;
+  *) fail "$3: expected to contain '$2'; got: $(printf '%s' "$1" | head -c 400)$(printf '%s\n' "$1" | grep -E '^FACT (aborted|budget):' | sed 's/^/ ... /')" ;;
   esac
 }
 expect_absent() {
@@ -38,13 +38,23 @@ expect_absent() {
   *"$2"*) fail "$3: found '$2' where it must never appear" ;;
   esac
 }
+# A run that stopped says why only in its block, and a status alone does not:
+# the stop and budget rows of run90's last output are named with the mismatch.
 expect_status() { # status want what
-  [ "$1" = "$2" ] || fail "$3: expected exit $2, got $1"
+  [ "$1" = "$2" ] || fail "$3: expected exit $2, got $1$(printf '%s\n' "${out:-}" | grep -E '^FACT (aborted|budget):' | sed 's/^/ ... last run90: /')"
 }
 
 # The sentinel is deliberately not a credential shape: nothing here is a real
 # token, and a test asserts this string never survives the run.
 SENTINEL='FAKE-TOKEN-FOR-CHECK-90-TESTS-NOT-A-CREDENTIAL-0123456789'
+
+# A run restarts its proxy for every phase and every header drop, and the
+# script gives each start 5s to say it is listening. A python start on a CI
+# runner busy with the race tests has taken longer, and the run then stopped
+# with exit 2 in whichever test happened to be starting a proxy. The wait ends
+# as soon as the proxy listens or dies, so a generous bound costs a passing
+# run nothing; every run here, run90's and the hand-built ones, inherits it.
+export CHECK90_PROXY_START_SECONDS=120
 
 # Every variable the script's environment guard refuses, unset before each run:
 # this machine may have one of them set (a runner usually has NO_PROXY), and a
@@ -350,7 +360,6 @@ import http.server, json, os, sys
 TOKEN = os.environ["FAKE_UPSTREAM_TOKEN"]
 MODE = os.environ.get("FAKE_UPSTREAM_MODE", "ok")
 REQUIRE = [h for h in os.environ.get("FAKE_UPSTREAM_REQUIRE_HEADERS", "").split() if h]
-PORT = int(os.environ["FAKE_UPSTREAM_PORT"])
 
 
 def error(handler, status, etype, message, extra=None):
@@ -398,12 +407,38 @@ class H(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-srv = http.server.ThreadingHTTPServer(("127.0.0.1", PORT), H)
-print("fake upstream listening on %d" % PORT, flush=True)
+srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+print("fake upstream listening on %d" % srv.server_address[1], flush=True)
 srv.serve_forever()
 UPSTREAM_EOF
 }
 
+# The upstream binds port 0 and reports the port it got: a port found free and
+# released before the upstream binds it can be lost, and in that gap a shard
+# running beside this one can take it. The wait is for the line, bounded far
+# above a python start on a loaded machine, and ends early if the upstream died.
+start_upstream() { # dir mode [require headers]
+  local dir=$1 mode=${2:-ok} require=${3:-}
+  FAKE_UPSTREAM_TOKEN=$SENTINEL FAKE_UPSTREAM_MODE=$mode \
+    FAKE_UPSTREAM_REQUIRE_HEADERS="$require" \
+    python3 "$dir/upstream.py" >"$dir/upstream.log" 2>&1 &
+  local pid=$!
+  pids+=("$pid")
+  local i=0
+  while [ "$i" -lt 1200 ] && kill -0 "$pid" 2>/dev/null; do
+    grep -q 'listening on' "$dir/upstream.log" 2>/dev/null && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  UPSTREAM_PORT=$(sed -n 's/^fake upstream listening on \([0-9]*\)$/\1/p' "$dir/upstream.log" 2>/dev/null | head -n 1)
+  [ -n "$UPSTREAM_PORT" ] || {
+    fail "the fake upstream did not start: $(cat "$dir/upstream.log")"
+    return 1
+  }
+  FAKE_UPSTREAM_ADDR="127.0.0.1:$UPSTREAM_PORT"
+}
+
+# free_port: a loopback port nothing listens on at the moment it is asked.
 free_port() {
   python3 - <<'PORT_EOF'
 import socket
@@ -412,26 +447,6 @@ s.bind(("127.0.0.1", 0))
 print(s.getsockname()[1])
 s.close()
 PORT_EOF
-}
-
-start_upstream() { # dir mode [require headers]
-  local dir=$1 mode=${2:-ok} require=${3:-}
-  UPSTREAM_PORT=$(free_port)
-  FAKE_UPSTREAM_TOKEN=$SENTINEL FAKE_UPSTREAM_MODE=$mode \
-    FAKE_UPSTREAM_REQUIRE_HEADERS="$require" FAKE_UPSTREAM_PORT=$UPSTREAM_PORT \
-    python3 "$dir/upstream.py" >"$dir/upstream.log" 2>&1 &
-  pids+=("$!")
-  local i=0
-  while [ "$i" -lt 50 ]; do
-    grep -q 'listening on' "$dir/upstream.log" 2>/dev/null && break
-    sleep 0.1
-    i=$((i + 1))
-  done
-  grep -q 'listening on' "$dir/upstream.log" || {
-    fail "the fake upstream did not start: $(cat "$dir/upstream.log")"
-    return 1
-  }
-  FAKE_UPSTREAM_ADDR="127.0.0.1:$UPSTREAM_PORT"
 }
 
 # ---------------------------------------------------------------- running it
@@ -784,15 +799,18 @@ test_sigint_cleans_up() {
     FAKE_CLAUDE_SENTINEL="$SENTINEL" FAKE_CLAUDE_CALLS="$dir/claude.calls" \
     bash "$script" <"$dir/tokenin" >"$dir/out" 2>"$dir/err" &
   local pid=$!
+  # Both waits end on what they wait for: the signal has to land once the run is
+  # in its first step (its scratch directory announced), however slowly a loaded
+  # machine gets it there, and the bound is only for a run that never does.
   local i=0
-  while [ "$i" -lt 60 ]; do
+  while [ "$i" -lt 600 ] && kill -0 "$pid" 2>/dev/null; do
     grep -q 'step 1/7' "$dir/err" 2>/dev/null && break
     sleep 0.2
     i=$((i + 1))
   done
   kill -INT "$pid" 2>/dev/null || true
   local j=0
-  while kill -0 "$pid" 2>/dev/null && [ "$j" -lt 150 ]; do
+  while kill -0 "$pid" 2>/dev/null && [ "$j" -lt 600 ]; do
     sleep 0.2
     j=$((j + 1))
   done
@@ -1532,9 +1550,17 @@ test_a_machine_with_no_ca_bundle_stops_before_the_first_call() {
 # the proxy really hits on any machine; the test's fake client prints the
 # reason phrase the way the real one does.
 test_the_upstream_error_type_reaches_the_block() {
-  local dead
-  dead=$(free_port)
-  run90 uptype ok "" CHECK90_UPSTREAM="127.0.0.1:$dead"
+  # The dead port is only free when it is picked: a shard running beside this
+  # one can bind it before the run connects, and the proxy then logs that
+  # server's answer instead of a refusal. A socket held bound without listening
+  # cannot stand in for it (macOS lets such a connect time out rather than
+  # refuse), so a run whose proxy got any answer is repeated on a fresh port.
+  local attempt
+  for attempt in 1 2 3; do
+    rm -rf "$work/uptype"
+    run90 uptype ok "" CHECK90_UPSTREAM="127.0.0.1:$(free_port)"
+    grep -q '^FACT response ' "$work/uptype/logs/"*.log 2>/dev/null || break
+  done
   expect_status "$status" 2 "upstream error type: the run"
   expect_contains "$out" "FACT observed-control: FAIL" \
     "upstream error type: the call through the proxy failed"

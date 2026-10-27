@@ -60,7 +60,7 @@
 #             stopped before its call learned nothing about the swap.
 #
 # CHECK90_UPSTREAM, CHECK90_DELAY, CHECK90_CALL_TIMEOUT, CHECK90_TOTAL_SECONDS,
-# CHECK90_MAX_DROPS, CHECK90_MANAGED_SETTINGS_DIR and
+# CHECK90_MAX_DROPS, CHECK90_PROXY_START_SECONDS, CHECK90_MANAGED_SETTINGS_DIR and
 # CHECK90_MANAGED_SETTINGS_DIRS exist for this script's own test:
 # CHECK90_UPSTREAM may only name a loopback address (the test's fake upstream),
 # so no environment can send the token anywhere but Anthropic's endpoint, and
@@ -987,7 +987,7 @@ start_proxy() { # start_proxy LOGFILE [extra args...]
     --upstream-scheme "$UPSTREAM_SCHEME" --require-credential-file "$PLACEHOLDER_FILE" "$@" >"$log" 2>&1 &
   PROXY_PID=$!
   local i=0
-  while [ "$i" -lt 50 ]; do
+  while [ "$i" -lt $((PROXY_START_SECONDS * 10)) ]; do
     if grep -q 'listening on' "$log" 2>/dev/null; then
       record_ca_bundle "$log"
       return 0
@@ -1005,7 +1005,7 @@ start_proxy() { # start_proxy LOGFILE [extra args...]
     sleep 0.1
     i=$((i + 1))
   done
-  stop "the proxy did not report that it is listening within 5s"
+  stop "the proxy did not report that it is listening within ${PROXY_START_SECONDS}s"
 }
 
 # --------------------------------------------------------------- calling claude
@@ -1618,6 +1618,7 @@ main() {
   TOTAL_SECONDS=${CHECK90_TOTAL_SECONDS:-1800}
   MAX_DROPS=${CHECK90_MAX_DROPS:-8}
   VERSION_TIMEOUT=${CHECK90_VERSION_TIMEOUT:-30}
+  PROXY_START_SECONDS=${CHECK90_PROXY_START_SECONDS:-5}
   UPSTREAM=${CHECK90_UPSTREAM:-api.anthropic.com}
   UPSTREAM_SCHEME=https
   case "$UPSTREAM" in

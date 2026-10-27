@@ -899,15 +899,27 @@ func pathWithoutGo(t *testing.T, extra ...string) string {
 // runs in, then sends the release script the signal a Ctrl-C sends, so the run
 // ends through on_signal's exit 130 and not through the check's own cleanup --
 // which is the path that used to leave the worktree and its registration
-// behind. The script is the lowest-numbered process whose command line carries
-// its path: the subshells it forks carry the same line.
+// behind. The script is the OUTERMOST of this stub's ancestors whose command
+// line carries its path: the subshells it forks carry the same line. It is
+// found by walking up the parent chain rather than by picking the lowest pid
+// that matches, because pids wrap and a subshell forked after a wrap has a
+// lower pid than the script that forked it -- the signal would then end only
+// the subshell, and the run would go on to finish.
 func writeSignalStub(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "plugin-test-signal-stub.sh")
 	script := `#!/usr/bin/env bash
 set -eu
 echo "tree=$PWD" >> "$STUB_LOG"
-pid=$(pgrep -f -- "$STUB_SCRIPT" | sort -n | head -1)
+pid=""
+p=$PPID
+while [ "${p:-0}" -gt 1 ]; do
+  case "$(ps -o command= -p "$p" 2>/dev/null || true)" in
+  *"$STUB_SCRIPT"*) pid=$p ;;
+  esac
+  p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ' || true)
+done
+[ -n "$pid" ]
 kill -TERM "$pid"
 exit 0
 `
