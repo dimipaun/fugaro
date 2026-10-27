@@ -2292,10 +2292,19 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * documents it is handed, and which document to read and how often is this
    * file's business -- the same division `showSpend` and `showRun` keep.
    */
-  const graph: { screen: GraphScreen | null; readAt: number; inFlight: boolean } = {
+  const graph: {
+    screen: GraphScreen | null
+    readAt: number
+    inFlight: boolean
+    /** queued is the claim of the operator's own Refresh when it arrived while a
+     * read was outstanding, and `null` when no read is waiting: at most **one**
+     * read is re-queued however many times the control is pressed. */
+    queued: number | null
+  } = {
     screen: null,
     readAt: 0,
     inFlight: false,
+    queued: null,
   }
 
   /** graphScreenNow is the screen, built on first use. The worker is started
@@ -2319,19 +2328,28 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * frame up -- because a frame is a moment and a plan is the whole picture.
    */
   const readGraph = async (mine: number): Promise<void> => {
-    if (graph.inFlight) return
+    if (graph.inFlight) {
+      // A read that is already outstanding is not a reason to drop the
+      // operator's: the one in flight may have started before the change they
+      // want to see, so their press is held as **one** read to make when it
+      // settles. The claim is kept rather than the read: a console that moved on
+      // in the meantime has bumped the generation, and the queued read is then
+      // stale and draws nothing.
+      graph.queued = mine
+      return
+    }
     graph.inFlight = true
     graph.readAt = Date.now()
     try {
       const plan = documentOf(await bridge.planStatus({ all: true }))
       if (stale(mine)) return
       if (!plan.ok) {
-        refuse('plan.status', plan.sentence)
+        refuseGraph(plan.sentence)
         return
       }
       const decoded = decodePlanStatus(plan.data, 'plan.status')
       if (!decoded.ok) {
-        refuse('plan.status', decoded.skew.because)
+        refuseGraph(decoded.skew.because)
         return
       }
       // The console's run list, read the same way the Live screen's rigor join
@@ -2348,10 +2366,22 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     } catch {
       // `readBridgeFrom` answers `null` rather than rejecting, so reaching here
       // is a bridge that threw where it should not have.
-      if (!stale(mine)) refuse('plan.status', READ_UNREADABLE)
+      if (!stale(mine)) refuseGraph(READ_UNREADABLE)
     } finally {
       graph.inFlight = false
+      const queued = graph.queued
+      graph.queued = null
+      if (queued !== null) void readGraph(queued)
     }
+  }
+
+  /** refuseGraph is the refusal screen and the forgetting together: a plan the
+   * console could not read must not be redrawn from the plan it read before it,
+   * so the screen drops the document it holds as well as the panel drawing it
+   * (GV2.3b, `GraphScreen.forget`). */
+  const refuseGraph = (sentence: string): void => {
+    graph.screen?.forget()
+    refuse('plan.status', sentence)
   }
 
   /** maybeRefreshGraph is the one place the plan's cadence is applied, so
@@ -2407,6 +2437,30 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   }
 
   /**
+   * FocusTarget is where a redraw puts the keyboard: the classes the element may
+   * be drawn as, and the attribute and value that name it. A node is a card on
+   * the canvas or a row in the list -- two drawings of one door, and the drawing
+   * the operator is looking at is the one that holds it -- and a tab is named by
+   * its `aria-selected`, because the tab the screen drew as selected is the tab
+   * that is showing even when the one asked for was not in this document.
+   */
+  interface FocusTarget {
+    readonly classes: readonly string[]
+    readonly attribute: string
+    readonly value: string
+  }
+
+  /** nodeStop is the card or row a task's key names. */
+  const nodeStop = (key: string): FocusTarget => ({
+    classes: ['graph-node', 'graph-row'],
+    attribute: 'data-key',
+    value: key,
+  })
+
+  /** SELECTED_TAB is the graph's tablist's single tab stop. */
+  const SELECTED_TAB: FocusTarget = { classes: ['graph-tab'], attribute: 'aria-selected', value: 'true' }
+
+  /**
    * wireGraph makes the drawn graph a screen a person can drive: the tabs narrow
    * the stream, a chip opens a finished release, a node selects (and, once
    * selected, opens its run), the two controls zoom and switch the drawing, and
@@ -2427,19 +2481,52 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   const wireGraph = (drawn: Drawn): void => {
     const screen = graph.screen
     if (screen === null) return
-    const redraw = (element: SkewElement | null): void => {
+    /**
+     * redraw puts a freshly drawn tree on the panel, wires it, and -- when the
+     * gesture that drew it was the keyboard's or a click on a door -- moves the
+     * keyboard into the **new** tree.
+     *
+     * **The focus is asked for here and never on `drawn`.** Every one of these
+     * gestures replaces the panel's tree, so an element found in the tree being
+     * taken down is a node a real window has already detached: focusing it leaves
+     * the keyboard on `<body>`, and the reader who pressed an arrow key is no
+     * longer anywhere (design section 4.3).
+     */
+    const redraw = (element: SkewElement | null, focus: FocusTarget | null = null): void => {
       if (element === null) return
       replace(element)
-      wireGraph(element as Drawn)
+      const next = element as Drawn
+      wireGraph(next)
+      if (focus !== null) focusMatching(next, focus)
     }
 
-    for (const button of classed(drawn, 'graph-tab')) {
+    const tabButtons = classed(drawn, 'graph-tab')
+    for (const button of tabButtons) {
       const tab = tabOf(button.getAttribute('data-tab') ?? tabKey(null))
-      if (tab === screen.current.tab) continue
-      surface.nodeOf(button).addEventListener('click', () => {
-        // A tab is a different graph, not a different drawing of one: the screen
-        // re-lays it out, so this door is the asynchronous one.
-        void screen.narrow(tab).then(redraw)
+      const node = surface.nodeOf(button)
+      if (tab !== screen.current.tab) {
+        node.addEventListener('click', () => {
+          // A tab is a different graph, not a different drawing of one: the screen
+          // re-lays it out, so this door is the asynchronous one.
+          void screen.narrow(tab).then((element) => redraw(element, SELECTED_TAB))
+        })
+      }
+      // The tablist's keys (design section 4.3, the navigation's own rule): Left
+      // and Right, Home and End, and each of them is the tab it moves to -- a tab's
+      // selection *is* the graph it draws, so the arrows activate as they move and
+      // no second key is needed. The selected tab is in the loop like any other,
+      // because it is the one the arrows move **from**.
+      keydownOn(node, (event: KeyEventLike) => {
+        const target = tabTarget(event.key, tabButtons.indexOf(button), tabButtons.length, 'x')
+        const wanted = target === null ? undefined : tabButtons[target]
+        if (wanted === undefined) return
+        event.preventDefault()
+        // The tab the screen draws is the one to focus, not the tab that was
+        // asked for: a stream this document no longer carries falls back to All,
+        // and the ring belongs on the tab that is showing.
+        void screen.narrow(tabOf(wanted.getAttribute('data-tab') ?? tabKey(null))).then((element) =>
+          redraw(element, SELECTED_TAB),
+        )
       })
     }
 
@@ -2467,8 +2554,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
           if (run !== null) void showRun(run)
           return
         }
-        redraw(screen.change({ selected: key }))
-        focusIn(drawn, key)
+        redraw(screen.change({ selected: key }), nodeStop(key))
       })
       keydownOn(node, (event: KeyEventLike) => {
         if (event.key === 'Enter' || event.key === ' ') {
@@ -2481,8 +2567,8 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         const wanted = target === null ? undefined : doors[target]
         if (wanted === undefined) return
         event.preventDefault()
-        redraw(screen.change({ selected: wanted.getAttribute('data-key') ?? '' }))
-        focusIn(drawn, wanted.getAttribute('data-key') ?? '')
+        const moved = wanted.getAttribute('data-key') ?? ''
+        redraw(screen.change({ selected: moved }), nodeStop(moved))
       })
     }
 
@@ -2522,18 +2608,22 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     }
   }
 
-  /** focusIn moves the keyboard to the drawn node or row a key or a click just
-   * selected. The roving `tabindex` is what makes the stop reachable and the
-   * focus is what makes the ring follow it: a selection that moved the attribute
-   * and left the keyboard where it was is a picture a keyboard reader cannot
-   * find their way around (design section 4.3). */
-  const focusIn = (drawn: Drawn, key: string): void => {
-    const found = [...classed(drawn, 'graph-node'), ...classed(drawn, 'graph-row')].find(
-      (element) => element.getAttribute('data-key') === key,
-    )
-    if (found === undefined) return
-    const focusable = found as Drawn & { focus?(): void }
-    focusable.focus?.()
+  /** focusMatching moves the keyboard to the element of a freshly drawn tree
+   * that a gesture chose: the first element of one of `classes` whose `attribute`
+   * carries `value`. The roving `tabindex` is what makes the stop reachable and
+   * the focus is what makes the ring follow it: a selection that moved the
+   * attribute and left the keyboard where it was is a picture a keyboard reader
+   * cannot find their way around (design section 4.3). */
+  const focusMatching = (drawn: Drawn, target: FocusTarget): void => {
+    for (const name of target.classes) {
+      const found = classed(drawn, name).find(
+        (element) => element.getAttribute(target.attribute) === target.value,
+      )
+      if (found === undefined) continue
+      const focusable = found as Drawn & { focus?(): void }
+      focusable.focus?.()
+      return
+    }
   }
 
   // ---- Spend ------------------------------------------------------------

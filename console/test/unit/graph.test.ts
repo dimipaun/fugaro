@@ -664,6 +664,23 @@ describe('the graph screen and what it will not draw', () => {
     expect(textOf(root)).toContain(`${String(model.notShown)} ${GRAPH_NOT_SHOWN_SINGULAR}`)
   })
 
+  it('forgets the document a refusal replaced, so no later frame can redraw it', async () => {
+    // A refusal is the entry's screen for a plan the console could not read, and
+    // the plan it read *before* the refusal is still in this screen's hands: a
+    // live frame is the graph's other input and would fold its stages into that
+    // older document and draw it -- a picture that says the plan is fine when the
+    // read that just failed says it is not. `forget` is what the entry calls on
+    // every refusal path, so a frame that arrives afterwards has nothing to draw.
+    const { screen } = screenWith()
+    await screen.load(DOCUMENT, RUNS)
+    expect(screen.lastModel).not.toBeNull()
+
+    screen.forget()
+    expect(screen.lastModel).toBeNull()
+    expect(screen.redraw()).toBeNull()
+    expect(await screen.frame([runRow('20261025-121805-aa02', 'fix')])).toBeNull()
+  })
+
   it('falls back to the list, saying why, when there are no positions to draw', () => {
     // `positions: null` is the state before the first layout has answered, and
     // the state a worker that answered nothing leaves behind. The canvas is the
@@ -760,6 +777,23 @@ describe('the graph screen and its navigation', () => {
     expect(viewBoxOf(bounds, 2)).toBe('25 12.5 50 25')
     expect(viewBoxOf(bounds, 0.0001)).toBe(viewBoxOf(bounds, GRAPH_ZOOM_MIN))
     expect(viewBoxOf(bounds, 1000)).toBe(viewBoxOf(bounds, GRAPH_ZOOM_MAX))
+  })
+
+  it('clamps a zoom where it is stored, so the next step is taken from a bound', () => {
+    // The bound is applied where the zoom is *kept* and not only where it is
+    // drawn: the entry takes each wheel step from `current.zoom`, so a screen
+    // that stored an unbounded one would need a hundred scrolls to come back
+    // from a pinch -- and a `viewBox` written from the stored number is a
+    // picture a person cannot find their way out of.
+    const { screen } = screenWith()
+    screen.change({ zoom: 1000 })
+    expect(screen.current.zoom).toBe(GRAPH_ZOOM_MAX)
+    screen.change({ zoom: 0.0001 })
+    expect(screen.current.zoom).toBe(GRAPH_ZOOM_MIN)
+    // A change that carries no zoom leaves the stored one where it was.
+    screen.change({ zoom: 2 })
+    screen.change({ view: 'list' })
+    expect(screen.current.zoom).toBe(2)
   })
 
   it('names a tab as an attribute value, and reads it back as the tab it was', () => {

@@ -1889,3 +1889,284 @@ describe('the rail’s accessibility (review m5)', () => {
     expect(document.activeElement).not.toBe(heading)
   })
 })
+
+// ---------------------------------------------------------------------------
+// The graph view's own wiring (GV2.3b): the keyboard, and the two reads behind
+// it.
+//
+// The screen next door (`graph.test.ts`) is a function of the documents it is
+// handed. What is held here is the part the *entry* owns: that a redraw puts the
+// keyboard back in the tree it drew, that the graph's tablist answers the same
+// keys the navigation's does, that a Refresh pressed while a read is in flight is
+// not dropped, and that a plan the console could not read is not redrawn from the
+// plan it read before it.
+//
+// **The first case is the one to mutation-prove.** In `wireGraph`'s `redraw`,
+// drop the focus request --
+//
+//   const redraw = (element, focus = null) => { ... if (focus !== null) focusMatching(drawn, focus) }
+//
+// becomes `const redraw = (element) => { ... }` with the `focusIn(drawn, key)`
+// calls left where they were, on the tree being taken down -- and the case then
+// fails on its second assertion: the focused node is the detached one rather than
+// the node the current panel holds. Red before, green after.
+// ---------------------------------------------------------------------------
+
+/** PLAN_STATUS is the graph's own document as the wire has it: the fixture the
+ * screen next door is pinned against, so a case here drives the same graph. */
+const PLAN_STATUS: unknown = JSON.parse(
+  readFileSync(join(CONSOLE_ROOT, 'test', 'fixtures', 'plan-status.json'), 'utf8'),
+)
+
+/** GRAPH_RUNS is the console's run list, ending with the suffixes the fixture's
+ * tasks were joined to: the join that gives a node a door. */
+const GRAPH_RUNS: readonly string[] = [
+  '20261025-121805-aa01',
+  '20261025-121805-aa02',
+  '20261025-121805-aa03',
+  '20261025-121805-aa04',
+]
+
+/**
+ * FakeWorker is the layout protocol without a browser. The graph screen builds a
+ * worker the moment the view is opened (`LayoutClient`'s constructor), and a
+ * suite with no `Worker` at all drives the refusal screen rather than the graph
+ * -- so every case below stubs this one in. It answers each layout as it is
+ * posted, and the `register` message the client sends from its constructor is
+ * ignored: the client matches a reply by request id and drops the registration's.
+ */
+class FakeWorker {
+  private readonly listeners = new Map<string, ((event: { readonly data?: unknown }) => void)[]>()
+
+  postMessage(message: unknown): void {
+    const request = message as Record<string, unknown>
+    if (request['cmd'] !== 'layout') return
+    const graph = request['graph'] as {
+      readonly children: readonly { readonly id: string; readonly width: number; readonly height: number }[]
+      readonly edges: readonly { readonly id: string }[]
+    }
+    const data = {
+      children: graph.children.map((child, index) => ({
+        id: child.id,
+        x: index * 300,
+        y: 0,
+        width: child.width,
+        height: child.height,
+      })),
+      edges: graph.edges.map((edge) => ({ id: edge.id, sections: [] })),
+    }
+    for (const listener of this.listeners.get('message') ?? []) {
+      listener({ data: { id: request['id'], data } })
+    }
+  }
+
+  addEventListener(type: string, listener: (event: { readonly data?: unknown }) => void): void {
+    this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener])
+  }
+
+  terminate(): void {}
+}
+
+/** planStatusReply is one `plan.status` answer: the envelope `CliBackedHandlers`
+ * builds, with the fixture's document inside it. */
+function planStatusReply(document: unknown = PLAN_STATUS): Record<string, unknown> {
+  return {
+    ok: true,
+    data: {
+      document,
+      receivedAt: '2026-10-15T12:00:00Z',
+      sequence: 1,
+      day: '2026-10-15',
+      rolled: false,
+      notices: [],
+    },
+  }
+}
+
+/** runsReply is the console's run list, in the shape `runIdsIn` reads. */
+function runsReply(): Record<string, unknown> {
+  return { ok: true, data: { document: { runs: GRAPH_RUNS.map((run) => ({ run })) } } }
+}
+
+/** graphBridge is the fake bridge with the graph's two reads answered, and the
+ * layout worker stubbed in: the two things a case that wants a drawn graph needs
+ * and nothing else. */
+function graphBridge(replies: Readonly<Record<string, AReply>> = {}): FakeBridge {
+  vi.stubGlobal('Worker', FakeWorker)
+  return fakeBridge({
+    replies: { planStatus: () => planStatusReply(), listRuns: () => runsReply(), ...replies },
+  })
+}
+
+/** openGraph boots a console and opens the Graph view, and answers the document
+ * once the plan's first read has been drawn. */
+async function openGraph(bridge: Record<string, unknown>): Promise<FakeDocument> {
+  const document = await boot(bridge, new FakeDocument())
+  buttonFor(document, 'graph').click()
+  await flush()
+  return document
+}
+
+/** nodeNamed is one drawn node card or list row by the key it carries. */
+function nodeNamed(document: FakeDocument, key: string): FakeNode | undefined {
+  return [...classed(panelOf(document), 'graph-node'), ...classed(panelOf(document), 'graph-row')].find(
+    (node) => node.attributes.get('data-key') === key,
+  )
+}
+
+/** keyed is the first drawn node card's key: the door a case clicks. */
+function firstKeyed(document: FakeDocument): string {
+  const node = classed(panelOf(document), 'graph-node')[0]
+  const key = node?.attributes.get('data-key')
+  if (key === undefined || key === null) throw new Error('the graph drew no node to select')
+  return key
+}
+
+describe('the graph view’s keyboard', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('puts the keyboard back in the tree a click or an arrow key just redrew', async () => {
+    const { bridge } = graphBridge()
+    const document = await openGraph(bridge)
+    const key = firstKeyed(document)
+
+    const clicked = nodeNamed(document, key)
+    if (clicked === undefined) throw new Error('the graph drew no node to select')
+    clicked.click()
+    await flush()
+
+    // The click selected the task and the tree was replaced: the keyboard has to
+    // be on the node **the panel now holds**, not on the one that was taken down
+    // -- a reader whose focus dropped to `<body>` on every arrow key is a reader
+    // who cannot walk the picture at all (design section 4.3).
+    const selected = nodeNamed(document, key)
+    if (selected === undefined) throw new Error('the redraw lost the node')
+    expect(selected.attributes.get('data-selected')).toBe('true')
+    expect(document.activeElement, 'the focus did not land in the tree the click drew').toBe(selected)
+
+    // And the same for the arrow keys, which move the selection along.
+    const before = classed(panelOf(document), 'graph-node').map((node) => node.attributes.get('data-key'))
+    selected.press('ArrowDown')
+    await flush()
+    const moved = before[1] ?? ''
+    const next = nodeNamed(document, moved)
+    if (next === undefined) throw new Error('the arrow key selected nothing')
+    expect(next.attributes.get('data-selected')).toBe('true')
+    expect(document.activeElement, 'the focus did not follow the arrow key').toBe(next)
+    // One selection, and it is the one the arrow key moved to: the node the
+    // click had selected is in the tree that was taken down.
+    expect(
+      classed(panelOf(document), 'graph-node').filter(
+        (node) => node.attributes.get('data-selected') === 'true',
+      ),
+    ).toEqual([next])
+  })
+
+  it('drives the graph’s tablist with the arrows, and takes the focus to the tab it chose', async () => {
+    const { bridge } = graphBridge()
+    const document = await openGraph(bridge)
+    const tabs = classed(panelOf(document), 'graph-tab')
+    expect(tabs.map((tab) => tab.attributes.get('data-tab'))).toEqual(['stream:example', 'stream:', 'all'])
+    expect(tabs.map((tab) => tab.attributes.get('tabindex'))).toEqual(['-1', '-1', '0'])
+
+    // Right wraps from the last tab to the first, and a tab's selection *is* the
+    // graph it draws: the screen re-lays the narrowed graph out, so the redraw
+    // lands a turn later and the focus follows it there.
+    const right = (tabs[2] as FakeNode).press('ArrowRight')
+    await flush()
+    expect(right.defaultPrevented, 'the graph left its own arrow key to the window').toBe(true)
+    const after = classed(panelOf(document), 'graph-tab')
+    expect(after.map((tab) => tab.attributes.get('aria-selected'))).toEqual(['true', 'false', 'false'])
+    expect(after.map((tab) => tab.attributes.get('tabindex'))).toEqual(['0', '-1', '-1'])
+    expect(document.activeElement, 'the ring did not follow the tab the arrow chose').toBe(after[0])
+
+    // Home and End are the tablist's, and a key this tablist does not own -- Up
+    // and Down are the *node* doors' -- is left to the window.
+    const end = (after[0] as FakeNode).press('End')
+    await flush()
+    expect(end.defaultPrevented).toBe(true)
+    const back = classed(panelOf(document), 'graph-tab')
+    expect(back.map((tab) => tab.attributes.get('aria-selected'))).toEqual(['false', 'false', 'true'])
+    expect(document.activeElement).toBe(back[2])
+    expect((back[2] as FakeNode).press('ArrowDown').defaultPrevented).toBe(false)
+  })
+
+  it('re-queues one plan read when Refresh is pressed while a read is in flight', async () => {
+    // The operator's Refresh is a read of its own, and a read that is dropped
+    // because one was already outstanding is a gesture with nothing behind it --
+    // which is the state a slow `plan.status` leaves the screen in. So the second
+    // press asks for **one** more read, made when the first settles.
+    const held: (() => void)[] = []
+    let made = 0
+    const { bridge, calls } = graphBridge({
+      planStatus: () => {
+        made += 1
+        if (made !== 2) return planStatusReply()
+        return new Promise((resolve) => {
+          held.push(() => {
+            resolve(planStatusReply())
+          })
+        })
+      },
+    })
+    const document = await openGraph(bridge)
+    expect(calls.filter((call) => call.name === 'planStatus')).toHaveLength(1)
+
+    const refresh = classed(panelOf(document), 'graph-refresh')[0] as FakeNode
+    refresh.click()
+    await flush()
+    expect(calls.filter((call) => call.name === 'planStatus')).toHaveLength(2)
+    // The second press lands while the first read is outstanding.
+    refresh.click()
+    await flush()
+    expect(calls.filter((call) => call.name === 'planStatus')).toHaveLength(2)
+
+    // The read settles, and the read the second press asked for is made.
+    ;(held[0] as () => void)()
+    await flush()
+    expect(calls.filter((call) => call.name === 'planStatus')).toHaveLength(3)
+    // And it drew: the panel is the graph rather than the view the console was
+    // showing while the read was on its way.
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
+  })
+})
+
+describe('the graph’s plan read when it refuses', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps the refusal on screen when the next live frame arrives', async () => {
+    // A refusal is the graph screen's answer for a plan the console cannot read.
+    // A frame is the *other* input (GV2.3b joins the plan to the feed's stages),
+    // and a frame drawn over the refusal would put the plan the console read
+    // before the refusal back on screen -- a picture that says the plan is fine
+    // when the read that just failed says it is not.
+    const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
+    let refused = false
+    const { bridge } = graphBridge({
+      planStatus: () => (refused ? { ok: false, reason: 'the plan could not be read' } : planStatusReply()),
+      subscribeLive: () => snapshotReply(frame),
+    })
+    const document = await openGraph(bridge)
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
+
+    refused = true
+    ;(classed(panelOf(document), 'graph-refresh')[0] as FakeNode).click()
+    await flush()
+    const refusal = panelOf(document).children[0] as FakeNode
+    expect(refusal.attributes.get('class')).toBe('console-unavailable')
+
+    // A poll tick: the frame is read, and it is not drawn.
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
+    await flush()
+    expect(panelOf(document).children[0], 'a frame drew the plan the refusal replaced').toBe(refusal)
+    expect(classed(panelOf(document), 'graph-canvas')).toEqual([])
+  })
+})

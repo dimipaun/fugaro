@@ -700,17 +700,31 @@ function contentBounds(model: GraphModel, placed: ReadonlyMap<string, Rect>): Re
  *
  * `viewBox` is an attribute of the `<svg>` element, which is why zoom, pinch and
  * fit are three ways of writing one string and not three transforms: nothing
- * here needs a style. `GRAPH_ZOOM_MIN`/`GRAPH_ZOOM_MAX` bound it, because a
- * graph zoomed past either end is a graph a person cannot find their way back
- * from with one gesture.
+ * here needs a style. `clampZoom` bounds it, because a graph zoomed past either
+ * end is a graph a person cannot find their way back from with one gesture.
  */
 export function viewBoxOf(bounds: Rect, zoom: number): string {
-  const scale = Math.min(GRAPH_ZOOM_MAX, Math.max(GRAPH_ZOOM_MIN, zoom))
+  const scale = clampZoom(zoom)
   const width = bounds.width / scale
   const height = bounds.height / scale
   const x = bounds.x + (bounds.width - width) / 2
   const y = bounds.y + (bounds.height - height) / 2
   return `${coord(x)} ${coord(y)} ${coord(width)} ${coord(height)}`
+}
+
+/**
+ * clampZoom is the one bound on the zoom, and it is applied **where the zoom is
+ * stored** and not only where it is drawn.
+ *
+ * `viewBoxOf` clamps the number it is handed, which keeps the picture drawable;
+ * the entry takes every wheel step from `current.zoom` (`zoom * step`), so a
+ * screen that *kept* an unbounded number would need a hundred scrolls to come
+ * back from one pinch, and each of them would draw the same clamped viewBox --
+ * a control that looks stuck. Storing the bound is what makes the next step a
+ * step from the edge.
+ */
+export function clampZoom(zoom: number): number {
+  return Math.min(GRAPH_ZOOM_MAX, Math.max(GRAPH_ZOOM_MIN, zoom))
 }
 
 /** TAB_ALL is the All tab's key, and TAB_STREAM_PREFIX qualifies a stream's own
@@ -1297,7 +1311,7 @@ export class GraphScreen {
    * laid out, so it goes through `narrow` below -- which asks, because it must.
    */
   change(part: Omit<Partial<GraphState>, 'tab'>): ScreenElement | null {
-    this.state = { ...this.state, ...part }
+    this.state = { ...this.state, ...part, zoom: clampZoom(part.zoom ?? this.state.zoom) }
     return this.redraw()
   }
 
@@ -1318,6 +1332,28 @@ export class GraphScreen {
       { model: this.model, positions: this.positions, state: this.state, runs: this.runs },
       this.deps.theme,
     )
+  }
+
+  /**
+   * forget drops the document the last read drew, and the model and the
+   * positions built from it, **keeping the state**: the tab, the drawing, the
+   * selection, the open chips and the zoom are the operator's and a re-read
+   * draws the same view of a fresh document.
+   *
+   * The entry calls this on every refusal. A refusal is a screen with nothing on
+   * it, and the *previous* plan is still in this screen's hands: a live frame --
+   * the graph's other input, folded into the document the screen holds -- would
+   * draw that older plan again over the refusal, which says the plan is fine when
+   * the read that just failed says it is not. The layout cache and the worker are
+   * deliberately kept: they hold positions and no document, and the next read
+   * lays out the graph it is handed.
+   */
+  forget(): void {
+    this.document = null
+    this.model = null
+    this.positions = null
+    this.feed = []
+    this.drawnStages = ''
   }
 
   /** dispose drops the cache and the worker with it. The graph belongs to one
