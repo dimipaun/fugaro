@@ -170,12 +170,12 @@ func flagRecurs(weeks []Summary) []Pattern {
 		p := Pattern{Rule: RuleFlagRecurs, Subject: name}
 		raised := 0
 		for _, w := range recent {
-			figure := "0"
+			hit := "0"
 			if w.Flags[name] > 0 {
-				figure, raised = "1", raised+1
+				hit, raised = "1", raised+1
 			}
 			p.Periods = append(p.Periods, w.Period)
-			p.Figures = append(p.Figures, figure)
+			p.Figures = append(p.Figures, hit)
 		}
 		if raised >= FlagWeeks {
 			out = append(out, p)
@@ -221,21 +221,21 @@ func recipeMedianUp(months []Summary) []Pattern {
 	if !ok {
 		return nil
 	}
-	before, now := recent[0], recent[1]
+	prev, cur := recent[0], recent[1]
 	var out []Pattern
-	for _, name := range sharedRecipes(before, now) {
-		was, okWas := micros(before.Recipes[name])
-		is, okIs := micros(now.Recipes[name])
-		if !okWas || !okIs || was <= 0 {
+	for _, name := range sharedRecipes(prev, cur) {
+		before, okBefore := micros(prev.Recipes[name])
+		after, okAfter := micros(cur.Recipes[name])
+		if !okBefore || !okAfter || before <= 0 {
 			continue
 		}
-		if is*RecipeRiseDen < was*RecipeRiseNum {
+		if after*RecipeRiseDen < before*RecipeRiseNum {
 			continue
 		}
 		out = append(out, Pattern{
 			Rule: RuleRecipeMedian, Subject: name,
-			Periods: []string{before.Period, now.Period},
-			Figures: []string{report.USD6(was), report.USD6(is)},
+			Periods: []string{prev.Period, cur.Period},
+			Figures: []string{report.USD6(before), report.USD6(after)},
 		})
 	}
 	return out
@@ -525,8 +525,8 @@ func part(review, total budget.Micros) int64 {
 
 // shareText is a part in millionths as an exact decimal string: 170114 is
 // 0.170114.
-func shareText(part int64) string {
-	return fmt.Sprintf("%d.%06d", part/1_000_000, part%1_000_000)
+func shareText(millionths int64) string {
+	return fmt.Sprintf("%d.%06d", millionths/1_000_000, millionths%1_000_000)
 }
 
 // fencedBlock is the report's ```json block, the bytes between its fence
