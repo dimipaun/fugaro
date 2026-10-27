@@ -408,11 +408,11 @@ orders the two in one slice with the skew test as its verification (plan T5.1).
 `render`; `recipe.Parse` *refuses* `goto`, `on_reject`, `extends`, `on_pass`,
 `on_fail`, `model`, `models` as reserved keys; the catalog holds nine recipes
 (`default`, `solo`, `standard`, `premium`, `review-only`, `pick`, `test-and-fix`,
-`lint-fix`, `run-digest`). Nothing in a recipe sees a finding. Consequence: the modes are not
-five new catalog recipes, and shipping them as five YAML files would be a
-feature that looks implemented and changes nothing. The mode selects a recipe for
-its *check* gate and a policy for its *verdict*; the policy is Go (plan T2.1,
-T3.1).
+`lint-fix`, `run-digest`). Nothing in a recipe sees a finding. Consequence: the
+modes are not five new catalog recipes, and shipping them as five YAML files
+would be a feature that looks implemented and changes nothing. The mode selects
+a recipe for its *check* gate and a policy for its *verdict*; the policy is Go
+(plan T2.1, T3.1).
 
 **F25 — The one required `review` step is a format rule.** Class: **Rule**.
 `internal/recipe`'s parse and mode rules, and `docs/recipes.md` (`review-only`
