@@ -1,19 +1,24 @@
-DRAFT FOR COUNSEL REVIEW: not reviewed by counsel; not in force; commercial terms in [BRACKETS] are the owner's to fill
+DRAFT FOR COUNSEL REVIEW: not reviewed by counsel; not in force; prices and other Order Form items stay in [BRACKETS]
 
 # Fugaro Subscription Terms
 
-**Status.** This is a first draft, written 2026-10-27 for counsel to review. It is not an offer,
-and nobody has agreed to it. These are the "Fugaro Subscription Terms" that the business licence
-in [`ee/LICENSE`](../../ee/LICENSE), [`console/LICENSE.md`](../../console/LICENSE.md) and
-[`mobile/LICENSE.md`](../../mobile/LICENSE.md) (counsel's text of 2026-10-27, one wording in all
-three files) refers to as published "at [URL TO BE PUBLISHED]". The licence files are unchanged
-by this draft: the placeholder URL is replaced in a separate step, after counsel approves this
-text and the owner publishes it ([implementation plan, L4.3 and L4.4](implementation-plan.md#l43--publish-the-subscription-terms-owner-run-after-counsel)).
+**Status.** This is a draft, written 2026-10-27 for counsel to review and amended the same day to
+the owner's answers of 2026-10-27 (the answers themselves are kept in the owner's private business
+repository, with the prices). It is not an offer, and nobody has agreed to it. These are the
+"Fugaro Subscription Terms" that the business licence in [`ee/LICENSE`](../../ee/LICENSE),
+[`console/LICENSE.md`](../../console/LICENSE.md) and [`mobile/LICENSE.md`](../../mobile/LICENSE.md)
+(counsel's text of 2026-10-27, one wording in all three files) refers to as published "at [URL TO
+BE PUBLISHED]". The licence files are unchanged by this draft: the placeholder URL is replaced in a
+separate step, after counsel approves this text and the owner publishes it ([implementation plan,
+L4.3 and L4.4](implementation-plan.md#l43--publish-the-subscription-terms-owner-run-after-counsel)).
 
 **How to read it.** Sections 1 to 24 are the agreement text, in plain language for counsel to
-tighten. Text in `[BRACKETS]` is a value or choice the owner fills. Paragraphs marked **Note for
-counsel** or **Owner choice** are drafting notes, not agreement text, and are removed before
-publication. The two question lists after the agreement are outside it.
+tighten. Text in `[BRACKETS]` is a value filled on the Order Form or by counsel: prices,
+currencies, discounts, the Enterprise seat floor and similar commercial values are deliberately
+not written here. Paragraphs marked **Note for counsel** are drafting notes, not agreement text,
+and are removed before publication; where the owner decided differently from the option the
+earlier draft or its brief recommended, the note names the owner's decision. The two question
+lists after the agreement are outside it.
 
 **Words kept identical to the licence.** "Agreement", "Licensor", "production", "Subscription
 Terms", "user seat" and "you" are defined in the licence files; this draft uses them with the same
@@ -31,18 +36,26 @@ which is the entity "identified as licensor in the Subscription Terms" that the 
 and the business entity that accepts them (the **"Customer"**, the "you" of the licence when it
 acts for that entity).
 
-> **Owner choice / Note for counsel.** The copyright line of the root `LICENSE` and of the three
-> licence files names Dimi Paun personally. Whether the Licensor is that person or an entity he
-> controls (and, if an entity, whether the copyright is assigned or licensed to it) is open; the
-> licence defines the Licensor only through these Terms.
+> **Note for counsel.** The owner's decision (2026-10-27): the Licensor is a **new dedicated
+> entity**, incorporated before the first paid sale and named here; the copyright is assigned to
+> it now, while its value is low (the mechanics and tax treatment are the accountant's to confirm).
+> The copyright line of the root `LICENSE` and of the three licence files names the owner
+> personally today, and the licence defines the Licensor only through these Terms: whether the
+> approved licence must be changed to name the new entity is a question for counsel.
 
 1.2 The Customer accepts these Terms by signing an Order Form that refers to them, by accepting
-them online when it buys a Subscription, or by using the Software in production. The individual
-who accepts them for the Customer confirms that they are authorised to bind it.
+them online when it buys or obtains a Subscription (including a free plan under section 4.3), or by
+using the Software in production. The individual who accepts them for the Customer confirms that
+they are authorised to bind it.
 
 1.3 **Businesses only.** The Software is offered to businesses and other organisations, for use
 in their trade, business or profession, and not to consumers. The Customer confirms that it is
 not acquiring the Subscription as a consumer.
+
+1.4 **Who sells.** A merchant of record may be the seller of record for self-serve purchases
+(the Team plan bought online); its buyer terms then apply to the sale, including payment, taxes
+and the processing of refunds, while these Terms govern the Subscription and the use of the
+Software. Enterprise Subscriptions are signed with and invoiced directly by the Licensor.
 
 ## 2. Definitions
 
@@ -54,6 +67,7 @@ Capitalised words have these meanings. Words defined in the licence keep their l
 - **"Agreement"**: as in the licence: these Terms, or another written agreement with the Licensor
   governing the use of the Software. Where the Customer has signed such another agreement, it
   governs instead of these Terms to the extent it says so.
+- **"Command-line tool"**: the `fugaro` command-line tool, which is part of the Core.
 - **"Contractor"**: a person or entity the Customer engages to work for it, acting on the
   Customer's behalf.
 - **"Core"**: the parts of the Fugaro repository outside `ee/`, `console/` and `mobile/`, which
@@ -66,11 +80,15 @@ Capitalised words have these meanings. Words defined in the licence keep their l
   repository's `README.md`, `SECURITY.md` and the documents under `docs/`, as updated from time
   to time.
 - **"Fees"**: the amounts payable for a Subscription under an Order Form.
+- **"Free Plan"**: a Subscription for which no Fee is charged, under section 4.3.
+- **"Job"**: one Fugaro run: a task the Core runs in the Customer's cloud project.
+- **"Key Service"**: the hosted service the Licensor operates to issue License Keys (section 8.3).
 - **"Licence"**: the licence text in `ee/LICENSE`, `console/LICENSE.md` and `mobile/LICENSE.md`.
-- **"License Key"**: a key the Licensor issues that enables the parts of the Software that require
-  one (section 8).
+- **"License Key"**: a signed key the Licensor issues to a User that enables the Software for that
+  User (section 8).
 - **"Order Form"**: an order, quote or online checkout page, accepted by both parties, that names
-  the plan, the number of User Seats, the Subscription Term and the Fees.
+  the plan, the number of User Seats, the Subscription Term, the features of the plan and the
+  Fees.
 - **"Production Use"**: use of the Software in production, which the Licence defines as any
   environment other than a development or testing environment. Using the Software on the
   Customer's real repositories, with real tasks whose output is meant to be merged or shipped, is
@@ -81,13 +99,15 @@ Capitalised words have these meanings. Words defined in the licence keep their l
   directories of the Fugaro repository, in source form and every compiled form built from it,
   including code from those directories compiled into a released binary or application. Today
   that is the desktop console (from console 0.113.0) and the mobile app (from its first release);
-  `ee/` holds no code yet. The Core is not part of the Software.
+  `ee/` holds no code yet. The Core, including the Command-line tool, is not part of the Software.
 - **"Subscription"**: the Customer's right, for the Subscription Term, to make Production Use of
   the Software for the number of User Seats on its Order Form; in the Licence's words, a valid
-  Fugaro Enterprise Edition subscription for the correct number of user seats.
+  Fugaro Enterprise Edition subscription for the correct number of user seats. A Free Plan is a
+  Subscription.
 - **"Subscription Term"**: the initial term and every renewal term (section 6).
-- **"User"** and **"User Seat"**: a User is one person who uses the Software; one User Seat
-  covers one User. Section 5 describes, as the Licence says these Terms do, how seats are counted.
+- **"User"** and **"User Seat"**: a User is one person who uses the Software or launches Jobs as
+  section 5.1 says; one User Seat covers one User. Section 5 describes, as the Licence says these
+  Terms do, how seats are counted.
 
 ## 3. What the Subscription grants
 
@@ -100,18 +120,29 @@ business purposes, by no more Users than the User Seats on its Order Form.
 already allows without a subscription: using, copying and modifying the Software for development
 and testing purposes. Those uses need no Subscription and no seat.
 
-3.3 **The Core is not part of the Subscription.** The Core is under the MIT licence and stays
-under it. These Terms neither grant nor restrict any right in the Core, and no Fee is charged for
-it. Software releases and source published under the MIT licence before the business licence
-applied to them (every console release up to and including 0.112.0, and the source of each of the
-three directories as published before the change) stay under the MIT licence, as `LICENSING.md`
-states, and these Terms do not reach them.
+3.3 **The Core is not part of the Subscription.** The Core, including the Command-line tool, is
+under the MIT licence and stays under it. These Terms grant no right in the Core and take none
+away: anyone may use the Command-line tool under the MIT licence with no Subscription, no seat and
+no License Key. Section 5.1 counts people who launch Jobs with the Command-line tool only as a rule
+between the parties for measuring the Fees of a Subscription the Customer has chosen to buy; it is
+a contract term, not a restriction of the MIT licence. Software releases and source published under
+the MIT licence before the business licence applied to them (every console release up to and
+including 0.112.0, and the source of each of the three directories as published before the change)
+stay under the MIT licence, as `LICENSING.md` states, and these Terms do not reach them.
+
+> **Note for counsel.** The owner's decisions (2026-10-27), each a licence-scope matter for counsel
+> and the licensing plan rather than for these Terms: future versions of the coordinator, and of the
+> spend and cost reports (`fugaro report` and similar), move into the business-licensed
+> directories, while the released MIT versions stay MIT and remain available to fork; the central
+> orchestrators and the hosted MCP server start there. These Terms name no paid feature: the
+> features of each plan are **[features per plan on the Order Form]**.
 
 3.4 **Affiliates and Contractors.** As clause 4.2 of the Licence allows, the Customer may let its
 Affiliates and Contractors use the Software for the Customer's own internal use. Each such person
-who uses the Software is a User and takes a User Seat. The Customer is responsible for their
-compliance with these Terms and the Licence. **[Owner choice: whether an Affiliate may instead buy
-under the Customer's Order Form for its own internal use.]**
+who uses the Software or launches Jobs is a User and takes a User Seat. An Affiliate may also buy
+under the Customer's Order Form for its own internal use, with its Users counted in that Order
+Form's seats. The Customer is responsible for the compliance of its Affiliates and Contractors with
+these Terms and the Licence.
 
 3.5 **Modifications.** The Customer may modify the Software as the Licence allows. Under clause 2.1
 of the Licence, ownership of modifications and patches a subscriber makes is governed by these
@@ -125,11 +156,8 @@ Subscription (clause 2.2 of the Licence). A modification submitted for inclusion
 repository goes through the Fugaro contributor licence agreement, as clause 2.1 of the Licence
 says, and not through these Terms.
 
-3.6 **Patents.** **[Owner choice / Note for counsel: clause 10.1 of the Licence grants patent rights
-only as the Agreement sets out. Option A: no patent licence (the Licence's default). Option B: a
-licence under the Licensor's patents that the Software, unmodified, necessarily infringes, for the
-Customer's Production Use during the Subscription Term, ending if the Customer brings a patent
-claim against the Licensor over the Software.]**
+3.6 **Patents.** These Terms grant no patent licence, so, under clause 10.1 of the Licence, no
+patent rights are granted.
 
 3.7 **What is not granted.** No right is granted except as stated in these Terms and the Licence.
 In particular, the Customer may not: sell, resell, rent or sublicense the Software or access to
@@ -139,115 +167,216 @@ in the Fugaro name or logo.
 
 ## 4. Plans and Order Forms
 
-4.1 Each Subscription is bought through an Order Form, which states:
+4.1 **Plans.** There are three:
+
+- **Community** (no Fee): the Core; development and testing use of the Software; and the Free
+  Plans of section 4.3. Support is through public GitHub issues (section 10.1).
+- **Team**: bought online, per User Seat, billed monthly or annually.
+- **Enterprise**: an annual contract, per User Seat, signed with and invoiced by the Licensor. An
+  Enterprise Customer may sign its own agreement with the Licensor, which is then the Agreement
+  (section 2).
+
+4.2 **Order Forms.** Each paid Subscription is bought through an Order Form, which states:
 
 | Item | Value |
 | --- | --- |
-| Plan or tier | [TIERS: for example, Team / Business / Enterprise, and what each includes] |
-| Price | [PRICE PER USER SEAT] per [BILLING PERIOD] |
-| Currency | [CURRENCY] |
-| Billing period | [BILLING PERIOD: monthly or annual] |
-| Minimum seats | [MINIMUM, if any] |
-| Initial term | [INITIAL TERM] |
-| Renewal | [AUTO-RENEWAL: yes or no; renewal term length] |
-| Support | [SUPPORT LEVEL, or "standard" per section 10] |
-| Trial | [TRIAL OR FREE TIER, if any, and its limits] |
+| Plan | Team or Enterprise |
+| Features | [features per plan on the Order Form] |
+| Price | [PRICE PER USER SEAT: Order Form] |
+| Currency | [CURRENCY: Order Form] |
+| Billing period | Team: monthly or annual. Enterprise: annual |
+| User Seats | the number bought; Team has no minimum; Enterprise: at least [ENTERPRISE SEAT FLOOR: Order Form] |
+| Term and renewal | section 6 |
+| Support | section 10.1 for the plan |
+| Discount | [DISCOUNT, if any, under section 4.3: Order Form] |
 
-4.2 The Order Form may add terms for one Customer (for example, a negotiated price, a support
-level or an SLA). Section 23 says which document wins if they conflict.
+4.3 **Free Plans and discounts.** Each is granted through a License Key or an Order Form, and the
+Licensor may end it at the end of its key's term if its conditions are no longer met:
+
+- **(a) One free seat per organisation.** An organisation that has no paid Subscription may hold
+  one free User Seat, intended for proof of concept and evaluation. Its License Key is issued as
+  section 8.3 says (a work email on the organisation's own domain, a three-month key, renewable,
+  one per organisation). A Customer that has a paid Subscription has no free seat and pays for
+  every User.
+- **(b) Open-source teams.** A team whose projects are entirely public under a licence approved by
+  the Open Source Initiative gets the Team plan free. Eligibility is checked automatically from the
+  repository URLs given when the key is issued (section 8.3), and the key lasts one year.
+- **(c) Academic institutions** get the Team plan free, by a short application renewed every year.
+- **(d) Nonprofit organisations** get a discount on the Team plan, by application renewed every
+  year: **[NONPROFIT DISCOUNT: Order Form]**.
+- **(e) Startups** get a time-limited discount on the Team plan, by application: **[STARTUP
+  DISCOUNT, ITS DURATION AND ELIGIBILITY: Order Form]**. It ends automatically when its period
+  ends.
+
+> **Note for counsel.** The owner's decision (2026-10-27) differs in part from the earlier draft's
+> options (no free tier, a time-limited trial, or a small free seat count): one free seat per
+> organisation without a subscription, free Team for entirely open-source teams and for academic
+> institutions, and discounts for nonprofits and startups. Whether a Free Plan is a "valid Fugaro
+> Enterprise Edition subscription" under clause 1.1 of the Licence, and whether a free seat meant
+> for proof of concept and evaluation is Production Use at all or the development and testing use
+> clause 3.1 of the Licence already allows, are questions for counsel.
+
+4.4 **Trial.** The three-month key of the free seat (section 4.3(a)) is the self-serve,
+single-seat trial. A multi-seat trial of the Team plan is available on request through the manual
+request queue (section 8.3), at the Licensor's discretion and for the period it states.
+
+> **Note for counsel.** The owner's decision (2026-10-27) differs from the earlier draft's
+> separate "time-limited production trial": the free seat's key is the trial.
+
+4.5 **Order Form terms.** The Order Form may add terms for one Customer (for example, a negotiated
+price, a support level or service credits). Section 23 says which document wins if they conflict.
 
 ## 5. User Seats: counting, changes, true-up and audit
 
-5.1 **What a seat is.** A User Seat is one named person who uses the Software. A person "uses the
-Software" when they run or operate any part of it in Production Use: for example, opening the
-desktop console against one of the Customer's production installations, signing in to the mobile
-app against one, or using a feature that needs the License Key. **[Note for counsel and owner:
-whether a person who only receives the result of a run (a reviewer of the resulting pull request)
-without operating the Software uses it. The draft's reading is that they do not.]**
+5.1 **What a seat is.** This is a pricing rule for a Customer with a Subscription. Every person who
+launches Jobs for the Customer, by any means, takes a User Seat: through the desktop console, the
+mobile app, the Command-line tool, or an AI agent or automation that the person drives. A person who
+uses the Software in Production Use in any other way also takes a seat, as the Licence says. No seat
+is needed for:
 
-5.2 **Seats are for one person at a time.** A seat may not be shared between people or used by a
-shared or generic account. The Customer may move a seat from one person to another when the first
-person no longer needs it (for example, they leave or change roles), **[not more than once per
-[PERIOD] for the same seat]**.
+- a person who only views, once the Software has a viewer role (section 5.2); and
+- a person who reviews the pull requests that Jobs open but never uses the Software and never
+  launches a Job.
 
-5.3 **Adding seats.** The Customer may add seats at any time through an Order Form. Added seats
-are charged **[pro rata for the rest of the current billing period / from the next billing
-period]** and end with the Subscription Term.
+The Command-line tool stays under the MIT licence (section 3.3): counting its users is how the
+parties measure the Fees of the Customer's Subscription, not a condition on anyone's use of the
+Command-line tool.
 
-5.4 **Reducing seats.** The Customer may reduce the number of seats only with effect from the next
-renewal, by notice before the renewal date (section 6.3).
+> **Note for counsel.** The owner's decision (2026-10-27) differs from the earlier draft, which
+> counted only people who operate the Software: a seat is **anyone who launches Jobs, by any
+> means**, including through the MIT Command-line tool, stated as a pricing rule in these Terms.
+> The Licence describes a user seat as "one person who uses the Software, as further described in
+> the Subscription Terms"; counsel to word this rule so that it fits that description and does not
+> read as a restriction on MIT code.
 
-5.5 **True-up.** If the Customer's Users exceed its User Seats, the Customer buys the missing seats
-for the period of the excess, at the price on its Order Form, and the Licensor invoices them. The
-Customer reports its seat usage **[once a year, within [30] days of the anniversary of its
-Subscription / on request, not more than once a year]**.
+5.2 **Roles.** Viewer, operator and administrator roles, enforced across the whole system (the
+cloud side included, not only the console), are a separate design and are not built. Until the
+viewer role exists, every User who launches Jobs is a seat, and every person who uses the console or
+the mobile app needs a License Key (section 8) and is a User. **[Note for counsel: the draft reads
+the Licence as counting a person who only opens the console or the mobile app, before the viewer
+role exists, as a User; the owner's decision makes viewers free only once the role exists.]**
 
-5.6 **Light audit.** Not more than once in any twelve-month period, on at least **[30]** days'
-written notice, the Licensor may ask the Customer to certify in writing, signed by an officer, the
-number of its Users in the preceding period, with reasonable supporting records. Only if that
-certification is not given, or the Licensor has reasonable grounds to believe it is materially
-wrong, may an independent auditor bound by confidentiality review the Customer's relevant records,
-during business hours and without unreasonable disruption. The Licensor pays for the review,
-unless it shows an under-count of more than **[5%]**, in which case the Customer pays its
-reasonable cost as well as the missing seats. The Software has no telemetry the Licensor could use
-to count Users (section 9); seat counting rests on the Customer's own records.
+5.3 **Seats are for one person at a time.** A seat may not be shared between people or used by a
+shared or generic account. The Customer may move a seat from one person to another not more than
+once in any 30 days for the same seat, except that it may move it at any time when the person leaves
+the Customer.
+
+5.4 **Adding seats.** The Customer may add seats at any time. Added seats are charged pro rata
+from the day they are added to the end of the current billing period, and end with the
+Subscription Term.
+
+5.5 **Reducing seats.** The Customer may reduce the number of seats only with effect from the next
+renewal, by notice before the renewal date (section 6), and an Enterprise Customer not below its
+seat floor.
+
+5.6 **True-up (Team).** At each renewal of an annual Team Subscription, the Customer certifies the
+number of its Users in the term that is ending and buys any missing seats for the period of the
+excess, at the price on its Order Form. No audit applies to the Team plan.
+
+5.7 **Audit (Enterprise).** Not more than once in any twelve-month period, on at least 30 days'
+written notice, the Licensor may have an independent auditor bound by confidentiality review the
+Enterprise Customer's records relevant to its number of Users, during business hours and without
+unreasonable disruption. The Licensor pays for the review, unless it shows an underpayment of more
+than 5%, in which case the Customer pays the review's reasonable cost as well as the missing seats.
+
+5.8 **Seat estimate.** The Software is intended to show, beside the licensed seats, an advisory
+estimate of the people who launch Jobs, worked out on the Customer's machine from the Customer's
+own records; it stores nothing and sends nothing to the Licensor (section 9). It is not built yet.
+It is a convenience: the Software has no telemetry the Licensor could use to count Users, and seat
+counting rests on the Customer's own records.
 
 ## 6. Term and renewal
 
-6.1 A Subscription starts on the date on the Order Form and lasts for the **[INITIAL TERM]**.
+6.1 **Team, monthly.** A monthly Team Subscription starts on purchase and renews every month. The
+Customer may cancel it at any time; cancellation takes effect at the end of the current month.
 
-6.2 **[AUTO-RENEWAL: Option A: it renews automatically for successive terms of [RENEWAL TERM]
-unless either party gives notice of non-renewal at least [NOTICE PERIOD] before the end of the
-current term. Option B: it ends at the end of its term unless renewed by a new Order Form.]**
+6.2 **Team, annual.** An annual Team Subscription starts on purchase and renews automatically for
+one year at a time, unless the Customer cancels it at least 30 days before the end of the current
+term.
 
-6.3 The Licensor tells the Customer of any price change for a renewal at least **[NOTICE PERIOD]**
-before the renewal date; the new price applies from the renewal.
+6.3 **Enterprise.** An Enterprise Subscription's term and renewal are as its Order Form or signed
+agreement states.
 
-6.4 These Terms last as long as any Subscription under them.
+6.4 **Price changes.** The Licensor tells the Customer of any price change for a renewal at least
+**[NOTICE PERIOD]** before the renewal date; the new price applies from the renewal.
+
+6.5 These Terms last as long as any Subscription under them.
 
 ## 7. Fees, payment and taxes
 
-7.1 The Customer pays the Fees in **[CURRENCY]**, **[in advance for each billing period]**, within
-**[PAYMENT TERMS: for example, 30 days of the invoice date]**, or by the payment method used at
-checkout.
+7.1 The Customer pays the Fees in the currency on its Order Form, in advance for each billing
+period: for the Team plan, by the payment method used at checkout; for the Enterprise plan, within
+**[PAYMENT TERMS: Order Form]** of the invoice date.
 
-7.2 Late amounts **[may bear interest at [RATE] per month, or the highest rate allowed by law if
-lower]**, after the Licensor gives notice that the amount is overdue.
+7.2 Late amounts bear interest at **[RATE TO BE SET BY COUNSEL]**, or the highest rate allowed by
+law if lower, after the Licensor (or the merchant of record) gives notice that the amount is
+overdue.
 
 7.3 **Taxes.** Fees exclude taxes. The Customer pays all sales, use, value-added, goods and
-services and similar taxes on the Fees, except taxes on the Licensor's income. **[Note for counsel:
-the tax regime is open. The Licensor is expected to be in Ontario, Canada, so GST/HST registration
-and its application to Canadian and non-resident customers, place-of-supply rules for software
-licences, withholding tax on cross-border licence payments, and any foreign VAT/GST registration
-are open items.]**
+services and similar taxes on the Fees, except taxes on the Licensor's income. For a purchase
+through a merchant of record (section 1.4), the merchant of record charges and remits the taxes on
+its sale. **[Note for counsel: the Licensor is expected to be in Ontario, Canada. Open: whether the
+Licensor's supplies to a non-resident merchant of record are zero-rated for GST/HST, when the
+Licensor must register, GST/HST on Enterprise Subscriptions invoiced directly to Canadian
+customers, place-of-supply rules for software licences, withholding tax on cross-border licence
+payments, and any foreign VAT/GST registration.]**
 
-7.4 **Refunds.** **[REFUND POLICY: for example, Fees are non-refundable except as section 13.3 or
-19.2 says.]**
+7.4 **Refunds.** Team, monthly: no refunds. Team, annual: a full refund if the Customer cancels
+within 30 days of the purchase or of a renewal, and no refund after that. Enterprise: as its Order
+Form or signed agreement states. Free Plans carry no Fees and no refunds.
 
 7.5 Fees are not contingent on any future feature or on any statement about the roadmap.
 
-## 8. License Key and offline activation
+## 8. License Keys and offline activation
 
-8.1 Parts of the Software may need a License Key to turn on. The Licensor issues the License Key
-for the Customer's Subscription, and it reflects the plan, the seats and the end of the
-Subscription Term.
+8.1 **Every User holds a key.** Every User, on a paid plan or a Free Plan, holds a License Key to
+use the Software. A License Key states the plan, the features it enables, the number of seats of
+its Subscription, its expiry, and the date up to which released versions are covered.
 
-8.2 **Design intent, not implemented.** The intended model is described here so the Customer knows
-what to expect; it is not built, and the Licensor may change it before it is
-([licensing plan task L3.1](implementation-plan.md#l31--the-licence-key-design-note) and decision
-D308 in [the reconciliation](reconciliation.md)):
+8.2 **How the Software checks a key (design intent, not implemented).** The intended model is
+described here so the Customer knows what to expect; it is not built, and the Licensor may change it
+before it is ([licensing plan task L3.1](implementation-plan.md#l31--the-licence-key-design-note) and
+decision D308 in [the reconciliation](reconciliation.md)):
 
-- The License Key is a signed statement (who it is for, which features, when it expires) that the
-  Software checks **offline**, against a public key built into the Software.
-- The check makes **no network call**: the Software does not contact the Licensor to activate,
-  validate or count anything ("no phone-home").
-- After the key expires, a **grace period** of **[GRACE PERIOD]** applies before the features it
-  enables turn off.
-- Without a valid key, those features are off; the Core, which needs no key, keeps working.
+- The License Key is a signed statement that the Software checks **offline**, against a public key
+  built into the Software.
+- The check makes **no network call**: the Software does not contact the Licensor or the Key
+  Service to activate, validate or count anything ("no phone-home"). An outage of the Key Service
+  therefore blocks only the issuing of new keys, never a key already installed.
+- After a key expires, a **grace period of 30 days** applies; then section 10.4 applies.
+- The Core needs no key and keeps working.
 
-8.3 The License Key is the Customer's Confidential Information and the Licensor's property. The
-Customer may not share it outside its Users, alter it, or circumvent the check. Because the check
-is offline, the Licensor relies on these Terms, and not on any technical control, for seat limits.
+8.3 **How keys are issued (design intent, not implemented).** The Licensor issues License Keys
+automatically from the Key Service, through a self-serve key website:
+
+- **Open-source teams** (section 4.3(b)): the repository URLs and an email address; the service
+  checks automatically that every repository is public under a licence approved by the Open Source
+  Initiative, and issues a one-year key.
+- **The free seat** (section 4.3(a)): a work email address on the organisation's own domain
+  (addresses at free email providers are not accepted); the service issues a three-month key,
+  renewable, and allows one free seat per organisation, enforced by email domain.
+- **Paid Subscriptions**: keys for the seats bought, after purchase.
+- **Special cases** (for example, a person without an email address on their organisation's
+  domain, a multi-seat trial, or an academic or nonprofit application): a manual request form,
+  which feeds a queue that the Licensor reviews; the Licensor may approve or decline a request.
+
+8.4 **Personal data at key sign-up.** To issue a key, the Key Service collects the email address of
+the person signing up, the organisation's domain, and, for open-source teams, the repository URLs.
+The Licensor uses them only to issue and renew keys, to check eligibility for a Free Plan, to
+enforce one free seat per organisation, and to contact the person about their key. It keeps them
+for **[RETENTION PERIOD]** after the key expires, and handles them under its privacy notice at
+**[PRIVACY NOTICE URL]** and applicable law. **[Note for counsel: PIPEDA applies; GDPR may apply to
+sign-ups from the European Union; the privacy notice must cover the Key Service before it opens.]**
+
+8.5 The License Key is the Customer's Confidential Information and the Licensor's property. The
+Customer may not share it outside the User it was issued to, alter it, or circumvent the check.
+Because the check is offline, the Licensor relies on these Terms, and not on any technical control,
+for seat limits.
+
+> **Note for counsel.** The owner's decision (2026-10-27) differs from the earlier draft, where a
+> key existed only for a paid Subscription and the Licensor issued it by hand: **every User,
+> including free users, holds a signed key**, issued automatically by a hosted signing service the
+> Licensor operates, with the check still offline.
 
 ## 9. Customer Data and privacy
 
@@ -257,7 +386,8 @@ against the Customer's own repositories; the desktop console is an application o
 machines that drives the Core's command-line tool; the mobile app reads the Customer's own Firebase
 database; the optional credentials service and the coordinator are designed to run in the
 Customer's own cloud project (both are part of the Core today, not of the Software). The Licensor
-operates no server that these components report to.
+operates no server that these components report to. The Key Service (section 8.3) is a website a
+person visits to obtain a key; the Software never contacts it.
 
 9.2 **What the Licensor does not receive.** Through the Software, the Licensor does not receive the
 Customer's repositories, source code, tasks, prompts, model output, credentials, run records,
@@ -279,9 +409,9 @@ parties the Customer chooses (section 9.4).
   release with a plain request to the public release endpoint of the code host, carrying no
   identifying data (`internal/updatecheck`); the Licensor does not receive it.
 
-**Commitment [Owner choice]:** if the Licensor adds any telemetry to the Software, it is off unless
-the Customer turns it on (opt-in), and what it sends is described in the Documentation before the
-release that adds it.
+**Commitment:** if the Licensor adds any telemetry to the Software, it is off unless the Customer
+turns it on (opt-in), and what it sends is described in the Documentation before the release that
+adds it.
 
 9.4 **Third parties the Customer chooses.** The Software and the Core send the Customer's code and
 prompts to the AI model providers, code hosts and cloud providers the Customer configures, under the
@@ -291,34 +421,59 @@ Core's `allow_data_to` setting) is the Customer's decision.
 
 9.5 **Data the Licensor does handle.** The Licensor holds the business contact, billing and
 order information needed to sell and support the Subscription (names, business email addresses,
-seat counts, invoices), and anything the Customer chooses to send it for support (section 10.3). It
-handles that information under its privacy notice at **[PRIVACY NOTICE URL]** and applicable law,
-and uses it only to provide the Subscription, support and billing, and to meet legal duties.
-**[Note for counsel: PIPEDA applies to that information; whether GDPR or other laws apply depends
-on where customers are; a data processing addendum should be needed only if the Licensor receives
-personal information in support data.]**
+seat counts, invoices), the key sign-up data of section 8.4, and anything the Customer chooses to
+send it for support (section 10.3). It handles that information under its privacy notice at
+**[PRIVACY NOTICE URL]** and applicable law, and uses it only to provide the Subscription, the
+License Keys, support and billing, and to meet legal duties. **[Note for counsel: PIPEDA applies to
+that information; whether GDPR or other laws apply depends on where customers are; a data
+processing addendum should be needed only if the Licensor receives personal information in support
+data.]**
 
 ## 10. Support and updates
 
-10.1 **Support.** The Licensor provides **[SUPPORT LEVEL: for example, email support on business
-days, with a target first response of [TIME]]**. There is no service-level agreement unless an
-Order Form includes one.
+10.1 **Support.** By plan:
+
+- **Community** (and Free Plans unless their Order Form says otherwise): public GitHub issues, with
+  no response target.
+- **Team**: email, with a target first response by the next business day, in the business hours of
+  Toronto, Canada.
+- **Enterprise**: target first responses, in business hours, of four business hours for a P1 (the
+  Software or the Core is unusable in production, with no workaround), one business day for a P2 (a
+  major function is impaired) and two business days for a P3 (anything else).
+
+There is no round-the-clock support. Response times are targets, not guarantees. Where an
+Enterprise Order Form provides service credits for a missed target, they are the only remedy for
+it: **[SERVICE CREDITS: Order Form]**. There is no other service-level agreement.
 
 10.2 **Updates.** During the Subscription Term the Customer may use every new version of the
-Software the Licensor releases, on the same terms. The Licensor may change or remove features of
-the Software between versions. The Licensor supports **[the latest release only, as `SECURITY.md`
-says for the Core today / the latest [N] releases]**.
+Software the Licensor releases, up to the covered-versions date of its License Key, on the same
+terms. The Licensor may change or remove features of the Software between versions. The Licensor
+supports the current minor release and the one before it.
 
 10.3 **Support data.** If the Customer sends logs, configuration or code to get support, it sends
 only what is needed, removes secrets first, and the Licensor treats it as Confidential Information
 and deletes it **[within [PERIOD] after the issue is closed]**.
 
-10.4 **After the Subscription ends.** **[Owner choice.]** Option A (the Licence's default, clause
-11.1): the right to Production Use ends when the Subscription ends, for every version. Option B: a
-version released while the Subscription was active keeps working in production after it ends,
-without updates or support (a "perpetual fallback"); this needs an express grant here, because
-clause 11.1 of the Licence otherwise ends production use, and clause 12.1 lets the Agreement
-prevail. Either way, development and testing use stays free.
+10.4 **After the Subscription ends.** There is no perpetual fallback: the right to Production Use
+ends with the Subscription, for every version (clause 11.1 of the Licence). The Licensor grants
+these two rights beyond that end:
+
+- **Grace period.** For 30 days after a User's License Key expires, the Software keeps working as
+  the key allowed.
+- **Read-only use.** After the grace period, every User of the console and the mobile app may keep
+  using them read-only: they can see the Customer's installations, Jobs and their records, but
+  cannot launch, cancel or change anything through them, and every paid feature is off.
+
+The Command-line tool, under the MIT licence, keeps launching and cancelling Jobs. Development and
+testing use of the Software stays free.
+
+> **Note for counsel.** The owner's decision (2026-10-27) chose the earlier draft's Option A (no
+> perpetual fallback) and adds the read-only state; Option B (a perpetual fallback) is removed. It
+> reverses an earlier position that launching is never gated, for the console and the mobile app
+> only: after the grace period they no longer launch. The grace period and the read-only use are
+> production use after the subscription ends, so they need this express grant against clause 11.1
+> of the Licence (clause 12.1 lets the Agreement prevail); counsel to confirm that this fits the
+> Licence and to tighten the one-sentence description of read-only.
 
 ## 11. Intellectual property
 
@@ -354,9 +509,8 @@ Customer's cloud. **Their output can be wrong, insecure, incomplete or infringin
 ends in a pull request precisely so that a person reviews it. The Customer is responsible for
 reviewing and testing all output before merging, deploying or relying on it.
 
-13.3 **[Owner choice: a limited warranty, for example that the Software materially conforms to the
-Documentation for [30] days after purchase, with the remedy of a fix or, failing that, a refund of
-the Fees for the non-conforming part.]**
+13.3 **No other warranty.** The Licensor gives no warranty beyond section 13.1, on any plan, paid
+or free. The refunds of section 7.4 are not a warranty.
 
 13.4 **Disclaimer.** Except as section 13 says, and to the maximum extent the law allows, the
 Software, the License Keys and the Documentation are provided **"AS IS"**, without warranty of any
@@ -414,16 +568,17 @@ Terms and does not cure the breach within **[30]** days of written notice.
 for the benefit of creditors, or is subject to bankruptcy or receivership proceedings not dismissed
 within **[60]** days.
 
-17.4 **Effect.** When a Subscription ends: the right to Production Use ends (subject to section 10.4
-Option B, if chosen); the Customer stops Production Use and, as clause 11.3 of the Licence requires
-when it applies, destroys copies of the Software, **except** that it may keep copies for
-development and testing (which the Licence allows without a subscription) and records it needs for
-legal purposes; and unpaid Fees for the period up to the end fall due. **[Owner choice: whether
-the Customer gets a pro-rata refund of prepaid Fees when it terminates for the Licensor's
-breach.]**
+17.4 **Effect.** When a Subscription ends: the right to Production Use ends, except for the grace
+period and the read-only use of section 10.4; the Customer stops any other Production Use and, as
+clause 11.3 of the Licence requires when it applies, destroys copies of the Software, **except**
+that it may keep copies for development and testing (which the Licence allows without a
+subscription), for the read-only use of section 10.4, and records it needs for legal purposes; and
+unpaid Fees for the period up to the end fall due. **[Note for counsel: section 7.4's refund rules
+do not address termination for the Licensor's breach; whether a pro-rata refund of prepaid Fees
+applies then.]**
 
-17.5 **Survival.** Sections 2, 3.5, 5.5 and 5.6 (for the period of the Subscription), 7 (amounts
-due), 11, 13.4, 14, 15, 16, 17.4, 17.5 and 19 to 24 survive.
+17.5 **Survival.** Sections 2, 3.5, 5.6 and 5.7 (for the period of the Subscription), 7 (amounts
+due), 10.4, 11, 13.4, 14, 15, 16, 17.4, 17.5 and 19 to 24 survive.
 
 ## 18. Export control and sanctions
 
@@ -443,9 +598,8 @@ it applies to. If the Customer does not accept it, it may decline to renew.
 
 ## 20. Publicity
 
-Neither party uses the other's name or logo in marketing without the other's prior written
-consent, **[except that the Licensor may list the Customer's name as a customer, which the Customer
-may refuse by notice]**.
+Neither party uses the other's name or logo, in marketing or as a customer reference, without the
+other's prior written consent.
 
 ## 21. Assignment
 
@@ -463,7 +617,8 @@ notices of breach or termination also go **[by courier or registered mail]**.
 
 23.1 If documents conflict, this order applies: (1) a signed Order Form, for that Order Form's
 Subscription; (2) these Terms; (3) the Documentation. Between these Terms and the Licence, the
-Licence's clause 12.1 already says the Agreement prevails for the party that entered into it.
+Licence's clause 12.1 already says the Agreement prevails for the party that entered into it. A
+merchant of record's buyer terms govern only the sale (section 1.4).
 
 23.2 These Terms, the Order Forms and the Licence are the whole agreement between the parties about
 the Software and replace any earlier proposals or understandings about it. Terms in the Customer's
@@ -487,36 +642,17 @@ that jurisdiction. This matches clause 14.1 of the Licence.
 
 ## Questions for the owner (not part of the agreement)
 
-Every commercial decision the draft leaves in brackets:
+The owner answered the earlier list on 2026-10-27; the answers are in the private business
+repository, with the prices, currencies and discounts that stay `[bracketed Order Form items]` here.
+Two remain open:
 
-1. **Pricing model and tiers**: which plans exist and what each includes.
-2. **Metric**: per User Seat (as the Licence says today), or per installation or project; a change
-   of metric also needs the Licence's seat wording to change.
-3. **Price per seat** and **currency** (CAD, USD or both).
-4. **Billing period**: monthly, annual, or both (with an annual discount?).
-5. **Initial term, auto-renewal** and the non-renewal **notice period**.
-6. **Free tier or trial**: none (development and testing are already free), a time-limited
-   production trial, or a small free seat count.
-7. **After lapse** (section 10.4): production use stops (the Licence's default) or a perpetual
-   fallback for versions released during the term.
-8. **Support and SLA**: one support level or tiers; whether any plan carries an SLA; how many
-   releases are supported.
-9. **Contracting entity** (section 1.1): the owner personally or a company, and if a company, how
-   the copyright gets to it.
-10. **Negotiated agreements**: whether enterprise customers may sign their own agreement (the
-    Licence already allows "another written agreement").
-11. **Refund policy** (section 7.4) and whether there is a limited warranty (section 13.3).
-12. **Audit strength** (section 5.6): self-certification only, or the auditor fallback; the
-    under-count threshold; the true-up cadence.
-13. **Free use for academic, non-profit or open-source projects**: whether such production use is
-    free, and how it is granted (a free Order Form, or a clause here).
-14. **Seat reassignment limit**, **minimum seats**, and whether a pull-request reviewer who never
-    opens the Software needs a seat (section 5.1).
-15. **Affiliates** buying under one Order Form (section 3.4), and **customer-name publicity**
-    (section 20).
-16. **Patent licence** (section 3.6, option A or B), and the **opt-in telemetry commitment**
-    (section 9.3).
-17. **Licence-key grace period** (section 8.2) and the late-payment interest rate.
+1. **Enterprise seat floor** (sections 4.2 and 5.5): the minimum number of seats for an Enterprise
+   Subscription.
+2. **Late-payment interest rate** (section 7.2): counsel sets it.
+
+The other bracketed values (notice periods, payment terms, the liability cap, retention and
+deletion periods, cure periods, the confidentiality term) are drafting defaults for counsel to
+confirm.
 
 ## Questions for counsel (not part of the agreement)
 
@@ -535,14 +671,34 @@ Every commercial decision the draft leaves in brackets:
    else needs classification or reporting in Canada or the United States.
 6. **Interaction with the Licence and the CLA**: that the defined terms match the Licence; the
    modification-ownership clause (section 3.5) against the Licence's clause 2.1 and the D311
-   ruling; the patent clause against the Licence's clause 10.1; the destruction-on-termination
-   carve-outs against clause 11.3; and the boundary with the contributor licence agreement being
-   drafted separately.
+   ruling; the patent clause (section 3.6) against the Licence's clause 10.1; the
+   destruction-on-termination carve-outs against clause 11.3; and the boundary with the
+   contributor licence agreement being drafted separately.
 7. **Tax treatment** (section 7.3): GST/HST and place of supply, withholding on cross-border
    payments, foreign VAT/GST registration thresholds.
 8. **Source-code escrow**: whether to offer it at all, given that the source is published.
 9. **Indemnity** (section 15): whether to offer one and how narrow.
-10. **Licensor identity**: the Licence defines the Licensor only through these Terms while its
-    copyright line names an individual; whether that is sound until an entity is chosen.
+10. **Licensor identity** (section 1.1): the Licence defines the Licensor only through these Terms
+    while its copyright line names an individual; whether that is sound until the new entity
+    exists.
 11. **Unilateral changes** (section 19): whether renewal-only effect with notice is enforceable as
-    drafted.
+    drafted, and whether changes that apply only at renewal are enforceable at all.
+
+Added 2026-10-27, with the owner's answers:
+
+12. **Free seat and read-only lapse**: whether the free seat (section 4.3(a)) and the read-only use
+    after a lapse (section 10.4) fit the business licence.
+13. **The seat rule** (section 5.1): wording "anyone who launches Jobs, by any means, including
+    through the MIT Command-line tool" as a pricing rule in these Terms.
+14. **Personal data at key sign-up** (section 8.4): email addresses, company domains and repository
+    URLs, under PIPEDA and GDPR.
+15. **The new entity**: whether the approved licence must name it as Licensor (section 1.1).
+16. **The late-payment interest rate** (section 7.2).
+17. **GST/HST** (section 7.3): whether supplies to a non-resident merchant of record are
+    zero-rated, when to register, and GST/HST on Enterprise Subscriptions invoiced directly to
+    Canadian customers.
+18. **Features moving out of the Core** (the note to section 3.3): the licence scope of future
+    versions of the coordinator and of the spend and cost reports.
+
+For the accountant, not counsel: the mechanics and tax treatment of assigning the copyright to the
+new entity now (section 1.1).
