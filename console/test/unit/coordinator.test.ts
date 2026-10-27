@@ -419,10 +419,15 @@ describe('the project view screen', () => {
     expect(drawn(node)).not.toContain('https://example.invalid/owner/repo-a/pull/7')
   })
 
-  it('says so when the installation lists no repository', () => {
-    // An empty document is the console's own sentence rather than an empty box:
-    // a screen that drew nothing would be indistinguishable from one whose read
-    // failed.
+  it('says so when the document selects no repository', () => {
+    // **No argv this console passes prints an empty `repos`.** `--all` on a
+    // config that lists no repository is refused by the CLI
+    // (`coordinatorRepos`' `userErr`), and without `--all` the document is the
+    // single `RepoView` and not this envelope — so what is drawn here is the
+    // console's own guard rather than a state it reads: a screen that drew
+    // nothing for it would be indistinguishable from one whose read failed,
+    // and the guard costs a branch. It is asserted so the branch stays real
+    // rather than becoming dead code nobody checked.
     const node = renders({ repos: [] })
     expect(drawn(node)).toContain('no repository')
     expect(drawn(node)).toContain('fugaro coordinator status --from-store --all --json')

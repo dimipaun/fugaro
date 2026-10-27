@@ -754,7 +754,7 @@ opens `~/.config/fugaro` (§3.4 rule 7).
 
 **Who reads it.** Since the owner's design ruling of 2026-10-25 it is the
 installation rail's read: the dashboard's `installation.list` operation (one of
-the surface's twenty-two, `CONSOLE_OPERATIONS` in `src/main/ipc.ts`), answered by
+the surface's twenty-three, `CONSOLE_OPERATIONS` in `src/main/ipc.ts`), answered by
 the same dispatcher the picker window uses. The console reads two of the
 `warnings` lines by their wording, to mark the rail's rows
 (`src/main/installationstate.ts`): `<path> could not be read: <reason>`, matched
@@ -1486,7 +1486,7 @@ The document:
 
 | Key | Type | Absent | Null | Notes |
 | --- | --- | --- | --- | --- |
-| `repos` | array | never | never | one `RepoView` per selected repository, in the order `coordinatorRepos` produced them (sorted, so the same config gives the same document). `[]` when the local config lists no repository at all |
+| `repos` | array | never | never | one `RepoView` per selected repository, in the order `coordinatorRepos` produced them (sorted, so the same config gives the same document). **It is never `[]` here**: `--all` on a config that lists no repository is **refused** (`coordinatorRepos`' `userErr`, "the local config lists no repository: add one to its repos"), so that caller gets an error and a non-zero exit rather than a document. `--all` is the argv the console passes, so an empty array is a shape this read does not print |
 
 one entry of `repos`:
 
@@ -1525,7 +1525,7 @@ one entry of `runs`:
 | Key | Type | Absent | Null | Notes |
 | --- | --- | --- | --- | --- |
 | `id` | string | never | never | the run's id, as `fugaro run` wrote it. **Untrusted display text** and never a path |
-| `pr` | number | **yes** | **yes** | the pull request number the run is on, **`0` when it is on none** — a run that has not opened one yet, or one that produced none at all |
+| `pr` | number | **yes** | **yes** | the pull request number the run is on. **Absent when the run is on none** — a run that has not opened one yet, or one that produced none at all — because the wire omits it (`Run.PR` is `json:"pr,omitempty"`; the struct's `0` is Go's internal spelling of "none" and never a key on the wire). The console therefore never sees a `0` here, and its decoder refuses one: a pull request number below `1` is not a number it will draw |
 | `status` | string | **yes** | **yes** | the run record's own word (`"running"`, `"succeeded"`, …). **`""` for a run whose object the store does not hold**, which is not the same as a status the console does not know |
 | `outcome` | string | **yes** | **yes** | the record's outcome word, absent when the run has not written one |
 | `terminal` | bool | **yes** | **yes** | whether the run has finished. A run with no readable record is **not** terminal, which is the safe direction: it is still in flight, and the view says so rather than guessing |
