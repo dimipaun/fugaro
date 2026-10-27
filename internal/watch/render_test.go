@@ -692,3 +692,28 @@ func TestWatchBarWarnsAtEightyPercent(t *testing.T) {
 		t.Fatalf("the ascii marker is missing:\n%s", got)
 	}
 }
+
+// TestWatchNarrowBarWarnsAtEightyPercent: tier 1 draws no bar, only the figure,
+// and that branch marked the share through colour alone — so with colour off a
+// narrow screen showed no warning at all. The figure carries the same marker
+// the bar's tier writes.
+func TestWatchNarrowBarWarnsAtEightyPercent(t *testing.T) {
+	project := func(pct float64) View {
+		return View{
+			Now: t0, Day: "2026-10-03", Mode: "enforce", Conn: Connection{Kind: ConnLive, Age: time.Second},
+			Project: ProjectLine{Counted: 40 * usd, Spent: 40 * usd, Bar: Bar{Has: true, Used: 40 * usd, Cap: 50 * usd, Percent: pct}, Runs: 1},
+		}
+	}
+	at := func(pct float64, ascii bool) string {
+		return frame(project(pct), 50, 0, func(o *RenderOptions) { o.ASCII, o.Color = ascii, false })
+	}
+	if got := at(79.9, false); strings.Contains(got, "80% ⚠") {
+		t.Fatalf("79.9%% of the cap drew the warning marker:\n%s", got)
+	}
+	if got := at(80, false); !strings.Contains(got, "80% ⚠ of") {
+		t.Fatalf("80%% of the cap drew no warning marker at 50 columns:\n%s", got)
+	}
+	if got := at(80, true); !strings.Contains(got, "80% ! of") {
+		t.Fatalf("the ascii marker is missing at 50 columns:\n%s", got)
+	}
+}
