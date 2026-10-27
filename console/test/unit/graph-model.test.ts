@@ -226,6 +226,23 @@ describe('the graph model', () => {
     ])
   })
 
+  it('draws a finished release as a chip grouped by stream, and leaves the boxes open ones', () => {
+    // A finished release is a hundred finished tasks nobody wants drawn, so it
+    // leaves the plan's boxes and joins its stream's chips -- and the two lists
+    // are complements of one another, never both and never neither.
+    const finished = built(['plans', 0, 'releases', 0, 'finished'], true)
+    expect(finished.columns[0]?.plans[0]?.releases.map((release) => release.version)).toEqual(['1.5.0'])
+    expect(finished.chips.map((group) => group.stream)).toEqual([STREAM])
+    expect(finished.chips[0]?.label).toEqual({ ok: true, text: STREAM, flags: [] })
+    expect(finished.chips[0]?.chips.map((chip) => chip.version)).toEqual(['1.4.0'])
+    // A chip carries the same heading a box would, so a screen draws one with
+    // the other's code.
+    expect(text(finished.chips[0]?.chips[0]?.heading.name)).toBe('Examplefruit')
+    // The second plan's release list is empty and the first plan's `finished`
+    // flag stays false, so the unmarked case is still all boxes.
+    expect(model(null).chips).toEqual([])
+  })
+
   it('draws an edge only between two nodes this read carries, and counts the rest', () => {
     // A needed task the plan does not have is a dependency the picture cannot
     // draw, and it is counted rather than dropped in silence.

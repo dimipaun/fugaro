@@ -472,24 +472,24 @@ function streamLabel(document: PlanStatusView, streams: readonly string[], strea
 function graphPlan(plan: PlanView, index: number, room: number): { plan: GraphPlan; chips: GraphRelease[] } {
   const where = `plans[${String(index)}]`
   let notShown = 0
-  const kept: PlanNodeView[] = []
-  for (const node of plan.nodes) {
+  // The document's own index is carried beside the node, so a refusal names the
+  // field the value was read from rather than the place it ended up drawn in.
+  const kept: { readonly node: PlanNodeView; readonly at: number }[] = []
+  for (const [at, node] of plan.nodes.entries()) {
     if (kept.length >= GRAPH_MAX_NODES_PER_PLAN || kept.length >= room) {
       notShown += 1
       continue
     }
-    kept.push(node)
+    kept.push({ node, at })
   }
   // The level first and the id second: the id breaks every tie, so two reads of
   // one document put their nodes in one order (C8).
-  kept.sort((left, right) => left.level - right.level || compare(left.id, right.id))
+  kept.sort((left, right) => left.node.level - right.node.level || compare(left.node.id, right.node.id))
 
-  const nodes = kept.map((node, at) => graphNode(node, where, at))
-  const byId = new Map(kept.map((node, at) => [node.id, { node, drawn: nodes[at] }]))
+  const nodes = kept.map(({ node, at }) => graphNode(node, where, at))
+  const byId = new Map(kept.map(({ node }) => [node.id, node]))
   const edges: GraphEdge[] = []
-  for (const node of kept) {
-    const drawn = byId.get(node.id)
-    if (drawn === undefined) continue
+  for (const { node } of kept) {
     for (const [at, id] of node.needs.entries()) {
       if (at >= GRAPH_MAX_NEEDS) {
         notShown += 1
@@ -503,8 +503,8 @@ function graphPlan(plan: PlanView, index: number, room: number): { plan: GraphPl
       edges.push({
         from: id,
         to: node.id,
-        crossRelease: from.node.release !== node.release,
-        critical: from.node.critical && node.critical && node.level === from.node.level + 1,
+        crossRelease: from.release !== node.release,
+        critical: from.critical && node.critical && node.level === from.level + 1,
       })
     }
   }
