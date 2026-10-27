@@ -113,7 +113,7 @@
     },
     "compression_off": {
       "type": "boolean",
-      "description": "task.Spec.CompressionOff, written by fugaro run --no-compression: it disables agent.compression for this run only, overriding the repository's own reviewed choice (docs/design/headroom-compression.md §4). There is no field and no flag to force compression on, so this is the only direction the override goes. Needs a 0.12.0 runner, which is why a launch that would set it is gated at launch (internal/cli/recipes_skew.go's compressionSince) and why the launcher writes it only when the resolved configuration turns compression on: task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running the task without it."
+      "description": "task.Spec.CompressionOff, written by fugaro run --no-compression: it disables agent.compression for this run only, overriding the repository's own reviewed choice (docs/design/headroom-compression.md §4). There is no field and no flag to force compression on, so this is the only direction the override goes. Needs a 0.12.0 runner, which is why the launcher gates at launch (internal/cli/recipes_skew.go's compressionSince) every launch whose task carries it: one that writes it, which --no-compression does only when the resolved configuration turns compression on, and a --pr follow-up or a --retry, which inherits it from the run it continues and so carries it even after the repository's key has been removed. task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running the task without it."
     }
   },
   "dependentRequired": {

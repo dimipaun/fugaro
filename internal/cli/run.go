@@ -487,6 +487,18 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	if o.noCompression && compression {
 		spec.CompressionOff = true
 	}
+	// The compression image gate's own condition, resolved here beside the
+	// write and used by both launch branches below. It is the field's as much
+	// as the configuration's, and the two halves catch different failures: a
+	// run that will read a configuration turning compression on needs a runner
+	// that can parse the key, and a task carrying compression_off needs one
+	// that can parse the field — task.Parse decodes with DisallowUnknownFields,
+	// so an older runner refuses the whole task either way. The field's half is
+	// not implied by the configuration's: a follow-up (--pr) and a --retry
+	// inherit the field from the run they continue, which carries it even after
+	// the repository's key has been removed. A launch that writes no field and
+	// reads no such key is never gated.
+	compressionGate := compression || spec.CompressionOff
 	s := runstore.Open(env.bucket.Bucket, slug, spec.RunID)
 	// The run-id freshness check, first of everything an --attach launch
 	// does and before the first byte it could upload (design §4 step 1,
@@ -602,13 +614,13 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 					return launchResult{}, err
 				}
 			}
-			// The compression gate, judged on the configuration the run will
-			// read rather than on a task field (see compressionRequested):
-			// a runner older than compressionSince knows neither the key nor
-			// the field, and refuses the file at bootstrap. It fires whether
-			// or not --no-compression is set, since the override turns the
-			// sidecar off and not the key the old runner cannot read.
-			if compression {
+			// The compression gate: a runner older than compressionSince knows
+			// neither the key nor the field and refuses whichever it meets at
+			// bootstrap, so the launch is judged on both (compressionGate
+			// above). It fires whether or not --no-compression is set, since
+			// the override turns the sidecar off and not the key the old
+			// runner cannot read.
+			if compressionGate {
 				if err := checkCloneImageSince(env.lc, spec, compressionSince,
 					"agent.compression", "context compression", "", warn); err != nil {
 					return launchResult{}, err
@@ -674,12 +686,11 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 					return launchResult{}, err
 				}
 			}
-			// The compression gate: the same gate as the clone branch's
-			// above, and for the same reason. It is judged from the deployed
-			// job's build record because that record names the base image the
-			// image runs the binary of, and it fires whether or not
-			// --no-compression is set (see compressionRequested).
-			if compression {
+			// The compression gate: the same gate as the clone branch's above,
+			// and for the same reason. It is judged from the deployed job's
+			// build record because that record names the base image the image
+			// runs the binary of.
+			if compressionGate {
 				if err := checkImageSince(ctx, env, slug, spec, kind, compressionSince,
 					"agent.compression", "context compression", "", warn); err != nil {
 					return launchResult{}, err

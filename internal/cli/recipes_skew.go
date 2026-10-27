@@ -324,15 +324,20 @@ const planTaskSince = "0.11.2"
 // --no-compression): an older runner refuses the field outright, since
 // task.Parse decodes with DisallowUnknownFields, and the run would fail at
 // bootstrap on a task nobody can read. It must equal the release that ships
-// task.Spec.CompressionOff: docs/release.md ("Before you tag") has the
-// release checklist verify it. internal/cli/run.go gates a launch against an
-// older build record, exactly as it does for a plan task (planTaskSince) and
-// for a title (titlesSince).
+// task.Spec.CompressionOff, and docs/release.md ("Before you tag") is where
+// that is verified: its bullet for this constant does not exist yet, because
+// it is written with the release that cuts the feature -- Task 9 of
+// docs/plans/2026-10-12-headroom-compression.md, whose Task 6 added this
+// constant and this gate, the same way planTaskSince's bullet arrived with the
+// release that shipped the plan task. internal/cli/run.go gates a launch
+// against an older build record, exactly as it does for a plan task
+// (planTaskSince) and for a title (titlesSince).
 //
-// It names 0.12.0, the release after 0.11.6 and the first that ships the
-// field's runner half (the sidecar Task 4 merged) -- a number ahead of the
-// tag, like planTaskSince's 0.11.2, and the checklist bullet above is what
-// holds it to the version actually tagged.
+// It names 0.12.0 ("Dolphin": docs/release-streams.yaml's `next` CLI name),
+// the release after 0.11.6 and the first that ships the field's runner half
+// (the sidecar Task 4 merged) -- a number ahead of the tag, like
+// planTaskSince's 0.11.2 ("Camel two"), and the checklist bullet is what will
+// hold it to the version actually tagged.
 const compressionSince = "0.12.0"
 
 // compressionForTest, for tests only, stands in for the resolved
@@ -347,8 +352,9 @@ const compressionSince = "0.12.0"
 var compressionForTest string
 
 // compressionRequested reports whether the run this launch is about turns
-// context compression on, which is what the launch's compressionSince gate
-// and --no-compression are both judged on.
+// context compression on: one half of what the launch's compressionSince gate
+// is judged on (the task's own CompressionOff is the other, since a follow-up
+// and a retry inherit it) and what --no-compression decides against.
 //
 // The configuration is read as rigorLaunchSources reads it -- at the ref, out
 // of this checkout's object database, so a launch is judged on the file the

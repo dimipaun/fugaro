@@ -69,12 +69,18 @@ func TestNoCompressionFlagExistsButNoForceOnFlagDoes(t *testing.T) {
 	}
 }
 
-// TestCompressionImageGateRefusesOldBuild: a launch whose resolved
-// configuration turns compression on is refused when the job's build record
-// predates compressionSince, on every launch path (a first run, a follow-up,
-// an explicit --workflow, a --batch label). The gate fires whether or not
-// --no-compression is given: the run would still read a fugaro.yaml an old
-// runner's own config parser refuses, so the override is no way past it.
+// TestCompressionImageGateRefusesOldBuild: a launch whose task carries
+// compression_off, or whose resolved configuration turns compression on, is
+// refused when the job's build record predates compressionSince — on every
+// launch path (a first run, a follow-up, a retry, an explicit --workflow, a
+// --batch label). The gate fires whether or not --no-compression is given: the
+// run would still read a fugaro.yaml an old runner's own config parser refuses,
+// so the override is no way past it.
+//
+// The last two cases are the field's half of that condition, which the
+// configuration's half does not imply: a follow-up and a retry inherit the
+// field from the run they continue, so they carry it even once the repository's
+// key is gone, and an old runner refuses the whole task on the field alone.
 //
 // The IDs are minted from the wall clock rather than fixed: the follow-up case
 // drives run --pr, whose lookback resolvePR measures back from time.Now()
@@ -141,6 +147,35 @@ func TestCompressionImageGateRefusesOldBuild(t *testing.T) {
 			t.Fatalf("%d executions, want none", n)
 		}
 	})
+	// No compressionOnForTest here: the repository turns compression off, and
+	// the field the follow-up inherits is the whole reason the launch is gated.
+	t.Run("a follow-up inheriting the field after the key was removed", func(t *testing.T) {
+		f := newCloudFixture(t)
+		writeBuildRecord(t, f, appSlug, "web", release060)
+		root := firstRunSpec(rootID)
+		root.CompressionOff = true
+		seedSpec(t, f, root, false)
+		rec := prRecord(rootID, "", 7, 1)
+		rec.StartedAt = time.Now().Add(-time.Hour)
+		writeRecord(t, f, rootID, rec)
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "more work")
+		refusal(t, err)
+		if n := len(f.run.Executions()); n != 0 {
+			t.Fatalf("%d executions, want none", n)
+		}
+	})
+	t.Run("a retry of a task carrying the field", func(t *testing.T) {
+		f := newCloudFixture(t)
+		writeBuildRecord(t, f, appSlug, "web", release060)
+		spec := firstRunSpec(wallRunID(t, time.Minute, "c1a5"))
+		spec.CompressionOff = true
+		seedSpec(t, f, spec, false)
+		_, _, err := execute(t, "run", "--retry", spec.RunID)
+		refusal(t, err)
+		if n := len(f.run.Executions()); n != 0 {
+			t.Fatalf("%d executions, want none", n)
+		}
+	})
 }
 
 // TestCompressionImageGateNotTriggeredWithoutCompression: an installation
@@ -163,9 +198,13 @@ func TestCompressionImageGateNotTriggeredWithoutCompression(t *testing.T) {
 // TestFollowUpInheritsCompressionOff: a follow-up keeps the previous run's
 // override the way it keeps its account and title, so a chain of follow-ups
 // on a run launched with --no-compression stays off without the flag being
-// repeated on every one of them.
+// repeated on every one of them. The image is one that can read the field:
+// the inherited field is what the launch is gated on (see
+// TestCompressionImageGateRefusesOldBuild), even though nothing in this
+// fixture's configuration turns compression on.
 func TestFollowUpInheritsCompressionOff(t *testing.T) {
 	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", release0120)
 	root := firstRunSpec(rootID)
 	root.CompressionOff = true
 	seedSpec(t, f, root, false)

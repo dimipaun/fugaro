@@ -147,10 +147,13 @@ type Spec struct {
 	// override: there is no field and no flag to force compression *on*,
 	// only off). A runner before compressionSince refuses the field, since
 	// this package's decoder disallows unknown fields, which is why the
-	// launcher gates a launch that would set it and writes it only when
-	// there is compression to turn off: a task this release writes for a
-	// launch without the flag is byte-identical to what the previous
-	// release wrote.
+	// launcher gates every launch whose task carries it. --no-compression
+	// writes it only when there is compression to turn off, so a launch
+	// with nothing to override carries no field and stays byte-identical
+	// to what the previous release wrote; a follow-up (--pr) and a --retry
+	// inherit it from the run they continue, so they carry it whether or
+	// not the repository still turns compression on, and the gate is
+	// judged on the field for that reason rather than on the flag.
 	CompressionOff bool `json:"compression_off,omitempty"`
 	// Mode is the recipe's mode, written by the launcher from the recipe it
 	// resolved ("artifact" today; implement and review write nothing, so
