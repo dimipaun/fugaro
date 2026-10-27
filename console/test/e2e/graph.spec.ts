@@ -80,7 +80,7 @@
 // one of its own: the entry draws this same screen into the document beside the
 // mount, from the same stub document, and two `section.graph` elements in one
 // document are two elements a page-scoped frame cannot tell apart. **No PNG is
-// committed**, as for the other four screens: macOS and Linux pixels differ, and
+// committed**, as for the other five screens: macOS and Linux pixels differ, and
 // the baselines are owner-run.
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
@@ -812,7 +812,7 @@ test.describe('the Graph screen', () => {
   }
 
   test('is painted from the design tokens, not from the browser defaults', async () => {
-    // The same computed-ground assertion the other four screens' specs make, and
+    // The same computed-ground assertion the other five screens' specs make, and
     // the one case here that is red when the stylesheet stops being linked: the
     // theme travels as a `data-theme` attribute the renderer stamps, so every
     // read above passes on a tree nothing paints.
