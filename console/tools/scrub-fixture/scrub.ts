@@ -676,6 +676,12 @@ function scrubRun(
     workflow: invent('example-workflow'),
     requested_by: invent('redacted@example.invalid'),
     ...JOB_RULES,
+    // GV2.5: a live run carries its draft pull request number once it has one,
+    // so this table needs a rule for it or a current recording is refused whole
+    // (`applyRules` copies a key only through its own rule). A number, invented
+    // the way the finished shape's own `pr_number` is, and never a URL: the
+    // rule replaces a value, it does not reconstruct one.
+    pr_number: () => 100 + i,
     credential: invent('example-credential'),
     waiting_until: instant(shiftMs),
   })
