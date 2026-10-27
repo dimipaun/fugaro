@@ -183,10 +183,12 @@ type runOptions struct {
 	// one-directional — there is no --compression flag — because turning
 	// compression on is a reviewed fugaro.yaml change, and a flag that could
 	// force it on from the command line would undo that for every workflow a
-	// launcher can already run. It writes task.Spec.CompressionOff only when
-	// the resolved configuration turns compression on: with compression
-	// already off there is nothing to override, and the field would only add
-	// version skew (an older runner refuses the whole task).
+	// launcher can already run. It writes task.Spec.CompressionOff when the
+	// resolved configuration turns compression on: with compression already
+	// off there is nothing to override, and the field would only add version
+	// skew (an older runner refuses the whole task). A configuration the
+	// launcher could not read leaves nothing to judge, so the launch is
+	// refused rather than guessed at (finishLaunch).
 	noCompression bool
 	// paths is --path, repeated: the paths this launch declares it will
 	// touch, which the runner matches against the area rules at D22's first
@@ -475,8 +477,23 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	// resolved once for every launch shape (a first run, a follow-up, a
 	// review, a retry, each attempt of a batch) and used by both --no-compression
 	// and the image gate below. Read after the layer is embedded, so it is the
-	// resolution the run itself makes.
-	compression := compressionRequested(ctx, env, spec)
+	// resolution the run itself makes. compressionKnown is false when the
+	// launcher could not read that configuration at all — a --repo launch from
+	// outside a checkout of that repository, say — which is not the same as
+	// reading one that leaves compression off.
+	compression, compressionKnown := compressionRequested(ctx, env, spec)
+	// --no-compression over a configuration the launcher could not read is
+	// refused rather than guessed at: writing the field would put
+	// compression_off on a task whose repository may never turn compression on,
+	// and an older runner refuses the whole task for a field it does not know
+	// (task.Parse decodes with DisallowUnknownFields) — so a flag that only
+	// ever turns compression off would be what fails such a launch at
+	// bootstrap. Skipping the image gate in exchange for the guess would let
+	// that same run start on such a runner. Refused before anything is written
+	// or uploaded, so nothing starts.
+	if o.noCompression && !compressionKnown {
+		return launchResult{}, userErr("--no-compression: the launcher cannot read %s's fugaro.yaml at %s to know whether compression is on; run from a checkout that has the ref, or drop the flag", spec.Repo, spec.Ref)
+	}
 	// --no-compression writes the task's own field only when there is
 	// compression to turn off, the way the title and the plan task are
 	// written: a launch that has nothing to override carries no field and
