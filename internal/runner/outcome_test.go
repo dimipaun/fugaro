@@ -1,12 +1,19 @@
 package runner
 
 import (
+	"context"
+	"log/slog"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
@@ -264,5 +271,225 @@ func TestOutcomeReadsTheScoredFields(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("scoresOf[%d] = %+v, want %+v", i, got[i], want[i])
 		}
+	}
+}
+
+// The raise a run's mode takes during the run decides readiness, and names
+// itself in the reason (docs/rigor-modes/implementation-plan.md T3.5; D22,
+// D19). A raise the run's own diff made — at D22's round moment, or at
+// finalize — is a mode the review round the run ends on was not necessarily
+// held at, and the reason a reader gets says which mode, which rule and which
+// moment. A run whose mode never rose is unchanged, and so is a repository
+// that configured no rigor at all.
+
+// The findings these cases split on, as the reviewer writes them: risk 4 is
+// below Startup's floor and blocks at Critical, and risk 9 is above every
+// on-axis floor (the same two scores as `small` and `big` above).
+var (
+	riskThree = Finding{Likelihood: 1, Impact: 3, FixCost: 1, Class: "correctness", Summary: "the message names the raw id"}
+	riskFour  = Finding{Likelihood: 2, Impact: 2, FixCost: 1, Class: "correctness", Summary: "the handler ignores the error"}
+	riskNine  = Finding{Likelihood: 3, Impact: 3, FixCost: 2, Class: "correctness", Summary: "the retry loop never stops"}
+)
+
+// raisedBase is a repository whose base branch carries block as its rigor
+// configuration, with the rest of a valid fugaro.yaml around it: the mode's
+// configuration comes from the base branch (D25), so the block has to be in
+// the remote's fugaro.yaml rather than in a layer a test hands the run.
+func raisedBase(t *testing.T, block string) string {
+	t.Helper()
+	testutil.IsolateGit(t)
+	const head = "version: 1\nproject: aurora\ngit: { provider: github }\n"
+	const tail = "workflows:\n  server: { commands: { build: make, test: make test } }\n"
+	return testutil.NewRemote(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": head + block + tail})
+}
+
+// raisedCase is one run's inputs: the repository's rigor block, the paths the
+// task declared (`fugaro run --path`), the paths the run's own work measured,
+// the last senior review round's findings, and the moments after bootstrap to
+// resolve the mode at, in D22's order.
+type raisedCase struct {
+	block    string
+	declared []string
+	paths    []string
+	findings []Finding
+	moments  []string
+}
+
+// raisedRun is one run whose mode is resolved at D22's first moment from the
+// paths the case declares and then at each moment it names, from the paths its
+// work measured. Its last senior review is round 2, carrying findings, which is
+// the round Decide reads.
+func raisedRun(t *testing.T, tc raisedCase) *run {
+	t.Helper()
+	remote := raisedBase(t, tc.block)
+	testutil.IsolateGit(t)
+	ctx := context.Background()
+	repo, err := gitops.OpenOrClone(ctx, filepath.Join(t.TempDir(), "work"), remote, gitops.IdentityEnv())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{}
+	cfg.Git.BaseBranch = "main"
+	r := &run{
+		repo: repo, cfg: cfg, spec: &task.Spec{RequestedBy: "person-1", Paths: tc.declared},
+		rec: &runstore.Record{
+			Version: 1, RunID: "20261024-120000-abcd", Branch: "fugaro/x", BaseBranch: "main",
+			Status: runstore.StatusRunning, Outcome: runstore.OutcomeNone,
+			Reviews: []runstore.ReviewSummary{{Round: 2, Tier: runstore.TierSenior, Verdict: "changes", Findings: len(tc.findings)}},
+		},
+		d: Deps{Log: slog.New(slog.DiscardHandler)},
+	}
+	r.lastSenior = seniorRound{Round: 2, Findings: tc.findings}
+	r.bootstrapRigor(ctx)
+	paths := tc.paths
+	if len(paths) == 0 {
+		paths = []string{"internal/payments/20261024-120000-abcd.go"}
+	}
+	for _, at := range tc.moments {
+		r.recordRigor(at, paths)
+	}
+	return r
+}
+
+// decideOf is Decide's answer for r, asked as finalize's own call site asks it
+// (runner.go): the run's last senior review, a passing clean-tree test on the
+// commit it ran on, and the policy the run's mode gives.
+func decideOf(t *testing.T, r *run) (bool, string) {
+	t.Helper()
+	pass := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true, Passed: true}
+	return Decide([]verify.Record{pass}, "abc", seniorReview(r.rec.Reviews), r.findingsPolicy())
+}
+
+// TestRaisedModeByAreaKeepsDraft: an area rule raises the run's mode at D22's
+// round moment, and the last review round carries a finding the raised mode
+// does not tolerate. The pull request stays a draft, and the reason says which
+// mode rose, which rule raised it and at which moment — a reader of the record
+// can go and look at the rule rather than guess.
+func TestRaisedModeByAreaKeepsDraft(t *testing.T) {
+	r := raisedRun(t, raisedCase{
+		block:    "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"internal/payments/**\", mode: critical }\n",
+		findings: []Finding{riskFour},
+		moments:  []string{runstore.RigorAtRound},
+	})
+	if got := r.reachedRigor(); got != rigor.Critical {
+		t.Fatalf("the run resolved %q; want critical, or the case proves nothing", got)
+	}
+	ready, reason := decideOf(t, r)
+	if ready {
+		t.Fatalf("a round the raised mode does not tolerate made the pull request ready: %q", reason)
+	}
+	const want = "review round 2 still has 1 finding, and the mode was raised to critical by area payments after a review round"
+	if reason != want {
+		t.Errorf("reason = %q, want %q", reason, want)
+	}
+}
+
+// TestModeRaisedAtFinalizeLeavesDraft: the mode rises at D22's third moment,
+// after every review round, so no round was held at the mode the run ends at
+// — and the round the run ends on is one the raised mode tolerates, which is
+// the case that would otherwise become ready (T3.5, D22's "too late to buy
+// rounds"). The pull request stays a draft and the reason says why.
+//
+// The second half is the same raise one moment earlier: a raise the last
+// review round was held at is a raise that round answered, so a round the
+// raised mode tolerates still becomes ready.
+func TestModeRaisedAtFinalizeLeavesDraft(t *testing.T) {
+	const block = "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"internal/payments/**\", mode: startup }\n"
+	late := raisedRun(t, raisedCase{block: block, findings: []Finding{riskFour}, moments: []string{runstore.RigorAtFinalize}})
+	if got := late.reachedRigor(); got != rigor.Startup {
+		t.Fatalf("the run resolved %q; want startup, or the case proves nothing", got)
+	}
+	ready, reason := decideOf(t, late)
+	if ready {
+		t.Fatalf("a mode raised at finalize made the pull request ready: %q", reason)
+	}
+	const want = "the mode was raised to startup by area payments at finalize, after the last review round"
+	if reason != want {
+		t.Errorf("reason = %q, want %q", reason, want)
+	}
+
+	held := raisedRun(t, raisedCase{block: block, findings: []Finding{riskFour}, moments: []string{runstore.RigorAtRound}})
+	if ready, reason := decideOf(t, held); !ready {
+		t.Errorf("a raise the last review round was held at left the pull request a draft: %q", reason)
+	}
+}
+
+// TestRaisedModeByLayerAfterARoundStaysReady: the moment the mode rose decides,
+// not the shape of the block that records it. Areas are defaults and not floors
+// (docs/project-layer.md §2), so a declared path can start a run *below* the
+// repository's own mode; a later moment whose paths match no area then resolves
+// that mode, which is a raise the block records with no rule of its own and an
+// `at` of round. The round that follows such a raise was held at the raised
+// mode, so a round it tolerates is ready — the run is not a draft, and the
+// reason does not claim the mode rose at finalize, which is the moment the
+// record itself contradicts.
+func TestRaisedModeByLayerAfterARoundStaysReady(t *testing.T) {
+	base := raisedCase{
+		block:    "rigor:\n  default: pro\n  areas:\n    - { name: docs, match: \"docs/**\", mode: poc }\n",
+		declared: []string{"docs/readme.md"},
+		paths:    []string{"internal/foo.go"},
+		moments:  []string{runstore.RigorAtRound, runstore.RigorAtFinalize},
+	}
+
+	tolerated := base
+	tolerated.findings = []Finding{riskThree}
+	r := raisedRun(t, tolerated)
+	if got := r.reachedRigor(); got != rigor.Pro {
+		t.Fatalf("the run resolved %q; want pro, or the case proves nothing", got)
+	}
+	if got := r.rec.Rigor.At; got != runstore.RigorAtRound {
+		t.Fatalf("the block was changed at %q; want %q, or the case proves nothing", got, runstore.RigorAtRound)
+	}
+	ready, reason := decideOf(t, r)
+	if !ready || reason != "review round 2 left 1 finding, tolerated at pro" {
+		t.Errorf("a raise between rounds = %v %q, want the tolerated round the raise bought rounds for", ready, reason)
+	}
+
+	blocking := base
+	blocking.findings = []Finding{riskNine}
+	ready, reason = decideOf(t, raisedRun(t, blocking))
+	if ready {
+		t.Fatalf("a round the raised mode does not tolerate made the pull request ready: %q", reason)
+	}
+	const want = "review round 2 still has 1 finding, and the mode was raised to pro after a review round"
+	if reason != want {
+		t.Errorf("reason = %q, want %q: a raise no rule made names no rule, and its own moment", reason, want)
+	}
+}
+
+// TestModeNeverRaisedDecideUnchanged is D19 for T3.5: a run whose mode never
+// rose decides exactly as it did before the raise acted — the count's own
+// reason when the mode blocks, and T3.1's tolerated reason when it does not.
+// Both cases resolve their mode at finalize, as every run does.
+func TestModeNeverRaisedDecideUnchanged(t *testing.T) {
+	const block = "rigor:\n  default: startup\n"
+	blocking := raisedRun(t, raisedCase{block: block, findings: []Finding{riskNine}, moments: []string{runstore.RigorAtFinalize}})
+	ready, reason := decideOf(t, blocking)
+	if ready || reason != "review round 2 still has 1 finding" {
+		t.Errorf("a run whose mode never rose = %v %q, want false with the count's own reason", ready, reason)
+	}
+
+	tolerated := raisedRun(t, raisedCase{block: block, findings: []Finding{riskFour}, moments: []string{runstore.RigorAtFinalize}})
+	ready, reason = decideOf(t, tolerated)
+	if !ready || reason != "review round 2 left 1 finding, tolerated at startup" {
+		t.Errorf("a tolerated round at a mode that never rose = %v %q, want T3.1's own answer", ready, reason)
+	}
+}
+
+// TestUnconfiguredRepoDecideUnchanged is the owner's ruling on T3.1, held for
+// T3.5: a repository that configured no rigor resolves Pro for its budget
+// (D19) but files nothing, so it tolerates nothing and decides by the count —
+// today's behaviour, whatever its diff matched.
+func TestUnconfiguredRepoDecideUnchanged(t *testing.T) {
+	r := raisedRun(t, raisedCase{findings: []Finding{riskFour}, moments: []string{runstore.RigorAtFinalize}})
+	if got := r.reachedRigor(); got != rigor.Default {
+		t.Fatalf("the run resolved %q; want the default, or the case proves nothing", got)
+	}
+	ready, reason := decideOf(t, r)
+	if ready || reason != "review round 2 still has 1 finding" {
+		t.Errorf("an unconfigured repository = %v %q, want false with the count's own reason", ready, reason)
 	}
 }

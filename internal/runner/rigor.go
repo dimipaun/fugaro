@@ -79,9 +79,44 @@ func (r *run) roundRigor(ctx context.Context) {
 // raise-only rule is what keeps a request from being outvoted by a later,
 // weaker read, and giving it to all three moments is what makes a requested
 // mode hold for the whole run rather than for the moment it arrived at.
+//
+// It is also where a raise is read (noteRigorRaise): the mode the run had
+// reached before this moment and the resolver's answer for it are both in hand
+// here, and nowhere else — the block records the last mode and the rules that
+// matched, not the mode each moment resolved.
 func (r *run) recordRigor(at string, paths []string) {
-	res := rigor.Resolve(r.rigorCfg, rigor.Request{Mode: r.spec.Rigor, Paths: paths, Reached: r.reachedRigor()})
+	before := r.reachedRigor()
+	res := rigor.Resolve(r.rigorCfg, rigor.Request{Mode: r.spec.Rigor, Paths: paths, Reached: before})
 	r.rec.Rigor = r.rec.Rigor.Applied(runstore.Moment{Resolved: res, At: at, Revision: r.rigorRev})
+	r.noteRigorRaise(at, before, res)
+}
+
+// noteRigorRaise records the raise this moment took, if it took one, as the
+// readiness rule reads it (T3.5). It is kept here rather than read back off the
+// block at finalize because the block keeps no per-moment history, and which
+// moment raised the mode is the one fact that says whether any review round was
+// held at the mode the run ends at: the block's own `at` is the last moment
+// that *changed* the block, which a moment that matches a rule changes without
+// raising the mode.
+//
+// Bootstrap's own resolution is where a run starts rather than a raise, and a
+// moment that resolves the mode the run has already reached takes none: D22's
+// fold never falls, so the two answers differ only when this moment raised the
+// mode. A moment that does raise it replaces any earlier raise — it is the last
+// one, and the mode the run ends at is the one it is judged by.
+//
+// The rule named is the one this moment matched, its own strictest
+// (rigor.Select), and only where the layer that decided it is an area: a raise
+// by a layer, or by a floor outside every layer (D18), has no rule to name.
+func (r *run) noteRigorRaise(at string, before rigor.Mode, res rigor.Resolved) {
+	if before == "" || res.Mode == before {
+		return
+	}
+	raise := &RigorRaise{Mode: res.Mode, At: at}
+	if res.From == rigor.FromArea && len(res.Areas) > 0 {
+		raise.Area = res.Areas[0].Name
+	}
+	r.rigorRaise = raise
 }
 
 // reachedRigor is the mode this run has resolved so far: bootstrap's answer

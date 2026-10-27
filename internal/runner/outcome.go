@@ -36,6 +36,12 @@ const ReasonNoVerifiedTest = "no verified test run on the final commit"
 // is the one this function gave before modes existed, reason string included:
 // the reasons above the tolerance are the gates, and a mode cannot make an
 // unverified or unreviewed run ready.
+//
+// A mode raised after the review round the verdict came from is the one
+// exception to that tolerance (T3.5): a round the raised mode tolerates is
+// still a draft when no review was held at the mode the run ends at, and the
+// reason names the raise — the mode, the rule that raised it and the moment
+// (D22's third moment is the case a run cannot buy rounds with).
 func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSummary, pol FindingsPolicy) (bool, string) {
 	latest := latestVerifiedTest(records, finalSHA)
 	switch {
@@ -46,8 +52,11 @@ func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSumma
 	case last == nil:
 		return false, "no review verdict"
 	case last.Verdict != "ship":
-		if pol.tolerates(last) {
+		if pol.tolerates(last) && !pol.raisedAfterReview() {
 			return true, fmt.Sprintf("review round %d left %s, tolerated at %s", last.Round, Plural(len(pol.Tolerated), "finding"), pol.Mode)
+		}
+		if pol.Raised != nil {
+			return false, pol.raiseReason(last)
 		}
 		return false, fmt.Sprintf("review round %d still has %s", last.Round, Plural(last.Findings, "finding"))
 	}
@@ -75,6 +84,59 @@ type FindingsPolicy struct {
 	// tolerate nothing at all: one that configured no rigor, or a mode whose
 	// rigor.Files row files no tolerated finding (D9).
 	Blocking, Tolerated []rigor.Score
+	// Raised is the raise the run's mode took during the run, nil when it never
+	// rose (T3.5, D19). It is what makes a raised mode decide readiness and
+	// name itself in the reason.
+	Raised *RigorRaise
+}
+
+// RigorRaise is the raise a run's mode took during the run (T3.5, D22): the
+// mode it rose to, the rule the moment that raised it matched when it matched
+// one, and D22's moment it rose at. The moment that took it records it
+// (noteRigorRaise, rigor.go), because the block keeps no per-moment history and
+// the moment is what says whether any review round was held at the mode the run
+// ends at. A run whose mode never rose has none, which is D19.
+type RigorRaise struct {
+	// Mode is the mode this raise reached, which is the mode the reason names.
+	Mode rigor.Mode
+	// Area is the rule the raising moment matched — its own strictest, which
+	// D23 makes the deciding one — and "" when the layer that decided it is not
+	// an area: a raise by a layer, or by a built-in floor outside every layer
+	// (D18), has no rule to name.
+	Area string
+	// At is D22's moment the raise happened at: a round, or finalize, the one
+	// moment no review round follows.
+	At string
+}
+
+// raisedAfterReview reports whether the mode rose after the last review round:
+// D22's third moment, before the pull request is marked ready. Tolerating that
+// round's findings would make the pull request ready on a review nobody held at
+// the mode the run is judged by, which is what D22's "too late to buy rounds"
+// forbids.
+func (pol FindingsPolicy) raisedAfterReview() bool {
+	return pol.Raised != nil && pol.Raised.At == runstore.RigorAtFinalize
+}
+
+// raiseReason is Decide's reason for a run its raised mode keeps a draft: the
+// raise first — the mode, the rule that raised it and the moment — and, when
+// the raised mode does not tolerate the round either, the round's own count
+// ahead of it. A reader of the reason can go and look at the rule the run's own
+// work matched rather than guess what changed.
+func (pol FindingsPolicy) raiseReason(last *runstore.ReviewSummary) string {
+	reason := fmt.Sprintf("the mode was raised to %s", pol.Raised.Mode)
+	if pol.Raised.Area != "" {
+		reason += fmt.Sprintf(" by area %s", pol.Raised.Area)
+	}
+	if pol.Raised.At == runstore.RigorAtFinalize {
+		reason += " at finalize, after the last review round"
+	} else {
+		reason += " after a review round"
+	}
+	if !pol.tolerates(last) {
+		reason = fmt.Sprintf("review round %d still has %s, and %s", last.Round, Plural(last.Findings, "finding"), reason)
+	}
+	return reason
 }
 
 // tolerates reports whether the mode lets the whole round through: the split
@@ -113,10 +175,13 @@ func findingsPolicyOf(cfg rigor.Config, mode rigor.Mode, round int, findings []r
 }
 
 // findingsPolicy is findingsPolicyOf for this run: the last senior review
-// round as the loop read it, the mode the run resolved, and the rigor
-// configuration that mode was read from.
+// round as the loop read it, the mode the run resolved, the rigor
+// configuration that mode was read from, and the raise the run's mode took
+// during it (noteRigorRaise, rigor.go).
 func (r *run) findingsPolicy() FindingsPolicy {
-	return findingsPolicyOf(r.rigorCfg, r.reachedRigor(), r.lastSenior.Round, scoresOf(r.lastSenior.Findings))
+	pol := findingsPolicyOf(r.rigorCfg, r.reachedRigor(), r.lastSenior.Round, scoresOf(r.lastSenior.Findings))
+	pol.Raised = r.rigorRaise
+	return pol
 }
 
 // toleratedRecord is what the run's record keeps of the findings the mode let
