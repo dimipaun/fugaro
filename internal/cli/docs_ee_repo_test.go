@@ -59,6 +59,7 @@ const eeBoundaryPackage = "internal/eeboundary/"
 // out of it takes that workflow down.
 var eeReadingTests = []string{
 	"TestDocsEELicensed",
+	"TestDocsLicensingLicenceRefCopy",
 	"TestDocsLicensingStatement",
 }
 

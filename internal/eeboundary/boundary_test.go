@@ -31,14 +31,14 @@ package eeboundary
 //     into it, a //go:embed pattern, a //go:generate line, a cgo #include or
 //     #cgo flag, a `replace` (or `use`) directive in any go.mod or go.work,
 //     and a nested go.mod or go.work under ee/ itself.
-//   - every tracked file under each licence directory -- ee/, console/ and
-//     mobile/, one business licence in three files of identical wording
+//   - every tracked file under each licence directory -- the console, the
+//     mobile app and ee/, one business licence in three files of identical wording
 //     (D311) -- carries the two-line notice R3 asks for, in the comment syntax
 //     of its type; a type with no comment syntax needs a sibling
 //     `<name>.license`; and ee/LICENSE exists as soon as one source file does.
 //     At 0.11.0 ee/ is reserved and holds only ee/README.md, so its half
 //     passes vacuously -- which is the point: the rule landed before the first
-//     ee/ file did. console/ and mobile/ hold code today, so their halves are
+//     ee/ file did. The console and the mobile app hold code today, so their halves are
 //     the rule doing work, and the pointer each file carries names its own
 //     directory's licence file.
 //
@@ -1203,7 +1203,7 @@ func TestEEBoundaryScanCatchesPlantedViolations(t *testing.T) {
 			files: map[string]string{
 				consoleLicenceFile: licenceFixture,
 				// The pointer names each directory's own licence file, so the two
-				// lines differ between console/ and mobile/ and neither may carry
+				// lines differ between the two app directories and neither may carry
 				// the other's.
 				consoleDirName + "/src/main.ts":                    noticeText("// ", "", consolePointer) + "export const main = 1;\n",
 				consoleDirName + "/src/app.css":                    noticeText("/* ", " */", consolePointer) + "a {}\n",
