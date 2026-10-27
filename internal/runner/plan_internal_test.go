@@ -60,14 +60,26 @@ func TestPlanRoundCeilingPrecedence(t *testing.T) {
 	}
 }
 
-// TestPlanRoundCeilingIsNeverAboveTheRecipeBound: no mode's ceiling reaches
-// above MaxReviewRounds, which is the most a review step may carry at all
-// (T3.2). The ceiling is a lower bound only — a mode cannot buy a run more
-// rounds than the recipe itself allows.
-func TestPlanRoundCeilingIsNeverAboveTheRecipeBound(t *testing.T) {
+// TestPlanRoundCeilingNeverRaisesThePrecedence: the ceiling lowers the rounds
+// F6's precedence agrees on and never raises them, whatever mode the run
+// reached (T3.2). The other direction — that no mode's ceiling reaches above
+// the recipe's own bound — is asserted over the table's raw rows in
+// internal/rigor, where a row the table should not carry is visible;
+// reviewRoundCeiling's own clamps make it true by construction here.
+func TestPlanRoundCeilingNeverRaisesThePrecedence(t *testing.T) {
+	six := parseRecipe(t, "version: 1\nname: six\nsteps:\n  - review: { max_rounds: 6 }\n")
+	a := config.Agent{ReviewRounds: 5}
 	for _, m := range rigor.Modes {
-		if got := reviewRoundCeiling(m, true); got > recipe.MaxReviewRounds {
-			t.Errorf("reviewRoundCeiling(%s) = %d; want at most %d", m, got, recipe.MaxReviewRounds)
+		got := planOf(six, false, a, nil, nil, m, true)
+		if got[0].Precedence != 6 {
+			t.Fatalf("%s: precedence = %d; want the recipe's six", m, got[0].Precedence)
+		}
+		if got[0].Rounds > got[0].Precedence {
+			t.Errorf("%s: rounds = %d; want at most the precedence's %d — a mode raises nothing (D7b)",
+				m, got[0].Rounds, got[0].Precedence)
+		}
+		if m == rigor.Critical && got[0].Rounds != 6 {
+			t.Errorf("critical: rounds = %d; want the precedence's six unlowered", got[0].Rounds)
 		}
 	}
 }

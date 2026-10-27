@@ -38,15 +38,16 @@ var roundCeilings = map[Mode]int{
 
 // widestRoundCeiling is the most review rounds a step may carry at all, and
 // what RoundCeiling answers for a mode it cannot place: recipe.MaxReviewRounds,
-// pinned to it by the runner's TestPlanRoundCeilingIsNeverAboveTheRecipeBound
-// so a mode can never reach above the recipe's own bound.
+// pinned to it by this package's TestRoundCeilingRowsAreWithinTheRecipeBound
+// and TestRoundCeilingNeverLowersABelowTheRecipeBound, so a mode can never
+// reach above the recipe's own bound.
 const widestRoundCeiling = 10
 
 // RoundCeiling is the most review rounds mode m allows: the table's number,
 // held under O3's floor (minRoundCeiling) and inside the recipe's bound
-// (widestRoundCeiling). A ceiling above the first would be a mode spending
-// fewer rounds than today's default before the owner has answered O3; one above
-// the second would be a mode raising what a recipe may carry.
+// (widestRoundCeiling). A row below the first would be a mode spending fewer
+// rounds than today's default before the owner has answered O3; one above the
+// second would be a mode raising what a recipe may carry.
 func RoundCeiling(m Mode) int {
 	n, ok := roundCeilings[m]
 	if !ok {

@@ -27,6 +27,23 @@ func TestRoundCeilingIsTheModesTable(t *testing.T) {
 	}
 }
 
+// TestRoundCeilingRowsAreWithinTheRecipeBound: no row of the table reaches
+// above widestRoundCeiling, so no mode buys a run more rounds than the recipe
+// itself allows (T3.2). Asserted over the raw rows rather than through
+// RoundCeiling, whose two clamps would hide a row the table should not carry:
+// a Critical row of twenty would still answer MaxReviewRounds and pass a test
+// that reads only RoundCeiling's answer.
+func TestRoundCeilingRowsAreWithinTheRecipeBound(t *testing.T) {
+	for m, n := range roundCeilings {
+		if n < 1 || n > widestRoundCeiling {
+			t.Errorf("roundCeilings[%s] = %d; want 1..%d", m, n, widestRoundCeiling)
+		}
+	}
+	if widestRoundCeiling != recipe.MaxReviewRounds {
+		t.Errorf("widestRoundCeiling = %d; want recipe.MaxReviewRounds %d", widestRoundCeiling, recipe.MaxReviewRounds)
+	}
+}
+
 // TestRoundCeilingNeverLowersABelowTheRecipeBound: a mode the table cannot
 // place takes the widest ceiling, the fail-closed reading table.go gives a mode
 // it cannot read — an unplaced mode lowers nothing.

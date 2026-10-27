@@ -555,6 +555,32 @@ func TestReviewRoundsUnconfiguredRepositoryIsUnchanged(t *testing.T) {
 	}
 }
 
+// TestReviewRoundsTheModesCeilingLowers: T3.2's ceiling lowers the rounds F6
+// agrees on, and it lowers them where it acts — in the loop's own bound, not
+// only in the plan the loop no longer reads for its exit. The repository opted
+// in and runs at POC, whose ceiling is two, and asks for three: the run spends
+// two senior rounds, one fewer than the precedence gave it.
+func TestReviewRoundsTheModesCeilingLowers(t *testing.T) {
+	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "review_rounds: 2", "review_rounds: 3", 1)
+	cfg = strings.Replace(cfg, "agent:\n", "rigor:\n  default: poc\nagent:\n", 1)
+	h := newHarness(t, cfg, nil)
+	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
+		verifyTest(t, ctx, req)
+		return agent.Result{}, nil
+	}
+	rec, err := h.run(t, implement("feature"), review("changes", 1), fix, review("changes", 1), fix, review("changes", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := seniorRounds(rec); got != 2 {
+		t.Fatalf("the run spent %d senior rounds; want 2 — POC's ceiling lowers the three the repository asked for (D7b)", got)
+	}
+	if rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("outcome = %q; want a draft: the run stopped on the ceiling with a finding open", rec.Outcome)
+	}
+}
+
 // TestFilingDoesNotSpendTheFinalizeReserveOnTheSuite: a run that left a
 // round open files its item at finalize, on finalize's context, which the
 // finalize reserve bounds. Filing only ever follows a round that did not ship,

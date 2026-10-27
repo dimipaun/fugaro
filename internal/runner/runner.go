@@ -2037,7 +2037,7 @@ func (r *run) agentLoop(ctx context.Context) {
 	}
 }
 
-// seniorLoop is a review step: up to st.Rounds senior reviews on the
+// seniorLoop is a review step: up to (*run).reviewRounds senior reviews on the
 // reviewer's model, each followed by a fix while it asks for changes. Its
 // verdict alone decides readiness (seniorReview). tier is "senior" when a
 // first line came before it, "" otherwise, as runs without a first line

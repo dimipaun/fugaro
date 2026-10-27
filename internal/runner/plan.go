@@ -69,11 +69,15 @@ func planOf(rcp *recipe.Recipe, derived bool, a config.Agent, providers map[stri
 
 // reviewRoundCeiling is the ceiling the mode puts on a review step's rounds
 // (T3.2, D7b): rigor.RoundCeiling of the mode, under the recipe's own bound —
-// a mode lowers the rounds F6 agrees on and never reaches above MaxReviewRounds
-// — or the recipe's bound alone for a repository that configured no rigor, the
-// gate the findings policy reads too (outcome.go, the owner's ruling of
-// 2026-10-24): a repository that says nothing about rigor is reviewed exactly
-// as it was.
+// a mode lowers the rounds F6 agrees on and never reaches above MaxReviewRounds.
+//
+// The repository's own rigor: block is the gate, the same
+// rigor.Config.Configured the findings policy reads (outcome.go): a repository
+// that says nothing about rigor is reviewed in exactly the rounds it was, which
+// T3.2 asks for and which keeps the ceiling out of a repository that never
+// opted into a mode. It is a gate this task carries, not one this folder's
+// decisions name — D19 resolves Pro for an unconfigured repository, whose row
+// would lower such a repository's rounds.
 func reviewRoundCeiling(mode rigor.Mode, configured bool) int {
 	if !configured {
 		return recipe.MaxReviewRounds
