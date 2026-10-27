@@ -497,6 +497,18 @@ Besides F27's URLs, the two vendors are named once more, in this note only: the 
 in structure from GitLab's and PostHog's published `ee/LICENSE` texts, and whether that adaptation
 is permitted is one of counsel's questions (T1 (a)).
 
+## Amendment 2026-10-27 (the CLA text)
+
+The CLA text that O1 and D304 leave to counsel is drafted in [CLA.md](CLA.md) on the owner's
+request of 2026-10-26/27, awaiting counsel: it grants the Project Owner the relicensing rights the
+contribution rule above requires, for the core and for `console/`, `mobile/` and `ee/`. Its
+governing law and venue are Ontario, Canada (the owner's ruling of 2026-10-27); counsel confirms
+the wording and its enforceability against contributors outside Canada. Plan task L0.1's CLA-text item is drafted;
+L0.2, the owner's CLA Assistant install, is written out as a checklist in
+[implementation-plan.md](implementation-plan.md#l02--install-the-hosted-cla-app-owner-run). The
+`[CLA URL TO BE PUBLISHED]` placeholder in the three licence files stays until the owner has
+created the Gist.
+
 ## UNVERIFIED
 
 - **U1** — **Moot after O2** (`LICENSE` is not changed). What stays unverified is only that GitHub
