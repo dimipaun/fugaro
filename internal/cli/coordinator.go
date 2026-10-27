@@ -607,9 +607,10 @@ func newCoordinatorStatusCmd() *cobra.Command {
 			"reconciled is \"stored\": false, and the document then holds the runs half of\n" +
 			"the view — the runs bucket alone, with the pull requests those runs name\n" +
 			"listed and no host state for them — so a console reads a project whose\n" +
-			"coordinator is off with the same argv. What decides between the two is the\n" +
-			"database and never the local config: a teammate's config is the published\n" +
-			"shared one, and it does not carry the coordinator's switch at all.\n" +
+			"coordinator is off with the same argv. --since bounds that half, and a\n" +
+			"stored view is printed as the sweep wrote it. What decides between the two\n" +
+			"is the database and never the local config: a teammate's config is the\n" +
+			"published shared one, and it does not carry the coordinator's switch at all.\n" +
 			"The stale marker is printed exactly as stored, with no age computed from it:\n" +
 			"the stored view carries no time by design (internal/coordinator/sweep.go).\n\n" +
 			"The launcher of a run is printed as what it is — the string the run's own launch\n" +

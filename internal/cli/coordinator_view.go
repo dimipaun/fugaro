@@ -133,7 +133,8 @@ func coordinatorStoredErr(lc *localcfg.Config, err error) error {
 // database held, the sweep's marker when there is one, and the view itself in
 // the table status draws.
 //
-// The marker is printed as stored — its own Since and its own reason — and no
+// The marker is printed as stored — its own Since, and its own reason, which
+// goes through cellOneLine because the node is another writer's text — and no
 // age is derived from it: the view beside it carries no time by design
 // (sweep.go), so "stale for three hours" would be a claim about when the
 // sweep last ran that this read cannot make.

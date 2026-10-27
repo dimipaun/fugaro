@@ -1393,9 +1393,10 @@ sweep's marker, as stored}}. A repository the coordinator has never
 reconciled is "stored": false, and the document then holds the runs half of
 the view — the runs bucket alone, with the pull requests those runs name
 listed and no host state for them — so a console reads a project whose
-coordinator is off with the same argv. What decides between the two is the
-database and never the local config: a teammate's config is the published
-shared one, and it does not carry the coordinator's switch at all.
+coordinator is off with the same argv. --since bounds that half, and a
+stored view is printed as the sweep wrote it. What decides between the two
+is the database and never the local config: a teammate's config is the
+published shared one, and it does not carry the coordinator's switch at all.
 The stale marker is printed exactly as stored, with no age computed from it:
 the stored view carries no time by design (internal/coordinator/sweep.go).
 
