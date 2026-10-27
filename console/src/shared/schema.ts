@@ -834,10 +834,10 @@ export const REPO_KEYS = [
  *
  * **`pr_number` arrived with the same plan's GV2.5** (a live run's draft pull
  * request number, the run's own `record_pr`), between `plan_task` and
- * `credential` in `JSONRun`. Unlike `plan_task` it **is** read: the graph screen
- * joins a run to a node and shows that node's pull request, and this is the
- * number the node already carries once `plan status` has seen it, a refresh
- * earlier. It is decoded with `optionalInt`, so absent is `null` -- "the run has
+ * `credential` in `JSONRun`. Like `plan_task` it is accepted, not read yet
+ * (GV2.3b): the graph screen that will join a run to a node and show that
+ * node's pull request reads the number `plan status` gives the node, a refresh
+ * later, and nothing reads this one yet. It is decoded with `optionalInt`, so absent is `null` -- "the run has
  * recorded no pull request" -- and not `0`, which no repository numbering from 1
  * ever issues. A number, never a link: the console builds none from a feed value
  * (design section 5.1 rule 2).

@@ -188,9 +188,10 @@ drift from it.
 **A live run carries no link and no URL** — no `pr_url`, no `pr` (design §4.3
 gap 6, §5.1 rule 2). The console renders no link for a live row; the run-detail
 screen reads `diagnose RUN --json` for the one run whose detail is open. It does
-carry `pr_number`, which is the number and not a way to open anything — the
-graph screen (GV2.5) shows it beside a running node from the feed alone, before
-the next `plan status` refresh tells it the same number through `record_pr`.
+carry `pr_number`, which is the number and not a way to open anything. It is
+accepted, not read yet (GV2.3b): the graph screen that will show it beside a
+running node from the feed alone, before the next `plan status` refresh tells it
+the same number through `record_pr`, has not landed.
 
 ### `JSONFinished` (`internal/watch/json.go`) — a finished run
 
@@ -528,7 +529,7 @@ exactly its own tags and nothing is nested under a `process` or `checks` key:
 | Field | Type | omitempty | Note |
 |---|---|---|---|
 | `project` | string | no | the Fugaro project |
-| `row` | `runview.Row` | no | §5 — this is where a live run's PR number and `pr_url` come from (design gap 6) |
+| `row` | `runview.Row` | no | §5 — this is where a live run's PR number and `pr_url` come from (design gap 6). *Note 2026-10-27:* the live row of `watch --json` now carries `pr_number` too (GV2.5), a draft PR's number parsed from the run's PR URL with the GitHub URL pattern; `pr_url` is still only here |
 | `halt` | `*runstore.Halt` | **yes** | why a halted run was halted |
 | `verify` | `[]verify.Record` | **yes** | `result.json`'s verify records |
 | `failed`, `flaky` | `[]string` | **yes** | the last test record's failed and flaky tests |
