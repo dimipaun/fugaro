@@ -334,6 +334,32 @@ func TestBaseBranchSkew(t *testing.T) {
 	})
 }
 
+// TestBaseBranchSkewForAnotherRepository is the same unknown mode end to end:
+// the launch is for acme/other from this checkout of acme/app, so the launcher
+// reads no workflow of the repository it is launching and cannot tell whether
+// its job is a checkout: clone one. The installation's base image predates
+// baseBranchSince while acme/other's build record — the judge a derived
+// workflow would use — is current, so the field is dropped on the base image's
+// word alone; the earlier gate kept it and the run died at bootstrap.
+func TestBaseBranchSkewForAnotherRepository(t *testing.T) {
+	f := newCloudFixture(t)
+	addOtherRepo(t, f)
+	f.appendConfig(t, "base_branch: master\n")
+	f.appendConfig(t, "base_images: { base: ghcr.io/dimipaun/fugaro-base:0.12.0 }\n")
+	baseBranchCheckout(t, "acme/app", baseBranchYAML("git: { provider: github, base_branch: main }\n"), "main")
+	_, errOut, err := execute(t, "run", "--repo", "acme/other", "--run-id", "20261027-100000-abcd", "A task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := readSpecOf(t, f, mustSlug("github", "acme/other"), "20261027-100000-abcd")
+	if spec.BaseBranch != "" {
+		t.Fatalf("base_branch = %q, want none: the installation's base image predates %s", spec.BaseBranch, baseBranchSince)
+	}
+	if !strings.Contains(errOut, "predates "+baseBranchSince) {
+		t.Fatalf("stderr:\n%s", errOut)
+	}
+}
+
 // TestValidateNamesTheLayerAnInvalidBaseBranchIsIn: fugaro validate judges
 // every base branch where it is written and names the layer it was written in
 // — the file's own git.base_branch by its path, and an installation's
