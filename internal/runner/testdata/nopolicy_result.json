@@ -51,12 +51,14 @@
   "stage": "writeback",
   "stages": [
     {
+      "agents": 0,
       "duration_s": 0,
       "model_usd": 1,
       "name": "implement",
       "started_at": "<time>"
     },
     {
+      "agents": 0,
       "duration_s": 0,
       "model_usd": 0.5,
       "name": "review",

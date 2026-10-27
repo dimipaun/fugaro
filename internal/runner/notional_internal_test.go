@@ -112,7 +112,7 @@ func TestGatewayStageCostTellsNotionalFromMoney(t *testing.T) {
 	// runner.go does it: the cost, then the timing.
 	r.recordGatewayStageCost("implement", notional.USD(), false)
 	r.updateCost()
-	r.rec.Stages = append(r.rec.Stages, r.stageTiming("implement", time.Now().Add(-time.Minute), notional.USD()))
+	r.rec.Stages = append(r.rec.Stages, r.stageTiming("implement", time.Now().Add(-time.Minute), notional.USD(), 0))
 
 	want := notional.USD()
 	if len(r.rec.Stages) != 1 {

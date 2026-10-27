@@ -38,6 +38,11 @@ type Result struct {
 	IsError    bool
 	Subtype    string
 	ExitCode   int
+	// SubAgents is the stage's sub-agent tool calls, which the runner's
+	// relay counts from the stage's own stream (task-governance T1.3). The
+	// relay is the runner's, not the agent's, so the runner folds the count
+	// in after Run; a caller that kept no relay leaves it 0.
+	SubAgents int
 	// Usage is the result event's "usage" and ModelUsage its "modelUsage"
 	// by model, which also covers subagent and background models.
 	Usage      Usage

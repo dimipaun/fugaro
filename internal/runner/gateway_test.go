@@ -471,6 +471,85 @@ func TestStageTimingCarriesCost(t *testing.T) {
 	}
 }
 
+// subAgentCalls makes inner write n sub-agent tool calls into the stage's
+// stream, so a test's stage carries a sub-agent count the relay sees.
+func subAgentCalls(inner step, n int) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		for i := 0; i < n; i++ {
+			_, _ = req.Transcript.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Agent","input":{"subagent_type":"general-purpose","prompt":"x"}}]}}` + "\n"))
+		}
+		return inner(t, ctx, req)
+	}
+}
+
+// TestStageTimingRecordsGatewayCalls: a gateway run's stage records its
+// calls from the stage report, and its agents from the relay's count of the
+// sub-agent tool calls in the stage's own stream -- never the gateway's
+// distinct-agent-ID count, which rests on an ID no one verifies
+// (task-governance T1.3). The fake's model call carries no agent ID, so the
+// gateway report would count no sub-agent while the stream names two.
+func TestStageTimingRecordsGatewayCalls(t *testing.T) {
+	g := newGW(t, gwRolesConfig(t), "observe", "",
+		out4k(), // implement: sonnet, one call
+		out4k()) // review: opus, one call
+	var st []int
+	rec, err := g.run(t,
+		calling(&st, subAgentCalls(implement("feature"), 2), call{sonnet, 4000}),
+		calling(&st, review("ship", 0), call{opus, 4000}))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	want := []struct {
+		name   string
+		calls  int
+		agents int
+	}{{"implement", 1, 2}, {"review", 1, 0}}
+	if len(rec.Stages) != len(want) {
+		t.Fatalf("stages = %+v", rec.Stages)
+	}
+	for i, w := range want {
+		s := rec.Stages[i]
+		if s.Name != w.name {
+			t.Fatalf("stage %d = %+v, want %s", i, s, w.name)
+		}
+		if s.Calls == nil || *s.Calls != w.calls {
+			t.Errorf("stage %q calls = %v, want %d from the stage report", s.Name, s.Calls, w.calls)
+		}
+		if s.Agents == nil || *s.Agents != w.agents {
+			t.Errorf("stage %q agents = %v, want %d from the relay, not the gateway's distinct IDs", s.Name, s.Agents, w.agents)
+		}
+	}
+}
+
+// TestStageTimingOAuthHasNoCalls: without a gateway a stage has no call
+// count, so calls is absent rather than zero (G5), while agents is still the
+// relay's count of the stage's sub-agent tool calls (task-governance T1.3).
+func TestStageTimingOAuthHasNoCalls(t *testing.T) {
+	oauthCfg := strings.Replace(gwRolesConfig(t), "auth: api-key", "auth: oauth", 1)
+	og := newGW(t, oauthCfg, "observe", "")
+	og.deps.Env = append(filterEnv(og.deps.Env, "ANTHROPIC_API_KEY"), "CLAUDE_CODE_OAUTH_TOKEN=oauth-token-abcdef")
+	rec, err := og.run(t,
+		subAgentCalls(implement("feature"), 2),
+		review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if len(rec.Stages) != 2 {
+		t.Fatalf("stages = %+v", rec.Stages)
+	}
+	for _, s := range rec.Stages {
+		if s.Calls != nil {
+			t.Errorf("stage %q calls = %d: an oauth run has no gateway, so calls is absent, never zero", s.Name, *s.Calls)
+		}
+	}
+	if a := rec.Stages[0].Agents; a == nil || *a != 2 {
+		t.Errorf("implement agents = %v, want 2 from the relay", a)
+	}
+	if a := rec.Stages[1].Agents; a == nil || *a != 0 {
+		t.Errorf("review agents = %v, want 0 from the relay", a)
+	}
+}
+
 // TestStageTimingLateSpendIsUnattributed: a gateway call that settles after
 // its stage's wait ran out counts in the run's model cost and in no stage's
 // report. The stages then sum to model_usd minus cost.model_by's

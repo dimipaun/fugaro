@@ -51,6 +51,26 @@ func TestRelay(t *testing.T) {
 	}
 }
 
+// TestRelayCountsSubAgents: the relay counts the stage's sub-agent tool
+// calls -- the tool-use blocks naming the sub-agent tool ("Agent", or its
+// "Task" alias) -- and not its other tool uses, so the runner can record the
+// stage's own figure for every auth mode (task-governance T1.3).
+func TestRelayCountsSubAgents(t *testing.T) {
+	var buf bytes.Buffer
+	r := NewRelay(slog.New(slog.NewJSONHandler(&buf, nil)), nil)
+	for _, l := range []string{
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Agent","input":{"subagent_type":"general-purpose","prompt":"x"}}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"a"}},{"type":"tool_use","name":"Task","input":{"subagent_type":"Explore","prompt":"y"}}]}}`,
+	} {
+		_, _ = r.Write([]byte(l + "\n"))
+	}
+	r.Flush()
+	if r.SubAgents != 2 {
+		t.Errorf("SubAgents = %d, want 2: the two sub-agent tool calls, not the Bash or Read", r.SubAgents)
+	}
+}
+
 func TestRelayRedactsAfterDecoding(t *testing.T) {
 	var buf bytes.Buffer
 	r := NewRelay(slog.New(slog.NewJSONHandler(&buf, nil)), []string{"hunter2-token"})
