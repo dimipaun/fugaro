@@ -45,6 +45,7 @@ in this order:
 | `0.111.0` | Mango |
 | `0.112.0` | Melon |
 | `0.113.0` | Nectarine |
+| `0.114.0` | Orange |
 
 **Granny Smith, Golden Delicious and Crab are not on the list**, and neither is Lemon: a
 name that spells "Apple" puts the word in a console release's title, and the desktop app is
