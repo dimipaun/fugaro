@@ -539,8 +539,7 @@ its base rather than a reservation taken here, and
 **GV2.6**). Its subject is the **console's dependency graph in the packed, signed macOS app**: that
 the elkjs worker loads from `app://` under the Electron fuses (the plan's **U5**), that the graph
 renders for the sandbox installation's checkout, and that with **Reduce motion** on every state is
-static and keeps its text label. It builds the console **locally** and opens it — no cloud project,
-no installation touched, no credential — and it is owner-run: **no agent runs any step of it**, and
+static and keeps its text label. It builds the console **locally** and opens it on the sandbox installation `fugaro`; the app's own Graph read spawns `fugaro plan status --json` there, a **read** of the run records, and nothing is written, no credential is handed over — and it is owner-run: **no agent runs any step of it**, and
 it is **NOT RUN**.
 
 **That is the end of the register.** The paragraph below is not another
