@@ -360,6 +360,9 @@ From the design:
   §2, §5; this is a **tested**, not an enforced, property, since an
   unprivileged Cloud Run container cannot itself block an outbound call the
   sidecar's own code decides to make).
+  **(2026-10-27: no such test exists — Task 7's revised run pinned nothing,
+  so the artifact this bullet says was tested is not in the image. Read the
+  Task 7 revised note before treating this property as covered.)**
 - The sidecar's own environment is an explicit allowlist, never the
   runner's inherited one (P7); its stdout/stderr are kept only as a small,
   bounded, redacted tail for diagnosing a startup or crash reason, never
@@ -503,7 +506,9 @@ fixture's directory), gated on Task 11's Check L2 (the bypass-list
 capability reading) having a recorded, positive answer, and on Task 7's CI
 no-egress test already being green (it runs as part of PR 2's own CI, so by
 the time PR 2 has merged this gate is already satisfied or not — PR 3 simply
-checks it was). **An earlier draft of this plan lifted the refusal inside
+checks it was). **(2026-10-27: that test does not exist — Task 7's revised run
+pinned nothing, so this gate cannot be satisfied as written; see the Task 7
+revised note.)** **An earlier draft of this plan lifted the refusal inside
 PR 2**, which is circular: it would make the feature usable by a real run
 before any of these checks had run at all, since the measurement in
 particular (Task 11's Check L4) needs the lift to have already happened to
@@ -900,7 +905,9 @@ func TestMemoryLimitKillsAnOverBudgetSidecar(t *testing.T) {
 (This design's explicit no-outbound-network requirement (design §2) is
 **not** tested here against a fake binary — a fake process proves nothing
 about what Headroom's real one would try to reach. That property is tested
-once, against the real pinned binary, in Task 7's CI docker test.)
+once, against the real pinned binary, in Task 7's CI docker test — except
+that, as of the Task 7 revised note of 2026-10-27, **no artifact was pinned
+and no such test exists**, so this parenthetical currently points at nothing.)
 
 - [ ] **Step 1: Write the failing tests**
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -1766,6 +1773,140 @@ unpacked, and `docs.headroomlabs.ai/llms-full.txt`):
   under `--network none` — a decision about the feature's shipped shape, not
   a test detail.
 
+**Task 7, revised (2026-10-27): the owner's wheel ruling was carried out and
+the pin stops on this task's own closure conditions, so there is still no
+image change.** The owner's ruling allowed a hash-locked Python wheel in the
+base image, installed the way graphify's is. The candidate release was
+resolved and measured end to end rather than read off a release page; the
+measurements below are from this container, on `linux/amd64`, against PyPI
+and GitHub's release API.
+
+- **The pin target itself is sound.** Release **0.40.0** (published
+  2026-10-06, 21 days before this note, so inside the "at least 14 days old"
+  condition the owner's 2026-10-27 instruction for this task set — **no
+  document in this tree states such a rule**, and this note is not the place
+  to invent one; 0.41.0 of 2026-10-14 and 0.42.0 of 2026-10-26 are not) it
+  publishes `cp310-abi3` wheels for **both** `manylinux_2_28_x86_64`
+  (`sha256:49b6d8a01c8eceb5b9e9a675720ed5e4cb24e467282642653aac7f2fd8faf47f`)
+  and `manylinux_2_28_aarch64`
+  (`sha256:140811066bfb7afe888f471be4a587375779af9de8dd76bb9a8126b52b8e930f`).
+  GitHub's per-asset `sha256:` digests and PyPI's `digests.sha256` for those
+  two files agree exactly, so a pin would be cross-checked as this task asks.
+  The wheel is Apache-2.0 (`License-Expression: Apache-2.0`), its console
+  script is `headroom=headroom.cli:main`, and `headroom --version` reports
+  `headroom, version 0.40.0`.
+- **The closure is more than double the ~400 MB ceiling this run was given,
+  and more than four times what the base image has left.** The ~400 MB figure
+  is **not this plan's and not the design's** — neither states a size limit
+  anywhere — it is the owner's 2026-10-27 instruction for this task, recorded
+  here as the run's acceptance criterion rather than as a rule the tree
+  carries. The in-tree budget is the stricter and independent check, and it
+  is quoted at the end of this bullet. The extras
+  the supervised sidecar needs are `[proxy]` — the request path and the local
+  compressor — chosen over `[all]` because `[all]` adds `[code]`, `[evals]`,
+  `[html]`, `[image]`, `[mcp]`, `[memory]`, `[ml]`, `[otel]`, `[relevance]`,
+  `[reports]`, `[spreadsheet]` and `[voice]`, none of which the sidecar's own
+  process uses. `uv pip compile` of `headroom-ai[proxy]==0.40.0`
+  (`--universal --python-version 3.12 --generate-hashes`, the command
+  graphify's `requirements.in` documents) resolves to a **95-package** lock
+  and installs to **488 MB** of site-packages, **571 MB** for the venv,
+  **662 MB / 746 MB** once `--compile-bytecode` — the flag graphify's own
+  test requires, because the venv is root-owned — is applied. Adding uv's
+  managed CPython (109 MB) makes it **~855 MB before any model asset**. The
+  base image is already **3812 MB** on amd64 against `images/size-budget.sh`'s
+  4000 MB hard budget, so it has 188 MB of headroom: this cannot be absorbed
+  even at the smaller figure. For comparison, `headroom-ai` with no extras —
+  which cannot start the proxy at all, since `fastapi` and `uvicorn` live in
+  `[proxy]` — is 68 packages and 264 MB of site-packages.
+- **The `[proxy]` closure also fetches data at run time that
+  `--require-hashes` does not cover.** Installed from that lock and run under
+  `--network none`, `headroom proxy` blocks at startup on `Downloading
+  Kompress ONNX model from chopratejas/kompress-v2-base` and never binds;
+  that artifact is `onnx/kompress-int8-wo.onnx`, **274 MB** (its tokenizer
+  3.6 MB), and the router adds a second HuggingFace model
+  (`chopratejas/technique-router`). `HEADROOM_OFFLINE=1` refuses the fetch,
+  logs *"Compression falls back to the non-ML path"*, and a
+  `POST /v1/compress` then **does** complete with no network at all
+  (`tokens_before: 10305`, `tokens_after: 272`,
+  `transforms_applied: ["router:text:0.03"]`) — so a no-egress pass is
+  possible, but it is the structural-only path: a run that wants the ML
+  compressors the docs' own prose describes needs a pre-provisioned model
+  cache of ~278 MB or more, which is not a Python distribution and so has no
+  hash the lock can carry. Two egress attempts the docs' own "network egress"
+  table does not list also appear at startup even with `HEADROOM_OFFLINE=1`
+  set: `litellm` fetches `raw.githubusercontent.com/BerriAI/litellm`'s model
+  cost map (three attempts, then a local fallback), and the proxy's default
+  session-summary beacon is on unless `HEADROOM_BEACON=off`,
+  `DO_NOT_TRACK=1` or `HEADROOM_OFFLINE` is set.
+- **Neither of the other two stop conditions holds, recorded for the
+  record.** Every needed wheel resolves for `aarch64-manylinux_2_28` (93
+  packages; no missing build), so the arm64 runner is not the problem and
+  Task 4's bootstrap check needs no arm64 clause. **On licences: read per
+  package from each installed wheel's own `METADATA`, preferring its
+  `License-Expression` over its `License` field and over its classifiers,
+  which are looser than either** — the closure is MIT, Apache-2.0,
+  BSD-2-Clause/BSD-3-Clause, ISC and PSF-2.0 throughout, with MPL-2.0 in
+  exactly three packages and never as the only option on the combined work:
+  `certifi` (MPL-2.0 alone), `tqdm` (`MPL-2.0 AND MIT`) and `orjson`
+  (`MPL-2.0 AND (Apache-2.0 OR MIT)` — an earlier draft of this note listed
+  orjson with the other two on the strength of its classifier line alone,
+  which names all three licences separately and reads as if MPL-2.0 were the
+  whole answer). `numpy` (`BSD-3-Clause AND 0BSD AND MIT AND Zlib AND
+  CC0-1.0`) and `regex` (`Apache-2.0 AND CNRI-Python`) are permissive
+  throughout. Nothing GPL, AGPL or SSPL. This is 93 installed packages;
+  `pywin32` appears in the universal lock for Windows only.
+
+**Outcome: the pin stops, and `images/base/Dockerfile`,
+`images/base/tools.tsv`, `/etc/fugaro/base.json`, the base-image design doc
+and `SECURITY.md` are all unchanged by this task** — there is no `headroom`
+row, no private venv, no wrapper and no new test, so the base-image selftest
+and the no-egress CI docker test have nothing new to cover.
+
+**The no-egress gate this task was meant to feed therefore has no runner, and
+every document that reads it as already satisfied is now stale.** That gate
+is the design's precondition for ever shipping, not a detail: design §2 makes
+the pre-ship `--network none` test the thing whose failure means *"do not ship
+it"*, design §5 lists it as one of the two live checks that *"must pass before
+that one final change merges"*, and design §6 says its result *"gates the
+lift"*. The plan reads it as satisfied once PR 2 merges in four places — Task
+10's gating paragraph (*"already being green … it runs as part of PR 2's own
+CI"*, and *"Task 7's no-egress CI result is already known by this point"*),
+the PR-groups paragraph (*"PR 3 simply checks it was"*), the Global
+Constraints bullet (*"Task 7's CI docker test proves an actual compression
+pass completes under `--network none`"*) and Task 2's own parenthetical
+(*"That property is tested once, against the real pinned binary, in Task 7's
+CI docker test"*). Check L3 leans on it too (*"that signal was Task 7's CI
+test, which already ran"*), and Task 8's SECURITY.md bullet is to tell the
+reader the property is *"tested, not enforced"*. **None of that is true as of
+this note: the test was not written, because there is nothing pinned to run it
+against, and PR 2 can merge without it.** The gate is not failed — it is
+absent, and it is not one this task can supply, since the thing it tests (a
+real compression pass by the pinned artifact under `--network none`) is
+exactly what the two stop conditions above prevent. What *was* measured here
+is not a substitute: it ran a wheel that is not in the image and is pinned by
+nothing in this tree. **Task 10 must not treat this gate as satisfied, and
+Task 8 must not write its bullet claiming a testing that never happened,
+until the owner picks one of the routes below and a Task 7 follow-up pins an
+artifact and writes the test against it.** Every site named above now carries
+a dated pointer back to this note: the four plan paragraphs, Task 8's bullet,
+Check L3, and the design's §2, §5, §6 and §7 claims.
+
+Lifting this needs a decision this task cannot make, and it is a base-image
+budget decision before it is a Headroom one: either raise
+`images/size-budget.sh`'s `MAX_MB` by roughly 0.9 GB and pre-provision a
+hash-pinned model cache beside the venv, or ship the structural-only path
+(`HEADROOM_DISABLE_KOMPRESS=1` and `HEADROOM_OFFLINE=1`, the shape that was
+measured working under `--network none`) and accept that the ML compressors
+are off — the second is still ~0.67 GB over the current budget, so neither
+route fits without the owner raising it. **Either way the no-egress test is
+still owed**: a structural-only shape needs it just as much, since the
+measurement above is the only thing that would have to be re-run against
+whatever artifact is finally pinned. **The design's §5 premise still stands
+and is now measured: a Python-distributed Headroom is materially heavier than
+any other piece of this design, and heavier than this base image's remaining
+budget, not merely heavier than the standalone binary Task 7 went looking
+for.**
+
 ---
 
 ### Task 8: SECURITY.md, the user doc, skills, and docs tests
@@ -1778,6 +1919,10 @@ unpacked, and `docs.headroomlabs.ai/llms-full.txt`):
   agent with its own narrow environment (P7), and is *tested*, not
   *enforced*, to need no outbound network (design §2 — the wording must not
   overclaim an enforced guarantee Cloud Run cannot actually provide).
+  **(2026-10-27: the "tested" half of that wording has nothing behind it —
+  Task 7's revised run pinned no artifact and wrote no no-egress test, so this
+  bullet must not claim a testing that did not happen. See the Task 7 revised
+  note.)**
 - New: `docs/compression.md`, covering `agent.compression`, the
   `--no-compression` flag (and the deliberate absence of a force-on flag),
   the `api-key`-with-gateway-on restriction, the `oauth`/`vertex` refusals,
@@ -1867,7 +2012,10 @@ task does not lift the refusal at all for any recipe that has a `review` or
 catalog (§3.5 there), is effectively every catalog recipe, so a negative
 Check L2 is a strong signal against shipping compression at all in v1, not
 a narrow scoping note. Task 7's no-egress CI result is already known by
-this point, since it ran as part of PR 2's own CI.
+this point, since it ran as part of PR 2's own CI. **(2026-10-27: it is not —
+Task 7's revised run pinned no artifact and wrote no such test, so a
+no-egress result is not merely "already known", it does not exist. This task
+must not read the gate as satisfied; see the Task 7 revised note.)**
 
 **Files:**
 - Edit: `internal/config/validate.go` (the message for `agent.compression:
@@ -1995,7 +2143,10 @@ something actually runnable: a functional smoke test, not a network claim.
   the feature. **FACT:** pass/fail, and if fail, the exact failure. A
   failure here is a bug to fix, not a "do not ship" signal by itself (that
   signal was Task 7's CI test, which already ran); this check is functional,
-  not a security property.
+  not a security property. **(2026-10-27: that signal never ran — Task 7's
+  revised run pinned no artifact and wrote no test, so this check is no longer
+  a functional follow-on to a passed security gate but the first real exercise
+  of the feature. See the Task 7 revised note.)**
 - [ ] **Check L4. The §6 measurement protocol.** (Depends on Check L3
   passing.) The paired A/B run over the owner's chosen task corpus, in the
   sandbox, on an `agent.auth: api-key` repository with `budget.mode:

@@ -658,6 +658,13 @@ that recommendation rests on a test passing once, not an enforced guarantee
 that holds for every future version of a third-party binary this design
 does not control.
 
+**(2026-10-27: that pre-ship test does not exist and cannot yet be written —
+Task 7's revised run pinned no artifact, so there is nothing for it to run
+against. This paragraph's "verified, pre-ship" claim and its "do not ship it"
+failure mode are therefore both unexercised: nothing has been verified, and
+nothing has been found to fail. See the revised Task 7 note in
+`docs/plans/2026-10-12-headroom-compression.md` before relying on either.)**
+
 **License.** Apache-2.0, as given in the owner's request — **UNVERIFIED**,
 since the actual `LICENSE` file was never read, the same way every other
 Headroom-specific fact in this document is. If confirmed, it would be the
@@ -1205,6 +1212,11 @@ it necessarily runs *after* the lift has merged, since it needs a real run
 to actually exercise compression, the ordering an earlier draft of this
 document had backwards ("before any code merges"). None of these gates is
 this design's to satisfy — they are live, owner-run checks (§6, §7).
+**(2026-10-27: the first of the two named gates — Task 7's
+no-outbound-network CI test — does not exist, because Task 7's revised run
+pinned no artifact to test. The lift is therefore gated on one real check and
+one that is absent, not on two that have run; see the revised Task 7 note in
+`docs/plans/2026-10-12-headroom-compression.md`.)**
 
 ## 6. Measurement plan
 
@@ -1215,7 +1227,11 @@ separately: by Check L2 (§3/§5/§7 — can Headroom's configuration honor the
 bypass list) and Task 7's no-outbound-network result, both of which gate
 the lift (§4/§5) and both of which this measurement runs *after*, against
 an already-lifted, already-opt-in feature (§5's "what gates merging vs. the
-lift"). Even a clean pass here keeps it opt-in (§4); this plan exists only
+lift"). **(2026-10-27: the second of those two — Task 7's
+no-outbound-network result — does not exist; Task 7's revised run pinned no
+artifact, so no such result was ever produced. See the revised Task 7 note in
+`docs/plans/2026-10-12-headroom-compression.md`.)** Even a clean pass here
+keeps it opt-in (§4); this plan exists only
 to decide whether Headroom's own, already-shipped compression is ever worth
 proposing as a *default*, set against the vendor's own claims.
 
@@ -1394,7 +1410,10 @@ the owner approving this design and, separately, on the live checks named
 in §1.1 (the oauth/`ANTHROPIC_BASE_URL` question), §3 (the bypass-list
 capability reading), §5 (the no-outbound-network CI result) and §6 (the
 measurement) before the feature's refusal is ever lifted or the feature is
-proposed as a default.
+proposed as a default. **(2026-10-27: §5's no-outbound-network CI result does
+not exist — Task 7's revised run pinned no artifact and wrote no test, so this
+list of gates is one short of what it claims; see the revised Task 7 note in
+the plan.)**
 
 ## 8. Non-goals
 
