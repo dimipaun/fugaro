@@ -667,3 +667,28 @@ func TestReadyForReviewSection(t *testing.T) {
 	}
 	golden(t, "ready_for_review_100", got)
 }
+
+// TestWatchBarWarnsAtEightyPercent: pctColour's warning at 80% is colour, and
+// colour can be off, so the bar's tier also carries a marker. The share is the
+// ratio, not the rounded figure: 79.9% draws "(80%)" and no marker, and 80.0%
+// draws the marker.
+func TestWatchBarWarnsAtEightyPercent(t *testing.T) {
+	project := func(pct float64) View {
+		return View{
+			Now: t0, Day: "2026-10-03", Mode: "enforce", Conn: Connection{Kind: ConnLive, Age: time.Second},
+			Project: ProjectLine{Counted: 40 * usd, Spent: 40 * usd, Bar: Bar{Has: true, Used: 40 * usd, Cap: 50 * usd, Percent: pct}, Runs: 1},
+		}
+	}
+	at := func(pct float64, ascii bool) string {
+		return frame(project(pct), 120, 0, func(o *RenderOptions) { o.ASCII, o.Color = ascii, false })
+	}
+	if got := at(79.9, false); strings.Contains(got, "80% ⚠") {
+		t.Fatalf("79.9%% of the cap drew the warning marker:\n%s", got)
+	}
+	if got := at(80, false); !strings.Contains(got, "(80% ⚠)") {
+		t.Fatalf("80%% of the cap drew no warning marker:\n%s", got)
+	}
+	if got := at(80, true); !strings.Contains(got, "(80% !)") {
+		t.Fatalf("the ascii marker is missing:\n%s", got)
+	}
+}

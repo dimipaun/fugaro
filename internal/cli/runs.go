@@ -758,7 +758,8 @@ func validGeneration(g int64) bool { return g >= 0 }
 // which is not the same fact as resolving the built-in default.
 //
 // runs ls is a table, so the cell is one short line; `fugaro diagnose` prints
-// the whole block (`rigorLine`). Both are built from the record's own block,
+// the whole block (runstore.RigorRecord.Line). Both are built from the
+// record's own block,
 // which is job-writable: the block reaches the row through
 // runstore.RigorRecord.Bounded, the name through the same clip every other
 // name cell uses, and the finished cell through cellOneLine.
