@@ -281,7 +281,7 @@ func TestDocsStateTheBitbucketProjectTokenReach(t *testing.T) {
 	// in. docs/git-providers.md is the page the operator follows.
 	for _, want := range []string{
 		// The credential (D461): the narrowest token that covers the set.
-		"a **workspace access token** or a **project access token** can serve many repositories",
+		"**workspace access token** or a **project access token** (both Bitbucket Premium) can serve many repositories",
 		"Prefer a **project token** when the repositories sit in one Bitbucket project",
 		// The steps, in order.
 		"`project_secrets: { bitbucket-token: { allow_data_to: [myworkspace/*] } }`",
