@@ -1747,7 +1747,7 @@ unpacked, and `docs.headroomlabs.ai/llms-full.txt`):
   npm, or Docker". Running it therefore means a Python runtime plus the
   package's dependency closure (`[all]` = proxy, code, ml, memory, relevance,
   image, reports, otel, evals, voice, html, mcp, spreadsheet).
-- **This is design §5's "materially heavier" case**, which is why the route
+- **This is design §2's "materially heavier" case**, which is why the route
   is the owner's to choose and not this task's: the base image already
   installs one Python tool from a hash-locked lock file
   (`images/base/graphify/requirements.lock.txt`, uv-compiled with
@@ -1797,47 +1797,66 @@ and GitHub's release API.
   `headroom, version 0.40.0`.
 - **The closure is more than double the ~400 MB ceiling this run was given,
   and more than four times what the base image has left.** The ~400 MB figure
-  is **not this plan's and not the design's** — neither states a size limit
-  anywhere — it is the owner's 2026-10-27 instruction for this task, recorded
-  here as the run's acceptance criterion rather than as a rule the tree
-  carries. The in-tree budget is the stricter and independent check, and it
-  is quoted at the end of this bullet. The extras
-  the supervised sidecar needs are `[proxy]` — the request path and the local
+  is **not this plan's and not the design's** — it is the owner's 2026-10-27
+  instruction for this task, recorded here as the run's acceptance criterion
+  rather than as a rule the tree carries. The tree carries a limit, just a
+  larger one: the design §5's "Size cost" paragraph names
+  `images/size-budget.sh`, a **4.0 GB hard limit** and a **3.5 GB warning**
+  (design lines 1115-1116). An earlier draft of this note said "neither states
+  a size limit anywhere" — false, and **the #1162 pull request's summary
+  repeated** it; both are withdrawn in the Corrections below. The in-tree
+  budget is the stricter and independent check, and it is quoted at the end of
+  this bullet. The extras the supervised sidecar needs are `[proxy]` — the
+  request path and the local
   compressor — chosen over `[all]` because `[all]` adds `[code]`, `[evals]`,
   `[html]`, `[image]`, `[mcp]`, `[memory]`, `[ml]`, `[otel]`, `[relevance]`,
   `[reports]`, `[spreadsheet]` and `[voice]`, none of which the sidecar's own
   process uses. `uv pip compile` of `headroom-ai[proxy]==0.40.0`
   (`--universal --python-version 3.12 --generate-hashes`, the command
-  graphify's `requirements.in` documents) resolves to a **95-package** lock
-  and installs to **488 MB** of site-packages, **571 MB** for the venv,
-  **662 MB / 746 MB** once `--compile-bytecode` — the flag graphify's own
-  test requires, because the venv is root-owned — is applied. Adding uv's
-  managed CPython (109 MB) makes it **~855 MB before any model asset**. The
-  base image is already **3812 MB** on amd64 against `images/size-budget.sh`'s
+  graphify's `requirements.in` documents) resolves to a **95-entry** lock —
+  **93 installed on linux or aarch64**, the two extra entries being the
+  Windows-only `pywin32` and `colorama`, not `pywin32` alone as an earlier
+  draft of this note had it — and installs to **488 MB** of site-packages,
+  **571 MB** for the venv, **662 MB** and **746 MB** respectively once
+  `--compile-bytecode` — the flag graphify's own test requires, because the
+  venv is root-owned — is applied, and **~855 MB** if uv's managed CPython
+  (109 MB) were added to it. It need not be: graphify already puts a
+  uv-managed CPython 3.12 in this base image, so that runtime is already paid
+  for and the figure to weigh is **~746 MB before any model asset**. The base
+  image is already **3812 MB** on amd64 against `images/size-budget.sh`'s
   4000 MB hard budget, so it has 188 MB of headroom: this cannot be absorbed
-  even at the smaller figure. For comparison, `headroom-ai` with no extras —
+  at 746 MB any more than at 855 MB, and the 4.0 GB cap blocks both. For
+  comparison, `headroom-ai` with no extras —
   which cannot start the proxy at all, since `fastapi` and `uvicorn` live in
   `[proxy]` — is 68 packages and 264 MB of site-packages.
-- **The `[proxy]` closure also fetches data at run time that
-  `--require-hashes` does not cover.** Installed from that lock and run under
+- **The second blocker, stated plainly: the `[proxy]` closure fetches its
+  models at run time, and `--require-hashes` does not cover them.** Installed
+  from that lock and run under
   `--network none`, `headroom proxy` blocks at startup on `Downloading
   Kompress ONNX model from chopratejas/kompress-v2-base` and never binds;
-  that artifact is `onnx/kompress-int8-wo.onnx`, **274 MB** (its tokenizer
-  3.6 MB), and the router adds a second HuggingFace model
-  (`chopratejas/technique-router`). `HEADROOM_OFFLINE=1` refuses the fetch,
+  that artifact is `onnx/kompress-int8-wo.onnx`, **274 MB** as this run
+  measured the download — the docs this note cites state no model size — with
+  a tokenizer 3.6 MB (likewise measured), and the router adds a second
+  HuggingFace model (`chopratejas/technique-router`) whose size is
+  **UNVERIFIED**. `HEADROOM_OFFLINE=1` refuses the fetch,
   logs *"Compression falls back to the non-ML path"*, and a
   `POST /v1/compress` then **does** complete with no network at all
   (`tokens_before: 10305`, `tokens_after: 272`,
   `transforms_applied: ["router:text:0.03"]`) — so a no-egress pass is
   possible, but it is the structural-only path: a run that wants the ML
-  compressors the docs' own prose describes needs a pre-provisioned model
-  cache of ~278 MB or more, which is not a Python distribution and so has no
-  hash the lock can carry. Two egress attempts the docs' own "network egress"
-  table does not list also appear at startup even with `HEADROOM_OFFLINE=1`
-  set: `litellm` fetches `raw.githubusercontent.com/BerriAI/litellm`'s model
-  cost map (three attempts, then a local fallback), and the proxy's default
-  session-summary beacon is on unless `HEADROOM_BEACON=off`,
-  `DO_NOT_TRACK=1` or `HEADROOM_OFFLINE` is set.
+  compressors the docs' own prose describes needs the models **vendored into
+  the image with hashes of their own**, since a model artifact is not a Python
+  distribution and no hash the lock can carry covers it. One egress attempt
+  the docs' own "network egress" table does not list also appeared at startup
+  in this run's measurement: `litellm` fetched
+  `raw.githubusercontent.com/BerriAI/litellm`'s model cost map (three
+  attempts, then a local fallback) — **UNVERIFIED** against the citation,
+  whose `HEADROOM_OFFLINE` row says offline mode refuses litellm's
+  pricing-table refresh. An earlier draft also listed the session-summary
+  beacon here, as egress appearing "even with `HEADROOM_OFFLINE=1` set";
+  that contradicted the table it cites, which names `HEADROOM_OFFLINE` among
+  the beacon's off switches. The one beacon statement this note now uses is
+  in the Corrections below.
 - **Neither of the other two stop conditions holds, recorded for the
   record.** Every needed wheel resolves for `aarch64-manylinux_2_28` (93
   packages; no missing build), so the arm64 runner is not the problem and
@@ -1853,8 +1872,9 @@ and GitHub's release API.
   which names all three licences separately and reads as if MPL-2.0 were the
   whole answer). `numpy` (`BSD-3-Clause AND 0BSD AND MIT AND Zlib AND
   CC0-1.0`) and `regex` (`Apache-2.0 AND CNRI-Python`) are permissive
-  throughout. Nothing GPL, AGPL or SSPL. This is 93 installed packages;
-  `pywin32` appears in the universal lock for Windows only.
+  throughout. Nothing GPL, AGPL or SSPL. This is 93 installed packages; the
+  universal lock's other two entries, `pywin32` and `colorama`, are
+  Windows-only.
 
 **Outcome: the pin stops, and `images/base/Dockerfile`,
 `images/base/tools.tsv`, `/etc/fugaro/base.json`, the base-image design doc
@@ -1867,17 +1887,20 @@ every document that reads it as already satisfied is now stale.** That gate
 is the design's precondition for ever shipping, not a detail: design §2 makes
 the pre-ship `--network none` test the thing whose failure means *"do not ship
 it"*, design §5 lists it as one of the two live checks that *"must pass before
-that one final change merges"*, and design §6 says its result *"gates the
-lift"*. The plan reads it as satisfied once PR 2 merges in four places — Task
-10's gating paragraph (*"already being green … it runs as part of PR 2's own
-CI"*, and *"Task 7's no-egress CI result is already known by this point"*),
-the PR-groups paragraph (*"PR 3 simply checks it was"*), the Global
+that one final change merges"*, and design §6 lists it as one of the two
+results *"both of which gate the lift"* (§6's own closing wording for the
+pair). The plan reads it as satisfied once PR 2 merges in four places — the
+PR-groups paragraph at the top of this document (*"no-egress test already
+being green"*, *"it runs as part of PR 2's own CI"* and *"PR 3 simply checks
+it was"*), Task 10's gating paragraph (*"Task 7's no-egress CI result is
+already known by this point"*), the Global
 Constraints bullet (*"Task 7's CI docker test proves an actual compression
 pass completes under `--network none`"*) and Task 2's own parenthetical
 (*"That property is tested once, against the real pinned binary, in Task 7's
 CI docker test"*). Check L3 leans on it too (*"that signal was Task 7's CI
-test, which already ran"*), and Task 8's SECURITY.md bullet is to tell the
-reader the property is *"tested, not enforced"*. **None of that is true as of
+test, which already ran"*), and Task 8's own bullet in this plan is to tell the
+reader the property is *"tested"*, not *"enforced"*, to need no outbound
+network. **None of that is true as of
 this note: the test was not written, because there is nothing pinned to run it
 against, and PR 2 can merge without it.** The gate is not failed — it is
 absent, and it is not one this task can supply, since the thing it tests (a
@@ -1901,11 +1924,51 @@ are off — the second is still ~0.67 GB over the current budget, so neither
 route fits without the owner raising it. **Either way the no-egress test is
 still owed**: a structural-only shape needs it just as much, since the
 measurement above is the only thing that would have to be re-run against
-whatever artifact is finally pinned. **The design's §5 premise still stands
+whatever artifact is finally pinned. **The design §2's premise (restated in
+§5's "Size cost" paragraph) still stands
 and is now measured: a Python-distributed Headroom is materially heavier than
 any other piece of this design, and heavier than this base image's remaining
 budget, not merely heavier than the standalone binary Task 7 went looking
 for.**
+
+**Corrections (2026-10-27, review of #1162).** Five corrections to the note
+above; where a bullet still reads otherwise, this block is the statement to
+use.
+
+- **The beacon and `HEADROOM_OFFLINE=1`.** KNOWN, from the docs this note
+  cites (`docs.headroomlabs.ai/llms-full.txt`, its "Network egress" table and
+  its "The beacon is on by default" section): the session-summary beacon
+  (`headroom-beacon.headroom-beacon.workers.dev/v1/logs`) is **on by
+  default**, and `HEADROOM_OFFLINE` is named among the switches that disable
+  it — so `HEADROOM_OFFLINE=1` is documented to stop the beacon, and the
+  beacon is a path that table does list. **UNVERIFIED: whether any beacon
+  egress attempt still happens with `HEADROOM_OFFLINE=1` set.** The revised
+  run recorded no beacon upload under offline mode, and nothing in this tree
+  shows one.
+- **The size limit the note said did not exist.** The design §5's "Size cost"
+  paragraph names `images/size-budget.sh` with a **4.0 GB hard limit** and a
+  **3.5 GB warning** (design lines 1115-1116), so "neither states a size limit
+  anywhere" was false — and **the #1162 pull request's summary repeated** the
+  false claim.
+- **95 against 93.** Recounted from the lock this note cites: the universal
+  lock carries **95 entries**, **two** of them Windows-only by marker
+  (`sys_platform == 'win32'`) — `pywin32` and `colorama` — so a linux or
+  aarch64 install is **93**. An earlier draft named `pywin32` alone, which
+  could not account for the difference.
+- **The Python runtime is already in the base image.** graphify installs a
+  uv-managed CPython 3.12 into this same base image, so the closure would not
+  add uv's 109 MB again: the figure to weigh is **~746 MB**, not ~855 MB. The
+  conclusion is unchanged either way — the base image is **3812 MB** of
+  `images/size-budget.sh`'s 4000 MB hard limit, 188 MB free, so the 4.0 GB
+  cap blocks at 746 MB as it does at 855 MB.
+- **The second blocker, stated plainly.** Beyond the closure's size, the
+  proxy fetches its ML models from `huggingface.co` when it *runs*, not when
+  it installs — the Kompress ONNX (274 MB as this run measured the download;
+  the cited docs state no model size) plus a router model whose size is
+  **UNVERIFIED** — which breaks the design's no-outbound-network requirement
+  unless the models are vendored into the image with hashes of their own.
+  `--require-hashes` cannot cover them, because they are not Python
+  distributions.
 
 ---
 
@@ -2133,7 +2196,11 @@ something actually runnable: a functional smoke test, not a network claim.
   a negative answer withholds the lift entirely for any recipe with a
   `review`/`review_first` step** — in practice every catalog recipe
   (`docs/design/generic-tool.md` §3.5) — since this plan builds no
-  per-stage exclusion to fall back on instead.
+  per-stage exclusion to fall back on instead. **(Start from the Task 7
+  revised note earlier in this document: it *is* what Task 7 found when it
+  resolved the artifact, and its Corrections block records that Headroom
+  fetches its ML models at run time from `huggingface.co` — a fact any
+  bypass-list answer has to be read against.)**
 - [ ] **Check L3. A real, lifted compression pass works end to end in the
   sandbox.** (Depends on Task 10 having merged, and a sandbox image built
   from it.) Launch one ordinary sandbox task with `agent.compression:
