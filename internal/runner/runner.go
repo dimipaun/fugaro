@@ -136,6 +136,13 @@ type Deps struct {
 	// BackendErr is BackendFromEnv's error: bootstrap fails with it once the
 	// run's record is claimed.
 	BackendErr error
+	// CompressionOverride, for tests only, is the sidecar the run routes
+	// through, set directly on the run. Nothing real populates it: the
+	// config key is refused (config.Validate) and no sidecar is started yet,
+	// so this is the only way a test reaches a populated run.compression.
+	// Like every Deps field it is built by Fugaro's own bootstrap code, never
+	// from repository content, so nothing on a run's branch can reach it.
+	CompressionOverride *agent.CompressionProxy
 }
 
 type run struct {
@@ -250,11 +257,18 @@ type run struct {
 	// D140): the two are disjoint, and their sum is the run's whole model
 	// figure (record.CostUSD, cost.model_usd). Only a cascade run's calls
 	// carry a tier, so gwNotional is 0 for every other run.
-	gw         *gateway.Server
-	gwAgent    *agent.Gateway
-	gwClosed   bool
-	gwUsed     pricing.Micros
-	gwNotional pricing.Micros
+	gw *gateway.Server
+	// compression is the context-compression sidecar Claude Code's calls go
+	// through first, or nil when the run has none. Nothing sets it for a real
+	// run yet: agent.compression is still refused by config.Validate (the
+	// plan's P11), and starting the sidecar is a later change. Deps.
+	// CompressionOverride is the one bridge, for a test that needs a
+	// populated field with no config and no sidecar behind it.
+	compression *agent.CompressionProxy
+	gwAgent     *agent.Gateway
+	gwClosed    bool
+	gwUsed      pricing.Micros
+	gwNotional  pricing.Micros
 	// gwCacheRead and gwCacheWrite are the run's prompt-cache read and write
 	// token totals, taken from the gateway's ledger when it closes: what the
 	// run's record carries so a reader can see whether the cache behaved as
@@ -417,6 +431,9 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 			Stage: "bootstrap", Outcome: runstore.OutcomeNone, StartedAt: d.Now().UTC()},
 		// A local run has no duplicate to tell apart: its record is its own.
 		owned: d.Execution == "",
+	}
+	if d.CompressionOverride != nil {
+		r.compression = d.CompressionOverride
 	}
 	defer func() {
 		if p := recover(); p != nil {
@@ -1718,7 +1735,8 @@ func (r *run) bootstrap(ctx context.Context) error {
 		}
 	}
 	env, secrets, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{
-		Auth: cfg.Agent.Auth, Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend, Gateway: r.gateway(),
+		Auth: cfg.Agent.Auth, Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend,
+		Gateway: r.gateway(), Compression: r.compression,
 		// Docker stays false here, so the agent's environment has no
 		// DOCKER_HOST: nothing yet tells this runner that its workflow asked
 		// for `docker: true` (the workflow field and the runner's copy of it
