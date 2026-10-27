@@ -404,9 +404,10 @@ orders the two in one slice with the skew test as its verification (plan T5.1).
 
 **F24 — The recipe loop cannot express "this finding is tolerated".** Class:
 **Gap**.
-`internal/recipe` parses steps of kind `first_line`, `review`, `check`, `plan`,
-`render`; `recipe.Parse` *refuses* `goto`, `on_reject`, `extends`, `on_pass`,
-`on_fail`, `model`, `models` as reserved keys; the catalog holds nine recipes
+`internal/recipe` parses steps of kind `first_line`, `review`, `check`,
+`digest`, `plan`, `render`; `recipe.Parse` *refuses* `goto`, `on_reject`,
+`extends`, `on_pass`, `on_fail`, `model`, `models` as reserved keys; the catalog
+holds nine recipes
 (`default`, `solo`, `standard`, `premium`, `review-only`, `pick`, `test-and-fix`,
 `lint-fix`, `run-digest`). Nothing in a recipe sees a finding. Consequence: the
 modes are not five new catalog recipes, and shipping them as five YAML files
