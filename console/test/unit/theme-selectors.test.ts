@@ -110,7 +110,7 @@ const ELEMENT_PREFIX = /^(?:a|aside|button|code|details|div|dl|figure|form|g|h1|
  * attribute hook is a `data-*` or an `aria-*`. Everything else the section
  * mentions (`class`, `title`, `role`, `putReading`, `UNAVAILABLE_MARK`,
  * `path:line`) names no hook a stylesheet could select. */
-const HOOK = /^(?:(?:live|spend|projects|run|degraded|graph|console|unavailable|installation)(?:-[a-z0-9-]+)?|(?:data|aria)-[a-z0-9-]+)$/
+const HOOK = /^(?:(?:live|spend|projects|run|degraded|graph|coordinator|console|unavailable|installation)(?:-[a-z0-9-]+)?|(?:data|aria)-[a-z0-9-]+)$/
 
 /** CLASS_HOOK is the class half of `HOOK`, and `SUFFIX` is the shorthand §2.7
  * and §2.8 write their hook sets with: the degraded screen's section is two
@@ -135,7 +135,7 @@ const HOOK = /^(?:(?:live|spend|projects|run|degraded|graph|console|unavailable|
  * follows, and any token that is neither is skipped -- so the `-num` of §2.10's
  * prose, which follows a `cell(...)` signature rather than a hook, licenses
  * nothing. */
-const CLASS_HOOK = /^(?:live|spend|projects|run|degraded|graph|console|unavailable|installation)-[a-z0-9-]+$/
+const CLASS_HOOK = /^(?:live|spend|projects|run|degraded|graph|coordinator|console|unavailable|installation)-[a-z0-9-]+$/
 
 /** SUFFIX is one `-suffix`, or a run of them joined by `/` as §2.7's
  * `-word`/`-at`/`-age` is written. */
