@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The graph screen's model and its layout cache (console GV2.3a; the owner's
 // dependency graph spec §3 and its addendum §3,
 // docs/console-dependency-graph/).

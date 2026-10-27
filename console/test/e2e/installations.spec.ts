@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The installation picker, in a real Electron window (desktop-console plan Task
 // 3.4b, steps 5 and 6; owner ruling C9; the owner's ruling of 2026-10-20).
 //

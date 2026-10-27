@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The transcription port: streaming speech-to-text (mobile plan, Task P3.4;
 // D123, D118, D126).
 //

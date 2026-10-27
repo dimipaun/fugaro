@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // Terminal escape sequences and control strings (review round 3 of PR 494).
 //
 // Three layers read CLI text that may carry ECMA-48 sequences: the sentence

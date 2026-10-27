@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise -->
+<!-- See console/LICENSE.md for the terms. -->
 # The JSON contract the console reads
 
 Tasks 0.1 and 0.2 of

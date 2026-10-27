@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The rows the installation rail is drawn from (owner's design ruling of
 // 2026-10-25).
 //

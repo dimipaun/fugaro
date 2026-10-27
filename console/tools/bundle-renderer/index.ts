@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The renderer bundler: the compiled entry, and everything it requires, into one
 // script the document loads (desktop-console plan Task 3.4a; design section 5.1
 // rules 1, 3 and 5), and the theme's stylesheets into the one stylesheet the

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // Ambiguous escape sequences are read every way, and the union is redacted
 // (review round 4 of PR 494).
 //

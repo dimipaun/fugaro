@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The renderer entry, in a real Electron window (desktop-console plan Task 3.4a,
 // steps 1, 2, 4 and 5; design section 5.1 rules 1, 3, 5 and D7).
 //

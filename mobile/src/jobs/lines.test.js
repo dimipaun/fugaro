@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // What the list says (mobile plan, Task P3.3; resolved 2026-10-17).
 //
 // The plan's first two cases for this task are about the *screen*: "every

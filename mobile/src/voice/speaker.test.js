@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The wiring P3.6 left open, held to its own rule (mobile plan, Task P3.5;
 // Global Constraint 10, Voice D52).
 //

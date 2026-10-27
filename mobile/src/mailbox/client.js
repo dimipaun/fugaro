@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The phone's mailbox client (mobile plan, Task P3.6; D111, D113, D113b,
 // D118; functional-spec-reconciliation.md §3.5).
 //

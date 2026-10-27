@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The account store's one door (mobile plan, Task P3.1; D111, D114, D125).
 //
 // Everything the app needs from this directory, re-exported here and nowhere

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+# See console/LICENSE.md for the terms.
 #
 # Notarise one built artifact with Apple, staple the ticket to it, and validate
 # the staple.

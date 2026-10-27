@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The list itself: one row of numbers and states, the heartbeat, and the wire
 // between them (mobile plan, Task P3.3; resolved 2026-10-17, tensions (a) and
 // (b1)).

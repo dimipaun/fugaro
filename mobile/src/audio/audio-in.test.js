@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The capture port's tests (mobile plan, Task P3.4; D122, D118, D126).
 //
 // Twice over: the *shape* the port promises (`isAudioIn`, the event's fields,

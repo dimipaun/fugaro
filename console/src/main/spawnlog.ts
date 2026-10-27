@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The opt-in spawn log (desktop-console plan Task 1.3, SECURITY-SENSITIVE;
 // design section 5.1 rule 10, decision D20).
 //

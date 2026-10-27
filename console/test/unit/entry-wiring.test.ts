@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The dashboard's wiring (desktop-console plan Task 3.4c, step 2).
 //
 // `bundle.test.ts` runs the built bundle and proves the entry reaches the

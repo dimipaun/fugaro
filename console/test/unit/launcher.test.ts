@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The Started-by column's own rules: the short form, and the two shapes that
 // draw nothing (owner request 2026-10-18, wording from the 2026-10-22 watch
 // spec; `console/src/shared/launcher.ts`).

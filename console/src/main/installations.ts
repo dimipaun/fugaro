@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The operator's installations: where they are kept, what is checked before
 // they are kept, and the closed surface the picker window is allowed to use
 // (desktop-console plan Task 3.4b; design sections 3.4 rules 5 and 7, 5.1 rule

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The Projects screen, and the Run detail screen's model
 // (desktop-console plan Task 2.3; design section 6.2 screens 3 and 4).
 //

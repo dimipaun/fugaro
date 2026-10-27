@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // Secret-shaped strings, assembled at run time and never written down
 // (desktop-console plan Task 2.0).
 //

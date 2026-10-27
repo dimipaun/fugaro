@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // Rule 7's third prohibition, enforced: **the app never reads the operator's
 // config** (desktop-console plan Task 1.3, design section 3.4 rule 7, D13).
 //
