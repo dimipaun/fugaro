@@ -147,19 +147,18 @@ func TestManagedSettingsBeforeEveryStage(t *testing.T) {
 // from the EnvSpec the runner builds -- and the file carries no real key.
 func TestWriteManagedSettingsCarriesCompressionURL(t *testing.T) {
 	h := newGW(t, gwConfig(t, ""), "observe", "", anthropicfake.MessageOK(sonnet, pricing.Usage{Output: 1})).harness
-	sidecar := &agent.CompressionProxy{BaseURL: "http://127.0.0.1:9100"}
-	h.deps.CompressionOverride = sidecar
+	h.deps.CompressionForTest = "headroom"
 	read := func(inner step) step {
 		return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 			env, _, raw := settingsEnv(t, h)
-			if env["ANTHROPIC_BASE_URL"] != sidecar.BaseURL {
-				t.Errorf("managed settings ANTHROPIC_BASE_URL = %q, want the sidecar's %q: %s", env["ANTHROPIC_BASE_URL"], sidecar.BaseURL, raw)
+			if env["ANTHROPIC_BASE_URL"] != sidecarURL {
+				t.Errorf("managed settings ANTHROPIC_BASE_URL = %q, want the sidecar's %q: %s", env["ANTHROPIC_BASE_URL"], sidecarURL, raw)
 			}
 			if strings.Contains(raw, plantedKey) {
 				t.Errorf("the real key is in the managed settings: %s", raw)
 			}
-			if got := envValue(req.Env, "ANTHROPIC_BASE_URL"); got != sidecar.BaseURL {
-				t.Errorf("the agent's environment ANTHROPIC_BASE_URL = %q, want the sidecar's %q", got, sidecar.BaseURL)
+			if got := envValue(req.Env, "ANTHROPIC_BASE_URL"); got != sidecarURL {
+				t.Errorf("the agent's environment ANTHROPIC_BASE_URL = %q, want the sidecar's %q", got, sidecarURL)
 			}
 			return inner(t, ctx, req)
 		}
@@ -371,7 +370,7 @@ func TestRepoSettingsRerouteRefused(t *testing.T) {
 func TestCheckSettingsRoutingAppliesWithCompression(t *testing.T) {
 	g := newGWFiles(t, gwConfig(t, ""), "observe", "", map[string]string{".claude/settings.json": rerouting})
 	h := g.harness
-	h.deps.CompressionOverride = &agent.CompressionProxy{BaseURL: "http://127.0.0.1:9100"}
+	h.deps.CompressionForTest = "headroom"
 	rec, err := h.run(t)
 	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, ".claude/settings.json") ||
 		!strings.Contains(rec.Reason, "sets ANTHROPIC_BASE_URL") {
@@ -381,7 +380,7 @@ func TestCheckSettingsRoutingAppliesWithCompression(t *testing.T) {
 		t.Fatal("the agent ran")
 	}
 	ok := newGW(t, gwConfig(t, ""), "observe", "").harness
-	ok.deps.CompressionOverride = &agent.CompressionProxy{BaseURL: "http://127.0.0.1:9100"}
+	ok.deps.CompressionForTest = "headroom"
 	if rec, err := ok.run(t, implement("feature"), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("a compression run with no committed routing file was refused: rec = %+v, err = %v", rec, err)
 	}
