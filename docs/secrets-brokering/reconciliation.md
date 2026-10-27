@@ -1,6 +1,6 @@
 # Secrets and credential brokering: reconciliation (draft)
 
-**Status: reconciliation answered; plan written; nothing is implemented; no task approved.** The
+**Status: reconciliation answered (D497a amended after review, O5); plan written; nothing is implemented; no task approved.** The
 owner answered D490–D506 on 2026-10-27 (§5): all as recommended except **D501/D502** (the service
 keeps scaling to zero: not the recommendation) and **D494**, which follows the recommendation and
 **departs from the owner's spec** (no RTDB token store). The plan is
@@ -79,13 +79,16 @@ competes with 0.13.0's planned Bitbucket shared-job work (D460–D477), which it
 | Shared project job accounts (phase 3, GitHub profiles) | The App key, the profile's provider keys and Claude account token | Same | `modules/project/sa.tf`, `modules/project/job.tf` |
 | The repository's build account | The git credential and the workflows' build secrets, during Cloud Build; the daily image-check job runs as it too | Cloud Build `availableSecrets`, BuildKit `--secret id=git-credentials`; the check job's `secret_key_ref` | `modules/repo/build.tf`, `modules/repo/check.tf`, `images/derived/cloudbuild.yaml`, `internal/cli/gitcred.go` (`fugaro image git-credential`), `internal/cli/imagecheck.go` |
 | The coordinator job's account | The GitHub App key | `secret_key_ref` | `modules/installation/coordinator.tf` `google_secret_manager_secret_iam_member.coordinator_app_key` |
+| Batch VM accounts (the compute backend, when selected) | The workflow's secrets | Batch `secretVariables`, resolved as the VM's account | `internal/backend/batch` `Options.Secrets`, `checkSecrets` |
+| The build request built in Go | The git credential and each workflow build secret added to `availableSecrets` | Cloud Build, as the build account | `internal/backend/gcp/build.go` |
 | The credentials service's account | The bundle | Secret Manager API | `credentials.tf`, `internal/credsvc/bundle.go` |
 | The owner, on their machine | The bundle (read-modify-write); the App key for `doctor --check-github-app` | Their own credentials | `internal/cli/creds.go`, `internal/cli/doctor.go` |
 | Operators | Add versions, list metadata; never read a value | `secretVersionAdder` and `viewer` | `modules/repo/secrets.tf`, `modules/installation/secrets.tf` |
 | Launchers | List names, labels and version counts | `fugaroLauncher` custom role | `modules/installation/iam.tf` |
 | Project Owners and Editors | Anything | Basic roles bypass secret-level policy | SECURITY.md "What is not on by default" |
 
-So **five runtime identity classes** read secret values today, not one, plus humans. Each per-repository
+So **seven runtime reader classes** (five account classes, the Batch VM account when that backend is
+selected, and the Go-built build request) read secret values today, not one, plus humans. Each per-repository
 job is its own account, so an installation with N repositories and W workflows has at least N×W
 job accounts holding `secretAccessor`.
 
@@ -96,7 +99,7 @@ job accounts holding `secretAccessor`.
 route of an existing service, not a new service. It inherits `Authenticator`, the bundle, the audit
 log, the kill switches and the "no admin routes" rule.
 
-**F2, Wrong.** "It is the only component with access to Secret Manager." Five runtime identity
+**F2, Wrong.** "It is the only component with access to Secret Manager." Seven runtime reader
 classes read values today (§3), and the service itself reads only model credentials and the App
 key (D145). *Consequence:* the principle is an end state reached class by class, each with a
 breaking IAM change (D500).
@@ -265,7 +268,7 @@ shared Bitbucket jobs holding the workspace token. *Consequence:* tension T4; D5
 | D465: a derived `bitbucket_token` block in the policy node, checked by the runner | **Survives as data, enforcement moves** to the service, which already reads the policy node (O4's admissions precedent). A runner-side check binds nothing the agent cannot bypass (F5) |
 | D466: doctor warns about a repository's own token overriding the project one | **Moot** once the proxy holds the one token |
 | D467: copy `project_secrets` to every operator machine | **Survives** while the allow-list is local |
-| D474: pin the Bitbucket API root | **Survives, changed meaning.** The runner's API root becomes the proxy; a launcher redirect then leaks the run identity, not the workspace token |
+| D474: pin the Bitbucket API root | **Survives for non-proxied repositories**, whose runner still holds the token. A proxied run's adapter does not read `FUGARO_BITBUCKET_API_URL` (its transport goes to the forwarder). An owner-listed root is not served through the proxy in S1 (O4) |
 | D475: launchers trusted | **Survives.** A launcher can still mint any repository's run identity (accepted limit) |
 | D476: no code mitigation for cross-repository pull requests | **Resolved by the proxy**: a run cannot push to or open a pull request in another repository |
 | D477: policy version 3 → 4 in 0.13.0 | **Tension T4**: if the proxy adds policy fields, a second lockstep bump follows unless both ship together |
@@ -283,7 +286,7 @@ refuses a project-level `secretAccessor` and pins the job and project modules' a
 `TestServiceHeldSecretsMatchTheCredentialsService` holds the Go list to the module.
 `.github/workflows/` cannot be edited from an agent run. *Consequence:* the "fails on direct secret
 reads" check is a Go test over Terraform and Go imports with an explicit exceptions table, run by
-the existing `go test` CI job (D499).
+the existing `go test` CI job (D499). CI runs on pushes to `main` and is not a merge gate (`.github/workflows/ci.yml`), so the guard fails `main` and the release gate, not the pull request.
 
 **F25, Gap.** Spec §3's per-request log line. The rules file requires exactly one audit line per
 refusal once the identity is verified, and names only. Git makes several requests per operation.
@@ -299,15 +302,21 @@ and scoped to one repository; branch rules exist natively as rulesets; the agent
 `api.github.com` with `GH_TOKEN`, and pointing it at a proxy means an Enterprise-style host
 (`GH_HOST`), which changes `gh`'s paths. *Consequence:* D497b; deferring costs nothing today.
 
-**F28, Gap (found while planning).** A first run's branch is derivable: `task.BranchRE` is
-`fugaro/<run-id>`, and the run identity's `fr` claim is the run id (`internal/task/task.go`
-`BranchRunID`, `internal/budget/token` `Claims.Run`). A follow-up (`fugaro run --pr N`) pushes to the
-pull request's own head branch, which can be any name. *Consequence:* the launcher-minted claim
-(D497a) is what binds a follow-up's branch; for a first run the service also checks that the claim
-equals `fugaro/<fr>`, so a launcher cannot name another branch for a first run. A launcher can
-still mint a follow-up identity for any branch of any repository (D475's accepted limit). A run
-identity minted by a launcher older than the claim carries none, and the service refuses its push
-(fetch and REST still work); the plan adds a skew constant (B1.1).
+**F28, Gap (found while planning; corrected in review round 1).** Every branch a run may push is a
+Fugaro branch: `task.Spec` validation refuses a `Branch` that does not match `task.BranchRE`
+(`fugaro/<run-id>`, "the only branch a follow-up may continue", `internal/task/task.go`), and the
+runner pushes only `fugaro/` branches. A first run's branch is `fugaro/<fr>`; a follow-up's names
+the earlier run that created it. *Consequence:* the launcher-minted claim (D497a) is checked against
+`task.BranchRE` always, and must equal `fugaro/<fr>` or name an earlier run, so even a hostile
+launcher cannot aim the proxy at `main`; it can aim it at any Fugaro branch of a repository it may
+launch (D475). Review round 1 also found that branch binding alone leaves the runner's REST writes
+open: `UpdatePR`, `Comment`, `ApplyReady` and create take any pull request of the repository, and a
+review-only run comments on pull requests that are not Fugaro branches (`task.Spec.ReviewPRs`).
+So the claim also names the run's pull requests (`fpr`: `task.Spec.PR` or `ReviewPRs`), and the
+service lets a pull-request write through only when the pull request's source is `fb` or its
+number is in `fpr` (D497a, **amended after review**, O5). An identity minted by a launcher older than
+the claims carries none: the runner refuses it at bootstrap on a proxied repository, and the policy
+version bump (D477) already makes an older CLI refuse to launch against a v4 node (O3).
 
 ## 5. Decisions (D490–D506), answered 2026-10-27
 
@@ -324,7 +333,7 @@ reason, the alternative and its cost, and the owner's answer of 2026-10-27 (rela
 | **D494** | The proxy credential: the spec's opaque token in RTDB, or the existing run identity? (F12, F16) | **The run identity plus the job account's ID token**, verified by `Authenticator` as today (D134), revoked by the write-once outcome and the kill switches. No new store, no subscription, no sweep. Per-run early revocation, if wanted, is a small `creds/` mark the service checks | **The spec's RTDB token store:** a new subtree and rules, a mint endpoint, a cache with an SSE subscription that needs always-on CPU (F16), a sweep, and a second per-run identity beside D134's. **Or signed JWTs:** a new signing key to hold and rotate | **2026-10-27: the recommendation. It DEPARTS FROM THE OWNER'S SPEC** (spec §4, "Proxy token design"): the run identity plus the job's ID token; no RTDB token store, no subscription, no sweep. Why: D134's identity already exists, is verified by `Authenticator` and ends with the run's outcome |
 | **D495** | How does git reach the proxy? (F6, F10) | **A loopback forwarder in the runner**, beside the gateway, that holds no real credential and attaches the job's ID token and the run identity per request; git and the runner's Bitbucket client point at it. Reason: tokens refresh per request, no git command outlives a token, and it is D135's pattern | **git straight at the service** with `extraHeader` (U1) and the run identity as the Basic password: no forwarder, but tokens are rewritten in git's environment at every refresh and a long command can fail mid-way. It also follows the spec's letter ("not in the CLI") more closely | **2026-10-27: the recommendation.** A loopback forwarder in the runner that holds no secret (D135's pattern). It departs from the spec's letter ("not built into the CLI") and keeps its intent: no real token is in the job (F6). Why: fresh tokens per request, and no git command outlives a token |
 | **D496** | The proxy's per-request rules (F7, F8, F11) | **Repository plus action from the first slice:** fetch from the task's repository; push only to the run's branch (force allowed there), no deletes, no tags; REST only the endpoints the runner uses, for that repository; everything else refused. Reason: parsing the receive-pack command list is cheap, and repository-only would still let a run push to the base branch | **Repository only first,** branch rules later. Simpler, and the base branch then relies on Bitbucket's branch restrictions alone | **2026-10-27: the recommendation.** Repository and action rules from the start: fetch only from the task's repository; push only to the run's branch, force allowed, no deletes, no tags; REST only the runner's endpoints; the receive-pack command list is read before the pack is streamed on. Why: the base branch must not depend on Bitbucket's branch restrictions alone |
-| **D497** | (a) How is the run's branch bound? (F12) (b) GitHub through the proxy (phase 2)? (F27) | **(a) A new launcher-minted claim** in the run identity (launchers are trusted, D475), checked by the service; a version-skew constant for old launchers. **(b) Defer phase 2** until Check 191 proves the Bitbucket proxy; GitHub's tokens are already short-lived and repository-scoped, and rulesets give branch rules | (a) Repository-only pushes (D496's alternative). (b) Plan GitHub proxying now: `gh` through an Enterprise-style host, a second REST surface, for a smaller gain | **2026-10-27: the recommendation.** (a) A launcher-minted branch claim, now (F28). (b) GitHub through the proxy is deferred. Why: the branch must be bound by something the service trusts; GitHub's tokens are already narrow |
+| **D497** | (a) How is the run's branch bound? (F12) (b) GitHub through the proxy (phase 2)? (F27) | **(a) A new launcher-minted claim** in the run identity (launchers are trusted, D475), checked by the service; a version-skew constant for old launchers. **(b) Defer phase 2** until Check 191 proves the Bitbucket proxy; GitHub's tokens are already short-lived and repository-scoped, and rulesets give branch rules | (a) Repository-only pushes (D496's alternative). (b) Plan GitHub proxying now: `gh` through an Enterprise-style host, a second REST surface, for a smaller gain | **2026-10-27: the recommendation.** (a) A launcher-minted branch claim, now (F28). (b) GitHub through the proxy is deferred. Why: the branch must be bound by something the service trusts; GitHub's tokens are already narrow **Amended after review (round 1, 2026-10-27), for the owner to confirm (O5):** the code fact that every runnable branch matches `task.BranchRE` makes the branch rule stronger than the row assumed; and branch binding alone leaves pull-request writes open (F28), so the launcher-minted claim also names the run's pull requests (`fpr`). The owner's intent (a launcher-minted binding, now) is kept; only the claim's content widens |
 | **D498** | Model keys (spec §5, F9) | **No new mechanism:** wire the remaining `agent.auth` modes through the service (the existing plan's open half), keep Vertex out of scope (no key; the job account's role), and let doctor report installations where a key reaches the agent (budget off, no service) | **A new model proxy:** duplicates the gateway and the service's forward | **2026-10-27: the recommendation.** No new mechanism: the remaining `agent.auth` modes are wired through the service; Vertex is out. Why: the gateway and the service's forward already exist |
 | **D499** | The CI check (spec §1) | **A Go test** that fails on any Terraform `secretAccessor` member, `secret_key_ref` or Cloud Build `availableSecrets`, and any Go use of the Secret Manager API, outside an exceptions table in the test, each row naming its decision and its exit slice. Runs in the existing CI `go test` job | **A shell lint in a workflow:** needs a `.github/workflows/` change an agent cannot push, and is easier to bypass | **2026-10-27: the recommendation.** A Go test with an exceptions table; no workflow edit. Why: an agent cannot edit `.github/workflows/`, and the existing CI job runs it |
 | **D500** | Removing Secret Manager access from job accounts (breaking) | **Per installation and per secret class**, each behind a flip list like `config.ServiceHeldSecretNames` and its Terraform mirror, each flip gated on an owner-run live check, with a `### For operators` entry; `belong` is never touched (D147) | **One release that removes every accessor:** one code path sooner, but every installation's runs depend on a just-deployed service at once, with no fallback | **2026-10-27: the recommendation.** Per installation and per secret class, flip lists gated on owner-run live checks, `### For operators` release notes; `belong` is never touched. Why: no installation depends on a just-deployed service without a fallback |
@@ -380,16 +389,26 @@ the proxy (S1) is 0.14.0.
   at the proxy (one repository, one branch, the run's life), and that no agent sandbox is planned.
   The plan writes it so (B1.10); the owner may want a sandbox project instead.
 - **O2 (D493).** The re-planned S2's release split. This document's reading: **every** remaining
-  S2 task moves to 0.14.0 with the proxy (T2.1's block as data, T2.3's derivation, T2.8's API-root
-  pin, T2.11's notes), so the policy version is bumped once, in 0.14.0, on the day an enforcer for
-  the block exists; T2.2, T2.4, T2.6, T2.7 (shared Bitbucket jobs, Check 181) wait for C3.9 (D505);
-  T2.9 (the runner's check) is replaced by the service's (B1.4). The alternative is to ship T2.1,
-  T2.3, T2.8 and the v4 bump in 0.13.0 as data with no enforcer, which still bumps once but asks
-  every installation for a lockstep upgrade for data nothing reads until 0.14.0. **The plan uses
-  this document's reading until the owner rules.**
-- **O3 (F28).** A launcher older than the branch claim mints identities the proxy refuses for
-  pushes. The plan's skew constant makes `fugaro run` refuse to launch a Bitbucket run of an
-  opted-in installation from an older binary rather than fail at the first push. Confirm.
+  S2 task moves to 0.14.0 with the proxy, so the policy version is bumped once, in 0.14.0, on the
+  day an enforcer for the block exists. T2.1 and T2.3 are **amended** (review round 1): the block is
+  derived from `project_secrets.bitbucket-token.allow_data_to` whether or not a profile mounts the
+  token (a per-repository proxied job needs it), it gains a `proxy` switch, and `VersionSince[4]` is
+  0.14.0's. T2.8 is unchanged. T2.11's 0.13.0 notes are replaced by the plan's 0.14.0 operator notes
+  (B1.13). T2.2, T2.4, T2.6, T2.7 (shared Bitbucket jobs, Check 181) wait for C3.9 (D505); T2.9 (the
+  runner's check) is replaced by the service's (B1.4). The alternative is to ship T2.1, T2.3, T2.8
+  and the v4 bump in 0.13.0 as data with no enforcer, which still bumps once but asks every
+  installation for a lockstep upgrade for data nothing reads until 0.14.0. **The plan uses this
+  document's reading until the owner rules.**
+- **O3 (F28, amended after review).** No launcher skew constant (a constant in the new binary cannot
+  stop an older launcher). Instead the runner on a proxied repository refuses, at bootstrap, an
+  identity without the claims, naming the launcher's version, and the v4 policy bump makes an older
+  CLI refuse to launch. Confirm.
+- **O4 (D474 and T2's ruling, found in review).** An owner-listed Bitbucket API root (T2.8) is not
+  served through the proxy in S1: the service forwards only to Bitbucket Cloud's own hosts. A
+  repository behind an owner-listed root stays non-proxied. Confirm, or ask for the roots in S1.
+- **O5 (D497a, amended after review).** The run identity carries the run's pull requests (`fpr`)
+  beside the branch (`fb`), and pull-request writes are bound to them (F28). Confirm the amended
+  answer.
 
 ## 8. Numbers this work holds
 
