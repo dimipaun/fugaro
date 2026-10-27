@@ -32,10 +32,11 @@ func TestRunNoCompressionSetsSpecField(t *testing.T) {
 		f := newCloudFixture(t)
 		compressionOnForTest(t)
 		writeBuildRecord(t, f, appSlug, "web", release0120)
-		if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261012-100000-c0a1", "--no-compression", "A task"); err != nil {
+		runID := wallRunID(t, time.Minute, "c0a1")
+		if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", runID, "--no-compression", "A task"); err != nil {
 			t.Fatal(err)
 		}
-		if got := readSpec(t, f, "20261012-100000-c0a1"); !got.CompressionOff {
+		if got := readSpec(t, f, runID); !got.CompressionOff {
 			t.Fatal("CompressionOff = false, want true")
 		}
 	})
@@ -43,10 +44,11 @@ func TestRunNoCompressionSetsSpecField(t *testing.T) {
 		f := newCloudFixture(t)
 		compressionOnForTest(t)
 		writeBuildRecord(t, f, appSlug, "web", release0120)
-		if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261012-100000-c0a2", "A task"); err != nil {
+		runID := wallRunID(t, time.Minute, "c0a2")
+		if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", runID, "A task"); err != nil {
 			t.Fatal(err)
 		}
-		if got := readSpec(t, f, "20261012-100000-c0a2"); got.CompressionOff {
+		if got := readSpec(t, f, runID); got.CompressionOff {
 			t.Fatal("CompressionOff = true with no --no-compression, want absent")
 		}
 	})
@@ -73,6 +75,11 @@ func TestNoCompressionFlagExistsButNoForceOnFlagDoes(t *testing.T) {
 // an explicit --workflow, a --batch label). The gate fires whether or not
 // --no-compression is given: the run would still read a fugaro.yaml an old
 // runner's own config parser refuses, so the override is no way past it.
+//
+// The IDs are minted from the wall clock rather than fixed: the follow-up case
+// drives run --pr, whose lookback resolvePR measures back from time.Now()
+// itself, so a fixed date would age out of it and the case would stop reaching
+// the gate by the calendar alone.
 func TestCompressionImageGateRefusesOldBuild(t *testing.T) {
 	refusal := func(t *testing.T, err error) {
 		t.Helper()
@@ -84,7 +91,7 @@ func TestCompressionImageGateRefusesOldBuild(t *testing.T) {
 		f := newCloudFixture(t)
 		compressionOnForTest(t)
 		writeBuildRecord(t, f, appSlug, "web", release060)
-		_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261012-100000-c1a1", "A task")
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", wallRunID(t, time.Minute, "c1a1"), "A task")
 		refusal(t, err)
 		if n := len(f.run.Executions()); n != 0 {
 			t.Fatalf("%d executions, want none", n)
@@ -108,7 +115,7 @@ func TestCompressionImageGateRefusesOldBuild(t *testing.T) {
 		f := newCloudFixture(t)
 		compressionOnForTest(t)
 		writeBuildRecord(t, f, appSlug, "web", release060)
-		_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261012-100000-c1a2", "--workflow", "web", "A task")
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", wallRunID(t, time.Minute, "c1a2"), "--workflow", "web", "A task")
 		refusal(t, err)
 		if n := len(f.run.Executions()); n != 0 {
 			t.Fatalf("%d executions, want none", n)
@@ -118,7 +125,7 @@ func TestCompressionImageGateRefusesOldBuild(t *testing.T) {
 		f := newCloudFixture(t)
 		compressionOnForTest(t)
 		writeBuildRecord(t, f, appSlug, "web", release060)
-		_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261012-100000-c1a3", "--batch", "nightly", "A task")
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", wallRunID(t, time.Minute, "c1a3"), "--batch", "nightly", "A task")
 		refusal(t, err)
 		if n := len(f.run.Executions()); n != 0 {
 			t.Fatalf("%d executions, want none", n)
@@ -128,7 +135,7 @@ func TestCompressionImageGateRefusesOldBuild(t *testing.T) {
 		f := newCloudFixture(t)
 		compressionOnForTest(t)
 		writeBuildRecord(t, f, appSlug, "web", release060)
-		_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261012-100000-c1a4", "--no-compression", "A task")
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", wallRunID(t, time.Minute, "c1a4"), "--no-compression", "A task")
 		refusal(t, err)
 		if n := len(f.run.Executions()); n != 0 {
 			t.Fatalf("%d executions, want none", n)
@@ -144,10 +151,11 @@ func TestCompressionImageGateRefusesOldBuild(t *testing.T) {
 func TestCompressionImageGateNotTriggeredWithoutCompression(t *testing.T) {
 	f := newCloudFixture(t)
 	writeBuildRecord(t, f, appSlug, "web", release060)
-	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261012-100000-c2a1", "--no-compression", "A task"); err != nil {
+	runID := wallRunID(t, time.Minute, "c2a1")
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", runID, "--no-compression", "A task"); err != nil {
 		t.Fatal(err)
 	}
-	if got := readSpec(t, f, "20261012-100000-c2a1"); got.CompressionOff {
+	if got := readSpec(t, f, runID); got.CompressionOff {
 		t.Fatal("CompressionOff = true with no compression in the configuration, want absent")
 	}
 }
