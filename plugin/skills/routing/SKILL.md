@@ -62,6 +62,6 @@ A recipe that produces a **file** instead of a pull request (`mode: artifact`, l
 
 Pick only a recipe `fugaro recipes ls --json` lists with `launchable: true`; never invent a recipe name, and read a catalog recipe's own `use_when` for what it actually requires.
 
-A launch can still be refused by the job-image gate (a recipe needs a 0.5.0 job image, 0.7.0 for a 0.7.0 construct, 0.8.0 for `mode: artifact` — `reference/launch.md` has the detail). When it is, report the refusal and the fix command it names to the user — never edit `fugaro.yaml`, a secret or any other config to get around it, and never silently fall back to a different recipe: for one task, offer the alternative and wait for the user; for a batch, report the refused item and continue the rest.
+A launch can still be refused by the job-image gate (a recipe needs a 0.5.0 job image, 0.7.0 for a 0.7.0 construct, 0.8.0 for `mode: artifact`, 0.13.0 for a recipe whose first step is `digest`, which the runner executes itself — `reference/launch.md` has the detail). When it is, report the refusal and the fix command it names to the user — never edit `fugaro.yaml`, a secret or any other config to get around it, and never silently fall back to a different recipe: for one task, offer the alternative and wait for the user; for a batch, report the refused item and continue the rest.
 
 Having decided on the cloud, launch with the `working` skill, and only task text the user has approved.
