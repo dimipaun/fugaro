@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The three things the four golden specs share (desktop-console plan Task 6.6;
 // design sections 6.1 and 6.2).
 //

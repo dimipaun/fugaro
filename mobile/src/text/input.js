@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The text screen's typed input (mobile plan, Task P6.9; D167, D164, D169,
 // D162; functional-spec-reconciliation.md §3.5).
 //

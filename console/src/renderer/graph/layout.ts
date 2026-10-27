@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The graph's layout, and the cache that keeps it from happening twice
 // (console GV2.3a; the owner's dependency graph spec §3, GD3's ruling (c)).
 //

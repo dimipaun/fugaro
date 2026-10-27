@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The sample data's own claims (owner ruling of 2026-10-19).
 //
 // The demo is only honest if a reviewer can tell it is a demo, and only stable

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The compiled preload, as Electron actually loads it (desktop-console plan Task
 // 3.4a, step 2; design section 5.1 rule 5).
 //

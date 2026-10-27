@@ -628,9 +628,10 @@ one in `app.ts` — and each prepends its own class: `live-num`, `spend-num`,
 `projects-number`, `run-number`, `coordinator-count`. The coordinator's is the one whose
 cell holds the console's own word for the count beside the figure, so the class the figure
 is drawn in — and the one the stylesheet's alignment rule names — is
-`coordinator-count-value` inside that cell. Each of those five classes is the single hook
-giving **tabular figures** and right alignment, so §6.1 rule 2's "tabular figures,
-right-aligned numerics" is satisfiable on those five screens.
+`coordinator-count-value` inside that cell. Each screen's hook (`coordinator-count-value`
+on the Coordinator, the prepended class on the other four) is the single hook giving
+**tabular figures** and right alignment, so §6.1 rule 2's "tabular figures, right-aligned
+numerics" is satisfiable on those five screens.
 
 **The degraded screen's `numberCell` (`degraded.ts`) prepends no class at all** — it is
 `cell(parent, factory, tag, ...classes)` with no `-num` — so every figure on the degraded

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The one child process (desktop-console plan Task 1.3, SECURITY-SENSITIVE;
 // design section 3.4 rules 1 to 5 and section 5.1 rules 6 and 8).
 //

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The settings port's tests (mobile plan, Task P3.1; D111, D114).
 //
 // `expo-async-storage.js` is the unencrypted store -- the "settings file" D111

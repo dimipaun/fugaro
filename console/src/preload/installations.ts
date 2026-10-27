@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The installation picker's preload: the *only* thing the picker document can
 // do (desktop-console plan Task 3.4b; design sections 3.4 rules 5 and 7, 5.1
 // rule 10, D13, D14; owner ruling C9, 2026-10-18).

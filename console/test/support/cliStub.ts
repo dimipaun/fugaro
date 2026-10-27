@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The stub `fugaro` an end-to-end spec hands the real console (desktop-console
 // plan Task 3.3).
 //

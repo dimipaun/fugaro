@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The picker's home: the app's own environment's `HOME`, never Electron's
 // `app.getPath('home')`.
 //

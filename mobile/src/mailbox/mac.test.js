@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The message tag, in the app (mobile plan, Task P3.6; P6.3's schema and
 // `vectors.json`, functional-spec-reconciliation.md §3.5, D171).
 //

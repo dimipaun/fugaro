@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The console's own states, for the four conditions design section 6.3 lists:
 // a project with no Firebase budget backend, a feed that has gone quiet, no
 // `fugaro` at all, and a read the CLI refused (desktop-console plan Task 3.1).

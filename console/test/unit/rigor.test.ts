@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The rigor block, read once for the three screens that draw a run's mode
 // (`console/src/shared/rigor.ts`; owner request 2026-10-25, the rigor-mode
 // screens task).

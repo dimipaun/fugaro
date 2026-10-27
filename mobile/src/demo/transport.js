@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The demo's transport: the app's in-memory database double, with the OTHER
 // end of the mailbox already in it (owner ruling of 2026-10-19).
 //

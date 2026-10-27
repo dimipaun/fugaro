@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The redactor against the third independent review (desktop-console plan Task
 // 1.4, SECURITY-SENSITIVE). Every input below was, at 96b81997, either written
 // into a fixture with identity still in it or took time quadratic in its

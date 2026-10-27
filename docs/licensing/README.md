@@ -20,12 +20,21 @@ agreement, shown as bracketed placeholders that a later change fills. Counsel's 
 handled so: the root `LICENSE` stays pure MIT and `README.md` and `LICENSING.md` state the three
 directories (the owner's ruling of 2026-10-27, keeping O2); `README.md`, `LICENSE` and `LICENSING.md`
 state no client-side MIT exception (counsel's 2.1, checked: none found); SPDX notices on every file in
-`console/` and `mobile/`, a `LICENSES/` directory and the copyleft and app-store audit are one
-follow-up run; the CLA text, its URL and the CONTRIBUTING gate wait for counsel's CLA. Questions
+`console/` and `mobile/`, a `LICENSES/` directory and the copyleft and app-store audit
+([dependency-audit.md](dependency-audit.md)) are one
+follow-up run; the CLA text, its URL and the CONTRIBUTING gate wait for counsel's CLA, and the owner's
+ruling of 2026-10-27 is that they arrive together for `ee/`, `console/` and `mobile/`, not one directory
+at a time. Questions
 for counsel: the covered coordinator and orchestrator code lives outside the three directories and stays
 MIT until it moves; the note that the licence "applies only to code added or changed after it is adopted"
 sits beside a clause covering "every file" under the directories; and the Licensor is defined only
 through Subscription Terms that do not exist yet, while the copyright line names the owner personally.
+
+**Amended 2026-10-27: the Subscription Terms draft.** [subscription-terms.md](subscription-terms.md)
+drafts the Fugaro Subscription Terms the licence names, for counsel to review; it is **not in
+force**, and the licence files keep their placeholder URL until counsel approves the text and the
+owner publishes it (plan tasks L4.3 and L4.4,
+[reconciliation.md](reconciliation.md#amendment-2026-10-27-the-subscription-terms-draft)).
 
 Spec owner: the repository owner. Spec received 2026-10-24; reconciled against `origin/main` at
 `e924481cd` the same day.
@@ -34,7 +43,8 @@ Spec owner: the repository owner. Spec received 2026-10-24; reconciled against `
 | --- | --- |
 | [spec.md](spec.md) | The owner's spec, verbatim (no typo fixes) |
 | [reconciliation.md](reconciliation.md) | Findings F1–F27 against the code and the published licence texts, resolutions R1–R8, decisions D300–D310 with the owner's answers (D301 and D303 amended), tensions T1 (ruled), T2 (accepted) and T3 (D303's mixed-licence release), items O1–O3, UNVERIFIED U1–U8. **Where it disagrees with `spec.md`, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Slices L0–L5 (L4.2 and L5.1 owner-run), tasks with their tests and dependencies, levels, the critical path, the shared-files table. Nothing in it is approved |
+| [implementation-plan.md](implementation-plan.md) | Slices L0–L5 (L4.2, L4.3 and L5.1 owner-run), tasks with their tests and dependencies, levels, the critical path, the shared-files table. Nothing in it is approved |
+| [subscription-terms.md](subscription-terms.md) | The Fugaro Subscription Terms, a first draft for counsel (2026-10-27): not reviewed, not in force; commercial terms in brackets, with the owner's and counsel's open questions |
 
 ## The numbers this work holds
 

@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise -->
+<!-- See console/LICENSE.md for the terms. -->
 # Third-party notices
 
 The Fugaro console ships one file that is not ours: `dist/bundle/elk-worker.min.js`,

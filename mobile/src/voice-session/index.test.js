@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The voice session's door, and the scan that keeps it what it is
 // (voice-session plan, Task VS0.3; D205, D206, F24, F9, D213, D113, D117).
 //

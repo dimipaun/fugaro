@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // A filesystem path is not a token, and a scratch directory's random name is
 // not a credential (owner's report, 2026-10-21, from the screenshot run).
 //

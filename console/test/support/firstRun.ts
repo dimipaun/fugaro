@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // D13's first run, as the end-to-end specs meet it.
 //
 // A console launched with no installation chosen opens its dashboard or its

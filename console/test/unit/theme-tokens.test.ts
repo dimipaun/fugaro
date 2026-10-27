@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The theme's tokens and the palette they are painted in (desktop-console plan
 // Task 6.1; docs/design/console-styling.md sections 3.1-3.4 and 6.3).
 //

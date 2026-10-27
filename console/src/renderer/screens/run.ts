@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The Run detail screen: the design's screen 4, drawn from `diagnose RUN
 // --json`, a capped `logs RUN --json` window, `logs RUN --url` and the replay
 // buffer (desktop-console plan Task 2.3; design section 6.2 screen 4).

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 /**
  * layout-client is the renderer's side of the layout worker: it posts ELK's
  * JSON graph -- ids and sizes, never text -- and resolves with the positions.

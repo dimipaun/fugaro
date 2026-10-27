@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The console's application icon (the owner's brief of 2026-10-19): the
 // website's own mark, at the size the packager wants, with nothing to keep in
 // step by hand.
