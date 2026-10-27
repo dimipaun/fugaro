@@ -177,6 +177,17 @@ type runOptions struct {
 	// rigorFlags, because a value outside it is a launcher's mistake rather
 	// than a run's opinion.
 	rigor string
+	// noCompression is --no-compression: turn the repository's
+	// agent.compression off for this run only (docs/design/
+	// headroom-compression.md §4). The override is deliberately
+	// one-directional — there is no --compression flag — because turning
+	// compression on is a reviewed fugaro.yaml change, and a flag that could
+	// force it on from the command line would undo that for every workflow a
+	// launcher can already run. It writes task.Spec.CompressionOff only when
+	// the resolved configuration turns compression on: with compression
+	// already off there is nothing to override, and the field would only add
+	// version skew (an older runner refuses the whole task).
+	noCompression bool
 	// paths is --path, repeated: the paths this launch declares it will
 	// touch, which the runner matches against the area rules at D22's first
 	// moment (bootstrap). Nil (the default) is no declaration, and a
@@ -220,6 +231,10 @@ func newRunCmd() *cobra.Command {
 			"as the plan's own graph spells them, at most 128 bytes; what the run does is\n" +
 			"unchanged by it. A follow-up (--pr) records one only when it is given, and\n" +
 			"--retry takes none (the stored task keeps its own).\n\n" +
+			"--no-compression turns the repository's agent.compression off for this run only,\n" +
+			"overriding its fugaro.yaml. There is no --compression flag: turning compression\n" +
+			"on is a reviewed fugaro.yaml change. A follow-up (--pr) keeps its run's choice,\n" +
+			"and --retry takes none (the stored task keeps its own).\n\n" +
 			"--mode MODE asks for a rigor mode for this run: " + rigor.ModeList() + ".\n" +
 			"It may raise the mode the run resolves from its own configuration\n" +
 			"(rigor.default and rigor.areas in fugaro.yaml, the project layer's defaults)\n" +
@@ -249,6 +264,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.ModeList()+"; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it; without it the run resolves from those layers alone")
 	f.StringArrayVar(&o.paths, "path", nil, "declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none resolves from its configuration alone")
 	f.IntVar(&o.attempts, "attempts", 0, "launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe")
+	f.BoolVar(&o.noCompression, "no-compression", false, "turn agent.compression off for this run only, overriding fugaro.yaml; there is no flag to turn it on, which is a reviewed fugaro.yaml change")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 	f.BoolVar(&o.noBudgetCheck, "no-budget-check", false, "skip the launch pre-check of the budget (kill switches, missing caps, no headroom); the run is held to the same limits when it starts")
 	addCloudFlags(cmd, &o.cloud)
@@ -256,7 +272,7 @@ func newRunCmd() *cobra.Command {
 }
 
 // taskFlags are the flags --retry excludes: the stored task.json supplies them.
-var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "plan-task", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path"}
+var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "plan-task", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "no-compression"}
 
 // prFlags are the flags --pr excludes: the previous run on the PR supplies them.
 var prFlags = []string{"ref", "workflow"}
@@ -455,6 +471,34 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			return launchResult{}, err
 		}
 	}
+	// Whether the configuration this run will read turns compression on,
+	// resolved once for every launch shape (a first run, a follow-up, a
+	// review, a retry, each attempt of a batch) and used by both --no-compression
+	// and the image gate below. Read after the layer is embedded, so it is the
+	// resolution the run itself makes.
+	compression := compressionRequested(ctx, env, spec)
+	// --no-compression writes the task's own field only when there is
+	// compression to turn off, the way the title and the plan task are
+	// written: a launch that has nothing to override carries no field and
+	// stays byte-identical to what the previous release wrote. Written before
+	// createTask below, so a repeated --run-id with a flag the stored task
+	// does not carry is refused as a different task rather than silently
+	// dropped.
+	if o.noCompression && compression {
+		spec.CompressionOff = true
+	}
+	// The compression image gate's own condition, resolved here beside the
+	// write and used by both launch branches below. It is the field's as much
+	// as the configuration's, and the two halves catch different failures: a
+	// run that will read a configuration turning compression on needs a runner
+	// that can parse the key, and a task carrying compression_off needs one
+	// that can parse the field — task.Parse decodes with DisallowUnknownFields,
+	// so an older runner refuses the whole task either way. The field's half is
+	// not implied by the configuration's: a follow-up (--pr) and a --retry
+	// inherit the field from the run they continue, which carries it even after
+	// the repository's key has been removed. A launch that writes no field and
+	// reads no such key is never gated.
+	compressionGate := compression || spec.CompressionOff
 	s := runstore.Open(env.bucket.Bucket, slug, spec.RunID)
 	// The run-id freshness check, first of everything an --attach launch
 	// does and before the first byte it could upload (design §4 step 1,
@@ -570,6 +614,18 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 					return launchResult{}, err
 				}
 			}
+			// The compression gate: a runner older than compressionSince knows
+			// neither the key nor the field and refuses whichever it meets at
+			// bootstrap, so the launch is judged on both (compressionGate
+			// above). It fires whether or not --no-compression is set, since
+			// the override turns the sidecar off and not the key the old
+			// runner cannot read.
+			if compressionGate {
+				if err := checkCloneImageSince(env.lc, spec, compressionSince,
+					"agent.compression", "context compression", "", warn); err != nil {
+					return launchResult{}, err
+				}
+			}
 			// The rigor: gate, judged on the file the run will read rather
 			// than on a task field: see checkRigorImage. Unconditional, since
 			// the repository's file alone can carry the key.
@@ -627,6 +683,16 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			if spec.PlanTask != "" {
 				if err := checkImageSince(ctx, env, slug, spec, kind, planTaskSince,
 					"a plan task (--plan-task)", "the plan task", "", warn); err != nil {
+					return launchResult{}, err
+				}
+			}
+			// The compression gate: the same gate as the clone branch's above,
+			// and for the same reason. It is judged from the deployed job's
+			// build record because that record names the base image the image
+			// runs the binary of.
+			if compressionGate {
+				if err := checkImageSince(ctx, env, slug, spec, kind, compressionSince,
+					"agent.compression", "context compression", "", warn); err != nil {
 					return launchResult{}, err
 				}
 			}

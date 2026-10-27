@@ -2046,6 +2046,46 @@ func TestTaskSchemaOAuthTokenMatchesTheGoRules(t *testing.T) {
 	}
 }
 
+// TestTaskSchemaCompressionOffMatchesTheGoField ties task.schema.json's
+// `compression_off` property to the Go field it mirrors (task.Spec.
+// CompressionOff, fugaro run --no-compression). The schema is
+// additionalProperties: false, so a property missing here, or named
+// differently from the Go field's own json tag, makes every task such a launch
+// writes schema-invalid — and only the schema's consumers would notice: the
+// corpus fixtures would not unless one carries the field (testdata/task/valid/
+// compression-off.json now does), and no Go test reads this document. That is
+// the defect that made the plan_task and oauth_token properties necessary, one
+// field at a time.
+//
+// The document below is marshalled from task.Spec rather than written out, so
+// it reads the Go field's own tag: renaming either side's spelling stops the
+// two agreeing, which is the drift this catches.
+//
+// Mutation (rename the property to `compressionOff` in schemas/task.schema.json):
+// the document carrying the field is rejected as an unknown key and this fails.
+func TestTaskSchemaCompressionOffMatchesTheGoField(t *testing.T) {
+	sch := compile(t, "task.schema.json")
+	validate := func(s task.Spec) error {
+		data, err := json.Marshal(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	spec := task.Spec{Version: 1, RunID: "20261027-093000-abcd", Repo: "acme/app", Ref: "main", Task: "x"}
+	if err := validate(spec); err != nil {
+		t.Fatalf("schema rejects a task carrying no compression_off: %v", err)
+	}
+	spec.CompressionOff = true
+	if err := validate(spec); err != nil {
+		t.Fatalf("schema rejects a task carrying compression_off, which fugaro run --no-compression writes: %v", err)
+	}
+}
+
 // TestFugaroSchemaOAuthTokenMatchesTheGoRules is TestTaskSchemaOAuthToken
 // MatchesTheGoRules's sibling for fugaro.schema.json's agent.oauth_token
 // (named oauth tokens plan Task 6): the two schema copies, and the Go rules

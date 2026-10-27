@@ -319,6 +319,63 @@ const titlesSince = "0.8.5"
 // actually tagged.
 const planTaskSince = "0.11.2"
 
+// compressionSince is the first fugaro release whose runner reads a task's
+// compression_off field (task.Spec.CompressionOff, fugaro run
+// --no-compression): an older runner refuses the field outright, since
+// task.Parse decodes with DisallowUnknownFields, and the run would fail at
+// bootstrap on a task nobody can read. It must equal the release that ships
+// task.Spec.CompressionOff, and docs/release.md ("Before you tag") is where
+// that is verified: its bullet for this constant does not exist yet, because
+// it is written with the release that cuts the feature -- Task 9 of
+// docs/plans/2026-10-12-headroom-compression.md, whose Task 6 added this
+// constant and this gate, the same way planTaskSince's bullet arrived with the
+// release that shipped the plan task. internal/cli/run.go gates a launch
+// against an older build record, exactly as it does for a plan task
+// (planTaskSince) and for a title (titlesSince).
+//
+// It names 0.12.0 ("Dolphin": docs/release-streams.yaml's `next` CLI name),
+// the release after 0.11.6 and the first that ships the field's runner half
+// (the sidecar Task 4 merged) -- a number ahead of the tag, like
+// planTaskSince's 0.11.2 ("Camel two"), and the checklist bullet is what will
+// hold it to the version actually tagged.
+const compressionSince = "0.12.0"
+
+// compressionForTest, for tests only, stands in for the resolved
+// agent.compression of the configuration a launch reads. It is the CLI's
+// counterpart of the runner's Deps.CompressionForTest: config.Validate
+// refuses agent.compression while the key is reserved (the plan's P11), so a
+// committed fugaro.yaml cannot carry it and no flag sets it, and a test that
+// means to exercise the launch-time gate has to stand the resolution up
+// itself. Empty (the default, and every real binary) means no test is
+// running. Nothing a repository or a launcher controls reaches it: it is not
+// read from any file, environment variable or flag.
+var compressionForTest string
+
+// compressionRequested reports whether the run this launch is about turns
+// context compression on: one half of what the launch's compressionSince gate
+// is judged on (the task's own CompressionOff is the other, since a follow-up
+// and a retry inherit it) and what --no-compression decides against.
+//
+// The configuration is read as rigorLaunchSources reads it -- at the ref, out
+// of this checkout's object database, so a launch is judged on the file the
+// run checks out rather than on the launcher's working tree, which the run
+// never reads -- with the checkout's own document standing in when the ref
+// cannot be read. A file the launcher cannot read at all is not gated: the
+// run's own bootstrap, which reads the file this launcher could not, is what
+// refuses the key then. agent.compression is repository-scope and no project
+// layer or profile may set it (docs/design/layered-config.md §5), so the
+// resolved value is this file's own.
+func compressionRequested(ctx context.Context, env *cloudEnv, spec *task.Spec) bool {
+	if compressionForTest != "" {
+		return true
+	}
+	cfg := cascadeRefConfig(ctx, env, spec)
+	if cfg == nil {
+		cfg = checkoutConfig(ctx, spec.Repo)
+	}
+	return cfg != nil && cfg.Agent.Compression != ""
+}
+
 // cascadeSince is the first fugaro release whose config reader accepts
 // fugaro.yaml's agent.auth: cascade (docs/credentials-service, D133): before
 // it the value is not one of config.AgentAuths, so a job built from an older

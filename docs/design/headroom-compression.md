@@ -986,7 +986,15 @@ answer exists.
 (mirroring `namedTokensSince`/`checkImageSince`,
 `docs/plans/2026-10-09-named-oauth-tokens.md` Task 6) refuses *launching* a
 run that would set it against an image built before the feature shipped,
-naming `fugaro image refresh` as the fix.
+naming `fugaro image refresh` as the fix. **The same check covers the task's
+own half of the feature, and `--no-compression` is no way past it:** the flag
+turns the sidecar off, not the `fugaro.yaml` key the run still reads, so a
+launch whose configuration turns compression on is refused with or without it
+— and a task carrying `compression_off` (a `--pr` follow-up or a `--retry`
+inherits it from the run it continues) is refused too, since `task.Parse`
+decodes with `DisallowUnknownFields`. A launch that neither carries that field
+nor reads such a key is never gated. (Amended 2026-10-27, as the plan's Task 6
+was implemented; the plan's Task 6 carries the same note.)
 
 **Shipping the key before the sidecar is implemented, without a silent
 no-op.** This design's first draft had the config PR (Task 1-2) ship a key

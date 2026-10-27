@@ -1916,6 +1916,16 @@ func (r *run) resolveConfig(data []byte) (*config.Config, error) {
 		// content.
 		out.Cfg.Agent.Compression = r.d.CompressionForTest
 	}
+	if r.spec.CompressionOff {
+		// The run's own --no-compression, applied last so it wins over every
+		// other input: the configuration it overrides, and (for a test)
+		// Deps.CompressionForTest above. It is the one direction the
+		// override goes -- nothing here can turn compression on for a
+		// configuration that does not ask for it -- and it is applied on the
+		// resolved config for the same reason CompressionForTest is: every
+		// entry point that resolves one comes through here.
+		out.Cfg.Agent.Compression = ""
+	}
 	return out.Cfg, nil
 }
 

@@ -141,6 +141,20 @@ type Spec struct {
 	// CLI checks the job's build record first, the same way it already
 	// does for ProjectLayer.
 	OAuthToken string `json:"oauth_token,omitempty"`
+	// CompressionOff, when true, disables agent.compression for this run
+	// only, overriding fugaro.yaml (fugaro run --no-compression;
+	// docs/design/headroom-compression.md §4's deliberately one-directional
+	// override: there is no field and no flag to force compression *on*,
+	// only off). A runner before compressionSince refuses the field, since
+	// this package's decoder disallows unknown fields, which is why the
+	// launcher gates every launch whose task carries it. --no-compression
+	// writes it only when there is compression to turn off, so a launch
+	// with nothing to override carries no field and stays byte-identical
+	// to what the previous release wrote; a follow-up (--pr) and a --retry
+	// inherit it from the run they continue, so they carry it whether or
+	// not the repository still turns compression on, and the gate is
+	// judged on the field for that reason rather than on the flag.
+	CompressionOff bool `json:"compression_off,omitempty"`
 	// Mode is the recipe's mode, written by the launcher from the recipe it
 	// resolved ("artifact" today; implement and review write nothing, so
 	// every existing spec is byte-identical to what the previous release

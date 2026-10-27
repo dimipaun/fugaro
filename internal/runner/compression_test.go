@@ -35,6 +35,50 @@ func TestRunnerStartsNoSidecarByDefault(t *testing.T) {
 	}
 }
 
+// TestRunnerCompressionOffStartsNoSidecar: a task's own --no-compression
+// (task.Spec.CompressionOff) beats the configuration, and it is applied after
+// Deps.CompressionForTest so a test's own compression-on cannot outrank it.
+// The harness's config has compression on through CompressionForTest and the
+// gateway is on, so nothing but the task's own field keeps the sidecar from
+// starting.
+//
+// The agent's environment stands in for run.compression being nil: the test
+// package cannot read the unexported field, and where Claude Code is pointed
+// is what the field decides.
+func TestRunnerCompressionOffStartsNoSidecar(t *testing.T) {
+	h := compressionHarness(t)
+	spec, err := h.store.ReadTask(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.CompressionOff = true
+	if err := h.store.WriteTask(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	probed := false
+	inspect := func(inner step) step {
+		return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+			if got := envValue(req.Env, "ANTHROPIC_BASE_URL"); got == sidecarURL {
+				t.Fatalf("Claude Code is pointed at the sidecar %q despite compression_off", got)
+			}
+			probed = true
+			return inner(t, ctx, req)
+		}
+	}
+	if _, err := h.run(t, inspect(implement("feature")), review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	if !probed {
+		t.Fatal("no stage ran")
+	}
+	if h.compressionStarts != 0 {
+		t.Fatalf("a sidecar was started %d times for a task with compression_off", h.compressionStarts)
+	}
+	if h.compressionStops != 0 {
+		t.Fatalf("the sidecar was stopped %d times, want 0: none was started", h.compressionStops)
+	}
+}
+
 // TestStartCompressionRefusesWithoutGateway is P9's runtime half: the
 // gateway requirement can live in no config layer, because the effective
 // budget mode is the tightest of the ceiling, the default branch's file and

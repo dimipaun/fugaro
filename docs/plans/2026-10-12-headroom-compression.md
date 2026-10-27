@@ -1469,6 +1469,42 @@ launch-time gate that is subtly wrong (fires too late, or not on every
 launch path) is exactly how an old runner would end up running a feature it
 doesn't know about.
 
+**Amended 2026-10-27, as this task was implemented: the gate's skip case is
+the configuration, not the flag.** The paragraph below ("refuses launching a
+run whose resolved `agent.compression` is non-empty **and** not already
+overridden off") is the one thing here that does not survive contact with an
+older runner. `--no-compression` turns the *sidecar* off; it does not remove
+`agent.compression` from the `fugaro.yaml` the run still reads, and an older
+runner's `config.Parse` refuses that key outright (§5's "Strict-parser
+consequences", the reason this gate exists at all) — so skipping the gate
+because the override is set would launch exactly the run the gate is for, and
+the override would be a way *past* it. The gate is therefore judged on the
+field and the file together: it fires when the task carries
+`compression_off`, or when the resolved configuration turns compression on,
+whether or not `--no-compression` is given. The field's half is not implied by
+the file's — a `--pr` follow-up and a `--retry` inherit `CompressionOff` from
+the run they continue, so they carry it even after the repository's key has
+been removed — and it is the half the sibling gates' own rule ("the check is
+the field's, not the flag's") asks for. Two consequences for the tests below:
+`TestCompressionImageGateSkippedWhenOverriddenOff` is replaced by
+`TestCompressionImageGateNotTriggeredWithoutCompression` (a launch whose
+configuration turns compression on is refused with or without the flag; one
+that neither carries the field nor reads such a key is never gated), and
+`TestRunNoCompressionSetsSpecField` no longer asserts that the launch is never
+refused — it asserts the field is written when there is compression to turn
+off and absent when there is not. **Three smaller corrections, same date:**
+`compressionSince` names `0.12.0` ("Dolphin"), not the `0.8.0` the snippet
+below carries, because the constant must name the release that ships the
+field's runner half and this plan's tasks landed after 0.11.6; the runner
+honours the field in one place the plan's file list for this task did not
+name (`internal/runner/runner.go`'s `resolveConfig`, clearing
+`Agent.Compression` after `Deps.CompressionForTest`, so off always wins); and
+because `config.Validate` still refuses `agent.compression` (P11), no
+committed `fugaro.yaml` can turn compression on for a launcher test, so the
+CLI carries a test-only seam for the resolved value (`compressionForTest` in
+`internal/cli/recipes_skew.go`, unset in every real binary and read from no
+file, environment variable or flag).
+
 **Files:**
 - Edit: `internal/task/task.go`, `task_test.go`
 - Edit: `schemas/task.schema.json`
