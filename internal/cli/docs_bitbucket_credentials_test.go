@@ -245,7 +245,7 @@ func TestDocsBitbucketCredentialsDecisionsAreAnswered(t *testing.T) {
 
 // bitbucketPathRE matches a backticked repository path, in the top-level
 // directories this folder cites. It is the planPaths spelling
-// (docs_mobile_mailbox_plan_test.go) with `console/` and `images/` added: this
+// (docs_mobile_mailbox_plan_test.go) with the console and `images/` added: this
 // folder's plan amends console P6, so it cites the console's files by path.
 var bitbucketPathRE = regexp.MustCompile("`((?:internal|console|docs|deploy|website|scripts|images|shared|mobile)/[A-Za-z0-9_./-]*)`")
 
@@ -271,8 +271,8 @@ func bitbucketIsPath(p string) bool {
 // bitbucketCitedPaths is every repository path one of the folder's documents
 // names — in backticks and as a link — sorted and deduplicated. It is read out
 // of the document at test time, so a path a later edit adds is checked the
-// moment it is written down. A trailing slash (a directory written as
-// `console/`) is stripped, so the two spellings of one directory are one entry,
+// moment it is written down. A trailing slash (a directory written with one) is
+// stripped, so the two spellings of one directory are one entry,
 // and a link is resolved against docs/bitbucket-credentials/, which is where the
 // documents live.
 func bitbucketCitedPaths(doc string) []string {
