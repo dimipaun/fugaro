@@ -198,16 +198,16 @@ func TestNewToleratedBoundsWhatItStores(t *testing.T) {
 // as the whole one. A set the runner did not read stores no list at all,
 // which is a different fact from a set that is empty.
 //
-// The schema's shape is pinned too (result.schema.json's applicable): the two
-// sets are read from one revision exactly when the comparison applies, so a
-// non-empty Outside always comes with a WhyNot.
+// The blocks that record an Outside carry a WhyNot, the shape a run writes:
+// Applicable is true only where the two sets were read from one revision, so
+// an applicable comparison has nothing outside (ReviewScope's doc). The
+// schema states that shape but does not enforce it — it carries no
+// constraint tying applicable to outside — so this test pins the blocks the
+// runner builds, not the schema.
 func TestNewReviewScopeBoundsWhatItStores(t *testing.T) {
 	sc := NewReviewScope(false, ReviewScopeNoNarrowerRange, []string{"a.txt", "b.txt"}, []string{"a.txt", "b.txt", "c.txt"})
-	if sc.WhyNot != ReviewScopeNoNarrowerRange || !slices.Equal(sc.Outside, []string{"c.txt"}) {
+	if sc.Applicable || sc.WhyNot != ReviewScopeNoNarrowerRange || !slices.Equal(sc.Outside, []string{"c.txt"}) {
 		t.Errorf("NewReviewScope = %+v, want c.txt outside a range kept wide", sc)
-	}
-	if sc.Applicable {
-		t.Errorf("NewReviewScope = applicable with %v outside: the schema admits no such block", sc.Outside)
 	}
 	if sc.Truncated {
 		t.Error("a comparison of three paths is recorded as truncated")
@@ -271,9 +271,6 @@ func TestNewReviewScopeBoundsWhatItStores(t *testing.T) {
 	sc = NewReviewScope(false, ReviewScopeNoNarrowerRange, nil, []string{long})
 	if got := len([]rune(sc.Outside[0])); got != MaxReviewScopePath {
 		t.Errorf("outside path length = %d, want %d", got, MaxReviewScopePath)
-	}
-	if sc.Applicable {
-		t.Errorf("NewReviewScope = applicable with %v outside: the schema admits no such block", sc.Outside)
 	}
 	if !sc.Truncated {
 		t.Error("a clipped path is not recorded as truncated")

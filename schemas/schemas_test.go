@@ -1413,20 +1413,7 @@ func TestResultSchemaHalted(t *testing.T) {
 // Mutation (run, restored): drop a value from the enum, or add one to
 // runstore.go, and this names the side that has it.
 func TestResultSchemaHaltReasonsAgreeWithGo(t *testing.T) {
-	var want []string
-	for _, vs := range haltReasonSpecs(t) {
-		for _, v := range vs.Values {
-			lit, ok := v.(*ast.BasicLit)
-			if !ok || lit.Kind != token.STRING {
-				t.Fatalf("a HaltReason constant's value is not a string literal: %v", v)
-			}
-			s, err := strconv.Unquote(lit.Value)
-			if err != nil {
-				t.Fatal(err)
-			}
-			want = append(want, s)
-		}
-	}
+	want := runstoreConstValues(t, haltReasonSpec)
 	if len(want) == 0 {
 		t.Fatal("no HaltReason constants found in ../internal/runstore/runstore.go: this test proves nothing")
 	}
@@ -1475,7 +1462,7 @@ func TestResultSchemaHaltReasonsAgreeWithGo(t *testing.T) {
 // Mutation (run, restored): drop a value from the enum, or add one to
 // runstore.go, and this names the side that has it.
 func TestResultSchemaReviewScopeReasonsAgreeWithGo(t *testing.T) {
-	want := reviewScopeReasons(t)
+	want := runstoreConstValues(t, reviewScopeSpec)
 	if len(want) == 0 {
 		t.Fatal("no ReviewScope* constants found in ../internal/runstore/runstore.go: this test proves nothing")
 	}
@@ -1508,9 +1495,31 @@ func TestResultSchemaReviewScopeReasonsAgreeWithGo(t *testing.T) {
 	}
 }
 
-// reviewScopeReasons returns the value of every ReviewScope* string constant
-// in runstore.go: the reasons ReviewScope.WhyNot carries.
-func reviewScopeReasons(t *testing.T) []string {
+// reviewScopeSpec reports whether a const spec in runstore.go declares a
+// ReviewScope* reason. The constants are untyped, so their names are the only
+// handle on them.
+func reviewScopeSpec(vs *ast.ValueSpec) bool {
+	for _, name := range vs.Names {
+		if strings.HasPrefix(name.Name, "ReviewScope") {
+			return true
+		}
+	}
+	return false
+}
+
+// haltReasonSpec reports whether a const spec in runstore.go declares a
+// HaltReason.
+func haltReasonSpec(vs *ast.ValueSpec) bool {
+	id, ok := vs.Type.(*ast.Ident)
+	return ok && id.Name == "HaltReason"
+}
+
+// runstoreConstValues returns the string value of every constant in
+// runstore.go whose spec keep accepts, in source order. Both enum pins above
+// read their Go side through it: one parse and one walk, so the two cannot
+// drift apart, and a constant that is not a string literal fails either the
+// same way.
+func runstoreConstValues(t *testing.T, keep func(*ast.ValueSpec) bool) []string {
 	t.Helper()
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "../internal/runstore/runstore.go", nil, 0)
@@ -1525,13 +1534,10 @@ func reviewScopeReasons(t *testing.T) []string {
 		}
 		for _, spec := range gd.Specs {
 			vs, ok := spec.(*ast.ValueSpec)
-			if !ok {
+			if !ok || !keep(vs) {
 				continue
 			}
 			for i, name := range vs.Names {
-				if !strings.HasPrefix(name.Name, "ReviewScope") {
-					continue
-				}
 				if i >= len(vs.Values) {
 					t.Fatalf("%s has no value in its spec: this test cannot read it", name.Name)
 				}
@@ -1544,34 +1550,6 @@ func reviewScopeReasons(t *testing.T) []string {
 					t.Fatal(err)
 				}
 				out = append(out, s)
-			}
-		}
-	}
-	return out
-}
-
-// haltReasonSpecs returns every value spec in runstore.go whose declared type
-// is HaltReason.
-func haltReasonSpecs(t *testing.T) []*ast.ValueSpec {
-	t.Helper()
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "../internal/runstore/runstore.go", nil, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var out []*ast.ValueSpec
-	for _, decl := range f.Decls {
-		gd, ok := decl.(*ast.GenDecl)
-		if !ok || gd.Tok != token.CONST {
-			continue
-		}
-		for _, spec := range gd.Specs {
-			vs, ok := spec.(*ast.ValueSpec)
-			if !ok {
-				continue
-			}
-			if id, ok := vs.Type.(*ast.Ident); ok && id.Name == "HaltReason" {
-				out = append(out, vs)
 			}
 		}
 	}
