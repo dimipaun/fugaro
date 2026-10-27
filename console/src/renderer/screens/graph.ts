@@ -43,9 +43,11 @@
 // still distinguishes a critical edge is `stroke-width`, neither of which forced
 // colours touches.
 //
-// **No motion.** Not one keyframe is in this file or in the stylesheet rules it
-// adds: this task draws a still picture, and GV2.4 is where the comet, the pulse
-// and the flow arrive.
+// **The motion is the stylesheet's, and this file draws what it is drawn on.** GV2.4's
+// comet, the pulse and the flow are three keyframes in `theme/screens.css`, all of them
+// under `section.graph svg`; what this file adds for them is the hook the pulse selects
+// (`data-critical`) and the two `aria-hidden` marks they move. No keyframe is in this file,
+// and every state here is still the drawing the stylesheet's reduced-motion arm leaves.
 //
 // **No pull request link, and that is the design's ruling rather than an
 // omission.** A node draws its pull request **number as text** and offers no
@@ -66,7 +68,7 @@ import type { Positions, RouteSection, WorkerLike } from '../graph/layout-client
 import { WORKER_URL } from '../graph/layout-client'
 import { GraphLayout, edgeKey, nodeKey } from '../graph/layout'
 import { buildGraphModel } from '../graph/model'
-import type { GraphModel, GraphNode, GraphPlan, GraphRelease, GraphTab } from '../graph/model'
+import type { GraphModel, GraphNode, GraphPlan, GraphRelease, GraphTab, StateWord } from '../graph/model'
 
 // ---------------------------------------------------------------------------
 // The factory
@@ -274,6 +276,34 @@ const GRAPH_CRITICAL_SLOT = 104
 const GRAPH_PR_SLOT = 12
 const GRAPH_RUN_SLOT = 46
 const GRAPH_MARK_SLOT = 112
+
+/** GRAPH_RUNNING_WORDS are the four words a task being worked on draws first, and
+ * they are the four the comet's own rule selects. Three are the stages a person
+ * watches; the fourth is `queued`, which `primaryWord` produces for a run whose
+ * stage this screen has no word for -- `plan`, `bootstrap`, `check`, `finalize`,
+ * `render`, `writeback` or none at all. `queued` is only ever a *running* task
+ * ("live, and not in a stage a person watches"), so leaving it out would leave a
+ * task that is genuinely running with no motion at all (design section 3.9's
+ * amendment, and the spec's "extend for other known states"). */
+const GRAPH_RUNNING_WORDS: readonly StateWord[] = Object.freeze(['implementing', 'in review', 'fixing', 'queued'])
+
+/** GRAPH_NODE_RX is the card's own corner radius, written on the box and again on
+ * the streak that travels it: the two have to be the same arc, or the streak
+ * leaves the border at every corner. */
+const GRAPH_NODE_RX = 6
+
+/** GRAPH_NODE_RADIUS is that radius as the attribute it is written as. */
+const GRAPH_NODE_RADIUS = String(GRAPH_NODE_RX)
+
+/** GRAPH_GLOW_OFFSET is how far the glow behind a critical card reaches past its
+ * own boundary: enough that the card's fill hides the middle of the glow and only
+ * the spill around it shows. */
+const GRAPH_GLOW_OFFSET = 6
+
+/** GRAPH_GLOW_RADIUS is the card's radius plus that offset. Two arcs with one
+ * centre keep the glow the same distance out at the corners as along the edges; a
+ * glow drawn with the card's own radius would pinch shut where they meet. */
+const GRAPH_GLOW_RADIUS = String(GRAPH_NODE_RX + GRAPH_GLOW_OFFSET)
 
 // ---------------------------------------------------------------------------
 // The state a person chose
@@ -1119,11 +1149,12 @@ function releaseBox(factory: GraphFactory, box: ReleaseBox): ScreenElement {
  * nodeCard is one task's box: its title, its words, its pull request number and
  * its run, and -- when the gesture would do nothing -- the sentence saying why.
  *
- * The card carries `data-key` (its layout key), `data-state` (its first word)
- * and, when a gesture opens a run, `data-run-id` (the run the console's own list
- * resolved the suffix to). It carries **no destination**: the design's §5.1 rule
- * 2 and gap 7 leave the console no URL to build, so the pull request is a number
- * and its reason.
+ * The card carries `data-key` (its layout key), `data-state` (its first word),
+ * `data-critical` (whether it is on the plan's critical path, which its first
+ * word cannot say) and, when a gesture opens a run, `data-run-id` (the run the
+ * console's own list resolved the suffix to). It carries **no destination**: the
+ * design's §5.1 rule 2 and gap 7 leave the console no URL to build, so the pull
+ * request is a number and its reason.
  */
 function nodeCard(
   factory: GraphFactory,
@@ -1143,18 +1174,55 @@ function nodeCard(
   group.setAttribute('data-key', key)
   group.setAttribute('data-state', node.words[0] ?? '')
   group.setAttribute('data-selected', selected ? 'true' : 'false')
+  // The path is a fact of its own and not a first word: a critical task that is
+  // running says `implementing` in `data-state`, so the pulse's rule has nothing
+  // else to select (design section 2.11's attribute table).
+  group.setAttribute('data-critical', node.critical ? 'true' : 'false')
   group.setAttribute('tabindex', stopHere ? '0' : '-1')
   shift(group, rect.x, rect.y)
   if (door.run !== null) group.setAttribute('data-run-id', door.run)
   else group.append(tooltip(factory, door.because))
+
+  // The glow is drawn **before** the card, because "behind the node" is where the
+  // spec puts it: the card's own fill hides the middle of it and what a reader
+  // sees is the spill around the card, which is the state's own tone on the
+  // boundary and the glow outside it rather than one covering the other.
+  if (node.critical) {
+    const glow = makeNS(factory, 'rect', 'graph-node-pulse')
+    glow.setAttribute('aria-hidden', 'true')
+    geometry(glow, 'x', -GRAPH_GLOW_OFFSET)
+    geometry(glow, 'y', -GRAPH_GLOW_OFFSET)
+    geometry(glow, 'width', rect.width + GRAPH_GLOW_OFFSET * 2)
+    geometry(glow, 'height', rect.height + GRAPH_GLOW_OFFSET * 2)
+    glow.setAttribute('rx', GRAPH_GLOW_RADIUS)
+    group.append(glow)
+  }
 
   const outline = makeNS(factory, 'rect', 'graph-node-box')
   geometry(outline, 'x', 0)
   geometry(outline, 'y', 0)
   geometry(outline, 'width', rect.width)
   geometry(outline, 'height', rect.height)
-  outline.setAttribute('rx', '6')
+  outline.setAttribute('rx', GRAPH_NODE_RADIUS)
   group.append(outline)
+
+  // The comet is the card's own border drawn a second time, and the streak is the
+  // dash the stylesheet gives it: `pathLength` is what makes that dash a fraction
+  // of the perimeter rather than a length in user units, so the stylesheet never
+  // has to know how big a card is. Both marks are `aria-hidden`: a moving light is
+  // not a fact a reader needs twice, and the word beside it says the same thing
+  // (design section 3.5).
+  if (node.words[0] !== undefined && GRAPH_RUNNING_WORDS.includes(node.words[0])) {
+    const comet = makeNS(factory, 'rect', 'graph-node-comet')
+    comet.setAttribute('aria-hidden', 'true')
+    comet.setAttribute('pathLength', '100')
+    geometry(comet, 'x', 0)
+    geometry(comet, 'y', 0)
+    geometry(comet, 'width', rect.width)
+    geometry(comet, 'height', rect.height)
+    comet.setAttribute('rx', GRAPH_NODE_RADIUS)
+    group.append(comet)
+  }
 
   const title = makeNS(factory, 'text', 'graph-node-title')
   geometry(title, 'x', GRAPH_WORD_SLOT)
