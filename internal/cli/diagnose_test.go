@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -86,6 +87,212 @@ func TestDiagnoseWithoutTranscripts(t *testing.T) {
 	var d Diagnosis
 	if err != nil || json.Unmarshal([]byte(out), &d) != nil || d.Row.Status != "pending" || len(d.Findings) != 0 || d.AgentMessage != "" {
 		t.Fatalf("diagnose of a run with nothing yet: %s, %v", out, err)
+	}
+}
+
+// TestDiagnosePrintsStagesAndTolerated: the run's per-stage record (the model
+// calls, sub-agent calls and model spend of each stage, governance T1.1-T1.3)
+// and the findings the run's rigor mode let through (T3.4) are both on the
+// record and neither reached a JSON the console reads. diagnose --json carries
+// both, in the record's own order, with every string redacted like the rest of
+// the document.
+func TestDiagnosePrintsStagesAndTolerated(t *testing.T) {
+	const secret = "ghp_test0123456789abcdef"
+	t.Setenv("FUGARO_BITBUCKET_TOKEN", secret)
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcf"
+	exec := seedRun(t, f, id, "", "someone@example.com", true)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, id)
+	calls, agents, none := 12, 3, 0
+	cost := runstore.NewCost(2.5, 0, runstore.BasisAPIList)
+	cost.ModelBy = map[string]float64{"unattributed": 0.25, "model-a": 2.25}
+	score := rigor.Score{Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Cosmetic}
+	rec := &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady,
+		CostUSD: 2.5, Cost: &cost,
+		Stages: []runstore.StageTiming{
+			{Name: "implement " + secret, Calls: &calls, Agents: &agents, ModelUSD: 2.0, Model: "model-a " + secret, ModelNotionalUSD: 0.5},
+			{Name: "review", Agents: &none, ModelUSD: 0.25},
+		},
+		Tolerated: runstore.NewTolerated([]runstore.ToleratedFinding{
+			{Title: "a comment left behind: " + secret, Mode: rigor.Pro,
+				Likelihood: score.Likelihood, Impact: score.Impact, FixCost: score.FixCost, Class: score.Class},
+		})}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, secret) {
+		t.Fatalf("the document carries the secret:\n%s", out)
+	}
+	var d Diagnosis
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if len(d.Stages) != 2 || d.Stages[0].Name != "implement [REDACTED]" || d.Stages[1].Name != "review" {
+		t.Fatalf("stages = %+v", d.Stages)
+	}
+	if d.Stages[0].Model != "model-a [REDACTED]" || d.Stages[0].ModelUSD != 2.0 || d.Stages[0].ModelNotionalUSD != 0.5 {
+		t.Fatalf("implement's spend = %+v", d.Stages[0])
+	}
+	// A stage nobody counted and a stage counted at zero are different facts,
+	// so the counts stay pointers: review has no call count at all (no
+	// gateway) and an agent count of zero.
+	if d.Stages[0].Calls == nil || *d.Stages[0].Calls != calls || d.Stages[0].Agents == nil || *d.Stages[0].Agents != agents {
+		t.Fatalf("implement's counts = %+v", d.Stages[0])
+	}
+	if d.Stages[1].Calls != nil || d.Stages[1].Agents == nil || *d.Stages[1].Agents != 0 {
+		t.Fatalf("review's counts = %+v: calls %v, agents %v", d.Stages[1], d.Stages[1].Calls, d.Stages[1].Agents)
+	}
+	// The invariant the record's own comment states, read off the printed
+	// document: the stages are the whole model spend but for what settled
+	// after its stage's wait ran out.
+	var stages float64
+	for _, st := range d.Stages {
+		stages += st.ModelUSD
+	}
+	if got := stages + d.ModelBy["unattributed"]; got != d.Row.Cost.ModelUSD {
+		t.Fatalf("sum(stages[].model_usd) %v + model_by[unattributed] %v = %v, want row.cost.model_usd %v", stages, d.ModelBy["unattributed"], got, d.Row.Cost.ModelUSD)
+	}
+	if d.Tolerated == nil || d.Tolerated.Total != 1 || len(d.Tolerated.Findings) != 1 {
+		t.Fatalf("tolerated = %+v", d.Tolerated)
+	}
+	tf := d.Tolerated.Findings[0]
+	if tf.Title != "a comment left behind: [REDACTED]" || tf.Mode != rigor.Pro || tf.Label != score.Label() {
+		t.Fatalf("tolerated finding = %+v", tf)
+	}
+}
+
+// TestDiagnoseRedactsEveryStringOfAToleratedFinding: the block's mode, label
+// and class are enums on the write path, but they are strings on the wire and
+// a hand-edited record can put anything in them, so every string of the block
+// goes through the document's own redaction and not only the title.
+func TestDiagnoseRedactsEveryStringOfAToleratedFinding(t *testing.T) {
+	const secret = "ghp_test0123456789abcdef"
+	t.Setenv("FUGARO_BITBUCKET_TOKEN", secret)
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abd3"
+	exec := seedRun(t, f, id, "", "someone@example.com", true)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, id)
+	rec := &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+		Status: runstore.StatusSucceeded, Stage: "writeback",
+		Tolerated: &runstore.ToleratedFindings{
+			Findings: []runstore.ToleratedFinding{{
+				Title: secret, Mode: rigor.Mode(secret), Label: rigor.Label(secret), Class: rigor.Class(secret),
+				Likelihood: 1, Impact: 1, FixCost: 1}},
+			Total: 1}}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, secret) {
+		t.Fatalf("the document carries the secret:\n%s", out)
+	}
+	var d Diagnosis
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if d.Tolerated == nil || len(d.Tolerated.Findings) != 1 {
+		t.Fatalf("tolerated = %+v", d.Tolerated)
+	}
+	tf := d.Tolerated.Findings[0]
+	if tf.Title != "[REDACTED]" || tf.Mode != "[REDACTED]" || tf.Label != "[REDACTED]" || tf.Class != "[REDACTED]" {
+		t.Fatalf("tolerated finding = %+v", tf)
+	}
+}
+
+// TestDiagnoseOmitsStagesAndToleratedWhenEmpty: both keys are omitempty, so a
+// run whose record carries neither -- a run that never recorded a stage, and
+// one with no record at all -- prints a document without them rather than an
+// empty list a console would draw as "no stages".
+func TestDiagnoseOmitsStagesAndToleratedWhenEmpty(t *testing.T) {
+	f := newCloudFixture(t)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	const bare = "20260927-100000-abd0"
+	exec := seedRun(t, f, bare, "", "someone@example.com", true)
+	s := runstore.Open(b, appSlug, bare)
+	if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: bare, Repo: "acme/app", Workflow: "web",
+		Execution: exec, Status: runstore.StatusSucceeded, Stage: "writeback"}); err != nil {
+		t.Fatal(err)
+	}
+	seedRun(t, f, "20260927-100000-abd1", "", "someone@example.com", true) // no record at all
+	for _, id := range []string{bare, "20260927-100000-abd1"} {
+		out, _, err := execute(t, "diagnose", "--json", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var d Diagnosis
+		if err := json.Unmarshal([]byte(out), &d); err != nil {
+			t.Fatal(err)
+		}
+		if d.Stages != nil || d.Tolerated != nil {
+			t.Fatalf("%s: stages %+v, tolerated %+v", id, d.Stages, d.Tolerated)
+		}
+		for _, key := range []string{`"stages"`, `"tolerated"`} {
+			if strings.Contains(out, key) {
+				t.Fatalf("%s prints %s for a run that recorded none:\n%s", id, key, out)
+			}
+		}
+	}
+}
+
+// TestDiagnoseBoundsStagesAndTolerated: the record is an object a hand can
+// edit, and diagnose prints one document, so both lists are bounded again on
+// read: the stages at diagnoseStages and the tolerated findings at
+// runstore.MaxTolerated, with the block's total never below the entries kept.
+func TestDiagnoseBoundsStagesAndTolerated(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abd2"
+	exec := seedRun(t, f, id, "", "someone@example.com", true)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, id)
+	stages := make([]runstore.StageTiming, 0, diagnoseStages+50)
+	for i := range diagnoseStages + 50 {
+		stages = append(stages, runstore.StageTiming{Name: fmt.Sprintf("stage-%d", i)})
+	}
+	findings := make([]runstore.ToleratedFinding, 0, runstore.MaxTolerated+50)
+	for i := range runstore.MaxTolerated + 50 {
+		findings = append(findings, runstore.ToleratedFinding{Title: fmt.Sprintf("finding-%d", i), Mode: rigor.Pro,
+			Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Cosmetic})
+	}
+	rec := &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+		Status: runstore.StatusSucceeded, Stage: "writeback", Stages: stages,
+		Tolerated: &runstore.ToleratedFindings{Findings: findings, Total: 0}}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d Diagnosis
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Stages) != diagnoseStages || d.Stages[diagnoseStages-1].Name != fmt.Sprintf("stage-%d", diagnoseStages-1) {
+		t.Fatalf("%d stages printed, want the first %d", len(d.Stages), diagnoseStages)
+	}
+	if d.Tolerated == nil || len(d.Tolerated.Findings) != runstore.MaxTolerated {
+		t.Fatalf("tolerated = %+v", d.Tolerated)
+	}
+	if d.Tolerated.Total < len(d.Tolerated.Findings) {
+		t.Fatalf("total %d is below the %d entries printed", d.Tolerated.Total, len(d.Tolerated.Findings))
 	}
 }
 

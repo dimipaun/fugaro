@@ -228,6 +228,27 @@ const artifactsSince = "0.8.0"
 // the release that ships them.
 const recipesV07Since = "0.7.0"
 
+// digestSince is the first fugaro release whose runner executes the digest
+// step: it writes the run reports the repository is missing and commits
+// them, with no model call (recipe.UsesDigest). A runner before it refuses
+// the whole recipe as an unknown step kind, so a digest launch against an
+// older job image is refused at launch, by this gate, instead of failing
+// the run at bootstrap — and, in the window between this recipe's release
+// and the step's, an image gate is the only refusal a launcher can make:
+// the step is the runner's own work, so no other release can run it.
+//
+// Like artifactsSince it carries no shipped flag: refusing every image that
+// predates the step is exactly the direction this gate wants, and an image
+// with no release tag (a dev build, a hand-pushed one) only warns, the same
+// as for every other *Since constant here — the runner refuses the recipe
+// itself in that case (internal/runner/runner.go, right after
+// resolveRecipe), so a warning cannot let a digest run through as an
+// ordinary implement run and open a pull request the recipe never asked
+// for. It names 0.13.0, the release the report run ships in, which is not
+// tagged yet: docs/release.md's checklist verifies the constant against the
+// tag actually cut, the way planTaskSince's bullet records.
+const digestSince = "0.13.0"
+
 // gitSecretIDSince is the first fugaro release whose runner reads
 // CheckJobSpec's git_secret_id (internal/infra/spec.go): the daily image
 // check job's own rebuild names the secret ID Readiness resolved, so a
@@ -496,12 +517,12 @@ func embeddedRecipeOf(spec *task.Spec) *recipe.Recipe {
 }
 
 // checkRecipeImage refuses a launch whose job image runs a fugaro older than
-// recipesSince (decision D2), or than recipesV07Since when the embedded
-// recipe uses a 0.7.0 construct (design generic-tool.md §3.1). The judge is
-// the build record's base_ref: the image runs the binary of the base it was
-// built FROM. A non-release base is not judged (one warning); no record, or
-// one without base_ref, is refused. kind is the workflow's base kind, ""
-// when unknown.
+// recipesSince (decision D2), or than the newer constant an embedded
+// recipe's own constructs need (recipeSinceFor). The judge is the build
+// record's base_ref: the image runs the binary of the base it was built
+// FROM. A non-release base is not judged (one warning); no record, or one
+// without base_ref, is refused. kind is the workflow's base kind, "" when
+// unknown.
 func checkRecipeImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
 	subject, alt := "fugaro.yaml's agent.recipe", ""
 	if spec.Recipe != nil {
@@ -510,16 +531,33 @@ func checkRecipeImage(ctx context.Context, env *cloudEnv, slug string, spec *tas
 			alt = "; or launch with --recipe default to run today's loop"
 		}
 	}
-	since := recipesSince
-	if r := embeddedRecipeOf(spec); r != nil && recipe.UsesV08(r) {
+	return checkImageSince(ctx, env, slug, spec, kind, recipeSinceFor(spec), subject, "recipes", alt, warn)
+}
+
+// recipeSinceFor is the release the embedded recipe's own constructs demand,
+// the newest of the gates its text trips (design generic-tool.md §3.1): a
+// recipe the launcher cannot read here — a repository-sourced one, which
+// carries only its name, or a bare agent.recipe name — keeps recipesSince,
+// the same way an older runner refuses its unknown keys at the run.
+func recipeSinceFor(spec *task.Spec) string {
+	r := embeddedRecipeOf(spec)
+	switch {
+	case r == nil:
+		return recipesSince
+	case recipe.UsesDigest(r):
+		// The digest step is 0.13.0's, newer than every other construct
+		// here, so it is the binding gate; no mode: artifact construct can
+		// come with it, since the step is only legal in mode: implement.
+		return digestSince
+	case recipe.UsesV08(r):
 		// UsesV08 implies UsesV07 (a 0.8.0 construct always comes with a
 		// 0.7.0 one: mode is one), and artifactsSince is the newer of the
 		// two, so it is the binding gate.
-		since = artifactsSince
-	} else if r := embeddedRecipeOf(spec); r != nil && recipe.UsesV07(r) {
-		since = recipesV07Since
+		return artifactsSince
+	case recipe.UsesV07(r):
+		return recipesV07Since
 	}
-	return checkImageSince(ctx, env, slug, spec, kind, since, subject, "recipes", alt, warn)
+	return recipesSince
 }
 
 // checkImageSince refuses a launch whose job image runs a fugaro older than
@@ -740,8 +778,8 @@ func checkCloneImageSince(lc *localcfg.Config, spec *task.Spec, since, subject, 
 }
 
 // checkCloneRecipeImage is checkRecipeImage for a checkout: clone workflow
-// (recipesSince, or recipesV07Since for an embedded recipe that uses a 0.7.0
-// construct): see checkCloneImageSince.
+// (recipesSince, or the newer constant the embedded recipe's constructs
+// need): see checkCloneImageSince.
 func checkCloneRecipeImage(lc *localcfg.Config, spec *task.Spec, warn io.Writer) error {
 	subject, alt := "fugaro.yaml's agent.recipe", ""
 	if spec.Recipe != nil {
@@ -750,16 +788,7 @@ func checkCloneRecipeImage(lc *localcfg.Config, spec *task.Spec, warn io.Writer)
 			alt = "; or launch with --recipe default to run today's loop"
 		}
 	}
-	since := recipesSince
-	if r := embeddedRecipeOf(spec); r != nil && recipe.UsesV08(r) {
-		// UsesV08 implies UsesV07 (a 0.8.0 construct always comes with a
-		// 0.7.0 one: mode is one), and artifactsSince is the newer of the
-		// two, so it is the binding gate.
-		since = artifactsSince
-	} else if r := embeddedRecipeOf(spec); r != nil && recipe.UsesV07(r) {
-		since = recipesV07Since
-	}
-	return checkCloneImageSince(lc, spec, since, subject, "recipes", alt, warn)
+	return checkCloneImageSince(lc, spec, recipeSinceFor(spec), subject, "recipes", alt, warn)
 }
 
 // refuseClonesNotShipped refuses, before any cloud effect, deploying or

@@ -27,6 +27,7 @@
         { "type": "array", "prefixItems": [{ "$ref": "#/$defs/firstLine" }, { "$ref": "#/$defs/reviewBounce" }], "items": false, "minItems": 2 },
         { "type": "array", "prefixItems": [{ "$ref": "#/$defs/check" }, { "$ref": "#/$defs/reviewNoBounce" }], "items": false, "minItems": 2 },
         { "type": "array", "prefixItems": [{ "$ref": "#/$defs/check" }, { "$ref": "#/$defs/firstLine" }, { "$ref": "#/$defs/reviewBounce" }], "items": false, "minItems": 3 },
+        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/digest" }, { "$ref": "#/$defs/reviewNoBounce" }], "items": false, "minItems": 2 },
         { "$ref": "#/$defs/artifactSteps" }
       ]
     },
@@ -94,6 +95,11 @@
     "render": {
       "type": "object", "additionalProperties": false, "required": ["render"],
       "properties": { "render": { "type": ["object", "null"], "additionalProperties": false } }
+    },
+    "digest": {
+      "type": "object", "additionalProperties": false, "required": ["digest"],
+      "properties": { "digest": { "type": ["object", "null"], "additionalProperties": false } },
+      "description": "The report run's deterministic first step (recipe.StepDigest): it takes no options, and recipe.Parse refuses it anywhere but first in a mode: implement recipe, at most once, and followed by exactly one review step."
     },
     "firstLine": {
       "type": "object", "additionalProperties": false, "required": ["first_line"],

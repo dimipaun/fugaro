@@ -530,6 +530,34 @@ func TestBudgetPreviewTypicalCountsMatchTheBound(t *testing.T) {
 	}
 }
 
+// TestBudgetPreviewDigestCountsNoImplementStage: run-digest's first step is
+// the runner's own work, which writes the run reports with no model call, so
+// the typical run the preview prices has no implement stage to average --
+// counting one would quote a stage the run never starts, on the coder's
+// model, at the recipe's own bound. The catalog-wide pin above keeps this
+// and recipe.StageBound moving together; this test names the shape.
+func TestBudgetPreviewDigestCountsNoImplementStage(t *testing.T) {
+	text, ok := recipe.CatalogText("run-digest")
+	if !ok {
+		t.Fatal("no catalog recipe run-digest")
+	}
+	rp, problems := recipe.Parse(text)
+	if len(problems) > 0 {
+		t.Fatalf("run-digest: %s", recipe.ProblemsText(problems))
+	}
+	counts := previewTypicalCounts(rp, 3, 10)
+	if n := counts["implement"]; n != 0 {
+		t.Errorf("implement stages = %d, want none", n)
+	}
+	sum := 0
+	for _, c := range counts {
+		sum += c
+	}
+	if sum != 2 { // the senior review and its fix
+		t.Errorf("typical stages = %d, want 2: %+v", sum, counts)
+	}
+}
+
 // TestBudgetPreviewTypicalCountsHonourTheRoundKnobs: the typical run is one
 // round of each loop, but a knob at 0 leaves a loop out of the run
 // altogether, so its stages leave the count too rather than being counted at

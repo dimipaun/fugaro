@@ -247,3 +247,40 @@ func TestRigorRecordBoundedRefusesABlockItCannotRead(t *testing.T) {
 		}
 	}
 }
+
+// TestRigorRecordLineIsTheOneLineBothReadersPrint: `fugaro diagnose` and the
+// run's report show the same block, so the words are stated once — here —
+// rather than in each reader: a second wording would let the pull request and
+// the diagnosis disagree about the mode a run resolved. It is one line
+// whatever the block holds, because the block is job-writable and an area's
+// name or a revision carrying a newline would otherwise forge a line of its
+// own under the reader's.
+func TestRigorRecordLineIsTheOneLineBothReadersPrint(t *testing.T) {
+	if got := (*RigorRecord)(nil).Line(); got != "" {
+		t.Errorf("a nil block printed %q; an absent answer is not a line", got)
+	}
+	rg := &RigorRecord{Mode: rigor.Critical, From: rigor.FromArea,
+		Areas: []RigorArea{
+			{Name: "payments", Mode: rigor.Critical, At: RigorAtBootstrap},
+			{Name: "docs", Mode: rigor.Critical, At: RigorAtRound},
+		}, At: RigorAtFinalize, Revision: "origin/main"}
+	want := "critical, from area (payments at bootstrap, docs at round), at finalize, read from origin/main"
+	if got := rg.Line(); got != want {
+		t.Errorf("Line() = %q, want %q", got, want)
+	}
+	// A revision the record could not name is left out rather than printed
+	// empty, and a block with no areas carries no parentheses.
+	bare := &RigorRecord{Mode: rigor.POC, From: rigor.FromProject, At: RigorAtBootstrap}
+	if got := bare.Line(); got != "poc, from project, at bootstrap" {
+		t.Errorf("Line() = %q, want the block without a revision", got)
+	}
+	// One line whatever the block holds.
+	forged := rg.Clone()
+	forged.Areas[0].Name = "payments\nRigor:    pocs"
+	forged.Revision = "origin/main\nand more"
+	if got := forged.Line(); strings.Contains(got, "\n") {
+		t.Errorf("Line() = %q; a value in the block forged a line", got)
+	} else if !strings.Contains(got, "payments Rigor: pocs") {
+		t.Errorf("Line() = %q; want the area's name flattened into the line", got)
+	}
+}

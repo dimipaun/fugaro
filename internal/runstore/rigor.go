@@ -2,6 +2,7 @@ package runstore
 
 import (
 	"slices"
+	"strings"
 
 	"github.com/dimipaun/fugaro/internal/rigor"
 )
@@ -70,6 +71,38 @@ type RigorRecord struct {
 	// (D25: the base branch, for every run kind), "origin/main" and the like.
 	// Absent when the run could not name it.
 	Revision string `json:"revision,omitempty"`
+}
+
+// Line is the block as one line of text: the mode, the layer that decided it,
+// every area rule that matched with the moment it was applied at (D23, D24),
+// the moment of the block and the revision the mode's configuration was read
+// from (D25).
+//
+// It is here rather than in a reader because two of them print it — `fugaro
+// diagnose`'s Rigor line and the run's report — and a second copy would be a
+// second wording for one fact. It is one line whatever the block holds: the
+// block is job-writable, so an area's name or a revision carrying a newline
+// would otherwise forge a line of its own under the reader's.
+//
+// The caller still owns the medium: a terminal reader runs the result through
+// its own sanitiser, and a Markdown one puts its label in front.
+func (r *RigorRecord) Line() string {
+	if r == nil {
+		return ""
+	}
+	line := string(r.Mode) + ", from " + string(r.From)
+	if len(r.Areas) > 0 {
+		parts := make([]string, 0, len(r.Areas))
+		for _, a := range r.Areas {
+			parts = append(parts, a.Name+" at "+a.At)
+		}
+		line += " (" + strings.Join(parts, ", ") + ")"
+	}
+	line += ", at " + r.At
+	if r.Revision != "" {
+		line += ", read from " + r.Revision
+	}
+	return strings.Join(strings.Fields(line), " ")
 }
 
 // RigorArea is one matched rule as the record carries it: the rule's name, the

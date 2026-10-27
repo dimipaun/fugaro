@@ -64,7 +64,7 @@ import type { Sanitized } from '../../shared/sanitize'
 import type { PlanNodeView, PlanStatusView, RunView } from '../../shared/schema'
 import type { ElementLike } from '../app'
 import { LayoutClient } from '../graph/layout-client'
-import type { Positions, RouteSection, WorkerLike } from '../graph/layout-client'
+import type { LayoutGraph, LayoutRequest, Positions, RouteSection, WorkerLike } from '../graph/layout-client'
 import { WORKER_URL } from '../graph/layout-client'
 import { GraphLayout, edgeKey, nodeKey } from '../graph/layout'
 import { buildGraphModel } from '../graph/model'
@@ -265,6 +265,19 @@ export const GRAPH_PAD = 18
  * layout engine places the tasks and nothing else, so the box is grown upward
  * for its head rather than drawn over the first row of cards. */
 export const GRAPH_RELEASE_HEAD = 30
+
+/** GRAPH_LAYER_GAP is the room this screen asks the layout engine to leave
+ * between two rows of tasks: the head room a box draws above its tasks
+ * (GRAPH_RELEASE_HEAD) and the padding a box keeps around them (GRAPH_PAD
+ * twice). The engine's own room is 20 px, which is less than one heading needs:
+ * a box grown upward for its heading then reaches into the row above, whose
+ * cards are drawn after every box and paint over it. */
+export const GRAPH_LAYER_GAP = GRAPH_PAD * 2 + GRAPH_RELEASE_HEAD
+
+/** GRAPH_LAYER_OPTION is the ELK setting GRAPH_LAYER_GAP is passed as. It is
+ * named here rather than written inline because it is a string ELK parses, so
+ * the layout test reads the same spelling the screen sends. */
+export const GRAPH_LAYER_OPTION = 'elk.layered.spacing.nodeNodeBetweenLayers'
 
 /** GRAPH_TITLE_SLOT, GRAPH_PR_SLOT, GRAPH_RUN_SLOT and GRAPH_MARK_SLOT are the
  * x offsets of the cells along a card of `GRAPH_NODE_WIDTH`, and
@@ -1541,6 +1554,29 @@ export class GraphScreen {
 }
 
 /**
+ * GraphLayoutClient is the layout client this screen asks for a drawing: the
+ * plain client, with one option added to every request.
+ *
+ * The engine's own room between two rows of tasks is 20 px
+ * (`elk.layered.spacing.nodeNodeBetweenLayers`' default), which is less than a
+ * release box draws above its topmost task: `boxOf` grows the box upward by
+ * GRAPH_PAD + GRAPH_RELEASE_HEAD, and `drawPlan` appends every box before every
+ * card, so with the default room the heading is painted into the row above and
+ * that row's cards -- drawn later -- cover it. Asking for GRAPH_LAYER_GAP is
+ * what keeps the heading in the gap, so it is the request that carries the fix
+ * rather than the drawing code: a shorter head would leave the heading under
+ * the cards at the same 20 px.
+ */
+export class GraphLayoutClient extends LayoutClient {
+  override layout(graph: LayoutGraph, request: LayoutRequest = {}): Promise<Positions> {
+    return super.layout(graph, {
+      ...request,
+      layoutOptions: { ...request.layoutOptions, [GRAPH_LAYER_OPTION]: String(GRAPH_LAYER_GAP) },
+    })
+  }
+}
+
+/**
  * graphLayoutClient is the screen's worker, and the only place this console
  * starts one (GV2.2): a classic worker from the served file, same-origin under
  * the unchanged `script-src 'self'`.
@@ -1551,7 +1587,7 @@ export class GraphScreen {
  * this file could not close.
  */
 export function graphLayoutClient(): LayoutClient {
-  return new LayoutClient(() => new Worker(WORKER_URL) as unknown as WorkerLike)
+  return new GraphLayoutClient(() => new Worker(WORKER_URL) as unknown as WorkerLike)
 }
 
 /** graphScreen is the screen the entry mounts: the real cache over the real

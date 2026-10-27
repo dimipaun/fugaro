@@ -113,6 +113,12 @@ func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 		}
 		fmt.Fprintf(&b, "**Reviews:** %s\n\n", strings.Join(parts, "; "))
 	}
+	// The mode and the findings it let through, right under the reviews whose
+	// rounds it decided: the line says what the run was held to, and the table
+	// says what that left unfixed (docs/rigor-modes/implementation-plan.md
+	// T4.2, D9, F19).
+	b.WriteString(rigorLine(rec.Rigor))
+	b.WriteString(toleratedSection(rec))
 	b.WriteString(testsLine(rec, filedFrom))
 	if rec.Cost != nil {
 		b.WriteString(CostLine(*rec.Cost) + "\n\n")
@@ -215,6 +221,83 @@ func shortSum(sum string) string {
 // secsText is a recorded duration in seconds for a report line.
 func secsText(s float64) string {
 	return time.Duration(s * float64(time.Second)).Round(time.Second).String()
+}
+
+// rigorLine is the mode the run resolved as the report prints it: the block's
+// own words (runstore.RigorRecord.Line, which `fugaro diagnose` prints too)
+// under the report's label, so the pull request and the diagnosis cannot say
+// different things about one fact.
+//
+// "" for a record carrying no block, which is every run that resolved no mode
+// and every record written before the field existed: an absent answer is not
+// the built-in default, and a line claiming one would name a mode nobody
+// resolved (D18's one-value rule).
+func rigorLine(rg *runstore.RigorRecord) string {
+	if rg == nil {
+		return ""
+	}
+	return "**Rigor:** " + rg.Line() + "\n\n"
+}
+
+// toleratedSection is the report's list of the findings the run's resolved
+// mode let through (T4.2, D9, F19): the block `fugaro diagnose --json` prints
+// back from the record under `tolerated`, one row per finding — the score the
+// mode's table read, the word a person reads for it, the mode that tolerated it
+// and the reviewer's own words for the finding — so the pull request says what
+// was left unfixed and not only how many findings the round had.
+//
+// "" for a record carrying no block, which is every run that tolerated
+// nothing: an absent block is a different fact from a block that lists none,
+// and a section over an empty list would claim a decision no mode made.
+//
+// "" too for a round the mode blocked. The record keeps the tolerated half of
+// every round the split scored, a mixed round's included, while the body names
+// what was tolerated only where the round was let through whole (prflow.go
+// toleratedPart): a table over that half would claim a decision Decide never
+// made, and it is the round's own count printed above it that a reader goes by.
+func toleratedSection(rec *runstore.Record) string {
+	tf := rec.Tolerated
+	if tf == nil || len(tf.Findings) == 0 {
+		return ""
+	}
+	// The split is a partition of the round (rigor.Split), so the findings the
+	// record counts as tolerated are all of them — the only count a round the
+	// mode let through whole can leave — and fewer of them is a round Decide
+	// blocked on the rest. The comparison is against the record's own total
+	// rather than the rows, which the cap can shorten.
+	last := seniorReview(rec.Reviews)
+	if last == nil || tf.Total != last.Findings {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("#### Tolerated\n\n")
+	b.WriteString("| Label | Likelihood | Impact | Fix cost | Class | Mode | Finding |\n|---|---|---|---|---|---|---|\n")
+	for _, f := range tf.Findings {
+		fmt.Fprintf(&b, "| %s | %d | %d | %d | %s | %s | %s |\n",
+			tableText(string(f.Label)), f.Likelihood, f.Impact, f.FixCost,
+			tableText(string(f.Class)), tableText(string(f.Mode)), toleratedCell(f.Title))
+	}
+	if tf.Total > len(tf.Findings) {
+		// The table is not the whole answer, and it says so rather than
+		// passing its last row off as the last finding the mode tolerated.
+		// The gap is not always the record's cap (runstore.MaxTolerated):
+		// NewTolerated also drops an entry it cannot read, so the rows are
+		// "some of" the total and never "the first" of it.
+		fmt.Fprintf(&b, "\n%s tolerated in all; the record lists %d of them.\n", Plural(tf.Total, "finding"), len(tf.Findings))
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// toleratedCell renders a reviewer's title into the one table cell it can
+// break. The title is the reviewer's own text: a newline in it would end the
+// row, and the line after it would be read as Markdown of its own — a title
+// opening "# " becomes a heading — so its whitespace is flattened first. What
+// is left is a value the render's own text chose, like an artifact's name, so
+// it goes through tableCode: the pipe that would slide the columns is escaped
+// and the fence is longer than any backtick run in it.
+func toleratedCell(title string) string {
+	return tableCode(strings.Join(strings.Fields(title), " "))
 }
 
 // testsLine is the report's account of the suite on the final commit. A run
