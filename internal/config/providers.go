@@ -569,7 +569,9 @@ const GitHubAppKeySecret = "github-app-key"
 //
 // The Bitbucket token is deliberately absent: D145 leaves it alone, because a
 // Bitbucket credential is a repository access token, issued for one repository
-// and usable for no other, which no service can mint per job (F7).
+// and usable for no other -- and the one workspace or project access token an
+// operator may store project-wide reaches many, so neither shape can be minted
+// per job (F7, D461).
 var ServiceHeldSecretNames = []string{}
 
 // IsServiceHeldSecretEnv reports whether a job mounting the logical secret
