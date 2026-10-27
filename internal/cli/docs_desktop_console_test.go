@@ -8537,15 +8537,32 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 	}
 	// The row's first token is the form it refuses: a row that still LEADS with a
 	// bare `run` is the old row, and it reads as a permission for the one argv
-	// rule 11 writes. A `run` inside the row's prose (the moved row names the
-	// argv it excludes) is not what this checks.
+	// rule 11 writes. A bare `run` ANYWHERE ELSE in the table is the same defect
+	// one row down — the entry lived in the "every writer" row's list before
+	// rule 11 moved it, so deleting the moved row and putting the bare `run`
+	// back beside `cancel` and `sync` is the mutation, not only restoring the
+	// row this design replaced. The one row allowed to hold a bare `run` token
+	// is the moved row itself, which names the argv it excludes.
 	sawRetry := false
 	for _, cells := range neverRows {
-		switch tok := firstBacktick(cells[0]); tok {
+		leads := firstBacktick(cells[0])
+		switch leads {
 		case "run --retry":
 			sawRetry = true
 		case "run":
 			t.Errorf("%s's never table still leads a row with a bare `run`: rule 11 moved that row to `run --retry` and every other `run` argv", path)
+		}
+		if leads == "run --retry" {
+			continue
+		}
+		// The whole row and not a token walk: a row that lists an escaped "|"
+		// (the secret commands' row does) splits into several cells, and the
+		// backticks pair across that split rather than inside a cell, so a bare
+		// `run` appended after the escape is found by the literal spelling and
+		// missed by anything that has to pair delimiters. `run --retry` and
+		// `runs ls` both keep a character after `run`, so neither matches.
+		if strings.Contains(strings.Join(cells, "|"), "`run`") {
+			t.Errorf("%s's never table lists a bare `run` in the row that leads with %q: the bare entry belongs to no row but rule 11's, which spells the argv it excludes", path, leads)
 		}
 	}
 	if !sawRetry {
