@@ -1403,9 +1403,11 @@ the stored view carries no time by design (internal/coordinator/sweep.go).
 The launcher of a run is printed as what it is — the string the run's own launch
 record wrote about itself — and never as an identity.
 
-This command reads and writes nothing of its own: no store of the coordinator's
-own, no service, no model credential. It is the read the CLI already performs,
-the runs bucket and a pull request read that can only read.
+This command writes nothing of its own: no service, no model credential, and no
+store it maintains. Without --from-store it reads nothing of the coordinator's
+either — it is the read the CLI already performs, the runs bucket and a pull
+request read that can only read — while --from-store reads the view the sweep
+stored and nothing else.
 
 Usage: `fugaro coordinator status`
 

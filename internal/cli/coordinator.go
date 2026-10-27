@@ -615,9 +615,11 @@ func newCoordinatorStatusCmd() *cobra.Command {
 			"the stored view carries no time by design (internal/coordinator/sweep.go).\n\n" +
 			"The launcher of a run is printed as what it is — the string the run's own launch\n" +
 			"record wrote about itself — and never as an identity.\n\n" +
-			"This command reads and writes nothing of its own: no store of the coordinator's\n" +
-			"own, no service, no model credential. It is the read the CLI already performs,\n" +
-			"the runs bucket and a pull request read that can only read.",
+			"This command writes nothing of its own: no service, no model credential, and no\n" +
+			"store it maintains. Without --from-store it reads nothing of the coordinator's\n" +
+			"either — it is the read the CLI already performs, the runs bucket and a pull\n" +
+			"request read that can only read — while --from-store reads the view the sweep\n" +
+			"stored and nothing else.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if o.fromStore {
