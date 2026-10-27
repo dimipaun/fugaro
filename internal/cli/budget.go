@@ -531,11 +531,6 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 		sp := repoSpend[k]
 		rs.CountedUSD, rs.SpentUSD, rs.NotionalUSD = sp.Counted.USD(), sp.Spent.USD(), sp.Notional.USD()
 		rs.HeadroomUSD = headroom(roomUnder(rc.RepoDaily, sp.Counted), roomUnder(caps.GlobalDaily, global.Counted))
-		if cap, ok := rc.RepoDaily(); ok {
-			if n := budget.DailyWarnNote(repoScope(rs), sp.Counted, cap); n != "" {
-				doc.Warnings = append(doc.Warnings, n)
-			}
-		}
 		if kv, ok := cfg.Kill.Repos[k]; ok {
 			rs.Kill = killView(&kv)
 		}
@@ -550,6 +545,14 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 			r.Stale = e.UpdatedAt > 0 && now.Sub(time.UnixMilli(e.UpdatedAt)) > staleAfter
 			rs.Running = append(rs.Running, r)
 			doc.Running = append(doc.Running, r)
+		}
+		// After the agents loop: a repository the config does not name takes
+		// its name from the registry, and the warning must call it what
+		// printShow's heading does.
+		if cap, ok := rc.RepoDaily(); ok {
+			if n := budget.DailyWarnNote(repoScope(rs), sp.Counted, cap); n != "" {
+				doc.Warnings = append(doc.Warnings, n)
+			}
 		}
 		doc.Repos = append(doc.Repos, rs)
 		listed++

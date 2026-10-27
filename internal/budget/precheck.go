@@ -146,8 +146,9 @@ func Precheck(ctx context.Context, r Reader, in PrecheckInput) (PrecheckResult, 
 		res.Notes = append(res.Notes, "the project is in observe mode; under enforce this launch would be refused: "+d.Advisory.Detail)
 	}
 	if !res.Refused && in.Capped {
-		// The 80% warnings come last: they are advice beside a refusal or the
-		// mode note, never instead of one, and a refused launch is what speaks.
+		// Only a launch that happens warns: once the cap refuses, the refusal
+		// is what speaks, and a warning beside it would advise on a launch
+		// that is not starting.
 		res.Notes = append(res.Notes, dailyWarnNotes(caps, st)...)
 	}
 	return res, nil

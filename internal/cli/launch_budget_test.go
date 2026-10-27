@@ -648,9 +648,14 @@ func TestPrecheckLowHeadroomRefuses(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
 	// $0.10 left of the repository's $50 day.
 	f.db.Set(budget.PathSpendRepo(today(), appSlug), map[string]any{"counted": 49_900_000})
-	_, _, err := runBudget(t)
+	_, errOut, err := runBudget(t)
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "repo_daily_cap") {
 		t.Fatalf("err = %v", err)
+	}
+	// That counter is past 80% of the same cap, and the refusal is what
+	// speaks: nothing warns beside a launch that is not starting.
+	if strings.Contains(errOut, "past 80% warns") {
+		t.Fatalf("a refused launch carried the 80%% warning: %q", errOut)
 	}
 	// Exactly the minimum left passes.
 	f.db.Set(budget.PathSpendRepo(today(), appSlug), map[string]any{"counted": 49_750_000})
@@ -729,9 +734,13 @@ func TestRunAttemptsBudgetNoBudgetCheckWarnsOnce(t *testing.T) {
 func TestPrecheckGlobalHeadroom(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
 	f.db.Set(budget.PathSpendGlobal(today()), map[string]any{"counted": 99_900_000})
-	_, _, err := runBudget(t)
+	_, errOut, err := runBudget(t)
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "global_daily_cap") {
 		t.Fatalf("err = %v", err)
+	}
+	// Past 80% of the project's cap, but the refusal is what speaks.
+	if strings.Contains(errOut, "past 80% warns") {
+		t.Fatalf("a refused launch carried the 80%% warning: %q", errOut)
 	}
 }
 
