@@ -208,13 +208,13 @@ export function graphOf(model: GraphModel): LayoutGraph {
  * plan called `ab` with a task called `c` would otherwise be the plan `a` with
  * the task `bc` -- and an id may hold any character, so nothing else in the key
  * is relied on to separate. */
-function nodeKey(plan: string, node: string): string {
+export function nodeKey(plan: string, node: string): string {
   return `${String(plan.length)}:${plan}:${node}`
 }
 
 /** edgeKey is an edge's layout id, qualified the same way and for the same
  * reason: two plans of one checkout may hold the same pair of task ids, and the
  * engine's ids must be unique across the graph it is given. */
-function edgeKey(plan: string, from: string, to: string): string {
+export function edgeKey(plan: string, from: string, to: string): string {
   return `${String(plan.length)}:${plan}:${String(from.length)}:${from}:${to}`
 }
