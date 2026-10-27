@@ -668,3 +668,19 @@ func TestParseSharedAcceptsDigestPinnedBaseImages(t *testing.T) {
 		}
 	}
 }
+
+// TestParseSharedRefusesAProjectBaseBranch: the installation config's
+// top-level base_branch is the project's default base branch, and it is the
+// owner's — published to the policy node by `fugaro project policy publish`,
+// which only the owner writes and the runner fails closed on. The shared
+// config is a different object: any launcher with write access to the runs
+// bucket can rewrite it, so a base branch there would let that launcher move
+// every repository of the project at once. The refusal names the key, as the
+// per-repo one does.
+func TestParseSharedRefusesAProjectBaseBranch(t *testing.T) {
+	data := strings.Replace(validShared(), "repos:", "base_branch: attacker\nrepos:", 1)
+	_, err := ParseShared([]byte(data), sharedAnchor)
+	if err == nil || !strings.Contains(err.Error(), "base_branch") {
+		t.Fatalf("a project base_branch was accepted: %v", err)
+	}
+}

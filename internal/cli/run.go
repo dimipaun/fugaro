@@ -250,7 +250,7 @@ func newRunCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.StringVar(&o.repo, "repo", "", "repository as owner/name (default: this checkout's origin)")
-	f.StringVar(&o.ref, "ref", "", "base branch or ref the run is cut from (default: the branch this checkout is on, when origin has it and it is not the base branch; else the repo's base_branch)")
+	f.StringVar(&o.ref, "ref", "", "base branch or ref the run is cut from (default: the branch this checkout is on, when origin has it and it is not the base branch; else the base branch (fugaro.yaml git.base_branch, then the local config's, then the project's base_branch, then main))")
 	f.StringVar(&o.workflow, "workflow", "", "workflow to run (default: the repo's only workflow)")
 	f.StringVar(&o.runID, "run-id", "", "run ID to use; repeating one reports its launch instead of starting another")
 	f.StringVar(&o.batch, "batch", "", "batch label, to group runs in fugaro runs ls")
@@ -578,17 +578,31 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		// nothing in the bucket under a run id that never gets a task. A
 		// launch with no --attach does nothing here at all.
 		agentRecipe, kind, clone := "", "", false
+		// mode is the same answer for baseBranchSkew, and nil where clone is
+		// false for the other gates because nothing was read: a launch for
+		// another repository from a checkout that is not its own reads no
+		// workflow of it, and baseBranchSkew asks both judges there rather
+		// than take the one a derived workflow would use (its comment has why).
+		var mode *bool
 		if co := checkoutConfig(ctx, spec.Repo); co != nil {
 			agentRecipe = co.Agent.Recipe
 			if w, ok := co.Workflows[spec.Workflow]; ok {
 				kind = w.BaseKind()
 				clone = w.Checkout == config.CheckoutClone
+				m := clone
+				mode = &m
 			}
 		}
 		caps, err := attachLaunch(ctx, env, slug, spec, s.Prefix(), o.attach, kind, clone, warn)
 		if err != nil {
 			return launchResult{}, err
 		}
+		// The base branch's own gate, before anything is written: a runner
+		// older than baseBranchSince cannot read the field and would refuse
+		// the whole task, so the field is dropped rather than the launch
+		// (baseBranchSkew). Here, and not with the gates below, because it
+		// decides what the task createTask writes.
+		baseBranchSkew(ctx, env, slug, spec, mode, warn)
 		// checkRecipeImage and checkImageSince judge a workflow's derived
 		// image by its build record, which a checkout: clone workflow never
 		// has (it runs the installation's base image directly, not a
@@ -981,7 +995,13 @@ func noteRigorRequest(ctx context.Context, o *runOptions, repo string, warn io.W
 // recipe from its first (design generic-tool review, 2026-10-13).
 type attemptPlan struct {
 	repo, slug, workflow, ref, me, account, totalOverride string
-	recipe                                                *task.Recipe
+	// base is the task's base_branch field, the branch the runner resolves the
+	// configuration and the pull request's base from: the layers the launcher
+	// read when one of them (and not the checkout's own file) named it, and ""
+	// otherwise, so the spec stays byte-identical to the previous release's for
+	// a launch that changes nothing (specBaseBranch).
+	base   string
+	recipe *task.Recipe
 	// mode is the resolved recipe's mode when the runner cannot read it
 	// from the task alone (mode: artifact today): buildAttemptSpec writes it
 	// into the spec, and it is empty for implement and review, so those
@@ -1023,11 +1043,18 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 		}
 		totalOverride = total.String()
 	}
-	ref := o.ref
+	// The base branch is resolved before the ref. An explicit ref is the
+	// branch the run is cut from, not its base, and the file that decides a
+	// base under one is the file at that ref — which only the runner reads,
+	// and it is read first there (ResolveConfig takes the task's base only
+	// where the file writes none). So a --ref launch carries the two layers
+	// below the file, and a launch without one carries all four.
+	ref, base := o.ref, ""
 	if ref == "" {
-		if ref, err = newRunRef(ctx, env, repo, checkout, warn); err != nil {
-			return nil, err
-		}
+		b, source := launchBaseBranch(ctx, env, repo)
+		base, ref = resolvedBaseBranch(b, source), newRunRef(ctx, repo, b, warn)
+	} else {
+		base = specBaseBranch(env.layersBaseBranch(ctx, repo))
 	}
 	me, err := env.lc.Me(ctx)
 	if err != nil {
@@ -1046,7 +1073,7 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	if err != nil {
 		return nil, err
 	}
-	return &attemptPlan{repo: repo, slug: slug, workflow: workflow, ref: ref, me: me, account: account, totalOverride: totalOverride, recipe: rcp, mode: mode}, nil
+	return &attemptPlan{repo: repo, slug: slug, workflow: workflow, ref: ref, base: base, me: me, account: account, totalOverride: totalOverride, recipe: rcp, mode: mode}, nil
 }
 
 // buildAttemptSpec stamps a fresh run id (or o.runID, when given) onto plan,
@@ -1060,7 +1087,7 @@ func buildAttemptSpec(plan *attemptPlan, o *runOptions, text string) (string, *t
 			return "", nil, err
 		}
 	}
-	spec := &task.Spec{Version: 1, RunID: runID, Repo: plan.repo, Ref: plan.ref, Workflow: plan.workflow, Task: text, Title: o.title,
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: plan.repo, Ref: plan.ref, BaseBranch: plan.base, Workflow: plan.workflow, Task: text, Title: o.title,
 		PlanTask: o.planTask, RequestedBy: plan.me, Batch: o.batch, Recipe: plan.recipe, Mode: plan.mode,
 		Rigor: rigor.Mode(o.rigor), Paths: o.paths}
 	if plan.totalOverride != "" {
@@ -1281,15 +1308,17 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 			}
 		}
 	}
-	ref := o.ref
+	// The layers, and the field, as a first run's (resolveAttemptPlan) with
+	// one case short: a review run reads its own configuration from the branch
+	// it is cut from — the runner's readBaseConfig refuses a file whose base
+	// is not that branch — so an explicit --ref writes no field. There, the
+	// field would name a branch other than the ref, and the run would be
+	// refused rather than held to it; the file at that ref is the judge, as it
+	// is for a first run.
+	ref, base := o.ref, ""
 	if ref == "" {
-		if r, ok := env.localRepo(repo); ok && r.BaseBranch != "" {
-			ref = r.BaseBranch
-		} else if c := checkout(); c != nil && c.Git.BaseBranch != "" {
-			ref = c.Git.BaseBranch
-		} else {
-			return "", nil, userErr("cannot tell the base branch of %s; pass --ref", repo)
-		}
+		b, source := launchBaseBranch(ctx, env, repo)
+		base, ref = resolvedBaseBranch(b, source), b
 	}
 	me, err := env.lc.Me(ctx)
 	if err != nil {
@@ -1306,7 +1335,7 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 		return "", nil, err
 	}
 	printRecipeNote(warn, rr, true)
-	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: ref, Workflow: workflow, Task: text, Title: o.title, PlanTask: o.planTask,
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: ref, BaseBranch: base, Workflow: workflow, Task: text, Title: o.title, PlanTask: o.planTask,
 		RequestedBy: me, Batch: o.batch, Recipe: rr.taskRecipe(), ReviewPRs: append([]int(nil), o.pr...),
 		Rigor: rigor.Mode(o.rigor), Paths: o.paths}
 	if total > 0 {
@@ -1434,7 +1463,11 @@ func agentAtRef(ctx context.Context, env *cloudEnv, repo, ref string) (config.Ag
 	fl, cached := cachedProjectLayer(ctx, root, env.lc)
 	if cached && fl.Layer != nil {
 		pl := &task.ProjectLayer{SHA256: fl.Layer.SHA256, Generation: fl.Generation, YAML: string(fl.Layer.Raw)}
-		if res := runner.ResolveConfig(data, pl, env.lc.Name); res.LayerErr == nil && len(res.Problems) == 0 {
+		// No base branch: the task is not built yet at this point (this is the
+		// read the launch resolves its account from), and only agent.auth is
+		// read out of the resolution — a base changes git.base_branch and
+		// nothing else.
+		if res := runner.ResolveConfig(data, pl, env.lc.Name, ""); res.LayerErr == nil && len(res.Problems) == 0 {
 			auth = res.Cfg.Agent.Auth
 		}
 	}
@@ -1475,7 +1508,7 @@ func cascadeRefConfig(ctx context.Context, env *cloudEnv, spec *task.Spec) *conf
 	if err != nil {
 		return nil
 	}
-	out := runner.ResolveConfig(data, spec.ProjectLayer, env.lc.Name)
+	out := runner.ResolveConfig(data, spec.ProjectLayer, env.lc.Name, spec.BaseBranch)
 	if out.LayerErr != nil || len(out.Problems) > 0 {
 		return nil
 	}

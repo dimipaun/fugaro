@@ -441,6 +441,18 @@ func compressionRequested(ctx context.Context, env *cloudEnv, spec *task.Spec) (
 // release the service ships in, so the constant cannot move without them.
 const cascadeSince = "0.10.0"
 
+// baseBranchSince is the first fugaro release whose runner reads a task's
+// base_branch (the project's default base branch a launch resolves): an older
+// runner refuses the whole task at bootstrap, since task.Parse decodes with
+// DisallowUnknownFields. Unlike every other *Since gate here the launch is
+// never refused over it — baseBranchSkew drops the field and says so — because
+// what the field carries is a default: the run it would have targeted the
+// project's base branch on runs on the installation's base instead, and a
+// launch that works today must keep working. It must equal the release that
+// ships the field; docs/release.md ("Before you tag") has the checklist
+// verify it.
+const baseBranchSince = "0.12.1"
+
 // rigorSince is the first fugaro release whose config reader knows
 // fugaro.yaml's rigor: block and the project layer's defaults.rigor
 // (docs/rigor-modes). Both files are decoded with KnownFields, so a runner
@@ -629,6 +641,85 @@ func releaseOf(ref string) (string, bool) {
 		return "", false
 	}
 	return m[2], true
+}
+
+// baseBranchSkew drops spec.BaseBranch when the job's image runs a fugaro
+// older than baseBranchSince, and says so on warn: such a runner refuses the
+// whole task at bootstrap (task.Parse decodes with DisallowUnknownFields), so
+// carrying the field would turn a launch that works today into a run that dies
+// after it was paid for. The launch is never refused — the project's base
+// branch is a default, and the run it is dropped for targets the installation's
+// base branch instead, which is what every launch did before this field — and
+// the field's own absence keeps a launch that resolved no project default (the
+// common case) byte-identical to the previous release's.
+//
+// The judge is the one the other gates use: a checkout: clone job runs the
+// installation's base image itself (checkCloneImageSince's judge, the ref
+// base_images.base names), and a derived image runs the binary of the base its
+// build record was built FROM (checkImageSince's). clone is that workflow's
+// checkout mode, nil when the launch could not read it — a launch for another
+// repository from a checkout that is not its own, where checkoutConfig answers
+// nil. Neither judge is then known to be the job's, so both are asked and
+// either one predating drops the field: a clone workflow has no build record
+// at all (it is never built, so the other judge would find nothing and keep a
+// field the image cannot read), while a derived one is refused by
+// checkImageSince before the task is written when its record is missing. An
+// image neither judge can show — a base with no release tag, a record without
+// a base_ref, a record that cannot be read — is left carrying the field: what
+// the image reads cannot be shown, and the alternative, dropping a project
+// default on a development image whose runner does read it, is a silent change
+// of the branch the run targets, which nothing in the run reports. The read's
+// own failure is dropped for the same reason: this gate's only power is to
+// omit a field, and a launch is not worth refusing over a database read that
+// the launch's other gates make anyway.
+func baseBranchSkew(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, clone *bool, warn io.Writer) {
+	b := spec.BaseBranch
+	if b == "" {
+		return
+	}
+	drop := func() {
+		spec.BaseBranch = ""
+		fmt.Fprintf(warn, "the job image predates %s and ignores the project's base branch %s; refresh it with fugaro image refresh\n", baseBranchSince, b)
+	}
+	predates := func(rel string, known bool) bool { return known && imagePredates(rel, baseBranchSince) }
+	if clone == nil {
+		rel, known := releaseOf(env.lc.BaseImage(config.BaseKind))
+		if predates(rel, known) {
+			drop()
+			return
+		}
+		if rel, known = recordBaseRelease(ctx, env, slug, spec); predates(rel, known) {
+			drop()
+		}
+		return
+	}
+	if *clone {
+		if rel, known := releaseOf(env.lc.BaseImage(config.BaseKind)); predates(rel, known) {
+			drop()
+		}
+		return
+	}
+	if rel, known := recordBaseRelease(ctx, env, slug, spec); predates(rel, known) {
+		drop()
+	}
+}
+
+// recordBaseRelease is the release of the base image the build record of slug
+// workflow names, and whether a record said so at all.
+func recordBaseRelease(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) (string, bool) {
+	b, err := env.recordBucket(ctx)
+	if err != nil {
+		return "", false
+	}
+	data, _, err := b.Read(ctx, imagecheck.RecordKey(slug, spec.Workflow))
+	if err != nil {
+		return "", false
+	}
+	rec, err := imagecheck.ParseRecord(data)
+	if err != nil || rec.BaseRef == "" {
+		return "", false
+	}
+	return releaseOf(rec.BaseRef)
 }
 
 // checkCloneImageSince is checkImageSince for a checkout: clone workflow:

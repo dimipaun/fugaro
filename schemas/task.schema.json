@@ -11,6 +11,18 @@
     "run_id": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
     "repo": { "type": "string", "pattern": "^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)+$" },
     "ref": { "type": "string", "minLength": 1 },
+    "base_branch": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._][A-Za-z0-9._/-]*$",
+      "allOf": [
+        { "not": { "pattern": "\\.\\." } },
+        { "not": { "pattern": "//" } },
+        { "not": { "pattern": "(^|/)\\." } },
+        { "not": { "pattern": "\\.lock(/|$)" } },
+        { "not": { "pattern": "[/.]$" } }
+      ],
+      "description": "The base the launcher resolved from the layers below the repository's own file (config.EffectiveBaseBranch: the local config's repos.<r>.base_branch, else the project's base_branch, which a machine whose own config sets none reads from the published policy node). The runner uses it only when the fugaro.yaml at the ref does not set git.base_branch itself, which is the first layer. Absent (omitempty) for a launch whose file names the base, and for one whose resolved value is main, which is the fallback the file's own resolution already has; the launcher's skew gate omits it against a job image older than 0.12.1 rather than refusing the launch. The rules here are config.ValidBranchName's, the one validator fugaro.yaml's git.base_branch, the installation config's own top-level base_branch and the policy node's are all held to: letters, digits, '.', '_', '-' and '/', not starting with '-', '.' or '/', with no '..', '//', component starting with '.', or trailing '/', '.' or '.lock'."
+    },
     "workflow": { "type": "string" },
     "task": { "type": "string" },
     "title": {

@@ -27,8 +27,11 @@ const SharedMaxBytes = 64 << 10
 // with objectAdmin on it can write), update_check (same reasoning: a
 // machine's choice to silence the nag is its own operator's, not something
 // a launcher writing the shared file should be able to flip for everyone),
-// and each repo's base_branch, which the checkout's reviewed fugaro.yaml
-// names. **credentials_service: is published too**, for the reason batch: and
+// and each repo's base_branch and the project's top-level base_branch, which
+// the checkout's reviewed fugaro.yaml names (the project's is published to the
+// policy node instead, by `fugaro project policy publish`: the node is written
+// only by the owner and the runner fails closed on it, while the shared file
+// is writable by any launcher). **credentials_service: is published too**, for the reason batch: and
 // mailbox: are: the installation's one Cloud Run service, and therefore the
 // URL `fugaro run` puts on a job's environment, is the installation's fact and
 // not one machine's — the machine that launches is often not the machine that
@@ -70,6 +73,7 @@ func (c *Config) Shared() *Config {
 	s.Profiles = nil
 	s.UpdateCheck = nil
 	s.Build.ServiceAccount = ""
+	s.BaseBranch = ""
 	s.Repos = withoutBaseBranches(c.Repos)
 	return &s
 }

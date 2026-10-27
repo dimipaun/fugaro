@@ -54,46 +54,45 @@ type cloudVerdict struct {
 // cache (decision L13), never the bucket itself, so an anchored checkout
 // with no cached layer leaves it unknown rather than reading one for real;
 // the project layer's own values, when cached, still apply normally.
-func resolveCloudRepo(ctx context.Context, root string, co cloudOptions) (cfg *config.Config, lc *localcfg.Config, lcPath, repo, host string, v *cloudVerdict) {
+func resolveCloudRepo(ctx context.Context, root string, co cloudOptions) (rf resolvedFile, lc *localcfg.Config, lcPath, repo, host string, v *cloudVerdict) {
 	co.stderr = func() io.Writer { return io.Discard } // the caller prints the per-checkout line
 	failed := func(repo string, err error) *cloudVerdict {
 		return &cloudVerdict{state: cloudFailed, repo: repo, reason: oneLine(err.Error())}
 	}
 	if releaseVersion() == "" {
-		return nil, nil, "", "", "", &cloudVerdict{state: cloudNotHere, reason: "a development build has no release base image to move to"}
+		return resolvedFile{}, nil, "", "", "", &cloudVerdict{state: cloudNotHere, reason: "a development build has no release base image to move to"}
 	}
 	if _, err := os.Stat(filepath.Join(root, "fugaro.yaml")); errors.Is(err, os.ErrNotExist) {
-		return nil, nil, "", "", "", &cloudVerdict{state: cloudNotHere, reason: "no fugaro.yaml yet, so no job image to refresh"}
+		return resolvedFile{}, nil, "", "", "", &cloudVerdict{state: cloudNotHere, reason: "no fugaro.yaml yet, so no job image to refresh"}
 	}
 	_, rf, err := loadCheckoutResolved(ctx, root, nil, layerOptions{Lenient: true, Offline: true})
 	if err != nil {
-		return nil, nil, "", "", "", failed("", err)
+		return resolvedFile{}, nil, "", "", "", failed("", err)
 	}
-	cfg = rf.Cfg
 	repo, err = checkoutRepo(ctx, root)
 	if err != nil {
-		return nil, nil, "", "", "", failed("", err)
+		return resolvedFile{}, nil, "", "", "", failed("", err)
 	}
 	lc, lcPath, _, err = loadRepoConfig(ctx, &initOptions{cloud: co}, root)
 	if err != nil {
 		var se *localcfg.SelectError
 		if checkoutNamesProject(ctx, root) && (errors.As(err, &se) || errors.Is(err, localcfg.ErrMissing)) {
-			return nil, nil, "", repo, "", &cloudVerdict{state: cloudNotHere, repo: repo, reason: "no local project config selects this checkout (" + oneLine(err.Error()) + "): the cloud step is for the operator who set the project up"}
+			return resolvedFile{}, nil, "", repo, "", &cloudVerdict{state: cloudNotHere, repo: repo, reason: "no local project config selects this checkout (" + oneLine(err.Error()) + "): the cloud step is for the operator who set the project up"}
 		}
-		return nil, nil, "", "", "", failed(repo, err)
+		return resolvedFile{}, nil, "", "", "", failed(repo, err)
 	}
 	oi, ok := readOrigin(ctx, root)
 	if !ok {
-		return nil, nil, "", "", "", failed(repo, errors.New("cannot read the checkout's origin"))
+		return resolvedFile{}, nil, "", "", "", failed(repo, errors.New("cannot read the checkout's origin"))
 	}
 	if !repoKnown(lc, oi) {
-		return nil, nil, "", repo, "", &cloudVerdict{state: cloudNotHere, repo: repo, reason: fmt.Sprintf("%s is not onboarded to project %s, so it has no job image yet", pluginwire.Printable(repo), lc.Name)}
+		return resolvedFile{}, nil, "", repo, "", &cloudVerdict{state: cloudNotHere, repo: repo, reason: fmt.Sprintf("%s is not onboarded to project %s, so it has no job image yet", pluginwire.Printable(repo), lc.Name)}
 	}
 	host, err = infra.RegistryHost(lc)
 	if err != nil {
-		return nil, nil, "", "", "", failed(repo, err)
+		return resolvedFile{}, nil, "", "", "", failed(repo, err)
 	}
-	return cfg, lc, lcPath, repo, host, nil
+	return rf, lc, lcPath, repo, host, nil
 }
 
 // cloudCheck is the cloud step's state from fugaro.yaml and the local
@@ -106,10 +105,11 @@ func cloudCheck(ctx context.Context, root string, co cloudOptions, rerun string)
 	if rerun == "" {
 		rerun = selfCommand() + " upgrade"
 	}
-	cfg, lc, lcPath, repo, host, v := resolveCloudRepo(ctx, root, co)
+	rf, lc, lcPath, repo, host, v := resolveCloudRepo(ctx, root, co)
 	if v != nil {
 		return *v
 	}
+	cfg := rf.Cfg
 	ver := releaseVersion()
 	set := map[string]bool{}
 	for _, w := range cfg.Workflows {
@@ -219,13 +219,14 @@ var jobConfigCopyTimeout = 30 * time.Second
 // cloud connection or a job read itself — any of which could carry a URL
 // or, from an underlying client, a token).
 func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string {
-	cfg, lc, _, repo, _, v := resolveCloudRepo(ctx, root, co)
+	rf, lc, _, repo, _, v := resolveCloudRepo(ctx, root, co)
 	if v != nil {
 		if v.state == cloudFailed {
 			return couldNotCheckJobConfigCopy(v.reason)
 		}
 		return "" // a U9 skip (cloudNotHere): nothing to check here
 	}
+	cfg := rf.Cfg
 	names := slices.Sorted(maps.Keys(cfg.Workflows))
 	if len(names) == 0 {
 		return ""
@@ -258,7 +259,7 @@ func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string
 	projectScopes := map[string]bool{}
 	anyJob := false
 	for _, name := range names {
-		spec, err := infra.Workflow(infra.Inputs{LC: lc, Repo: repo, Cfg: cfg, RepoURL: repoURL}, name)
+		spec, err := infra.Workflow(infra.Inputs{LC: lc, Repo: repo, Cfg: cfg, FileSetsBaseBranch: fileSetsBaseBranch(rf), RepoURL: repoURL}, name)
 		if err != nil {
 			return couldNotCheckJobConfigCopy("cannot compute the repository's spec from the local config")
 		}

@@ -2321,3 +2321,34 @@ func TestResultSchemaAcceptsCacheFields(t *testing.T) {
 		}
 	}
 }
+
+// TestTaskSchemaBaseBranchMatchesTheGoRule ties the task schema's
+// `base_branch` property to the Go rule it mirrors (config.ValidBranchName,
+// the one validator fugaro.yaml's git.base_branch, the installation
+// config's base_branch and the policy node's are all held to). The schema
+// is a second copy of that shape, and task.schema.json is
+// additionalProperties: false, so without this property a launch that
+// carries a project default base branch writes a task.json this schema
+// rejects -- and without the test, the two copies drift silently.
+func TestTaskSchemaBaseBranchMatchesTheGoRule(t *testing.T) {
+	sch := compile(t, "task.schema.json")
+	doc := func(b string) any {
+		return yamlInstance(t, []byte(`{"version":1,"run_id":"20260926-221530-a1b2","repo":"acme/app","ref":"main","task":"x","base_branch":`+strconv.Quote(b)+`}`))
+	}
+	for _, b := range []string{"main", "master", "release/1.2", "feature/JIRA-123_x.y", "_x", "develop"} {
+		if !config.ValidBranchName(b) {
+			t.Fatalf("fixture %q is not a valid branch name", b)
+		}
+		if err := sch.Validate(doc(b)); err != nil {
+			t.Errorf("the schema rejects base_branch %q, which config.ValidBranchName accepts: %v", b, err)
+		}
+	}
+	for _, b := range []string{"--upload-pack=x", "a..b", "$(id)", "x y", "/x", ".hidden", "main.lock", "x/", "x.", "a//b"} {
+		if config.ValidBranchName(b) {
+			t.Fatalf("fixture %q is a valid branch name", b)
+		}
+		if err := sch.Validate(doc(b)); err == nil {
+			t.Errorf("the schema accepts base_branch %q, which config.ValidBranchName refuses", b)
+		}
+	}
+}

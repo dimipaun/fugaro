@@ -811,3 +811,33 @@ func TestPlanTaskShape(t *testing.T) {
 		t.Fatalf("round trip = %+v, %v", got, err)
 	}
 }
+
+// TestBaseBranchValidated: a task's base_branch is the base the launcher
+// resolved from the local config and the project's published policy, which
+// the runner uses only when the fugaro.yaml at the ref sets no
+// git.base_branch. It reaches git, Docker build arguments and Cloud Build,
+// so it is held to the same rule fugaro.yaml's own key is
+// (config.ValidBranchName) on read and on the launcher's own write.
+func TestBaseBranchValidated(t *testing.T) {
+	const tmpl = `{"version":1,"run_id":"20260926-221530-a1b2","repo":"acme/app","ref":"main","task":"x"`
+	s, err := Parse([]byte(tmpl + `,"base_branch":"master"}`))
+	if err != nil || s.BaseBranch != "master" {
+		t.Fatalf("Parse = %+v, %v", s, err)
+	}
+	s, err = Parse([]byte(tmpl + "}"))
+	if err != nil || s.BaseBranch != "" {
+		t.Fatalf("no base_branch: %+v, %v", s, err)
+	}
+	for _, ok := range []string{"master", "release/1.2", "dev_x"} {
+		if _, err := Parse([]byte(tmpl + `,"base_branch":"` + ok + `"}`)); err != nil {
+			t.Errorf("%q refused: %v", ok, err)
+		}
+	}
+	// An empty value is indistinguishable from an absent key (omitempty), and
+	// means the same to the runner: the file's own resolution, then main.
+	for _, bad := range []string{"--upload-pack=x", "a..b", "$(id)", "x y", "/x"} {
+		if _, err := Parse([]byte(tmpl + `,"base_branch":"` + bad + `"}`)); err == nil || !strings.Contains(err.Error(), "base_branch") {
+			t.Errorf("%q: err = %v, want it to mention base_branch", bad, err)
+		}
+	}
+}

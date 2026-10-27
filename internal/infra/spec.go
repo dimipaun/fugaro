@@ -111,6 +111,24 @@ type Inputs struct {
 	Cfg  *config.Config
 	// RepoURL is the https clone URL; empty means the provider's usual one.
 	RepoURL string
+	// FileSetsBaseBranch is whether Cfg's own fugaro.yaml writes
+	// git.base_branch itself (config.SetsGitBaseBranch), which is what puts
+	// the file's value above the local config's entry and the project's
+	// default (config.EffectiveBaseBranch). A resolved config cannot answer
+	// it — Resolve fills main in, so a file that writes nothing and one that
+	// writes main resolve alike — so a caller that read the file passes the
+	// answer, true or false. False is not the same as nil: it says the file
+	// names no base and the local entry below it is the spec's, which is what
+	// a caller reads head's file for.
+	//
+	// The field is a pointer because there is a third answer: a caller that
+	// did not read the file at all. nil means the file decides — it is the
+	// same as FileSetsBaseBranch pointing at true — so such a caller gets
+	// Cfg's own resolved value, main included. That is *not* what this spec
+	// computed before the field existed, where a non-empty repos.<r>.base_branch
+	// entry won over Cfg's value: a caller holding only a resolved config and
+	// a local entry that differs must pass false, or the entry is lost.
+	FileSetsBaseBranch *bool
 	// GitHubAppID overrides the local config's github_app_id.
 	GitHubAppID string
 	// Installation are the installation root's outputs. Fields left empty
@@ -426,10 +444,22 @@ func resolve(in Inputs) (*repoCtx, error) {
 		}
 	}
 
-	c.baseBranch = in.Cfg.Git.BaseBranch
-	if hasLocal && local.BaseBranch != "" {
-		c.baseBranch = local.BaseBranch
+	// The branch this repository's builds and checks are cut from, resolved
+	// by the one precedence every layer resolves through: the checkout's
+	// fugaro.yaml when the file writes git.base_branch, else the local
+	// config's repos.<r>.base_branch, else the project's top-level
+	// base_branch, else main. in.Cfg carries the file's value (or the
+	// default Resolve filled in), which is why the file's own answer needs
+	// in.FileSetsBaseBranch beside it.
+	repoBranch := ""
+	if hasLocal {
+		repoBranch = local.BaseBranch
 	}
+	fileSets := true
+	if in.FileSetsBaseBranch != nil {
+		fileSets = *in.FileSetsBaseBranch
+	}
+	c.baseBranch, _ = config.EffectiveBaseBranch(in.Cfg.Git.BaseBranch, fileSets, repoBranch, lc.BaseBranch)
 	if c.repoURL, err = repoURL(c.provider, in.Repo, in.RepoURL); err != nil {
 		return nil, err
 	}

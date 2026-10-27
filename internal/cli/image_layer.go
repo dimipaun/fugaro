@@ -31,11 +31,17 @@ func layerSHAOf(cfg *config.Config) string {
 // which prepareLayerCopy would then write over the repository's copy,
 // undoing fugaro config publish.
 func resolveForBuild(ctx context.Context, root string, lc *localcfg.Config) (*config.Config, error) {
+	rf, err := resolveForBuildFile(ctx, root, lc)
+	return rf.Cfg, err
+}
+
+// resolveForBuildFile is resolveForBuild with the resolution beside the
+// config: the repository's spec is computed from it, and the spec's base
+// branch needs the file's own answer for git.base_branch, which a resolved
+// config does not carry (infra.Inputs.FileSetsBaseBranch).
+func resolveForBuildFile(ctx context.Context, root string, lc *localcfg.Config) (resolvedFile, error) {
 	_, rf, err := loadCheckoutResolved(ctx, root, lc, layerOptions{})
-	if err != nil {
-		return nil, err
-	}
-	return rf.Cfg, nil
+	return rf, err
 }
 
 // baseImagePredatesLayer reports whether base is a release reference
