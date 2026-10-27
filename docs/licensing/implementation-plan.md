@@ -126,6 +126,24 @@ first non-Go file under `ee/`.
   app ask for a signature; a bot-authored PR passes without one.
 - **Depends on:** L0.1 (the CLA text). **Not on the 0.11.0 critical path** (O3).
 
+**Amended 2026-10-27: L0.1's CLA-text item is drafted.** The agreement's text is
+[CLA.md](CLA.md), drafted on the owner's request of 2026-10-26/27 as one Markdown document for a
+single click-through signature in CLA Assistant, and **not yet read by counsel**: counsel reviews
+it under L0.1 before L0.2 installs it. L0.2 is the owner's CLA Assistant install, in these steps:
+
+- [ ] Create the Gist from `CLA.md` as its top note says (only the agreement text), and copy the
+  file's **Raw** URL.
+- [ ] Sign in to <https://cla-assistant.io> with GitHub.
+- [ ] **Configure CLA**: choose the repository `dimipaun/fugaro` and paste the Gist's raw URL.
+- [ ] Allow-list `fugaro-dev[bot]` and `dependabot[bot]` (bots do not sign).
+- [ ] Make the CLA status visible on pull requests (the app's commit status and comment).
+- [ ] Open a test pull request from a second account the owner controls: the app asks for a
+  signature; a bot-authored pull request passes without one.
+- [ ] Optional, a repository setting the owner clicks: require the CLA check on `main` in the
+  branch protection rules.
+- [ ] Replace `[CLA URL TO BE PUBLISHED]` in `console/LICENSE.md`, `mobile/LICENSE.md` and
+  `ee/LICENSE` with the Gist's URL (a separate change, after the Gist exists).
+
 ### Slice L1 — the 0.11.0 skeleton (D306)
 
 #### L1.1 — The boundary and notice tests
