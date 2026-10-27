@@ -1334,10 +1334,12 @@ main p {
  * reader with no colour at all still reads, which is the same defence the dashes
  * above are.
  *
- * **Nothing here animates.** The graph is the one screen the design's section
- * 3.9 amendment lets move, and the motion (the comet, the pulse, the flow) is
- * GV2.4's task; every state below is the static style that amendment says must
- * stand on its own, and the reduced-motion arm arrives with the keyframes.
+ * **Three things here move, and they are the design's three.** The graph is the
+ * one screen the design's section 3.9 amendment lets animate: a comet on a
+ * running card, a pulse on a critical one and a flow along a critical edge, each
+ * drawn by the motion block below with its own static style under the graph's own
+ * `prefers-reduced-motion` and `forced-colors` arms. Every other state here, and
+ * every figure on every screen, stays still.
  */
 
 section.graph {
@@ -1619,6 +1621,132 @@ svg .graph-node-mark {
 
 svg .graph-node-run {
   font-family: var(--font-mono);
+}
+
+/* ---- The graph's motion (design section 3.9's amendment of 2026-10-24) -----
+ *
+ * Three things move on this screen and no more: a **comet** along a running
+ * card's top edge, a **pulse** on a critical card's halo, and a **flow** along a
+ * critical edge. Each is drawn on a mark the state already has, and each keeps
+ * its word, so a reader who sees no motion -- or a screenshot read in greyscale
+ * -- still reads every state (design section 3.5).
+ *
+ * **Nothing a reader reads moves.** The comet is on a card's boundary, the halo
+ * is outside it and the flow is on an edge: no title, word, pull request number,
+ * run or figure is transformed or faded, here or anywhere else in the theme.
+ *
+ * **Only `transform` and `opacity` move, with one exception.** A dash travelling
+ * along a path cannot be drawn with either: the path's `d` is an attribute the
+ * layout answered, so `stroke-dashoffset` is the one property that moves a dash
+ * along it, and it is taken on the critical edge's own path and nowhere else.
+ * The alternative is no flow at all.
+ *
+ * **The static style of each is the rule below, and the arms further down only
+ * stop the animation.** `base.css`'s global freeze stops an animation where it
+ * stands -- a comet frozen mid-sweep is a picture of something that is not
+ * happening -- so the graph restates its three states under its own reduce block
+ * and its own forced-colors block, and leaves the global freeze alone.
+ */
+
+/* The comet is a streak the screen draws across a card's top edge: `scaleX`
+ * makes it a streak, and the translate carries it in percentages of the card it
+ * was drawn with, so this file never has to know how wide a card is. `opacity:
+ * 1` and no transform are the static style -- the whole top edge of a running
+ * card, lit -- which is what the two arms below are left with. */
+section.graph svg .graph-node-comet {
+  fill: var(--accent);
+  opacity: 1;
+  transform: none;
+  transform-box: fill-box;
+  transform-origin: 0 50%;
+}
+
+section.graph svg .graph-node[data-state='implementing'] .graph-node-comet,
+section.graph svg .graph-node[data-state='in review'] .graph-node-comet,
+section.graph svg .graph-node[data-state='fixing'] .graph-node-comet {
+  animation: graph-comet 2.6s linear infinite;
+}
+
+/* The halo is a critical card's own second channel: 3 px of `--accent`, the tone
+ * the critical path is drawn in, around a card whose boundary keeps the state it
+ * was already carrying. */
+section.graph svg .graph-node-pulse {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 3;
+  opacity: 1;
+}
+
+section.graph svg .graph-node[data-critical='true'] .graph-node-pulse {
+  animation: graph-pulse 2.2s ease-in-out infinite;
+}
+
+/* The flow is the critical path's own dashes travelling along it. The dashes
+ * exist only while they flow: the static style of this state is the 3 px line
+ * the rule above draws, and both arms below take the dasharray away again. */
+section.graph svg .graph-edge[data-critical='true'] .graph-edge-path {
+  stroke-dasharray: 10 14;
+  animation: graph-flow 1.6s linear infinite;
+}
+
+@keyframes graph-comet {
+  from {
+    transform: translateX(0) scaleX(0.08);
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  88% {
+    opacity: 1;
+  }
+  to {
+    transform: translateX(92%) scaleX(0.08);
+    opacity: 0;
+  }
+}
+
+@keyframes graph-pulse {
+  from {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.35;
+  }
+}
+
+@keyframes graph-flow {
+  from {
+    stroke-dashoffset: 24;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* The graph's own reduced-motion arm, and it is not the global freeze: the
+ * freeze in `base.css` leaves a comet wherever its last frame put it (F36 in the
+ * reconciliation), so each state is drawn as the still mark it is when nothing
+ * moves -- a running card's lit top edge, a critical card's solid halo, and the
+ * 3 px critical edge with nothing flowing along it. */
+@media (prefers-reduced-motion: reduce) {
+  section.graph svg .graph-node[data-state='implementing'] .graph-node-comet,
+  section.graph svg .graph-node[data-state='in review'] .graph-node-comet,
+  section.graph svg .graph-node[data-state='fixing'] .graph-node-comet {
+    animation: none;
+  }
+
+  section.graph svg .graph-node[data-critical='true'] .graph-node-pulse {
+    animation: none;
+  }
+
+  section.graph svg .graph-edge[data-critical='true'] .graph-edge-path {
+    animation: none;
+    stroke-dasharray: none;
+  }
 }
 
 /* The list: the picture's non-visual equivalent, one row per task with the whole
@@ -2073,6 +2201,25 @@ p.graph-empty {
   svg .graph-node-run,
   svg .graph-node-mark {
     fill: CanvasText;
+  }
+
+  /* The graph's motion is drawn and never runs here: the two marks take the
+   * system's text colour, the flow's dashes go, and each state is left as the
+   * same still drawing the reduced-motion arm leaves behind (design section
+   * 4.4, and the amendment's fourth rule). */
+  section.graph svg .graph-node-comet {
+    fill: CanvasText;
+    animation: none;
+  }
+
+  section.graph svg .graph-node-pulse {
+    stroke: CanvasText;
+    animation: none;
+  }
+
+  section.graph svg .graph-edge[data-critical='true'] .graph-edge-path {
+    stroke-dasharray: none;
+    animation: none;
   }
 
   button.graph-tab[aria-selected='true'],

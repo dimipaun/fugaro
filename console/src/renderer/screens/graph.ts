@@ -64,7 +64,7 @@ import type { Positions, RouteSection, WorkerLike } from '../graph/layout-client
 import { WORKER_URL } from '../graph/layout-client'
 import { GraphLayout, edgeKey, nodeKey } from '../graph/layout'
 import { buildGraphModel } from '../graph/model'
-import type { GraphModel, GraphNode, GraphPlan, GraphRelease, GraphTab } from '../graph/model'
+import type { GraphModel, GraphNode, GraphPlan, GraphRelease, GraphTab, StateWord } from '../graph/model'
 
 // ---------------------------------------------------------------------------
 // The factory
@@ -272,6 +272,27 @@ const GRAPH_CRITICAL_SLOT = 104
 const GRAPH_PR_SLOT = 12
 const GRAPH_RUN_SLOT = 46
 const GRAPH_MARK_SLOT = 112
+
+/** GRAPH_RUNNING_WORDS are the three words a task being worked on draws first,
+ * which are the three the comet's own rule selects: a stage the engine reports
+ * that this screen has no word for draws `queued`, and a queued task is not
+ * moving (design section 3.9's amendment). */
+const GRAPH_RUNNING_WORDS: readonly StateWord[] = Object.freeze(['implementing', 'in review', 'fixing'])
+
+/** GRAPH_HALO_OFFSET is how far outside its own boundary a critical card's halo
+ * is drawn. `critical` is a second word beside the first, so the halo must leave
+ * the boundary carrying the state -- amber for blocked, muted for done -- where a
+ * reader already looks for it. */
+const GRAPH_HALO_OFFSET = 3
+
+/** GRAPH_COMET_HEIGHT is the thickness of the streak a running card draws along
+ * its top edge: a mark on the boundary, short of the title 20 px below it. */
+const GRAPH_COMET_HEIGHT = 3
+
+/** GRAPH_HALO_RADIUS is the card's own corner radius (`rx` 6) plus the offset.
+ * Two arcs with one centre keep the ring the same 3 px all the way round; a
+ * halo drawn with the box's own radius would pinch shut where they meet. */
+const GRAPH_HALO_RADIUS = String(6 + GRAPH_HALO_OFFSET)
 
 // ---------------------------------------------------------------------------
 // The state a person chose
@@ -1117,11 +1138,12 @@ function releaseBox(factory: GraphFactory, box: ReleaseBox): ScreenElement {
  * nodeCard is one task's box: its title, its words, its pull request number and
  * its run, and -- when the gesture would do nothing -- the sentence saying why.
  *
- * The card carries `data-key` (its layout key), `data-state` (its first word)
- * and, when a gesture opens a run, `data-run-id` (the run the console's own list
- * resolved the suffix to). It carries **no destination**: the design's §5.1 rule
- * 2 and gap 7 leave the console no URL to build, so the pull request is a number
- * and its reason.
+ * The card carries `data-key` (its layout key), `data-state` (its first word),
+ * `data-critical` (whether it is on the plan's critical path, which its first
+ * word cannot say) and, when a gesture opens a run, `data-run-id` (the run the
+ * console's own list resolved the suffix to). It carries **no destination**: the
+ * design's §5.1 rule 2 and gap 7 leave the console no URL to build, so the pull
+ * request is a number and its reason.
  */
 function nodeCard(
   factory: GraphFactory,
@@ -1141,6 +1163,10 @@ function nodeCard(
   group.setAttribute('data-key', key)
   group.setAttribute('data-state', node.words[0] ?? '')
   group.setAttribute('data-selected', selected ? 'true' : 'false')
+  // The path is a fact of its own and not a first word: a critical task that is
+  // running says `implementing` in `data-state`, so the pulse's rule has nothing
+  // else to select (design section 2.11's attribute table).
+  group.setAttribute('data-critical', node.critical ? 'true' : 'false')
   group.setAttribute('tabindex', stopHere ? '0' : '-1')
   shift(group, rect.x, rect.y)
   if (door.run !== null) group.setAttribute('data-run-id', door.run)
@@ -1153,6 +1179,31 @@ function nodeCard(
   geometry(outline, 'height', rect.height)
   outline.setAttribute('rx', '6')
   group.append(outline)
+
+  // The two marks the motion is drawn on, each drawn only where it belongs and
+  // each `aria-hidden`: a moving light is not a fact a reader needs twice, and
+  // the word beside it says the same thing (design section 3.5). They sit under
+  // the text, so the streak a running card draws along its top edge can never
+  // reach a title.
+  if (node.words[0] !== undefined && GRAPH_RUNNING_WORDS.includes(node.words[0])) {
+    const comet = makeNS(factory, 'rect', 'graph-node-comet')
+    comet.setAttribute('aria-hidden', 'true')
+    geometry(comet, 'x', 0)
+    geometry(comet, 'y', -GRAPH_COMET_HEIGHT / 2)
+    geometry(comet, 'width', rect.width)
+    geometry(comet, 'height', GRAPH_COMET_HEIGHT)
+    group.append(comet)
+  }
+  if (node.critical) {
+    const halo = makeNS(factory, 'rect', 'graph-node-pulse')
+    halo.setAttribute('aria-hidden', 'true')
+    geometry(halo, 'x', -GRAPH_HALO_OFFSET)
+    geometry(halo, 'y', -GRAPH_HALO_OFFSET)
+    geometry(halo, 'width', rect.width + GRAPH_HALO_OFFSET * 2)
+    geometry(halo, 'height', rect.height + GRAPH_HALO_OFFSET * 2)
+    halo.setAttribute('rx', GRAPH_HALO_RADIUS)
+    group.append(halo)
+  }
 
   const title = makeNS(factory, 'text', 'graph-node-title')
   geometry(title, 'x', GRAPH_WORD_SLOT)
