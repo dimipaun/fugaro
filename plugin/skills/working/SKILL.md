@@ -26,6 +26,7 @@ Then read the file for what you are doing:
 | reading what a run printed | `reference/logs.md` |
 | explaining why a run failed, halted or looks odd | `reference/diagnose.md` |
 | continuing a Fugaro pull request | `reference/followup.md` |
+| reviewing the runs daily, weekly, monthly or yearly | `reference/periodic-reviews.md` |
 
 ## What makes a good task
 
@@ -70,30 +71,11 @@ On a pull request that was retargeted, check the base its runs recorded before l
 
 Do not wait for the daily look. Whoever launched a run keeps watching the COST column of `fugaro runs ls`, and the moment a running run has spent HALF of its per-run cap (`fugaro budget show` names the cap) it stops being left alone: read `fugaro logs RUN` (or `fugaro diagnose RUN`) and ask whether the run is doing the task or looping. A loop looks like the same full check or test command run again and again, edits to files the task never named (tests and docs around a few lines of text), a review stage that rereads the whole branch, or a task that was written as a plan when it is a small edit. Then choose: let it finish, cancel it (`fugaro cancel RUN`, what it pushed stays), or finish the change by hand. A change of a few lines of text or copy is faster and far cheaper by hand than as a run.
 
-## Inspect the expensive runs daily
+## Review your runs
 
-Once a day, list the last 24 hours of runs (`fugaro runs ls --since 24h`) and read the dearest 10-20% of them by the COST column — one or two rows in twenty. The reading is read-only, and it is where the next run gets cheaper.
+`fugaro runs digest --period day` (or `week`, `month`, `year`) writes one closed period's report of this repository into its own `docs/fugaro-reviews/`, for a person or an agent to commit through an ordinary pull request. Without `--date` it is the most recent closed period; a period holding today is still receiving runs, so it is refused. Fugaro schedules nothing: the cadence is the user's own cron job, CI workflow or agent routine, or a run launched to write the report.
 
-Take each of those through `fugaro diagnose RUN` for the cost and the halt, then `fugaro logs RUN`, and look for:
-
-- **the review stage costing far more than implement.** Where a run's calls go through the gateway, each model call is one log line carrying its stage — `[implement] model call`, `[review] model call`, `[fix] model call`, and `[review_first] model call` for the cheaper first-line review — and the snippet below counts them. A review making many times implement's calls for a small change has read too much, and often the wrong diff base (below).
-- **sub-agent fan-outs** — `tool Agent:` lines, each a sub-agent the stage spawned, with its own calls on top of the stage's. These are the agent's own output, so they are there on every run.
-- **the wrong diff base** — the review's own `git diff origin/<base>...HEAD` naming a base the pull request does not target (the long-lived-branch section above is about those runs).
-- **repeated identical commands**, a resumed session re-reading the whole repository, rounds that end at the same cap, and a relaunch that redoes work already landed.
-
-Write each lesson where the next run will read it — the project's `CLAUDE.md` or its agent instructions — and fix the cause it names: the task's brief, the configuration, or the product itself.
-
-The `model call` lines are the gateway's, so a run only has them with the budget on and an API key or vertex credential; an `oauth` run's calls never reach it and log none of them. Read those runs by the agent's own lines instead, one `result` line per agent run, tagged with its stage: `[implement/agent]`, `[review/agent]`, `[review_first/agent]` and `[fix/agent]`.
-
-This counts a run's calls without changing anything: `fugaro logs` only reads, and so does `grep -c`.
-
-```bash
-RUN=<run>
-fugaro logs "$RUN" | grep -c '\[implement\] model call'
-fugaro logs "$RUN" | grep -cE '\[review(_first)?\] model call'
-fugaro logs "$RUN" | grep -c '\[fix\] model call'
-fugaro logs "$RUN" | grep -c 'tool Agent:'
-```
+The **daily report is the outlier sweep**: read its flagged runs and the dearest of the rest the way `reference/periodic-reviews.md` says, and write each lesson where the next run will read it. That file has the four periods and how to schedule them, how to read a report's patterns, the relaunch note, and the submission step that is the person's, never the agent's.
 
 ## A usage limit on the Claude account
 
