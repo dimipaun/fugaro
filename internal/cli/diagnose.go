@@ -33,21 +33,33 @@ const (
 	agentMessageBytes = 4 << 10
 	// diagnoseLogLines is how many of the newest log lines a diagnosis keeps.
 	diagnoseLogLines = 30
+	// diagnoseStages bounds the stages a diagnosis prints. A run records one
+	// entry per stage per round, so this is room for every run the loop can
+	// make and the point past which the record is not believed: the record is
+	// an object a hand can edit, and one diagnosis must not print thousands
+	// of entries.
+	diagnoseStages = 64
 )
 
 // Diagnosis is what diagnose gathers about one run. Every string in it
 // that comes from the run is redacted.
 type Diagnosis struct {
-	Project      string           `json:"project"` // the Fugaro project
-	Row          runview.Row      `json:"row"`
-	Halt         *runstore.Halt   `json:"halt,omitempty"`     // why a halted run was halted
-	Verify       []verify.Record  `json:"verify,omitempty"`   // result.json's verify records
-	Failed       []string         `json:"failed,omitempty"`   // the last test record's failed tests
-	Flaky        []string         `json:"flaky,omitempty"`    // the last test record's flaky tests
-	Findings     []runner.Finding `json:"findings,omitempty"` // the last review's findings
-	AgentMessage string           `json:"agent_message,omitempty"`
-	LogTail      []string         `json:"log_tail,omitempty"`
-	ReportPath   string           `json:"report_path"`
+	Project  string           `json:"project"` // the Fugaro project
+	Row      runview.Row      `json:"row"`
+	Halt     *runstore.Halt   `json:"halt,omitempty"`     // why a halted run was halted
+	Verify   []verify.Record  `json:"verify,omitempty"`   // result.json's verify records
+	Failed   []string         `json:"failed,omitempty"`   // the last test record's failed tests
+	Flaky    []string         `json:"flaky,omitempty"`    // the last test record's flaky tests
+	Findings []runner.Finding `json:"findings,omitempty"` // the last review's findings
+	// Tolerated is the findings the run's resolved mode let through
+	// (runstore.ToleratedFindings), in the reviewer's order, bounded again on
+	// read and with every title redacted. Absent -- never an empty block --
+	// for a run that tolerated nothing, and for every record written before
+	// the field existed.
+	Tolerated    *runstore.ToleratedFindings `json:"tolerated,omitempty"`
+	AgentMessage string                      `json:"agent_message,omitempty"`
+	LogTail      []string                    `json:"log_tail,omitempty"`
+	ReportPath   string                      `json:"report_path"`
 	// ArtifactPaths are where the run's artifacts live in the runs bucket:
 	// the run prefix followed by artifacts/<name>, the same shape ReportPath
 	// has, so `gcloud storage cp` can take one directly. The record's own
@@ -69,6 +81,19 @@ type Diagnosis struct {
 	// ModelBy is the spend by model. Both are the run's own record.
 	Route   map[string]float64 `json:"route_by,omitempty"`
 	ModelBy map[string]float64 `json:"model_by,omitempty"`
+	// Stages is the run's per-stage record (runstore.StageTiming): what each
+	// stage cost in model dollars and, when something counted them, how many
+	// model calls and sub-agent tool calls it made. In the record's own order
+	// and bounded at diagnoseStages, with every string redacted. Calls and
+	// Agents stay pointers, so a stage nobody counted is absent and a stage
+	// counted at zero is not: the two are different facts. Absent when the
+	// record has no stages, and when there is no record at all.
+	//
+	// The stages are the run's whole model spend but for what settled after
+	// its stage's wait ran out, which is in ModelBy["unattributed"]: exactly,
+	// sum(stages[].model_usd) + model_by["unattributed"] ==
+	// row.cost.model_usd.
+	Stages []runstore.StageTiming `json:"stages,omitempty"`
 	// Reported is what providers said the run's calls cost, beside Charge,
 	// what the table said for the provider routes' calls (the charge
 	// always settles; Claude's spend is not in it). Zero when no provider
@@ -195,6 +220,7 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		for _, a := range rec.Artifacts {
 			d.ArtifactPaths = append(d.ArtifactPaths, s.Prefix()+runstore.ArtifactPrefix+red(a.Name))
 		}
+		d.Stages, d.Tolerated = stageTimingsOf(rec.Stages, red), toleratedOf(rec.Tolerated, red)
 		d.Verify = rec.Verify
 		for i := range d.Verify {
 			v := &d.Verify[i]
@@ -239,6 +265,47 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		d.LogTail = append(d.LogTail, tail[i%diagnoseLogLines])
 	}
 	return d, nil
+}
+
+// stageTimingsOf is the record's stages for the document: the record's own
+// order, bounded at diagnoseStages, and redacted like every other string here.
+// nil for a record with none, so the key is absent rather than an empty list.
+func stageTimingsOf(stages []runstore.StageTiming, red func(string) string) []runstore.StageTiming {
+	if len(stages) == 0 {
+		return nil
+	}
+	out := make([]runstore.StageTiming, 0, min(len(stages), diagnoseStages))
+	for _, s := range stages {
+		if len(out) == diagnoseStages {
+			break
+		}
+		s.Name, s.Model = red(s.Name), red(s.Model)
+		out = append(out, s)
+	}
+	return out
+}
+
+// toleratedOf is the record's tolerated findings for the document: bounded
+// again on read, because the record is an object a hand can edit and the
+// write-side bound (runstore.NewTolerated) is not one a reader can count on,
+// and with every title redacted. nil for a run that tolerated nothing -- no
+// block, or a block that lists none -- so the key is absent.
+func toleratedOf(t *runstore.ToleratedFindings, red func(string) string) *runstore.ToleratedFindings {
+	if t == nil || len(t.Findings) == 0 {
+		return nil
+	}
+	out := &runstore.ToleratedFindings{Findings: make([]runstore.ToleratedFinding, 0, min(len(t.Findings), runstore.MaxTolerated))}
+	for _, f := range t.Findings {
+		if len(out.Findings) == runstore.MaxTolerated {
+			break
+		}
+		f.Title = red(f.Title)
+		out.Findings = append(out.Findings, f)
+	}
+	// The block's total is how many findings the mode really tolerated, and a
+	// record claiming fewer than it lists is not one to print as written.
+	out.Total = max(t.Total, len(out.Findings))
+	return out
 }
 
 // seniorRound is the round of the last senior review (not a first-line one,
