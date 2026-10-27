@@ -1778,9 +1778,10 @@ export const COORDINATOR_UNREAD_KEYS: readonly string[] = Object.freeze([
 export const COORDINATOR_STALE_KEYS: readonly string[] = Object.freeze(['since', 'reason'])
 
 /** CoordinatorPullRequest is one pull request as the host last showed it.
- * `title` is untrusted text written by whoever opened it, and `url` is text the
- * console draws and never hands to `openExternal` (design section 5.1 rule 2:
- * the console builds no link from a document's string). */
+ * `title` is untrusted text written by whoever opened it, and `url` is carried
+ * as data and **not drawn at all**: the project view builds no element from it,
+ * not as text and never as a link (design section 5.1 rule 2: the console
+ * builds no link from a document's string). */
 export interface CoordinatorPullRequest {
   readonly number: number
   readonly url: string

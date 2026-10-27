@@ -1542,7 +1542,7 @@ the `pr` of a record:
 | Key | Type | Absent | Null | Notes |
 | --- | --- | --- | --- | --- |
 | `number` | number | never | never | the pull request's own number. It is a number to **show**: no screen builds a link from it (design §5.1 rule 2, §4.3's gap 7) |
-| `url` | string | **yes** | **yes** | the host's URL for it, which the sweep read once. **Carried as data and never as a link**: the console draws it as text like every other string here, because it is a hostile field like any other |
+| `url` | string | **yes** | **yes** | the host's URL for it, which the sweep read once. **Carried as data and not drawn**: the project view builds no element from it — not as text, and never as a link (design §5.1 rule 2) — because it is a hostile field like any other |
 | `title` | string | **yes** | **yes** | **untrusted text written by whoever opened the pull request.** It is carried as data and is never a decision: a renderer sanitises it before it reaches a line or a cell (`safetext`), the way every other surface that draws a pull request's own words does |
 | `branch` | string | **yes** | **yes** | the source branch the host reports |
 | `draft` | bool | **yes** | **yes** | whether the host says the pull request is a draft |

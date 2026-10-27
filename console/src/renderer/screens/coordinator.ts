@@ -30,8 +30,9 @@
 //     branch are written by whoever opened the pull request, so each is drawn
 //     through `putText` with the class its wire key declares -- never through
 //     `literal`, never into an attribute a browser navigates from, and never
-//     into a link: the pull request's `url` is drawn as text, like every other
-//     string here (design section 5.1 rule 2).
+//     into a link. The pull request's `url` is **not drawn at all**: it is
+//     carried as data, and no element, attribute or link is built from it
+//     (design section 5.1 rule 2).
 //
 // The counts are this console's own off the document's arrays, and they are
 // readings: they enter through `measured` and leave through `putReading`, so

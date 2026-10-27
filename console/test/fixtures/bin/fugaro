@@ -49,6 +49,14 @@
 #     view makes (GV2.3b), and it is the one the stub answers with `--all` and
 #     without it alike: `--all` is the screen's own control over how much of the
 #     document the CLI lists, and the document is the same document.
+#   * `coordinator status --from-store --all --json --project P` -- the document
+#     in `coordinator-status.json` beside it, which `cliStub.ts` writes from the
+#     committed `test/fixtures/coordinator-status.json` (Bitbucket credentials
+#     T1.2, D364). This is the read the **Coordinator** view makes, and it is the
+#     read whose argv fixes the most: `--from-store` and `--all` are the spawn
+#     row's own words, because the screen has no control that turns either off,
+#     so the stub holds all three flags exactly rather than answering a question
+#     this console should never have been able to ask.
 #
 # **Everything else is refused, loudly, with exit 2.** A stub that answered
 # whatever it was asked would hide the thing these specs are about: if the
@@ -174,7 +182,37 @@ case "$command" in
     fi
     cat "${here}/plan-status.json"
     ;;
+  coordinator)
+    # `coordinator status --from-store --all --json` is the project view's one
+    # read (Bitbucket credentials T1.2, D364): every repository of the
+    # installation, from the view the coordinator's sweep last stored. The three
+    # words are the console's spawn row and not a screen's control, so the stub
+    # holds them exactly -- a console that dropped `--from-store` would be making
+    # a host call this build has no credential for, and the spec would rather see
+    # that here than pass on a document it should never have been able to obtain.
+    if [ "${1:-}" != 'status' ] || [ "${2:-}" != '--from-store' ] || [ "${3:-}" != '--all' ] || [ "${4:-}" != '--json' ]; then
+      refuse "the stub fugaro answers 'coordinator status --from-store --all --json' and was asked for 'coordinator $*'"
+    fi
+    shift 4
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --project | --config)
+          if [ $# -lt 2 ]; then
+            refuse "'coordinator status' was given '$1' with no value"
+          fi
+          shift 2
+          ;;
+        *)
+          refuse "'coordinator status' was asked for '$1'"
+          ;;
+      esac
+    done
+    if [ ! -f "${here}/coordinator-status.json" ]; then
+      refuse 'no coordinator document is seeded beside this stub'
+    fi
+    cat "${here}/coordinator-status.json"
+    ;;
   *)
-    refuse "the stub fugaro answers 'version', 'config list --json', 'plan status --json', 'doctor --json' and 'watch --json', and was asked for '$command'"
+    refuse "the stub fugaro answers 'version', 'config list --json', 'plan status --json', 'coordinator status --from-store --all --json', 'doctor --json' and 'watch --json', and was asked for '$command'"
     ;;
 esac

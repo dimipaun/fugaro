@@ -404,12 +404,12 @@ describe('the project view screen', () => {
     }
   })
 
-  it('builds no link from wire text: the document’s URL is drawn as text and no element carries an href', () => {
+  it('builds no link from wire text: the document’s URL is not drawn at all, and no element carries an href', () => {
     // Design section 5.1 rule 2: the console builds no link from a document's
     // string. The pull request's `url` is not drawn at all -- a link is
-    // `link.openExternal`'s, validated in the main process -- and no element of
-    // this tree carries a navigating attribute, an attribute value that is a
-    // URL, or a tag that could navigate.
+    // `link.openExternal`'s, validated in the main process -- so no element of
+    // this tree carries it as text, and none carries a navigating attribute, an
+    // attribute value that is a URL, or a tag that could navigate.
     const node = renders({ repos: [STORED] })
     for (const element of walk(node)) {
       expect(FakeScreen.FORBIDDEN_ATTRIBUTES.has(element.tag)).toBe(false)
