@@ -9,6 +9,9 @@ Four parts of the repository are not covered by it. Three of them, `console/`, `
 three files of identical wording, which is counsel's text of 2026-10-27 and replaces the draft the owner adopted on 2026-10-26. **Two things it names are not published yet**: the Subscription Terms and the contributor licence agreement, each shown as a bracketed placeholder in the text. The licence allows copying and modifying for development and testing,
 and needs a subscription for the correct number of user seats (one seat per person who uses it)
 for production use, under those Subscription Terms.
+A first draft of the Subscription Terms, written for counsel, is at
+[`docs/licensing/subscription-terms.md`](docs/licensing/subscription-terms.md): it is **not in force**
+until counsel has reviewed it and the owner has published it.
 
 ## The desktop console, `console/`
 
