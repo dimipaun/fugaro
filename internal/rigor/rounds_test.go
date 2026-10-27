@@ -27,6 +27,20 @@ func TestRoundCeilingIsTheModesTable(t *testing.T) {
 	}
 }
 
+// TestRoundCeilingHasARowForEveryMode: every mode of the vocabulary has its own
+// row, so a mode added to Modes without one fails here rather than silently
+// taking the widest ceiling RoundCeiling gives a mode it cannot place.
+func TestRoundCeilingHasARowForEveryMode(t *testing.T) {
+	for _, m := range Modes {
+		if _, ok := roundCeilings[m]; !ok {
+			t.Errorf("roundCeilings has no row for %s", m)
+		}
+	}
+	if len(roundCeilings) != len(Modes) {
+		t.Errorf("roundCeilings has %d rows; want one per mode, %d", len(roundCeilings), len(Modes))
+	}
+}
+
 // TestRoundCeilingRowsAreWithinTheRecipeBound: no row of the table reaches
 // above widestRoundCeiling, so no mode buys a run more rounds than the recipe
 // itself allows (T3.2). Asserted over the raw rows rather than through

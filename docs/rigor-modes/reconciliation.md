@@ -2125,6 +2125,8 @@ of 2.** One round changes what "reviewed" means, and the difference in cost is
 real. The plan's ceiling is multiplicative on the existing precedence, so the
 answer is a number in a table — but it is the kind of number the owner should set
 once, in the open, rather than a default an implementer picks.
+*Owner ruling 2026-10-27:* the floor stays 2 (`minRoundCeiling`), and a
+repository with no `rigor:` block keeps today's behaviour, with no ceiling.
 
 **O4 — What happens to a ready Hotfix PR nobody merges.** It sits ready and
 unmerged, which is a state no other mode produces and nothing expires. Whether
