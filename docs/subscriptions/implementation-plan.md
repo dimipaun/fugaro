@@ -9,7 +9,8 @@ in the four licence files (#1140, merged).
 
 **Status: plan only. Nothing is implemented, and NO TASK IS APPROVED.** Each task needs the owner's
 explicit go. Answering D430–D448 and B1–B17, and ruling T10–T26, O4 and the key binding, approved
-none of them. Some tasks also wait on counsel (S8.4) or on the new entity (S8.1); each task says
+none of them. Some tasks also wait on counsel (S8.4), on the new entity (S8.1) or on the owner's
+ruling on **T27**, the one consequence of the rulings still open (S1.1, S1.6); each task says
 which.
 
 **Re-sliced 2026-10-27 after the owner's rulings** (reconciliation, "Rulings"). What changed, with
@@ -132,7 +133,8 @@ The owner's answers and rulings that shape it (non-price; figures are private, D
   those.
 - **Tests:** `TestDocsSubscriptionsCarryNoPriceFigures` and
   `TestDocsSubscriptionsPriceScanCatchesPlants`.
-  - The scan flags a currency sign or code beside a digit, and a percentage offered as a discount.
+  - The scan flags a currency sign or code beside a digit, and a digit followed by `%` or
+    "percent".
   - It allows, by an exact list, the Terms' values already on `main`: the Affiliate control
     threshold and the audit threshold.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDocsSubscriptions' -count=1`.
@@ -175,7 +177,8 @@ The owner's answers and rulings that shape it (non-price; figures are private, D
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDocsEE' -count=1 && go test
   ./internal/eeboundary/ -count=1`.
 - **Red step:** change the pin first; it fails until the files say it.
-- **Depends on:** S1.1, S0.6 (the same files). **Reviewer:** opus + mandatory independent review.
+- **Depends on:** S1.1 (the design it states), S0.6 (the same files). **Reviewer:** opus + mandatory
+  independent review.
 - **Commit:** `licensing: the core-to-ee moves the owner ruled (D434, D444, T10, T11)`.
 
 #### S0.4 The one Terms revision, after counsel's feedback
@@ -263,17 +266,36 @@ The owner's answers and rulings that shape it (non-price; figures are private, D
         (`internal/budget/rules/coordinator_test.go`, `emulator_coordinator_test.go`,
         `rules_test.go`) import;
       - the launch's declaration (`internal/cli/run.go`), through a hook `ee/register` fills.
-        An untagged build declares nothing.
+        An untagged build declares nothing;
+      - `coordinator.DocumentID` as well as the paths, which the emulator rules test also uses
+        (`PathProject`, `PathProjectDocument`, `PathRepoDocument`, `PathRepos`).
+    - **The test data:** `internal/cli/testdata/coordinator_status.golden`,
+      `coordinator_mint_refused.json`, `coordinator_no_requests.json` and
+      `coordinator_read_token.json` move with the tests. `coordinator_token.json` stays, because
+      `internal/gitprov/github/apptoken_test.go` reads it too, and the moved tests take a copy.
+    - **The helper surface an `ee/` command needs.** The moved commands call unexported
+      `internal/cli` helpers (`userErr`, `remote`, `oneLine`, `openCloud`, `repoSlug`, `clipRunes`;
+      for the report, `addCloudFlags`, `budgetDBFor`, `openCloudFor`, `dbErr`). S1.1 names the small
+      exported API S1.2 publishes for them, and nothing more.
+    - **The pins:** the nine coordinator view types and `consoleContractCommands`
+      (`newCoordinatorStatusCmd`, `newReportCmd`) in `internal/cli/docs_desktop_console_test.go`
+      move to tagged tests under `ee/coordinator/cli` and `ee/report/cli`.
     - **Other core dependents to re-point:** `internal/cli/doctor_policy_test.go` and
       `internal/cli/docs_desktop_console_test.go`.
-    - **Unchanged:** the console's project view keeps spawning `coordinator status --from-store
-      --all --json`, now a key-gated command.
+    - **The console's project view** (`console/src/renderer/screens/coordinator.ts`) and the
+      Spend screen (`spend.ts`) keep their argv; they re-plan for a key-gated command's refusal
+      (S6.1), and T27 decides when that refusal can first happen.
   - **The reports (T11).**
-    - `internal/report/` (`report.go`, `render.go`, `report_test.go`) and
-      `internal/cli/report.go` move.
-    - `internal/digest` gets an MIT copy of the period helpers it uses (`report.Dim`,
-      `report.PeriodKey`, the by-day/week/month/year keys).
-    - The `report.JSONDoc` pin in `docs_desktop_console_test.go` moves to an `ee/report` test.
+    - `internal/report/` (`report.go`, `render.go`, `report_test.go`) and the `fugaro report`
+      command move.
+    - **What stays in core** from `internal/cli/report.go`, because core MIT code uses it:
+      `costLines` and `recordOfRun` (`fugaro diagnose` in `diagnose.go`,
+      `cloudrun_golden_test.go`), `reportHistory`, `newReportFirestore` and `firestoreErr`
+      (`project_enroll.go`), and `computeSources` (`report_source_test.go`,
+      `cloudrun_golden_test.go`). They move into a core file; the command alone moves.
+    - `internal/digest` gets an MIT copy of what it uses: `report.Dim`, `report.ParseDim`,
+      `report.PeriodKey`, the by-day/week/month/year keys and `report.USD`.
+    - The `report.JSONDoc` pin in `docs_desktop_console_test.go` moves to `ee/report/cli`.
     - The Spend screen keeps `report --json` with a key.
     - The working skill marks `fugaro report` as a paid command and the digest as free.
   - **Which command tree** `website/content/cli-reference.md` and the plugin tests read: the
@@ -289,16 +311,17 @@ The owner's answers and rulings that shape it (non-price; figures are private, D
 - **Tests:** none beyond the Docs suite (a design).
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1`.
 - **Red step:** none (design).
-- **Depends on:** none (T10, T11, T20, T21 ruled). **Reviewer:** opus + mandatory independent review.
+- **Depends on:** the owner's ruling on T27 (T10, T11, T20, T21 are ruled). **Reviewer:** opus +
+  mandatory independent review.
 - **Commit:** `docs(design): the core-to-ee moves for the coordinator and the reports`.
 
 #### S1.2 A command registry and the launch hook in the core
 
 - **Files:** `internal/cli/extend.go` (new), `internal/cli/extend_test.go` (new),
-  `internal/cli/root.go`, `internal/cli/run.go`.
+  `internal/cli/root.go`, `internal/cli/run.go`, and `internal/cli/api.go` (new; the exported helpers).
 - **Interfaces:**
-  - **Produces:** a registration function for cobra commands, and a launch-declarer hook that
-    defaults to nothing.
+  - **Produces:** a registration function for cobra commands, a launch-declarer hook that
+    defaults to nothing, and the small exported helper API S1.1 names for `ee/` commands.
   - **Refuses:** a name a core command holds.
 - **Tests:**
   - `TestRegisteredCommandJoinsTheRoot`
@@ -322,7 +345,8 @@ The owner's answers and rulings that shape it (non-price; figures are private, D
   - the boundary tests, tagged and untagged
 - **Command:** `go test ./internal/eeboundary/ -count=1 && go test -tags ee ./ee/register/ -count=1`.
 - **Red step:** `TestRegisterFollowsTheGatingModel` fails before the package exists.
-- **Depends on:** S1.2, S0.6. **Reviewer:** opus + mandatory independent review.
+- **Depends on:** S1.2, S0.6. The boundary tests already admit exactly `cmd/fugaro/ee_on.go` →
+  `ee/register`; no boundary-test edit. **Reviewer:** opus + mandatory independent review.
 - **Commit:** `ee: the register package and the one assembly file`.
 
 #### S1.4 The coordinator's command and library move (T10)
@@ -336,9 +360,12 @@ library left in core. Now: the command and the library, file by file as S1.1 lis
       siblings);
     - `internal/cli/coordinator.go`, `internal/cli/coordinator_view.go`,
       `internal/cli/coordinator_test.go`, `internal/cli/coordinator_view_test.go` →
-      `ee/coordinator/cli/`.
-  - **New:** the MIT path package `internal/coordpath/` (new), for the coordinator's database
-    paths.
+      `ee/coordinator/cli/`;
+    - `internal/cli/testdata/coordinator_status.golden`, `coordinator_mint_refused.json`,
+      `coordinator_no_requests.json`, `coordinator_read_token.json` → `ee/coordinator/cli/testdata/`
+      (with `.license` siblings), plus a copy of `coordinator_token.json`, which stays.
+  - **New:** the MIT package `internal/coordpath/` (new), for the coordinator's database paths and
+    `DocumentID`.
   - **Re-pointed:**
     - `internal/cli/run.go` (the hook), `internal/cli/project_cmd.go`;
     - `internal/budget/rules/coordinator_test.go`, `internal/budget/rules/emulator_coordinator_test.go`,
@@ -365,10 +392,16 @@ library left in core. Now: the command and the library, file by file as S1.1 lis
 stays MIT with its own copy of the period helpers.*
 
 - **Files:**
-  - **Moved:** `internal/report/` → `ee/report/`; `internal/cli/report.go`,
-    `internal/cli/report_test.go` → `ee/report/cli/`.
-  - **The digest's MIT copy:** `internal/digest/period.go` (new, the MIT copy),
-    `internal/digest/digest.go`, `internal/digest/patterns.go`, `internal/cli/runs_digest.go`.
+  - **Moved:** `internal/report/` → `ee/report/`; the command part of `internal/cli/report.go`
+    and `internal/cli/report_test.go` → `ee/report/cli/`.
+  - **Kept in core:** `internal/cli/reportcore.go` (new; `costLines`, `recordOfRun`,
+    `reportHistory`, `newReportFirestore`, `firestoreErr`, `computeSources`), used by
+    `internal/cli/diagnose.go`, `internal/cli/project_enroll.go`,
+    `internal/cli/cloudrun_golden_test.go` and `internal/cli/report_source_test.go`.
+  - **The digest's MIT copy:** `internal/digest/period.go` (new: `Dim`, `ParseDim`, `PeriodKey`,
+    the period keys, `USD`), `internal/digest/digest.go`, `internal/digest/patterns.go`,
+    `internal/digest/render.go`, `internal/digest/digest_test.go`, `internal/cli/runs_digest.go`,
+    `internal/cli/runs_digest_test.go`.
   - **Pins and the skill:** `internal/cli/docs_desktop_console_test.go` (the `report.JSONDoc` pin
     moves to `ee/report/cli`), `plugin/skills/working/SKILL.md`.
   - **Registration and docs:** `ee/register/register.go`, `internal/cli/root.go`,
@@ -399,17 +432,17 @@ stays MIT with its own copy of the period helpers.*
   && cd website && npm run check`.
 - **Red step:** set the tag first; `TestEETagNeedsTheLabels` fails until every label says MIT core
   plus the business licence.
-- **Depends on:** S1.5, S1.9, S2.9, S7.1 (`community.astro`). **Reviewer:** opus + mandatory
-  independent review.
+- **Depends on:** S1.5, S1.9, S2.9, S7.1 (`community.astro`); the owner's ruling on T27.
+  **Reviewer:** opus + mandatory independent review.
 - **Commit:** `release: one binary, MIT core plus business-licensed parts (D447, T21)`.
 
 #### S1.7 R1 pinned: the run images build `fugaro` untagged
 
 - **Files:** `images/build_tags_test.go` (new).
 - **Tests:**
-  - `TestRunImagesBuildFugaroWithoutTheEETag`, over `images/base`, `images/credentials`,
-    `images/build-base.sh` and the Cloud Build configuration (a `-tags` flag, or a `GOFLAGS` that
-    carries one);
+  - `TestRunImagesBuildFugaroWithoutTheEETag`, over the base and credentials images' build (their
+    Dockerfiles, their path through `images/build-base.sh`, and the Cloud Build configuration: a
+    `-tags` flag, or a `GOFLAGS` that carries one). The coordinator job's image is S1.9's;
   - `TestBuildTagScanCatchesPlants`.
 - **Command:** `go test ./images/ -run 'TestRunImagesBuildFugaroWithoutTheEETag|TestBuildTagScanCatchesPlants' -count=1`.
 - **Red step:** the plant (a `-tags ee` line) fails before the scan exists.
@@ -439,14 +472,22 @@ stays MIT with its own copy of the period helpers.*
   - `internal/infra/firebase.go` (`CoordinatorImageExists`);
   - `deploy/terraform/gcp/modules/installation/coordinator.tf`, which mounts the installation's
     key as a Secret Manager secret;
-  - `images/history_test.go`.
+  - `images/history/Dockerfile` (it copies `cmd`, `internal`, `images` and `deploy/terraform` today,
+    not `ee/`), `images/history_test.go`, `images/build_tags_test.go` (S1.7's scan learns the
+    coordinator image's exception);
+  - `deploy/terraform/terraform_test.go`
+    (`TestTheCoordinatorJobTakesItsCredentialFromASecretAndNothingElse`), `internal/infra/firebase_test.go`
+    (`TestCoordinatorTfvarsGolden`) and the `internal/infra/tf/cover_*` goldens;
+  - a staged workflow change under `docs/pending-workflows/` if the image is split from the history
+    image (`.github/workflows/images.yml` builds it; no agent edits `.github/workflows/`).
 - **Tests:**
   - `TestCoordinatorImageCarriesTheEETag`
   - `TestCoordinatorJobMountsTheKeySecret`, a `terraform` test
   - the history job's own tests unchanged
-- **Command:** `go test ./images/ -run 'TestCoordinatorImage|TestHistory' -count=1 && go test -tags
-  terraform ./internal/infra/... -run Coordinator -count=1 && terraform fmt -check -recursive
-  deploy/terraform`.
+- **Command:** `go test ./images/ -run 'TestCoordinatorImage|TestHistory|TestRunImagesBuild' -count=1
+  && go test ./deploy/terraform/ -run Coordinator -count=1 && go test ./internal/infra/ -run
+  Coordinator -count=1 && go test -tags terraform ./internal/infra/... -run Coordinator -count=1 &&
+  terraform fmt -check -recursive deploy/terraform`.
 - **Red step:** `TestCoordinatorImageCarriesTheEETag` fails before the build changes.
 - **Depends on:** S1.4, S2.3. **Reviewer:** opus + mandatory independent review. **For operators:**
   each installation that uses the coordinator runs `fugaro update` and stores its key (per
@@ -553,7 +594,8 @@ by O4 (expiry only). A version field may be added later, as a new task. The numb
   - new: `console/src/main/licence-store.ts`, `console/src/renderer/screens/licence.ts`,
     `console/test/unit/licence-store.test.ts`;
   - changed: `console/src/main/ipc.ts`, `console/src/preload/index.ts`, `console/src/main/spawn.ts`
-    (`CHILD_ENV_KEYS`), `console/src/main/wsl.ts`, `console/src/renderer/entry.ts`.
+    (`CHILD_ENV_KEYS`), `console/src/main/wsl.ts`, `console/src/renderer/entry.ts`,
+    `console/test/unit/ipc.test.ts`, `console/test/unit/preload-surface.test.ts`.
 - **Interfaces:** paste a key, store it, and hand it to the spawned CLI as S2.1 says, never in argv.
   Console code carries no link naming the project's own host.
 - **Tests:**
@@ -809,7 +851,9 @@ by O4 (expiry only). A version field may be added later, as a new task. The numb
 
 - **Files:** `console/src/main/licence-state.ts` (new), `console/src/main/ipc.ts`,
   `console/src/preload/index.ts`, `console/src/renderer/entry.ts`,
-  `console/test/unit/licence-state.test.ts` (new).
+  `console/src/renderer/screens/coordinator.ts` and `spend.ts` (a key-gated command's refusal),
+  `console/test/unit/licence-state.test.ts` (new), `console/test/unit/ipc.test.ts`,
+  `console/test/unit/preload-surface.test.ts`.
 - **Tests:**
   - Within grace, everything works.
   - After grace, launch and config operations are refused in the main process, and reads and
@@ -1000,6 +1044,9 @@ by O4 (expiry only). A version field may be added later, as a new task. The numb
 | `website/content/cli-reference.md` | S4.1 (2), S1.4 (3), S1.5 (4) |
 | `ee/register/register.go` | S1.3 (2), S1.4 (3), S1.5 (4) |
 | `internal/cli/docs_desktop_console_test.go` | S1.4 (3), S1.5 (4) |
+| `internal/cli/api.go` | S1.2 (1) |
+| `internal/cli/report.go`, `internal/cli/reportcore.go`, `internal/cli/diagnose.go`, `internal/cli/project_enroll.go`, `internal/cli/cloudrun_golden_test.go`, `internal/cli/report_source_test.go` | S1.5 (4) |
+| `internal/cli/testdata/coordinator_*` | S1.4 (3) |
 | `ee/README.md`, `.claude/rules/ee.md`, `internal/cli/docs_ee_reserved_test.go` | S0.6 (0), S0.3 (1) |
 | `LICENSING.md` | S0.3 (1), S1.6 (5) |
 | `README.md`, `.goreleaser.yaml`, `docs/releases/README.md` | S1.6 (5) |
@@ -1014,9 +1061,10 @@ by O4 (expiry only). A version field may be added later, as a new task. The numb
 | `internal/cli/docs_coordinator_test.go`, `docs/gcp-live-checklist.md` | S3.6 (2) |
 | `internal/budget/rules/*_test.go` (coordinator), `internal/cli/project_cmd.go`, `internal/cli/doctor_policy_test.go` | S1.4 (3) |
 | `internal/digest/*`, `internal/cli/runs_digest.go`, `plugin/skills/working/SKILL.md` | S1.5 (4) |
-| `images/*` (history/coordinator build), `internal/infra/firebase.go`, `deploy/terraform/gcp/modules/installation/coordinator.tf` | S1.9 (4) |
-| `images/build_tags_test.go` | S1.7 (1) |
-| `console/src/main/ipc.ts`, `console/src/preload/index.ts`, `console/src/renderer/entry.ts` | S2.7 (2), S6.2 (3), S4.2 (4) |
+| `images/*` (history/coordinator build), `internal/infra/firebase.go`, `internal/infra/firebase_test.go`, `internal/infra/tf/cover_*`, `deploy/terraform/terraform_test.go`, `deploy/terraform/gcp/modules/installation/coordinator.tf`, `docs/pending-workflows/*` | S1.9 (4) |
+| `images/build_tags_test.go` | S1.7 (1), S1.9 (4) |
+| `console/src/main/ipc.ts`, `console/src/preload/index.ts`, `console/src/renderer/entry.ts`, `console/test/unit/ipc.test.ts`, `console/test/unit/preload-surface.test.ts` | S2.7 (2), S6.2 (3), S4.2 (4) |
+| `console/src/renderer/screens/coordinator.ts`, `console/src/renderer/screens/spend.ts` | S6.2 (3) |
 | `console/src/main/spawn.ts` | S2.7 (2), S4.2 (4) |
 | `console/src/main/wsl.ts` | S2.7 (2) |
 | `console/src/main/licence.ts` | S2.4 (1), S2.9 (4) |
