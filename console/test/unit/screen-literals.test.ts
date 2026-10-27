@@ -949,6 +949,8 @@ describe('no module under src/renderer writes an inline style', () => {
       'app.ts',
       'entry.ts',
       'graph/layout-client.ts',
+      'graph/layout.ts',
+      'graph/model.ts',
       'installations.ts',
       'screens/degraded.ts',
       'screens/live.ts',

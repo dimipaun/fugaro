@@ -188,6 +188,12 @@ type StateNode struct {
 	// than one of its own.
 	Level    int  `json:"level"`
 	Critical bool `json:"critical"`
+	// Needs is the ids of the tasks this task needs, from the plan's own edges,
+	// sorted by id and de-duplicated, and absent when it needs nothing. It
+	// lists every needed task **whether or not that task is in Nodes in this
+	// read** — a closed task is filtered out without All — because it is the
+	// graph's edge and not a statement about this read.
+	Needs []string `json:"needs,omitempty"`
 	// Release is the target version the plan gives this task, as the plan
 	// spells it, absent when it gives none. It is the key a release box groups
 	// by.
@@ -341,6 +347,10 @@ func State(planID string, doc Document, runs []RunFact, o StateOptions) (StatePl
 	for _, e := range doc.Edges {
 		needs[e.Task] = append(needs[e.Task], e.Needs)
 	}
+	// The resolver reads this map too (is every task this one needs done), so
+	// `sortedNeeds` answers with a sorted copy rather than sorting a node's
+	// slice in place: one map, read twice, and the second reader does not get to
+	// change what the first one sees.
 	res := &resolver{
 		needs:  needs,
 		joined: joinRuns(planID, doc, runs, o.Repo),
@@ -357,6 +367,7 @@ func State(planID string, doc Document, runs []RunFact, o StateOptions) (StatePl
 		sn := StateNode{
 			ID: node.ID, Title: node.Title,
 			Level: level[node.ID], Critical: critical[node.ID],
+			Needs: sortedNeeds(needs[node.ID]),
 		}
 		if node.Version != nil {
 			sn.Release = *node.Version
@@ -378,6 +389,25 @@ func State(planID string, doc Document, runs []RunFact, o StateOptions) (StatePl
 	out.Open = out.Tasks - out.Closed
 	out.Releases = releases(doc, states, o)
 	return out, nil
+}
+
+// sortedNeeds is what a node carries: the tasks it needs, sorted by id and with
+// each id once. A plan writes its edges in the order its planner thought of
+// them, and a graph view draws the same picture whatever that order is — so the
+// read sorts, and two reads of one plan carry the same list.
+func sortedNeeds(needs []string) []string {
+	if len(needs) == 0 {
+		return nil
+	}
+	out := append([]string(nil), needs...)
+	sort.Strings(out)
+	kept := out[:1]
+	for _, id := range out[1:] {
+		if id != kept[len(kept)-1] {
+			kept = append(kept, id)
+		}
+	}
+	return kept
 }
 
 // nodeAnswer is one task's state, as resolver.stateOf answers it and as it is

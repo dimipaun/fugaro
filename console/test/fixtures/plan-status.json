@@ -27,6 +27,7 @@
           "closed": false,
           "level": 1,
           "critical": true,
+          "needs": ["task-one"],
           "release": "1.4.0",
           "run": "aa02",
           "stage": "implement"
@@ -55,6 +56,7 @@
           "closed": false,
           "level": 2,
           "critical": false,
+          "needs": ["task-two", "task-three"],
           "release": "1.5.0"
         },
         {
@@ -64,6 +66,7 @@
           "closed": false,
           "level": 2,
           "critical": false,
+          "needs": ["task-five"],
           "release": "1.5.0",
           "run": "aa04"
         }
