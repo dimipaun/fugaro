@@ -449,6 +449,8 @@ document, release assignment later — so Slices 1–2 wait on no ruling; (e)
   the row.
 - **Depends on:** GV2.4. **Reviewer:** standard (for the row). **OWNER-RUN:** yes; no agent runs any
   step.
+- **Written:** the row and the section are in `docs/gcp-live-checklist.md`; the check itself stays
+  **NOT RUN**.
 
 ### Slice 3 — the write (GD2) — blocked until the coordinator's record exists (ruling (a))
 
