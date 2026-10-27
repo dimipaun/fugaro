@@ -101,7 +101,7 @@ const RAIL_HOOKS: readonly string[] = Object.freeze([
  * (`div.console-rail-head`, `header.degraded-header`). Stripping one is what
  * turns a token into the class a rule would select; a token with any other
  * prefix is not a hook. */
-const ELEMENT_PREFIX = /^(?:a|aside|button|code|details|div|dl|figure|form|h1|h2|h3|header|input|label|li|nav|ol|p|pre|section|span|summary|table|tbody|td|th|tr|ul)\./
+const ELEMENT_PREFIX = /^(?:a|aside|button|code|details|div|dl|figure|form|g|h1|h2|h3|header|input|label|li|nav|ol|p|path|pre|rect|section|span|summary|svg|table|tbody|td|text|th|tr|tspan|ul)\./
 
 /** HOOK is what a token has to look like to be a hook rather than a word of
  * prose. A class hook carries one of the prefixes §2's tables and prose are
@@ -110,7 +110,7 @@ const ELEMENT_PREFIX = /^(?:a|aside|button|code|details|div|dl|figure|form|h1|h2
  * attribute hook is a `data-*` or an `aria-*`. Everything else the section
  * mentions (`class`, `title`, `role`, `putReading`, `UNAVAILABLE_MARK`,
  * `path:line`) names no hook a stylesheet could select. */
-const HOOK = /^(?:(?:live|spend|projects|run|degraded|console|unavailable|installation)(?:-[a-z0-9-]+)?|(?:data|aria)-[a-z0-9-]+)$/
+const HOOK = /^(?:(?:live|spend|projects|run|degraded|graph|console|unavailable|installation)(?:-[a-z0-9-]+)?|(?:data|aria)-[a-z0-9-]+)$/
 
 /** CLASS_HOOK is the class half of `HOOK`, and `SUFFIX` is the shorthand §2.7
  * and §2.8 write their hook sets with: the degraded screen's section is two
@@ -135,7 +135,7 @@ const HOOK = /^(?:(?:live|spend|projects|run|degraded|console|unavailable|instal
  * follows, and any token that is neither is skipped -- so the `-num` of §2.10's
  * prose, which follows a `cell(...)` signature rather than a hook, licenses
  * nothing. */
-const CLASS_HOOK = /^(?:live|spend|projects|run|degraded|console|unavailable|installation)-[a-z0-9-]+$/
+const CLASS_HOOK = /^(?:live|spend|projects|run|degraded|graph|console|unavailable|installation)-[a-z0-9-]+$/
 
 /** SUFFIX is one `-suffix`, or a run of them joined by `/` as §2.7's
  * `-word`/`-at`/`-age` is written. */
@@ -241,7 +241,7 @@ const RENDERER: readonly string[] = Object.freeze([
 
 /** EMITTER is how a screen draws an element: `make` and `cell` and the two
  * value helpers each take the factory, then the tag, then the classes. */
-const EMITTER = /\b(?:make|cell|textCell|numberCell)\(/g
+const EMITTER = /\b(?:make|cell|makeNS|cellNS|drawn|drawnNS|textCell|numberCell)\(/g
 
 /** CLASS_LITERAL is what a class argument looks like. A tag passed as a class
  * (`make(factory, 'li', 'li')`) is not one, and neither is a document value. */
@@ -448,7 +448,7 @@ function drawnAttributes(): ReadonlyMap<string, ReadonlySet<string>> {
       times.get(name) === 1 ? created.get(name) : undefined
     // The optional wrapper is `literal(cell(element, factory, 'span',
     // 'degraded-mode'), 'polling')`, which binds the span the same way.
-    for (const match of text.matchAll(/(?:const|let)\s+(\w+)\s*=\s*(?:\w+\(\s*)?(?:make|cell|textCell|numberCell)\(/g)) {
+    for (const match of text.matchAll(/(?:const|let)\s+(\w+)\s*=\s*(?:\w+\(\s*)?(?:make|cell|makeNS|cellNS|drawn|drawnNS|textCell|numberCell)\(/g)) {
       const name = match[1] ?? ''
       const args = callArguments(text, match.index + (match[0]?.length ?? 0) - 1)
       const at = args.findIndex((argument) => argument.trim() === 'factory')
