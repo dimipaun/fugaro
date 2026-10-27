@@ -17,6 +17,7 @@ import (
 	"gocloud.dev/gcerrors"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
@@ -127,6 +128,97 @@ const (
 	TierFirst  = "first"
 	TierSenior = "senior"
 )
+
+// MaxTolerated bounds the tolerated findings a record stores. A round's
+// findings are a model's output and the record is a small object every
+// listing reads, so the list is capped and Total says how many there really
+// were (result.schema.json's maxItems).
+const MaxTolerated = 100
+
+// MaxToleratedTitle bounds a stored finding's title in runes. It is the
+// reviewer's own sentence for the finding, and the whole summary stays in the
+// transcript: what the record keeps is a line a reader can scan.
+const MaxToleratedTitle = 200
+
+// ToleratedFindings is the findings a run's resolved mode let through
+// (docs/rigor-modes/implementation-plan.md T3.4, D9, F19): one entry per
+// finding the mode tolerated, in the reviewer's own order, so a reader — and
+// the backlog surface — can see what was let through once the job and the
+// pull request are gone.
+//
+// The findings themselves and not only the count ReviewSummary carries,
+// because a backlog of what a mode decided not to fix needs the findings
+// (F19). It is bounded data: every entry is enums, three small integers and
+// one clipped line, and the list is capped at MaxTolerated with Total saying
+// how many the mode really tolerated, so a truncated list is never presented
+// as the whole one.
+type ToleratedFindings struct {
+	// Findings is one entry per tolerated finding, in the reviewer's order.
+	// Never empty: a run that tolerated nothing carries no block at all,
+	// which is a different fact from a block that lists none.
+	Findings []ToleratedFinding `json:"findings"`
+	// Total is how many findings the mode tolerated. Never less than
+	// len(Findings).
+	Total int `json:"total"`
+}
+
+// ToleratedFinding is one finding a mode let through: the score the mode's
+// table read (D1, D2), the mode that tolerated it, the word a person reads
+// for the score, and the reviewer's own words for the finding, clipped.
+//
+// The score is stored flat rather than as a nested object, like the record's
+// other tuples, and all four parts are kept: the axes are what a reader
+// re-reads a threshold against, and the class is what the spec's severity
+// override turned on.
+type ToleratedFinding struct {
+	// Title is the reviewer's own summary of the finding, clipped to
+	// MaxToleratedTitle runes. An entry without one is not stored.
+	Title string `json:"title"`
+	// Label is the word for the score (rigor.Label): blocker, high, medium,
+	// low or nit. It is derived from the score and never an input to a
+	// decision (D2), so NewTolerated fills it from the axes beside it and no
+	// caller can store a word that disagrees with them.
+	Label rigor.Label `json:"label"`
+	// Mode is the mode that tolerated the finding: the run's resolved mode,
+	// which is one value (D9, D22).
+	Mode rigor.Mode `json:"mode"`
+	// Likelihood, Impact, FixCost and Class are the score the mode's table
+	// read, as the reviewer wrote it (D3).
+	Likelihood int         `json:"likelihood"`
+	Impact     int         `json:"impact"`
+	FixCost    int         `json:"fix_cost"`
+	Class      rigor.Class `json:"class"`
+}
+
+// NewTolerated bounds the findings a run records as tolerated and returns the
+// block to store, or nil when it holds none — a run that tolerated nothing
+// carries no block at all, rather than an empty one.
+//
+// The label is taken from the score here and never from the caller, and an
+// entry whose mode, score or title cannot be read is dropped: the table reads
+// the axes and the class (D2), and a record that carried a word of its own
+// would be a second opinion about them.
+func NewTolerated(findings []ToleratedFinding) *ToleratedFindings {
+	if len(findings) == 0 {
+		return nil
+	}
+	tf := &ToleratedFindings{Findings: []ToleratedFinding{}, Total: len(findings)}
+	for _, f := range findings {
+		s := rigor.Score{Likelihood: f.Likelihood, Impact: f.Impact, FixCost: f.FixCost, Class: f.Class}
+		if f.Title == "" || !rigor.Known(f.Mode) || !s.Scored() {
+			continue
+		}
+		if len(tf.Findings) >= MaxTolerated {
+			break
+		}
+		f.Title, f.Label = clipRunes(f.Title, MaxToleratedTitle), s.Label()
+		tf.Findings = append(tf.Findings, f)
+	}
+	if len(tf.Findings) == 0 {
+		return nil
+	}
+	return tf
+}
 
 // StageTiming records how long one stage took, and what its model calls
 // cost (generic-tool plan Task 24). ModelUSD is the gateway's StageReport
@@ -352,6 +444,17 @@ type Record struct {
 	// left. At most MaxBacklogClosed, and absent — never an empty list — for
 	// a run that closed none.
 	BacklogClosed []string `json:"backlog_closed,omitempty"`
+	// Tolerated is the findings the run's resolved mode let through, in the
+	// reviewer's order: the findings themselves and not only the count
+	// Reviews carries, because what a mode decided not to fix is what a
+	// reader — and the backlog surface — needs (docs/rigor-modes/
+	// implementation-plan.md T3.4, D9, F19). Nothing reads it yet; it is
+	// written because the record is what survives the run. Absent — never an
+	// empty block — for a run that tolerated nothing, which is every record
+	// written before this field existed: the field is additive, so an old
+	// reader sees the record it always saw and the schema's version stays 1
+	// (F21).
+	Tolerated *ToleratedFindings `json:"tolerated,omitempty"`
 }
 
 // MaxBacklogClosed bounds Record.BacklogClosed. A run closes only what the

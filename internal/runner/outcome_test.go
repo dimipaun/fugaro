@@ -1,6 +1,8 @@
 package runner
 
 import (
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/rigor"
@@ -186,6 +188,59 @@ func TestDecideBlocksAPolicyItCannotPlace(t *testing.T) {
 		ready, reason := Decide([]verify.Record{pass}, "abc", last, tc.pol)
 		if ready || reason != "review round 2 still has 1 finding" {
 			t.Errorf("%s: Decide = %v %q, want false with the count's own reason", tc.name, ready, reason)
+		}
+	}
+}
+
+// TestToleratedRecordKeepsWhatTheModeLetThrough is T3.4 at the runner: the
+// record keeps the findings the mode let through — each with the reviewer's
+// own words for it, the word for its score and the mode that tolerated it —
+// and nothing at all when the mode tolerated none (D9, F19). The blocking
+// finding of the same round is not in it, and the titles are the tolerated
+// findings' own, which is what pairs the split back with the round.
+func TestToleratedRecordKeepsWhatTheModeLetThrough(t *testing.T) {
+	findings := []Finding{
+		{Severity: "minor", Summary: "the retry loop has no backoff", Likelihood: 1, Impact: 3, FixCost: 2, Class: "correctness"},
+		{Severity: "major", Summary: "the handler ignores the error", Likelihood: 4, Impact: 4, FixCost: 2, Class: "correctness"},
+		{Severity: "minor", Summary: "a long comment restates the function", Likelihood: 2, Impact: 2, FixCost: 1, Class: "cosmetic"},
+	}
+	r := &run{lastSenior: seniorRound{Round: 2, Findings: findings}}
+	pol := findingsPolicyOf(optedIn, rigor.Startup, 2, scoresOf(findings))
+	got := r.toleratedRecord(pol)
+	want := []runstore.ToleratedFinding{
+		{Title: "the retry loop has no backoff", Label: rigor.Nit, Mode: rigor.Startup, Likelihood: 1, Impact: 3, FixCost: 2, Class: rigor.Correctness},
+		{Title: "a long comment restates the function", Label: rigor.Low, Mode: rigor.Startup, Likelihood: 2, Impact: 2, FixCost: 1, Class: rigor.Cosmetic},
+	}
+	if got == nil || !reflect.DeepEqual(got.Findings, want) {
+		t.Fatalf("toleratedRecord = %+v, want %+v", got, want)
+	}
+	if got.Total != 2 {
+		t.Errorf("total = %d, want the 2 findings the mode tolerated", got.Total)
+	}
+
+	// A reviewer's words are agent text on a record the repository can read,
+	// so what is stored is redacted like everything else the run publishes.
+	const secret = "super-secret-token"
+	r.addSecret(secret)
+	r.lastSenior.Findings = []Finding{{Summary: "the token " + secret + " is logged", Likelihood: 1, Impact: 1, FixCost: 1, Class: "correctness"}}
+	got = r.toleratedRecord(findingsPolicyOf(optedIn, rigor.Startup, 2, scoresOf(r.lastSenior.Findings)))
+	if got == nil || strings.Contains(got.Findings[0].Title, secret) {
+		t.Fatalf("toleratedRecord left a credential in the record: %+v", got)
+	}
+
+	// A mode that tolerates nothing — and every run whose filing cannot carry
+	// a tolerated finding — writes no block at all (D9).
+	for _, tc := range []struct {
+		name string
+		cfg  rigor.Config
+		mode rigor.Mode
+	}{
+		{"critical tolerates nothing", optedIn, rigor.Critical},
+		{"poc files nothing so it tolerates nothing", optedIn, rigor.POC},
+		{"a repository that configured nothing", rigor.Config{}, rigor.Pro},
+	} {
+		if pol := findingsPolicyOf(tc.cfg, tc.mode, 2, scoresOf(findings)); r.toleratedRecord(pol) != nil {
+			t.Errorf("%s: the record kept findings the mode did not tolerate", tc.name)
 		}
 	}
 }

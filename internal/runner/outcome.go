@@ -119,6 +119,46 @@ func (r *run) findingsPolicy() FindingsPolicy {
 	return findingsPolicyOf(r.rigorCfg, r.reachedRigor(), r.lastSenior.Round, scoresOf(r.lastSenior.Findings))
 }
 
+// toleratedRecord is what the run's record keeps of the findings the mode let
+// through (docs/rigor-modes/implementation-plan.md T3.4, D9, F19): one entry
+// per tolerated finding, with the reviewer's own words for it. It is nil when
+// the policy tolerates nothing, so the record carries no block at all rather
+// than an empty one.
+//
+// The pairing is the split's own, without asking the table a second time.
+// rigor.Split appends a finding's score to Tolerated in the reviewer's order,
+// and whether a finding blocks is a function of its score alone (rigor.Blocks
+// reads nothing else), so a tolerated score is tolerated at every finding that
+// carries it: walking the round's findings and taking each tolerated score at
+// the next finding it equals pairs the two lists exactly, and the record
+// cannot disagree with the readiness rule about which findings were tolerated.
+func (r *run) toleratedRecord(pol FindingsPolicy) *runstore.ToleratedFindings {
+	if len(pol.Tolerated) == 0 {
+		return nil
+	}
+	entries := make([]runstore.ToleratedFinding, 0, len(pol.Tolerated))
+	next := 0
+	for _, f := range r.lastSenior.Findings {
+		if next == len(pol.Tolerated) {
+			break
+		}
+		s := scoreOf(f)
+		if s != pol.Tolerated[next] {
+			continue
+		}
+		entries = append(entries, runstore.ToleratedFinding{
+			Title:      r.redact(f.Summary),
+			Mode:       pol.Mode,
+			Likelihood: s.Likelihood,
+			Impact:     s.Impact,
+			FixCost:    s.FixCost,
+			Class:      s.Class,
+		})
+		next++
+	}
+	return runstore.NewTolerated(entries)
+}
+
 // seniorRound is one senior review round as the loop read it: the round number
 // the record carries, and the findings the summary beside it only counts. The
 // findings are kept whole because the mode's threshold table reads their
@@ -135,9 +175,14 @@ type seniorRound struct {
 func scoresOf(findings []Finding) []rigor.Score {
 	out := make([]rigor.Score, 0, len(findings))
 	for _, f := range findings {
-		out = append(out, rigor.Score{Likelihood: f.Likelihood, Impact: f.Impact, FixCost: f.FixCost, Class: rigor.Class(f.Class)})
+		out = append(out, scoreOf(f))
 	}
 	return out
+}
+
+// scoreOf is one finding as the table reads it.
+func scoreOf(f Finding) rigor.Score {
+	return rigor.Score{Likelihood: f.Likelihood, Impact: f.Impact, FixCost: f.FixCost, Class: rigor.Class(f.Class)}
 }
 
 // Plural formats "1 finding" / "3 findings".

@@ -394,6 +394,16 @@ func TestDecideToleratedRoundOpensAReadyPR(t *testing.T) {
 	if len(rec.Backlog) != 1 {
 		t.Errorf("the record's items = %v; want the item the tolerated round was filed as (D9)", rec.Backlog)
 	}
+	// And the record keeps the finding itself, with the count and the
+	// reviewer's own words for it, so what the mode let through is readable
+	// after the job and the pull request are gone (T3.4, F19).
+	if rec.Tolerated == nil || rec.Tolerated.Total != 1 || len(rec.Tolerated.Findings) != 1 {
+		t.Fatalf("the record's tolerated findings = %+v; want the one startup let through (T3.4)", rec.Tolerated)
+	}
+	if got := rec.Tolerated.Findings[0]; got.Title != "fix it" || got.Label != rigor.Low || got.Mode != rigor.Startup ||
+		got.Likelihood != 2 || got.Impact != 2 || got.FixCost != 1 || got.Class != rigor.Correctness {
+		t.Errorf("tolerated finding = %+v; want the reviewer's finding, scored, labelled and with the mode that tolerated it", got)
+	}
 	if pr := onlyPR(t, h.provider); pr.Draft {
 		t.Errorf("the pull request is a draft: %+v", pr)
 	}

@@ -2672,7 +2672,9 @@ func (r *run) finalize(ctx context.Context) error {
 	r.rec.HeadSHA, r.rec.Verify = sha, records
 	r.uploadVerifyRecords(ctx, records)
 
-	ready, reason := Decide(records, decided, seniorReview(r.rec.Reviews), r.findingsPolicy())
+	pol := r.findingsPolicy()
+	ready, reason := Decide(records, decided, seniorReview(r.rec.Reviews), pol)
+	r.rec.Tolerated = r.toleratedRecord(pol)
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"
 	}
