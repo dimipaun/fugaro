@@ -1379,6 +1379,26 @@ The coordinator reads github only: a bitbucket repository is refused, and the
 refusal names the reason, because its credential is one repository's access
 token and cannot be widened to a project (reconciliation Q12 (A), finding #30).
 
+--from-store is a different read of the same view (D364): it prints what the
+sweep already stored, coordinator/repos/<slug>/ in the project's database,
+through the caller's own credentials — roles/firebasedatabase.viewer is what
+admits it — and with the same --repo and --all selection as above. It opens no
+host and holds no App ID, no App key and no Bitbucket credential: everything a
+stored view says about a pull request is what the sweep read once. It is the
+read a console makes, and it works with FUGARO_CREDENTIALS_SERVICE_URL set,
+where the read above refuses.
+With --json, one repository is printed as it is stored: {"repo":
+"owner/name", "stored": true, "view": {the view document}, "stale": {the
+sweep's marker, as stored}}. A repository the coordinator has never
+reconciled is "stored": false, and the document then holds the runs half of
+the view — the runs bucket alone, with the pull requests those runs name
+listed and no host state for them — so a console reads a project whose
+coordinator is off with the same argv. What decides between the two is the
+database and never the local config: a teammate's config is the published
+shared one, and it does not carry the coordinator's switch at all.
+The stale marker is printed exactly as stored, with no age computed from it:
+the stored view carries no time by design (internal/coordinator/sweep.go).
+
 The launcher of a run is printed as what it is — the string the run's own launch
 record wrote about itself — and never as an identity.
 
@@ -1394,6 +1414,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--all` | bool | `false` | no | read every repository the local config lists, one view each |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--from-store` | bool | `false` | no | print the view the sweep stored, with no host read and no key (falls back to the runs alone when none is stored) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for status |
 | `--json` | bool | `false` | no | print machine-readable output |

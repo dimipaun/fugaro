@@ -533,11 +533,12 @@ const coordinatorTruncatedNote = "n+ in FILES is a run whose changed-file set is
 
 // coordinatorOptions are status's flags.
 type coordinatorOptions struct {
-	cloud  cloudOptions
-	repo   string
-	all    bool
-	since  string
-	asJSON bool
+	cloud     cloudOptions
+	repo      string
+	all       bool
+	since     string
+	asJSON    bool
+	fromStore bool
 }
 
 func newCoordinatorCmd() *cobra.Command {
@@ -592,19 +593,44 @@ func newCoordinatorStatusCmd() *cobra.Command {
 			"The coordinator reads github only: a bitbucket repository is refused, and the\n" +
 			"refusal names the reason, because its credential is one repository's access\n" +
 			"token and cannot be widened to a project (reconciliation Q12 (A), finding #30).\n\n" +
+			"--from-store is a different read of the same view (D364): it prints what the\n" +
+			"sweep already stored, coordinator/repos/<slug>/ in the project's database,\n" +
+			"through the caller's own credentials — roles/firebasedatabase.viewer is what\n" +
+			"admits it — and with the same --repo and --all selection as above. It opens no\n" +
+			"host and holds no App ID, no App key and no Bitbucket credential: everything a\n" +
+			"stored view says about a pull request is what the sweep read once. It is the\n" +
+			"read a console makes, and it works with FUGARO_CREDENTIALS_SERVICE_URL set,\n" +
+			"where the read above refuses.\n" +
+			"With --json, one repository is printed as it is stored: {\"repo\":\n" +
+			"\"owner/name\", \"stored\": true, \"view\": {the view document}, \"stale\": {the\n" +
+			"sweep's marker, as stored}}. A repository the coordinator has never\n" +
+			"reconciled is \"stored\": false, and the document then holds the runs half of\n" +
+			"the view — the runs bucket alone, with the pull requests those runs name\n" +
+			"listed and no host state for them — so a console reads a project whose\n" +
+			"coordinator is off with the same argv. What decides between the two is the\n" +
+			"database and never the local config: a teammate's config is the published\n" +
+			"shared one, and it does not carry the coordinator's switch at all.\n" +
+			"The stale marker is printed exactly as stored, with no age computed from it:\n" +
+			"the stored view carries no time by design (internal/coordinator/sweep.go).\n\n" +
 			"The launcher of a run is printed as what it is — the string the run's own launch\n" +
 			"record wrote about itself — and never as an identity.\n\n" +
 			"This command reads and writes nothing of its own: no store of the coordinator's\n" +
 			"own, no service, no model credential. It is the read the CLI already performs,\n" +
 			"the runs bucket and a pull request read that can only read.",
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error { return runCoordinatorStatus(cmd, &o) },
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if o.fromStore {
+				return runCoordinatorStatusFromStore(cmd, &o)
+			}
+			return runCoordinatorStatus(cmd, &o)
+		},
 	}
 	f := cmd.Flags()
 	f.StringVar(&o.repo, "repo", "", "the repository to read (owner/name; default: the local config's, when it lists one)")
 	f.BoolVar(&o.all, "all", false, "read every repository the local config lists, one view each")
 	f.StringVar(&o.since, "since", coordinatorDefaultSince, "only runs started within this long ("+coordinatorDefaultSince+", 36h, 90m; 0 for all)")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
+	f.BoolVar(&o.fromStore, "from-store", false, "print the view the sweep stored, with no host read and no key (falls back to the runs alone when none is stored)")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
