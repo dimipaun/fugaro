@@ -118,7 +118,7 @@ func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 	// says what that left unfixed (docs/rigor-modes/implementation-plan.md
 	// T4.2, D9, F19).
 	b.WriteString(rigorLine(rec.Rigor))
-	b.WriteString(toleratedSection(rec.Tolerated))
+	b.WriteString(toleratedSection(rec))
 	b.WriteString(testsLine(rec, filedFrom))
 	if rec.Cost != nil {
 		b.WriteString(CostLine(*rec.Cost) + "\n\n")
@@ -240,17 +240,33 @@ func rigorLine(rg *runstore.RigorRecord) string {
 }
 
 // toleratedSection is the report's list of the findings the run's resolved
-// mode let through (T4.2, D9, F19): the list `fugaro diagnose` reads back from
-// the record, one row per finding — the score the mode's table read, the word
-// a person reads for it, the mode that tolerated it and the reviewer's own
-// words for the finding — so the pull request says what was left unfixed and
-// not only how many findings the round had.
+// mode let through (T4.2, D9, F19): the block `fugaro diagnose --json` prints
+// back from the record under `tolerated`, one row per finding — the score the
+// mode's table read, the word a person reads for it, the mode that tolerated it
+// and the reviewer's own words for the finding — so the pull request says what
+// was left unfixed and not only how many findings the round had.
 //
 // "" for a record carrying no block, which is every run that tolerated
 // nothing: an absent block is a different fact from a block that lists none,
 // and a section over an empty list would claim a decision no mode made.
-func toleratedSection(tf *runstore.ToleratedFindings) string {
+//
+// "" too for a round the mode blocked. The record keeps the tolerated half of
+// every round the split scored, a mixed round's included, while the body names
+// what was tolerated only where the round was let through whole (prflow.go
+// toleratedPart): a table over that half would claim a decision Decide never
+// made, and it is the round's own count printed above it that a reader goes by.
+func toleratedSection(rec *runstore.Record) string {
+	tf := rec.Tolerated
 	if tf == nil || len(tf.Findings) == 0 {
+		return ""
+	}
+	// The split is a partition of the round (rigor.Split), so the findings the
+	// record counts as tolerated are all of them — the only count a round the
+	// mode let through whole can leave — and fewer of them is a round Decide
+	// blocked on the rest. The comparison is against the record's own total
+	// rather than the rows, which the cap can shorten.
+	last := seniorReview(rec.Reviews)
+	if last == nil || tf.Total != last.Findings {
 		return ""
 	}
 	var b strings.Builder

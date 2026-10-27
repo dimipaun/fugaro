@@ -6,6 +6,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/verify"
 )
 
 // toleratedRec is a record whose mode let one finding through: the shape
@@ -19,6 +20,51 @@ func toleratedRec(findings []runstore.ToleratedFinding) *runstore.Record {
 		},
 		Reviews:   []runstore.ReviewSummary{{Round: 1, Tier: runstore.TierSenior, Verdict: "changes", Findings: len(findings)}},
 		Tolerated: runstore.NewTolerated(findings),
+	}
+}
+
+// TestReportOmitsToleratedForARoundTheModeBlocked: a round that left a
+// blocking finding beside a tolerated one is a round Decide did not tolerate,
+// and the pull request's body says so in the round's own count rather than
+// naming anything tolerated. The report's table must not claim what the body
+// leaves out: what the mode tolerated is the whole round or nothing (D7, F4).
+func TestReportOmitsToleratedForARoundTheModeBlocked(t *testing.T) {
+	tol, blocked := tiny, big
+	rec := &runstore.Record{
+		RunID:   "20261027-120000-abcd",
+		HeadSHA: "abc",
+		Outcome: runstore.OutcomeDraft,
+		Rigor: &runstore.RigorRecord{
+			Mode: rigor.Startup, From: rigor.FromRepo, At: runstore.RigorAtFinalize, Revision: "origin/main",
+		},
+		Reviews: []runstore.ReviewSummary{{Round: 2, Tier: runstore.TierSenior, Verdict: "changes", Findings: 2}},
+		Tolerated: runstore.NewTolerated([]runstore.ToleratedFinding{{
+			Title: "unbounded retry loop in the fetch", Mode: rigor.Startup,
+			Likelihood: tol.Likelihood, Impact: tol.Impact, FixCost: tol.FixCost, Class: tol.Class,
+		}}),
+	}
+	pol := FindingsPolicy{Mode: rigor.Startup, Round: 2, Tolerated: []rigor.Score{tol}, Blocking: []rigor.Score{blocked}}
+	pass := verify.Record{Kind: verify.KindTest, HeadSHA: rec.HeadSHA, CleanTree: true, Passed: true}
+	ready, reason := Decide([]verify.Record{pass}, rec.HeadSHA, seniorReview(rec.Reviews), pol)
+	if ready {
+		t.Fatalf("the round was tolerated: %q", reason)
+	}
+	rec.Reason = reason
+
+	got := Report(rec, "runs/acme-app/20261027-120000-abcd/", nil)
+	if !strings.Contains(got, "**Outcome:** draft — "+reason) {
+		t.Errorf("the report does not carry the round the mode blocked:\n%s", got)
+	}
+	if !strings.Contains(got, "**Reviews:** senior round 2: changes (2 findings)") {
+		t.Errorf("the report lost the round's own count:\n%s", got)
+	}
+	if !strings.Contains(got, "**Rigor:** "+rec.Rigor.Line()) {
+		t.Errorf("the report lost the mode line:\n%s", got)
+	}
+	for _, claim := range []string{"#### Tolerated", "| Label |", "unbounded retry loop"} {
+		if strings.Contains(got, claim) {
+			t.Errorf("the report claims %q for a round the mode blocked:\n%s", claim, got)
+		}
 	}
 }
 
@@ -51,7 +97,10 @@ func TestReportListsWhatTheModeTolerated(t *testing.T) {
 // passing its last row off as the last one. It never says its rows are "the
 // first" of the total: the gap is the record's cap only when the list was long
 // enough for it, and NewTolerated also drops an entry it cannot read, so the
-// rows are some of the total and not the opening of it.
+// rows are some of the total and not the opening of it. The round the record's
+// summary carries counts every finding it left, which is the total the mode
+// tolerated: the rows are short of it because the record could not keep them,
+// not because the round held anything back.
 func TestReportToleratedTotalIsSaidWhenTheTableIsPartial(t *testing.T) {
 	row := runstore.ToleratedFinding{
 		Title: "one finding", Mode: rigor.Pro,
@@ -66,7 +115,7 @@ func TestReportToleratedTotalIsSaidWhenTheTableIsPartial(t *testing.T) {
 		{"an entry the record dropped", 2, "2 findings tolerated in all; the record lists 1 of them."},
 	} {
 		rec := toleratedRec([]runstore.ToleratedFinding{row})
-		rec.Tolerated.Total = tc.total
+		rec.Tolerated.Total, rec.Reviews[0].Findings = tc.total, tc.total
 		got := Report(rec, "loc/", nil)
 		if !strings.Contains(got, tc.want) {
 			t.Errorf("%s: the partial table does not say so (%q):\n%s", tc.name, tc.want, got)
