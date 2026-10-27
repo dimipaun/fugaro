@@ -1896,20 +1896,21 @@ describe('the rail’s accessibility (review m5)', () => {
 //
 // The screen next door (`graph.test.ts`) is a function of the documents it is
 // handed. What is held here is the part the *entry* owns: that a redraw puts the
-// keyboard back in the tree it drew, that the graph's tablist answers the same
-// keys the navigation's does, that a Refresh pressed while a read is in flight is
-// not dropped, and that a plan the console could not read is not redrawn from the
-// plan it read before it.
+// keyboard back in the tree it drew -- on the element the gesture was made on,
+// and on the element it was already on when no gesture caused the redraw -- that
+// the graph's tablist answers the same keys the navigation's does, that a Refresh
+// pressed while a read is in flight is not dropped, and that a plan the console
+// could not read is not redrawn from the plan it read before it.
 //
-// **The first case is the one to mutation-prove.** In `wireGraph`'s `redraw`,
-// drop the focus request --
+// **The focus rule is the one to mutation-prove, and the Fit case is where.**
+// `redraw` takes the target every call site names; drop the one the Fit control
+// passes --
 //
-//   const redraw = (element, focus = null) => { ... if (focus !== null) focusMatching(drawn, focus) }
+//   redraw(screen.change({ zoom: 1 }), FIT_BUTTON)  ->  redraw(screen.change({ zoom: 1 }), null)
 //
-// becomes `const redraw = (element) => { ... }` with the `focusIn(drawn, key)`
-// calls left where they were, on the tree being taken down -- and the case then
-// fails on its second assertion: the focused node is the detached one rather than
-// the node the current panel holds. Red before, green after.
+// -- and that case fails: the tree is replaced either way, and with `null` the
+// keyboard is left on the control the panel no longer holds. Red before, green
+// after.
 // ---------------------------------------------------------------------------
 
 /** PLAN_STATUS is the graph's own document as the wire has it: the fixture the
@@ -2022,6 +2023,38 @@ function firstKeyed(document: FakeDocument): string {
   return key
 }
 
+/** nodeForTask is the drawn card or row for one task of the fixture plan: the
+ * layout key is `<plan length>:<plan>:<task>`, so the task id is its tail. */
+function nodeForTask(document: FakeDocument, task: string): FakeNode | undefined {
+  return [...classed(panelOf(document), 'graph-node'), ...classed(panelOf(document), 'graph-row')].find((node) =>
+    (node.attributes.get('data-key') ?? '').endsWith(`:${task}`),
+  )
+}
+
+/** wordsOf is the words drawn on one task's card, in document order: what a
+ * reader sees of the state, and what a live frame's stage moves. */
+function wordsOf(document: FakeDocument, task: string): readonly string[] {
+  const node = nodeForTask(document, task)
+  if (node === undefined) throw new Error(`the graph drew no node for ${task}`)
+  return everyNode(node)
+    .filter((each) => each.attributes.get('data-word') !== null)
+    .map((each) => each.textContent ?? '')
+}
+
+/** frameWithStage is one live frame whose row for one run suffix carries a stage:
+ * the console's own `live.watch` document with the run id and the stage of its
+ * first row replaced, so the frame is a frame the decoder accepts and the graph's
+ * fold has a stage to fold. The suffix is what the fold joins on, and `aa02` is
+ * the fixture plan's one running task (`graph.test.ts`'s own join). */
+function frameWithStage(suffix: string, stage: string): Readonly<Record<string, unknown>> {
+  const document = JSON.parse(JSON.stringify(syntheticDocuments()[0])) as { runs: Record<string, unknown>[] }
+  const row = document.runs[0]
+  if (row === undefined) throw new Error('the synthetic frame has no run row to change')
+  row['run'] = `20261025-121805-${suffix}`
+  row['stage'] = stage
+  return document
+}
+
 describe('the graph view’s keyboard', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -2093,6 +2126,48 @@ describe('the graph view’s keyboard', () => {
     expect((back[2] as FakeNode).press('ArrowDown').defaultPrevented).toBe(false)
   })
 
+  it('keeps the keyboard on the control a key pressed, and leaves it alone when it is elsewhere', async () => {
+    const { bridge } = graphBridge()
+    const document = await openGraph(bridge)
+
+    // Fit and the view switch are the two controls whose redraw used to leave the
+    // reader on `<body>`: both are `button`s a Tab reaches, both replace the
+    // panel's tree, and a keyboard reader who pressed Enter on one has to be on
+    // the one the new tree holds (design section 4.3).
+    const fit = classed(panelOf(document), 'graph-fit')[0]
+    if (fit === undefined) throw new Error('the graph drew no Fit control')
+    fit.focus()
+    fit.click()
+    await flush()
+    const afterFit = classed(panelOf(document), 'graph-fit')[0]
+    expect(afterFit, 'the Fit control drew nothing: the case would prove nothing').not.toBe(fit)
+    expect(document.activeElement, 'the Fit control dropped the keyboard').toBe(afterFit)
+
+    const view = classed(panelOf(document), 'graph-view')[0]
+    if (view === undefined) throw new Error('the graph drew no view switch')
+    view.focus()
+    view.click()
+    await flush()
+    const afterView = classed(panelOf(document), 'graph-view')[0]
+    if (afterView === undefined) throw new Error('the view switch drew nothing: the case would prove nothing')
+    expect(afterView).not.toBe(view)
+    expect(document.activeElement, 'the view switch dropped the keyboard').toBe(afterView)
+    // Back to the canvas, so the read below has a picture to draw.
+    afterView.click()
+    await flush()
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
+
+    // And a redraw that no gesture caused never takes the keyboard from outside
+    // the graph: the reader is on the navigation's own Graph button, and the
+    // read's redraw leaves them there.
+    const nav = buttonFor(document, 'graph')
+    nav.focus()
+    ;(classed(panelOf(document), 'graph-refresh')[0] as FakeNode).click()
+    await flush()
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
+    expect(document.activeElement, 'a read pulled the keyboard into the graph').toBe(nav)
+  })
+
   it('re-queues one plan read when Refresh is pressed while a read is in flight', async () => {
     // The operator's Refresh is a read of its own, and a read that is dropped
     // because one was already outstanding is a gesture with nothing behind it --
@@ -2130,6 +2205,66 @@ describe('the graph view’s keyboard', () => {
     // And it drew: the panel is the graph rather than the view the console was
     // showing while the read was on its way.
     expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
+  })
+})
+
+describe('the graph’s live frame', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('draws the stage a frame carries for a task of the plan, and leaves the keyboard where it was', async () => {
+    // The join GV2.3b exists for: the plan says the task is `running` and the
+    // *feed* says which stage it is in, so a frame is what moves a word from
+    // "implementing" to "in review". Nothing else in the console writes a stage
+    // into the drawing.
+    const { bridge } = graphBridge({
+      subscribeLive: () => snapshotReply(frameWithStage('aa02', 'review')),
+    })
+    const document = await openGraph(bridge)
+    // The plan's own stage, before any frame has been folded in.
+    expect(wordsOf(document, 'task-two')).toContain('implementing')
+
+    // A node is selected -- which is the state a frame's redraw is most likely to
+    // interrupt, because selecting one is what puts the keyboard on the canvas.
+    const selected = nodeForTask(document, 'task-one')
+    if (selected === undefined) throw new Error('the graph drew no task-one')
+    selected.click()
+    await flush()
+    const key = selected.attributes.get('data-key')
+
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
+    await flush()
+    // The frame reached the drawing...
+    expect(wordsOf(document, 'task-two'), 'the frame’s stage never reached the node').toContain('in review')
+    expect(wordsOf(document, 'task-two')).not.toContain('implementing')
+    // ...and the reader is still on the task they had selected, in the tree the
+    // frame drew rather than on the one it replaced.
+    const stillSelected = nodeForTask(document, 'task-one')
+    expect(stillSelected).not.toBe(selected)
+    expect(stillSelected?.attributes.get('data-key')).toBe(key)
+    expect(document.activeElement, 'the frame dropped the keyboard off the selection').toBe(stillSelected)
+  })
+
+  it('does not pull the keyboard into the graph when the reader is somewhere else', async () => {
+    // A frame is not a gesture: it lands on a poll tick, whether or not anybody
+    // is looking at the graph's own elements, and a redraw that focused the
+    // selection would take a reader out of the navigation mid-walk.
+    const { bridge } = graphBridge({
+      subscribeLive: () => snapshotReply(frameWithStage('aa02', 'review')),
+    })
+    const document = await openGraph(bridge)
+    const nav = buttonFor(document, 'graph')
+    nav.focus()
+
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
+    await flush()
+    expect(wordsOf(document, 'task-two')).toContain('in review')
+    expect(document.activeElement, 'a frame pulled the keyboard into the graph').toBe(nav)
   })
 })
 

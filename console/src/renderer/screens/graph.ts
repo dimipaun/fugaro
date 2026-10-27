@@ -452,14 +452,35 @@ function feedStages(feed: readonly RunView[]): ReadonlyMap<string, string> {
   return stages
 }
 
-/** stagesKey is a frame's own answer as one string, sorted so two frames that
- * say the same thing about the same suffixes have the same key however the rows
- * were ordered. */
-function stagesKey(stages: ReadonlyMap<string, string>): string {
-  return [...stages]
-    .map(([suffix, stage]) => `${suffix}=${stage}`)
-    .sort()
-    .join(',')
+/** drawnStages is what a frame says about **the graph this screen draws**: the
+ * `run=stage` pairs of the tasks that are running and that this frame has a stage
+ * for, sorted so two frames that say the same thing about the same tasks have the
+ * same key however the rows were ordered.
+ *
+ * **The feed's other rows are deliberately not in the key.** A `live.watch` frame
+ * is installation-wide -- it carries every run the console can see, another
+ * checkout's included -- and a key that took all of it would rebuild the graph
+ * (re-running `buildGraphModel` over every node, and `renderGraph` over the whole
+ * DOM) for a picture that did not change, on a poll that runs every second. The
+ * key is therefore a function of the *fold* and not of the frame: an unchanged
+ * key means `withFeedStages` would return the same document, so the model, the
+ * positions and the drawing are the ones already on screen.
+ *
+ * A stage a plan the current tab hides would take is still in the key. The tab
+ * drops whole plans and the caps drop tasks, so this is a superset of what the
+ * drawing folds in: the cost of a hidden task's stage moving is one redraw, where
+ * leaving it out could leave a drawn word stale. */
+function drawnStages(document: PlanStatusView, feed: readonly RunView[]): string {
+  const stages = feedStages(feed)
+  if (stages.size === 0) return ''
+  const pairs: string[] = []
+  for (const plan of document.plans) {
+    for (const node of plan.nodes) {
+      const stage = stageFor(node, stages)
+      if (stage !== null) pairs.push(`${node.run}=${stage}`)
+    }
+  }
+  return pairs.sort().join(',')
 }
 
 function stageFor(node: PlanNodeView, stages: ReadonlyMap<string, string>): string | null {
@@ -1252,8 +1273,8 @@ export class GraphScreen {
   private positions: Positions | null = null
   private asked = 0
   private disposed = false
-  /** drawnStages is what the last frame said about the graph's stages, as one
-   * string, so an identical frame is answered without drawing anything. */
+  /** drawnStages is what the last frame said about **this graph's** stages, as
+   * one string, so an identical frame is answered without drawing anything. */
   private drawnStages = ''
   private readonly layout: GraphLayout
 
@@ -1289,11 +1310,13 @@ export class GraphScreen {
    * A frame that says exactly what the last one said answers **nothing**: the
    * poll runs once a second and most frames repeat themselves, and redrawing an
    * identical tree every second would replace the picture a reader is looking at
-   * with a copy of it -- losing, among other things, where the focus was.
+   * with a copy of it -- losing, among other things, where the focus was. What
+   * "says" means is `drawnStages` above: the stages **this graph draws**, not
+   * every stage in a frame that is installation-wide.
    */
   async frame(feed: readonly RunView[]): Promise<ScreenElement | null> {
     if (this.document === null) return null
-    const key = stagesKey(feedStages(feed))
+    const key = drawnStages(this.document, feed)
     if (key === this.drawnStages) return null
     this.drawnStages = key
     this.feed = feed

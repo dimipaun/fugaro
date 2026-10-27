@@ -107,6 +107,24 @@ async function active(
   })
 }
 
+/**
+ * focusedOn is the attributes of the focused element **when it is one of
+ * `className`**, and `null` otherwise -- `<body>` included.
+ *
+ * Every poll in this file goes through it, and that is the whole of why they are
+ * not flaky: a redraw that drops the keyboard leaves `document.activeElement` on
+ * `<body>`, whose attributes are all absent, so a poll written as "the attribute
+ * changed" (`'' !== 'stream:example'`) passes on exactly the failure it is meant
+ * to catch. A poll that can only pass on an element of the right class cannot.
+ */
+async function focusedOn(
+  page: Page,
+  className: string,
+): Promise<{ readonly classes: readonly string[]; readonly attributes: Readonly<Record<string, string>> } | null> {
+  const now = await active(page)
+  return now.classes.includes(className) ? now : null
+}
+
 /** pressTabUntil walks the tab order from wherever the keyboard is until the
  * focused element carries `className`, and answers whether it got there. It is
  * how a claim about the *tab order* is made: a roving `tabindex` that put every
@@ -177,6 +195,12 @@ test.describe('the graph view in a window', () => {
   })
 
   test('keeps the dash and the edge scale when forced colors is active', async () => {
+    // A task is selected first: the selection is a width as well as a tone
+    // (`svg .graph-node[data-selected='true'] .graph-node-box`), and a window with
+    // nothing selected has no such element at all -- a `null` read there would
+    // make the assertion below pass whatever the stylesheet says.
+    await page.locator('g.graph-node').first().click()
+    await page.locator('g.graph-node[data-selected="true"]').first().waitFor()
     await page.emulateMedia({ forcedColors: 'active' })
     try {
       // The tones are the system's here and the shapes are not: the blocked
@@ -193,7 +217,9 @@ test.describe('the graph view in a window', () => {
         }
         return {
           critical: width('g.graph-edge[data-critical="true"] .graph-edge-path'),
-          plain: width('g.graph-edge[data-critical="false"] .graph-edge-path'),
+          // An edge that is neither critical nor one of the selected task's, so
+          // the width read here is the plain one rather than the selection's.
+          plain: width('g.graph-edge[data-critical="false"][data-selected="false"] .graph-edge-path'),
           selected: width('g.graph-node[data-selected="true"] .graph-node-box'),
         }
       })
@@ -201,7 +227,7 @@ test.describe('the graph view in a window', () => {
       expect(widths.plain).toBe('2px')
       // The selection is a width too, and the tone it is drawn in is the
       // reading's -- which forced colors takes away, leaving the thickness.
-      expect(widths.selected === '2px' || widths.selected === null).toBe(true)
+      expect(widths.selected).toBe('2px')
     } finally {
       await page.emulateMedia({ forcedColors: 'none' })
     }
@@ -215,39 +241,59 @@ test.describe('the graph view in a window', () => {
     const first = await active(page)
     expect(first.classes).toContain('graph-tab')
     expect(first.attributes['aria-selected']).toBe('true')
+    const firstTab = first.attributes['data-tab'] ?? ''
+    expect(firstTab, 'the first tab carries no data-tab: the polls below would be vacuous').not.toBe('')
 
     // Right moves to the next tab and **takes the focus with it**, and the tab
     // it lands on is the one the screen drew as selected: a tab is a different
-    // graph, so the redraw lands a worker's answer later.
+    // graph, so the redraw lands a worker's answer later. The poll answers a
+    // value only while a **focused** tab other than the first is showing, so the
+    // old tab's `aria-selected` (which is still `true` until the redraw lands)
+    // and `<body>` both keep it waiting rather than passing it.
     await page.keyboard.press('ArrowRight')
     await expect
-      .poll(async () => (await active(page)).attributes['data-tab'] ?? '')
-      .not.toBe(first.attributes['data-tab'] ?? '')
+      .poll(async () => {
+        const now = await focusedOn(page, 'graph-tab')
+        const tab = now?.attributes['data-tab'] ?? ''
+        return tab !== '' && tab !== firstTab ? tab : ''
+      })
+      .not.toBe('')
     const moved = await active(page)
     expect(moved.classes).toContain('graph-tab')
     expect(moved.attributes['aria-selected']).toBe('true')
+    expect(moved.attributes['data-tab'] ?? '').not.toBe(firstTab)
 
     // And a redraw puts the focus back in the tree it drew. A click selects the
     // task -- which replaces the picture -- and the arrow key then moves the
     // selection, which replaces it again: without the focus restore the reader
     // is on `<body>` after the first of the two and never gets to the second.
     const node = page.locator('g.graph-node').first()
-    const key = await node.getAttribute('data-key')
+    const key = (await node.getAttribute('data-key')) ?? ''
+    expect(key, 'the node carries no data-key: the polls below would be vacuous').not.toBe('')
     await node.click()
     await expect
-      .poll(async () => (await active(page)).attributes['data-key'] ?? '')
-      .toBe(key ?? '')
+      .poll(async () => {
+        const now = await focusedOn(page, 'graph-node')
+        const at = now?.attributes['data-key'] ?? ''
+        return at === key ? at : ''
+      })
+      .toBe(key)
     const selected = await active(page)
     expect(selected.classes).toContain('graph-node')
     expect(selected.attributes['data-selected']).toBe('true')
 
     await page.keyboard.press('ArrowDown')
     await expect
-      .poll(async () => (await active(page)).attributes['data-key'] ?? '')
-      .not.toBe(key ?? '')
+      .poll(async () => {
+        const now = await focusedOn(page, 'graph-node')
+        const at = now?.attributes['data-key'] ?? ''
+        return at !== '' && at !== key ? at : ''
+      })
+      .not.toBe('')
     const next = await active(page)
     expect(next.classes).toContain('graph-node')
     expect(next.attributes['data-selected']).toBe('true')
+    expect(next.attributes['data-key'] ?? '').not.toBe(key)
   })
 })
 

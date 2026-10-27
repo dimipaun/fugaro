@@ -2361,8 +2361,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       const runs = listed.ok ? runIdsIn(listed.data) : []
       const drawn = await graphScreenNow().load(decoded.value, runs)
       if (stale(mine) || drawn === null) return
-      replace(drawn)
-      wireGraph(drawn)
+      // A read names no gesture: the keyboard stays where it was, and a reader
+      // who is not in the graph is not pulled into it.
+      redraw(drawn, stopNow())
     } catch {
       // `readBridgeFrom` answers `null` rather than rejecting, so reaching here
       // is a bridge that threw where it should not have.
@@ -2378,9 +2379,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   /** refuseGraph is the refusal screen and the forgetting together: a plan the
    * console could not read must not be redrawn from the plan it read before it,
    * so the screen drops the document it holds as well as the panel drawing it
-   * (GV2.3b, `GraphScreen.forget`). */
+   * (GV2.3b, `GraphScreen.forget`). The drawing it held goes too, so a redraw
+   * that comes later asks the keyboard about the tree the panel really has. */
   const refuseGraph = (sentence: string): void => {
     graph.screen?.forget()
+    graphTree = null
     refuse('plan.status', sentence)
   }
 
@@ -2404,11 +2407,131 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   const showGraph = async (): Promise<void> => {
     const mine = claim()
     const last = graph.screen?.redraw() ?? null
-    if (last !== null) {
-      replace(last)
-      wireGraph(last as Drawn)
-    }
+    if (last !== null) redraw(last, stopNow())
     await readGraph(mine)
+  }
+
+  /** graphTree is the graph drawing the panel holds, so a redraw no gesture
+   * caused can ask where the keyboard is **before** it takes that tree down. It
+   * is `null` while the panel holds something else -- a refusal, or another
+   * screen -- and a stale tree is harmless either way: the walk below matches the
+   * keyboard against the tree's own elements, and a detached one holds none. */
+  let graphTree: Drawn | null = null
+
+  /**
+   * FocusTarget is where a redraw puts the keyboard: the classes the element may
+   * be drawn as, and -- when a class alone does not name it -- the attribute and
+   * value that do.
+   *
+   * A node is a card on the canvas or a row in the list -- two drawings of one
+   * door, and the drawing the operator is looking at is the one that holds it --
+   * and a tab is named by its `aria-selected`, because the tab the screen drew as
+   * selected is the tab that is showing even when the one asked for was not in
+   * this document. The three controls that carry no identity attribute (Fit,
+   * Refresh, the view switch) are named by their class alone, and the screen
+   * draws one of each.
+   */
+  interface FocusTarget {
+    readonly classes: readonly string[]
+    readonly attribute?: string
+    readonly value?: string
+  }
+
+  /** STOP_ATTRIBUTES is the attributes that name one drawn thing apart from its
+   * siblings, in the order a target reads them: a node's and a row's key, a
+   * chip's release, a tab's stream. */
+  const STOP_ATTRIBUTES = ['data-key', 'data-chip', 'data-tab'] as const
+
+  /** nodeStop is the card or row a task's key names. */
+  const nodeStop = (key: string): FocusTarget => ({
+    classes: ['graph-node', 'graph-row'],
+    attribute: 'data-key',
+    value: key,
+  })
+
+  /** SELECTED_TAB is the graph's tablist's single tab stop. */
+  const SELECTED_TAB: FocusTarget = { classes: ['graph-tab'], attribute: 'aria-selected', value: 'true' }
+
+  /** chipStop is the chip of the release whose key it was drawn for: the button
+   * the operator pressed, and the one the redraw draws back. */
+  const chipStop = (key: string): FocusTarget => ({ classes: ['graph-chip'], attribute: 'data-chip', value: key })
+
+  /** FIT_BUTTON and VIEW_BUTTON are the two controls a class names on its own:
+   * neither carries an attribute that tells it from a sibling, and the screen
+   * draws one of each. */
+  const FIT_BUTTON: FocusTarget = { classes: ['graph-fit'] }
+  const VIEW_BUTTON: FocusTarget = { classes: ['graph-view'] }
+
+  /** stopOf is where the keyboard is, read off a tree the panel holds: the target
+   * naming `document.activeElement` when that element is one of the tree's own,
+   * and `null` when the keyboard is anywhere else -- another screen, the rail, or
+   * nowhere at all. */
+  const stopOf = (drawn: Drawn): FocusTarget | null => {
+    const active = document.activeElement
+    if (active === null) return null
+    for (const element of elementsUnder(drawn)) {
+      if (surface.nodeOf(element) !== active) continue
+      const classes = (element.getAttribute('class') ?? '').split(/\s+/).filter((each) => each !== '')
+      for (const attribute of STOP_ATTRIBUTES) {
+        const value = element.getAttribute(attribute)
+        if (value !== null) return { classes, attribute, value }
+      }
+      return { classes }
+    }
+    return null
+  }
+
+  /** stopNow is where the keyboard is in the graph as it stands: the target a
+   * redraw that no gesture caused leaves it on. It is `null` when the keyboard is
+   * not on one of the drawing's own elements, and a redraw with `null` focuses
+   * nothing -- which is how a frame that lands while the reader is in the rail
+   * leaves them there. */
+  const stopNow = (): FocusTarget | null => (graphTree === null ? null : stopOf(graphTree))
+
+  /**
+   * redraw puts a freshly drawn graph on the panel, wires it, and moves the
+   * keyboard into the **new** tree -- or leaves it where it was, when the target
+   * it is handed is `null`.
+   *
+   * **Every call site names a target, and that is the rule.** A gesture names the
+   * element it was made on -- the chip that was pressed, the node a click
+   * selected, the tab an arrow key chose -- because that element is the one the
+   * reader is working with. A redraw that no gesture caused (a live frame, the
+   * poll's own read, a wheel) names `stopNow()`, the element the keyboard is
+   * already on.
+   *
+   * **The focus is asked for here and never on the tree being taken down.** Every
+   * one of these redraws replaces the panel's tree, so an element found in the
+   * old one is a node a real window has already detached: focusing it leaves the
+   * keyboard on `<body>`, and the reader who pressed an arrow key is no longer
+   * anywhere (design section 4.3).
+   */
+  const redraw = (element: SkewElement | null, focus: FocusTarget | null): void => {
+    if (element === null) return
+    replace(element)
+    const next = element as Drawn
+    graphTree = next
+    wireGraph(next)
+    if (focus !== null) focusMatching(next, focus)
+  }
+
+  /** focusMatching moves the keyboard to the element of a freshly drawn tree
+   * that a gesture chose: the first element of one of `classes` whose `attribute`
+   * carries `value` -- or, for a target that names no attribute, the first
+   * element of one of `classes`. The roving `tabindex` is what makes the stop
+   * reachable and the focus is what makes the ring follow it: a selection that
+   * moved the attribute and left the keyboard where it was is a picture a
+   * keyboard reader cannot find their way around (design section 4.3). */
+  const focusMatching = (drawn: Drawn, target: FocusTarget): void => {
+    for (const name of target.classes) {
+      const found = classed(drawn, name).find(
+        (element) => target.attribute === undefined || element.getAttribute(target.attribute) === target.value,
+      )
+      if (found === undefined) continue
+      const focusable = found as Drawn & { focus?(): void }
+      focusable.focus?.()
+      return
+    }
   }
 
   /**
@@ -2432,33 +2555,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // The frame that changed nothing answers nothing, and a frame that landed
     // after the operator moved on draws nothing.
     if (drawn === null || currentView !== 'graph') return
-    replace(drawn)
-    wireGraph(drawn)
+    // A frame is not a gesture: the keyboard stays on the element it was on, and
+    // a reader who is elsewhere is left there.
+    redraw(drawn, stopNow())
   }
-
-  /**
-   * FocusTarget is where a redraw puts the keyboard: the classes the element may
-   * be drawn as, and the attribute and value that name it. A node is a card on
-   * the canvas or a row in the list -- two drawings of one door, and the drawing
-   * the operator is looking at is the one that holds it -- and a tab is named by
-   * its `aria-selected`, because the tab the screen drew as selected is the tab
-   * that is showing even when the one asked for was not in this document.
-   */
-  interface FocusTarget {
-    readonly classes: readonly string[]
-    readonly attribute: string
-    readonly value: string
-  }
-
-  /** nodeStop is the card or row a task's key names. */
-  const nodeStop = (key: string): FocusTarget => ({
-    classes: ['graph-node', 'graph-row'],
-    attribute: 'data-key',
-    value: key,
-  })
-
-  /** SELECTED_TAB is the graph's tablist's single tab stop. */
-  const SELECTED_TAB: FocusTarget = { classes: ['graph-tab'], attribute: 'aria-selected', value: 'true' }
 
   /**
    * wireGraph makes the drawn graph a screen a person can drive: the tabs narrow
@@ -2481,24 +2581,6 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   const wireGraph = (drawn: Drawn): void => {
     const screen = graph.screen
     if (screen === null) return
-    /**
-     * redraw puts a freshly drawn tree on the panel, wires it, and -- when the
-     * gesture that drew it was the keyboard's or a click on a door -- moves the
-     * keyboard into the **new** tree.
-     *
-     * **The focus is asked for here and never on `drawn`.** Every one of these
-     * gestures replaces the panel's tree, so an element found in the tree being
-     * taken down is a node a real window has already detached: focusing it leaves
-     * the keyboard on `<body>`, and the reader who pressed an arrow key is no
-     * longer anywhere (design section 4.3).
-     */
-    const redraw = (element: SkewElement | null, focus: FocusTarget | null = null): void => {
-      if (element === null) return
-      replace(element)
-      const next = element as Drawn
-      wireGraph(next)
-      if (focus !== null) focusMatching(next, focus)
-    }
 
     const tabButtons = classed(drawn, 'graph-tab')
     for (const button of tabButtons) {
@@ -2534,7 +2616,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       const key = button.getAttribute('data-chip') ?? ''
       surface.nodeOf(button).addEventListener('click', () => {
         const open = screen.current.expanded
-        redraw(screen.change({ expanded: open.includes(key) ? open.filter((each) => each !== key) : [...open, key] }))
+        redraw(
+          screen.change({ expanded: open.includes(key) ? open.filter((each) => each !== key) : [...open, key] }),
+          chipStop(key),
+        )
       })
     }
 
@@ -2582,14 +2667,14 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     const fit = classed(drawn, 'graph-fit')[0]
     if (fit !== undefined) {
       surface.nodeOf(fit).addEventListener('click', () => {
-        redraw(screen.change({ zoom: 1 }))
+        redraw(screen.change({ zoom: 1 }), FIT_BUTTON)
       })
     }
 
     const view = classed(drawn, 'graph-view')[0]
     if (view !== undefined) {
       surface.nodeOf(view).addEventListener('click', () => {
-        redraw(screen.change({ view: screen.current.view === 'graph' ? 'list' : 'graph' }))
+        redraw(screen.change({ view: screen.current.view === 'graph' ? 'list' : 'graph' }), VIEW_BUTTON)
       })
     }
 
@@ -2603,26 +2688,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         event.preventDefault()
         const step = event.ctrlKey ? GRAPH_PINCH_STEP : GRAPH_ZOOM_STEP
         const zoom = screen.current.zoom * (event.deltaY < 0 ? step : 1 / step)
-        redraw(screen.change({ zoom }))
+        // A wheel is a pointer gesture and names no element of its own: the
+        // keyboard goes back to whatever it was on.
+        redraw(screen.change({ zoom }), stopNow())
       })
-    }
-  }
-
-  /** focusMatching moves the keyboard to the element of a freshly drawn tree
-   * that a gesture chose: the first element of one of `classes` whose `attribute`
-   * carries `value`. The roving `tabindex` is what makes the stop reachable and
-   * the focus is what makes the ring follow it: a selection that moved the
-   * attribute and left the keyboard where it was is a picture a keyboard reader
-   * cannot find their way around (design section 4.3). */
-  const focusMatching = (drawn: Drawn, target: FocusTarget): void => {
-    for (const name of target.classes) {
-      const found = classed(drawn, name).find(
-        (element) => element.getAttribute(target.attribute) === target.value,
-      )
-      if (found === undefined) continue
-      const focusable = found as Drawn & { focus?(): void }
-      focusable.focus?.()
-      return
     }
   }
 

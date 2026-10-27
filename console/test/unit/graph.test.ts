@@ -234,6 +234,20 @@ function patched(path: readonly (string | number)[], value: unknown): PlanStatus
   return decoded(copy)
 }
 
+/** twoRunning is the fixture with a second task running, and a run of its own:
+ * the order of a frame's rows is only a claim about a frame that says two things
+ * at once, and this fixture has one running task. `task-three` is the task
+ * nothing depends on, so making it running moves no edge and no critical path,
+ * and `aa07` is a suffix no other task of the fixture carries. */
+function twoRunning(): PlanStatusView {
+  const copy = JSON.parse(JSON.stringify(RAW)) as { plans: { nodes: Record<string, unknown>[] }[] }
+  const node = copy.plans[0]?.nodes[2]
+  if (node === undefined) throw new Error('the fixture has no third task')
+  node['state'] = 'running'
+  node['run'] = 'aa07'
+  return decoded(copy)
+}
+
 /** runRow is one watch row. Only `run` and `stage` are read by anything on this
  * screen -- the join takes the suffix, the words take the stage -- so every
  * other field is the empty reading: the smallest row the type allows. */
@@ -811,15 +825,33 @@ describe('the graph screen and its navigation', () => {
 
   it('answers an identical frame with nothing, and a changed one with a drawing', async () => {
     const { screen, worker } = screenWith()
-    await screen.load(DOCUMENT, RUNS)
+    // Two running tasks, because order is only a claim about a frame that says
+    // more than one thing: the fixture has one running task, and a frame for a
+    // task that is not running says nothing this screen draws (the case below).
+    await screen.load(twoRunning(), RUNS)
     const frame = [runRow('20261025-121805-aa02', 'fix')]
     expect(await screen.frame(frame)).not.toBeNull()
     expect(await screen.frame(frame)).toBeNull()
     // The order the rows arrive in is not part of what a frame says.
     expect(
-      await screen.frame([runRow('20261025-121805-aa01', 'implement'), runRow('20261025-121805-aa02', 'fix')]),
+      await screen.frame([runRow('20261025-121805-aa07', 'review'), runRow('20261025-121805-aa02', 'fix')]),
     ).not.toBeNull()
-    expect(await screen.frame([runRow('20261025-121805-aa02', 'fix'), runRow('20261025-121805-aa01', 'implement')])).toBeNull()
+    expect(await screen.frame([runRow('20261025-121805-aa02', 'fix'), runRow('20261025-121805-aa07', 'review')])).toBeNull()
+    expect(worker.placements).toBe(1)
+  })
+
+  it('answers a frame that says nothing about a drawn task with nothing', async () => {
+    // **The feed is installation-wide and the drawing is not.** A `live.watch`
+    // frame carries every run the console can see -- another installation's, and
+    // the finished tasks' of this plan -- and a key taken from all of it would
+    // rebuild the graph (a fresh model over every node, and the whole DOM) once a
+    // second for a picture that did not change. `aa01` is this fixture's
+    // `done` task and `zz99` belongs to no task at all: neither says anything
+    // about the graph, and neither is a reason to redraw it.
+    const { screen, worker } = screenWith()
+    await screen.load(DOCUMENT, RUNS)
+    expect(await screen.frame([runRow('20261025-121805-aa01', 'implement')])).toBeNull()
+    expect(await screen.frame([runRow('20261025-121805-zz99', 'review')])).toBeNull()
     expect(worker.placements).toBe(1)
   })
 
