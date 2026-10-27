@@ -96,24 +96,26 @@ func parseRecipe(t *testing.T, text string) *recipe.Recipe {
 }
 
 func TestPlanDefaultFollowsAgent(t *testing.T) {
+	// Critical, whose ceiling is the whole scale: the case is about F6's own
+	// precedence, so the mode's ceiling must not bite (T3.2).
 	def := catalogRecipe(t, recipe.DefaultName)
 	a := config.Agent{ReviewRounds: 4, FirstLineReview: config.FirstLineOff, FirstLineRounds: 2}
-	if got := planOf(def, true, a, nil, nil); !slices.Equal(got, []planStep{{Kind: recipe.StepReview, Rounds: 4}}) {
+	if got := planOf(def, true, a, nil, nil, rigor.Critical, true); !slices.Equal(got, []planStep{{Kind: recipe.StepReview, Rounds: 4, Precedence: 4}}) {
 		t.Fatalf("off: %v", got)
 	}
 	a.FirstLineReview = config.FirstLineOn
-	if got := planOf(def, true, a, nil, nil); !slices.Equal(got, []planStep{
-		{Kind: recipe.StepFirstLine, Rounds: 2},
-		{Kind: recipe.StepReview, Rounds: 4, FirstRounds: 2},
+	if got := planOf(def, true, a, nil, nil, rigor.Critical, true); !slices.Equal(got, []planStep{
+		{Kind: recipe.StepFirstLine, Rounds: 2, Precedence: 2},
+		{Kind: recipe.StepReview, Rounds: 4, Precedence: 4, FirstRounds: 2},
 	}) {
 		t.Fatalf("on: %v", got)
 	}
 	// Not derived (a project or repository recipe named default): its
 	// first_line step always runs.
 	a.FirstLineReview = config.FirstLineOff
-	if got := planOf(def, false, a, nil, nil); !slices.Equal(got, []planStep{
-		{Kind: recipe.StepFirstLine, Rounds: 2},
-		{Kind: recipe.StepReview, Rounds: 4, FirstRounds: 2},
+	if got := planOf(def, false, a, nil, nil, rigor.Critical, true); !slices.Equal(got, []planStep{
+		{Kind: recipe.StepFirstLine, Rounds: 2, Precedence: 2},
+		{Kind: recipe.StepReview, Rounds: 4, Precedence: 4, FirstRounds: 2},
 	}) {
 		t.Fatalf("not derived: %v", got)
 	}
@@ -127,22 +129,22 @@ func TestPlanPrecedence(t *testing.T) {
 	a := config.Agent{ReviewRounds: 5, FirstLineReview: config.FirstLineOff, FirstLineRounds: 3}
 	// The recipe's own values win over agent.*, and first_line_review: off
 	// does not switch off a recipe's first_line step.
-	if got := planOf(cheap, false, a, nil, nil); !slices.Equal(got, []planStep{
-		{Kind: recipe.StepFirstLine, Rounds: 2},
-		{Kind: recipe.StepReview, Rounds: 1, FirstRounds: 2},
+	if got := planOf(cheap, false, a, nil, nil, rigor.Critical, true); !slices.Equal(got, []planStep{
+		{Kind: recipe.StepFirstLine, Rounds: 2, Precedence: 2},
+		{Kind: recipe.StepReview, Rounds: 1, Precedence: 1, FirstRounds: 2},
 	}) {
 		t.Fatalf("recipe over agent: %v", got)
 	}
 	// The task's override wins over both.
 	seven := 7
-	if got := planOf(cheap, false, a, nil, &seven); !slices.Equal(got, []planStep{
-		{Kind: recipe.StepFirstLine, Rounds: 2},
-		{Kind: recipe.StepReview, Rounds: 7, FirstRounds: 2},
+	if got := planOf(cheap, false, a, nil, &seven, rigor.Critical, true); !slices.Equal(got, []planStep{
+		{Kind: recipe.StepFirstLine, Rounds: 2, Precedence: 2},
+		{Kind: recipe.StepReview, Rounds: 7, Precedence: 7, FirstRounds: 2},
 	}) {
 		t.Fatalf("override: %v", got)
 	}
 	solo := parseRecipe(t, "version: 1\nname: claude-solo\nroles:\n  reviewer: coder\nsteps:\n  - review: { max_rounds: 1 }\n")
-	if got := planOf(solo, false, a, nil, nil); !slices.Equal(got, []planStep{{Kind: recipe.StepReview, Rounds: 1}}) {
+	if got := planOf(solo, false, a, nil, nil, rigor.Critical, true); !slices.Equal(got, []planStep{{Kind: recipe.StepReview, Rounds: 1, Precedence: 1}}) {
 		t.Fatalf("solo: %v", got)
 	}
 }
@@ -153,10 +155,10 @@ func TestPlanPrecedence(t *testing.T) {
 func TestPlanBounceCarriesFirstRounds(t *testing.T) {
 	bouncy := parseRecipe(t, "version: 1\nname: bouncy\nsteps:\n  - first_line: { max_rounds: 2 }\n  - review: { bounce: first_line, max_rounds: 3 }\n")
 	a := config.Agent{ReviewRounds: 5, FirstLineRounds: 1}
-	got := planOf(bouncy, false, a, nil, nil)
+	got := planOf(bouncy, false, a, nil, nil, rigor.Critical, true)
 	want := []planStep{
-		{Kind: recipe.StepFirstLine, Rounds: 2},
-		{Kind: recipe.StepReview, Rounds: 3, Bounce: true, FirstRounds: 2},
+		{Kind: recipe.StepFirstLine, Rounds: 2, Precedence: 2},
+		{Kind: recipe.StepReview, Rounds: 3, Precedence: 3, Bounce: true, FirstRounds: 2},
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("plan = %+v, want %+v", got, want)

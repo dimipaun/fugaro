@@ -5,13 +5,23 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 // planStep is one step of the run's loop after implement, with its rounds
 // decided.
 type planStep struct {
-	Kind   recipe.StepKind
+	Kind recipe.StepKind
+	// Rounds is the step's rounds after the mode's ceiling (T3.2): F6's
+	// precedence under rigor.RoundCeiling of the mode the run had reached when
+	// the plan was derived.
 	Rounds int
+	// Precedence is F6's value before the mode's ceiling. The review step
+	// keeps it because the ceiling is read again on every round
+	// (reviewRounds): a mode a run raises between rounds raises the ceiling
+	// for the rounds that remain, and those rounds are spent under this value
+	// under the new ceiling, never under the rounds already gone (D22).
+	Precedence int
 	// Bounce is review: {bounce: first_line} (recipe.Step.Bounce), copied
 	// from the recipe's review step.
 	Bounce bool
@@ -25,8 +35,10 @@ type planStep struct {
 // planOf turns a recipe into the run's plan (docs/design/recipes.md §6).
 // derived marks the catalog default, whose first_line step runs only when
 // agent.first_line_review turns it on. Rounds come from the task's override,
-// else the step's max_rounds, else agent.*.
-func planOf(rcp *recipe.Recipe, derived bool, a config.Agent, providers map[string]config.ModelProvider, reviewOverride *int) []planStep {
+// else the step's max_rounds, else agent.*, spent under the mode's ceiling
+// (T3.2).
+func planOf(rcp *recipe.Recipe, derived bool, a config.Agent, providers map[string]config.ModelProvider, reviewOverride *int, mode rigor.Mode, configured bool) []planStep {
+	ceil := reviewRoundCeiling(mode, configured)
 	var out []planStep
 	var firstRounds int
 	for _, s := range rcp.Steps {
@@ -40,7 +52,7 @@ func planOf(rcp *recipe.Recipe, derived bool, a config.Agent, providers map[stri
 				n = s.MaxRounds
 			}
 			firstRounds = n
-			out = append(out, planStep{Kind: s.Kind, Rounds: n})
+			out = append(out, planStep{Kind: s.Kind, Rounds: n, Precedence: n})
 		case recipe.StepReview:
 			n := a.ReviewRounds
 			if s.MaxRounds > 0 {
@@ -49,10 +61,34 @@ func planOf(rcp *recipe.Recipe, derived bool, a config.Agent, providers map[stri
 			if reviewOverride != nil {
 				n = *reviewOverride
 			}
-			out = append(out, planStep{Kind: s.Kind, Rounds: n, Bounce: s.Bounce, FirstRounds: firstRounds})
+			out = append(out, planStep{Kind: s.Kind, Rounds: min(n, ceil), Precedence: n, Bounce: s.Bounce, FirstRounds: firstRounds})
 		}
 	}
 	return out
+}
+
+// reviewRoundCeiling is the ceiling the mode puts on a review step's rounds
+// (T3.2, D7b): rigor.RoundCeiling of the mode, under the recipe's own bound —
+// a mode lowers the rounds F6 agrees on and never reaches above MaxReviewRounds
+// — or the recipe's bound alone for a repository that configured no rigor, the
+// gate the findings policy reads too (outcome.go, the owner's ruling of
+// 2026-10-24): a repository that says nothing about rigor is reviewed exactly
+// as it was.
+func reviewRoundCeiling(mode rigor.Mode, configured bool) int {
+	if !configured {
+		return recipe.MaxReviewRounds
+	}
+	return min(rigor.RoundCeiling(mode), recipe.MaxReviewRounds)
+}
+
+// reviewRounds is the bound the next round is spent under (T3.2): F6's
+// precedence under the ceiling of the mode the run has reached *now*. It is
+// read on every round rather than fixed with the plan, because D22 resolves the
+// mode again after each round that changed the tree: a mode a run raises
+// between rounds buys the rounds that remain and never reaches back to the ones
+// already spent.
+func (r *run) reviewRounds(st planStep) int {
+	return min(st.Precedence, reviewRoundCeiling(r.reachedRigor(), r.rigorCfg.Configured()))
 }
 
 // checkPlan refuses a plan that does not end with a review step: a run

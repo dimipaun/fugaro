@@ -1525,7 +1525,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// step, neither of which an artifact recipe's [plan], render shape
 		// has. Its own stage list is read directly (artifactHasPlan), and
 		// the render is the runner's (artifact.go).
-		plan := planOf(rcp, derived, cfg.Agent, r.modelProviders(), spec.Overrides.ReviewRounds)
+		plan := planOf(rcp, derived, cfg.Agent, r.modelProviders(), spec.Overrides.ReviewRounds, r.reachedRigor(), r.rigorCfg.Configured())
 		if err := checkPlan(plan); err != nil {
 			return fmt.Errorf("recipe %s: %w", rrec.Name, err)
 		}
@@ -2047,7 +2047,7 @@ func (r *run) agentLoop(ctx context.Context) {
 // the next senior round; a bounce with FirstRounds == 0 behaves like a plain
 // review step, since there is no cheap loop to bounce back to.
 func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, sys, sessionID string) {
-	for round := 1; round <= st.Rounds; round++ {
+	for round := 1; ; round++ {
 		req := agent.Request{Prompt: r.reviewPromptWithInput(ctx, reviewPrompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
 		res, ok, _ := r.stage(ctx, "review", req, stageOpts{})
 		// The review's own session is saved like a work stage's (C1.17,
@@ -2064,7 +2064,7 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 		r.lastSenior = seniorRound{Round: round, Findings: v.Findings}
 		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: v.Verdict, Findings: len(v.Findings)})
 		r.save(ctx)
-		if r.capReached() || v.Verdict == "ship" || round == st.Rounds {
+		if r.capReached() || v.Verdict == "ship" || round >= r.reviewRounds(st) {
 			return
 		}
 		r.afterStage(ctx, "review")
