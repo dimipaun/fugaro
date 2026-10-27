@@ -1,0 +1,8 @@
+version: 1
+name: run-digest
+description: Writes the run reports the repository is missing, commits them, and hands the pull request to one senior review.
+use_when: A scheduled run review only, launched by your own routine (fugaro run --recipe run-digest). Never the recipe for a task, since it writes run reports rather than code.
+steps:
+  - digest: {}
+  - review:
+      max_rounds: 1

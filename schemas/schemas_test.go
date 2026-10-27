@@ -1960,6 +1960,36 @@ func TestRecipeSchemaArtifactStepsMatchGo(t *testing.T) {
 	}
 }
 
+// TestRecipeSchemaDigestStepsMatchGo pins the schema's step shape for the
+// digest step against recipe.Parse for every mode: the shape is exactly
+// [digest, review] in a mode: implement recipe (the catalog's run-digest),
+// and the two modes that already pin their own steps — mode: review to one
+// review, mode: artifact to a render — are what refuse it elsewhere, so the
+// steps oneOf's digest alternative needs no branch of its own.
+func TestRecipeSchemaDigestStepsMatchGo(t *testing.T) {
+	sch := compile(t, "recipe.schema.json")
+	const outs = "outputs:\n  globs: [\"out/*.png\"]\n"
+	for _, tc := range []struct{ name, text string }{
+		{"no mode digests then reviews", "version: 1\nname: a\nsteps:\n  - digest: {}\n  - review: {}\n"},
+		{"implement digests then reviews", "version: 1\nname: a\nmode: implement\nsteps:\n  - digest: {}\n  - review: {}\n"},
+		{"review digests then reviews", "version: 1\nname: a\nmode: review\nsteps:\n  - digest: {}\n  - review: {}\n"},
+		{"artifact digests then reviews", "version: 1\nname: a\nmode: artifact\n" + outs + "steps:\n  - digest: {}\n  - review: {}\n"},
+		{"digest alone", "version: 1\nname: a\nsteps:\n  - digest: {}\n"},
+		{"digest then first line then review", "version: 1\nname: a\nsteps:\n  - digest: {}\n  - first_line: {}\n  - review: {}\n"},
+		{"check then digest then review", "version: 1\nname: a\nsteps:\n  - check: { command: test }\n  - digest: {}\n  - review: {}\n"},
+		{"digest twice then review", "version: 1\nname: a\nsteps:\n  - digest: {}\n  - digest: {}\n  - review: {}\n"},
+		{"digest with options", "version: 1\nname: a\nsteps:\n  - digest: { max_rounds: 2 }\n  - review: {}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			schemaOK := sch.Validate(yamlInstance(t, []byte(tc.text))) == nil
+			_, ps := recipe.Parse([]byte(tc.text))
+			if schemaOK != (len(ps) == 0) {
+				t.Errorf("schema ok = %v, recipe.Parse problems = %v", schemaOK, ps)
+			}
+		})
+	}
+}
+
 func TestFugaroSchemaLayeredCorpus(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
 	for _, f := range globAll(t, "../testdata/config/layered/valid/*.yaml") {

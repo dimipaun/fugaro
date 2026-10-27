@@ -32,7 +32,8 @@ steps:
   - review: {}
 ```
 
-- `implement` always runs first, unless `mode: review` (section 3) says there is no `implement` at all. `steps` lists what follows it, in order.
+- `implement` always runs first, unless `mode: review` (section 3) says there is no `implement` at all, or the first step is `digest`, which is the run's own deterministic first stage instead (see below). `steps` lists what follows it, in order.
+- `digest: {}` is the report run's step (the catalog's `run-digest`, section 2): the run writes the run reports the repository is missing and commits them itself, so no model writes a figure. It takes no options, and it may appear only once, only as the first step, and only in a `mode: implement` recipe — the shape is exactly `digest` and then `review`, so the one senior review judges the pull request the digest wrote and no other step runs over it.
 - `plan` and `render` are the two step kinds of `mode: artifact` (section 3): `plan` is an agent stage and `render` is deterministic, running the workflow's `commands.render`. An artifact recipe's `steps` is exactly those two, in that order, or `render` alone — a `render`-only recipe calls no model at all.
 - `outputs` is a top-level block, legal only on `mode: artifact` (section 3): `globs` (required: the artifact paths, relative to the checkout), `max_files`, `max_bytes` (each artifact) and `max_total_bytes` (the whole set), and `probe`, which is `probe` or `none` and names the workflow's `commands.probe`. `outputs` on any other mode is refused outright (section 8), and `mode: artifact` without it is too.
 - `check` may appear at most once, and only before `first_line` and `review`: `check: { command: build | test | lint, autofix: true }`. `command` names a `commands.*` key of the `fugaro.yaml` the run reads at its ref (never a command of its own: a recipe never names a command). `autofix` is allowed only with `command: lint`, and needs `commands.fix` next to `commands.lint`. `commands.fix` is trusted only when it exits 0, does not time out, and leaves the branch's history exactly where it found it: a timeout, a non-zero exit, or a commit it made on its own, are all discarded (reset to the commit read before the fix ran, untracked files removed) rather than committed under the runner's identity, and the check step ends red with a plain explanation of why. A follow-up (`fugaro run --pr N`) keeps its recipe, so its check still runs; a clean or fixed check never ends or shortens a follow-up the way it does a first run — the launcher asked for something specific (replying to comments, applying instructions), and the gate passing does not mean that work is done.
@@ -59,6 +60,7 @@ steps:
 | `pick` | `mode: review`; `review: { max_rounds: 1 }`. No coding. | Comparing several pull requests for the same task to decide which to keep, once every attempt has settled. Launch with `--recipe pick --pr A --pr B [--pr C]` (2 to 4 pull requests). |
 | `test-and-fix` | `check: { command: test }`; `first_line: {}`; `review: { bounce: first_line }`. | Keeping a branch green, chasing a failing or flaky test, CI babysitting. A green run ends with no pull request. |
 | `lint-fix` | `roles: { reviewer: coder }`; `check: { command: lint, autofix: true }`; `review: {}`. | Routine mechanical cleanup (formatting, lint and type-check errors) in a repository with `commands.lint` and `commands.fix`. |
+| `run-digest` | `digest: {}`; `review: { max_rounds: 1 }`. The report run: the run writes the run reports itself, then one senior review judges the pull request. | Scheduled run reviews only, launched by your own routine (`fugaro run --recipe run-digest "periodic run review"`). Never the recipe for a task. |
 
 Only the catalog's own `default` follows `agent.first_line_review`. Every other recipe, including a `default` you define yourself in the repository or the project, is taken as written: a `first_line` step in it always runs.
 
@@ -128,7 +130,7 @@ Launch it with `fugaro run --recipe sizzle --attach screenshot.png`, which uploa
 
 ## 4. Loop knobs stay outside the recipe
 
-`agent.first_line_rounds` (1 to 3, the cheap rounds) and `agent.review_rounds` (1 to 10, the senior rounds; with `bounce`, the number of bounce-backs is `review_rounds - 1`) are the knobs a recipe's own `max_rounds` overrides, never the other way around (section 1). The catalog recipes above set no `max_rounds` (`review-only` and `pick` excepted, which `mode: review` pins to 1), so tuning the loop in `fugaro.yaml` or the project layer keeps you on a built-in recipe. A custom recipe can still pin its own rounds.
+`agent.first_line_rounds` (1 to 3, the cheap rounds) and `agent.review_rounds` (1 to 10, the senior rounds; with `bounce`, the number of bounce-backs is `review_rounds - 1`) are the knobs a recipe's own `max_rounds` overrides, never the other way around (section 1). The catalog recipes above set no `max_rounds` (`review-only` and `pick` excepted, which `mode: review` pins to 1, and `run-digest`, whose one review round is the report run's own shape rather than a knob), so tuning the loop in `fugaro.yaml` or the project layer keeps you on a built-in recipe. A custom recipe can still pin its own rounds.
 
 ## 5. Choosing a recipe
 
@@ -183,7 +185,8 @@ A recipe that uses a reserved key is refused with a message that says so:
 - `check.command` other than `build`, `test` or `lint`; `autofix` on anything but `command: lint`.
 - `outputs` on a recipe that is not `mode: artifact` ("is only for `mode: artifact`"), and `mode: artifact` with no `outputs` at all ("is required for `mode: artifact`").
 - `roles` on a `mode: artifact` recipe: it has no agent steps to map them onto.
-- `plan` or `render` in a recipe of any other mode ("is only for `mode: artifact`"), and `check`, `first_line` or `review` in a `mode: artifact` one ("is not a step of `mode: artifact`") — an artifact recipe takes one `render`, optionally after one `plan`, and nothing else.
+- `plan` or `render` in a recipe of any other mode ("is only for `mode: artifact`"), and `check`, `first_line`, `digest` or `review` in a `mode: artifact` one ("is not a step of `mode: artifact`") — an artifact recipe takes one `render`, optionally after one `plan`, and nothing else.
+- `digest` anywhere but first ("digest must be the first step"), twice ("digest may appear at most once"), in a `mode: review` recipe ("digest is only for `mode: implement`"), or followed by anything but the one `review` step ("digest must be followed by one review step").
 
 There are no task-shaped catalog recipes (fix a bug, add a feature) yet.
 
