@@ -8,7 +8,7 @@
 // meets a **browser**: the real CSP, the real layout worker
 // (`app://console/elk-worker.min.js`, GV2.2), the real entry reading
 // `plan status --json` from the stub CLI, and the keyboard a person presses.
-// Five claims live here and nowhere else:
+// Six claims live here and nowhere else:
 //
 //   1. **the state words are drawn, and a blocked card's second channel is a
 //      dash.** The unit suite reads the tree the screen builds; whether the
@@ -36,6 +36,15 @@
 //      and a browser's own cascade -- and the reduced-motion half is the one the
 //      global freeze in `base.css` cannot make (F36: it only shortens the
 //      animation, which parks a comet off the card's far edge at `opacity: 0`).
+//   6. **a release heading is hit-tested as itself and not as the card that used
+//      to cover it.** The box is grown upward for its heading, and the engine's
+//      own room between two rows of tasks was less than that growth, so the
+//      heading was drawn inside the row above -- and painted over, because the
+//      screen appends every box before every card. A screenshot cannot report
+//      this (a covered heading is a heading-shaped hole, which looks like a
+//      heading drawn faintly) and the unit suite cannot either: whether a point
+//      on a glyph belongs to the heading or to a card is the browser's own hit
+//      test, over the real worker's answer.
 //
 // **The graph's document is the stub's `plan status --json` answer.** The stub
 // beside this suite answers that read (`test/fixtures/bin/fugaro`,
@@ -79,6 +88,9 @@ const NAV_GRAPH = 'nav.console-views button.console-view[data-view="graph"]'
  * and the element whose absence means the screen fell back to the list (which is
  * what a worker that answered nothing leaves). */
 const CANVAS = 'svg.graph-canvas'
+
+/** HEADING is a release box's heading text: the name line a card covered. */
+const HEADING = 'text.graph-release-heading'
 
 /**
  * withFinishedRelease is the committed document with its first release marked
@@ -258,6 +270,58 @@ test.describe('the graph view in a window', () => {
     // A card in a state with no second channel is not dashed, so the assertion
     // above is about the blocked rule and not about every box on the canvas.
     expect(await strokeDash(page, 'g.graph-node[data-state="ready"] .graph-node-box')).toBe('none')
+  })
+
+  test('draws every release heading out from under the task cards', async () => {
+    // The committed document carries two releases, and the case is about a
+    // heading a card covered: one heading would leave it vacuous if the layout
+    // ever drew a single row.
+    const headings = page.locator(HEADING)
+    expect(await headings.count(), 'the committed document draws two release headings').toBeGreaterThan(1)
+
+    for (const heading of await headings.all()) {
+      // Each heading is scrolled to the middle of the window before it is read:
+      // the picture is taller than the viewport, and `elementsFromPoint` answers
+      // about the viewport -- a point below the fold hit-tests as nothing at all,
+      // which is a pass for the wrong reason.
+      const reading = await heading.evaluate((element) => {
+        element.scrollIntoView({ block: 'center', inline: 'center' })
+        // The point is the **centre of the heading's first glyph**, taken from a
+        // Range over that one character: the centre of the text element's own box
+        // can land between two glyphs, where the hit test answers about whatever
+        // is behind the text -- the very answer this case exists to rule out.
+        const text = document.createTreeWalker(element, NodeFilter.SHOW_TEXT).nextNode()
+        if (text === null || (text.textContent ?? '') === '') return null
+        const range = document.createRange()
+        range.setStart(text, 0)
+        range.setEnd(text, 1)
+        const glyph = range.getBoundingClientRect()
+        const at = { x: glyph.left + glyph.width / 2, y: glyph.top + glyph.height / 2 }
+        const stack = document.elementsFromPoint(at.x, at.y)
+        const mine = stack.findIndex((each) => each === element || element.contains(each))
+        return {
+          release: element.parentElement?.getAttribute('data-release') ?? 'a release',
+          glyph: { width: glyph.width, height: glyph.height },
+          inViewport: at.x >= 0 && at.y >= 0 && at.x <= window.innerWidth && at.y <= window.innerHeight,
+          // What the point actually hits: the topmost element at a glyph is the
+          // `<text>` itself or one of its tspans.
+          hit: stack[0]?.getAttribute('class') ?? 'nothing',
+          topIsHeading: stack[0] !== undefined && (stack[0] === element || element.contains(stack[0])),
+          // And every element *above* the heading that belongs to a task card:
+          // the stack is topmost-first, so anything before the heading is paint
+          // order that came later, which is what covering it means.
+          coveredBy: (mine < 0 ? stack : stack.slice(0, mine))
+            .filter((each) => each.closest('g.graph-node') !== null)
+            .map((each) => each.getAttribute('class') ?? ''),
+        }
+      })
+
+      expect(reading, `${heading} draws no heading glyph to hit-test`).not.toBeNull()
+      expect(reading?.glyph.height, 'the glyph read is empty, so the hit test below is vacuous').toBeGreaterThan(0)
+      expect(reading?.inViewport, 'the point is outside the viewport, where a hit test answers nothing').toBe(true)
+      expect(reading?.topIsHeading, `${reading?.release}'s heading is hit as ${String(reading?.hit)} instead`).toBe(true)
+      expect(reading?.coveredBy, `${reading?.release}'s heading is painted over by a task card`).toEqual([])
+    }
   })
 
   test('keeps the dash and the edge scale when forced colors is active', async () => {
