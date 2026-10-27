@@ -110,6 +110,10 @@
       "maxLength": 31,
       "not": { "const": "default" },
       "description": "The named Claude OAuth account this run's agent.auth: oauth workflow used (docs/design/named-oauth-tokens.md). Absent, or \"default\" itself, name the repository's unnamed claude-oauth-token secret; \"default\" is therefore never a value here, which is why the pattern alone (matching \"default\") is not enough. maxLength is required alongside the pattern: each of the pattern's {0,30} repetitions may consume one character or, via the dash alternative, two (\"-\" plus the alphanumeric it must precede), so the pattern alone admits names up to 61 characters (e.g. \"a\" + 30 repetitions of \"-a\") — config.MaxClaudeAccountNameLen (internal/config/claude_accounts.go) is 31, and this must match it exactly."
+    },
+    "compression_off": {
+      "type": "boolean",
+      "description": "task.Spec.CompressionOff, written by fugaro run --no-compression: it disables agent.compression for this run only, overriding the repository's own reviewed choice (docs/design/headroom-compression.md §4). There is no field and no flag to force compression on, so this is the only direction the override goes. Needs a 0.12.0 runner, which is why a launch that would set it is gated at launch (internal/cli/recipes_skew.go's compressionSince) and why the launcher writes it only when the resolved configuration turns compression on: task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running the task without it."
     }
   },
   "dependentRequired": {
