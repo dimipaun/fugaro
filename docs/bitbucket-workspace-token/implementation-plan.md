@@ -61,11 +61,13 @@ references decisions by `D#` and findings by `F#`.
 - Historical records are amended by a dated note, never rewritten: `docs/releases/v0.9.0.md`,
   Check 52's FACT, and `docs/plans/2026-10-14-project-centric.md`.
 - Opting in is the operator's own act, so S1 needs no "For operators" release step. **S2 needs
-  three**, and T2.11 writes them all into the 0.13.0 notes (`docs/releases/README.md`):
+  four**, and T2.11 writes them all into the 0.13.0 notes (`docs/releases/README.md`):
   1. The lockstep upgrade for the policy version 4 (D477).
   2. Fixing any node the new rules refuse (T2.1).
   3. A local Bitbucket profile that already lists `bitbucket-token` now deploys a job or is
      refused. `ProjectJobs` skips such a profile today (T2.2).
+  4. An installation that sets `FUGARO_BITBUCKET_API_URL` lists that root in `bitbucket_api_roots`
+     and republishes before it upgrades, or its cloud runs are refused (T2.8).
 - Generated pages are never edited by hand. `website/content/security.md` and
   `website/content/cli-reference.md` are regenerated with `go run ./internal/clidoc`, and
   `go test ./internal/clidoc/` holds them current.
@@ -100,8 +102,8 @@ references decisions by `D#` and findings by `F#`.
    `https://api.bitbucket.org/2.0` or to an API root the owner allow-lists in the policy. Pinned by
    T2.8. The rest of a launcher's reach is a statement (T1.1).
 9. **An older runner never runs on a version-4 node** (D477). `Decode` refuses any other version in
-   both directions. That is the lockstep, and it means no per-feature base floor. Pinned by T2.1:
-   `TestDecodeRefusesAVersion3Node`.
+   both directions. That is the lockstep, and it means no per-feature base floor. Pinned by T2.1's
+   new test `TestDecodeRefusesAVersion3Node`.
 
 ## Slices
 
@@ -195,7 +197,12 @@ references decisions by `D#` and findings by `F#`.
 - **Depends on:** no task. It waits for these answers:
   - D467: its recommendation is what this task writes.
   - D468: whether the docs carry the "not yet live-checked" label.
-  - D475: launchers named as accepted.
+  - D475: answered yes on 2026-10-27; launchers are named as trusted.
+
+  **While D467 and D468 stay open, the approved task writes the defaults.** For D467, the
+  second-machine sentence, which is documentation only. For D468, the "not yet live-checked with a
+  workspace or project token (Check 180)" label, because the owner said Check 180 comes later. If
+  the owner answers otherwise, the follow-up is a one-line edit.
 - **Commit:** `docs(bitbucket): one workspace or project token for many repositories, and what it reaches`
 - **Reviewer tier:** opus + mandatory independent review (a `SECURITY.md` statement about a
   credential's reach).
@@ -278,14 +285,22 @@ references decisions by `D#` and findings by `F#`.
     `bitbucket_token.allow_repos`.
   - `internal/projectpolicy/profiles.go`: `validProfiles`, and `providerRequired`'s message.
   - `internal/projectpolicy/version.go`: `Version` 3 → 4 and `VersionSince[4]` (D477).
-  - Every test fixture that hard-codes policy version 3: about 20 files in `internal/cli`,
-    `internal/runner` and `internal/credsvc`. Find them with
-    `git grep -lE '"version": ?3' -- 'internal/cli/*_test.go' 'internal/runner/*_test.go' 'internal/credsvc/*_test.go'`.
+  - Every **policy-node** fixture that hard-codes version 3. That is `internal/projectpolicy`'s own
+    tests (about 145 hits in six files: `policy_test.go`, `credentials_test.go`, `read_test.go`,
+    `prices_test.go`, `cloneurls_test.go`, `routing_comment_test.go`), plus the policy fixtures in
+    `internal/cli`, `internal/runner` and `internal/credsvc`. A plain grep for `"version":3` also
+    finds non-policy documents, which stay as they are: the managed state
+    (`managed_flag_test.go`), a tfstate (`managed_inventory_test.go`) and an IAM policy
+    (`credsvc/probe_test.go`). The whole-package test runs below catch any fixture the sweep
+    misses.
   - `policy.go` also gains `bitbucket_api_roots`: the owner-allow-listed API roots T2.8 accepts
     (D474).
   - `internal/projectpolicy/bitbucket.go` (new).
   - `internal/projectpolicy/bitbucket_test.go` (new).
 - **Interfaces produced:** T2.2, T2.3, T2.4, T2.8 and T2.9 consume these.
+  - `Policy.BitbucketAPIRoots []string` (`bitbucket_api_roots`). It is validated as `https://`
+    URLs with no query, fragment or userinfo, and is matched exactly after trimming a trailing `/`.
+    T2.3 publishes it and T2.8 reads it.
   - `projectpolicy.SharedBitbucketProfile(p config.JobProfile) bool` is true when
     `p.Provider == "bitbucket"` and `p.Secrets` contains `bitbucket-token` (D473, pending).
   - `projectpolicy.DeriveBitbucketToken(profiles map[string]Profile, secrets map[string]config.ProjectSecret) (*BitbucketToken, error)`
@@ -312,7 +327,7 @@ references decisions by `D#` and findings by `F#`.
   - `TestValidProfilesRefuseAProfileListBeyondTheBitbucketBlock`
   - `TestDeriveBitbucketTokenQualifiesTheSlugs`
   - `TestSharedBitbucketProfileNeedsTheTokenMount`
-  - `TestDecodeRefusesAVersion3Node` and `TestVersionSinceCoversEveryVersion` (existing)
+  - `TestDecodeRefusesAVersion3Node` (new) and `TestVersionSinceCoversEveryVersion` (existing)
   - `TestPolicyCarriesBitbucketAPIRoots`
   - `TestAdmitsIntersectsABitbucketTokenProfile`. Its fixture is a profile with its own list and a
     wider project list, as `repos add` would leave it, and it pins the intersection.
@@ -370,8 +385,9 @@ references decisions by `D#` and findings by `F#`.
 - **Files:**
   - `internal/cli/project_cmd.go`: beside `DeriveAccounts` in the publish path, it derives the
     block and writes `bitbucket_api_roots`.
-  - `internal/localcfg/localcfg.go`: the operator's `bitbucket_api_roots` list (D474). It is
-    operator-only, and like `project_secrets` it is never in the shared config.
+  - `internal/localcfg/localcfg.go`: the operator's `bitbucket_api_roots` list (D474).
+  - `internal/localcfg/shared.go`: `Config.Shared()` drops the list, as it drops
+    `ProjectSecrets`.
   - `internal/cli/sharedcfg.go`: `sharedForbidden` gains the key.
   - `internal/cli/project_cmd_bitbucket_test.go` (new).
 - **Interfaces consumed:** T2.1.
@@ -384,7 +400,7 @@ references decisions by `D#` and findings by `F#`.
 - **Red step:** `...WritesTheBitbucketTokenBlock` and `...AcceptsAnAllowListedBitbucketProfile` fail
   first: after T2.1 the decoder refuses a token profile with no block, so publish fails until it
   derives one. The refusal test may already pass through T2.1 and stays as a pin.
-- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestPolicyPublish.*Bitbucket' -count=1`
+- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestPolicyPublish.*Bitbucket|TestSharedConfigRefusesBitbucketAPIRoots' -count=1 && go test ./internal/localcfg/ -count=1`
 - **Depends on:** T2.1.
 - **Commit:** `cli: project policy publish carries the Bitbucket token's allow-list and refuses a profile beyond it`
 - **Reviewer tier:** opus + mandatory independent review.
@@ -520,28 +536,42 @@ number is not reused.
 
 ### T2.11: The 0.13.0 lockstep upgrade notes (0.13.0, D477)
 
-- **Files:** the 0.13.0 release notes (`docs/releases/v0.13.0.md`, as `docs/releases/README.md`
-  describes) and its pin test, if the notes convention has one.
+- **Where it lands.** In **the 0.13.0 release PR** (`/new-release 0.13.0`), not earlier. A
+  `docs/releases/v0.13.0.md` merged before the release would show on the website's changelog as if
+  0.13.0 were out, and without its `website/data/release-summaries.yaml` line the website build
+  stops. The task drafts the section text in its own PR as
+  `docs/bitbucket-workspace-token/release-0.13.0-operators.md`. The release PR copies it.
+- **Files:** `docs/bitbucket-workspace-token/release-0.13.0-operators.md` (new, the draft) and
+  `internal/cli/docs_bitbucket_release_steps_test.go` (new, a pin). At release time the release PR
+  also writes `docs/releases/v0.13.0.md` and `website/data/release-summaries.yaml`, and the pin
+  moves to that file.
 - **What its `### For operators` section says.** Each step is labelled per installation or per
   repository:
-  1. **Lockstep.** The policy is now version 4. Upgrade the CLI on every operator and launcher
-     machine and the base image of every job together. Then republish the policy with
-     `fugaro project policy publish --delete`, then `fugaro project policy publish`, and re-add
-     any manual `fugaro project repos add` entries (as in 0.9.0). Older runners, older CLIs'
-     launches and the credentials service refuse a version-4 node, and new ones refuse a version-3
-     node.
-  2. **Profiles the new rules refuse.** A GitHub profile that mounts `bitbucket-token` is fixed
-     before the republish. So is a Bitbucket profile that mounts it without its own exact
+  1. **Before upgrading,** run `fugaro project policy show` and keep the list of repositories
+     (manual `repos add` entries are lost in a republish, as in 0.9.0).
+  2. **Lockstep.** The policy is now version 4. Upgrade together:
+     - the CLI on every operator and launcher machine;
+     - every job's base image;
+     - the credentials service, where one is deployed, because it decodes the node.
+
+     Then republish with `fugaro project policy publish --delete`, then
+     `fugaro project policy publish`, and re-add the kept entries. Older runners, older CLIs'
+     launches and the service refuse a version-4 node, and new ones refuse a version-3 node.
+  3. **Profiles the new rules refuse.** Before the republish, fix any GitHub profile that mounts
+     `bitbucket-token`, and any Bitbucket profile that mounts it without its own exact
      `allow_repos`.
-  3. **A Bitbucket profile already listing `bitbucket-token`** now gets a shared job, or is refused
+  4. **A Bitbucket profile already listing `bitbucket-token`** now gets a shared job, or is refused
      under D465.
-  4. **The optional `bitbucket_api_roots` list** (D474).
-- **Tests:** `go test ./internal/cli/ -run Docs` (the release-notes pins).
-- **Red step:** none of its own. It is a docs task, checked by the existing release-notes tests and
-  by the release script.
-- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1 -timeout 1800s`
-- **Depends on:** T2.1, T2.2 and T2.3.
-- **Commit:** `docs(releases): 0.13.0's lockstep policy upgrade and the Bitbucket shared job steps`
+  5. **A non-default `FUGARO_BITBUCKET_API_URL`.** Where a job's environment sets one, list that
+     root in `bitbucket_api_roots` and republish before upgrading the runners, or every cloud run
+     is refused (T2.8).
+- **Tests:** `TestBitbucketReleaseStepsNameTheLockstep` (new). It pins steps 1, 2 and 5: the
+  `policy show` line, the `--delete` then `publish` order, the credentials service, and
+  `bitbucket_api_roots`.
+- **Red step:** the pin fails until the draft exists.
+- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestBitbucketReleaseSteps|Docs' -count=1 -timeout 1800s`
+- **Depends on:** T2.1, T2.2, T2.3 and T2.8.
+- **Commit:** `docs(bitbucket-workspace-token): 0.13.0's lockstep policy upgrade steps, drafted for the release notes`
 - **Reviewer tier:** standard.
 
 ### T3.1: A workspace pattern in the allow-list (0.13.0, only if D464 = "pattern")
@@ -576,8 +606,8 @@ number is not reused.
 | T2.8 | T2.1 |
 | T2.9 | T2.1 |
 | T2.10 | T1.4 |
-| T2.11 | T2.1, T2.2, T2.3 |
-| T2.6 | T1.1, T1.3, T2.2, T2.3, T2.4, T2.8, T2.9, T2.10 (and T2.6 documents T2.11's steps by link) |
+| T2.11 | T2.1, T2.2, T2.3, T2.8 |
+| T2.6 | T1.1, T1.3, T2.2, T2.3, T2.4, T2.8, T2.9 |
 | T2.7 | T2.6 |
 | T3.1 | T2.1, T2.9, T2.6 |
 
@@ -597,6 +627,9 @@ number is not reused.
 - **0.12.1:** T1.1. With D468 = "before": T1.3 → T1.4.
 - **0.13.0:** T2.1 → T2.2 (or T2.8 or T2.9) → T2.6 → T2.7. T2.1 is now the largest task, because
   of the fixture sweep.
+- **The owner-bound chain is kept off it.** T1.4 (Check 180) → T2.10 waits on a Premium sandbox,
+  and none is known (U6). So T2.6 no longer waits on T2.10. If T2.10 is built, its own PR adds its
+  sentence to `docs/git-providers.md` and `SECURITY.md`, after T2.6.
 - What must be sequential, and why:
   - T2.2, T2.3, T2.4, T2.8 and T2.9 consume T2.1's interface.
   - T2.6 must describe shipped code.
@@ -619,14 +652,15 @@ number is not reused.
 | `internal/config/project_secrets_test.go` | T3.1 (0.13.0 L3) |
 | `internal/projectpolicy/policy.go`, `profiles.go`, `version.go`, `bitbucket_test.go` | T2.1 (L0) |
 | `internal/projectpolicy/bitbucket.go` | T2.1 (L0), T3.1 (L3) |
-| `docs/releases/v0.13.0.md` | T2.11 (L2) |
+| `docs/bitbucket-workspace-token/release-0.13.0-operators.md`, `internal/cli/docs_bitbucket_release_steps_test.go` | T2.11 (L2). `docs/releases/v0.13.0.md` is written by the release PR, outside the levels |
 | the ~20 test files that hard-code policy version 3 (`internal/cli`, `internal/runner`, `internal/credsvc`) | T2.1 (L0). Any of them that a later task also edits, such as `internal/cli/project_job_test.go` (T2.2), is edited at a later level |
-| `internal/localcfg/localcfg.go`, `internal/cli/sharedcfg.go` | T2.3 (L1) |
+| `internal/localcfg/localcfg.go`, `internal/localcfg/shared.go`, `internal/cli/sharedcfg.go` | T2.3 (L1) |
 | `internal/infra/projectjobs.go`, `internal/infra/projectjobs_test.go`, `internal/cli/project_job.go`, `internal/cli/project_job_test.go` | T2.2 (L1) |
 | `internal/cli/project_cmd.go`, `internal/cli/project_cmd_bitbucket_test.go` | T2.3 (L1) |
 | `internal/cli/doctor.go`, `internal/cli/doctor_bitbucket_shared_test.go` | T2.4 (L1) |
 | `internal/runner/runner.go`, `internal/runner/bitbucket_api_root_test.go` | T2.8 (L1) |
-| `internal/runner/reviewmode.go`, `internal/runner/reviewmode_bitbucket_test.go` | T2.10 (L1 or L2) |
+| `internal/runner/reviewmode.go`, `internal/runner/reviewmode_bitbucket_test.go` | T2.10 (L1 or later; after T1.4) |
+| `docs/git-providers.md`, `SECURITY.md` (T2.10's sentence) | T2.10, only after T2.6 has merged |
 | `internal/runner/projectjob.go` | T2.9 (L1), T3.1 (L3) |
 | `internal/runner/projectjob_bitbucket_test.go` | T2.9 (L1) |
 | `docs/project-layer.md`, `docs/plans/2026-10-14-project-centric.md`, `internal/cli/docs_project_centric_test.go` | T2.6 (L2) |

@@ -25,7 +25,7 @@ D464–D468, D473 (proposed) and D476 wait for the owner. Each task needs the ow
 | Release | Tasks |
 | --- | --- |
 | **0.12.1** | **T1.1** (docs and the `SECURITY.md` reach statement) and **T1.2** (CLI help text, comments and message wording), **both APPROVED 2026-10-27**. Per-repository jobs are unchanged, and there is no behaviour change. Check 180 (T1.3, T1.4) stays owner-run and comes later: no Premium sandbox workspace is known |
-| **0.13.0** | **T2.1–T2.10**: Bitbucket in shared project jobs, the node's derived Bitbucket block enforced by the runner and checked at publish and deploy, the doctor warning, the API-root pin (T2.8, on), review-only refusing the token's own pull requests (T2.10, if D476), the policy version 4 and its lockstep release notes (T2.11), the phase-3 docs and Check 181. None is approved. **T3.1** (a workspace pattern) only if D464 says so |
+| **0.13.0** | **T2.1–T2.11**: Bitbucket in shared project jobs, the node's derived Bitbucket block enforced by the runner and checked at publish and deploy, the doctor warning, the API-root pin (T2.8, on), review-only refusing the token's own pull requests (T2.10, if D476), the policy version 4 and its lockstep release notes (T2.11), the phase-3 docs and Check 181. None is approved. **T3.1** (a workspace pattern) only if D464 says so |
 
 The headline finding: storing one workspace or project token for many repositories **already
 works**. It runs through the `project_secrets.bitbucket-token` allow-list and

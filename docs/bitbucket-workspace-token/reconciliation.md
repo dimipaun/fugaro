@@ -184,8 +184,8 @@ simply instruct the agent to print it. This holds already in slice 1, on per-rep
 the same launcher gets one repository's token. With the opt-in, the launcher gets the whole token's
 reach. → D474.
 
-The owner accepted this risk for agents (D462); whether the statement and D462 cover launchers is
-O4. *Consequence:* `SECURITY.md` and `docs/git-providers.md` say
+The owner accepted this risk for agents (D462); D475 (answered yes on 2026-10-27) extends the
+acceptance to launchers. *Consequence:* `SECURITY.md` and `docs/git-providers.md` say
 it in those words. The docs recommend the narrowest token (project over workspace) and the minimum
 scopes (D470). A token does not expire on its own unless the operator sets an expiry.
 
@@ -304,8 +304,9 @@ for 0.12.1. Approving those tasks is the owner's separate act, recorded in the p
 | **D462** | Accept that the token's reach is the agent's reach (F7)? | Accept, with mitigations: the allow-list, the narrowest token type, minimum scopes (D470), an optional expiry, and a plain statement in `SECURITY.md` and `docs/git-providers.md` | Refuse, and keep per-repository tokens. That leaves the spec unmet | **2026-10-27: accepted, with the allow-list, minimum scopes, and a plain statement in `SECURITY.md` and `docs/git-providers.md`.** (The narrowest token type and an optional expiry are this document's additions.) This **reverses** the owner's position of 2026-10-26 (docs/bitbucket-credentials D363 as amended: runs keep per-repository tokens), **for operators who opt in** through the allow-list. It **amends** the ruling of 2026-10-15 ("Bitbucket stays per repository": `docs/git-providers.md`, `docs/design/project-centric.md` §4.5 and D5, `docs/design/project-secrets.md`). Every pin is listed in F5 |
 | **D463** | Which release carries what? | 0.12.1: S1 only, if it is genuinely small. 0.13.0: everything else | Put S2 in 0.12.1. It is not small (§6) | **2026-10-27: 0.12.1 must be quick; anything big goes to 0.13.0, the "control the spend" release, and live checks go there too.** (Applied, not the owner's words: S1 is 0.12.1, everything else 0.13.0, §6; D468 asks to reopen the live-check part for Check 180 alone) |
 
-**Decisions this reconciliation raises.** They are **pending with the owner**. A subagent could not
-ask them, so each answer cell is empty and they are listed under §7.
+**Decisions this reconciliation raises.** D474, D475 and D477 were answered on 2026-10-27, and
+their rows carry the answers. The rest are **pending with the owner**: their answer cells are
+empty, and they are listed under §7.
 
 | # | Question | Recommendation | Alternative and cost | Owner's answer |
 | --- | --- | --- | --- | --- |
@@ -316,7 +317,7 @@ ask them, so each answer cell is empty and they are listed under §7.
 | **D474** | Should a cloud run refuse a non-default `FUGARO_BITBUCKET_API_URL`? (F7) | **Yes, in 0.13.0:** outside a local invocation the runner refuses any API root other than `https://api.bitbucket.org/2.0`. That closes the token-redirect half of the launcher path (the agent half stays). `FUGARO_GITHUB_API_URL` is the same redirect for App-signed JWTs today; it is named here and out of scope | Leave it and state it. Every launcher of an allow-listed repository can then exfiltrate the workspace token without an agent's help | **2026-10-27: yes. The recommendation, extended by the owner:** an API root the owner allow-lists in the policy is also accepted, for self-managed Bitbucket. Why: the token must not be sent to a launcher's host. Consequence: the policy node gains an owner-set list of API roots (T2.1), and T2.8 is on. **Tension T2** (§7): D366 put Bitbucket Data Center out of scope, and the adapter speaks only the Cloud 2.0 API |
 | **D475** | Does D462's acceptance cover launchers? (F7; was O4) | **Yes, and say so in `SECURITY.md`.** A launcher of an allow-listed repository can already obtain the run's git credential today; the opt-in widens it to the token's reach | No: then D474 (the API-root pin) and a way to keep the token from the agent are prerequisites, and the latter is the push and pull-request proxy docs/bitbucket-credentials parked | **2026-10-27: yes, launchers are trusted as before. The recommendation.** Why: a launcher can already obtain the run's git credential today. **Recorded consequence:** a malicious launcher can use the agent to write across everything the token reaches, the whole workspace or project. The API root is locked by D474, so a launcher cannot have the runner send the token to its own host. `SECURITY.md` says this (T1.1) |
 | **D476** | A code mitigation for F17's cross-repository pull requests? (was O5) | **0.13.0: a review-only run on Bitbucket refuses a pull request whose author is the token's own identity**, when that identity is known (U2). It is a new behaviour, so it is the owner's | Document only (T1.1). A hostile agent's pull request in another repository is then reviewed by a run that holds the token | |
-| **D477** | Does the node's new `bitbucket_token` block bump `projectpolicy.Version`? (D465, review round 3) | **No bump.** `Decode` records unknown top-level keys (`UnknownKeys`) instead of refusing them, so older readers tolerate the block. Older runners never run a Bitbucket shared job, because T2.2 refuses to deploy one on a base below the release. That floor is a per-feature `…Since`, which goes against P6's "no `*Since` constant per feature" (`internal/cli/recipes_skew.go`), so the owner rules on it here | **Bump 3 → 4.** `Decode` refuses any other version in both directions. Every runner, per-repository and GitHub-shared alike, every older CLI's launch, and the credentials service (`credsvc` decodes the node) would refuse the other version's node. That needs a lockstep upgrade of every installation (`publish --delete`, then publish; the 0.9.0 notes show the order and the loss of manual `repos add` entries), plus `VersionSince[4]` and about 29 test files that hard-code version 3 | **2026-10-27: bump the version (3 → 4). Not the recommendation**, which was no bump. The decision was relayed as "the design's recommendation". It is recorded as the owner's answer against this document's recommendation. Why: a clean refusal is better than a per-feature base floor. **Recorded consequence:** when 0.13.0 ships, every installation with a published policy upgrades in lockstep. Older runners, older CLIs' launches and the credentials service refuse a v4 node, and new ones refuse a v3 node. The operator republishes (`publish --delete`, then publish, re-adding manual `repos add` entries, as in 0.9.0). A release-notes task writes the `### For operators` steps (T2.11). T2.2's base floor is dropped |
+| **D477** | Does the node's new `bitbucket_token` block bump `projectpolicy.Version`? (D465, review round 3) | **No bump.** `Decode` records unknown top-level keys (`UnknownKeys`) instead of refusing them, so older readers tolerate the block. Older runners never run a Bitbucket shared job, because T2.2 refuses to deploy one on a base below the release. That floor is a per-feature `…Since`, which goes against P6's "no `*Since` constant per feature" (`internal/cli/recipes_skew.go`), so the owner rules on it here | **Bump 3 → 4.** `Decode` refuses any other version in both directions. Every runner, per-repository and GitHub-shared alike, every older CLI's launch, and the credentials service (`credsvc` decodes the node) would refuse the other version's node. That needs a lockstep upgrade of every installation (`publish --delete`, then publish; the 0.9.0 notes show the order and the loss of manual `repos add` entries), plus `VersionSince[4]` and the policy fixtures that hard-code version 3 (counted in plan T2.1) | **2026-10-27: bump the version (3 → 4). Not the recommendation**, which was no bump. The decision was relayed as "the design's recommendation". It is recorded as the owner's answer against this document's recommendation. Why: a clean refusal is better than a per-feature base floor. **Recorded consequence:** when 0.13.0 ships, every installation with a published policy upgrades in lockstep. Older runners, older CLIs' launches and the credentials service refuse a v4 node, and new ones refuse a v3 node. The operator republishes (`publish --delete`, then publish, re-adding manual `repos add` entries, as in 0.9.0). A release-notes task writes the `### For operators` steps (T2.11). T2.2's base floor is dropped |
 | **D468** | **Reopen D463's live-check part for Check 180 alone?** That is, run Check 180 (a workspace or project token, live, sandbox) before 0.12.1's docs ship (F15, T1)? | **Run it before 0.12.1 ships if a Premium sandbox exists.** It is owner-run and needs no code, so it does not slow the release's code | Ship 0.12.1's docs marked "not yet live-checked", and run Check 180 in 0.13.0 as the 2026-10-27 ruling puts live checks | |
 
 **Resolutions** (one defensible answer; not questions; D473 is a proposal pending the owner, see §7):
@@ -354,7 +355,9 @@ ask them, so each answer cell is empty and they are listed under §7.
 - **T1.** D463 puts live checks in 0.13.0. 0.12.1's docs then present a path that has never been
   run with a workspace or project token (F15, U1, U2). Choices: run Check 180 first (owner time, and
   it needs a Premium sandbox, U6), or ship the docs saying "not yet live-checked". D468 asks.
-- **O1.** D464–D468, D473 and D476 are pending. D474, D475 and D477 were answered on 2026-10-27.
+- **O1.** D464–D468, D473 and D476 are pending. Each needs the owner's answer before the task that
+  depends on it (shown in the plan) can be approved. D474, D475 and D477 were answered on
+  2026-10-27.
 - **T2 (new, 2026-10-27).** D474's answer accepts an owner-allow-listed API root "for self-managed
   Bitbucket". D366 (docs/bitbucket-credentials) put Bitbucket Data Center out of scope, and the
   adapter speaks only the Cloud 2.0 API (`bitbucket.DefaultBaseURL`). The owner has two choices:
@@ -362,8 +365,9 @@ ask them, so each answer cell is empty and they are listed under §7.
     D366 stands.
   - **Data Center comes into scope.** That needs a second adapter, and it is not planned here.
 
-  T2.8 builds the list either way. It does not resolve this tension. Each needs the owner's answer before the task that depends on it
-  (shown in the plan) can be approved.
+  T2.8 builds the list either way. It does not resolve this tension. Also stated: an owner-listed
+  root reaches the runner only through a published policy. An installation that publishes none has
+  no way to list a root, and its runs are refused unless they use Bitbucket Cloud's own API.
 - **O2.** Does a Premium sandbox Bitbucket workspace exist for Checks 180–181? **UNVERIFIED** (U6).
   Without one, both checks wait.
 - **O3.** D462 reverses the 2026-10-26 position for opted-in operators. docs/bitbucket-credentials'
