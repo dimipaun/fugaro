@@ -363,11 +363,11 @@ var compressionForTest string
 // of this checkout's object database, so a launch is judged on the file the
 // run checks out rather than on the launcher's working tree, which the run
 // never reads -- with the checkout's own document standing in when the ref
-// cannot be read. A file the launcher cannot read at all is not gated: the
-// run's own bootstrap, which reads the file this launcher could not, is what
-// refuses the key then. agent.compression is repository-scope and no project
-// layer or profile may set it (docs/design/layered-config.md §5), so the
-// resolved value is this file's own.
+// cannot be read. A file the launcher cannot read at all is never gated on the
+// key: the run's own bootstrap, which reads the file this launcher could not,
+// is what refuses the key then. agent.compression is repository-scope and no
+// project layer or profile may set it (docs/design/layered-config.md §5), so
+// the resolved value is this file's own.
 func compressionRequested(ctx context.Context, env *cloudEnv, spec *task.Spec) (on, known bool) {
 	if compressionForTest != "" {
 		return true, true
