@@ -44,24 +44,31 @@ func TestDecide(t *testing.T) {
 	build := verify.Record{Kind: verify.KindBuild, HeadSHA: "abc", CleanTree: true, Passed: true}
 	ship := &runstore.ReviewSummary{Round: 1, Verdict: "ship"}
 	changes := &runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: 3}
+	// A mode whose split blocks: one finding above Startup's floor, which is
+	// the half of the split the count's own reason is kept for (outcome.go).
+	blocked := findingsPolicyOf(rigor.Config{RepoBlock: true}, rigor.Startup, 2,
+		[]rigor.Score{{Likelihood: 3, Impact: 3, FixCost: 1, Class: rigor.Correctness}})
 	cases := []struct {
 		name    string
 		records []verify.Record
 		last    *runstore.ReviewSummary
+		pol     FindingsPolicy
 		ready   bool
 		reason  string
 	}{
-		{"ready", []verify.Record{pass}, ship, true, ""},
-		{"latest matching run wins", []verify.Record{pass, fail}, ship, false, "tests failing on the final commit"},
-		{"fixed after failing", []verify.Record{fail, pass}, ship, true, ""},
-		{"dirty tree does not count", []verify.Record{dirty}, ship, false, "no verified test run on the final commit"},
-		{"old commit does not count", []verify.Record{old}, ship, false, "no verified test run on the final commit"},
-		{"build is not test", []verify.Record{build}, ship, false, "no verified test run on the final commit"},
-		{"review findings", []verify.Record{pass}, changes, false, "review round 2 still has 3 findings"},
-		{"no review", []verify.Record{pass}, nil, false, "no review verdict"},
+		{"ready", []verify.Record{pass}, ship, FindingsPolicy{}, true, ""},
+		{"latest matching run wins", []verify.Record{pass, fail}, ship, FindingsPolicy{}, false, "tests failing on the final commit"},
+		{"fixed after failing", []verify.Record{fail, pass}, ship, FindingsPolicy{}, true, ""},
+		{"dirty tree does not count", []verify.Record{dirty}, ship, FindingsPolicy{}, false, "no verified test run on the final commit"},
+		{"old commit does not count", []verify.Record{old}, ship, FindingsPolicy{}, false, "no verified test run on the final commit"},
+		{"build is not test", []verify.Record{build}, ship, FindingsPolicy{}, false, "no verified test run on the final commit"},
+		{"review findings", []verify.Record{pass}, changes, FindingsPolicy{}, false, "review round 2 still has 3 findings"},
+		{"no review", []verify.Record{pass}, nil, FindingsPolicy{}, false, "no review verdict"},
+		{"a mode in play changes none of the four reasons", []verify.Record{pass},
+			&runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: 1}, blocked, false, "review round 2 still has 1 finding"},
 	}
 	for _, tc := range cases {
-		ready, reason := Decide(tc.records, "abc", tc.last)
+		ready, reason := Decide(tc.records, "abc", tc.last, tc.pol)
 		if ready != tc.ready || reason != tc.reason {
 			t.Errorf("%s: Decide = %v %q, want %v %q", tc.name, ready, reason, tc.ready, tc.reason)
 		}
@@ -122,7 +129,7 @@ func TestReportConsistentWithDecide(t *testing.T) {
 	}
 
 	// Decide should report tests failing (uses clean record)
-	ready, reason := Decide(rec.Verify, rec.HeadSHA, ship)
+	ready, reason := Decide(rec.Verify, rec.HeadSHA, ship, FindingsPolicy{})
 	if ready || reason != "tests failing on the final commit" {
 		t.Errorf("Decide = %v %q, want false %q", ready, reason, "tests failing on the final commit")
 	}

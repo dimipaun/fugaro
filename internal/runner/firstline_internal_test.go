@@ -38,7 +38,7 @@ func TestSeniorReviewSkipsFirstLine(t *testing.T) {
 	if seniorReview(rs) != nil {
 		t.Fatal("a first-line review was read as the senior verdict")
 	}
-	if ok, _ := Decide(nil, "", seniorReview(rs)); ok {
+	if ok, _ := Decide(nil, "", seniorReview(rs), FindingsPolicy{}); ok {
 		t.Fatal("ready")
 	}
 	rs = append(rs, runstore.ReviewSummary{Round: 1, Tier: runstore.TierSenior, Verdict: "changes", Findings: 1}, runstore.ReviewSummary{Round: 1, Tier: runstore.TierFirst, Verdict: "ship"})
