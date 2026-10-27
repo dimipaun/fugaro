@@ -45,6 +45,7 @@ describe('the stub’s command keys', () => {
       'version',
       'doctor',
       'config list',
+      'coordinator status',
     ])
     // The console's one spawn table, which since the owner's design ruling of
     // 2026-10-25 includes the installation rail's own read (`config list
