@@ -63,15 +63,33 @@
 // critical path and its one blocked card are both inside the two releases it
 // has, so finishing either of them would take an edge or a state away from a
 // case that is about them.
+//
+// **The goldens** are the third describe: `test/e2e/__screenshots__/graph/{light,dark}-<platform>.png`,
+// taken the way `spend.spec.ts` takes its own -- the compiled screen loaded out
+// of `dist/` into the window's own document and mounted into a host of this
+// spec's making, so what a golden frames is the screen and not the window's
+// entry beside it. The name is passed to `toHaveScreenshot` as an ARRAY
+// (`['graph', 'light.png']`), because Playwright sanitizes a STRING name before
+// `snapshotPathTemplate` applies and would flatten `'graph/light.png'` into
+// `__screenshots__/graph-light.png` beside the Live screen's two files.
+//
+// The frame is the mount for the reason `spend.spec.ts` records at length, and
+// one of its own: the entry draws this same screen into the document beside the
+// mount, from the same stub document, and two `section.graph` elements in one
+// document are two elements a page-scoped frame cannot tell apart. **No PNG is
+// committed**, as for the other four screens: macOS and Linux pixels differ, and
+// the baselines are owner-run.
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
+import { GRAPH_THEMES } from '../../src/renderer/screens/graph'
 import { inRangeCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
+import { expectGolden, expectGrounded } from '../support/goldens'
 import { launchConsole } from '../support/launch'
 
 // `test/e2e/x.spec.ts` is two levels below the console's own directory.
@@ -91,6 +109,165 @@ const CANVAS = 'svg.graph-canvas'
 
 /** HEADING is a release box's heading text: the name line a card covered. */
 const HEADING = 'text.graph-release-heading'
+
+/** RUNS is the console's own run list, in the shape `plan status` writes a
+ * task's `run` as: the last four characters are what the document carries, and
+ * the whole id is what a card's door opens (`runForSuffix`). The fixture's five
+ * suffixes are here, so no card in a golden is drawn with the sentence a suffix
+ * that matches nothing gets. */
+const RUNS: readonly string[] = Object.freeze([
+  '20261027-030000-aa01',
+  '20261027-030000-aa02',
+  '20261027-030000-aa03',
+  '20261027-030000-aa04',
+  '20261027-030000-aa05',
+])
+
+/** THE_MOUNT is where the golden describe draws the screen, and therefore what
+ * its goldens frame: the mount and never the page (see the header). */
+const THE_MOUNT = '#graph-mount'
+
+/** GOLDEN_DIR is the directory this spec's recordings live in, and
+ * GOLDEN_NAMES are the names `toHaveScreenshot` is given: arrays, because
+ * Playwright flattens a string's `/` (see the header). */
+const GOLDEN_DIR = join(consoleDir, 'test', 'e2e', '__screenshots__', 'graph')
+const GOLDEN_NAMES = {
+  light: ['graph', 'light.png'],
+  dark: ['graph', 'dark.png'],
+} as const
+
+/** SKIP_GOLDENS is the one documented way to run this file with no goldens
+ * recorded: `FUGARO_CONSOLE_GOLDENS=skip`. Anything else, including unset, means
+ * the golden tests run and a missing baseline fails them. */
+const SKIP_GOLDENS = process.env['FUGARO_CONSOLE_GOLDENS'] === 'skip'
+
+/** SPEC is this file's own name: what a re-record command has to name, and what
+ * every golden failure here quotes back to the reader. */
+const SPEC = 'graph.spec.ts'
+
+/** The compiled modules the screen is made of, in dependency order: the screen,
+ * the three modules of the picture (the model, the cache and the worker client)
+ * and the three shared modules those reach. `shared/schema.js` is here because
+ * the fixture is decoded in the window rather than in this file: the screen is
+ * handed a document the console's own decoder admitted, which is the shape the
+ * entry hands it. Nothing else may be reachable -- the registry below refuses a
+ * specifier that is not a relative path, so a bundle that grew an import of
+ * `node:` or of a package fails here rather than in a window with no Node in
+ * it. */
+const MODULES: readonly string[] = Object.freeze([
+  'shared/availability.js',
+  'shared/sanitize.js',
+  'shared/schema.js',
+  'renderer/graph/model.js',
+  'renderer/graph/layout-client.js',
+  'renderer/graph/layout.js',
+  'renderer/screens/graph.js',
+])
+
+/** moduleSource is one compiled module as a registry entry. */
+function moduleSource(relative: string): string {
+  const code = readFileSync(join(consoleDir, 'dist', relative), 'utf8')
+  return `registry[${JSON.stringify(`/${relative}`)}] = function (exports, require, module) {\n${code}\n};`
+}
+
+/** LOADER is the module registry the injected bundle runs on: a CommonJS
+ * `require` that can resolve `./` and `../` specifiers and nothing else. */
+const LOADER = `
+var registry = {};
+var cache = {};
+function normalize(spec, from) {
+  if (spec.charAt(0) !== '.') throw new Error('the renderer may not require ' + spec);
+  var base = from.split('/').slice(0, -1);
+  var parts = spec.split('/');
+  for (var i = 0; i < parts.length; i++) {
+    var part = parts[i];
+    if (part === '' || part === '.') continue;
+    if (part === '..') { base.pop(); continue; }
+    base.push(part);
+  }
+  var resolved = base.join('/');
+  return /\\.js$/.test(resolved) ? resolved : resolved + '.js';
+}
+function load(path) {
+  if (cache[path]) return cache[path].exports;
+  var definition = registry[path];
+  if (!definition) throw new Error('no module ' + path);
+  var module = { exports: {} };
+  cache[path] = module;
+  definition(module.exports, function (spec) { return load(normalize(spec, path)); }, module);
+  return module.exports;
+}
+`
+
+/**
+ * FACTORY is a DOM-backed `GraphFactory`: one wrapper per element, so the
+ * screen's own narrow interface is served by a real node, in the namespace the
+ * tag needs -- the picture is SVG geometry, and `createNS` is the second method
+ * this screen's factory has. `node` is the harness's handle on the element and
+ * is never visible to the screen.
+ */
+const FACTORY = `
+function domFactory() {
+  var wrappers = new Map();
+  function wrap(node) {
+    var existing = wrappers.get(node);
+    if (existing) return existing;
+    var wrapper = {
+      tag: node.tagName.toLowerCase(),
+      node: node,
+      get textContent() { return node.textContent; },
+      set textContent(value) { node.textContent = value; },
+      setAttribute: function (name, value) { node.setAttribute(name, value); },
+      getAttribute: function (name) { return node.getAttribute(name); },
+      removeAttribute: function (name) { node.removeAttribute(name); },
+      append: function (child) { node.appendChild(child.node); },
+      childNodes: function () {
+        var out = [];
+        for (var i = 0; i < node.children.length; i++) out.push(wrap(node.children[i]));
+        return out;
+      },
+    };
+    wrappers.set(node, wrapper);
+    return wrapper;
+  }
+  return {
+    create: function (tag) { return wrap(document.createElement(tag)); },
+    createNS: function (tag) { return wrap(document.createElementNS('http://www.w3.org/2000/svg', tag)); },
+    wrap: wrap,
+  };
+}
+`
+
+/** draw is the expression the window evaluates: decode the committed fixture
+ * through the console's own door, lay it out with the real worker, and mount
+ * what the screen draws. It answers a promise, because the layout is the
+ * worker's: `executeJavaScript` waits for it. */
+function draw(theme: string): string {
+  const plan = JSON.parse(readFileSync(PLAN_FIXTURE, 'utf8')) as unknown
+  return `(function () {
+${LOADER}${MODULES.map(moduleSource).join('\n')}${FACTORY}
+var schema = load('/shared/schema.js');
+var graph = load('/renderer/screens/graph.js');
+var decoded = schema.decodePlanStatus(${JSON.stringify(plan)}, 'the committed plan document');
+if (!decoded.ok) return Promise.resolve({ error: 'the decoder refused the fixture: ' + decoded.skew.because });
+var factory = domFactory();
+var screen = graph.graphScreen(factory, ${JSON.stringify(theme)});
+return screen.load(decoded.value, ${JSON.stringify(RUNS)}).then(function (drawing) {
+  if (drawing === null) return { error: 'the screen answered no drawing for the committed document' };
+  var previous = document.getElementById('graph-mount');
+  if (previous) previous.remove();
+  var host = document.createElement('div');
+  host.id = 'graph-mount';
+  host.appendChild(drawing.node);
+  document.body.appendChild(host);
+  return {
+    theme: drawing.node.getAttribute('data-theme'),
+    releases: host.querySelectorAll('g.graph-release').length,
+    cards: host.querySelectorAll('g.graph-node').length,
+  };
+});
+})()`
+}
 
 /**
  * withFinishedRelease is the committed document with its first release marked
@@ -549,5 +726,130 @@ test.describe('the graph view’s chips', () => {
     await chip.click()
     await expect(chip).toHaveAttribute('aria-expanded', 'false')
     expect(await page.locator('div.graph-chip-body').count()).toBe(0)
+  })
+})
+
+test.describe('the Graph screen', () => {
+  // One window, and the tests in order: each draws the screen it is about into
+  // the same document, and the goldens are taken from what the test before them
+  // mounted.
+  test.describe.configure({ mode: 'serial' })
+
+  let app: ElectronApplication
+  let page: Page
+  let cli: CliStub
+
+  test.beforeAll(async () => {
+    // A scratch profile with the stub as the active installation and a checkout,
+    // as the cases above: without either the window opens on the picker or on the
+    // entry's refusal, and the document this spec mounts into would be a document
+    // with no stylesheet to paint it.
+    cli = inRangeCliStub()
+    cli.seedActiveInstallation()
+    cli.seedActiveCheckout()
+    app = await launchConsole({ args: cli.launchArgs(consoleDir), env: cli.env })
+    page = await app.firstWindow()
+    await page.waitForLoadState('domcontentloaded')
+    // GV2.4's motion is the one thing this screen draws that is not a function of
+    // its inputs: a comet, a pulse and a flow, all three infinite. The
+    // reduced-motion arm leaves each as its still drawing (design section 3.9's
+    // amendment), so a frame is the same frame in every run -- and it is the arm
+    // a reader who asked for no motion is shown, which is the drawing a golden
+    // should be a record of.
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+  })
+
+  test.afterAll(async () => {
+    await app?.close()
+    cli.remove()
+  })
+
+  /** mount draws the committed fixture in one theme and fails with the window's
+   * own words if the bundle could not be loaded or the screen refused to draw. */
+  async function mount(theme: string): Promise<void> {
+    const result = (await app.evaluate(async ({ BrowserWindow }, source) => {
+      const window = BrowserWindow.getAllWindows()[0]
+      if (window === undefined) return { error: 'the console has no window' }
+      return (await window.webContents.executeJavaScript(source, true)) as { error?: string }
+    }, draw(theme))) as { readonly error?: string }
+    expect(result.error).toBeUndefined()
+  }
+
+  /** drawn reads what the mount holds back out of the live document: the theme
+   * the screen stamped, and the two things a frame of it has to contain. */
+  async function drawn(): Promise<{ readonly theme: string | null; readonly cards: number; readonly releases: number }> {
+    return page.evaluate(() => {
+      const scope: ParentNode = document.getElementById('graph-mount') ?? document.createDocumentFragment()
+      return {
+        theme: scope.querySelector('section.graph')?.getAttribute('data-theme') ?? null,
+        cards: scope.querySelectorAll('g.graph-node').length,
+        releases: scope.querySelectorAll('g.graph-release').length,
+      }
+    })
+  }
+
+  test('is painted from the design tokens, not from the browser defaults', async () => {
+    // The same computed-ground assertion the other four screens' specs make, and
+    // the one case here that is red when the stylesheet stops being linked: the
+    // theme travels as a `data-theme` attribute the renderer stamps, so every
+    // read above passes on a tree nothing paints.
+    //
+    // NOT a golden test, deliberately: `FUGARO_CONSOLE_GOLDENS=skip` does not
+    // skip it. Nothing here reads a PNG, so an unstyled tree is red on its own
+    // account rather than recorded as a fresh baseline nobody compared.
+    await expectGrounded(page, (theme) => mount(theme), {
+      themes: GRAPH_THEMES,
+      mount: THE_MOUNT,
+      text: 'h1.graph-title',
+      screen: 'the Graph screen',
+    })
+  })
+
+  test('draws the graph screen', async ({}, testInfo) => {
+    await mount('light')
+    // The frame is worth recording only if the document reached it: a worker
+    // that answered nothing leaves the screen on its list fallback, which would
+    // be a golden of a sentence.
+    const light = await drawn()
+    expect(light.theme).toBe('light')
+    expect(light.cards, 'the committed document draws no task card, so the frame is not the graph').toBeGreaterThan(0)
+    expect(light.releases, 'the committed document draws no release box').toBeGreaterThan(0)
+    test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
+    await expectGolden(page.locator(THE_MOUNT), GOLDEN_NAMES.light, { spec: SPEC, consoleDir, testInfo })
+  })
+
+  test('draws the graph screen in the dark theme', async ({}, testInfo) => {
+    await mount('dark')
+    const dark = await drawn()
+    expect(dark.theme).toBe('dark')
+    expect(dark.cards, 'the committed document draws no task card, so the frame is not the graph').toBeGreaterThan(0)
+    test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
+    await expectGolden(page.locator(THE_MOUNT), GOLDEN_NAMES.dark, { spec: SPEC, consoleDir, testInfo })
+  })
+
+  test('resolves the golden names under the graph directory', ({}, testInfo) => {
+    // Not a golden test: it asks Playwright where a recording would land, so a
+    // name the template flattens is red before anyone records anything.
+    expect(testInfo.snapshotPath(...GOLDEN_NAMES.light)).toBe(join(GOLDEN_DIR, `light-${process.platform}.png`))
+    expect(testInfo.snapshotPath(...GOLDEN_NAMES.dark)).toBe(join(GOLDEN_DIR, `dark-${process.platform}.png`))
+  })
+
+  test('has a golden for each theme the design names', () => {
+    // A theme with no golden is a theme nobody has looked at. The themes are the
+    // screen's own, and the directory is this screen's own, so a third palette --
+    // or a PNG that was never committed -- fails here.
+    test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
+    const present = existsSync(GOLDEN_DIR)
+      ? readdirSync(GOLDEN_DIR)
+          .filter((file) => file.endsWith('.png'))
+          .sort()
+      : []
+    // One per theme for THIS platform (the template adds `-<platform>`: macOS
+    // and Linux pixels differ and CI runs both), and nothing that is not a
+    // theme's recording for one of those two platforms.
+    expect(present.filter((file) => file.endsWith(`-${process.platform}.png`))).toEqual(
+      GRAPH_THEMES.map((theme) => `${theme}-${process.platform}.png`).sort(),
+    )
+    for (const file of present) expect(file).toMatch(new RegExp(`^(${GRAPH_THEMES.join('|')})-(darwin|linux)\\.png$`))
   })
 })
