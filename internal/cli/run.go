@@ -184,10 +184,11 @@ type runOptions struct {
 	// compression on is a reviewed fugaro.yaml change, and a flag that could
 	// force it on from the command line would undo that for every workflow a
 	// launcher can already run. It writes task.Spec.CompressionOff when the
-	// resolved configuration turns compression on, and when the launcher could
-	// not read that configuration at all (finishLaunch): with the file read
-	// and compression off there is nothing to override, and the field would
-	// only add version skew (an older runner refuses the whole task).
+	// resolved configuration turns compression on: with compression already
+	// off there is nothing to override, and the field would only add version
+	// skew (an older runner refuses the whole task). A configuration the
+	// launcher could not read leaves nothing to judge, so the launch is
+	// refused rather than guessed at (finishLaunch).
 	noCompression bool
 	// paths is --path, repeated: the paths this launch declares it will
 	// touch, which the runner matches against the area rules at D22's first
@@ -481,20 +482,26 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	// outside a checkout of that repository, say — which is not the same as
 	// reading one that leaves compression off.
 	compression, compressionKnown := compressionRequested(ctx, env, spec)
-	// --no-compression writes the task's own field when the configuration
-	// turns compression on, the way the title and the plan task are written:
-	// a launch that has nothing to override carries no field and stays
-	// byte-identical to what the previous release wrote. A configuration the
-	// launcher could not read at all is written too, although nothing is known
-	// to override: the run's own bootstrap reads the file this launcher could
-	// not, and a task without the field would tell it compression is off, so a
-	// repository that turns it on would start the sidecar the person asked to
-	// turn off. Written before createTask below, so a repeated --run-id with a
-	// flag the stored task does not carry is refused as a different task
-	// rather than silently dropped. The field written over an unread
-	// configuration is not judged either; the gate below says why.
-	compressionUnread := o.noCompression && !compressionKnown
-	if o.noCompression && (compression || !compressionKnown) {
+	// --no-compression over a configuration the launcher could not read is
+	// refused rather than guessed at: writing the field would put
+	// compression_off on a task whose repository may never turn compression on,
+	// and an older runner refuses the whole task for a field it does not know
+	// (task.Parse decodes with DisallowUnknownFields) — so a flag that only
+	// ever turns compression off would be what fails such a launch at
+	// bootstrap. Skipping the image gate in exchange for the guess would let
+	// that same run start on such a runner. Refused before anything is written
+	// or uploaded, so nothing starts.
+	if o.noCompression && !compressionKnown {
+		return launchResult{}, userErr("--no-compression: the launcher cannot read %s's fugaro.yaml at %s to know whether compression is on; run from a checkout that has the ref, or drop the flag", spec.Repo, spec.Ref)
+	}
+	// --no-compression writes the task's own field only when there is
+	// compression to turn off, the way the title and the plan task are
+	// written: a launch that has nothing to override carries no field and
+	// stays byte-identical to what the previous release wrote. Written before
+	// createTask below, so a repeated --run-id with a flag the stored task
+	// does not carry is refused as a different task rather than silently
+	// dropped.
+	if o.noCompression && compression {
 		spec.CompressionOff = true
 	}
 	// The compression image gate's own condition, resolved here beside the
@@ -508,22 +515,7 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	// inherit the field from the run they continue, which carries it even after
 	// the repository's key has been removed. A launch that writes no field and
 	// reads no such key is never gated.
-	//
-	// The one field not gated is the one --no-compression wrote over a
-	// configuration the launcher could not read: an unread file leaves the
-	// image the run will use as unknown as its compression, because which of
-	// the two branches below judges a launch is the workflow's checkout mode,
-	// and that mode comes from the same file (the checkoutConfig read that
-	// decides clone, below). A checkout: clone workflow's job image is the
-	// installation's base image and never has a build record to judge, while a
-	// baked workflow's has one and is judged by it; judging a launch the
-	// launcher cannot tell apart as baked refuses a clone workflow for a record
-	// it never has — with a cure (fugaro image refresh) that cannot clear it,
-	// since refresh submits no build for a clone workflow and so no record ever
-	// appears. That field is left to the run's own bootstrap, which reads the
-	// file this launcher could not, exactly as the key half of this same gate
-	// is (rigorLaunchSources).
-	compressionGate := compression || (spec.CompressionOff && !compressionUnread)
+	compressionGate := compression || spec.CompressionOff
 	s := runstore.Open(env.bucket.Bucket, slug, spec.RunID)
 	// The run-id freshness check, first of everything an --attach launch
 	// does and before the first byte it could upload (design §4 step 1,

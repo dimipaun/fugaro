@@ -357,7 +357,9 @@ var compressionForTest string
 // and a retry inherit it) and what --no-compression decides against. known is
 // whether the launcher read the configuration at all: on is false both when
 // the file was read and leaves compression off and when there is no file to
-// read, and the two are not the same thing to the launch (finishLaunch).
+// read, and the two are not the same thing to the launch — the first is a
+// --no-compression with nothing to turn off, the second one the launch cannot
+// honour at all (finishLaunch).
 //
 // The configuration is read as rigorLaunchSources reads it -- at the ref, out
 // of this checkout's object database, so a launch is judged on the file the
