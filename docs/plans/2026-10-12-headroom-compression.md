@@ -1715,6 +1715,57 @@ git add images/base/Dockerfile images/base/tools.tsv images/
 git commit -m "headroom compression task 7: pin Headroom in the base image, prove a real pass needs no network"
 ```
 
+**Task 7 finding (2026-10-27): no standalone native binary is published, so
+Step 1's first stop condition holds and this task ships no image change.**
+Resolved from Headroom's own release page, as Step 1 requires
+(`github.com/headroomlabs-ai/headroom`, its `/releases` list and the
+`/releases/latest` payload, its README and `llms.txt`, the wheel
+`headroom_ai-0.42.0-cp310-abi3-manylinux_2_28_x86_64.whl` downloaded and
+unpacked, and `docs.headroomlabs.ai/llms-full.txt`):
+
+- **The artifact inventory has no binary in it.** 175 releases, latest
+  `v0.42.0` (2026-10-26, Apache-2.0). Across *every* release the assets are
+  only `headroom_ai-<v>-<python tag>-<platform>.whl` (CPython `cp310-abi3`
+  and `cp310`–`cp313`, for `manylinux_2_28` x86_64/aarch64, macOS
+  x86_64/arm64 and win_amd64), the `headroom_ai-<v>.tar.gz` sdist, and two
+  npm tarballs (`headroom-ai-<v>.tgz`, `headroom-openclaw-<v>.tgz`). No
+  release, on any architecture, ships a native self-contained executable.
+- **The CLI is a Python console script, not a binary.** The wheel's
+  `dist-info/entry_points.txt` is `headroom=headroom.cli:main`, its
+  `METADATA` says `Requires-Python: >=3.10`, and its only compiled object is
+  the CPython extension `headroom/_core.abi3.so`. The README's install lines
+  are `uv tool install --python 3.13 "headroom-ai[all]"` and
+  `pip install "headroom-ai[all]"`, its npm line is annotated "TypeScript SDK
+  only — no CLI", and the installation page says "Install Headroom via pip,
+  npm, or Docker". Running it therefore means a Python runtime plus the
+  package's dependency closure (`[all]` = proxy, code, ml, memory, relevance,
+  image, reports, otel, evals, voice, html, mcp, spreadsheet).
+- **This is design §5's "materially heavier" case**, which is why the route
+  is the owner's to choose and not this task's: the base image already
+  installs one Python tool from a hash-locked lock file
+  (`images/base/graphify/requirements.lock.txt`, uv-compiled with
+  `--generate-hashes`), so a Python-distributed Headroom is not unprecedented
+  — but adding a Python runtime, a wheel closure and model assets to the
+  harness layer is a size and supply-chain decision on top of the one this
+  task was scoped to make.
+- **Checksums, for the record.** GitHub's release API publishes a per-asset
+  `sha256:` digest, so a pin would be verifiable against a
+  publisher-provided value; I recomputed two and they match
+  (`headroom-ai-0.42.0.tgz` `372c4dc7…`, the `manylinux_2_28_x86_64` wheel
+  `fbb3ceb8…`). No release publishes a separate checksum file or a signature,
+  and the GitHub attestations API answers 404 for that wheel's digest. There
+  is simply no binary to pin.
+- **Two further facts to weigh with the no-egress premise**, both from
+  Headroom's own docs (`docs.headroomlabs.ai/llms-full.txt`, the network
+  egress and installation sections): the ML compression paths download models
+  from `huggingface.co` on first use, and a telemetry beacon is **on by
+  default** (with a daily `pypi.org` update check); `HEADROOM_OFFLINE=1`
+  refuses all of it, and the docs' own advice is to pre-provision model assets
+  rather than allow runtime fetches. A no-egress test for the real binary
+  would therefore have to pin that switch and a model cache, not merely run
+  under `--network none` — a decision about the feature's shipped shape, not
+  a test detail.
+
 ---
 
 ### Task 8: SECURITY.md, the user doc, skills, and docs tests
