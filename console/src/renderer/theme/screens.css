@@ -1625,56 +1625,63 @@ svg .graph-node-run {
 
 /* ---- The graph's motion (design section 3.9's amendment of 2026-10-24) -----
  *
- * Three things move on this screen and no more: a **comet** along a running
- * card's top edge, a **pulse** on a critical card's halo, and a **flow** along a
- * critical edge. Each is drawn on a mark the state already has, and each keeps
- * its word, so a reader who sees no motion -- or a screenshot read in greyscale
- * -- still reads every state (design section 3.5).
+ * Three things move on this screen and no more: a **comet** that travels a
+ * running card's own border, a **pulse** on the glow behind a critical card, and
+ * a **flow** along a critical edge -- the owner's spec's three shapes, drawn in
+ * this design's tokens. Each is drawn on a mark the state already has, and each
+ * keeps its word, so a reader who sees no motion -- or a screenshot read in
+ * greyscale -- still reads every state (design section 3.5).
  *
- * **Nothing a reader reads moves.** The comet is on a card's boundary, the halo
- * is outside it and the flow is on an edge: no title, word, pull request number,
- * run or figure is transformed or faded, here or anywhere else in the theme.
+ * **Nothing a reader reads moves.** The comet is on a card's boundary, the glow
+ * is behind it and the flow is on an edge: no title, word, pull request number,
+ * run or figure is moved or faded, here or anywhere else in the theme.
  *
- * **Only `transform` and `opacity` move, with one exception.** A dash travelling
- * along a path cannot be drawn with either: the path's `d` is an attribute the
- * layout answered, so `stroke-dashoffset` is the one property that moves a dash
- * along it, and it is taken on the critical edge's own path and nowhere else.
- * The alternative is no flow at all.
+ * **`opacity` moves, and two dashes travel, and that is the whole list.** A dash
+ * along a path cannot be carried by `transform` or `opacity`: the path's `d` is an
+ * attribute the layout answered, so `stroke-dashoffset` is the one property that
+ * moves a dash along it. Two of the three states are a dash -- the flow along the
+ * critical edge, and the comet around the card -- and they are the only two
+ * keyframes that take it (`graph-motion.test.ts` bounds it by name).
  *
- * **The static style of each is the rule below, and the arms further down only
- * stop the animation.** `base.css`'s global freeze stops an animation where it
- * stands -- a comet frozen mid-sweep is a picture of something that is not
- * happening -- so the graph restates its three states under its own reduce block
- * and its own forced-colors block, and leaves the global freeze alone.
+ * **The static style of each is the rule below, and the arms further down stop the
+ * animation** -- with one exception, the flow, whose dashes are the animation and
+ * so are taken away with it. `base.css`'s global freeze stops an animation where
+ * it stands -- a comet frozen halfway round a card is a picture of something that
+ * is not happening -- so the graph restates its three states under its own reduce
+ * block and its own forced-colors block, and leaves the global freeze alone.
  */
 
-/* The comet is a streak the screen draws across a card's top edge: `scaleX`
- * makes it a streak, and the translate carries it in percentages of the card it
- * was drawn with, so this file never has to know how wide a card is. `opacity:
- * 1` and no transform are the static style -- the whole top edge of a running
- * card, lit -- which is what the two arms below are left with. */
+/* The comet is a light streak that travels the card's own border: the mark is the
+ * card's outline again, with a dash for the streak and a gap for the rest of the
+ * perimeter. `pathLength` is written on the element (graph.ts) so the dash is a
+ * share of the border rather than a length in user units, which is what keeps this
+ * file from having to know how big a card is. The dash at rest, `stroke-dashoffset:
+ * 0`, is the static style both arms below are left with. */
 section.graph svg .graph-node-comet {
-  fill: var(--accent);
-  opacity: 1;
-  transform: none;
-  transform-box: fill-box;
-  transform-origin: 0 50%;
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 3;
+  stroke-dasharray: 12 88;
+  stroke-dashoffset: 0;
 }
 
 section.graph svg .graph-node[data-state='implementing'] .graph-node-comet,
 section.graph svg .graph-node[data-state='in review'] .graph-node-comet,
-section.graph svg .graph-node[data-state='fixing'] .graph-node-comet {
+section.graph svg .graph-node[data-state='fixing'] .graph-node-comet,
+section.graph svg .graph-node[data-state='queued'] .graph-node-comet {
   animation: graph-comet 2.6s linear infinite;
 }
 
-/* The halo is a critical card's own second channel: 3 px of `--accent`, the tone
- * the critical path is drawn in, around a card whose boundary keeps the state it
- * was already carrying. */
+/* The glow is a critical card's own second channel: a filled wash of `--accent`,
+ * the tone the critical path is drawn in, behind a card whose boundary keeps the
+ * state it was already carrying -- amber for blocked, muted for done. It is
+ * blurred so its edge is light rather than a line, and it is drawn before the card
+ * so only the spill shows: a glow is not a border. Its resting opacity is what the
+ * two arms below are left with. */
 section.graph svg .graph-node-pulse {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 3;
-  opacity: 1;
+  fill: var(--accent);
+  filter: blur(4px);
+  opacity: 0.45;
 }
 
 section.graph svg .graph-node[data-critical='true'] .graph-node-pulse {
@@ -1691,30 +1698,22 @@ section.graph svg .graph-edge[data-critical='true'] .graph-edge-path {
 
 @keyframes graph-comet {
   from {
-    transform: translateX(0) scaleX(0.08);
-    opacity: 0;
-  }
-  12% {
-    opacity: 1;
-  }
-  88% {
-    opacity: 1;
+    stroke-dashoffset: 100;
   }
   to {
-    transform: translateX(92%) scaleX(0.08);
-    opacity: 0;
+    stroke-dashoffset: 0;
   }
 }
 
 @keyframes graph-pulse {
   from {
-    opacity: 0.35;
+    opacity: 0.25;
   }
   50% {
-    opacity: 1;
+    opacity: 0.7;
   }
   to {
-    opacity: 0.35;
+    opacity: 0.25;
   }
 }
 
@@ -1730,12 +1729,14 @@ section.graph svg .graph-edge[data-critical='true'] .graph-edge-path {
 /* The graph's own reduced-motion arm, and it is not the global freeze: the
  * freeze in `base.css` leaves a comet wherever its last frame put it (F36 in the
  * reconciliation), so each state is drawn as the still mark it is when nothing
- * moves -- a running card's lit top edge, a critical card's solid halo, and the
- * 3 px critical edge with nothing flowing along it. */
+ * moves -- the running card's streak at rest on its border, the critical card's
+ * glow at its resting opacity, and the 3 px critical edge with nothing flowing
+ * along it. */
 @media (prefers-reduced-motion: reduce) {
   section.graph svg .graph-node[data-state='implementing'] .graph-node-comet,
   section.graph svg .graph-node[data-state='in review'] .graph-node-comet,
-  section.graph svg .graph-node[data-state='fixing'] .graph-node-comet {
+  section.graph svg .graph-node[data-state='fixing'] .graph-node-comet,
+  section.graph svg .graph-node[data-state='queued'] .graph-node-comet {
     animation: none;
   }
 
@@ -2203,16 +2204,19 @@ p.graph-empty {
     fill: CanvasText;
   }
 
-  /* The graph's motion is drawn and never runs here: the two marks take the
-   * system's text colour, the flow's dashes go, and each state is left as the
-   * same still drawing the reduced-motion arm leaves behind (design section
-   * 4.4, and the amendment's fourth rule). */
+  /* The graph's motion is drawn and never runs here: the streak is a stroke and
+   * the glow is a fill, so both take the system's text colour, the blur goes with
+   * the tones (a blurred wash is a colour effect, and this mode keeps marks and
+   * borders), the flow's dashes go, and each state is left as the same still
+   * drawing the reduced-motion arm leaves behind (design section 4.4, and the
+   * amendment's fourth rule). */
   section.graph svg .graph-node-comet {
-    fill: CanvasText;
+    stroke: CanvasText;
   }
 
   section.graph svg .graph-node-pulse {
-    stroke: CanvasText;
+    fill: CanvasText;
+    filter: none;
   }
 
   /* `animation: none` is written on the selectors the motion block animates and
@@ -2224,6 +2228,7 @@ p.graph-empty {
   section.graph svg .graph-node[data-state='implementing'] .graph-node-comet,
   section.graph svg .graph-node[data-state='in review'] .graph-node-comet,
   section.graph svg .graph-node[data-state='fixing'] .graph-node-comet,
+  section.graph svg .graph-node[data-state='queued'] .graph-node-comet,
   section.graph svg .graph-node[data-critical='true'] .graph-node-pulse {
     animation: none;
   }

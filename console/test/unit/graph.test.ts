@@ -34,11 +34,9 @@ import { describe, expect, it } from 'vitest'
 
 import { measured } from '../../src/shared/availability'
 import { PLAN_STATUS_MIN_INTERVAL_MS } from '../../src/source/cli'
-import { decodePlanStatus } from '../../src/shared/schema'
 import type { PlanStatusView, RunView } from '../../src/shared/schema'
 import { nodeKey } from '../../src/renderer/graph/layout'
 import { LayoutClient } from '../../src/renderer/graph/layout-client'
-import type { WorkerLike } from '../../src/renderer/graph/layout-client'
 import { buildGraphModel } from '../../src/renderer/graph/model'
 import { LIVE_PR_NO_LINK_REASON } from '../../src/renderer/screens/live'
 import { PR_NO_LINK_REASON } from '../../src/renderer/screens/run'
@@ -53,7 +51,6 @@ import {
   GRAPH_ZOOM_MAX,
   GRAPH_ZOOM_MIN,
   GraphScreen,
-  SVG_NAMESPACE_URI,
   doorFor,
   releaseKey,
   renderGraph,
@@ -64,122 +61,10 @@ import {
   viewBoxOf,
   withFeedStages,
 } from '../../src/renderer/screens/graph'
-import type { GraphFactory, GraphState, GraphTheme, ScreenElement } from '../../src/renderer/screens/graph'
+import type { GraphState, GraphTheme, ScreenElement } from '../../src/renderer/screens/graph'
 import { FakeDocument, everyNode, textOf } from '../support/fakeDom'
 import type { FakeNode } from '../support/fakeDom'
-
-// ---------------------------------------------------------------------------
-// The fake worker, and the two-namespace factory
-// ---------------------------------------------------------------------------
-
-/**
- * FakeWorker is the layout protocol without a browser. It answers **every**
- * layout as it is posted, synchronously, so a case never waits on a reply it has
- * not decided on -- and `placements` is then the whole observable the first case
- * needs: how many times the engine was asked to lay this picture out.
- */
-class FakeWorker implements WorkerLike {
-  readonly sent: Record<string, unknown>[] = []
-  terminated = false
-  private readonly listeners = new Map<string, ((event: { data?: unknown; message?: string }) => void)[]>()
-
-  /** placements counts the layouts this worker was actually asked to run. */
-  get placements(): number {
-    return this.sent.filter((message) => message['cmd'] === 'layout').length
-  }
-
-  postMessage(message: unknown): void {
-    const request = message as Record<string, unknown>
-    this.sent.push(request)
-    if (request['cmd'] === 'layout') this.reply(request)
-  }
-
-  addEventListener(type: string, listener: (event: { data?: unknown; message?: string }) => void): void {
-    this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener])
-  }
-
-  terminate(): void {
-    this.terminated = true
-  }
-
-  /** reply places every node the request asked about and routes every edge: the
-   * client refuses a reply that leaves one out, so a fake answering a subset
-   * would refuse every layout rather than draw one. */
-  private reply(request: Record<string, unknown>): void {
-    const graph = request['graph'] as {
-      readonly children: readonly { readonly id: string; readonly width: number; readonly height: number }[]
-      readonly edges: readonly { readonly id: string }[]
-    }
-    const data = {
-      children: graph.children.map((child, index) => ({
-        id: child.id,
-        x: index * 300,
-        y: 0,
-        width: child.width,
-        height: child.height,
-      })),
-      edges: graph.edges.map((edge) => ({
-        id: edge.id,
-        sections: [{ startPoint: { x: 0, y: 0 }, endPoint: { x: 1, y: 1 } }],
-      })),
-    }
-    for (const listener of this.listeners.get('message') ?? []) {
-      listener({ data: { id: request['id'], data } })
-    }
-  }
-}
-
-/** NodeSurface is one fake node as a `ScreenElement`: a text slot and
- * attributes. It is `entry.ts`'s `domSurface`, in a test. */
-class NodeSurface implements ScreenElement {
-  constructor(readonly node: FakeNode) {}
-
-  get tag(): string {
-    return this.node.tagName.toLowerCase()
-  }
-
-  get textContent(): string | null {
-    return this.node.textContent
-  }
-
-  set textContent(value: string | null) {
-    this.node.textContent = value
-  }
-
-  setAttribute(name: string, value: string): void {
-    this.node.setAttribute(name, value)
-  }
-
-  getAttribute(name: string): string | null {
-    return this.node.getAttribute(name)
-  }
-
-  removeAttribute(name: string): void {
-    this.node.removeAttribute(name)
-  }
-
-  append(child: ScreenElement): void {
-    this.node.appendChild((child as NodeSurface).node)
-  }
-
-  childNodes(): readonly ScreenElement[] {
-    return this.node.children.map((child) => new NodeSurface(child))
-  }
-}
-
-/** Surface is the two-namespace factory: `create` for the console's own
- * elements and `createNS` for the picture's geometry. */
-class Surface implements GraphFactory {
-  constructor(private readonly document: FakeDocument) {}
-
-  create(tag: string): ScreenElement {
-    return new NodeSurface(this.document.createElement(tag))
-  }
-
-  createNS(tag: string): ScreenElement {
-    return new NodeSurface(this.document.createElementNS(SVG_NAMESPACE_URI, tag))
-  }
-}
+import { FakeWorker, NodeSurface, Surface, decoded } from '../support/graphHarness'
 
 // ---------------------------------------------------------------------------
 // The documents
@@ -212,12 +97,6 @@ const RUNS: readonly string[] = Object.freeze([
   '20261025-121805-aa04',
   '20261025-121805-aa05',
 ])
-
-function decoded(raw: unknown): PlanStatusView {
-  const result = decodePlanStatus(raw)
-  if (!result.ok) throw new Error(result.skew.because)
-  return result.value
-}
 
 /** patched is the fixture with one path replaced, as the wire has it: a patched
  * document is a document and goes through the decoder like any other. */

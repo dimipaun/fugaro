@@ -275,26 +275,33 @@ const GRAPH_PR_SLOT = 12
 const GRAPH_RUN_SLOT = 46
 const GRAPH_MARK_SLOT = 112
 
-/** GRAPH_RUNNING_WORDS are the three words a task being worked on draws first,
- * which are the three the comet's own rule selects: a stage the engine reports
- * that this screen has no word for draws `queued`, and a queued task is not
- * moving (design section 3.9's amendment). */
-const GRAPH_RUNNING_WORDS: readonly StateWord[] = Object.freeze(['implementing', 'in review', 'fixing'])
+/** GRAPH_RUNNING_WORDS are the four words a task being worked on draws first, and
+ * they are the four the comet's own rule selects. Three are the stages a person
+ * watches; the fourth is `queued`, which `primaryWord` produces for a run whose
+ * stage this screen has no word for -- `plan`, `bootstrap`, `check`, `finalize`,
+ * `render`, `writeback` or none at all. `queued` is only ever a *running* task
+ * ("live, and not in a stage a person watches"), so leaving it out would leave a
+ * task that is genuinely running with no motion at all (design section 3.9's
+ * amendment, and the spec's "extend for other known states"). */
+const GRAPH_RUNNING_WORDS: readonly StateWord[] = Object.freeze(['implementing', 'in review', 'fixing', 'queued'])
 
-/** GRAPH_HALO_OFFSET is how far outside its own boundary a critical card's halo
- * is drawn. `critical` is a second word beside the first, so the halo must leave
- * the boundary carrying the state -- amber for blocked, muted for done -- where a
- * reader already looks for it. */
-const GRAPH_HALO_OFFSET = 3
+/** GRAPH_NODE_RX is the card's own corner radius, written on the box and again on
+ * the streak that travels it: the two have to be the same arc, or the streak
+ * leaves the border at every corner. */
+const GRAPH_NODE_RX = 6
 
-/** GRAPH_COMET_HEIGHT is the thickness of the streak a running card draws along
- * its top edge: a mark on the boundary, short of the title 20 px below it. */
-const GRAPH_COMET_HEIGHT = 3
+/** GRAPH_NODE_RADIUS is that radius as the attribute it is written as. */
+const GRAPH_NODE_RADIUS = String(GRAPH_NODE_RX)
 
-/** GRAPH_HALO_RADIUS is the card's own corner radius (`rx` 6) plus the offset.
- * Two arcs with one centre keep the ring the same 3 px all the way round; a
- * halo drawn with the box's own radius would pinch shut where they meet. */
-const GRAPH_HALO_RADIUS = String(6 + GRAPH_HALO_OFFSET)
+/** GRAPH_GLOW_OFFSET is how far the glow behind a critical card reaches past its
+ * own boundary: enough that the card's fill hides the middle of the glow and only
+ * the spill around it shows. */
+const GRAPH_GLOW_OFFSET = 6
+
+/** GRAPH_GLOW_RADIUS is the card's radius plus that offset. Two arcs with one
+ * centre keep the glow the same distance out at the corners as along the edges; a
+ * glow drawn with the card's own radius would pinch shut where they meet. */
+const GRAPH_GLOW_RADIUS = String(GRAPH_NODE_RX + GRAPH_GLOW_OFFSET)
 
 // ---------------------------------------------------------------------------
 // The state a person chose
@@ -1174,37 +1181,45 @@ function nodeCard(
   if (door.run !== null) group.setAttribute('data-run-id', door.run)
   else group.append(tooltip(factory, door.because))
 
+  // The glow is drawn **before** the card, because "behind the node" is where the
+  // spec puts it: the card's own fill hides the middle of it and what a reader
+  // sees is the spill around the card, which is the state's own tone on the
+  // boundary and the glow outside it rather than one covering the other.
+  if (node.critical) {
+    const glow = makeNS(factory, 'rect', 'graph-node-pulse')
+    glow.setAttribute('aria-hidden', 'true')
+    geometry(glow, 'x', -GRAPH_GLOW_OFFSET)
+    geometry(glow, 'y', -GRAPH_GLOW_OFFSET)
+    geometry(glow, 'width', rect.width + GRAPH_GLOW_OFFSET * 2)
+    geometry(glow, 'height', rect.height + GRAPH_GLOW_OFFSET * 2)
+    glow.setAttribute('rx', GRAPH_GLOW_RADIUS)
+    group.append(glow)
+  }
+
   const outline = makeNS(factory, 'rect', 'graph-node-box')
   geometry(outline, 'x', 0)
   geometry(outline, 'y', 0)
   geometry(outline, 'width', rect.width)
   geometry(outline, 'height', rect.height)
-  outline.setAttribute('rx', '6')
+  outline.setAttribute('rx', GRAPH_NODE_RADIUS)
   group.append(outline)
 
-  // The two marks the motion is drawn on, each drawn only where it belongs and
-  // each `aria-hidden`: a moving light is not a fact a reader needs twice, and
-  // the word beside it says the same thing (design section 3.5). They sit under
-  // the text, so the streak a running card draws along its top edge can never
-  // reach a title.
+  // The comet is the card's own border drawn a second time, and the streak is the
+  // dash the stylesheet gives it: `pathLength` is what makes that dash a fraction
+  // of the perimeter rather than a length in user units, so the stylesheet never
+  // has to know how big a card is. Both marks are `aria-hidden`: a moving light is
+  // not a fact a reader needs twice, and the word beside it says the same thing
+  // (design section 3.5).
   if (node.words[0] !== undefined && GRAPH_RUNNING_WORDS.includes(node.words[0])) {
     const comet = makeNS(factory, 'rect', 'graph-node-comet')
     comet.setAttribute('aria-hidden', 'true')
+    comet.setAttribute('pathLength', '100')
     geometry(comet, 'x', 0)
-    geometry(comet, 'y', -GRAPH_COMET_HEIGHT / 2)
+    geometry(comet, 'y', 0)
     geometry(comet, 'width', rect.width)
-    geometry(comet, 'height', GRAPH_COMET_HEIGHT)
+    geometry(comet, 'height', rect.height)
+    comet.setAttribute('rx', GRAPH_NODE_RADIUS)
     group.append(comet)
-  }
-  if (node.critical) {
-    const halo = makeNS(factory, 'rect', 'graph-node-pulse')
-    halo.setAttribute('aria-hidden', 'true')
-    geometry(halo, 'x', -GRAPH_HALO_OFFSET)
-    geometry(halo, 'y', -GRAPH_HALO_OFFSET)
-    geometry(halo, 'width', rect.width + GRAPH_HALO_OFFSET * 2)
-    geometry(halo, 'height', rect.height + GRAPH_HALO_OFFSET * 2)
-    halo.setAttribute('rx', GRAPH_HALO_RADIUS)
-    group.append(halo)
   }
 
   const title = makeNS(factory, 'text', 'graph-node-title')

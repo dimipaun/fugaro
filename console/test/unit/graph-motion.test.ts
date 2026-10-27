@@ -9,24 +9,23 @@
 // and only a browser has one.
 //
 // `graph.test.ts` next door is the screen's own. This file reads the stylesheets
-// as text and the drawn node for the one hook the motion keys on: a critical
-// card carries `data-critical`, which is the fact the pulse's rule selects and
-// the reason the hook was added at all (`data-state` is the node's **first**
-// word, so a critical task's own `data-state` says `implementing`).
+// as text, and then reads the **drawn** screen for the two hooks the motion keys
+// on, because each of them is a fact in two files at once: a critical card
+// carries `data-critical` (`data-state` is the node's **first** word, so a
+// critical task's own `data-state` says `implementing`), and a running card draws
+// the comet for the same words the stylesheet's comet rules select.
 
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { decodePlanStatus } from '../../src/shared/schema'
 import type { PlanStatusView } from '../../src/shared/schema'
 import { LayoutClient } from '../../src/renderer/graph/layout-client'
-import type { WorkerLike } from '../../src/renderer/graph/layout-client'
-import { GraphScreen, SVG_NAMESPACE_URI } from '../../src/renderer/screens/graph'
-import type { GraphFactory, ScreenElement } from '../../src/renderer/screens/graph'
+import { GraphScreen } from '../../src/renderer/screens/graph'
 import { FakeDocument, everyNode } from '../support/fakeDom'
 import type { FakeNode } from '../support/fakeDom'
+import { FakeWorker, NodeSurface, Surface, decoded } from '../support/graphHarness'
 
 const CONSOLE_ROOT = join(__dirname, '..', '..')
 const THEME = join(CONSOLE_ROOT, 'src', 'renderer', 'theme')
@@ -210,9 +209,17 @@ function selectors(rules: readonly Rule[], matches: (rule: Rule) => boolean): st
     .join('\n')
 }
 
-/** RUNNING is the three state words a running card carries, which are the three
- * the comet is drawn for (`data-state` is the node's first word). */
-const RUNNING: readonly string[] = Object.freeze(['implementing', 'in review', 'fixing'])
+/** RUNNING is the four state words a running card carries, which are the four the
+ * comet is drawn for (`data-state` is the node's first word). Three are the stages
+ * a person watches and the fourth is `queued`, which is what a run in a stage this
+ * screen has no word for draws -- and `queued` is only ever a running task. */
+const RUNNING: readonly string[] = Object.freeze(['implementing', 'in review', 'fixing', 'queued'])
+
+/** DASHES is the two keyframes that carry a dash along a path: the flow along a
+ * critical edge and the comet around a running card. Both are dashes on a path
+ * whose `d` is the layout's answer, so neither can be moved by `transform` or
+ * `opacity`, and neither keyframe may touch anything else. */
+const DASHES: readonly string[] = Object.freeze(['graph-comet', 'graph-flow'])
 
 /** declared is the one value a rule selecting `className` gives a property, or
  * `null` when no rule gives it one. The last rule wins, as it does in the
@@ -257,33 +264,49 @@ describe('the graph’s motion in the stylesheets', () => {
     expect(outside, 'a rule animates something the graph screen does not draw').toEqual([])
   })
 
-  it('moves transform and opacity, and takes the one documented exception for the flow', () => {
-    // A flow cannot be drawn with either: the path's `d` is an attribute the
-    // layout answered, so `stroke-dashoffset` is the only property that moves a
-    // dash along it. The exception is bounded to the flow's own keyframes, so a
-    // comet or a pulse that reached for it fails here.
-    const allowed = new Set(['transform', 'opacity', 'stroke-dashoffset'])
+  it('moves opacity, and a dash along each of the two paths, and nothing else', () => {
+    // The pulse is an opacity. The other two are dashes: a path's `d` is an
+    // attribute the layout answered, so `stroke-dashoffset` is the one property
+    // that carries a dash along it -- the flow's along the critical edge and the
+    // comet's around the card. The exception is bounded to those two keyframes by
+    // name, so a third state that reached for it fails here, and so does a comet
+    // that started moving something else.
+    const allowed = new Set(['opacity', 'stroke-dashoffset'])
     for (const keyframe of themeKeyframes()) {
       for (const step of keyframe.steps) {
         for (const one of step) {
           expect(allowed.has(one.property), `${keyframe.name} animates ${one.property}`).toBe(true)
           if (one.property === 'stroke-dashoffset') {
-            expect(keyframe.name, 'only the flow may animate a dash offset').toBe('graph-flow')
+            expect(DASHES, `${keyframe.name} may not animate a dash offset`).toContain(keyframe.name)
           }
         }
       }
     }
-    // And the flow really is drawn that way rather than merely allowed to be: an
-    // exception nothing takes is a licence with nothing behind it.
-    expect(themeKeyframes().find((one) => one.name === 'graph-flow')?.steps.flat().map((one) => one.property)).toContain(
-      'stroke-dashoffset',
-    )
+    // And both dashes really are drawn that way rather than merely allowed to be:
+    // an exception nothing takes is a licence with nothing behind it.
+    for (const name of DASHES) {
+      expect(
+        themeKeyframes()
+          .find((one) => one.name === name)
+          ?.steps.flat()
+          .map((one) => one.property),
+        `${name} is not a dash after all`,
+      ).toContain('stroke-dashoffset')
+    }
+    // The pulse is the one that is an opacity, so the set above is not just the
+    // dashes with a licence to spare.
+    expect(
+      themeKeyframes()
+        .find((one) => one.name === 'graph-pulse')
+        ?.steps.flat()
+        .map((one) => one.property),
+    ).toEqual(['opacity', 'opacity', 'opacity'])
   })
 
   it('draws every animated state with the hook the rules select, on the graph screen only', () => {
     const animating = animationRules().filter(animates)
     const bySelector = selectors(animating, () => true)
-    // The comet: the three running words, which is what `data-state` holds for a
+    // The comet: the four running words, which is what `data-state` holds for a
     // task being worked on.
     for (const word of RUNNING) expect(bySelector, `the comet is not drawn for ${word}`).toContain(`[data-state='${word}']`)
     expect(bySelector).toContain('graph-node-comet')
@@ -292,8 +315,8 @@ describe('the graph’s motion in the stylesheets', () => {
     expect(bySelector).toContain('graph-node-pulse')
     expect(bySelector).toContain("[data-critical='true']")
     expect(bySelector).toContain('graph-edge-path')
-    // And nothing animates a word: the motion is on a card's boundary, its
-    // halo and an edge, never on the text a reader reads (design section 3.5).
+    // And nothing animates a word: the motion is on a card's boundary, the glow
+    // behind it and an edge, never on the text a reader reads (design section 3.5).
     for (const text of ['graph-node-title', 'graph-node-word', 'graph-node-pr', 'graph-node-run', 'graph-node-mark']) {
       expect(bySelector, `${text} is animated`).not.toContain(text)
     }
@@ -312,14 +335,15 @@ describe('the graph’s motion in the stylesheets', () => {
     expect(still).toContain('graph-node-pulse')
     expect(still).toContain("[data-critical='true']")
     expect(still).toContain('graph-edge-path')
-    // The static mark each state is left as: the comet rests as the lit top edge
-    // of a running card, the halo is drawn solid, and the flow's dashes go so the
-    // critical edge is the 3 px line it is drawn as. The first two are the base
-    // rules -- a state that never animated is drawn the same way -- and the
-    // dashes are the arm's own, because a dasharray set for the animation would
-    // otherwise be left behind as a dashed critical path.
-    expect(declared('graph-node-comet', 'transform')).toBe('none')
-    expect(declared('graph-node-pulse', 'opacity')).toBe('1')
+    // The static mark each state is left as: the comet's streak rests where its
+    // dash starts on the card's border, the glow sits at its resting opacity, and
+    // the flow's dashes go so the critical edge is the 3 px line it is drawn as.
+    // The first two are the base rules -- a state that never animated is drawn the
+    // same way -- and the dashes are the arm's own, because a dasharray set for
+    // the animation would otherwise be left behind as a dashed critical path.
+    expect(declared('graph-node-comet', 'stroke-dashoffset')).toBe('0')
+    expect(declared('graph-node-comet', 'stroke-dasharray')).toBe('12 88')
+    expect(declared('graph-node-pulse', 'opacity')).toBe('0.45')
     expect(
       selectors(arm, (rule) => rule.declarations.some((one) => one.property === 'stroke-dasharray' && one.value === 'none')),
     ).toContain('graph-edge-path')
@@ -353,123 +377,44 @@ describe('the graph’s motion in the stylesheets', () => {
 })
 
 // ---------------------------------------------------------------------------
-// The hook the pulse keys on
+// The hooks the motion keys on
 // ---------------------------------------------------------------------------
 
-/** NodeSurface is one fake node as a `ScreenElement`: a text slot and
- * attributes. It is `graph.test.ts`'s own pair, kept here because a test file
- * cannot import another one's cases. */
-class NodeSurface implements ScreenElement {
-  constructor(readonly node: FakeNode) {}
+const RAW: unknown = JSON.parse(readFileSync(join('test', 'fixtures', 'plan-status.json'), 'utf8'))
 
-  get tag(): string {
-    return this.node.tagName.toLowerCase()
-  }
+const DOCUMENT: PlanStatusView = decoded(RAW)
 
-  get textContent(): string | null {
-    return this.node.textContent
-  }
-
-  set textContent(value: string | null) {
-    this.node.textContent = value
-  }
-
-  setAttribute(name: string, value: string): void {
-    this.node.setAttribute(name, value)
-  }
-
-  getAttribute(name: string): string | null {
-    return this.node.getAttribute(name)
-  }
-
-  removeAttribute(name: string): void {
-    this.node.removeAttribute(name)
-  }
-
-  append(child: ScreenElement): void {
-    this.node.appendChild((child as NodeSurface).node)
-  }
-
-  childNodes(): readonly ScreenElement[] {
-    return this.node.children.map((child) => new NodeSurface(child))
-  }
-}
-
-/** Surface is the two-namespace factory. */
-class Surface implements GraphFactory {
-  constructor(private readonly document: FakeDocument) {}
-
-  create(tag: string): ScreenElement {
-    return new NodeSurface(this.document.createElement(tag))
-  }
-
-  createNS(tag: string): ScreenElement {
-    return new NodeSurface(this.document.createElementNS(SVG_NAMESPACE_URI, tag))
-  }
-}
-
-/** PlacingWorker is the layout protocol without a browser: it places every child
- * and routes every edge the client asked about, because a reply that leaves one
- * out is refused and the screen would draw its list instead of a picture. */
-class PlacingWorker implements WorkerLike {
-  private readonly listeners = new Map<string, ((event: { data?: unknown; message?: string }) => void)[]>()
-
-  postMessage(message: unknown): void {
-    const request = message as {
-      readonly id?: number
-      readonly cmd?: string
-      readonly graph?: {
-        readonly children: readonly { readonly id: string; readonly width: number; readonly height: number }[]
-        readonly edges: readonly { readonly id: string }[]
-      }
-    }
-    if (request.cmd !== 'layout' || request.graph === undefined) return
-    const data = {
-      children: request.graph.children.map((child, index) => ({
-        id: child.id,
-        x: index * 300,
-        y: 0,
-        width: child.width,
-        height: child.height,
-      })),
-      edges: request.graph.edges.map((edge) => ({
-        id: edge.id,
-        sections: [{ startPoint: { x: 0, y: 0 }, endPoint: { x: 1, y: 1 } }],
-      })),
-    }
-    for (const listener of this.listeners.get('message') ?? []) listener({ data: { id: request.id, data } })
-  }
-
-  addEventListener(type: string, listener: (event: { data?: unknown; message?: string }) => void): void {
-    this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener])
-  }
-
-  terminate(): void {}
-}
-
-const DOCUMENT: PlanStatusView = decoded(JSON.parse(readFileSync(join('test', 'fixtures', 'plan-status.json'), 'utf8')))
-
-function decoded(raw: unknown): PlanStatusView {
-  const result = decodePlanStatus(raw)
-  if (!result.ok) throw new Error(result.skew.because)
-  return result.value
-}
-
-/** drawnNodes is the fixture's graph as the screen draws it, one entry per card:
- * the node's own `data-key`, its `data-state` and its `data-critical`. */
-async function drawnNodes(): Promise<readonly FakeNode[]> {
-  const document = new FakeDocument()
+/** drawnNodes is a document's graph as the screen draws it, one entry per card:
+ * the node's own `data-state`, `data-critical` and whatever it drew inside. */
+async function drawnNodes(document: PlanStatusView = DOCUMENT): Promise<readonly FakeNode[]> {
+  const dom = new FakeDocument()
   const screen = new GraphScreen({
-    factory: new Surface(document),
-    client: new LayoutClient(() => new PlacingWorker()),
+    factory: new Surface(dom),
+    client: new LayoutClient(() => new FakeWorker()),
     theme: 'light',
   })
-  const element = await screen.load(DOCUMENT, [])
+  const element = await screen.load(document, [])
   if (element === null) throw new Error('the screen drew nothing')
   return everyNode((element as NodeSurface).node).filter((each) => each.getAttribute('class') === 'graph-node')
 }
 
-describe('the critical node’s own hook', () => {
+/** withRunningStages is the fixture with its first four tasks running, one in
+ * each of the four stages a running task can draw a word for -- `implement`,
+ * `review`, `fix` and one the screen has no word for -- so that every word the
+ * comet is drawn for is on the picture at once. The other tasks keep the states
+ * they had, which is where the cards with no comet come from. */
+function withRunningStages(): PlanStatusView {
+  const copy = JSON.parse(JSON.stringify(RAW)) as { plans: { nodes: Record<string, unknown>[] }[] }
+  const nodes = copy.plans[0]?.nodes ?? []
+  const stages = ['implement', 'review', 'fix', 'plan']
+  nodes.slice(0, stages.length).forEach((node, at) => {
+    node['state'] = 'running'
+    node['stage'] = stages[at]
+  })
+  return decoded(copy)
+}
+
+describe('the hooks the motion keys on', () => {
   it('carries data-critical on every card, true on the path and false off it', async () => {
     // `data-state` is the node's **first** word, so a task on the critical path
     // that is running says `implementing` there and its `critical` word is the
@@ -493,5 +438,35 @@ describe('the critical node’s own hook', () => {
         .filter((each): each is string => each !== null)
     for (const node of critical) expect(words(node)).toContain('critical')
     for (const node of plain) expect(words(node)).not.toContain('critical')
+  })
+
+  it('draws the comet for exactly the states the stylesheet animates it on', async () => {
+    // The comet is in two files: the words the screen draws it for, in `graph.ts`,
+    // and the selectors the stylesheet animates, in `screens.css`. A word that
+    // drifted out of either half would put the streak out for that state with
+    // every other case in this file still green -- the same silent extinction
+    // `theme-selectors.test.ts` exists to prevent on the stylesheet's side. So the
+    // picture is read card by card against the rules, over a document that puts
+    // all four running words on it at once.
+    const animated = new Set<string>()
+    for (const rule of animationRules().filter((one) => animates(one) && one.selector.includes('graph-node-comet'))) {
+      for (const match of rule.selector.matchAll(/\[data-state='([^']*)'\]/g)) animated.add(match[1] ?? '')
+    }
+    expect(animated.size, 'the stylesheet animates the comet for no state at all').toBeGreaterThan(0)
+
+    const nodes = await drawnNodes(withRunningStages())
+    const drawn = new Set<string>()
+    for (const node of nodes) {
+      const state = node.getAttribute('data-state') ?? ''
+      const comet = everyNode(node).some((each) => each.getAttribute('class') === 'graph-node-comet')
+      expect(comet, `the screen and the stylesheet disagree about the comet in state ${state}`).toBe(animated.has(state))
+      if (comet) drawn.add(state)
+    }
+    // Both directions, and neither set is empty: a card with no comet in a state
+    // the stylesheet animates fails above, and a word the screen never draws fails
+    // here.
+    expect([...drawn].sort()).toEqual([...animated].sort())
+    expect(drawn.size, 'the document drew fewer running words than the four there are').toBe(RUNNING.length)
+    expect(nodes.length, 'every card is running, so the cards with no comet prove nothing').toBeGreaterThan(drawn.size)
   })
 })

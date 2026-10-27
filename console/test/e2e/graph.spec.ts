@@ -99,26 +99,32 @@ async function strokeDash(page: Page, selector: string): Promise<string> {
   return page.locator(selector).first().evaluate((element) => getComputedStyle(element).strokeDasharray)
 }
 
+/** strokeOffset is one element's computed `stroke-dashoffset`: where the dash a
+ * mark is drawn with has come to rest. */
+async function strokeOffset(page: Page, selector: string): Promise<string> {
+  return page.locator(selector).first().evaluate((element) => getComputedStyle(element).strokeDashoffset)
+}
+
 /** COMET, PULSE and FLOW are the three marks GV2.4's motion is drawn on: the
- * streak a running card draws along its top edge, the halo a critical card
- * draws outside its boundary, and the critical path's own dashes. */
+ * streak that travels a running card's border, the glow behind a critical card,
+ * and the critical path's own dashes. */
 const COMET = 'g.graph-node[data-state="implementing"] .graph-node-comet'
 const PULSE = 'g.graph-node[data-critical="true"] .graph-node-pulse'
 const FLOW = 'g.graph-edge[data-critical="true"] .graph-edge-path'
 
-/** moving is one mark's computed motion -- the animation's name, and where the
- * animation has left it -- or `null` when nothing matches, which is a claim of
- * its own: a selector that matches no element is the one way "it does not
- * animate" is trivially true. */
+/** moving is one mark's computed motion -- the animation's name and its opacity,
+ * which is the whole of what "this is still" means here -- or `null` when nothing
+ * matches, which is a claim of its own: a selector that matches no element is the
+ * one way "it does not animate" is trivially true. */
 async function moving(
   page: Page,
   selector: string,
-): Promise<{ readonly name: string; readonly opacity: string; readonly transform: string } | null> {
+): Promise<{ readonly name: string; readonly opacity: string } | null> {
   return page.evaluate((at) => {
     const element = document.querySelector(at)
     if (element === null) return null
     const style = getComputedStyle(element)
-    return { name: style.animationName, opacity: style.opacity, transform: style.transform }
+    return { name: style.animationName, opacity: style.opacity }
   }, selector)
 }
 
@@ -322,25 +328,29 @@ test.describe('the graph view in a window', () => {
 
   test('leaves each moving state as its still drawing when reduced motion is asked for', async () => {
     // **F36.** `base.css` freezes animation globally with
-    // `animation-duration: 0.01ms !important` and one iteration, which is a
-    // duration and a count: it leaves the *name* in place and parks each mark on
-    // its last frame -- a comet swept off the card's far edge at `opacity: 0`,
-    // which is a picture of nothing happening. So the graph restates its three
-    // states under its own arm, and this is the case that says so in a browser.
+    // `animation-duration: 0.01ms !important` and one iteration, and that is a
+    // duration and a count and nothing else: it leaves every animation *named*,
+    // and it leaves a mark whose dasharray lives in the animated rule -- the flow,
+    // whose dashes are not in a keyframe -- drawn as dashes that are not flowing,
+    // which is a picture of something that is not happening. So the graph restates
+    // its three states under its own arm, and this is the case that says so in a
+    // browser.
     await page.emulateMedia({ reducedMotion: 'reduce' })
     try {
       const comet = await moving(page, COMET)
       expect(comet, 'no comet is drawn, so the still mark below would be vacuous').not.toBeNull()
       expect(comet?.name).toBe('none')
-      // The still drawing: the whole top edge of the running card, lit, and not
-      // the invisible streak the global freeze alone would leave at the far end.
-      expect(comet?.opacity).toBe('1')
-      expect(comet?.transform).toBe('none')
+      // The still drawing: the streak's dash at rest on the card's own border --
+      // a dash that is drawn, and drawn where the animation starts it, rather
+      // than a border left with whatever the freeze stopped on.
+      expect(await strokeDash(page, COMET)).not.toBe('none')
+      expect(await strokeOffset(page, COMET)).toBe('0px')
 
       const pulse = await moving(page, PULSE)
-      expect(pulse, 'no halo is drawn, so the still mark below would be vacuous').not.toBeNull()
+      expect(pulse, 'no glow is drawn, so the still mark below would be vacuous').not.toBeNull()
       expect(pulse?.name).toBe('none')
-      expect(pulse?.opacity).toBe('1')
+      // And the glow is still a glow: its resting opacity, behind the card.
+      expect(pulse?.opacity).toBe('0.45')
 
       const flow = await moving(page, FLOW)
       expect(flow?.name).toBe('none')

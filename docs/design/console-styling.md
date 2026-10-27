@@ -669,8 +669,8 @@ order: header → tabs → chips → canvas, or the list, never both.
 | `graph-edge`, `graph-edge-path` | `g` + `path` | one edge per dependency; the `g` carries the three facts below |
 | `graph-node`, `graph-node-box` | `g` + `rect` | one card per task; the `g` carries `data-state`, `data-selected` and `data-critical` |
 | `graph-node-title`, `graph-node-word`, `graph-node-pr`, `graph-node-run`, `graph-node-mark` | `text` inside the card | the title, one element per state word, the pull request number, the run and the reading's mark |
-| `graph-node-comet` | `rect` inside the card, `aria-hidden` | the streak a **running** card draws along its top edge: GV2.4's motion, drawn only while the first word is `implementing`, `in review` or `fixing` |
-| `graph-node-pulse` | `rect` outside the card's boundary, `aria-hidden` | the halo a **critical** card draws: the same 3 px of `--accent` the critical path is drawn in, kept outside the boundary so the state's own tone is not covered |
+| `graph-node-comet` | `rect` on the card's own border, `aria-hidden` | the light streak that travels a **running** card's border: GV2.4's motion, drawn only while the first word is one of the four a running task draws (`implementing`, `in review`, `fixing`, `queued`) |
+| `graph-node-pulse` | `rect` behind the card, `aria-hidden` | the glow a **critical** card draws: a filled, blurred wash of the same `--accent` the critical path is drawn in, a few pixels larger than the card so what a reader sees is the spill around it and never the card's own boundary, which keeps the state's tone |
 | `graph-list`, `graph-list-plan`, `graph-list-title` | the list's `div`, one `section` and `h2` per plan | `role="list"` on the `div` |
 | `graph-list-release`, `graph-list-nodes`, `graph-row` | the list's per-release `h3`, `ul` and `li` | one row per task, with the whole title |
 | `graph-row-title`, `graph-row-mark`, `graph-row-pr`, `graph-row-run` | `span`s inside a row | the same five facts the card carries |
@@ -711,7 +711,7 @@ the inventory test with `data-hidden` and `data-skew`; the other two, `data-key`
 | halted | on the card, and in the list | the boundary in `--halted`, the deliberate stop |
 | ready | on the card, and in the list | the boundary in `--border-strong`, as queued |
 | done | on the card, and in the list | the boundary and the title in `--text-muted`: no longer a reading anyone acts on |
-| critical | a **second** word beside the first | the edges of the critical path, 3 px of `--accent` against a plain edge's 2 px, and the card's own halo in the same 3 px |
+| critical | a **second** word beside the first | the edges of the critical path, 3 px of `--accent` against a plain edge's 2 px, and the card's own glow behind it in the same `--accent` |
 
 **The edge widths are the second channel and the only one a forced-colors reader keeps**:
 a cross-release edge is 1 px, a plain one 2 px, the critical path 3 px, and the edges of a
@@ -720,12 +720,13 @@ selected task 3 px of the reading tone — so the whole distinction survives
 paints `--ok` on this screen: §3.2 licenses that token to two readings, and a finished task
 is neither.
 
-**This section's motion is §3.9's amendment, and GV2.4 landed it.** Three things here move
-and no more — a comet along a running card's top edge, a pulse on a critical card's halo, a
-flow along a critical edge — and every state above is still the static drawing each of them
-leaves behind: the graph writes its own `@media (prefers-reduced-motion: reduce)` arm and
-its own `forced-colors: active` arm, and the global freeze in `base.css` stays where it is.
-No other screen animates anything, and no figure animates anywhere (§3.9).
+**This section's motion is §3.9's amendment, and GV2.4 landed it, in the spec's own three
+shapes.** A light streak travels a running card's border, a glow pulses behind a critical
+card, and a flow runs along a critical edge — and every state above is still the static
+drawing each of them leaves behind: the graph writes its own
+`@media (prefers-reduced-motion: reduce)` arm and its own `forced-colors: active` arm, and
+the global freeze in `base.css` stays where it is. No other screen animates anything, and no
+figure animates anywhere (§3.9).
 
 ---
 
