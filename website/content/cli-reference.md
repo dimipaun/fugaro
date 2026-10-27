@@ -2862,7 +2862,8 @@ The report is internal/digest's: the period's runs, the flagged ones and the
 dearest of the rest, the stage figures, the summary block a later report reads,
 and the fixed pattern rules (D326) read over that block and the committed ones.
 A yearly report has no runs of its own to read -- the records are kept 90 days
-(F24) -- so it is the twelve monthly reports of that year added up.
+(F24) -- so it is that year's monthly reports added up, and the report says how
+many of the twelve it added up, so a partial year is not read as a whole one.
 
 --date names any day inside the period. Without it the most recent closed period
 is reported: the day, week, month or year before the one today falls in. A period
@@ -2880,10 +2881,11 @@ committed into a repository that may be public. Nothing here refuses in a coding
 agent's session, which is what makes the scheduled report run possible.
 
 The committed reports under --dir are the ones the pattern rules read, and each is
-re-checked by shape before it is used: a report a person edited by hand, or one
-renamed out of D321's layout, is named on stderr and left out of the patterns and
-of the index's figures, and the report being written goes on. Nothing else in the
-folder is read, and the folder is never edited except for the report and the index.
+re-checked by shape before it is used: a report a person edited by hand, or a
+markdown file whose name is not <YYYY>/<key>.md, is named on stderr by its own path
+and left out of the patterns and of the index's figures, and the report being
+written goes on. Nothing else in the folder is read, and the folder is never edited
+except for the report and the index.
 
 The read is the repository's runs bucket listing, newest first, capped at the bound
 runs stats uses, and a listing longer than that says so on stderr. The listing is not
@@ -2894,8 +2896,8 @@ it has no records left -- which is why a yearly report rolls the committed month
 ones up rather than reading records.
 
 --stdout prints the report instead of writing it, and --json prints the summary
-block and the patterns as {repo, period, summary, patterns[], skipped[], wrote[]}.
-Neither writes a file, so a caller can read a report before committing it.
+block and the patterns as {repo, period, summary, patterns[], skipped[]}. Neither
+writes a file, so a caller can read a report before committing it.
 
 Usage: `fugaro runs digest`
 

@@ -20,8 +20,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -150,6 +152,21 @@ func TestRunsDigestWritesPeriodFile(t *testing.T) {
 	}
 	if got.Summary.Period != "2026-10-25" || got.Summary.Runs != 1 || got.Summary.End != "2026-10-25" {
 		t.Errorf("--json printed %+v", got.Summary)
+	}
+	// The document's keys are the ones the help names and no others, in the
+	// document's own case: a consumer reads them, and a key nothing documents
+	// is a shape it cannot rely on.
+	var doc2 map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(doc), &doc2); err != nil {
+		t.Fatal(err)
+	}
+	keys := make([]string, 0, len(doc2))
+	for k := range doc2 {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	if want := "period,repo,summary"; strings.Join(keys, ",") != want {
+		t.Errorf("--json printed the keys %v, want %s", keys, want)
 	}
 	after, err := os.ReadFile(filepath.Join(dir, "README.md"))
 	if err != nil {
@@ -332,6 +349,188 @@ func TestRunsDigestSkipsMalformedReport(t *testing.T) {
 	}
 }
 
+// TestRunsDigestNamesRenamedReport: the folder is a person's to edit, so a
+// report file whose name is not D321's layout -- renamed within its year, or
+// filed under a year its key does not name -- is named by its own path and
+// left out of the patterns and of the index's figures, rather than vanishing
+// from the folder without a word.
+func TestRunsDigestNamesRenamedReport(t *testing.T) {
+	digestCheckout(t)
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	digestClock(t, "2026-10-27")
+	seedDigestRun(t, f, "20261025-120000-abcd", time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC), "acme/app")
+	if _, _, err := execute(t, "runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir); err != nil {
+		t.Fatal(err)
+	}
+
+	// The same report under two names this command did not write: one renamed
+	// inside its year, one filed under a year its key does not name.
+	body, err := os.ReadFile(filepath.Join(dir, "2026", "2026-10-25.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	renamed := []string{"2026/2026-10-25-digest.md", "2025/2026-10-25.md"}
+	for _, rel := range renamed {
+		path := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, body, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// --json writes nothing, so both files are still there to be named, and
+	// both are in the document's skipped list.
+	doc, errOut, err := execute(t, "runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir, "--json")
+	if err != nil {
+		t.Fatalf("a renamed report failed the command: %v (%s)", err, errOut)
+	}
+	for _, rel := range renamed {
+		if !strings.Contains(errOut, rel) {
+			t.Errorf("the command does not name %s on stderr:\n%s", rel, errOut)
+		}
+	}
+	var got struct {
+		Skipped []string `json:"skipped"`
+	}
+	if err := json.Unmarshal([]byte(doc), &got); err != nil {
+		t.Fatalf("%v: %s", err, doc)
+	}
+	// The skipped list is in path order, which is what makes it the same list
+	// twice (G3).
+	want := append([]string(nil), renamed...)
+	sort.Strings(want)
+	if strings.Join(got.Skipped, ",") != strings.Join(want, ",") {
+		t.Errorf("--json skipped %v, want %s", got.Skipped, want)
+	}
+
+	// The report being written goes on, and the index lists the report the
+	// layout holds and not the names it does not.
+	if _, errOut, err := execute(t, "runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir); err != nil {
+		t.Fatalf("a renamed report failed the write: %v (%s)", err, errOut)
+	}
+	index, err := os.ReadFile(filepath.Join(dir, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(index), "2026/2026-10-25.md") {
+		t.Errorf("the index lost the report of the layout:\n%s", index)
+	}
+	for _, rel := range renamed {
+		if strings.Contains(string(index), rel) {
+			t.Errorf("the index lists %s:\n%s", rel, index)
+		}
+	}
+}
+
+// TestRunsDigestRegeneratesHandEditedReport: regenerating a report a person
+// edited by hand is the repair this command is for, and the file it replaces
+// is not named as skipped -- the warning is computed before the write, and a
+// caller reading it would think the folder still holds something it does not.
+func TestRunsDigestRegeneratesHandEditedReport(t *testing.T) {
+	digestCheckout(t)
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	digestClock(t, "2026-10-27")
+	seedDigestRun(t, f, "20261025-120000-abcd", time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC), "acme/app")
+	if _, _, err := execute(t, "runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(dir, "2026", "2026-10-25.md")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited := strings.Replace(string(body), `"runs":1`, `"runs":"many"`, 1)
+	if edited == string(body) {
+		t.Fatal("the fixture's block carries no runs figure to edit")
+	}
+	if err := os.WriteFile(path, []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A call that writes nothing is not fixing the file, so it names it.
+	_, errOut, err := execute(t, "runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir, "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errOut, "2026/2026-10-25.md") {
+		t.Errorf("a call that writes nothing does not name the hand-edited report:\n%s", errOut)
+	}
+
+	// The call that replaces it does not: the file it names is the one it is
+	// about to write over.
+	_, errOut, err = execute(t, "runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(errOut, "2026/2026-10-25.md") {
+		t.Errorf("the command names the report it is replacing:\n%s", errOut)
+	}
+	if !strings.Contains(digestReport(t, dir, "2026-10-25"), `"runs":1`) {
+		t.Error("the report being written is not a good one")
+	}
+	index, err := os.ReadFile(filepath.Join(dir, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(index), "| - | - | - | - |") {
+		t.Errorf("the index lists the replaced report without figures:\n%s", index)
+	}
+}
+
+// TestRunsDigestWarnsTruncatedListing pins the bound on the read: a listing
+// past it is reported over its newest runs, and the command says so on stderr
+// rather than quietly publishing a period's figures over part of it.
+// digestMaxRuns is a variable for this test's sake: five thousand real runs
+// are not a fixture.
+func TestRunsDigestWarnsTruncatedListing(t *testing.T) {
+	digestCheckout(t)
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	digestClock(t, "2026-10-27")
+	bound := digestMaxRuns
+	digestMaxRuns = 2
+	t.Cleanup(func() { digestMaxRuns = bound })
+
+	for i, at := range []time.Time{
+		time.Date(2026, 10, 25, 10, 0, 0, 0, time.UTC),
+		time.Date(2026, 10, 25, 11, 0, 0, 0, time.UTC),
+		time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC),
+	} {
+		seedDigestRun(t, f, fmt.Sprintf("20261025-1%d0000-abcd", i), at, "acme/app")
+	}
+
+	out, errOut, err := execute(t, "runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir, "--stdout")
+	if err != nil {
+		t.Fatalf("runs digest: %v (%s)", err, errOut)
+	}
+	if !strings.Contains(errOut, "more than 2 runs") {
+		t.Errorf("the command does not say the listing was truncated:\n%s", errOut)
+	}
+	if !strings.Contains(out, `"runs":2`) {
+		t.Errorf("the report is not over the newest runs of the bound:\n%s", out)
+	}
+	if strings.Contains(out, "20261025-100000-abcd") {
+		t.Errorf("the report reads a run past the bound, so the cap does not keep the newest:\n%s", out)
+	}
+	if !strings.Contains(out, "20261025-120000-abcd") {
+		t.Errorf("the report leaves out the newest run:\n%s", out)
+	}
+
+	// A listing within the bound says nothing: the warning is about a report
+	// read over part of its period, not about every call.
+	digestMaxRuns = bound
+	if _, errOut, err := execute(t, "runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir, "--stdout"); err != nil {
+		t.Fatal(err)
+	} else if strings.Contains(errOut, "truncated") || strings.Contains(errOut, "more than") {
+		t.Errorf("a listing within the bound warned:\n%s", errOut)
+	}
+}
+
 // TestRunsDigestYearRollsUpMonths is F24: the records are kept 90 days, so a
 // yearly report has no runs of its own to read -- it is the twelve monthly
 // reports of that year added up, and a month of another year is not one of
@@ -361,6 +560,11 @@ func TestRunsDigestYearRollsUpMonths(t *testing.T) {
 		`"start":"2025-01-01"`,
 		`"end":"2025-12-31"`,
 		`"runs":2`,
+		// The report says how much of the year it added up: two of the
+		// twelve months are committed, and the block carries the same count,
+		// so neither a reader nor a rule takes it for a full year (G5).
+		"2 of the year's twelve",
+		`"months":2`,
 		"2025-08",
 		"2025-09",
 	} {
