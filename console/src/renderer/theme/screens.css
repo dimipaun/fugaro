@@ -150,17 +150,20 @@ p.live-review-capped {
   font-size: var(--font-size-base);
 }
 
-/* ---- The five number hooks, and the alignment rule ------------------------
+/* ---- The number hooks, and the alignment rule -----------------------------
  *
  * Section 6.1 rule 2: density as the default, tabular figures, right-aligned
  * numerics, and no whitespace padding between related figures. One rule carries
- * all of it, and it names **five** hooks because five screens exist: Live,
- * Spend, Projects and Run each prepend their own in their own `numberCell`, and
- * the degraded screen's `numberCell` prepends none -- which is why Task 6.4 adds
- * `degraded-num` to that one helper (`src/renderer/screens/degraded.ts`), the
- * only code change in the styling work (design section 2.10). Without it the
- * feed age, the counts and the money of the degraded and unavailable screens
- * would be the only figures in the console with no alignment hook at all.
+ * all of it, and it names **six** hooks because six screens draw a figure
+ * through a `numberCell`: Live, Spend, Projects and Run each prepend their own,
+ * the coordinator's is the span its `numberCell` writes the reading into beside
+ * the console's own word for it (`coordinator-count-value`; `coordinator-count`
+ * is the cell around the pair), and the degraded screen's `numberCell` prepends
+ * none -- which is why Task 6.4 adds `degraded-num` to that one helper
+ * (`src/renderer/screens/degraded.ts`), the only code change in the styling
+ * work (design section 2.10). Without it the feed age, the counts and the money
+ * of the degraded and unavailable screens would be the only figures in the
+ * console with no alignment hook at all.
  *
  * `min-width` is in `ch` and stated here rather than as a token: like the rail's
  * two widths it is a fact about the drawing, and section 3.1's vocabulary is
@@ -172,6 +175,7 @@ p.live-review-capped {
 .spend-num,
 .projects-number,
 .run-number,
+.coordinator-count-value,
 .degraded-num {
   min-width: 6ch;
   font-family: var(--font-mono);
@@ -1813,30 +1817,20 @@ p.coordinator-counts {
   margin: 0 0 var(--space-2xs);
 }
 
-/* The screen's number hook, and the figure inside it: the tabular figures and
- * the right alignment section 2.10 requires, so the three counts beside a
- * repository's name read as a column rather than as prose. The `ch` minimum is
- * stated here rather than as a token for the reason the shared number-hook rule
- * gives: it is a fact about the drawing, and section 3.1's vocabulary is
- * closed. */
+/* One count's cell: the console's own word for the count, and the reading
+ * beside it. The reading is a span of its own -- the screen's number hook, the
+ * class the shared alignment rule names -- so section 2.10's tabular figures and
+ * `ch` minimum land on the figure and never on the word, and a count that grows
+ * a digit keeps its width and its place in the row. */
 span.coordinator-count {
   display: inline-flex;
   align-items: baseline;
   gap: var(--space-2xs);
-  font-variant-numeric: tabular-nums;
 }
 
 span.coordinator-count-word {
   color: var(--text-muted);
   font-size: var(--font-size-sm);
-}
-
-span.coordinator-count-value {
-  min-width: 6ch;
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-sm);
-  text-align: right;
 }
 
 /* The bound that left records or collisions out: the console's own sentence with

@@ -1,0 +1,104 @@
+{
+  "repos": [
+    {
+      "repo": "owner/repo-a",
+      "stored": true,
+      "view": {
+        "repo": "owner/repo-a",
+        "records": [
+          {
+            "pr": {
+              "number": 7,
+              "url": "https://example.invalid/owner/repo-a/pull/7",
+              "title": "a title someone wrote",
+              "branch": "feat/a-thing",
+              "draft": true,
+              "state": "open"
+            },
+            "runs": [
+              {
+                "id": "20261027-030000-aa01",
+                "pr": 7,
+                "status": "running",
+                "outcome": "",
+                "terminal": false,
+                "branch": "feat/a-thing",
+                "base_branch": "main",
+                "declared_by": "person-1",
+                "files": ["src/a.go"],
+                "files_truncated": false
+              }
+            ],
+            "branch": "feat/a-thing",
+            "release": "1.4",
+            "in_flight": true,
+            "files": ["src/a.go"],
+            "services": ["service-a"]
+          },
+          {
+            "pr": {
+              "number": 11,
+              "url": "https://example.invalid/owner/repo-a/pull/11",
+              "title": "another title someone wrote",
+              "branch": "feat/b-thing",
+              "draft": false,
+              "state": "open"
+            },
+            "runs": [],
+            "branch": "feat/b-thing",
+            "in_flight": false,
+            "files": [],
+            "services": []
+          }
+        ],
+        "collisions": [
+          {
+            "a": "#7",
+            "b": "20261027-030000-aa01",
+            "files": ["src/a.go"],
+            "services": []
+          }
+        ],
+        "unread": [
+          {
+            "number": 9,
+            "reason": "the host refused the read",
+            "carried": true,
+            "failures": 2,
+            "retry_after": "2026-10-27T04:00:00Z"
+          }
+        ],
+        "omitted": 1,
+        "omitted_collisions": 2
+      },
+      "stale": {
+        "since": "2026-10-27T02:00:00Z",
+        "reason": "the repository’s runs could not be read"
+      }
+    },
+    {
+      "repo": "owner/repo-b",
+      "stored": false,
+      "view": {
+        "repo": "owner/repo-b",
+        "records": [
+          {
+            "runs": [
+              {
+                "id": "20261027-031500-bb02",
+                "status": "succeeded",
+                "outcome": "implemented",
+                "terminal": true,
+                "files": []
+              }
+            ],
+            "in_flight": false,
+            "files": [],
+            "services": []
+          }
+        ],
+        "collisions": []
+      }
+    }
+  ]
+}

@@ -612,7 +612,7 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 | **Share** | `percent` | Live (cap percent, bar fills), Spend (`data-height`) | 1 decimal + `%` |
 | **Duration / time** | `seconds` | Live (run age, connection age, silence), Run (stage duration, replay window), degraded (feed age) | 0 decimals + ` s` |
 | **Time (money-shaped)** | `hours` | Spend (run hours, totals) | 2 decimals + ` h` |
-| **Count** | `count` | Live (**the review inbox only**: the ready rows it holds, how many it drew and how many the document carried), Spend (runs, tokens), Projects (counts, versions), Run (tests, lines, records), degraded (runs, searched) | 0 decimals + grouping |
+| **Count** | `count` | Live (**the review inbox only**: the ready rows it holds, how many it drew and how many the document carried), Spend (runs, tokens), Projects (counts, versions), Run (tests, lines, records), Coordinator (a repository's records, how many of them are in flight, its collisions, and what a bound left out), degraded (runs, searched) | 0 decimals + grouping |
 
 **Live's money, shares and durations are what its *run* rows are made of**; the only `count`
 readings on the screen are the review inbox's three (v2 plan Task V2.7.1), each a count of a
@@ -622,12 +622,15 @@ without a reason. The rest of the screen's numbers are `usd`, `percent` and `sec
 sparkline list (`String(line.segments)`), not a reading drawn through `formatReading`, so it
 carries no mark, no `title` and no state.
 
-**Four of the five screens have a number hook, and the fifth does not.** Live, Spend,
-Projects and Run each have their own `numberCell` — one per screen file, not one in
-`app.ts` — and each prepends its own class: `live-num`, `spend-num`, `projects-number`,
-`run-number`. That class is the single hook giving **tabular figures** and right alignment,
-so §6.1 rule 2's "tabular figures, right-aligned numerics" is satisfiable today on those
-four screens only.
+**Six screens draw a figure through a `numberCell`, and five of them have a number hook.**
+Live, Spend, Projects, Run and the Coordinator each have their own — one per screen file, not
+one in `app.ts` — and each prepends its own class: `live-num`, `spend-num`,
+`projects-number`, `run-number`, `coordinator-count`. The coordinator's is the one whose
+cell holds the console's own word for the count beside the figure, so the class the figure
+is drawn in — and the one the stylesheet's alignment rule names — is
+`coordinator-count-value` inside that cell. Each of those five classes is the single hook
+giving **tabular figures** and right alignment, so §6.1 rule 2's "tabular figures,
+right-aligned numerics" is satisfiable on those five screens.
 
 **The degraded screen's `numberCell` (`degraded.ts`) prepends no class at all** — it is
 `cell(parent, factory, tag, ...classes)` with no `-num` — so every figure on the degraded
@@ -640,7 +643,7 @@ and writing the same `font-variant-numeric: tabular-nums` rule for it, which is 
 `console/src/renderer/screens/degraded.ts` is in Task 6.4's Files — the one screen file the
 styling work edits, and the reason it is a code change and not a CSS one.
 
-Monospace is the mechanism on all five: `font-variant-numeric: tabular-nums` with a
+Monospace is the mechanism on all six: `font-variant-numeric: tabular-nums` with a
 fallback to `--font-mono`.
 
 ### 2.11 Graph — `console/src/renderer/screens/graph.ts`
@@ -749,8 +752,8 @@ beyond the focus ring the shared blocks already carry.
 | `coordinator-repo-stale` | `p` | the sweep's marker, drawn only when the document carries one |
 | `coordinator-stale-word`, `coordinator-stale-since`, `coordinator-stale-reason` | `span`s inside it | the introducing word, the stamp and the reason, drawn exactly as stored |
 | `coordinator-counts` | `p` | the three counts beside a repository's name |
-| `coordinator-count` | `span` | one count's cell, and the screen's number hook: the class the tabular figures hang from |
-| `coordinator-count-word`, `coordinator-count-value` | `span`s inside the cell | the console's own word for the count, and the reading |
+| `coordinator-count` | `span` | one count's cell, holding the console's word for the count beside the reading |
+| `coordinator-count-word`, `coordinator-count-value` | `span`s inside the cell | the console's own word for the count, and the reading — which is the screen's number hook, the class §2.10's alignment rule names, because the figure is drawn in a span of its own and the word beside it is not a figure |
 | `coordinator-omitted` | `p` | the bound that left records or collisions out, drawn only when the document says so |
 | `coordinator-omitted-word` | `span` | the console's sentence introducing them |
 | `coordinator-records`, `coordinator-collisions`, `coordinator-unreads` | `ul`s | a repository's three lists, each drawn only when it holds something |
@@ -789,9 +792,10 @@ cannot read a class that arrives through a parameter, and a bare class selector 
 **Five hooks the stylesheet does not select**, and §2's rule read the other way:
 `coordinator-count-records`, `coordinator-count-inflight`, `coordinator-count-collisions`,
 `coordinator-omitted-records` and `coordinator-omitted-collisions` say *which* count each
-cell is, and the rules that align the counts and colour the sentence that introduces them are
-written on the cell and on the sentence rather than on the five. They are the screen's own
-bookkeeping, and a rule that wants one adds it to the table above first.
+cell is, and the rules that lay the counts out and colour the sentence that introduces them
+are written on the cell, on the reading inside it and on the sentence rather than on the
+five. They are the screen's own bookkeeping, and a rule that wants one adds it to the table
+above first.
 
 **Three readings ask for attention, and each carries its own word**: a pair of records in
 flight on the same files or services, a pull request whose state no sweep could read, and a

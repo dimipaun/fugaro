@@ -32,12 +32,14 @@
 // `watch --json --project P` with the committed synthetic recording and
 // `doctor --json` with a minimal document, and refuses anything else -- and any
 // read that does not carry the seeded project -- with exit 2. That is why this
-// module writes four files beside the stub and not one: `version.txt` (the
+// module writes five files beside the stub and not one: `version.txt` (the
 // handshake), `project.txt` (the project every read must name, rewritten by
 // `seedInstallations`), `frames.ndjson` (the recording `watch` prints, rendered
 // from `test/fixtures/synthetic.ndjson` through `loadFixture`, so the stub can
-// only replay a fixture this build vouches for), and `plan-status.json` (the
-// document `plan status --json` prints, the Graph view's own read, GV2.3b).
+// only replay a fixture this build vouches for), `plan-status.json` (the
+// document `plan status --json` prints, the Graph view's own read, GV2.3b) and
+// `coordinator-status.json` (the document `coordinator status
+// --from-store --all --json` prints, the project view's own read, T1.2).
 //
 //   - offers `resolveConsoleBinary(env)`, which runs the console's own
 //     `resolveBinary` with **exactly the arguments `src/main/index.ts` uses**, so
@@ -82,6 +84,15 @@ const SYNTHETIC_FIXTURE = join(__dirname, '..', 'fixtures', 'synthetic.ndjson')
  * document `graph.test.ts` draws its screen from, so the graph an e2e window
  * shows is the graph the unit suite's cases are written against. */
 const PLAN_FIXTURE = join(__dirname, '..', 'fixtures', 'plan-status.json')
+
+/** COORDINATOR_FIXTURE is the committed `coordinator status --from-store --all
+ * --json` document the stub's `coordinator status` answers with (Bitbucket
+ * credentials T1.2, D364; the Coordinator view reads it). It is invented rather
+ * than recorded, like the plan document and for the same reason: the two states
+ * the screen turns on -- a repository the sweep never reconciled, and a stale
+ * marker -- are not in any recording this tree carries, and a document is the
+ * only way a spec can hold either. */
+const COORDINATOR_FIXTURE = join(__dirname, '..', 'fixtures', 'coordinator-status.json')
 
 /** DEFAULT_PROJECT is the project a stub answers for until a spec seeds one. */
 const DEFAULT_PROJECT = 'e2e'
@@ -227,6 +238,10 @@ export function installCliStub(line: string): CliStub {
   let installationsList: string | null = null
   const frames = syntheticFrames()
   let plan = readFileSync(PLAN_FIXTURE, 'utf8')
+  // The project view's document, read once and written beside every copy of the
+  // stub: no spec seeds another one, because the states the Coordinator's cases
+  // are about are the ones the committed document already carries.
+  const coordinator = readFileSync(COORDINATOR_FIXTURE, 'utf8')
   // The last seeded file, kept so `seedActiveCheckout` can add a directory to
   // the active entry without a spec having to name the entry again.
   let seeded: {
@@ -243,6 +258,7 @@ export function installCliStub(line: string): CliStub {
       writeFileSync(join(where, 'project.txt'), `${project}\n`)
       writeFileSync(join(where, 'frames.ndjson'), frames)
       writeFileSync(join(where, 'plan-status.json'), plan)
+      writeFileSync(join(where, 'coordinator-status.json'), coordinator)
       if (installationsList !== null) writeFileSync(join(where, 'installations.ndjson'), installationsList)
     }
   }
@@ -342,6 +358,7 @@ export function installCliStub(line: string): CliStub {
       writeFileSync(join(where, 'project.txt'), `${project}\n`)
       writeFileSync(join(where, 'frames.ndjson'), frames)
       writeFileSync(join(where, 'plan-status.json'), plan)
+      writeFileSync(join(where, 'coordinator-status.json'), coordinator)
       return join(where, 'fugaro')
     },
     seedInstallationsList(projects: readonly string[], extra: readonly string[] = []): void {

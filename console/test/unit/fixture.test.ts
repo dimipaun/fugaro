@@ -542,6 +542,16 @@ describe('the committed synthetic fixture', () => {
       // than recorded, and `test/unit/schema.test.ts` is where its keys are
       // held to the Go structs.
       'plan-status.json',
+      // `coordinator-status.json` is the same kind of thing one document over
+      // (Bitbucket credentials T1.2, D364): one `coordinator status
+      // --from-store --all --json` document, invented from the structs
+      // (`internal/coordinator/state.go`, `internal/cli/coordinator_view.go`)
+      // rather than recorded, because the two states the project view turns on
+      // -- a repository the sweep never reconciled, and a stale marker -- are in
+      // no recording this tree carries. The e2e stub answers that read with it
+      // (`test/support/cliStub.ts`) and `test/unit/cli-stub.test.ts` holds it to
+      // the console's own decoder.
+      'coordinator-status.json',
       ...FIXTURE_CASES.map((name) => `${name}.ndjson`),
     ])
     const present = readdirSync(FIXTURE_DIRECTORY)
