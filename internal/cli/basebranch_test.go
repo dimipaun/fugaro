@@ -360,6 +360,25 @@ func TestBaseBranchSkewForAnotherRepository(t *testing.T) {
 	}
 }
 
+// TestBaseBranchSinceIsTheReleaseTheChecklistNames holds baseBranchSince to the
+// reader that states its number: docs/release.md's Before-you-tag bullet, which
+// is where a release verifies the constant against the tag actually cut.
+func TestBaseBranchSinceIsTheReleaseTheChecklistNames(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `baseBranchSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no baseBranchSince bullet")
+	}
+	if !strings.Contains(bullet, "currently `\""+baseBranchSince+"\"`") {
+		t.Errorf("docs/release.md's baseBranchSince bullet does not carry the constant's release (%q)", baseBranchSince)
+	}
+}
+
 // TestValidateNamesTheLayerAnInvalidBaseBranchIsIn: fugaro validate judges
 // every base branch where it is written and names the layer it was written in
 // — the file's own git.base_branch by its path, and an installation's
