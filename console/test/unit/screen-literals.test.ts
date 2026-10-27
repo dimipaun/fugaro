@@ -754,8 +754,15 @@ const RENDERER_FILES: readonly string[] = Object.freeze(
 const SHARED_DRAWER = '../../shared/version.ts'
 
 describe('a screen writes only its own vocabulary through literal', () => {
-  it('reads the five screens', () => {
-    expect([...SCREEN_FILES]).toEqual(['degraded.ts', 'live.ts', 'projects.ts', 'run.ts', 'spend.ts'])
+  it('reads the six screens', () => {
+    expect([...SCREEN_FILES]).toEqual([
+      'coordinator.ts',
+      'degraded.ts',
+      'live.ts',
+      'projects.ts',
+      'run.ts',
+      'spend.ts',
+    ])
   })
 
   it('reads the shared modules as well, so a drawer outside the screens is scanned', () => {

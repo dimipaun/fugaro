@@ -135,11 +135,12 @@ const PROJECT = 'fugaro'
 const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
 
 /**
- * COMMANDS_TAKING_PROJECT is the plan's own list, hard-coded: the twelve
+ * COMMANDS_TAKING_PROJECT is the plan's own list, hard-coded: the thirteen
  * operations `addCloudFlags` gives `--project` to (`internal/cli/cloud.go:51`,
  * called from each of those constructors), including the two log operations
  * that share the `logs` command -- console L5b's `runs.stats` is the eleventh,
- * and plan GV2.1's `plan.status` the twelfth. The complement -- the commands
+ * plan GV2.1's `plan.status` the twelfth, and Bitbucket credentials T1.2's
+ * `coordinator.status` the thirteenth. The complement -- the commands
  * that take no
  * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
  * command words the CLI itself uses (`version` and the rail's `config list`),
@@ -159,6 +160,7 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'secrets.inventory',
   'accounts.inventory',
   'environment.report',
+  'coordinator.status',
 ]
 /** freshDirectory is a temporary directory this test owns, one per call. */
 function freshDirectory(prefix = 'fugaro-console-test-'): string {
@@ -418,11 +420,13 @@ describe('the spawn table and the argv it builds', () => {
     }).toThrow(/does not start with config list/)
   })
 
-  it('fixes the design allow-list exactly: fourteen argvs, thirteen commands, twelve of them with --project', () => {
+  it('fixes the design allow-list exactly: fifteen argvs, fourteen commands, thirteen of them with --project', () => {
     // The design's §5.1 rule 6 table is the whole allow-list, argv for argv:
     // the rail's read (`config list --json`, the case above) used to be the
     // picker's own row in a second table until the owner's ruling of 2026-10-25,
-    // and plan GV2.1's `plan status --json` is the fourteenth. The Go side pins
+    // plan GV2.1's `plan status --json` is the fourteenth, and Bitbucket
+    // credentials T1.2's `coordinator status --from-store --all --json` the
+    // fifteenth. The Go side pins
     // the document's list (`internal/cli/docs_desktop_console_test.go`,
     // TestDocsDesktopConsoleDesignAllowListIsExactArgv) and this case pins the
     // console's; the two are held in step by hand on purpose.
@@ -441,9 +445,10 @@ describe('the spawn table and the argv it builds', () => {
       'version',
       'doctor --json',
       'config list --json',
+      'coordinator status --from-store --all --json',
     ])
-    // The eleven *commands* that take the flag (addCloudFlags, internal/cli/
-    // cloud.go:51) are eleven rows plus one: `logs` has two rows, `--json` and
+    // The twelve *commands* that take the flag (addCloudFlags, internal/cli/
+    // cloud.go:51) are twelve rows plus one: `logs` has two rows, `--json` and
     // `--url`, and neither of them may be the one that forgets --project.
     const commandsWithProject = SPAWN_COMMANDS.filter((row) => row.takesProject).map((row) =>
       row.words.filter((word) => !word.startsWith('--')).join(' '),
@@ -461,9 +466,10 @@ describe('the spawn table and the argv it builds', () => {
         'secrets ls',
         'accounts ls',
         'doctor',
+        'coordinator status',
       ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(12)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(13)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))
