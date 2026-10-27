@@ -590,6 +590,7 @@ func (r *run) closeGateway() {
 	// subscription part of them (C1.16, D140). The stages' own reports are
 	// what the splits (model_by, route_by) are built from.
 	r.gwUsed, r.gwNotional = led.Used, led.Notional
+	r.gwCacheRead, r.gwCacheWrite = led.CacheReadTokens, led.CacheWriteTokens
 	r.mu.Unlock()
 	r.rec.CostUSD = (led.Used + led.Notional).USD()
 	r.updateCost()

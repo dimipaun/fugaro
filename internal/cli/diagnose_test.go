@@ -724,3 +724,61 @@ func TestDiagnosePutsTheComputeSourceOnItsOwnLine(t *testing.T) {
 		t.Errorf("a cost with no source line rendered one:\n%s", b.String())
 	}
 }
+
+// TestDiagnoseShowsCacheLineOnlyWhenNonZero (P12): the run's prompt-cache
+// read and write token totals get one line of their own, and a run that
+// recorded neither -- no gateway, or a gateway run whose calls hit no cache
+// -- prints exactly the block it always did.
+func TestDiagnoseShowsCacheLineOnlyWhenNonZero(t *testing.T) {
+	f := newCloudFixture(t)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	for i, tc := range []struct {
+		read, write int64
+		want        string
+	}{
+		{0, 0, ""},
+		{400, 0, "Cache:    400 read, 0 write (tokens)"},
+		{0, 50, "Cache:    0 read, 50 write (tokens)"},
+		{400, 50, "Cache:    400 read, 50 write (tokens)"},
+	} {
+		id := fmt.Sprintf("20260927-17000%d-aaaa", i)
+		exec := seedRun(t, f, id, "", "someone@example.com", true)
+		s := runstore.Open(b, appSlug, id)
+		cost := runstore.NewCost(1.23, 0, runstore.BasisAPIList)
+		cost.CacheReadTokens, cost.CacheWriteTokens = tc.read, tc.write
+		if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+			Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady, CostUSD: 1.23, Cost: &cost}); err != nil {
+			t.Fatal(err)
+		}
+		human, _, err := execute(t, "diagnose", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := 0
+		for _, ln := range strings.Split(human, "\n") {
+			if strings.HasPrefix(ln, "Cache:") {
+				lines++
+			}
+		}
+		if tc.want == "" {
+			if lines != 0 {
+				t.Fatalf("%d read/%d write: a cache line was printed for a run that recorded none:\n%s", tc.read, tc.write, human)
+			}
+		} else if lines != 1 || !strings.Contains(human, tc.want+"\n") {
+			t.Fatalf("%d read/%d write: want exactly %q:\n%s", tc.read, tc.write, tc.want, human)
+		}
+		js, _, err := execute(t, "diagnose", "--json", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var d Diagnosis
+		if err := json.Unmarshal([]byte(js), &d); err != nil {
+			t.Fatal(err)
+		}
+		if d.Row.Cost.CacheReadTokens != tc.read || d.Row.Cost.CacheWriteTokens != tc.write {
+			t.Fatalf("%d read/%d write: json cost = %+v", tc.read, tc.write, d.Row.Cost)
+		}
+	}
+}

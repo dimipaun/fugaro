@@ -63,7 +63,7 @@ import { createSpawnLog } from '../main/spawnlog'
 import type { SpawnLogWriter } from '../main/spawnlog'
 import type { OperationName, ValidatedArguments } from '../main/ipc'
 import { MAX_TEXT_INPUT_LENGTH } from '../shared/sanitize'
-import { SourceRefusal, refusalFrom } from './source'
+import { SourceRefusal, refusalFrom, NO_PLAN_CHECKOUT } from './source'
 import type {
   FeedEnd,
   FugaroSource,
@@ -107,6 +107,22 @@ export const MAX_LIVE_FEEDS = 4
  * the same fact: `degraded.spec.ts` asserts the two cannot drift.
  */
 export const FEED_STALE_AFTER_SECONDS = 45
+
+/**
+ * PLAN_STATUS_MIN_INTERVAL_MS is how long `plan.status` serves the document it
+ * already read before it runs the child again: the dependency-graph plan's
+ * GV2.1 fixes the refresh at "on demand, at most once a minute, never per watch
+ * frame". The read is the most expensive one this surface has -- it walks a
+ * repository's `docs/` and joins the runs -- and a screen that redraws it on
+ * every live frame would run it several times a minute for a graph that changes
+ * when a plan file changes.
+ *
+ * The cached answer is the snapshot the read actually produced, stamped with the
+ * console clock of that read, and not a re-stamp: a screen that showed a fresh
+ * time over a minute-old document would be inventing a reading. A call inside
+ * the interval answers that document; a call outside it runs the child.
+ */
+export const PLAN_STATUS_MIN_INTERVAL_MS = 60_000
 
 /**
  * FeedSilence is what the console knows about how long the feed has been quiet:
@@ -249,7 +265,7 @@ export interface CliSourceOptions {
 
 /**
  * CliSource is a `FugaroSource` and a little more: `installation` is the resolved
- * header, and `close` stops the feeds. The twelve reads are one-liners over
+ * header, and `close` stops the feeds. The thirteen reads are one-liners over
  * `readDocument` and `readText`.
  */
 export class CliSource implements FugaroSource {
@@ -458,6 +474,17 @@ export class CliSource implements FugaroSource {
     return this.#readDocument('runs.stats', args)
   }
 
+  /** planStatus reads `plan status --json`, which is the one read whose answer
+   * depends on **where** the child runs: the CLI walks `docs/` from its working
+   * directory (`internal/cli/plan_status.go`), and that directory is this
+   * source's checkout (`options.checkout`, rule 5). No argv this method builds
+   * names a path -- the row in `src/main/spawn.ts` has no `--dir` and no
+   * positional word -- so the document is about the installation's own
+   * repository or it is a refusal. */
+  planStatus(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('plan.status', args)
+  }
+
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot> {
     return this.#readDocument('run.diagnose', args)
   }
@@ -659,7 +686,7 @@ function bindingKey(installation: BoundInstallation): string {
  * plane: every read resolves the installation that is active **now**, builds the
  * one source for it if there is not one already, and delegates.
  *
- * Three decisions are worth reading off the code rather than out of a comment:
+ * Four decisions are worth reading off the code rather than out of a comment:
  *
  *   - **no installation, no spawn.** `resolve` throws `NoInstallation` before
  *     anything is constructed, so a console with nothing chosen drives nothing.
@@ -674,6 +701,14 @@ function bindingKey(installation: BoundInstallation): string {
  *     **lazy** one: it attaches on the first `current()`, and the same argument
  *     object answers the same feed object while it is live -- the contract the
  *     interface states, kept here rather than only under it.
+ *   - **`planStatus` is the one read that decides something here** instead of
+ *     delegating a one-liner: it refuses an installation with no checkout
+ *     **before** `resolve` is reached, so nothing is spawned for a question with
+ *     no directory to be asked about, and it answers the document it read within
+ *     `PLAN_STATUS_MIN_INTERVAL_MS` rather than running the child again. Both
+ *     belong on this side of the seam because both are about the *binding*: the
+ *     checkout is the binding's, and the document is a function of the binding
+ *     and the arguments.
  */
 export function createBoundSource(deps: BoundSourceDeps): BoundSource {
   // The two seams are this function's own and are not `CliSource` options, so
@@ -684,6 +719,21 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
   let bound: { readonly key: string; readonly source: CliSource } | null = null
   let pending: { readonly key: string; readonly source: Promise<CliSource> } | null = null
   const feeds = new Map<string, LiveFeed>()
+
+  /**
+   * planReads holds the last `plan status` read per (binding, argv) -- the
+   * promise itself, so a read still in flight is shared -- with the console
+   * clock of the moment it finished, `null` while it runs. It is cleared wherever
+   * `feeds` is: both are answers about the binding that is being dropped, and a
+   * cached plan graph for a directory the console has stopped showing is the
+   * same defect as a live feed for one.
+   */
+  const planReads = new Map<string, { readonly reading: Promise<Snapshot>; at: number | null }>()
+
+  /** nowMs is the console's own clock in milliseconds, the one the sources are
+   * built with (`options.clock`), so a test that moves the clock moves this
+   * interval with it rather than reaching for the wall clock here. */
+  const nowMs = (): number => (deps.clock ?? ((): Date => new Date()))().getTime()
 
   /**
    * epoch is what "the build in flight is no longer the one that matters" is
@@ -744,6 +794,7 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     const previous = bound
     bound = null
     feeds.clear()
+    planReads.clear()
     epoch += 1
     const mine = epoch
     const source = (async (): Promise<CliSource> => {
@@ -857,6 +908,7 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     bound = null
     pending = null
     feeds.clear()
+    planReads.clear()
     // A build in flight is invalidated here rather than awaited: it is for an
     // installation that is gone, and it closes its own source when it lands.
     epoch += 1
@@ -902,6 +954,46 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     runReport: (args) => read('spend.report', (source) => source.runReport(args)),
     listRuns: (args) => read('runs.list', (source) => source.listRuns(args)),
     statsRuns: (args) => read('runs.stats', (source) => source.statsRuns(args)),
+    /**
+     * planStatus is the surface's one read with a precondition and a cadence.
+     *
+     * The precondition is the checkout. The CLI resolves the plan's `docs/`
+     * directory from the child's working directory, and an installation that
+     * records none has no directory for the read to be about: this refuses with
+     * `NO_PLAN_CHECKOUT` **before** `resolve` -- so no binary is probed, no
+     * child is spawned, and the console does not quietly read whatever
+     * repository it happens to be sitting in. That the renderer cannot supply a
+     * directory is `src/main/ipc.ts`'s guarantee, stated there; this is the
+     * other half, where the console refuses to guess one.
+     *
+     * The cadence is `PLAN_STATUS_MIN_INTERVAL_MS`, keyed by the binding *and*
+     * the argv the arguments become (`--all` is a different document, not a
+     * wider one; `all: false` is the same argv as no `all`). The entry is the
+     * read itself, **in flight** as well as answered, so calls that arrive while
+     * the child runs share it rather than each spawning one, and a refused read
+     * holds the floor like an answered one. The `at` recorded is the clock
+     * reading **after** the child finished, so the interval is a floor on the
+     * time between two spawns rather than on the time between a spawn and the
+     * next request.
+     */
+    planStatus: async (args) => {
+      const installation = deps.installation()
+      if (installation === null) throw noInstallation()
+      if (installation.checkout === undefined) throw new SourceRefusal(NO_PLAN_CHECKOUT)
+      const key = `${bindingKey(installation)}\u0000${args['all'] === true ? '--all' : ''}`
+      const cached = planReads.get(key)
+      if (cached !== undefined && (cached.at === null || nowMs() - cached.at < PLAN_STATUS_MIN_INTERVAL_MS)) {
+        return cached.reading
+      }
+      const reading = read('plan.status', (source) => source.planStatus(args))
+      const entry: { readonly reading: Promise<Snapshot>; at: number | null } = { reading, at: null }
+      planReads.set(key, entry)
+      const settled = (): void => {
+        entry.at = nowMs()
+      }
+      reading.then(settled, settled)
+      return reading
+    },
     diagnoseRun: (args) => read('run.diagnose', (source) => source.diagnoseRun(args)),
     readRunLogs: (args) => read('run.logs', (source) => source.readRunLogs(args)),
     runLogLink: (args) => read('run.logLink', (source) => source.runLogLink(args)),

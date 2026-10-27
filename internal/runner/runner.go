@@ -264,11 +264,17 @@ type run struct {
 	// plan's P11), and starting the sidecar is a later change. Deps.
 	// CompressionOverride is the one bridge, for a test that needs a
 	// populated field with no config and no sidecar behind it.
-	compression  *agent.CompressionProxy
-	gwAgent      *agent.Gateway
-	gwClosed     bool
-	gwUsed       pricing.Micros
-	gwNotional   pricing.Micros
+	compression *agent.CompressionProxy
+	gwAgent     *agent.Gateway
+	gwClosed    bool
+	gwUsed      pricing.Micros
+	gwNotional  pricing.Micros
+	// gwCacheRead and gwCacheWrite are the run's prompt-cache read and write
+	// token totals, taken from the gateway's ledger when it closes: what the
+	// run's record carries so a reader can see whether the cache behaved as
+	// the design's compression risk (§3) says it should (P12).
+	gwCacheRead  int64
+	gwCacheWrite int64
 	lastStage    *gateway.StageReport
 	modelBy      map[string]pricing.Micros
 	routeBy      map[string]pricing.Micros
@@ -2684,7 +2690,9 @@ func (r *run) finalize(ctx context.Context) error {
 	r.rec.HeadSHA, r.rec.Verify = sha, records
 	r.uploadVerifyRecords(ctx, records)
 
-	ready, reason := Decide(records, decided, seniorReview(r.rec.Reviews), r.findingsPolicy())
+	pol := r.findingsPolicy()
+	ready, reason := Decide(records, decided, seniorReview(r.rec.Reviews), pol)
+	r.rec.Tolerated = r.toleratedRecord(pol)
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"
 	}

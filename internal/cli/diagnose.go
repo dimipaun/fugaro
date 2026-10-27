@@ -520,6 +520,13 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	for _, ln := range costLines(r.Cost) {
 		fmt.Fprintf(&b, "%s\n", ln)
 	}
+	// The run's prompt-cache token totals, printed only when a gateway
+	// recorded one: a run that read nothing from cache and wrote nothing to
+	// it -- no gateway, or one whose calls all missed and cached nothing --
+	// keeps the block it always had (P12).
+	if r.Cost.CacheReadTokens != 0 || r.Cost.CacheWriteTokens != 0 {
+		fmt.Fprintf(&b, "Cache:    %d read, %d write (tokens)\n", r.Cost.CacheReadTokens, r.Cost.CacheWriteTokens)
+	}
 	if r.Cost.CatalogStale {
 		// The run charged, and over-counted on purpose: the catalog it
 		// priced from was past its own 30 days (design §7, P7).

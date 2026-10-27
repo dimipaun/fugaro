@@ -4,13 +4,34 @@ Fugaro's core is released under the MIT licence in [`LICENSE`](LICENSE), and tha
 of the core's licence. The open-core work does not change it: the core stays MIT, and every release
 before 0.11.0 is MIT.
 
-Two parts of the repository are not covered by it.
+Four parts of the repository are not covered by it. Three of them, `console/`, `mobile/` and
+`ee/`, are excluded from the MIT licence and carry a business licence of their own, one text in
+three files with only the product's name changed. **That text is a draft, not yet reviewed by
+counsel**: the owner adopted it on 2026-10-26 ahead of that review, and each file's first line says
+so until counsel has read it. Each one allows copying and modifying for development and testing,
+and needs a subscription for the correct number of user seats (one seat per person who uses it)
+for production use, under Subscription Terms that are not published yet.
 
-## `ee/` is excluded and reserved
+## The desktop console, `console/`
+
+From console 0.113.0 the desktop console is under [`console/LICENSE.md`](console/LICENSE.md), the
+whole of it: the renderer bundle and everything the app's windows load are covered too, with no
+MIT carve-out for code that runs on the client. Every console release up to and including 0.112.0
+stays under the MIT licence it was released under, and so does the console's source as published
+before the change. Third-party components the console ships keep their own licences
+([`console/THIRD_PARTY_NOTICES.md`](console/THIRD_PARTY_NOTICES.md)).
+
+## The mobile app, `mobile/`
+
+The mobile app is under [`mobile/LICENSE.md`](mobile/LICENSE.md), from its first release: no
+release of it has been published. The app's source as published before the change stays under the
+MIT licence it was published under. Its third-party components keep their own licences.
+
+## `ee/`, the enterprise edition
 
 [`ee/`](ee/README.md) is excluded from the MIT licence and reserved for net-new organisation
-features, which will ship under their own licence. The directory holds no code and no licence file
-today, so nothing placed there is licensed yet, and nothing outside `ee/` imports anything under it.
+features, under [`ee/LICENSE`](ee/LICENSE). The directory holds no code yet and nothing under it
+has ever been released, and nothing outside `ee/` imports anything under it.
 
 ## `.agents/` is third-party code
 
@@ -18,10 +39,16 @@ today, so nothing placed there is licensed yet, and nothing outside `ee/` import
 project's code under its own MIT licence, whose text and copyright line are in the file linked
 above; they are not Fugaro's to relicense, and the licence in `LICENSE` does not cover them.
 
+## `shared/` stays MIT
+
+`shared/`, the pure-logic package the mobile app imports and the core's own tests read, is not
+under the business licence: it stays under the MIT licence in `LICENSE`.
+
 ## Released versions
 
-Every release before 0.11.0 is MIT, and so is every release of the core. The split adds a directory
-under a separate licence; it takes nothing away from what has already been published.
+Every release before 0.11.0 is MIT, and so is every release of the core and every console release
+up to and including 0.112.0. The split adds a licence to three directories from here on; it takes
+nothing away from what has already been published.
 
 ## Trademarks
 

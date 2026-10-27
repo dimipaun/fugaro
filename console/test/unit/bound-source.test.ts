@@ -23,9 +23,10 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { NoInstallation, createBoundSource } from '../../src/source/cli'
+import { NoInstallation, PLAN_STATUS_MIN_INTERVAL_MS, createBoundSource } from '../../src/source/cli'
 import type { BoundInstallation, CliSource } from '../../src/source/cli'
-import { SourceRefusal } from '../../src/source/source'
+import { NO_PLAN_CHECKOUT, SourceRefusal } from '../../src/source/source'
+import type { Snapshot } from '../../src/source/source'
 
 /** FIRST and SECOND are the two installations the cases below move between. */
 const FIRST: BoundInstallation = {
@@ -304,6 +305,99 @@ describe('the source bound to the active installation', () => {
     expect(started).toBe(2)
   })
 
+describe('the plan read, whose directory is the binding’s', () => {
+  it('refuses an installation with no checkout, and spawns nothing for it', async () => {
+    // GV2.1's read walks the graph artifacts under the child's working
+    // directory, so an installation that records none has no directory for the
+    // question. The refusal has to happen **before** the source is built, and
+    // that is the whole point of the case: building one probes `version` first
+    // (`CliSource.create`), which is a child, so the operator with no checkout
+    // would pay for a spawn whose read could only be refused -- and a console
+    // that built anyway would be positioned to read whatever repository it
+    // happened to be sitting in. `built` staying empty is the assertion that
+    // says no child was started, and not merely that the read failed.
+    const built: string[] = []
+    const source = createBoundSource({
+      installation: () => FIRST,
+      create: async (each) => {
+        built.push(each.id)
+        return aSource([], each.id)
+      },
+    })
+
+    const error = await refusalOf(source.planStatus({}))
+    expect(error, 'a checkoutless installation was not refused').toBeInstanceOf(SourceRefusal)
+    expect((error as SourceRefusal).message).toBe(NO_PLAN_CHECKOUT)
+    expect(built, 'the refusal spawned a child after all').toEqual([])
+
+    // The read is refused for the missing directory and not for the
+    // installation: the same binding answers another read, so the case cannot
+    // pass by refusing every op of a broken source.
+    const versioned = createBoundSource({ installation: () => FIRST, create: async (each) => aSource([], each.id) })
+    expect((await versioned.version()).text).toBe(FIRST.id)
+  })
+
+  it('serves the document it read within the minute rather than spawning again', async () => {
+    // GV2.1's cadence: on demand, at most once a minute. The cache is keyed by
+    // the binding *and* the arguments, so `--all` is its own document rather
+    // than the wider one, and the stamp is taken after the child answered, so
+    // the interval floors the time between two spawns. Every spawn here is
+    // counted, because "the read was served twice from one child" is the claim.
+    const spawned: unknown[] = []
+    let reads = 0
+    const at = Date.parse('2026-10-15T12:00:00Z')
+    let now = at
+    let installation: BoundInstallation = { ...FIRST, checkout: '/home/operator/src/acme' }
+    const source = createBoundSource({
+      installation: () => installation,
+      clock: () => new Date(now),
+      create: async () => {
+        return {
+          version: async () => ({ text: FIRST.id, receivedAt: '2026-10-15T12:00:00Z' }),
+          close: async () => undefined,
+          planStatus: async (args: unknown): Promise<Snapshot> => {
+            reads += 1
+            spawned.push(args)
+            return {
+              document: { read: reads },
+              receivedAt: new Date(now).toISOString().replace(/\.\d{3}Z$/, 'Z'),
+              sequence: reads,
+              day: null,
+              rolled: false,
+              notices: [],
+            }
+          },
+        } as unknown as CliSource
+      },
+    })
+
+    const first = await source.planStatus({})
+    expect(first.document, 'the first read did not reach the child').toEqual({ read: 1 })
+    now += 1_000
+    const again = await source.planStatus({})
+    expect(spawned, 'a read inside the minute spawned a second child').toHaveLength(1)
+    expect(again, 'the cached answer was not the document that was read').toBe(first)
+
+    // `--all` is a different document, not a wider view of the cached one.
+    expect((await source.planStatus({ all: true })).document).toEqual({ read: 2 })
+    expect(spawned).toHaveLength(2)
+
+    // At exactly the interval the read runs again: the bound is inclusive, so a
+    // one-minute screen is not served a two-minute-old graph.
+    now = at + PLAN_STATUS_MIN_INTERVAL_MS
+    expect((await source.planStatus({})).document, 'the read at the interval was served the cache').toEqual({ read: 3 })
+    expect(spawned).toHaveLength(3)
+
+    // A checkout change is a different binding: the graph belongs to the
+    // directory, so the document cached for the previous one must not be
+    // answered for the new one.
+    now += 1_000
+    installation = { ...FIRST, checkout: '/home/operator/src/other' }
+    expect((await source.planStatus({})).document, 'the previous directory’s graph was served').toEqual({ read: 4 })
+    expect(spawned).toHaveLength(4)
+  })
+})
+
   it('says `configured` only for a record that carries an override, and `well-known` otherwise', () => {
     // `InstallationRef.source` is the one word that says *how* the binary was
     // chosen (design section 3.4 rule 4), and the ordinary case -- a record this
@@ -331,5 +425,50 @@ describe('the source bound to the active installation', () => {
       binaryPath: '/opt/fugaro/bin/fugaro',
       source: 'configured',
     })
+  })
+
+  it('holds the once-a-minute floor against concurrent calls, failed reads and equivalent arguments', async () => {
+    // Review (a): the floor was a cache of *answered* reads, so ten calls in
+    // the same instant spawned ten children, a failed read was spawned again at
+    // once, and `{}` and `{ all: false }` -- the same argv -- were two keys.
+    let spawned = 0
+    let fail = false
+    let release: () => void = () => undefined
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const at = Date.parse('2026-10-15T12:00:00Z')
+    let now = at
+    const source = createBoundSource({
+      installation: () => ({ ...FIRST, checkout: '/home/operator/src/acme' }),
+      clock: () => new Date(now),
+      create: async () =>
+        ({
+          version: async () => ({ text: FIRST.id, receivedAt: '2026-10-15T12:00:00Z' }),
+          close: async () => undefined,
+          planStatus: async (): Promise<Snapshot> => {
+            spawned += 1
+            await held
+            if (fail) throw new Error('the CLI refused')
+            return { document: { read: spawned }, receivedAt: '2026-10-15T12:00:00Z', sequence: spawned, day: null, rolled: false, notices: [] }
+          },
+        }) as unknown as CliSource,
+    })
+
+    const calls = Array.from({ length: 10 }, (_, index) => source.planStatus(index % 2 === 0 ? {} : { all: false }))
+    release()
+    const answers = await Promise.all(calls)
+    expect(spawned, 'concurrent calls each spawned a child').toBe(1)
+    for (const answer of answers) expect(answer).toBe(answers[0])
+
+    // A failed read holds the floor too: the next call inside the minute is
+    // answered with the same refusal rather than a second child.
+    now = at + PLAN_STATUS_MIN_INTERVAL_MS
+    fail = true
+    await expect(source.planStatus({})).rejects.toThrow()
+    expect(spawned).toBe(2)
+    now += 1_000
+    await expect(source.planStatus({ all: false })).rejects.toThrow()
+    expect(spawned, 'a failed read was spawned again inside the minute').toBe(2)
   })
 })

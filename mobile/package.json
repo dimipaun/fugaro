@@ -1,6 +1,7 @@
 {
   "name": "fugaro-mobile",
   "version": "0.0.0",
+  "license": "SEE LICENSE IN LICENSE.md",
   "private": true,
   "type": "module",
   "description": "The Fugaro mobile app: an Expo (React Native) app for the phone, its own artifact outside the Go module (mobile plan D125). It reads the database directly under a user-claim read grant (D112) and holds exactly two credential items per account, in platform secure storage (D111).",

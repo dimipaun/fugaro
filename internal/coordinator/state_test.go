@@ -5,9 +5,11 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/rtdb"
@@ -248,5 +250,74 @@ func TestWriteRetriesOnlyALostRace(t *testing.T) {
 		if n := puts.Load(); n != 1 {
 			t.Errorf("status %d: Write put %d times, want 1: only rtdb.ErrPrecondition is a lost race", tc.status, n)
 		}
+	}
+}
+
+// TestReadRepoView: the stored view and the marker beside it, read as the
+// typed documents a sweep writes rather than as the raw messages the sweep's
+// own reader uses. Three things are the read's and not a decoder's:
+//
+//   - An absent node is "no view" (Stored false) and not a view with nothing
+//     in it — a console that could not tell the two apart would claim the
+//     coordinator had reconciled a repository it never read.
+//   - The repository is echoed, because the node's key is a slug (a hash of
+//     the provider and the name) and an absent node carries no view to read
+//     the name out of.
+//   - A node that is not a view is refused rather than shown as one with
+//     nothing in it: strict decoding is the rule the tree's other wire
+//     formats keep.
+func TestReadRepoView(t *testing.T) {
+	s := testStore(t)
+	ctx := testCtx(t)
+	const slug = "github-acme-webapp"
+
+	got, err := s.ReadRepoView(ctx, slug, "acme/webapp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Stored || got.Stale != nil || len(got.View.Records) != 0 || got.View.Repo != "" {
+		t.Errorf("an absent node read as %+v, want no view", got)
+	}
+	if got.Repo != "acme/webapp" {
+		t.Errorf("Repo = %q, want the repository the caller asked about", got.Repo)
+	}
+
+	view := View{Repo: "acme/webapp", Records: []Record{{
+		PR:       &PullRequest{Number: 7, State: StateOpen},
+		Runs:     []Run{{ID: "20261024-120000-aaaa", PR: 7, Files: []string{}}},
+		InFlight: true, Files: []string{"internal/cli/run.go"},
+	}}, Collisions: []Collision{}}
+	since := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	mark := Stale{Since: since, Reason: StaleUnsupported}
+	if err := s.Write(ctx, PathView(slug), view); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Write(ctx, PathStale(slug), mark); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err = s.ReadRepoView(ctx, slug, "acme/webapp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Stored || !reflect.DeepEqual(got.View, view) {
+		t.Errorf("the stored view read back as %+v (stored %v), want %+v", got.View, got.Stored, view)
+	}
+	if got.Stale == nil || !got.Stale.Since.Equal(since) || got.Stale.Reason != StaleUnsupported {
+		t.Errorf("the marker read back as %+v, want %+v as stored", got.Stale, mark)
+	}
+
+	// One repository's node is its own: a neighbour has no view, and this read
+	// does not fall back to the project's.
+	other, err := s.ReadRepoView(ctx, "github-acme-other", "acme/other")
+	if err != nil || other.Stored || other.Stale != nil {
+		t.Errorf("a neighbour's node read as %+v (err %v), want no view", other, err)
+	}
+
+	if err := s.Write(ctx, PathView("github-acme-broken"), "not a view"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ReadRepoView(ctx, "github-acme-broken", "acme/broken"); err == nil {
+		t.Error("a node that does not decode read as a view")
 	}
 }

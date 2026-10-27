@@ -58,7 +58,7 @@ const eeBoundaryPackage = "internal/eeboundary/"
 // after its test stopped reading ee/ costs coverage for nothing; a reader left
 // out of it takes that workflow down.
 var eeReadingTests = []string{
-	"TestDocsEEReserved",
+	"TestDocsEELicensed",
 	"TestDocsLicensingStatement",
 }
 

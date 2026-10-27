@@ -135,10 +135,12 @@ const PROJECT = 'fugaro'
 const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
 
 /**
- * COMMANDS_TAKING_PROJECT is the plan's own list, hard-coded: the eleven
+ * COMMANDS_TAKING_PROJECT is the plan's own list, hard-coded: the twelve
  * operations `addCloudFlags` gives `--project` to (`internal/cli/cloud.go:51`,
  * called from each of those constructors), including the two log operations
- * that share the `logs` command -- console L5b's `runs.stats` is the eleventh. The complement -- the commands that take no
+ * that share the `logs` command -- console L5b's `runs.stats` is the eleventh,
+ * and plan GV2.1's `plan.status` the twelfth. The complement -- the commands
+ * that take no
  * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
  * command words the CLI itself uses (`version` and the rail's `config list`),
  * which is the same list `assertSpawnSurface` holds the table to; this file
@@ -150,6 +152,7 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'spend.report',
   'runs.list',
   'runs.stats',
+  'plan.status',
   'run.diagnose',
   'run.logs',
   'run.logLink',
@@ -415,22 +418,21 @@ describe('the spawn table and the argv it builds', () => {
     }).toThrow(/does not start with config list/)
   })
 
-  it('fixes the design allow-list exactly: thirteen argvs, twelve commands, eleven of them with --project', () => {
-    // The design's §5.1 rule 6 table is the whole allow-list, and **the table
-    // and the document are now the same thirteen argvs**: the rail's read
-    // (`config list --json`, the case above) used to be the picker's own row in
-    // a second table, and the owner's ruling of 2026-10-25 moved it onto this
-    // one. The two are held in step by hand on purpose: the Go side pins the
-    // document's thirteen
-    // (`internal/cli/docs_desktop_console_test.go`,
+  it('fixes the design allow-list exactly: fourteen argvs, thirteen commands, twelve of them with --project', () => {
+    // The design's §5.1 rule 6 table is the whole allow-list, argv for argv:
+    // the rail's read (`config list --json`, the case above) used to be the
+    // picker's own row in a second table until the owner's ruling of 2026-10-25,
+    // and plan GV2.1's `plan status --json` is the fourteenth. The Go side pins
+    // the document's list (`internal/cli/docs_desktop_console_test.go`,
     // TestDocsDesktopConsoleDesignAllowListIsExactArgv) and this case pins the
-    // console's thirteen.
+    // console's; the two are held in step by hand on purpose.
     expect([...SPAWN_COMMANDS].map((row) => row.words.join(' '))).toEqual([
       'watch --json',
       'budget show --json',
       'report --json',
       'runs ls --json',
       'runs stats --json',
+      'plan status --json',
       'diagnose --json',
       'logs --json',
       'logs --url',
@@ -440,8 +442,8 @@ describe('the spawn table and the argv it builds', () => {
       'doctor --json',
       'config list --json',
     ])
-    // The ten *commands* that take the flag (addCloudFlags, internal/cli/
-    // cloud.go:51) are ten rows plus one: `logs` has two rows, `--json` and
+    // The eleven *commands* that take the flag (addCloudFlags, internal/cli/
+    // cloud.go:51) are eleven rows plus one: `logs` has two rows, `--json` and
     // `--url`, and neither of them may be the one that forgets --project.
     const commandsWithProject = SPAWN_COMMANDS.filter((row) => row.takesProject).map((row) =>
       row.words.filter((word) => !word.startsWith('--')).join(' '),
@@ -453,6 +455,7 @@ describe('the spawn table and the argv it builds', () => {
         'report',
         'runs ls',
         'runs stats',
+        'plan status',
         'diagnose',
         'logs',
         'secrets ls',
@@ -460,7 +463,7 @@ describe('the spawn table and the argv it builds', () => {
         'doctor',
       ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(11)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(12)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))
@@ -502,6 +505,81 @@ describe('the spawn table and the argv it builds', () => {
     expect(argv[argv.indexOf('--config') + 1]).toBe('/Users/owner/.config/fugaro/config.toml')
     // ...and the ambient one, when the installation does not declare a path.
     expect(argvFor('budget.show', {}, safeContext())).not.toContain('--config')
+  })
+
+  it('spawns `plan status` with exactly these words, and no directory anywhere in them', () => {
+    // The plan read's argv, word for word (plan GV2.1; the design allow-list's
+    // `plan status --json` and its `--all`). It is written out rather than read
+    // from the row because the claim is *this* argv: `--json` first, then the
+    // cloud flags in the order `runs ls` carries them, then the one argument the
+    // screen may add.
+    expect(argvFor('plan.status', {}, safeContext({ project: 'chosen' }))).toEqual([
+      'plan',
+      'status',
+      '--json',
+      '--project',
+      'chosen',
+    ])
+    expect(argvFor('plan.status', { all: true }, safeContext({ project: 'chosen' }))).toEqual([
+      'plan',
+      'status',
+      '--json',
+      '--all',
+      '--project',
+      'chosen',
+    ])
+    // `all: false` is the screen's toggle off, and it must be the absence of the
+    // word rather than the word with a value beside it: `--all false` is an argv
+    // cobra reads as the flag being on.
+    expect(argvFor('plan.status', { all: false }, safeContext({ project: 'chosen' }))).not.toContain('--all')
+    // A flag payload cannot spell a word of its own, and it cannot get as far as
+    // the argv at all: the row declares a boolean and the builder refuses
+    // anything else rather than stringifying it into a word.
+    expect(() =>
+      argvFor(
+        'plan.status',
+        { all: '--dir' } as unknown as Parameters<typeof argvFor>[1],
+        safeContext({ project: 'chosen' }),
+      ),
+    ).toThrow(/all is not a boolean/)
+    // `--config` is the installation's, as on every cloud row: the read runs in
+    // the checkout's directory, and the config that names the project is a
+    // separate fact about the installation.
+    expect(
+      argvFor(
+        'plan.status',
+        {},
+        safeContext({ project: 'chosen', configPath: '/Users/owner/.config/fugaro/config.toml' }),
+      ),
+    ).toEqual([
+      'plan',
+      'status',
+      '--json',
+      '--project',
+      'chosen',
+      '--config',
+      '/Users/owner/.config/fugaro/config.toml',
+    ])
+    // **And no path, in any position.** The directory is the spawn's own: it is
+    // `safeContext.directory`, which reaches the child as its cwd and never as a
+    // word of the argv. This is the assertion a mutated row (`--dir`, a
+    // positional word) fails on, and it is checked against the directory the
+    // context actually carries rather than against a path the row would have to
+    // spell.
+    const directory = '/Users/owner/src/fugaro'
+    const argumentCases: ValidatedArguments[] = [{}, { all: true }]
+    for (const args of argumentCases) {
+      const argv = argvFor('plan.status', args, safeContext({ project: 'chosen', directory }))
+      expect(argv, JSON.stringify(args)).not.toContain(directory)
+      expect(argv, JSON.stringify(args)).not.toContain('--dir')
+      expect(argv).not.toContain('--gcp-project')
+      expect(argv).not.toContain('--region')
+      // Every word is either one of the command's own, the project's name, or
+      // the flag the schema declares -- there is nothing else it could be.
+      expect(argv.filter((word) => word.startsWith('--'))).toEqual(
+        args.all === true ? ['--json', '--all', '--project'] : ['--json', '--project'],
+      )
+    }
   })
 
   it('emits one array element per value, in the operation’s own order', () => {

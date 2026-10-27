@@ -1,9 +1,11 @@
 package coordinator
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -155,6 +157,80 @@ func (s *Store) Read(ctx context.Context, path string, out any) (etag string, fo
 		return "", false, err
 	}
 	return s.c.GetETag(ctx, path, out)
+}
+
+// RepoView is one repository's stored view as the database holds it: the
+// document the sweep replaces in place (PathView), whether there was one at
+// all, and the marker beside it that says the repository could not be
+// reconciled (PathStale).
+//
+// Stored is what a reader cannot tell from the view alone. An absent node and
+// a repository the sweep reconciled to nothing both read as a view with no
+// records, and a reader that showed the second when it had the first would
+// claim the coordinator had read a repository it never did.
+//
+// The marker is carried as the sweep wrote it and no age is computed from it:
+// the view beside it is a function of its inputs and carries no time
+// (sweep.go), so a read with a clock of its own would be comparing two things
+// that are not on the same scale.
+type RepoView struct {
+	// Repo is the repository the caller asked about, "owner/name", as the
+	// caller spelled it. The node's key is a slug — a hash of the provider
+	// and the name — so an absent node carries no name to read back.
+	Repo string `json:"repo"`
+	// Stored is whether the database held a view document.
+	Stored bool `json:"stored"`
+	// View is the stored view, and the zero view when Stored is false.
+	View View `json:"view"`
+	// Stale is the marker the sweep left, exactly as stored, or nil when the
+	// repository has none.
+	Stale *Stale `json:"stale,omitempty"`
+}
+
+// StoredProjectView is every repository's stored view, in the order the
+// caller read them. Like ProjectView it compares nothing across repositories.
+type StoredProjectView struct {
+	Repos []RepoView `json:"repos"`
+}
+
+// ReadRepoView reads repo's view and the marker beside it from slug's node,
+// typed rather than raw: this is the read the console and a person's own CLI
+// make (D364), and neither of them holds the credential a sweep uses.
+//
+// A node that does not decode is refused rather than shown as a view with
+// nothing in it, and an unknown field is a refusal too: this is the strict
+// decoding the tree's other wire formats keep, and a document this reader
+// cannot read is one it must not pass off as empty.
+func (s *Store) ReadRepoView(ctx context.Context, slug, repo string) (RepoView, error) {
+	out := RepoView{Repo: repo}
+	var raw json.RawMessage
+	if _, found, err := s.Read(ctx, PathView(slug), &raw); err != nil {
+		return RepoView{}, err
+	} else if found {
+		if err := strictDecode(raw, &out.View); err != nil {
+			return RepoView{}, fmt.Errorf("coordinator: reading /%s: %w", PathView(slug), err)
+		}
+		out.Stored = true
+	}
+	var mark json.RawMessage
+	if _, found, err := s.Read(ctx, PathStale(slug), &mark); err != nil {
+		return RepoView{}, err
+	} else if found {
+		var stale Stale
+		if err := strictDecode(mark, &stale); err != nil {
+			return RepoView{}, fmt.Errorf("coordinator: reading /%s: %w", PathStale(slug), err)
+		}
+		out.Stale = &stale
+	}
+	return out, nil
+}
+
+// strictDecode decodes one stored document, refusing a field this build does
+// not know rather than dropping it.
+func strictDecode(raw json.RawMessage, out any) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	return dec.Decode(out)
 }
 
 // Put writes v (nil deletes) at path only while the node still carries etag,

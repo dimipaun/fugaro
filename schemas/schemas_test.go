@@ -583,6 +583,13 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		Backlog: []string{"20261024-01", "20261024-02"},
 		// And the items it closed as the follow-up that fixed them (D31).
 		BacklogClosed: []string{"20261023-01"},
+		// And what the mode let through (docs/rigor-modes T3.4, D9, F19):
+		// the findings themselves, each with the score the table read, the
+		// mode that tolerated it and the reviewer's own words for it.
+		Tolerated: runstore.NewTolerated([]runstore.ToleratedFinding{
+			{Title: "the retry loop has no backoff", Mode: rigor.Startup, Likelihood: 1, Impact: 3, FixCost: 2, Class: rigor.Correctness},
+			{Title: "a long comment restates the function", Mode: rigor.Startup, Likelihood: 2, Impact: 2, FixCost: 1, Class: rigor.Cosmetic},
+		}),
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {
@@ -716,22 +723,52 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			t.Errorf("schema accepts %s: %s", tc.name, repl)
 		}
 	}
+	// What the mode let through (docs/rigor-modes T3.4, D9, F19) is closed
+	// too: an entry is the score the table read, the mode that tolerated it
+	// and the word for the score, so a value outside one of those vocabularies
+	// is a finding no reader should have to render — and the list is bounded
+	// the way the record's other bounded lists are.
+	for _, tc := range []struct{ name, old, new string }{
+		{"a label that is not one", `"label":"low"`, `"label":"minor"`},
+		{"a mode outside the vocabulary", `"mode":"startup","likelihood":1`, `"mode":"paranoid","likelihood":1`},
+		{"a class outside the vocabulary", `"class":"cosmetic"`, `"class":"style"`},
+		{"an axis outside the scale", `"likelihood":1`, `"likelihood":0`},
+		{"a finding with no title", `"title":"the retry loop has no backoff",`, ``},
+		{"a finding with no score", `"likelihood":1,"impact":3,"fix_cost":2,"class":"correctness"`, `"class":"correctness"`},
+		{"a key the finding does not carry", `"fix_cost":2`, `"severity":"minor"`},
+		{"a title longer than the bound", `"title":"the retry loop has no backoff"`, `"title":"` + strings.Repeat("x", runstore.MaxToleratedTitle+1) + `"`},
+		{"more findings than the bound", `"findings":[`, `"findings":[` + strings.Repeat(`{"title":"t","label":"nit","mode":"startup","likelihood":1,"impact":3,"fix_cost":2,"class":"correctness"},`, runstore.MaxTolerated)},
+	} {
+		old, repl := []byte(tc.old), []byte(tc.new)
+		if !bytes.Contains(data, old) {
+			t.Fatalf("fixture lacks the literal this test replaces (%s): %s", tc.name, data)
+		}
+		bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, old, repl, 1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(bad); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, repl)
+		}
+	}
 	without := rec
 	without.Backlog = nil
 	without.BacklogClosed = nil
+	without.Tolerated = nil
 	bare, err := json.Marshal(without)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(bare, []byte(`"backlog"`)) || bytes.Contains(bare, []byte(`"backlog_closed"`)) {
-		t.Fatalf("a run that filed and closed nothing still writes the fields: %s", bare)
+	if bytes.Contains(bare, []byte(`"backlog"`)) || bytes.Contains(bare, []byte(`"backlog_closed"`)) ||
+		bytes.Contains(bare, []byte(`"tolerated"`)) {
+		t.Fatalf("a run that filed, closed and tolerated nothing still writes the fields: %s", bare)
 	}
 	inst, err = jsonschema.UnmarshalJSON(bytes.NewReader(bare))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := sch.Validate(inst); err != nil {
-		t.Fatalf("schema rejects a record that filed nothing: %v\n%s", err, bare)
+		t.Fatalf("schema rejects a record that filed, closed and tolerated nothing: %v\n%s", err, bare)
 	}
 }
 
@@ -2080,6 +2117,32 @@ func TestFugaroSchemaAgentOAuthToken(t *testing.T) {
 	} {
 		if err := sch.Validate(yamlInstance(t, []byte(text))); (err == nil) != valid {
 			t.Errorf("%q: valid = %v, want %v (%v)", text, err == nil, valid, err)
+		}
+	}
+}
+
+// TestResultSchemaAcceptsCacheFields (P12): the run's prompt-cache read and
+// write token totals are part of the cost object. Pinned separately from
+// TestResultSchemaAcceptsRunnerRecords so a later edit that tightens cost's
+// additionalProperties fails here, naming the field, rather than only there.
+func TestResultSchemaAcceptsCacheFields(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	head := `{"version":1,"run_id":"20261027-100000-abcd","status":"succeeded","stage":"writeback","outcome":"ready","cost_usd":1.23,"started_at":"2026-10-27T10:00:00Z","cost":{"model_usd":1.23,"compute_usd":0,"compute_estimated":false,"total_usd":1.23,"estimate":true,"model_basis":"api-list"`
+	validate := func(lit string) error {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(head + lit + `}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	for _, lit := range []string{``, `,"cache_read_tokens":400`, `,"cache_write_tokens":50`, `,"cache_read_tokens":400,"cache_write_tokens":50`} {
+		if err := validate(lit); err != nil {
+			t.Errorf("schema rejects cost%s: %v", lit, err)
+		}
+	}
+	for _, lit := range []string{`,"cache_read_tokens":-1`, `,"cache_write_tokens":"50"`} {
+		if err := validate(lit); err == nil {
+			t.Errorf("schema accepts cost%s", lit)
 		}
 	}
 }

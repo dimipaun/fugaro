@@ -1,9 +1,10 @@
 package cli
 
-// ee/ is reserved at 0.11.0 (licensing plan L1.2, D306's fallback as ruled by
-// T1 choice (iii)): the folder holds a README that says so and no code, no
-// licence file and nothing else, until counsel's enterprise text is approved
-// and `ee/LICENSE` lands in its own task.
+// ee/ carries its licence from 2026-10-26 (licensing plan L4.1, brought
+// forward by the owner's ruling D311): the folder holds a README that says what
+// it is for, the draft `ee/LICENSE` that counsel has not read yet, and no code.
+// It is still reserved for net-new organisation features, which is the
+// sentence the website's licence band and LICENSING.md lean on.
 //
 // The read goes through readRealEE (docs_ee_repo_test.go), so this test's name
 // is in eeReadingTests and the "core without ee/" workflow skips it there.
@@ -14,21 +15,24 @@ import (
 	"testing"
 )
 
-// TestDocsEEReserved is the reservation itself: the README exists and says what
-// the folder is, ee/ holds nothing else, and there is no licence file to read.
-func TestDocsEEReserved(t *testing.T) {
-	// Read flattened and folded, so a re-wrapped sentence or a capitalised
-	// heading is not what this test is about: the folder's reservation is.
+// eeDraftStatusLine is the first line of `ee/LICENSE` until counsel has read
+// the text. The owner removes it then, and this constant goes with it in the
+// same commit, so a licence that quietly lost its status line while still a
+// draft fails here.
+const eeDraftStatusLine = "DRAFT FOR COUNSEL REVIEW: not yet reviewed by counsel"
+
+// TestDocsEELicensed: the README says what the folder is and that the licence
+// is a draft, the licence names the Software, the seats and the SPDX
+// identifier every ee/ file's notice carries, and ee/ holds nothing else.
+func TestDocsEELicensed(t *testing.T) {
 	flat := strings.ToLower(flattenDoc(readRealEE(t, "README.md")))
 	for _, want := range []string{
 		"reserved",
 		"net-new organisation features",
 		"their own licence",
-		"nothing here is licensed yet",
+		"](license)",
+		"counsel has not read",
 		"no code",
-		"no licence file",
-		"ee/license",
-		"counsel",
 		"nothing outside `ee/` imports anything under `ee/`",
 		"spdx-license-identifier: licenseref-fugaro-enterprise",
 	} {
@@ -37,14 +41,32 @@ func TestDocsEEReserved(t *testing.T) {
 		}
 	}
 
-	// The listing is the "and nothing else" half, and it is also how the test
-	// asserts that ee/LICENSE is absent: a reserved ee/ holds the one README, so
-	// a second tracked file (a licence file included) fails here rather than
-	// being read as if the folder were licensed.
-	entries := strings.Fields(readRealEE(t, ""))
-	if want := []string{"README.md"}; !slices.Equal(entries, want) {
-		t.Errorf(`ee/ holds %v; a reserved ee/ holds exactly %v.
+	licence := strings.ReplaceAll(readRealEE(t, "LICENSE"), "\r\n", "\n")
+	if first, _, _ := strings.Cut(licence, "\n"); first != eeDraftStatusLine {
+		t.Errorf("ee/LICENSE's first line is %q, want %q: the text is a draft counsel has not read (D311), and the status line comes off only when counsel has", first, eeDraftStatusLine)
+	}
+	flatLicence := flattenDoc(licence)
+	for _, want := range []string{
+		"Fugaro Enterprise Edition",
+		"LicenseRef-Fugaro-Enterprise",
+		"<URL TO BE PUBLISHED>",
+		"correct number of user seats",
+		"development and testing purposes without a subscription",
+		"Nothing under ee/ has ever been released",
+		`THE SOFTWARE IS PROVIDED "AS IS"`,
+	} {
+		if !strings.Contains(flatLicence, want) {
+			t.Errorf("ee/LICENSE lacks %q", want)
+		}
+	}
+	if core := licenceCopyrightLine(readDoc(t, "LICENSE")); licenceCopyrightLine(licence) != core {
+		t.Errorf("ee/LICENSE's copyright line is %q, want the root LICENSE's %q: the licensor of ee/ is the core's own holder until counsel names another", licenceCopyrightLine(licence), core)
+	}
 
-ee/ is reserved with no licence file until counsel's text is approved (licensing plan L1.2, T1 choice (iii)), so a file landing here means either the licence arrived and this test and ee/README.md move with it, or code arrived before there is anything licensing it.`, entries, want)
+	// The listing is the "and nothing else" half: no code has landed, so a
+	// third file here is code arriving without a test that says what it is.
+	entries := strings.Fields(readRealEE(t, ""))
+	if want := []string{"LICENSE", "README.md"}; !slices.Equal(entries, want) {
+		t.Errorf(`ee/ holds %v; it holds exactly %v until the first organisation feature lands, and that feature's task moves this list with it.`, entries, want)
 	}
 }

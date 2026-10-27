@@ -31,11 +31,19 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
-import { UNAVAILABLE_MARK, formatReading, readNumber } from '../../src/shared/availability'
+import { UNAVAILABLE_MARK, formatReading, readNumber, unavailable } from '../../src/shared/availability'
 import {
   DEGRADED_KEYS,
   FINISHED_KEYS,
   LIVE_KEYS,
+  PLAN_KEYS,
+  PLAN_NODE_KEYS,
+  PLAN_RELEASE_KEYS,
+  PLAN_MAX_LEVEL,
+  PLAN_STATES,
+  PLAN_STATUS_KEYS,
+  PLAN_STREAM_KEYS,
+  PLAN_TOTALS_KEYS,
   RECORD_KEYS,
   REPO_KEYS,
   RUN_KEYS,
@@ -43,10 +51,12 @@ import {
   NON_TEXT_STRING_KEYS,
   WIRE_TEXT_CLASSES,
   decodeDocument,
+  decodePlanStatus,
   decodeSnapshot,
   knownTopLevelKeys,
   wireTextClass,
 } from '../../src/shared/schema'
+import type { PlanState, PlanStatusView } from '../../src/shared/schema'
 import type { LiveDocument } from '../../src/shared/schema'
 import type { JSONDoc } from '../../src/source/source'
 import { loadFixture } from '../../src/source/fixture'
@@ -65,6 +75,17 @@ const documents: readonly JSONDoc[] = fixture.records
 
 /** first is the fixture's first document, which every test here starts from. */
 const first: JSONDoc = documents[0] ?? {}
+
+/**
+ * PLAN_STATUS is `test/fixtures/plan-status.json`: one `plan status --json`
+ * document, written from the Go structs (plan GV2.1). It is not a recording and
+ * carries no redactor header -- the read is a one-shot document rather than a
+ * feed, so it is JSON and not `.ndjson`, and the loader that verifies a
+ * recording never sees it. Its keys are pinned against the structs below.
+ */
+const PLAN_STATUS: JSONDoc = JSON.parse(
+  readFileSync(join('test', 'fixtures', 'plan-status.json'), 'utf8'),
+) as JSONDoc
 
 /**
  * RUNVIEW_SOURCE is `internal/runview/runview.go`, read from this file's own
@@ -93,6 +114,25 @@ const WATCH_SOURCE = readFileSync(
   'utf8',
 )
 
+/**
+ * PLAN_SOURCE and STATE_SOURCE are the two Go files the plan status document's
+ * shape is written in (plan GV2.1), read the same way and for the same reason:
+ * the document is one command's own, and a key the CLI gains without this
+ * console gaining it is a field a screen would silently draw nothing for.
+ *
+ * They are two files rather than one because the read is: `plan_status.go`
+ * writes the envelope and its figures, and `internal/plan/state.go` writes the
+ * plans, tasks, releases and streams the envelope carries.
+ */
+const PLAN_SOURCE = readFileSync(
+  fileURLToPath(new URL('../../../internal/cli/plan_status.go', import.meta.url)),
+  'utf8',
+)
+const STATE_SOURCE = readFileSync(
+  fileURLToPath(new URL('../../../internal/plan/state.go', import.meta.url)),
+  'utf8',
+)
+
 /** structTag is one field's `json:` tag: the key it writes, and whether the tag
  * carries `omitempty`. */
 interface StructTag {
@@ -103,10 +143,16 @@ interface StructTag {
 /** structTags is every `json:"…"` tag of one struct in `source`, in declaration
  * order. A field tagged `json:"-"` writes no key at all, so it is not one of
  * these. It throws rather than answering an empty list: a pin that silently
- * finds nothing would pass while checking nothing. */
-function structTags(source: string, name: string): readonly StructTag[] {
+ * finds nothing would pass while checking nothing. `file` is only the name the
+ * throw carries, so a struct that is not there reads as the file it was looked
+ * for in. */
+function structTags(
+  source: string,
+  name: string,
+  file = 'internal/runview/runview.go',
+): readonly StructTag[] {
   const start = source.indexOf(`type ${name} struct {`)
-  if (start < 0) throw new Error(`internal/runview/runview.go has no \`type ${name} struct\``)
+  if (start < 0) throw new Error(`${file} has no \`type ${name} struct\``)
   const end = source.indexOf('\n}', start)
   if (end < 0) throw new Error(`the ${name} struct is not closed at column 0, so its tags cannot be read`)
   const tags: StructTag[] = []
@@ -1033,7 +1079,7 @@ describe('every wire string is classified', () => {
       by: 'fixture-operator',
       at: '2026-10-15T12:00:00Z',
       reason: 'budget kill fixture-sandbox',
-    }), patched(first, ['queued_note'], 'the bucket was read a minute ago'), LIVE_REAL]
+    }), patched(first, ['queued_note'], 'the bucket was read a minute ago'), LIVE_REAL, PLAN_STATUS]
     for (const document of all) {
       expect(unclassified(document), JSON.stringify(stringLeaves(document).map((l) => l.path))).toEqual([])
     }
@@ -1064,6 +1110,14 @@ describe('every wire string is classified', () => {
     expect(stringLeaves(LIVE_REAL).map((leaf) => leaf.key)).toContain('credential')
     expect(stringLeaves(LIVE_REAL).map((leaf) => leaf.key)).toContain('waiting_until')
     expect(unclassified(LIVE_REAL)).toEqual([])
+    // And the plan status document's own keys: `artifact`, `theme`, `names`,
+    // `current`, `next`, `tag_prefix` and `mark` are in no other document, so
+    // without this row the map could claim to be total over the wire while
+    // missing exactly the keys this read writes.
+    for (const key of ['artifact', 'theme', 'names', 'current', 'next', 'tag_prefix', 'mark']) {
+      expect(stringLeaves(PLAN_STATUS).map((leaf) => leaf.key), key).toContain(key)
+    }
+    expect(unclassified(PLAN_STATUS)).toEqual([])
   })
 
   it('reports a key it has no class for, which is what makes the walk a test', () => {
@@ -1149,5 +1203,182 @@ describe('an optional boolean is a boolean or absent (review round 2 of PR 494)'
 
   it('still reads absent and null as false', () => {
     expect(decodeDocument(patched(DEGRADED_REAL, ['runs', 0, 'cost', 'compute_estimated'], null)).ok).toBe(true)
+  })
+})
+
+describe('the plan status document (plan GV2.1)', () => {
+  /** planDecoded is a plan document that must decode, or the test fails with
+   * the refusal's own sentence rather than on an assertion three lines later. */
+  function planDecoded(raw: unknown, where = 'the plan status document'): PlanStatusView {
+    const result = decodePlanStatus(raw, where)
+    if (!result.ok) throw new Error(result.skew.because)
+    return result.value
+  }
+
+  /** planRefusal is the refusal of a plan document that must be refused. */
+  function planRefusal(raw: unknown): { field: string; name: string } {
+    const result = decodePlanStatus(raw, 'the plan status document')
+    if (result.ok) throw new Error('expected a refusal')
+    return result.skew.refusal
+  }
+
+  it('decodes the committed fixture, and reads what the graph screen draws', () => {
+    const document = planDecoded(PLAN_STATUS)
+    expect(document.repo).toBe('example-owner/example-repo')
+    expect(formatReading(document.totals.plans)).toBe('2')
+    expect(formatReading(document.totals.tasks)).toBe('7')
+    expect(document.plans.map((plan) => plan.id)).toEqual([
+      'plans/2026-10-01-example-graph',
+      'example-second',
+    ])
+    // A plan's own three figures are the sum of its release boxes plus the
+    // tasks a plan gives no version, which is why the CLI states them and the
+    // console does not add anything up.
+    const [graph] = document.plans
+    expect(formatReading(graph?.tasks ?? unavailable('no plan'))).toBe('6')
+    expect(graph?.nodes.map((node) => node.state)).toEqual([
+      'done',
+      'running',
+      'ready',
+      'cancelled',
+      'blocked',
+      'not-started',
+    ])
+    expect(graph?.nodes[0]?.mark).toBe('merge unknown')
+    expect(graph?.nodes[0]?.prNumber).toBe(101)
+    expect(graph?.nodes[2]?.prNumber).toBeNull()
+    // The node a read collapses still says so: `closed` is the field the read
+    // counted it with, not a rule the screen re-derives from the state.
+    expect(graph?.nodes[3]?.closed).toBe(true)
+    expect(graph?.nodes[1]?.closed).toBe(false)
+    // A plan that names no stream has no stream, and a plan with no versioned
+    // task has no release box at all -- both are facts about the document
+    // rather than missing values.
+    expect(document.plans[1]?.stream).toBe('')
+    expect(document.plans[1]?.releases).toEqual([])
+    expect(document.streams).toEqual([
+      {
+        name: 'example',
+        theme: 'an invented theme',
+        names: ['Examplefruit', 'Examplebird'],
+        current: '1.4.0',
+        next: '1.5.0',
+        tagPrefix: 'v',
+      },
+    ])
+    expect(document.warnings).toHaveLength(1)
+  })
+
+  it('reads a count as a reading and a level as a number', () => {
+    // The availability rule is the whole of this test: a figure a header prints
+    // is a `Reading`, so a document that does not carry one is drawn as `n/a`
+    // rather than as a zero (`formatReading` is the only way to text it), while
+    // a node's `level` is a place in a dependency chain and is either there as
+    // a whole number or the document is not one this console can draw.
+    const document = planDecoded(PLAN_STATUS)
+    expect(formatReading(document.totals.open)).toBe('6')
+    expect(typeof document.plans[0]?.nodes[0]?.level).toBe('number')
+    // A totals object that carries no figure decodes as four unavailable
+    // readings rather than as four zeros: the document is readable and it does
+    // not know, which is the distinction the whole availability model exists
+    // for.
+    const noCounts = planDecoded(patched(PLAN_STATUS, ['totals'], {}))
+    expect(noCounts.totals.plans).toEqual(expect.objectContaining({ state: 'unavailable' }))
+    expect(formatReading(noCounts.totals.plans)).toBe(UNAVAILABLE_MARK)
+    const fractional = patched(PLAN_STATUS, ['plans', 0, 'nodes', 0, 'level'], 1.5)
+    expect(planRefusal(fractional).name).toBe('not-a-number')
+    expect(planRefusal(fractional).field).toBe('plans[0].nodes[0].level')
+  })
+
+  it('reads a pull request number only as a positive whole number, and a level only within its bound', () => {
+    // A pull request number is an identifier: a fraction, a negative, a zero or
+    // a numeral in a string is not one, and reading it as "no pull request"
+    // would hide that the document is wrong.
+    for (const bad of [-3.5, -3, 0, 2.5, '7', true]) {
+      const refusal = planRefusal(patched(PLAN_STATUS, ['plans', 0, 'nodes', 0, 'pr_number'], bad))
+      expect(refusal.name, String(bad)).toBe('not-a-number')
+      expect(refusal.field, String(bad)).toBe('plans[0].nodes[0].pr_number')
+    }
+    expect(planDecoded(patched(PLAN_STATUS, ['plans', 0, 'nodes', 0, 'pr_number'], 7)).plans[0]?.nodes[0]?.prNumber).toBe(7)
+    expect(planDecoded(patched(PLAN_STATUS, ['plans', 0, 'nodes', 0, 'pr_number'], null)).plans[0]?.nodes[0]?.prNumber).toBeNull()
+    // A level is a place in a dependency chain: whole, not negative, and not
+    // larger than any plan this console would draw.
+    for (const bad of [-1, PLAN_MAX_LEVEL + 1, 1e9]) {
+      const refusal = planRefusal(patched(PLAN_STATUS, ['plans', 0, 'nodes', 0, 'level'], bad))
+      expect(refusal.name, String(bad)).toBe('not-a-number')
+      expect(refusal.field, String(bad)).toBe('plans[0].nodes[0].level')
+    }
+    expect(planDecoded(patched(PLAN_STATUS, ['plans', 0, 'nodes', 0, 'level'], PLAN_MAX_LEVEL)).plans[0]?.nodes[0]?.level).toBe(PLAN_MAX_LEVEL)
+  })
+
+  it('types a plan state as the six words and nothing else', () => {
+    const known: PlanState = 'not-started'
+    expect(PLAN_STATES).toContain(known)
+    // @ts-expect-error 'paused' is not one of the six states
+    const unknown: PlanState = 'paused'
+    expect(PLAN_STATES).not.toContain(unknown)
+  })
+
+  it('refuses a state that is not one of the six, by name', () => {
+    // The decoder's own red step, and the reason this document needs a decoder
+    // at all: every field beside `state` is read in that word's light, so a
+    // seventh word is a CLI whose rules this build does not know. It is refused
+    // rather than drawn in whatever colour a screen keeps for "not one of mine".
+    for (const state of ['in-review', 'RUNNING', '', 'done ']) {
+      const refusal = planRefusal(patched(PLAN_STATUS, ['plans', 0, 'nodes', 0, 'state'], state))
+      expect(refusal.name, state).toBe('unknown-value')
+      expect(refusal.field, state).toBe('plans[0].nodes[0].state')
+    }
+    // ...and the six it does know all pass, so the refusal above is not a
+    // decoder that refuses every word.
+    expect(PLAN_STATES).toHaveLength(6)
+    for (const [index, state] of PLAN_STATES.entries()) {
+      const accepted = patched(PLAN_STATUS, ['plans', 0, 'nodes', 0, 'state'], state)
+      expect(planDecoded(accepted).plans[0]?.nodes[0]?.state, `${state} at ${String(index)}`).toBe(state)
+    }
+  })
+
+  it('lists every key of the document and of each object in it, read off the structs', () => {
+    // `structTags` is the reader the three pins above it use, and these are the
+    // two Go files the plan read is written in: the envelope and its figures are
+    // `plan_status.go`'s, the plans and everything under them are
+    // `internal/plan/state.go`'s. Both directions, as above: a key the console
+    // lists and the struct cannot write fails here, and so does a key the struct
+    // writes and the console does not list.
+    const pairs: readonly (readonly [readonly StructTag[], readonly string[], string])[] = [
+      [structTags(PLAN_SOURCE, 'planStatusDoc', 'internal/cli/plan_status.go'), PLAN_STATUS_KEYS, 'the document'],
+      [structTags(PLAN_SOURCE, 'planStatusTotals', 'internal/cli/plan_status.go'), PLAN_TOTALS_KEYS, 'totals'],
+      [structTags(STATE_SOURCE, 'StatePlan', 'internal/plan/state.go'), PLAN_KEYS, 'plans[]'],
+      [structTags(STATE_SOURCE, 'StateNode', 'internal/plan/state.go'), PLAN_NODE_KEYS, 'nodes[]'],
+      [structTags(STATE_SOURCE, 'StateRelease', 'internal/plan/state.go'), PLAN_RELEASE_KEYS, 'releases[]'],
+      [structTags(STATE_SOURCE, 'StateStream', 'internal/plan/state.go'), PLAN_STREAM_KEYS, 'streams[]'],
+    ]
+    for (const [tags, keys, what] of pairs) {
+      expect(tags.map((tag) => tag.key), what).toEqual([...keys])
+    }
+    // ...and the refusal itself, one step past the list: a key no struct of the
+    // read writes is refused by name rather than read as nothing.
+    const rogue = patched(PLAN_STATUS, ['plans', 0, 'nodes', 0, 'colour'], 'red')
+    expect(planRefusal(rogue).name).toBe('unknown-key')
+    expect(planRefusal(rogue).field).toBe('plans[0].nodes[0].colour')
+    expect(planRefusal(patched(PLAN_STATUS, ['download'], 'https://example.invalid/x')).field).toBe('download')
+  })
+
+  it('refuses a feed document, and the feed refuses this one', () => {
+    // The two documents carry no common marker, so neither door admits the
+    // other's: a plan document handed to the feed's door is an unknown shape,
+    // and the feed's own document is refused here for the keys it lacks. A
+    // screen that read one as the other would draw an empty graph over a live
+    // feed, or an empty feed over a graph.
+    // The feed's own document is refused by this door for the key it carries
+    // that no struct of the read writes -- the two shapes share no key at all,
+    // so the very first one is already a refusal.
+    expect(decodeDocument(PLAN_STATUS).ok).toBe(false)
+    const feed = decodePlanStatus(first)
+    expect(feed.ok).toBe(false)
+    if (!feed.ok) expect(feed.skew.refusal.name).toBe('unknown-key')
+    // The plan document's own door takes exactly the fixture, and an object
+    // that is not one at all is refused before anything is read from it.
+    expect(decodePlanStatus([]).ok).toBe(false)
   })
 })

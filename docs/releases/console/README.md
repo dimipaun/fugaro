@@ -67,3 +67,14 @@ that a console version is never confused with the CLI's own `0.11.0` (the owner'
 in the same commit, **before** the tag exists: `console/package.json`'s `version` is set to
 `X.Y.Z`, and this release's notes file is written as `vX.Y.Z.md`. The workflow refuses a tag
 whose `X.Y.Z` is not the version line's, and refuses to build without the notes file.
+
+## The licence changes at 0.113.0
+
+**From `0.113.0` the console is under its own business licence, [`console/LICENSE.md`](../../../console/LICENSE.md)**
+(the owner's ruling D311 of 2026-10-26, [`LICENSING.md`](../../../LICENSING.md)); every release
+up to and including `0.112.0` stays under the MIT licence it was released under. So the notes of
+`0.113.0` say it in their summary line or first bullet, in a user's words: the release is the first
+under the new licence, production use needs a subscription, and the earlier releases stay MIT.
+The licence text is a draft counsel has not read, and it names Subscription Terms that are not
+published yet: the release waits until the owner has published those terms or replaced that
+sentence, because until then a production user has no way to comply.

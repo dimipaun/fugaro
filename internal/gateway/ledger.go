@@ -106,6 +106,13 @@ type charge struct {
 	// an ordinary one as a tier A one. It means something only when usageRead
 	// says the call reported usage at all.
 	cacheRead int64
+	// cacheWrite is the call's reported cache-write tokens, both TTLs
+	// together. It is summed into the run's total and read for nothing else:
+	// it is what the run's own record needs to answer design §3's
+	// prompt-caching risk (a compressed session's cache prefix can change,
+	// turning cheap reads into dearer writes), and like cacheRead it means
+	// something only when usageRead is set.
+	cacheWrite int64
 	// usageRead is true for a call whose usage this gateway read (its report,
 	// complete or partial). A call that settled with no usage -- one that
 	// never reached the upstream, a relayed model or provider error, a
@@ -152,6 +159,12 @@ func (s *Server) settle(st *stageState, w pricing.Micros, c charge) {
 	// miss that cost nothing (F24).
 	if c.usageRead {
 		s.lastCacheRead, s.lastCacheKnown = c.cacheRead, true
+		// The run's cache totals are of the calls whose usage was read, for
+		// the same reason the switch estimate is: a call that reported none
+		// says nothing about what the run had cached, and adding its zero
+		// would read as a cache that did nothing (P12, F24).
+		s.cacheRead = int64(satAdd(pricing.Micros(s.cacheRead), pricing.Micros(c.cacheRead)))
+		s.cacheWrite = int64(satAdd(pricing.Micros(s.cacheWrite), pricing.Micros(c.cacheWrite)))
 	} else {
 		s.lastCacheRead, s.lastCacheKnown = 0, false
 	}

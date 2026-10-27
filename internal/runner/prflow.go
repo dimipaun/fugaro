@@ -423,8 +423,10 @@ func verifyPart(records []verify.Record) string {
 
 // reviewsPart is the section's account of the review rounds, or "". With a
 // first line, it says which tier the latest review is: the first line only
-// advises, the senior review decides.
-func reviewsPart(rs []runstore.ReviewSummary) string {
+// advises, the senior review decides. pol is the mode's findings policy for
+// the round the line reports (finalSection); a round the mode let through
+// names each finding it tolerated beside the count (T3.3).
+func reviewsPart(rs []runstore.ReviewSummary, pol FindingsPolicy) string {
 	if len(rs) == 0 {
 		return ""
 	}
@@ -442,7 +444,30 @@ func reviewsPart(rs []runstore.ReviewSummary) string {
 	case "none":
 		return fmt.Sprintf("%sreview round %d: skipped, no verdict", who, last.Round)
 	}
-	return fmt.Sprintf("%sreview round %d: %s", who, last.Round, Plural(last.Findings, "finding"))
+	return fmt.Sprintf("%sreview round %d: %s%s", who, last.Round, Plural(last.Findings, "finding"), toleratedPart(pol, last))
+}
+
+// toleratedPart is the rest of a review line whose round the run's mode let
+// through: one label per tolerated finding, in the reviewer's own order
+// (rigor.Split), and the mode that let them through — the words Decide's own
+// reason uses, so the body and the record can be diffed (D18, T3.3).
+//
+// "" for every other round, including a round the mode only partly tolerated:
+// what was let through is the whole round or nothing, and a line naming the
+// findings a mode would have tolerated in a round it blocked would be
+// claiming an answer Decide never gave (D7, F4). A first-line review never
+// decides (seniorReview), so it tolerates nothing whatever its counts say. A
+// run that never reaches Decide tolerates nothing either, which is why the
+// running section asks with the zero policy.
+func toleratedPart(pol FindingsPolicy, last runstore.ReviewSummary) string {
+	if last.Tier == runstore.TierFirst || !pol.tolerates(&last) {
+		return ""
+	}
+	labels := make([]string, 0, len(pol.Tolerated))
+	for _, s := range pol.Tolerated {
+		labels = append(labels, string(s.Label()))
+	}
+	return ", tolerated at " + inlineText(string(pol.Mode)) + " (" + inlineText(strings.Join(labels, ", ")) + ")"
 }
 
 // backlogPart is the section's account of the items the run wrote: the ids it
@@ -560,7 +585,10 @@ func (r *run) runningSection(stage string, during bool) string {
 	if during {
 		what = fmt.Sprintf("checkpoint during stage `%s`", inlineText(stage))
 	} else if stage == "review" || stage == "review_first" {
-		if p := reviewsPart(r.rec.Reviews); p != "" {
+		// The zero policy: mid-run nothing has been tolerated yet, and the
+		// section names what the round left rather than what a mode would do
+		// with it once the run reaches Decide (T3.3).
+		if p := reviewsPart(r.rec.Reviews, FindingsPolicy{}); p != "" {
 			what = p
 		}
 	}
@@ -587,7 +615,8 @@ func (r *run) pushedPart(records []verify.Record) string {
 }
 
 // finalSection is the section when the run ended: outcome, reason, tests,
-// reviews and cost.
+// reviews and cost. A review round the run's mode let through names each
+// finding it tolerated and the mode that tolerated it (T3.3, D7, D18).
 func (r *run) finalSection(ready bool, reason string, records []verify.Record) string {
 	head, why := "**Draft**", inlineText(reason)
 	switch {
@@ -598,7 +627,7 @@ func (r *run) finalSection(ready bool, reason string, records []verify.Record) s
 	case r.rec.Status == runstore.StatusCancelled:
 		head = "**Cancelled**"
 	}
-	return r.sectionLines(head, why, r.rigorPart(), verifyPart(records), reviewsPart(r.rec.Reviews), r.narrowText, r.backlogPart(), r.costPart(), r.updated("finished"))
+	return r.sectionLines(head, why, r.rigorPart(), verifyPart(records), reviewsPart(r.rec.Reviews, r.findingsPolicy()), r.narrowText, r.backlogPart(), r.costPart(), r.updated("finished"))
 }
 
 // ---- finalize ----

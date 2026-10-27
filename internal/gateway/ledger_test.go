@@ -1186,3 +1186,28 @@ func TestStageReportCountsDistinctAgents(t *testing.T) {
 		t.Errorf("Agents = %d, want 0: the main session is no sub-agent", rep.Agents)
 	}
 }
+
+// TestLedgerSumsCacheTokens (P12): the run's prompt-cache read and write
+// token totals are the sums of the calls' reported usage, both cache TTLs
+// together, and a call that read from no cache and wrote to none adds
+// nothing rather than a zero that would read as one.
+func TestLedgerSumsCacheTokens(t *testing.T) {
+	cached := pricing.Usage{Input: 100, CacheWrite5m: 30, CacheWrite1h: 5, CacheRead: 400, Output: 20}
+	h := newHarness(t, anthropicfake.StreamOK(sonnet, cached), anthropicfake.StreamOK(sonnet, pricing.Usage{Input: 100, Output: 20}))
+	for _, body := range []string{
+		msg(sonnet, 1000, `"stream":true`, `"cache_control":{"type":"ephemeral","ttl":"1h"}`),
+		msg(sonnet, 1000, `"stream":true`),
+	} {
+		if resp, _ := h.post(body); resp.StatusCode != 200 {
+			t.Fatalf("post: %d", resp.StatusCode)
+		}
+	}
+	h.gw.EndStage()
+	l := h.gw.Ledger()
+	if want := int64(cached.CacheRead); l.CacheReadTokens != want {
+		t.Errorf("ledger cache reads = %d, want %d", l.CacheReadTokens, want)
+	}
+	if want := int64(cached.CacheWrite5m + cached.CacheWrite1h); l.CacheWriteTokens != want {
+		t.Errorf("ledger cache writes = %d, want %d", l.CacheWriteTokens, want)
+	}
+}

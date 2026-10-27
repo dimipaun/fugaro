@@ -331,7 +331,7 @@ export interface ConsoleOperation {
 }
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Twenty-one operations, and the table
+ * CONSOLE_OPERATIONS is the whole surface. Twenty-two operations, and the table
  * is the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
@@ -341,19 +341,26 @@ export interface ConsoleOperation {
  * that -- and that list is `docs/json-contract.md`'s, read off the cobra
  * commands. The twelfth of those commands is `runs.stats` (console L5b, the
  * Spend screen's by-person view), which the table narrowed to this task's own
- * argument: see its comment below. The thirteenth operation is the startup
+ * argument: see its comment below.
+ *
+ * **GV2.1's `plan status --json` is this surface's fourteenth argv**: section
+ * 2.1's fourteenth row and §5.1 rule 6's `plan status --json` row (the
+ * console-v2 plan's GV1.6 ships the document, GV2.1 is this operation, and
+ * `console/docs/json-contract.md` §6.12 describes it). `plan.status`'s own
+ * comment below says why the directory it reads in never reaches it.
+ *
+ * The thirteenth **operation** (the row, not an argv) is the startup
  * handshake's answer (`startup.compatibility`, the console's own state, which
- * no CLI command can be asked for); the fourteenth is the one path that is not
- * a command: `openExternal`, whose URL argument goes through
- * `validateExternalUrl` -- `https:` only, no credentials, no port, host on
- * `ALLOWED_EXTERNAL_HOSTS` -- so the renderer's only way out of the console is
- * a link the console would have opened anyway. The fifteenth
- * (`installation.current`) is the dashboard's read of the installation the
- * operator chose, or D13's no-installation state; its handler is
- * `handlersFor`'s **optional** `installation` dep, so a build without a store
- * answers it with that state rather than failing to register. The last six are
- * the rail's own (see their comment below): one read of the CLI's list and five
- * operations on the console's own store and window.
+ * no CLI command can be asked for). `openExternal` is the one operation that is
+ * not a command at all and the only way out of the console: its URL argument
+ * goes through `validateExternalUrl` -- `https:` only, no credentials, no port,
+ * host on `ALLOWED_EXTERNAL_HOSTS` -- so the renderer can open a link the
+ * console would have opened anyway. `installation.current` is the dashboard's
+ * read of the installation the operator chose, or D13's no-installation state;
+ * its handler is `handlersFor`'s **optional** `installation` dep, so a build
+ * without a store answers it with that state rather than failing to register.
+ * The rail's six (see their comment below) are one read of the CLI's list and
+ * five operations on the console's own store and window.
  *
  * Two operations share one command and differ by their flags, deliberately:
  * `run.logs` is `logs RUN --json` and `run.logLink` is `logs RUN --url`. They
@@ -520,6 +527,46 @@ export const CONSOLE_OPERATIONS = [
         kind: 'runSince',
         required: false,
         why: 'the design allow-list admits `--since` on this command, in `runs stats`’s own forms (parseSince): 7d, 36h, 90m or 0 — never a date, and never `report`’s `12w`.',
+      },
+    ],
+  },
+  // The Plan screen's read (plan GV2.1). It is the thirteenth CLI command the
+  // console spawns, and the one read whose subject is the **checkout** rather
+  // than the project: `plan status` walks the graph artifacts under the
+  // checkout's own `docs/` and joins them to the runs of that checkout's
+  // repository, so the child has to run *in* the checkout.
+  //
+  // Its flags are the command's own, read off `newPlanStatusCmd` the way every
+  // other row's are, and §5.1 rule 6's row permits exactly `--all` among them.
+  //
+  // **The directory is therefore not a key of this schema, and never a word of
+  // its argv.** The main process sets the child's working directory from the
+  // installation's recorded checkout (`createBoundSource`, `src/source/cli.ts`),
+  // and an installation that has none is refused before a child exists: a
+  // renderer-supplied path would be a way for a document to name a directory the
+  // operator never chose (the plan's constraint C1, "the renderer never sends a
+  // path"). `argvFor` builds every word of the argv from the spawn table, and no
+  // row can emit `--dir` for this command.
+  //
+  // **`all` and nothing else.** `--all` is the screen's own control: it lists
+  // the closed tasks (merged and cancelled) that the read otherwise counts per
+  // release. It is a boolean and never a string, so a payload cannot spell a
+  // flag with it, and the cloud flags (`--project`, `--config`) are the
+  // installation's, exactly as `runs ls` carries them -- never `--gcp-project`
+  // or `--region`, which are no part of this surface. There is no positional
+  // argument: `newPlanStatusCmd` is cobra's `NoArgs`.
+  {
+    name: 'plan.status',
+    method: 'planStatus',
+    command: 'plan status',
+    flags: ['--json'],
+    summary: "every plan's tasks under the checkout's docs/, joined to the runs working on them",
+    args: [
+      {
+        key: 'all',
+        kind: 'flag',
+        required: false,
+        why: '`newPlanStatusCmd` has this flag, and it is the screen’s own control: it lists the tasks the read otherwise counts per release, which is narrower than the count the screen already has. It is the one argument this operation declares, and the design’s §5.1 table has not carried a row for the command yet.',
       },
     ],
   },
