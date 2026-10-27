@@ -1422,6 +1422,21 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// The digest step is the runner's own work (T3.2): it writes the run
+	// reports the repository is missing and commits them, with no model
+	// call, and planOf has no arm for it. A run that got past this point
+	// would drop the step, spend a full implement stage on the recipe's
+	// prompt and open an ordinary pull request in its name — the opposite of
+	// what run-digest asks for. Refused here, right after the recipe is
+	// resolved and before any stage: the launcher's image gate refuses a
+	// digest launch against a release image (digestSince,
+	// internal/cli/recipes_skew.go), and this is the backstop for the
+	// launches it cannot judge — a development or hand-pushed base image
+	// only warns there, and a hand-written task.json never passes it at all.
+	if recipe.UsesDigest(rcp) {
+		return fmt.Errorf("recipe %s holds a digest step, which this job image's runner does not execute yet: the run would skip the step and open an ordinary pull request instead. Upgrade the job image of %s workflow %s (fugaro image refresh --repo %s --workflow %s) to one whose runner writes the run reports",
+			rrec.Name, r.spec.Repo, r.spec.Workflow, r.spec.Repo, r.spec.Workflow)
+	}
 	switch {
 	case r.review && rcp.Mode != recipe.ModeReview:
 		return fmt.Errorf("recipe %s is not mode: review, but the task names pull requests to review", rrec.Name)

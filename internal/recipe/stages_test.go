@@ -44,6 +44,22 @@ func TestStageBoundArtifactIsOneModelStage(t *testing.T) {
 	}
 }
 
+// TestStageBoundDigestHasNoImplementStage: a digest recipe's first step is
+// the runner's own work -- it writes the run reports the repository is
+// missing with no model call -- so a run of it starts no implement stage,
+// and the review loop after it is all the run can record. Without this arm
+// the recipe falls into the implement arithmetic and is priced one stage too
+// high, which is the direction a cost ceiling must not err in.
+func TestStageBoundDigestHasNoImplementStage(t *testing.T) {
+	r, ps := Parse([]byte("version: 1\nname: d\nsteps:\n  - digest: {}\n  - review: { max_rounds: 1 }\n"))
+	if len(ps) != 0 {
+		t.Fatalf("problems: %s", ProblemsText(ps))
+	}
+	if got := StageBound(r, 3, 10); got != 2 { // the senior review and its fix
+		t.Fatalf("digest bound = %d, want 2", got)
+	}
+}
+
 // TestUsesV07DecidesByKeyPresence: a 0.6 parser refuses every one of these
 // keys outright ("is not a recipe key"), even written with a value that
 // looks like a no-op, so UsesV07 must decide from presence, never from the

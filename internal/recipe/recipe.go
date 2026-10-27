@@ -234,6 +234,24 @@ func UsesV08(r *Recipe) bool {
 	return r.newKeysV08
 }
 
+// UsesDigest reports whether r holds the digest step, the report run's own
+// step (run-digest, T3.1). It reads the parsed steps rather than a
+// parse-time flag, unlike UsesV07 and UsesV08: a parser that predates the
+// step refuses the whole recipe ("is not a step type") instead of dropping
+// the key, so no recipe that parses without the step can have carried one.
+//
+// It is read by the launch gate: checkRecipeImage and
+// checkCloneRecipeImage choose digestSince when the embedded recipe holds
+// the step (internal/cli/recipes_skew.go), so a digest launch against a job
+// image whose runner predates the release that executes it is refused
+// before it starts, naming fugaro image refresh, rather than reaching the
+// runner's own refusal (internal/runner/runner.go, right after
+// resolveRecipe) — which is the backstop for the launches the launcher
+// cannot judge, a development base image among them.
+func UsesDigest(r *Recipe) bool {
+	return slices.ContainsFunc(r.Steps, func(s Step) bool { return s.Kind == StepDigest })
+}
+
 // Renamed are catalog names removed in 0.7.0 and what replaced them.
 var Renamed = map[string]string{"cheap-loop-senior": "standard", "claude-solo": "solo"}
 
