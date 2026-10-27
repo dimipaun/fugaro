@@ -47,6 +47,14 @@ func newReleaseRepo(t *testing.T) *releaseRepo {
 			t.Fatalf("copying %s: %v", name, err)
 		}
 	}
+	// The copied plugin carries the repository's own version, which is the last
+	// release's and moves with every one: a test cutting 0.12.0 would find the
+	// plugin already there once 0.12.0 ships and its bump commit would be empty.
+	// Pin the fixture's plugin below every version these tests release.
+	pin := exec.Command("bash", filepath.Join(seed, "scripts", "bump-plugin-version.sh"), "0.11.4")
+	if out, err := pin.CombinedOutput(); err != nil {
+		t.Fatalf("pinning the fixture plugin version: %v\n%s", err, out)
+	}
 	// scripts/release.sh reads the CLI stream out of docs/release-streams.yaml,
 	// so the fixture carries its own, pinned: the repository's own file moves
 	// with every release, and a test reading it would assert against whatever
