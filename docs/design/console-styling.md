@@ -724,6 +724,90 @@ the `@media (prefers-reduced-motion: reduce)` arm that restates these styles are
 task, and until they land every state above is already the static drawing that arm must
 leave behind.
 
+### 2.12 Coordinator — `console/src/renderer/screens/coordinator.ts`
+
+The Coordinator draws the project view: one panel per repository the installation's config
+lists, each with the sweep's own marker, the three counts beside the repository's name, the
+records with the runs behind them, the collisions, and the pull requests whose host state no
+sweep could read. Regions in tree order: the read's source line → the console's sentence
+about the age the view does not carry → one `section.coordinator-repo` per repository (the
+name → which view the node is → the marker → the counts → what a bound left out → the
+records → the collisions → the unreads) — or, for an installation that lists no repository,
+the console's own empty sentence instead of the panels. **The read is one command line**
+(`fugaro coordinator status --from-store --all --json`) and the drawing adds no control, no
+link and no gesture: the screen is read-only, which is why no rule here needs a transition
+beyond the focus ring the shared blocks already carry.
+
+| Hook | Drawn as | Note |
+|---|---|---|
+| `section.coordinator` | the screen's root | carries `data-theme` like every other screen's |
+| `coordinator-source` | `p` | the read's own command line, in the console's words |
+| `coordinator-age`, `coordinator-empty` | `p` | the console's two sentences: the age the stored view does not carry, and an installation that lists no repository |
+| `section.coordinator-repo` | the repository's panel | one per repository the config lists |
+| `h2.coordinator-repo-name` | `h2` | the repository's own name, read out of the local config |
+| `coordinator-repo-state` | `p` | which view the node is: `the last stored view`, or the runs-only fallback |
+| `coordinator-repo-stale` | `p` | the sweep's marker, drawn only when the document carries one |
+| `coordinator-stale-word`, `coordinator-stale-since`, `coordinator-stale-reason` | `span`s inside it | the introducing word, the stamp and the reason, drawn exactly as stored |
+| `coordinator-counts` | `p` | the three counts beside a repository's name |
+| `coordinator-count` | `span` | one count's cell, and the screen's number hook: the class the tabular figures hang from |
+| `coordinator-count-word`, `coordinator-count-value` | `span`s inside the cell | the console's own word for the count, and the reading |
+| `coordinator-omitted` | `p` | the bound that left records or collisions out, drawn only when the document says so |
+| `coordinator-omitted-word` | `span` | the console's sentence introducing them |
+| `coordinator-records`, `coordinator-collisions`, `coordinator-unreads` | `ul`s | a repository's three lists, each drawn only when it holds something |
+| `li.coordinator-record` | `li` | one record: a pull request with the runs behind it, or the in-flight runs alone |
+| `coordinator-record-label` | `span` | the console's own name for the record |
+| `coordinator-record-title` | `span` | the untrusted title whoever opened the pull request wrote |
+| `coordinator-record-state`, `coordinator-record-branch`, `coordinator-record-release` | `span`s | the host's state, the branch and the release |
+| `coordinator-record-draft`, `coordinator-record-flight`, `coordinator-record-noruns` | `span`s | the console's own words: `draft`, `in flight` or `finished`, and `no run behind it` |
+| `coordinator-runs` | `ul` | the runs behind the record, hung off the row by the hairline a nested panel is separated with (§3.8) |
+| `li.coordinator-run` | `li` | one run |
+| `coordinator-run-id` | `span` | the run's id |
+| `coordinator-run-status`, `coordinator-run-outcome` | `span`s | the record's own words, each drawn only when it wrote one |
+| `coordinator-run-declared-word`, `coordinator-run-by` | `span`s | the introducing word and the declaration itself, which is unverified and is never an identity |
+| `coordinator-run-open`, `coordinator-run-short` | `span`s | `in flight`, and the store's own admission that the path set is short |
+| `li.coordinator-collision` | `li` | one pair of records in flight on the same files or services |
+| `coordinator-collision-a`, `coordinator-collision-b` | `span`s | the pair's two labels |
+| `coordinator-collision-word` | `span` | the console's sentence between them |
+| `coordinator-file`, `coordinator-service` | `span`s | one path and one service of the shared sets, each already cut to the console's cap |
+| `coordinator-more` | `span` | how many of a cut list were not drawn |
+| `li.coordinator-unread` | `li` | one pull request a sweep could not read |
+| `coordinator-unread-word` | `span` | the introducing words, `state unread` |
+| `coordinator-unread-number` | `span` | the pull request's number |
+| `coordinator-unread-reason`, `coordinator-unread-retry` | `span`s | the reason a sweep gave, and when it may retry |
+| `coordinator-unread-carried` | `span` | the console's answer to whether the state shown is the last one a sweep did read |
+
+**This screen emits no `data-*` of its own, so every rule for it is written against a
+class.** It holds no control, no state variant and no selection — the one attribute it
+stamps is the `data-theme` every screen's root carries — and a rule that wanted a `data-*`
+here would be inventing the state it keyed on. Three of the hooks above are drawn as `span`s
+the rules select **without a tag** (`coordinator-file`, `coordinator-service` and
+`coordinator-more`, which the screen's own `listCell` and `countCell` pass through a
+`...classes` parameter): the scan that pairs a selector with the tag the renderer draws
+cannot read a class that arrives through a parameter, and a bare class selector is the shape
+`degraded-num` already has.
+
+**Five hooks the stylesheet does not select**, and §2's rule read the other way:
+`coordinator-count-records`, `coordinator-count-inflight`, `coordinator-count-collisions`,
+`coordinator-omitted-records` and `coordinator-omitted-collisions` say *which* count each
+cell is, and the rules that align the counts and colour the sentence that introduces them are
+written on the cell and on the sentence rather than on the five. They are the screen's own
+bookkeeping, and a rule that wants one adds it to the table above first.
+
+**Three readings ask for attention, and each carries its own word**: a pair of records in
+flight on the same files or services, a pull request whose state no sweep could read, and a
+set the document's own bound left short — the last of which is the reading §2.11's
+`graph-not-shown` draws the same way. All three take `--warn`, whose role cell is
+"attention" (§3.2), and all three are drawn beside the sentence that says what they are, so
+the tone is redundant by construction (§3.5) and this screen adds no arm to the
+`forced-colors` block: no rule here depends on colour alone. **No rule paints `--ok`**:
+§3.2 licenses that token to two readings, and no repository, record or run on this screen is
+either of them.
+
+**The screen claims no age, and the stylesheet does not add one.** The stored view carries
+no time by design, so the marker's stamp is drawn as the string the document holds and never
+reformatted into a date: the console's own sentence about the time it does not have is the
+`coordinator-age` paragraph, and it is drawn as prose.
+
 ---
 
 ## 3. The theme system
