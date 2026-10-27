@@ -284,13 +284,13 @@ func TestFollowUpInheritsCompressionOff(t *testing.T) {
 	}
 }
 
-// TestCompressionImageGateRefusesOldCloneBuild is the clone branch of that
-// gate: a checkout: clone workflow has no derived image and so no build record
-// to judge (checkImageSince's half), and the floor is judged against
-// base_images.base itself instead (checkCloneImageSince). 0.7.5 is a release
-// that predates compressionSince, so the launch is refused there — before any
-// execution — exactly as the built-image branch refuses its own old build
-// record.
+// TestCompressionImageGateRefusesOldCloneBuild is the clone branch of the
+// compression gate: a checkout: clone workflow has no derived image and so no
+// build record to judge (checkImageSince's half), and the floor is judged
+// against base_images.base itself instead (checkCloneImageSince). 0.7.5 is a
+// release that predates compressionSince, so the launch is refused there —
+// before any execution — exactly as the built-image branch refuses its own old
+// build record.
 func TestCompressionImageGateRefusesOldCloneBuild(t *testing.T) {
 	f := newCloudFixture(t)
 	compressionOnForTest(t)
@@ -316,7 +316,7 @@ func TestCompressionImageGateRefusesOldCloneBuild(t *testing.T) {
 }
 
 // TestRetryKeepsNoCompression: --retry replays a run's stored task as it is —
-// --no-compression is in taskFlags for that reason, so a stored task is the
+// --no-compression is in taskFlags for that reason, so the stored task is the
 // only thing that can carry the override into a retry — and the field is what
 // the retried launch's own image gate is judged on. A retry that dropped it
 // would not merely lose the override: createTask compares the stored task with
