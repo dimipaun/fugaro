@@ -305,12 +305,9 @@ func bitbucketCitedPaths(doc string) []string {
 //
 // The list shrinks as the tasks land, and the test says so when it does not:
 // T0.1's own file left it in the commit that wrote this guard and T0.2's in the
-// commit that registered the checks, so both are checked like every other cited
-// path now.
+// commit that registered the checks, and T1.1's two files left it after T1.1
+// landed, so all of them are checked like every other cited path now.
 var bitbucketWillCreate = map[string]string{
-	// S1: the key-free stored-view read.
-	"internal/cli/coordinator_view.go":      "T1.1",
-	"internal/cli/coordinator_view_test.go": "T1.1",
 	// S2: Bitbucket in the coordinator job, through the service.
 	"internal/gitprov/bitbucket/oauth.go":              "T2.1",
 	"internal/gitprov/bitbucket/oauth_test.go":         "T2.1",

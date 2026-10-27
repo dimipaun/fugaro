@@ -30,6 +30,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/stats"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -223,6 +224,11 @@ type Digest struct {
 	Total Figures
 	// Flags counts the period's flags by name, in FlagNames order.
 	Flags []FlagCount
+	// Recipes is each recipe's median cost over the period's runs, by the
+	// name the report writes: a catalog recipe's own, "other" for every other
+	// name. It is the per-recipe figure D326's third rule reads month over
+	// month.
+	Recipes map[string]budget.Micros
 	// Dropped is how many selected rows the size cap left out.
 	Dropped int
 }
@@ -234,6 +240,7 @@ type Digest struct {
 // prefix names.
 func Build(recs []runstore.Record, p Period) Digest {
 	all := make([]Run, 0, len(recs))
+	byRecipe := map[string][]budget.Micros{}
 	total := Figures{}
 	for i := range recs {
 		rec := &recs[i]
@@ -242,6 +249,8 @@ func Build(recs []runstore.Record, p Period) Digest {
 		}
 		r := row(rec)
 		all = append(all, r)
+		name := recipeName(rec)
+		byRecipe[name] = append(byRecipe[name], cost(r))
 		total.Runs++
 		if len(r.Flags) > 0 {
 			total.Flagged++
@@ -278,13 +287,61 @@ func Build(recs []runstore.Record, p Period) Digest {
 	}
 
 	d := Digest{
-		Period: p,
-		Runs:   append(flagged, rest...),
-		Stages: stages(recs, p),
-		Total:  total,
-		Flags:  flagCounts(all),
+		Period:  p,
+		Runs:    append(flagged, rest...),
+		Stages:  stages(recs, p),
+		Total:   total,
+		Flags:   flagCounts(all),
+		Recipes: recipeMedians(byRecipe),
 	}
 	return capTo(d, MaxBytes)
+}
+
+// recipeName is the record's recipe as the report names it: the catalog
+// recipe's own name, and "other" for every name that is not one (G1).
+//
+// The name alone is not the recipe: a repository's own recipe file, and a
+// project layer's, may reuse a catalog name and shadow the built-in one, so
+// only a run whose recipe came from the catalog is counted under a catalog
+// label -- otherwise one repository's own loop and its figures would sit
+// where a reader reads the catalog's. It is the rule internal/stats publishes
+// by, and a name the catalog retired keeps its figures under the name the
+// catalog carries now. A record that names no recipe is one no catalog recipe
+// accounts for, which is what "other" says.
+func recipeName(rec *runstore.Record) string {
+	if rec.Recipe == nil {
+		return other
+	}
+	if name, ok := stats.ShippedName(rec.Recipe.Name, rec.Recipe.Source); ok {
+		return name
+	}
+	return other
+}
+
+// recipeMedians is each recipe's median cost over the period's runs.
+func recipeMedians(byRecipe map[string][]budget.Micros) map[string]budget.Micros {
+	if len(byRecipe) == 0 {
+		return nil
+	}
+	out := make(map[string]budget.Micros, len(byRecipe))
+	for name, costs := range byRecipe {
+		out[name] = median(costs)
+	}
+	return out
+}
+
+// median is the middle figure, and the mean of the two middle ones, rounded
+// up, when there is an even number of them.
+func median(vals []budget.Micros) budget.Micros {
+	sorted := slices.Sorted(slices.Values(vals))
+	switch n := len(sorted); {
+	case n == 0:
+		return 0
+	case n%2 == 1:
+		return sorted[n/2]
+	default:
+		return (sorted[n/2-1] + sorted[n/2] + 1) / 2
+	}
 }
 
 // row is one record as the report's row.

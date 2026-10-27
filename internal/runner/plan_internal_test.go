@@ -16,8 +16,8 @@ func intp(n int) *int { return &n }
 
 // TestPlanRoundCeilingPrecedence: the mode's ceiling sits *under* F6's
 // precedence rather than beside it (T3.2, D7b). The precedence is asserted
-// through planOf's own answer — the task's override, else the repository's
-// agent.review_rounds, else the recipe's max_rounds — and every mode's ceiling
+// through planOf's own answer — the task's override, else the recipe's
+// max_rounds, else the repository's agent.review_rounds — and every mode's ceiling
 // only lowers it: a cheaper mode spends fewer rounds than the precedence agreed
 // on, a mode whose ceiling does not bite leaves the precedence's answer alone,
 // and a repository that configured no rigor keeps today's rounds whatever mode

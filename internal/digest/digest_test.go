@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -173,31 +175,17 @@ func TestDigestGolden(t *testing.T) {
 
 	// The fenced block is what a later report's pattern rules read, so it has
 	// to be JSON and it has to say what the tables say.
+	raw, ok := fencedBlock(got)
+	if !ok {
+		t.Fatal("the report carries no json block")
+	}
 	var block Summary
-	if err := json.Unmarshal(fenced(t, got), &block); err != nil {
+	if err := json.Unmarshal(raw, &block); err != nil {
 		t.Fatalf("the summary block is not JSON: %v", err)
 	}
 	if !reflect.DeepEqual(block, d.Summary()) {
 		t.Errorf("the summary block = %+v, want %+v", block, d.Summary())
 	}
-}
-
-// fenced is the report's ```json block, the bytes between its fence lines.
-func fenced(t *testing.T, out []byte) []byte {
-	t.Helper()
-	lines := strings.Split(string(out), "\n")
-	for i, l := range lines {
-		if l != "```json" {
-			continue
-		}
-		for j := i + 1; j < len(lines); j++ {
-			if lines[j] == "```" {
-				return []byte(strings.Join(lines[i+1:j], "\n"))
-			}
-		}
-	}
-	t.Fatal("the report carries no json block")
-	return nil
 }
 
 // TestDigestSelection pins D325's rule: every flagged run is selected whatever
@@ -395,6 +383,54 @@ func TestDigestUnknownEnumRendersOther(t *testing.T) {
 			t.Errorf("the report does not render %q:\n%s", want, out)
 		}
 	}
+}
+
+// TestDigestARepoRecipeIsNotTheCatalogRecipe: a repository's own recipe file,
+// and a project layer's, may reuse a catalog name -- resolveRecipe lets it
+// shadow the built-in one -- so the name alone is not the recipe. Only a run
+// whose recipe came from the catalog is counted under a catalog label, the
+// rule internal/stats publishes by: otherwise one repository's own loop and
+// its figures would sit where a reader reads the catalog's.
+func TestDigestARepoRecipeIsNotTheCatalogRecipe(t *testing.T) {
+	recipeOf := func(rec runstore.Record, name string, source recipe.Source) runstore.Record {
+		rec.Recipe = &runstore.RecipeRecord{Name: name, Source: string(source), SHA256: strings.Repeat("a", 64)}
+		return rec
+	}
+	recs := []runstore.Record{
+		recipeOf(run(t, "20261019-090000-aaaa", "2026-10-19T09:00:00Z", 0.10, 0), "standard", recipe.SourceCatalog),
+		recipeOf(run(t, "20261020-090000-bbbb", "2026-10-20T09:00:00Z", 9.00, 0), "standard", recipe.SourceRepo),
+		recipeOf(run(t, "20261021-090000-cccc", "2026-10-21T09:00:00Z", 9.00, 0), "standard", recipe.SourceProject),
+		// A catalog name 0.7.0 retired keeps its figures under the name the
+		// catalog carries now.
+		recipeOf(run(t, "20261022-090000-dddd", "2026-10-22T09:00:00Z", 0.30, 0), "claude-solo", recipe.SourceCatalog),
+	}
+
+	got := Build(recs, week43(t)).Recipes
+	for _, want := range []struct {
+		name string
+		usd  string
+	}{
+		{"standard", "0.100000"}, // the catalog's own run alone
+		{"solo", "0.300000"},     // the retired name, under the catalog's name
+		{"other", "9.000000"},    // the two shadowing runs, never under "standard"
+	} {
+		if got[want.name] != mustMicros(t, want.usd) {
+			t.Errorf("the median for %s = %s, want %s: %v", want.name, report.USD6(got[want.name]), want.usd, got)
+		}
+	}
+	if len(got) != 3 {
+		t.Errorf("the report's recipes = %v, want standard, solo and other", got)
+	}
+}
+
+// mustMicros is an exact dollar string as micro-dollars.
+func mustMicros(t *testing.T, usd string) budget.Micros {
+	t.Helper()
+	m, ok := micros(usd)
+	if !ok {
+		t.Fatalf("%q is not a dollar string", usd)
+	}
+	return m
 }
 
 // TestDigestHasNoPersonField pins the types: there is no field a person could

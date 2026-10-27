@@ -279,7 +279,8 @@ export interface GraphColumn {
   readonly plans: readonly GraphPlan[]
 }
 
-/** GraphModel is one tab's whole picture. `notShown` is the sum of the plans'. */
+/** GraphModel is one tab's whole picture. `notShown` is the sum of the plans',
+ * plus one for every plan dropped past the `GRAPH_MAX_PLANS` cap. */
 export interface GraphModel {
   readonly tab: GraphTab
   readonly tabs: readonly GraphTabOption[]
@@ -406,7 +407,7 @@ export function buildGraphModel(inputs: GraphInputs): GraphModel {
   for (const stream of streams) {
     const ofStream = plans.filter((plan) => plan.stream === stream)
     if (ofStream.length === 0) continue
-    columns.push({ stream, label: streamLabel(document, streams, stream), plans: ofStream })
+    columns.push({ stream, label: streamLabel(document, stream), plans: ofStream })
   }
 
   return { tab, tabs, columns, chips: chipGroups(document, streams, chips), notShown }
@@ -420,7 +421,7 @@ export function buildGraphModel(inputs: GraphInputs): GraphModel {
 function graphTabs(document: PlanStatusView, streams: readonly string[]): readonly GraphTabOption[] {
   const tabs: GraphTabOption[] = streams.map((stream) => ({
     tab: stream,
-    label: streamLabel(document, streams, stream),
+    label: streamLabel(document, stream),
   }))
   tabs.push({ tab: null, label: own('All') })
   return tabs
@@ -447,7 +448,7 @@ function streamOrder(document: PlanStatusView): readonly string[] {
 /** streamLabel is what a column and a tab are called. A stream's `name` is a
  * string a checkout wrote, so it goes through the `stream` class; the
  * no-stream column is the console's own two words. */
-function streamLabel(document: PlanStatusView, streams: readonly string[], stream: string): Sanitized {
+function streamLabel(document: PlanStatusView, stream: string): Sanitized {
   if (stream === '') return own('no stream')
   const at = document.streams.findIndex((candidate) => candidate.name === stream)
   if (at >= 0) return sanitizeText(stream, classOf('stream'), `streams[${String(at)}].name`)
@@ -600,7 +601,7 @@ function chipGroups(
     const ordered = [...ofStream].sort(
       (left, right) => compare(left.version, right.version) || compare(left.plan, right.plan),
     )
-    groups.push({ stream, label: streamLabel(document, streams, stream), chips: ordered })
+    groups.push({ stream, label: streamLabel(document, stream), chips: ordered })
   }
   return groups
 }

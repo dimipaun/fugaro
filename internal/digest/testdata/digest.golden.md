@@ -27,5 +27,5 @@ Model calls and sub-agents by stage, over every run of the period.
 ## Summary
 
 ```json
-{"period":"2026-W43","start":"2026-10-19","end":"2026-10-25","runs":7,"shown":7,"flagged":4,"billed":"4.200000","notional":"0.150000","review":"0.740000","halts":1,"flags":{"fix_rounds":1,"halt":1,"review_calls":1,"subagents":1}}
+{"period":"2026-W43","start":"2026-10-19","end":"2026-10-25","runs":7,"shown":7,"flagged":4,"billed":"4.200000","notional":"0.150000","review":"0.740000","halts":1,"flags":{"fix_rounds":1,"halt":1,"review_calls":1,"subagents":1},"recipes":{"other":"0.300000"}}
 ```

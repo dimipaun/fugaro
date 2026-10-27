@@ -6,8 +6,8 @@ package rigor
 // rather than a condition inside itself.
 //
 // The ceiling only ever lowers. The review step's rounds come from F6's
-// precedence first — the task's Overrides.ReviewRounds, else the repository's
-// agent.review_rounds, else the recipe's max_rounds — and the ceiling is spent
+// precedence first — the task's Overrides.ReviewRounds, else the recipe's
+// max_rounds, else the repository's agent.review_rounds — and the ceiling is spent
 // under that answer, never above, so no mode buys a run more rounds than its
 // own configuration asked for.
 //
