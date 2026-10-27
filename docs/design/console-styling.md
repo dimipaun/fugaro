@@ -159,9 +159,13 @@ that wants it, so the test's list and the stylesheet's selectors move together. 
 deliberately the subset a rule is written against rather than a second copy of the code.
 **`data-hidden`** (every view the mode withholds) and **`data-skew`** (the compatibility
 handshake), both stamped by `console/src/shared/version.ts`, are the two the inventory test
-refuses by name; the graph screen's eight unlisted attributes are §2.11's own. They are the
-examples the rule holds for: they are emitted, no rule needs them, and a rule that suddenly
-wants one adds it to this table first.
+refuses by name; the graph screen's eight unlisted attributes are §2.11's own, and six of
+those the test refuses by name too. They are the examples the rule holds for: they are
+emitted, no rule needs them, and a rule that suddenly wants one adds it to this table first.
+The test's licence is by attribute **name**, not by name and screen, so the two of §2.11's
+eight that are hooks here as well — `data-key` for the spend screen (§2.3, §2.4) and
+`data-view` for the navigation and the people panel (§2.1, §2.5) — stay licensed, and §2.11
+says so.
 
 Three facts hold across every screen and are stated once:
 
@@ -655,7 +659,7 @@ order: header → tabs → chips → canvas, or the list, never both.
 | `graph-not-shown` | `p` | a bound dropped plans, tasks or needs: the console's own sentence, in `--warn` |
 | `graph-chips`, `graph-chip-group`, `graph-chip-stream` | `div`, `section`, `h2` | the finished releases, one group per stream |
 | `graph-chip-list`, `graph-chip-item`, `graph-chip` | `ul`, `li`, `button` | one chip per finished release: `aria-expanded` is the fact the click flips |
-| `graph-chip-name`, `graph-chip-mark`, `graph-chip-version` | `span`s inside the chip | the name, the `·` mark and the version |
+| `graph-chip-name`, `graph-chip-mark`, `graph-chip-version` | `span`s inside the chip | the name, the `✓` mark and the version |
 | `graph-chip-body`, `graph-chip-tasks`, `graph-chip-task`, `graph-chip-task-title` | the open chip's own panel | drawn **only** while `aria-expanded` is `true` |
 | `graph-release-bar` | `p` (chip body) and `span` (list heading) | the "n of m done" bar, both places |
 | `graph-canvas` | `svg` | `viewBox` carries the zoom; the element has no width or height of its own |
@@ -691,7 +695,9 @@ text it draws). They are the screen's own bookkeeping — the entry reads `data-
 `data-run-id`, `data-tab` and `data-chip` back off the drawn tree to route a click, and the
 other four name only what the screen itself knows (which drawing is showing, which stream a
 group belongs to, which release a box is, which word an element draws) — and no stylesheet
-rule may select one without adding it above first.
+rule may select one without adding it above first. Six of the eight are refused by name in
+the inventory test with `data-hidden` and `data-skew`; the other two, `data-key` and
+`data-view`, are §2's hooks on other screens and stay licensed (§2's licence paragraph).
 
 **How each state is marked** (§3.5: a word, and the tone second):
 

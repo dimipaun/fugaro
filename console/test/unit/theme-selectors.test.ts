@@ -30,7 +30,7 @@
 // it names two paragraphs further down. The reading is widened, not loosened:
 // `HOOK` keeps only tokens shaped like a hook, so a prose word (`class`, `title`,
 // `putReading`) is not a licence to select `.class` or `.title`, and
-// `NOT_A_LICENCE` keeps out the two `data-*` attributes the design names
+// `NOT_A_LICENCE` keeps out the `data-*` attributes the design names
 // **in order to refuse them** ("A hook that is emitted and not listed here is
 // not a licence to write a rule against it").
 //
@@ -141,14 +141,33 @@ const CLASS_HOOK = /^(?:live|spend|projects|run|degraded|graph|console|unavailab
  * `-word`/`-at`/`-age` is written. */
 const SUFFIX = /^-[a-z0-9-]+(?:\/-[a-z0-9-]+)*$/
 
-/** NOT_A_LICENCE is the two attributes §2 names **in order to refuse them**.
- * §2's licence paragraph is explicit -- "`data-hidden` (every view the mode
- * withholds) and `data-skew` (the compatibility handshake), both stamped by
- * `console/src/shared/version.ts` ... they are emitted, no rule needs them, and a
- * rule that suddenly wants one adds it to this table first" -- so reading §2
- * whole must not quietly license them. They are subtracted here by name, which
- * is what keeps §2's sentence true of the scan. */
-const NOT_A_LICENCE: readonly string[] = Object.freeze(['data-hidden', 'data-skew'])
+/** NOT_A_LICENCE is the attributes §2 names **in order to refuse them**: §2's
+ * licence paragraph names `data-hidden` and `data-skew` explicitly ("they are
+ * emitted, no rule needs them, and a rule that suddenly wants one adds it to
+ * this table first"), and §2.11 names the graph's own bookkeeping the same way
+ * ("no stylesheet rule may select one without adding it above first"). Reading
+ * §2 whole must not quietly license either set, so they are subtracted here by
+ * name -- which is what keeps both sentences true of the scan.
+ *
+ * **Six of §2.11's eight, and not the other two.** `data-key` and `data-view`
+ * are listed in §2.11 because *the graph* emits them and no graph rule selects
+ * them, but the same two names are §2's hooks elsewhere: §2.3's table and §2.4's
+ * prose license `data-key` on a spend chart's points and rows and on the caps
+ * panel's `li.spend-cap-repo` (`screens.css` selects it), and §2.1 licenses
+ * `data-view` on `nav.console-views button.console-view` and §2.5 on
+ * `section.spend-people`. The scan licenses by attribute **name**, not by name
+ * and screen, so subtracting those two would refuse rules the design asked for;
+ * §2.11's paragraph says which of its eight this list holds to. */
+const NOT_A_LICENCE: readonly string[] = Object.freeze([
+  'data-hidden',
+  'data-skew',
+  'data-run-id',
+  'data-tab',
+  'data-chip',
+  'data-stream',
+  'data-release',
+  'data-word',
+])
 
 /** readDesign reads the design document, failing by name rather than with an
  * ENOENT from somewhere further along. */
@@ -635,7 +654,7 @@ describe('the theme’s selectors against the design’s §2 inventory', () => {
     expect(hooks).toContain('data-state')
   })
 
-  it('reads §2 whole, so the screens whose hooks are prose are licensed and the two refused hooks are not', () => {
+  it('reads §2 whole, so the screens whose hooks are prose are licensed and the refused hooks are not', () => {
     // The case above is the count and the chrome's; this one is the reading
     // Task 6.4 widened, and each of the four hooks below is one a rule in
     // `screens.css` selects. Two of them are **prose-only**: §2.7 and §2.8 have
@@ -649,11 +668,25 @@ describe('the theme’s selectors against the design’s §2 inventory', () => {
     for (const hook of ['degraded', 'unavailable-body', 'degraded-num', 'data-panel', 'data-kind']) {
       expect(hooks, `§2 does not name ${hook}, and a rule selects it`).toContain(hook)
     }
-    // And the widening is not a loosening: the two attributes §2 names in order
-    // to refuse them are still refused, because a rule that wants one adds it to
-    // §2 first (design §2's licence paragraph).
+    // And the widening is not a loosening: the attributes §2 names in order to
+    // refuse them are still refused, because a rule that wants one adds it to §2
+    // first (design §2's licence paragraph, and §2.11's for the graph's).
     expect(hooks, 'the scan licensed the two hooks §2 refuses by name').not.toContain('data-hidden')
     expect(hooks).not.toContain('data-skew')
+    // §2.11 names eight attributes the graph emits and no rule needs, and the
+    // six that are not §2 hooks elsewhere are refused here too: §2.11 says "no
+    // stylesheet rule may select one without adding it above first", and a
+    // reading of §2 whole would otherwise license all eight.
+    for (const attribute of ['data-run-id', 'data-tab', 'data-chip', 'data-stream', 'data-release', 'data-word']) {
+      expect(hooks, `the scan licensed ${attribute}, which §2.11 says no rule may select`).not.toContain(attribute)
+    }
+    // The other two of §2.11's eight **stay** licensed, and that is not an
+    // oversight: the scan licenses by name, and both names are §2's hooks on
+    // other screens -- a spend chart's and a caps row's `data-key` (§2.3, §2.4,
+    // which `screens.css` selects) and the navigation's and the people panel's
+    // `data-view` (§2.1, §2.5). Refusing them here would refuse those rules.
+    expect(hooks, '§2 licenses data-key for the spend screen').toContain('data-key')
+    expect(hooks, '§2 licenses data-view for the navigation').toContain('data-view')
 
     // The `-suffix` shorthand is expanded, and only where it can be read: the
     // degraded screen's run row and feed age are hooks §2 names in shorthand,
@@ -684,8 +717,9 @@ describe('the theme’s selectors against the design’s §2 inventory', () => {
     // The same licence, for the `data-*` and `aria-*` hooks a rule selects
     // rather than for its classes. The attributes the screens emit beyond §2's
     // tables are real and are deliberately unlisted (design §2 names
-    // `data-hidden` and `data-skew` as the two examples) -- so this case is what
-    // makes a rule that suddenly wants one add it to the table first.
+    // `data-hidden` and `data-skew` as the two examples, and §2.11 the graph's
+    // six) -- so this case is what makes a rule that suddenly wants one add it
+    // to the table first.
     const hooks = inventoryHooks()
     const unknown: string[] = []
     for (const name of SCANNED) {
