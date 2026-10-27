@@ -103,7 +103,7 @@ type digestDoc struct {
 type digestRow struct {
 	dim     report.Dim
 	key     string
-	rel     string // <YYYY>/<key>.md, the shape-checked name the folder holds
+	rel     string // the file's path under --dir, D321's <YYYY>/<key>.md when it is a row and no shape of this command's when it is skipped
 	summary digest.Summary
 	read    bool
 }
@@ -125,7 +125,8 @@ func newRunsDigestCmd() *cobra.Command {
 			"--date names any day inside the period. Without it the most recent closed period\n" +
 			"is reported: the day, week, month or year before the one today falls in. A period\n" +
 			"holding today is still receiving runs -- a run counts in the period it finished,\n" +
-			"in UTC (G4) -- so it is refused and nothing is written for it.\n\n" +
+			"in UTC (G4) -- so it is refused and nothing is written for it, and so is a period\n" +
+			"that has not begun yet.\n\n" +
 			"The report is of this repository and of no other (G2, D322): --repo names it, and\n" +
 			"without --repo it is the checkout's own origin. There is no --all. A record under\n" +
 			"the repository's prefix whose own repository is another is not read into the\n" +
@@ -232,7 +233,7 @@ func runRunsDigest(cmd *cobra.Command, o *digestOptions) error {
 		cur = d.Summary()
 		head = digest.Markdown(d)
 	}
-	patterns := digest.Patterns(digestPrev(rows, p.Key), cur)
+	patterns := digest.Patterns(digestPrev(rows, p), cur)
 	body := append(head, '\n')
 	body = append(body, digest.PatternsMarkdown(patterns)...)
 
@@ -299,6 +300,12 @@ func digestPeriod(dim report.Dim, date string, now time.Time) (digest.Period, er
 	if p.Holds(today) {
 		return digest.Period{}, userErr("period %s is open: it holds %s, and its runs are still arriving. Report a closed period, or wait until %s has ended",
 			p.Key, today.Format("2006-01-02"), p.Key)
+	}
+	// A period that starts after today has received no finished run at all: it
+	// is not a closed period with no runs, it is not yet a period.
+	if p.Start > today.Format("2006-01-02") {
+		return digest.Period{}, userErr("period %s has not begun: it starts %s, after today (%s), so no run has finished in it. Report a closed period, or wait until %s has begun",
+			p.Key, p.Start, today.Format("2006-01-02"), p.Key)
 	}
 	return p, nil
 }
@@ -459,10 +466,14 @@ func digestReportFiles(dir, replaced string, warn io.Writer) (*digestFolder, err
 		return nil, userErr("reading %s: %v", safetext.Strip(dir), err)
 	}
 	folder := &digestFolder{}
+	// A skipped file's name is the person's, and a person's file name can carry
+	// a control character or an escape sequence: it is printed to a terminal and
+	// carried in --json, so it is made one line of text in both places (G1).
 	skip := func(rel string) {
-		folder.skipped = append(folder.skipped, rel)
+		name := safetext.OneLine(rel)
+		folder.skipped = append(folder.skipped, name)
 		if warn != nil {
-			fmt.Fprintf(warn, "warning: %s is not a report this command wrote; it is left out of the patterns and of the index's figures\n", rel)
+			fmt.Fprintf(warn, "warning: %s is not a report this command wrote; it is left out of the patterns and of the index's figures\n", name)
 		}
 	}
 	for _, y := range years {
@@ -533,13 +544,20 @@ func digestReadRow(path, key string) (digest.Summary, bool) {
 }
 
 // digestPrev is the committed summaries the pattern rules read: every readable
-// report of the folder except the one being written, which the rules are
-// handed separately, so this report's own figures are the ones that count for
-// its period.
-func digestPrev(rows []digestRow, key string) []digest.Summary {
+// report of a period at or before this report's, except this report's own
+// period, which the rules are handed separately, so this report's own figures
+// are the ones that count for its period.
+//
+// A report of a later period is not history. This command runs from a person's
+// terminal and reports a period from its own runs, so a backfill of an older
+// period runs with the later ones already committed, and a rule that read them
+// would fire in the backfill's report over periods it does not cover -- "three
+// of the last four weeks" over four weeks a year after the one being written
+// (G5).
+func digestPrev(rows []digestRow, p digest.Period) []digest.Summary {
 	prev := make([]digest.Summary, 0, len(rows))
 	for _, r := range rows {
-		if r.read && r.key != key {
+		if r.read && r.key != p.Key && r.summary.End <= p.End {
 			prev = append(prev, r.summary)
 		}
 	}
@@ -611,8 +629,15 @@ func digestIndexMarkdown(rows []digestRow) string {
 			fmt.Fprintf(&b, "| [%s](%s) | - | - | - | - |\n", r.key, r.rel)
 			continue
 		}
-		fmt.Fprintf(&b, "| [%s](%s) | %d | %d | %s | %s |\n",
-			r.key, r.rel, r.summary.Runs, r.summary.Flagged, r.summary.Billed, r.summary.Notional)
+		// A year's figures are its months added up (F24), so its row says how
+		// many of the twelve it covers: a partial year read as a whole one is
+		// the mistake the block's own Months field exists to prevent (G5).
+		note := ""
+		if r.summary.Months > 0 {
+			note = fmt.Sprintf(" (%d of 12 months)", r.summary.Months)
+		}
+		fmt.Fprintf(&b, "| [%s](%s)%s | %d | %d | %s | %s |\n",
+			r.key, r.rel, note, r.summary.Runs, r.summary.Flagged, r.summary.Billed, r.summary.Notional)
 	}
 	fmt.Fprintf(&b, "\n%d reports", len(rows))
 	if unreadable > 0 {

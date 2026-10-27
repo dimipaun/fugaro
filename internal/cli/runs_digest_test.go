@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/digest"
+	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -587,9 +588,184 @@ func TestRunsDigestYearRollsUpMonths(t *testing.T) {
 		}
 	}
 
+	// The index says how much of the year its row covers too: a year of two
+	// months read as a whole one is the same mistake the block's Months field
+	// exists to prevent (G5).
+	if !strings.Contains(string(index), "2 of 12 months") {
+		t.Errorf("the index does not say how much of the year it covers:\n%s", index)
+	}
+
 	// A year no committed month names has nothing to roll up, and says so
 	// rather than writing a report of zeros (G5).
 	if _, _, err := execute(t, "runs", "digest", "--period", "year", "--date", "2023-01-01", "--dir", dir); err == nil {
 		t.Error("a year with no committed monthly report was reported")
 	}
+}
+
+// digestSeedWeek writes one committed weekly report carrying one flag, the way
+// an earlier call of this command wrote it, and returns its period key: the
+// pattern rules' history, without a run record per week.
+func digestSeedWeek(t *testing.T, dir, date, flag string) string {
+	t.Helper()
+	p, err := digest.NewPeriod(report.ByWeek, date)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, err := json.Marshal(digest.Summary{
+		Period: p.Key, Start: p.Start, End: p.End,
+		Runs: 5, Shown: 5, Flagged: 1,
+		Billed: "1.000000", Notional: "0.000000", Review: "0.000000",
+		Flags: map[string]int{flag: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := "# Run digest: " + p.Key + "\n\n```json\n" + string(block) + "\n```\n"
+	path := filepath.Join(dir, p.Key[:4], p.Key+".md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p.Key
+}
+
+// TestRunsDigestBackfillReadsNoLaterPeriod: a period's history is the reports
+// committed before it in time, not the ones the folder happens to hold. The
+// command is run from a terminal and a period is reported over its own runs,
+// so a backfill of an older week runs with the later weeks' reports already
+// committed, and a rule reading them would report a pattern over weeks this
+// report does not cover (G5).
+func TestRunsDigestBackfillReadsNoLaterPeriod(t *testing.T) {
+	digestCheckout(t)
+	newCloudFixture(t)
+	dir := t.TempDir()
+	digestClock(t, "2026-10-27")
+
+	// Four weeks running, each carrying the same flag: a history the first
+	// rule fires on. All of them are after the week being backfilled.
+	later := map[string]bool{}
+	for _, day := range []string{"2026-05-11", "2026-05-18", "2026-05-25", "2026-06-01"} {
+		later[digestSeedWeek(t, dir, day, digest.FlagHalt)] = true
+	}
+
+	// 2026-03-02 is in 2026-W10, ten weeks before the earliest of them.
+	doc, errOut, err := execute(t, "runs", "digest", "--period", "week", "--date", "2026-03-02", "--dir", dir, "--json")
+	if err != nil {
+		t.Fatalf("backfilling a week failed: %v (%s)", err, errOut)
+	}
+	var got struct {
+		Period   string           `json:"period"`
+		Patterns []digest.Pattern `json:"patterns"`
+	}
+	if err := json.Unmarshal([]byte(doc), &got); err != nil {
+		t.Fatalf("%v: %s", err, doc)
+	}
+	if got.Period != "2026-W10" {
+		t.Fatalf("the report is of %s, want 2026-W10", got.Period)
+	}
+	for _, p := range got.Patterns {
+		for _, period := range p.Periods {
+			if later[period] {
+				t.Errorf("the report of %s read the later period %s into %s", got.Period, period, p.Rule)
+			}
+		}
+	}
+	if len(got.Patterns) != 0 {
+		t.Errorf("a week with no earlier report raised %+v", got.Patterns)
+	}
+}
+
+// TestRunsDigestRefusesFuturePeriod: a period that has not begun has received
+// no finished run at all, so it is refused the way a period holding today is,
+// and nothing is written for a period that is not yet a period (G4).
+func TestRunsDigestRefusesFuturePeriod(t *testing.T) {
+	digestCheckout(t)
+	newCloudFixture(t)
+	dir := t.TempDir()
+	digestClock(t, "2026-10-27")
+
+	for _, tc := range []struct{ period, date, key string }{
+		{"day", "2099-01-01", "2099-01-01"},
+		{"week", "2099-01-01", "2099-W01"},
+		{"month", "2099-01-01", "2099-01"},
+		{"year", "2099-01-01", "2099"},
+	} {
+		_, _, err := execute(t, "runs", "digest", "--period", tc.period, "--date", tc.date, "--dir", dir)
+		if err == nil {
+			t.Errorf("--period %s --date %s reported a period that has not begun", tc.period, tc.date)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.key) || !strings.Contains(err.Error(), "2026-10-27") {
+			t.Errorf("--period %s --date %s refused with %q, want the period and today named", tc.period, tc.date, err)
+		}
+	}
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
+		t.Errorf("a refused report wrote %v (err %v), want nothing", entries, err)
+	}
+}
+
+// TestRunsDigestSkippedNameIsOneLine: the files under --dir are a person's to
+// name, so a skipped one can carry a control character. The command names it
+// on stderr and in --json's skipped list, and neither a terminal nor a
+// consumer may take those bytes for anything but the text of one line (G1).
+func TestRunsDigestSkippedNameIsOneLine(t *testing.T) {
+	digestCheckout(t)
+	newCloudFixture(t)
+	dir := t.TempDir()
+	digestClock(t, "2026-10-27")
+
+	// A name whose escape sequence rewrites the screen, and one that carries a
+	// line break of its own. Neither is D321's shape, so both are skipped.
+	names := []string{"2026/report\x1b[31m.md", "2026/two\nlines.md"}
+	for _, name := range names {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("# Run digest\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	doc, errOut, err := execute(t, "runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir, "--json")
+	if err != nil {
+		t.Fatalf("a name with a control character failed the command: %v (%s)", err, errOut)
+	}
+	var got struct {
+		Skipped []string `json:"skipped"`
+	}
+	if err := json.Unmarshal([]byte(doc), &got); err != nil {
+		t.Fatalf("%v: %s", err, doc)
+	}
+	if len(got.Skipped) != len(names) {
+		t.Fatalf("--json skipped %v, want the fixture's two files", got.Skipped)
+	}
+	// Every printed name is one line of printable text: the warning lines this
+	// command writes may end in a newline of their own, and nothing else.
+	for _, line := range append(append([]string{}, got.Skipped...), strings.Split(errOut, "\n")...) {
+		if i := strings.IndexFunc(line, digestControl); i >= 0 {
+			t.Errorf("%q carries the control character %q", line, line[i])
+		}
+	}
+	for _, want := range []string{"2026/report.md", "2026/two?lines.md"} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr does not name %q:\n%s", want, errOut)
+		}
+		named := false
+		for _, s := range got.Skipped {
+			named = named || s == want
+		}
+		if !named {
+			t.Errorf("--json skipped %v, want %q", got.Skipped, want)
+		}
+	}
+}
+
+// digestControl is a character a skip listing must not carry: everything
+// safetext.OneLine rewrites or drops, so a test written without it proves the
+// listing is one line of text.
+func digestControl(r rune) bool {
+	return r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f)
 }

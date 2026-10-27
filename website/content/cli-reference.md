@@ -2874,7 +2874,8 @@ many of the twelve it added up, so a partial year is not read as a whole one.
 --date names any day inside the period. Without it the most recent closed period
 is reported: the day, week, month or year before the one today falls in. A period
 holding today is still receiving runs -- a run counts in the period it finished,
-in UTC (G4) -- so it is refused and nothing is written for it.
+in UTC (G4) -- so it is refused and nothing is written for it, and so is a period
+that has not begun yet.
 
 The report is of this repository and of no other (G2, D322): --repo names it, and
 without --repo it is the checkout's own origin. There is no --all. A record under
