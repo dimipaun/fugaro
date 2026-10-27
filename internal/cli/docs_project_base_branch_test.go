@@ -30,8 +30,8 @@ func TestDocsStateTheProjectDefaultBaseBranch(t *testing.T) {
 		// §2, beside the one rule: the four layers, in the order they resolve.
 		"The base branch resolves through four layers, narrowest first",
 		"the checkout's committed `fugaro.yaml` when its text writes `git.base_branch`",
-		"then the installation config's `repos.<r>.base_branch`, then the project's `base_branch`",
-		"which `fugaro project policy publish` writes into the policy node",
+		"then the installation config's `repos.<r>.base_branch`, then the project's default base branch",
+		"the installation config's top-level `base_branch`, which `fugaro project policy publish` writes into the policy node",
 		"then `main`",
 		// The key is judged on whether it is written, never on its value:
 		// applyDefaults fills main in, so the two would otherwise look alike.
