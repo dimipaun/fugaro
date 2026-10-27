@@ -20,17 +20,17 @@ On the same day the owner also answered:
 
 In a later round the same day the owner answered the rest:
 
-- **D464:** yes, in 0.12.1: `*` within one path segment of `allow_data_to`, such as
+- **D464:** yes, in 0.12.1, because 50 lines is still a per-repository chore: `*` within one path segment of `allow_data_to`, such as
   `myworkspace/*`. A bare `*`, `*/*` and a wildcard workspace are refused, and there are at most two
   `*` and never a regular expression. This was **not the recommendation**. Run
   20261027-212846-dc73 builds it.
-- **D465:** the derived `bitbucket_token` policy block, checked by the runner.
-- **D466:** yes, `fugaro doctor` warns about an overriding own copy.
-- **D467:** documentation in 0.12.1.
-- **D468:** no; the docs carry the "not yet live-checked" label.
-- **D473:** yes.
-- **D476:** no, the trust rule is kept and the risk stated. This was **not the recommendation**.
-- **T2:** Cloud-compatible API roots only; Data Center stays out.
+- **D465:** the derived `bitbucket_token` policy block, checked by the runner (the accounts precedent).
+- **D466:** yes, `fugaro doctor` warns about an overriding own copy, which is otherwise silent.
+- **D467:** documentation in 0.12.1, with no code.
+- **D468:** no, there is no sandbox to run it in; the docs carry the "not yet live-checked" label.
+- **D473:** yes, so existing installations are unchanged.
+- **D476:** no, the trust rule is kept and the risk stated, accepted under D462. This was **not the recommendation**.
+- **T2:** Cloud-compatible API roots only, because there is one adapter for one API; Data Center stays out.
 
 No decision is pending. Each task still needs the owner's own explicit go.
 
@@ -50,7 +50,7 @@ nothing. The docs present that path as an exception, so the 0.12.1 slice is docs
 | --- | --- |
 | [spec.md](spec.md) | The owner's request of 2026-10-27, verbatim |
 | [reconciliation.md](reconciliation.md) | What exists (§2); Atlassian's facts (§3); findings F1–F18 (§4); decisions D460–D477, all answered 2026-10-27 (§5); the release split (§6); tensions T1–T2 and open items O1–O7 (§7); UNVERIFIED U1–U8 (§9). **Where it disagrees with `spec.md`, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Slices S1–S3; tasks T1.1–T1.4, T2.1–T2.11 (T2.5 folded into T2.9) and T3.1, each with its files, tests, red step, command and reviewer tier; levels, critical path, shared-files table, and Checks 180–181. **Nothing in it is approved** |
+| [implementation-plan.md](implementation-plan.md) | Slices S1–S2 (S3 superseded by run dc73); tasks T1.1–T1.4 and T2.1–T2.11 (T2.5 folded into T2.9, T2.10 off, T3.1 superseded), each with its files, tests, red step, command and reviewer tier; levels, critical path, shared-files table, and Checks 180–181. **Only T1.1 and T1.2 are approved** (0.12.1, after dc73 merges) |
 
 ## Typos fixed in the spec
 

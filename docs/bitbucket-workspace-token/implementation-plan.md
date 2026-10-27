@@ -16,7 +16,7 @@ references decisions by `D#` and findings by `F#`.
   - **D463:** 0.12.1 is quick, and anything big goes to 0.13.0.
 - **Answered later on 2026-10-27:**
   - **D474 = yes.** Cloud runs refuse a non-default Bitbucket API URL, except an API root the owner
-    allow-lists in the policy. T2.8 is on. Tension T2 is open.
+    allow-lists in the policy. T2.8 is on. Tension T2 was ruled the same day: Cloud-compatible roots only.
   - **D475 = yes.** Launchers are trusted as before. A malicious launcher can use the agent to write
     across the token's reach.
   - **D477 = bump the policy version (3 → 4).** This was not the recommendation. 0.13.0 ships as a
@@ -186,7 +186,9 @@ references decisions by `D#` and findings by `F#`.
     "Copy the `project_secrets.bitbucket-token` entry to every operator machine's local config:
     the shared config never carries it, and without it `fugaro update --repo` asks for a
     per-repository token."
-  - **The wildcard** (D464, shipped by dc73). The example is
+  - **The wildcard** (D464, shipped by dc73). dc73 already adds a `myworkspace/*` paragraph to
+    `SECURITY.md` and `docs/git-providers.md`, and wildcard help text to `secrets.go`. **T1.1 and
+    T1.2 build on those sentences rather than writing second ones.** The example is
     `project_secrets: { bitbucket-token: { allow_data_to: [myworkspace/*] } }`. A repository created
     later in that workspace is admitted to the token with no new grant. A bare `*`, `*/*` and a
     wildcard workspace are refused.
@@ -202,9 +204,15 @@ references decisions by `D#` and findings by `F#`.
     project token (Check 180)".
 - **Schema/rules/config change:** none.
 - **Tests:**
-  - `TestDocsStateTheBitbucketProjectTokenReach` (new). It pins the reach sentence in
-    `SECURITY.md` and in `docs/git-providers.md`, the rotation order, and the second-machine
-    sentence.
+  - `TestDocsStateTheBitbucketProjectTokenReach` (new). It pins:
+    - the reach sentence in `SECURITY.md` and in `docs/git-providers.md`;
+    - the rotation order;
+    - the second-machine sentence (D467);
+    - the D476 cross-repository review risk;
+    - the Data Center statement (T2);
+    - the "not yet live-checked … (Check 180)" label.
+
+    It does not repeat a pin of dc73's wildcard sentence, which dc73's own tests hold.
   - `TestDocsWarnAboutAProjectWideGitCredential` (its pinned sentences keep their facts, reworded in
     both places if needed).
   - `TestDocsSayTheInitPromptHasNoRepoFlagAndBitbucketIsPerRepository`.
@@ -238,6 +246,9 @@ references decisions by `D#` and findings by `F#`.
   - `internal/gitprov/providers/providers.go` and `internal/gitprov/bitbucket/bitbucket.go`: the
     missing-token messages ("a Bitbucket access token"), wording only.
   - `internal/cli/init.go`: the comment above `infra.SecretVersions`.
+  - The help text, building on dc73's wildcard text, names `myworkspace/*` as the usual
+    allow-list for a workspace or project token. It also carries D467's sentence: copy the
+    `project_secrets` entry to every operator machine.
   - `website/content/cli-reference.md`: regenerated with `go run ./internal/clidoc`.
   - `internal/cli/secrets_bitbucket_text_test.go` (new).
 - **Interfaces:** none. Behaviour is unchanged (Global Constraint 1).
@@ -246,6 +257,8 @@ references decisions by `D#` and findings by `F#`.
   - `TestSecretsSetHelpNamesTheBitbucketProjectToken` (new): the help says a workspace or project
     access token may be stored project-wide through the allow-list.
   - `TestSecretsLsHelpNamesTheBitbucketProjectToken` (new).
+  - `TestSecretsSetHelpNamesTheWorkspaceWildcardAndTheSecondMachine` (new): `myworkspace/*` and
+    D467's sentence.
   - The existing `TestRepoEngineBuildsOnAProjectWideGitCredential` and
     `TestInitRepoProjectSecretUnlistedRepoIsMissing`, passing unchanged.
 - **Red step:** the new tests fail on today's help text, which says "a repository access token,
@@ -321,17 +334,25 @@ references decisions by `D#` and findings by `F#`.
   - `projectpolicy.SharedBitbucketProfile(p config.JobProfile) bool` is true when
     `p.Provider == "bitbucket"` and `p.Secrets` contains `bitbucket-token` (D473 = yes).
   - `projectpolicy.DeriveBitbucketToken(profiles map[string]Profile, secrets map[string]config.ProjectSecret) (*BitbucketToken, error)`
-    turns `project_secrets.bitbucket-token.allow_data_to` into `bitbucket/owner/name` entries. These
-    include dc73's segment wildcards (D464), carried as written. A profile's own `allow_repos`
-    stays exact, and the subset check asks whether each exact entry is matched by a block entry,
-    using **dc73's own matcher**, so the CLI and the runner cannot disagree. Like `DeriveAccounts`, it returns nil when no profile mounts the token, because every
-    run reads the node, and it returns `Canonical`'s errors.
+    turns `project_secrets.bitbucket-token.allow_data_to` into `bitbucket/owner/name` entries.
+    Entries include dc73's segment wildcards (D464). An exact slug goes through `Canonical`. A
+    pattern cannot, because `task.CanonicalRepo` refuses `*`, so it is qualified directly: the
+    `bitbucket/` prefix and the lower-cased literal owner, with the name segment as written, after
+    passing dc73's own `allow_data_to` validation. A profile's own `allow_repos` stays exact. The
+    subset check and the runner both match with **`projectpolicy.MatchRepo`**, which dc73 rewires
+    onto `config.MatchSegment`, so both use one function. Like `DeriveAccounts`, it returns nil when no profile mounts the token, because every
+    run reads the node, and it returns `Canonical`'s errors for exact slugs and the validation's
+    errors for patterns.
   - **The node's own rules**, applied in `Decode`'s validation of the whole policy (the block is
     a node-level field), which the runner and the launcher decode with. `CheckProfiles`'s
     signature is unchanged, so `internal/infra/projectjobs.go` still compiles at this level:
     - A profile that mounts `bitbucket-token` writes its own `allow_repos`. The list is non-empty
       and exact, with no wildcard.
     - That list is a subset of `bitbucket_token.allow_repos`.
+    - **The block itself keeps D464's narrower rules**, whoever writes the node: a literal owner,
+      at most two `*`, each within one segment, and no bare `*`. A node carrying `*` or
+      `bitbucket/*/*` is refused, even though `MatchRepo` would accept it in `allow_repos`.
+      Test: `TestDecodeRefusesABroadBitbucketTokenPattern`.
     - `bitbucket-token` on a GitHub profile is refused.
     - Admission stays the intersection of the project's list and the profile's own
       (`Policy.Admits`), so `fugaro project repos add` cannot widen it.
@@ -452,7 +473,9 @@ number is not reused.
   - `docs/git-providers.md`:
     - "Bitbucket stays on the per-repository path" (its shared-job claims only, since T1.1 already
       rewrote the slice-1 sentence);
-    - the `FUGARO_BITBUCKET_API_URL` variables-table row (T2.8).
+    - the `FUGARO_BITBUCKET_API_URL` variables-table row (T2.8), with `bitbucket_api_roots` and the
+      statement that a listed root must speak Bitbucket Cloud's API, because Data Center is not
+      supported (D366, T2).
   - `docs/design/project-centric.md`: dated amendments to §4.1 "GitHub only" and §4.5/D5.
   - `docs/project-layer.md`: "Bitbucket repositories never reach one", plus Global Constraint 6's
     known drift.
@@ -501,7 +524,7 @@ number is not reused.
   `internal/runner/bitbucket_api_root_test.go` (new).
 - **Behaviour:** outside a local invocation, a run refuses any `FUGARO_BITBUCKET_API_URL` other than
   `https://api.bitbucket.org/2.0`, or a root in the published `bitbucket_api_roots` (T2.1), before
-  the provider opens. `FUGARO_GITHUB_API_URL` is out of scope. Tension T2 (Data Center is out of
+  the provider opens. `FUGARO_GITHUB_API_URL` is out of scope. Tension T2, ruled 2026-10-27: Cloud-compatible roots only (Data Center is out of
   scope by D366) is not resolved here.
 - **Tests:** `TestCloudRunRefusesAnotherBitbucketAPIRoot`,
   `TestCloudRunAcceptsAnOwnerAllowListedBitbucketAPIRoot` and
@@ -518,8 +541,8 @@ number is not reused.
 - **Files:** `internal/runner/projectjob.go` (the check, beside `checkProjectJobAccount`),
   `internal/runner/project.go` (the call, at the end of `admissionCheck`, which runs before
   `openProvider`, so T2.8's `runner.go` is untouched), and `internal/runner/projectjob_bitbucket_test.go` (new).
-- **Behaviour (D465 = the recommendation, 2026-10-27):** the match uses dc73's matcher, because the
-  block may carry D464's segment wildcards. On a project job whose provider is `bitbucket`, after
+- **Behaviour (D465 = the recommendation, 2026-10-27):** the match uses `projectpolicy.MatchRepo`,
+  the same function as T2.1's subset check, because the block may carry D464's segment wildcards. On a project job whose provider is `bitbucket`, after
   `admissionCheck` and before `openProvider`, the run checks its repository against the published
   `bitbucket_token.allow_repos`. A node with no block refuses the run.
 - **Tests:**
@@ -651,7 +674,8 @@ not built.
 | 0.12.1 | before L0 | run dc73 (outside this plan) |
 | 0.12.1 | L0 | T1.1, T1.2 |
 | 0.13.0 | L0 | T2.1 (and T1.3, which writes Check 180, D468 = no) |
-| 0.13.0 | L1 | T2.2, T2.3, T2.4, T2.8, T2.9 (and T1.4, owner-run, once a sandbox exists) |
+| 0.13.0 | L1 | T2.2, T2.3, T2.4, T2.8, T2.9 |
+| any time later | — | T1.4 (owner-run, once a Premium sandbox exists; no known date) |
 | 0.13.0 | L2 | T2.6, T2.11 |
 | 0.13.0 | L3 | T2.7 (OWNER-RUN) |
 
@@ -671,14 +695,15 @@ not built.
 | --- | --- |
 | `docs/git-providers.md` | T1.1 (0.12.1 L0), T2.6 (0.13.0 L2) |
 | `SECURITY.md`, `website/content/security.md`, `internal/cli/docs_project_wide_git_test.go` | T1.1 (0.12.1 L0), T2.6 (0.13.0 L2) |
-| `docs/gcp-live-checklist.md`, `internal/cli/docs_checks_180_181_test.go` | T1.3 (0.13.0 L0), T2.6 (0.13.0 L2) |
+| `docs/gcp-live-checklist.md`, `internal/cli/docs_checks_180_181_test.go` | T1.3 (0.13.0 L0), T2.6 (0.13.0 L2); T1.4's results (owner-run) land outside the levels, in their own commit after T2.6 has merged if it slips |
 | `docs/design/project-centric.md` | T1.1 (0.12.1 L0, §6.3 note), T2.6 (0.13.0 L2) |
 | `docs/design/project-secrets.md`, `plugin/skills/setup/*`, `README.md`, `docs/multi-model.md`, `internal/cli/docs_credentials_github_tokens_test.go`, `website/src/pages/getting-started.astro`, `docs/bitbucket-credentials/README.md`, `docs/bitbucket-credentials/reconciliation.md` | T1.1 (0.12.1 L0) |
 | `docs/coordinator/README.md` | T1.3 (0.13.0 L0), T2.6 (0.13.0 L2) |
 | `internal/gitprov/bitbucket/bitbucket.go` | T1.2 (0.12.1 L0) |
 | `internal/runner/project.go` | T2.9 (L1) |
 | `internal/cli/secrets.go`, `internal/cli/init.go`, `internal/config/config.go`, `internal/config/providers.go`, `internal/infra/spec.go`, `internal/gitprov/providers/providers.go`, `website/content/cli-reference.md`, `internal/cli/secrets_bitbucket_text_test.go` | T1.2 (0.12.1 L0) |
-| `internal/config/project_secrets.go` | run dc73 (before L0), then T1.2 (0.12.1 L0) |
+| `internal/config/project_secrets.go`, `internal/config/providers.go`, `internal/cli/secrets.go`, `website/content/cli-reference.md` | run dc73 (before L0), then T1.2 (0.12.1 L0) |
+| `SECURITY.md`, `website/content/security.md`, `docs/git-providers.md`, `docs/design/project-secrets.md`, `plugin/skills/setup/reference/decisions.md` | run dc73 (before L0), then T1.1 (0.12.1 L0); later T2.6 for the first three |
 | `internal/projectpolicy/policy.go`, `profiles.go`, `version.go`, `bitbucket_test.go` | T2.1 (L0) |
 | `internal/projectpolicy/bitbucket.go` | T2.1 (L0) |
 | `docs/bitbucket-workspace-token/release-0.13.0-operators.md`, `internal/cli/docs_bitbucket_release_steps_test.go` | T2.11 (L2). `docs/releases/v0.13.0.md` is written by the release PR, outside the levels |
