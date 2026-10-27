@@ -491,7 +491,7 @@ func pctColour(p float64) string {
 	switch {
 	case p >= 100:
 		return cBad
-	case p >= 80:
+	case p >= warnPercent:
 		return cWarn
 	}
 	return cOK
@@ -515,7 +515,7 @@ func (r *rend) figures(tier int, b Bar, counted, spent, notional budget.Micros, 
 		if label {
 			lbl = "counted "
 		}
-		parts = append(parts, seg{fmt.Sprintf("%s%s of %s (%.0f%%)", lbl, USD(b.Used), USD(b.Cap), b.Percent), ""})
+		parts = append(parts, seg{fmt.Sprintf("%s%s of %s (%.0f%%%s)", lbl, USD(b.Used), USD(b.Cap), b.Percent, capWarn(b.Percent, r.g.warn)), ""})
 	case b.Has:
 		parts = append(parts, seg{fmt.Sprintf("%.0f%% of %s", b.Percent, USD(b.Cap)), pctColour(b.Percent)})
 	case tier >= 2:

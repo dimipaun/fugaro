@@ -1158,3 +1158,68 @@ func TestBudgetPricesStaleCatalogWarns(t *testing.T) {
 		t.Errorf("the JSON does not mark the catalog stale: %s", js)
 	}
 }
+
+// TestBudgetShowWarnsAtEightyPercent: once a daily counter passes 80% of its
+// cap, show prints one warning line for that cap — the repository's and the
+// project's — and 79.9% warns not at all (R5). Nothing is refused: it is a
+// warning beside the cap that keeps applying.
+func TestBudgetShowWarnsAtEightyPercent(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.db.Set("config/mode", "enforce")
+	seedCaps(f, 100, 20)
+	f.db.Set(budget.PathCapsDefaults, map[string]any{"repoDailyMicros": 50 * usd1})
+	d := today()
+	// The config's one repository is the only one the database holds, so its
+	// counter is the project's too: figures that do not add up warn about that
+	// instead, and the test is not about that warning.
+	set := func(counted int64) {
+		f.db.Set(budget.PathSpendGlobal(d), map[string]any{"counted": counted})
+		f.db.Set(budget.PathSpendRepo(d, appSlug), map[string]any{"counted": counted})
+	}
+	warnings := func(t *testing.T) []string {
+		t.Helper()
+		out, _, err := execute(t, "budget", "show", "--json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc struct {
+			Warnings []string `json:"warnings"`
+		}
+		if err := json.Unmarshal([]byte(out), &doc); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		return doc.Warnings
+	}
+
+	// 79.9% of the repository's $50 day: below the share, no line at all.
+	set(39_950_000)
+	if w := warnings(t); len(w) != 0 {
+		t.Fatalf("79.9%% of a cap warned: %q", w)
+	}
+	if out, _, err := execute(t, "budget", "show"); err != nil || strings.Contains(out, "note:") {
+		t.Fatalf("79.9%% printed a note: %v\n%s", err, out)
+	}
+
+	// Exactly the share warns, for the repository's $50 cap; the project's $100
+	// one is at 40% and says nothing.
+	set(40_000_000)
+	w := warnings(t)
+	if len(w) != 1 || !strings.Contains(w[0], "acme/app") || !strings.Contains(w[0], "$40.00 of $50.00") {
+		t.Fatalf("warnings at 80%% of the repository's cap = %q", w)
+	}
+
+	// Past both caps' share: one line each, the project's included.
+	set(82_000_000)
+	w = warnings(t)
+	if len(w) != 2 || !strings.Contains(strings.Join(w, "\n"), "the project's daily cap") ||
+		!strings.Contains(strings.Join(w, "\n"), "$82.00 of $100.00") {
+		t.Fatalf("warnings at 82%% = %q", w)
+	}
+	out, _, err := execute(t, "budget", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(out, "note: "); n != 2 {
+		t.Fatalf("show printed %d notes, want 2:\n%s", n, out)
+	}
+}
