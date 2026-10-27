@@ -491,10 +491,23 @@ func pctColour(p float64) string {
 	switch {
 	case p >= 100:
 		return cBad
-	case p >= 80:
+	case p >= warnPercent:
 		return cWarn
 	}
 	return cOK
+}
+
+// warnPercent is budget.WarnShare as the percentage a Bar carries.
+const warnPercent = budget.WarnShare * 100
+
+// warnMark is the warning the bar's figure carries at or past warnPercent: the
+// colour says it only when colour is on, and the figure must say it either way.
+// The rounded figure is not the test — 79.9% draws "(80%)" and no mark.
+func (r *rend) warnMark(p float64) string {
+	if p >= warnPercent {
+		return " " + r.g.warn
+	}
+	return ""
 }
 
 // figures are the money of the project or one repository, most important
@@ -515,7 +528,7 @@ func (r *rend) figures(tier int, b Bar, counted, spent, notional budget.Micros, 
 		if label {
 			lbl = "counted "
 		}
-		parts = append(parts, seg{fmt.Sprintf("%s%s of %s (%.0f%%)", lbl, USD(b.Used), USD(b.Cap), b.Percent), ""})
+		parts = append(parts, seg{fmt.Sprintf("%s%s of %s (%.0f%%%s)", lbl, USD(b.Used), USD(b.Cap), b.Percent, r.warnMark(b.Percent)), ""})
 	case b.Has:
 		parts = append(parts, seg{fmt.Sprintf("%.0f%% of %s", b.Percent, USD(b.Cap)), pctColour(b.Percent)})
 	case tier >= 2:

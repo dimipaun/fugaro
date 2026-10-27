@@ -687,7 +687,9 @@ func TestRunAttemptsBudgetPrecheckCountsAllAtOnce(t *testing.T) {
 // budget pre-check's notes (and, in TestRunAttemptsBudgetNoBudgetCheckWarnsOnce,
 // the --no-budget-check warning) print once for the whole batch, not once
 // per attempt — observe mode's advisory note is the simplest way to force
-// Precheck to return a Note on a launch it still allows.
+// Precheck to return a Note on a launch it still allows. The counter that
+// leaves too little headroom for that note is past 80% of the same cap, so
+// the launch carries the 80% warning too, and it is counted the same way.
 func TestRunAttemptsBudgetNotesPrintOncePerBatch(t *testing.T) {
 	f := newLaunchBudget(t, "observe")
 	bumpMaxParallel(t, 5)
@@ -697,8 +699,13 @@ func TestRunAttemptsBudgetNotesPrintOncePerBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := strings.Count(errOut, "budget: "); n != 1 {
-		t.Fatalf("budget notes printed %d times for a 3-attempt batch, want 1: %q", n, errOut)
+	for _, want := range []string{"budget: the project is in observe mode", "budget: the repository's daily cap"} {
+		if n := strings.Count(errOut, want); n != 1 {
+			t.Fatalf("%q printed %d times for a 3-attempt batch, want 1: %q", want, n, errOut)
+		}
+	}
+	if n := strings.Count(errOut, "budget: "); n != 2 {
+		t.Fatalf("the batch carried %d budget notes, want 2, one each: %q", n, errOut)
 	}
 	if !launchedAny(f) {
 		t.Fatal("observe must still launch")
@@ -973,5 +980,43 @@ func TestRunFXFollowsNamedAccountJobTimeout(t *testing.T) {
 	want := 30*time.Minute + time.Hour + 5*time.Minute
 	if got < want || got > want+2*time.Minute {
 		t.Fatalf("fx - launch = %v, want about %v (the named job's timeout, not the default job's 6h)", got, want)
+	}
+}
+
+// TestLaunchWarnsAtEightyPercent: a launch whose repository or project daily
+// counter has passed 80% of its cap prints one budget: warning line and
+// launches anyway (R5); 79.9% prints none. The repository's cap here is the
+// $50 default, the project's the $100 global one.
+func TestLaunchWarnsAtEightyPercent(t *testing.T) {
+	for _, tc := range []struct {
+		counted int64
+		want    bool
+	}{
+		{39_950_000, false}, // 79.9% of the repository's $50 day
+		{40_000_000, true},  // exactly 80%
+	} {
+		f := newLaunchBudget(t, "enforce")
+		f.db.Set(budget.PathSpendRepo(today(), appSlug), map[string]any{"counted": tc.counted})
+		_, errOut, err := runBudget(t)
+		if err != nil {
+			t.Fatalf("%d counted: %v", tc.counted, err)
+		}
+		warned := strings.Contains(errOut, "budget: the repository's daily cap")
+		if warned != tc.want {
+			t.Fatalf("counted %d: warned = %v, want %v:\n%s", tc.counted, warned, tc.want, errOut)
+		}
+		if !launchedAny(f) {
+			t.Fatalf("counted %d: the warning must not stop the launch", tc.counted)
+		}
+	}
+	// The project's own cap warns beside the repository's.
+	f := newLaunchBudget(t, "enforce")
+	f.db.Set(budget.PathSpendGlobal(today()), map[string]any{"counted": 82 * usd1})
+	_, errOut, err := runBudget(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errOut, "budget: the project's daily cap") || !strings.Contains(errOut, "$82.00 of $100.00") {
+		t.Fatalf("the project's warning is missing:\n%s", errOut)
 	}
 }

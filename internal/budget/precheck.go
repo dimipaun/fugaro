@@ -145,5 +145,28 @@ func Precheck(ctx context.Context, r Reader, in PrecheckInput) (PrecheckResult, 
 	case d.Advisory != nil && in.Capped:
 		res.Notes = append(res.Notes, "the project is in observe mode; under enforce this launch would be refused: "+d.Advisory.Detail)
 	}
+	if !res.Refused && in.Capped {
+		// The 80% warnings come last: they are advice beside a refusal or the
+		// mode note, never instead of one, and a refused launch is what speaks.
+		res.Notes = append(res.Notes, dailyWarnNotes(caps, st)...)
+	}
 	return res, nil
+}
+
+// dailyWarnNotes are a passing launch's 80% warnings, the repository's cap
+// first and the project's second, each only when its own day counter has
+// passed WarnShare of it.
+func dailyWarnNotes(caps Caps, st State) []string {
+	var out []string
+	if cap, ok := caps.RepoDaily(); ok {
+		if n := DailyWarnNote("the repository's", st.Repo.Counted, cap); n != "" {
+			out = append(out, n)
+		}
+	}
+	if cap, ok := caps.GlobalDaily(); ok {
+		if n := DailyWarnNote("the project's", st.Global.Counted, cap); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
 }

@@ -485,6 +485,9 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 	}
 	if v, ok := caps.GlobalDaily(); ok {
 		doc.Global.DailyCapUSD = usdPtr(&v)
+		if n := budget.DailyWarnNote("the project's", global.Counted, v); n != "" {
+			doc.Warnings = append(doc.Warnings, n)
+		}
 	}
 	if cfg.Caps.Global != nil {
 		doc.Global.PerRunCapUSD = usdPtr(cfg.Caps.Global.PerRunMicros)
@@ -528,6 +531,11 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 		sp := repoSpend[k]
 		rs.CountedUSD, rs.SpentUSD, rs.NotionalUSD = sp.Counted.USD(), sp.Spent.USD(), sp.Notional.USD()
 		rs.HeadroomUSD = headroom(roomUnder(rc.RepoDaily, sp.Counted), roomUnder(caps.GlobalDaily, global.Counted))
+		if cap, ok := rc.RepoDaily(); ok {
+			if n := budget.DailyWarnNote(repoScope(rs), sp.Counted, cap); n != "" {
+				doc.Warnings = append(doc.Warnings, n)
+			}
+		}
 		if kv, ok := cfg.Kill.Repos[k]; ok {
 			rs.Kill = killView(&kv)
 		}
@@ -641,6 +649,15 @@ func killText(k *showKill) string {
 		s += ": " + oneLine(k.Reason)
 	}
 	return s
+}
+
+// repoScope names a shown repository in a warning line: its name, or its slug
+// when the config names none, the way printShow's own heading does.
+func repoScope(r showRepo) string {
+	if r.Repo != "" {
+		return r.Repo + "'s"
+	}
+	return r.Slug + "'s"
 }
 
 func printShow(w io.Writer, d *budgetShowDoc) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -73,8 +74,13 @@ func TestPrecheckModeAbsentNotes(t *testing.T) {
 	delete(n, PathMode)
 	n[PathSpendRepo(Day(preNow), "gh-acme-app")] = map[string]any{"counted": 49_900_000}
 	res := pre(t, n, true)
-	if res.Refused || len(res.Notes) != 2 {
-		t.Fatalf("want a pass with the mode note and the would-refuse note: %+v", res)
+	// The counter that leaves too little headroom for the advisory note is
+	// past 80% of the same cap by construction, so its warning comes too.
+	if res.Refused || len(res.Notes) != 3 {
+		t.Fatalf("want a pass with the mode note, the would-refuse note and the 80%% note: %+v", res)
+	}
+	if !strings.Contains(strings.Join(res.Notes, " "), "past 80% warns") {
+		t.Fatalf("the 80%% warning is missing: %+v", res)
 	}
 }
 
