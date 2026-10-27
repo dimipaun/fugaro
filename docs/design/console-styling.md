@@ -159,7 +159,7 @@ that wants it, so the test's list and the stylesheet's selectors move together. 
 deliberately the subset a rule is written against rather than a second copy of the code.
 **`data-hidden`** (every view the mode withholds) and **`data-skew`** (the compatibility
 handshake), both stamped by `console/src/shared/version.ts`, are the two the inventory test
-refuses by name; the graph screen's six unlisted attributes are §2.11's own. They are the
+refuses by name; the graph screen's eight unlisted attributes are §2.11's own. They are the
 examples the rule holds for: they are emitted, no rule needs them, and a rule that suddenly
 wants one adds it to this table first.
 
@@ -650,7 +650,7 @@ order: header → tabs → chips → canvas, or the list, never both.
 |---|---|---|
 | `section.graph` | the screen's root | carries `data-theme` like every other screen's |
 | `graph-header`, `graph-title` | `header`, `h1` | the title block, `--space-md` below it (§3.8) |
-| `graph-tabs`, `graph-tab` | `nav` + `button` | the tablist: `role="tab"` on each button, `aria-selected` on the chosen one, a roving `tabindex` |
+| `graph-tabs`, `graph-tab` | `nav` + `button` | the tablist: `role="tab"` on each button, `aria-selected` on the chosen one, a roving `tabindex`, and §4.3's own keys — Left and Right, Home and End, each activating the tab it moves to |
 | `graph-actions`, `graph-view`, `graph-refresh`, `graph-fit` | `div` + three `button`s | view switch, refresh, and fit — the last one is drawn only while the canvas is |
 | `graph-not-shown` | `p` | a bound dropped plans, tasks or needs: the console's own sentence, in `--warn` |
 | `graph-chips`, `graph-chip-group`, `graph-chip-stream` | `div`, `section`, `h2` | the finished releases, one group per stream |
@@ -683,11 +683,15 @@ order: header → tabs → chips → canvas, or the list, never both.
 | `aria-expanded` | `true` \| `false` | `button.graph-chip` |
 
 **The attributes no rule needs**, and §2's rule read the other way: the graph also emits
-`data-key` (a card's layout key), `data-run-id` (the run a gesture would open), `data-tab`
-and `data-view` (the tablist's and the view switch's own values), `data-release` (a box's
-key) and `data-word` (the word an element draws, beside the text it draws). They are the
-screen's own bookkeeping — the entry reads `data-tab`, `data-view` and `data-run-id` back
-to route a click — and no stylesheet rule may select one without adding it above first.
+eight. `data-key` (a card's and a row's layout key), `data-run-id` (the run a gesture would
+open), `data-tab` (the tablist's own value), `data-chip` (a chip's release key),
+`data-view` (the view switch's own value), `data-stream` (the stream a chip group is drawn
+for), `data-release` (a box's key) and `data-word` (the word an element draws, beside the
+text it draws). They are the screen's own bookkeeping — the entry reads `data-key`,
+`data-run-id`, `data-tab` and `data-chip` back off the drawn tree to route a click, and the
+other four name only what the screen itself knows (which drawing is showing, which stream a
+group belongs to, which release a box is, which word an element draws) — and no stylesheet
+rule may select one without adding it above first.
 
 **How each state is marked** (§3.5: a word, and the tone second):
 

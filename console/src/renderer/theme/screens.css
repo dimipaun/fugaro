@@ -1590,6 +1590,14 @@ svg .graph-node[data-state='done'] .graph-node-box {
   stroke: var(--text-muted);
 }
 
+/* A done card goes quiet in its **text** as well as its boundary, which is the
+ * second channel the row below keeps: a reader who cannot tell the muted stroke
+ * from the strong one still reads a done task from the title, and a reader who
+ * can reads it twice. */
+svg .graph-node[data-state='done'] .graph-node-title {
+  fill: var(--text-muted);
+}
+
 /* The selected card's boundary thickens and does not change tone: the tone is
  * the state's, and a selection that recoloured it would hide the state. */
 svg .graph-node[data-selected='true'] .graph-node-box {
@@ -1672,10 +1680,13 @@ span.graph-word {
   font-size: var(--font-size-xs);
 }
 
-/* A blocked row carries the same mark its card draws, and a done one goes quiet
- * the same way: the two drawings of one model say the same thing about it. */
+/* A blocked row carries the same mark its card draws -- **dashed**, which is the
+ * second channel the card's dashed box keeps: the amber and the dash say the
+ * same thing twice, so the row reads as blocked where the tone does not. A done
+ * one goes quiet the same way, in the title. The two drawings of one model say
+ * the same thing about it. */
 li.graph-row[data-state='blocked'] {
-  border-left: 3px solid var(--warn);
+  border-left: 3px dashed var(--warn);
 }
 
 li.graph-row[data-state='done'] span.graph-row-title {
@@ -2069,6 +2080,9 @@ p.graph-empty {
     border-color: Highlight;
   }
 
+  /* Only the tone is written here: a border's *style* is not forced by the
+   * system, so the blocked row's dashed left edge survives with the amber
+   * going to `CanvasText` (design section 4.4's rule 1). */
   li.graph-row[data-state='blocked'] {
     border-left-color: CanvasText;
   }
@@ -2078,5 +2092,4 @@ p.graph-empty {
     color: HighlightText;
     forced-color-adjust: none;
   }
-}
 }
