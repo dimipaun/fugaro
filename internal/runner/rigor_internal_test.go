@@ -353,6 +353,99 @@ func TestFinalSectionNamesTheModeAndWhereItCameFrom(t *testing.T) {
 	}
 }
 
+// toleratedFindings are the three findings the review round below leaves open,
+// scored so that Startup tolerates all three and Critical blocks all three:
+// the split is the mode's, and these cases read it through the mode's own
+// table rather than by asserting the table again.
+var toleratedFindings = []Finding{
+	{Likelihood: 2, Impact: 2, FixCost: 1, Class: "correctness"},
+	{Likelihood: 1, Impact: 2, FixCost: 1, Class: "cosmetic"},
+	{Likelihood: 1, Impact: 1, FixCost: 1, Class: "cosmetic"},
+}
+
+// blockingFindings are the same three findings scored so that every mode with a
+// floor blocks them, Startup included: the round a mode did not let through.
+var blockingFindings = []Finding{
+	{Likelihood: 3, Impact: 3, FixCost: 1, Class: "correctness"},
+	{Likelihood: 4, Impact: 4, FixCost: 1, Class: "maintainability"},
+	{Likelihood: 3, Impact: 4, FixCost: 1, Class: "performance"},
+}
+
+// seniorFindings is the last senior review round as the loop leaves it
+// (runner.go seniorLoop): the findings the record's summary beside them only
+// counts, which is what the mode's table reads (outcome.go, T3.1).
+func seniorFindings(r *run, findings []Finding) {
+	last := r.rec.Reviews[len(r.rec.Reviews)-1]
+	r.lastSenior = seniorRound{Round: last.Round, Findings: findings}
+}
+
+// TestFinalSectionNamesWhatTheModeTolerated: T3.3. A run whose last senior
+// round the mode let through names each finding it tolerated with the word its
+// score reads as, in the reviewer's own order, and the mode that tolerated it
+// — the answer the record's own reason carries too (D18). A round the mode did
+// not let through is the section it was before this task, byte for byte, and
+// the mode line T1.6 added is in the body either way: D18's audit requirement
+// does not depend on there being something to tolerate.
+func TestFinalSectionNamesWhatTheModeTolerated(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		mode     string
+		findings []Finding
+		ready    bool
+		reason   string
+		want     string
+	}{
+		{
+			"the mode let the round through", "startup", toleratedFindings, true,
+			"review round 2 left 3 findings, tolerated at startup",
+			"review round 2: 3 findings, tolerated at startup (low, nit, nit)",
+		},
+		{
+			"the mode blocked the round", "startup", blockingFindings, false,
+			"review round 2 still has 3 findings",
+			"review round 2: 3 findings",
+		},
+		{
+			"a mode that tolerates nothing", "critical", toleratedFindings, false,
+			"review round 2 still has 3 findings",
+			"review round 2: 3 findings",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _ := modeRun(t, tc.mode, openRound)
+			seniorFindings(r, tc.findings)
+
+			section := r.finalSection(tc.ready, tc.reason, nil)
+
+			if !strings.Contains(section, tc.want) {
+				t.Fatalf("the status section does not carry %q:\n%s", tc.want, section)
+			}
+			if !strings.Contains(section, "rigor: "+tc.mode+" (repo)") {
+				t.Errorf("the status section lost the mode line (D18):\n%s", section)
+			}
+			if strings.Contains(section, "tolerated") != strings.Contains(tc.want, "tolerated") {
+				t.Errorf("the status section's account of what was tolerated is not the mode's own:\n%s", section)
+			}
+		})
+	}
+}
+
+// TestFinalSectionWithoutAFindingToTolerateIsUnchanged is T3.3's other half:
+// a mode-aware run with nothing to tolerate carries the section it carried
+// before this task — the mode line T1.6 added, and nothing else new — so the
+// feature is invisible to every run that did not leave a round open.
+func TestFinalSectionWithoutAFindingToTolerateIsUnchanged(t *testing.T) {
+	r, _ := modeRun(t, "startup", runstore.ReviewSummary{Round: 2, Tier: runstore.TierSenior, Verdict: "ship"})
+
+	section := r.finalSection(true, "", nil)
+
+	const want = "**Ready for review** · rigor: startup (repo) · no test run yet · senior review: ship in round 2 · model cost $0.00 · finished 2026-10-24 12:00Z\n" +
+		"Run `20261024-120000-abcd` (a stale time here means the run died: `fugaro diagnose 20261024-120000-abcd`)"
+	if section != want {
+		t.Errorf("the status section of a run with nothing to tolerate:\n got %q\nwant %q", section, want)
+	}
+}
+
 // TestFinalizeRigorResolvesFromTheRunsOwnPathsAndNeverFalls: D22's moments at
 // the runner. Bootstrap declares no path here, so the run starts at its
 // repository's default; finalize resolves from the paths the run's own record
