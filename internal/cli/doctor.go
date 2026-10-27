@@ -437,7 +437,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 			// jobs mount): an invalid one already failed its own check, so
 			// there is nothing to compute from.
 			if rf != nil && rf.Cfg != nil {
-				if facts, ok := doctorRepoSecretsOf(lc, rf.Cfg, repo); ok {
+				if facts, ok := doctorRepoSecretsOf(lc, rf, repo); ok {
 					o.Checks = append(o.Checks, doctorProjectSecretStoredChecks(facts, o.Secrets, projSecrets, projOK)...)
 					if c := doctorProjectSecretScopeCheck(ctx, lc, facts, o.Secrets, projSecrets); c != nil {
 						o.Checks = append(o.Checks, *c)
@@ -818,11 +818,12 @@ type doctorRepoSecrets struct {
 // repository the local config does not record): the same edit already fails
 // another check, so the two below stay silent rather than report on a
 // repository whose jobs cannot be built at all.
-func doctorRepoSecretsOf(lc *localcfg.Config, cfg *config.Config, repo string) (doctorRepoSecrets, bool) {
+func doctorRepoSecretsOf(lc *localcfg.Config, rf *resolvedFile, repo string) (doctorRepoSecrets, bool) {
+	cfg := rf.Cfg
 	facts := doctorRepoSecrets{repo: repo,
 		candidates: map[string]string{}, logical: map[string]string{}, repoIDs: map[string]string{}, jobs: map[string]string{}}
 	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
-		ws, err := infra.Workflow(infra.Inputs{LC: lc, Repo: repo, Cfg: cfg}, name)
+		ws, err := infra.Workflow(infra.Inputs{LC: lc, Repo: repo, Cfg: cfg, FileSetsBaseBranch: fileSetsBaseBranch(*rf)}, name)
 		if err != nil {
 			return doctorRepoSecrets{}, false
 		}

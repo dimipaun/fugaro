@@ -2880,11 +2880,11 @@ which is why they are superseded: re-record them on the Mac with the command abo
 and commit the result. Until that is done the four superseded screens' golden
 tests fail on darwin with that command in the message rather than with a bare
 pixel diff — which is the intended state, and not a regression to chase. The
-Graph's and the Coordinator's four golden cases have nothing to compare against
-anywhere, so they fail with that same command on darwin and with its `xvfb-run`
-form on Linux until the owner records them in the release PR. **Linux baselines
-are not committed** and have never been recorded; they need a Linux machine with a
-display (`xvfb-run`).
+Graph's and the Coordinator's six golden cases (three each) have nothing to
+compare against anywhere, so they fail with that same command on darwin and with
+its `xvfb-run` form on Linux until the owner records them in the release PR.
+**Linux baselines are not committed** and have never been recorded; they need a
+Linux machine with a display (`xvfb-run`).
 
 **CI does not compare any golden today.** `.github/workflows/console-tests.yml`
 sets `FUGARO_CONSOLE_GOLDENS: skip` at job level, so on both

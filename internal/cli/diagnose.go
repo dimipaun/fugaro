@@ -236,7 +236,14 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		if n := seniorRound(rec.Reviews); n > 0 {
 			if res, ok := transcriptResult(ctx, s, "review-"+strconv.Itoa(n)); ok {
 				for _, f := range runner.ParseVerdict(res).Findings {
-					d.Findings = append(d.Findings, runner.Finding{Severity: red(f.Severity), File: red(f.File), Summary: red(f.Summary)})
+					// The score travels with the finding when the transcript
+					// carries one (D3's four optional properties) and stays
+					// absent when it does not, so a transcript from before the
+					// score existed renders exactly as it did.
+					d.Findings = append(d.Findings, runner.Finding{
+						Severity: red(f.Severity), File: red(f.File), Summary: red(f.Summary),
+						Likelihood: f.Likelihood, Impact: f.Impact, FixCost: f.FixCost, Class: red(f.Class),
+					})
 				}
 			}
 		}
@@ -482,6 +489,20 @@ func followUpLine(fu *runstore.FollowUp) string {
 	return line
 }
 
+// scoreCell is a finding's score as diagnose prints it beside the finding's
+// own row, "" for one the reviewer left unscored — which is what keeps a
+// transcript from before the score existed rendering exactly as it did. Every
+// part is named rather than printed as a tuple of numbers: the axes and the
+// class are what a reader checks a mode's threshold against (D2, D3), and a
+// bare tuple leaves the reader to remember which number was which.
+func scoreCell(likelihood, impact, fixCost int, class string) string {
+	s := rigor.Score{Likelihood: likelihood, Impact: impact, FixCost: fixCost, Class: rigor.Class(class)}
+	if !s.Scored() {
+		return ""
+	}
+	return fmt.Sprintf(" (likelihood %d, impact %d, fix cost %d, class %s)", s.Likelihood, s.Impact, s.FixCost, oneLine(class))
+}
+
 // lastTest is the last test record of recs.
 func lastTest(recs []verify.Record) (verify.Record, bool) {
 	for i := len(recs) - 1; i >= 0; i-- {
@@ -653,7 +674,43 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 			if f.File != "" {
 				loc = " " + oneLine(f.File) + ":"
 			}
-			fmt.Fprintf(&b, "  [%s]%s %s\n", oneLine(f.Severity), loc, oneLine(f.Summary))
+			fmt.Fprintf(&b, "  [%s]%s%s %s\n", oneLine(f.Severity),
+				scoreCell(f.Likelihood, f.Impact, f.FixCost, f.Class), loc, oneLine(f.Summary))
+		}
+	}
+	// The findings the resolved mode let through (T4.1), under the review
+	// they came from: what the run left open, and the score and the mode that
+	// left it open. One block per mode, in the order the modes appear: a run
+	// resolves one mode (D9), so this is one block, and a record carrying two
+	// reads as two rather than as whichever happened to be listed first.
+	if t := d.Tolerated; t != nil && len(t.Findings) > 0 {
+		var modes []string
+		byMode := map[string][]runstore.ToleratedFinding{}
+		for _, f := range t.Findings {
+			m := oneLine(string(f.Mode))
+			if _, ok := byMode[m]; !ok {
+				modes = append(modes, m)
+			}
+			byMode[m] = append(byMode[m], f)
+		}
+		for i, mode := range modes {
+			fmt.Fprintf(&b, "\nTolerated by %s\n", mode)
+			for _, f := range byMode[mode] {
+				fmt.Fprintf(&b, "  [%s]%s %s\n", oneLine(string(f.Label)),
+					scoreCell(f.Likelihood, f.Impact, f.FixCost, string(f.Class)), oneLine(f.Title))
+			}
+			// The block's total is how many findings the mode really
+			// tolerated, so a list shorter than that says how many it does
+			// not show rather than reading as the whole of it (F19). It says
+			// nothing about where the rest are: the list is short because it
+			// was bounded when it was written and bounded again here, and a
+			// hand-edited record — the one this guards against — need never
+			// have been bounded at all. It closes the last block, which is
+			// the only one it can belong to: the entries keep the reviewer's
+			// order and the cut is at the end of that order.
+			if i == len(modes)-1 && t.Total > len(t.Findings) {
+				fmt.Fprintf(&b, "  … and %d more tolerated findings\n", t.Total-len(t.Findings))
+			}
 		}
 	}
 	if d.AgentMessage != "" {

@@ -43,6 +43,7 @@ import { buildGraphModel } from '../../src/renderer/graph/model'
 import { LIVE_PR_NO_LINK_REASON } from '../../src/renderer/screens/live'
 import { PR_NO_LINK_REASON } from '../../src/renderer/screens/run'
 import {
+  GRAPH_COMPONENT_OPTION,
   GRAPH_INITIAL_STATE,
   GRAPH_LAYER_GAP,
   GRAPH_LAYER_OPTION,
@@ -134,6 +135,29 @@ function twoRunning(): PlanStatusView {
   return decoded(copy)
 }
 
+/** isolatedAbove is the fixture with its first task cut loose: no release of its
+ * own, and the one task that waited on it waiting on nothing. So `task-one` is
+ * an isolated task -- the first node of the model's own order, and therefore the
+ * component the engine places at the top -- and the release box below it is the
+ * box whose heading the isolated task's own card would cover. `task-three` joins
+ * that release so the box spans the isolated task's own column: a box drawn
+ * beside it would leave the two rectangles clear of each other in `x` and the
+ * case would read as room kept whatever the engine was asked for. */
+function isolatedAbove(): PlanStatusView {
+  const copy = JSON.parse(JSON.stringify(RAW)) as { plans: { nodes: Record<string, unknown>[] }[] }
+  const nodes = copy.plans[0]?.nodes ?? []
+  const first = nodes.find((node) => node['id'] === 'task-one')
+  const second = nodes.find((node) => node['id'] === 'task-two')
+  const third = nodes.find((node) => node['id'] === 'task-three')
+  if (first === undefined || second === undefined || third === undefined) {
+    throw new Error('the fixture has no first three tasks')
+  }
+  first['release'] = null
+  second['needs'] = []
+  third['release'] = '1.4.0'
+  return decoded(copy)
+}
+
 /** runRow is one watch row. Only `run` and `stage` are read by anything on this
  * screen -- the join takes the suffix, the words take the stage -- so every
  * other field is the empty reading: the smallest row the type allows. */
@@ -187,9 +211,12 @@ function screenWith(theme: GraphTheme = 'light'): { screen: GraphScreen; worker:
  * Each node goes one row below the deepest node it waits on, the rows are
  * separated by the room the request asks for, and the nodes of one row sit side
  * by side -- so a release box's heading band is drawn where the request's
- * spacing puts it, which is the whole of what the case below reads. It is not a
- * fake of ELK: nothing here routes an edge or orders a row, and nothing in the
- * case needs it to. */
+ * spacing puts it, which is the whole of what the cases below read. Two nodes
+ * no edge joins are two **components**, and the engine places them apart by a
+ * spacing of its own (`GRAPH_COMPONENT_OPTION`), so the components are stacked
+ * here at the room the request asks for rather than sharing one set of rows. It
+ * is not a fake of ELK: nothing here routes an edge or orders a row, and nothing
+ * in the cases needs it to. */
 class LayeredWorker implements WorkerLike {
   readonly sent: Record<string, unknown>[] = []
   private readonly listeners = new Map<string, ((event: { data?: unknown }) => void)[]>()
@@ -213,19 +240,29 @@ class LayeredWorker implements WorkerLike {
     }
     const options = (request['layoutOptions'] ?? {}) as Readonly<Record<string, string>>
     const gap = Number(options[GRAPH_LAYER_OPTION] ?? 20)
-    const rows = rowsOf(graph.children, graph.edges)
+    const componentGap = Number(options[GRAPH_COMPONENT_OPTION] ?? 20)
+    const placed = new Map<string, { readonly x: number; readonly y: number }>()
+    let top = 0
+    for (const component of componentsOf(graph.children, graph.edges)) {
+      const rows = rowsOf(component.nodes, component.edges)
+      const height = component.nodes[0]?.height ?? 0
+      rows.forEach((row, at) => {
+        row.forEach((id, column) => {
+          const node = component.nodes.find((each) => each.id === id)
+          if (node === undefined) return
+          placed.set(id, { x: column * (node.width + 24), y: top + at * (height + gap) })
+        })
+      })
+      top += (rows.length - 1) * (height + gap) + height + componentGap
+    }
     const data = {
-      children: graph.children.map((child) => {
-        const row = rows.findIndex((each) => each.includes(child.id))
-        const column = (rows[row] ?? []).indexOf(child.id)
-        return {
-          id: child.id,
-          x: column * (child.width + 24),
-          y: row * (child.height + gap),
-          width: child.width,
-          height: child.height,
-        }
-      }),
+      children: graph.children.map((child) => ({
+        id: child.id,
+        x: placed.get(child.id)?.x ?? 0,
+        y: placed.get(child.id)?.y ?? 0,
+        width: child.width,
+        height: child.height,
+      })),
       edges: graph.edges.map((edge) => ({
         id: edge.id,
         sections: [{ startPoint: { x: 0, y: 0 }, endPoint: { x: 1, y: 1 } }],
@@ -261,6 +298,43 @@ function rowsOf(nodes: readonly LayoutNode[], edges: readonly LayoutEdge[]): rea
     rows[at]?.push(node.id)
   }
   return rows
+}
+
+/** componentsOf is the graph's nodes as the engine's own connected components:
+ * two nodes an edge joins are one component, and a node no edge touches -- an
+ * isolated task -- is a component of its own. They are in the order their first
+ * node appears, which is the model's own order. */
+function componentsOf(
+  nodes: readonly LayoutNode[],
+  edges: readonly LayoutEdge[],
+): readonly { readonly nodes: readonly LayoutNode[]; readonly edges: readonly LayoutEdge[] }[] {
+  const root = new Map<string, string>(nodes.map((node) => [node.id, node.id]))
+  const find = (id: string): string => {
+    let at = id
+    while (root.get(at) !== undefined && root.get(at) !== at) at = root.get(at) ?? at
+    return at
+  }
+  for (const edge of edges) {
+    for (const from of edge.sources) {
+      for (const to of edge.targets) {
+        const left = find(from)
+        const right = find(to)
+        if (left !== right) root.set(right, left)
+      }
+    }
+  }
+  const groups = new Map<string, { nodes: LayoutNode[]; edges: LayoutEdge[] }>()
+  for (const node of nodes) {
+    const at = find(node.id)
+    const group = groups.get(at) ?? { nodes: [], edges: [] }
+    group.nodes.push(node)
+    groups.set(at, group)
+  }
+  for (const edge of edges) {
+    const at = find(edge.sources[0] ?? '')
+    groups.get(at)?.edges.push(edge)
+  }
+  return [...groups.values()]
 }
 
 /** layeredScreen is the screen the app builds -- its own layout client -- over
@@ -441,7 +515,7 @@ describe('the graph screen and the layout cache', () => {
 // ---------------------------------------------------------------------------
 
 describe('the graph screen and the room a release heading needs', () => {
-  it('asks the engine for the room a heading needs between two rows of tasks', async () => {
+  it('asks the engine for the room a heading needs, between two rows and between two components', async () => {
     const { screen, worker } = screenWith()
     await screen.load(DOCUMENT, RUNS)
     const asked = worker.sent.filter((each) => each['cmd'] === 'layout')
@@ -449,18 +523,20 @@ describe('the graph screen and the room a release heading needs', () => {
     const options = (asked[0]?.['layoutOptions'] ?? {}) as Readonly<Record<string, string>>
     // The room is the lower box's heading and the padding both boxes keep: less
     // than that and the heading is drawn on the row above, whose cards are drawn
-    // later and paint over it.
+    // later and paint over it. The engine places separate components apart by a
+    // spacing of its own, and a heading does not know which of the two it is
+    // under, so the same room is asked for both.
     expect(GRAPH_LAYER_GAP).toBe(GRAPH_PAD * 2 + GRAPH_RELEASE_HEAD)
     expect(options[GRAPH_LAYER_OPTION]).toBe(String(GRAPH_LAYER_GAP))
+    expect(options[GRAPH_COMPONENT_OPTION]).toBe(String(GRAPH_LAYER_GAP))
   })
 
   it('draws every release heading clear of every task card, its own box’s and another’s', async () => {
-    // A heading longer than any box is the fixture's own release renamed: the
-    // band below is the box's whole width whatever the heading says, so a long
-    // one is the case a box drawn to its tasks' width cannot save by being wide.
-    const document = patched(['plans', 0, 'releases', 0, 'name'], 'a release whose name runs past the width of its own box')
+    // The fixture's own document, with no field renamed: a heading's band is the
+    // box's whole width and a fixed height whatever the heading says, so the
+    // release's name is not an input this case can vary.
     const screen = layeredScreen(new LayeredWorker())
-    await screen.load(document, RUNS)
+    await screen.load(DOCUMENT, RUNS)
     const drawing = screen.redraw()
     if (drawing === null) throw new Error('no drawing')
     const root = mounted(drawing)
@@ -473,16 +549,49 @@ describe('the graph screen and the room a release heading needs', () => {
     expect(boxes.length).toBeGreaterThan(1)
     expect(cards.length).toBeGreaterThan(boxes.length)
 
-    for (const box of boxes) {
-      for (const card of cards) {
-        expect(
-          overlaps(box.band, card.rect),
-          `${box.key} draws its heading over ${card.key}: the box grows upward for two lines of text, and the layout has to leave it that room`,
-        ).toBe(false)
-      }
-    }
+    expectNoHeadingUnderACard(boxes, cards)
+  })
+
+  it('keeps the room a heading needs under an isolated task, which the engine places as its own component', async () => {
+    // An isolated task is a component of its own, and the engine stacks
+    // components at `elk.spacing.componentComponent` -- 20 px by default, the
+    // same room it leaves between two rows. A release below that task draws its
+    // heading in the gap, and nothing in the drawing code knows the row above is
+    // a different component: the box's own growth and the append order are the
+    // same, so a heading covered this way looks exactly like the one the layer
+    // spacing used to cover.
+    const screen = layeredScreen(new LayeredWorker())
+    await screen.load(isolatedAbove(), RUNS)
+    const drawing = screen.redraw()
+    if (drawing === null) throw new Error('no drawing')
+    const root = mounted(drawing)
+
+    const boxes = releaseBoxesIn(root)
+    const cards = cardsIn(root)
+    // The fixture is worth reading only if the isolated task really sits above a
+    // release's first card: one component of its own, and a box below it.
+    expect(cards.length).toBeGreaterThan(boxes.length)
+    expect(boxes.length).toBeGreaterThan(0)
+
+    expectNoHeadingUnderACard(boxes, cards)
   })
 })
+
+/** expectNoHeadingUnderACard is the one assertion both room cases make: no
+ * release box's heading band shares an area with any task card's rectangle. */
+function expectNoHeadingUnderACard(
+  boxes: readonly { readonly key: string; readonly band: ReturnType<typeof rectOf> }[],
+  cards: readonly { readonly key: string; readonly rect: ReturnType<typeof rectOf> }[],
+): void {
+  for (const box of boxes) {
+    for (const card of cards) {
+      expect(
+        overlaps(box.band, card.rect),
+        `${box.key} draws its heading over ${card.key}: the box grows upward for two lines of text, and the layout has to leave it that room`,
+      ).toBe(false)
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // The words

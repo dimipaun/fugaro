@@ -279,6 +279,14 @@ export const GRAPH_LAYER_GAP = GRAPH_PAD * 2 + GRAPH_RELEASE_HEAD
  * the layout test reads the same spelling the screen sends. */
 export const GRAPH_LAYER_OPTION = 'elk.layered.spacing.nodeNodeBetweenLayers'
 
+/** GRAPH_COMPONENT_OPTION is the ELK setting GRAPH_LAYER_GAP is passed as for
+ * the room between two components -- tasks no edge joins. It carries the same
+ * room as GRAPH_LAYER_OPTION because a heading does not know which of the two it
+ * is under: the engine's own 20 px is less than one heading needs, and a task
+ * that waits on nothing is a component of its own, so an isolated task's card
+ * would cover the next release's heading exactly as a row above it would. */
+export const GRAPH_COMPONENT_OPTION = 'elk.spacing.componentComponent'
+
 /** GRAPH_TITLE_SLOT, GRAPH_PR_SLOT, GRAPH_RUN_SLOT and GRAPH_MARK_SLOT are the
  * x offsets of the cells along a card of `GRAPH_NODE_WIDTH`, and
  * GRAPH_WORD_SLOT/GRAPH_CRITICAL_SLOT are the two word slots. They are fixed
@@ -1566,12 +1574,22 @@ export class GraphScreen {
  * what keeps the heading in the gap, so it is the request that carries the fix
  * rather than the drawing code: a shorter head would leave the heading under
  * the cards at the same 20 px.
+ *
+ * The room between two components is asked for at the same gap, and for the same
+ * reason: the engine's own room there is that same 20 px, and a task no edge
+ * joins is a component of its own, so the next release's heading is drawn under
+ * the isolated task's card with nothing in the drawing code to tell the two
+ * apart.
  */
 export class GraphLayoutClient extends LayoutClient {
   override layout(graph: LayoutGraph, request: LayoutRequest = {}): Promise<Positions> {
     return super.layout(graph, {
       ...request,
-      layoutOptions: { ...request.layoutOptions, [GRAPH_LAYER_OPTION]: String(GRAPH_LAYER_GAP) },
+      layoutOptions: {
+        ...request.layoutOptions,
+        [GRAPH_LAYER_OPTION]: String(GRAPH_LAYER_GAP),
+        [GRAPH_COMPONENT_OPTION]: String(GRAPH_LAYER_GAP),
+      },
     })
   }
 }

@@ -47,12 +47,30 @@ func BranchRunID(branch string) (string, bool) {
 
 // Spec is the task spec stored as runs/<repo-slug>/<run-id>/task.json.
 type Spec struct {
-	Version  int    `json:"version"`
-	RunID    string `json:"run_id"`
-	Repo     string `json:"repo"`
-	Ref      string `json:"ref"`
-	Workflow string `json:"workflow,omitempty"`
-	Task     string `json:"task,omitempty"`
+	Version int    `json:"version"`
+	RunID   string `json:"run_id"`
+	Repo    string `json:"repo"`
+	Ref     string `json:"ref"`
+	// BaseBranch is the base the launcher resolved from the layers below the
+	// repository's own file (config.EffectiveBaseBranch: the local config's
+	// repos.<r>.base_branch, else the project's base_branch, which a machine
+	// whose own config sets none reads from the published policy node). The
+	// runner uses it only when the fugaro.yaml at the ref does not set
+	// git.base_branch itself — the file is layer 1 and always wins — so a
+	// launch whose file names the base carries no field (omitempty) and its
+	// spec is byte-identical to what a release before this one wrote.
+	//
+	// It is written only when the resolved value is not main, which is the
+	// default the file's own resolution already falls back to: a field
+	// carrying "main" would be a member every launch has, and every older
+	// runner would refuse the spec outright (Parse decodes with
+	// DisallowUnknownFields) over a value that changes nothing. The launcher's
+	// skew gate (internal/cli's baseBranchSince) is what keeps even a
+	// non-main value out of an old job's task: it omits the field and says so
+	// on stderr rather than refusing the launch.
+	BaseBranch string `json:"base_branch,omitempty"`
+	Workflow   string `json:"workflow,omitempty"`
+	Task       string `json:"task,omitempty"`
 	// Title is the run's own job title, from fugaro run --title: the one
 	// line every surface that names a run shows — fugaro watch's live,
 	// queued and finished rows, the budget registry's entry, the title and
@@ -649,6 +667,9 @@ func (s *Spec) Validate() error {
 	}
 	if s.Branch != "" && !BranchRE.MatchString(s.Branch) {
 		bad("task spec: branch %q must be fugaro/<run-id>", s.Branch)
+	}
+	if s.BaseBranch != "" && !config.ValidBranchName(s.BaseBranch) {
+		bad("task spec: base_branch %q must be a plain git branch name", s.BaseBranch)
 	}
 	if s.PreviousRun != "" && !runIDRE.MatchString(s.PreviousRun) {
 		bad("task spec: previous_run %q is not a run ID", s.PreviousRun)

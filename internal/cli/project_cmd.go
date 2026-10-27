@@ -733,6 +733,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		Version:    projectpolicy.Version,
 		Budget:     projectpolicy.Budget{Mode: lc.Budget.Mode, PerRunUSD: lc.Budget.PerRunUSD, AllowedModels: lc.Budget.AllowedModels, MaxRunTokens: lc.Budget.MaxRunTokens},
 		AllowRepos: nonNil(allow),
+		BaseBranch: lc.BaseBranch,
 		Providers:  policyProviders(lc),
 		Prices:     policyPrices(lc),
 		Profiles:   profiles,

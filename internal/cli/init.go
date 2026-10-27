@@ -3117,7 +3117,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		}
 		printCeiling(w, lc, cfg)
 	}
-	in := infra.Inputs{LC: lc, Repo: repo, Cfg: cfg, RepoURL: repoURL, GitHubAppID: o.githubAppID}
+	in := infra.Inputs{LC: lc, Repo: repo, Cfg: cfg, FileSetsBaseBranch: fileSetsBaseBranch(rf), RepoURL: repoURL, GitHubAppID: o.githubAppID}
 	var spec infra.RepoSpec
 	if !o.forget {
 		// Every name, before any cloud call: a spec that can't be

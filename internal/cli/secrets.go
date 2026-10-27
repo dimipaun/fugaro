@@ -315,6 +315,13 @@ container and every repository is asked for its own value (docs/git-providers.md
 Storing it for the project is refused unless project_secrets.bitbucket-token
 allow-lists the repositories it is meant for.
 
+An allow_data_to entry may use * inside a segment, never across /: a
+workspace's whole list is written myworkspace/* (and myworkspace/api-* names
+a family), while the owner segment must be literal -- a bare * is not
+accepted, because one project secret is one owner's credential. A wildcard
+means every repository it matches, now and later: onboarding one mounts the
+project copy with nothing else to do.
+
 With --repo (owner/name, or with no value for this checkout's origin) the
 value is stored as the repository's own copy instead. That copy overrides
 the project copy from then on: disabling its last enabled version is the

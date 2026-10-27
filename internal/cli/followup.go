@@ -573,7 +573,7 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	// number (the run it follows holds the node), and a chain that kept
 	// re-claiming a task would say the task is running again with every
 	// follow-up. An explicit --plan-task claims one for this run itself.
-	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: c.Ref, Workflow: workflow, Task: text,
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: c.Ref, BaseBranch: specBaseBranch(c.Ref), Workflow: workflow, Task: text,
 		Title:          cmp.Or(o.title, c.Title),
 		PlanTask:       o.planTask,
 		CompressionOff: c.CompressionOff,

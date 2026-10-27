@@ -2238,7 +2238,14 @@ var chk49Citations = []chkCitation{
 	{"internal/cli/run.go", "taskText(cmd, o.tf, args, prSet)"},
 	{"internal/cli/run.go", "launchPolicyGates(ctx, env, slug, spec)"},
 	{"internal/cli/run.go", "pass the task as TEXT or with --task-file (- for stdin)"},
-	{"internal/cli/run.go", "ref = c.Git.BaseBranch"},
+	// The ref's own fallback moved with the ruling that gave the base branch
+	// four layers: the launcher takes --ref as it is (a first run's spec is
+	// buildAttemptSpec's) and resolves the ref through launchBaseBranch in
+	// basebranch.go when the flag is empty. The number this sentence used to
+	// carry ((:630), the shape chkNoLineCites cannot see) pointed at the
+	// --plan-task gate by then, so both halves are named instead.
+	{"internal/cli/run.go", "func buildAttemptSpec"},
+	{"internal/cli/basebranch.go", "func launchBaseBranch"},
 	{"internal/gitops/gitops.go", "\"fetch\", \"--quiet\", \"origin\", ref"},
 	{"internal/runner/runner.go", "CheckoutNewBranch(ctx, spec.Ref, branch)"},
 	{"internal/cli/cloud.go", "\"project\", \"\", \"the Fugaro project"},

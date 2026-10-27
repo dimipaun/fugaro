@@ -200,13 +200,13 @@ func TestReviewScopeNotApplicableWhenRangeKeptWide(t *testing.T) {
 	})
 }
 
-// TestReviewScopeNotApplicableToFollowUpReviewAndAutofix: three runs have no
-// implement set of their own by definition — a follow-up and a review run
-// review the pull request's range, and a run whose check gate's commands.fix
-// committed skipped implement entirely — so the comparison is recorded with
-// the reason and never as a mismatch. The first two read nothing at all: the
-// range is the pull request's, so there is no narrowing to make a decision
-// about.
+// TestReviewScopeNotApplicableToFollowUpReviewAndAutofix: three runs record a
+// reason instead of a comparison — a follow-up's range is the pull request's,
+// which holds whoever else contributed to it, a review run has no implement
+// stage, and a run whose check gate's commands.fix committed skipped
+// implement entirely — so the comparison is recorded as not applicable and
+// never as a mismatch. The first two read nothing at all: the range is the
+// pull request's, so there is no narrowing to make a decision about.
 //
 // Mutation (leave Applicable true, or drop a reason, for any of them): this
 // test fails. Mutation (return a reason for the autofix gate before the range

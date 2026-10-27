@@ -535,7 +535,7 @@ exactly its own tags and nothing is nested under a `process` or `checks` key:
 | `halt` | `*runstore.Halt` | **yes** | why a halted run was halted |
 | `verify` | `[]verify.Record` | **yes** | `result.json`'s verify records |
 | `failed`, `flaky` | `[]string` | **yes** | the last test record's failed and flaky tests |
-| `findings` | `[]runner.Finding` | **yes** | the last review's findings |
+| `findings` | `[]runner.Finding` | **yes** | the last review's findings; one element is `severity`, `file` and `summary` and, when its transcript carried a score, the four optional properties **`likelihood`**, **`impact`**, **`fix_cost`** and **`class`** (rigor D3, read back here by T4.1) — the keys of an element, never of `Diagnosis` itself. The three axes are 1–5 and `class` is `runner.VerdictSchema`'s enum. Each is absent when the transcript did not have it, so a finding from a transcript written before the score existed — every transcript a run made before rigor mode shipped — carries none of the four and reads in the document exactly as it always did |
 | `agent_message` | string | **yes** | capped at `agentMessageBytes` = 4 KiB |
 | `log_tail` | `[]string` | **yes** | the newest `diagnoseLogLines` = 30 lines |
 | `report_path` | string | no | |

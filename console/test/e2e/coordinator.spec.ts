@@ -49,7 +49,7 @@
 // Nothing on this screen moves or is read from a clock -- `COORDINATOR_NO_AGE_WORD`
 // is the console's own sentence about the time the stored view does not carry --
 // so the frame is a function of the committed document alone and needs no
-// emulation to freeze it. **No PNG is committed**, as for the other four
+// emulation to freeze it. **No PNG is committed**, as for the other five
 // screens: macOS and Linux pixels differ, and the baselines are owner-run.
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
@@ -359,7 +359,7 @@ test.describe('the Coordinator screen', () => {
   }
 
   test('is painted from the design tokens, not from the browser defaults', async () => {
-    // The same computed-ground assertion the other four screens' specs make, and
+    // The same computed-ground assertion the other five screens' specs make, and
     // the one case here that is red when the stylesheet stops being linked: the
     // theme travels as a `data-theme` attribute the renderer stamps, so every
     // read above passes on a tree nothing paints.

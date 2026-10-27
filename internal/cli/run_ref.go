@@ -12,7 +12,8 @@ import (
 // newRunRef is the ref a new run is cut from when --ref was not given: the
 // branch the checkout in the working directory is on, when that is a branch
 // origin has and not the repository's base branch, else the base branch
-// (the local config's, then the checkout's fugaro.yaml's).
+// (launchBaseBranch resolved it: the checkout's fugaro.yaml, then the local
+// config's, then the project's, then main).
 //
 // The checkout's branch wins because the run's review measures the run's
 // work against the ref it was cut from (internal/runner/diffbase.go): a run
@@ -26,28 +27,10 @@ import (
 // "Origin has" is read from this checkout's own remote-tracking ref, never
 // the network: a branch that was never pushed (or whose remote-tracking ref
 // was pruned) is not used, since the job could not fetch it.
-func newRunRef(ctx context.Context, env *cloudEnv, repo string, checkout func() *config.Config, warn io.Writer) (string, error) {
-	var base string
-	if r, ok := env.localRepo(repo); ok && r.BaseBranch != "" {
-		base = r.BaseBranch
-	} else if c := checkout(); c != nil && c.Git.BaseBranch != "" {
-		base = c.Git.BaseBranch
-	}
+func newRunRef(ctx context.Context, repo, base string, warn io.Writer) string {
 	if b := checkoutBranchOnOrigin(ctx, repo); b != "" && b != base {
-		fmt.Fprintf(warn, "using --ref %s: this checkout is on %s; pass --ref %s to run from the default branch\n", b, b, orDefault(base))
-		return b, nil
-	}
-	if base == "" {
-		return "", userErr("cannot tell the base branch of %s; pass --ref", repo)
-	}
-	return base, nil
-}
-
-// orDefault is base for newRunRef's hint, or a placeholder when no base
-// branch could be read (the hint still has to name a flag value).
-func orDefault(base string) string {
-	if base == "" {
-		return "<base-branch>"
+		fmt.Fprintf(warn, "using --ref %s: this checkout is on %s; pass --ref %s to run from the default branch\n", b, b, base)
+		return b
 	}
 	return base
 }

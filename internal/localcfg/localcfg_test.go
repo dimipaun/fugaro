@@ -1383,3 +1383,33 @@ func TestRoutingInTheLocalConfig(t *testing.T) {
 		t.Errorf("a claim with no allow_data_to: err = %v, want a refusal naming allow_data_to", err)
 	}
 }
+
+// TestProjectBaseBranchValidated: the installation config's top-level
+// base_branch is the project's default base branch, a sibling of repos:, so
+// it reaches git, Cloud Build and a run's ref exactly as a repo's does and
+// is held to the same rule. The refusal names the layer the value came
+// from, because the same word is a per-repo key one level down.
+func TestProjectBaseBranchValidated(t *testing.T) {
+	c, err := Parse([]byte(sample + "base_branch: trunk\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.BaseBranch != "trunk" {
+		t.Errorf("BaseBranch = %q, want trunk", c.BaseBranch)
+	}
+	for _, ok := range []string{"main", "release/1.2", "dev_x"} {
+		if _, err := Parse([]byte(sample + "base_branch: " + ok + "\n")); err != nil {
+			t.Errorf("%q refused: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{`"--upload-pack=x"`, `"main\n"`, `"a..b"`, `"$(id)"`, `"x y"`, `"/x"`} {
+		_, err := Parse([]byte(sample + "base_branch: " + bad + "\n"))
+		if err == nil || !strings.Contains(err.Error(), "the project's default base branch") {
+			t.Errorf("%s: err = %v", bad, err)
+		}
+	}
+	// No project base_branch at all is fine: the checkout's or main is used.
+	if c, err := Parse([]byte(sample)); err != nil || c.BaseBranch != "" {
+		t.Errorf("no base_branch: %v, %q", err, c.BaseBranch)
+	}
+}

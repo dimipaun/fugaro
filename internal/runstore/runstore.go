@@ -145,8 +145,10 @@ const MaxReviewScopePath = 512
 
 // MaxReviewScopeBytes caps the stored paths' total length, the two sets
 // together, like MaxChangedPathBytes: a plan that renames a directory puts a
-// megabyte of paths in a set, three lists at the count cap are past
-// MaxRecordBytes, and a record that big cannot be read back at all.
+// megabyte of paths in a set, and the block's three lists at the count cap
+// hold 600 paths of up to MaxReviewScopePath runes — 300 KiB of ASCII path,
+// and over MaxRecordBytes once those runes average more than three bytes
+// each — in a record every listing reads.
 const MaxReviewScopeBytes = 16 << 10
 
 // The review-scope reasons (ReviewScope.WhyNot), each a short value the

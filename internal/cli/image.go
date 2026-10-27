@@ -179,10 +179,11 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	for _, w := range lc.Warnings() {
 		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", w)
 	}
-	_, cfg, name, err := loadCheckoutWorkflow(ctx, o.workflow, lc, layerOptions{})
+	_, rf, name, err := loadCheckoutWorkflow(ctx, o.workflow, lc, layerOptions{})
 	if err != nil {
 		return err
 	}
+	cfg := rf.Cfg
 	if cfg.Workflows[name].Checkout == config.CheckoutClone {
 		return userErr("this workflow runs the base image (checkout: clone): there is nothing to build")
 	}
@@ -249,7 +250,7 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 		kind := w.BaseKind()
 		specLC.BaseImages[kind] = cmp.Or(specLC.BaseImages[kind], base)
 	}
-	rs, err := infra.Repo(infra.Inputs{LC: &specLC, Repo: repo, Cfg: cfg, RepoURL: repoURL})
+	rs, err := infra.Repo(infra.Inputs{LC: &specLC, Repo: repo, Cfg: cfg, FileSetsBaseBranch: fileSetsBaseBranch(rf), RepoURL: repoURL})
 	if err != nil {
 		return userErr("%v", err)
 	}
@@ -478,7 +479,8 @@ func newImageRenderCmd() *cobra.Command {
 				o = layerOptions{Data: data, Where: layerBucket + "/" + config.LayerCopyKey(layerSlug)}
 			}
 			o.Lenient = true
-			root, rf, err := loadCheckoutResolved(cmd.Context(), "", nil, o)
+			lc := selectedProjectConfig(cmd.Context())
+			root, rf, err := loadCheckoutResolved(cmd.Context(), "", lc, o)
 			if err != nil {
 				return err
 			}
@@ -495,7 +497,7 @@ func newImageRenderCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: workflow %s uses the repository Dockerfile %s\n", name, repoFile)
 			}
 			if cloudOutputs != "" {
-				if err := writeCloudOutputs(cmd.Context(), root, cfg, name, cloudOutputs); err != nil {
+				if err := writeCloudOutputs(cmd.Context(), root, lc, rf, name, cloudOutputs); err != nil {
 					return err
 				}
 			}
@@ -519,7 +521,8 @@ func newImageRenderCmd() *cobra.Command {
 // render read: selftest.json (the smoke's spec, image.SpecForCloud),
 // record.json (the build record's source side, which record completes),
 // and source-commit and built-at (the image's labels).
-func writeCloudOutputs(ctx context.Context, root string, cfg *config.Config, name, dir string) error {
+func writeCloudOutputs(ctx context.Context, root string, lc *localcfg.Config, rf resolvedFile, name, dir string) error {
+	cfg := rf.Cfg
 	git := func(args ...string) (string, error) {
 		c := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
 		c.WaitDelay = 5 * time.Second
@@ -541,10 +544,6 @@ func writeCloudOutputs(ctx context.Context, root string, cfg *config.Config, nam
 	if err != nil {
 		return fmt.Errorf("the commit time %q: %w", committed, err)
 	}
-	branch, err := git("symbolic-ref", "--short", "HEAD")
-	if err != nil {
-		branch = cfg.Git.BaseBranch
-	}
 	origin, err := git("remote", "get-url", "origin")
 	if err != nil {
 		return userErr("no origin remote in this checkout")
@@ -553,6 +552,20 @@ func writeCloudOutputs(ctx context.Context, root string, cfg *config.Config, nam
 	repo, ok := repoFromOrigin(origin)
 	if !ok {
 		return userErr("origin %s does not name owner/name", gcp.RedactURL(origin))
+	}
+	branch, err := git("symbolic-ref", "--short", "HEAD")
+	if err != nil {
+		// Detached, which is how the build's own clone of the base branch
+		// lands: the branch this build was submitted for, resolved by the one
+		// precedence every layer resolves a base branch through. The name is
+		// what a reader of the record compares against the branch they asked
+		// for, so it is the pull request's base branch and not the checkout's
+		// or the file's own value (which Resolve fills the default in for).
+		local, project := "", ""
+		if lc != nil {
+			local, project = lc.Repos[repo].BaseBranch, lc.BaseBranch
+		}
+		branch, _ = config.EffectiveBaseBranch(cfg.Git.BaseBranch, *fileSetsBaseBranch(rf), local, project)
 	}
 	// Git's own view of HEAD, as the check reads the branch: blob IDs of
 	// what git stores, not of the checkout's bytes.
@@ -607,10 +620,19 @@ func writeCloudOutputs(ctx context.Context, root string, cfg *config.Config, nam
 // 0.6.0. Neither resolves a cloud project config of its own (no cloud
 // flags), so loadCheckoutWorkflow falls back to selectedProjectConfig.
 func loadCheckout(ctx context.Context, workflow string) (root string, cfg *config.Config, name string, err error) {
-	return loadCheckoutWorkflow(ctx, workflow, nil, layerOptions{Lenient: true})
+	root, rf, name, err := loadCheckoutWorkflow(ctx, workflow, nil, layerOptions{Lenient: true})
+	if rf.Cfg == nil {
+		return root, nil, name, err
+	}
+	return root, rf.Cfg, name, err
 }
 
-// loadCheckoutWorkflow is loadCheckout resolved over o, against lc (nil:
+// loadCheckoutWorkflow returns the resolution beside the checkout, not just
+// the config: the caller that computes the repository's spec needs the file's
+// own answer for git.base_branch (infra.Inputs.FileSetsBaseBranch), which a
+// resolved config no longer carries.
+//
+// It is loadCheckout resolved over o, against lc (nil:
 // loadCheckoutResolved falls back to selectedProjectConfig, the flag-blind
 // selection loadCheckout's two lenient callers have no better option for).
 // runImageBuildCloud is the one strict caller, and the one that already has
@@ -627,16 +649,15 @@ func loadCheckout(ctx context.Context, workflow string) (root string, cfg *confi
 // prepareLayerCopy, called from runImageBuildCloud once cfg is resolved
 // here: resolving strictly here against the right lc is what lets that
 // call trust cfg.Layer, rather than building on a stale or unknown one.
-func loadCheckoutWorkflow(ctx context.Context, workflow string, lc *localcfg.Config, o layerOptions) (root string, cfg *config.Config, name string, err error) {
-	root, rf, err := loadCheckoutResolved(ctx, "", lc, o)
+func loadCheckoutWorkflow(ctx context.Context, workflow string, lc *localcfg.Config, o layerOptions) (root string, rf resolvedFile, name string, err error) {
+	root, rf, err = loadCheckoutResolved(ctx, "", lc, o)
 	if err != nil {
-		return "", nil, "", err
+		return "", rf, "", err
 	}
-	cfg = rf.Cfg
-	if name, _, err = cfg.SelectWorkflow(workflow); err != nil {
-		return "", nil, "", &ExitError{Code: ExitUserError, Err: err}
+	if name, _, err = rf.Cfg.SelectWorkflow(workflow); err != nil {
+		return "", rf, "", &ExitError{Code: ExitUserError, Err: err}
 	}
-	return root, cfg, name, nil
+	return root, rf, name, nil
 }
 
 // loadCheckoutConfig is loadCheckout without selecting a workflow.
