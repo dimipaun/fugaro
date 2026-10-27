@@ -1694,6 +1694,53 @@ func TestRepoSpecBaseBranchFallsBackToTheCheckout(t *testing.T) {
 	}
 }
 
+// TestRepoSpecBaseBranchPrecedence: the spec's base branch is the one
+// precedence every layer resolves through (config.EffectiveBaseBranch) — the
+// checkout's fugaro.yaml when the file writes git.base_branch, else the local
+// config's repos.<r>.base_branch, else the project's own base_branch, else
+// main. FileSetsBaseBranch is that first question, which a resolved config
+// cannot answer: a caller that did not read the file says false, and the
+// layers below the file then win.
+func TestRepoSpecBaseBranchPrecedence(t *testing.T) {
+	for _, tc := range []struct {
+		name, fileBranch string
+		fileSets         bool
+		entry, project   string
+		want             string
+	}{
+		{"the file's own key beats the local entry", "develop", true, "master", "release", "develop"},
+		{"a caller that cannot tell keeps the local entry", "develop", false, "master", "release", "master"},
+		{"the project's default when neither names one", "main", false, "", "release", "release"},
+		{"main when nothing names one", "main", false, "", "", "main"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := sandboxInputs(t, m5Additions)
+			in.FileSetsBaseBranch = &tc.fileSets
+			r := in.LC.Repos["acme/sandbox"]
+			r.BaseBranch = tc.entry
+			in.LC.Repos["acme/sandbox"] = r
+			in.LC.BaseBranch = tc.project
+			cfg := *in.Cfg
+			in.Cfg = &cfg
+			in.Cfg.Git.BaseBranch = tc.fileBranch
+			rs, err := Repo(in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rs.BaseBranch != tc.want {
+				t.Fatalf("base branch %q, want %q", rs.BaseBranch, tc.want)
+			}
+			var spec CheckJobSpec
+			if err := json.Unmarshal([]byte(rs.Check.Env[CheckSpecEnv]), &spec); err != nil {
+				t.Fatal(err)
+			}
+			if spec.BaseBranch != tc.want {
+				t.Errorf("check spec base branch %q, want %q", spec.BaseBranch, tc.want)
+			}
+		})
+	}
+}
+
 // claudeAccountsLC configures two named Claude accounts: "acme-personal",
 // allowed for acme/sandbox (sandboxInputs' repo, oauth by default), and
 // "acme-overflow", allowed for a different repository only.

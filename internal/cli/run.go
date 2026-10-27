@@ -1451,7 +1451,11 @@ func agentAtRef(ctx context.Context, env *cloudEnv, repo, ref string) (config.Ag
 	fl, cached := cachedProjectLayer(ctx, root, env.lc)
 	if cached && fl.Layer != nil {
 		pl := &task.ProjectLayer{SHA256: fl.Layer.SHA256, Generation: fl.Generation, YAML: string(fl.Layer.Raw)}
-		if res := runner.ResolveConfig(data, pl, env.lc.Name); res.LayerErr == nil && len(res.Problems) == 0 {
+		// No base branch: the task is not built yet at this point (this is the
+		// read the launch resolves its account from), and only agent.auth is
+		// read out of the resolution — a base changes git.base_branch and
+		// nothing else.
+		if res := runner.ResolveConfig(data, pl, env.lc.Name, ""); res.LayerErr == nil && len(res.Problems) == 0 {
 			auth = res.Cfg.Agent.Auth
 		}
 	}
@@ -1492,7 +1496,7 @@ func cascadeRefConfig(ctx context.Context, env *cloudEnv, spec *task.Spec) *conf
 	if err != nil {
 		return nil
 	}
-	out := runner.ResolveConfig(data, spec.ProjectLayer, env.lc.Name)
+	out := runner.ResolveConfig(data, spec.ProjectLayer, env.lc.Name, spec.BaseBranch)
 	if out.LayerErr != nil || len(out.Problems) > 0 {
 		return nil
 	}

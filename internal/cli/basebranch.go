@@ -74,6 +74,15 @@ func (e *cloudEnv) projectBaseBranch(ctx context.Context, needed bool) string {
 	return p.BaseBranch
 }
 
+// fileSetsBaseBranch is whether a resolved file writes git.base_branch
+// itself: the question config.EffectiveBaseBranch's fileSets argument asks,
+// and the one infra.Inputs carries for the same reason (its doc comment has
+// why a resolved config cannot answer it).
+func fileSetsBaseBranch(rf resolvedFile) *bool {
+	sets := rf.Res != nil && rf.Res.SourceOf("git.base_branch") == config.SourceRepo
+	return &sets
+}
+
 // specBaseBranch is the task field a launch writes for base: nothing when the
 // winning layer is the default (main), which is what every launch carried
 // before the field existed. A value of main is dropped rather than written:

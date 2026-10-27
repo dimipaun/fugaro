@@ -192,7 +192,7 @@ func (r *run) baseRigor(ctx context.Context) (rigor.Config, string) {
 			"revision", rev, "err", r.redact(err.Error()))
 		return r.cfg.ProjectRigor(), ""
 	}
-	out := ResolveConfig(data, r.spec.ProjectLayer, r.d.Project)
+	out := ResolveConfig(data, r.spec.ProjectLayer, r.d.Project, r.spec.BaseBranch)
 	switch {
 	case out.LayerErr != nil:
 		err = out.LayerErr

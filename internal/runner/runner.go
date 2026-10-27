@@ -1829,7 +1829,16 @@ type ConfigResolution struct {
 // TestEveryConsumerResolvesTheSameBytes) calls the runner's own
 // resolution, not a copy of its logic that could silently diverge from
 // it; every other caller stays (*run).resolveConfig.
-func ResolveConfig(data []byte, pl *task.ProjectLayer, project string) ConfigResolution {
+//
+// base is the task's base_branch, the project's default base branch a launch
+// resolved (internal/config's EffectiveBaseBranch): a file that writes no
+// git.base_branch of its own takes it, and the resolution says so
+// (Sources["git.base_branch"] = SourceProject, ConfigSHA256 recomputed over
+// the config that came out). A file that writes the key keeps it — the
+// repository's own reviewed text is the branch the run is cut from and the
+// one its pull request targets — and so does a task carrying none, which is
+// every task that resolved no such default.
+func ResolveConfig(data []byte, pl *task.ProjectLayer, project, base string) ConfigResolution {
 	var out ConfigResolution
 	var layer *config.ProjectLayer
 	if pl != nil {
@@ -1847,6 +1856,15 @@ func ResolveConfig(data []byte, pl *task.ProjectLayer, project string) ConfigRes
 		}
 	}
 	out.Cfg, out.Res, out.Problems = config.Resolve(data, layer)
+	if base != "" && out.Cfg != nil && out.Res.SourceOf("git.base_branch") != config.SourceRepo {
+		// The file's own value is asked for by its source, never by comparing
+		// with the default: Resolve fills main in, so a file that writes
+		// nothing and one that chose main resolve alike, and the layers below
+		// must not be lost to the second.
+		out.Cfg.Git.BaseBranch = base
+		out.Res.Sources["git.base_branch"] = config.SourceProject
+		out.Res.ConfigSHA256 = out.Cfg.SHA256()
+	}
 	return out
 }
 
@@ -1859,7 +1877,7 @@ func ResolveConfig(data []byte, pl *task.ProjectLayer, project string) ConfigRes
 // fugaro.yaml does.
 func (r *run) resolveConfig(data []byte) (*config.Config, error) {
 	pl := r.spec.ProjectLayer
-	out := ResolveConfig(data, pl, r.d.Project)
+	out := ResolveConfig(data, pl, r.d.Project, r.spec.BaseBranch)
 	if pl != nil {
 		if out.LayerErr != nil {
 			// Recorded before returning: an invalid layer still names the

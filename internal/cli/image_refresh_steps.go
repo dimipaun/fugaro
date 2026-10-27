@@ -72,10 +72,11 @@ func refreshReload(ctx context.Context, p *refreshPlan) (*refreshTarget, error) 
 	// freshly reloaded lc, rather than reused from p.cfg
 	// (refreshPreflight's loadCheckoutConfigAt, read lc==nil, flag-blind,
 	// and lenient): resolveForBuild's own doc comment has why.
-	cfg, err := resolveForBuild(ctx, p.root, lc)
+	rf, err := resolveForBuildFile(ctx, p.root, lc)
 	if err != nil {
 		return nil, err
 	}
+	cfg := rf.Cfg
 	repoURL, err := checkoutURL(ctx, p.root)
 	if err != nil {
 		return nil, err
@@ -93,7 +94,7 @@ func refreshReload(ctx context.Context, p *refreshPlan) (*refreshTarget, error) 
 			}
 		}
 	}
-	spec, err := infra.Repo(infra.Inputs{LC: &specLC, Repo: p.repo, Cfg: cfg, RepoURL: repoURL})
+	spec, err := infra.Repo(infra.Inputs{LC: &specLC, Repo: p.repo, Cfg: cfg, FileSetsBaseBranch: fileSetsBaseBranch(rf), RepoURL: repoURL})
 	if err != nil {
 		return nil, userErr("%v", err)
 	}
