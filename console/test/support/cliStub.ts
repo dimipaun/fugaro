@@ -32,11 +32,12 @@
 // `watch --json --project P` with the committed synthetic recording and
 // `doctor --json` with a minimal document, and refuses anything else -- and any
 // read that does not carry the seeded project -- with exit 2. That is why this
-// module writes three files beside the stub and not one: `version.txt` (the
+// module writes four files beside the stub and not one: `version.txt` (the
 // handshake), `project.txt` (the project every read must name, rewritten by
-// `seedInstallations`), and `frames.ndjson` (the recording `watch` prints,
-// rendered from `test/fixtures/synthetic.ndjson` through `loadFixture`, so the
-// stub can only replay a fixture this build vouches for).
+// `seedInstallations`), `frames.ndjson` (the recording `watch` prints, rendered
+// from `test/fixtures/synthetic.ndjson` through `loadFixture`, so the stub can
+// only replay a fixture this build vouches for), and `plan-status.json` (the
+// document `plan status --json` prints, the Graph view's own read, GV2.3b).
 //
 //   - offers `resolveConsoleBinary(env)`, which runs the console's own
 //     `resolveBinary` with **exactly the arguments `src/main/index.ts` uses**, so
@@ -75,6 +76,12 @@ const CLI_STUB = join(__dirname, '..', 'fixtures', 'bin', 'fugaro')
  * read, so the Live screen the e2e sees is the one the unit suite's fixture
  * source feeds. */
 const SYNTHETIC_FIXTURE = join(__dirname, '..', 'fixtures', 'synthetic.ndjson')
+
+/** PLAN_FIXTURE is the committed `plan status --json` document the stub's `plan
+ * status` answers with (plan GV2.1; the Graph view reads it, GV2.3b). It is the
+ * document `graph.test.ts` draws its screen from, so the graph an e2e window
+ * shows is the graph the unit suite's cases are written against. */
+const PLAN_FIXTURE = join(__dirname, '..', 'fixtures', 'plan-status.json')
 
 /** DEFAULT_PROJECT is the project a stub answers for until a spec seeds one. */
 const DEFAULT_PROJECT = 'e2e'
@@ -144,6 +151,16 @@ export interface CliStub {
    * resolution to this scratch tree whatever the machine has in `/usr/local/bin`
    * -- a spec whose subject is not the resolution should not depend on it. */
   seedActiveInstallation(project?: string, binaryPath?: string | null): void
+  /** seedActiveCheckout gives the active installation a checkout: it makes a
+   * directory in this scratch tree and records it, and answers its path. The
+   * reads that are *about* a directory need one -- `plan.status` resolves
+   * `docs/` from the CLI's working directory, which is the checkout, so an
+   * installation that records none is refused before any child is spawned
+   * (`NO_PLAN_CHECKOUT`) and the Graph draws that refusal instead of a graph.
+   * A directory and not a repository: the stub answers its reads from the files
+   * beside itself wherever it runs, so what the checkout has to be is a
+   * directory that exists. */
+  seedActiveCheckout(): string
   /** seedInstallations writes `installations.json` with these entries and
    * `active` (Task 3.4b), for a spec that needs more than one installation. The
    * active entry's project becomes the one the stub answers for. An entry with
@@ -154,6 +171,7 @@ export interface CliStub {
       readonly id: string
       readonly project: string
       readonly binaryPath?: string | null
+      readonly checkout?: string
     }[],
     active: string | null,
   ): void
@@ -175,6 +193,12 @@ export interface CliStub {
    * the picker draws its warning line instead of that screen.) `warnings` are
    * further lines the CLI prints after its own, verbatim. */
   seedInstallationsList(projects: readonly string[], warnings?: readonly string[]): void
+  /** seedPlan replaces the `plan status --json` document the stub answers with,
+   * in both places the stub was installed. It is the committed fixture until a
+   * spec asks for another one, and it is the one document a spec may want to
+   * change: a **chip** exists only for a finished release, and the committed
+   * document has none (the unit suite patches the same flag). */
+  seedPlan(document: unknown): void
   /** setVersion rewrites the line the stub prints (`'0.8.1\n'`, `'banana\n'`, a
    * hostile line), in both places the stub was installed. */
   setVersion(line: string): void
@@ -202,10 +226,23 @@ export function installCliStub(line: string): CliStub {
   let project = DEFAULT_PROJECT
   let installationsList: string | null = null
   const frames = syntheticFrames()
+  let plan = readFileSync(PLAN_FIXTURE, 'utf8')
+  // The last seeded file, kept so `seedActiveCheckout` can add a directory to
+  // the active entry without a spec having to name the entry again.
+  let seeded: {
+    readonly entries: readonly {
+      readonly id: string
+      readonly project: string
+      readonly binaryPath?: string | null
+      readonly checkout?: string
+    }[]
+    readonly active: string | null
+  } = { entries: [], active: null }
   const writeSupport = (): void => {
     for (const where of [dir, wellKnown]) {
       writeFileSync(join(where, 'project.txt'), `${project}\n`)
       writeFileSync(join(where, 'frames.ndjson'), frames)
+      writeFileSync(join(where, 'plan-status.json'), plan)
       if (installationsList !== null) writeFileSync(join(where, 'installations.ndjson'), installationsList)
     }
   }
@@ -254,6 +291,7 @@ export function installCliStub(line: string): CliStub {
       // make, so the first entry's project -- or the default -- is written.
       const chosen = entries.find((entry) => entry.id === active) ?? entries[0]
       project = chosen === undefined ? DEFAULT_PROJECT : chosen.project
+      seeded = { entries: [...entries], active }
       writeSupport()
       writeFileSync(
         join(userData, INSTALLATIONS_FILE_NAME),
@@ -268,10 +306,30 @@ export function installCliStub(line: string): CliStub {
             ...(entry.binaryPath === undefined || entry.binaryPath === null
               ? {}
               : { binaryPath: entry.binaryPath }),
+            ...(entry.checkout === undefined ? {} : { checkout: entry.checkout }),
           })),
         }),
         { mode: 0o600 },
       )
+    },
+    seedActiveCheckout(): string {
+      const where = join(scratch, 'checkout')
+      mkdirSync(where, { recursive: true })
+      if (seeded.active === null || !seeded.entries.some((entry) => entry.id === seeded.active)) {
+        // A checkout belongs to an installation, so this call has an order. It
+        // says so rather than writing a file with no entry to hang it on, which
+        // would leave the spec waiting for a screen that is drawn for a state
+        // nobody asked for.
+        throw new Error('seedActiveCheckout needs an active installation: call seedActiveInstallation first')
+      }
+      // Written back through `seedInstallations`, so the file keeps the one
+      // shape this module writes and the project the stub answers for is not
+      // disturbed by adding a directory to the record.
+      stub.seedInstallations(
+        seeded.entries.map((entry) => (entry.id === seeded.active ? { ...entry, checkout: where } : entry)),
+        seeded.active,
+      )
+      return where
     },
     extraStub(name: string, next: string): string {
       const where = join(scratch, name)
@@ -283,6 +341,7 @@ export function installCliStub(line: string): CliStub {
       // one active gets the same answers rather than a `cat` of a missing file.
       writeFileSync(join(where, 'project.txt'), `${project}\n`)
       writeFileSync(join(where, 'frames.ndjson'), frames)
+      writeFileSync(join(where, 'plan-status.json'), plan)
       return join(where, 'fugaro')
     },
     seedInstallationsList(projects: readonly string[], extra: readonly string[] = []): void {
@@ -304,6 +363,10 @@ export function installCliStub(line: string): CliStub {
         ...extra,
       ]
       installationsList = `${JSON.stringify({ installations, warnings })}\n`
+      writeSupport()
+    },
+    seedPlan(document: unknown): void {
+      plan = `${JSON.stringify(document)}\n`
       writeSupport()
     },
     setVersion(next: string): void {

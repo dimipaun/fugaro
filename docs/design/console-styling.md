@@ -155,12 +155,17 @@ a hook §2 does not name, and §2 is the table it fails against. And a hook a ru
 wants — one the screens emit and this table has dropped — is added **here first**, in the PR
 that wants it, so the test's list and the stylesheet's selectors move together. The
 `data-*` attributes the screens emit beyond these are real — reading the renderer's
-`setAttribute` calls against this table leaves exactly two, **`data-hidden`** (every view
-the mode withholds) and **`data-skew`** (the compatibility handshake), both stamped by
-`console/src/shared/version.ts` — and the list is deliberately the subset a rule is written
-against rather than a second copy of the code. Those two are the examples the rule holds
-for: they are emitted, no rule needs them, and a rule that suddenly wants one adds it to
-this table first.
+`setAttribute` calls against this table leaves a short list, and the entries above are
+deliberately the subset a rule is written against rather than a second copy of the code.
+**`data-hidden`** (every view the mode withholds) and **`data-skew`** (the compatibility
+handshake), both stamped by `console/src/shared/version.ts`, are the two the inventory test
+refuses by name; the graph screen's eight unlisted attributes are §2.11's own, and six of
+those the test refuses by name too. They are the examples the rule holds for: they are
+emitted, no rule needs them, and a rule that suddenly wants one adds it to this table first.
+The test's licence is by attribute **name**, not by name and screen, so the two of §2.11's
+eight that are hooks here as well — `data-key` for the spend screen (§2.3, §2.4) and
+`data-view` for the navigation and the people panel (§2.1, §2.5) — stay licensed, and §2.11
+says so.
 
 Three facts hold across every screen and are stated once:
 
@@ -637,6 +642,87 @@ styling work edits, and the reason it is a code change and not a CSS one.
 
 Monospace is the mechanism on all five: `font-variant-numeric: tabular-nums` with a
 fallback to `--font-mono`.
+
+### 2.11 Graph — `console/src/renderer/screens/graph.ts`
+
+The Graph draws one model twice: a **picture** (an `svg` whose geometry is the layout
+worker's answer, written as SVG attributes because `style-src 'self'` admits no inline
+style, §5.5) and a **list** that is the same model with every title whole. Regions in tree
+order: header → tabs → chips → canvas, or the list, never both.
+
+| Hook | Drawn as | Note |
+|---|---|---|
+| `section.graph` | the screen's root | carries `data-theme` like every other screen's |
+| `graph-header`, `graph-title` | `header`, `h1` | the title block, `--space-md` below it (§3.8) |
+| `graph-tabs`, `graph-tab` | `nav` + `button` | the tablist: `role="tab"` on each button, `aria-selected` on the chosen one, a roving `tabindex`, and §4.3's own keys — Left and Right, Home and End, each activating the tab it moves to |
+| `graph-actions`, `graph-view`, `graph-refresh`, `graph-fit` | `div` + three `button`s | view switch, refresh, and fit — the last one is drawn only while the canvas is |
+| `graph-not-shown` | `p` | a bound dropped plans, tasks or needs: the console's own sentence, in `--warn` |
+| `graph-chips`, `graph-chip-group`, `graph-chip-stream` | `div`, `section`, `h2` | the finished releases, one group per stream |
+| `graph-chip-list`, `graph-chip-item`, `graph-chip` | `ul`, `li`, `button` | one chip per finished release: `aria-expanded` is the fact the click flips |
+| `graph-chip-name`, `graph-chip-mark`, `graph-chip-version` | `span`s inside the chip | the name, the `✓` mark and the version |
+| `graph-chip-body`, `graph-chip-tasks`, `graph-chip-task`, `graph-chip-task-title` | the open chip's own panel | drawn **only** while `aria-expanded` is `true` |
+| `graph-release-bar` | `p` (chip body) and `span` (list heading) | the "n of m done" bar, both places |
+| `graph-canvas` | `svg` | `viewBox` carries the zoom; the element has no width or height of its own |
+| `graph-release`, `graph-release-box` | `g` + `rect` | one frame per release with a task on the picture |
+| `graph-release-heading`, `graph-release-bar` | `text` inside the box | the heading line and the bar under it |
+| `graph-release-stream`, `graph-release-name`, `graph-release-version` | `tspan`s inside that heading | the same three parts the chip draws |
+| `graph-edge`, `graph-edge-path` | `g` + `path` | one edge per dependency; the `g` carries the three facts below |
+| `graph-node`, `graph-node-box` | `g` + `rect` | one card per task; the `g` carries `data-state` and `data-selected` |
+| `graph-node-title`, `graph-node-word`, `graph-node-pr`, `graph-node-run`, `graph-node-mark` | `text` inside the card | the title, one element per state word, the pull request number, the run and the reading's mark |
+| `graph-list`, `graph-list-plan`, `graph-list-title` | the list's `div`, one `section` and `h2` per plan | `role="list"` on the `div` |
+| `graph-list-release`, `graph-list-nodes`, `graph-row` | the list's per-release `h3`, `ul` and `li` | one row per task, with the whole title |
+| `graph-row-title`, `graph-row-mark`, `graph-row-pr`, `graph-row-run` | `span`s inside a row | the same five facts the card carries |
+| `graph-words`, `graph-word` | `span`s in the list | the words, one element each |
+| `graph-empty` | `p` | no plan to draw, or no layout to draw: two different sentences, one hook |
+
+**Attributes a rule selects**, and the one thing each means:
+
+| Attribute | Values | On |
+|---|---|---|
+| `data-state` | the node's **first** state word (§3.9's list) | `g.graph-node`, `li.graph-row` |
+| `data-selected` | `true` \| `false` | `g.graph-node`, `li.graph-row` — and, on `g.graph-edge`, whether either end is the selected one |
+| `data-critical` | `true` \| `false` | `g.graph-edge` |
+| `data-cross` | `true` \| `false` | `g.graph-edge` |
+| `aria-selected` | `true` \| `false` | `button.graph-tab` (§2.1's hook, this screen's tablist) |
+| `aria-expanded` | `true` \| `false` | `button.graph-chip` |
+
+**The attributes no rule needs**, and §2's rule read the other way: the graph also emits
+eight. `data-key` (a card's and a row's layout key), `data-run-id` (the run a gesture would
+open), `data-tab` (the tablist's own value), `data-chip` (a chip's release key),
+`data-view` (the view switch's own value), `data-stream` (the stream a chip group is drawn
+for), `data-release` (a box's key) and `data-word` (the word an element draws, beside the
+text it draws). They are the screen's own bookkeeping — the entry reads `data-key`,
+`data-run-id`, `data-tab` and `data-chip` back off the drawn tree to route a click, and the
+other four name only what the screen itself knows (which drawing is showing, which stream a
+group belongs to, which release a box is, which word an element draws) — and no stylesheet
+rule may select one without adding it above first. Six of the eight are refused by name in
+the inventory test with `data-hidden` and `data-skew`; the other two, `data-key` and
+`data-view`, are §2's hooks on other screens and stay licensed (§2's licence paragraph).
+
+**How each state is marked** (§3.5: a word, and the tone second):
+
+| State | The word | The second channel |
+|---|---|---|
+| implementing / in review / fixing | on the card, and in the list | the card's boundary in `--accent` — structure, which is what a task being worked on is |
+| queued / waiting | on the card, and in the list | the card's own `--border-strong` boundary: nothing is happening, and nothing shouts |
+| blocked | on the card, and in the list | the boundary in `--warn` **and dashed** — the one state a reader needs at a glance |
+| halted | on the card, and in the list | the boundary in `--halted`, the deliberate stop |
+| ready | on the card, and in the list | the boundary in `--border-strong`, as queued |
+| done | on the card, and in the list | the boundary and the title in `--text-muted`: no longer a reading anyone acts on |
+| critical | a **second** word beside the first | the edges of the critical path, 3 px of `--accent` against a plain edge's 2 px |
+
+**The edge widths are the second channel and the only one a forced-colors reader keeps**:
+a cross-release edge is 1 px, a plain one 2 px, the critical path 3 px, and the edges of a
+selected task 3 px of the reading tone — so the whole distinction survives
+`forced-colors: active`, where the dashes of a blocked card survive with it (§4.4). No rule
+paints `--ok` on this screen: §3.2 licenses that token to two readings, and a finished task
+is neither.
+
+**This section adds no motion.** §3.9's amendment lets the graph animate and hands the
+static style per state to this screen; the keyframes (the comet, the pulse, the flow) and
+the `@media (prefers-reduced-motion: reduce)` arm that restates these styles are GV2.4's
+task, and until they land every state above is already the static drawing that arm must
+leave behind.
 
 ---
 

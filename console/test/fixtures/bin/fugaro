@@ -20,6 +20,7 @@
 #     spec writes. That is the whole of `fugaro version` on this tree -- one
 #     human line, no `--json` (design section 4.3 gap 2) -- and it is what
 #     `src/main/spawn.ts`'s `probeVersion` runs at startup.
+#   * `plan status --json [--all] --project P` -- see above.
 #   * `doctor --json --dir D --project P` -- a minimal `doctorOutput`
 #     (contract section 6.4). It is what `verifyCandidate` runs to prove an
 #     installation is usable, so a spec that adds one through the picker needs
@@ -40,6 +41,12 @@
 #     (Task 3.4c), and it is the *whole* recording: the stub prints it and
 #     exits 0, which is the stream's own end and the supervisor's cue to restart
 #     it, exactly as a real `watch` that returned cleanly would be.
+#   * `plan status --json [--all] --project P` -- the document in
+#     `plan-status.json` beside it, which `cliStub.ts` writes from the committed
+#     `test/fixtures/plan-status.json` (GV2.1). This is the read the **Graph**
+#     view makes (GV2.3b), and it is the one the stub answers with `--all` and
+#     without it alike: `--all` is the screen's own control over how much of the
+#     document the CLI lists, and the document is the same document.
 #
 # **Everything else is refused, loudly, with exit 2.** A stub that answered
 # whatever it was asked would hide the thing these specs are about: if the
@@ -133,7 +140,39 @@ case "$command" in
   doctor)
     printf '{"ok":true,"checks":[{"id":"project","ok":true}],"project":"%s"}\n' "$project"
     ;;
+  plan)
+    # `plan status --json` takes one flag of its own -- `--all`, the Graph
+    # screen's control over how much of the document the CLI lists -- and then
+    # the `--project` every read carries, which the loop above has already held
+    # to the seeded project. Anything else is refused rather than ignored: a
+    # stub that answered whatever it was asked would hide a console asking for
+    # something it should not have been able to get.
+    if [ "${1:-}" != 'status' ] || [ "${2:-}" != '--json' ]; then
+      refuse "the stub fugaro answers 'plan status --json' and was asked for 'plan $*'"
+    fi
+    shift 2
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --all)
+          shift
+          ;;
+        --project | --config)
+          if [ $# -lt 2 ]; then
+            refuse "'plan status --json' was given '$1' with no value"
+          fi
+          shift 2
+          ;;
+        *)
+          refuse "'plan status --json' was asked for '$1'"
+          ;;
+      esac
+    done
+    if [ ! -f "${here}/plan-status.json" ]; then
+      refuse 'no plan document is seeded beside this stub'
+    fi
+    cat "${here}/plan-status.json"
+    ;;
   *)
-    refuse "the stub fugaro answers 'version', 'config list --json', 'doctor --json' and 'watch --json', and was asked for '$command'"
+    refuse "the stub fugaro answers 'version', 'config list --json', 'plan status --json', 'doctor --json' and 'watch --json', and was asked for '$command'"
     ;;
 esac

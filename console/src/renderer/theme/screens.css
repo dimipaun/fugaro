@@ -1299,6 +1299,408 @@ main p {
   border-style: dashed;
 }
 
+/* ---- Graph (design section 2.11) ------------------------------------------
+ *
+ * The Graph draws one model twice: a picture, and the list that is the same
+ * model with every title whole. **The picture's geometry is not CSS.** Every
+ * coordinate the layout worker answered is written as an SVG attribute by the
+ * screen (`x`, `y`, `width`, `height`, `rx`, `d`, `transform`, `viewBox`),
+ * because `style-src 'self'` admits no inline style and a stylesheet cannot read
+ * a `data-*` as a length (design section 5.5, and the reason the cap bar's fill
+ * is a percentage in an attribute). What the rules below paint is colour, weight
+ * and dashes.
+ *
+ * **No state is carried by colour alone** (design section 3.5). Every state word
+ * is an element in the DOM beside the tone -- `implementing`, `in review`,
+ * `fixing`, `queued`, `waiting`, `halted`, `blocked`, `ready`, `done` -- and the
+ * two edge facts a reader scans for are shapes rather than hues: the stroke
+ * **width** of a critical edge and the **dashes** of a blocked task's box, both
+ * of which survive `forced-colors` because neither is a colour (design section
+ * 4.4).
+ *
+ * **The tones are the state tokens' roles and not a second palette.** A task
+ * being worked on is `--accent`, the token section 3.2 gives to structure; one
+ * that cannot move is `--warn`, which is attention; a halt is `--halted`, whose
+ * role cell is "a deliberate stop"; a finished task is `--text-muted`, because
+ * it is no longer a reading anyone acts on. `--ok` is **not** used: the design
+ * licenses that token to exactly two readings, and a finished task is neither
+ * (`theme-tokens.test.ts`'s `OK_SELECTORS`).
+ *
+ * **The faint cross-release edge is faint by its width.** The palette's one dim
+ * tone is `--border`, and the design licenses it to a `--rule-width` hairline
+ * and to nothing else -- a stroke is not a hairline, and a rule that reached for
+ * it here would fail the `--border`-is-decorative scan. So the three edge kinds
+ * are 1, 2 and 3 px, of `--border-strong`, `--accent` and `--text`: a scale a
+ * reader with no colour at all still reads, which is the same defence the dashes
+ * above are.
+ *
+ * **Nothing here animates.** The graph is the one screen the design's section
+ * 3.9 amendment lets move, and the motion (the comet, the pulse, the flow) is
+ * GV2.4's task; every state below is the static style that amendment says must
+ * stand on its own, and the reduced-motion arm arrives with the keyframes.
+ */
+
+section.graph {
+  display: block;
+  color: var(--text);
+}
+
+header.graph-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-sm);
+}
+
+h1.graph-title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--weight-semibold);
+  margin: 0 0 var(--space-md);
+}
+
+/* The tabs are a tablist: `aria-selected` is the machine-readable half and the
+ * accent is the drawn one, the treatment the navigation's own buttons get in
+ * `base.css` (design sections 2.1 and 4.3). */
+nav.graph-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs);
+}
+
+button.graph-tab {
+  padding: var(--space-2xs) var(--space-xs);
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+button.graph-tab:hover {
+  color: var(--text);
+}
+
+button.graph-tab[aria-selected='true'] {
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  font-weight: var(--weight-medium);
+}
+
+div.graph-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs);
+  margin-left: auto;
+}
+
+button.graph-view,
+button.graph-refresh,
+button.graph-fit {
+  padding: var(--space-2xs) var(--space-xs);
+  font-size: var(--font-size-sm);
+  color: var(--text);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
+/* A bound that dropped tasks says so in the console's own sentence; the tone is
+ * the second channel and the count and the words are the first. */
+p.graph-not-shown {
+  margin: var(--space-2xs) 0 0;
+  color: var(--warn);
+  font-size: var(--font-size-xs);
+}
+
+div.graph-chips {
+  margin-bottom: var(--space-md);
+}
+
+section.graph-chip-group {
+  margin-bottom: var(--space-xs);
+}
+
+h2.graph-chip-stream {
+  margin: 0 0 var(--space-2xs);
+  font-size: var(--font-size-xs);
+  font-weight: var(--weight-medium);
+  color: var(--text-muted);
+}
+
+ul.graph-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+li.graph-chip-item {
+  display: block;
+}
+
+/* A chip is a button: the click is what opens a finished release's tasks, and
+ * `aria-expanded` is the fact both the rule and a reader get. */
+button.graph-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2xs);
+  padding: var(--space-2xs) var(--space-xs);
+  font-size: var(--font-size-sm);
+  color: var(--text);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-pill);
+}
+
+button.graph-chip[aria-expanded='true'] {
+  border-color: var(--accent);
+}
+
+span.graph-chip-name {
+  color: var(--text);
+}
+
+span.graph-chip-mark,
+span.graph-chip-version {
+  color: var(--text-muted);
+}
+
+span.graph-chip-version {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* An open chip's body is the release's own panel, hung off the chip by the
+ * hairline a panel is separated with (design section 3.8). */
+div.graph-chip-body {
+  margin-top: var(--space-2xs);
+  padding-left: var(--space-sm);
+  border-left: var(--rule-width) solid var(--border);
+}
+
+p.graph-release-bar,
+span.graph-release-bar {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+ul.graph-chip-tasks,
+ul.graph-list-nodes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+li.graph-chip-task {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  font-size: var(--font-size-sm);
+}
+
+span.graph-chip-task-title {
+  color: var(--text);
+}
+
+/* The canvas: an `svg` with a `viewBox` and no width or height of its own, so it
+ * takes the panel's width and the picture's ratio decides its height. */
+svg.graph-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: var(--surface);
+  border: var(--rule-width) solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+/* A release's box is a frame drawn *around* its tasks, so it is an outline and
+ * never a fill: filling it would put a surface under the cards' own surfaces. */
+svg .graph-release-box {
+  fill: none;
+  stroke: var(--border-strong);
+  stroke-width: 1;
+}
+
+svg .graph-release-heading,
+svg .graph-release-bar,
+svg .graph-release-stream,
+svg .graph-release-version {
+  fill: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+svg .graph-release-name {
+  fill: var(--text);
+}
+
+/* The edges, in the order the widths are read: a cross-release edge is the
+ * thinnest, a plain one is 2 px, the critical path is 3 px of the accent, and a
+ * selected task's edges are 3 px of the reading tone -- the loudest line on the
+ * canvas, because the selection is a question and its answer is those edges. */
+svg .graph-edge-path {
+  fill: none;
+  stroke: var(--border-strong);
+  stroke-width: 2;
+}
+
+svg .graph-edge[data-cross='true'] .graph-edge-path {
+  stroke-width: 1;
+}
+
+svg .graph-edge[data-critical='true'] .graph-edge-path {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+svg .graph-edge[data-selected='true'] .graph-edge-path {
+  stroke: var(--text);
+  stroke-width: 3;
+}
+
+/* The tasks. A card is a surface with a boundary, and the boundary carries the
+ * state: `data-state` is the node's first word, so a rule keyed on it draws the
+ * same state the word beside it spells. A blocked task is dashed as well as
+ * amber, because "this one is not going to move" is the one state a reader needs
+ * at a glance, and a done one goes quiet rather than green. */
+svg .graph-node-box {
+  fill: var(--surface);
+  stroke: var(--border-strong);
+  stroke-width: 1;
+}
+
+svg .graph-node[data-state='implementing'] .graph-node-box,
+svg .graph-node[data-state='in review'] .graph-node-box,
+svg .graph-node[data-state='fixing'] .graph-node-box {
+  stroke: var(--accent);
+}
+
+svg .graph-node[data-state='blocked'] .graph-node-box {
+  stroke: var(--warn);
+  stroke-dasharray: 6 4;
+}
+
+svg .graph-node[data-state='halted'] .graph-node-box {
+  stroke: var(--halted);
+}
+
+svg .graph-node[data-state='done'] .graph-node-box {
+  stroke: var(--text-muted);
+}
+
+/* A done card goes quiet in its **text** as well as its boundary, which is the
+ * second channel the row below keeps: a reader who cannot tell the muted stroke
+ * from the strong one still reads a done task from the title, and a reader who
+ * can reads it twice. */
+svg .graph-node[data-state='done'] .graph-node-title {
+  fill: var(--text-muted);
+}
+
+/* The selected card's boundary thickens and does not change tone: the tone is
+ * the state's, and a selection that recoloured it would hide the state. */
+svg .graph-node[data-selected='true'] .graph-node-box {
+  stroke-width: 2;
+}
+
+svg .graph-node-title {
+  fill: var(--text);
+  font-size: var(--font-size-sm);
+}
+
+svg .graph-node-word,
+svg .graph-node-pr,
+svg .graph-node-run,
+svg .graph-node-mark {
+  fill: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+svg .graph-node-run {
+  font-family: var(--font-mono);
+}
+
+/* The list: the picture's non-visual equivalent, one row per task with the whole
+ * title, and the release's own bar above them. */
+div.graph-list {
+  display: block;
+}
+
+section.graph-list-plan {
+  margin-bottom: var(--space-md);
+}
+
+h2.graph-list-title {
+  margin: 0 0 var(--space-2xs);
+  font-size: var(--font-size-md);
+  font-weight: var(--weight-medium);
+}
+
+h3.graph-list-release {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  margin: 0 0 var(--space-2xs);
+  font-size: var(--font-size-sm);
+  font-weight: var(--weight-medium);
+}
+
+li.graph-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  min-height: var(--row-height);
+  padding: var(--space-2xs) 0;
+  border-bottom: var(--rule-width) solid var(--border);
+}
+
+span.graph-row-title {
+  color: var(--text);
+}
+
+span.graph-row-mark,
+span.graph-row-pr,
+span.graph-row-run {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+span.graph-words {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs);
+}
+
+span.graph-word {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* A blocked row carries the same mark its card draws -- **dashed**, which is the
+ * second channel the card's dashed box keeps: the amber and the dash say the
+ * same thing twice, so the row reads as blocked where the tone does not. A done
+ * one goes quiet the same way, in the title. The two drawings of one model say
+ * the same thing about it. */
+li.graph-row[data-state='blocked'] {
+  border-left: 3px dashed var(--warn);
+}
+
+li.graph-row[data-state='done'] span.graph-row-title {
+  color: var(--text-muted);
+}
+
+li.graph-row[data-selected='true'] {
+  background: var(--surface-alt);
+}
+
+p.graph-empty {
+  color: var(--text-muted);
+}
+
 /* ---- Narrow windows (design section 4.2, the screens' share) -------------
  *
  * The chrome's share of the three layers is `base.css`'s; these are the
@@ -1630,5 +2032,64 @@ main p {
    * (design section 4.4), and a command is neither of them. */
   #picker-onboarding code {
     border: var(--border-width) solid GrayText;
+  }
+
+  /* The graph's canvas is where a reader's information is a **stroke** rather
+   * than a colour, so what forced colors has to keep is the stroke's shape: its
+   * width, its dashes and its presence. The tones go to `CanvasText` and the
+   * fills to `Canvas`, the same pair every row above gets. `stroke-width` and
+   * `stroke-dasharray` are not forced by the system, so the dashed blocked task
+   * and the 1/2/3 px edge scale survive the author's colours going away -- which
+   * is design section 4.4's rule 1: a state keeps its word, and here its shape
+   * as well. */
+  svg.graph-canvas {
+    background: Canvas;
+    border-color: CanvasText;
+  }
+
+  svg .graph-release-box,
+  svg .graph-node-box {
+    fill: Canvas;
+    stroke: CanvasText;
+  }
+
+  svg .graph-edge-path {
+    stroke: CanvasText;
+  }
+
+  svg .graph-edge[data-selected='true'] .graph-edge-path,
+  svg .graph-node[data-selected='true'] .graph-node-box {
+    stroke: Highlight;
+  }
+
+  svg .graph-release-heading,
+  svg .graph-release-bar,
+  svg .graph-release-stream,
+  svg .graph-release-version,
+  svg .graph-release-name,
+  svg .graph-node-title,
+  svg .graph-node-word,
+  svg .graph-node-pr,
+  svg .graph-node-run,
+  svg .graph-node-mark {
+    fill: CanvasText;
+  }
+
+  button.graph-tab[aria-selected='true'],
+  button.graph-chip[aria-expanded='true'] {
+    border-color: Highlight;
+  }
+
+  /* Only the tone is written here: a border's *style* is not forced by the
+   * system, so the blocked row's dashed left edge survives with the amber
+   * going to `CanvasText` (design section 4.4's rule 1). */
+  li.graph-row[data-state='blocked'] {
+    border-left-color: CanvasText;
+  }
+
+  li.graph-row[data-selected='true'] {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
   }
 }

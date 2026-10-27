@@ -20,7 +20,7 @@
 //     refused by name -- with `config list --json` in the sentence, so a failing
 //     spec prints the command it should have been asked for.
 
-import { copyFileSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -28,6 +28,7 @@ import { spawnSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
 
 import { parseInstallationsDocument } from '../../src/main/installlist'
+import { decodePlanStatus } from '../../src/shared/schema'
 
 /** STUB is the fixture this file runs, at the path the e2e helper copies from. */
 const STUB = join(__dirname, '..', 'fixtures', 'bin', 'fugaro')
@@ -87,6 +88,40 @@ describe('the e2e stub’s own answers', () => {
     expect(parsed.ok && parsed.document.installations[0]?.name).toBe('e2e')
   })
 
+  it('prints the plan document for `plan status --json`, and the console reads it', () => {
+    // The Graph view's own read (GV2.3b): the console spawns
+    // `plan status --json --all --project P`, and the document that comes back
+    // is what the screen is a function of. A stub that printed a shape the
+    // decoder refuses would put every e2e that opens the Graph in front of the
+    // refusal screen instead of a graph.
+    const directory = install()
+    writeFileSync(join(directory, 'project.txt'), 'e2e\n')
+    // The committed document, which is the one `cliStub.ts` writes beside the
+    // stub the e2e specs install.
+    const seeded = readFileSync(join(__dirname, '..', 'fixtures', 'plan-status.json'), 'utf8')
+    writeFileSync(join(directory, 'plan-status.json'), seeded)
+    const answered = run(directory, ['plan', 'status', '--json', '--all', '--project', 'e2e'])
+    expect(answered.status).toBe(0)
+    expect(answered.stdout).toBe(seeded)
+    expect(decodePlanStatus(JSON.parse(answered.stdout)).ok).toBe(true)
+    // `--all` is the screen's control over how much of the document the CLI
+    // lists, not a different read: the same document comes back without it.
+    expect(run(directory, ['plan', 'status', '--json', '--project', 'e2e']).stdout).toBe(seeded)
+  })
+
+  it('refuses a word `plan status --json` does not take, and a document that was never seeded', () => {
+    const directory = install()
+    writeFileSync(join(directory, 'project.txt'), 'e2e\n')
+    const extra = run(directory, ['plan', 'status', '--json', '--all', '--project', 'e2e', '--everything'])
+    expect(extra.status).toBe(2)
+    expect(extra.stderr).toContain("was asked for '--everything'")
+    // Unseeded, the read is refused by name: `cat` of a missing file would fail
+    // with the shell's own message and no sentence saying what is wrong.
+    const missing = run(directory, ['plan', 'status', '--json', '--project', 'e2e'])
+    expect(missing.status).toBe(2)
+    expect(missing.stderr).toContain('no plan document is seeded')
+  })
+
   it('refuses a `--project` on the one command that has none, and names it', () => {
     const directory = install()
     const answered = run(directory, ['config', 'list', '--json', '--project', 'e2e'])
@@ -105,6 +140,7 @@ describe('the e2e stub’s own answers', () => {
     // failing spec's message is where a reader learns what the stub would have
     // answered.
     expect(answered.stderr).toContain('config list --json')
+    expect(answered.stderr).toContain('plan status --json')
     expect(answered.stderr).toContain('watch --json')
     expect(answered.stderr).toContain("was asked for 'runs'")
   })

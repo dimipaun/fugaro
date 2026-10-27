@@ -161,6 +161,37 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     because:
       "`unreadableReason(compatibility)`: the reader's own reason for a failed read, **through `sanitizeText`** (the `sentence` class) inside that function, and `null` when there is none or the sanitizer refuses it -- in which case `renderVersionSkew` creates no element at all, so nothing raw and nothing empty reaches the sink",
   },
+  'graph.ts': {
+    'value.text': {
+      within: 'drawInto',
+      reason:
+        'the sanitizer\'s own answer, which is the one document-shaped string this screen writes: a `Sanitized` value is built in `graph/model.ts` by `sanitizeText` with each field\'s own class and wire path, and `sanitizeText` refuses anything that is not a string -- so this is `version.ts`\'s `versionText` case ("a drawer may write a sanitizer\'s own answer, and it may write nothing else"), and `drawInto` is the only writer of one',
+    },
+    UNAVAILABLE_MARK: 'the console\'s own unavailable mark (`app.ts`), the other half of `drawInto`\'s pair of outcomes -- the same constant `version.ts` and `projects.ts` draw a refused value as',
+    word: {
+      within: 'markWord',
+      reason:
+        '`GraphNode.words`, the model\'s own `StateWord` list: `stateWords` is one exhaustive function over the closed `PlanState` union and answers a word from `STATE_WORDS` (plus `critical`), so no document string is ever a word -- the document\'s own stage and title reach the screen through `drawInto`, never through this sink',
+    },
+    reason: {
+      within: 'tooltip',
+      reason:
+        'the sentence a gesture that does nothing is owed: `doorFor`\'s `because` (this console\'s own reason for a suffix no run ends with, or two runs ending with one) or `GRAPH_PR_NO_LINK_REASON`, both written in this file',
+    },
+    'GRAPH_VIEW_LABELS[picture.state.view]':
+      '`GRAPH_VIEW_LABELS`, this file\'s own table of what each drawing is called, keyed by the closed `GraphViewName` union (`GRAPH_VIEWS`)',
+    'notShownNote(picture.model.notShown)':
+      '`notShownNote` composes the sentence from `GRAPH_NOT_SHOWN_SINGULAR`/`GRAPH_NOT_SHOWN_PLURAL` and a count the model computed (`buildGraphModel`\'s `notShown`), so a document string is in neither half of it',
+    'barText(release)':
+      '`barText` composes "n of m done" from two `formatReading` readings -- the console\'s only formatter, whose unavailable mark is what a release the document gave no counters reads -- and the words around them are this file\'s',
+    'barText(box.release)': '`barText`, the same "n of m done" run the chip and the list heading draw, so one rule reads all three',
+    'cutForCard(node.title)':
+      '`cutForCard` answers the model\'s own `Sanitized` title cut to the room a card has, or the console\'s unavailable mark: the value has been through `sanitizeText` in `graph/model.ts`, and the cut is `[...text]` so a surrogate pair is never split',
+    '`#${String(node.prNumber)}`':
+      'a pull request number the model read as a positive integer (`prNumberAt`), drawn as **text**: design section 5.1 rule 2 and its gap 7 leave the console no URL to build, so the number is the whole of it and its `title` carries `GRAPH_PR_NO_LINK_REASON` -- the treatment `live.ts` and `run.ts` give the same field',
+    '`run …${node.run.text}`':
+      'the run suffix as the model\'s `Sanitized` `run` value, which `suffixRefusal` refuses unless it is four characters, under this file\'s own "run …" label -- so the interpolation is a sanitized four-character suffix and never a run id or a path',
+  },
   'run.ts': {
     'stage.deadline': '`deadlineState` keeps a word only when it is on `DEADLINE_STATES`, else null',
     '`#${String(model.number)}`': 'a pull request number the model read as a finite integer (`prNumberOf`)',
@@ -356,6 +387,48 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     kind: { within: 'root', reason: 'the closed discriminant of this file\'s states (`no-firebase`, `no-binary`, `refused`), written as a key' },
     "receivedAt === null ? '' : receivedAt": 'the arrival stamp `src/source/cli.ts` wrote on the frame, or the empty string when the caller keeps no feed reading; a key rather than text',
     theme: { within: 'root', reason: 'a `LiveTheme`, the closed theme tuple' },
+  },
+  'graph.ts': {
+    "classes.join(' ')": { within: 'elementIn', reason: 'the class list of the `elementIn` helper; every call site passes string-literal class names' },
+    'value.reason': {
+      within: 'drawInto',
+      reason: 'the sanitizer\'s own reason for a refused value, written by `sanitizeText` in the model and naming the field it refused rather than the value it refused',
+    },
+    word: {
+      within: 'markWord',
+      reason: 'a `StateWord` from `GraphNode.words`, the model\'s own vocabulary, written as the `data-word` hook a rule colours -- the same word the element draws as text',
+    },
+    'coord(value)': {
+      within: 'geometry',
+      reason:
+        '`coord` of a number the layout client let through as finite (`layout-client.ts` reads every coordinate with `Number.isFinite`), which is what makes each of `x`, `y`, `width`, `height`, `rx` and `d` a number and not a string -- and why the theme is never a length',
+    },
+    '`translate(${coord(x)} ${coord(y)})`': { within: 'shift', reason: 'the same two coordinates as an SVG transform: the engine\'s answer for where a card sits' },
+    'path': {
+      within: 'drawPlan',
+      reason: '`pathOf(route.sections)`: an `M`/`L` run over the bend points the engine answered with, every coordinate of it through `coord`',
+    },
+    'picture.state.view': { within: 'header', reason: '`GraphViewName`, the closed `GRAPH_VIEWS` tuple' },
+    'GRAPH_VIEW_NAMES[picture.state.view]': { within: 'header', reason: 'this file\'s own table of what each drawing is called, keyed by the same closed union' },
+    'tabKey(option.tab)': {
+      within: 'tabs',
+      reason:
+        '`tabKey` spells a `GraphTab` as one string -- `all` for the All tab, `stream:<name>` otherwise -- so the attribute tells a stream called `all` from the All tab, which `tabOf` reads back',
+    },
+    'group.stream': {
+      within: 'chips',
+      reason: 'a stream name, which the model holds as a **key**: `graph/model.ts` never spells one, the heading beside it is the `Sanitized` label, and a plan\'s `stream` is the same kind of value',
+    },
+    'box.key': { within: 'releaseBox', reason: '`releaseKey(plan, version)`, this file\'s own join of two ids the model holds as keys -- written as `data-release` and never drawn' },
+    key: 'the layout key of a card, a row or a chip -- `nodeKey(plan.id, node.id)` or `releaseKey(plan.id, version)`, ids the model holds as **keys** and never spells (`graph/model.ts`\'s header) -- written into `data-key`/`data-chip` and never drawn; the drawn text is the `Sanitized` title beside it',
+    "node.words[0] ?? ''": 'the node\'s first `StateWord`, the model\'s own vocabulary, as the `data-state` hook a rule colours; the empty string is a node the model gave no word, which is a state no colour applies to',
+    'door.run': 'the run id this console\'s own run list resolved the node\'s suffix to (`doorFor`), which is what `data-run-id` carries and what the entry opens -- a node whose suffix no run ends with, or one two runs end with, carries no attribute at all',
+    'door.because': { within: 'listRow', reason: '`doorFor`\'s own sentence for a gesture that opens nothing, in the `title` an HTML element keeps a tooltip in' },
+    'viewBoxOf(bounds, picture.state.zoom)': {
+      within: 'canvas',
+      reason: '`viewBoxOf`: four numbers off the picture\'s own bounds and the state\'s zoom, so what the canvas looks at is geometry rather than a style',
+    },
+    theme: { within: 'renderGraph', reason: 'a `GraphTheme`, the closed `GRAPH_THEMES` tuple' },
   },
   'run.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
@@ -765,10 +838,11 @@ const RENDERER_FILES: readonly string[] = Object.freeze(
 const SHARED_DRAWER = '../../shared/version.ts'
 
 describe('a screen writes only its own vocabulary through literal', () => {
-  it('reads the six screens', () => {
+  it('reads the seven screens', () => {
     expect([...SCREEN_FILES]).toEqual([
       'coordinator.ts',
       'degraded.ts',
+      'graph.ts',
       'live.ts',
       'projects.ts',
       'run.ts',
@@ -972,6 +1046,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'installations.ts',
       'screens/coordinator.ts',
       'screens/degraded.ts',
+      'screens/graph.ts',
       'screens/live.ts',
       'screens/projects.ts',
       'screens/run.ts',

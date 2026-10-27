@@ -463,6 +463,7 @@ describe('the bundle in a document', () => {
     expect(nav.attributes.get('class')).toBe('console-views')
     expect(nav.children.map((button) => button.attributes.get('data-view'))).toEqual([
       'live',
+      'graph',
       'spend',
       'projects',
       'coordinator',
