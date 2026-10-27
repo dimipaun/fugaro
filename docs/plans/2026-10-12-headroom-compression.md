@@ -1766,6 +1766,87 @@ unpacked, and `docs.headroomlabs.ai/llms-full.txt`):
   under `--network none` — a decision about the feature's shipped shape, not
   a test detail.
 
+**Task 7, revised (2026-10-27): the owner's wheel ruling was carried out and
+the pin stops on this task's own closure conditions, so there is still no
+image change.** The owner's ruling allowed a hash-locked Python wheel in the
+base image, installed the way graphify's is. The candidate release was
+resolved and measured end to end rather than read off a release page; the
+measurements below are from this container, on `linux/amd64`, against PyPI
+and GitHub's release API.
+
+- **The pin target itself is sound.** Release **0.40.0** (published
+  2026-10-06, 21 days before this note, so inside the "at least 14 days old"
+  rule; 0.41.0 of 2026-10-14 and 0.42.0 of 2026-10-26 are not) publishes
+  `cp310-abi3` wheels for **both** `manylinux_2_28_x86_64`
+  (`sha256:49b6d8a01c8eceb5b9e9a675720ed5e4cb24e467282642653aac7f2fd8faf47f`)
+  and `manylinux_2_28_aarch64`
+  (`sha256:140811066bfb7afe888f471be4a587375779af9de8dd76bb9a8126b52b8e930f`).
+  GitHub's per-asset `sha256:` digests and PyPI's `digests.sha256` for those
+  two files agree exactly, so a pin would be cross-checked as this task asks.
+  The wheel is Apache-2.0 (`License-Expression: Apache-2.0`), its console
+  script is `headroom=headroom.cli:main`, and `headroom --version` reports
+  `headroom, version 0.40.0`.
+- **The closure is more than double this task's ~400 MB ceiling.** The extras
+  the supervised sidecar needs are `[proxy]` — the request path and the local
+  compressor — chosen over `[all]` because `[all]` adds `[code]`, `[evals]`,
+  `[html]`, `[image]`, `[mcp]`, `[memory]`, `[ml]`, `[otel]`, `[relevance]`,
+  `[reports]`, `[spreadsheet]` and `[voice]`, none of which the sidecar's own
+  process uses. `uv pip compile` of `headroom-ai[proxy]==0.40.0`
+  (`--universal --python-version 3.12 --generate-hashes`, the command
+  graphify's `requirements.in` documents) resolves to a **95-package** lock
+  and installs to **488 MB** of site-packages, **571 MB** for the venv,
+  **662 MB / 746 MB** once `--compile-bytecode` — the flag graphify's own
+  test requires, because the venv is root-owned — is applied. Adding uv's
+  managed CPython (109 MB) makes it **~855 MB before any model asset**. The
+  base image is already **3812 MB** on amd64 against `images/size-budget.sh`'s
+  4000 MB hard budget, so it has 188 MB of headroom: this cannot be absorbed
+  even at the smaller figure. For comparison, `headroom-ai` with no extras —
+  which cannot start the proxy at all, since `fastapi` and `uvicorn` live in
+  `[proxy]` — is 68 packages and 264 MB of site-packages.
+- **The `[proxy]` closure also fetches data at run time that
+  `--require-hashes` does not cover.** Installed from that lock and run under
+  `--network none`, `headroom proxy` blocks at startup on `Downloading
+  Kompress ONNX model from chopratejas/kompress-v2-base` and never binds;
+  that artifact is `onnx/kompress-int8-wo.onnx`, **274 MB** (its tokenizer
+  3.6 MB), and the router adds a second HuggingFace model
+  (`chopratejas/technique-router`). `HEADROOM_OFFLINE=1` refuses the fetch,
+  logs *"Compression falls back to the non-ML path"*, and a
+  `POST /v1/compress` then **does** complete with no network at all
+  (`tokens_before: 10305`, `tokens_after: 272`,
+  `transforms_applied: ["router:text:0.03"]`) — so a no-egress pass is
+  possible, but it is the structural-only path: a run that wants the ML
+  compressors the docs' own prose describes needs a pre-provisioned model
+  cache of ~278 MB or more, which is not a Python distribution and so has no
+  hash the lock can carry. Two egress attempts the docs' own "network egress"
+  table does not list also appear at startup even with `HEADROOM_OFFLINE=1`
+  set: `litellm` fetches `raw.githubusercontent.com/BerriAI/litellm`'s model
+  cost map (three attempts, then a local fallback), and the proxy's default
+  session-summary beacon is on unless `HEADROOM_BEACON=off`,
+  `DO_NOT_TRACK=1` or `HEADROOM_OFFLINE` is set.
+- **Neither of the other two stop conditions holds, recorded for the
+  record.** Every needed wheel resolves for `aarch64-manylinux_2_28` (93
+  packages; no missing build), so the arm64 runner is not the problem and
+  Task 4's bootstrap check needs no arm64 clause. The closure's licences are
+  all permissive: MIT, Apache-2.0, BSD-3-Clause, ISC, PSF-2.0 and MPL-2.0
+  (`certifi`, `orjson`, `tqdm` — file-level copyleft, redistributable).
+
+**Outcome: the pin stops, and `images/base/Dockerfile`,
+`images/base/tools.tsv`, `/etc/fugaro/base.json`, the base-image design doc
+and `SECURITY.md` are all unchanged by this task** — there is no `headroom`
+row, no private venv, no wrapper and no new test, so the base-image selftest
+and the no-egress CI docker test have nothing new to cover. Lifting this needs
+a decision this task cannot make, and it is a base-image budget decision
+before it is a Headroom one: either raise `images/size-budget.sh`'s `MAX_MB`
+by roughly 0.9 GB and pre-provision a hash-pinned model cache beside the
+venv, or ship the structural-only path (`HEADROOM_DISABLE_KOMPRESS=1` and
+`HEADROOM_OFFLINE=1`, the shape that was measured working under
+`--network none`) and accept that the ML compressors are off — the second is
+still ~0.67 GB over the current budget, so neither route fits without the
+owner raising it. **The design's §5 premise still stands and is now measured:
+a Python-distributed Headroom is materially heavier than any other piece of
+this design, and heavier than this base image's remaining budget, not merely
+heavier than the standalone binary Task 7 went looking for.**
+
 ---
 
 ### Task 8: SECURITY.md, the user doc, skills, and docs tests
