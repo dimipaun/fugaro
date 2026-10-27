@@ -151,6 +151,16 @@ export interface CliStub {
    * resolution to this scratch tree whatever the machine has in `/usr/local/bin`
    * -- a spec whose subject is not the resolution should not depend on it. */
   seedActiveInstallation(project?: string, binaryPath?: string | null): void
+  /** seedActiveCheckout gives the active installation a checkout: it makes a
+   * directory in this scratch tree and records it, and answers its path. The
+   * reads that are *about* a directory need one -- `plan.status` resolves
+   * `docs/` from the CLI's working directory, which is the checkout, so an
+   * installation that records none is refused before any child is spawned
+   * (`NO_PLAN_CHECKOUT`) and the Graph draws that refusal instead of a graph.
+   * A directory and not a repository: the stub answers its reads from the files
+   * beside itself wherever it runs, so what the checkout has to be is a
+   * directory that exists. */
+  seedActiveCheckout(): string
   /** seedInstallations writes `installations.json` with these entries and
    * `active` (Task 3.4b), for a spec that needs more than one installation. The
    * active entry's project becomes the one the stub answers for. An entry with
@@ -161,6 +171,7 @@ export interface CliStub {
       readonly id: string
       readonly project: string
       readonly binaryPath?: string | null
+      readonly checkout?: string
     }[],
     active: string | null,
   ): void
@@ -216,6 +227,17 @@ export function installCliStub(line: string): CliStub {
   let installationsList: string | null = null
   const frames = syntheticFrames()
   let plan = readFileSync(PLAN_FIXTURE, 'utf8')
+  // The last seeded file, kept so `seedActiveCheckout` can add a directory to
+  // the active entry without a spec having to name the entry again.
+  let seeded: {
+    readonly entries: readonly {
+      readonly id: string
+      readonly project: string
+      readonly binaryPath?: string | null
+      readonly checkout?: string
+    }[]
+    readonly active: string | null
+  } = { entries: [], active: null }
   const writeSupport = (): void => {
     for (const where of [dir, wellKnown]) {
       writeFileSync(join(where, 'project.txt'), `${project}\n`)
@@ -269,6 +291,7 @@ export function installCliStub(line: string): CliStub {
       // make, so the first entry's project -- or the default -- is written.
       const chosen = entries.find((entry) => entry.id === active) ?? entries[0]
       project = chosen === undefined ? DEFAULT_PROJECT : chosen.project
+      seeded = { entries: [...entries], active }
       writeSupport()
       writeFileSync(
         join(userData, INSTALLATIONS_FILE_NAME),
@@ -283,10 +306,30 @@ export function installCliStub(line: string): CliStub {
             ...(entry.binaryPath === undefined || entry.binaryPath === null
               ? {}
               : { binaryPath: entry.binaryPath }),
+            ...(entry.checkout === undefined ? {} : { checkout: entry.checkout }),
           })),
         }),
         { mode: 0o600 },
       )
+    },
+    seedActiveCheckout(): string {
+      const where = join(scratch, 'checkout')
+      mkdirSync(where, { recursive: true })
+      if (seeded.active === null || !seeded.entries.some((entry) => entry.id === seeded.active)) {
+        // A checkout belongs to an installation, so this call has an order. It
+        // says so rather than writing a file with no entry to hang it on, which
+        // would leave the spec waiting for a screen that is drawn for a state
+        // nobody asked for.
+        throw new Error('seedActiveCheckout needs an active installation: call seedActiveInstallation first')
+      }
+      // Written back through `seedInstallations`, so the file keeps the one
+      // shape this module writes and the project the stub answers for is not
+      // disturbed by adding a directory to the record.
+      stub.seedInstallations(
+        seeded.entries.map((entry) => (entry.id === seeded.active ? { ...entry, checkout: where } : entry)),
+        seeded.active,
+      )
+      return where
     },
     extraStub(name: string, next: string): string {
       const where = join(scratch, name)

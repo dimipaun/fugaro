@@ -34,9 +34,13 @@
 // **One flag is seeded differently, and this is why.** A **chip** exists only for
 // a *finished* release (the addendum: the chips are the finished releases), and
 // the committed document has none -- the unit suite patches the same flag
-// (`FINISHED` in `graph.test.ts`). The one case about a chip seeds its own copy
-// with that release marked finished, rather than changing the committed document
-// every other case reads.
+// (`FINISHED` in `graph.test.ts`). The one case about a chip **launches its own
+// window** over a copy with a release marked finished, rather than changing the
+// document every other case reads: a finished release's tasks are the ones the
+// canvas leaves out until its chip is open, and the committed document's
+// critical path and its one blocked card are both inside the two releases it
+// has, so finishing either of them would take an edge or a state away from a
+// case that is about them.
 
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -128,11 +132,17 @@ test.describe('the graph view in a window', () => {
   test.beforeAll(async () => {
     // A scratch profile with the stub as the active installation, as the other
     // dashboard specs do: without one the window opens on the picker and there
-    // is no view to open. The plan document is seeded **before** the launch, so
-    // the first `plan status` read the graph makes is answered.
+    // is no view to open. The plan document needs no seeding of its own -- the
+    // stub carries the committed one, which is the document every case here but
+    // the chip's reads.
     cli = inRangeCliStub()
     cli.seedActiveInstallation()
-    cli.seedPlan(withFinishedRelease())
+    // And a checkout, which is the other half of that read: `plan.status` is
+    // about a directory -- the CLI resolves `docs/` from its working directory
+    // -- so an installation that records none is refused before any child runs
+    // (`NO_PLAN_CHECKOUT` in `src/source/source.ts`), and the screen would draw
+    // that refusal where this spec is waiting for a canvas.
+    cli.seedActiveCheckout()
     app = await launchConsole({ args: cli.launchArgs(consoleDir), env: cli.env })
     page = await app.firstWindow()
     await page.waitForLoadState('domcontentloaded')
@@ -164,34 +174,6 @@ test.describe('the graph view in a window', () => {
     // A card in a state with no second channel is not dashed, so the assertion
     // above is about the blocked rule and not about every box on the canvas.
     expect(await strokeDash(page, 'g.graph-node[data-state="ready"] .graph-node-box')).toBe('none')
-  })
-
-  test('expands a finished release on a click, and on nothing else', async () => {
-    const chip = page.locator('button.graph-chip').first()
-    await expect(chip).toHaveAttribute('aria-expanded', 'false')
-    expect(await page.locator('div.graph-chip-body').count()).toBe(0)
-
-    // Not on the focus, and not on the hover: the addendum's gesture is the
-    // click, and a chip that opened on either would be opening on something no
-    // reader asked for.
-    await chip.focus()
-    await expect(chip).toHaveAttribute('aria-expanded', 'false')
-    expect(await page.locator('div.graph-chip-body').count()).toBe(0)
-    await chip.hover()
-    await expect(chip).toHaveAttribute('aria-expanded', 'false')
-    expect(await page.locator('div.graph-chip-body').count()).toBe(0)
-
-    await chip.click()
-    await expect(chip).toHaveAttribute('aria-expanded', 'true')
-    // The body is the release's tasks, and it is the one place a finished
-    // release's tasks are drawn: the canvas leaves them out until the chip is
-    // open.
-    expect(await page.locator('div.graph-chip-body').count()).toBe(1)
-    expect(await page.locator('div.graph-chip-body li').count()).toBeGreaterThan(0)
-
-    await chip.click()
-    await expect(chip).toHaveAttribute('aria-expanded', 'false')
-    expect(await page.locator('div.graph-chip-body').count()).toBe(0)
   })
 
   test('keeps the dash and the edge scale when forced colors is active', async () => {
@@ -266,5 +248,60 @@ test.describe('the graph view in a window', () => {
     const next = await active(page)
     expect(next.classes).toContain('graph-node')
     expect(next.attributes['data-selected']).toBe('true')
+  })
+})
+
+test.describe('the graph view’s chips', () => {
+  let app: ElectronApplication
+  let page: Page
+  let cli: CliStub
+
+  test.beforeAll(async () => {
+    // Its own window, over its own copy of the document: a chip is drawn for a
+    // *finished* release and the committed document has none (the header says
+    // why this is a second launch rather than a flag flipped under the cases
+    // above).
+    cli = inRangeCliStub()
+    cli.seedActiveInstallation()
+    cli.seedActiveCheckout()
+    cli.seedPlan(withFinishedRelease())
+    app = await launchConsole({ args: cli.launchArgs(consoleDir), env: cli.env })
+    page = await app.firstWindow()
+    await page.waitForLoadState('domcontentloaded')
+    await page.locator(NAV_GRAPH).click()
+    await page.locator(CANVAS).waitFor()
+  })
+
+  test.afterAll(async () => {
+    await app?.close()
+    cli.remove()
+  })
+
+  test('expands a finished release on a click, and on nothing else', async () => {
+    const chip = page.locator('button.graph-chip').first()
+    await expect(chip).toHaveAttribute('aria-expanded', 'false')
+    expect(await page.locator('div.graph-chip-body').count()).toBe(0)
+
+    // Not on the focus, and not on the hover: the addendum's gesture is the
+    // click, and a chip that opened on either would be opening on something no
+    // reader asked for.
+    await chip.focus()
+    await expect(chip).toHaveAttribute('aria-expanded', 'false')
+    expect(await page.locator('div.graph-chip-body').count()).toBe(0)
+    await chip.hover()
+    await expect(chip).toHaveAttribute('aria-expanded', 'false')
+    expect(await page.locator('div.graph-chip-body').count()).toBe(0)
+
+    await chip.click()
+    await expect(chip).toHaveAttribute('aria-expanded', 'true')
+    // The body is the release's tasks, and it is the one place a finished
+    // release's tasks are drawn: the canvas leaves them out until the chip is
+    // open.
+    expect(await page.locator('div.graph-chip-body').count()).toBe(1)
+    expect(await page.locator('div.graph-chip-body li').count()).toBeGreaterThan(0)
+
+    await chip.click()
+    await expect(chip).toHaveAttribute('aria-expanded', 'false')
+    expect(await page.locator('div.graph-chip-body').count()).toBe(0)
   })
 })
