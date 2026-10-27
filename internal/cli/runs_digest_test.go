@@ -57,7 +57,9 @@ func digestClock(t *testing.T, day string) {
 
 // seedDigestRun writes one run's result.json under the fixture repository's
 // own slug, finished at fin, with repo as the repository the record itself
-// names.
+// names. The two are deliberately separable: a project job's account reaches
+// every repository's runs/, so a record under one repository's prefix that
+// names another is exactly the untrusted input G2's check is for.
 func seedDigestRun(t *testing.T, f *cloudFixture, id string, fin time.Time, repo string) {
 	t.Helper()
 	rec := &runstore.Record{

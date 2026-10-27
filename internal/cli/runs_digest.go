@@ -134,10 +134,12 @@ func newRunsDigestCmd() *cobra.Command {
 			"of the index's figures, and the report being written goes on. Nothing else in the\n" +
 			"folder is read, and the folder is never edited except for the report and the index.\n\n" +
 			"The read is the repository's runs bucket listing, newest first, capped at the bound\n" +
-			"runs stats uses: a period holding more runs than that is reported over its newest\n" +
-			"ones. The bucket's lifecycle age keeps the listing small, and F24's retention means\n" +
-			"a period older than it has no records left -- which is why a yearly report rolls\n" +
-			"the committed monthly ones up rather than reading records.\n\n" +
+			"runs stats uses, and a listing longer than that says so on stderr. The listing is not\n" +
+			"narrowed to the period: a run counts in the period it finished (G4), so a run that\n" +
+			"started before the period and finished inside it is one of its runs. The bucket's\n" +
+			"lifecycle age keeps the listing small, and F24's retention means a period older than\n" +
+			"it has no records left -- which is why a yearly report rolls the committed monthly\n" +
+			"ones up rather than reading records.\n\n" +
 			"--stdout prints the report instead of writing it, and --json prints the summary\n" +
 			"block and the patterns as {repo, period, summary, patterns[], skipped[], wrote[]}.\n" +
 			"Neither writes a file, so a caller can read a report before committing it.",
@@ -203,9 +205,13 @@ func runRunsDigest(cmd *cobra.Command, o *digestOptions) error {
 		}
 		head = digestYearMarkdown(p, months, cur)
 	} else {
-		recs, err := digestRecords(ctx, env, slug, repo)
+		recs, truncated, err := digestRecords(ctx, env, slug, repo)
 		if err != nil {
 			return err
+		}
+		if truncated {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: this repository's runs bucket listing holds more than %d runs; the report reads its newest %d, so an older period is reported over fewer of its runs\n",
+				userStatsMaxRuns, userStatsMaxRuns)
 		}
 		d := digest.Build(recs, p)
 		cur = d.Summary()
@@ -307,17 +313,26 @@ func digestRepo(ctx context.Context, env *cloudEnv, repo string) (string, string
 // runs bucket's listing under this repository's own prefix, then one
 // result.json per run -- newest first and bounded at runs stats' bound.
 //
+// The listing is not narrowed to the period. A run counts in the period it
+// finished (G4), so a run that started before the period and finished inside
+// it is one of its runs, and a listing taken from the period's own first day
+// would leave it out of this report and out of the next one too. The bucket's
+// lifecycle age (runs_days) keeps the whole listing small, and a listing
+// longer than the bound is truncated to its newest runs and says so, rather
+// than quietly reporting a period over part of itself.
+//
 // A run with no result.json has not finished, so it is in no period (G4), and
 // a record nobody can read is one run's problem rather than the report's, as
 // in runs ls: it is left out rather than read as a zero. A record whose own
 // repository is not the one being reported is not this repository's run, and
 // is dropped here, before anything of it is built into the report (G2).
-func digestRecords(ctx context.Context, env *cloudEnv, slug, repo string) ([]runstore.Record, error) {
+func digestRecords(ctx context.Context, env *cloudEnv, slug, repo string) ([]runstore.Record, bool, error) {
 	ids, err := runstore.ListRunIDs(ctx, env.bucket.Bucket, slug, time.Time{})
 	if err != nil {
-		return nil, remote(err)
+		return nil, false, remote(err)
 	}
-	if len(ids) > userStatsMaxRuns {
+	truncated := len(ids) > userStatsMaxRuns
+	if truncated {
 		ids = ids[:userStatsMaxRuns]
 	}
 	recs := make([]runstore.Record, len(ids))
@@ -339,7 +354,7 @@ func digestRecords(ctx context.Context, env *cloudEnv, slug, repo string) ([]run
 		}
 	})
 	if err := errors.Join(errs...); err != nil {
-		return nil, remote(fmt.Errorf("reading this repository's run records: %w", err))
+		return nil, false, remote(fmt.Errorf("reading this repository's run records: %w", err))
 	}
 	out := make([]runstore.Record, 0, len(ids))
 	for i, ok := range found {
@@ -347,7 +362,7 @@ func digestRecords(ctx context.Context, env *cloudEnv, slug, repo string) ([]run
 			out = append(out, recs[i])
 		}
 	}
-	return out, nil
+	return out, truncated, nil
 }
 
 // digestSameRepo is whether a record's own repository is the one being

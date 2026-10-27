@@ -2886,10 +2886,12 @@ of the index's figures, and the report being written goes on. Nothing else in th
 folder is read, and the folder is never edited except for the report and the index.
 
 The read is the repository's runs bucket listing, newest first, capped at the bound
-runs stats uses: a period holding more runs than that is reported over its newest
-ones. The bucket's lifecycle age keeps the listing small, and F24's retention means
-a period older than it has no records left -- which is why a yearly report rolls
-the committed monthly ones up rather than reading records.
+runs stats uses, and a listing longer than that says so on stderr. The listing is not
+narrowed to the period: a run counts in the period it finished (G4), so a run that
+started before the period and finished inside it is one of its runs. The bucket's
+lifecycle age keeps the listing small, and F24's retention means a period older than
+it has no records left -- which is why a yearly report rolls the committed monthly
+ones up rather than reading records.
 
 --stdout prints the report instead of writing it, and --json prints the summary
 block and the patterns as {repo, period, summary, patterns[], skipped[], wrote[]}.
