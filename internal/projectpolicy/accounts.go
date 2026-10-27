@@ -139,8 +139,10 @@ func checkWrittenAccountFields(name string, raw json.RawMessage) error {
 //     at all;
 //   - "*" admits everything the profile admits, at a stroke, which is the
 //     opposite of what an account's list is for: it is the per-repository
-//     decision (D3), and the derivation cannot even write one (publish
-//     qualifies each allow_data_to slug, and no slug carries a wildcard);
+//     decision (D3), and the derivation cannot even write one (DeriveAccounts
+//     refuses a slug carrying a wildcard, which project_secrets allows for a
+//     list that only decides mounts — its own refusal is the sentence saying
+//     why the two lists differ);
 //   - an entry that is not a canonical, provider-qualified repository name is
 //     a repository nothing matches: MatchRepo compares segment against
 //     segment, and a two-segment "acme/app" would name no repository this
@@ -331,6 +333,18 @@ func DeriveAccounts(profiles map[string]Profile, accounts map[string]config.Clau
 				return nil, providerRequired("projectpolicy: profiles." + profileName)
 			}
 			for _, slug := range slugs {
+				if strings.Contains(slug, "*") {
+					// A project_secrets entry may carry a segment wildcard
+					// (config.ProjectSecret.AllowsData, owner ruling of
+					// 2026-10-27), and the default account's list is the one
+					// that reaches a published policy node. It cannot here:
+					// accounts.<name>.allow_repos is exact by D3, because the
+					// subset rule against a profile's own allow_repos is
+					// decided repository by repository. Refused by name, since
+					// Canonical's own sentence would call a pattern that
+					// ValidateProjectSecrets accepts "not a repository".
+					return nil, fmt.Errorf("projectpolicy: profiles.%s.claude_accounts: %s holds %q, a pattern, and this account's list is published as accounts.%s.allow_repos, which is exact: a wildcard there makes the subset rule against the profile's own allow_repos undecidable (D3). Name the repositories themselves in %s, or take the account off the profile", profileName, source, slug, ref, source)
+				}
 				canonical, err := Canonical(provider, slug)
 				if err != nil {
 					return nil, fmt.Errorf("projectpolicy: profiles.%s.claude_accounts: %s holds %q, which is not a repository: %v — an account's allow_repos entry is a provider-qualified repository name (the account's list is qualified with the profile's provider, %s here)", profileName, source, slug, err, provider)

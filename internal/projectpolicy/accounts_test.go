@@ -483,6 +483,44 @@ func TestDeriveAccounts(t *testing.T) {
 	}
 }
 
+// TestDeriveAccountsRefusesAWildcardEntry: project_secrets.<name>.allow_data_to
+// accepts a segment wildcard (config.ProjectSecret.AllowsData, owner ruling of
+// 2026-10-27), and the DEFAULT account's entry is the one that reaches a
+// published policy node — so this is where a wildcard has to stop. The
+// policy's accounts.<name>.allow_repos is exact by D3 (the subset rule against
+// a profile's own allow_repos is decided repository by repository), and the
+// refusal names the block the operator edits rather than letting Canonical
+// report a pattern ValidateProjectSecrets accepts as "not a repository".
+func TestDeriveAccountsRefusesAWildcardEntry(t *testing.T) {
+	profiles := map[string]Profile{
+		"standard": {JobProfile: config.JobProfile{Provider: "bitbucket", ClaudeAccounts: []string{"default"}}},
+	}
+	_, err := DeriveAccounts(profiles, nil, map[string]config.ProjectSecret{
+		"claude-oauth-token": {AllowDataTo: []string{"myworkspace/*"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "which is exact") {
+		t.Fatalf("a wildcard project_secrets entry reached the policy's account list: %v", err)
+	}
+	for _, want := range []string{"project_secrets.claude-oauth-token.allow_data_to", "accounts.default.allow_repos"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "is not a repository") {
+		t.Errorf("the refusal calls the pattern not a repository, which project_secrets accepts: %v", err)
+	}
+	// An exact list for the same account is unaffected.
+	got, err := DeriveAccounts(profiles, nil, map[string]config.ProjectSecret{
+		"claude-oauth-token": {AllowDataTo: []string{"myworkspace/api"}},
+	})
+	if err != nil {
+		t.Fatalf("an exact entry was refused: %v", err)
+	}
+	if want := []string{"bitbucket/myworkspace/api"}; !slices.Equal(got["default"].AllowRepos, want) {
+		t.Errorf("default.allow_repos = %v, want %v", got["default"].AllowRepos, want)
+	}
+}
+
 // TestCheckWrittenAccountFieldsReturnsTheReadError: the member-spelling check
 // reads an entry as a map, and an entry it cannot read that way is an error —
 // the same error checkWrittenProfileFields returns for the profiles block, and

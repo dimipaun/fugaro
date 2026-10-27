@@ -81,7 +81,7 @@ Its own topic, and only for a workflow that needs nothing a build gives it. `che
 
 ## What scope a secret's value goes to
 
-Init's own prompts (skill step 9) have no `--repo` to pass: a name this repository may mount project-wide goes to the project's Secret Manager; a per-repository name does not (`bitbucket-token` reaches project scope only through an explicit `project_secrets` entry — its access token serves one repository). A project-scope name's reach is its entry's `allow_data_to`, or the provider's for a provider key: say which repositories it reaches. A covered name is not asked for; a prompt that skips one works as intended.
+Init's own prompts (skill step 9) have no `--repo` to pass: a name this repository may mount project-wide goes to the project's Secret Manager; a per-repository name does not (`bitbucket-token` reaches project scope only through an explicit `project_secrets` entry — its access token serves one repository). A project-scope name's reach is its entry's `allow_data_to`, or the provider's for a provider key: say which repositories it reaches. A `project_secrets` entry may use `*` inside a segment (`myworkspace/*`), never across `/`, and the owner segment must be literal: a wildcard reaches every repository it matches, now and later, so say that rather than only the repositories that exist today. A covered name is not asked for; a prompt that skips one works as intended.
 
 For this repository's own copy instead, press Ctrl-C at the prompt and run the command it printed with `--repo <owner/name>`, then start setup again. The user runs it in their own terminal window, not through the agent:
 

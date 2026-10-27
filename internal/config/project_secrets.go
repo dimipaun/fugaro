@@ -17,18 +17,65 @@ import (
 //
 // Unlike a provider's allow_data_to (§3a, the owner's final ruling), an
 // empty or absent list here means "shared with nobody", unchanged: only
-// providers: gets the no-list/["*"]-means-any-repository rule. The literal
-// "*" is refused as a repository slug by repoSlugRE, deliberately.
+// providers: gets the no-list/["*"]-means-any-repository rule. An entry may
+// carry "*" inside a segment (myworkspace/*, myworkspace/api-*) but never a
+// bare "*" and never a wildcard owner: see invalidAllowDataToEntry.
 type ProjectSecret struct {
 	// AllowDataTo are the repositories (owner/name) whose runs may mount
-	// this project secret; empty means none.
+	// this project secret; empty means none. An entry may use "*" inside a
+	// segment, never across "/".
 	AllowDataTo []string `yaml:"allow_data_to,omitempty" json:"allow_data_to,omitempty"`
 }
 
 // AllowsData reports whether repo (owner/name) may mount p. Case-folded,
-// like ModelProvider.AllowsData and ClaudeAccount.AllowsData.
+// like ModelProvider.AllowsData and ClaudeAccount.AllowsData, and — unlike
+// those two — an entry may use "*" inside a segment, which is how one entry
+// serves a whole workspace or a family of repositories (owner ruling,
+// 2026-10-27, Bitbucket design D464).
+//
+// A wildcard means every CURRENT AND FUTURE repository it matches: the list
+// is the only gate, and onboarding a repository that matches an entry mounts
+// the project copy on it with nothing else to do (SECURITY.md). An entry
+// whose owner segment is a wildcard, and the bare "*", admit nothing here
+// rather than everything: ValidateProjectSecrets refuses both, and a config
+// that reached this function without validation mounts nothing.
 func (p ProjectSecret) AllowsData(repo string) bool {
-	return slices.ContainsFunc(p.AllowDataTo, func(r string) bool { return strings.EqualFold(r, repo) })
+	return slices.ContainsFunc(p.AllowDataTo, func(r string) bool { return matchRepoPattern(r, repo) })
+}
+
+// matchRepoPattern reports whether one allow_data_to entry admits repo
+// (owner/name): segment against segment, case-folded, with config.MatchSegment
+// as the segment matcher, so a "*" never crosses "/". A pattern with a
+// different number of segments than the repository admits nothing, which is
+// why "myworkspace/*" does not admit the nested path "myworkspace/a/b".
+//
+// The owner segment must be literal, and that is checked here as well as in
+// ValidateProjectSecrets: a pattern like "*/*" would otherwise admit every
+// repository of every workspace, the one widening this list is never meant to
+// make, and a config file is not always one that has been validated.
+func matchRepoPattern(pattern, repo string) bool {
+	if pattern == "" || repo == "" {
+		return false
+	}
+	ps, cs := strings.Split(strings.ToLower(pattern), "/"), strings.Split(strings.ToLower(repo), "/")
+	if len(ps) != len(cs) {
+		return false
+	}
+	if strings.Contains(ps[0], "*") {
+		return false
+	}
+	for i := range ps {
+		// An empty segment names nothing on either side, and "*" matches the
+		// empty string: without this, "myworkspace/*" would admit the
+		// half-spelled "myworkspace/", which no exact entry ever did.
+		if ps[i] == "" || cs[i] == "" {
+			return false
+		}
+		if !MatchSegment(ps[i], cs[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // AllowedForProjectSecret reports whether the project_secrets block lists
@@ -109,12 +156,68 @@ func ValidateProjectSecrets(secrets map[string]ProjectSecret) []Problem {
 			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("%q is not a secret Fugaro stores project-wide: only %s", pluginwire.Printable(name), reservedSecretList())})
 		}
 		for _, r := range secrets[name].AllowDataTo {
-			if !repoSlugRE.MatchString(r) || hasDotSegment(r) {
-				ps = append(ps, Problem{Path: at + ".allow_data_to", Message: fmt.Sprintf("%q must be a repository as owner/name", pluginwire.Printable(r))})
+			if msg := invalidAllowDataToEntry(r); msg != "" {
+				ps = append(ps, Problem{Path: at + ".allow_data_to", Message: msg})
 			}
 		}
 	}
 	return ps
+}
+
+const (
+	// maxAllowDataToStars is the most wildcards one allow_data_to entry may
+	// carry. A pattern with more is a typo rather than an intent, and the
+	// entry is what decides which repositories mount a project secret.
+	maxAllowDataToStars = 2
+	// allowDataToOwnerWildcard and allowDataToBareStar are the two sentences
+	// the refusals below share, kept as constants so the reason is worded
+	// once: an entry that admits every workspace is the widening this list
+	// must never make, whichever spelling reaches it.
+	allowDataToOwnerWildcard = "the owner segment must be literal: a wildcard owner would mount this value in every workspace, so name the workspace"
+	allowDataToBareStar      = `"*" is not accepted: name the repositories this value reaches, or a whole workspace's with "myworkspace/*"`
+)
+
+// invalidAllowDataToEntry returns "" when r is a usable
+// project_secrets.<name>.allow_data_to entry, else the sentence saying why
+// not. An entry names a repository as owner/name and may use "*" inside a
+// segment — "myworkspace/*", "myworkspace/api-*" — which is how one entry
+// serves a whole workspace or a family of repositories (owner ruling,
+// 2026-10-27, Bitbucket design D464).
+//
+// It is deliberately NARROWER than the published policy's allow_repos, which
+// this shares its segment matcher with (projectpolicy.ValidPattern/MatchRepo):
+// that list admits a bare "*", admits "*/acme/*", and bounds a pattern by
+// character length. This one is a list of repositories a single credential
+// reaches, so:
+//
+//   - the owner segment must be literal, which refuses "*/*" and "*/api" and,
+//     with them, the bare "*" — a wildcard owner is every workspace, and the
+//     value in question is one owner's credential;
+//   - at most two "*" per entry, one per segment at most in practice;
+//   - the entry still names exactly two segments, so "myworkspace/a/b" is not
+//     an entry at all. A repository path may nest in a task slug, but this
+//     list has always been owner/name, and AllowsData matches segment counts
+//     (a nested path is admitted by no entry, as it is today).
+func invalidAllowDataToEntry(r string) string {
+	segs := strings.Split(r, "/")
+	if len(segs) != 2 {
+		if r == "*" {
+			return allowDataToBareStar
+		}
+		return fmt.Sprintf("%q must be a repository as owner/name (with \"*\" allowed inside a segment, as in \"myworkspace/*\")", pluginwire.Printable(r))
+	}
+	for _, s := range segs {
+		if s == "" || s == "." || s == ".." || !repoPatternSegmentRE.MatchString(s) {
+			return fmt.Sprintf("%q must be a repository as owner/name (with \"*\" allowed inside a segment, as in \"myworkspace/*\")", pluginwire.Printable(r))
+		}
+	}
+	if strings.Contains(segs[0], "*") {
+		return fmt.Sprintf("%q: %s", pluginwire.Printable(r), allowDataToOwnerWildcard)
+	}
+	if n := strings.Count(r, "*"); n > maxAllowDataToStars {
+		return fmt.Sprintf("%q has %d \"*\"; at most %d are allowed (a pattern with more is a typo, not an intent)", pluginwire.Printable(r), n, maxAllowDataToStars)
+	}
+	return ""
 }
 
 // reservedSecretList is the four reserved names, sorted, for a message.

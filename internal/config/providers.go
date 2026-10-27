@@ -134,6 +134,12 @@ var (
 	providerNameRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,19}$`)
 	modelPatternRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]*\*?$`)
 	repoSlugRE     = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
+	// repoPatternSegmentRE is one segment of a project_secrets allow_data_to
+	// entry: repoSlugRE's own charset plus "*", which is a wildcard inside
+	// the segment and never crosses "/" (ValidateProjectSecrets,
+	// matchRepoPattern). Nothing else gets the wildcard: a provider's and a
+	// named account's allow_data_to are exact names or the literal "*".
+	repoPatternSegmentRE = regexp.MustCompile(`^[A-Za-z0-9._*-]+$`)
 )
 
 // RequireZDROn reports whether the route prices the ZDR-eligible endpoints
