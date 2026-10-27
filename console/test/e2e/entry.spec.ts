@@ -111,7 +111,7 @@ const consoleDir = join(__dirname, '..', '..')
 
 /**
  * SHIPPED_KEYS is what `window.fugaro` must carry, read out of the preload's own
- * table: the twenty-one methods, plus `version` and `operations`. Read rather than
+ * table: the twenty-two methods, plus `version` and `operations`. Read rather than
  * spelled, because the claim here is "the bridge in the page is the surface this
  * console ships" -- a retyped list would only prove the retyping.
  */
@@ -317,7 +317,7 @@ test.describe('the renderer entry, in the real window', () => {
       expect(shape.scriptUrls).toEqual([`${APP_ORIGIN}/console.js`])
       expect(SERVED_FILES).toContain('/console.js')
       // The bridge `src/preload/index.ts` exposes, as the renderer received it:
-      // the twenty-one methods and the two fields, frozen, at the shipped version.
+      // the twenty-two methods and the two fields, frozen, at the shipped version.
       // Two files have to be right for this to hold -- the preload that exposed
       // it and the entry that ran beside it -- because the preload only reaches
       // the dashboard window (`dashboardWebPreferences`).
