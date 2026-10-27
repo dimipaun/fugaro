@@ -2266,6 +2266,31 @@ describe('the graph’s live frame', () => {
     expect(wordsOf(document, 'task-two')).toContain('in review')
     expect(document.activeElement, 'a frame pulled the keyboard into the graph').toBe(nav)
   })
+
+  it('keeps the rail’s state word while the graph is the view on screen', async () => {
+    // The rail's word is the **read's** own and not the Live screen's: the frame
+    // the graph folds is the same `live.watch` read (`pollLive` routes it to
+    // `frameGraph`), so a feed that has gone quiet has to read `silent` here too.
+    // The word is written whether or not the frame moved anything -- the third
+    // read below brings the same frame back, which the screen answers with no
+    // drawing at all, and the word still follows the read.
+    const frame = frameWithStage('aa02', 'review')
+    let receivedAt = nowStamp()
+    const { bridge } = graphBridge({ subscribeLive: () => snapshotReply(frame, receivedAt) })
+    const document = await openGraph(bridge)
+    const state = (): string | null => spanOf(document, RAIL_STATE_CLASS).attributes.get('data-state') ?? null
+    expect(state(), 'the mount’s own read was fresh: the case would prove nothing').toBe('running')
+
+    receivedAt = '2026-10-15T12:00:00Z'
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
+    await flush()
+    expect(state(), 'a feed gone quiet left the rail on running').toBe('silent')
+
+    receivedAt = nowStamp()
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
+    await flush()
+    expect(state(), 'a live feed left the rail on silent').toBe('running')
+  })
 })
 
 describe('the graph’s plan read when it refuses', () => {

@@ -776,6 +776,37 @@ describe('the graph screen and its navigation', () => {
     expect(tabs.map((each) => each.getAttribute('tabindex'))).toEqual(['-1', '-1', '0'])
   })
 
+  it('puts the first task in the tab order while nothing is selected, and the selected one after that', async () => {
+    // The doors are a roving `tabindex` too, and the one thing that rule may not
+    // do is leave the group with **no** stop: nothing is selected when the screen
+    // opens, no gesture but a click or an arrow key selects a task, and a door the
+    // arrow keys reach is a door the tab order had to reach first. A group whose
+    // every door is at `-1` is a picture and a list no keyboard can enter -- the
+    // same failure the navigation's own roving `tabindex` names and forbids.
+    const { screen } = screenWith()
+    await screen.load(DOCUMENT, RUNS)
+    const canvas = screen.redraw()
+    if (canvas === null) throw new Error('no drawing')
+    const drawn = mounted(canvas)
+    const doors = everyNode(drawn).filter((each) => each.getAttribute('data-key') !== null)
+    expect(doors.length).toBeGreaterThan(1)
+    expect(doors.map((each) => each.getAttribute('tabindex')).filter((each) => each === '0')).toHaveLength(1)
+    expect(doors[0]?.getAttribute('tabindex')).toBe('0')
+    // The stop is the tab order's, and the selection is not the same fact: the
+    // first door is where the keyboard enters, and it is not drawn as chosen.
+    expect(doors[0]?.getAttribute('data-selected')).toBe('false')
+
+    // A selection moves the stop to the task that was selected, which is the door
+    // the reader is working with.
+    const key = keys(drawn)[1] ?? ''
+    expect(key, 'the fixture drew no second task: the case would prove nothing').not.toBe('')
+    const list = screen.change({ selected: key, view: 'list' })
+    if (list === null) throw new Error('no drawing')
+    const rows = everyNode(mounted(list)).filter((each) => each.getAttribute('data-key') !== null)
+    expect(rows.map((each) => each.getAttribute('tabindex')).filter((each) => each === '0')).toHaveLength(1)
+    expect(rows.find((each) => each.getAttribute('tabindex') === '0')?.getAttribute('data-key')).toBe(key)
+  })
+
   it('falls back to All for a stream the document no longer carries', async () => {
     const { screen } = screenWith()
     await screen.load(DOCUMENT, RUNS)

@@ -911,8 +911,9 @@ function canvas(factory: GraphFactory, picture: GraphPicture): ScreenElement | n
   svg.setAttribute('aria-label', GRAPH_CANVAS_LABEL)
   svg.setAttribute('viewBox', viewBoxOf(bounds, picture.state.zoom))
 
+  const stop = doorStop(picture, drawnKeys(picture, 'canvas'))
   for (const column of picture.model.columns) {
-    for (const plan of column.plans) drawPlan(factory, svg, picture, plan, placed)
+    for (const plan of column.plans) drawPlan(factory, svg, picture, plan, placed, stop)
   }
   return svg
 }
@@ -924,6 +925,7 @@ function drawPlan(
   picture: GraphPicture,
   plan: GraphPlan,
   placed: ReadonlyMap<string, Rect>,
+  stop: string | null,
 ): void {
   const shown = visibleNodes(picture, plan)
   for (const box of releaseBoxes(picture, plan, placed, shown)) {
@@ -953,7 +955,7 @@ function drawPlan(
     if (!shown.has(nodeKey(plan.id, node.id))) continue
     const rect = placed.get(nodeKey(plan.id, node.id))
     if (rect === undefined) continue
-    svg.append(nodeCard(factory, picture, plan, node, rect))
+    svg.append(nodeCard(factory, picture, plan, node, rect, stop))
   }
 }
 
@@ -974,6 +976,51 @@ function visibleNodes(picture: GraphPicture, plan: GraphPlan): ReadonlySet<strin
     shown.add(nodeKey(plan.id, node.id))
   }
   return shown
+}
+
+/**
+ * drawnKeys is the tasks one drawing draws, as their layout keys, in the order
+ * the tab order sees them -- the order both drawings append their doors in, which
+ * is the order the entry walks them with the arrow keys.
+ *
+ * The two drawings do not draw the same set: the canvas leaves a finished
+ * release's tasks out until its chip is open (`visibleNodes`), and the list draws
+ * every task of every plan.
+ */
+function drawnKeys(picture: GraphPicture, drawing: 'canvas' | 'list'): readonly string[] {
+  const drawn: string[] = []
+  for (const column of picture.model.columns) {
+    for (const plan of column.plans) {
+      const shown = drawing === 'canvas' ? visibleNodes(picture, plan) : null
+      for (const node of plan.nodes) {
+        const key = nodeKey(plan.id, node.id)
+        if (shown === null || shown.has(key)) drawn.push(key)
+      }
+    }
+  }
+  return drawn
+}
+
+/**
+ * doorStop is the one door a drawing puts in the tab order: the selected task
+ * when this drawing draws it, and the **first** door it draws otherwise.
+ *
+ * **A group with no stop is a group the keyboard cannot enter at all**, which is
+ * the one thing a roving `tabindex` may not do -- the rule the navigation's own
+ * `markButtons` keeps, and the failure the doors had: nothing is selected when
+ * the screen opens, and with every door at `-1` no task could be selected, no run
+ * opened and the arrow walk never started. The fallback is a stop and not a
+ * selection: the first door is where the keyboard enters, and it is not drawn as
+ * chosen.
+ *
+ * The selected task may be a door this drawing does not draw -- a plan read can
+ * finish the release it is in, and the canvas leaves a finished release's tasks
+ * out -- so the fallback is what the drawing has rather than what the state says.
+ */
+function doorStop(picture: GraphPicture, drawn: readonly string[]): string | null {
+  const selected = picture.state.selected
+  if (selected !== null && drawn.includes(selected)) return selected
+  return drawn[0] ?? null
 }
 
 /** finishedVersions is the versions a plan has shipped: the model's chips are
@@ -1082,15 +1129,19 @@ function nodeCard(
   plan: GraphPlan,
   node: GraphNode,
   rect: Rect,
+  stop: string | null,
 ): ScreenElement {
   const key = nodeKey(plan.id, node.id)
   const door = doorFor(node, picture.runs)
   const selected = key === picture.state.selected
+  // The roving `tabindex` is the drawing's own stop (`doorStop`) and not the
+  // selection, which keeps its own attribute below.
+  const stopHere = key === stop
   const group = makeNS(factory, 'g', 'graph-node')
   group.setAttribute('data-key', key)
   group.setAttribute('data-state', node.words[0] ?? '')
   group.setAttribute('data-selected', selected ? 'true' : 'false')
-  group.setAttribute('tabindex', selected ? '0' : '-1')
+  group.setAttribute('tabindex', stopHere ? '0' : '-1')
   shift(group, rect.x, rect.y)
   if (door.run !== null) group.setAttribute('data-run-id', door.run)
   else group.append(tooltip(factory, door.because))
@@ -1146,6 +1197,7 @@ function list(factory: ScreenFactory, picture: GraphPicture): ScreenElement {
   const element = make(factory, 'div', 'graph-list')
   element.setAttribute('role', 'list')
   element.setAttribute('aria-label', GRAPH_LIST_LABEL)
+  const stop = doorStop(picture, drawnKeys(picture, 'list'))
   for (const column of picture.model.columns) {
     for (const plan of column.plans) {
       const section = cell(element, factory, 'section', 'graph-list-plan')
@@ -1154,7 +1206,7 @@ function list(factory: ScreenFactory, picture: GraphPicture): ScreenElement {
         section.append(listRelease(factory, release))
       }
       const nodes = cell(section, factory, 'ul', 'graph-list-nodes')
-      for (const node of plan.nodes) nodes.append(listRow(factory, picture, plan, node))
+      for (const node of plan.nodes) nodes.append(listRow(factory, picture, plan, node, stop))
     }
   }
   return element
@@ -1174,16 +1226,25 @@ function listRelease(factory: ScreenFactory, release: GraphRelease): ScreenEleme
 /** listRow is one task's row: its title, its words, its mark, its pull request
  * number and its run. It carries the same facts the card does, and the title
  * whole -- the card is where a title is cut, and the list is where it is not. */
-function listRow(factory: ScreenFactory, picture: GraphPicture, plan: GraphPlan, node: GraphNode): ScreenElement {
+function listRow(
+  factory: ScreenFactory,
+  picture: GraphPicture,
+  plan: GraphPlan,
+  node: GraphNode,
+  stop: string | null,
+): ScreenElement {
   const key = nodeKey(plan.id, node.id)
   const door = doorFor(node, picture.runs)
   const selected = key === picture.state.selected
+  // The roving `tabindex` is the drawing's own stop (`doorStop`), as it is on a
+  // card: a row and a card are the same door drawn twice.
+  const stopHere = key === stop
   const row = make(factory, 'li', 'graph-row')
   row.setAttribute('role', 'listitem')
   row.setAttribute('data-key', key)
   row.setAttribute('data-state', node.words[0] ?? '')
   row.setAttribute('data-selected', selected ? 'true' : 'false')
-  row.setAttribute('tabindex', selected ? '0' : '-1')
+  row.setAttribute('tabindex', stopHere ? '0' : '-1')
   // The gesture's own sentence, in the attribute an HTML element keeps a tooltip
   // in -- the same fact the card carries as a `<title>` child.
   row.setAttribute('title', door.because)

@@ -19,10 +19,12 @@
 //      design section 4.4's rule 1 for this screen, whose information is a
 //      *stroke* rather than a colour. The emulation is Chromium's own, so this
 //      is the system's forced-colors pass and not a stylesheet pretending.
-//   4. **the keyboard walks the graph.** The tablist's roving `tabindex` is a
-//      claim about the *tab order*, which a fake DOM cannot have: Tab has to
-//      reach the tablist, the arrows have to move the tab, and a redraw has to
-//      put the focus back in the tree it drew rather than on `<body>`.
+//   4. **the keyboard walks the graph.** A roving `tabindex` is a claim about
+//      the *tab order*, which a fake DOM cannot have: Tab has to reach the
+//      tablist and a task (a group whose every door is out of the tab order is a
+//      picture no keyboard can enter), the arrows have to move the tab, and a
+//      redraw has to put the focus back in the tree it drew rather than on
+//      `<body>`.
 //
 // **The graph's document is the stub's `plan status --json` answer.** The stub
 // beside this suite answers that read (`test/fixtures/bin/fugaro`,
@@ -176,6 +178,30 @@ test.describe('the graph view in a window', () => {
     cli.remove()
   })
 
+  test('reaches the picture from the keyboard before any task is selected', async () => {
+    // **This case is first because it is about the state the screen opens in.**
+    // Nothing is selected when the graph is drawn, and the doors are a roving
+    // `tabindex`: a group whose every door is at `-1` is a group the keyboard
+    // cannot enter at all, which leaves the picture and the list mouse-only -- no
+    // task selectable, no run openable, and the arrow walk with nowhere to start.
+    // So the tab order has to reach a door, and the door it reaches is the stop
+    // and not the selection.
+    expect(await pressTabUntil(page, 'graph-node'), 'the tab order never reached a task').toBe(true)
+    const reached = await active(page)
+    expect(reached.classes).toContain('graph-node')
+    expect(reached.attributes['data-selected']).toBe('false')
+
+    // One door in the tab order, and it is the first the drawing draws: the
+    // roving rule is the tablist's own, one stop and not a second walk through
+    // every card.
+    const stops = await page.evaluate(() =>
+      [...document.querySelectorAll('g.graph-node, li.graph-row')].filter(
+        (each) => each.getAttribute('tabindex') === '0',
+      ),
+    )
+    expect(stops).toHaveLength(1)
+  })
+
   test('draws the state words, and marks a blocked card with a dash as well as a tone', async () => {
     const words = await page.locator(`${CANVAS} [data-word]`).allTextContents()
     // The committed document carries one task of each of these, and a word is
@@ -217,9 +243,12 @@ test.describe('the graph view in a window', () => {
         }
         return {
           critical: width('g.graph-edge[data-critical="true"] .graph-edge-path'),
-          // An edge that is neither critical nor one of the selected task's, so
-          // the width read here is the plain one rather than the selection's.
-          plain: width('g.graph-edge[data-critical="false"][data-selected="false"] .graph-edge-path'),
+          // An edge that is neither critical, nor a cross-release one (the design
+          // draws those at 1 px), nor one of the selected task's -- so the width
+          // read here is the plain one and not another rule's.
+          plain: width(
+            'g.graph-edge[data-critical="false"][data-cross="false"][data-selected="false"] .graph-edge-path',
+          ),
           selected: width('g.graph-node[data-selected="true"] .graph-node-box'),
         }
       })

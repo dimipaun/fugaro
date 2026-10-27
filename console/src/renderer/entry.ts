@@ -2543,14 +2543,30 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * A frame the console cannot read is **ignored**: the graph is a picture of the
    * plan, and a `live.watch` read that failed says nothing about the plan. The
    * plan's own read is where a refusal belongs, and it has one.
+   *
+   * **The rail's state word is the read's, and it is written here too.** The
+   * frame is the same `live.watch` answer `drawLive` reads (`pollLive` routes one
+   * read to the view on screen), so while the graph is up this is the only place
+   * the word can be kept: a feed that has gone quiet, or a frame the console
+   * cannot read, leaves the rail on `silent` here exactly as it does on Live
+   * (design section 4.1). It is written **before** the drawing is asked for and
+   * whether or not one is drawn -- the word is about the console's read of this
+   * installation, not about whether the picture moved.
    */
   const frameGraph = async (reply: unknown): Promise<void> => {
     if (graph.screen === null) return
     const answer = replyData(reply)
-    if (!answer.ok) return
+    if (!answer.ok) {
+      rail.setState('silent')
+      return
+    }
     const envelope = answer.data as Record<string, unknown>
     const decoded = decodeSnapshot(envelope['document'], 'live.watch')
-    if (!decoded.ok) return
+    if (!decoded.ok) {
+      rail.setState('silent')
+      return
+    }
+    rail.setState(feedHealthOf(envelope['receivedAt'], nowStamp()).stale ? 'silent' : 'running')
     const drawn = await graph.screen.frame(decoded.value.runs)
     // The frame that changed nothing answers nothing, and a frame that landed
     // after the operator moved on draws nothing.
