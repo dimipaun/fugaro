@@ -44,7 +44,10 @@
 //      this (a covered heading is a heading-shaped hole, which looks like a
 //      heading drawn faintly) and the unit suite cannot either: whether a point
 //      on a glyph belongs to the heading or to a card is the browser's own hit
-//      test, over the real worker's answer.
+//      test, over the real worker's answer. The hit test is made **once per
+//      glyph**, because one point on a heading is a point a card can miss: a
+//      card covering all but the first character of a line leaves that one
+//      point over the heading and every other one under the card.
 //
 // **The graph's document is the stub's `plan status --json` answer.** The stub
 // beside this suite answers that read (`test/fixtures/bin/fugaro`,
@@ -463,41 +466,61 @@ test.describe('the graph view in a window', () => {
       // which is a pass for the wrong reason.
       const reading = await heading.evaluate((element) => {
         element.scrollIntoView({ block: 'center', inline: 'center' })
-        // The point is the **centre of the heading's first glyph**, taken from a
-        // Range over that one character: the centre of the text element's own box
-        // can land between two glyphs, where the hit test answers about whatever
-        // is behind the text -- the very answer this case exists to rule out.
-        const text = document.createTreeWalker(element, NodeFilter.SHOW_TEXT).nextNode()
-        if (text === null || (text.textContent ?? '') === '') return null
-        const range = document.createRange()
-        range.setStart(text, 0)
-        range.setEnd(text, 1)
-        const glyph = range.getBoundingClientRect()
-        const at = { x: glyph.left + glyph.width / 2, y: glyph.top + glyph.height / 2 }
-        const stack = document.elementsFromPoint(at.x, at.y)
-        const mine = stack.findIndex((each) => each === element || element.contains(each))
+        // **Every glyph of the heading is read, one Range per character.** The
+        // point hit-tested is the centre of a glyph's own box, because the centre
+        // of the text element's box can land between two glyphs, where the hit
+        // test answers about whatever is behind the text -- the very answer this
+        // case exists to rule out. One glyph would not be enough either: a card
+        // can cover the rest of the line and leave the first character standing,
+        // which is a heading a reader cannot read and a case that would pass.
+        const glyphs: { readonly text: string; readonly rect: DOMRect }[] = []
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+        for (let text = walker.nextNode(); text !== null; text = walker.nextNode()) {
+          const value = text.textContent ?? ''
+          for (let at = 0; at < value.length; at += 1) {
+            const range = document.createRange()
+            range.setStart(text, at)
+            range.setEnd(text, at + 1)
+            glyphs.push({ text: value[at] ?? '', rect: range.getBoundingClientRect() })
+          }
+        }
         return {
           release: element.parentElement?.getAttribute('data-release') ?? 'a release',
-          glyph: { width: glyph.width, height: glyph.height },
-          inViewport: at.x >= 0 && at.y >= 0 && at.x <= window.innerWidth && at.y <= window.innerHeight,
-          // What the point actually hits: the topmost element at a glyph is the
-          // `<text>` itself or one of its tspans.
-          hit: stack[0]?.getAttribute('class') ?? 'nothing',
-          topIsHeading: stack[0] !== undefined && (stack[0] === element || element.contains(stack[0])),
-          // And every element *above* the heading that belongs to a task card:
-          // the stack is topmost-first, so anything before the heading is paint
-          // order that came later, which is what covering it means.
-          coveredBy: (mine < 0 ? stack : stack.slice(0, mine))
-            .filter((each) => each.closest('g.graph-node') !== null)
-            .map((each) => each.getAttribute('class') ?? ''),
+          glyphs: glyphs.map((glyph) => {
+            const at = { x: glyph.rect.left + glyph.rect.width / 2, y: glyph.rect.top + glyph.rect.height / 2 }
+            const stack = document.elementsFromPoint(at.x, at.y)
+            const mine = stack.findIndex((each) => each === element || element.contains(each))
+            return {
+              text: glyph.text,
+              height: glyph.rect.height,
+              inViewport: at.x >= 0 && at.y >= 0 && at.x <= window.innerWidth && at.y <= window.innerHeight,
+              // What the point actually hits: the topmost element at a glyph is
+              // the `<text>` itself or one of its tspans.
+              hit: stack[0]?.getAttribute('class') ?? 'nothing',
+              topIsHeading: stack[0] !== undefined && (stack[0] === element || element.contains(stack[0])),
+              // And every element *above* the heading that belongs to a task card:
+              // the stack is topmost-first, so anything before the heading is paint
+              // order that came later, which is what covering it means.
+              coveredBy: (mine < 0 ? stack : stack.slice(0, mine))
+                .filter((each) => each.closest('g.graph-node') !== null)
+                .map((each) => each.getAttribute('class') ?? ''),
+            }
+          }),
         }
       })
 
-      expect(reading, `${heading} draws no heading glyph to hit-test`).not.toBeNull()
-      expect(reading?.glyph.height, 'the glyph read is empty, so the hit test below is vacuous').toBeGreaterThan(0)
-      expect(reading?.inViewport, 'the point is outside the viewport, where a hit test answers nothing').toBe(true)
-      expect(reading?.topIsHeading, `${reading?.release}'s heading is hit as ${String(reading?.hit)} instead`).toBe(true)
-      expect(reading?.coveredBy, `${reading?.release}'s heading is painted over by a task card`).toEqual([])
+      const glyphs = reading?.glyphs ?? []
+      expect(
+        glyphs.length,
+        `${String(reading?.release)}'s heading was read as ${String(glyphs.length)} glyphs, and a heading is hit-tested glyph by glyph`,
+      ).toBeGreaterThan(1)
+      for (const glyph of glyphs) {
+        const where = `${String(reading?.release)}'s heading, at its “${glyph.text}”`
+        expect(glyph.height, `the glyph read at ${where} is empty, so its hit test is vacuous`).toBeGreaterThan(0)
+        expect(glyph.inViewport, `the point at ${where} is outside the viewport, where a hit test answers nothing`).toBe(true)
+        expect(glyph.topIsHeading, `${where}, is hit as ${String(glyph.hit)} instead`).toBe(true)
+        expect(glyph.coveredBy, `${where}, is painted over by a task card`).toEqual([])
+      }
     }
   })
 
