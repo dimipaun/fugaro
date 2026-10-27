@@ -1580,8 +1580,8 @@ test files declare has to be selected by the pattern this section prints.
 
 ## What is generated, and what must not be edited
 
-The generated files under `content/` are **never edited by hand**: `cli-reference.md` and
-`security.md` are generated documents and `costs.json` is the owner-run aggregation's output.
+The generated files under `content/` are **never edited by hand**: `cli-reference.md`,
+`security.md` and `subscription-terms.md` are generated documents and `costs.json` is the owner-run aggregation's output.
 `content/downloads.json` is the one **hand-kept** file, marked `none: hand-kept` in the table,
 and it is edited by hand. The directory holds three kinds of file and they say so in three ways:
 
@@ -1603,6 +1603,7 @@ check until this document says the same thing.
 |---|---|---|
 | `content/cli-reference.md` | the command tree, `internal/cli.NewRootCmd` | `go run ./internal/clidoc` |
 | `content/security.md` | `SECURITY.md`, byte for byte below the title | `go run ./internal/clidoc` |
+| `content/subscription-terms.md` | `docs/licensing/subscription-terms.md`, sections 1 to 24 with the drafting notes cut, under a draft status line | `go run ./internal/clidoc` |
 | `content/costs.json` | `fugaro stats runs --project <installation> --json`, and it is the aggregation's output verbatim | owner-run: `fugaro stats runs --project <installation> --json > website/content/costs.json` |
 | `content/downloads.json` | hand-kept, not generated: the console's facts and the release's own published names, with `{version}` where the version goes — the URLs are derived from them (below), and `available` follows `site.yaml`'s `features.console_downloads` | none: hand-kept |
 

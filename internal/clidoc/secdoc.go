@@ -1,7 +1,8 @@
 // Command clidoc generates the site's generated-content files from the
-// repository itself. Today it generates one: website/content/security.md,
+// repository itself: website/content/security.md,
 // the security page, from SECURITY.md, byte for byte (website plan Task
-// W0.5).
+// W0.5). website/content/subscription-terms.md, the agreement text of the
+// draft Subscription Terms with its drafting notes cut, is in termsdoc.go.
 //
 // W0.4's CLI reference — website/content/cli-reference.md, built by walking
 // internal/cli's NewRootCmd() — is this command's other generator and joins
@@ -95,6 +96,18 @@ func main() {
 		fmt.Printf("wrote %s from %s\n", securityPage, securitySource)
 	default:
 		fmt.Printf("%s is already current\n", securityPage)
+	}
+
+	changed, err = writeTermsPage(".")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "clidoc:", err)
+		os.Exit(1)
+	}
+	switch {
+	case changed:
+		fmt.Printf("wrote %s from %s\n", termsPage, termsSource)
+	default:
+		fmt.Printf("%s is already current\n", termsPage)
 	}
 
 	n, err := writeCLIReference(*out)
