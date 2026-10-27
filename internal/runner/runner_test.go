@@ -25,6 +25,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backlog"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
+	"github.com/dimipaun/fugaro/internal/headroomproc"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -57,6 +58,9 @@ type scriptedAgent struct {
 	t     *testing.T
 	steps []step
 	calls []agent.Request
+	// before, when set, runs at the start of every stage's call: the
+	// harness's hook for what a test wants to happen mid-stage.
+	before func(ctx context.Context)
 }
 
 func (a *scriptedAgent) Run(ctx context.Context, req agent.Request) (agent.Result, error) {
@@ -65,6 +69,9 @@ func (a *scriptedAgent) Run(ctx context.Context, req agent.Request) (agent.Resul
 	if i >= len(a.steps) {
 		a.t.Errorf("unexpected agent call #%d", i+1)
 		return agent.Result{}, errors.New("unexpected call")
+	}
+	if a.before != nil {
+		a.before(ctx)
 	}
 	return a.steps[i](a.t, ctx, req)
 }
@@ -78,7 +85,75 @@ type harness struct {
 	agent     *scriptedAgent
 	remote    string
 	failsFile string
+	// sidecar is the fake process the run started, when compression is on;
+	// the three counters below say what Deps.StartHeadroom and Stop were
+	// called with.
+	sidecar            *fakeSidecar
+	compressionStarts  int
+	lastCompressionEnv []string
+	compressionStops   int
+	// sidecarFailsDuring is the stage during which the fake sidecar's Dead
+	// channel closes, set by killSidecarDuring and hangSidecarDuring.
+	sidecarFailsDuring string
 }
+
+// sidecarURL is what the fake sidecar says it listens on. Nothing dials it:
+// the stages of these tests make no model calls.
+const sidecarURL = "http://127.0.0.1:9100"
+
+// fakeSidecar is the harness's stand-in for a running compression sidecar.
+// Nothing is spawned: Deps.StartHeadroom returns it, Dead closes when a test
+// says the sidecar died, and Stop is counted.
+type fakeSidecar struct {
+	dead  chan struct{}
+	once  sync.Once
+	stops *int
+}
+
+func (f *fakeSidecar) URL() string { return sidecarURL }
+
+func (f *fakeSidecar) Dead() <-chan struct{} { return f.dead }
+
+func (f *fakeSidecar) Stop(context.Context) error {
+	*f.stops++
+	return nil
+}
+
+// die is the crash, or the liveness failure a hang is: one channel either
+// way, which is the point -- the runner has no second path for a hang.
+func (f *fakeSidecar) die() { f.once.Do(func() { close(f.dead) }) }
+
+// startFakeSidecar is Deps.StartHeadroom: it records what the runner built
+// the sidecar's environment from and hands back the fake.
+func (h *harness) startFakeSidecar(_ context.Context, o headroomproc.Options) (runner.SidecarProcess, error) {
+	h.compressionStarts++
+	h.lastCompressionEnv = o.Env
+	h.sidecar = &fakeSidecar{dead: make(chan struct{}), stops: &h.compressionStops}
+	return h.sidecar, nil
+}
+
+// beforeStage is the scripted agent's hook: the stage the runner recorded
+// before it called the agent is the one a test named, so this is where a
+// sidecar death or hang lands mid-stage.
+func (h *harness) beforeStage(ctx context.Context) {
+	if h.sidecarFailsDuring == "" || h.sidecar == nil {
+		return
+	}
+	rec, err := h.store.ReadRecord(ctx)
+	if err != nil || rec.Stage != h.sidecarFailsDuring {
+		return
+	}
+	h.sidecar.die()
+}
+
+// killSidecarDuring makes the fake sidecar die while the named stage runs,
+// as a crash does: Dead() closes and the runner must fail that stage.
+func (h *harness) killSidecarDuring(stage string) { h.sidecarFailsDuring = stage }
+
+// hangSidecarDuring is killSidecarDuring for a sidecar that stays up and
+// stops answering: P8's liveness probe closes Dead() the same way, and the
+// runner must treat the two identically (P10).
+func (h *harness) hangSidecarDuring(stage string) { h.sidecarFailsDuring = stage }
 
 // newHarness seeds a remote with the fixture repo (cfg replaces fugaro.yaml
 // when non-empty) and stores a task spec.
@@ -124,7 +199,7 @@ func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string
 	}
 	a := &scriptedAgent{t: t}
 	p := &fake.Provider{Repo: spec.Repo, Remote: remote}
-	return &harness{
+	h := &harness{
 		files: files,
 		deps: runner.Deps{
 			Store: store, OpenProvider: gitprov.Static(p), Agent: a,
@@ -139,6 +214,11 @@ func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string
 		},
 		store: store, bucket: bucket, provider: p, agent: a, remote: remote, failsFile: failsFile,
 	}
+	// Every harness starts its sidecar through the fake, so no test spawns a
+	// real process; a test that never turns compression on never calls it.
+	h.deps.StartHeadroom = h.startFakeSidecar
+	a.before = h.beforeStage
+	return h
 }
 
 // useHTTPRemote replaces the harness's remote with the same files served
