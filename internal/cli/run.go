@@ -183,10 +183,11 @@ type runOptions struct {
 	// one-directional — there is no --compression flag — because turning
 	// compression on is a reviewed fugaro.yaml change, and a flag that could
 	// force it on from the command line would undo that for every workflow a
-	// launcher can already run. It writes task.Spec.CompressionOff only when
-	// the resolved configuration turns compression on: with compression
-	// already off there is nothing to override, and the field would only add
-	// version skew (an older runner refuses the whole task).
+	// launcher can already run. It writes task.Spec.CompressionOff when the
+	// resolved configuration turns compression on, and when the launcher could
+	// not read that configuration at all (finishLaunch): with the file read
+	// and compression off there is nothing to override, and the field would
+	// only add version skew (an older runner refuses the whole task).
 	noCompression bool
 	// paths is --path, repeated: the paths this launch declares it will
 	// touch, which the runner matches against the area rules at D22's first
@@ -475,16 +476,25 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	// resolved once for every launch shape (a first run, a follow-up, a
 	// review, a retry, each attempt of a batch) and used by both --no-compression
 	// and the image gate below. Read after the layer is embedded, so it is the
-	// resolution the run itself makes.
-	compression := compressionRequested(ctx, env, spec)
-	// --no-compression writes the task's own field only when there is
-	// compression to turn off, the way the title and the plan task are
-	// written: a launch that has nothing to override carries no field and
-	// stays byte-identical to what the previous release wrote. Written before
-	// createTask below, so a repeated --run-id with a flag the stored task
-	// does not carry is refused as a different task rather than silently
-	// dropped.
-	if o.noCompression && compression {
+	// resolution the run itself makes. compressionKnown is false when the
+	// launcher could not read that configuration at all — a --repo launch from
+	// outside a checkout of that repository, say — which is not the same as
+	// reading one that leaves compression off.
+	compression, compressionKnown := compressionRequested(ctx, env, spec)
+	// --no-compression writes the task's own field when the configuration
+	// turns compression on, the way the title and the plan task are written:
+	// a launch that has nothing to override carries no field and stays
+	// byte-identical to what the previous release wrote. A configuration the
+	// launcher could not read at all is written too, although nothing is known
+	// to override: the run's own bootstrap reads the file this launcher could
+	// not, and a task without the field would tell it compression is off, so a
+	// repository that turns it on would start the sidecar the person asked to
+	// turn off. Writing the field brings the launch under the image gate below
+	// (whose condition already counts the field), so an image too old to parse
+	// it refuses the launch here instead of at that bootstrap. Written before
+	// createTask below, so a repeated --run-id with a flag the stored task does
+	// not carry is refused as a different task rather than silently dropped.
+	if o.noCompression && (compression || !compressionKnown) {
 		spec.CompressionOff = true
 	}
 	// The compression image gate's own condition, resolved here beside the

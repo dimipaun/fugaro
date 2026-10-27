@@ -4,6 +4,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // release0120 is a build record's base_ref at exactly compressionSince: a
@@ -67,6 +70,59 @@ func TestNoCompressionFlagExistsButNoForceOnFlagDoes(t *testing.T) {
 	if flags.Lookup("compression") != nil {
 		t.Error("fugaro run has a --compression flag: turning compression on is a reviewed fugaro.yaml change, never a flag (docs/design/headroom-compression.md §4)")
 	}
+}
+
+// TestNoCompressionWhenConfigUnreadable: --no-compression holds when the
+// launcher cannot read the configuration at all — a --repo launch from
+// outside a checkout of that repository. The flag cannot be dropped there:
+// the run's own bootstrap reads the file this launcher could not, so a
+// repository that turns compression on would start the sidecar the person
+// asked to turn off. The field is written anyway, and with it the image gate
+// (compressionGate already counts CompressionOff as its own half) is judged,
+// so an image too old to parse the field refuses the launch here rather than
+// at the run's bootstrap.
+func TestNoCompressionWhenConfigUnreadable(t *testing.T) {
+	// The launch is the unreadable case: no checkout of acme/app anywhere
+	// near the working directory, so neither the ref's document
+	// (cascadeRefConfig) nor the checkout's (checkoutConfig) resolves.
+	unreadable := func(t *testing.T, baseRef string) (*cloudFixture, string) {
+		t.Helper()
+		f := newCloudFixture(t)
+		t.Chdir(t.TempDir())
+		writeBuildRecord(t, f, appSlug, "web", baseRef)
+		return f, wallRunID(t, time.Minute, "c3a1")
+	}
+	t.Run("the field is written", func(t *testing.T) {
+		f, runID := unreadable(t, release0120)
+		if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", runID, "--no-compression", "A task"); err != nil {
+			t.Fatal(err)
+		}
+		if got := readSpec(t, f, runID); !got.CompressionOff {
+			t.Fatal("CompressionOff = false with --no-compression and an unreadable configuration, want true")
+		}
+	})
+	t.Run("the gate is judged", func(t *testing.T) {
+		f, runID := unreadable(t, release060)
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", runID, "--no-compression", "A task")
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "agent.compression") || !strings.Contains(err.Error(), "fugaro 0.12.0 or later") {
+			t.Fatalf("err = %v, want a user error naming agent.compression and fugaro 0.12.0 or later", err)
+		}
+		if n := len(f.run.Executions()); n != 0 {
+			t.Fatalf("%d executions, want none", n)
+		}
+	})
+	// An unreadable configuration is not itself a reason to write the field:
+	// only the flag is. A launch without one stays byte-identical to what the
+	// previous release wrote.
+	t.Run("no flag, no field", func(t *testing.T) {
+		f, runID := unreadable(t, release0120)
+		if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", runID, "A task"); err != nil {
+			t.Fatal(err)
+		}
+		if got := readSpec(t, f, runID); got.CompressionOff {
+			t.Fatal("CompressionOff = true without the flag, want absent")
+		}
+	})
 }
 
 // TestCompressionImageGateRefusesOldBuild: a launch whose task carries
@@ -183,8 +239,17 @@ func TestCompressionImageGateRefusesOldBuild(t *testing.T) {
 // alone has nothing to turn off, so the launch writes no compression_off
 // field (an old runner would refuse the task outright) and is never judged on
 // the build record the gate would need.
+//
+// The launch is made from a checkout of the repository, because the case this
+// test is about is a configuration the launcher read and that leaves
+// compression off. A launch from outside a checkout is the other case — the
+// launcher read nothing there, so --no-compression writes the field and the
+// gate is judged (TestNoCompressionWhenConfigUnreadable) — and this test,
+// with no checkout of its own, was asserting that one by accident.
 func TestCompressionImageGateNotTriggeredWithoutCompression(t *testing.T) {
 	f := newCloudFixture(t)
+	appRepoCheckout(t, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\n" +
+		"workflows:\n  web: { commands: { build: sh build.sh, test: sh test.sh } }\n"})
 	writeBuildRecord(t, f, appSlug, "web", release060)
 	runID := wallRunID(t, time.Minute, "c2a1")
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", runID, "--no-compression", "A task"); err != nil {
@@ -216,5 +281,62 @@ func TestFollowUpInheritsCompressionOff(t *testing.T) {
 	}
 	if got := readSpec(t, f, fuID); !got.CompressionOff {
 		t.Fatal("follow-up CompressionOff = false, want true (inherited)")
+	}
+}
+
+// TestCompressionImageGateRefusesOldCloneBuild is the clone branch of that
+// gate: a checkout: clone workflow has no derived image and so no build record
+// to judge (checkImageSince's half), and the floor is judged against
+// base_images.base itself instead (checkCloneImageSince). 0.7.5 is a release
+// that predates compressionSince, so the launch is refused there — before any
+// execution — exactly as the built-image branch refuses its own old build
+// record.
+func TestCompressionImageGateRefusesOldCloneBuild(t *testing.T) {
+	f := newCloudFixture(t)
+	compressionOnForTest(t)
+	f.appendConfig(t, "base_images: {base: ghcr.io/dimipaun/fugaro-base:0.7.5}\n")
+	testutil.IsolateGit(t)
+	other := mustSlug("github", "acme/other")
+	f.run.AddJob(gcp.JobName(other, "svc"), "2", "4Gi")
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nworkflows:\n" +
+		"  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n"})
+	t.Chdir(dir)
+	_, _, err := execute(t, "run", "--run-id", wallRunID(t, time.Minute, "c5a1"), "A task")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "agent.compression") ||
+		!strings.Contains(err.Error(), "fugaro 0.12.0 or later") ||
+		!strings.Contains(err.Error(), "the checkout: clone job image of acme/other workflow svc is ghcr.io/dimipaun/fugaro-base:0.7.5, release 0.7.5") {
+		t.Fatalf("err = %v, want a user error naming agent.compression, fugaro 0.12.0 or later and the base image the clone job would run", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
+
+// TestRetryKeepsNoCompression: --retry replays a run's stored task as it is —
+// --no-compression is in taskFlags for that reason, so a stored task is the
+// only thing that can carry the override into a retry — and the field is what
+// the retried launch's own image gate is judged on. A retry that dropped it
+// would not merely lose the override: createTask compares the stored task with
+// the one the launch just built, so a dropped field is a different task and
+// the retry is refused outright.
+func TestRetryKeepsNoCompression(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", release0120)
+	t.Chdir(t.TempDir())
+	spec := firstRunSpec(wallRunID(t, time.Minute, "c6a1"))
+	spec.CompressionOff = true
+	seedSpec(t, f, spec, false)
+	wantRefused(t, f, "it takes no --no-compression", "run", "--retry", spec.RunID, "--no-compression")
+	if _, _, err := execute(t, "run", "--retry", spec.RunID); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSpec(t, f, spec.RunID); !got.CompressionOff {
+		t.Fatal("retried task CompressionOff = false, want the stored task's true")
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want 1", n)
 	}
 }

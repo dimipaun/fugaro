@@ -354,7 +354,10 @@ var compressionForTest string
 // compressionRequested reports whether the run this launch is about turns
 // context compression on: one half of what the launch's compressionSince gate
 // is judged on (the task's own CompressionOff is the other, since a follow-up
-// and a retry inherit it) and what --no-compression decides against.
+// and a retry inherit it) and what --no-compression decides against. known is
+// whether the launcher read the configuration at all: on is false both when
+// the file was read and leaves compression off and when there is no file to
+// read, and the two are not the same thing to the launch (finishLaunch).
 //
 // The configuration is read as rigorLaunchSources reads it -- at the ref, out
 // of this checkout's object database, so a launch is judged on the file the
@@ -365,15 +368,18 @@ var compressionForTest string
 // refuses the key then. agent.compression is repository-scope and no project
 // layer or profile may set it (docs/design/layered-config.md §5), so the
 // resolved value is this file's own.
-func compressionRequested(ctx context.Context, env *cloudEnv, spec *task.Spec) bool {
+func compressionRequested(ctx context.Context, env *cloudEnv, spec *task.Spec) (on, known bool) {
 	if compressionForTest != "" {
-		return true
+		return true, true
 	}
 	cfg := cascadeRefConfig(ctx, env, spec)
 	if cfg == nil {
 		cfg = checkoutConfig(ctx, spec.Repo)
 	}
-	return cfg != nil && cfg.Agent.Compression != ""
+	if cfg == nil {
+		return false, false
+	}
+	return cfg.Agent.Compression != "", true
 }
 
 // cascadeSince is the first fugaro release whose config reader accepts
