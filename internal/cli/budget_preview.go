@@ -716,7 +716,9 @@ var previewStageKinds = [...]string{"implement", "review_first", "fix", "review"
 // history mean is multiplied by. It mirrors the runner's loop: an implement,
 // then a first line of review_first and its fix, then a senior review, its
 // fix, and, with bounce, one more cheap pair. A mode: review recipe runs the
-// senior review alone.
+// senior review alone, and a digest recipe has no implement stage at all:
+// its first step is the runner's own work, which writes the run reports with
+// no model call (run-digest).
 //
 // first and rounds are the checkout's first_line_rounds and review_rounds (a
 // step's own max_rounds overriding its knob, as recipe.StageBound takes
@@ -742,12 +744,15 @@ func previewTypicalCounts(rp *recipe.Recipe, first, rounds int) map[string]int {
 	}
 	// The fix after the first line and the fix after the senior review are one
 	// kind in result.json ("fix"), so they share one mean and one count here.
-	return map[string]int{
-		"implement":    1,             // the first_line step's first stage
+	counts := map[string]int{
 		"review_first": f + cheap,     // the first line, and its bounce-back
 		"review":       n,             // one senior round
 		"fix":          f + n + cheap, // each review's demands answered
 	}
+	if !recipe.UsesDigest(rp) {
+		counts["implement"] = 1 // the first_line step's first stage
+	}
+	return counts
 }
 
 // roundCount is how many rounds one loop gets, read as a typical run's count:

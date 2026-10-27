@@ -60,6 +60,11 @@ const (
 	StepFirstLine StepKind = "first_line"
 	StepReview    StepKind = "review"
 	StepCheck     StepKind = "check"
+	// StepDigest is the report run's deterministic step (T3.1): the runner
+	// writes the run reports the repository is missing and commits them, so
+	// a recipe may hold it only as the first step of a mode: implement
+	// recipe, at most once, and only with the review step after it.
+	StepDigest StepKind = "digest"
 	// StepPlan is the optional agent stage a mode: artifact recipe may begin
 	// with: it writes a render plan, and nothing else (design
 	// artifact-runs.md §6).
@@ -227,6 +232,24 @@ type Recipe struct {
 // refresh, rather than reaching the runner's own mode cross-check.
 func UsesV08(r *Recipe) bool {
 	return r.newKeysV08
+}
+
+// UsesDigest reports whether r holds the digest step, the report run's own
+// step (run-digest, T3.1). It reads the parsed steps rather than a
+// parse-time flag, unlike UsesV07 and UsesV08: a parser that predates the
+// step refuses the whole recipe ("is not a step type") instead of dropping
+// the key, so no recipe that parses without the step can have carried one.
+//
+// It is read by the launch gate: checkRecipeImage and
+// checkCloneRecipeImage choose digestSince when the embedded recipe holds
+// the step (internal/cli/recipes_skew.go), so a digest launch against a job
+// image whose runner predates the release that executes it is refused
+// before it starts, naming fugaro image refresh, rather than reaching the
+// runner's own refusal (internal/runner/runner.go, right after
+// resolveRecipe) — which is the backstop for the launches the launcher
+// cannot judge, a development base image among them.
+func UsesDigest(r *Recipe) bool {
+	return slices.ContainsFunc(r.Steps, func(s Step) bool { return s.Kind == StepDigest })
 }
 
 // Renamed are catalog names removed in 0.7.0 and what replaced them.
@@ -608,7 +631,7 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 	for i, item := range v.Content {
 		path := fmt.Sprintf("steps[%d]", i)
 		if item.Kind != yaml.MappingNode || len(item.Content) != 2 {
-			p.add(path, item.Line, "must be one step: first_line: {...}, check: {...}, review: {...}, plan: {...} or render: {...}")
+			p.add(path, item.Line, "must be one step: first_line: {...}, check: {...}, digest: {...}, review: {...}, plan: {...} or render: {...}")
 			continue
 		}
 		k, body := item.Content[0], item.Content[1]
@@ -628,6 +651,8 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 		case string(StepRender):
 			kind = StepRender
 			r.newKeysV08 = true
+		case string(StepDigest):
+			kind = StepDigest
 		case "checks":
 			p.add(kpath, k.Line, "the step type is check, not checks")
 			continue
@@ -635,7 +660,7 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 			if msg, ok := reserved[k.Value]; ok {
 				p.add(kpath, k.Line, "%s", msg)
 			} else {
-				p.add(kpath, k.Line, "is not a step type (version 1 has first_line, check, review, plan and render)")
+				p.add(kpath, k.Line, "is not a step type (version 1 has first_line, check, digest, review, plan and render)")
 			}
 			continue
 		}
@@ -646,8 +671,8 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 			idx = append(idx, i)
 			continue
 		}
-		if kind == StepPlan || kind == StepRender {
-			p.artifactStepBody(kpath, body)
+		if kind == StepPlan || kind == StepRender || kind == StepDigest {
+			p.emptyStepBody(kpath, body)
 			out = append(out, s)
 			idx = append(idx, i)
 			continue
@@ -694,11 +719,12 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 	return out, idx
 }
 
-// artifactStepBody parses a plan or render step's body: it holds nothing.
-// There is no max_rounds (neither step is a loop) and no bounce (there is
-// no review to bounce back to), so any key here is refused as an unknown
-// recipe key rather than silently ignored.
-func (p *parser) artifactStepBody(kpath string, body *yaml.Node) {
+// emptyStepBody parses a plan, render or digest step's body: it holds
+// nothing. None of the three is a loop, so there is no max_rounds to set and
+// no bounce (a digest step has no review before it to bounce back to), and
+// any key here is refused as an unknown recipe key rather than silently
+// ignored.
+func (p *parser) emptyStepBody(kpath string, body *yaml.Node) {
 	switch {
 	case body.Kind == yaml.ScalarNode && body.Tag == "!!null":
 	case body.Kind == yaml.MappingNode:
@@ -904,9 +930,23 @@ func (p *parser) order(r *Recipe, src []int) {
 	steps := r.Steps
 	checks, firsts, reviews := 0, 0, 0
 	sawOther, firstSeen := false, false
+	digests, digestAt := 0, -1
 	for i, s := range steps {
 		path := fmt.Sprintf("steps[%d]", src[i])
 		switch s.Kind {
+		case StepDigest:
+			sawOther = true
+			digests++
+			digestAt = i
+			if digests > 1 {
+				p.add(path, 0, "digest may appear at most once")
+			}
+			if i != 0 {
+				p.add(path, 0, "digest must be the first step")
+			}
+			if r.Mode != ModeImplement {
+				p.add(path, 0, "digest is only for mode: implement")
+			}
 		case StepCheck:
 			checks++
 			if checks > 1 {
@@ -940,6 +980,12 @@ func (p *parser) order(r *Recipe, src []int) {
 			p.add(path, 0, "%s is only for mode: artifact", s.Kind)
 		}
 	}
+	// The digest step writes the pull request the review then judges: a
+	// first_line loop or a second review would be a loop over a report no
+	// model wrote, so the shape is exactly digest then review.
+	if digestAt >= 0 && (len(steps) != 2 || steps[1].Kind != StepReview) {
+		p.add(fmt.Sprintf("steps[%d]", src[digestAt]), 0, "digest must be followed by one review step")
+	}
 	switch {
 	case reviews == 0:
 		p.add("steps", 0, "must end with a review step: readiness needs the senior review's ship verdict")
@@ -968,9 +1014,10 @@ func (p *parser) orderArtifact(steps []Step, src []int) {
 	for i, s := range steps {
 		path := fmt.Sprintf("steps[%d]", src[i])
 		switch s.Kind {
-		case StepCheck, StepFirstLine, StepReview:
+		case StepCheck, StepFirstLine, StepDigest, StepReview:
 			// check included: an artifact recipe has no implement for a
-			// gate to judge, and no review to give a ship verdict.
+			// gate to judge, no report to write and no review to give a
+			// ship verdict.
 			p.add(path+"."+string(s.Kind), 0, "%s is not a step of mode: artifact", s.Kind)
 		}
 	}
