@@ -83,7 +83,9 @@ running executions to end, then revoke the old token in Bitbucket.
 **F4, Exists.** Migration from per-repository tokens needs nothing new. A repository's own copy with
 an enabled version still wins over the project copy (`ResolveSecretID`). The deployed job's mount is
 fixed at apply time by Readiness (`MountSecretID`). So to move a repository onto the project token,
-disable its own copy's versions **and then run `fugaro update --repo` for it**. Until that update,
+disable its own copy's versions **and then run `fugaro update --repo --allow-delete` for it** (the
+re-apply replaces the job's IAM member, which is a delete; `docs/multi-model.md`; flag added in
+review round 3). Until that update,
 its job still mounts its own container, whose `latest` is disabled, and its runs fail. This is what
 `docs/multi-model.md` already says for any secret (corrected in review round 1). The owner asked to
 keep the override.
@@ -120,7 +122,12 @@ does not apply (F11).
 - Found in review round 2: `internal/cli/docs_credentials_github_tokens_test.go` pins "**On
   Bitbucket it IS this repository's access token**" and "never the App's private key and never
   another repository's token"; `website/src/pages/getting-started.astro` ("a repository access
-  token on Bitbucket"); `website/test/security.mjs`; and, inside the phase-3 paragraph of
+  token on Bitbucket"); `SECURITY.md`'s "project scope is the default" paragraph and its review-mode
+  premise ("pushing one already needs write access", which F17 says a workspace token breaks); the
+  `bitbucket.New` error "a repository access token is required"; `docs/bitbucket-credentials/`
+  (D363's record, pinned by `docs_bitbucket_credentials_test.go`, gains a dated note that D462
+  reverses it for opted-in operators); `docs/coordinator/README.md`, whose "highest check section
+  written" pin moves when Check 180 is written; and, inside the phase-3 paragraph of
   `docs/git-providers.md`, the sentence "the project-wide token an earlier design assumed therefore
   does not exist … nothing to configure for one", which is a slice-1 statement and is rewritten by
   T1.1. The Check 52 pins in `docs_project_centric_test.go` also **ban** "project access token" and
@@ -301,13 +308,14 @@ ask them, so each answer cell is empty and they are listed under §7.
 | # | Question | Recommendation | Alternative and cost | Owner's answer |
 | --- | --- | --- | --- | --- |
 | **D464** | Should the allow-list take a pattern such as `<workspace>/*`? (F10) | **No, keep the explicit list.** Each line is a deliberate grant of a workspace-reach credential, it is typed once, and "empty means nobody" stays simple | A `<workspace>/*` entry. Ten lines of config code plus the schema and `ProjectSecretCandidate`; security-sensitive (a new repository in the workspace would be admitted silently). 0.13.0 at the earliest (S3) | |
-| **D465** | How is the allow-list enforced for a Bitbucket shared job? (F11) | **Amended in review rounds 1 and 2, before any answer. Follow the accounts precedent.** (1) `fugaro project policy publish` derives a `bitbucket_token.allow_repos` block from `project_secrets.bitbucket-token.allow_data_to`, as `DeriveAccounts` derives `accounts`. (2) The runner, on a Bitbucket shared job, refuses a repository not on that block before the provider opens, as `checkProjectJobAccount` does. (3) `validProfiles` requires a profile that mounts `bitbucket-token` to carry its own exact list, a subset of the block, and refuses the token on a GitHub profile. (4) `projectpolicy.Version` goes from 3 to 4, so older CLIs refuse to publish over the node (`refuseNewerPolicy`). (5) `fugaro update` runs the same subset check before it deploys. **Trust stated plainly:** whoever may write the node (an admin, IAM-only) is trusted to decide who mounts the token. The runner check binds every other path, but **not a launcher** (F7, D474) | (b) A CLI-only subset check at deploy and publish: no runner enforcement, bypassed by an older binary, a direct node writer, or a second operator with a wider entry. (c) Carry the list in the job's environment: a launcher may override it | |
+| **D465** | How is the allow-list enforced for a Bitbucket shared job? (F11) | **Amended in review rounds 1 and 2, before any answer. Follow the accounts precedent.** (1) `fugaro project policy publish` derives a `bitbucket_token.allow_repos` block from `project_secrets.bitbucket-token.allow_data_to`, as `DeriveAccounts` derives `accounts`. (2) The runner, on a Bitbucket shared job, refuses a repository not on that block before the provider opens, as `checkProjectJobAccount` does. (3) `validProfiles` requires a profile that mounts `bitbucket-token` to carry its own exact list, a subset of the block, and refuses the token on a GitHub profile. (4) Whether `projectpolicy.Version` moves is D477. (5) `fugaro update` runs the same subset check before it deploys. **Trust stated plainly:** whoever may write the node, and so whoever **publishes** (the block is derived from the publisher's own entry), is trusted to decide who mounts the token. The runner check binds every other path, but **not a launcher** (F7, D474) | (b) A CLI-only subset check at deploy and publish: no runner enforcement, bypassed by an older binary, a direct node writer, or a second operator with a wider entry. (c) Carry the list in the job's environment: a launcher may override it | |
 | **D466** | A repository with its own `bitbucket-token` copy, admitted to a Bitbucket shared job (F11) | **Document it, and have `fugaro doctor` warn:** on a shared job the project token is used and the repository's own copy is not. The copy still wins on that repository's per-repository jobs (F4, kept) | The launcher keeps such a repository on its per-repository job. That needs a Secret Manager metadata read at every launch, plus the launcher's grant on it | |
-| **D467** | A second operator's machine has no `project_secrets` (F9) | **0.12.1: document it** ("copy the entry to every operator's local config, or `fugaro update --repo` asks for a per-repository token"). No code. Under S2 (corrected in review round 2): `Shared()` drops `Profiles` too, so a machine seeded from the shared config has no profiles, and `RefuseProjectJobDeletes` stops its plan. A machine with profiles copied by hand but no entry stops at D465's subset check. A machine with a **wider** entry is not stopped by the CLI; D465's runner check against the published block is what binds it | Publish the allow-list in the shared config. That reverses `sharedForbidden`'s security reason (a runs-bucket writer could widen a mount): no | |
+| **D467** | A second operator's machine has no `project_secrets` (F9) | **0.12.1: document it** ("copy the entry to every operator's local config, or `fugaro update --repo` asks for a per-repository token"). No code. Under S2 (corrected in review round 2): `Shared()` drops `Profiles` too, so a machine seeded from the shared config has no profiles, and `RefuseProjectJobDeletes` stops its plan. A machine with profiles copied by hand but no entry stops at D465's subset check. A machine with a **wider** entry is not stopped: if it publishes, the block it derives widens what the runner admits (corrected in review round 3). The publisher decides, as D465 states | Publish the allow-list in the shared config. That reverses `sharedForbidden`'s security reason (a runs-bucket writer could widen a mount): no | |
 | **D474** | Should a cloud run refuse a non-default `FUGARO_BITBUCKET_API_URL`? (F7) | **Yes, in 0.13.0:** outside a local invocation the runner refuses any API root other than `https://api.bitbucket.org/2.0`. That closes the token-redirect half of the launcher path (the agent half stays). `FUGARO_GITHUB_API_URL` is the same redirect for App-signed JWTs today; it is named here and out of scope | Leave it and state it. Every launcher of an allow-listed repository can then exfiltrate the workspace token without an agent's help | |
 | **D475** | Does D462's acceptance cover launchers? (F7; was O4) | **Yes, and say so in `SECURITY.md`.** A launcher of an allow-listed repository can already obtain the run's git credential today; the opt-in widens it to the token's reach | No: then D474 (the API-root pin) and a way to keep the token from the agent are prerequisites, and the latter is the push and pull-request proxy docs/bitbucket-credentials parked | |
 | **D476** | A code mitigation for F17's cross-repository pull requests? (was O5) | **0.13.0: a review-only run on Bitbucket refuses a pull request whose author is the token's own identity**, when that identity is known (U2). It is a new behaviour, so it is the owner's | Document only (T1.1). A hostile agent's pull request in another repository is then reviewed by a run that holds the token | |
-| **D468** | Check 180 (a workspace or project token, live, sandbox) before 0.12.1's docs ship? (F15, T1) | **Run it before 0.12.1 ships if a Premium sandbox exists.** It is owner-run and needs no code, so it does not slow the release's code | Ship 0.12.1's docs marked "not yet live-checked", and run Check 180 in 0.13.0 as the 2026-10-27 ruling puts live checks | |
+| **D477** | Does the node's new `bitbucket_token` block bump `projectpolicy.Version`? (D465, review round 3) | **No bump.** `Decode` records unknown top-level keys (`UnknownKeys`) instead of refusing them, so older readers tolerate the block. Older runners never run a Bitbucket shared job, because T2.2 refuses to deploy one on a base below the release. That floor is a per-feature `…Since`, which goes against P6's "no `*Since` constant per feature" (`internal/cli/recipes_skew.go`), so the owner rules on it here | **Bump 3 → 4.** `Decode` refuses any other version in both directions. Every runner, per-repository and GitHub-shared alike, every older CLI's launch, and the credentials service (`credsvc` decodes the node) would refuse the other version's node. That needs a lockstep upgrade of every installation (`publish --delete`, then publish; the 0.9.0 notes show the order and the loss of manual `repos add` entries), plus `VersionSince[4]` and about 29 test files that hard-code version 3 | |
+| **D468** | **Reopen D463's live-check part for Check 180 alone?** That is, run Check 180 (a workspace or project token, live, sandbox) before 0.12.1's docs ship (F15, T1)? | **Run it before 0.12.1 ships if a Premium sandbox exists.** It is owner-run and needs no code, so it does not slow the release's code | Ship 0.12.1's docs marked "not yet live-checked", and run Check 180 in 0.13.0 as the 2026-10-27 ruling puts live checks | |
 
 **Resolutions** (one defensible answer; not questions; D473 is a proposal pending the owner, see §7):
 
@@ -335,7 +343,7 @@ ask them, so each answer cell is empty and they are listed under §7.
 | Release | Slice | What | Size |
 | --- | --- | --- | --- |
 | **0.12.1** | **S1** | The docs (`docs/git-providers.md`, `SECURITY.md`, `website/content/security.md`, the setup skill) present one workspace or project token, allow-listed and stored once, as the supported path for many repositories. They state the reach (D462), the rotation, the migration, the second machine (D467) and the PR author. The CLI's help text and message wording, and `PerRepositorySecret`'s doc comment, say the same. **No behaviour change**; per-repository jobs are unchanged | 2 tasks, about 20 files (docs, generated pages, comments and message text), 1–2 runs |
-| **0.13.0** | **S2** | Bitbucket in shared project jobs: a Bitbucket profile that mounts `bitbucket-token` gets a job (a GitHub profile still may not mount it), the node rule and the deploy and publish check (D465), the doctor warning (D466), the API-root pin (D474), the launcher and runner tests, the phase-3 doc pins (F5), and Check 181 | 7 tasks |
+| **0.13.0** | **S2** | Bitbucket in shared project jobs: a Bitbucket profile that mounts `bitbucket-token` gets a job (a GitHub profile still may not mount it), the node rule and the deploy and publish check (D465), the doctor warning (D466), the API-root pin (D474), the launcher and runner tests, the phase-3 doc pins (F5), and Check 181 | 9 tasks (T2.1–T2.4, T2.6–T2.10) |
 | **0.13.0** | **S3** | Only if D464 is answered "pattern" | 1 task |
 | **0.13.0** (or before 0.12.1 under D468) | — | Check 180 (owner-run) | owner |
 
@@ -344,7 +352,7 @@ ask them, so each answer cell is empty and they are listed under §7.
 - **T1.** D463 puts live checks in 0.13.0. 0.12.1's docs then present a path that has never been
   run with a workspace or project token (F15, U1, U2). Choices: run Check 180 first (owner time, and
   it needs a Premium sandbox, U6), or ship the docs saying "not yet live-checked". D468 asks.
-- **O1.** D464–D468 and D474–D476 are pending. Each needs the owner's answer before the task that depends on it
+- **O1.** D464–D468 and D474–D477 are pending. Each needs the owner's answer before the task that depends on it
   (shown in the plan) can be approved.
 - **O2.** Does a Premium sandbox Bitbucket workspace exist for Checks 180–181? **UNVERIFIED** (U6).
   Without one, both checks wait.
@@ -359,7 +367,7 @@ ask them, so each answer cell is empty and they are listed under §7.
 
 ## 8. Numbers this work holds
 
-D460–D489: D460–D476 used, D477–D489 reserved and unused. Checks 180–189: 180–181 proposed, 182–189
+D460–D489: D460–D477 used, D478–D489 reserved and unused. Checks 180–189: 180–181 proposed, 182–189
 reserved. Both blocks sit above the subscriptions work's D430–D459 and Checks 170–179. They were
 checked against `main` and the docs of every open PR on 2026-10-27 (none writes D460 or above, or
 Check 180 or above).
