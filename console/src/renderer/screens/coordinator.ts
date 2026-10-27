@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The Coordinator screen: the project view (Bitbucket credentials T1.2, D364).
 //
 // One read -- `fugaro coordinator status --from-store --all --json`, pinned in

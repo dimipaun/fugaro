@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The port's double, held to the two rules it claims to model (P3.6).
 //
 // A fake is only worth the tests that trust it. `store.js` claims two things

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The startup wiring (desktop-console plan Task 3.3; design section 7.1, D7).
 //
 // Task 3.2 built the handshake and left it uncalled: `src/main/index.ts` built

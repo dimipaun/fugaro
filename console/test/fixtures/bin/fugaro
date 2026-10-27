@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+# See console/LICENSE.md for the terms.
 # A stub `fugaro`, for the end-to-end specs that launch the real console
 # (desktop-console plan Tasks 3.3 and 3.4c).
 #

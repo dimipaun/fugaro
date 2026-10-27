@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The microphone's port: capture, voice activity detection, end-of-turn
 // detection and the barge-in signal (mobile plan, Task P3.4; D122, D123, D118).
 //

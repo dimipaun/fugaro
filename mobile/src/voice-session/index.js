@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The voice session's one door (voice-session plan, Task VS0.3; D205, D206).
 //
 // A caller imports `src/voice-session/index.js` and gets the machine and the

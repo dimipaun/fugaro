@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise -->
+<!-- See mobile/LICENSE.md for the terms. -->
 # `mailbox/` — the app's mailbox client
 
 The phone's end of the mailbox (mobile plan, task **P3.6**, decisions **D111**,

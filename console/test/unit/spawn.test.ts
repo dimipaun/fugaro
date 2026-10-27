@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The spawn contract, held to the design's section 3.4 rules and section 5.1's
 // allow-list (desktop-console plan Task 1.3, SECURITY-SENSITIVE).
 //

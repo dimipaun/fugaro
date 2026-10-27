@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // What belongs to an open account, and how it is torn down (Task P3.1; D114).
 //
 // D114's account model is not only a tuple: several installations are stored

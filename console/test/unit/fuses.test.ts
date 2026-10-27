@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The fuses the console's shipped binary is built with (desktop-console plan
 // Task 4.1; design section 5.1 rule 4), and the packaging configuration they
 // belong to.

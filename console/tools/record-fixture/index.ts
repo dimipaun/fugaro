@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The recorder: the tool that turns one `fugaro watch --json` into a fixture
 // (desktop-console plan Task 1.4; design section 9.1).
 //

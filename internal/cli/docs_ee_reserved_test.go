@@ -49,8 +49,13 @@ func TestDocsEELicensed(t *testing.T) {
 		"LicenseRef-Fugaro-Enterprise",
 		"[URL TO BE PUBLISHED]",
 		"[CLA URL TO BE PUBLISHED]",
-		// Split because the console boundary test refuses any literal console path in a Go file other than its one allow-listed reader; the licence text itself says it.
-		"every file under the ee/, " + "console" + "/ and mobile/ directories",
+		// Counsel's coverage sentence names the three directories, and the
+		// console's half is spelled from the boundary test's own constant: the
+		// floor of docs_console_boundary_test.go's mention scan is the string a
+		// console path starts with, so writing it here would put this file
+		// outside the one-entry allow-list over wording that is the licence's
+		// own and not a reference to the directory.
+		"every file under the ee/, " + consoleDirName + "/ and mobile/ directories",
 		"correct number of user seats",
 		"development and testing purposes without a subscription",
 

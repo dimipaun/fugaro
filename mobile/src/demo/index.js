@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The demo mode: the app, running on fixed sample data, for a reviewer who
 // cannot pair anything (owner ruling of 2026-10-19).
 //

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The connection, behind a port (mobile plan, Task P6.10; D167, G21).
 //
 // **Why this is a port and not a read of the SDK.** D167's ruling is that the

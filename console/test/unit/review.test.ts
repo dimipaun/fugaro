@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The review inbox (desktop-console v2 plan Task V2.7.1; v1 design section 6.2
 // screen 1, section 5.1 rule 2 and its gap 7, design note F26).
 //

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // No line of this repository carries a secret-shaped string (desktop-console
 // plan Task 2.0; the recorder's own rule, `src/source/redact.ts`).
 //

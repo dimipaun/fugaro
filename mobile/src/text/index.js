@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The text screen's one door (mobile plan, Task P6.9; D167).
 //
 // A screen imports `src/text/index.js`. It builds the typed pipeline with

@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise -->
+<!-- See mobile/LICENSE.md for the terms. -->
 # `text/` — the text screen
 
 The phone's text fallback (mobile plan, task **P6.9**; decisions **D167**,

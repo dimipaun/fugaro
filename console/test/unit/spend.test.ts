@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The Spend screen's row model, its three series and its caps panel
 // (desktop-console plan Task 2.2; design section 6.2 screen 2, D15;
 // `console/docs/json-contract.md` sections 3 and 4).

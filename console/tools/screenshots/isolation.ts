@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The screen the screenshot run has to pass before it is allowed to start the
 // console (owner ruling 2026-10-20: the website's console pictures are taken
 // from FIXTURE data, by a script the owner runs on their own Mac).

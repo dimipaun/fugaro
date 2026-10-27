@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The handshake wired into startup, in a real Electron process (desktop-console
 // plan Task 3.3; design section 7.1, D7).
 //

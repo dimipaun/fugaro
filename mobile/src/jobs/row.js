@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The project's row: the one row the read grant lets this list draw
 // (mobile plan, Task P3.3; resolved 2026-10-17, tension (b1)).
 //

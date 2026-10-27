@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The fake document the entry is driven against (desktop-console plan Tasks
 // 3.4a and 3.4c).
 //

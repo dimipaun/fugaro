@@ -20,8 +20,11 @@ agreement, shown as bracketed placeholders that a later change fills. Counsel's 
 handled so: the root `LICENSE` stays pure MIT and `README.md` and `LICENSING.md` state the three
 directories (the owner's ruling of 2026-10-27, keeping O2); `README.md`, `LICENSE` and `LICENSING.md`
 state no client-side MIT exception (counsel's 2.1, checked: none found); SPDX notices on every file in
-`console/` and `mobile/`, a `LICENSES/` directory and the copyleft and app-store audit are one
-follow-up run; the CLA text, its URL and the CONTRIBUTING gate wait for counsel's CLA. Questions
+`console/` and `mobile/`, a `LICENSES/` directory and the copyleft and app-store audit
+([dependency-audit.md](dependency-audit.md)) are one
+follow-up run; the CLA text, its URL and the CONTRIBUTING gate wait for counsel's CLA, and the owner's
+ruling of 2026-10-27 is that they arrive together for `ee/`, `console/` and `mobile/`, not one directory
+at a time. Questions
 for counsel: the covered coordinator and orchestrator code lives outside the three directories and stays
 MIT until it moves; the note that the licence "applies only to code added or changed after it is adopted"
 sits beside a clause covering "every file" under the directories; and the Licensor is defined only

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The fixture format, its loader and the replay, held to their own contract
 // (desktop-console plan Task 1.4).
 //
@@ -526,6 +528,17 @@ describe('the committed synthetic fixture', () => {
       'synthetic.ndjson',
       'degraded.ndjson',
       'bin',
+      // The `.license` siblings carry the two-line SPDX notice for the types
+      // that have no comment syntax of their own (`.ndjson` and `.json`;
+      // `internal/eeboundary`'s notice rule, counsel's text of 2026-10-27).
+      // They are not fixtures and no case reads one: the `.ndjson` sweep above
+      // matches on the `.ndjson` suffix and never sees one. The stub under
+      // `bin/` carries its notice as a comment instead, because a shell script
+      // has one.
+      'synthetic.ndjson.license',
+      'degraded.ndjson.license',
+      'plan-status.json.license',
+      ...FIXTURE_CASES.map((name) => `${name}.ndjson.license`),
       // `screenshots` is the owner-run screenshot tool's data
       // (`test/fixtures/screenshots/`, ruling of 2026-10-20): a directory of
       // documents an e2e-shaped run feeds the built console, so the `.ndjson`

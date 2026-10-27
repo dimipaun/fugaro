@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The root shell's tests (mobile plan, Task P3.1; D114; the demo banner is the
 // owner's ruling of 2026-10-19).
 //

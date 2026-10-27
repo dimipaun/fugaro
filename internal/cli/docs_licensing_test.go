@@ -110,6 +110,7 @@ func TestDocsLicensingStatement(t *testing.T) {
 		"](.agents/LICENSE)",
 		"](ee/LICENSE)",
 		"](mobile/LICENSE.md)",
+		"](LICENSES/LicenseRef-Fugaro-Enterprise.txt)",
 		trademark,
 	} {
 		if !strings.Contains(doc, want) {
@@ -214,4 +215,40 @@ func licenceCopyrightLine(doc string) string {
 		}
 	}
 	return ""
+}
+
+// licenceRefCopy is where REUSE, the convention the notice's SPDX identifier
+// belongs to, expects a custom licence's text: one file per identifier under a
+// root `LICENSES/`, named for the identifier. The notice on every file under
+// ee/, the console and the mobile app carries `LicenseRef-Fugaro-Enterprise`, and a
+// reader or a tool that follows that identifier has to land on the terms
+// themselves rather than on a directory of prose about them.
+const licenceRefCopy = "LICENSES/LicenseRef-Fugaro-Enterprise.txt"
+
+// TestDocsLicensingLicenceRefCopy: counsel's text is one wording in three
+// files, and this is the fourth copy the SPDX identifier points at. It is
+// compared to `ee/LICENSE` byte for byte, both ways -- so the copy cannot
+// drift from the licence the notice's identifier names, and a fifth copy
+// cannot quietly answer to the same identifier with different terms. Three
+// files of identical wording are checked against each other elsewhere in this
+// package; this is the one that has to be identical to them, not merely
+// similar.
+//
+// It reads the real `ee/` through readRealEE, so its name is in
+// eeReadingTests and the "core without ee/" workflow skips it there.
+func TestDocsLicensingLicenceRefCopy(t *testing.T) {
+	copyOf := readDoc(t, licenceRefCopy)
+	licence := readRealEE(t, "LICENSE")
+	if copyOf != licence {
+		t.Errorf(`%s is not ee/LICENSE byte for byte (%d bytes against %d).
+
+The file exists so that the identifier every notice under ee/, the console and the mobile app carries resolves to the terms. Two files answering to LicenseRef-Fugaro-Enterprise with different wording is the one outcome the identifier cannot express, and a copy that has drifted from ee/LICENSE is the copy a licence scanner hands a reader instead of the licence. Copy ee/LICENSE over it; do not edit either text.`, licenceRefCopy, len(copyOf), len(licence))
+	}
+	// The copy has to name the identifier, not merely hold the same sentences:
+	// the file's name and the notice's are the two halves of one fact, and a
+	// reader who opens the copy to find out what `LicenseRef-Fugaro-Enterprise`
+	// means has to see the identifier in it.
+	if !strings.Contains(licence, "LicenseRef-Fugaro-Enterprise") {
+		t.Errorf("%s never names LicenseRef-Fugaro-Enterprise: the file is named for the identifier a reader arrives with, and the two halves have to be visible in one page", licenceRefCopy)
+	}
 }
