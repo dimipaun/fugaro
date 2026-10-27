@@ -43,7 +43,7 @@ The owner's answers of 2026-10-26 that shape it:
 - Numbers: decisions **D400-D429** and checks **160-169** are this work's block, taken above the highest
   decision written (D367) and reserved (up to D389 by the Bitbucket credentials plan) under `docs/` on
   `main` and in open PRs, and above the highest check reserved (154).
-  D400-D405 are written; D406-D429 and checks 163-169 are reserved and unused.
+  D400-D405 are written and answered and D406 is written and pending; D407-D429 and checks 163-169 are reserved and unused.
 
 ## Global constraints and review focus
 
@@ -76,7 +76,7 @@ upstream response carries.
 - **Interfaces:** consumes `pricing.Usage`'s counts (gateway path) and `agent.Usage` (subscription path, whose single cache-creation count is booked as 5m); produces `Cost.ModelTokens`, a map from model to
   `{input, output, cache_read, cache_write_5m, cache_write_1h}` int64, `omitempty`.
 - **Schema change:** additive optional property under `cost`, `additionalProperties: false` kept.
-- **Tests:** `TestCostModelTokensRoundTrip`, `TestCostModelTokensOmittedWhenEmpty`, `TestCostCacheTotalsEqualModelTokensSums` (#1115's totals), and in `schemas` a
+- **Tests:** `TestCostModelTokensRoundTrip`, `TestCostModelTokensOmittedWhenEmpty`, and in `schemas` a
   case that validates a record with and without the field.
 - **Command:** `go test ./internal/runstore/ ./schemas/ -run 'TestCostModelTokens|Result' -count=1`
 - **Depends on:** open PRs #1115, #1107 and #1111 merged (all edit `cost.go` or the schema).
@@ -90,10 +90,10 @@ upstream response carries.
 - **Interfaces:** with the gateway on, sums the gateway's per-call `pricing.Usage` under the model the
   gateway priced; without it, copies `agent.Result.ModelUsage`. Produces filled `Cost.ModelTokens`.
 - **Tests:** `TestRunFillsModelTokensGateway` (two models; a call whose usage is unparsed adds no tokens;
-  a response naming another model adds no key), `TestRunFillsModelTokensSubscription` (`auth: oauth`; all cache creation lands in `cache_write_5m`).
-- **Command:** `go test ./internal/runner/ -run 'TestRunFillsModelTokens' -count=1` (the package takes
+  a response naming another model adds no key), `TestRunFillsModelTokensSubscription` (`auth: oauth`; all cache creation lands in `cache_write_5m`), `TestRunFillsModelTokensNoGatewayAPIKey` (an api-key run with the gateway off), and `TestCostCacheTotalsEqualModelTokensSums` (#1115's totals equal the per-model sums).
+- **Command:** `go test ./internal/runner/ -run 'TestRunFillsModelTokens|TestCostCacheTotalsEqualModelTokensSums' -count=1` (the package takes
   about 25 minutes in full: name the tests).
-- **Depends on:** G1.1; #1107, #1108, #1110, #1111, #1115, #1071 and #1072 merged or rebased on (all write `runner.go`, `cost.go`, `gateway.go` or the gateway files).
+- **Depends on:** G1.1; #1107, #1108, #1110, #1111 and #1115 merged or rebased on (all write `runner.go`, `cost.go`, `gateway.go` or the gateway files).
 - **Commit:** `runner: record each model's tokens on the run's cost`
 - **Red step:** both tests fail with an empty `ModelTokens`.
 - **Reviewer tier:** `opus + mandatory independent review` (the gateway holds the model credential and
@@ -105,21 +105,21 @@ upstream response carries.
   `internal/cli/root.go` (one registration line), `website/content/cli-reference.md` (regenerated with
   `go run ./internal/clidoc`, never edited by hand).
 - **Interfaces:** consumes the stored `Record.Cost` (never `runview`'s rebuilt row), `priceTableFor`, `Cost.ModelTokens` and the `onPR` lookup;
-  produces `fugaro estimate (--run ID | --pr N) --model ID [--json]`. With several runs on a PR it lists
+  produces `fugaro estimate (--run ID | --pr N --repo owner/name [--since D]) --model ID [--json]` (`--pr` inherits `runs ls`'s one-repository rule and its default lookback). With several runs on a PR it lists
   them and asks for `--run`.
 - **Tests:** `TestEstimateReprices`, `TestEstimateRefusesRunWithoutTokens`,
   `TestEstimateRefusesUnknownModel` (names the known IDs), `TestEstimateLabelsEstimate`,
   `TestEstimateStaleCatalog`, `TestEstimateByPR`, `TestEstimateSeveralRunsOnAPR`, `TestEstimateReadsStoredCost` (a record whose `runview` row would drop `ModelTokens`), and the existing
   `TestCliReferenceIsCurrent` in `internal/clidoc`.
 - **Command:** `go test ./internal/cli/ ./internal/clidoc/ -run 'TestEstimate|TestCliReference' -count=1`
-- **Depends on:** G1.1.
+- **Depends on:** G1.1; #831, #1072, #1114 and #907 merged or rebased on (they write `cli-reference.md`; #831 also `root.go`).
 - **Commit:** `cli: fugaro estimate reprices a run on another model`
 - **Red step:** each estimate test fails with "unknown command"; the reference test fails until regenerated.
 - **Reviewer tier:** standard.
 
 ### G1.4 Plugin skill
 
-- **Files:** `plugin/skills/working/SKILL.md`, and the docs tests' pins if any move.
+- **Files:** `plugin/skills/working/SKILL.md`, the plugin test that checks skills against the CLI (found first under `plugin/`), and the docs tests' pins if any move.
 - **Tests:** `go test ./internal/cli/ -run Docs -count=1`, `go test ./plugin/... -count=1`.
 - **Command:** the two above.
 - **Depends on:** G1.3.
@@ -131,14 +131,13 @@ upstream response carries.
 
 ### G2.1 Variant data, its loader and the claims guard
 
-- **Files:** `website/data/landing.yaml` (new), `website/src/content.ts` (the loader and its
-  validation), `website/test/landing-data.mjs` (new).
+- **Files:** `website/data/landing.yaml` (new), `website/src/lib/landing.mjs` (new: the loader and its validation, a plain module as `consent-key.mjs` and `changelog.mjs` are, so the test imports it directly), `website/test/landing-data.mjs` (new).
 - **Interfaces:** produces `loadLanding()`: per variant, path, headline, supporting line, self-hosted video
   file (optional), proof number with its source, tone, WhatsApp pre-fill text; and a `partner_logos` list
-  (empty).
+  (empty) and an optional self-hosted `image` (the `/crew` cat imagery).
 - **Schema/config change:** `landing.yaml` is new; paths are the four message names, unique, no
   `/landing` prefix.
-- **Tests:** unknown field is an error; duplicate path is an error; a proof number carries a `source` naming a data file under `website/data/` that records its sample size, at least `min_runs` (D96-D97), or the sentinel `unmeasured`, and a figure whose source file is missing or too small fails the build; a video is a path under `website/`, an `http(s)` URL fails; the WhatsApp text
+- **Tests:** unknown field is an error; duplicate path is an error; a proof number carries a `source` naming an entry of the existing typical-costs data, read through the existing `loadTypicalCosts(minRuns)` so `min_runs` stays one number (D96-D97), or the sentinel `unmeasured`, and a figure whose entry is missing or under `min_runs` fails the loader; a video is a path under `website/`, an `http(s)` URL fails; the WhatsApp text
   names the variant.
 - **Command:** `cd website && node --test test/landing-data.mjs`
 - **Depends on:** none.
@@ -150,7 +149,7 @@ upstream response carries.
 
 - **Files:** `website/src/pages/[variant].astro` (new, or four thin pages if the router cannot do it
   without a collision with the existing routes: decided at the start by building), new files under
-  `website/src/components/`,   `website/src/layouts/Base.astro` (a campaign mode: no navigation, `noindex`, canonical to the home page), `website/test/landing-pages.mjs` (new). `content.ts` is not touched (G2.1 owns it).
+  `website/src/components/`,   `website/src/layouts/Base.astro` (a campaign mode: no navigation, `noindex`, canonical to the home page, and the slot where G2.3 later wires the campaign banner; the `/crew` `image` renders in its own slot), `website/test/landing-pages.mjs` (new). `content.ts` is not touched.
 - **Interfaces:** consumes `loadLanding()`; no navigation, a minimal footer (GitHub and docs; no pricing
   link, since no pricing page exists and pricing is outside this repository).
 - **Tests:** the four paths build; each is `noindex` with a canonical to the home page; section order matches the spec; no email form; Book a demo is a plain link and the page is
@@ -164,24 +163,23 @@ upstream response carries.
 
 ### G2.3 Marketing consent and the three loads
 
-- **Files:** `website/public/scripts/consent-early.js`, `website/public/scripts/site.js`, `website/src/lib/consent-key.mjs`, `website/src/components/ConsentBanner.astro` (a campaign variant that asks the marketing choice; `Base.astro` stays G2.2's), `firebase.json`
+- **Files:** `website/public/scripts/consent-early.js`, `website/public/scripts/site.js`, `website/src/lib/consent-key.mjs`, `website/src/components/ConsentBanner.astro` (a campaign variant that asks the marketing choice), `website/src/layouts/Base.astro` (it emits `consent-early.js` and the banner; G2.2 wrote its campaign mode at a lower level), `firebase.json`
   (the CSP header only), `website/data/site.yaml`, `website/src/pages/privacy.astro`,
   `docs/website/reconciliation.md` (an amendment note on D106), `.claude/rules/website.md` (the CSP
   line), and the tests that pin them: `website/test/origins.mjs`, `brand.mjs`, `consent.mjs`,
   `layout.mjs`, `privacy.mjs`, plus `internal/cli/docs_website_boundary_test.go` if it pins the CSP.
-- **Interfaces:** a separate marketing purpose in the consent state, with a consent version that asks
-  existing visitors again; loaders for the pixel, the insight tag and the Calendly script that run only
+- **Interfaces:** a separate marketing consent under its own key (not a bump of the analytics key, which would re-ask visitors on every page), asked only on the four campaign paths; loaders for the pixel, the insight tag and the Calendly script that run only
   with that purpose granted and only on the four paths; withdrawal removes the first-party cookies the trackers set (cookies on the vendors' own domains and scripts already loaded persist until a reload, which the privacy text says).
 - **Config change:** `site.yaml` gains the three public identifiers and the origins (as the file's own
-  rule says, load origins are admitted by the consent check, not `allowed_hosts`); the CSP widens site-wide (F18) by exactly the origins each vendor documents, per directive (`script-src`, `img-src`, `connect-src`, `style-src` for Calendly's stylesheet, and a new `frame-src`); the test holds that exact per-directive list. **The owner approves the
+  rule says, load origins are admitted by the consent check, not `allowed_hosts`); the CSP widens site-wide (F18) by exact hosts, no wildcard (O3), each vendor's documented origins, per directive (`script-src`, `img-src`, `connect-src`, `style-src` for Calendly's stylesheet, and a new `frame-src`); the test holds that exact per-directive list. **The owner approves the
   privacy wording and the rules-file line** before the task merges.
-- **Tests:** no request to any of the three before the marketing purpose is granted, including after an
+- **Tests:** the Meta and LinkedIn tags are configured to send the page URL without its query (a test over the loader's configuration); a non-campaign page where a visitor already decided analytics shows no new banner; no request to any of the three before the marketing purpose is granted, including after an
   analytics-only consent; none on a non-campaign page; withdrawal stops them and clears the first-party cookies (for example `_fbp`); the
   privacy page names the three; the CSP lists exactly the new origins; the existing CSP and single-header
   tests are amended to the new exact list.
 - **Command:** `cd website && node --test test/origins.mjs test/brand.mjs test/consent.mjs test/layout.mjs test/privacy.mjs && npm run check`
   and `go test ./internal/cli/ -run Docs -count=1`
-- **Depends on:** G2.2.
+- **Depends on:** G2.2; #864 merged or rebased on (it writes `site.js` and `consent.mjs`).
 - **Commit:** `website: a marketing consent, and the pixel, the insight tag and Calendly behind it`
 - **Red step:** the origins test fails because the pages carry no such loaders and the CSP lacks the hosts.
 - **Reviewer tier:** `opus + mandatory independent review` (privacy and consent).
@@ -191,7 +189,7 @@ upstream response carries.
 - **Files:** `website/public/scripts/site.js` (the file G2.3 wrote, a later level),
   `website/test/landing-events.mjs` (new).
 - **Interfaces:** emits `demo_booked`, `install_click` and `whatsapp_click` to GA4 after analytics consent;
-  accepts `demo_booked` only from a message whose `origin` is Calendly's; passes only allow-listed `utm_*` values, length-capped and encoded, into the Calendly URL (F22: not into the `wa.me` text, not into GA4).
+  accepts `demo_booked` only from a message whose `origin` is Calendly's; passes only allow-listed `utm_*` values, length-capped and encoded, into the Calendly URL (F22: not into the `wa.me` text, not into GA4, and not onto the plain-link fallback a visitor who declined marketing consent gets); `demo_booked` forwards no field of Calendly's message to GA4 and is accepted only when `event.source` is the embedded frame as well as the origin matching.
 - **Tests:** each event fires once on its action and not before consent; a message from another origin
   does not fire `demo_booked`; UTMs reach the Calendly URL; hostile values (script text, an over-long
   value, a non-`utm_` key) are dropped or encoded; absent UTMs leave the URL unchanged.
@@ -215,8 +213,7 @@ upstream response carries.
 
 ### G3.1 Compare the security text with the secret flow
 
-- **Files:** `docs/go-to-market/security-check.md` (new). No edit to `SECURITY.md` or
-  `website/content/security.md` unless the owner approves the wording the note proposes.
+- **Files:** `docs/go-to-market/security-check.md` (new). No edit to `SECURITY.md` unless the owner approves the wording the note proposes; the site's security page is regenerated from it with `go run ./internal/clidoc`, never edited by hand (`.claude/rules/credentials-service.md`).
 - **Interfaces:** reads `SECURITY.md`, `website/content/security.md`, `docs/credentials-service/`.
 - **Tests:** the docs tests still pass.
 - **Command:** `go test ./internal/cli/ -run Docs -count=1`
@@ -241,11 +238,11 @@ upstream response carries.
 ### G6.1 The live-check register rows
 
 - **Files:** `docs/gcp-live-checklist.md` (Checks 160, 161 and 162, each with its section and register row,
-  marked NOT RUN).
+  marked NOT RUN), `docs/coordinator/README.md` (its "highest check section written" sentence, which #1112 also edits).
 - **Tests:** `go test ./internal/cli/ -run Docs -count=1`
-- **Depends on:** G1.3, G2.3.
+- **Depends on:** G1.3, G2.3; #1112, #917, #864, #831, #667 and #620 merged or rebased on (they write the checklist).
 - **Commit:** `docs: register Checks 160-162`
-- **Red step:** the docs test that cross-checks register rows against sections fails with a row and no section.
+- **Red step:** adding the `## Check 160` section fails `TestDocsCoordinatorNumbersTableIsReadFromItsSources` until the coordinator README's sentence is amended.
 - **Reviewer tier:** standard.
 
 **Check 162: OWNER-RUN, after G1.2 and G1.3 are released.** The owner runs `fugaro estimate --run <ID>
@@ -255,8 +252,8 @@ owner judges it. Checks 163-169 are reserved and unused.
 
 ## Parallel execution
 
-Edges, from the "Depends on" lines: open PRs #1115, #1107, #1110, #1111 (external) → G1.1 → {G1.2, G1.3};
-G1.3 → G1.4; G2.1 → G2.2 → G2.3 → G2.4 → G2.5; G1.3 and G2.3 → G6.1; G3.1, G5.1 and G2.1 have no dependency. The levels below assume the open PRs have merged; if they slip, G1 slips with them and nothing else.
+Edges, from the "Depends on" lines: open PRs #1115, #1107, #1111 (external) → G1.1 → {G1.2, G1.3};
+G1.3 → G1.4; G2.1 → G2.2 → G2.3 → G2.4 → G2.5; G1.3 and G2.3 → G6.1; G3.1, G5.1 and G2.1 have no dependency. The levels below assume the open PRs each task names have merged; a PR that slips holds back only the tasks that name it.
 
 | Level | Tasks (run concurrently) |
 | --- | --- |
@@ -275,9 +272,9 @@ G1.3 → G1.4) is independent of it.
 | File | Writers | Levels |
 | --- | --- | --- |
 | `website/public/scripts/site.js` | G2.3, G2.4 | L2, L3 (never together) |
-| `docs/gcp-live-checklist.md` | G6.1 | L3 |
-| `website/src/content.ts` | G2.1 | L0 |
-| `website/src/layouts/Base.astro` | G2.2 | L1 |
+| `docs/gcp-live-checklist.md`, `docs/coordinator/README.md` | G6.1 | L3 |
+| `website/src/lib/landing.mjs` | G2.1 | L0 |
+| `website/src/layouts/Base.astro` | G2.2, G2.3 | L1, L2 |
 | `website/src/components/ConsentBanner.astro`, `website/src/lib/consent-key.mjs` | G2.3 | L2 |
 | `website/test/origins.mjs`, `brand.mjs`, `consent.mjs`, `layout.mjs`, `privacy.mjs` | G2.3 | L2 |
 | `internal/runstore/cost.go`, `schemas/result.schema.json` | G1.1 (after #1115, #1107, #1111) | L0 |
@@ -286,7 +283,7 @@ G1.3 → G1.4) is independent of it.
 | `plugin/skills/working/SKILL.md` | G1.4 | L2 |
 | `docs/licensing/README.md` | G5.1 | L0 |
 
-**Open PRs that write the same files (each a dependency until merged, or the task rebases on it first):** #1107, #1108, #1110, #1111, #1115, #1071, #1072 (`runner.go` and friends); #864 (`site.js`, `consent.mjs`); #1072, #1114, #907 (`cli-reference.md`, the working skill); #1112, #917, #864 (`docs/gcp-live-checklist.md`); #831 (`root.go`).
+**Open PRs that write the same files (each a dependency of the task that names it, until merged or until the task rebases on it first):** #1107, #1108, #1110, #1111, #1115 (`runner.go`, `cost.go`, the gateway files, the schema); #864 (`site.js`, `consent.mjs`); #831, #1072, #1114, #907 (`cli-reference.md`; #831 also `root.go`, #1072 also the working skill); #1112, #917, #864, #831, #667, #620 (`docs/gcp-live-checklist.md`). #1071 and #1072's review-base attempts are not dependencies: attempt B (#1073) merged.
 
 No level holds two writers of one file. A change to any task's Files re-checks this table; an open PR that
 writes a file named above is a dependency until it merges.

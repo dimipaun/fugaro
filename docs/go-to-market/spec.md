@@ -4,8 +4,8 @@
 > plans that stay outside this repository (D403). This file copies verbatim only the sections that
 > ask for work in this repository: the open-core line, the landing pages, `fugaro estimate` and its
 > metrics, the enterprise must-haves, and the engineering rows of the action table. Pricing, outbound,
-> content and partner material, and the named design partners, are left out. Nothing here is
-> edited; each block below is a contiguous run of the original lines.
+> content and partner material, and the named design partners, are left out. Each block
+> below is a contiguous run of the original lines, unedited; the headings and this note are the excerpt's own.
 
 ## Licensing context and action items (engineering rows)
 

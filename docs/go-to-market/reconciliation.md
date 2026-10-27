@@ -55,8 +55,7 @@ any other with the list of known IDs.
 cache write 5m and 1h, web searches) is what the gateway prices; `agent.Usage` (`internal/agent/agent.go`)
 is what the agent stream reports per model, with one cache-creation count and no 5m/1h split; `budget.ModelUse` (`internal/budget/model.go`) already carries a model's in, out, cache read and cache write for the day counter, and `internal/runner/budget_session.go` books all cache creation as 5m. `runstore.Cost` keeps dollars
 only (`ModelBy`, `RouteBy`), and #1115 (open) adds only cache read/write totals. Two paths fill the cost:
-with the gateway on, `internal/runner/cost.go` fills `ModelBy` from the gateway's ledger; without it
-(`auth: oauth`, `model_source: claude-code`) the only source is `agent.Result.ModelUsage`. Both need
+with the gateway on, `internal/runner/cost.go` fills `ModelBy` from the gateway's ledger; without it (`auth: oauth` runs, and api-key or vertex runs whose budget mode is neither observe nor enforce: `GatewayOn` in `internal/runner/routing.go`) the only source is `agent.Result.ModelUsage`, and the record's `model_source` says `claude-code`. Both need
 filling or `estimate` would refuse every subscription run. The record gains per-model tokens (additive,
 optional; the 5m/1h split is kept on the gateway path and is not available on the subscription path, which records all cache creation as 5m, as the budget does). #1115's cache read/write totals are the sums of the per-model figures, and a test pins the equality. `runview.cost` rebuilds a run's cost and drops `ModelBy`, so `estimate` reads the stored `Record.Cost` directly. Runs recorded before that have none, and `estimate`
 refuses them by name (pre-1.0: no backfill).
@@ -116,7 +115,7 @@ mode of it (task G2.2). D107 requires media to be self-hosted or on an allowed h
 is a file under `website/`, never a YouTube or Vimeo URL, which would be a fourth third party D401 never
 allowed.
 
-**F22 (Gap): UTMs and GA4.** GA4 receives the page's origin and path only (`site.js`), and the privacy page says no query is reported. UTM values go to the Calendly URL and nowhere else; they are not put into the `wa.me` text (which would show them to the visitor and send campaign data to a vendor the privacy text does not name), and attribution in GA4 would be a privacy-text change that is the owner's.
+**F22 (Gap): UTMs and GA4.** GA4 receives the page's origin and path only (`site.js`), and the privacy page says no query is reported. UTM values go to the Calendly URL and nowhere else (the Meta and LinkedIn tags send the page URL with its query by default, so G2.3 configures them to drop it and the privacy text says so); they are not put into the `wa.me` text (which would show them to the visitor and send campaign data to a vendor the privacy text does not name), and attribution in GA4 would be a privacy-text change that is the owner's.
 
 **F21 (Gap): the benchmarking line of spec §13.** "Alongside actual cost" asks for the estimate shown next
 to each job's cost; this plan builds only the on-demand command. Showing it in `fugaro diagnose` or the
@@ -165,6 +164,8 @@ public tree, a seat cannot be enforced by a licence key on them until they move.
 before the move is the owner's to rule and sits in `fugaro-business`; no task here depends on it.
 
 **O1.** The business sections are committed locally in `fugaro-business` (`docs/`); pushing them is the owner's.
+
+**O3.** G2.3's CSP additions must name exact hosts: `.claude/rules/website.md` forbids wildcards and `brand.mjs` enforces it, and some vendors document wildcard origins. If a vendor needs one, the owner decides whether to admit it or drop that vendor.
 
 **O2.** F18: the CSP widens for every page, not the four. Choices: accept it (recommended: the origins are inert without the loader), or change the CSP test to allow a second, path-scoped header, which a browser intersects with the first and so cannot widen. The plan assumes the first; the owner confirms.
 
