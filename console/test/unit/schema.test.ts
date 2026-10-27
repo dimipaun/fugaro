@@ -1267,7 +1267,7 @@ describe('the plan status document (plan GV2.1)', () => {
     // that needs nothing carries an empty list rather than a missing one: the
     // graph screen walks this list for every node it draws.
     expect(graph?.nodes[1]?.needs).toEqual(['task-one'])
-    expect(graph?.nodes[4]?.needs).toEqual(['task-two', 'task-three'])
+    expect(graph?.nodes[4]?.needs).toEqual(['task-three', 'task-two'])
     expect(graph?.nodes[0]?.needs).toEqual([])
     // A plan that names no stream has no stream, and a plan with no versioned
     // task has no release box at all -- both are facts about the document
@@ -1363,9 +1363,9 @@ describe('the plan status document (plan GV2.1)', () => {
     // know the naming rules of every plan -- so the one thing refused here is a
     // member that could not be an id at all.
     const node = ['plans', 0, 'nodes', 0] as const
-    expect(planDecoded(patched(PLAN_STATUS, [...node, 'needs'], ['task-two', 'task-three'])).plans[0]?.nodes[0]?.needs).toEqual([
-      'task-two',
+    expect(planDecoded(patched(PLAN_STATUS, [...node, 'needs'], ['task-three', 'task-two'])).plans[0]?.nodes[0]?.needs).toEqual([
       'task-three',
+      'task-two',
     ])
     // Absent and null are the same fact: this task needs nothing. Both are an
     // empty list rather than `undefined`, so no screen has to guard.

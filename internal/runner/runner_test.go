@@ -651,8 +651,16 @@ func TestReviewRoundsUnconfiguredRepositoryIsUnchanged(t *testing.T) {
 // in and runs at POC, whose ceiling is two, and asks for three: the run spends
 // two senior rounds, one fewer than the precedence gave it.
 func TestReviewRoundsTheModesCeilingLowers(t *testing.T) {
-	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "review_rounds: 2", "review_rounds: 3", 1)
-	cfg = strings.Replace(cfg, "agent:\n", "rigor:\n  default: poc\nagent:\n", 1)
+	base := testutil.FixtureFiles(t)["fugaro.yaml"]
+	cfg := strings.Replace(base, "review_rounds: 2", "review_rounds: 3", 1)
+	if cfg == base {
+		t.Fatal("the fixture has no review_rounds: 2 to raise, so the case would not ask for three rounds")
+	}
+	withRigor := strings.Replace(cfg, "agent:\n", "rigor:\n  default: poc\nagent:\n", 1)
+	if withRigor == cfg {
+		t.Fatal("the fixture has no agent: block to put rigor: before, so the repository would not opt in")
+	}
+	cfg = withRigor
 	h := newHarness(t, cfg, nil)
 	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
