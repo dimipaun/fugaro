@@ -107,6 +107,42 @@ func TestCheckRecipeImageDigestSince(t *testing.T) {
 	}
 }
 
+// TestCheckCloneRecipeImageDigestSince is TestCheckRecipeImageDigestSince for
+// a checkout: clone workflow, where there is no derived image and so no build
+// record: the same digest step raises checkCloneImageSince's threshold on
+// base_images.base itself, so a release image older than digestSince is
+// refused, while a base image that is not a release only warns (the runner
+// refuses the recipe itself there).
+func TestCheckCloneRecipeImageDigestSince(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	text, ok := recipe.CatalogText("run-digest")
+	if !ok {
+		t.Fatal("no catalog recipe run-digest")
+	}
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x",
+		Recipe: &task.Recipe{Name: "run-digest", Source: string(recipe.SourceCatalog), YAML: string(text)}}
+	lc := *env.lc
+	lc.BaseImages = map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:0.12.0"}
+	var warn bytes.Buffer
+	err := checkCloneRecipeImage(&lc, spec, &warn)
+	if err == nil || !strings.Contains(err.Error(), "recipe run-digest needs a job image whose runner knows recipes (fugaro 0.13.0 or later)") ||
+		!strings.Contains(err.Error(), "release 0.12.0") || ExitCode(err) != ExitUserError {
+		t.Fatalf("0.12.0: warn = %q, err = %v", warn.String(), err)
+	}
+	if warn.Len() != 0 {
+		t.Errorf("0.12.0: warning %q, want none", warn.String())
+	}
+	lc.BaseImages["base"] = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c"
+	warn.Reset()
+	if err := checkCloneRecipeImage(&lc, spec, &warn); err != nil {
+		t.Fatalf("dev base: %v", err)
+	}
+	if !strings.Contains(warn.String(), "not a release base image") {
+		t.Errorf("dev base: warning %q, want the not-a-release note", warn.String())
+	}
+}
+
 // TestCheckCloneImageSince (review finding 1, HIGH): checkCloneImageSince
 // judges base_images.base's own release directly, since a checkout: clone
 // workflow's job has no derived image and so no build record to judge. One
