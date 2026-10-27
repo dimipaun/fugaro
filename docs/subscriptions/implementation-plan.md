@@ -67,6 +67,8 @@ The owner's answers of 2026-10-27 that shape it (non-price; figures are private,
 | Constraint | Pinned by |
 | --- | --- |
 | No price, currency amount, discount offer, fee rate or Enterprise floor in the repository | S0.1 |
+| A key verifier makes no network call | S2.3 (`TestLicencePackageImportsNoNetwork`), S7.3 (privacy rule 5 over `ee/`) |
+| A leaked signing key cannot mint keys old releases accept for ever | S2.1, S2.3 (`TestKeyBeyondTheTierLifetimeIsRefused`) |
 | The run images and the job images build `fugaro` without the `ee` tag (R1) | S1.7 |
 | The core never imports `ee/`; paid commands reach the binary only through `ee/register` | S1.2, S1.3 (existing boundary tests) |
 | The MIT CLI launches and cancels at every licence state (D436) | S1.4 (`TestUntaggedBuildStillDeclaresLaunches`), S6.4 (Check 176) |
@@ -139,12 +141,14 @@ read-only state (does it ever remove cancel or the kill switch, T12).
   to "no code"; the first `ee/` code (S1.3, S2.3) needs both to admit code under the notice rule.
   The rule's R8 sentence ("Minting is the owner's, off every machine an agent reaches") becomes R5
   as amended: agents may write the issuing service's code, never hold or reach the signing key, and
-  never deploy or operate the service.
+  never deploy or operate the service; and "no key material … not a fixture shaped like one" admits
+  public keys and signature vectors explicitly (S2.3, S2.9), never a private half.
 - **Tests:** `TestDocsEELicensed`, `go test ./internal/eeboundary/ -count=1`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDocsEE' -count=1 && go test
   ./internal/eeboundary/ -count=1`.
 - **Red step:** the updated test fails until the README and the rule say it.
-- **Depends on:** none. **Reviewer:** opus + mandatory independent review.
+- **Depends on:** #1140 (which edits `ee/README.md` and `docs_ee_reserved_test.go`) landed or
+  closed. **Reviewer:** opus + mandatory independent review.
 - **Commit:** `ee: the folder admits its first code; minting stays off agents' machines (R5)`.
 
 #### S0.7 The release gate of D448
@@ -170,8 +174,8 @@ read-only state (does it ever remove cancel or the kill switch, T12).
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'Docs.*EE|TestDocsEE' -count=1` and
   `go test ./internal/eeboundary/ -count=1`.
 - **Red step:** change the pin first; it fails until the three files say it.
-- **Depends on:** S1.1; the owner's rulings on T10 and T11. #1140 (open, edits `LICENSING.md` and
-  `ee/README.md`) lands or closes first. **Reviewer:** opus + mandatory independent review
+- **Depends on:** S1.1, S0.6 (same files); the owner's rulings on T10 and T11. #1140 (open, edits
+  `LICENSING.md` and `ee/README.md`) lands or closes first. **Reviewer:** opus + mandatory independent review
   (licence wording).
 - **Commit:** `licensing: the core-to-ee moves the owner ruled (D434, D444)`.
 
@@ -200,7 +204,12 @@ read-only state (does it ever remove cancel or the kill switch, T12).
   (T20); the released binary's labels (F34, T21); R1's test (S1.7) and the coordinator job's
   shared history image (F32); how the key reaches a paid CLI command when the console spawns it
   (F41, with S2.1); which tree `website/content/cli-reference.md` and the plugin skills describe
-  (F45); the digest inside a run (F46); the migration for users of the released MIT versions.
+  (F45); the digest inside a run (F46); **one gating model** for a paid command (present and refusing
+  without a key, so the console gets a clear refusal, or absent), which S1.3's and S1.4's tests
+  follow; the hosted MCP server (D435), amending the coordinator plan's P8 to start in `ee/`;
+  where the issuing service's `main` lives and whether its dependencies may enter the root
+  `go.mod` the MIT CLI and the run images share (the owner's yes, `CLAUDE.md`); the migration for
+  users of the released MIT versions.
 - **Tests:** `go test ./internal/cli/ -run Docs`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1`.
 - **Red step:** none (design).
@@ -232,7 +241,8 @@ read-only state (does it ever remove cancel or the kill switch, T12).
 - **Tests:** `go build -tags ee ./cmd/fugaro`, `go test -tags ee ./ee/...`, and the boundary tests
   untagged and tagged.
 - **Command:** `go test ./internal/eeboundary/ -count=1 && go test -tags ee ./ee/register/ -count=1`.
-- **Red step:** `TestRegisterAddsNothingWithoutAFeature` fails before the package exists.
+- **Red step:** `TestRegisterFollowsTheGatingModel` (the S1.1 model) fails before the package
+  exists.
 - **Depends on:** S1.2, S0.6. **Reviewer:** opus + mandatory independent review.
 - **Commit:** `ee: the register package and the one assembly file`.
 
@@ -250,7 +260,8 @@ read-only state (does it ever remove cancel or the kill switch, T12).
 - **Command:** `go test ./internal/cli/ -run 'TestUntaggedBuild|TestCoordinator' -count=1 && go
   test -tags ee ./ee/coordinator/ -count=1 && go test ./internal/eeboundary/ -count=1`.
 - **Red step:** `TestCoordinatorCommandNeedsAKey` fails while the command is core.
-- **Depends on:** S1.3, S2.3, the owner's ruling on T10. **Reviewer:** opus + mandatory
+- **Depends on:** S1.3, S2.3, S4.1 and S3.6 (shared `root.go`, `cli-reference.md` and
+  `docs/coordinator/README.md`), the owner's ruling on T10. **Reviewer:** opus + mandatory
   independent review.
 - **Commit:** `coordinator: future versions under the business licence (D434)`.
 
@@ -308,22 +319,26 @@ read-only state (does it ever remove cancel or the kill switch, T12).
   private keys; **where each product stores the key and how the console hands it to the CLI it
   spawns, never in argv** (F41); the no-key state (F43); a separate staging signing key and key
   id that production verifiers refuse, for the merchant's test mode and Check 179; how paid keys
-  renew ahead of expiry (T25, T26).
+  renew ahead of expiry (T25, T26); **a maximum lifetime per tier** checked by every verifier
+  (`expires − issued` within the cap, and an issue date no later than the build's release date),
+  so a leaked signing key cannot mint keys that old releases accept for ever.
 - **Tests:** none beyond the Docs suite (a design).
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1`.
 - **Red step:** none (design).
-- **Depends on:** the owner's answer to O4. **Reviewer:** opus + mandatory independent review.
+- **Depends on:** the owner's answer to O4; #1140 (which edits `docs/licensing/implementation-plan.md`)
+  landed or closed. **Reviewer:** opus + mandatory independent review.
 - **Commit:** `docs(licensing): the licence-key design note (L3.1, D438)`.
 
 #### S2.2 The release date in every CLI build
 
-- **Files:** `.goreleaser.yaml`, `internal/cli/releaseinfo.go`, `internal/cli/releaseinfo_test.go`.
+- **Files:** `.goreleaser.yaml`, `internal/cli/releaseinfo.go`, `internal/cli/releaseinfo_test.go`,
+  `internal/cli/root.go` (`writeVersion`).
 - **Interfaces:** produces `internal/cli.ReleaseDate` (empty in a development build), shown by
   `fugaro version`.
 - **Tests:** `TestReleaseDateDefaultsToDevelopment`, `TestGoreleaserStampsTheReleaseDate`.
 - **Command:** `go test ./internal/cli/ -run 'TestReleaseDate|TestGoreleaserStamps' -count=1`.
 - **Red step:** `TestGoreleaserStampsTheReleaseDate` fails until the ldflag exists.
-- **Depends on:** S2.1. **Reviewer:** standard.
+- **Depends on:** S2.1, S1.2 (both edit `internal/cli/root.go`). **Reviewer:** standard.
 - **Commit:** `release: stamp the release date beside the version and commit`.
 
 #### S2.3 The Go verifier
@@ -336,7 +351,8 @@ read-only state (does it ever remove cancel or the kill switch, T12).
 - **Tests:** `TestVerifyRefusesBeforeParsing`, `TestVerifyUnknownKeyID`,
   `TestGraceIsThirtyDays`, `TestExpiredAfterGrace`, `TestVectorsRoundTrip` (the vectors are
   produced by a test-time key whose private half is never written),
-  `TestTestKeyIDIsNotInTheProductionKeyring`, `TestStagingKeyIDIsRefused`, and negative vectors (a non-canonical signature, a
+  `TestTestKeyIDIsNotInTheProductionKeyring`, `TestStagingKeyIDIsRefused`,
+  `TestKeyBeyondTheTierLifetimeIsRefused`, `TestLicencePackageImportsNoNetwork`, and negative vectors (a non-canonical signature, a
   key id naming another key, a truncated claim set).
 - **Command:** `go test -tags ee ./ee/licence/ -count=1 && go test ./internal/eeboundary/ -count=1`.
 - **Red step:** `TestVerifyRefusesBeforeParsing` with a tampered byte fails before `Verify` exists.
@@ -346,7 +362,8 @@ read-only state (does it ever remove cancel or the kill switch, T12).
 #### S2.4 The console's verifier and release date
 
 - **Files:** `console/src/main/licence.ts` (new), `console/test/unit/licence.test.ts` (new), the
-  console's build configuration (the file U5 finds) for the release date.
+  console's build configuration (the file U5 finds) for the release date, and the screen that shows
+  the console's version (Check 178).
 - **Tests:** the S2.3 cases in TypeScript with Node's built-in Ed25519, including the test and
   staging key ids refused by the production keyring.
 - **Command:** `cd console && npm run typecheck && npm run test:unit -- --maxWorkers=2
@@ -384,8 +401,10 @@ read-only state (does it ever remove cancel or the kill switch, T12).
 #### S2.7 The console's key entry and hand-off
 
 - **Files:** `console/src/main/licence-store.ts` (new), `console/src/renderer/screens/licence.ts`
-  (new), `console/src/main/ipc.ts`, `console/src/preload/index.ts`,
-  `console/test/unit/licence-store.test.ts` (new).
+  (new), `console/src/main/ipc.ts`, `console/src/preload/index.ts`, `console/src/main/spawn.ts`
+  (`CHILD_ENV_KEYS`, the child's whole environment, if S2.1 hands the key over by environment),
+  `console/src/main/wsl.ts` (which forwards it under WSL), `console/src/renderer/entry.ts` (the new
+  screen), `console/test/unit/licence-store.test.ts` (new).
 - **Interfaces:** a screen to paste a key; the key stored as S2.1 says; handed to the spawned CLI
   as S2.1 says, never in argv. No link naming the project's own host in console code
   (`website/test/privacy.mjs`'s console allow-list): where to get a key is in the docs.
@@ -441,7 +460,10 @@ read-only state (does it ever remove cancel or the kill switch, T12).
   signature-verified and idempotent, and Enterprise keys from the admin page (F42); **proof of
   control** for the open-source check (F47); uniform answers that never reveal whether a domain
   holds a key; single-use, expiring verification tokens; the admin page's authentication, step-up,
-  CSRF defence, escaping, audit log and per-tier limits; abuse throttling within the site's CSP.
+  CSRF defence, escaping, audit log and per-tier limits; abuse throttling within the site's CSP;
+  **a privilege split**: the internet-facing intake, the purchase events and the admin page write a
+  queue, and a non-public minter alone holds the key store's signer role; a domain with a paid
+  subscription gets no free key (D432).
 - **Tests:** none beyond the Docs suite (a design).
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1`.
 - **Red step:** none (design).
@@ -462,7 +484,8 @@ read-only state (does it ever remove cancel or the kill switch, T12).
   `TestPurchaseEventNeedsAValidSignature`, `TestPurchaseEventIsIdempotent`,
   `TestRenewalReissuesAndCancellationStops`, `TestSeatChangeReissues`,
   `TestReplayedOrOutOfOrderEventIsIgnored`, `TestTestModeEventsMintStagingKeysOnly`,
-  `TestApplicantFieldsCannotInjectMailHeaders`, `TestRequestsAreThrottled`, with a fake key store,
+  `TestApplicantFieldsCannotInjectMailHeaders`, `TestRequestsAreThrottled`,
+  `TestDomainWithAPaidSubscriptionGetsNoFreeKey`, `TestOnlyTheMinterCallsTheSigner`, with a fake key store,
   a fake code host and a fake merchant.
 - **Command:** `go test -tags ee ./ee/keyservice/ -count=1 && go test ./internal/eeboundary/ -count=1`.
 - **Red step:** `TestSignerIsCalledOnlyAfterEveryCheck` fails before the handler exists.
@@ -499,8 +522,9 @@ read-only state (does it ever remove cancel or the kill switch, T12).
 
 - **Files:** per S3.1, outside `deploy/terraform` (for example `ee/keyservice/terraform/`, new),
   with a `terraform`-tagged validate test beside it.
-- **Tests:** `terraform validate` and a plan test that the key store's key is non-exportable and
-  only the service's identity holds the signer role.
+- **Tests:** `terraform validate` and a plan test that the key store's key is non-exportable,
+  only the minter's identity holds the signer role, and the public-facing service's identity does
+  not.
 - **Command:** `terraform fmt -check -recursive ee/keyservice/terraform` and `terraform validate`
   there (CI's terraform job covers only `deploy/terraform`), then `go test -tags terraform
   ./ee/keyservice/... -count=1` (per S3.1).
@@ -539,14 +563,15 @@ read-only state (does it ever remove cancel or the kill switch, T12).
   `TestSeatsDeduplicatesPeople`, `TestSeatsReadsNinetyDays`.
 - **Command:** `go test ./internal/cli/ -run 'TestSeats' -count=1`.
 - **Red step:** `TestSeatsFlagsGroups` fails before the command exists.
-- **Depends on:** S1.2 (both edit `internal/cli/root.go`); S1.1 says whether it is core or `ee/`
+- **Depends on:** S2.2 (both edit `internal/cli/root.go`, after S1.2); S1.1 says whether it is core or `ee/`
   (T11); T14 (who counts). **Reviewer:** standard.
 - **Commit:** `cli: fugaro seats, an advisory seat estimate (D439)`.
 
 #### S4.2 The console's seats panel
 
 - **Files:** `console/src/renderer/screens/seats.ts` (new), `console/src/main/spawn.ts`,
-  `console/src/main/ipc.ts`, `console/test/unit/seats.test.ts` (new).
+  `console/src/main/ipc.ts`, `console/src/preload/index.ts`, `console/src/renderer/entry.ts`,
+  `console/test/unit/seats.test.ts` (new), `console/test/unit/preload-surface.test.ts`.
 - **Tests:** the estimate beside the key's seats, an overage warning, no blocking.
 - **Command:** `cd console && npm run typecheck && npm run test:unit -- --maxWorkers=2
   test/unit/seats.test.ts test/unit/ipc.test.ts`.
@@ -604,9 +629,11 @@ read-only state (does it ever remove cancel or the kill switch, T12).
 #### S6.3 The app's lapse state
 
 - **Files:** `mobile/src/licence/state.js` (new), `mobile/src/licence/state.test.js` (new), and
-  the screens S6.1 names, `mobile/src/licence/index.js`.
-- **Tests:** within grace everything works; after grace the app is read-only as S6.1 says; no key
-  behaves as S6.1 says.
+  the screens S6.1 names, `mobile/src/licence/index.js`, the mailbox client and
+  `mobile/src/mailbox/write-path.test.js`.
+- **Tests:** within grace everything works; after grace the app is read-only as S6.1 says,
+  enforced at the mailbox client, the app's only write path (`src/mailbox/write-path.test.js`
+  extended), not per screen; no key behaves as S6.1 says.
 - **Command:** `cd mobile && npm test`.
 - **Red step:** the after-grace case fails before the state exists.
 - **Depends on:** S6.1, S2.8 (both edit `index.js`), S8.4. **Reviewer:** opus + mandatory independent review.
@@ -649,7 +676,8 @@ read-only state (does it ever remove cancel or the kill switch, T12).
   "nothing the Fugaro project operates" and `privacy.mjs` rule 5 ("The project operates no host
   the software talks to") restated for a project that runs an issuing service the software never
   calls (F44), with the owner's approval; the merchant of record as a recipient of buyers' data.
-- **Tests:** `privacy.mjs`, its rule 5 kept as a scan of the software's sources.
+- **Tests:** `privacy.mjs`, its rule 5 kept as a scan of the software's sources and extended to
+  `ee/` (excluding `ee/keyservice/`, the service itself), which ships in the released binary.
 - **Command:** `cd website && npm run check`.
 - **Red step:** the new section's pin fails first.
 - **Depends on:** S8.4. **Reviewer:** opus + mandatory independent review (legal copy).
@@ -680,7 +708,8 @@ read-only state (does it ever remove cancel or the kill switch, T12).
   interest rate, and answers the amended Terms' questions 12–18. **Its sign-off gates console
   0.113.0 and the first mobile release (D448, T17, S0.7).** Depends on: S0.2.
 - **S8.5 The Paddle account** in the entity's name, with its test mode, and the discounts of
-  §4.3 configured in checkout from the private figures. Depends on: S8.1.
+  §4.3 configured in checkout from the private figures; and how the Team true-up (§5.6) is
+  collected at renewal (a certification step in checkout or by email). Depends on: S8.1.
 - **S8.6 The figures** (prices, discounts, the Enterprise floor, O1) in the private repository.
   Depends on: none.
 
@@ -688,37 +717,38 @@ read-only state (does it ever remove cancel or the kill switch, T12).
 
 **Edges** (from the Depends-on lines; owner rulings and external gates in brackets):
 S0.2→S8.4; S8.4→S0.4, S6.2, S6.3, S7.1, S7.3, S3.7; S8.5→S3.7; S0.6→S1.3, S2.3;
-S2.4→S2.7; S2.5→S2.8; S2.7→S6.2; S2.8→S6.3; S6.2→S4.2; S0.4→S7.2; S1.1→S0.3, S1.2, S1.7,
-(S4.1); S1.2→S1.3, S4.1; S1.3→S1.4; S2.3→S1.4, S2.6, S3.2; S1.4→S1.5; S1.5, S2.2, S2.9→S1.6;
+S0.6→S0.3; S2.4→S2.7; S2.5→S2.8; S2.7→S6.2; S2.8→S6.3; S6.2→S4.2; S0.4→S7.2; S1.1→S0.3, S1.2,
+S1.7, (S4.1); S1.2→S1.3, S2.2; S2.2→S4.1; S1.3→S1.4; S4.1, S3.6→S1.4; S2.3→S1.4, S2.6, S3.2; S1.4→S1.5; S1.5, S2.2, S2.9→S1.6;
 S2.1→S2.2, S2.3, S2.4, S2.5, S3.1, S6.1; S2.4→S2.6, S4.2; S2.5→S2.6; S3.1→S3.2, S3.3, S3.5,
 S3.6; S3.2→S3.4; S6.1→S3.6, S6.2, S6.3; S4.1→S4.2; S3.2, S3.3, S3.4, S3.5, S3.6, S7.3, S8.1,
 S8.3→S3.7; S3.7, S2.6→S2.9; S6.2, S6.3, S2.9, S2.2→S6.4; S8.1→S8.2, S8.5; S8.2→S8.3; S3.7,
 S7.1, S7.2, S7.3, S3.3→S7.4.
 [T10, T11, T20, T21]→S1.1; [T12]→S6.1; [T13, T25, T26]→S3.1; [T16]→S5.1; [T22]→S7.2;
 [O4]→S2.1; [T23]→S0.5; [T14]→S4.1; [T12, T24, T25, T26, O4]→S0.4; [CSP approval]→S3.3;
-[#1140]→S0.3, S0.4, S8.3.
+[#1140]→S0.3, S0.4, S0.6, S2.1, S8.3.
 
 | Level | Tasks (run concurrently) |
 | --- | --- |
 | 0 | S0.1, S0.2, S0.5, S0.6, S0.7, S1.1, S2.1, S5.1; owner: S8.1, S8.6 |
-| 1 | S0.3, S1.2, S1.7, S2.2, S2.3, S2.4, S2.5, S3.1, S6.1; owner/counsel: S8.2, S8.4, S8.5 |
-| 2 | S0.4, S1.3, S2.6, S2.7, S2.8, S3.2, S3.3, S3.5, S3.6, S4.1, S7.1, S7.3, S8.3 |
-| 3 | S1.4, S3.4, S6.2, S6.3, S7.2 |
-| 4 | S1.5, S4.2, S3.7 (owner) |
-| 5 | S2.9, S7.4 (owner) |
+| 1 | S0.3, S1.2, S1.7, S2.3, S2.4, S2.5, S3.1, S6.1; owner/counsel: S8.2, S8.4, S8.5 |
+| 2 | S0.4, S1.3, S2.2, S2.6, S2.7, S2.8, S3.2, S3.3, S3.5, S3.6, S7.1, S7.3, S8.3 |
+| 3 | S3.4, S4.1, S6.2, S6.3, S7.2 |
+| 4 | S1.4, S4.2, S3.7 (owner) |
+| 5 | S1.5, S2.9, S7.4 (owner) |
 | 6 | S1.6, S6.4 (owner) |
 
 **Critical path:** seven levels, behind owner rulings and two external gates:
 **S2.1 → S3.1 → S3.2 → S3.4 → S3.7 → S2.9 → S1.6** (the signing service live, the production key
 in every verifier, then the `ee` release; gated by O4, T13, T25, T26, the entity S8.1 and counsel
-S8.4). The moves chain **S1.1 → S1.2 → S1.3 → S1.4 → S1.5 → S1.6** (gated by T10, T11, T21) joins
-it at S1.6. **The release-blocking path:** console 0.113.0 and the first mobile release wait for
+S8.4). The moves chain **S1.1 → S1.2 → S2.2 → S4.1 → S1.4 → S1.5 → S1.6** (seven levels, the
+`root.go` writers in turn; gated by T10, T11, T21) ends at the same task. **The release-blocking path:** console 0.113.0 and the first mobile release wait for
 counsel (S0.2 → S8.4) and for the lapse state (S2.1 → S2.4 → S2.7 → S6.2; S2.5 → S2.8 → S6.3);
 if they enforce a key (D438), they also wait for keys to be issuable, which is the critical path
 up to S2.9 (T17, S0.7).
 
-**What must be sequential and why:** S1.4 before S1.5 and S1.2 before S4.1 (all edit
-`internal/cli/root.go`); S1.2 → S1.3 (the registry is the interface `ee/register` fills); S0.6
+**What must be sequential and why:** S1.2 → S2.2 → S4.1 → S1.4 → S1.5 (all edit
+`internal/cli/root.go`; S4.1, S1.4 and S1.5 also `website/content/cli-reference.md`); S3.6 → S1.4
+(`docs/coordinator/README.md`); S0.6 → S0.3 (the `ee/` folder's docs); S1.2 → S1.3 (the registry is the interface `ee/register` fills); S0.6
 before S1.3 and S2.3 (the first `ee/` code needs the folder's docs test to admit it); S2.3 before
 S3.2 and S1.4 (the claim encoding and the key gate); S3.2 before S3.4 (one package); S3.7 before
 S2.9 (the key exists only once the owner creates it); S8.2 before S8.3 (the assignment must be
@@ -729,34 +759,36 @@ signed before the copyright line changes); S2.7 → S6.2 → S4.2 and S2.8 → S
 
 | File | Writers (level) |
 | --- | --- |
-| `internal/cli/root.go` | S1.2 (1), S4.1 (2), S1.4 (3), S1.5 (4) |
-| `website/content/cli-reference.md` | S4.1 (2), S1.4 (3), S1.5 (4) |
-| `ee/register/register.go` | S1.3 (2), S1.4 (3), S1.5 (4) |
+| `internal/cli/root.go` | S1.2 (1), S2.2 (2), S4.1 (3), S1.4 (4), S1.5 (5) |
+| `website/content/cli-reference.md` | S4.1 (3), S1.4 (4), S1.5 (5) |
+| `ee/register/register.go` | S1.3 (2), S1.4 (4), S1.5 (5) |
 | `ee/README.md`, `.claude/rules/ee.md`, `internal/cli/docs_ee_reserved_test.go` | S0.6 (0), S0.3 (1) |
 | `LICENSING.md` | S0.3 (1) |
 | `SECURITY.md`, `website/content/security.md`, `website/test/security.mjs` | S0.5 (0) |
 | `docs/releases/console/README.md`, `docs/releases/mobile/README.md` | S0.7 (0) |
 | `internal/cli/docs_licensing_test.go` | S8.3 (2) |
-| `internal/cli/docs_desktop_console_test.go` | S1.5 (4) |
+| `internal/cli/docs_desktop_console_test.go` | S1.5 (5) |
 | `internal/cli/docs_coordinator_test.go`, `docs/gcp-live-checklist.md` | S3.6 (2) |
-| `.goreleaser.yaml` | S2.2 (1), S1.6 (6) |
+| `.goreleaser.yaml` | S2.2 (2), S1.6 (6) |
 | `docs/licensing/README.md`, `docs/licensing/implementation-plan.md` | S2.1 (0) |
 | `docs/subscriptions/README.md` | S0.2 (0) |
 | `docs/licensing/subscription-terms.md` | S0.4 (2) |
-| `docs/coordinator/README.md` | S3.6 (2), S1.4 (3) |
+| `docs/coordinator/README.md` | S3.6 (2), S1.4 (4) |
 | `console/src/main/ipc.ts` | S2.7 (2), S6.2 (3), S4.2 (4) |
-| `console/src/main/spawn.ts` | S4.2 (4) |
-| `console/src/preload/index.ts` | S2.7 (2), S6.2 (3) |
-| `console/src/renderer/entry.ts` | S6.2 (3) |
+| `console/src/main/spawn.ts` | S2.7 (2), S4.2 (4) |
+| `console/src/main/wsl.ts` | S2.7 (2) |
+| `console/src/preload/index.ts` | S2.7 (2), S6.2 (3), S4.2 (4) |
+| `console/src/renderer/entry.ts` | S2.7 (2), S6.2 (3), S4.2 (4) |
+| `mobile/src/mailbox/` (client, `write-path.test.js`) | S6.3 (3) |
 | `console/src/main/licence.ts` | S2.4 (1), S2.9 (5) |
-| `console/src/renderer/screens/spend.ts` | S1.5 (4) |
+| `console/src/renderer/screens/spend.ts` | S1.5 (5) |
 | `mobile/package.json`, `mobile/src/dependencies.test.js` | S2.5 (1) |
 | `mobile/src/licence/index.js` | S2.5 (1), S2.8 (2), S6.3 (3) |
 | `mobile/src/licence/verify.js` | S2.5 (1), S2.9 (5) |
 | `mobile/src/licence/` (other files) | S2.5 (1, `verify.test.js`), S2.6 (2, `vectors.test.js`), S2.8 (2, `store*`), S6.3 (3, `state*`): distinct files |
 | `ee/licence/` | S2.3 (1), S2.9 (5) |
 | `ee/keyservice/` | S3.2 (2), S3.5 (2, `terraform/` only), S3.4 (3) |
-| `plugin/skills/working/SKILL.md` | S1.5 (4) |
+| `plugin/skills/working/SKILL.md` | S1.5 (5) |
 | `website/src/pages/*`, `website/test/*` | S3.3 (2, `keys` and the CSP tests the owner approves), S7.1 (2, `community`, `faq-community`), S7.3 (2, `privacy`), S7.2 (3, `pricing`): distinct files, provided S3.3's CSP change does not touch the privacy page or test; S0.5 (0) writes `security` only |
 | The five licence files | S8.3 (2) |
 
