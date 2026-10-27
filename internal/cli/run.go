@@ -1300,10 +1300,13 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 			}
 		}
 	}
-	// The layers, and the field, exactly as a first run's (resolveAttemptPlan):
-	// a review run reads its own configuration from the branch it is cut from
-	// (readBaseConfig), so the field is the branch that resolved the ref, and
-	// an explicit --ref writes none.
+	// The layers, and the field, as a first run's (resolveAttemptPlan) with
+	// one case short: a review run reads its own configuration from the branch
+	// it is cut from — the runner's readBaseConfig refuses a file whose base
+	// is not that branch — so an explicit --ref writes no field. There, the
+	// field would name a branch other than the ref, and the run would be
+	// refused rather than held to it; the file at that ref is the judge, as it
+	// is for a first run.
 	ref, base := o.ref, ""
 	if ref == "" {
 		b, source := launchBaseBranch(ctx, env, repo)
