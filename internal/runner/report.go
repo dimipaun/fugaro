@@ -223,11 +223,10 @@ func secsText(s float64) string {
 	return time.Duration(s * float64(time.Second)).Round(time.Second).String()
 }
 
-// rigorLine is the mode the run resolved as the report prints it: the mode,
-// the layer that decided it, every area rule that matched with the moment it
-// was applied at, the moment of the block and the revision it was read from
-// (D24, D25) — the same words `fugaro diagnose`'s Rigor line uses, so the
-// pull request and the diagnosis can be read against each other.
+// rigorLine is the mode the run resolved as the report prints it: the block's
+// own words (runstore.RigorRecord.Line, which `fugaro diagnose` prints too)
+// under the report's label, so the pull request and the diagnosis cannot say
+// different things about one fact.
 //
 // "" for a record carrying no block, which is every run that resolved no mode
 // and every record written before the field existed: an absent answer is not
@@ -237,22 +236,7 @@ func rigorLine(rg *runstore.RigorRecord) string {
 	if rg == nil {
 		return ""
 	}
-	line := string(rg.Mode) + ", from " + string(rg.From)
-	if len(rg.Areas) > 0 {
-		parts := make([]string, 0, len(rg.Areas))
-		for _, a := range rg.Areas {
-			parts = append(parts, a.Name+" at "+a.At)
-		}
-		line += " (" + strings.Join(parts, ", ") + ")"
-	}
-	line += ", at " + rg.At
-	if rg.Revision != "" {
-		line += ", read from " + rg.Revision
-	}
-	// The block is job-writable and a line of the report is a claim: an area's
-	// name or a revision carrying a newline would otherwise forge a second
-	// line under this one, so the whole line is flattened to one.
-	return "**Rigor:** " + strings.Join(strings.Fields(line), " ") + "\n\n"
+	return "**Rigor:** " + rg.Line() + "\n\n"
 }
 
 // toleratedSection is the report's list of the findings the run's resolved
@@ -277,11 +261,13 @@ func toleratedSection(tf *runstore.ToleratedFindings) string {
 			tableText(string(f.Label)), f.Likelihood, f.Impact, f.FixCost,
 			tableText(string(f.Class)), tableText(string(f.Mode)), toleratedCell(f.Title))
 	}
-	if n := tf.Total - len(tf.Findings); n > 0 {
-		// The record caps the list (runstore.MaxTolerated), so a table that is
-		// not the whole answer says so rather than passing its last row off as
-		// the last finding the mode tolerated.
-		fmt.Fprintf(&b, "\n%s tolerated in all; the table lists the first %d.\n", Plural(tf.Total, "finding"), len(tf.Findings))
+	if tf.Total > len(tf.Findings) {
+		// The table is not the whole answer, and it says so rather than
+		// passing its last row off as the last finding the mode tolerated.
+		// The gap is not always the record's cap (runstore.MaxTolerated):
+		// NewTolerated also drops an entry it cannot read, so the rows are
+		// "some of" the total and never "the first" of it.
+		fmt.Fprintf(&b, "\n%s tolerated in all; the record lists %d of them.\n", Plural(tf.Total, "finding"), len(tf.Findings))
 	}
 	b.WriteString("\n")
 	return b.String()

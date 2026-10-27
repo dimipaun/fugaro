@@ -33,6 +33,9 @@ func TestReportListsWhatTheModeTolerated(t *testing.T) {
 	got := Report(rec, "runs/acme-app/20261027-120000-abcd/", nil)
 	for _, want := range []string{
 		"**Rigor:** pro, from repo, at finalize, read from origin/main",
+		// The words are the block's own, which `fugaro diagnose` prints too:
+		// the report contributes the label, never a second wording.
+		"**Rigor:** " + rec.Rigor.Line(),
 		"#### Tolerated",
 		"| Label | Likelihood | Impact | Fix cost | Class | Mode | Finding |",
 		"| low | 2 | 2 | 1 | correctness | pro | `unbounded retry loop in the fetch` |",
@@ -43,21 +46,37 @@ func TestReportListsWhatTheModeTolerated(t *testing.T) {
 	}
 }
 
-// TestReportToleratedTotalIsSaidWhenTruncated: the record caps the list, so a
-// truncated table says how many findings the mode really tolerated rather than
-// presenting the first hundred as the whole answer.
-func TestReportToleratedTotalIsSaidWhenTruncated(t *testing.T) {
-	rec := toleratedRec([]runstore.ToleratedFinding{{
+// TestReportToleratedTotalIsSaidWhenTheTableIsPartial: a table that is not the
+// whole list says how many findings the mode really tolerated, rather than
+// passing its last row off as the last one. It never says its rows are "the
+// first" of the total: the gap is the record's cap only when the list was long
+// enough for it, and NewTolerated also drops an entry it cannot read, so the
+// rows are some of the total and not the opening of it.
+func TestReportToleratedTotalIsSaidWhenTheTableIsPartial(t *testing.T) {
+	row := runstore.ToleratedFinding{
 		Title: "one finding", Mode: rigor.Pro,
 		Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Correctness,
-	}})
-	rec.Tolerated.Total = runstore.MaxTolerated + 7
-	got := Report(rec, "loc/", nil)
-	if !strings.Contains(got, "107 findings tolerated in all; the table lists the first 1") {
-		t.Errorf("a truncated list does not name the total:\n%s", got)
+	}
+	for _, tc := range []struct {
+		name  string
+		total int
+		want  string
+	}{
+		{"the record's cap", runstore.MaxTolerated + 7, "107 findings tolerated in all; the record lists 1 of them."},
+		{"an entry the record dropped", 2, "2 findings tolerated in all; the record lists 1 of them."},
+	} {
+		rec := toleratedRec([]runstore.ToleratedFinding{row})
+		rec.Tolerated.Total = tc.total
+		got := Report(rec, "loc/", nil)
+		if !strings.Contains(got, tc.want) {
+			t.Errorf("%s: the partial table does not say so (%q):\n%s", tc.name, tc.want, got)
+		}
+		if strings.Contains(got, "the first") {
+			t.Errorf("%s: the table claims its rows are the first of the total:\n%s", tc.name, got)
+		}
 	}
 	// A list that is the whole answer says nothing about a total.
-	rec.Tolerated.Total = 1
+	rec := toleratedRec([]runstore.ToleratedFinding{row})
 	if whole := Report(rec, "loc/", nil); strings.Contains(whole, "tolerated in all") {
 		t.Errorf("a complete list names a total:\n%s", whole)
 	}
