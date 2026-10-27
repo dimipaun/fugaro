@@ -14,8 +14,11 @@ at that date. Both are `lockfileVersion` 3.
 
 Every number below was read out of the two lockfiles on disk. Nothing was installed, no registry was
 contacted, and no `node_modules` was read: a v3 lockfile carries each package's `license` field, and
-that field is the declaration this audit classifies. The command that reproduces the counts is
-`go test ./internal/eeboundary/ -run Licen -count=1 -v`, which reads both lockfiles the same way.
+that field is the declaration this audit classifies. The tables below are a tally of that field, read
+off the two files and recorded as of 2026-10-27; no command prints them, and this section does not
+claim one does. What the rule enforces, it enforces over the same two files read the same way:
+`go test ./internal/eeboundary/ -run Licen -count=1 -v` prints, for each lockfile, every copyleft
+identifier it found there and allowed by name.
 
 The two things this method cannot see, stated rather than left implied:
 

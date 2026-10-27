@@ -27,7 +27,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -39,11 +38,21 @@ const (
 	ruleLicenceNamed = "every dependency declares a licence"
 )
 
-// copyleftPattern matches the identifiers this rule refuses, wherever they
-// appear in an SPDX expression. The match is on the identifier and not on a
-// substring of one: `LGPL-2.1` and `AGPL-3.0` are copyleft too, and
-// `SSPL-1.0` is the one the specification adds to the pair.
-var copyleftPattern = regexp.MustCompile(`\b(?:A?LGPL-[\d.]+|AGPL-[\d.]+|GPL-[\d.]+|SSPL-[\d.]+|GPL-[\d.]+-only|GPL-[\d.]+-or-later)\b`)
+// copyleftPattern matches the identifier families this rule refuses, wherever
+// they appear in an SPDX expression: GPL and AGPL, LGPL (a copyleft too, and
+// the one a package is likeliest to import by accident) and SSPL, the family
+// the specification adds.
+//
+// The version is optional and its spelling is loose on purpose. A lockfile's
+// `license` field is written by whichever tool produced it, and the published
+// forms are not one shape: `GPL-2.0`, `GPL-2.0-only`, `GPL-2.0-or-later`,
+// `GPL-3.0+`, and the older `GPL`, `GPLv2` and `GPLv3` all mean the same family.
+// A pattern that required a hyphen and a version would let every versionless or
+// `v`-spelled declaration through while the rule said it refuses them, so the
+// version is matched when present and the bare family name matches on its own.
+// The trailing `\b` is what keeps `GPL` from matching a longer word, and the
+// leading one keeps `LGPL`'s `GPL` tail from matching on its own.
+var copyleftPattern = regexp.MustCompile(`\b(?:A?GPL|LGPL|SSPL)(?:-?v?\d+(?:\.\d+)*)?(?:-only|-or-later)?\b`)
 
 // copyleftAllowed is the explicit allow-list of dependency names whose declared
 // licence matches copyleftPattern and which `docs/licensing/dependency-audit.md`
@@ -143,16 +152,53 @@ func licenceOf(raw json.RawMessage) string {
 	return string(raw)
 }
 
-// moduleRootFrom answers the repository root from this package's own directory.
-// It is separate from boundary_test.go's moduleRoot, which asserts the go.mod it
-// needs; this one answers the path for a caller that only reads lockfiles.
-func moduleRootFrom(t *testing.T) string {
-	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller answered nothing: this file cannot find the repository root without its own path")
+// TestCopyleftPatternSpellsTheFamiliesOut is the rule's own table. It is here
+// because the pattern is the half of the rule that decides what gets read at
+// all: a declaration the pattern misses is a package the copyleft test never
+// looks at, and the spellings below are the ones a lockfile carries that a
+// pattern written for `GPL-2.0` alone would miss. The refusals are matched
+// first, so a permissive declaration that grew a copyleft arm fails here rather
+// than in a lockfile nobody edits.
+func TestCopyleftPatternSpellsTheFamiliesOut(t *testing.T) {
+	for _, tt := range []struct {
+		declared string
+		refused  bool
+	}{
+		{"GPL-2.0", true},
+		{"GPL-2.0-only", true},
+		{"GPL-2.0-or-later", true},
+		{"GPL-3.0+", true},
+		{"GPL", true},
+		{"GPLv2", true},
+		{"GPLv3", true},
+		{"LGPL-2.1", true},
+		{"LGPLv2.1", true},
+		{"AGPL-3.0", true},
+		{"AGPLv3", true},
+		{"SSPL-1.0", true},
+		{"SSPL", true},
+		{"BSD-3-Clause OR GPL-2.0", true},
+		{"MIT OR AGPL-3.0", true},
+
+		{"", false},
+		{"MIT", false},
+		{"ISC", false},
+		{"Apache-2.0", false},
+		{"MPL-2.0", false},
+		{"BSD-2-Clause", false},
+		{"BSD-3-Clause", false},
+		{"BlueOak-1.0.0", false},
+		{"MIT OR CC0-1.0", false},
+		{"WTFPL OR ISC", false},
+		{"CC-BY-4.0", false},
+		{"Unlicense", false},
+		{"Python-2.0", false},
+		{"0BSD", false},
+	} {
+		if got := copyleftPattern.MatchString(tt.declared); got != tt.refused {
+			t.Errorf("copyleftPattern.MatchString(%q) is %v, want %v: the pattern decides which packages the copyleft rule reads at all, so a declaration it misses is one nothing refuses", tt.declared, got, tt.refused)
+		}
 	}
-	return filepath.Dir(filepath.Dir(filepath.Dir(file)))
 }
 
 // TestLicenceBoundaryRefusesCopyleftDependencies: neither the console nor the
@@ -164,7 +210,7 @@ func moduleRootFrom(t *testing.T) string {
 // file: it is either dropping the dependency or a line in copyleftAllowed with
 // the reason, which is the decision the owner makes.
 func TestLicenceBoundaryRefusesCopyleftDependencies(t *testing.T) {
-	root := moduleRootFrom(t)
+	root := moduleRoot(t)
 	seen := map[string]bool{}
 	for _, dir := range lockDirectories {
 		deps := readLockfile(t, root, dir)
@@ -206,7 +252,7 @@ func TestLicenceBoundaryRefusesCopyleftDependencies(t *testing.T) {
 // a package nobody has read, and the report lists each declaration as of
 // 2026-10-27 precisely so that a new one is visible.
 func TestLicenceBoundaryNamesEveryDependencyLicence(t *testing.T) {
-	root := moduleRootFrom(t)
+	root := moduleRoot(t)
 	for _, dir := range lockDirectories {
 		deps := readLockfile(t, root, dir)
 		if len(deps) < 100 {
