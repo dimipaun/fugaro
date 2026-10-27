@@ -244,12 +244,14 @@ func TestGuardSubtractsTheNarrowedCommitOnlyWhileOriginHoldsIt(t *testing.T) {
 }
 
 // TestNarrowingAndTheGuardCostTheSameWhateverTheBranchCount: with 220
-// branches on origin, narrowing the range is seven git processes (the git
+// branches on origin, narrowing the range is eleven git processes (the git
 // version, ls-remote, one cat-file for every head's presence, one rev-list
-// for the run's own commits, the first one's parent, and the two counts),
-// and the guard's check of the narrowed commit is three (ls-remote, cat-file
-// and one rev-list fed the heads on stdin). Before, each was a process per
-// branch: a cat-file each, and a merge-base each in the guard.
+// for the run's own commits, the first one's parent, the two counts, the
+// ancestry check the narrowed commit is read through, and the two
+// --name-only reads the review-scope comparison is recorded from), and the
+// guard's check of the narrowed commit is three (ls-remote, cat-file and one
+// rev-list fed the heads on stdin). Before, each was a process per branch: a
+// cat-file each, and a merge-base each in the guard.
 //
 // Mutation (a merge-base per head in onOrigin, or a cat-file -e per head in
 // gitops.OriginHeads): the counts below fail.
@@ -273,8 +275,8 @@ func TestNarrowingAndTheGuardCostTheSameWhateverTheBranchCount(t *testing.T) {
 		t.Fatalf("narrowBase = %q, want the integration tip %s", r.narrowBase, tip)
 	}
 	lines := testutil.GitCalls(t, calls)
-	if n := testutil.GitSubcommands(lines); len(lines) != 7 || n["cat-file"] != 1 || n["ls-remote"] != 1 || n["merge-base"] != 0 {
-		t.Fatalf("narrowing over 220 branches ran %d git processes (%v), want 7:\n%s", len(lines), n, strings.Join(lines, "\n"))
+	if n := testutil.GitSubcommands(lines); len(lines) != 11 || n["cat-file"] != 1 || n["ls-remote"] != 1 || n["merge-base"] != 1 || n["diff"] != 2 {
+		t.Fatalf("narrowing over 220 branches ran %d git processes (%v), want 11:\n%s", len(lines), n, strings.Join(lines, "\n"))
 	}
 	if !r.onOrigin(ctx, tip) {
 		t.Fatalf("onOrigin(%s) = false, want the integration branch to hold it", tip)

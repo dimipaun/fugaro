@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -186,6 +187,66 @@ func TestNewToleratedBoundsWhatItStores(t *testing.T) {
 	}
 	if tf := NewTolerated(nil); tf != nil {
 		t.Errorf("NewTolerated(nil) = %+v, want nil", tf)
+	}
+}
+
+// TestNewReviewScopeBoundsWhatItStores: the comparison's Outside is the
+// review range's paths less the implement set's, and the block is bounded —
+// each list at MaxReviewScopeFiles, each path at MaxReviewScopePath — with
+// Truncated saying when anything was cut, so a stored set is never presented
+// as the whole one. A set the runner did not read stores no list at all,
+// which is a different fact from a set that is empty.
+func TestNewReviewScopeBoundsWhatItStores(t *testing.T) {
+	sc := NewReviewScope(true, "", []string{"a.txt", "b.txt"}, []string{"a.txt", "b.txt", "c.txt"})
+	if !sc.Applicable || sc.WhyNot != "" || !slices.Equal(sc.Outside, []string{"c.txt"}) {
+		t.Errorf("NewReviewScope = %+v, want c.txt outside an applicable comparison", sc)
+	}
+	if sc.Truncated {
+		t.Error("a comparison of three paths is recorded as truncated")
+	}
+	sc = NewReviewScope(false, ReviewScopeFollowUp, nil, nil)
+	if sc == nil || sc.Applicable || sc.WhyNot != ReviewScopeFollowUp {
+		t.Fatalf("NewReviewScope on no sets = %+v, want the reason alone", sc)
+	}
+	if sc.ImplementFiles != nil || sc.ReviewFiles != nil || sc.Outside != nil {
+		t.Errorf("NewReviewScope on no sets stores %v/%v/%v, want no lists", sc.ImplementFiles, sc.ReviewFiles, sc.Outside)
+	}
+	data, err := json.Marshal(sc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(data, []byte(`"implement_files"`)) || bytes.Contains(data, []byte(`"review_files"`)) || bytes.Contains(data, []byte(`"outside"`)) {
+		t.Errorf("a comparison with no sets marshals lists: %s", data)
+	}
+
+	var implement, review []string
+	for i := 0; i < MaxReviewScopeFiles+5; i++ {
+		p := fmt.Sprintf("p%03d.txt", i)
+		implement = append(implement, p)
+		review = append(review, p)
+	}
+	sc = NewReviewScope(true, "", implement, review)
+	if len(sc.ImplementFiles) != MaxReviewScopeFiles || len(sc.ReviewFiles) != MaxReviewScopeFiles || !sc.Truncated {
+		t.Errorf("NewReviewScope = %d/%d paths, truncated %v, want %d and true",
+			len(sc.ImplementFiles), len(sc.ReviewFiles), sc.Truncated, MaxReviewScopeFiles)
+	}
+	if len(sc.Outside) != 0 {
+		t.Errorf("outside = %v, want nothing outside an equal pair", sc.Outside)
+	}
+
+	long := strings.Repeat("x", MaxReviewScopePath+50)
+	sc = NewReviewScope(true, "", nil, []string{long})
+	if got := len([]rune(sc.Outside[0])); got != MaxReviewScopePath {
+		t.Errorf("outside path length = %d, want %d", got, MaxReviewScopePath)
+	}
+	if !sc.Truncated {
+		t.Error("a clipped path is not recorded as truncated")
+	}
+
+	// An empty path is not a path, and a set that came to nothing stores no
+	// list rather than an empty one.
+	if sc := NewReviewScope(true, "", []string{""}, []string{""}); sc.ImplementFiles != nil || sc.ReviewFiles != nil {
+		t.Errorf("NewReviewScope on an empty path stores %v/%v, want no lists", sc.ImplementFiles, sc.ReviewFiles)
 	}
 }
 

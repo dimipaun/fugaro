@@ -404,6 +404,35 @@
         "total": { "type": "integer", "minimum": 0, "description": "How many findings the mode tolerated, so a record whose list was capped still says how many were let through. Never less than the length of findings." }
       }
     },
+    "review_scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["applicable"],
+      "description": "The comparison between the paths implement changed and the paths the review range covers, taken right after implement (docs/task-governance/implementation-plan.md T5.2, F2, D332). Report only: nothing halts on it, and it is the input of the digest's review-scope flag (T1.4) and of the review-scope stop (T7.3). Both sets are repository-relative paths git listed, read over the same range the review input is built from, so outside is exactly what the reviewer was handed that implement never wrote. Bounded (runstore.MaxReviewScopeFiles paths, each at runstore.MaxReviewScopePath runes). Absent for a run that died before the comparison, and in records from before this field existed; the field is additive, so `version` stays 1.",
+      "properties": {
+        "applicable": { "type": "boolean", "description": "Whether the review range is the run's own commits — narrowed to them, or equal to them by construction — and so whether outside is a mismatch rather than a fact about a range kept wider on purpose. True exactly when why_not is absent." },
+        "why_not": { "enum": ["follow-up", "review-run", "autofix", "git-too-old", "no-own-commits", "own-commits-unreadable", "no-narrower-range", "range-moved", "read-failed"], "description": "Why the comparison does not apply (internal/runstore's ReviewScope* values): a follow-up or a review run reviews the pull request's range; an autofix gate skipped implement; a git older than 2.44 cannot say which commits are the run's own; the run made no commit of its own, or they could not be read; the recorded range holds no more commits than the run's own, so it was kept; the commit the run's own commits start after no longer leads to HEAD; or one of the comparison's own git reads failed. A reader renders this value and never task text." },
+        "implement_files": {
+          "type": "array",
+          "maxItems": 200,
+          "description": "The paths the run's own commits changed, sorted as git listed them, at most 200 (runstore.MaxReviewScopeFiles). Absent — never an empty array — when there is no implement set to compare with, which why_not then says.",
+          "items": { "type": "string", "minLength": 1, "maxLength": 512, "description": "One repository-relative path, clipped to 512 runes (runstore.MaxReviewScopePath)." }
+        },
+        "review_files": {
+          "type": "array",
+          "maxItems": 200,
+          "description": "The paths the review range covers, the same way.",
+          "items": { "type": "string", "minLength": 1, "maxLength": 512, "description": "One repository-relative path, clipped to 512 runes." }
+        },
+        "outside": {
+          "type": "array",
+          "maxItems": 200,
+          "description": "The paths in review_files that are not in implement_files: what the reviewer was handed that implement never wrote (F2). Absent when there are none.",
+          "items": { "type": "string", "minLength": 1, "maxLength": 512, "description": "One repository-relative path, clipped to 512 runes." }
+        },
+        "truncated": { "type": "boolean", "description": "Set when one of the lists was capped at 200 paths, or one of its paths clipped at 512 runes: the stored sets are then not the whole ones." }
+      }
+    },
     "backlog_closed": {
       "type": "array",
       "maxItems": 64,

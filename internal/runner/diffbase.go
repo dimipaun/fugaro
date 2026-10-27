@@ -8,6 +8,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitops"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // diffBase is the branch every diff this run takes is measured against:
@@ -167,56 +168,171 @@ func (r *run) reviewRev(ctx context.Context) string {
 // so reading which branches' commits the checkout holds would fetch every
 // missing one in a blobless clone (gitops.NoLazyFetch). The base image's git
 // is newer (images/base_docker_test.go); a repository's own image may not be.
+//
+// Whatever it decides, it records the comparison between the paths the run's
+// own commits changed and the paths the review range covers (readReviewScope,
+// the record's review_scope): the range is the run's own commits exactly when
+// it was narrowed or when the base the run recorded still names the commit
+// they start after, which is what Applicable says, and a range kept wide by
+// design is recorded as a fact rather than as a mismatch (plan T5.2, D332).
 func (r *run) narrowReviewRange(ctx context.Context) {
-	if r.follow != nil || r.review || r.repo == nil || r.rec == nil {
+	if r.rec == nil {
+		return
+	}
+	if why := r.reviewScopeNotApplicable(); why != "" {
+		r.rec.ReviewScope = runstore.NewReviewScope(false, why, nil, nil)
+		return
+	}
+	if r.repo == nil {
 		return
 	}
 	def := "origin/" + r.diffBase()
 	if v, err := r.repo.GitVersion(ctx); err != nil || !gitops.NoLazyFetch(v) {
+		r.rec.ReviewScope = runstore.NewReviewScope(false, runstore.ReviewScopeGitTooOld, nil, nil)
 		r.d.Log.Warn("this git cannot read origin's branches without fetching them (GIT_NO_LAZY_FETCH needs git 2.44); the review range is the run's recorded base",
 			"git", v, "range", r.redact(def)+"...HEAD", "err", r.redactErr(err))
 		return
 	}
-	base, why := ownCommitsBase(ctx, r.repo, r.rec.Branch, def)
-	if base == "" {
-		r.d.Log.Info("the review range is the run's recorded base", "range", r.redact(def)+"...HEAD", "why", r.redact(why))
+	or := ownRangeBase(ctx, r.repo, r.rec.Branch, def)
+	if or.Base == "" {
+		r.rec.ReviewScope = runstore.NewReviewScope(false, or.WhyNot, nil, nil)
+		r.d.Log.Info("the review range is the run's recorded base", "range", r.redact(def)+"...HEAD", "why", r.redact(or.Why))
 		return
 	}
-	r.narrowBase = base
-	r.d.Log.Info("the review range is narrowed to the run's own commits", "range", base+"...HEAD",
-		"instead_of", r.redact(def)+"...HEAD", "why", r.redact(why))
+	if or.Narrow {
+		r.narrowBase = or.Base
+	}
+	r.rec.ReviewScope = r.readReviewScope(ctx, or)
+	if !or.Narrow {
+		r.d.Log.Info("the review range is the run's recorded base", "range", r.redact(def)+"...HEAD", "why", r.redact(or.Why))
+		return
+	}
+	r.d.Log.Info("the review range is narrowed to the run's own commits", "range", or.Base+"...HEAD",
+		"instead_of", r.redact(def)+"...HEAD", "why", r.redact(or.Why))
 }
 
-// ownCommitsBase is narrowReviewRange's decision: the parent of the run's
-// first own commit when the range from it holds fewer commits than def's,
-// else "". why says which, for the log.
-func ownCommitsBase(ctx context.Context, repo *gitops.Repo, runBranch, def string) (base, why string) {
+// reviewScopeNotApplicable is why this run's review range is not its own
+// commits by definition, "" when the comparison is read. None of the three
+// has an implement set of its own: a follow-up and a review run review the
+// pull request's range, and a run whose check step's commands.fix committed
+// skipped implement (the Fixed gate, gate.go's skipImplement).
+func (r *run) reviewScopeNotApplicable() string {
+	switch {
+	case r.review:
+		return runstore.ReviewScopeReviewRun
+	case r.follow != nil:
+		return runstore.ReviewScopeFollowUp
+	case r.rec.Gate == "fixed":
+		return runstore.ReviewScopeAutofix
+	}
+	return ""
+}
+
+// readReviewScope records the comparison between the paths this run's own
+// commits changed (own.Base, implementation's set, taken here and not at
+// finalize) and the paths the review range covers (reviewRev, the same
+// revision the prompt and the input are built over). It is report only:
+// nothing here changes what the run does (D332).
+//
+// Applicable — the one thing a later stop reads — is true exactly when the
+// review range starts at the run's own commits: narrowed to them, or equal
+// to them by construction because the base the run recorded still is the
+// commit its own commits start after. A read that fails records no
+// comparison at all, which is a different fact from a comparison that found
+// nothing.
+func (r *run) readReviewScope(ctx context.Context, or ownRange) *runstore.ReviewScope {
+	rev := r.reviewRev(ctx)
+	applicable := rev == or.Base
+	if !applicable {
+		// The range starts at the recorded base, which is a ref (origin/<base>)
+		// rather than a commit: it starts at the run's own commits only while
+		// that ref still names the commit they start after.
+		commit, err := r.repo.CommitOf(ctx, rev)
+		if err != nil {
+			r.d.Log.Warn("the review range's base could not be read; the record carries no review-scope comparison",
+				"rev", r.redact(rev), "err", r.redactErr(err))
+			return runstore.NewReviewScope(false, runstore.ReviewScopeReadFailed, nil, nil)
+		}
+		applicable = commit == or.Base
+	}
+	implement, err := r.repo.ChangedFiles(ctx, or.Base)
+	if err != nil {
+		r.d.Log.Warn("reading the paths the run's own commits changed failed; the record carries no review-scope comparison",
+			"err", r.redactErr(err))
+		return runstore.NewReviewScope(false, runstore.ReviewScopeReadFailed, nil, nil)
+	}
+	review, err := r.repo.ChangedFiles(ctx, rev)
+	if err != nil {
+		r.d.Log.Warn("reading the paths the review range covers failed; the record carries no review-scope comparison",
+			"err", r.redactErr(err))
+		return runstore.NewReviewScope(false, runstore.ReviewScopeReadFailed, nil, nil)
+	}
+	if applicable {
+		return runstore.NewReviewScope(true, "", implement, review)
+	}
+	why := or.WhyNot
+	if why == "" {
+		why = runstore.ReviewScopeRangeMoved
+	}
+	return runstore.NewReviewScope(false, why, implement, review)
+}
+
+// ownRange is narrowReviewRange's reading of the run's own commits: the
+// commit before the first of them (Base — the base the range is narrowed
+// to), whether the recorded range holds more commits than they do (Narrow,
+// the decision to cut it), WhyNot when there is no such commit (one of
+// runstore's ReviewScope* reasons) and Why, what was read, for the log.
+type ownRange struct {
+	Base   string
+	Narrow bool
+	WhyNot string
+	Why    string
+}
+
+// ownRangeBase reads the run's own commits and counts the two ranges: the
+// decision narrowReviewRange and the review-scope comparison are both taken
+// from it, once, so the range that is narrowed and the range that is
+// compared can never be two different readings.
+func ownRangeBase(ctx context.Context, repo *gitops.Repo, runBranch, def string) ownRange {
 	own, err := repo.OwnCommits(ctx, runBranch)
 	if err != nil {
-		return "", "the run's own commits could not be read: " + err.Error()
+		return ownRange{WhyNot: runstore.ReviewScopeOwnCommitsUnreadable, Why: "the run's own commits could not be read: " + err.Error()}
 	}
 	if len(own) == 0 {
-		return "", "the run has no commits of its own"
+		return ownRange{WhyNot: runstore.ReviewScopeNoOwnCommits, Why: "the run has no commits of its own"}
 	}
-	parent, err := repo.FirstParent(ctx, own[0])
+	base, err := repo.FirstParent(ctx, own[0])
 	if err != nil {
-		return "", "the parent of the run's first own commit could not be read: " + err.Error()
+		return ownRange{WhyNot: runstore.ReviewScopeOwnCommitsUnreadable, Why: "the parent of the run's first own commit could not be read: " + err.Error()}
 	}
-	if parent == "" {
-		return "", "the run's first own commit has no parent"
+	if base == "" {
+		return ownRange{WhyNot: runstore.ReviewScopeOwnCommitsUnreadable, Why: "the run's first own commit has no parent"}
 	}
-	narrow, err := repo.CommitsAhead(ctx, parent)
+	narrow, err := repo.CommitsAhead(ctx, base)
 	if err != nil {
-		return "", "the narrowed range could not be counted: " + err.Error()
+		return ownRange{WhyNot: runstore.ReviewScopeReadFailed, Why: "the narrowed range could not be counted: " + err.Error()}
 	}
 	recorded, err := repo.CommitsAhead(ctx, def)
 	if err != nil {
-		return "", "the recorded range could not be counted: " + err.Error()
+		return ownRange{WhyNot: runstore.ReviewScopeReadFailed, Why: "the recorded range could not be counted: " + err.Error()}
 	}
 	if narrow >= recorded {
-		return "", fmt.Sprintf("the recorded range holds %d commits, the run's own range %d: nothing to narrow", recorded, narrow)
+		return ownRange{Base: base, WhyNot: runstore.ReviewScopeNoNarrowerRange,
+			Why: fmt.Sprintf("the recorded range holds %d commits, the run's own range %d: nothing to narrow", recorded, narrow)}
 	}
-	return parent, fmt.Sprintf("%d own commits; the recorded range holds %d commits, the run's own range %d", len(own), recorded, narrow)
+	return ownRange{Base: base, Narrow: true,
+		Why: fmt.Sprintf("%d own commits; the recorded range holds %d commits, the run's own range %d", len(own), recorded, narrow)}
+}
+
+// ownCommitsBase is ownRangeBase's answer for the caller that only narrows:
+// the parent of the run's first own commit when the range from it holds
+// fewer commits than def's, else "". why says which, for the log.
+func ownCommitsBase(ctx context.Context, repo *gitops.Repo, runBranch, def string) (base, why string) {
+	or := ownRangeBase(ctx, repo, runBranch, def)
+	if !or.Narrow {
+		return "", or.Why
+	}
+	return or.Base, or.Why
 }
 
 // narrowSummary is the line the run report and the pull request's status
