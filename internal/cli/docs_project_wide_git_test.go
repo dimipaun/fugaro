@@ -213,7 +213,7 @@ func TestDocsSayTheInitPromptHasNoRepoFlagAndBitbucketIsPerRepository(t *testing
 		{"../../docs/multi-model.md", []string{
 			"the prompt has no `--repo` to pass",
 			"press Ctrl-C at it, run the command it printed (`fugaro secrets set <name> --repo <owner>/<name>`) in your own terminal, and start `fugaro update --repo` again",
-			"`bitbucket-token` excepted: a repository access token serves one repository, so it is stored per repository by default and the prompt offers it project-wide only through an explicit `project_secrets` allow-list entry",
+			"`bitbucket-token` excepted: a repository access token serves one repository, so it is stored per repository by default; the prompt offers it project-wide only through an explicit `project_secrets` allow-list entry, which is what an operator holding one workspace or project access token for many repositories writes",
 		}},
 	}
 	for _, tc := range cases {
@@ -239,6 +239,85 @@ func TestDocsSayTheInitPromptHasNoRepoFlagAndBitbucketIsPerRepository(t *testing
 			if strings.Contains(doc, wrong) {
 				t.Errorf("%s still tells a reader the update prompt takes `--repo`: %q", tc.path, wrong)
 			}
+		}
+	}
+}
+
+// TestDocsStateTheBitbucketProjectTokenReach (plan T1.1, 0.12.1): an operator
+// who holds one Bitbucket workspace or project access token may store it once
+// for many repositories through `project_secrets.bitbucket-token` (D461, D462,
+// D464), and the allow-list decides only which jobs mount it — not what the
+// token reaches. Both documents a reader meets the option on have to say so in
+// the same words, together with the rotation order (F3), the second operator's
+// machine (D467), the cross-repository credential reach (F7) and review risk
+// (F17, D476), that Bitbucket Data Center stays out of scope (D366, T2), the
+// single author every repository's pull requests then carry (F8, D472), and
+// that no one has run the path with such a token yet (D468 = no, Check 180).
+// The sentences wrap in the files, so the assertions are made against the
+// whitespace-normalized text.
+func TestDocsStateTheBitbucketProjectTokenReach(t *testing.T) {
+	providers := strings.Join(strings.Fields(readDoc(t, "docs/git-providers.md")), " ")
+	sec := strings.Join(strings.Fields(readDoc(t, "SECURITY.md")), " ")
+
+	// The reach, word for word in both documents: the allow-list limits which
+	// jobs mount the token, and what the token itself reaches is wider — the
+	// launchers of an allow-listed repository included (F7, D475), and every
+	// other credential of a repository an agent pushes into (review round 2).
+	for _, doc := range []struct {
+		path string
+		text string
+	}{{"docs/git-providers.md", providers}, {"SECURITY.md", sec}} {
+		for _, want := range []string{
+			"Every allow-listed run's agent holds the token's value, and so does every launcher of an allow-listed repository",
+			"Through pushes to another repository's base or Fugaro branches, an agent also reaches **every other credential** that repository's runs and builds hold.",
+		} {
+			if !strings.Contains(doc.text, strings.Join(strings.Fields(want), " ")) {
+				t.Errorf("%s does not say %q: the allow-list decides which jobs mount a workspace or project token, and the token's own reach is wider than that", doc.path, want)
+			}
+		}
+	}
+
+	// The option, the steps, and everything a reader has to know before opting
+	// in. docs/git-providers.md is the page the operator follows.
+	for _, want := range []string{
+		// The credential (D461): the narrowest token that covers the set.
+		"a **workspace access token** or a **project access token** can serve many repositories",
+		"Prefer a **project token** when the repositories sit in one Bitbucket project",
+		// The steps, in order.
+		"`project_secrets: { bitbucket-token: { allow_data_to: [myworkspace/*] } }`",
+		"Run `fugaro update`, so the project container exists.",
+		"`fugaro secrets set bitbucket-token --project-wide < token-file`",
+		"Run each repository's `fugaro update --repo`. It asks nothing: the name is covered.",
+		// The second operator's machine (D467).
+		"Copy the `project_secrets.bitbucket-token` entry to every operator machine's local config: the shared config never carries it, and without it `fugaro update --repo` asks for a per-repository token.",
+		// Rotation (F3).
+		"Store the new token as a new version of the same secret, wait for the running executions to end, and then revoke the old token.",
+		// Migration off a repository's own copy (F4).
+		"wins over the project copy until its versions are disabled **and** its `fugaro update --repo --allow-delete` has run",
+		// The cross-repository path an operator must not trust (F17).
+		"never put the token's own account ID in `followup.trusted`",
+		// The review risk the owner accepted rather than mitigated (D476).
+		"A hostile agent in one repository can open its own malicious pull request in another, and a later review-only run there trusts it.",
+		// Data Center (D366, T2).
+		"**Bitbucket Data Center is not supported**",
+		// One author on every repository (F8, D472).
+		"every enrolled repository's pull requests and comments carry the same author",
+		// The live check (D468 = no).
+		"Not yet live-checked with a workspace or project token (Check 180).",
+	} {
+		if !strings.Contains(providers, strings.Join(strings.Fields(want), " ")) {
+			t.Errorf("docs/git-providers.md does not say %q: it is the page an operator reads to opt in to one Bitbucket token for many repositories", want)
+		}
+	}
+
+	// SECURITY.md states the option itself, and the D476 risk, where a reader
+	// meets the project-scope default and review mode's trust rule.
+	for _, want := range []string{
+		"an operator who holds one **workspace or project access token** may instead mount it in many repositories at once through the allow-list",
+		"A hostile agent in one repository can open its own malicious pull request in another, and a later review-only run there trusts it.",
+	} {
+		if !strings.Contains(sec, strings.Join(strings.Fields(want), " ")) {
+			t.Errorf("SECURITY.md does not say %q: D462 accepted the token's reach on the record, and SECURITY.md is that record", want)
 		}
 	}
 }
