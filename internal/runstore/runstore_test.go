@@ -192,7 +192,8 @@ func TestNewToleratedBoundsWhatItStores(t *testing.T) {
 
 // TestNewReviewScopeBoundsWhatItStores: the comparison's Outside is the
 // review range's paths less the implement set's, and the block is bounded —
-// each list at MaxReviewScopeFiles, each path at MaxReviewScopePath — with
+// each list at MaxReviewScopeFiles, the two lists together at
+// MaxReviewScopeBytes, each path at MaxReviewScopePath — with
 // Truncated saying when anything was cut, so a stored set is never presented
 // as the whole one. A set the runner did not read stores no list at all,
 // which is a different fact from a set that is empty.
@@ -232,6 +233,31 @@ func TestNewReviewScopeBoundsWhatItStores(t *testing.T) {
 	}
 	if len(sc.Outside) != 0 {
 		t.Errorf("outside = %v, want nothing outside an equal pair", sc.Outside)
+	}
+
+	// The two lists share one byte budget, so a directory rename's worth of
+	// paths stops there rather than putting the block past MaxRecordBytes.
+	wide := strings.Repeat("d", 200)
+	var many []string
+	for i := range MaxReviewScopeFiles {
+		many = append(many, fmt.Sprintf("%03d/%s", i, wide))
+	}
+	sc = NewReviewScope(true, "", many, many)
+	if !sc.Truncated {
+		t.Error("a set past the byte budget is not recorded as truncated")
+	}
+	var stored int
+	for _, p := range sc.ImplementFiles {
+		stored += len(p)
+	}
+	for _, p := range sc.ReviewFiles {
+		stored += len(p)
+	}
+	if stored > MaxReviewScopeBytes {
+		t.Errorf("stored %d bytes of path, over the bound of %d", stored, MaxReviewScopeBytes)
+	}
+	if len(sc.ImplementFiles) == len(many) {
+		t.Errorf("stored all %d paths, want the byte bound to cut the list", len(many))
 	}
 
 	long := strings.Repeat("x", MaxReviewScopePath+50)

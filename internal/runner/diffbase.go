@@ -179,7 +179,7 @@ func (r *run) narrowReviewRange(ctx context.Context) {
 	if r.rec == nil {
 		return
 	}
-	if why := r.reviewScopeNotApplicable(); why != "" {
+	if why := r.reviewScopeNotOwnCommits(); why != "" {
 		r.rec.ReviewScope = runstore.NewReviewScope(false, why, nil, nil)
 		return
 	}
@@ -202,7 +202,14 @@ func (r *run) narrowReviewRange(ctx context.Context) {
 	if or.Narrow {
 		r.narrowBase = or.Base
 	}
-	r.rec.ReviewScope = r.readReviewScope(ctx, or)
+	// A run that skipped implement has no implement set to compare the range
+	// with, but its range is narrowed as any other run's is: the record says
+	// the comparison does not apply, it does not change the range.
+	if why := r.reviewScopeSkippedImplement(); why != "" {
+		r.rec.ReviewScope = runstore.NewReviewScope(false, why, nil, nil)
+	} else {
+		r.rec.ReviewScope = r.readReviewScope(ctx, or)
+	}
 	if !or.Narrow {
 		r.d.Log.Info("the review range is the run's recorded base", "range", r.redact(def)+"...HEAD", "why", r.redact(or.Why))
 		return
@@ -211,18 +218,33 @@ func (r *run) narrowReviewRange(ctx context.Context) {
 		"instead_of", r.redact(def)+"...HEAD", "why", r.redact(or.Why))
 }
 
-// reviewScopeNotApplicable is why this run's review range is not its own
-// commits by definition, "" when the comparison is read. None of the three
-// has an implement set of its own: a follow-up and a review run review the
-// pull request's range, and a run whose check step's commands.fix committed
-// skipped implement (the Fixed gate, gate.go's skipImplement).
-func (r *run) reviewScopeNotApplicable() string {
+// reviewScopeNotOwnCommits is why this run's review range is not its own
+// commits by definition and is not narrowed at all, "" when it is: a
+// follow-up and a review run review the pull request's range, which their
+// prefetch has already fetched for at bootstrap, and neither has an implement
+// stage, so neither has an implement set to compare it with.
+//
+// No production call reaches the review-run case: review mode goes through
+// runReviewMode, which never narrows. It is kept so that a review run's
+// reader still gets the reason rather than a comparison, and so that a call
+// moving here cannot quietly start narrowing a range the plan says is the
+// pull request's.
+func (r *run) reviewScopeNotOwnCommits() string {
 	switch {
 	case r.review:
 		return runstore.ReviewScopeReviewRun
 	case r.follow != nil:
 		return runstore.ReviewScopeFollowUp
-	case r.rec.Gate == "fixed":
+	}
+	return ""
+}
+
+// reviewScopeSkippedImplement is why this run has no implement set, "" when it
+// has one: the check step's commands.fix committed and the run skipped
+// implement (the Fixed gate, gate.go's skipImplement), so the run's own
+// commits are the fix's work rather than implement's.
+func (r *run) reviewScopeSkippedImplement() string {
+	if r.rec.Gate == "fixed" {
 		return runstore.ReviewScopeAutofix
 	}
 	return ""
@@ -322,17 +344,6 @@ func ownRangeBase(ctx context.Context, repo *gitops.Repo, runBranch, def string)
 	}
 	return ownRange{Base: base, Narrow: true,
 		Why: fmt.Sprintf("%d own commits; the recorded range holds %d commits, the run's own range %d", len(own), recorded, narrow)}
-}
-
-// ownCommitsBase is ownRangeBase's answer for the caller that only narrows:
-// the parent of the run's first own commit when the range from it holds
-// fewer commits than def's, else "". why says which, for the log.
-func ownCommitsBase(ctx context.Context, repo *gitops.Repo, runBranch, def string) (base, why string) {
-	or := ownRangeBase(ctx, repo, runBranch, def)
-	if !or.Narrow {
-		return "", or.Why
-	}
-	return or.Base, or.Why
 }
 
 // narrowSummary is the line the run report and the pull request's status

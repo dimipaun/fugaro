@@ -204,10 +204,13 @@ func TestReviewScopeNotApplicableWhenRangeKeptWide(t *testing.T) {
 // implement set of their own by definition — a follow-up and a review run
 // review the pull request's range, and a run whose check gate's commands.fix
 // committed skipped implement entirely — so the comparison is recorded with
-// the reason and never as a mismatch. None of the three reads git.
+// the reason and never as a mismatch. The first two read nothing at all: the
+// range is the pull request's, so there is no narrowing to make a decision
+// about.
 //
 // Mutation (leave Applicable true, or drop a reason, for any of them): this
-// test fails.
+// test fails. Mutation (return a reason for the autofix gate before the range
+// is decided): the autofix subtest fails on narrowBase.
 func TestReviewScopeNotApplicableToFollowUpReviewAndAutofix(t *testing.T) {
 	ctx := context.Background()
 	newRun := func() *run {
@@ -221,7 +224,6 @@ func TestReviewScopeNotApplicableToFollowUpReviewAndAutofix(t *testing.T) {
 			r.follow = &followState{pr: gitprov.PRInfo{Base: "integration"}}
 		}},
 		{"a review run", runstore.ReviewScopeReviewRun, func(r *run) { r.review = true }},
-		{"an autofix gate that skipped implement", runstore.ReviewScopeAutofix, func(r *run) { r.rec.Gate = "fixed" }},
 	} {
 		r := newRun()
 		tc.mutate(r)
@@ -237,4 +239,26 @@ func TestReviewScopeNotApplicableToFollowUpReviewAndAutofix(t *testing.T) {
 			t.Errorf("%s: scope compares %v against %v, want no comparison", tc.name, sc.ImplementFiles, sc.ReviewFiles)
 		}
 	}
+
+	t.Run("an autofix gate that skipped implement", func(t *testing.T) {
+		repo, _, tip := ownRangeRepo(t, 3)
+		testutil.Git(t, repo.Dir, "checkout", "--quiet", "-b", "work", "origin/integration")
+		commitFiles(t, repo.Dir, "run.txt")
+		r := scopeRun(repo)
+		r.rec.Gate = "fixed"
+		r.narrowReviewRange(ctx)
+		if r.narrowBase != tip || r.narrowed() != tip {
+			t.Fatalf("narrowBase = %q, narrowed() = %q, want the autofix run's range narrowed to %s", r.narrowBase, r.narrowed(), tip)
+		}
+		sc := r.rec.ReviewScope
+		if sc == nil {
+			t.Fatal("the record carries no review_scope")
+		}
+		if sc.Applicable || sc.WhyNot != runstore.ReviewScopeAutofix {
+			t.Errorf("scope = applicable %v, why_not %q, want false and %q", sc.Applicable, sc.WhyNot, runstore.ReviewScopeAutofix)
+		}
+		if len(sc.ImplementFiles) != 0 || len(sc.ReviewFiles) != 0 || len(sc.Outside) != 0 {
+			t.Errorf("scope compares %v against %v, want no comparison", sc.ImplementFiles, sc.ReviewFiles)
+		}
+	})
 }

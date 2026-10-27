@@ -133,7 +133,8 @@ const (
 // stores. The sets come from git, both are read over a range that can be a
 // whole integration branch's divergence (the cost the narrowing exists to
 // avoid), and the record is a small object every listing reads, so the
-// lists are capped and Truncated says so (result.schema.json's maxItems).
+// lists are capped — by count, by path, and by bytes between them — and
+// Truncated says so (result.schema.json's maxItems).
 const MaxReviewScopeFiles = 200
 
 // MaxReviewScopePath bounds one stored path in runes, like MaxToleratedTitle
@@ -141,6 +142,12 @@ const MaxReviewScopeFiles = 200
 // filesystems a repository is checked out on, so this only keeps one from
 // filling the record.
 const MaxReviewScopePath = 512
+
+// MaxReviewScopeBytes caps the stored paths' total length, the two sets
+// together, like MaxChangedPathBytes: a plan that renames a directory puts a
+// megabyte of paths in a set, three lists at the count cap are past
+// MaxRecordBytes, and a record that big cannot be read back at all.
+const MaxReviewScopeBytes = 16 << 10
 
 // The review-scope reasons (ReviewScope.WhyNot), each a short value the
 // runner sets and never anything a task wrote, so the digest can render it
@@ -195,6 +202,13 @@ const (
 // where the comparison is a statement about the narrowing; elsewhere the
 // range is wider on purpose and Outside is a fact, never a mismatch.
 //
+// Applicable says the two sets were read from one revision, so Outside is
+// empty by construction whenever it is true: every non-empty Outside is
+// recorded with a WhyNot (TestReviewScopeEqualRecordsNothingOutside,
+// TestReviewScopeRecordsOutsideFiles). That is the shape a later stop has to
+// know about (T7.3, D332); this record states the fact and leaves the
+// reading of it to the consumer.
+//
 // Absent — never an empty block — for a run that died before the comparison,
 // and in records from before this field existed: the field is additive, so
 // an old reader sees the record it always saw and the schema's version stays
@@ -222,27 +236,30 @@ type ReviewScope struct {
 	// did change (Truncated says the lists are not the whole ones).
 	Outside []string `json:"outside,omitempty"`
 	// Truncated is set when one of the lists was capped at
-	// MaxReviewScopeFiles, or one of its paths at MaxReviewScopePath: the
-	// stored sets are then not the whole ones.
+	// MaxReviewScopeFiles, or at MaxReviewScopeBytes of path between them, or
+	// one of its paths at MaxReviewScopePath: the stored sets are then not the
+	// whole ones.
 	Truncated bool `json:"truncated,omitempty"`
 }
 
 // NewReviewScope bounds the two sets and returns the block to store:
 // Outside is ReviewFiles less ImplementFiles, in git's own (sorted) order,
 // every path clipped to MaxReviewScopePath runes and every list capped at
-// MaxReviewScopeFiles with Truncated saying whether anything was cut. Nil
-// and empty sets are both "no set", so a caller that read none stores no
-// list rather than an empty one.
+// MaxReviewScopeFiles, or at MaxReviewScopeBytes of path between the two,
+// with Truncated saying whether anything was cut. Nil and empty sets are both
+// "no set", so a caller that read none stores no list rather than an empty
+// one.
 //
 // applicable must agree with whyNot — true exactly when whyNot is "" — and
 // the runner sets both from one reading of git.
 func NewReviewScope(applicable bool, whyNot string, implementFiles, reviewFiles []string) *ReviewScope {
 	sc := &ReviewScope{Applicable: applicable, WhyNot: whyNot}
+	budget := MaxReviewScopeBytes
 	var cut bool
-	if sc.ImplementFiles, cut = boundReviewScopeFiles(implementFiles); cut {
+	if sc.ImplementFiles, cut = boundReviewScopeFiles(implementFiles, &budget); cut {
 		sc.Truncated = true
 	}
-	if sc.ReviewFiles, cut = boundReviewScopeFiles(reviewFiles); cut {
+	if sc.ReviewFiles, cut = boundReviewScopeFiles(reviewFiles, &budget); cut {
 		sc.Truncated = true
 	}
 	if len(sc.ReviewFiles) == 0 {
@@ -268,10 +285,12 @@ func NewReviewScope(applicable bool, whyNot string, implementFiles, reviewFiles 
 
 // boundReviewScopeFiles is NewReviewScope's cap and clip: paths in git's
 // order, at most MaxReviewScopeFiles of them, each at most
-// MaxReviewScopePath runes, and whether either bound cut anything. An empty
+// MaxReviewScopePath runes and the lot within budget bytes, which the two
+// lists share so the block never grows past MaxReviewScopeBytes whatever the
+// sets hold. It also says whether any of the three cut anything. An empty
 // path is not a path, and a set that comes to nothing is nil rather than
 // empty, so a caller stores no list at all.
-func boundReviewScopeFiles(paths []string) ([]string, bool) {
+func boundReviewScopeFiles(paths []string, budget *int) ([]string, bool) {
 	if len(paths) == 0 {
 		return nil, false
 	}
@@ -287,6 +306,10 @@ func boundReviewScopeFiles(paths []string) ([]string, bool) {
 		if clipped := clipRunes(p, MaxReviewScopePath); clipped != p {
 			p, trimmed = clipped, true
 		}
+		if *budget < len(p) {
+			return out, true
+		}
+		*budget -= len(p)
 		out = append(out, p)
 	}
 	if len(out) == 0 {
