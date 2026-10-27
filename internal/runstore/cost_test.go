@@ -123,3 +123,27 @@ func TestCostModelFieldsRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// TestCostCacheFieldsRoundTrip (P12): the run's prompt-cache read and write
+// token totals are plain sums of the gateway's per-call usage, not a dollar
+// split, and a run that recorded neither writes neither key.
+func TestCostCacheFieldsRoundTrip(t *testing.T) {
+	c := Cost{ModelUSD: 1.23, CacheReadTokens: 400, CacheWriteTokens: 50}
+	data, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Field by field: Cost carries maps, so the struct itself is not
+	// comparable.
+	var got Cost
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ModelUSD != c.ModelUSD || got.CacheReadTokens != 400 || got.CacheWriteTokens != 50 {
+		t.Fatalf("round trip: got %+v", got)
+	}
+	if data2, _ := json.Marshal(Cost{ModelUSD: 1}); strings.Contains(string(data2), "cache_read_tokens") ||
+		strings.Contains(string(data2), "cache_write_tokens") {
+		t.Errorf("a zero cache total was not omitted: %s", data2)
+	}
+}

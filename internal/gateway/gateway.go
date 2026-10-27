@@ -196,7 +196,17 @@ type Halt struct {
 // a reader that wants the run's whole model figure adds them, and one that
 // wants what it owes reads Used. A run with no cascade has no tiers, so its
 // Notional is zero and Used is exactly what it always was.
-type Ledger struct{ Granted, Used, Notional, Reserved pricing.Micros }
+type Ledger struct {
+	Granted, Used, Notional, Reserved pricing.Micros
+	// CacheReadTokens and CacheWriteTokens are the run's prompt-cache read
+	// and write token totals: plain sums of the calls' reported usage, not a
+	// dollar split, which the price table's one blended figure per call
+	// cannot give (P12). A run whose calls read nothing from cache and wrote
+	// nothing to it has zero of both, which is the truth and not a missing
+	// figure.
+	CacheReadTokens  int64
+	CacheWriteTokens int64
+}
 
 // Server is a running gateway.
 type Server struct {
@@ -248,13 +258,20 @@ type Server struct {
 	lastCacheRead  int64
 	lastModel      string
 	lastCacheKnown bool
-	halt           *Halt
-	haltMsg        string
-	wouldHalted    bool           // observe: enforce would have halted by now
-	granted        pricing.Micros // lease: the sum of what the lease granted, less what was released
-	flight         *topUp         // lease: the top-up in flight, if any
-	stage          *stageState
-	onLedger       func(Ledger, pricing.Micros) // tests: called after every ledger change
+	// cacheRead and cacheWrite are the run's prompt-cache read and write
+	// token totals, summed over every call whose usage was read -- notional
+	// ones included, since a cascade run's cache behaviour is as much its
+	// own as its money is. They reach the run's record through the Ledger
+	// (P12).
+	cacheRead   int64
+	cacheWrite  int64
+	halt        *Halt
+	haltMsg     string
+	wouldHalted bool           // observe: enforce would have halted by now
+	granted     pricing.Micros // lease: the sum of what the lease granted, less what was released
+	flight      *topUp         // lease: the top-up in flight, if any
+	stage       *stageState
+	onLedger    func(Ledger, pricing.Micros) // tests: called after every ledger change
 }
 
 // stageState is a running stage; its calls hold it until they settle.
@@ -472,13 +489,15 @@ func (s *Server) Ledger() Ledger {
 
 func (s *Server) ledgerLocked() Ledger {
 	if s.o.Lease != nil {
-		return Ledger{Granted: s.granted, Used: s.used, Notional: s.notional, Reserved: s.reserved}
+		return Ledger{Granted: s.granted, Used: s.used, Notional: s.notional, Reserved: s.reserved,
+			CacheReadTokens: s.cacheRead, CacheWriteTokens: s.cacheWrite}
 	}
 	g := pricing.Micros(math.MaxInt64)
 	if s.o.Mode == Enforce {
 		g = s.o.Cap
 	}
-	return Ledger{Granted: g, Used: s.used, Notional: s.notional, Reserved: s.reserved}
+	return Ledger{Granted: g, Used: s.used, Notional: s.notional, Reserved: s.reserved,
+		CacheReadTokens: s.cacheRead, CacheWriteTokens: s.cacheWrite}
 }
 
 // BeginStage starts allowing st's models. A stage still running is ended

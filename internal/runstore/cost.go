@@ -56,6 +56,18 @@ type Cost struct {
 	// Unreconciled is the USD charged from reservations rather than from
 	// reported usage.
 	Unreconciled float64 `json:"unreconciled,omitempty"`
+	// CacheReadTokens and CacheWriteTokens are the run's prompt-cache read
+	// and write token totals, summed from the gateway's per-call usage (the
+	// cache_read_input_tokens/cache_creation_input_tokens its stream parses
+	// into pricing.Usage). They are token counts and not a dollar split: the
+	// price table returns one blended figure per call, so telling a cache
+	// read's dollars from a write's would need pricing code that does not
+	// exist. They answer design §3's prompt-caching risk -- a compressed
+	// session's cache prefix can change, turning cheap reads into dearer
+	// writes -- which is "did the cache behave as expected", not "what did a
+	// stage cost", and they are 0 for a run with no gateway.
+	CacheReadTokens  int64 `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int64 `json:"cache_write_tokens,omitempty"`
 	// UsageUnparsed counts calls settled at their reservation because
 	// their usage could not be read.
 	UsageUnparsed int `json:"usage_unparsed,omitempty"`

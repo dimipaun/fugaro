@@ -92,6 +92,9 @@ func (r *run) updateCost() {
 		c.ModelBy = modelByUSD(r.modelBy, model)
 		c.ReportedUSD = r.reported.USD()
 		c.RouteBy = routeByUSD(r.routeBy, r.modelBy, model, r.routed)
+		// The run's prompt-cache token totals, which only the gateway can
+		// count: they are of its per-call usage and of nothing else (P12).
+		c.CacheReadTokens, c.CacheWriteTokens = r.gwCacheRead, r.gwCacheWrite
 		notional = r.gwNotional.USD()
 		// The catalog only prices the routes' models, so its staleness is a
 		// fact about what this run charged: a table that holds a stale row for

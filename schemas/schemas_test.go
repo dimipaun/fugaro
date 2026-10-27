@@ -2083,3 +2083,29 @@ func TestFugaroSchemaAgentOAuthToken(t *testing.T) {
 		}
 	}
 }
+
+// TestResultSchemaAcceptsCacheFields (P12): the run's prompt-cache read and
+// write token totals are part of the cost object. Pinned separately from
+// TestResultSchemaAcceptsRunnerRecords so a later edit that tightens cost's
+// additionalProperties fails here, naming the field, rather than only there.
+func TestResultSchemaAcceptsCacheFields(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	head := `{"version":1,"run_id":"20261027-100000-abcd","status":"succeeded","stage":"writeback","outcome":"ready","cost_usd":1.23,"started_at":"2026-10-27T10:00:00Z","cost":{"model_usd":1.23,"compute_usd":0,"compute_estimated":false,"total_usd":1.23,"estimate":true,"model_basis":"api-list"`
+	validate := func(lit string) error {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(head + lit + `}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	for _, lit := range []string{``, `,"cache_read_tokens":400`, `,"cache_write_tokens":50`, `,"cache_read_tokens":400,"cache_write_tokens":50`} {
+		if err := validate(lit); err != nil {
+			t.Errorf("schema rejects cost%s: %v", lit, err)
+		}
+	}
+	for _, lit := range []string{`,"cache_read_tokens":-1`, `,"cache_write_tokens":"50"`} {
+		if err := validate(lit); err == nil {
+			t.Errorf("schema accepts cost%s", lit)
+		}
+	}
+}
