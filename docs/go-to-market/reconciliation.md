@@ -22,8 +22,8 @@ agenda (D403). **Where this file disagrees with `spec.md`, this file wins.**
 central orchestrators as `ee/`; `docs/licensing/reconciliation.md` D302 (answered 2026-10-24) keeps them
 MIT core because the console is already released under MIT. The owner's ruling on this spec is D400.
 
-**F2 (Exists): the licensing skeleton.** `ee/` is reserved with no licence file (T1), `LICENSE` stays pure
-MIT, the scope statement is `LICENSING.md`, and the release sets an `ee` build tag (D303). `ee/LICENSE`
+**F2 (Exists): the licensing skeleton.** `ee/` is reserved with no licence file (the licensing reconciliation's T1), `LICENSE` stays pure
+MIT, the scope statement is `LICENSING.md`, and D303 (amended) compiles `ee/` code into the one binary by an `ee` build tag, but at 0.11.0 `ee/` is empty and the release sets no tag (`.claude/rules/ee.md`). `ee/LICENSE`
 waits on counsel (licensing plan task L4.1). The spec's "exact licence still to choose" is that task.
 
 **F3 (Exists): the SECURITY document.** `SECURITY.md` and `website/content/security.md` already state the
@@ -38,31 +38,33 @@ workflows (`docs/website/preview-promote.md`); an agent run never edits `.github
 requests to origins D106 does not admit. The CSP allows scripts only from `'self'` and
 `www.googletagmanager.com`, and has no `frame-src`. Resolved by D401.
 
-**F6 (Rule): published figures.** The headline figures in the landing copy ("90% lower", "a tenth of the
-price", "$4.20", "$3 an hour") are claims. `docs/website/reconciliation.md` D96-D97 allow published
+**F6 (Rule): published figures.** The agenda's headline figures (a percentage saved, "a tenth of the price", a per-PR cost, an hourly rate) are claims. `docs/website/reconciliation.md` D96-D97 allow published
 figures only from an owner-run aggregation of at least `internal/stats.MinRuns` runs, with no
 repository, run, branch, task or person named, and a "not a promise" line. A competitor comparison needs
 a source and a date. The pages carry a figure from the variant config only once that aggregation exists;
 until then the config holds the sentinel `unmeasured` and the page refuses to build with a figure that
 is not backed (task L2.3).
 
-**F7 (Wrong): `opus-4.5`.** The demo command `fugaro estimate --pr 1255 --model opus-4.5` names a model
+**F7 (Wrong): `opus-4.5`.** The agenda's demo command (`fugaro estimate --pr N --model opus-4.5`, in the business agenda) names a model
 the price table does not have. `internal/pricing/table.go` has `claude-opus-5-5` and `claude-opus-5`;
 `internal/pricing/canonical.go` maps the canonical ID `claude-opus-5-5` to the route ID
 `anthropic/claude-opus-5.5`. The command takes a canonical ID or a route ID the table knows and refuses
 any other with the list of known IDs.
 
-**F8 (Gap): raw tokens are not on the record.** `agent.Usage` (input, output, cache read, cache creation)
-is parsed per model from the agent stream, and the gateway sees each call's usage, but result.json keeps
-dollars. #1115 (open) adds cache read and write token totals to `Cost`; input and output tokens per model
-are not stored anywhere in the run record. `fugaro estimate` needs per-model token sums, so the record
-must gain them (a `result.schema.json` change, additive, optional). Runs recorded before that have no
-tokens, and `estimate` refuses them by name rather than guess (pre-1.0: no backfill).
+**F8 (Gap): tokens per model are not on the run record.** `pricing.Usage` (input, output, cache read,
+cache write 5m and 1h, web searches) is what the gateway prices; `agent.Usage` (`internal/agent/agent.go`)
+is what the agent stream reports per model; `budget.ModelUse` already carries a model's in, out, cache read
+and cache write for the day counter (`internal/runner/budget_session.go`). `runstore.Cost` keeps dollars
+only (`ModelBy`, `RouteBy`), and #1115 (open) adds only cache read/write totals. Two paths fill the cost:
+with the gateway on, `internal/runner/cost.go` fills `ModelBy` from the gateway's ledger; without it
+(`auth: oauth`, `model_source: claude-code`) the only source is `agent.Result.ModelUsage`. Both need
+filling or `estimate` would refuse every subscription run. The record gains per-model tokens (additive,
+optional, with the 5m/1h cache-write split kept); runs recorded before that have none, and `estimate`
+refuses them by name (pre-1.0: no backfill).
 
 **F9 (Gap): what an estimate means.** Another model uses other token counts and retries, and the price
 catalog goes stale after 30 days (`runstore.Cost.CatalogStale`). The command labels every figure an
-estimate, assumes the run's own cache ratio, prints the catalog's date, and says so when the catalog is
-stale.
+estimate, assumes the run's own cache ratio, prints the catalog's date, and says so when the catalog is stale. It cannot reproduce a recorded `model_usd` exactly: long-context tiers apply per call, web searches are priced apart, and `model_usd` carries the `unattributed` residual and calls settled from reservations (`Unreconciled`, `UsageUnparsed`). Check 162 is judged with that in mind.
 
 **F10 (Gap): SSO and audit logs do not exist.** The workspaces spec that covers SSO has not been
 reconciled. Resolved by D402: this plan names them as gates and owns none of their tasks.
@@ -84,8 +86,37 @@ files; the pages render without them and the flag turns on with the first file.
 `internal/cli/docs_website_boundary_test.go`; any change to `site.yaml`, the CSP or the privacy page runs
 `go test ./internal/cli/ -run Docs` and `npm run check` in `website/`.
 
-**F16 (Gap): estimating a PR.** `runstore` records `PR *PRRef` on the run, so `--pr N` can find the
-run. Whether a lookup by PR number across runs exists is UNVERIFIED (U2).
+**F16 (Exists): finding a run by PR.** `fugaro runs ls --pr N` is backed by `onPR` in
+`internal/cli/runs.go`, over the run's `PR *PRRef`. A PR can have several runs (the first and its
+follow-ups); `estimate --pr N` reuses that lookup and, when more than one run matches, lists them and asks
+for `--run`, rather than sum or pick one.
+
+**F17 (Gap): one consent covers analytics only.** The consent state is one stored granted/denied value for
+the analytics banner (`website/public/scripts/consent-early.js`, `site.js`), and withdrawal deletes only
+GA4's cookies. Loading advertising trackers under it would treat an analytics consent as an advertising
+one, under privacy text that does not name those vendors. D401 therefore needs a separate marketing
+purpose, a consent version that asks existing visitors again, withdrawal that removes the trackers'
+cookies, and the privacy text's owner-approved wording. A visitor who declines still needs the call to
+action: Book a demo falls back to a plain link.
+
+**F18 (Gap): D401's "four pages only" cannot be a CSP property.** `firebase.json` serves exactly one
+Content-Security-Policy on every path, and `website/test/origins.mjs` pins that. The CSP therefore widens
+site-wide by exactly the new origins, and "those pages only" holds in the loader's path check and its test
+(open item O2).
+
+**F19 (Gap): documents D400 and D401 leave stale.** `ee/README.md`, `LICENSING.md`, `.claude/rules/ee.md`
+and the D302 row of `docs/licensing/reconciliation.md` say nothing moves out of the core; they are
+amended with the notice (T1), not before. D106 in `docs/website/reconciliation.md` and the CSP line in
+`.claude/rules/website.md` ("the analytics host, nothing else") are amended by task G2.3.
+
+**F20 (Gap): campaign pages must not index, and media must be self-hosted.** The sitemap is generated in
+`website/src/content.ts` and the base layout, so the four noindex pages must be excluded from it. D107
+requires media to be self-hosted or on an allowed host, so a variant's video is a file under `website/`,
+never a YouTube or Vimeo URL, which would be a fourth third party D401 never allowed.
+
+**F21 (Gap): the benchmarking line of spec §13.** "Alongside actual cost" asks for the estimate shown next
+to each job's cost; this plan builds only the on-demand command. Showing it in `fugaro diagnose` or the
+console is left out.
 
 ## Decisions
 
@@ -128,16 +159,16 @@ counsel is done. **The owner rules.** The plan has no task that writes a notice 
 public tree, a seat cannot be enforced by a licence key on them until they move. What a $39.99 seat buys
 before the move is the owner's to rule and sits in `fugaro-business`; no task here depends on it.
 
-**O1.** The `fugaro-business` repository does not exist yet; moving the full agenda there is the owner's.
+**O1.** The business sections are committed locally in `fugaro-business` (`docs/`); pushing them is the owner's.
+
+**O2.** F18: the CSP widens for every page, not the four. Choices: accept it (recommended: the origins are inert without the loader), or change the CSP test to allow a second, path-scoped header, which a browser intersects with the first and so cannot widen. The plan assumes the first; the owner confirms.
 
 ## UNVERIFIED
 
-- **U1.** Whether `internal/gateway` already holds per-call input and output token counts at the point the
-  run record is written (it holds usage for pricing; the record's own fields were not read in full).
-- **U2.** Whether a lookup of a run by PR number exists in `internal/cli` (`--pr` on `fugaro run` is for
-  follow-ups).
-- **U3.** Which non-Claude models (the agenda names DeepSeek, Qwen and Kimi) have a price row in the
-  embedded catalog today; `docs/design/provider-price-catalog.md` and `internal/pricing/catalog` decide it.
-- **U4.** That every route in `website/src/pages` is deployed under `fugaro.dev` with no collision for
-  `/save`, `/control`, `/scale` and `/crew`; `firebase.json` rewrites were not read in full.
+- **U1.** The exact point in the gateway's per-call path where usage is available for summing by model,
+  which G1.2's first step finds.
+- **U3 (settled).** The catalog has rows for DeepSeek, Qwen and Kimi models (`internal/pricing/catalog`);
+  which exact ones the price table prices stays the catalog's.
+- **U4 (settled).** `firebase.json` has no rewrites and `website/src/pages` has no `save`, `control`,
+  `scale` or `crew` route.
 - **U5.** No figure in the agenda was measured by this reconciliation (F6).
