@@ -31,12 +31,16 @@ package eeboundary
 //     into it, a //go:embed pattern, a //go:generate line, a cgo #include or
 //     #cgo flag, a `replace` (or `use`) directive in any go.mod or go.work,
 //     and a nested go.mod or go.work under ee/ itself.
-//   - every tracked file under ee/ carries the two-line notice R3 asks for, in
-//     the comment syntax of its type; a type with no comment syntax needs a
-//     sibling `<name>.license`; and ee/LICENSE exists as soon as one source
-//     file does. At 0.11.0 ee/ is reserved and holds only ee/README.md, so
-//     this half passes vacuously -- which is the point: the rule lands before
-//     the first ee/ file does.
+//   - every tracked file under each licence directory -- ee/, console/ and
+//     mobile/, one business licence in three files of identical wording
+//     (D311) -- carries the two-line notice R3 asks for, in the comment syntax
+//     of its type; a type with no comment syntax needs a sibling
+//     `<name>.license`; and ee/LICENSE exists as soon as one source file does.
+//     At 0.11.0 ee/ is reserved and holds only ee/README.md, so its half
+//     passes vacuously -- which is the point: the rule landed before the first
+//     ee/ file did. console/ and mobile/ hold code today, so their halves are
+//     the rule doing work, and the pointer each file carries names its own
+//     directory's licence file.
 //
 // Its limits are worth stating, because a reader will over-trust it otherwise.
 // It is a text scan of this repository at one commit: it says nothing about a
@@ -65,33 +69,89 @@ import (
 )
 
 const (
-	eeDirName       = "ee"
-	eeAssemblyFile  = "cmd/fugaro/ee_on.go"
-	eeReadmeFile    = "ee/README.md"
-	eeLicenceFile   = "ee/LICENSE"
-	eeSiblingSuffix = ".license"
+	eeDirName      = "ee"
+	consoleDirName = "console"
+	mobileDirName  = "mobile"
+
+	eeAssemblyFile = "cmd/fugaro/ee_on.go"
+	eeReadmeFile   = "ee/README.md"
+	eeLicenceFile  = "ee/LICENSE"
+
+	// The other two licence directories (D311) name their licence file
+	// LICENSE.md, and their READMEs are exempt exactly as ee/'s is. The paths
+	// are built from the directory names so a directory is spelled once.
+	consoleReadmeFile  = consoleDirName + "/README.md"
+	consoleLicenceFile = consoleDirName + "/LICENSE.md"
+	mobileReadmeFile   = mobileDirName + "/README.md"
+	mobileLicenceFile  = mobileDirName + "/LICENSE.md"
 
 	// symlinkMode is the mode git records for a symlink: `git ls-files -s`
-	// answers 120000 for one. A tracked symlink under ee/ is refused rather
-	// than followed, so a link cannot stand in for a file that carries the
-	// notice (R3, amended).
+	// answers 120000 for one. A tracked symlink under a licence directory is
+	// refused rather than followed, so a link cannot stand in for a file that
+	// carries the notice (R3, amended).
 	symlinkMode = "120000"
 
-	// The two lines R3 asks every ee/ source file to carry.
-	noticeSPDX    = "SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise"
-	noticePointer = "See ee/LICENSE for the terms."
+	// eeSiblingSuffix is the file a type with no comment syntax carries its
+	// notice in, beside it: `<name>.license`, as REUSE names it.
+	eeSiblingSuffix = ".license"
+
+	// The SPDX line R3 asks every file in a licence directory to carry. The
+	// pointer below it names that directory's own licence file.
+	noticeSPDX = "SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise"
 
 	// The rules, named as the tests below name them.
 	ruleImports = "core never imports ee/"
 	ruleEmbeds  = "core never embeds from ee/"
 	ruleRoutes  = "no module route into ee/"
-	ruleNotice  = "every ee/ file carries the notice"
 	ruleLicence = "ee/LICENSE exists whenever an ee/ source file does"
 )
 
-// eeFile is one file under ee/ as the tracked list describes it: the
-// module-relative slash path, and the mode `git ls-files -s` recorded.
-type eeFile struct {
+// noticeTarget is one directory whose tracked files carry the two-line notice,
+// and the licence file the pointer below the SPDX line names.
+type noticeTarget struct {
+	// dir is the module-relative directory name: ee, console or mobile.
+	dir string
+	// licence is the module-relative licence file the pointer names.
+	licence string
+	// readme is the one file besides the licence itself that is exempt.
+	readme string
+}
+
+// rule is the finding's rule name for this directory. It names the directory
+// so a failure says which of the three the file is in.
+func (t noticeTarget) rule() string { return "every " + t.dir + "/ file carries the notice" }
+
+// pointer is the second line of the notice: a reader is told which licence file
+// governs the file they are reading.
+func (t noticeTarget) pointer() string { return "See " + t.licence + " for the terms." }
+
+// noticeTargets are the three directories one business licence covers (D311),
+// in the order a reader meets them.
+var noticeTargets = []noticeTarget{
+	{dir: eeDirName, licence: eeLicenceFile, readme: eeReadmeFile},
+	{dir: consoleDirName, licence: consoleLicenceFile, readme: consoleReadmeFile},
+	{dir: mobileDirName, licence: mobileLicenceFile, readme: mobileReadmeFile},
+}
+
+// targetFor answers the licence directory a module-relative path sits in, and
+// whether it is in one at all.
+func targetFor(path string) (noticeTarget, bool) {
+	for _, t := range noticeTargets {
+		if path == t.dir || strings.HasPrefix(path, t.dir+"/") {
+			return t, true
+		}
+	}
+	return noticeTarget{}, false
+}
+
+// noticeRuleFor answers the notice rule's name for one directory, for a caller
+// that holds the name rather than the target.
+func noticeRuleFor(dir string) string { return noticeTarget{dir: dir}.rule() }
+
+// trackedFile is one file under a licence directory as the tracked list
+// describes it: the module-relative slash path, and the mode `git ls-files -s`
+// recorded.
+type trackedFile struct {
 	path string
 	mode string
 }
@@ -112,9 +172,9 @@ type report struct {
 	// asserts it is the module and not an empty directory, so no check below
 	// can pass by looking at nothing.
 	goFiles int
-	// eeFiles counts the tracked files the notice rule was handed.
-	eeFiles  int
-	findings []finding
+	// trackedFiles counts the tracked files the notice rule was handed.
+	trackedFiles int
+	findings     []finding
 }
 
 func (r *report) byRule(rule string) []finding {
@@ -142,8 +202,9 @@ func (s *scanner) add(rule, path, detail string) {
 }
 
 // scanTree runs every rule over one tree -- this module, or the one a plant
-// built -- and answers what it found. files is the tracked ee/ list the notice
-// rule reads; everything else is read from the tree.
+// built -- and answers what it found. files is the tracked list of the three
+// licence directories the notice rule reads; everything else is read from the
+// tree.
 //
 // The walk steps out of no directory at all, and that is deliberate: a
 // testdata/, node_modules/, `.hidden/` or `_build/` directory is read like any
@@ -151,7 +212,7 @@ func (s *scanner) add(rule, path, detail string) {
 // the import. It is also why the walk cannot be `go list -deps`: that sees one
 // build's files, and the files this rule exists for are the ones no build
 // reads.
-func scanTree(root string, files []eeFile) (*report, error) {
+func scanTree(root string, files []trackedFile) (*report, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -168,7 +229,7 @@ func scanTree(root string, files []eeFile) (*report, error) {
 	for _, f := range files {
 		s.tracked[f.path] = true
 	}
-	rep := &report{eeFiles: len(files)}
+	rep := &report{trackedFiles: len(files)}
 	err = filepath.WalkDir(abs, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -207,7 +268,7 @@ func scanTree(root string, files []eeFile) (*report, error) {
 	}
 	s.checkEELicence(files)
 	for _, f := range files {
-		if err := s.checkEEFile(f); err != nil {
+		if err := s.checkNoticeFile(f); err != nil {
 			return nil, err
 		}
 	}
@@ -633,12 +694,19 @@ var noticeStyles = map[string]noticeStyle{
 	".js": slashStyle, ".mjs": slashStyle, ".cjs": slashStyle,
 	".sh": hashStyle, ".py": hashStyle, ".tf": hashStyle,
 	".yaml": hashStyle, ".yml": hashStyle, ".toml": hashStyle,
-	".md": htmlStyle, ".html": htmlStyle,
+	".md": htmlStyle, ".html": htmlStyle, ".plist": htmlStyle,
 	".css":     cssStyle,
 	".license": bareStyle,
 }
 
-var noticeStylesByName = map[string]noticeStyle{"Dockerfile": hashStyle}
+// noticeStylesByName is the same table for a file whose type is its whole name:
+// a Dockerfile, and the two dot-files the console and the mobile app carry,
+// which take `#` comments like the INI and ignore-file formats they are.
+var noticeStylesByName = map[string]noticeStyle{
+	"Dockerfile": hashStyle,
+	".gitignore": hashStyle,
+	".npmrc":     hashStyle,
+}
 
 // noticeStyleFor answers how one file carries the notice: `#` for a file that
 // opens with a shebang, whatever its type, and otherwise the comment syntax
@@ -655,16 +723,20 @@ func noticeStyleFor(base string, shebang bool) (noticeStyle, bool) {
 	return st, ok
 }
 
-// checkEEFile holds one tracked file under ee/ to R3. A tracked file missing
-// from the working tree is skipped rather than refused: the core-without-ee
-// workflow deletes ee/ without committing, and a checkout in that state is a
-// state this test has to pass in.
-func (s *scanner) checkEEFile(f eeFile) error {
-	if f.mode == symlinkMode {
-		s.add(ruleNotice, f.path, "a symlink under ee/, which the notice rule refuses")
+// checkNoticeFile holds one tracked file under a licence directory to R3. A
+// tracked file missing from the working tree is skipped rather than refused:
+// the core-without-ee workflow deletes ee/ without committing, and a checkout
+// in that state is a state this test has to pass in.
+func (s *scanner) checkNoticeFile(f trackedFile) error {
+	target, ok := targetFor(f.path)
+	if !ok {
 		return nil
 	}
-	if f.path == eeReadmeFile || f.path == eeLicenceFile {
+	if f.mode == symlinkMode {
+		s.add(target.rule(), f.path, "a symlink under a licence directory, which the notice rule refuses")
+		return nil
+	}
+	if f.path == target.readme || f.path == target.licence {
 		return nil
 	}
 	data, err := os.ReadFile(filepath.Join(s.root, filepath.FromSlash(f.path)))
@@ -677,38 +749,47 @@ func (s *scanner) checkEEFile(f eeFile) error {
 	base := filepath.Base(f.path)
 	lines := fileLines(data)
 	shebang := len(lines) > 0 && strings.HasPrefix(lines[0], "#!")
+	// An XML declaration is the one other line that has to stay first, so the
+	// notice sits below it: the doctype and the root element then follow, and
+	// the file is still well-formed XML.
+	xmlDecl := !shebang && len(lines) > 0 && strings.HasPrefix(lines[0], "<?xml")
 	style, ok := noticeStyleFor(base, shebang)
 	if !ok {
 		if !s.tracked[f.path+eeSiblingSuffix] {
-			s.add(ruleNotice, f.path, "this file type carries no comment syntax, so it needs a sibling "+f.path+eeSiblingSuffix+" carrying the notice")
+			s.add(target.rule(), f.path, "this file type carries no comment syntax, so it needs a sibling "+f.path+eeSiblingSuffix+" carrying the notice")
 		}
 		return nil
 	}
 	if !shebang && scriptByType(base) {
 		if n := misplacedShebang(lines); n > 0 {
-			s.add(ruleNotice, f.path, fmt.Sprintf("a shebang on line %d rather than the first line, so the notice sits where a script expects its interpreter", n))
+			s.add(target.rule(), f.path, fmt.Sprintf("a shebang on line %d rather than the first line, so the notice sits where a script expects its interpreter", n))
 			return nil
 		}
 	}
 	offset := 0
-	if shebang {
+	if shebang || xmlDecl {
 		offset = 1
 	}
 	if len(lines) < offset+2 {
-		s.add(ruleNotice, f.path, "it is shorter than the two-line notice")
+		s.add(target.rule(), f.path, "it is shorter than the two-line notice")
 		return nil
 	}
-	if strings.TrimSpace(lines[offset]) != style.render(noticeSPDX) || strings.TrimSpace(lines[offset+1]) != style.render(noticePointer) {
-		s.add(ruleNotice, f.path, "it does not start with the two-line notice, which for this file type reads `"+style.render(noticeSPDX)+"` then `"+style.render(noticePointer)+"`")
+	pointer := style.render(target.pointer())
+	if strings.TrimSpace(lines[offset]) != style.render(noticeSPDX) || strings.TrimSpace(lines[offset+1]) != pointer {
+		s.add(target.rule(), f.path, "it does not start with the two-line notice, which for this file type reads `"+style.render(noticeSPDX)+"` then `"+pointer+"`")
 	}
 	return nil
 }
 
 // checkEELicence holds R3's last clause: the licence text exists as soon as
-// one file needs it, so a reserved ee/ holding only its README.md passes.
-func (s *scanner) checkEELicence(files []eeFile) {
+// one file needs it, so a reserved ee/ holding only its README.md passes. It
+// reads the ee/ files of the tracked list and no others.
+func (s *scanner) checkEELicence(files []trackedFile) {
 	source, licence := false, false
 	for _, f := range files {
+		if target, ok := targetFor(f.path); !ok || target.dir != eeDirName {
+			continue
+		}
 		switch f.path {
 		case eeLicenceFile:
 			licence = true
@@ -756,16 +837,16 @@ func moduleRoot(t *testing.T) string {
 	return root
 }
 
-// trackedEEFiles is `git ls-files -s ee/`, which is R3's scope: an untracked
-// .DS_Store or build output under ee/ does not fail the notice rule, and the
-// mode is what tells a symlink from a file.
-func trackedEEFiles(t *testing.T, root string) []eeFile {
+// trackedNoticeFiles is `git ls-files -s` over the three licence directories,
+// which is R3's scope: an untracked .DS_Store or build output under them does
+// not fail the notice rule, and the mode is what tells a symlink from a file.
+func trackedNoticeFiles(t *testing.T, root string) []trackedFile {
 	t.Helper()
-	out, err := exec.Command("git", "-C", root, "ls-files", "-s", "-z", "--", eeDirName+"/").Output()
+	out, err := exec.Command("git", "-C", root, "ls-files", "-s", "-z", "--", eeDirName+"/", consoleDirName+"/", mobileDirName+"/").Output()
 	if err != nil {
 		t.Skipf("git ls-files is unavailable (%v): the ee/ notice rule reads the tracked files", err)
 	}
-	var files []eeFile
+	var files []trackedFile
 	for _, entry := range strings.Split(string(out), "\x00") {
 		meta, path, ok := strings.Cut(entry, "\t")
 		if !ok {
@@ -775,7 +856,7 @@ func trackedEEFiles(t *testing.T, root string) []eeFile {
 		if len(fields) == 0 {
 			continue
 		}
-		files = append(files, eeFile{path: path, mode: fields[0]})
+		files = append(files, trackedFile{path: path, mode: fields[0]})
 	}
 	return files
 }
@@ -786,7 +867,7 @@ func trackedEEFiles(t *testing.T, root string) []eeFile {
 func realReport(t *testing.T) *report {
 	t.Helper()
 	root := moduleRoot(t)
-	rep, err := scanTree(root, trackedEEFiles(t, root))
+	rep, err := scanTree(root, trackedNoticeFiles(t, root))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -813,8 +894,34 @@ func TestNoModuleRouteIntoEE(t *testing.T) {
 }
 
 func TestEEFilesCarryTheNotice(t *testing.T) {
-	assertNoFindings(t, realReport(t), ruleNotice,
-		"Every tracked file under ee/ starts with the two-line notice in its type's comment syntax (R3): `"+noticeSPDX+"`, then `"+noticePointer+"`. A type with no comment syntax needs a sibling `<name>.license` carrying it. Only ee/README.md and ee/LICENSE are exempt.")
+	rule := noticeRuleFor(eeDirName)
+	assertNoFindings(t, realReport(t), rule, noticeWhy(eeDirName))
+}
+
+func TestConsoleFilesCarryTheLicenceNotice(t *testing.T) {
+	rule := noticeRuleFor(consoleDirName)
+	assertNoFindings(t, realReport(t), rule, noticeWhy(consoleDirName))
+}
+
+func TestMobileFilesCarryTheLicenceNotice(t *testing.T) {
+	rule := noticeRuleFor(mobileDirName)
+	assertNoFindings(t, realReport(t), rule, noticeWhy(mobileDirName))
+}
+
+// noticeWhy is the failure message one directory's notice rule prints. It names
+// the directory's own licence file, because the notice rule is what tells a
+// reader of any single file which of the three copies of the same terms covers
+// it.
+func noticeWhy(dir string) string {
+	var target noticeTarget
+	for _, candidate := range noticeTargets {
+		if candidate.dir == dir {
+			target = candidate
+		}
+	}
+	return "Every tracked file under " + dir + "/ starts with the two-line notice in its type's comment syntax: `" +
+		noticeSPDX + "`, then `" + target.pointer() + "`. A type with no comment syntax needs a sibling `<name>" +
+		eeSiblingSuffix + "` carrying it. Only " + target.readme + " and " + target.licence + " are exempt."
 }
 
 func TestEESourceNeedsTheLicence(t *testing.T) {
@@ -841,9 +948,15 @@ func joinFindings(fs []finding) string {
 
 // noticeText renders the two-line notice in one file type's comment syntax, so
 // a planted tree reads as the files it stands for.
-func noticeText(open, close string) string {
+const (
+	eePointer      = "See " + eeLicenceFile + " for the terms."
+	consolePointer = "See " + consoleLicenceFile + " for the terms."
+	mobilePointer  = "See " + mobileLicenceFile + " for the terms."
+)
+
+func noticeText(open, close, pointer string) string {
 	st := noticeStyle{open: open, close: close}
-	return st.render(noticeSPDX) + "\n" + st.render(noticePointer) + "\n"
+	return st.render(noticeSPDX) + "\n" + st.render(pointer) + "\n"
 }
 
 const (
@@ -863,11 +976,11 @@ type plant struct {
 	name  string
 	files map[string]string
 	links map[string]string
-	// eeFiles overrides the tracked ee/ list; the default is the ee/ tree the
+	// trackedFiles overrides the tracked ee/ list; the default is the ee/ tree the
 	// plant wrote, read the way a committed tree's `git ls-files -s ee/` would.
-	eeFiles []eeFile
-	want    []string
-	none    bool
+	trackedFiles []trackedFile
+	want         []string
+	none         bool
 }
 
 func TestEEBoundaryScanCatchesPlantedViolations(t *testing.T) {
@@ -957,7 +1070,7 @@ func TestEEBoundaryScanCatchesPlantedViolations(t *testing.T) {
 		},
 		{
 			name:  "a script whose shebang is not its first line",
-			files: map[string]string{"ee/run.sh": noticeText("# ", "") + "#!/bin/sh\n"},
+			files: map[string]string{"ee/run.sh": noticeText("# ", "", eePointer) + "#!/bin/sh\n"},
 			want:  []string{"ee/run.sh: a shebang on line 3 rather than the first line"},
 		},
 		{
@@ -967,13 +1080,13 @@ func TestEEBoundaryScanCatchesPlantedViolations(t *testing.T) {
 		},
 		{
 			name:  "a tracked symlink under ee/",
-			files: map[string]string{"ee/x.go": noticeText("// ", "") + "package x\n"},
+			files: map[string]string{"ee/x.go": noticeText("// ", "", eePointer) + "package x\n"},
 			links: map[string]string{"ee/alias.go": "x.go"},
-			want:  []string{"ee/alias.go: a symlink under ee/"},
+			want:  []string{"ee/alias.go: a symlink under a licence directory"},
 		},
 		{
 			name:  "a noticed source file while ee/LICENSE does not exist",
-			files: map[string]string{"ee/x.go": noticeText("// ", "") + "package x\n"},
+			files: map[string]string{"ee/x.go": noticeText("// ", "", eePointer) + "package x\n"},
 			want:  []string{"ee: ee/ holds a source file while ee/LICENSE does not exist"},
 		},
 		{
@@ -1062,7 +1175,7 @@ func TestEEBoundaryScanCatchesPlantedViolations(t *testing.T) {
 			name: "a shebang script whose notice follows the shebang",
 			files: map[string]string{
 				eeLicenceFile: licenceFixture,
-				"ee/run.sh":   "#!/bin/sh\n" + noticeText("# ", ""),
+				"ee/run.sh":   "#!/bin/sh\n" + noticeText("# ", "", eePointer),
 			},
 			none: true,
 		},
@@ -1075,20 +1188,82 @@ func TestEEBoundaryScanCatchesPlantedViolations(t *testing.T) {
 			name: "each type's notice passes",
 			files: map[string]string{
 				eeLicenceFile:                 licenceFixture,
-				"ee/x.go":                     noticeText("// ", "") + "package x\n",
-				"ee/notes.md":                 noticeText("<!-- ", " -->") + "# notes\n",
-				"ee/style.css":                noticeText("/* ", " */") + "a {}\n",
-				"ee/build.yaml":               noticeText("# ", "") + "a: b\n",
-				"ee/Dockerfile":               noticeText("# ", "") + "FROM scratch\n",
+				"ee/x.go":                     noticeText("// ", "", eePointer) + "package x\n",
+				"ee/notes.md":                 noticeText("<!-- ", " -->", eePointer) + "# notes\n",
+				"ee/style.css":                noticeText("/* ", " */", eePointer) + "a {}\n",
+				"ee/build.yaml":               noticeText("# ", "", eePointer) + "a: b\n",
+				"ee/Dockerfile":               noticeText("# ", "", eePointer) + "FROM scratch\n",
 				"ee/x.json":                   "{}\n",
-				"ee/x.json" + eeSiblingSuffix: noticeText("", ""),
+				"ee/x.json" + eeSiblingSuffix: noticeText("", "", eePointer),
 			},
 			none: true,
 		},
 		{
-			name:    "a tracked ee/ file deleted from the working tree",
-			eeFiles: []eeFile{{path: "ee/x.go", mode: "100644"}, {path: eeLicenceFile, mode: "100644"}},
-			none:    true,
+			name: "each type's notice passes in the console and the mobile app too",
+			files: map[string]string{
+				consoleLicenceFile: licenceFixture,
+				// The pointer names each directory's own licence file, so the two
+				// lines differ between console/ and mobile/ and neither may carry
+				// the other's.
+				consoleDirName + "/src/main.ts":                    noticeText("// ", "", consolePointer) + "export const main = 1;\n",
+				consoleDirName + "/src/app.css":                    noticeText("/* ", " */", consolePointer) + "a {}\n",
+				consoleDirName + "/src/index.html":                 "<?xml version=\"1.0\"?>\n" + noticeText("<!-- ", " -->", consolePointer) + "<html></html>\n",
+				consoleDirName + "/package.json":                   "{}\n",
+				consoleDirName + "/package.json" + eeSiblingSuffix: noticeText("", "", consolePointer),
+				consoleDirName + "/build/entitlements.plist":       "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" + noticeText("<!-- ", " -->", consolePointer) + "<plist></plist>\n",
+				consoleDirName + "/.gitignore":                     noticeText("# ", "", consolePointer) + "dist/\n",
+				consoleDirName + "/scripts/pack.sh":                "#!/bin/sh\n" + noticeText("# ", "", consolePointer),
+				mobileLicenceFile:                                  licenceFixture,
+				mobileDirName + "/src/a.js":                        noticeText("// ", "", mobilePointer) + "export const a = 1;\n",
+				mobileDirName + "/app.json":                        "{}\n",
+				mobileDirName + "/app.json" + eeSiblingSuffix:      noticeText("", "", mobilePointer),
+				mobileDirName + "/.gitignore":                      noticeText("# ", "", mobilePointer) + "node_modules/\n",
+			},
+			none: true,
+		},
+		{
+			name:  "a console file with no notice at all",
+			files: map[string]string{consoleDirName + "/src/main.ts": "export const main = 1;\n"},
+			want:  []string{consoleDirName + "/src/main.ts: " + notTheNotice},
+		},
+		{
+			name: "a mobile file carrying the console's pointer instead of its own",
+			files: map[string]string{
+				mobileDirName + "/src/a.js": noticeText("// ", "", consolePointer) + "export const a = 1;\n",
+			},
+			want: []string{mobileDirName + "/src/a.js: " + notTheNotice},
+		},
+		{
+			name:  "a console JSON file whose sibling is named but empty",
+			files: map[string]string{consoleDirName + "/package.json": "{}\n", consoleDirName + "/other.json" + eeSiblingSuffix: noticeText("", "", consolePointer)},
+			want:  []string{consoleDirName + "/package.json: this file type carries no comment syntax"},
+		},
+		{
+			name:  "a mobile asset with no sibling",
+			files: map[string]string{mobileDirName + "/assets/icon.png": "\x89PNG\r\n"},
+			want:  []string{mobileDirName + "/assets/icon.png: this file type carries no comment syntax"},
+		},
+		{
+			name: "a mobile file whose notice sits below its shebang",
+			files: map[string]string{
+				mobileDirName + "/scripts/run.sh": noticeText("# ", "", mobilePointer) + "#!/bin/sh\n",
+			},
+			want: []string{mobileDirName + "/scripts/run.sh: a shebang on line 3 rather than the first line"},
+		},
+		{
+			name:  "a symlink under the console",
+			links: map[string]string{consoleDirName + "/alias.ts": "src/main.ts"},
+			want:  []string{consoleDirName + "/alias.ts: a symlink under a licence directory"},
+		},
+		{
+			name:         "a tracked console file deleted from the working tree",
+			trackedFiles: []trackedFile{{path: consoleDirName + "/src/main.ts", mode: "100644"}},
+			none:         true,
+		},
+		{
+			name:         "a tracked ee/ file deleted from the working tree",
+			trackedFiles: []trackedFile{{path: "ee/x.go", mode: "100644"}, {path: eeLicenceFile, mode: "100644"}},
+			none:         true,
 		},
 	} {
 		t.Run(p.name, func(t *testing.T) {
@@ -1120,7 +1295,7 @@ func TestEEBoundaryScanCatchesPlantedViolations(t *testing.T) {
 // plantTree writes one plant as a tree under t.TempDir() and answers it with
 // the tracked ee/ list its scan is handed. Every plant carries a go.mod,
 // because the module path the scan checks imports against is read from it.
-func plantTree(t *testing.T, p plant) (string, []eeFile) {
+func plantTree(t *testing.T, p plant) (string, []trackedFile) {
 	t.Helper()
 	root := t.TempDir()
 	if _, ok := p.files["go.mod"]; !ok {
@@ -1140,10 +1315,10 @@ func plantTree(t *testing.T, p plant) (string, []eeFile) {
 			t.Fatal(err)
 		}
 	}
-	if p.eeFiles != nil {
-		return root, p.eeFiles
+	if p.trackedFiles != nil {
+		return root, p.trackedFiles
 	}
-	return root, treeEEFiles(t, root)
+	return root, treeNoticeFiles(t, root)
 }
 
 func writeFixture(t *testing.T, root, name string, body []byte) {
@@ -1157,16 +1332,25 @@ func writeFixture(t *testing.T, root, name string, body []byte) {
 	}
 }
 
-// treeEEFiles lists everything under a planted tree's ee/, the way a committed
-// tree's `git ls-files -s ee/` would: no directory is skipped, and a symlink
-// is marked with the mode git records for one.
-func treeEEFiles(t *testing.T, root string) []eeFile {
+// treeNoticeFiles lists everything under a planted tree's licence directories,
+// the way a committed tree's `git ls-files -s` would: no directory is skipped,
+// and a symlink is marked with the mode git records for one.
+func treeNoticeFiles(t *testing.T, root string) []trackedFile {
 	t.Helper()
-	var out []eeFile
-	err := filepath.WalkDir(filepath.Join(root, eeDirName), func(p string, d fs.DirEntry, err error) error {
+	var out []trackedFile
+	for _, dir := range []string{eeDirName, consoleDirName, mobileDirName} {
+		out = append(out, treeNoticeFilesIn(t, root, dir)...)
+	}
+	return out
+}
+
+func treeNoticeFilesIn(t *testing.T, root, dir string) []trackedFile {
+	t.Helper()
+	var out []trackedFile
+	err := filepath.WalkDir(filepath.Join(root, dir), func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if os.IsNotExist(err) {
-				return nil // a plant with no ee/ at all: its tracked list is empty
+				return nil // a plant with no such directory at all: it contributes nothing
 			}
 			return err
 		}
@@ -1181,7 +1365,7 @@ func treeEEFiles(t *testing.T, root string) []eeFile {
 		if d.Type()&fs.ModeSymlink != 0 {
 			mode = symlinkMode
 		}
-		out = append(out, eeFile{path: filepath.ToSlash(rel), mode: mode})
+		out = append(out, trackedFile{path: filepath.ToSlash(rel), mode: mode})
 		return nil
 	})
 	if err != nil {
