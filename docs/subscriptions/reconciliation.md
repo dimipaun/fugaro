@@ -1,9 +1,11 @@
 # Subscriptions: reconciliation
 
-Checked against `origin/main` at `d9b675a31`, 2026-10-27, which holds counsel's licence text
+Checked against `origin/main` at `252b5c46a`, 2026-10-27, which holds counsel's licence text
 (`ee/LICENSE`, `console/LICENSE.md`, `mobile/LICENSE.md`, #1128), the contributor licence agreement
 (`docs/licensing/CLA.md`) and the Subscription Terms draft for counsel
-(`docs/licensing/subscription-terms.md`, #1131). **Every decision below is answered by the owner
+(`docs/licensing/subscription-terms.md`: first draft #1131, **amended to the owner's answers by
+#1146**, licensing task L4.5, done). Where a finding below describes the first draft, it says so;
+T19 states what the amended draft settles and what it leaves. **Every decision below is answered by the owner
 (2026-10-27); nothing is implemented, and no task is approved.** Where this file disagrees with
 [spec.md](spec.md), this file wins. Nothing here is legal advice: statements about licence terms are
 facts found in the repository or in a published text, stated for the owner and counsel to weigh.
@@ -19,12 +21,12 @@ go-to-market work's D400–D429 and Checks 160–169 (`docs/go-to-market/README.
 credentials work's D360–D389 and Checks 145–154, on `main` and in the docs of every open PR.
 **D430–D448** are written and answered; **D449–D459** are reserved and unused. **Checks 170–179**
 are named by the plan, owner-run and not run. Findings are
-**F1–F47**, resolutions **R1–R6**, tensions **T1–T23** (T1–T9 from the first reading, T10–T23 from
+**F1–F47**, resolutions **R1–R6**, tensions **T1–T26** (T1–T9 from the first reading, T10–T26 from
 the answers), the owner's answers to the Terms draft's questions **B1–B17**, UNVERIFIED **U1–U12**.
 
 ## Headline: spec concept → what the repository already has
 
-| Spec concept | What exists at `d9b675a31` |
+| Spec concept | What exists at `252b5c46a` |
 | --- | --- |
 | Paid components under the Functional Source License (FSL), MIT after two years | Counsel's business licence of 2026-10-27, one text in `ee/LICENSE`, `console/LICENSE.md` and `mobile/LICENSE.md`: production use needs a subscription for the correct number of user seats (1.1), development and testing are free (3.1), no time conversion, no competing-use clause (F1, F2). **Kept (D431)** |
 | Core stays MIT; paid code in its own directory with its own licence | Exists: root `LICENSE` (MIT), `LICENSING.md`, `ee/` with its licence and README, `internal/eeboundary/boundary_test.go`, and the one allowed route `cmd/fugaro/ee_on.go` → `ee/register` (D303 as amended), which **does not exist yet**: `ee/` holds no code (F3) |
@@ -75,15 +77,16 @@ No release under it exists: the latest console tag is `console-v0.112.0` (MIT), 
 subscription under the Terms or a licence change (T13).
 
 **F5 — Wrong: the seat definition.** The licence: "A user seat is one person who uses the
-Software, as further described in the Subscription Terms" (1.1). The Terms draft §5.1: a person
-uses the Software when they "run or operate any part of it in Production Use". The licence's
+Software, as further described in the Subscription Terms" (1.1). The first Terms draft's §5.1 counted
+a person who "run[s] or operate[s] any part of it in Production Use"; the amended §5.1 states D433's
+rule ("Every person who launches Jobs for the Customer, by any means") as a pricing rule. The licence's
 Software is the console, the app and `ee/` only, so a person who launches jobs with the MIT CLI
 uses no licensed Software. *Consequence:* D433 makes the seat a pricing rule of the Terms (T14).
 
 **F6 — Wrong: viewer/operator/admin roles exist.** None does:
 - **The console** has no sign-in: it spawns the installed `fugaro` with the operator's ambient
   cloud identity (`docs/design/desktop-console.md` §1, §3.1) and treats every identity as a
-  possible admin (§2.2, D14).
+  possible admin (§3, rule 6 of §3.4, D14).
 - **The CLI** reads `terraform.launchers` and `terraform.operators` (`operatorMember`,
   `launcherMember` in `internal/cli/roles.go`) only to choose what a table shows; they grant
   nothing.
@@ -133,10 +136,11 @@ refusal (`internal/credsvc/audit.go`). Both MIT and released. *Consequence:* D44
 **F14 — Exists: the Watch dashboard is core.** `fugaro watch` is MIT; the console is its graphical
 form and is under the business licence from 0.113.0. *Consequence:* none beyond D432.
 
-**F15 — Rule: lapse.** Licence 11.1 ends production use at lapse; the Terms draft §10.4 offers
-Option A (that default) and Option B (perpetual fallback); §17.4 adds stopping use and destroying
-copies, keeping development and testing copies. *Consequence:* D436 chose no fallback but a
-read-only state, which neither option describes (T12).
+**F15 — Rule: lapse.** Licence 11.1 ends production use at lapse. The first Terms draft's §10.4
+offered Option A (that default) and Option B (perpetual fallback). The amended §10.4 removes Option
+B, grants a 30-day grace period and a read-only use of the console and the app in which a User
+"cannot launch, cancel or change anything", and §17.4 carves the read-only use out of the
+destruction duty. *Consequence:* D436 is drafted; what "read-only" keeps is still open (T12).
 
 **F16 — Gap: the licence key.** D308: an Ed25519-signed claim set verified offline, key id for
 rotation, grace, no revocation, no phone-home; the check in `ee/` behind `ee/register`. The design
@@ -174,17 +178,17 @@ the owner personally; the licence names the Licensor only through the Terms (§1
 root `LICENSE` file" and anyone to whom that holder transfers the Project or its copyright.
 *Consequence:* D441 with B9 (assign now); T18.
 
-**F22 — Gap: the merchant of record.** The Terms draft is a direct Licensor–Customer agreement
-(§1.1) with tax clauses that assume the Licensor invoices (§7.3). *Consequence:* D442; the Terms
-need a merchant-of-record path for Team checkout (T19).
+**F22 — Exists (amended draft): the merchant of record.** The first draft was a direct
+Licensor–Customer agreement whose tax clause assumed the Licensor invoices; the amended draft adds
+§1.4 ("Who sells") and a merchant-of-record path in §7.3. *Consequence:* D442 is drafted; the
+merchant's buyer terms remain U3.
 
 **F23 — Exists: no competing-use clause is needed.** The business licence grants nothing beyond
 development, testing and subscribed production use (5.1), and the Terms §3.7 forbids a hosted
 offering. *Consequence:* none.
 
-**F24 — Exists: true-up and audit.** Terms draft §5.5 (true-up) and §5.6 (self-certification, an
-auditor only as fallback, a bracketed under-count threshold) match the spec, except that the draft
-applies §5.6 to every subscription. *Consequence:* D443 (b): §5.6 becomes Enterprise-only (T19).
+**F24 — Exists (amended draft): true-up and audit.** The amended draft has §5.6 "True-up (Team)"
+and §5.7 "Audit (Enterprise)", as D443 (b) and B12 say. *Consequence:* none.
 
 **F25 — Rule: commercial material in a public repository.** D403 keeps it in the private business
 repository. *Consequence:* D430; `spec.md` is an excerpt.
@@ -199,9 +203,9 @@ testing only, so free production use comes from the Agreement. Terms §1.3 sells
 organisations only. An open-source maintainer applying with a repository URL and an email may be
 an individual. *Consequence:* D445; T15.
 
-**F28 — Gap: supported versions.** `SECURITY.md` "Supported versions": "Only the latest 0.x
-release is supported." The Terms draft §10.2 brackets it. B8 answers "current and previous minor
-release". *Consequence:* T23.
+**F28 — Rule: supported versions.** `SECURITY.md` "Supported versions": "Only the latest 0.x
+release is supported." The amended Terms §10.2: "The Licensor supports the current minor release
+and the one before it" (B8). *Consequence:* T23.
 
 **F29 — Exists: the CLA allows relicensing.** CLA §3.2 lets the Project Owner relicense
 contributions under any terms. *Consequence:* no CLA change for D434/D444 moves.
@@ -253,18 +257,19 @@ in the four licence files") changes `ee/LICENSE`, `console/LICENSE.md`, `mobile/
 `LICENSES/LicenseRef-Fugaro-Enterprise.txt`, `LICENSING.md`, `ee/README.md`,
 `docs/licensing/subscription-terms.md`, `docs/licensing/implementation-plan.md`,
 `docs/licensing/reconciliation.md` and `internal/cli/docs_ee_reserved_test.go`; the copyright-line
-commit of B9, the Terms amendment run and the licence-document changes touch the same files. *Consequence:* sequencing (T18).
+commit of B9, the Terms revision run and the licence-document changes touch the same files. *Consequence:* sequencing (T18).
 
-**F37 — Gap (new): post-lapse read-only is not a licence right.** Licence 11.1 ends the production
-right "under clause 1" at lapse, and Terms §17.4 says the Customer stops Production Use. A console
-used read-only against a production installation is still production use. *Consequence:* the
-read-only state needs an express grant in the Terms, or it is unlicensed use the product invites
-(T12).
+**F37 — Rule (new): post-lapse read-only is not a licence right by itself.** Licence 11.1 ends the
+production right "under clause 1" at lapse, and a console used read-only against a production
+installation is still production use. The amended Terms §10.4 now grants it expressly, with a note
+asking counsel to confirm it fits the licence (counsel question 12). *Consequence:* counsel (S8.4).
 
 **F38 — Rule (new): D302's two subjects are reversed in part.** D302 kept "console, mobile,
 coordinator and central orchestrators" in core MIT; D311 later put the console and the app under
 the business licence; D434 and D435 now move the coordinator's future versions and the orchestrators.
-`ee/README.md`, `.claude/rules/ee.md` and `LICENSING.md` state D302's "nothing moves out".
+`ee/README.md` ("not a place for anything that lives in the core today") and `.claude/rules/ee.md`
+("Nothing moves out of the core into `ee/` (D302)") state it; `LICENSING.md` reserves `ee/` for
+"net-new organisation features".
 *Consequence:* those three files change with S0.3, and D302 is amended (T10, T20).
 
 **F39 — Gap (new): free keys expire.** D440 issues a three-month commercial evaluation key
@@ -329,7 +334,7 @@ in S3.1; the limits stated in the key section below.
 | T5 | Which product is free | **Closed by D432** (the MIT core, plus one evaluation seat per non-subscribing organisation, plus open-source teams) |
 | T6 | Team features already MIT | **Replaced by T10, T11, T20** |
 | T7 | Seller, licensor, copyright holder | **Narrowed by D441 and B9**; sequencing is T18 |
-| T8 | Commercial questions | **Closed by D443** (figures private); the startup discount and programs are in T19's amendment list |
+| T8 | Commercial questions | **Closed by D443** (figures private); the startup discount and programs are in the amended Terms §4.3 |
 | T9 | "Never block work" against a licence state | **Replaced by T12** |
 
 ## Resolutions (one defensible answer each)
@@ -359,7 +364,7 @@ answers are private (D430).
 
 | # | Question | Recommendation and reason | Alternative and its cost | Owner's answer |
 | --- | --- | --- | --- | --- |
-| **D430** | Where does this spec live? (F25) | **An excerpt here**; price points, billing, refunds, SLA hours, the contracting entity and the conflict-of-interest note in the private business repository. *Reason:* D403 | Publish verbatim: costs a public pricing plan before it is validated | **2026-10-27: the recommendation.** A short excerpt here; prices, billing, refunds, SLA hours, the contracting entity and the conflict-of-interest note in the private business repository. *Why:* the repository is public and D403 keeps business material private. `spec.md` is that excerpt |
+| **D430** | Where does this spec live? (F25) | **An excerpt here**; price points, billing, refunds, SLA hours, the contracting entity and the conflict-of-interest note in the private business repository. *Reason:* D403 | Publish verbatim: costs a public pricing plan before it is validated | **2026-10-27: the recommendation.** A short excerpt here; prices, billing, refunds, SLA hours, the contracting entity and the conflict-of-interest note in the private business repository. *Why (inferred; the owner gave none):* the repository is public and D403 keeps business material private. `spec.md` is that excerpt |
 | **D431** | Licence for `ee/`, `console/`, `mobile/` (T1) | **Keep counsel's business licence; drop the FSL.** *Reason:* the FSL frees internal production use (F2) | FSL-1.1-MIT or closed binaries | **2026-10-27: the recommendation.** Keep counsel's licence; drop the FSL. *Why:* approved by counsel and not revisited |
 | **D432** | Is the console and app free for one user? (T2, T5) | **A no-fee Community plan in the Terms, one seat per organisation**, counsel confirming clause 1.1 | Paid from seat one | **2026-10-27: partly not the recommendation.** One free seat per organisation, **only for an organisation with no subscription**, intended for proof of concept and evaluation; a subscribing organisation pays for every user and gets no free seat. Teams whose projects are entirely public under an OSI licence get Team free. Counsel confirms it fits the licence. *Why:* the owner replaced an earlier "free for any individual" answer that conflicted with the seat model. Follow-through: T13, T15 |
 | **D433** | What is a seat? (T4) | **Keep the licence's words; read-only users excluded in the Terms**; every launcher, operator or admin through the Software is a seat | The spec's wording incl. CLI launchers: costs a seat the licence cannot require | **2026-10-27: not the recommendation.** A seat is **anyone who launches jobs, by any means** (console, mobile, CLI, agent), defined as a **pricing rule in the Subscription Terms**; read-only viewers are free once the viewer role exists (D446). *Why (owner's note):* the CLI is MIT, so this binds only subscribing organisations; counsel words it. Follow-through: T14, T21 |
@@ -381,29 +386,30 @@ answers are private (D430).
 
 ## The Terms draft's owner questions (B1–B17)
 
-The owner's answers of 2026-10-27 to the seventeen questions at the end of
-`docs/licensing/subscription-terms.md`, numbered as there. They are inputs to the amendment run
-(T19, S0.4); the Terms draft itself is unchanged by this PR.
+The owner's answers of 2026-10-27 to the seventeen owner questions of the first Terms draft
+(#1131), numbered as there. The amended draft on `main` (#1146) applies them and keeps two open (the
+Enterprise seat floor, the interest rate); the last column names the amended clause. Where the
+amended draft prints a figure that D430 sends to the private repository, the cell says so (T24).
 
-| # | Terms question | Owner's answer (non-price) | Recommended? | Clause it reaches |
+| # | Terms question | Owner's answer (non-price) | Recommended? | Amended clause |
 | --- | --- | --- | --- | --- |
 | B1 | Pricing model and tiers | Community (free), Team (self-serve, per seat), Enterprise (annual contract, invoiced) | Yes | §4.1 |
-| B2 | Metric | Per seat, as D433 defines it | Yes | §2 "User", §5.1 |
-| B3 | Price and currency | Two currencies, fixed prices in each; the Enterprise minimum. **Price: private** | n/a | §4.1, §7.1 |
-| B4 | Billing period | Team monthly or annual; Enterprise annual only; additions prorated from the day added; reductions at the next renewal | Yes | §4.1, §5.3, §5.4 |
-| B5 | Term and renewal | Monthly renews monthly, cancel any time, effective at period end; annual auto-renews for a year unless cancelled before a notice period; Enterprise per contract. **Figures: private** | Yes | §6.1–§6.3 |
-| B6 | Free tier or trial | The three-month commercial key (D440) is the self-serve single-seat trial; multi-seat Team trials on request through the manual queue | **No (not the recommendation)** | §4.1 "Trial", new free-plan clause |
-| B7 | After lapse | As D436 | **No (not the recommendation)** | §10.4, §17.4, §8.2 |
-| B8 | Support and SLA | Community: GitHub issues; Team: email; Enterprise: severity-based targets; no 24/7; targets, not guarantees; service credits only; supported: the current and the previous minor release. **Hours and targets: private** | Yes | §10.1, §10.2 |
+| B2 | Metric | Per seat, as D433 defines it | Yes | §5.1 |
+| B3 | Price and currency | Two currencies, fixed prices in each; the Enterprise minimum. **Price: private** | n/a | §4.2, §7.1 (brackets) |
+| B4 | Billing period | Team monthly or annual; Enterprise annual only; additions prorated from the day added; reductions at the next renewal | Yes | §5.4, §5.5 |
+| B5 | Term and renewal | Monthly renews monthly, cancel any time, effective at period end; annual auto-renews for a year unless cancelled before a notice period; Enterprise per contract. **Figures: private here; the amended §6.2 prints the notice period (T24)** | Yes | §6.1–§6.3 |
+| B6 | Free tier or trial | The three-month commercial key (D440) is the self-serve single-seat trial; multi-seat Team trials on request through the manual queue. *Owner's note:* resolves the conflict with D440 | **No (not the recommendation)** | §4.4 |
+| B7 | After lapse | As D436 | **No (not the recommendation)** | §10.4, §17.4 |
+| B8 | Support and SLA | Community: GitHub issues; Team: email; Enterprise: severity-based targets; no 24/7; targets, not guarantees; service credits only; supported: the current and the previous minor release. **Hours and targets: private here; the amended §10.1 prints them (T24)** | Yes | §10.1, §10.2 |
 | B9 | Contracting entity | A new entity; the copyright assigned to it **now**, while its value is low; the accountant confirms the mechanics | Yes | §1.1, the four copyright lines |
 | B10 | Negotiated agreements | Enterprise may sign its own agreement | Yes | §2 "Agreement", §23 |
-| B11 | Refunds and warranty | Refund rules per plan (**figures: private**); no warranty beyond "as is" | Yes | §7.4, §13.3 (dropped) |
-| B12 | Audit | Enterprise: the formal audit of §5.6 with the values its brackets already hold; Team: annual self-certified true-up, no audit | Yes | §5.5, §5.6 |
-| B13 | Free use and a startup discount | Free programs per D445; a startup discount for small companies for a limited period, expiring automatically. **Discount, period and eligibility figures: private** | **No (not the recommendation)** | new programs clause |
-| B14 | Seat rules | A seat may move to another person at most once per period, except on departure (**period: private**); no Team minimum; Enterprise has a floor (**amount: open, private**); pull-request reviewers who never use the software need no seat | Yes | §5.1 note, §5.2, §4.1 |
+| B11 | Refunds and warranty | Refund rules per plan (**figures: private here; the amended §7.4 prints the refund window, T24**); no warranty beyond "as is" | Yes | §7.4, §13.3 |
+| B12 | Audit | Enterprise: a formal audit at most once a year on notice, at the Licensor's cost below a threshold; Team: annual self-certified true-up, no audit | Yes | §5.6, §5.7 |
+| B13 | Free use and a startup discount | Free programs per D445; a startup discount for small companies for a limited period, expiring automatically. **Discount, period and eligibility figures: private** | **No (not the recommendation)** | §4.3 (brackets) |
+| B14 | Seat rules | A seat may move to another person at most once per period, except on departure (**period: private here; the amended §5.3 prints it, T24**); no Team minimum; Enterprise has a floor (**amount: open, private**); pull-request reviewers who never use the software need no seat | Yes | §5.1, §5.3, §4.2 |
 | B15 | Affiliates and publicity | Affiliates may buy under one Order Form; no use of a customer's name or logo without written consent | Yes | §3.4, §20 |
 | B16 | Patent and telemetry | No patent licence (Option A); any telemetry opt-in and documented | Yes | §3.6, §9.3 |
-| B17 | Grace period and interest | A **30-day grace period** after key expiry before D436 applies; late-payment interest at a modest fixed rate that **counsel sets** | Yes | §8.2, §7.2 |
+| B17 | Grace period and interest | A **30-day grace period** after key expiry before D436 applies; late-payment interest at a modest fixed rate that **counsel sets** | Yes | §8.2, §10.4, §7.2 |
 
 ## Open tensions for the owner
 
@@ -449,7 +455,7 @@ free; (b) move report and digest together; (c) keep both MIT (reverses the answe
 **T12 — (D436) No fallback; read-only after the grace period.** Facts: licence 11.1 ends the
 production right at lapse, consistent with no fallback (F15); but **read-only use of the console
 against a production installation is still production use**, so the read-only state needs an
-express post-lapse grant in the Terms (F37); Terms §10.4 Option B and §17.4 must change; the spec's
+express post-lapse grant in the Terms (F37), which the amended §10.4 and §17.4 now draft; the spec's
 "never block work" and the first proposal's D437 are reversed for the console and the app; the MIT
 CLI keeps launching and cancelling. **The console is read-only already** (F20): it launches,
 cancels and kills nothing, so a lapse can only remove views. Open: which views survive (live
@@ -459,7 +465,10 @@ the first gated action; the app's **cancel**, which goes through the mailbox to 
 paywall safety", R4); what a console or app with **no key** shows, including a 0.112.0 user
 upgrading (F43); what a free evaluator's expired key does (F39). Choices: (a) read-only keeps every
 current view and the app's cancel; (b) read-only keeps the free core's views (watch, logs) and
-hides the paid ones; (c) the console and the app stop entirely and the Terms say so.
+hides the paid ones; (c) the console and the app stop entirely and the Terms say so. **The amended
+Terms §10.4 already words read-only as "cannot launch, cancel or change anything"**, which would
+take the app's cancel away (against R4); that wording is a draft for counsel, not the owner's
+ruling on this tension, and the owner rules on it.
 
 **T13 — (D438, D440) A hosted signing service and key website.** A new Fugaro-hosted component
 with a new trust boundary: whoever reaches the signing key mints any key for any tier. Facts and
@@ -471,8 +480,9 @@ the service identity the only signer, no agent identity with any access, a key i
 open-source check reads public repositories through the code host's API but cannot see whether a
 project has other, private repositories, so "all repositories public" rests on the applicant's word.
 (3) **Personal data** collected at sign-up (emails, company domains, repository URLs): PIPEDA and
-GDPR, a privacy notice, retention, access and deletion requests; Terms §9.5 covers customers'
-billing data, not applicants. (4) **Uptime**: a promise for issuance only; validation is offline
+GDPR, a privacy notice, retention, access and deletion requests; the amended Terms §8.4 covers
+sign-up data (counsel question 14); the merchant of record as a recipient of buyers' data is in no
+notice yet. (4) **Uptime**: a promise for issuance only; validation is offline
 (R2 amended). (5) **Hosting and operation**: where it runs and who operates it are unanswered; the
 spec's "no Fugaro-hosted dependency" becomes "no hosted dependency at runtime". (6) **Identity**:
 the console has no sign-in, so the key binds to an organisation and a seat count, not a person
@@ -515,7 +525,10 @@ console does not have (F6) and the unbuilt `fugaro pair`. D433's free viewer wai
 **T17 — (D448) Counsel before console 0.113.0 and the first mobile release.** Console 0.113.0 is
 the first console under the business licence (`LICENSING.md`), and the mobile app's first store
 release is the app's first. Both are **blocked on counsel's sign-off of D432, D433 and D436**, and
-on S6 (the read-only state) if it must ship with them.
+on S6 (the read-only state) if it must ship with them. And since every console and app user holds
+a key (D438), a release that enforces one also waits until keys can be issued: the signing service
+live (S3.7) and the production public key in the verifiers (S2.9). The owner chooses whether
+0.113.0 ships before key enforcement (licence only) or with it.
 
 **T18 — (D441, B9) Copyright to the new entity now.** One commit must change the copyright line in
 `LICENSE` (which, through the CLA's definition, also changes the CLA's Project Owner),
@@ -526,40 +539,26 @@ the website, the Paddle account and the signing service's issuer follow. Open PR
 same licence files (F36) and should land or close first. Counsel: whether the approved licence
 must name the entity as Licensor. Accountant: the mechanics and the tax treatment of the assignment.
 
-**T19 — The Terms draft against the answers.** Every clause of
-`docs/licensing/subscription-terms.md` that must change, for counsel and a later amendment run
-(S0.2, S0.4); this PR does not rewrite the Terms:
+**T19 — The amended Terms against this reconciliation.** `main`'s #1146 (licensing L4.5, done)
+already amends `docs/licensing/subscription-terms.md` to the owner's answers: the Licensor and the
+merchant of record (§1.1, §1.4, §7.3), the free plans and discounts (§4.3, figures bracketed), the
+trial (§4.4), the seat rule (§5.1), roles (§5.2), true-up and audit (§5.6, §5.7), the seat estimate
+(§5.8), renewal (§6), refunds (§7.4), every user's key and its issuing (§8.1–§8.4), support and
+supported versions (§10.1, §10.2), the lapse (§10.4, §17.4), no warranty (§13.3), and counsel
+questions 12–18. What it leaves, or decides ahead of the owner, for counsel and a later revision
+run (S0.2, S0.4); this PR does not edit the Terms:
 
-| Clause | Change the answers require | From |
+| Clause on `main` | What remains | From |
 | --- | --- | --- |
-| Header, §1.1 and its note | The Licensor is the new entity; the copyright is assigned | D441, B9 |
-| §1.3 | Whether open-source maintainers and academics who are individuals may hold a no-fee key | D445, T15 |
-| §2 "Subscription", "User", "User Seat" | A no-fee subscription; a seat is anyone who launches jobs by any means, including the MIT CLI, as a pricing rule; viewers excluded once the role exists | D432, D433 |
-| §2 new "Organisation" | Defines one organisation for the free seat and the one-per-domain rule | D432, D440 |
-| §3 new free-plan clause | One free evaluation seat per organisation with no subscription; open-source teams Team free; academic free; nonprofit and startup discounts | D432, D445, B13 |
-| §3.4 owner choice | Affiliates may buy under one Order Form | B15 |
-| §3.6 | Option A (no patent licence); the note removed | B16 |
-| §4.1 | Tiers; currencies; Team without minimum; Enterprise floor; trial = the three-month key and multi-seat on request | B1, B3, B6, B14 |
-| §5.1 and its note | The seat as D433; pull-request reviewers who never use the software need no seat | D433, B14 |
-| §5.2 | The reassignment limit, except on departure | B14 |
-| §5.3, §5.4 | Prorated additions; reductions at renewal | B4 |
-| §5.5, §5.6 | True-up self-certified yearly for Team; §5.6 audit Enterprise-only | D443, B12 |
-| §6.1–§6.3 | Monthly and annual renewal, the notice period | B5 |
-| §7.1, §7.2 | Currencies; interest rate set by counsel | B3, B17 |
-| §7.3 and its note | Team sold through the merchant of record, which handles its sales taxes; Enterprise invoiced directly; GST/HST questions | D442 |
-| §7.4 | Refund rules per plan | B11 |
-| §8.1, §8.2 | Every user's key, from a hosted issuing service; offline validation; the 30-day grace; read-only after it; the covered-versions date's role (O4) | D436, D438, D440, B17 |
-| §8.3 | The key binds to an organisation; sharing among the organisation's users | F35 |
-| §9.3 | Telemetry opt-in and documented (commitment kept); the issuing service is not telemetry | B16 |
-| §9.5 and its note | Personal data collected at key sign-up; the privacy notice | D440, T13 |
-| §10.1, §10.2 | Support per tier; supported: current and previous minor | B8 |
-| §10.4 | Option A plus an express read-only grant after the grace period | D436, F37 |
-| §13.3 | No limited warranty; "as is" only | B11 |
-| §17.1 | Suspension and keys under the issuing service | D440 |
-| §17.4 | Effect of lapse: read-only, not stop-and-destroy, for the console and the app | D436 |
-| §20 | Publicity: written consent only (the bracketed exception dropped) | B15 |
-| New: merchant-of-record path | Team checkout terms with the merchant's buyer terms | D442 |
-| Questions sections | Removed after counsel answers | — |
+| §10.4 | Read-only "cannot launch, cancel or change anything" takes the app's cancel away; the owner rules on T12 first | T12, R4 |
+| §10.2 | "up to the covered-versions date of its License Key" gives the date a role (gating upgrades within a paid term), which O4 leaves to the owner | O4, F40 |
+| §8.5 | "outside the User it was issued to" binds a key to a person; the product can bind it only to an organisation | F35, F47 |
+| §8.3 | "Paid Subscriptions: keys for the seats bought, after purchase": no renewal, seat-change or cancellation path | F42, T25, T26 |
+| §10.1, §6.2, §7.4, §5.3 | Print the support targets and the renewal, refund and reassignment periods that D430 sends to the private repository | T24 |
+| §1.3 | Business-only, while an open-source maintainer applying with a repository URL may be an individual | T15 |
+| §8.4, §9.5 | The merchant of record as a recipient of buyers' personal data | T13 |
+| §3.3 note | The released binary carrying `ee/` code under one key-gated build is not addressed | T21 |
+| Counsel questions 12–18 | Cover O3; S0.2 adds T15, T21, T23 and the rows above | O3 |
 
 **T20 — (D435) Orchestrators in the business-licensed folder against PR #831.** #831 builds P2 of
 the central orchestrators (the access record, the `orchestrators` block, `fugaro orchestrator
@@ -587,6 +586,23 @@ the current and the previous minor release for the paid tiers. Whether `SECURITY
 the core too, or the Terms carry their own rule for the Software only. `SECURITY.md` is pinned by
 docs tests. The plan carries it to counsel (S0.2) and to a `SECURITY.md` task on the owner's
 ruling (S0.5).
+
+**T24 — (D430) Figures the amended Terms print.** D430 sends SLA hours, refunds and billing figures
+to the private repository; the amended Terms on `main` print the support targets and hours
+(§10.1), the annual renewal's cancellation notice (§6.2), the refund window (§7.4) and the seat
+reassignment period (§5.3). They will be public once the Terms are published, but D430 keeps them
+out of this folder. Choices: the owner accepts them in the Terms draft (they are terms a buyer must
+see); or the Terms bracket them as Order Form items until publication.
+
+**T25 — Refunds against keys that cannot be revoked.** A Team annual buyer who takes the refund
+(§7.4) keeps a key valid until it expires, because D308 has no revocation. Choices: paid keys are
+short-lived and reissued while paid (which sharpens T26); or the limit is accepted and the Terms
+say so.
+
+**T26 — An issuing outage does reach paying customers.** D438's note says an outage blocks only new
+keys, but every renewal and seat change is a new key; an outage longer than the 30-day grace drops
+paying users to read-only. Choices: keys issued well ahead of expiry; a longer grace for paid keys;
+or the owner accepts it and S3.1 states an issuing uptime target.
 
 ## Open items
 
@@ -627,7 +643,7 @@ Extends D308; nothing here is built. The design note is licensing plan L3.1
 
 ## UNVERIFIED
 
-Checked against `origin/main` at `d9b675a31` on 2026-10-27.
+Checked against `origin/main` at `252b5c46a` on 2026-10-27.
 
 - **U1** — (closed with T1) What "the date we make the Software available" means in the FSL.
 - **U2** — Whether a no-fee subscription and a Terms-level exclusion of read-only users satisfy
