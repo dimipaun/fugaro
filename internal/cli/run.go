@@ -464,23 +464,28 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 // already-leased state and print its notes once per attempt instead of once
 // per batch.
 func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec, reused bool, warn io.Writer, skipBudget bool) (launchResult, error) {
-	// --no-compression, resolved once for every launch shape (a first run, a
-	// follow-up, a review, a retry, each attempt of a batch), the way the
-	// title and the plan task are: it writes the task's own field only when
-	// the resolved configuration turns compression on, so a launch that has
-	// nothing to override carries no field and stays byte-identical to what
-	// the previous release wrote. Written before createTask below, so a
-	// repeated --run-id with a flag the stored task does not carry is
-	// refused as a different task rather than silently dropped.
-	if o.noCompression && compressionRequested(ctx, env, spec) {
-		spec.CompressionOff = true
-	}
 	var layerData []byte
 	var err error
 	if o.retry == "" && !reused {
 		if layerData, err = embedProjectLayer(ctx, env, spec, warn); err != nil {
 			return launchResult{}, err
 		}
+	}
+	// Whether the configuration this run will read turns compression on,
+	// resolved once for every launch shape (a first run, a follow-up, a
+	// review, a retry, each attempt of a batch) and used by both --no-compression
+	// and the image gate below. Read after the layer is embedded, so it is the
+	// resolution the run itself makes.
+	compression := compressionRequested(ctx, env, spec)
+	// --no-compression writes the task's own field only when there is
+	// compression to turn off, the way the title and the plan task are
+	// written: a launch that has nothing to override carries no field and
+	// stays byte-identical to what the previous release wrote. Written before
+	// createTask below, so a repeated --run-id with a flag the stored task
+	// does not carry is refused as a different task rather than silently
+	// dropped.
+	if o.noCompression && compression {
+		spec.CompressionOff = true
 	}
 	s := runstore.Open(env.bucket.Bucket, slug, spec.RunID)
 	// The run-id freshness check, first of everything an --attach launch
@@ -603,7 +608,7 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			// the field, and refuses the file at bootstrap. It fires whether
 			// or not --no-compression is set, since the override turns the
 			// sidecar off and not the key the old runner cannot read.
-			if compressionRequested(ctx, env, spec) {
+			if compression {
 				if err := checkCloneImageSince(env.lc, spec, compressionSince,
 					"agent.compression", "context compression", "", warn); err != nil {
 					return launchResult{}, err
@@ -674,7 +679,7 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			// job's build record because that record names the base image the
 			// image runs the binary of, and it fires whether or not
 			// --no-compression is set (see compressionRequested).
-			if compressionRequested(ctx, env, spec) {
+			if compression {
 				if err := checkImageSince(ctx, env, slug, spec, kind, compressionSince,
 					"agent.compression", "context compression", "", warn); err != nil {
 					return launchResult{}, err
