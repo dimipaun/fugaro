@@ -10,7 +10,7 @@ explicit go; answering a decision approved none of them.
 
 The owner's answers of 2026-10-26 that shape it:
 
-- **D406 is pending** (the notice's timing); D400-D405 are answered.
+- **D406** (the notice's timing): moot; a new licence lands as `ee/LICENSE.md` and the notice follows it in the licensing work.
 - **D400** (not the recommendation): the console, mobile app, coordinator and orchestrators stay where
   they are, to be marked as covered by the `ee/` licence and moved later. Only the note (G5.1) is a task
   here; the notice itself waits on T1.
@@ -43,7 +43,7 @@ The owner's answers of 2026-10-26 that shape it:
 - Numbers: decisions **D400-D429** and checks **160-169** are this work's block, taken above the highest
   decision written (D367) and reserved (up to D389 by the Bitbucket credentials plan) under `docs/` on
   `main` and in open PRs, and above the highest check reserved (154).
-  D400-D405 are written and answered and D406 is written and pending; D407-D429 and checks 163-169 are reserved and unused.
+  D400-D406 are written and answered; D407-D429 and checks 163-169 are reserved and unused.
 
 ## Global constraints and review focus
 
@@ -171,7 +171,7 @@ upstream response carries.
 - **Interfaces:** a separate marketing consent under its own key (not a bump of the analytics key, which would re-ask visitors on every page), asked only on the four campaign paths; loaders for the pixel, the insight tag and the Calendly script that run only
   with that purpose granted and only on the four paths; withdrawal removes the first-party cookies the trackers set (cookies on the vendors' own domains and scripts already loaded persist until a reload, which the privacy text says).
 - **Config change:** `site.yaml` gains the three public identifiers and the origins (as the file's own
-  rule says, load origins are admitted by the consent check, not `allowed_hosts`); the CSP widens site-wide (F18) by exact hosts, no wildcard (O3), each vendor's documented origins, per directive (`script-src`, `img-src`, `connect-src`, `style-src` for Calendly's stylesheet, and a new `frame-src`); the test holds that exact per-directive list. **The owner approves the
+  rule says, load origins are admitted by the consent check, not `allowed_hosts`); the CSP widens site-wide (F18) by exact hosts, each vendor's documented origins, with no wildcard in `script-src` and any other directive that needs one raised to the owner (O3), per directive (`script-src`, `img-src`, `connect-src`, `style-src` for Calendly's stylesheet, and a new `frame-src`); the test holds that exact per-directive list. **The owner approves the
   privacy wording and the rules-file line** before the task merges.
 - **Tests:** the Meta and LinkedIn tags are configured to send the page URL without its query (a test over the loader's configuration); a non-campaign page where a visitor already decided analytics shows no new banner; no request to any of the three before the marketing purpose is granted, including after an
   analytics-only consent; none on a non-campaign page; withdrawal stops them and clears the first-party cookies (for example `_fbp`); the

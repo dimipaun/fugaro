@@ -1,7 +1,7 @@
 # Go-to-market (engineering sections)
 
-**Status: plan only; nothing is implemented; no task approved.** D400-D405 were answered by the owner on
-2026-10-26 (D400 and D405 are not the recommendation); D406 awaits an answer. Each task in the plan still needs
+**Status: plan only; nothing is implemented; no task approved.** D400-D406 were answered by the owner on
+2026-10-26 (D400, D405 and D406 are not the recommendation). Each task in the plan still needs
 the owner's own go.
 
 Spec owner: the repository owner. Spec received 2026-10-26; reconciled against `origin/main` at
@@ -22,7 +22,7 @@ nothing edited and the named design partners left out.
 
 | Numbers | State |
 | --- | --- |
-| **D400-D429** | this work's block. **D400-D405** written and answered 2026-10-26, **D406** written and pending; **D407-D429** reserved and unused. Taken above the highest decision written (D367) and reserved (D389, by the Bitbucket credentials plan) on `main` and in open PRs |
+| **D400-D429** | this work's block. **D400-D406** written and answered 2026-10-26; **D407-D429** reserved and unused. Taken above the highest decision written (D367) and reserved (D389, by the Bitbucket credentials plan) on `main` and in open PRs |
 | **Checks 160-169** | this work's block. **160-162** are named by the plan and owner-run; **163-169** are reserved and unused. The highest check reserved on `main` and in open PRs was 154 |
 
 ## Headline

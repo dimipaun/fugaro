@@ -131,7 +131,7 @@ console is left out.
 | **D403** | Where do the engineering and business sections live? | Split: engineering in `docs/go-to-market/`, business in a private place. Cost: `spec.md` is an excerpt, not verbatim | **2026-10-26: as recommended.** The owner is creating a private repository, `fugaro-business`, for the marketing, sales and business material. This PR holds none of it and no plan task writes to it |
 | **D404** | What does the plan gate on, given "1.0"? | A named launch gate, "launch-ready", on whatever release the owner cuts. Cost: no fixed date | **2026-10-26: as recommended.** The owner picks the version number at the cut |
 | **D405** | GitHub stars on the pages? | Owner-run refresh file. Cost: can go stale | **2026-10-26: NOT the recommendation.** Omit stars until the number is worth showing. *Why:* no data file to keep fresh. The social-proof section ships with design-partner logos only, hidden until one exists |
-| **D406** | Does the per-file `ee/` notice (D400) go in now, or with counsel's licence text? | With counsel's text (T1 option b): the notice then names a licence that exists. Cost: files stay unmarked until L4.1 | **Pending: the owner has not answered.** No task writes a notice; G5.1 records the note only |
+| **D406** | Does the per-file `ee/` notice (D400) go in now, or with counsel's licence text? | With counsel's text (T1 option b): the notice then names a licence that exists. Cost: files stay unmarked until L4.1 | **2026-10-26: not the recommendation (neither option).** The owner says the question is moot: a new licence is about to land as `ee/LICENSE.md`, so the notice can name it. *Why:* counsel's text arrives shortly. No task here writes the notice; it follows the licence, in the licensing work |
 
 **Resolutions (one defensible answer, not questions):**
 
@@ -149,7 +149,7 @@ console is left out.
 
 ## Open tensions and open items for the owner
 
-**T1 (D400 against D302 and the licensing reconciliation; D406 asks).** Files in a repository whose `LICENSE` is
+**T1 (D400 against D302 and the licensing reconciliation; D406 answered).** Files in a repository whose `LICENSE` is
 MIT cannot be marked "covered by the `ee/` licence" until that licence text exists (L4.1 waits on
 counsel), and the console has already been released under MIT, which those copies keep. Choices: (a) mark
 them now with a neutral notice that names `LICENSING.md` and says the licence of these files is
@@ -165,9 +165,9 @@ before the move is the owner's to rule and sits in `fugaro-business`; no task he
 
 **O1.** The business sections are committed locally in `fugaro-business` (`docs/`); pushing them is the owner's.
 
-**O3.** G2.3's CSP additions must name exact hosts: `.claude/rules/website.md` forbids wildcards and `brand.mjs` enforces it, and some vendors document wildcard origins. If a vendor needs one, the owner decides whether to admit it or drop that vendor.
+**O3 (narrowed).** `.claude/rules/website.md` forbids a wildcard in `script-src` (enforced by `test/brand.mjs`). The new vendors' script hosts are expected to be exact (the three vendors are Meta, LinkedIn and Calendly); a wildcard could arise only in `img-src`, `connect-src` or `frame-src`, which that rule does not cover. G2.3 pins exact hosts wherever the vendor allows it and raises to the owner any directive that needs a wildcard.
 
-**O2.** F18: the CSP widens for every page, not the four. Choices: accept it (recommended: the origins are inert without the loader), or change the CSP test to allow a second, path-scoped header, which a browser intersects with the first and so cannot widen. The plan assumes the first; the owner confirms.
+**O2 (answered 2026-10-26: accepted).** F18: the CSP widens for every page, not the four; the origins are inert without the loader, and "those pages only" holds in the loader's path check.
 
 ## UNVERIFIED
 
