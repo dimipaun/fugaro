@@ -582,7 +582,7 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	// (D25: the base branch, which for a first run is not the branch the rest
 	// of the config came from).
 	if r.Rigor != nil {
-		fmt.Fprintf(&b, "Rigor:    %s\n", oneLine(rigorLine(r.Rigor)))
+		fmt.Fprintf(&b, "Rigor:    %s\n", oneLine(r.Rigor.Line()))
 	}
 	if h := d.Halt; h != nil {
 		line := fmt.Sprintf("Halted:   %s (%s) at %s", h.Reason, h.Scope, h.At.UTC().Format(time.RFC3339))
@@ -682,32 +682,6 @@ func spendList(m map[string]float64) string {
 		parts[i] = fmt.Sprintf("%s $%.4f", n, m[n])
 	}
 	return strings.Join(parts, ", ")
-}
-
-// rigorLine is a run's rigor as the diagnosis prints it: the mode, the layer
-// that decided it, every area rule that matched with the moment it was
-// applied at (D23, D24), the moment of the block, and the revision the mode's
-// configuration was read from (D25).
-//
-// The record is job-writable, so every piece of it is text this process did
-// not write: runstore.RigorRecord.Bounded has already refused a block whose
-// mode, layer or moment is outside its vocabulary and bounded the names, and
-// the caller runs the finished line through oneLine, which is what keeps a
-// newline in an area's name from forging a second field.
-func rigorLine(rg *runstore.RigorRecord) string {
-	line := string(rg.Mode) + ", from " + string(rg.From)
-	if len(rg.Areas) > 0 {
-		parts := make([]string, 0, len(rg.Areas))
-		for _, a := range rg.Areas {
-			parts = append(parts, a.Name+" at "+a.At)
-		}
-		line += " (" + strings.Join(parts, ", ") + ")"
-	}
-	line += ", at " + rg.At
-	if rg.Revision != "" {
-		line += ", read from " + rg.Revision
-	}
-	return line
 }
 
 // prColumnURL is the PR's URL with ls's draft marker.
