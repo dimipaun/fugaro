@@ -41,9 +41,11 @@
 // still distinguishes a critical edge is `stroke-width`, neither of which forced
 // colours touches.
 //
-// **No motion.** Not one keyframe is in this file or in the stylesheet rules it
-// adds: this task draws a still picture, and GV2.4 is where the comet, the pulse
-// and the flow arrive.
+// **The motion is the stylesheet's, and this file draws what it is drawn on.** GV2.4's
+// comet, the pulse and the flow are three keyframes in `theme/screens.css`, all of them
+// under `section.graph svg`; what this file adds for them is the hook the pulse selects
+// (`data-critical`) and the two `aria-hidden` marks they move. No keyframe is in this file,
+// and every state here is still the drawing the stylesheet's reduced-motion arm leaves.
 //
 // **No pull request link, and that is the design's ruling rather than an
 // omission.** A node draws its pull request **number as text** and offers no
