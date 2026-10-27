@@ -509,6 +509,29 @@ L0.2, the owner's CLA Assistant install, is written out as a checklist in
 `[CLA URL TO BE PUBLISHED]` placeholder in the three licence files stays until the owner has
 created the Gist.
 
+## Amendment 2026-10-27 (the Subscription Terms draft)
+
+Counsel's licence text of 2026-10-27, in `ee/LICENSE`, `console/LICENSE.md` and
+`mobile/LICENSE.md`, makes production use depend on the Fugaro Subscription Terms "available at
+[URL TO BE PUBLISHED]" (or another written agreement with the Licensor) and a valid subscription
+for the correct number of user seats, and leaves to those Terms the Licensor's identity, the
+further description of a user seat, the ownership of subscribers' modifications (clause 2.1), any
+patent licence (clause 10.1) and what may be kept after termination (clause 11.3).
+[subscription-terms.md](subscription-terms.md) is a **first draft of those Terms for counsel to
+review: not reviewed by counsel and not in force**, with every commercial term in brackets for the
+owner, a list of the owner's commercial questions and a list of questions for counsel. Its defined
+terms follow the licence's ("Agreement", "Licensor", "production", "user seat"); it treats the MIT
+core as outside the Subscription; and it describes the licence key only as D308's design intent
+(offline, signed, no phone-home), not as something built.
+
+What it changes here: nothing is decided. The licence files are not edited; replacing their
+placeholder URL is plan task L4.4, after counsel approves the text and the owner publishes it on
+the website (L4.3). Its statements about telemetry were read from the tree on 2026-10-27 and two
+are marked UNVERIFIED in the draft itself: whether the released console makes an update check (the
+design allows one; no updater was found in its main-process code), and what a first mobile release
+sends (no analytics or crash-reporting library is declared today). The contributor licence agreement
+is drafted separately in [CLA.md](CLA.md) and the draft does not depend on its text.
+
 ## UNVERIFIED
 
 - **U1** — **Moot after O2** (`LICENSE` is not changed). What stays unverified is only that GitHub

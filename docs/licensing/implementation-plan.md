@@ -45,6 +45,13 @@ licence elements are unchanged because both still read true (`ee/` is still rese
 organisation features, and `LICENSING.md` still says which parts the MIT licence does not cover).
 **L2.2** gains `console/LICENSE.md` in `build.files` and `console/package.json`'s `license` field.
 
+**Amended 2026-10-27: the Subscription Terms draft.** [subscription-terms.md](subscription-terms.md)
+is a first draft of the Fugaro Subscription Terms that counsel's licence text names "at [URL TO BE
+PUBLISHED]", written for counsel to review and **not in force**. Two tasks follow it, both after
+counsel: **L4.3** publishes the approved text on the website (owner-run), and **L4.4** replaces the
+placeholder URL in the three licence files. Neither is approved, and this amendment edits no
+licence file ([reconciliation.md](reconciliation.md#amendment-2026-10-27-the-subscription-terms-draft)).
+
 Out of scope here (R7): the spec's Task 3 (extension points) and Task 4 (workspaces), the
 `cmd/fugaro/ee_on.go` assembly file and the `ee/register` package (D303 as amended) belong to the
 workspaces plan, which takes D302, D303, D308 and D309 as inputs.
@@ -522,6 +529,26 @@ reads, stores or knows about keys (D308 with D303 as amended).
   ```
 - **Depends on:** L4.1 merged.
 
+#### L4.3 — Publish the Subscription Terms (OWNER-RUN, after counsel)
+- **What:** counsel reviews [subscription-terms.md](subscription-terms.md); the owner fills every
+  bracketed commercial term, removes the draft status line and the drafting notes, and publishes
+  the approved text as a page on the website (`fugaro.dev`, at a stable path chosen then), the
+  URL the licence files will name. The two question lists stay in the repository, not on the page.
+- **Depends on:** counsel's review; the owner's commercial answers (the draft's "Questions for the
+  owner").
+- **OWNER-RUN:** yes (the approval and the publication); an agent may prepare the website page
+  once the approved text exists.
+
+#### L4.4 — Fill the Subscription Terms URL in the licence files
+- **Files:** `ee/LICENSE`, `console/LICENSE.md`, `mobile/LICENSE.md` (`[URL TO BE PUBLISHED]`
+  becomes L4.3's URL, the only change), `internal/cli/docs_ee_reserved_test.go` (its pinned
+  placeholder follows), `LICENSING.md` and `ee/README.md` (they stop saying the Subscription Terms
+  are not published yet; the CLA's placeholder is its own step).
+- **Depends on:** L4.3 published. A separate change from the draft on purpose: the licence files
+  are counsel's text, and they change only once the document they name exists.
+- **Reviewer tier:** mandatory independent review (licence text). **OWNER-RUN:** no, after the
+  owner's go.
+
 ### Slice L5 — the release that ships the first ee feature (not in 0.11.0; added 2026-10-24 for D303's amendment)
 
 #### L5.1 — Counsel on the mixed-licence binary (OWNER-RUN)
@@ -551,7 +578,7 @@ reads, stores or knows about keys (D308 with D303 as amended).
 
 **Edges** (from the Depends-on lines): L0.1 → L0.2; L1.2 → L1.3; L1.3 → L1.5; L1.1 → L1.6;
 L1.1, L1.2, L1.3 → L1.7; L1.7 → L1.8; L1.2, L1.3, L1.5 → L1.9; L1.3, L1.10 → L1.11;
-L0.1, L1.2, L1.3, L1.8 → L4.1; L4.1 → L4.2; L4.1 → L5.1; L5.1, L2.1 → L5.2 (and the workspaces
+L0.1, L1.2, L1.3, L1.8 → L4.1; L4.1 → L4.2; L4.3 → L4.4; L4.1 → L5.1; L5.1, L2.1 → L5.2 (and the workspaces
 plan's first ee feature).
 
 | Level | Tasks (run concurrently) |
@@ -560,8 +587,8 @@ plan's first ee feature).
 | 1 | L0.2 (owner), L1.3, L1.6 |
 | 2 | L1.5, L1.7, L1.11 (owner) |
 | 3 | L1.8 (owner), L1.9 (the release PR) |
-| 4 | L4.1 (after counsel) |
-| 5 | L4.2 (owner), L5.1 (owner) |
+| 4 | L4.1 (after counsel), L4.3 (owner, after counsel) |
+| 5 | L4.2 (owner), L4.4, L5.1 (owner) |
 | 6 | L5.2 (with the first ee feature's release) |
 
 **Ready for the 0.11.0 tag** means these are merged: **L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7,
@@ -586,12 +613,12 @@ L4.1; L5.2 after L5.1 and L2.1 (it makes L2.1's coupling test non-trivial).
 | File | Writers (level) |
 | --- | --- |
 | `LICENSE` | none (O2: never edited; the counsel exception in Conventions is its own owner-approved commit) |
-| `LICENSING.md` | L1.3 (1), L4.1 (4), L5.2 (6) |
+| `LICENSING.md` | L1.3 (1), L4.1 (4), L4.4 (5), L5.2 (6) |
 | `README.md` | L1.3 (1), L5.2 (6) |
 | `.agents/LICENSE` | L1.3 (1) |
-| `ee/README.md` | L1.2 (0), L4.1 (4) |
-| `ee/LICENSE` | L4.1 (4) |
-| `internal/cli/docs_ee_reserved_test.go` | L1.2 (0), L4.1 (4) |
+| `ee/README.md` | L1.2 (0), L4.1 (4), L4.4 (5) |
+| `ee/LICENSE`, `console/LICENSE.md`, `mobile/LICENSE.md` | L4.1 (4), L4.4 (5) |
+| `internal/cli/docs_ee_reserved_test.go` | L1.2 (0), L4.1 (4), L4.4 (5) |
 | `internal/cli/docs_ee_repo_test.go` | L1.2 (0), L1.3 (1), L4.1 (4) |
 | `internal/cli/docs_licensing_test.go` | L1.3 (1), L4.1 (4), L5.2 (6) |
 | `internal/eeboundary/boundary_test.go` | L1.1 (0) |
@@ -609,6 +636,7 @@ L4.1; L5.2 after L5.1 and L2.1 (it makes L2.1's coupling test non-trivial).
 | `.goreleaser.yaml` | L2.1 (0), L5.2 (6) |
 | `console/package.json`, `console/tools/bundle-renderer/index.ts`, `console/scripts/notices.mjs`, `console/THIRD_PARTY_NOTICES.md`, `console/test/unit/packaging-licence.test.ts` | L2.2 (0); also the dependency graph's GV2.2 (another plan: see L2.2's cross-plan overlap) |
 | `docs/licensing/licence-key.md` | L3.1 (0) |
+| `docs/licensing/subscription-terms.md` | the 2026-10-27 draft; L4.3 (4, owner) |
 | `docs/releases/v0.11.0.md`, `website/data/release-summaries.yaml` | the 0.11.0 release PR (3) |
 
 `docs/pending-workflows/README.md` and `docs/gcp-live-checklist.md` are also written by other
@@ -624,4 +652,4 @@ unused. No check touches a cloud project.
 ## After deploy
 
 Nothing runs after a deploy (R5): no backfill, config or secret. The only owner steps are L0.1,
-L0.2, L1.8, L1.11, the approval inside L4.1, L4.2 and L5.1, none of which is a rollout step.
+L0.2, L1.8, L1.11, the approval inside L4.1, L4.2, L4.3 and L5.1, none of which is a rollout step.
