@@ -374,6 +374,34 @@
       "description": "The ids of the backlog items this run filed for what it left open, in the order it filed them (docs/rigor-modes/implementation-plan.md T4.5, D9, D26). The item files are on the run's branch and in its pull request, where `fugaro backlog list` reads them. Nothing consumes this property yet — neither `fugaro diagnose` nor the console's run row carries the ids — and it is written anyway, because the record is what survives the run. Absent — never an empty list — for a run that filed none, which is every record written before this field existed, so an old reader sees the record it always saw.",
       "items": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{2}$", "description": "One item id: the day the item was filed and the day's sequence, the name its file under docs/backlog/ opens with (internal/backlog's AllocateID)." }
     },
+    "tolerated": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["findings", "total"],
+      "description": "The findings the run's resolved mode let through, in the reviewer's own order (docs/rigor-modes/implementation-plan.md T3.4, D9, F19). The findings themselves and not only the count `reviews` carries, because what a mode decided not to fix is what a reader — and the backlog surface — needs. Bounded: at most 100 findings (runstore.MaxTolerated), each a score, two vocabulary values and a title of at most 200 runes. Absent — never an empty block — for a run that tolerated nothing, which is every record written before this field existed; the field is additive, so an old reader sees the record it always saw and `version` stays 1 (F21).",
+      "properties": {
+        "findings": {
+          "type": "array",
+          "maxItems": 100,
+          "description": "One entry per tolerated finding, in the reviewer's order. Never empty: a run that tolerated nothing carries no block at all. Shorter than total only when the run tolerated more than 100 findings, which the cap makes a record of the first 100 rather than of the whole set.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["title", "label", "mode", "likelihood", "impact", "fix_cost", "class"],
+            "properties": {
+              "title": { "type": "string", "minLength": 1, "maxLength": 200, "description": "The reviewer's own summary of the finding, clipped to 200 runes (runstore.MaxToleratedTitle) and redacted by the runner. It is the one piece of the finding's text the record carries; the whole summary stays in the transcript." },
+              "label": { "enum": ["blocker", "high", "medium", "low", "nit"], "description": "The word a person reads for the score (internal/rigor's label vocabulary). It is derived from the score and never an input to a decision (D2), so a reader takes the word from the axes beside it rather than trusting this one." },
+              "mode": { "enum": ["poc", "startup", "pro", "critical", "hotfix"], "description": "The mode that tolerated the finding (internal/rigor's vocabulary): the run's resolved mode, which is one value (D22)." },
+              "likelihood": { "type": "integer", "minimum": 1, "maximum": 5, "description": "How often the finding's condition will occur, on the anchored 1-5 scale (D1)." },
+              "impact": { "type": "integer", "minimum": 1, "maximum": 5, "description": "How bad it is when it does (D1)." },
+              "fix_cost": { "type": "integer", "minimum": 1, "maximum": 5, "description": "The effort to address it (D1). Only the modes whose sentence weighs it read it." },
+              "class": { "enum": ["correctness", "performance", "security", "data_loss", "maintainability", "cosmetic"], "description": "What kind of issue it is (D3, internal/rigor's vocabulary): the class is what the spec's severity override turned on." }
+            }
+          }
+        },
+        "total": { "type": "integer", "minimum": 0, "description": "How many findings the mode tolerated, so a record whose list was capped still says how many were let through. Never less than the length of findings." }
+      }
+    },
     "backlog_closed": {
       "type": "array",
       "maxItems": 64,

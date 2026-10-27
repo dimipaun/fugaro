@@ -17,6 +17,7 @@ import (
 	"gocloud.dev/blob/memblob"
 	"gocloud.dev/gcerrors"
 
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
@@ -89,6 +90,102 @@ func TestRecordRoundTripsOAuthAccount(t *testing.T) {
 	got, err = s.ReadRecord(ctx)
 	if err != nil || got.OAuthAccount != "" {
 		t.Fatalf("old record = %+v, %v", got, err)
+	}
+}
+
+// TestRecordRoundTripsToleratedFindings: what a mode let through survives the
+// round trip — the findings themselves, with the count, and not only the
+// number reviews carries (docs/rigor-modes T3.4, D9, F19) — and a record
+// written before the field existed still decodes, which is the compatibility
+// claim the unchanged version rests on.
+func TestRecordRoundTripsToleratedFindings(t *testing.T) {
+	s := newStore(t)
+	tolerated := NewTolerated([]ToleratedFinding{
+		{Title: "the retry loop has no backoff", Mode: rigor.Startup, Likelihood: 1, Impact: 3, FixCost: 2, Class: rigor.Correctness},
+		{Title: "a long comment restates the function", Mode: rigor.Startup, Likelihood: 2, Impact: 2, FixCost: 1, Class: rigor.Cosmetic},
+	})
+	rec := &Record{Version: 1, RunID: runID, Status: StatusSucceeded, Outcome: OutcomeReady,
+		StartedAt: time.Now().UTC(), Tolerated: tolerated}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Tolerated, tolerated) {
+		t.Fatalf("ReadRecord tolerated = %+v, want %+v", got.Tolerated, tolerated)
+	}
+	// The label is the score's, and the entry is bounded: the word a reader
+	// sees is the one the axes derive, whatever a caller put beside them.
+	if got.Tolerated.Findings[0].Label != rigor.Nit || got.Tolerated.Findings[1].Label != rigor.Low {
+		t.Errorf("labels = %q, %q, want nit and low", got.Tolerated.Findings[0].Label, got.Tolerated.Findings[1].Label)
+	}
+	if got.Tolerated.Total != 2 || len(got.Tolerated.Findings) != 2 {
+		t.Errorf("tolerated = %+v, want 2 findings and a total of 2", got.Tolerated)
+	}
+
+	// Empty is omitted, so a run that tolerated nothing writes the record it
+	// always wrote rather than an empty block.
+	data, err := json.Marshal(&Record{Version: 1, RunID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "tolerated") {
+		t.Fatalf("a run that tolerated nothing encoded the field: %s", data)
+	}
+
+	// A record written before this field existed still parses, without one.
+	old := `{"version":1,"run_id":"` + runID + `","status":"succeeded","stage":"writeback","outcome":"ready","cost_usd":1,"reviews":[{"round":2,"verdict":"changes","findings":2}],"started_at":"2026-09-26T22:15:30Z"}`
+	if err := s.PutFile(ctx, "result.json", []byte(old), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.ReadRecord(ctx)
+	if err != nil || got.Tolerated != nil {
+		t.Fatalf("old record = %+v, %v, want no tolerated block", got, err)
+	}
+	if len(got.Reviews) != 1 || got.Reviews[0].Findings != 2 {
+		t.Fatalf("old record reviews = %+v, want the round it always carried", got.Reviews)
+	}
+}
+
+// TestNewToleratedBoundsWhatItStores: the record is a small object every
+// listing reads, so the block is bounded — the list at MaxTolerated, each
+// title at MaxToleratedTitle — and Total says how many the mode really
+// tolerated, so a capped list is never presented as the whole one. An entry
+// the record cannot read is not stored at all.
+func TestNewToleratedBoundsWhatItStores(t *testing.T) {
+	var many []ToleratedFinding
+	for i := 0; i < MaxTolerated+5; i++ {
+		many = append(many, ToleratedFinding{Title: "a finding", Mode: rigor.Pro, Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Correctness})
+	}
+	tf := NewTolerated(many)
+	if len(tf.Findings) != MaxTolerated || tf.Total != MaxTolerated+5 {
+		t.Fatalf("NewTolerated = %d findings, total %d, want %d and %d", len(tf.Findings), tf.Total, MaxTolerated, MaxTolerated+5)
+	}
+
+	long := strings.Repeat("x", MaxToleratedTitle+50)
+	tf = NewTolerated([]ToleratedFinding{{Title: long, Mode: rigor.Pro, Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Correctness}})
+	if got := len([]rune(tf.Findings[0].Title)); got != MaxToleratedTitle {
+		t.Errorf("title length = %d, want %d", got, MaxToleratedTitle)
+	}
+
+	for _, tc := range []struct {
+		name string
+		f    ToleratedFinding
+	}{
+		{"no title", ToleratedFinding{Mode: rigor.Pro, Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Correctness}},
+		{"no mode", ToleratedFinding{Title: "t", Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Correctness}},
+		{"a mode outside the vocabulary", ToleratedFinding{Title: "t", Mode: rigor.Mode("paranoid"), Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Correctness}},
+		{"an unscored finding", ToleratedFinding{Title: "t", Mode: rigor.Pro, Class: rigor.Correctness}},
+		{"a class outside the vocabulary", ToleratedFinding{Title: "t", Mode: rigor.Pro, Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Class("style")}},
+	} {
+		if tf := NewTolerated([]ToleratedFinding{tc.f}); tf != nil {
+			t.Errorf("%s: NewTolerated = %+v, want nil", tc.name, tf)
+		}
+	}
+	if tf := NewTolerated(nil); tf != nil {
+		t.Errorf("NewTolerated(nil) = %+v, want nil", tf)
 	}
 }
 
