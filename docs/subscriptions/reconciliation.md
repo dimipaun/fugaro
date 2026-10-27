@@ -22,7 +22,9 @@ credentials work's D360–D389 and Checks 145–154, on `main` and in the docs o
 **D430–D448** are written and answered; **D449–D459** are reserved and unused. **Checks 170–179**
 are named by the plan, owner-run and not run. Findings are
 **F1–F47**, resolutions **R1–R6**, tensions **T1–T26** (T1–T9 from the first reading, T10–T26 from
-the answers), the owner's answers to the Terms draft's questions **B1–B17**, UNVERIFIED **U1–U12**.
+the answers; **all ruled 2026-10-27**, see "Rulings"), the owner's answers to the Terms draft's
+questions **B1–B17**, UNVERIFIED **U1–U12**. The rulings were recorded against `origin/main` at
+`d6f97594c` (which adds #1140 and #1148 to `252b5c46a`).
 
 ## Headline: spec concept → what the repository already has
 
@@ -253,7 +255,8 @@ app's uid is chosen by a launcher (F7); the CLI's identity is the cloud's. D438 
 an organisation (a domain or an Order Form) and carries a seat count, not a person; "every user
 has a key" means every console and app installation holds its organisation's key (T13).
 
-**F36 — Rule (new): an open PR edits the four licence files.** #1140 ("the Subscription Terms URL
+**F36 — Rule (new): an open PR edits the four licence files** (#1140 merged on 2026-10-27 as
+`dcee3c963`; the sequencing below is history). #1140 ("the Subscription Terms URL
 in the four licence files") changes `ee/LICENSE`, `console/LICENSE.md`, `mobile/LICENSE.md`,
 `LICENSES/LicenseRef-Fugaro-Enterprise.txt`, `LICENSING.md`, `ee/README.md`,
 `docs/licensing/subscription-terms.md`, `docs/licensing/implementation-plan.md`,
@@ -343,17 +346,22 @@ in S3.1; the limits stated in the key section below.
 - **R1** — Licence state never reaches the run path: the run images build `fugaro` with no `ee`
   tag, and the key check lives only at `ee/register` and in the console and app. A later task pins
   it with a test that the images' build commands carry no tag (S1.1 designs it; F32 is the strain).
+  **Narrowed by ruling T10 (2026-10-27):** the run images (base, credentials) stay untagged; the
+  coordinator's sweep job runs the key-gated build (S1.7, S1.9).
 - **R2** — No phone-home at runtime: validation is offline; no seat telemetry; the anonymous update
   check (`internal/updatecheck`) is unchanged. **Amended by D440:** the only Fugaro-hosted
   component is the issuing service, reached when a person asks for a key, never by the product.
 - **R3** — Every version released under MIT stays MIT: the coordinator and the reports of v0.11.0
   through v0.12.0, and the console up to 0.112.0. D434 and D444 move **future** versions only.
 - **R4** — The safety features stay in the MIT core (F8). The kill switch stays reachable from the
-  MIT CLI at every licence state; whether the console's kill switch survives read-only is T12.
+  MIT CLI at every licence state, and after ruling T12 also from the console and the app after the
+  grace period.
 - **R5** — **Amended by D440:** the record of issued keys lives in the signing service's store and
   in the private business repository, never in this repository; the signing key lives only in the
   service's key store, never on a machine an agent reaches, and no agent deploys or operates the
-  service (licensing R8 as amended).
+  service (licensing R8 as amended). **Ruling T13 (2026-10-27):** the service is owner-operated in a
+  dedicated Fugaro GCP project; until it exists, the owner mints keys by hand through the KMS key
+  (S2.10, S3.8).
 - **R6** — Tiers do not change the licence text; they live in the key's `features` and the Order
   Forms.
 
@@ -369,21 +377,21 @@ answers are private (D430).
 | **D431** | Licence for `ee/`, `console/`, `mobile/` (T1) | **Keep counsel's business licence; drop the FSL.** *Reason:* the FSL frees internal production use (F2) | FSL-1.1-MIT or closed binaries | **2026-10-27: the recommendation.** Keep counsel's licence; drop the FSL. *Why:* approved by counsel and not revisited |
 | **D432** | Is the console and app free for one user? (T2, T5) | **A no-fee Community plan in the Terms, one seat per organisation**, counsel confirming clause 1.1 | Paid from seat one | **2026-10-27: partly not the recommendation.** One free seat per organisation, **only for an organisation with no subscription**, intended for proof of concept and evaluation; a subscribing organisation pays for every user and gets no free seat. Teams whose projects are entirely public under an OSI licence get Team free. Counsel confirms it fits the licence. *Why:* the owner replaced an earlier "free for any individual" answer that conflicted with the seat model. Follow-through: T13, T15 |
 | **D433** | What is a seat? (T4) | **Keep the licence's words; read-only users excluded in the Terms**; every launcher, operator or admin through the Software is a seat | The spec's wording incl. CLI launchers: costs a seat the licence cannot require | **2026-10-27: not the recommendation.** A seat is **anyone who launches jobs, by any means** (console, mobile, CLI, agent), defined as a **pricing rule in the Subscription Terms**; read-only viewers are free once the viewer role exists (D446). *Why (owner's note):* the CLI is MIT, so this binds only subscribing organisations; counsel words it. Follow-through: T14, T21 |
-| **D434** | The coordinator: Team or core? (T6) | **Core stays core**; only new organisation-only parts born in `ee/`; amends D400 | Move future versions into `ee/`: costs D302's "nothing moves out", an MIT fork point | **2026-10-27: not the recommendation.** **Future coordinator versions move to the business-licensed folder**; the released MIT version stays available as a fork point. Amends **D302**; carries out **D400**'s later move. *Why (owner's note):* the released MIT version remains the fork point. Follow-through: T10 |
+| **D434** | The coordinator: Team or core? (T6) | **Core stays core**; only new organisation-only parts born in `ee/`; amends D400 | Move future versions into `ee/`: costs D302's "nothing moves out", an MIT fork point | **2026-10-27: not the recommendation.** **Future coordinator versions move to the business-licensed folder**; the released MIT version stays available as a fork point. Amends **D302**; carries out **D400**'s later move. *Why (owner's note):* the released MIT version remains the fork point. Follow-through: T10. **Amended by ruling T10 (2026-10-27):** the command **and the library** move, not only future parts of the command; the sweep job's image carries the key-gated build |
 | **D435** | Central orchestrators and the hosted MCP server | **Born in `ee/`**, through `ee/register` | Core MIT as planned | **2026-10-27: the recommendation.** Both start in the business-licensed folder (paid). *Why (inferred; the owner gave none):* not on `main`, not released. Follow-through: T20 (open PR #831) |
-| **D436** | Perpetual fallback after a lapse (T3) | **Yes, through Terms §10.4 Option B** | No fallback (licence 11.1) | **2026-10-27: not the recommendation.** **No perpetual fallback.** After the grace period (B17), every console and mobile user drops to **read-only**; paid features are off. The MIT CLI keeps launching and cancelling jobs. *Why (owner's note):* this reverses "launching is never gated" for the console and the app only, which the owner confirmed; counsel confirms. Follow-through: T12, F37 |
+| **D436** | Perpetual fallback after a lapse (T3) | **Yes, through Terms §10.4 Option B** | No fallback (licence 11.1) | **2026-10-27: not the recommendation.** **No perpetual fallback.** After the grace period (B17), every console and mobile user drops to **read-only**; paid features are off. The MIT CLI keeps launching and cancelling jobs. *Why (owner's note):* this reverses "launching is never gated" for the console and the app only, which the owner confirmed; counsel confirms. Follow-through: T12, F37. **Amended by ruling T12 (2026-10-27):** read-only keeps **cancel** and the kill switch; it refuses launch and config changes |
 | **D437** | What a lapse does in the product (T9) | **Paid features off with a banner; launch, cancel and every core action never gated** | Read-only for every paid feature | **2026-10-27: not the recommendation; merged into D436.** *Why (owner's note):* "Merged into A7" |
-| **D438** | The licence key (extends D308) | `tier`, `features`, `seats`, `expires`, `covers_until`; `ReleaseDate` in every build; seats warned, never enforced | D308 as is | **2026-10-27: not the recommendation.** A **signed offline key for every user, including free users**, issued automatically by a **hosted signing service** (D440). Contents: tier, features, seats, expiry, covered-versions date. *Why (owner's note):* the signing service holds the private key and is secured like the credentials service; validation stays offline, so an outage blocks only new keys. Follow-through: T13, F35, F40 (O4) |
+| **D438** | The licence key (extends D308) | `tier`, `features`, `seats`, `expires`, `covers_until`; `ReleaseDate` in every build; seats warned, never enforced | D308 as is | **2026-10-27: not the recommendation.** A **signed offline key for every user, including free users**, issued automatically by a **hosted signing service** (D440). Contents: tier, features, seats, expiry, covered-versions date. *Why (owner's note):* the signing service holds the private key and is secured like the credentials service; validation stays offline, so an outage blocks only new keys. Follow-through: T13, F35, F40 (O4). **Amended by rulings O4, T26 and the key binding (2026-10-27):** one key **per organisation** with a seat count; **expiry only** (the covered-versions date is dropped); the next key issues 30 days before expiry |
 | **D439** | How seats are counted in the product | **An advisory estimate**: launchers and operators lists plus run requesters over 90 days, beside the licensed seats; nothing stored or sent | Firebase Auth listing; none | **2026-10-27: the recommendation.** *Owner's note:* under D433 the estimate counts **all launchers**. Follow-through: T14 |
-| **D440** | The trial and key issuance | **Owner-minted trial keys by hand** | A signing service; an unsigned self-started trial | **2026-10-27: not the recommendation.** A **self-serve key website**. Open source: a repository URL plus an email, checked automatically (every repository public under an OSI licence), a one-year key. Commercial free seat: a company domain plus a work email on that domain (no free-mail domains), a three-month key, renewable, **one per organisation enforced by email domain**. A **manual request form** for special cases (for example free-mail users and multi-seat trials) feeds a **queue that notifies the owner**, who approves and mints keys from an **admin page**. *Why:* resolves the session's conflict between hand-minted keys and a key for everyone (D438). Amends licensing R8 and this file's R5. Follow-through: T13 |
+| **D440** | The trial and key issuance | **Owner-minted trial keys by hand** | A signing service; an unsigned self-started trial | **2026-10-27: not the recommendation.** A **self-serve key website**. Open source: a repository URL plus an email, checked automatically (every repository public under an OSI licence), a one-year key. Commercial free seat: a company domain plus a work email on that domain (no free-mail domains), a three-month key, renewable, **one per organisation enforced by email domain**. A **manual request form** for special cases (for example free-mail users and multi-seat trials) feeds a **queue that notifies the owner**, who approves and mints keys from an **admin page**. *Why:* resolves the session's conflict between hand-minted keys and a key for everyone (D438). Amends licensing R8 and this file's R5. Follow-through: T13. **Amended by ruling T13 (2026-10-27):** the service is owner-operated in a dedicated Fugaro GCP project and built after the entity exists; **until then keys are minted by hand** (this row's first recommendation, as an interim) |
 | **D441** | Who sells and who is the licensor? (T7) | **A dedicated entity before the first paid sale**, holding the copyright, named as Licensor | Interim under the owner's existing company | **2026-10-27: the recommendation.** A new dedicated entity before the first paid sale, named as Licensor in the Terms; with B9, the copyright is **assigned to it now**. *Why (inferred; the owner gave none):* one owner of rights, contracts and the CLA's Project Owner. Follow-through: T18 |
 | **D442** | Merchant of record | **A merchant of record for Team checkout; Enterprise direct** | Sell directly everywhere | **2026-10-27: the recommendation.** **Paddle** for Team checkout as merchant of record, handling sales taxes on its sales; Enterprise signed and invoiced directly by the entity. Fee rates and the tax plan: private. *Why (inferred; the owner gave none):* no sales-tax registration abroad for self-serve sales |
 | **D443** | Commercial terms (T8) | (a) figures private; (b) audit for Enterprise only, Team self-certified true-up; (c) annual discount, prorated additions, reductions at renewal; (d) no startup discount yet | Audit for every plan; a startup discount now | **2026-10-27: partly not the recommendation.** (a) Prices private; (b) formal audit for Enterprise only, Team self-certifies at renewal (true-up); (c) an annual discount (figure private), additions prorated, reductions at renewal; **(d) a startup discount is added** (B13), against the recommendation. *Why:* none given; the startup discount's terms are B13's |
-| **D444** | Spend and audit exports for Enterprise | **Only net-new exports**; `fugaro report` and the credentials audit log stay MIT | Charge for existing exports | **2026-10-27: not the recommendation.** **Spend and cost reports (`fugaro report` and similar) move to the business-licensed folder for future versions**; the credentials service's audit log stays MIT. *Why:* none given. Follow-through: T11 |
+| **D444** | Spend and audit exports for Enterprise | **Only net-new exports**; `fugaro report` and the credentials audit log stay MIT | Charge for existing exports | **2026-10-27: not the recommendation.** **Spend and cost reports (`fugaro report` and similar) move to the business-licensed folder for future versions**; the credentials service's audit log stays MIT. *Why:* none given. Follow-through: T11. **Amended by ruling T11 (2026-10-27):** `fugaro report` moves; **`fugaro runs digest` stays MIT** with its own copy of the period helpers |
 | **D445** | Free programs | **No-fee Order Forms on application**, renewed yearly; academic by institutions only | A clause in the Terms | **2026-10-27: partly not the recommendation.** Open source **automatic** (D440's checked key). Academic institutions get Team free and nonprofits a discount (figure private), both by a short application renewed yearly. *Why (inferred; the owner gave none):* open source is checked automatically by D440. Follow-through: T15 |
 | **D446** | Multi-user roles (F6) | **A separate design before any build**, on the existing lists plus a read-only list | Roles inside the console only | **2026-10-27: the recommendation, widened.** A separate design first; viewer, operator and admin roles **enforced system-wide, the cloud included**, not just in the console. It creates D433's free viewer. Follow-through: T16 |
-| **D447** | How paid features switch on | **The key-gated single binary of D303** (`ee` build tag) | Honour only | **2026-10-27: the recommendation.** Lapse per D436. Follow-through: T21 |
-| **D448** | Sequencing | **Settle D431–D433 and D436 before console 0.113.0 and the first mobile release** | Release first | **2026-10-27: the recommendation.** D431, D432, D433 and D436 are decided; **counsel signs off D432, D433 and D436 before console 0.113.0 and the first mobile release**. Follow-through: T17 |
+| **D447** | How paid features switch on | **The key-gated single binary of D303** (`ee` build tag) | Honour only | **2026-10-27: the recommendation.** Lapse per D436. Follow-through: T21. **Ruling T21 (2026-10-27):** one binary with a mixed licence, relabelled |
+| **D448** | Sequencing | **Settle D431–D433 and D436 before console 0.113.0 and the first mobile release** | Release first | **2026-10-27: the recommendation.** D431, D432, D433 and D436 are decided; **counsel signs off D432, D433 and D436 before console 0.113.0 and the first mobile release**. Follow-through: T17. **Ruling T17 (2026-10-27):** those releases ship honour-based, without key enforcement |
 
 ## The Terms draft's owner questions (B1–B17)
 
@@ -412,9 +420,41 @@ amended draft prints a figure that D430 sends to the private repository, the cel
 | B16 | Patent and telemetry | No patent licence (Option A); any telemetry opt-in and documented | Yes | §3.6, §9.3 |
 | B17 | Grace period and interest | A **30-day grace period** after key expiry before D436 applies; late-payment interest at a modest fixed rate that **counsel sets** | Yes | §8.2, §10.4, §7.2 |
 
-## Open tensions for the owner
+## Rulings on the tensions (2026-10-27)
 
-None is decided here. Each states the facts, the choices and what each holds back.
+The owner ruled every open tension on 2026-10-27. Each row gives:
+
+- the ruling and its date;
+- whether it is the recommendation;
+- a one-line reason;
+- where the plan follows it through (the re-sliced `implementation-plan.md`).
+
+The tensions as first raised are kept below for the record. **None remains open.** What remains is
+the open items (O1–O3, O5) and counsel's review.
+
+| # | Ruling (2026-10-27) | Recommendation? | Why (inferred: the owner gave rulings, not reasons) | Plan |
+| --- | --- | --- | --- | --- |
+| **T10** | The coordinator's **command and library** move to the business-licensed folder. **What stays:** the released MIT 0.11.x–0.12.0 stays the fork point. **What changes:** the sweep job's image carries the key-gated build; the console's project view, `coordinator status --from-store`, the P5 sweep and the plans that assume the coordinator in core are re-planned. This amends D302, D400 and D434; the core reaches the code only through `ee/register` | **No (not the recommendation**, which was "only new parts") | The owner wants the whole coordinator in the paid line from its next version | S1.1, S1.2, S1.4, S1.8, S1.9, S1.10 (Check 178) |
+| **T11** | `fugaro report` moves to the business-licensed folder for future versions; **`fugaro runs digest` stays MIT** with a small MIT copy of what it needs | **No (not the recommendation)** | The periodic reviews stay free; the organisation's spend report is paid | S1.1, S1.5 |
+| **T12** | After the grace period the console and the app **read and cancel runs**, and the kill switch stays; they cannot launch or change config. The amended Terms §10.4 changes in the one revision after counsel | Yes | Never paywall safety | S0.4, S6.1–S6.3, Checks 176–177 |
+| **T13** | The key service is **owner-operated in a dedicated Fugaro GCP project** (Cloud Run, a non-exportable KMS signing key, intake split from signing), **built after the entity exists**; until then keys are **minted by hand** (D440's first recommendation, as an interim) | Yes | One operator and one boundary; nothing hosted before there is a seller | S2.10, S3.1–S3.8 |
+| **T14** | Unchanged: the seat stays a contract pricing rule, and the estimate counts every launcher | Yes | Ruled by D433 | S4.1 |
+| **T15** | An **individual counts as an organisation of one** for the free seat and the public-OSI rule; counsel confirms business-only does not exclude them | Yes | Open-source maintainers are often individuals | S0.2, S0.4, S3.1, S7.1 |
+| **T16** | The cloud keeps enforcing the launcher, operator and admin lists **in MIT core**. `ee/` adds the role model, its UX and the viewer built on those lists, with a small MIT core change for the viewer's cloud enforcement | Yes | Enforcement that protects a project stays free | S5.1 |
+| **T17** | Console 0.113.0 and the first mobile release ship under the business licence **without key enforcement** once counsel signs off D432, D433 and D436 (honour-based); enforcement arrives with the key service in a later release | Yes | The licensed releases need not wait for the key service | S0.7, S8.4 |
+| **T18** | The copyright moves **once the entity exists, as one owner-go commit**: the licence files, the root-licence hash test, the Terms' Licensor line and the website. The accountant confirms the mechanics; nothing happens before. #1140 merged on 2026-10-27 (`dcee3c963`) | Yes | One coherent change, at the moment it has a recipient | S8.2, S8.3 |
+| **T19** | Answered through T12, T15, O4, the key-binding ruling and T26. The Terms are **not revised now** (counsel is reviewing them); one revision run follows counsel's feedback | Yes | Counsel reviews one text at a time | S0.4 |
+| **T20** | **Close #831 as superseded**; re-plan the orchestrators in the business folder behind `ee/register` | Yes | D435 places them in `ee/` | S1.8 |
+| **T21** | **One binary with a mixed licence, relabelled** (the key-gated single binary, the `ee` tag). The notices say MIT core plus business-licensed parts, and `fugaro` is no longer described as simply MIT | **No (not the recommendation**, which was two builds) | One download, one release pipeline | S1.6 |
+| **T22** | The **Team price is published** on the website; Enterprise is "contact us". The figures never enter the repository: the pages are owner-run publishing | Yes | Self-serve buyers need a price | S7.2, S7.4 |
+| **T23** | (Default.) `SECURITY.md`'s "latest release only" is aligned to the Terms' current and previous minor release, as a docs task | Default | One supported-version rule | S0.5 |
+| **T24** | The **contract figures stay in the Terms** (support targets, renewal, refund and reassignment periods); prices, discounts, fees and the Enterprise minimum stay on the private Order Form | Yes | Buyers must see the contract terms; prices change | S0.4 (no change to those clauses) |
+| **T25** | **Honour-based refunds**: the leakage (a refunded buyer keeps a key until expiry) is an **accepted risk** | **No (not the recommendation**, which was a short initial key) | Simplicity over a small leak | S0.4, S2.1 |
+| **T26** | The **next key issues 30 days before expiry** (overlap), so an issuing outage must exceed 60 days to bite; the key format allows overlapping keys | Yes | Renewals survive a long outage | S2.1, S2.3, S3.2, Check 175 |
+| **O4** | The key carries **expiry only**: the covered-versions date and the build `ReleaseDate` stamping are dropped, superseding that part of D438. A version field may be added later | Yes | No fallback, so no version window | S2.1; S2.2 withdrawn; Check 178 reused |
+| **Key binding** (F35, F47) | **One key per organisation** with a seat count, not per user. The console shows seats used against it, advisory; the Terms' per-User wording (§8.1, §8.5) changes in the one revision | Yes | The product can bind only an organisation | S0.4, S2.1, S4.2 |
+
+### The tensions as raised (ruled 2026-10-27, kept for the record)
 
 **T10 — (D434) Future coordinator versions in the business-licensed folder.** Facts: the
 coordinator is MIT and released in v0.11.0–v0.12.0, including `coordinator status --from-store`
@@ -614,32 +654,41 @@ or the owner accepts it and S3.1 states an issuing uptime target.
   D433's seat as a pricing rule; personal data at key sign-up (PIPEDA, GDPR); whether the licence
   must name the new entity as Licensor; the interest rate; GST/HST on supplies to the merchant of
   record and on Enterprise deals invoiced directly to Canadian customers, and registration timing.
-- **O4** — What the key's covered-versions date does now that there is no fallback (F40).
+- **O4** — ~~What the key's covered-versions date does now that there is no fallback (F40).~~
+  **Ruled 2026-10-27:** dropped; the key carries expiry only.
 - **O5** — For the accountant: the mechanics and tax treatment of assigning the copyright now.
 
-## A key for every user (D438 as answered)
+## A key per organisation (D438 as answered and ruled)
 
 Extends D308; nothing here is built. The design note is licensing plan L3.1
-(`docs/licensing/licence-key.md`), amended by S2.1.
+(`docs/licensing/licence-key.md`), superseded by S2.1. *Earlier version: a key per user with a
+`covers_until` date and a `ReleaseDate` stamped into every build; withdrawn by O4 and the
+key-binding ruling on 2026-10-27.*
 
 - **The key** is D308's signed claim set plus `tier` (`community`, `team`, `enterprise`),
-  `features`, `seats`, `expires`, `covers_until` (O4), the organisation it was issued to (a
-  domain or an Order Form id; F35), and a key id.
-- **Every build** stamps a `ReleaseDate` beside `Version` and `Commit` (`.goreleaser.yaml`
-  `ldflags`; the console's and the app's builds likewise); a development build stamps none and
-  counts as development use. Whether a lapse uses it depends on O4.
-- **The check**, offline, at `ee/register` (CLI) and in the console and app: paid features are on
-  while the signature verifies and `now <= expires + grace` (B17); after that the console and the
-  app enter the read-only state (D436, T12). The MIT CLI's own commands never check a key.
-- **Seats** are compared, never enforced (D439).
-- **Issuance** by the hosted signing service (D440, T13); the record of issued keys in the service
-  and the private business repository (R5 as amended).
-- **Known limits:** the source is visible, so a determined user can remove the check; a clock set
-  back extends `expires` (D308's admitted limit); no revocation, so a leaked key works until it
-  expires; the key names an organisation that nothing compares with the installation, so one key
-  can be shared across users and organisations and a subscriber's use of a free key cannot be
-  detected (F47). The Terms are the enforcement.
-- **Storage and hand-off** (F41): S2.1 decides where each product keeps the key and how the
+  `features`, `seats`, the **organisation** it was issued to (a domain, an individual as an
+  organisation of one, or an Order Form id), `issued`, `expires` and a key id. **Expiry only**: no
+  covered-versions date and no release-date stamping (O4).
+- **The check**, offline, at `ee/register` (CLI), in the console and in the app. Paid features are
+  on while the signature verifies, `now <= expires + grace` (B17), and the key is within its tier's
+  maximum lifetime. After that the console and the app enter the read-only state, which keeps
+  reads, cancel and the kill switch (D436, T12). The MIT CLI's own commands never check a key.
+- **Renewal** (T26): the next key issues 30 days before expiry. Two keys may be installed, and the
+  verifier takes the latest valid one, so an issuing outage bites only after 60 days.
+- **Seats** are compared, never enforced (D439): the console shows seats used against the key's
+  seats.
+- **Issuance:** by hand through the KMS key until the entity and the service exist (T13, S2.10);
+  then by the owner-operated service in its dedicated project. The record of issued keys is in the
+  service and the private business repository (R5).
+- **Known limits**, accepted:
+  - the source is visible, so a determined user can remove the check;
+  - a clock set back extends `expires` (D308);
+  - with no revocation, a leaked key works until it expires, and a refunded buyer keeps theirs
+    (T25, accepted);
+  - nothing compares the organisation with the installation, so a key can be shared (F47).
+
+  The Terms are the enforcement.
+- **Storage and hand-off** (F41): S2.1 decides where each product keeps the key, and how the
   console passes it to the CLI it spawns, never in argv.
 
 ## UNVERIFIED
@@ -666,4 +715,5 @@ Checked against `origin/main` at `252b5c46a` on 2026-10-27.
 - **U11** — Whether an email-domain check, a free-mail list and the code host's API are enough to
   enforce "one per organisation" and "all repositories public under an OSI licence" (T13). Not
   measured; Checks 171 and 172 measure them once built.
-- **U12** — Where the signing service is hosted and who operates it: not stated in the answers.
+- **U12** — ~~Where the signing service is hosted and who operates it.~~ **Ruled 2026-10-27
+  (T13):** owner-operated, in a dedicated Fugaro GCP project.

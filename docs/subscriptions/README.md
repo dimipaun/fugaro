@@ -2,9 +2,10 @@
 
 **Status: plan only; nothing is implemented; no task approved.** D430–D448 and the Terms draft's
 owner questions B1–B17 were answered by the owner on 2026-10-27 (D432, D443 and D445 partly, and
-D433, D434, D436, D437, D438, D440, D444, B6, B7 and B13 not the recommendation). Open tensions
-T10–T26 wait on the owner's rulings, and several tasks wait on counsel and on the new entity. Each
-task in the plan still needs the owner's own go.
+D433, D434, D436, D437, D438, D440, D444, B6, B7 and B13 not the recommendation). The owner
+ruled every open tension, T10–T26, O4 and the key binding, the same day (T10, T11, T21 and T25
+not the recommendation), and the plan was re-sliced to follow. Several tasks wait on counsel and on
+the new entity. Each task in the plan still needs the owner's own go.
 
 Spec owner: the repository owner (the byline in [spec.md](spec.md)). Spec received 2026-10-27;
 reconciled against `origin/main` at `252b5c46a` the same day, which carries the Subscription
@@ -19,8 +20,8 @@ carries a figure.
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The owner's "Fugaro Subscriptions Spec", an excerpt: the commercial lines are left out (its opening note lists them) |
-| [reconciliation.md](reconciliation.md) | Findings F1–F47 against the code, the licence files and the earlier rulings; decisions D430–D448 with the owner's answers; B1–B17; resolutions R1–R6; tensions T1–T26 (T10–T26 open, T19 what the amended Terms on `main` leave); open items O1–O5; UNVERIFIED U1–U12. **Where it disagrees with `spec.md`, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Slices S0 (Terms and licence docs), S1 (the moves into `ee/`), S2 (the key and verifiers), S3 (the signing service), S4 (seat estimate), S5 (roles design), S6 (lapse state), S7 (website), S8 (owner, counsel, accountant); levels, critical path, shared files, Checks 170–179. Nothing in it is approved |
+| [reconciliation.md](reconciliation.md) | Findings F1–F47 against the code, the licence files and the earlier rulings; decisions D430–D448 with the owner's answers; B1–B17; resolutions R1–R6; tensions T1–T26, all ruled 2026-10-27 (a "Rulings" section; the tensions as raised are kept); open items O1–O5; UNVERIFIED U1–U12. **Where it disagrees with `spec.md`, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Slices S0 (Terms and licence docs), S1 (the moves into `ee/`), S2 (the per-organisation key and its verifiers), S3 (the owner-operated key service), S4 (seat estimate), S5 (roles design), S6 (lapse state), S7 (website), S8 (owner, counsel, accountant); levels, critical path, shared files, Checks 170–179. Nothing in it is approved |
 
 ## Deviations from the owner's text
 
@@ -40,11 +41,14 @@ carries a figure.
 
 ## Headline
 
-Counsel's business licence stays (D431). The owner's answers move future versions of two released
-MIT features, the coordinator and the spend reports, into the business-licensed folder (D434,
-D444), which the core's launch path, the coordinator's scheduled job, the periodic reviews and the
-console all touch (T10, T11); add a Fugaro-hosted key signing service with a self-serve website
-(D438, D440), a new trust boundary that needs a threat model and the new entity first (T13); and
-drop the perpetual fallback for a read-only console and app after a 30-day grace (D436), which
-needs an express grant in the Terms (T12). Counsel's sign-off on the free seat, the seat rule and
-the lapse gates console 0.113.0 and the first mobile release (D448, T17).
+Counsel's business licence stays (D431). After the rulings of 2026-10-27:
+
+- **The moves.** The coordinator's command and library move to `ee/` (T10). `fugaro report` moves
+  while `fugaro runs digest` stays MIT (T11). One relabelled, mixed-licence binary ships (T21). The
+  released MIT versions stay the fork point.
+- **The key.** One offline key per organisation, expiry only, renewed 30 days early (O4, T26).
+- **The key service.** It is owner-operated in a dedicated GCP project and built after the entity
+  exists; until then, keys are minted by hand (T13).
+- **Lapse.** After the 30-day grace the console and the app keep reading and cancelling (T12).
+- **The first licensed releases.** Console 0.113.0 and the first mobile release ship honour-based
+  once counsel signs off (T17).
