@@ -74,6 +74,20 @@ func (e *cloudEnv) projectBaseBranch(ctx context.Context, needed bool) string {
 	return p.BaseBranch
 }
 
+// layersBaseBranch is the base branch the two layers below the file name: the
+// local config's repos.<r>.base_branch, else the project's base_branch, else
+// main. It is what a launch with an explicit --ref resolves, the file that
+// decides a base there being the one at that ref (fileSets false: no file of
+// this checkout's is the judge).
+func (e *cloudEnv) layersBaseBranch(ctx context.Context, repo string) string {
+	repoBranch := ""
+	if r, ok := e.localRepo(repo); ok {
+		repoBranch = r.BaseBranch
+	}
+	b, _ := config.EffectiveBaseBranch("", false, repoBranch, e.projectBaseBranch(ctx, repoBranch == ""))
+	return b
+}
+
 // fileSetsBaseBranch is whether a resolved file writes git.base_branch
 // itself: the question config.EffectiveBaseBranch's fileSets argument asks,
 // and the one infra.Inputs carries for the same reason (its doc comment has

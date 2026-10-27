@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -180,7 +182,11 @@ func TestBaseBranchPrecedenceInTheLauncher(t *testing.T) {
 			t.Fatalf("ref/base_branch = %q/%q, want master/master", spec.Ref, spec.BaseBranch)
 		}
 	})
-	t.Run("an explicit ref writes no field", func(t *testing.T) {
+	t.Run("an explicit ref carries the project default", func(t *testing.T) {
+		// The file that decides a base under --ref is the one at that ref,
+		// which only the runner reads; the two layers below it are about the
+		// repository, not the checkout, so a --ref launch is cut from develop
+		// and opens against the project's master, exactly as one without it.
 		f := newCloudFixture(t)
 		addOtherRepo(t, f)
 		f.appendConfig(t, "base_branch: master\n")
@@ -189,8 +195,23 @@ func TestBaseBranchPrecedenceInTheLauncher(t *testing.T) {
 			t.Fatal(err)
 		}
 		spec := readSpecOf(t, f, mustSlug("github", "acme/other"), "20261027-100000-abcd")
+		if spec.Ref != "develop" || spec.BaseBranch != "master" {
+			t.Fatalf("ref/base_branch = %q/%q, want develop/master", spec.Ref, spec.BaseBranch)
+		}
+	})
+	t.Run("an explicit ref with no layer below the file writes none", func(t *testing.T) {
+		// Nothing names a base but the default: the field is left out, which
+		// is what every launch carried before it existed and what a runner
+		// older than baseBranchSince reads without refusing the task.
+		f := newCloudFixture(t)
+		addOtherRepo(t, f)
+		baseBranchCheckout(t, "acme/other", noBaseBranchYAML, "master")
+		if _, _, err := execute(t, "run", "--repo", "acme/other", "--ref", "develop", "--run-id", "20261027-100000-abcd", "A task"); err != nil {
+			t.Fatal(err)
+		}
+		spec := readSpecOf(t, f, mustSlug("github", "acme/other"), "20261027-100000-abcd")
 		if spec.Ref != "develop" || spec.BaseBranch != "" {
-			t.Fatalf("ref/base_branch = %q/%q, want develop and no field: the run reads its configuration from the ref it was given", spec.Ref, spec.BaseBranch)
+			t.Fatalf("ref/base_branch = %q/%q, want develop and no field", spec.Ref, spec.BaseBranch)
 		}
 	})
 }
@@ -268,6 +289,49 @@ func TestBaseBranchSkew(t *testing.T) {
 			t.Errorf("base_branch = %q, stderr %q; want the field kept and nothing said without a record", spec.BaseBranch, warn.String())
 		}
 	})
+}
+
+// TestValidateNamesTheLayerAnInvalidBaseBranchIsIn: fugaro validate judges
+// every base branch where it is written and names the layer it was written in
+// — the file's own git.base_branch by its path, and an installation's
+// base_branch (or its repos.<r>.base_branch) as the project config it could
+// not read — so an operator is told which of the four layers to fix.
+func TestValidateNamesTheLayerAnInvalidBaseBranchIsIn(t *testing.T) {
+	t.Run("the file's own key", func(t *testing.T) {
+		out, _, err := execute(t, "validate", writeConfig(t, baseBranchYAML("git: { provider: github, base_branch: \"-bad\" }\n")))
+		if err == nil || !strings.Contains(out, "git.base_branch") {
+			t.Fatalf("out = %q, err = %v", out, err)
+		}
+	})
+	t.Run("the project config's", func(t *testing.T) {
+		dir := t.TempDir()
+		isolateProjects(t, dir)
+		path := writeProject(t, "aurora", "aurora-gcp")
+		appendProjectConfig(t, path, "base_branch: \"-bad\"\n")
+		enrollRepo(t, "aurora", "acme/app")
+		t.Chdir(checkoutsAt(t, filepath.Join(dir, "src", "app"),
+			"version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n",
+			"https://github.com/acme/app.git"))
+		out, errOut, err := execute(t, "validate")
+		if err == nil {
+			t.Fatalf("an installation whose base_branch is no branch name was accepted:\n%s%s", out, errOut)
+		}
+		if !strings.Contains(out, "base_branch") || !strings.Contains(out, "project config") {
+			t.Fatalf("the layer is not named:\nstdout:\n%s\nstderr:\n%s", out, errOut)
+		}
+	})
+}
+
+// appendProjectConfig adds top-level YAML to a written project config.
+func appendProjectConfig(t *testing.T, path, yaml string) {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(b, yaml...), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // TestBaseBranchOnAFollowUp: a --pr follow-up carries the base of the run it

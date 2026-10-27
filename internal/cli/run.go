@@ -250,7 +250,7 @@ func newRunCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.StringVar(&o.repo, "repo", "", "repository as owner/name (default: this checkout's origin)")
-	f.StringVar(&o.ref, "ref", "", "base branch or ref the run is cut from (default: the branch this checkout is on, when origin has it and it is not the base branch; else the repo's base_branch)")
+	f.StringVar(&o.ref, "ref", "", "base branch or ref the run is cut from (default: the branch this checkout is on, when origin has it and it is not the base branch; else the base branch (fugaro.yaml git.base_branch, then the local config's, then the project's base_branch, then main))")
 	f.StringVar(&o.workflow, "workflow", "", "workflow to run (default: the repo's only workflow)")
 	f.StringVar(&o.runID, "run-id", "", "run ID to use; repeating one reports its launch instead of starting another")
 	f.StringVar(&o.batch, "batch", "", "batch label, to group runs in fugaro runs ls")
@@ -1035,17 +1035,18 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 		}
 		totalOverride = total.String()
 	}
-	// The base branch is resolved before the ref, and only when no --ref was
-	// given: an explicit ref is the branch the run is cut from, and the base
-	// layers are then about the configuration's own base, which the file at
-	// that ref is the judge of — the field is not written at all (a launch
-	// with an explicit ref kept the previous release's bytes, and the runner's
-	// own read of the base branch, readBaseConfig, refuses a base that is not
-	// the ref).
+	// The base branch is resolved before the ref. An explicit ref is the
+	// branch the run is cut from, not its base, and the file that decides a
+	// base under one is the file at that ref — which only the runner reads,
+	// and it is read first there (ResolveConfig takes the task's base only
+	// where the file writes none). So a --ref launch carries the two layers
+	// below the file, and a launch without one carries all four.
 	ref, base := o.ref, ""
 	if ref == "" {
 		b, source := launchBaseBranch(ctx, env, repo)
 		base, ref = resolvedBaseBranch(b, source), newRunRef(ctx, repo, b, warn)
+	} else {
+		base = specBaseBranch(env.layersBaseBranch(ctx, repo))
 	}
 	me, err := env.lc.Me(ctx)
 	if err != nil {
