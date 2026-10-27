@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/logtail"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
@@ -33,12 +34,15 @@ const (
 	agentMessageBytes = 4 << 10
 	// diagnoseLogLines is how many of the newest log lines a diagnosis keeps.
 	diagnoseLogLines = 30
-	// diagnoseStages bounds the stages a diagnosis prints. A run records one
-	// entry per stage per round, so this is room for every run the loop can
-	// make and the point past which the record is not believed: the record is
-	// an object a hand can edit, and one diagnosis must not print thousands
-	// of entries.
-	diagnoseStages = 64
+	// diagnoseStages bounds the stages a diagnosis prints. It sits above the
+	// loop's own maximum -- 1 + 2*F + R*(2 + 2*F) stages, at most 87 under
+	// config.MaxFirstLineRounds and recipe.MaxReviewRounds, plus the provision
+	// and render stages (docs/design/generic-tool.md §3.1) -- because the
+	// identity Stages documents holds only for the whole list: a bound that
+	// bit a real run would make sum(stages[].model_usd) + model_by's
+	// unattributed entry miss row.cost.model_usd by the rounds it dropped. It
+	// guards against the record a hand can edit, not against the loop.
+	diagnoseStages = 128
 )
 
 // Diagnosis is what diagnose gathers about one run. Every string in it
@@ -288,8 +292,10 @@ func stageTimingsOf(stages []runstore.StageTiming, red func(string) string) []ru
 // toleratedOf is the record's tolerated findings for the document: bounded
 // again on read, because the record is an object a hand can edit and the
 // write-side bound (runstore.NewTolerated) is not one a reader can count on,
-// and with every title redacted. nil for a run that tolerated nothing -- no
-// block, or a block that lists none -- so the key is absent.
+// and with every string redacted -- the enums too, which the write path
+// validates to its vocabulary and a hand-edited record need not. nil for a run
+// that tolerated nothing -- no block, or a block that lists none -- so the key
+// is absent.
 func toleratedOf(t *runstore.ToleratedFindings, red func(string) string) *runstore.ToleratedFindings {
 	if t == nil || len(t.Findings) == 0 {
 		return nil
@@ -300,6 +306,7 @@ func toleratedOf(t *runstore.ToleratedFindings, red func(string) string) *runsto
 			break
 		}
 		f.Title = red(f.Title)
+		f.Mode, f.Label, f.Class = rigor.Mode(red(string(f.Mode))), rigor.Label(red(string(f.Label))), rigor.Class(red(string(f.Class)))
 		out.Findings = append(out.Findings, f)
 	}
 	// The block's total is how many findings the mode really tolerated, and a

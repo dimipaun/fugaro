@@ -169,6 +169,50 @@ func TestDiagnosePrintsStagesAndTolerated(t *testing.T) {
 	}
 }
 
+// TestDiagnoseRedactsEveryStringOfAToleratedFinding: the block's mode, label
+// and class are enums on the write path, but they are strings on the wire and
+// a hand-edited record can put anything in them, so every string of the block
+// goes through the document's own redaction and not only the title.
+func TestDiagnoseRedactsEveryStringOfAToleratedFinding(t *testing.T) {
+	const secret = "ghp_test0123456789abcdef"
+	t.Setenv("FUGARO_BITBUCKET_TOKEN", secret)
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abd3"
+	exec := seedRun(t, f, id, "", "someone@example.com", true)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, id)
+	rec := &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+		Status: runstore.StatusSucceeded, Stage: "writeback",
+		Tolerated: &runstore.ToleratedFindings{
+			Findings: []runstore.ToleratedFinding{{
+				Title: secret, Mode: rigor.Mode(secret), Label: rigor.Label(secret), Class: rigor.Class(secret),
+				Likelihood: 1, Impact: 1, FixCost: 1}},
+			Total: 1}}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, secret) {
+		t.Fatalf("the document carries the secret:\n%s", out)
+	}
+	var d Diagnosis
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if d.Tolerated == nil || len(d.Tolerated.Findings) != 1 {
+		t.Fatalf("tolerated = %+v", d.Tolerated)
+	}
+	tf := d.Tolerated.Findings[0]
+	if tf.Title != "[REDACTED]" || tf.Mode != "[REDACTED]" || tf.Label != "[REDACTED]" || tf.Class != "[REDACTED]" {
+		t.Fatalf("tolerated finding = %+v", tf)
+	}
+}
+
 // TestDiagnoseOmitsStagesAndToleratedWhenEmpty: both keys are omitempty, so a
 // run whose record carries neither -- a run that never recorded a stage, and
 // one with no record at all -- prints a document without them rather than an
