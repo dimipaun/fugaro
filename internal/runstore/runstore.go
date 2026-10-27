@@ -129,6 +129,195 @@ const (
 	TierSenior = "senior"
 )
 
+// MaxReviewScopeFiles bounds each path list a review-scope comparison
+// stores. The sets come from git, both are read over a range that can be a
+// whole integration branch's divergence (the cost the narrowing exists to
+// avoid), and the record is a small object every listing reads, so the
+// lists are capped — by count, by path, and by bytes between them — and
+// Truncated says so (result.schema.json's maxItems).
+const MaxReviewScopeFiles = 200
+
+// MaxReviewScopePath bounds one stored path in runes, like MaxToleratedTitle
+// bounds a finding's title. A path is at most PATH_MAX bytes on the
+// filesystems a repository is checked out on, so this only keeps one from
+// filling the record.
+const MaxReviewScopePath = 512
+
+// MaxReviewScopeBytes caps the stored paths' total length, the two sets
+// together, like MaxChangedPathBytes: a plan that renames a directory puts a
+// megabyte of paths in a set, three lists at the count cap are past
+// MaxRecordBytes, and a record that big cannot be read back at all.
+const MaxReviewScopeBytes = 16 << 10
+
+// The review-scope reasons (ReviewScope.WhyNot), each a short value the
+// runner sets and never anything a task wrote, so the digest can render it
+// (generic-tool plan T5.2, D332). WhyNot is "" exactly when Applicable is
+// true.
+const (
+	// ReviewScopeFollowUp: a follow-up reviews the pull request's own range,
+	// which holds whoever else contributed to it.
+	ReviewScopeFollowUp = "follow-up"
+	// ReviewScopeReviewRun: a review run has no implement stage, so it has
+	// no implement set to compare the range with.
+	ReviewScopeReviewRun = "review-run"
+	// ReviewScopeAutofix: the check step's commands.fix committed and the run
+	// skipped implement (gate.go, the Fixed gate): the run's own work is the
+	// fix's, not implement's.
+	ReviewScopeAutofix = "autofix"
+	// ReviewScopeGitTooOld: a git older than 2.44 cannot say which commits
+	// are the run's own without fetching origin's branches, so the wide range
+	// is kept and nothing is read for the comparison.
+	ReviewScopeGitTooOld = "git-too-old"
+	// ReviewScopeNoOwnCommits: the run made no commit of its own, so there is
+	// no implement set to compare the range with.
+	ReviewScopeNoOwnCommits = "no-own-commits"
+	// ReviewScopeOwnCommitsUnreadable: the run's own commits, or the parent
+	// of the first one, could not be read.
+	ReviewScopeOwnCommitsUnreadable = "own-commits-unreadable"
+	// ReviewScopeNoNarrowerRange: the recorded range holds no more commits
+	// than the run's own, so it was kept as it was — a run on its base, or one
+	// whose branch merged the base in. The comparison is recorded, and it is
+	// never a mismatch: the wide range was kept on purpose.
+	ReviewScopeNoNarrowerRange = "no-narrower-range"
+	// ReviewScopeRangeMoved: the commit the run's own commits start after no
+	// longer leads to HEAD, so the review range is not the run's own commits.
+	ReviewScopeRangeMoved = "range-moved"
+	// ReviewScopeReadFailed: one of the comparison's own git reads failed, so
+	// there are no two sets to compare.
+	ReviewScopeReadFailed = "read-failed"
+)
+
+// ReviewScope is the comparison between the paths implement changed and the
+// paths the review range covers (generic-tool plan T5.2, F2, D332): the
+// record of what the reviewer was handed beyond the run's own work, taken
+// right after implement and before the review prompt is built. It is report
+// only — nothing halts on it here; the stop is T7.3's — and it is the input
+// of the digest's review-scope flag (T1.4).
+//
+// Every path is repository-relative, as git listed it, and both sets are
+// read over the same diff form the review input is built from, so Outside is
+// exactly the review range's paths that the run's own commits did not
+// change. Applicable is true only where the review range IS the run's own
+// commits — narrowed to them, or equal to them by construction — which is
+// where the comparison is a statement about the narrowing; elsewhere the
+// range is wider on purpose and Outside is a fact, never a mismatch.
+//
+// Applicable says the two sets were read from one revision, so Outside is
+// empty by construction whenever it is true: every non-empty Outside is
+// recorded with a WhyNot (TestReviewScopeEqualRecordsNothingOutside,
+// TestReviewScopeRecordsOutsideFiles). That is the shape a later stop has to
+// know about (T7.3, D332); this record states the fact and leaves the
+// reading of it to the consumer.
+//
+// Absent — never an empty block — for a run that died before the comparison,
+// and in records from before this field existed: the field is additive, so
+// an old reader sees the record it always saw and the schema's version stays
+// 1.
+type ReviewScope struct {
+	// Applicable is whether the review range is the run's own commits, and so
+	// whether Outside is a mismatch rather than a fact about a range kept
+	// wider on purpose. True exactly when WhyNot is "".
+	Applicable bool `json:"applicable"`
+	// WhyNot is why the comparison does not apply, one of the values above,
+	// and "" when Applicable. A reader renders this and never the task.
+	WhyNot string `json:"why_not,omitempty"`
+	// ImplementFiles are the paths the run's own commits changed, at most
+	// MaxReviewScopeFiles of them. Absent — never empty — when there is no
+	// implement set to compare with, which WhyNot then says.
+	ImplementFiles []string `json:"implement_files,omitempty"`
+	// ReviewFiles are the paths the review range covers, the same way.
+	ReviewFiles []string `json:"review_files,omitempty"`
+	// Outside is the paths in ReviewFiles that are not in ImplementFiles: what
+	// the reviewer was handed that implement never wrote. Absent when there
+	// are none, which is the answer the comparison is meant to give — an
+	// empty list and no list would read as the same fact here, and the
+	// digest's flag is a non-empty Outside. It is taken over the two stored
+	// lists, so a truncated ImplementFiles can name a path here that the run
+	// did change (Truncated says the lists are not the whole ones).
+	Outside []string `json:"outside,omitempty"`
+	// Truncated is set when one of the lists was capped at
+	// MaxReviewScopeFiles, or at MaxReviewScopeBytes of path between them, or
+	// one of its paths at MaxReviewScopePath: the stored sets are then not the
+	// whole ones.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// NewReviewScope bounds the two sets and returns the block to store:
+// Outside is ReviewFiles less ImplementFiles, in git's own (sorted) order,
+// every path clipped to MaxReviewScopePath runes and every list capped at
+// MaxReviewScopeFiles, or at MaxReviewScopeBytes of path between the two,
+// with Truncated saying whether anything was cut. Nil and empty sets are both
+// "no set", so a caller that read none stores no list rather than an empty
+// one.
+//
+// applicable must agree with whyNot — true exactly when whyNot is "" — and
+// the runner sets both from one reading of git.
+func NewReviewScope(applicable bool, whyNot string, implementFiles, reviewFiles []string) *ReviewScope {
+	sc := &ReviewScope{Applicable: applicable, WhyNot: whyNot}
+	budget := MaxReviewScopeBytes
+	var cut bool
+	if sc.ImplementFiles, cut = boundReviewScopeFiles(implementFiles, &budget); cut {
+		sc.Truncated = true
+	}
+	if sc.ReviewFiles, cut = boundReviewScopeFiles(reviewFiles, &budget); cut {
+		sc.Truncated = true
+	}
+	if len(sc.ReviewFiles) == 0 {
+		return sc
+	}
+	// The difference is taken over the bounded lists, so a path Outside names
+	// is never one the stored ImplementFiles already holds.
+	implemented := make(map[string]bool, len(sc.ImplementFiles))
+	for _, p := range sc.ImplementFiles {
+		implemented[p] = true
+	}
+	outside := make([]string, 0, len(sc.ReviewFiles))
+	for _, p := range sc.ReviewFiles {
+		if !implemented[p] {
+			outside = append(outside, p)
+		}
+	}
+	if len(outside) > 0 {
+		sc.Outside = outside
+	}
+	return sc
+}
+
+// boundReviewScopeFiles is NewReviewScope's cap and clip: paths in git's
+// order, at most MaxReviewScopeFiles of them, each at most
+// MaxReviewScopePath runes and the lot within budget bytes, which the two
+// lists share so the block never grows past MaxReviewScopeBytes whatever the
+// sets hold. It also says whether any of the three cut anything. An empty
+// path is not a path, and a set that comes to nothing is nil rather than
+// empty, so a caller stores no list at all.
+func boundReviewScopeFiles(paths []string, budget *int) ([]string, bool) {
+	if len(paths) == 0 {
+		return nil, false
+	}
+	out := make([]string, 0, min(len(paths), MaxReviewScopeFiles))
+	trimmed := false
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		if len(out) >= MaxReviewScopeFiles {
+			return out, true
+		}
+		if clipped := clipRunes(p, MaxReviewScopePath); clipped != p {
+			p, trimmed = clipped, true
+		}
+		if *budget < len(p) {
+			return out, true
+		}
+		*budget -= len(p)
+		out = append(out, p)
+	}
+	if len(out) == 0 {
+		return nil, trimmed
+	}
+	return out, trimmed
+}
+
 // MaxTolerated bounds the tolerated findings a record stores. A round's
 // findings are a model's output and the record is a small object every
 // listing reads, so the list is capped and Total says how many there really
@@ -444,6 +633,13 @@ type Record struct {
 	// left. At most MaxBacklogClosed, and absent — never an empty list — for
 	// a run that closed none.
 	BacklogClosed []string `json:"backlog_closed,omitempty"`
+	// ReviewScope is the comparison between the paths implement changed and
+	// the paths the review range covers, taken right after implement
+	// (generic-tool plan T5.2, F2, D332): report only, and the input of the
+	// digest's review-scope flag (T1.4) and of the review-scope stop (T7.3).
+	// Absent for a run that died before the comparison, and in records from
+	// before this field existed.
+	ReviewScope *ReviewScope `json:"review_scope,omitempty"`
 	// Tolerated is the findings the run's resolved mode let through, in the
 	// reviewer's order: the findings themselves and not only the count
 	// Reviews carries, because what a mode decided not to fix is what a

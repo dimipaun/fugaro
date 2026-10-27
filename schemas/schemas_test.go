@@ -590,6 +590,13 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			{Title: "the retry loop has no backoff", Mode: rigor.Startup, Likelihood: 1, Impact: 3, FixCost: 2, Class: rigor.Correctness},
 			{Title: "a long comment restates the function", Mode: rigor.Startup, Likelihood: 2, Impact: 2, FixCost: 1, Class: rigor.Cosmetic},
 		}),
+		// And the review-scope comparison (docs/task-governance T5.2, F2,
+		// D332): the paths implement changed, the paths the review range
+		// covers, and what of the two is outside, with the range kept wide by
+		// design recorded as not applicable rather than as a mismatch.
+		ReviewScope: runstore.NewReviewScope(false, runstore.ReviewScopeNoNarrowerRange,
+			[]string{"internal/runner/diffbase.go"},
+			[]string{"internal/runner/diffbase.go", "internal/runner/reviewinput.go"}),
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {
@@ -751,16 +758,45 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			t.Errorf("schema accepts %s: %s", tc.name, repl)
 		}
 	}
+	// The review-scope comparison (docs/task-governance T5.2) is closed as
+	// well: its reason is one of a set the runner writes and a reader may
+	// render, the paths are bounded the way the record's other bounded lists
+	// are, and the block carries no key beyond those — so a record with a
+	// reason a digest cannot render, or a path at a length the record never
+	// holds, is refused rather than stored.
+	for _, tc := range []struct{ name, old, new string }{
+		{"a reason outside the set", `"why_not":"no-narrower-range"`, `"why_not":"because"`},
+		{"a reason that is not text", `"why_not":"no-narrower-range"`, `"why_not":5`},
+		{"the block with no applicable", `"applicable":false,`, ``},
+		{"an applicable that is not a boolean", `"applicable":false`, `"applicable":"no"`},
+		{"a key the block does not carry", `"outside":[`, `"mismatch":[`},
+		{"a path that is not text", `"internal/runner/diffbase.go"`, `5`},
+		{"a path longer than the bound", `"internal/runner/diffbase.go"`, `"` + strings.Repeat("x", runstore.MaxReviewScopePath+1) + `"`},
+		{"more paths than the bound", `"implement_files":[`, `"implement_files":[` + strings.Repeat(`"a",`, runstore.MaxReviewScopeFiles)},
+	} {
+		old, repl := []byte(tc.old), []byte(tc.new)
+		if !bytes.Contains(data, old) {
+			t.Fatalf("fixture lacks the literal this test replaces (%s): %s", tc.name, data)
+		}
+		bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, old, repl, 1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(bad); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, repl)
+		}
+	}
 	without := rec
 	without.Backlog = nil
 	without.BacklogClosed = nil
 	without.Tolerated = nil
+	without.ReviewScope = nil
 	bare, err := json.Marshal(without)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if bytes.Contains(bare, []byte(`"backlog"`)) || bytes.Contains(bare, []byte(`"backlog_closed"`)) ||
-		bytes.Contains(bare, []byte(`"tolerated"`)) {
+		bytes.Contains(bare, []byte(`"tolerated"`)) || bytes.Contains(bare, []byte(`"review_scope"`)) {
 		t.Fatalf("a run that filed, closed and tolerated nothing still writes the fields: %s", bare)
 	}
 	inst, err = jsonschema.UnmarshalJSON(bytes.NewReader(bare))
