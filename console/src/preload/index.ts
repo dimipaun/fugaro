@@ -87,7 +87,7 @@ export const BRIDGE_VERSION = 1
  * nothing failing, because the runtime tests in `test/unit/ipc.test.ts` pin the
  * same sets against the table and the object is built from that table anyway.
  * `satisfies` checks each row's shape without widening anything, so a row that
- * is not a name and a method is still a compile error, and the twenty-two names
+ * is not a name and a method is still a compile error, and the twenty-three names
  * stay literal -- which is what makes `ExposedName`, `ExposedMethod` and
  * `ConsoleBridge` below the closed things their comments say they are.
  *
@@ -143,6 +143,14 @@ export const BRIDGE_VERSION = 1
  * **The installation rail added six more, for twenty-two** (owner's design
  * ruling of 2026-10-25): `installation.list` spawns `config list --json`, and
  * the other five act on the console's own store and window.
+ *
+ * **Bitbucket credentials T1.2 added the twenty-third** (`coordinator.status` /
+ * `coordinatorStatus`, the project view read from the coordinator's stored
+ * view -- `fugaro coordinator status --from-store --all --json`, D364) and left
+ * the other twenty-two exactly where they were. It is the one read of the CLI's
+ * this surface can reach that needs no credential of the host's, and its two
+ * flags are words of `src/main/spawn.ts`'s row rather than arguments, which is
+ * why the row declares none.
  */
 export const EXPOSED_OPERATIONS = Object.freeze([
   ['live.watch', 'subscribeLive'],
@@ -175,11 +183,19 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   ['installation.remove', 'removeInstallation'],
   ['installation.reveal', 'revealInstallation'],
   ['installation.open', 'openInstallations'],
+  // The project view (Bitbucket credentials T1.2, D364): `fugaro coordinator
+  // status --from-store --all --json`, the one read of the CLI's that needs no
+  // credential of the host's. One row here for the reason L5b's and GV2.1's are
+  // one row each: a method that took the operation as an argument is the shape
+  // rule 5 forbids. The two flags the read fixes are words of `src/main/
+  // spawn.ts`'s row, not arguments a renderer sends -- the row here declares
+  // none.
+  ['coordinator.status', 'coordinatorStatus'],
 ] as const) satisfies readonly (readonly [string, string])[]
 
 /**
  * ExposedName is the closed union of the operation names this file exposes --
- * twenty-two string literals, not `string`. It is the type of the `operations` list
+ * twenty-three string literals, not `string`. It is the type of the `operations` list
  * a screen switches on, so the closure is what lets a screen be exhaustive.
  */
 export type ExposedName = (typeof EXPOSED_OPERATIONS)[number][0]
@@ -299,9 +315,9 @@ async function invokeOperation(
  *
  * The returned object is not cast into `ConsoleBridge`: it is checked against
  * it, like any other value, and that is the point of the accumulator's type. It
- * is `Record<ExposedMethod, ConsoleMethod>` -- twenty-two *named* properties,
+ * is `Record<ExposedMethod, ConsoleMethod>` -- twenty-three *named* properties,
  * because `ExposedMethod` is a union of literals -- so spreading it gives the
- * object literal those twenty-two properties as properties rather than as an index
+ * object literal those twenty-three properties as properties rather than as an index
  * signature. (Before that type was literal, this line needed `as ConsoleBridge`
  * to silence the compiler, which is what made the claim untested rather than
  * checked.) The loop is what actually writes them, and a loop is a thing the
@@ -330,7 +346,7 @@ export function createConsoleBridge(ipcRenderer: RendererLike): ConsoleBridge {
  * `exposeInMainWorld` is what keeps rule 5's promise concrete: the renderer gets
  * a copy of this object, in its own world, with `contextIsolation` in between.
  * It cannot reach the preload's scope, `ipcRenderer`, or Node -- only these
- * twenty-two methods.
+ * twenty-three methods.
  */
 export function exposeConsoleBridge(
   contextBridge: ContextBridgeLike,

@@ -834,10 +834,10 @@ export const REPO_KEYS = [
  *
  * **`pr_number` arrived with the same plan's GV2.5** (a live run's draft pull
  * request number, the run's own `record_pr`), between `plan_task` and
- * `credential` in `JSONRun`. Unlike `plan_task` it **is** read: the graph screen
- * joins a run to a node and shows that node's pull request, and this is the
- * number the node already carries once `plan status` has seen it, a refresh
- * earlier. It is decoded with `optionalInt`, so absent is `null` -- "the run has
+ * `credential` in `JSONRun`. Like `plan_task` it is accepted, not read yet
+ * (GV2.3b): the graph screen that will join a run to a node and show that
+ * node's pull request reads the number `plan status` gives the node, a refresh
+ * later, and nothing reads this one yet. It is decoded with `optionalInt`, so absent is `null` -- "the run has
  * recorded no pull request" -- and not `0`, which no repository numbering from 1
  * ever issues. A number, never a link: the console builds none from a feed value
  * (design section 5.1 rule 2).
@@ -1681,4 +1681,388 @@ function planStatusAt(raw: Record<string, unknown>, where: string): PlanStatusVi
  */
 export function decodePlanStatus(raw: unknown, where = 'the plan status document'): Decoded<PlanStatusView> {
   return at(where, () => planStatusAt(objectAt(raw, 'the document', where), where))
+}
+
+// ---------------------------------------------------------------------------
+// The coordinator's stored project view (Bitbucket credentials T1.2).
+// ---------------------------------------------------------------------------
+
+/**
+ * `fugaro coordinator status --from-store --all --json` is a **fourth**
+ * document, and like the plan status one it is not a shape of the feed: it is
+ * every repository the installation's local config lists, each with the view
+ * the coordinator's sweep last stored for it (`internal/coordinator/state.go`,
+ * `StoredProjectView`; `internal/cli/coordinator_view.go`,
+ * `runCoordinatorStatusFromStore`). So it has its own door,
+ * `decodeCoordinatorStatus`.
+ *
+ * **`stored` is the field this decoder exists for.** An absent node and a
+ * repository the sweep reconciled to nothing both read as a view with no
+ * records, and a screen that drew the second when it held the first would claim
+ * the coordinator had read a repository it never did. The CLI keeps the two
+ * apart (`RepoView.Stored`) and this decoder keeps the flag a boolean rather
+ * than folding it into "no records" — the screen labels a stored node as the
+ * last stored view and an unstored one as the runs alone.
+ *
+ * **Nothing here is a reading.** Every number in this document is structure — a
+ * pull request's number, a count of records, a retry count — and the console
+ * draws the counts it computes from the arrays rather than a figure the
+ * document carried, so no key of this shape goes through `readingOf`. The two
+ * quantities a screen prints (`omitted`, `omitted_collisions`) are the CLI's
+ * own `omitempty` counts, and absent means zero rather than unknown: the sweep
+ * dropped nothing.
+ */
+
+/** The exact key sets of the stored project view and of each object in it, in
+ * the structs' declaration order (`internal/coordinator/state.go`,
+ * `internal/coordinator/view.go`, `internal/coordinator/sweep.go`). A test reads
+ * the same fields off those files, so a key one side gains without the other is
+ * a failing test rather than an unread field. */
+export const COORDINATOR_STATUS_KEYS: readonly string[] = Object.freeze(['repos'])
+
+export const COORDINATOR_REPO_KEYS: readonly string[] = Object.freeze(['repo', 'stored', 'view', 'stale'])
+
+export const COORDINATOR_VIEW_KEYS: readonly string[] = Object.freeze([
+  'repo',
+  'records',
+  'collisions',
+  'unread',
+  'omitted',
+  'omitted_collisions',
+])
+
+export const COORDINATOR_RECORD_KEYS: readonly string[] = Object.freeze([
+  'pr',
+  'runs',
+  'branch',
+  'release',
+  'in_flight',
+  'files',
+  'services',
+])
+
+export const COORDINATOR_RUN_KEYS: readonly string[] = Object.freeze([
+  'id',
+  'pr',
+  'status',
+  'outcome',
+  'terminal',
+  'branch',
+  'base_branch',
+  'declared_by',
+  'files',
+  'files_truncated',
+])
+
+export const COORDINATOR_PR_KEYS: readonly string[] = Object.freeze([
+  'number',
+  'url',
+  'title',
+  'branch',
+  'draft',
+  'state',
+])
+
+export const COORDINATOR_COLLISION_KEYS: readonly string[] = Object.freeze(['a', 'b', 'files', 'services'])
+
+export const COORDINATOR_UNREAD_KEYS: readonly string[] = Object.freeze([
+  'number',
+  'reason',
+  'carried',
+  'failures',
+  'retry_after',
+])
+
+export const COORDINATOR_STALE_KEYS: readonly string[] = Object.freeze(['since', 'reason'])
+
+/** CoordinatorPullRequest is one pull request as the host last showed it.
+ * `title` is untrusted text written by whoever opened it, and `url` is text the
+ * console draws and never hands to `openExternal` (design section 5.1 rule 2:
+ * the console builds no link from a document's string). */
+export interface CoordinatorPullRequest {
+  readonly number: number
+  readonly url: string
+  readonly title: string
+  readonly branch: string
+  readonly draft: boolean
+  readonly state: string
+}
+
+/** CoordinatorRun is one run behind a record. `declaredBy` is a **declaration**
+ * a launch record wrote about itself, never an identity. */
+export interface CoordinatorRun {
+  readonly id: string
+  readonly pr: number | null
+  readonly status: string
+  readonly outcome: string
+  readonly terminal: boolean
+  readonly branch: string
+  readonly baseBranch: string
+  readonly declaredBy: string
+  readonly files: readonly string[]
+  readonly filesTruncated: boolean
+}
+
+/** CoordinatorRecord is one unit of work: a pull request and the runs behind
+ * it, or — for work that has not reached the host — the in-flight runs on their
+ * own, with `pr` null. */
+export interface CoordinatorRecord {
+  readonly pr: CoordinatorPullRequest | null
+  readonly runs: readonly CoordinatorRun[]
+  readonly branch: string
+  readonly release: string
+  readonly inFlight: boolean
+  readonly files: readonly string[]
+  readonly services: readonly string[]
+}
+
+/** CoordinatorCollision is two in-flight records touching the same file or the
+ * same service. */
+export interface CoordinatorCollision {
+  readonly a: string
+  readonly b: string
+  readonly files: readonly string[]
+  readonly services: readonly string[]
+}
+
+/** CoordinatorUnread is one pull request whose host state a sweep could not
+ * read, with whether the state shown is the last one a sweep did read. */
+export interface CoordinatorUnread {
+  readonly number: number
+  readonly reason: string
+  readonly carried: boolean
+  readonly failures: number | null
+  readonly retryAfter: string | null
+}
+
+/** CoordinatorStale is the marker the sweep leaves when it could not reconcile
+ * a repository, **exactly as stored**. No age is derived from `since`: the view
+ * beside it carries no time by design, so an age would compare two things that
+ * are not on the same scale. */
+export interface CoordinatorStale {
+  readonly since: string
+  readonly reason: string
+}
+
+/** CoordinatorView is one repository's stored view. `records` is empty both for
+ * a repository the sweep reconciled to nothing and for one it never read; which
+ * of the two it is comes from the enclosing `stored` flag and never from the
+ * array's length. */
+export interface CoordinatorView {
+  readonly repo: string
+  readonly records: readonly CoordinatorRecord[]
+  readonly collisions: readonly CoordinatorCollision[]
+  readonly unread: readonly CoordinatorUnread[]
+  readonly omitted: number
+  readonly omittedCollisions: number
+}
+
+/** CoordinatorRepoView is one repository's node: whether the database held a
+ * view at all, the view, and the marker beside it. */
+export interface CoordinatorRepoView {
+  readonly repo: string
+  readonly stored: boolean
+  readonly view: CoordinatorView
+  readonly stale: CoordinatorStale | null
+}
+
+/** CoordinatorStatusView is the whole document: every repository the
+ * installation lists, in the order the CLI read them. */
+export interface CoordinatorStatusView {
+  readonly repos: readonly CoordinatorRepoView[]
+}
+
+/** coordinatorIntAt is a whole number the shape must carry and that must not be
+ * negative: a pull request's number, a retry count. A fraction, a negative or a
+ * numeral in a string is refused by name rather than read as zero, because a
+ * count that is wrong is not one that is absent. */
+function coordinatorIntAt(raw: unknown, field: string, where: string): number {
+  const value = intAt(raw, field, where)
+  if (value < 0) return refuse('not-a-number', field, where)
+  return value
+}
+
+/** coordinatorNumberAt is `intAt` held to the positive range a pull request's
+ * number lives in: `0` is the CLI's "no pull request" and never a number. */
+function coordinatorNumberAt(raw: unknown, field: string, where: string): number {
+  const value = intAt(raw, field, where)
+  if (value < 1) return refuse('not-a-number', field, where)
+  return value
+}
+
+/** coordinatorOptionalNumberAt is a positive whole number the shape may leave
+ * out (`pr`, `failures`): absent and `null` both read as no number. */
+function coordinatorOptionalNumberAt(raw: Record<string, unknown>, key: string, field: string, where: string): number | null {
+  const value = raw[key]
+  if (value === undefined || value === null) return null
+  return coordinatorNumberAt(value, field === '' ? key : `${field}.${key}`, where)
+}
+
+/** coordinatorOptionalStampAt is an RFC 3339 stamp the shape may leave out
+ * (`retry_after`): absent and `null` both read as no stamp. A value that is
+ * there and is not a stamp is refused by field name rather than drawn as one. */
+function coordinatorOptionalStampAt(raw: Record<string, unknown>, key: string, field: string, where: string): string | null {
+  const value = raw[key]
+  if (value === undefined || value === null) return null
+  return timestampAt(value, field === '' ? key : `${field}.${key}`, where)
+}
+
+/** coordinatorStringsAt is a string array that must be there: a record's and a
+ * run's `files`, a collision's `files` and `services`. An empty list is the
+ * answer "no path" and not a missing answer, so the key is required and each
+ * member is a string. */
+function coordinatorStringsAt(raw: unknown, field: string, where: string): readonly string[] {
+  return arrayAt(raw, field, where).map((item, index) =>
+    stringAt(item, `${field}[${String(index)}]`, where),
+  )
+}
+
+function coordinatorPrAt(raw: unknown, field: string, where: string): CoordinatorPullRequest {
+  const pr = objectAt(raw, field, where)
+  closed(pr, COORDINATOR_PR_KEYS, field, where)
+  return {
+    number: coordinatorNumberAt(required(pr, 'number', field, where), `${field}.number`, where),
+    url: optionalText(pr, 'url', field, where),
+    title: optionalText(pr, 'title', field, where),
+    branch: optionalText(pr, 'branch', field, where),
+    draft: optionalBool(pr, 'draft', field, where),
+    state: optionalText(pr, 'state', field, where),
+  }
+}
+
+function coordinatorRunAt(raw: unknown, index: number, field: string, where: string): CoordinatorRun {
+  const at = `${field}[${String(index)}]`
+  const run = objectAt(raw, at, where)
+  closed(run, COORDINATOR_RUN_KEYS, at, where)
+  return {
+    id: stringAt(required(run, 'id', at, where), `${at}.id`, where),
+    pr: coordinatorOptionalNumberAt(run, 'pr', at, where),
+    status: optionalText(run, 'status', at, where),
+    outcome: optionalText(run, 'outcome', at, where),
+    terminal: optionalBool(run, 'terminal', at, where),
+    branch: optionalText(run, 'branch', at, where),
+    baseBranch: optionalText(run, 'base_branch', at, where),
+    declaredBy: optionalText(run, 'declared_by', at, where),
+    files: coordinatorStringsAt(required(run, 'files', at, where), `${at}.files`, where),
+    filesTruncated: optionalBool(run, 'files_truncated', at, where),
+  }
+}
+
+function coordinatorRecordAt(raw: unknown, index: number, field: string, where: string): CoordinatorRecord {
+  const at = `${field}[${String(index)}]`
+  const record = objectAt(raw, at, where)
+  closed(record, COORDINATOR_RECORD_KEYS, at, where)
+  const pr = record['pr']
+  return {
+    pr: pr === undefined || pr === null ? null : coordinatorPrAt(pr, `${at}.pr`, where),
+    runs: arrayAt(required(record, 'runs', at, where), `${at}.runs`, where).map((item, runIndex) =>
+      coordinatorRunAt(item, runIndex, `${at}.runs`, where),
+    ),
+    branch: optionalText(record, 'branch', at, where),
+    release: optionalText(record, 'release', at, where),
+    inFlight: boolAt(required(record, 'in_flight', at, where), `${at}.in_flight`, where),
+    files: coordinatorStringsAt(required(record, 'files', at, where), `${at}.files`, where),
+    services: coordinatorStringsAt(required(record, 'services', at, where), `${at}.services`, where),
+  }
+}
+
+function coordinatorCollisionAt(raw: unknown, index: number, field: string, where: string): CoordinatorCollision {
+  const at = `${field}[${String(index)}]`
+  const collision = objectAt(raw, at, where)
+  closed(collision, COORDINATOR_COLLISION_KEYS, at, where)
+  return {
+    a: stringAt(required(collision, 'a', at, where), `${at}.a`, where),
+    b: stringAt(required(collision, 'b', at, where), `${at}.b`, where),
+    files: coordinatorStringsAt(required(collision, 'files', at, where), `${at}.files`, where),
+    services: coordinatorStringsAt(required(collision, 'services', at, where), `${at}.services`, where),
+  }
+}
+
+function coordinatorUnreadAt(raw: unknown, index: number, field: string, where: string): CoordinatorUnread {
+  const at = `${field}[${String(index)}]`
+  const unread = objectAt(raw, at, where)
+  closed(unread, COORDINATOR_UNREAD_KEYS, at, where)
+  return {
+    number: coordinatorNumberAt(required(unread, 'number', at, where), `${at}.number`, where),
+    reason: stringAt(required(unread, 'reason', at, where), `${at}.reason`, where),
+    carried: optionalBool(unread, 'carried', at, where),
+    failures: coordinatorOptionalNumberAt(unread, 'failures', at, where),
+    retryAfter: coordinatorOptionalStampAt(unread, 'retry_after', at, where),
+  }
+}
+
+function coordinatorStaleAt(raw: unknown, field: string, where: string): CoordinatorStale {
+  const stale = objectAt(raw, field, where)
+  closed(stale, COORDINATOR_STALE_KEYS, field, where)
+  return {
+    since: timestampAt(required(stale, 'since', field, where), `${field}.since`, where),
+    reason: stringAt(required(stale, 'reason', field, where), `${field}.reason`, where),
+  }
+}
+
+function coordinatorViewAt(raw: unknown, field: string, where: string): CoordinatorView {
+  const view = objectAt(raw, field, where)
+  closed(view, COORDINATOR_VIEW_KEYS, field, where)
+  return {
+    repo: stringAt(required(view, 'repo', field, where), `${field}.repo`, where),
+    records: arrayAt(required(view, 'records', field, where), `${field}.records`, where).map((item, index) =>
+      coordinatorRecordAt(item, index, `${field}.records`, where),
+    ),
+    collisions: arrayAt(required(view, 'collisions', field, where), `${field}.collisions`, where).map((item, index) =>
+      coordinatorCollisionAt(item, index, `${field}.collisions`, where),
+    ),
+    // `unread`, `omitted` and `omitted_collisions` are the sweep's own keys
+    // (`omitempty`), so absent means "nothing was dropped and every state was
+    // read" rather than "the console does not know".
+    unread:
+      view['unread'] === undefined || view['unread'] === null
+        ? []
+        : arrayAt(view['unread'], `${field}.unread`, where).map((item, index) =>
+            coordinatorUnreadAt(item, index, `${field}.unread`, where),
+          ),
+    omitted:
+      view['omitted'] === undefined || view['omitted'] === null
+        ? 0
+        : coordinatorIntAt(view['omitted'], `${field}.omitted`, where),
+    omittedCollisions:
+      view['omitted_collisions'] === undefined || view['omitted_collisions'] === null
+        ? 0
+        : coordinatorIntAt(view['omitted_collisions'], `${field}.omitted_collisions`, where),
+  }
+}
+
+function coordinatorRepoAt(raw: unknown, index: number, where: string): CoordinatorRepoView {
+  const field = `repos[${String(index)}]`
+  const repo = objectAt(raw, field, where)
+  closed(repo, COORDINATOR_REPO_KEYS, field, where)
+  const stale = repo['stale']
+  return {
+    repo: stringAt(required(repo, 'repo', field, where), `${field}.repo`, where),
+    stored: boolAt(required(repo, 'stored', field, where), `${field}.stored`, where),
+    view: coordinatorViewAt(required(repo, 'view', field, where), `${field}.view`, where),
+    stale: stale === undefined || stale === null ? null : coordinatorStaleAt(stale, `${field}.stale`, where),
+  }
+}
+
+function coordinatorStatusAt(raw: Record<string, unknown>, where: string): CoordinatorStatusView {
+  closed(raw, COORDINATOR_STATUS_KEYS, '', where)
+  return {
+    repos: arrayAt(required(raw, 'repos', '', where), 'repos', where).map((item, index) =>
+      coordinatorRepoAt(item, index, where),
+    ),
+  }
+}
+
+/**
+ * decodeCoordinatorStatus admits `coordinator status --from-store --all --json`
+ * and nothing else. It is a separate door for `decodePlanStatus`'s reason: the
+ * two documents share no marker, so a feed document handed here is refused for
+ * the keys it is missing and this document handed to the feed's door is refused
+ * as an unknown shape. Neither is read as the other.
+ */
+export function decodeCoordinatorStatus(
+  raw: unknown,
+  where = 'the coordinator status document',
+): Decoded<CoordinatorStatusView> {
+  return at(where, () => coordinatorStatusAt(objectAt(raw, 'the document', where), where))
 }

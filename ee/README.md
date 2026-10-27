@@ -4,9 +4,7 @@ This directory is reserved for **net-new organisation features**, which ship und
 licence rather than under the MIT licence the core carries. It is not a place for anything that
 lives in the core today: what is already published under MIT stays there.
 
-**Everything here is under [`ee/LICENSE`](LICENSE)**, the Fugaro Enterprise Edition licence. Its
-text is a **draft that counsel has not read yet**: the owner adopted it on 2026-10-26 ahead of
-that review, and the status line at the top of the file comes off when counsel has read it. The
+**Everything here is under [`ee/LICENSE`](LICENSE)**, the Fugaro Enterprise Edition licence. Its text is **counsel's, of 2026-10-27**, one wording in `ee/`, `console/` and `mobile/`; it names Subscription Terms and a contributor agreement that are **not published yet**, and says so with a bracketed placeholder for each. The
 folder holds no code yet, and nothing under it has ever been released.
 
 Three rules hold for everything placed here:

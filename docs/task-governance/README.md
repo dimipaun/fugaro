@@ -1,12 +1,13 @@
 # Task governance and periodic run reviews
 
-**Status (2026-10-26): partly implemented — T1.2 is written on the branch
-`fugaro/20261026-201947-5156`, a draft pull request not on `main`, and no other task has started;
-no task approved.** T1.2 is the budget gateway's per-stage report counting the distinct sub-agents
-that called the stage (`gateway.StageReport.Agents`, from the `x-claude-code-agent-id` the gateway's
-`model call` lines already carry), which nothing reads yet: T7.2's fan-out stop is what will. The
-owner answered decisions D320–D333 on 2026-10-26 (D320 not the recommendation), which approves the
-reconciliation; each task of the plan still needs the owner's own explicit go.
+**Status (2026-10-26): partly implemented — T1.1, T1.2, T1.3 and T2.1 are on `main`; no other
+task has merged.** Every stage's record carries `calls` (the gateway's stage report, absent without
+a gateway) and `agents` (the sub-agent tool calls the relay counted on the stage's own stream, for
+every auth mode); the gateway's count of distinct agent IDs (`gateway.StageReport.Agents`, T1.2) is
+never recorded, and nothing reads it yet: T7.2's fan-out stop is what will. `internal/digest`
+builds a period's runs as a redacted, deterministic report (T2.1). The owner answered decisions
+D320–D333 on 2026-10-26 (D320 not the recommendation), which approves the reconciliation; each task
+of the plan still needs the owner's own explicit go.
 
 **Spec owner:** the Fugaro owner. **Dates:** governance spec 2026-10-22; periodic-reviews request
 2026-10-25. **Base:** `main` at `d5898f9b8` (`release: v0.11.4`).

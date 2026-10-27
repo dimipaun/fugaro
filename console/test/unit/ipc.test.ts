@@ -566,12 +566,16 @@ interface CliCommand {
  * (there is no command the console could drive that is not here), and nothing on
  * it that is not `allowed` may be driven either. Keeping the list complete is
  * what makes "the console is read-only" a fact about the surface rather than a
- * claim about the twelve argvs we happened to think of.
+ * claim about the argvs we happened to think of.
+ *
+ * `coordinator status` was already a leaf of this CLI on that date; it is listed
+ * as `allowed` from Bitbucket credentials T1.2, when the project view became the
+ * first screen to read it.
  */
 const CLI_COMMANDS: readonly CliCommand[] = [
-  // The eleven dashboard commands the design's allow-list admits (twelve argv:
-  // `logs` twice, and console L5b's `runs stats`), and the one document each
-  // draws. The picker's own read
+  // The thirteen dashboard commands the design's allow-list admits (fourteen
+  // argv: `logs` twice, and console L5b's `runs stats`), and the one document
+  // each draws. The picker's own read
   // (`config list --json`) is deliberately not here: it is not a dashboard
   // operation, and it arrived on 2026-10-18, after this snapshot's date.
   { command: 'watch', kind: 'allowed', where: 'internal/cli/watch.go:134' },
@@ -590,6 +594,9 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   { command: 'accounts ls', kind: 'allowed', where: 'internal/cli/accounts.go:70' },
   { command: 'version', kind: 'allowed', where: 'internal/cli/root.go:84' },
   { command: 'doctor', kind: 'allowed', where: 'internal/cli/doctor.go:159' },
+  // Bitbucket credentials T1.2: the project view's read, the one command here
+  // whose subject is the coordinator's *stored* view rather than a live read.
+  { command: 'coordinator status', kind: 'allowed', where: 'internal/cli/coordinator.go:560' },
   // Writers.
   { command: 'run', kind: 'mutating', where: 'internal/cli/run.go:134' },
   { command: 'cancel', kind: 'mutating', where: 'internal/cli/cancel.go:72' },
@@ -660,12 +667,15 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * `--dir D` on doctor is main-process state rather than a renderer argument, so
  * both are absent from these strings.
  *
- * **It is thirteen argvs, and this surface is fourteen.** The thirteenth is
+ * **It is fourteen argvs, and this surface is fifteen.** The thirteenth is
  * `config list --json`, the rail's own read (owner's design ruling of
  * 2026-10-25): until that ruling there were twelve here and it was pinned where
  * the picker's table was, and the ruling made the read the dashboard's own
  * operation. The fourteenth is GV2.1's `plan status --json` (the graph
- * screen's per-task state; `console/docs/json-contract.md` §6.12).
+ * screen's per-task state; `console/docs/json-contract.md` §6.12), and the
+ * fifteenth is T1.2's `coordinator status --from-store --all --json`, whose two
+ * extra words are fixed flags of the row rather than arguments
+ * (`console/docs/json-contract.md` §6.13).
  */
 const DESIGN_ARGV: readonly string[] = [
   'watch --json',
@@ -682,6 +692,7 @@ const DESIGN_ARGV: readonly string[] = [
   'doctor --json',
   'config list --json',
   'plan status --json',
+  'coordinator status --from-store --all --json',
 ]
 
 /** argvOf is an operation's command and the flags it fixes, as one string. */
@@ -839,7 +850,7 @@ describe("the allow-list's read-only invariant", () => {
     }
   })
 
-  it('fixes only the two flags the surface may fix, and never --url with --json', () => {
+  it('fixes only the four flags the surface may fix, and never --url with --json', () => {
     for (const operation of CONSOLE_OPERATIONS) {
       for (const flag of operation.flags) {
         expect(ALLOWED_OPERATION_FLAGS, `${operation.name} fixes ${flag}`).toContain(flag)
@@ -847,7 +858,12 @@ describe("the allow-list's read-only invariant", () => {
       const flags = flagsOf(operation)
       expect(flags.includes('--url') && flags.includes('--json'), operation.name).toBe(false)
     }
-    expect([...ALLOWED_OPERATION_FLAGS]).toEqual(['--json', '--url'])
+    // `--from-store` and `--all` are T1.2's two, fixed together on
+    // `coordinator status` alone: the stored view and the project-wide wrapper
+    // are one question, and no screen control turns either off. Widening this
+    // list is what a new operation fixing a new flag costs, and the exact-argv
+    // pin above is what keeps that from being a free widening.
+    expect([...ALLOWED_OPERATION_FLAGS]).toEqual(['--json', '--url', '--from-store', '--all'])
   })
 })
 
@@ -992,6 +1008,10 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   // installation's own, and this payload is the whole of what a renderer may
   // say to it (plan GV2.1, constraint C1).
   'plan.status': { all: false },
+  // No `repo`, no `since`, no `path`: T1.2's read is the installation's whole
+  // repository set, from the view the coordinator already stored, so this
+  // payload is empty on purpose (Bitbucket credentials T1.2).
+  'coordinator.status': {},
   'run.diagnose': { run: '20261016-121029-4a1b' },
   'run.logs': { run: '20261016-121029-4a1b' },
   'run.logLink': { run: '20261016-121029-4a1b' },
@@ -1813,7 +1833,7 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these twenty-two, and no others".
+ * channel. The claim is "these twenty-three, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
@@ -1833,7 +1853,11 @@ describe('the spend read’s arguments', () => {
  * method renamed. **Plan GV2.1 added the twenty-second** (`plan.status` /
  * `planStatus`, the plan graph joined to the runs working on it -- the read
  * L5b's reasoning covers, one command further) and left the other twenty-one
- * exactly where they were.
+ * exactly where they were. **Bitbucket credentials T1.2 added the twenty-third**
+ * (`coordinator.status` / `coordinatorStatus`, the project view's read of the
+ * coordinator's stored view -- the first operation here whose document the CLI
+ * serves from a store rather than from a live walk) and left the other
+ * twenty-two exactly where they were.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
@@ -1858,6 +1882,7 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['installation.remove', 'removeInstallation'],
   ['installation.reveal', 'revealInstallation'],
   ['installation.open', 'openInstallations'],
+  ['coordinator.status', 'coordinatorStatus'],
 ]
 
 /**
@@ -1888,7 +1913,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these twenty-two, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
+  it('is exactly these twenty-three, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -1905,11 +1930,11 @@ describe('the frozen list of operations the preload exposes', () => {
     // unmutated surface is asserted clean first.
     expect(surfaceOffences(SHIPPED_SURFACE)).toEqual([])
 
-    // A twenty-third channel: what each task added must stay one row, and the
+    // A twenty-fourth channel: what each task added must stay one row, and the
     // next task that adds a read cannot do it quietly.
-    const twentyThird = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
-    expect(twentyThird).toContain('fleet.report: a channel this console does not ship')
-    expect(twentyThird).toContain('23 rows, and this console ships 22')
+    const twentyFourth = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
+    expect(twentyFourth).toContain('fleet.report: a channel this console does not ship')
+    expect(twentyFourth).toContain('24 rows, and this console ships 23')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -1923,7 +1948,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('21 rows, and this console ships 22')
+    expect(withoutTheNewRow).toContain('22 rows, and this console ships 23')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -1938,8 +1963,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the twenty-two methods and nothing else', () => {
-    // The bridge the window is handed: the twenty-two methods and the names,
+  it('is frozen, and hands the window a bridge with the twenty-three methods and nothing else', () => {
+    // The bridge the window is handed: the twenty-three methods and the names,
     // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -2961,16 +2986,18 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: eighteen of the surface's twenty-two operations,
+    // The non-vacuity half: nineteen of the surface's twenty-three operations,
     // all of them reachable in a reduced mode (the handshake is the one the loop
     // skips and its own test covers; `installation.current`, Task 3.4b, is among
-    // the eighteen, because a reduced console's header still names its
+    // the nineteen, because a reduced console's header still names its
     // installation, and the rail's own six are too -- a reduced console still
     // has a rail, and the store it reads is not a figure the mode withholds).
     // `plan.status` is one of them: a plan graph is not a spend, a cap or a kill
-    // control, so there is no figure for the mode to withhold.
+    // control, so there is no figure for the mode to withhold. `coordinator.status`
+    // (T1.2) is another, and for the same reason: the project view is repository
+    // state, not money, so the mode has nothing to withhold from it.
     // A wrapper that refused the whole surface would fail here.
-    expect(THE_OPEN_OPERATIONS.length).toBe(18)
+    expect(THE_OPEN_OPERATIONS.length).toBe(19)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(

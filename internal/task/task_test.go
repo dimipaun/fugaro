@@ -12,6 +12,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 func TestNewRunID(t *testing.T) {
@@ -366,6 +367,70 @@ func TestOAuthTokenOmittedWhenAbsent(t *testing.T) {
 	got, err := Parse(data)
 	if err != nil || got.OAuthToken != "acme-personal" {
 		t.Fatalf("round trip = %+v, %v", got, err)
+	}
+}
+
+// TestTaskSpecCompressionOffRoundTrips: task.Spec.CompressionOff (fugaro run
+// --no-compression) survives a marshal/parse round trip, and a spec that does
+// not carry it is byte-identical to what the previous release wrote.
+func TestTaskSpecCompressionOffRoundTrips(t *testing.T) {
+	s := Spec{Version: 1, RunID: "20261012-100000-abcd", Repo: "owner/repo-a", Ref: "main", CompressionOff: true}
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got Spec
+	if err := json.Unmarshal(data, &got); err != nil || !got.CompressionOff {
+		t.Fatalf("round trip: got %+v, err %v", got, err)
+	}
+	plain, err := json.Marshal(Spec{Version: 1, RunID: "20261012-100000-abcd", Repo: "owner/repo-a", Ref: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(plain), "compression_off") {
+		t.Errorf("a false CompressionOff was not omitted: %s", plain)
+	}
+}
+
+// TestOldTaskParserRefusesCompressionOffField simulates a pre-feature
+// runner's strict decode: oldSpec is Spec's shape before this task, copied
+// field for field (not re-derived), so this proves what an old binary
+// actually did, not what this task wishes it did.
+func TestOldTaskParserRefusesCompressionOffField(t *testing.T) {
+	spec := Spec{Version: 1, RunID: "20261012-100000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "x", CompressionOff: true}
+	data, err := spec.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	type oldSpec struct {
+		Version      int           `json:"version"`
+		RunID        string        `json:"run_id"`
+		Repo         string        `json:"repo"`
+		Ref          string        `json:"ref"`
+		Workflow     string        `json:"workflow,omitempty"`
+		Task         string        `json:"task,omitempty"`
+		Title        string        `json:"title,omitempty"`
+		PlanTask     string        `json:"plan_task,omitempty"`
+		Branch       string        `json:"branch,omitempty"`
+		PR           int           `json:"pr,omitempty"`
+		PreviousRun  string        `json:"previous_run,omitempty"`
+		Overrides    Overrides     `json:"overrides"`
+		RequestedBy  string        `json:"requested_by,omitempty"`
+		Batch        string        `json:"batch,omitempty"`
+		Recipe       *Recipe       `json:"recipe,omitempty"`
+		ReviewPRs    []int         `json:"review_prs,omitempty"`
+		ProjectLayer *ProjectLayer `json:"project_layer,omitempty"`
+		OAuthToken   string        `json:"oauth_token,omitempty"`
+		Mode         string        `json:"mode,omitempty"`
+		Rigor        rigor.Mode    `json:"rigor,omitempty"`
+		Paths        []string      `json:"paths,omitempty"`
+		Inputs       []InputFile   `json:"inputs,omitempty"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var old oldSpec
+	if err := dec.Decode(&old); err == nil {
+		t.Fatal("a pre-feature Spec decoder accepted compression_off silently")
 	}
 }
 

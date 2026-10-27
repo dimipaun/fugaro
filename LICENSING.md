@@ -6,11 +6,9 @@ before 0.11.0 is MIT.
 
 Four parts of the repository are not covered by it. Three of them, `console/`, `mobile/` and
 `ee/`, are excluded from the MIT licence and carry a business licence of their own, one text in
-three files with only the product's name changed. **That text is a draft, not yet reviewed by
-counsel**: the owner adopted it on 2026-10-26 ahead of that review, and each file's first line says
-so until counsel has read it. Each one allows copying and modifying for development and testing,
+three files of identical wording, which is counsel's text of 2026-10-27 and replaces the draft the owner adopted on 2026-10-26. **Two things it names are not published yet**: the Subscription Terms and the contributor licence agreement, each shown as a bracketed placeholder in the text. The licence allows copying and modifying for development and testing,
 and needs a subscription for the correct number of user seats (one seat per person who uses it)
-for production use, under Subscription Terms that are not published yet.
+for production use, under those Subscription Terms.
 
 ## The desktop console, `console/`
 

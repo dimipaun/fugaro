@@ -46,7 +46,14 @@ type prChain struct {
 	// 2026-10-12, task 9b review; design docs/design/named-oauth-tokens.md
 	// §3 T6 and §6b).
 	OAuthToken string
-	Recipe     *task.Recipe // the previous run's: a follow-up keeps it unless --recipe names one
+	// CompressionOff is the previous run's own override (task.Spec.
+	// CompressionOff, fugaro run --no-compression): a follow-up keeps it, so
+	// a chain that turned compression off for one suspicious run stays off
+	// without the flag being repeated on every follow-up. The override is
+	// one-directional, so a follow-up can turn compression off but never
+	// back on: --no-compression sets it, and nothing clears it.
+	CompressionOff bool
+	Recipe         *task.Recipe // the previous run's: a follow-up keeps it unless --recipe names one
 	// Title is the previous run's own job title (task.Spec.Title, "") when
 	// it has none: a follow-up keeps its run's title, so a chain of
 	// follow-ups stays one job in fugaro watch instead of being listed
@@ -141,6 +148,7 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 	// from before it was kept falls back to that run's ref.
 	c.Ref, c.Workflow = c.Previous.BaseBranch, prev.Workflow
 	c.OAuthToken = prev.OAuthToken
+	c.CompressionOff = prev.CompressionOff
 	c.Recipe = prev.Recipe
 	c.Title = prev.Title
 	if c.Recipe == nil {
@@ -566,9 +574,10 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	// re-claiming a task would say the task is running again with every
 	// follow-up. An explicit --plan-task claims one for this run itself.
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: c.Ref, Workflow: workflow, Task: text,
-		Title:    cmp.Or(o.title, c.Title),
-		PlanTask: o.planTask,
-		Branch:   c.Branch, PR: o.pr[0], PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch, Recipe: rcp,
+		Title:          cmp.Or(o.title, c.Title),
+		PlanTask:       o.planTask,
+		CompressionOff: c.CompressionOff,
+		Branch:         c.Branch, PR: o.pr[0], PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch, Recipe: rcp,
 		Rigor: rigor.Mode(o.rigor), Paths: o.paths}
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()

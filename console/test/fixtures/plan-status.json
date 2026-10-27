@@ -56,7 +56,7 @@
           "closed": false,
           "level": 2,
           "critical": false,
-          "needs": ["task-two", "task-three"],
+          "needs": ["task-three", "task-two"],
           "release": "1.5.0"
         },
         {

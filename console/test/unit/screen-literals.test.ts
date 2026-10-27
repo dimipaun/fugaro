@@ -203,6 +203,13 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
         'the answer of the vocabulary the caller passed in (`rigorModeWord` or `rigorLayerWord`, both `shared/rigor.ts`), which is one of the console\'s own words or `null`; `null` is the branch that hands the document\'s own mode or layer to `putText` as text',
     },
   },
+  'coordinator.ts': {
+    word: {
+      within: 'numberCell',
+      reason:
+        'the parameter of the `numberCell` helper itself; every call site passes one of this file\'s own count words (`COORDINATOR_RECORDS_WORD`, `COORDINATOR_IN_FLIGHT_COUNT_WORD`, `COORDINATOR_COLLISIONS_WORD`), so no document string reaches the sink',
+    },
+  },
 })
 
 /** blankComments replaces every comment with spaces, keeping strings and line
@@ -451,6 +458,10 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     'people.view': '`PeopleView`, the closed three words `peopleViewOf` resolves (`all`, `own`, and `unknown` for a word this build does not know)',
     'drawnKey(currency)': 'read back from a cell `putText` wrote, so it is the sanitized text',
     theme: { within: 'renderSpend', reason: 'a `SpendTheme`, the closed theme tuple' },
+  },
+  'coordinator.ts': {
+    "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
+    theme: { within: 'renderCoordinator', reason: 'a `CoordinatorTheme`, the closed theme tuple' },
   },
 })
 
@@ -827,8 +838,9 @@ const RENDERER_FILES: readonly string[] = Object.freeze(
 const SHARED_DRAWER = '../../shared/version.ts'
 
 describe('a screen writes only its own vocabulary through literal', () => {
-  it('reads the six screens', () => {
+  it('reads the seven screens', () => {
     expect([...SCREEN_FILES]).toEqual([
+      'coordinator.ts',
       'degraded.ts',
       'graph.ts',
       'live.ts',
@@ -1032,6 +1044,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'graph/layout.ts',
       'graph/model.ts',
       'installations.ts',
+      'screens/coordinator.ts',
       'screens/degraded.ts',
       'screens/graph.ts',
       'screens/live.ts',

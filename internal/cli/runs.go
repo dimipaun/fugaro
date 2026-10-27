@@ -98,7 +98,7 @@ func newRunsCmd() *cobra.Command {
 		Use:   "runs",
 		Short: "List and inspect runs",
 	}
-	cmd.AddCommand(newLsCmd(), newRunsStatsCmd())
+	cmd.AddCommand(newLsCmd(), newRunsStatsCmd(), newRunsDigestCmd())
 	return cmd
 }
 

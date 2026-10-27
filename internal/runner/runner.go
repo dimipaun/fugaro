@@ -38,6 +38,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
+	"github.com/dimipaun/fugaro/internal/headroomproc"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/logtail"
 	"github.com/dimipaun/fugaro/internal/policy"
@@ -136,13 +137,19 @@ type Deps struct {
 	// BackendErr is BackendFromEnv's error: bootstrap fails with it once the
 	// run's record is claimed.
 	BackendErr error
-	// CompressionOverride, for tests only, is the sidecar the run routes
-	// through, set directly on the run. Nothing real populates it: the
-	// config key is refused (config.Validate) and no sidecar is started yet,
-	// so this is the only way a test reaches a populated run.compression.
-	// Like every Deps field it is built by Fugaro's own bootstrap code, never
-	// from repository content, so nothing on a run's branch can reach it.
-	CompressionOverride *agent.CompressionProxy
+	// CompressionForTest, for tests only, is the value a test's in-memory
+	// config gets for agent.compression. It is applied after the config is
+	// resolved and validated, so a test's fugaro.yaml never carries the key:
+	// config.Validate refuses it while it is reserved (the plan's P11), and
+	// what a test reaches through here is a run that is fully wired but
+	// could not be asked for from repository content.
+	CompressionForTest string
+	// StartHeadroom, for tests only, starts the compression sidecar in place
+	// of headroomproc.Start, so no test spawns a real process. Like every
+	// Deps field it is built by Fugaro's own bootstrap code (cmd/fugaro,
+	// internal/cli), never from repository content, so nothing on a run's
+	// branch can reach it.
+	StartHeadroom func(context.Context, headroomproc.Options) (SidecarProcess, error)
 }
 
 type run struct {
@@ -259,16 +266,21 @@ type run struct {
 	// carry a tier, so gwNotional is 0 for every other run.
 	gw *gateway.Server
 	// compression is the context-compression sidecar Claude Code's calls go
-	// through first, or nil when the run has none. Nothing sets it for a real
-	// run yet: agent.compression is still refused by config.Validate (the
-	// plan's P11), and starting the sidecar is a later change. Deps.
-	// CompressionOverride is the one bridge, for a test that needs a
-	// populated field with no config and no sidecar behind it.
+	// through first, or nil when the run has none: startCompression sets it
+	// from the sidecar it started, and it is what agent.BuildEnv and
+	// writeManagedSettings point Claude Code at. No real run can have one
+	// yet -- agent.compression is still refused by config.Validate (the
+	// plan's P11) -- so Deps.CompressionForTest is the only way in.
 	compression *agent.CompressionProxy
-	gwAgent     *agent.Gateway
-	gwClosed    bool
-	gwUsed      pricing.Micros
-	gwNotional  pricing.Micros
+	// sidecar is the process behind compression, nil when there is none; it
+	// is what fails a stage the sidecar dies under (watchSidecar) and what
+	// stopCompression ends at run end.
+	sidecar        SidecarProcess
+	sidecarStopped bool
+	gwAgent        *agent.Gateway
+	gwClosed       bool
+	gwUsed         pricing.Micros
+	gwNotional     pricing.Micros
 	// gwCacheRead and gwCacheWrite are the run's prompt-cache read and write
 	// token totals, taken from the gateway's ledger when it closes: what the
 	// run's record carries so a reader can see whether the cache behaved as
@@ -337,6 +349,12 @@ type run struct {
 	// review, and the mode must not come from there.
 	rigorCfg rigor.Config
 	rigorRev string
+	// rigorRaise is the last raise the run's mode took during the run, set by
+	// the moment that took it (noteRigorRaise, rigor.go) and nil while the mode
+	// has never risen above the one bootstrap resolved. It is kept here because
+	// the record's block carries no per-moment history: which moment raised the
+	// mode is what readiness reads (T3.5, outcome.go).
+	rigorRaise *RigorRaise
 	// lastSenior is the last senior review round as the loop read it: the
 	// findings the record's summary only counts, kept because the mode's
 	// threshold table reads their scores (outcome.go, T3.1). It is the round
@@ -432,9 +450,6 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		// A local run has no duplicate to tell apart: its record is its own.
 		owned: d.Execution == "",
 	}
-	if d.CompressionOverride != nil {
-		r.compression = d.CompressionOverride
-	}
 	defer func() {
 		if p := recover(); p != nil {
 			err = fmt.Errorf("panic: %v", p)
@@ -447,6 +462,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 			err = r.redactErr(err)
 			return
 		}
+		r.stopCompression()
 		r.closeGateway()
 		rctx, cancelRelease := context.WithTimeout(context.WithoutCancel(ctx), releaseDeferredTimeout)
 		r.releaseLock(rctx)
@@ -544,7 +560,9 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 	// From here nothing the backend says can stop a stage.
 	r.freezeHalts()
 	// Finalize makes no model calls: the gateway is closed first, and the
-	// run's model cost is its ledger's.
+	// run's model cost is its ledger's. The sidecar in front of it goes with
+	// it, for the same reason.
+	r.stopCompression()
 	r.closeGateway()
 	if errors.Is(context.Cause(runCtx), ErrCancelled) {
 		// The cancel may have landed after the last stage already returned
@@ -1734,6 +1752,11 @@ func (r *run) bootstrap(ctx context.Context) error {
 			return err
 		}
 	}
+	// After the gateway, whose loopback URL is what the sidecar forwards to,
+	// and before the agent's environment, which is pointed at the sidecar.
+	if err := r.startCompression(ctx); err != nil {
+		return err
+	}
 	env, secrets, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{
 		Auth: cfg.Agent.Auth, Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend,
 		Gateway: r.gateway(), Compression: r.compression,
@@ -1882,6 +1905,27 @@ func (r *run) resolveConfig(data []byte) (*config.Config, error) {
 		r.providers = merged
 	}
 	r.rec.ConfigSHA256 = out.Res.ConfigSHA256
+	if r.d.CompressionForTest != "" {
+		// The one way a test reaches a run with compression on. It is
+		// applied here, on the resolved config and after Validate has
+		// accepted the file the test committed, so that file never has to
+		// carry the key config.Validate refuses while it is reserved (P11).
+		// Every entry point that resolves a config -- bootstrap's own read,
+		// readBaseConfig's for a follow-up or a review run -- comes through
+		// here, so no path can miss it and none can set it from repository
+		// content.
+		out.Cfg.Agent.Compression = r.d.CompressionForTest
+	}
+	if r.spec.CompressionOff {
+		// The run's own --no-compression, applied last so it wins over every
+		// other input: the configuration it overrides, and (for a test)
+		// Deps.CompressionForTest above. It is the one direction the
+		// override goes -- nothing here can turn compression on for a
+		// configuration that does not ask for it -- and it is applied on the
+		// resolved config for the same reason CompressionForTest is: every
+		// entry point that resolves one comes through here.
+		out.Cfg.Agent.Compression = ""
+	}
 	return out.Cfg, nil
 }
 
@@ -2403,6 +2447,15 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		done := make(chan struct{})
 		watching.Add(1)
 		go func() { defer watching.Done(); r.watchHalt(stageCtx, done) }()
+		if p := r.sidecarProc(); p != nil {
+			// The sidecar is watched with the same shape and for the same
+			// reason, and it can only be here with the gateway: a sidecar
+			// that dies or stops answering under a stage must end that stage
+			// rather than leave it waiting on a process that never will
+			// (P8, P10).
+			watching.Add(1)
+			go func() { defer watching.Done(); r.watchSidecar(stageCtx, done, name, p) }()
+		}
 		stopWatch = sync.OnceFunc(func() { close(done); watching.Wait() })
 	}
 	// Checkpoints run only while the agent does: stopped (and waited for)

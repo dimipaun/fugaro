@@ -33,6 +33,15 @@ import { describe, expect, it } from 'vitest'
 
 import { UNAVAILABLE_MARK, formatReading, readNumber, unavailable } from '../../src/shared/availability'
 import {
+  COORDINATOR_COLLISION_KEYS,
+  COORDINATOR_PR_KEYS,
+  COORDINATOR_RECORD_KEYS,
+  COORDINATOR_REPO_KEYS,
+  COORDINATOR_RUN_KEYS,
+  COORDINATOR_STALE_KEYS,
+  COORDINATOR_STATUS_KEYS,
+  COORDINATOR_UNREAD_KEYS,
+  COORDINATOR_VIEW_KEYS,
   DEGRADED_KEYS,
   FINISHED_KEYS,
   LIVE_KEYS,
@@ -50,13 +59,14 @@ import {
   LIVE_MARKERS,
   NON_TEXT_STRING_KEYS,
   WIRE_TEXT_CLASSES,
+  decodeCoordinatorStatus,
   decodeDocument,
   decodePlanStatus,
   decodeSnapshot,
   knownTopLevelKeys,
   wireTextClass,
 } from '../../src/shared/schema'
-import type { PlanState, PlanStatusView } from '../../src/shared/schema'
+import type { CoordinatorStatusView, PlanState, PlanStatusView } from '../../src/shared/schema'
 import type { LiveDocument } from '../../src/shared/schema'
 import type { JSONDoc } from '../../src/source/source'
 import { loadFixture } from '../../src/source/fixture'
@@ -130,6 +140,29 @@ const PLAN_SOURCE = readFileSync(
 )
 const STATE_SOURCE = readFileSync(
   fileURLToPath(new URL('../../../internal/plan/state.go', import.meta.url)),
+  'utf8',
+)
+
+/**
+ * COORDINATOR_STATE_SOURCE, COORDINATOR_VIEW_SOURCE and COORDINATOR_SWEEP_SOURCE
+ * are the three Go files the stored project view is written in (Bitbucket
+ * credentials T1.2), read the same way and for the same reason. They are three
+ * rather than one because the view is: `state.go` writes the envelope and the
+ * repository node, `view.go` writes the records and the runs behind them, and
+ * `sweep.go` writes the two keys only the sweep fills in -- the stale marker and
+ * the unread list. A key one of them gains and this console does not is a field
+ * a screen silently draws nothing for.
+ */
+const COORDINATOR_STATE_SOURCE = readFileSync(
+  fileURLToPath(new URL('../../../internal/coordinator/state.go', import.meta.url)),
+  'utf8',
+)
+const COORDINATOR_VIEW_SOURCE = readFileSync(
+  fileURLToPath(new URL('../../../internal/coordinator/view.go', import.meta.url)),
+  'utf8',
+)
+const COORDINATOR_SWEEP_SOURCE = readFileSync(
+  fileURLToPath(new URL('../../../internal/coordinator/sweep.go', import.meta.url)),
   'utf8',
 )
 
@@ -1267,7 +1300,7 @@ describe('the plan status document (plan GV2.1)', () => {
     // that needs nothing carries an empty list rather than a missing one: the
     // graph screen walks this list for every node it draws.
     expect(graph?.nodes[1]?.needs).toEqual(['task-one'])
-    expect(graph?.nodes[4]?.needs).toEqual(['task-two', 'task-three'])
+    expect(graph?.nodes[4]?.needs).toEqual(['task-three', 'task-two'])
     expect(graph?.nodes[0]?.needs).toEqual([])
     // A plan that names no stream has no stream, and a plan with no versioned
     // task has no release box at all -- both are facts about the document
@@ -1363,9 +1396,9 @@ describe('the plan status document (plan GV2.1)', () => {
     // know the naming rules of every plan -- so the one thing refused here is a
     // member that could not be an id at all.
     const node = ['plans', 0, 'nodes', 0] as const
-    expect(planDecoded(patched(PLAN_STATUS, [...node, 'needs'], ['task-two', 'task-three'])).plans[0]?.nodes[0]?.needs).toEqual([
-      'task-two',
+    expect(planDecoded(patched(PLAN_STATUS, [...node, 'needs'], ['task-three', 'task-two'])).plans[0]?.nodes[0]?.needs).toEqual([
       'task-three',
+      'task-two',
     ])
     // Absent and null are the same fact: this task needs nothing. Both are an
     // empty list rather than `undefined`, so no screen has to guard.
@@ -1436,5 +1469,242 @@ describe('the plan status document (plan GV2.1)', () => {
     // The plan document's own door takes exactly the fixture, and an object
     // that is not one at all is refused before anything is read from it.
     expect(decodePlanStatus([]).ok).toBe(false)
+  })
+})
+
+describe('the coordinator’s stored project view (T1.2)', () => {
+  /**
+   * STORED_VIEW is one repository the sweep reconciled, in this file's own
+   * words rather than read from a fixture: the console has no committed
+   * coordinator document, and the two states this read turns on -- no node at
+   * all, and a repository the sweep marked stale -- are not in one stored view
+   * anyway. It carries **every** key of every shape, because the pin below
+   * reads the structs and this document the same way and a key left out here
+   * would make the two disagree.
+   */
+  const STORED_VIEW = {
+    repos: [
+      {
+        repo: 'owner/repo-a',
+        stored: true,
+        view: {
+          repo: 'owner/repo-a',
+          records: [
+            {
+              pr: {
+                number: 7,
+                url: 'https://example.invalid/owner/repo-a/pull/7',
+                title: 'a title someone wrote',
+                branch: 'feat/a-thing',
+                draft: true,
+                state: 'open',
+              },
+              runs: [
+                {
+                  id: '20261027-030000-aa01',
+                  pr: 7,
+                  status: 'running',
+                  outcome: '',
+                  terminal: false,
+                  branch: 'feat/a-thing',
+                  base_branch: 'main',
+                  declared_by: 'person-1',
+                  files: ['src/a.go'],
+                  files_truncated: false,
+                },
+              ],
+              branch: 'feat/a-thing',
+              release: '1.4',
+              in_flight: true,
+              files: ['src/a.go'],
+              services: ['service-a'],
+            },
+          ],
+          collisions: [{ a: '#7', b: '20261027-030000-aa01', files: ['src/a.go'], services: [] }],
+          unread: [
+            {
+              number: 9,
+              reason: 'the host refused the read',
+              carried: true,
+              failures: 2,
+              retry_after: '2026-10-27T04:00:00Z',
+            },
+          ],
+          omitted: 1,
+          omitted_collisions: 2,
+        },
+        stale: { since: '2026-10-27T02:00:00Z', reason: 'the repository’s runs could not be read' },
+      },
+    ],
+  }
+
+  /** coordinatorDecoded is a document that must decode, or the test fails with
+   * the refusal's own sentence rather than on an assertion three lines later. */
+  function coordinatorDecoded(raw: unknown): CoordinatorStatusView {
+    const result = decodeCoordinatorStatus(raw)
+    if (!result.ok) throw new Error(result.skew.because)
+    return result.value
+  }
+
+  /** coordinatorRefusal is the refusal of a document that must be refused. */
+  function coordinatorRefusal(raw: unknown): { field: string; name: string } {
+    const result = decodeCoordinatorStatus(raw)
+    if (result.ok) throw new Error('expected a refusal')
+    return result.skew.refusal
+  }
+
+  it('decodes a stored view, and tells “no node” from “a repository with nothing in it”', () => {
+    // The flag the whole read turns on. An absent database node arrives as
+    // `stored: false` with the runs half in `view`; a repository the sweep
+    // reconciled to nothing arrives as `stored: true` with an empty `records`.
+    // Both have empty arrays and only `stored` tells them apart, which is why
+    // the screen has one branch for each and not one branch for both.
+    const stored = coordinatorDecoded(STORED_VIEW).repos[0]
+    expect(stored?.repo).toBe('owner/repo-a')
+    expect(stored?.stored).toBe(true)
+    expect(stored?.stale?.since).toBe('2026-10-27T02:00:00Z')
+    expect(stored?.view.records[0]?.pr?.number).toBe(7)
+    expect(stored?.view.records[0]?.runs[0]?.declaredBy).toBe('person-1')
+    expect(stored?.view.records[0]?.runs[0]?.baseBranch).toBe('main')
+    expect(stored?.view.records[0]?.inFlight).toBe(true)
+    expect(stored?.view.collisions[0]?.b).toBe('20261027-030000-aa01')
+    expect(stored?.view.unread[0]?.failures).toBe(2)
+
+    const reconciledToNothing = coordinatorDecoded({
+      repos: [{ repo: 'owner/repo-b', stored: true, view: { repo: 'owner/repo-b', records: [], collisions: [] } }],
+    }).repos[0]
+    expect(reconciledToNothing?.stored).toBe(true)
+    expect(reconciledToNothing?.view.records).toEqual([])
+
+    const noNode = coordinatorDecoded({
+      repos: [{ repo: 'owner/repo-b', stored: false, view: { repo: 'owner/repo-b', records: [], collisions: [] } }],
+    }).repos[0]
+    expect(noNode?.stored).toBe(false)
+    // The sweep's three `omitempty` keys are absent from a view `status`
+    // computes, and absent is the zero and the empty list -- "nothing was
+    // dropped" -- never a gap a screen would have to draw as unknown.
+    expect(noNode?.view.omitted).toBe(0)
+    expect(noNode?.view.omittedCollisions).toBe(0)
+    expect(noNode?.view.unread).toEqual([])
+    // ...and a record's `pr` is the pull request or nothing, never a
+    // placeholder the screen would have to test for.
+    const noPullRequest = coordinatorDecoded({
+      repos: [
+        {
+          repo: 'owner/repo-b',
+          stored: false,
+          view: {
+            repo: 'owner/repo-b',
+            records: [{ runs: [{ id: '20261027-031500-bb02', files: [] }], in_flight: true, files: [], services: [] }],
+            collisions: [],
+          },
+        },
+      ],
+    }).repos[0]
+    expect(noPullRequest?.view.records[0]?.pr).toBeNull()
+    expect(noPullRequest?.view.records[0]?.runs[0]?.status).toBe('')
+    expect(noPullRequest?.view.records[0]?.runs[0]?.filesTruncated).toBe(false)
+  })
+
+  it('refuses a key no struct of the read writes, by the wire path it sits at', () => {
+    // The reader's own guard, and the same one the other documents are held to:
+    // a key the console has no field for is refused rather than carried past
+    // it. One at each level, because each shape has its own closed list.
+    const rogue = structuredClone(STORED_VIEW) as Record<string, unknown>
+    const repos = rogue.repos as Record<string, unknown>[]
+    ;(repos[0] as Record<string, unknown>).colour = 'red'
+    expect(coordinatorRefusal(rogue)).toMatchObject({ name: 'unknown-key', field: 'repos[0].colour' })
+    expect(coordinatorRefusal({ ...STORED_VIEW, download: 'https://example.invalid/x' })).toMatchObject({
+      name: 'unknown-key',
+      field: 'download',
+    })
+
+    // A key the document must carry is refused by name rather than read as
+    // nothing, and a value of the wrong type is refused by the field it is at.
+    const missing = structuredClone(STORED_VIEW) as Record<string, unknown>
+    delete ((missing.repos as Record<string, unknown>[])[0] as Record<string, unknown>).stored
+    expect(coordinatorRefusal(missing)).toMatchObject({ name: 'missing', field: 'repos[0].stored' })
+    const wrongType = structuredClone(STORED_VIEW) as Record<string, unknown>
+    ;(((wrongType.repos as Record<string, unknown>[])[0] as Record<string, unknown>).view as Record<
+      string,
+      unknown
+    >).records = 'none'
+    expect(coordinatorRefusal(wrongType)).toMatchObject({ name: 'not-an-array', field: 'repos[0].view.records' })
+
+    // An object that is not one at all is refused before anything is read from
+    // it, and the live feed's document is refused by this door for the very
+    // first key it carries: the two shapes share no key, so neither admits the
+    // other's.
+    expect(decodeCoordinatorStatus([]).ok).toBe(false)
+    const feed = decodeCoordinatorStatus({ conn: { state: 'ok' }, runs: [] })
+    expect(feed.ok).toBe(false)
+    if (!feed.ok) expect(feed.skew.refusal.name).toBe('unknown-key')
+  })
+
+  it('lists every key of the document and of each object in it, read off the structs', () => {
+    // `structTags` reads the Go as it read the plan document's: the same reader,
+    // the same both-directions comparison. A key the console lists and no struct
+    // writes fails here, and so does one a struct writes that the console does
+    // not list -- which is the drift this pin exists for, because a key the CLI
+    // gained and this console did not is a value the screen draws nothing for.
+    const pairs: readonly (readonly [readonly StructTag[], readonly string[], string])[] = [
+      [
+        structTags(COORDINATOR_STATE_SOURCE, 'StoredProjectView', 'internal/coordinator/state.go'),
+        COORDINATOR_STATUS_KEYS,
+        'the document',
+      ],
+      [
+        structTags(COORDINATOR_STATE_SOURCE, 'RepoView', 'internal/coordinator/state.go'),
+        COORDINATOR_REPO_KEYS,
+        'repos[]',
+      ],
+      [structTags(COORDINATOR_VIEW_SOURCE, 'View', 'internal/coordinator/view.go'), COORDINATOR_VIEW_KEYS, 'view'],
+      [
+        structTags(COORDINATOR_VIEW_SOURCE, 'Record', 'internal/coordinator/view.go'),
+        COORDINATOR_RECORD_KEYS,
+        'records[]',
+      ],
+      [structTags(COORDINATOR_VIEW_SOURCE, 'Run', 'internal/coordinator/view.go'), COORDINATOR_RUN_KEYS, 'runs[]'],
+      [
+        structTags(COORDINATOR_VIEW_SOURCE, 'PullRequest', 'internal/coordinator/view.go'),
+        COORDINATOR_PR_KEYS,
+        'pr',
+      ],
+      [
+        structTags(COORDINATOR_VIEW_SOURCE, 'Collision', 'internal/coordinator/view.go'),
+        COORDINATOR_COLLISION_KEYS,
+        'collisions[]',
+      ],
+      [
+        structTags(COORDINATOR_SWEEP_SOURCE, 'Unread', 'internal/coordinator/sweep.go'),
+        COORDINATOR_UNREAD_KEYS,
+        'unread[]',
+      ],
+      [
+        structTags(COORDINATOR_SWEEP_SOURCE, 'Stale', 'internal/coordinator/sweep.go'),
+        COORDINATOR_STALE_KEYS,
+        'stale',
+      ],
+    ]
+    for (const [tags, keys, what] of pairs) {
+      expect(tags.map((tag) => tag.key), what).toEqual([...keys])
+    }
+    // ...and the document above is the other side of the pin, so this is a
+    // comparison between the Go and a document rather than the Go twice: it
+    // carries every key of every shape, in the spelling the wire uses, and it
+    // decodes. `decodes` is asserted first because a document missing a key
+    // would otherwise make the key lists agree with an incomplete object.
+    coordinatorDecoded(STORED_VIEW)
+    const wire = STORED_VIEW.repos[0]
+    if (wire === undefined) throw new Error('the document lost its only repository')
+    expect(Object.keys(wire).sort()).toEqual([...COORDINATOR_REPO_KEYS].sort())
+    expect(Object.keys(wire.view).sort()).toEqual([...COORDINATOR_VIEW_KEYS].sort())
+    const record = wire.view.records[0]
+    if (record === undefined) throw new Error('the document lost its only record')
+    expect(Object.keys(record).sort()).toEqual([...COORDINATOR_RECORD_KEYS].sort())
+    expect(Object.keys(record.pr ?? {}).sort()).toEqual([...COORDINATOR_PR_KEYS].sort())
+    const run = record.runs[0]
+    if (run === undefined) throw new Error('the document lost its only run')
+    expect(Object.keys(run).sort()).toEqual([...COORDINATOR_RUN_KEYS].sort())
   })
 })

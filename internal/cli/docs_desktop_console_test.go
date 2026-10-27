@@ -47,6 +47,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/coordinator"
 	"github.com/dimipaun/fugaro/internal/plan"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/report"
@@ -396,6 +397,18 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(plan.StateStream{}),
 		reflect.TypeOf(planStatusDoc{}),
 		reflect.TypeOf(planStatusTotals{}),
+		// §6.13, the coordinator's stored project view (Bitbucket credentials
+		// T1.2): the envelope and the repository node, the view and the runs
+		// behind it, and the two keys only the sweep writes.
+		reflect.TypeOf(coordinator.StoredProjectView{}),
+		reflect.TypeOf(coordinator.RepoView{}),
+		reflect.TypeOf(coordinator.View{}),
+		reflect.TypeOf(coordinator.Record{}),
+		reflect.TypeOf(coordinator.Run{}),
+		reflect.TypeOf(coordinator.PullRequest{}),
+		reflect.TypeOf(coordinator.Collision{}),
+		reflect.TypeOf(coordinator.Unread{}),
+		reflect.TypeOf(coordinator.Stale{}),
 	}
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
 		if !strings.Contains(doc, "`"+name+"`") {
@@ -564,6 +577,13 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(plan.StatePlan{}), reflect.TypeOf(plan.StateNode{}),
 		reflect.TypeOf(plan.StateRelease{}), reflect.TypeOf(plan.StateStream{}),
 		reflect.TypeOf(planStatusDoc{}), reflect.TypeOf(planStatusTotals{}),
+		// §6.13, the coordinator's stored project view (Bitbucket credentials
+		// T1.2), the same nine shapes as the test above.
+		reflect.TypeOf(coordinator.StoredProjectView{}), reflect.TypeOf(coordinator.RepoView{}),
+		reflect.TypeOf(coordinator.View{}), reflect.TypeOf(coordinator.Record{}),
+		reflect.TypeOf(coordinator.Run{}), reflect.TypeOf(coordinator.PullRequest{}),
+		reflect.TypeOf(coordinator.Collision{}), reflect.TypeOf(coordinator.Unread{}),
+		reflect.TypeOf(coordinator.Stale{}),
 	}
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
 		real[name] = true
@@ -765,6 +785,9 @@ func TestDocsDesktopConsoleContractNamesTheFlagInventory(t *testing.T) {
 		"secrets ls":  newSecretsLsCmd,
 		"accounts ls": newAccountsLsCmd,
 		"doctor":      newDoctorCmd,
+		// The project view (Bitbucket credentials T1.2, §6.13): the one read
+		// of the installation's repositories that asks nothing of the host.
+		"coordinator status": newCoordinatorStatusCmd,
 	}
 	for name, newCmd := range spawned {
 		for _, flag := range []string{"project", "config"} {
@@ -827,6 +850,10 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// follows -- but the document describes its flags, so they are checked
 	// against this constructor like any other command's.
 	"backlog list": newBacklogListCmd,
+	// §6.13 documents the coordinator's stored project view (Bitbucket
+	// credentials T1.2). The console spawns it, so its flags are checked
+	// against this constructor like any other's.
+	"coordinator status": newCoordinatorStatusCmd,
 	// §6.12 documents the graph joined to the runs (GV1.6, the CLI release after 0.11.4), and the
 	// console spawns it since GV2.1, as §5.1 rule 6's `plan status --json` row. Its flags — including the cloud
 	// ones, which this command carries and `plan graph` does not — are checked
@@ -1088,7 +1115,7 @@ func firstBacktick(cell string) string {
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
 // §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
-// the thirteen argvs and nothing else -- the console's one spawn table
+// the fourteen argvs and nothing else -- the console's one spawn table
 // (SPAWN_COMMANDS) since the installation rail took the picker's read onto the
 // dashboard's surface -- and a review of an earlier revision found the picker's own
 // read, `config list --json`, absent here, which left the specification
@@ -1121,6 +1148,12 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// The graph screen's per-task state (console v2 plan GV2.1, the
 		// `plan.status` operation): read-only, no path in the argv.
 		"plan status --json",
+		// The project view (Bitbucket credentials T1.2, the
+		// `coordinator.status` operation): read-only, no path in the argv.
+		// `--from-store` is what makes it need no host credential at all --
+		// it prints the view the sweep stored -- and `--all` is every
+		// repository the installation's config lists.
+		"coordinator status --from-store --all --json",
 	}
 	rows := docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |")
 	got := map[string]bool{}
@@ -1207,11 +1240,13 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Thirteen commands: the eleven dashboard reads (logs has two argvs), the
-	// rail's `config list --json` (D13's amendment of 2026-10-20) and the
-	// graph screen's `plan status --json` (GV2.1).
-	if len(allowed) != 13 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 13 (logs has two argvs)", path, argvs, len(allowed))
+	// Fourteen commands: the twelve dashboard reads (logs has two argvs), the
+	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
+	// screen's `plan status --json` (GV2.1) and the project view's
+	// `coordinator status --from-store --all --json` (Bitbucket credentials
+	// T1.2).
+	if len(allowed) != 14 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 14 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown

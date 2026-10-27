@@ -250,18 +250,22 @@ describe('the dashboard the entry mounts', () => {
   it('offers only the views the gate would draw, and never asks for a withheld one', async () => {
     const { bridge, calls } = fakeBridge({ compatibility: aReducedCompatibility() })
     const document = await boot(bridge, new FakeDocument())
-    // The banner is drawn, and the navigation offers Live and Graph: `spend` is
-    // withheld and `projects` is the `caps` view, which a reduced mode withholds
-    // with it. A Spend entry here would be a door to a screen that cannot read.
-    // The Graph is offered because `plan.status` is not a view this mode
-    // withholds (GV2.1's decision, and `VIEWS`' own `null`): it draws no spend
-    // and no caps, so a reduced console keeps it.
+    // The banner is drawn, and the navigation offers Live, Graph and
+    // Coordinator: `spend` is withheld and `projects` is the `caps` view, which
+    // a reduced mode withholds with it. A Spend entry here would be a door to a
+    // screen that cannot read. The Graph is offered because `plan.status` is not
+    // a view this mode withholds (GV2.1's decision, and `VIEWS`' own `null`): it
+    // draws no spend and no caps. `coordinator` is offered because the project
+    // view is repository state rather than money, so the mode withholds no
+    // figure of it (Bitbucket credentials T1.2).
     expect(document.body.children[0]?.attributes.get('data-mode')).toBe('reduced')
     expect(navButtons(document).map((button) => button.attributes.get('data-view'))).toEqual([
       'live',
       'graph',
+      'coordinator',
     ])
     expect(navButtons(document).map((button) => button.attributes.get('class'))).toEqual([
+      VIEW_BUTTON_CLASS,
       VIEW_BUTTON_CLASS,
       VIEW_BUTTON_CLASS,
     ])
@@ -1190,22 +1194,23 @@ describe('the view navigation’s keyboard', () => {
     const graph = buttonFor(document, 'graph')
     const spend = buttonFor(document, 'spend')
     const projects = buttonFor(document, 'projects')
+    const coordinator = buttonFor(document, 'coordinator')
 
     // The nav is a tablist and its buttons are its tabs (design section 4.3). The view on
     // screen is marked twice: `aria-current` is the navigation's own mark, which the code
     // emitted before this task and `base.css` already selects, and `aria-selected` is the
     // same fact in the vocabulary a tablist is read with.
     expect(nav.attributes.get('role')).toBe('tablist')
-    for (const button of [live, graph, spend, projects]) {
+    for (const button of [live, graph, spend, projects, coordinator]) {
       expect(button.attributes.get('role')).toBe('tab')
       expect(button.attributes.get('type')).toBe('button')
     }
     expect(live.attributes.get('aria-current')).toBe('true')
     expect(live.attributes.get('aria-selected')).toBe('true')
     expect(live.attributes.get('tabindex')).toBe('0')
-    // The roving half: the others are out of the tab order, so the whole navigation is one
-    // stop rather than four.
-    for (const other of [graph, spend, projects]) {
+    // The roving half: the other four are out of the tab order, so the whole navigation is
+    // one stop rather than five.
+    for (const other of [graph, spend, projects, coordinator]) {
       expect(other.attributes.get('aria-current')).toBe('false')
       expect(other.attributes.get('aria-selected')).toBe('false')
       expect(other.attributes.get('tabindex')).toBe('-1')
@@ -1235,27 +1240,28 @@ describe('the view navigation’s keyboard', () => {
     expect(document.activeElement).toBe(spend)
     expect(calls.filter((call) => call.name === 'showBudget')).toHaveLength(1)
 
-    // End goes to the last tab, Home to the first, and Left wraps back from the first --
-    // the one behaviour `tabTarget` documents as the pattern's own.
+    // End goes to the last tab -- the project view, since T1.2 appended it -- Home to the
+    // first, and Left wraps back from the first: the one behaviour `tabTarget` documents as
+    // the pattern's own.
     spend.press('End')
     await flush()
-    expect(projects.attributes.get('aria-current')).toBe('true')
-    expect(document.activeElement).toBe(projects)
-    projects.press('Home')
+    expect(coordinator.attributes.get('aria-current')).toBe('true')
+    expect(document.activeElement).toBe(coordinator)
+    coordinator.press('Home')
     await flush()
     expect(live.attributes.get('aria-current')).toBe('true')
     expect(document.activeElement).toBe(live)
     live.press('ArrowLeft')
     await flush()
-    expect(projects.attributes.get('aria-current')).toBe('true')
-    expect(document.activeElement).toBe(projects)
+    expect(coordinator.attributes.get('aria-current')).toBe('true')
+    expect(document.activeElement).toBe(coordinator)
 
     // A key the navigation does not own is left to the window: the nav is a horizontal
     // tablist and its arrows are Left and Right (design section 4.3), while Up and Down are
     // the rail's (section 4.1).
-    const down = projects.press('ArrowDown')
+    const down = coordinator.press('ArrowDown')
     expect(down.defaultPrevented, 'the navigation took a key that is the rail’s').toBe(false)
-    expect(projects.attributes.get('aria-current')).toBe('true')
+    expect(coordinator.attributes.get('aria-current')).toBe('true')
   })
 
   it('keeps one tab stop while Run detail is up, when no offered view is current', async () => {

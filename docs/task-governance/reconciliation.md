@@ -260,8 +260,10 @@ or doc), **Open** (the spec's own unanswered question).
 ## 4. Resolutions (one defensible answer; not questions)
 
 - **R1 — Record calls and sub-agents per stage.** Add `calls` and `agents` to
-  `runstore.StageTiming` (from `gateway.StageReport.Calls` and distinct agent IDs; for oauth, from
-  what the agent's result line reports, else absent, never 0), with the schema in `schemas/`. Every
+  `runstore.StageTiming` (`calls` from `gateway.StageReport.Calls`, absent without a gateway, so on
+  an oauth run, never 0; `agents` from the sub-agent tool calls the relay counts on the stage's own
+  stream, for every auth mode, the gateway's distinct agent IDs never recorded because a client
+  claims them), with the schema in `schemas/`. Every
   report and every guardrail reads the record, not the logs (F5, F18, F24).
 - **R2 — The daily report is the outlier sweep.** One daily report serves P's "daily" and G§6's
   "outlier sweep"; the `working` skill's daily-inspection section is rewritten around the command

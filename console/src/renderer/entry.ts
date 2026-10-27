@@ -80,12 +80,13 @@ import { readNumber, unavailable } from '../shared/availability'
 import type { Reading } from '../shared/availability'
 import { rigorIndex } from '../shared/rigor'
 import type { RigorView } from '../shared/rigor'
-import { decodePlanStatus, decodeSnapshot } from '../shared/schema'
+import { decodeCoordinatorStatus, decodePlanStatus, decodeSnapshot } from '../shared/schema'
 import { sanitizeRefusal } from '../shared/sanitize'
 import { LIVE_STALE_AFTER_SECONDS, BurnHistory, buildLiveModel, renderLive } from './screens/live'
 import type { FeedHealth, LiveModel } from './screens/live'
 import { SPEND_DEFAULT_CONTROLS, personView, readSpend, renderSpend } from './screens/spend'
 import type { PeopleReader, SpendControls, SpendReader } from './screens/spend'
+import { buildCoordinatorModel, renderCoordinator } from './screens/coordinator'
 import { buildProjectsModel, renderProjects } from './screens/projects'
 import { buildRunModel, renderRun } from './screens/run'
 import { refusedState, renderUnavailable } from './screens/degraded'
@@ -318,8 +319,9 @@ function methodOf(fugaro: unknown, name: string): ((args: unknown) => unknown) |
 }
 
 /**
- * ReadBridge is the nine reads the screens make (Task 3.4c; console L5b added
- * `statsRuns`, GV2.3b added `planStatus`), named one by one
+ * ReadBridge is the ten reads the screens make (Task 3.4c; console L5b added
+ * `statsRuns`, Bitbucket credentials T1.2 added `coordinatorStatus`, GV2.3b
+ * added `planStatus`), named one by one
  * for the reason `CompatibilityBridge` names one: this file should reach for
  * exactly the operations it draws, and a reader should be able to see which
  * those are without reading the preload.
@@ -335,13 +337,14 @@ export interface ReadBridge {
   runReport(args: Readonly<Record<string, unknown>>): Promise<unknown>
   listRuns(args: Readonly<Record<string, unknown>>): Promise<unknown>
   statsRuns(args: Readonly<Record<string, unknown>>): Promise<unknown>
+  coordinatorStatus(args: Readonly<Record<string, unknown>>): Promise<unknown>
   diagnoseRun(args: Readonly<Record<string, unknown>>): Promise<unknown>
   readRunLogs(args: Readonly<Record<string, unknown>>): Promise<unknown>
   runLogLink(args: Readonly<Record<string, unknown>>): Promise<unknown>
   planStatus(args: Readonly<Record<string, unknown>>): Promise<unknown>
 }
 
-/** readBridgeFrom is the eight reads over the structural bridge. A missing
+/** readBridgeFrom is the ten reads over the structural bridge. A missing
  * member answers `null` rather than rejecting, and so does a member that fails
  * to answer -- by throwing before it returns, or by returning a promise that
  * rejects, which is what `invoke` does on a channel with nothing behind it.
@@ -369,6 +372,7 @@ export function readBridgeFrom(fugaro: unknown): ReadBridge {
     runReport: (args) => ask('runReport', args),
     listRuns: (args) => ask('listRuns', args),
     statsRuns: (args) => ask('statsRuns', args),
+    coordinatorStatus: (args) => ask('coordinatorStatus', args),
     diagnoseRun: (args) => ask('diagnoseRun', args),
     readRunLogs: (args) => ask('readRunLogs', args),
     runLogLink: (args) => ask('runLogLink', args),
@@ -1640,6 +1644,13 @@ export const VIEW_PANEL_CLASS = 'console-panel'
  * merely fail to mount it -- the entry does not offer it, and the read behind it
  * is never made.
  *
+ * Coordinator is the project view (Bitbucket credentials T1.2, D364). Its
+ * `view` is **null and not a `ReducedView`**, which is the same classification
+ * `plan.status` has: the read is repository state, not money, so no mode
+ * withholds it and a reduced console still offers it. It is the one view whose
+ * read touches no credential of the host's, which is why it is the one a
+ * console driving a CLI that cannot reach Bitbucket still draws.
+ *
  * Run detail is deliberately **not** here: it is reached from a run row (a run
  * is what names it), and until the operator picks one there is no run to draw.
  */
@@ -1656,6 +1667,7 @@ export const VIEWS: readonly {
   { id: 'graph', label: 'Graph', view: null },
   { id: 'spend', label: 'Spend', view: 'spend' },
   { id: 'projects', label: 'Projects', view: 'caps' },
+  { id: 'coordinator', label: 'Coordinator', view: null },
 ])
 
 /**
@@ -2038,7 +2050,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
 
   /** show switches the panel to one view. The Live screen is not re-read here --
    * its model is the one the last poll drew, which is the point of a live
-   * screen -- and the other two read on entry. The Live screen's **rigor join**
+   * screen -- and the other three read on entry. The Live screen's **rigor join**
    * is not its frame and is not re-read by the poll either, so it is asked for
    * here: entering the view is the moment a reader is looking at run rows, and
    * `maybeRefreshRigor` decides whether the map is old enough to be worth a
@@ -2056,6 +2068,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     if (id === 'graph') void showGraph()
     if (id === 'spend') void showSpend()
     if (id === 'projects') void showProjects()
+    if (id === 'coordinator') void showCoordinator()
   }
 
   // The navigation is a tab list in all but name, and Task 6.5 makes it one
@@ -2659,6 +2672,41 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     if (stale(mine)) return
     const model = buildProjectsModel({ budget, runs, accounts: null, secrets: null, sentences })
     replace(renderProjects(factory, model, theme))
+  }
+
+  // ---- Coordinator ------------------------------------------------------
+
+  /**
+   * showCoordinator reads the project view: one document, the coordinator's
+   * stored view for every repository of the installation
+   * (`coordinator status --from-store --all --json`).
+   *
+   * **The read is one, and its refusal is the screen.** There is no second
+   * document to fall back on and no figure this file could draw without it, so a
+   * refused read is drawn as the CLI's own sentence rather than as an empty
+   * project: a panel of zeroes would read as "this project has no work", which
+   * is a different fact from "the console could not ask" (Global Constraint 5).
+   *
+   * **A document the decoder refuses is a refusal too.** `decodeCoordinatorStatus`
+   * is the console's strict reader for this shape (unknown fields refused), so a
+   * document this build cannot read is drawn with the skew's own sentence --
+   * never as a view with nothing in it, which is the one reading a strict reader
+   * exists to prevent.
+   */
+  const showCoordinator = async (): Promise<void> => {
+    const mine = claim()
+    const answer = documentOf(await bridge.coordinatorStatus({}))
+    if (stale(mine)) return
+    if (!answer.ok) {
+      refuse('coordinator.status', answer.sentence)
+      return
+    }
+    const decoded = decodeCoordinatorStatus(answer.data, 'coordinator.status')
+    if (!decoded.ok) {
+      refuse('coordinator.status', decoded.skew.because)
+      return
+    }
+    replace(renderCoordinator(factory, buildCoordinatorModel({ view: decoded.value }), theme))
   }
 
   // ---- Run detail -------------------------------------------------------

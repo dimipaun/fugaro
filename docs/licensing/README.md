@@ -13,6 +13,20 @@ applied **before counsel has read it**. The console is the first component licen
 MIT core after the `ee/` skeleton. This reverses D302 for the console and the mobile app, and
 brings plan task L4.1 forward with a draft rather than an approved text.
 
+**Amended 2026-10-27: counsel's text replaces the draft.** `ee/LICENSE`, `console/LICENSE.md` and
+`mobile/LICENSE.md` now carry counsel's revised text, one wording in all three, with no draft banner. It
+still names two documents that are not published: the Subscription Terms and the contributor licence
+agreement, shown as bracketed placeholders that a later change fills. Counsel's other items are
+handled so: the root `LICENSE` stays pure MIT and `README.md` and `LICENSING.md` state the three
+directories (the owner's ruling of 2026-10-27, keeping O2); `README.md`, `LICENSE` and `LICENSING.md`
+state no client-side MIT exception (counsel's 2.1, checked: none found); SPDX notices on every file in
+`console/` and `mobile/`, a `LICENSES/` directory and the copyleft and app-store audit are one
+follow-up run; the CLA text, its URL and the CONTRIBUTING gate wait for counsel's CLA. Questions
+for counsel: the covered coordinator and orchestrator code lives outside the three directories and stays
+MIT until it moves; the note that the licence "applies only to code added or changed after it is adopted"
+sits beside a clause covering "every file" under the directories; and the Licensor is defined only
+through Subscription Terms that do not exist yet, while the copyright line names the owner personally.
+
 Spec owner: the repository owner. Spec received 2026-10-24; reconciled against `origin/main` at
 `e924481cd` the same day.
 
