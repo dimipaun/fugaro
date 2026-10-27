@@ -75,6 +75,5 @@ whose `X.Y.Z` is not the version line's, and refuses to build without the notes 
 up to and including `0.112.0` stays under the MIT licence it was released under. So the notes of
 `0.113.0` say it in their summary line or first bullet, in a user's words: the release is the first
 under the new licence, production use needs a subscription, and the earlier releases stay MIT.
-The licence text is a draft counsel has not read, and it names Subscription Terms that are not
-published yet: the release waits until the owner has published those terms or replaced that
+The licence text is counsel's, and it names Subscription Terms that are not published yet: the release waits until the owner has published those terms or replaced that
 sentence, because until then a production user has no way to comply.

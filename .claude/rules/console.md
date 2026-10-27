@@ -24,4 +24,4 @@ paths:
 - Go docs tests pin `docs/design/desktop-console.md` and `console/docs/json-contract.md` (`internal/cli/docs_desktop_console_test.go`, `docs_console_boundary_test.go`). After changing either, run `go test ./internal/cli/ -run Docs`.
 - No Go file outside the boundary test's allow-list may import or name `console/` paths (`docs_console_boundary_test.go`).
 - The console releases on its own tag, `console-vX.Y.Z`. Its notes go in `docs/releases/console/`.
-- From 0.113.0 `console/` is under the draft business licence in `console/LICENSE.md` (`LICENSING.md`, D311), the renderer included; releases up to 0.112.0 stay MIT. `package.json`'s `license` points at it and `build.files` packs it beside `THIRD_PARTY_NOTICES.md`. Never edit the licence text itself.
+- From 0.113.0 `console/` is under the business licence in `console/LICENSE.md` (counsel's text of 2026-10-27) (`LICENSING.md`, D311), the renderer included; releases up to 0.112.0 stay MIT. `package.json`'s `license` points at it and `build.files` packs it beside `THIRD_PARTY_NOTICES.md`. Never edit the licence text itself.
