@@ -50,7 +50,7 @@ func commitFiles(t *testing.T, dir string, names ...string) {
 }
 
 // TestOwnCommitsBase is the decision the review range is narrowed by
-// (diffbase.go, ownCommitsBase): a run launched without --ref (its recorded
+// (diffbase.go, ownRangeBase.Narrow): a run launched without --ref (its recorded
 // base is main) whose agent cut its branch from an integration branch is
 // reviewed over its own commits, and every other shape keeps today's range.
 //
@@ -66,18 +66,18 @@ func TestOwnCommitsBase(t *testing.T) {
 		repo, _, tip := ownRangeRepo(t, 5)
 		testutil.Git(t, repo.Dir, "checkout", "--quiet", "-b", "work", "origin/integration")
 		commitFiles(t, repo.Dir, "a.txt", "b.txt", "c.txt")
-		base, why := ownCommitsBase(ctx, repo, runBranch, "origin/main")
-		if base != tip {
-			t.Fatalf("base = %q (%s), want the integration tip %s", base, why, tip)
+		or := ownRangeBase(ctx, repo, runBranch, "origin/main")
+		if !or.Narrow || or.Base != tip {
+			t.Fatalf("ownRangeBase = %+v, want the range narrowed to the integration tip %s", or, tip)
 		}
-		if n := testutil.Git(t, repo.Dir, "rev-list", "--count", base+"..HEAD"); n != "3" {
+		if n := testutil.Git(t, repo.Dir, "rev-list", "--count", or.Base+"..HEAD"); n != "3" {
 			t.Fatalf("the narrowed range holds %s commits, want the run's 3", n)
 		}
 		// The run pushed its branch after each commit: still its own.
 		testutil.Git(t, repo.Dir, "push", "--quiet", "origin", "HEAD:refs/heads/"+runBranch)
 		testutil.Git(t, repo.Dir, "fetch", "--quiet", "origin", "+refs/heads/*:refs/remotes/origin/*")
-		if again, why := ownCommitsBase(ctx, repo, runBranch, "origin/main"); again != tip {
-			t.Fatalf("after the run's own push base = %q (%s), want %s", again, why, tip)
+		if again := ownRangeBase(ctx, repo, runBranch, "origin/main"); !again.Narrow || again.Base != tip {
+			t.Fatalf("after the run's own push ownRangeBase = %+v, want the range narrowed to %s", again, tip)
 		}
 	})
 
@@ -85,16 +85,16 @@ func TestOwnCommitsBase(t *testing.T) {
 		repo, _, _ := ownRangeRepo(t, 2)
 		testutil.Git(t, repo.Dir, "checkout", "--quiet", "-b", "work", "origin/main")
 		commitFiles(t, repo.Dir, "a.txt", "b.txt")
-		if base, why := ownCommitsBase(ctx, repo, runBranch, "origin/main"); base != "" {
-			t.Fatalf("a run on main narrowed to %s (%s), want its range unchanged", base, why)
+		if or := ownRangeBase(ctx, repo, runBranch, "origin/main"); or.Narrow {
+			t.Fatalf("a run on main narrowed to %s (%s), want its range unchanged", or.Base, or.Why)
 		}
 	})
 
 	t.Run("no commits of its own yet", func(t *testing.T) {
 		repo, _, _ := ownRangeRepo(t, 4)
 		testutil.Git(t, repo.Dir, "checkout", "--quiet", "-b", "work", "origin/integration")
-		if base, why := ownCommitsBase(ctx, repo, runBranch, "origin/main"); base != "" {
-			t.Fatalf("a run with no commits narrowed to %s (%s), want its range unchanged", base, why)
+		if or := ownRangeBase(ctx, repo, runBranch, "origin/main"); or.Narrow {
+			t.Fatalf("a run with no commits narrowed to %s (%s), want its range unchanged", or.Base, or.Why)
 		}
 	})
 
@@ -111,9 +111,9 @@ func TestOwnCommitsBase(t *testing.T) {
 		commitFiles(t, repo.Dir, "a.txt")
 		testutil.Git(t, repo.Dir, "merge", "--quiet", "--no-edit", "origin/main")
 		commitFiles(t, repo.Dir, "b.txt")
-		base, why := ownCommitsBase(ctx, repo, runBranch, "origin/main")
-		if base != tip {
-			t.Fatalf("base = %q (%s), want the integration tip %s", base, why, tip)
+		or := ownRangeBase(ctx, repo, runBranch, "origin/main")
+		if !or.Narrow || or.Base != tip {
+			t.Fatalf("ownRangeBase = %+v, want the range narrowed to the integration tip %s", or, tip)
 		}
 	})
 
@@ -122,8 +122,8 @@ func TestOwnCommitsBase(t *testing.T) {
 		testutil.Git(t, repo.Dir, "checkout", "--quiet", "-b", "work", "origin/main")
 		commitFiles(t, repo.Dir, "a.txt")
 		testutil.Git(t, repo.Dir, "merge", "--quiet", "--no-edit", "origin/integration")
-		if base, why := ownCommitsBase(ctx, repo, runBranch, "origin/main"); base != "" {
-			t.Fatalf("narrowed to %s (%s): a range that holds what the run merged must not be cut", base, why)
+		if or := ownRangeBase(ctx, repo, runBranch, "origin/main"); or.Narrow {
+			t.Fatalf("narrowed to %s (%s): a range that holds what the run merged must not be cut", or.Base, or.Why)
 		}
 	})
 
@@ -131,8 +131,8 @@ func TestOwnCommitsBase(t *testing.T) {
 		repo, _, _ := ownRangeRepo(t, 3)
 		testutil.Git(t, repo.Dir, "checkout", "--quiet", "-b", "work", "origin/integration")
 		commitFiles(t, repo.Dir, "a.txt")
-		if base, why := ownCommitsBase(ctx, repo, runBranch, "origin/gone"); base != "" {
-			t.Fatalf("narrowed to %s (%s) against a base the checkout lacks, want today's range", base, why)
+		if or := ownRangeBase(ctx, repo, runBranch, "origin/gone"); or.Narrow {
+			t.Fatalf("narrowed to %s (%s) against a base the checkout lacks, want today's range", or.Base, or.Why)
 		}
 	})
 }
@@ -194,11 +194,11 @@ func TestReviewRevFallsBackWhenAFixRoundRebasesAway(t *testing.T) {
 		cfg:  &config.Config{Git: config.Git{BaseBranch: "main"}},
 		repo: repo,
 	}
-	base, why := ownCommitsBase(ctx, repo, "fugaro/r1", "origin/main")
-	if base != tip {
-		t.Fatalf("base = %q (%s), want the integration tip %s", base, why, tip)
+	or := ownRangeBase(ctx, repo, "fugaro/r1", "origin/main")
+	if !or.Narrow || or.Base != tip {
+		t.Fatalf("ownRangeBase = %+v, want the range narrowed to the integration tip %s", or, tip)
 	}
-	r.narrowBase = base
+	r.narrowBase = or.Base
 	if got := r.reviewRev(ctx); got != tip {
 		t.Fatalf("reviewRev = %q, want the narrowed %s", got, tip)
 	}
@@ -244,12 +244,14 @@ func TestGuardSubtractsTheNarrowedCommitOnlyWhileOriginHoldsIt(t *testing.T) {
 }
 
 // TestNarrowingAndTheGuardCostTheSameWhateverTheBranchCount: with 220
-// branches on origin, narrowing the range is seven git processes (the git
+// branches on origin, narrowing the range is eleven git processes (the git
 // version, ls-remote, one cat-file for every head's presence, one rev-list
-// for the run's own commits, the first one's parent, and the two counts),
-// and the guard's check of the narrowed commit is three (ls-remote, cat-file
-// and one rev-list fed the heads on stdin). Before, each was a process per
-// branch: a cat-file each, and a merge-base each in the guard.
+// for the run's own commits, the first one's parent, the two counts, the
+// ancestry check the narrowed commit is read through, and the two
+// --name-only reads the review-scope comparison is recorded from), and the
+// guard's check of the narrowed commit is three (ls-remote, cat-file and one
+// rev-list fed the heads on stdin). Before, each was a process per branch: a
+// cat-file each, and a merge-base each in the guard.
 //
 // Mutation (a merge-base per head in onOrigin, or a cat-file -e per head in
 // gitops.OriginHeads): the counts below fail.
@@ -273,8 +275,8 @@ func TestNarrowingAndTheGuardCostTheSameWhateverTheBranchCount(t *testing.T) {
 		t.Fatalf("narrowBase = %q, want the integration tip %s", r.narrowBase, tip)
 	}
 	lines := testutil.GitCalls(t, calls)
-	if n := testutil.GitSubcommands(lines); len(lines) != 7 || n["cat-file"] != 1 || n["ls-remote"] != 1 || n["merge-base"] != 0 {
-		t.Fatalf("narrowing over 220 branches ran %d git processes (%v), want 7:\n%s", len(lines), n, strings.Join(lines, "\n"))
+	if n := testutil.GitSubcommands(lines); len(lines) != 11 || n["cat-file"] != 1 || n["ls-remote"] != 1 || n["merge-base"] != 1 || n["diff"] != 2 {
+		t.Fatalf("narrowing over 220 branches ran %d git processes (%v), want 11:\n%s", len(lines), n, strings.Join(lines, "\n"))
 	}
 	if !r.onOrigin(ctx, tip) {
 		t.Fatalf("onOrigin(%s) = false, want the integration branch to hold it", tip)

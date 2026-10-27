@@ -34,6 +34,15 @@ const (
 	agentMessageBytes = 4 << 10
 	// diagnoseLogLines is how many of the newest log lines a diagnosis keeps.
 	diagnoseLogLines = 30
+	// diagnoseStages bounds the stages a diagnosis prints. It sits above the
+	// loop's own maximum -- 1 + 2*F + R*(2 + 2*F) stages, at most 87 under
+	// config.MaxFirstLineRounds and recipe.MaxReviewRounds, plus the provision
+	// and render stages (docs/design/generic-tool.md §3.1) -- because the
+	// identity Stages documents holds only for the whole list: a bound that
+	// bit a real run would make sum(stages[].model_usd) + model_by's
+	// unattributed entry miss row.cost.model_usd by the rounds it dropped. It
+	// guards against the record a hand can edit, not against the loop.
+	diagnoseStages = 128
 )
 
 // Diagnosis is what diagnose gathers about one run. Every string in it
@@ -78,6 +87,19 @@ type Diagnosis struct {
 	// ModelBy is the spend by model. Both are the run's own record.
 	Route   map[string]float64 `json:"route_by,omitempty"`
 	ModelBy map[string]float64 `json:"model_by,omitempty"`
+	// Stages is the run's per-stage record (runstore.StageTiming): what each
+	// stage cost in model dollars and, when something counted them, how many
+	// model calls and sub-agent tool calls it made. In the record's own order
+	// and bounded at diagnoseStages, with every string redacted. Calls and
+	// Agents stay pointers, so a stage nobody counted is absent and a stage
+	// counted at zero is not: the two are different facts. Absent when the
+	// record has no stages, and when there is no record at all.
+	//
+	// The stages are the run's whole model spend but for what settled after
+	// its stage's wait ran out, which is in ModelBy["unattributed"]: exactly,
+	// sum(stages[].model_usd) + model_by["unattributed"] ==
+	// row.cost.model_usd.
+	Stages []runstore.StageTiming `json:"stages,omitempty"`
 	// Reported is what providers said the run's calls cost, beside Charge,
 	// what the table said for the provider routes' calls (the charge
 	// always settles; Claude's spend is not in it). Zero when no provider
@@ -89,6 +111,12 @@ type Diagnosis struct {
 	// PinWarnings are the model prices the run's cap counted on a guess:
 	// an unverified placeholder, or cache rates left at 0.
 	PinWarnings []string `json:"pin_warnings,omitempty"`
+	// Tolerated is the findings the run's resolved mode let through
+	// (runstore.ToleratedFindings), in the reviewer's order, bounded again on
+	// read and with every title redacted. Absent -- never an empty block --
+	// for a run that tolerated nothing, and for every record written before
+	// the field existed.
+	Tolerated *runstore.ToleratedFindings `json:"tolerated,omitempty"`
 }
 
 type diagnoseOptions struct {
@@ -204,6 +232,7 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		for _, a := range rec.Artifacts {
 			d.ArtifactPaths = append(d.ArtifactPaths, s.Prefix()+runstore.ArtifactPrefix+red(a.Name))
 		}
+		d.Stages, d.Tolerated = stageTimingsOf(rec.Stages, red), toleratedOf(rec.Tolerated, red)
 		d.Verify = rec.Verify
 		for i := range d.Verify {
 			v := &d.Verify[i]
@@ -256,6 +285,50 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		d.LogTail = append(d.LogTail, tail[i%diagnoseLogLines])
 	}
 	return d, nil
+}
+
+// stageTimingsOf is the record's stages for the document: the record's own
+// order, bounded at diagnoseStages, and redacted like every other string here.
+// nil for a record with none, so the key is absent rather than an empty list.
+func stageTimingsOf(stages []runstore.StageTiming, red func(string) string) []runstore.StageTiming {
+	if len(stages) == 0 {
+		return nil
+	}
+	out := make([]runstore.StageTiming, 0, min(len(stages), diagnoseStages))
+	for _, s := range stages {
+		if len(out) == diagnoseStages {
+			break
+		}
+		s.Name, s.Model = red(s.Name), red(s.Model)
+		out = append(out, s)
+	}
+	return out
+}
+
+// toleratedOf is the record's tolerated findings for the document: bounded
+// again on read, because the record is an object a hand can edit and the
+// write-side bound (runstore.NewTolerated) is not one a reader can count on,
+// and with every string redacted -- the enums too, which the write path
+// validates to its vocabulary and a hand-edited record need not. nil for a run
+// that tolerated nothing -- no block, or a block that lists none -- so the key
+// is absent.
+func toleratedOf(t *runstore.ToleratedFindings, red func(string) string) *runstore.ToleratedFindings {
+	if t == nil || len(t.Findings) == 0 {
+		return nil
+	}
+	out := &runstore.ToleratedFindings{Findings: make([]runstore.ToleratedFinding, 0, min(len(t.Findings), runstore.MaxTolerated))}
+	for _, f := range t.Findings {
+		if len(out.Findings) == runstore.MaxTolerated {
+			break
+		}
+		f.Title = red(f.Title)
+		f.Mode, f.Label, f.Class = rigor.Mode(red(string(f.Mode))), rigor.Label(red(string(f.Label))), rigor.Class(red(string(f.Class)))
+		out.Findings = append(out.Findings, f)
+	}
+	// The block's total is how many findings the mode really tolerated, and a
+	// record claiming fewer than it lists is not one to print as written.
+	out.Total = max(t.Total, len(out.Findings))
+	return out
 }
 
 // seniorRound is the round of the last senior review (not a first-line one,
@@ -562,7 +635,7 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	// (D25: the base branch, which for a first run is not the branch the rest
 	// of the config came from).
 	if r.Rigor != nil {
-		fmt.Fprintf(&b, "Rigor:    %s\n", oneLine(rigorLine(r.Rigor)))
+		fmt.Fprintf(&b, "Rigor:    %s\n", oneLine(r.Rigor.Line()))
 	}
 	if h := d.Halt; h != nil {
 		line := fmt.Sprintf("Halted:   %s (%s) at %s", h.Reason, h.Scope, h.At.UTC().Format(time.RFC3339))
@@ -693,32 +766,6 @@ func spendList(m map[string]float64) string {
 		parts[i] = fmt.Sprintf("%s $%.4f", n, m[n])
 	}
 	return strings.Join(parts, ", ")
-}
-
-// rigorLine is a run's rigor as the diagnosis prints it: the mode, the layer
-// that decided it, every area rule that matched with the moment it was
-// applied at (D23, D24), the moment of the block, and the revision the mode's
-// configuration was read from (D25).
-//
-// The record is job-writable, so every piece of it is text this process did
-// not write: runstore.RigorRecord.Bounded has already refused a block whose
-// mode, layer or moment is outside its vocabulary and bounded the names, and
-// the caller runs the finished line through oneLine, which is what keeps a
-// newline in an area's name from forging a second field.
-func rigorLine(rg *runstore.RigorRecord) string {
-	line := string(rg.Mode) + ", from " + string(rg.From)
-	if len(rg.Areas) > 0 {
-		parts := make([]string, 0, len(rg.Areas))
-		for _, a := range rg.Areas {
-			parts = append(parts, a.Name+" at "+a.At)
-		}
-		line += " (" + strings.Join(parts, ", ") + ")"
-	}
-	line += ", at " + rg.At
-	if rg.Revision != "" {
-		line += ", read from " + rg.Revision
-	}
-	return line
 }
 
 // prColumnURL is the PR's URL with ls's draft marker.

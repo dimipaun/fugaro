@@ -1,13 +1,15 @@
 # Task governance and periodic run reviews
 
-**Status (2026-10-26): partly implemented — T1.1, T1.2, T1.3 and T2.1 are on `main`; no other
-task has merged.** Every stage's record carries `calls` (the gateway's stage report, absent without
-a gateway) and `agents` (the sub-agent tool calls the relay counted on the stage's own stream, for
-every auth mode); the gateway's count of distinct agent IDs (`gateway.StageReport.Agents`, T1.2) is
-never recorded, and nothing reads it yet: T7.2's fan-out stop is what will. `internal/digest`
-builds a period's runs as a redacted, deterministic report (T2.1). The owner answered decisions
-D320–D333 on 2026-10-26 (D320 not the recommendation), which approves the reconciliation; each task
-of the plan still needs the owner's own explicit go.
+**Status (2026-10-27): partly implemented — T1.1–T1.3, T2.1–T2.3, T3.1, T4.1 and T5.1 are on
+`main`; T4.3's pull request (#1154) is unmerged, and no other task of this plan has merged.** The
+rigor plan's T4.2 (a run's report listing the findings its mode tolerated, #1156) is on `main` too,
+and is not a task of this plan. Every stage's record carries `calls` (the gateway's stage report,
+absent without a gateway) and `agents` (the sub-agent tool calls the relay counted on the stage's
+own stream, for every auth mode); the gateway's count of distinct agent IDs
+(`gateway.StageReport.Agents`, T1.2) is never recorded, and nothing reads it yet: T7.2's fan-out
+stop is what will. `internal/digest` builds a period's runs as a redacted, deterministic report
+(T2.1). The owner answered decisions D320–D333 on 2026-10-26 (D320 not the recommendation), which
+approves the reconciliation; each task of the plan still needs the owner's own explicit go.
 
 **Spec owner:** the Fugaro owner. **Dates:** governance spec 2026-10-22; periodic-reviews request
 2026-10-25. **Base:** `main` at `d5898f9b8` (`release: v0.11.4`).

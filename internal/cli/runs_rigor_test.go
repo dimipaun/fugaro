@@ -163,7 +163,13 @@ func TestDiagnosePrintsTheRigorLine(t *testing.T) {
 			t.Errorf("the rigor line lacks %q:\n%s", want, out)
 		}
 	}
-	if l := rigorLine(&runstore.RigorRecord{Mode: rigor.POC, From: rigor.FromProject, At: runstore.RigorAtBootstrap}); !strings.Contains(l, "poc") || strings.Contains(l, "read from") {
+	// The words are the block's own (runstore.RigorRecord.Line), which the
+	// run's report prints too: the diagnosis contributes the field's name and
+	// its spacing, never a second wording for the same facts.
+	if want := "Rigor:    " + rigorRow("a/b").Rigor.Line(); !strings.Contains(out, want) {
+		t.Errorf("the rigor line is not the block's own:\nwant %q\ngot:\n%s", want, out)
+	}
+	if l := (&runstore.RigorRecord{Mode: rigor.POC, From: rigor.FromProject, At: runstore.RigorAtBootstrap}).Line(); !strings.Contains(l, "poc") || strings.Contains(l, "read from") {
 		t.Errorf("a block with no areas and no revision: %q", l)
 	}
 }

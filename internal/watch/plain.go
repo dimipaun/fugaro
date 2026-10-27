@@ -52,7 +52,7 @@ func RenderPlain(w io.Writer, project string, v View, ready []ReadyRow, o PlainO
 	}
 
 	p := v.Project
-	fmt.Fprintf(&b, "total  %s%s%s%s\n", barText(p.Bar, p.Counted), sep, spendText(p.Spent, p.Notional), burnSuffix(p.Burn, sep, warn))
+	fmt.Fprintf(&b, "total  %s%s%s%s\n", barText(p.Bar, p.Counted, warn), sep, spendText(p.Spent, p.Notional), burnSuffix(p.Burn, sep, warn))
 	fmt.Fprintf(&b, "       %d runs%s%.1f run-hours\n", p.Runs, sep, p.RunHours)
 	if p.Kill.On {
 		fmt.Fprintf(&b, "       %s\n", killText(p.Kill, warn, "PROJECT KILLED"))
@@ -62,7 +62,7 @@ func RenderPlain(w io.Writer, project string, v View, ready []ReadyRow, o PlainO
 	}
 
 	for _, r := range v.Repos {
-		fmt.Fprintf(&b, "\n%s  %s%s%s%s\n", r.Name, barText(r.Bar, r.Counted), sep, spendText(r.Spent, r.Notional), burnSuffix(r.Burn, sep, warn))
+		fmt.Fprintf(&b, "\n%s  %s%s%s%s\n", r.Name, barText(r.Bar, r.Counted, warn), sep, spendText(r.Spent, r.Notional), burnSuffix(r.Burn, sep, warn))
 		if r.Kill.On {
 			fmt.Fprintf(&b, "  %s\n", killText(r.Kill, warn, "KILLED"))
 		}
@@ -173,11 +173,27 @@ func USD(m budget.Micros) string {
 	return fmt.Sprintf("$%.2f", m.USD())
 }
 
-func barText(b Bar, counted budget.Micros) string {
+// warnPercent is budget.WarnShare as the percentage a Bar carries. Every
+// surface that prints a cap reads it: the colour (render.go's pctColour) and
+// the warning marker both frames write.
+const warnPercent = budget.WarnShare * 100
+
+// capWarn is the warning marker a cap figure carries at or past warnPercent.
+// The interactive screen and the plain frames both write it, since neither
+// colour nor the colour-capable screen is always there; the rounded figure is
+// not the test — 79.9% draws "(80%)" and no mark.
+func capWarn(pct float64, warn string) string {
+	if pct >= warnPercent {
+		return " " + warn
+	}
+	return ""
+}
+
+func barText(b Bar, counted budget.Micros, warn string) string {
 	if !b.Has {
 		return "counted " + USD(counted) + ", no cap"
 	}
-	return fmt.Sprintf("counted %s of %s (%.0f%%)", USD(b.Used), USD(b.Cap), b.Percent)
+	return fmt.Sprintf("counted %s of %s (%.0f%%%s)", USD(b.Used), USD(b.Cap), b.Percent, capWarn(b.Percent, warn))
 }
 
 func spendText(spent, notional budget.Micros) string {

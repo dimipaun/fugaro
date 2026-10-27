@@ -760,6 +760,9 @@ func fullRecord(t *testing.T) runstore.Record {
 		},
 		Inputs:       []runstore.InputFile{{Name: "spec.md", Bytes: 10, SHA256: strings.Repeat("f", 64)}},
 		ChangedFiles: &runstore.ChangedFiles{Paths: []string{"internal/digest/digest.go"}, Total: 1},
+		ReviewScope: runstore.NewReviewScope(false, runstore.ReviewScopeNoNarrowerRange,
+			[]string{"internal/digest/digest.go"},
+			[]string{"internal/gateway/gateway.go", "internal/digest/digest.go"}),
 		Artifacts: []runstore.ArtifactFile{{
 			Name: "report.html", Bytes: 100, SHA256: strings.Repeat("a", 64), ContentType: "text/html",
 			Probe: &runstore.ProbeResult{Ran: true, ExitCode: 0, Warning: "a warning"},

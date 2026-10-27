@@ -44,6 +44,15 @@
     "source": "catalog"
   },
   "repo": "acme/app",
+  "review_scope": {
+    "applicable": true,
+    "implement_files": [
+      "feature.txt"
+    ],
+    "review_files": [
+      "feature.txt"
+    ]
+  },
   "reviews": [
     {
       "findings": 0,
