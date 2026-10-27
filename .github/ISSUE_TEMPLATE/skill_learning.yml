@@ -1,0 +1,41 @@
+name: Skill learning
+description: A pattern worth teaching Fugaro's skills. The text is rewritten by a maintainer before anything ships, and is never pasted into a skill.
+labels: [skill-learning]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Send a pattern you have found worth teaching Fugaro's skills. Nothing is
+        sent automatically: you open this issue yourself, and a maintainer reads
+        it, rewrites it into their own words and lands it through a normal pull
+        request, so the text below is input rather than something that ships.
+  - type: textarea
+    id: pattern
+    attributes:
+      label: The pattern
+      description: The thing that worked, and when it applies.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: The evidence
+      description: Where you saw it work, or what convinced you. Describe it rather than pasting private code, logs or identifiers.
+    validations:
+      required: true
+  - type: textarea
+    id: lesson
+    attributes:
+      label: The proposed lesson
+      description: How you would put it, if it were written up as a rule for the skills to follow.
+    validations:
+      required: true
+  - type: checkboxes
+    id: grants
+    attributes:
+      label: Licence and confidentiality
+      options:
+        - label: I license this text under the MIT licence and it may be incorporated into Fugaro's skills
+          required: true
+        - label: It holds no confidential data, address or repository name
+          required: true
