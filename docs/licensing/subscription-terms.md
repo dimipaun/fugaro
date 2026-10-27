@@ -7,10 +7,9 @@ the owner's answers of 2026-10-27 (the answers themselves are kept in the owner'
 repository, with the prices). It is not an offer, and nobody has agreed to it. These are the
 "Fugaro Subscription Terms" that the business licence in [`ee/LICENSE`](../../ee/LICENSE),
 [`console/LICENSE.md`](../../console/LICENSE.md) and [`mobile/LICENSE.md`](../../mobile/LICENSE.md)
-(counsel's text of 2026-10-27, one wording in all three files) refers to as published "at [URL TO
-BE PUBLISHED]". The licence files are unchanged by this draft: the placeholder URL is replaced in a
-separate step, after counsel approves this text and the owner publishes it ([implementation plan,
-L4.3 and L4.4](implementation-plan.md#l43--publish-the-subscription-terms-owner-run-after-counsel)).
+(counsel's text of 2026-10-27, one wording in all three files) refers to as published "at https://fugaro.dev/legal/subscription-terms" (the owner replaced the placeholder with that URL on
+2026-10-27; the page itself is published after counsel approves this text and the owner publishes
+it ([implementation plan, L4.3 and L4.4](implementation-plan.md#l43--publish-the-subscription-terms-owner-run-after-counsel))).
 
 **How to read it.** Sections 1 to 24 are the agreement text, in plain language for counsel to
 tighten. Text in `[BRACKETS]` is a value filled on the Order Form or by counsel: prices,
@@ -589,7 +588,7 @@ under those laws.
 
 ## 19. Changes to these Terms
 
-19.1 The Licensor may update these Terms by publishing a new version at **[URL TO BE PUBLISHED]**
+19.1 The Licensor may update these Terms by publishing a new version at **https://fugaro.dev/legal/subscription-terms**
 with its date. A new version applies to a Subscription from its next renewal (or new Order Form),
 not during a term already paid for, unless the Customer agrees.
 

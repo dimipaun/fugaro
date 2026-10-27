@@ -17,7 +17,7 @@ In this licence:
 "Agreement" means the Subscription Terms or another written agreement with the Licensor governing the use of the Software.
 "Licensor" means the entity identified as licensor in the Subscription Terms.
 "production" means any environment other than a development or testing environment.
-"Subscription Terms" means the Fugaro Subscription Terms published by the Licensor at [URL TO BE PUBLISHED].
+"Subscription Terms" means the Fugaro Subscription Terms published by the Licensor at https://fugaro.dev/legal/subscription-terms.
 "you" means the user of the code, including any entity that you represent.
 
 Terms
