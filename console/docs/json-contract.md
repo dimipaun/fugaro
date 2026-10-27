@@ -536,7 +536,6 @@ exactly its own tags and nothing is nested under a `process` or `checks` key:
 | `verify` | `[]verify.Record` | **yes** | `result.json`'s verify records |
 | `failed`, `flaky` | `[]string` | **yes** | the last test record's failed and flaky tests |
 | `findings` | `[]runner.Finding` | **yes** | the last review's findings |
-| `tolerated` | `*runstore.ToleratedFindings` | **yes** | the findings the run's resolved mode let through, in the reviewer's order (rigor T3.4): `findings` (one entry per finding — `title`, `label`, `mode`, `likelihood`, `impact`, `fix_cost`, `class`) and `total`, how many findings the mode really tolerated, never below the entries listed. The block is bounded at `runstore.MaxTolerated` = 100 when it is written and **again on read** — the record is an object a hand can edit — and every title is redacted. Absent — never an empty block — for a run that tolerated nothing |
 | `agent_message` | string | **yes** | capped at `agentMessageBytes` = 4 KiB |
 | `log_tail` | `[]string` | **yes** | the newest `diagnoseLogLines` = 30 lines |
 | `report_path` | string | no | |
@@ -549,6 +548,7 @@ exactly its own tags and nothing is nested under a `process` or `checks` key:
 | `reported_usd`, `charge_usd` | float64 | **yes** | what providers said the calls cost, beside what the table charged — **absent (0) when no provider reported one**, so the pair is read together |
 | `reported_warning` | string | **yes** | set when the two differ by more than `reportedGapPct` percent |
 | `pin_warnings` | `[]string` | **yes** | the model prices the run's cap counted on a guess |
+| `tolerated` | `*runstore.ToleratedFindings` | **yes** | the findings the run's resolved mode let through, in the reviewer's order (rigor T3.4): `findings` (one entry per finding — `title`, `label`, `mode`, `likelihood`, `impact`, `fix_cost`, `class`) and `total`, how many findings the mode really tolerated, never below the entries listed. The block is bounded at `runstore.MaxTolerated` = 100 when it is written and **again on read** — the record is an object a hand can edit — and every title is redacted. Absent — never an empty block — for a run that tolerated nothing |
 
 **`runs ls --json` deliberately does not carry `stages` or `tolerated`.** Both
 are the record's, and the list is one document for a whole window of runs: a

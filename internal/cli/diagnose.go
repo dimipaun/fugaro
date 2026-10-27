@@ -44,22 +44,16 @@ const (
 // Diagnosis is what diagnose gathers about one run. Every string in it
 // that comes from the run is redacted.
 type Diagnosis struct {
-	Project  string           `json:"project"` // the Fugaro project
-	Row      runview.Row      `json:"row"`
-	Halt     *runstore.Halt   `json:"halt,omitempty"`     // why a halted run was halted
-	Verify   []verify.Record  `json:"verify,omitempty"`   // result.json's verify records
-	Failed   []string         `json:"failed,omitempty"`   // the last test record's failed tests
-	Flaky    []string         `json:"flaky,omitempty"`    // the last test record's flaky tests
-	Findings []runner.Finding `json:"findings,omitempty"` // the last review's findings
-	// Tolerated is the findings the run's resolved mode let through
-	// (runstore.ToleratedFindings), in the reviewer's order, bounded again on
-	// read and with every title redacted. Absent -- never an empty block --
-	// for a run that tolerated nothing, and for every record written before
-	// the field existed.
-	Tolerated    *runstore.ToleratedFindings `json:"tolerated,omitempty"`
-	AgentMessage string                      `json:"agent_message,omitempty"`
-	LogTail      []string                    `json:"log_tail,omitempty"`
-	ReportPath   string                      `json:"report_path"`
+	Project      string           `json:"project"` // the Fugaro project
+	Row          runview.Row      `json:"row"`
+	Halt         *runstore.Halt   `json:"halt,omitempty"`     // why a halted run was halted
+	Verify       []verify.Record  `json:"verify,omitempty"`   // result.json's verify records
+	Failed       []string         `json:"failed,omitempty"`   // the last test record's failed tests
+	Flaky        []string         `json:"flaky,omitempty"`    // the last test record's flaky tests
+	Findings     []runner.Finding `json:"findings,omitempty"` // the last review's findings
+	AgentMessage string           `json:"agent_message,omitempty"`
+	LogTail      []string         `json:"log_tail,omitempty"`
+	ReportPath   string           `json:"report_path"`
 	// ArtifactPaths are where the run's artifacts live in the runs bucket:
 	// the run prefix followed by artifacts/<name>, the same shape ReportPath
 	// has, so `gcloud storage cp` can take one directly. The record's own
@@ -105,6 +99,12 @@ type Diagnosis struct {
 	// PinWarnings are the model prices the run's cap counted on a guess:
 	// an unverified placeholder, or cache rates left at 0.
 	PinWarnings []string `json:"pin_warnings,omitempty"`
+	// Tolerated is the findings the run's resolved mode let through
+	// (runstore.ToleratedFindings), in the reviewer's order, bounded again on
+	// read and with every title redacted. Absent -- never an empty block --
+	// for a run that tolerated nothing, and for every record written before
+	// the field existed.
+	Tolerated *runstore.ToleratedFindings `json:"tolerated,omitempty"`
 }
 
 type diagnoseOptions struct {
