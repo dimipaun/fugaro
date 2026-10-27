@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The two items the phone may hold (mobile plan, Task P3.1; decision D111).
 //
 // D111 answered "what may the app hold?" with a list of exactly two items per

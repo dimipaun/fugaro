@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The speech output port's tests (mobile plan, Task P3.4; D127, D118, D126).
 //
 // The utterance is the unit and its outcome is a value: played to the end, or

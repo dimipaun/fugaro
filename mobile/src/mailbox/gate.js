@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The offline gate (mobile plan, Task P6.10; D167, G21).
 //
 // One pure function over two observations -- whether there is a connection, and

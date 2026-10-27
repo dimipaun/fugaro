@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The installation rail and its issue view, in the real window (owner's design
 // ruling of 2026-10-25): the console never shows a picker screen; every
 // installation the CLI lists is a row in the rail, readable or not; a row the

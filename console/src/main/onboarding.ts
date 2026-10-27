@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The console's two onboarding states (owner's ruling of 2026-10-20; design
 // sections 3.4 rules 4 and 7, 6.3).
 //

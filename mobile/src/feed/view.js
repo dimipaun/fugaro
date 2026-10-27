@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The view's rules: the newest document, the day break, the degraded shape,
 // and silence that is not death (mobile plan, Task P3.2; json-contract §10.13
 // rules 2, 3 and 4, §10.7, §10.8).

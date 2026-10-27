@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The Spend screen: the design's screen 2, drawn from `report --json` and
 // `budget show --json` (desktop-console plan Tasks 2.2 and 2.4; design sections
 // 6.1 rule 1, 6.2 screen 2 and 5.1 rule 6; console/docs/json-contract.md

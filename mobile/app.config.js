@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The app's build-time config (mobile plan, Task P4.4; D120, D125; Check 89).
 //
 // `app.json` is the app's **static** config, and it is the file a reviewer

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The fake `wsl.exe`'s own contract (docs/console-windows/implementation-plan.md
 // Part A, T-A1 to T-A3).
 //

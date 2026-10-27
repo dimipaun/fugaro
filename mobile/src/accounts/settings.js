@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // What the app may keep outside secure storage (Task P3.1; D111, D114).
 //
 // D111's list is a statement about **where a credential lives**, and the half

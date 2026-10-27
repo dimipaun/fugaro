@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The text screen's tree (mobile plan, Task P6.9; D167, D170, D114).
 //
 // D167's second half is one screen: "a text screen listing pending prompts and

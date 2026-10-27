@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The dependency graph screen's test doubles: the fake DOM pair the screen draws
 // through, and a layout worker that answers every layout as it is posted.
 //

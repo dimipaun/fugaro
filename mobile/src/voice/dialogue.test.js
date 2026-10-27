@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The spoken confirmation and the routing in the voice screen (mobile plan,
 // Task P6.12; D162, D169, D164, D168, D160, D127).
 //

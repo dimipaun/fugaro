@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The fake CLI's own contract (desktop-console plan Task 1.3's helper).
 //
 // `stub.ts` is the only thing the spawn tests ever run, so a defect in it is a

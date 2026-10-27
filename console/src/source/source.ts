@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // FugaroSource -- the whole data plane (desktop-console plan Task 1.3).
 //
 // Every screen in this console talks to one interface and to nothing else. It

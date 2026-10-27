@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The text screen's tree (mobile plan, Task P6.9; D167, D170).
 //
 // The plan writes this task's first two verification claims as rendering ones:

@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+# See mobile/LICENSE.md for the terms.
 # Mutation-proves the mailbox client's guards (mobile plan, Task P3.6).
 #
 # This module is SECURITY-SENSITIVE and its rules are almost all of the "does

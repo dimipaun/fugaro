@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The renderer's entry point (desktop-console plan Tasks 3.4a, 3.4b and 3.4c;
 // design section 5.1 rules 1, 4 and 5).
 //

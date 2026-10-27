@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The spawn log, held to the schema Task 4.3's Check 59 reads (desktop-console
 // plan Task 1.3, design section 5.1 rule 10, D20).
 //

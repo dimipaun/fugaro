@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The account store's tests (mobile plan, Task P3.1; D114, D111).
 //
 // This is the file that pins the plan's own sentences for P3.1:

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // Recorded, redacted fixtures: the file format, its loader, and the replaying
 // source (desktop-console plan Task 1.4; design section 9.1).
 //

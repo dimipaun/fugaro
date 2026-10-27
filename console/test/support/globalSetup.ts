@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // Playwright's global setup: the one thing the console's e2e run does before
 // any worker exists.
 //

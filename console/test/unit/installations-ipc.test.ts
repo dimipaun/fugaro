@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The picker's surface, held to the two rules that make it a surface rather than
 // a bridge (desktop-console plan Task 3.4b; design sections 3.4 rules 4, 5 and 7,
 // 5.1 rule 10, D13, D14; owner ruling C9; owner's ruling of 2026-10-20).

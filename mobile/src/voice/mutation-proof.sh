@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+# See mobile/LICENSE.md for the terms.
 # Mutation-proves the voice screen's guards (mobile plan, Tasks P3.5 and P6.12).
 #
 # Almost every rule this task has is of the "does not do it" kind -- nothing is

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // Where the phone's two items live (mobile plan, Task P3.1; decision D111).
 //
 // D111 puts both of them -- the Firebase Auth ID token and the per-pairing MAC

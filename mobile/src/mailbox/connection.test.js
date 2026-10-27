@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The connection port's double (mobile plan, Task P6.10; D167).
 //
 // Small on purpose: it is one boolean and a log of the questions asked of it.

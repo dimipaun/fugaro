@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The scrub's vocabularies, its key tables and its clock (owner review of PR
 // #643, items 1 and 2; review of PR #754).
 //

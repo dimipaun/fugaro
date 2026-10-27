@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The feed's one door: its test (mobile plan, Task P3.2).
 //
 // The surface is asserted as an **exact set**, not as "these names are

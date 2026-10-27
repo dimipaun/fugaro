@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The two onboarding screens' facts, held to the repository's own copies of them
 // (owner's ruling of 2026-10-20; brief requirement 4; design section 3.4 rule 7).
 //
