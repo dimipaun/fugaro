@@ -36,6 +36,15 @@ force**, and the licence files keep their placeholder URL until counsel approves
 owner publishes it (plan tasks L4.3 and L4.4,
 [reconciliation.md](reconciliation.md#amendment-2026-10-27-the-subscription-terms-draft)).
 
+**Amended 2026-10-27: the Subscription Terms follow the owner's answers.** The draft now carries the
+owner's answers of 2026-10-27 (kept, with the prices, in the private business repository): a new
+entity as Licensor, a merchant of record for self-serve sales, one free seat per organisation and
+other free plans, a seat as anyone who launches jobs (a pricing rule, the command-line tool staying
+MIT), a read-only console and mobile app after a lapse with no perpetual fallback, and a signed
+offline key for every user issued by a hosted service. Prices stay bracketed; it is still **not in
+force** and still awaits counsel (plan task L4.5,
+[reconciliation.md](reconciliation.md#amendment-2026-10-27-the-subscription-terms-follow-the-owners-answers)).
+
 Spec owner: the repository owner. Spec received 2026-10-24; reconciled against `origin/main` at
 `e924481cd` the same day.
 
@@ -44,7 +53,7 @@ Spec owner: the repository owner. Spec received 2026-10-24; reconciled against `
 | [spec.md](spec.md) | The owner's spec, verbatim (no typo fixes) |
 | [reconciliation.md](reconciliation.md) | Findings F1–F27 against the code and the published licence texts, resolutions R1–R8, decisions D300–D310 with the owner's answers (D301 and D303 amended), tensions T1 (ruled), T2 (accepted) and T3 (D303's mixed-licence release), items O1–O3, UNVERIFIED U1–U8. **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Slices L0–L5 (L4.2, L4.3 and L5.1 owner-run), tasks with their tests and dependencies, levels, the critical path, the shared-files table. Nothing in it is approved |
-| [subscription-terms.md](subscription-terms.md) | The Fugaro Subscription Terms, a first draft for counsel (2026-10-27): not reviewed, not in force; commercial terms in brackets, with the owner's and counsel's open questions |
+| [subscription-terms.md](subscription-terms.md) | The Fugaro Subscription Terms, a draft for counsel (2026-10-27, amended the same day to the owner's answers): not reviewed, not in force; prices and other Order Form items in brackets, with the two open owner items and counsel's questions |
 
 ## The numbers this work holds
 

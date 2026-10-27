@@ -532,6 +532,41 @@ design allows one; no updater was found in its main-process code), and what a fi
 sends (no analytics or crash-reporting library is declared today). The contributor licence agreement
 is drafted separately in [CLA.md](CLA.md) and the draft does not depend on its text.
 
+## Amendment 2026-10-27 (the Subscription Terms follow the owner's answers)
+
+The owner answered the draft's commercial questions in a session on 2026-10-27; the answers, with
+the prices, currencies, discounts and the business plan, are kept in the owner's private business
+repository and not here. [subscription-terms.md](subscription-terms.md) now follows them (plan task
+L4.5). What changed in the draft:
+
+- **Licensor and seller** (section 1): a new dedicated entity, incorporated before the first paid
+  sale, with the copyright assigned to it; a merchant of record may sell self-serve purchases under
+  its own buyer terms; Enterprise is invoiced directly.
+- **Plans and free use** (section 4): Community, Team and Enterprise; one free seat per organisation
+  without a subscription, for proof of concept and evaluation; Team free for entirely open-source
+  teams (checked from the repository URLs) and academic institutions; discounts for nonprofits and
+  startups by application, their amounts on the Order Form; the free seat's three-month key is the
+  trial.
+- **Seats** (section 5): anyone who launches jobs by any means, the command-line tool included, as
+  a pricing rule between the parties; the command-line tool stays MIT; viewers free once that role
+  exists (roles are a separate design); seat moves, prorated additions, reductions at renewal, a
+  Team self-certified true-up and an Enterprise-only audit.
+- **Term, fees, refunds, support** (sections 6, 7 and 10): renewal, refund and support rules as the
+  owner decided; no warranty beyond "as is" (section 13.3); no patent licence (section 3.6); no
+  use of a customer's name without consent (section 20).
+- **Keys** (section 8): every user, free users included, holds a signed key that is still checked
+  offline; keys are issued automatically by a hosted signing service the Licensor operates, with
+  the sign-up data described; a 30-day grace period. This supersedes, for the Terms, the "minting is
+  OWNER-RUN" line of L3.1, which the licence-key design note follows when it is written.
+- **After a lapse** (section 10.4): no perpetual fallback; after the grace period the console and
+  mobile app are read-only and paid features are off, while the MIT command-line tool keeps
+  launching and cancelling jobs. This reverses, for the console and the mobile app, the earlier
+  position that launching is never gated.
+
+Still open: the Enterprise seat floor (the owner's) and the late-payment interest rate (counsel's).
+The draft's counsel list gains the items the session added. The licence files, the CLA and
+`LICENSING.md` are not edited, and the draft is still **not in force**.
+
 ## UNVERIFIED
 
 - **U1** — **Moot after O2** (`LICENSE` is not changed). What stays unverified is only that GitHub

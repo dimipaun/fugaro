@@ -52,6 +52,12 @@ counsel: **L4.3** publishes the approved text on the website (owner-run), and **
 placeholder URL in the three licence files. Neither is approved, and this amendment edits no
 licence file ([reconciliation.md](reconciliation.md#amendment-2026-10-27-the-subscription-terms-draft)).
 
+**Amended 2026-10-27: the Subscription Terms follow the owner's answers.** The owner answered the
+draft's commercial questions the same day (the answers and the prices are in the private business
+repository). New task **L4.5** amends the draft to them, done by the change that adds it; L4.3 now
+waits only on counsel and the two open items, the Enterprise seat floor and the interest rate
+([reconciliation.md](reconciliation.md#amendment-2026-10-27-the-subscription-terms-follow-the-owners-answers)).
+
 Out of scope here (R7): the spec's Task 3 (extension points) and Task 4 (workspaces), the
 `cmd/fugaro/ee_on.go` assembly file and the `ee/register` package (D303 as amended) belong to the
 workspaces plan, which takes D302, D303, D308 and D309 as inputs.
@@ -534,10 +540,20 @@ reads, stores or knows about keys (D308 with D303 as amended).
   bracketed commercial term, removes the draft status line and the drafting notes, and publishes
   the approved text as a page on the website (`fugaro.dev`, at a stable path chosen then), the
   URL the licence files will name. The two question lists stay in the repository, not on the page.
-- **Depends on:** counsel's review; the owner's commercial answers (the draft's "Questions for the
-  owner").
+- **Depends on:** counsel's review; the owner's commercial answers (given 2026-10-27, applied by
+  L4.5; the Enterprise seat floor and the interest rate stay open).
 - **OWNER-RUN:** yes (the approval and the publication); an agent may prepare the website page
   once the approved text exists.
+
+#### L4.5 — Amend the Subscription Terms to the owner's answers (new 2026-10-27, done)
+- **Files:** `docs/licensing/subscription-terms.md` (the answers applied, prices kept as bracketed
+  Order Form items, a note for counsel on every clause the owner decided differently from the
+  earlier draft's recommended option, the question lists brought in step), and the amendment notes
+  in `docs/licensing/README.md`, `reconciliation.md` and this plan.
+- **Tests:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Licens|CLA' -count=1 -timeout 1800s`.
+- **Depends on:** the owner's answers of 2026-10-27. **Blocks:** L4.3 (counsel reviews the amended
+  draft). **OWNER-RUN:** no. Edits no licence file.
+- **Commit:** `docs(licensing): the Subscription Terms, amended to the owner's answers (for counsel)`
 
 #### L4.4 — Fill the Subscription Terms URL in the licence files
 - **Files:** `ee/LICENSE`, `console/LICENSE.md`, `mobile/LICENSE.md` (`[URL TO BE PUBLISHED]`
@@ -578,7 +594,7 @@ reads, stores or knows about keys (D308 with D303 as amended).
 
 **Edges** (from the Depends-on lines): L0.1 → L0.2; L1.2 → L1.3; L1.3 → L1.5; L1.1 → L1.6;
 L1.1, L1.2, L1.3 → L1.7; L1.7 → L1.8; L1.2, L1.3, L1.5 → L1.9; L1.3, L1.10 → L1.11;
-L0.1, L1.2, L1.3, L1.8 → L4.1; L4.1 → L4.2; L4.3 → L4.4; L4.1 → L5.1; L5.1, L2.1 → L5.2 (and the workspaces
+L0.1, L1.2, L1.3, L1.8 → L4.1; L4.1 → L4.2; L4.5 → L4.3; L4.3 → L4.4; L4.1 → L5.1; L5.1, L2.1 → L5.2 (and the workspaces
 plan's first ee feature).
 
 | Level | Tasks (run concurrently) |
@@ -636,7 +652,7 @@ L4.1; L5.2 after L5.1 and L2.1 (it makes L2.1's coupling test non-trivial).
 | `.goreleaser.yaml` | L2.1 (0), L5.2 (6) |
 | `console/package.json`, `console/tools/bundle-renderer/index.ts`, `console/scripts/notices.mjs`, `console/THIRD_PARTY_NOTICES.md`, `console/test/unit/packaging-licence.test.ts` | L2.2 (0); also the dependency graph's GV2.2 (another plan: see L2.2's cross-plan overlap) |
 | `docs/licensing/licence-key.md` | L3.1 (0) |
-| `docs/licensing/subscription-terms.md` | the 2026-10-27 draft; L4.3 (4, owner) |
+| `docs/licensing/subscription-terms.md` | the 2026-10-27 draft; L4.5 (done); L4.3 (4, owner) |
 | `docs/releases/v0.11.0.md`, `website/data/release-summaries.yaml` | the 0.11.0 release PR (3) |
 
 `docs/pending-workflows/README.md` and `docs/gcp-live-checklist.md` are also written by other
