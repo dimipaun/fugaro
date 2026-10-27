@@ -489,11 +489,11 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	// to override: the run's own bootstrap reads the file this launcher could
 	// not, and a task without the field would tell it compression is off, so a
 	// repository that turns it on would start the sidecar the person asked to
-	// turn off. Writing the field brings the launch under the image gate below
-	// (whose condition already counts the field), so an image too old to parse
-	// it refuses the launch here instead of at that bootstrap. Written before
-	// createTask below, so a repeated --run-id with a flag the stored task does
-	// not carry is refused as a different task rather than silently dropped.
+	// turn off. Written before createTask below, so a repeated --run-id with a
+	// flag the stored task does not carry is refused as a different task
+	// rather than silently dropped. The field written over an unread
+	// configuration is not judged either; the gate below says why.
+	compressionUnread := o.noCompression && !compressionKnown
 	if o.noCompression && (compression || !compressionKnown) {
 		spec.CompressionOff = true
 	}
@@ -508,7 +508,22 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	// inherit the field from the run they continue, which carries it even after
 	// the repository's key has been removed. A launch that writes no field and
 	// reads no such key is never gated.
-	compressionGate := compression || spec.CompressionOff
+	//
+	// The one field not gated is the one --no-compression wrote over a
+	// configuration the launcher could not read: an unread file leaves the
+	// image the run will use as unknown as its compression, because which of
+	// the two branches below judges a launch is the workflow's checkout mode,
+	// and that mode comes from the same file (the checkoutConfig read that
+	// decides clone, below). A checkout: clone workflow's job image is the
+	// installation's base image and never has a build record to judge, while a
+	// baked workflow's has one and is judged by it; judging a launch the
+	// launcher cannot tell apart as baked refuses a clone workflow for a record
+	// it never has — with a cure (fugaro image refresh) that cannot clear it,
+	// since refresh submits no build for a clone workflow and so no record ever
+	// appears. That field is left to the run's own bootstrap, which reads the
+	// file this launcher could not, exactly as the key half of this same gate
+	// is (rigorLaunchSources).
+	compressionGate := compression || (spec.CompressionOff && !compressionUnread)
 	s := runstore.Open(env.bucket.Bucket, slug, spec.RunID)
 	// The run-id freshness check, first of everything an --attach launch
 	// does and before the first byte it could upload (design §4 step 1,

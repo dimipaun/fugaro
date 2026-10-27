@@ -4,9 +4,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/dimipaun/fugaro/internal/backend/gcp"
-	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // release0120 is a build record's base_ref at exactly compressionSince: a
@@ -77,51 +74,67 @@ func TestNoCompressionFlagExistsButNoForceOnFlagDoes(t *testing.T) {
 // outside a checkout of that repository. The flag cannot be dropped there:
 // the run's own bootstrap reads the file this launcher could not, so a
 // repository that turns compression on would start the sidecar the person
-// asked to turn off. The field is written anyway, and with it the image gate
-// (compressionGate already counts CompressionOff as its own half) is judged,
-// so an image too old to parse the field refuses the launch here rather than
-// at the run's bootstrap.
+// asked to turn off. The field is written, and the image gate is not judged
+// on it (finishLaunch): that file is also what says whether the workflow is
+// checkout: clone or baked, and the two are judged by different images, so a
+// launch the launcher cannot tell apart must not be refused as one of them.
 func TestNoCompressionWhenConfigUnreadable(t *testing.T) {
-	// The launch is the unreadable case: no checkout of acme/app anywhere
-	// near the working directory, so neither the ref's document
-	// (cascadeRefConfig) nor the checkout's (checkoutConfig) resolves.
-	unreadable := func(t *testing.T, baseRef string) (*cloudFixture, string) {
+	// unreadable is a launch made from outside any checkout of acme/app, so
+	// neither the ref's document (cascadeRefConfig) nor the checkout's
+	// (checkoutConfig) resolves. base and record are what the installation and
+	// the workflow hold: a record of "" is a workflow with no build record at
+	// all, which is what a checkout: clone workflow has.
+	unreadable := func(t *testing.T, base, record, suffix string) (*cloudFixture, string) {
 		t.Helper()
 		f := newCloudFixture(t)
+		if base != "" {
+			f.appendConfig(t, "base_images: {base: "+base+"}\n")
+		}
 		t.Chdir(t.TempDir())
-		writeBuildRecord(t, f, appSlug, "web", baseRef)
-		return f, wallRunID(t, time.Minute, "c3a1")
+		if record != "" {
+			writeBuildRecord(t, f, appSlug, "web", record)
+		}
+		return f, wallRunID(t, time.Minute, suffix)
 	}
-	t.Run("the field is written", func(t *testing.T) {
-		f, runID := unreadable(t, release0120)
-		if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", runID, "--no-compression", "A task"); err != nil {
+	// launch runs the launch and wants the stored task to carry the field when
+	// wantField, and not to carry it otherwise.
+	launch := func(t *testing.T, f *cloudFixture, runID string, wantField bool, args ...string) {
+		t.Helper()
+		if _, _, err := execute(t, append([]string{"run", "--repo", "acme/app", "--run-id", runID}, args...)...); err != nil {
 			t.Fatal(err)
 		}
-		if got := readSpec(t, f, runID); !got.CompressionOff {
-			t.Fatal("CompressionOff = false with --no-compression and an unreadable configuration, want true")
+		if got := readSpec(t, f, runID); got.CompressionOff != wantField {
+			t.Fatalf("CompressionOff = %v, want %v", got.CompressionOff, wantField)
 		}
+	}
+	t.Run("the field is written", func(t *testing.T) {
+		f, runID := unreadable(t, "", release0120, "c3a1")
+		launch(t, f, runID, true, "--no-compression", "A task")
 	})
-	t.Run("the gate is judged", func(t *testing.T) {
-		f, runID := unreadable(t, release060)
-		_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", runID, "--no-compression", "A task")
-		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "agent.compression") || !strings.Contains(err.Error(), "fugaro 0.12.0 or later") {
-			t.Fatalf("err = %v, want a user error naming agent.compression and fugaro 0.12.0 or later", err)
-		}
-		if n := len(f.run.Executions()); n != 0 {
-			t.Fatalf("%d executions, want none", n)
-		}
+	// An old build record is not judged either, although the baked branch would
+	// have judged it: the launcher cannot tell that this workflow is baked
+	// rather than a clone one, whose image is the installation's base and has
+	// no record to refuse.
+	t.Run("an old build record is not judged", func(t *testing.T) {
+		f, runID := unreadable(t, "", release060, "c3a2")
+		launch(t, f, runID, true, "--no-compression", "A task")
+	})
+	// The case the clone branch would get wrong if the launch were judged as
+	// baked: no build record at all (a clone workflow never has one, so
+	// checkImageSince would refuse every relaunch with a cure — fugaro image
+	// refresh — that cannot clear it) and an installation whose base image is
+	// old enough for the clone branch to refuse it. The launch is not refused,
+	// and the run's own bootstrap decides.
+	t.Run("a clone workflow it cannot tell is clone", func(t *testing.T) {
+		f, runID := unreadable(t, release075, "", "c3a3")
+		launch(t, f, runID, true, "--no-compression", "A task")
 	})
 	// An unreadable configuration is not itself a reason to write the field:
 	// only the flag is. A launch without one stays byte-identical to what the
 	// previous release wrote.
 	t.Run("no flag, no field", func(t *testing.T) {
-		f, runID := unreadable(t, release0120)
-		if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", runID, "A task"); err != nil {
-			t.Fatal(err)
-		}
-		if got := readSpec(t, f, runID); got.CompressionOff {
-			t.Fatal("CompressionOff = true without the flag, want absent")
-		}
+		f, runID := unreadable(t, "", release0120, "c3a4")
+		launch(t, f, runID, false, "A task")
 	})
 }
 
@@ -294,16 +307,7 @@ func TestFollowUpInheritsCompressionOff(t *testing.T) {
 func TestCompressionImageGateRefusesOldCloneBuild(t *testing.T) {
 	f := newCloudFixture(t)
 	compressionOnForTest(t)
-	f.appendConfig(t, "base_images: {base: ghcr.io/dimipaun/fugaro-base:0.7.5}\n")
-	testutil.IsolateGit(t)
-	other := mustSlug("github", "acme/other")
-	f.run.AddJob(gcp.JobName(other, "svc"), "2", "4Gi")
-	dir := t.TempDir()
-	testutil.Git(t, dir, "init", "-q")
-	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
-	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nworkflows:\n" +
-		"  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n"})
-	t.Chdir(dir)
+	cloneCheckout(t, f, release075, "", nil)
 	_, _, err := execute(t, "run", "--run-id", wallRunID(t, time.Minute, "c5a1"), "A task")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "agent.compression") ||
 		!strings.Contains(err.Error(), "fugaro 0.12.0 or later") ||
