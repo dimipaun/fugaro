@@ -38,20 +38,25 @@ import { measured } from '../../src/shared/availability'
 import { PLAN_STATUS_MIN_INTERVAL_MS } from '../../src/source/cli'
 import type { PlanStatusView, RunView } from '../../src/shared/schema'
 import { nodeKey } from '../../src/renderer/graph/layout'
-import { LayoutClient } from '../../src/renderer/graph/layout-client'
+import type { LayoutEdge, LayoutNode, WorkerLike } from '../../src/renderer/graph/layout-client'
 import { buildGraphModel } from '../../src/renderer/graph/model'
 import { LIVE_PR_NO_LINK_REASON } from '../../src/renderer/screens/live'
 import { PR_NO_LINK_REASON } from '../../src/renderer/screens/run'
 import {
   GRAPH_INITIAL_STATE,
+  GRAPH_LAYER_GAP,
+  GRAPH_LAYER_OPTION,
   GRAPH_NO_CANVAS,
   GRAPH_NO_PLANS,
   GRAPH_NOT_SHOWN_SINGULAR,
+  GRAPH_PAD,
   GRAPH_PR_NO_LINK_REASON,
   GRAPH_REFRESH_MS,
+  GRAPH_RELEASE_HEAD,
   GRAPH_RUN_AMBIGUOUS,
   GRAPH_ZOOM_MAX,
   GRAPH_ZOOM_MIN,
+  GraphLayoutClient,
   GraphScreen,
   doorFor,
   releaseKey,
@@ -160,16 +165,167 @@ function runRow(run: string, stage: string): RunView {
 }
 
 /** screenWith is a screen over a fresh fake worker and document, with the worker
- * handed back so a case can count the asks. */
+ * handed back so a case can count the asks. It is built with the screen's own
+ * layout client (`GraphLayoutClient`), which is what the app hands it: a case
+ * that read the asks off a plainer client would read a request the console never
+ * makes. */
 function screenWith(theme: GraphTheme = 'light'): { screen: GraphScreen; worker: FakeWorker } {
   const document = new FakeDocument()
   const worker = new FakeWorker()
   const screen = new GraphScreen({
     factory: new Surface(document),
-    client: new LayoutClient(() => worker),
+    client: new GraphLayoutClient(() => worker),
     theme,
   })
   return { screen, worker }
+}
+
+/** LayeredWorker answers a layout as rows, which is the engine's own shape and
+ * the shape this file's other fake does not have (it puts every node in one row
+ * at `y = 0`, where no heading can be covered by anything).
+ *
+ * Each node goes one row below the deepest node it waits on, the rows are
+ * separated by the room the request asks for, and the nodes of one row sit side
+ * by side -- so a release box's heading band is drawn where the request's
+ * spacing puts it, which is the whole of what the case below reads. It is not a
+ * fake of ELK: nothing here routes an edge or orders a row, and nothing in the
+ * case needs it to. */
+class LayeredWorker implements WorkerLike {
+  readonly sent: Record<string, unknown>[] = []
+  private readonly listeners = new Map<string, ((event: { data?: unknown }) => void)[]>()
+
+  postMessage(message: unknown): void {
+    const request = message as Record<string, unknown>
+    this.sent.push(request)
+    if (request['cmd'] === 'layout') this.reply(request)
+  }
+
+  addEventListener(type: string, listener: (event: { data?: unknown }) => void): void {
+    this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener])
+  }
+
+  terminate(): void {}
+
+  private reply(request: Record<string, unknown>): void {
+    const graph = request['graph'] as {
+      readonly children: readonly LayoutNode[]
+      readonly edges: readonly LayoutEdge[]
+    }
+    const options = (request['layoutOptions'] ?? {}) as Readonly<Record<string, string>>
+    const gap = Number(options[GRAPH_LAYER_OPTION] ?? 20)
+    const rows = rowsOf(graph.children, graph.edges)
+    const data = {
+      children: graph.children.map((child) => {
+        const row = rows.findIndex((each) => each.includes(child.id))
+        const column = (rows[row] ?? []).indexOf(child.id)
+        return {
+          id: child.id,
+          x: column * (child.width + 24),
+          y: row * (child.height + gap),
+          width: child.width,
+          height: child.height,
+        }
+      }),
+      edges: graph.edges.map((edge) => ({
+        id: edge.id,
+        sections: [{ startPoint: { x: 0, y: 0 }, endPoint: { x: 1, y: 1 } }],
+      })),
+    }
+    for (const listener of this.listeners.get('message') ?? []) listener({ data: { id: request['id'], data } })
+  }
+}
+
+/** rowsOf is the graph's nodes as rows: one node per row per depth, where a
+ * node's depth is the longest chain of dependencies above it. */
+function rowsOf(nodes: readonly LayoutNode[], edges: readonly LayoutEdge[]): readonly (readonly string[])[] {
+  const depth = new Map<string, number>(nodes.map((node) => [node.id, 0]))
+  for (let pass = 0; pass <= nodes.length; pass += 1) {
+    let moved = false
+    for (const edge of edges) {
+      for (const from of edge.sources) {
+        for (const to of edge.targets) {
+          const below = (depth.get(from) ?? 0) + 1
+          if (below > (depth.get(to) ?? 0)) {
+            depth.set(to, below)
+            moved = true
+          }
+        }
+      }
+    }
+    if (!moved) break
+  }
+  const rows: string[][] = []
+  for (const node of nodes) {
+    const at = depth.get(node.id) ?? 0
+    while (rows.length <= at) rows.push([])
+    rows[at]?.push(node.id)
+  }
+  return rows
+}
+
+/** layeredScreen is the screen the app builds -- its own layout client -- over
+ * the rows above, so a case reads the picture a request's own spacing draws. */
+function layeredScreen(worker: LayeredWorker): GraphScreen {
+  return new GraphScreen({
+    factory: new Surface(new FakeDocument()),
+    client: new GraphLayoutClient(() => worker),
+    theme: 'light',
+  })
+}
+
+/** rectOf is one SVG element's rectangle, as the drawing writes it. */
+function rectOf(node: FakeNode): { x: number; y: number; width: number; height: number } {
+  return {
+    x: Number(node.getAttribute('x')),
+    y: Number(node.getAttribute('y')),
+    width: Number(node.getAttribute('width')),
+    height: Number(node.getAttribute('height')),
+  }
+}
+
+/** releaseBoxesIn is every release box in a drawing: the release it names, and
+ * the band its heading is drawn in -- the box's own top, for the height of a
+ * heading (`y` to `y + GRAPH_RELEASE_HEAD`). */
+function releaseBoxesIn(root: FakeNode): readonly { readonly key: string; readonly band: ReturnType<typeof rectOf> }[] {
+  return everyNode(root)
+    .filter((each) => each.getAttribute('class') === 'graph-release')
+    .map((each) => {
+      const outline = each.children.find((child) => child.getAttribute('class') === 'graph-release-box')
+      if (outline === undefined) throw new Error('a release box was drawn with no outline')
+      const rect = rectOf(outline)
+      return { key: each.getAttribute('data-release') ?? '', band: { ...rect, height: GRAPH_RELEASE_HEAD } }
+    })
+}
+
+/** cardsIn is every task card in a drawing, at the coordinates its group's
+ * transform places it. */
+function cardsIn(root: FakeNode): readonly { readonly key: string; readonly rect: ReturnType<typeof rectOf> }[] {
+  return everyNode(root)
+    .filter((each) => each.getAttribute('class') === 'graph-node')
+    .map((each) => {
+      const at = /^translate\((-?[\d.]+) (-?[\d.]+)\)$/.exec(each.getAttribute('transform') ?? '')
+      const box = each.children.find((child) => child.getAttribute('class') === 'graph-node-box')
+      if (at === null || box === undefined) throw new Error('a task card was drawn with no place')
+      const rect = rectOf(box)
+      return {
+        key: each.getAttribute('data-key') ?? '',
+        rect: { ...rect, x: rect.x + Number(at[1]), y: rect.y + Number(at[2]) },
+      }
+    })
+}
+
+/** overlaps is whether two rectangles share any area: edges that touch are not
+ * an overlap, which is the room two stacked release boxes ask for exactly. */
+function overlaps(
+  one: { readonly x: number; readonly y: number; readonly width: number; readonly height: number },
+  other: { readonly x: number; readonly y: number; readonly width: number; readonly height: number },
+): boolean {
+  return (
+    one.x < other.x + other.width &&
+    other.x < one.x + one.width &&
+    one.y < other.y + other.height &&
+    other.y < one.y + one.height
+  )
 }
 
 /** mounted is a drawn element in a document of its own, as the tree a case reads
@@ -277,6 +433,54 @@ describe('the graph screen and the layout cache', () => {
     // picture over a newer one.
     expect(answers[0]).toBeNull()
     expect(answers[1]).not.toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The release boxes, and the room their headings need
+// ---------------------------------------------------------------------------
+
+describe('the graph screen and the room a release heading needs', () => {
+  it('asks the engine for the room a heading needs between two rows of tasks', async () => {
+    const { screen, worker } = screenWith()
+    await screen.load(DOCUMENT, RUNS)
+    const asked = worker.sent.filter((each) => each['cmd'] === 'layout')
+    expect(asked.length).toBe(1)
+    const options = (asked[0]?.['layoutOptions'] ?? {}) as Readonly<Record<string, string>>
+    // The room is the lower box's heading and the padding both boxes keep: less
+    // than that and the heading is drawn on the row above, whose cards are drawn
+    // later and paint over it.
+    expect(GRAPH_LAYER_GAP).toBe(GRAPH_PAD * 2 + GRAPH_RELEASE_HEAD)
+    expect(options[GRAPH_LAYER_OPTION]).toBe(String(GRAPH_LAYER_GAP))
+  })
+
+  it('draws every release heading clear of every task card, its own box’s and another’s', async () => {
+    // A heading longer than any box is the fixture's own release renamed: the
+    // band below is the box's whole width whatever the heading says, so a long
+    // one is the case a box drawn to its tasks' width cannot save by being wide.
+    const document = patched(['plans', 0, 'releases', 0, 'name'], 'a release whose name runs past the width of its own box')
+    const screen = layeredScreen(new LayeredWorker())
+    await screen.load(document, RUNS)
+    const drawing = screen.redraw()
+    if (drawing === null) throw new Error('no drawing')
+    const root = mounted(drawing)
+
+    const boxes = releaseBoxesIn(root)
+    const cards = cardsIn(root)
+    // Both halves are about something: the fixture draws more than one release
+    // box, and there are more cards than boxes, so a box that had no card of its
+    // own to collide with could not make this pass on its own.
+    expect(boxes.length).toBeGreaterThan(1)
+    expect(cards.length).toBeGreaterThan(boxes.length)
+
+    for (const box of boxes) {
+      for (const card of cards) {
+        expect(
+          overlaps(box.band, card.rect),
+          `${box.key} draws its heading over ${card.key}: the box grows upward for two lines of text, and the layout has to leave it that room`,
+        ).toBe(false)
+      }
+    }
   })
 })
 

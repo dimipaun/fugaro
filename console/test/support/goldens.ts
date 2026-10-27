@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
 // See console/LICENSE.md for the terms.
-// The three things the four golden specs share (desktop-console plan Task 6.6;
+// The three things the six golden specs share (desktop-console plan Task 6.6;
 // design sections 6.1 and 6.2).
 //
 // **1. The computed ground — the assertion the suite was missing.** Every one of
-// the four specs reads `data-theme` off its screen's root, and that read passes
+// the six specs reads `data-theme` off its screen's root, and that read passes
 // with **no stylesheet at all**: the theme travels as an attribute the renderer
 // stamps (`root.setAttribute('data-theme', theme)`), so a tree nothing paints
 // satisfies it. What no read covered is the *painting*: the ground the app is
@@ -68,7 +68,7 @@
 // re-recording; the guard's message is what says so, and it says the same thing
 // whichever clock found it.
 //
-// **Why this module is imported by a unit test as well as by four specs**, and
+// **Why this module is imported by a unit test as well as by six specs**, and
 // why every path in it is an argument rather than a constant derived from this
 // file's location: Playwright loads a spec as CommonJS (so `__dirname` is what a
 // spec has and `import.meta.url` is not), and vitest loads a unit test as ESM
@@ -492,7 +492,7 @@ export function goldenMismatch(goldenPath: string, reported: string, spec: strin
 }
 
 /**
- * expectGolden takes one recording, and it is the only way the four specs take
+ * expectGolden takes one recording, and it is the only way the six specs take
  * one — so that every golden in the suite fails with the same words, and with the
  * command that fixes it.
  *
