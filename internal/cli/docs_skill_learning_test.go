@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -70,10 +71,13 @@ func TestDocsSkillLearningForm(t *testing.T) {
 		}
 	}
 
-	// A label is how the issues this form opens are triaged; without one they
-	// land in the same undifferentiated pile as everything else (D327).
-	if len(form.Labels) == 0 {
-		t.Errorf("%s carries no top-level `labels:`, so an issue opened through it is not triaged as a learning (D327)", skillLearningPath)
+	// A label is how the issues this form opens are triaged, and it is pinned by
+	// name rather than by count: `skill-learning` is the label the work's own
+	// record tells a person to create, so a form that named something else — or
+	// nothing — would leave every submission unlabelled while a `len(...) != 0`
+	// check stayed green (D327).
+	if !slices.Equal(form.Labels, []string{"skill-learning"}) {
+		t.Errorf("%s carries `labels: %v`, want exactly [skill-learning]: that is the label the triage step creates, and an issue opened through a form naming another label is not triaged as a learning (D327)", skillLearningPath, form.Labels)
 	}
 
 	// The three fields the form requires, by the id the form gives them.
