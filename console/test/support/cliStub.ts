@@ -32,11 +32,12 @@
 // `watch --json --project P` with the committed synthetic recording and
 // `doctor --json` with a minimal document, and refuses anything else -- and any
 // read that does not carry the seeded project -- with exit 2. That is why this
-// module writes three files beside the stub and not one: `version.txt` (the
+// module writes four files beside the stub and not one: `version.txt` (the
 // handshake), `project.txt` (the project every read must name, rewritten by
-// `seedInstallations`), and `frames.ndjson` (the recording `watch` prints,
-// rendered from `test/fixtures/synthetic.ndjson` through `loadFixture`, so the
-// stub can only replay a fixture this build vouches for).
+// `seedInstallations`), `frames.ndjson` (the recording `watch` prints, rendered
+// from `test/fixtures/synthetic.ndjson` through `loadFixture`, so the stub can
+// only replay a fixture this build vouches for), and `plan-status.json` (the
+// document `plan status --json` prints, the Graph view's own read, GV2.3b).
 //
 //   - offers `resolveConsoleBinary(env)`, which runs the console's own
 //     `resolveBinary` with **exactly the arguments `src/main/index.ts` uses**, so
@@ -75,6 +76,12 @@ const CLI_STUB = join(__dirname, '..', 'fixtures', 'bin', 'fugaro')
  * read, so the Live screen the e2e sees is the one the unit suite's fixture
  * source feeds. */
 const SYNTHETIC_FIXTURE = join(__dirname, '..', 'fixtures', 'synthetic.ndjson')
+
+/** PLAN_FIXTURE is the committed `plan status --json` document the stub's `plan
+ * status` answers with (plan GV2.1; the Graph view reads it, GV2.3b). It is the
+ * document `graph.test.ts` draws its screen from, so the graph an e2e window
+ * shows is the graph the unit suite's cases are written against. */
+const PLAN_FIXTURE = join(__dirname, '..', 'fixtures', 'plan-status.json')
 
 /** DEFAULT_PROJECT is the project a stub answers for until a spec seeds one. */
 const DEFAULT_PROJECT = 'e2e'
@@ -175,6 +182,12 @@ export interface CliStub {
    * the picker draws its warning line instead of that screen.) `warnings` are
    * further lines the CLI prints after its own, verbatim. */
   seedInstallationsList(projects: readonly string[], warnings?: readonly string[]): void
+  /** seedPlan replaces the `plan status --json` document the stub answers with,
+   * in both places the stub was installed. It is the committed fixture until a
+   * spec asks for another one, and it is the one document a spec may want to
+   * change: a **chip** exists only for a finished release, and the committed
+   * document has none (the unit suite patches the same flag). */
+  seedPlan(document: unknown): void
   /** setVersion rewrites the line the stub prints (`'0.8.1\n'`, `'banana\n'`, a
    * hostile line), in both places the stub was installed. */
   setVersion(line: string): void
@@ -202,10 +215,12 @@ export function installCliStub(line: string): CliStub {
   let project = DEFAULT_PROJECT
   let installationsList: string | null = null
   const frames = syntheticFrames()
+  let plan = readFileSync(PLAN_FIXTURE, 'utf8')
   const writeSupport = (): void => {
     for (const where of [dir, wellKnown]) {
       writeFileSync(join(where, 'project.txt'), `${project}\n`)
       writeFileSync(join(where, 'frames.ndjson'), frames)
+      writeFileSync(join(where, 'plan-status.json'), plan)
       if (installationsList !== null) writeFileSync(join(where, 'installations.ndjson'), installationsList)
     }
   }
@@ -283,6 +298,7 @@ export function installCliStub(line: string): CliStub {
       // one active gets the same answers rather than a `cat` of a missing file.
       writeFileSync(join(where, 'project.txt'), `${project}\n`)
       writeFileSync(join(where, 'frames.ndjson'), frames)
+      writeFileSync(join(where, 'plan-status.json'), plan)
       return join(where, 'fugaro')
     },
     seedInstallationsList(projects: readonly string[], extra: readonly string[] = []): void {
@@ -304,6 +320,10 @@ export function installCliStub(line: string): CliStub {
         ...extra,
       ]
       installationsList = `${JSON.stringify({ installations, warnings })}\n`
+      writeSupport()
+    },
+    seedPlan(document: unknown): void {
+      plan = `${JSON.stringify(document)}\n`
       writeSupport()
     },
     setVersion(next: string): void {
