@@ -148,7 +148,7 @@ func TestCoordinatorStatusFromStoreNeedsNoKey(t *testing.T) {
 	t.Setenv(providers.EnvGitHubAppKey, "")
 	t.Setenv(providers.EnvCredentialsServiceURL, "")
 
-	got := storedJSON(t, "coordinator", "status", "--from-store", "--repo", "acme/app", "--json")
+	got := storedJSON(t, "coordinator", "status", "--from-store", "--repo", "acme/app", "--since", "0", "--json")
 	if got.Repo != "acme/app" {
 		t.Errorf("repo = %q, want acme/app", got.Repo)
 	}
@@ -243,14 +243,14 @@ func TestCoordinatorStatusFromStoreWithSharedConfigOnly(t *testing.T) {
 	if err := os.WriteFile(path, append(base, []byte("terraform: { coordinator: true }\n")...), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	withSwitch := storedJSON(t, "coordinator", "status", "--from-store", "--repo", "acme/app", "--json")
+	withSwitch := storedJSON(t, "coordinator", "status", "--from-store", "--repo", "acme/app", "--since", "0", "--json")
 	// A teammate's machine: what it holds is the published shared config,
 	// which is Config.Shared's subset — and Shared drops Terraform, so
 	// nothing in it says whether the coordinator is on.
 	if err := os.WriteFile(path, base, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	withoutSwitch := storedJSON(t, "coordinator", "status", "--from-store", "--repo", "acme/app", "--json")
+	withoutSwitch := storedJSON(t, "coordinator", "status", "--from-store", "--repo", "acme/app", "--since", "0", "--json")
 
 	if !withSwitch.Stored || !withoutSwitch.Stored {
 		t.Errorf("stored = %v / %v, want the stored view either way: the read does not consult the local config for whether the coordinator is on",
@@ -266,7 +266,7 @@ func TestCoordinatorStatusFromStoreAll(t *testing.T) {
 	f.writeStoredView(t, storedView(), nil)
 	noStoreOpens(t)
 
-	out, errOut, err := execute(t, "coordinator", "status", "--from-store", "--all", "--json")
+	out, errOut, err := execute(t, "coordinator", "status", "--from-store", "--all", "--since", "0", "--json")
 	if err != nil {
 		t.Fatalf("%v (stderr: %s)", err, errOut)
 	}
@@ -292,11 +292,11 @@ func TestCoordinatorStatusFromStorePrintsAStaleMarker(t *testing.T) {
 	f.writeStoredView(t, storedView(), &mark)
 	noStoreOpens(t)
 
-	got := storedJSON(t, "coordinator", "status", "--from-store", "--repo", "acme/app", "--json")
+	got := storedJSON(t, "coordinator", "status", "--from-store", "--repo", "acme/app", "--since", "0", "--json")
 	if got.Stale == nil || !got.Stale.Since.Equal(mark.Since) || got.Stale.Reason != mark.Reason {
 		t.Fatalf("the marker printed is %+v, want %+v exactly as stored", got.Stale, mark)
 	}
-	out, errOut, err := execute(t, "coordinator", "status", "--from-store", "--repo", "acme/app")
+	out, errOut, err := execute(t, "coordinator", "status", "--from-store", "--repo", "acme/app", "--since", "0")
 	if err != nil {
 		t.Fatalf("%v (stderr: %s)", err, errOut)
 	}
