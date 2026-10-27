@@ -409,6 +409,7 @@ export const SPAWN_FLAGS: readonly string[] = Object.freeze([
   '--mine',
   '--pr',
   '--project-wide',
+  '--from-store',
 ])
 
 /** DEFAULT_BACKOFF is the CLI's own stream backoff (`backMin`/`backMax`,
@@ -727,6 +728,27 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     operation: 'installation.list',
     words: ['config', 'list', '--json'],
     takesProject: false,
+    args: [],
+    dirFlag: false,
+  },
+  {
+    // The project view (Bitbucket credentials T1.2, D364): every repository of
+    // the installation, from the view the coordinator's sweep last stored. The
+    // two flags are fixed words rather than declared arguments -- the screen has
+    // no control that turns either off -- so `args` is empty and `argvFor` emits
+    // exactly the three words below plus `--project`/`--config` (rule 3; the
+    // command carries the cloud group's two, and it is a read of a project, so
+    // it is not on `COMMANDS_WITHOUT_PROJECT`).
+    //
+    // `--repo` and `--since` are deliberately absent: the read is about the
+    // project's whole repository set, and the stored view carries no time for a
+    // window to filter (`src/main/ipc.ts`'s comment on the operation says both
+    // at length). `--from-store` is on `SPAWN_FLAGS` and on no never-row: it is
+    // the read that touches no credential, and it is the whole point of this
+    // row that the console may make it.
+    operation: 'coordinator.status',
+    words: ['coordinator', 'status', '--from-store', '--all', '--json'],
+    takesProject: true,
     args: [],
     dirFlag: false,
   },

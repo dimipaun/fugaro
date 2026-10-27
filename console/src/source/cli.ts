@@ -485,6 +485,17 @@ export class CliSource implements FugaroSource {
     return this.#readDocument('plan.status', args)
   }
 
+  /** coordinatorStatus reads `coordinator status --from-store --all --json`,
+   * which is the one read here that touches nothing on this machine and no
+   * credential: the child reads the caller's own database node through
+   * `roles/firebasedatabase.viewer` and prints it. It is therefore the only read
+   * with **no precondition of its own** -- no checkout, no App key, no
+   * Bitbucket credential -- and the two flags that make it that are words of the
+   * spawn row, so no caller can turn either off. */
+  coordinatorStatus(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('coordinator.status', args)
+  }
+
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot> {
     return this.#readDocument('run.diagnose', args)
   }
@@ -994,6 +1005,12 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
       reading.then(settled, settled)
       return reading
     },
+    /** coordinatorStatus has no precondition and no cadence: the read touches
+     * nothing on this machine (it is the caller's own database node) and the
+     * stored view is a document the sweep replaces in place, so there is no
+     * directory to refuse for and nothing to be gained by holding a floor
+     * between two calls. */
+    coordinatorStatus: (args) => read('coordinator.status', (source) => source.coordinatorStatus(args)),
     diagnoseRun: (args) => read('run.diagnose', (source) => source.diagnoseRun(args)),
     readRunLogs: (args) => read('run.logs', (source) => source.readRunLogs(args)),
     runLogLink: (args) => read('run.logLink', (source) => source.runLogLink(args)),

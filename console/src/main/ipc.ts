@@ -2,8 +2,8 @@
 // section 5.1 rule 5).
 //
 // The console has no IPC bridge. It has a fixed table of named operations --
-// one per read the console performs, thirteen of them for the twelve documents
-// the dashboard draws out of design section 2.1 plus the one validated link
+// one per read the console performs, the CLI reads among them for the documents
+// the dashboard draws out of design section 2.1, plus the one validated link
 // (that section's list holds a thirteenth row, the picker's own `fugaro config
 // list --json`; it belongs to the installations picker window and is not an
 // operation of this table -- `src/preload/installations.ts` is its surface) --
@@ -331,7 +331,7 @@ export interface ConsoleOperation {
 }
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Twenty-two operations, and the table
+ * CONSOLE_OPERATIONS is the whole surface. Twenty-three operations, and the table
  * is the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
@@ -348,6 +348,13 @@ export interface ConsoleOperation {
  * console-v2 plan's GV1.6 ships the document, GV2.1 is this operation, and
  * `console/docs/json-contract.md` §6.12 describes it). `plan.status`'s own
  * comment below says why the directory it reads in never reaches it.
+ *
+ * **T1.2's `coordinator status --from-store --all --json` is this surface's
+ * fifteenth argv** (Bitbucket credentials T1.2, D364): the project view, read
+ * from the coordinator's stored view, which is the one read here that needs no
+ * credential of the host's. Its own comment below says why `--from-store` and
+ * `--all` are fixed words of its argv rather than arguments, and
+ * `console/docs/json-contract.md` §6.13 describes its document.
  *
  * The thirteenth **operation** (the row, not an argv) is the startup
  * handshake's answer (`startup.compatibility`, the console's own state, which
@@ -822,6 +829,37 @@ export const CONSOLE_OPERATIONS = [
       },
     ],
   },
+  // The project view (Bitbucket credentials T1.2, D364). `fugaro coordinator
+  // status --from-store --all --json` is the one read that answers for **every
+  // repository of the installation at once**, and it is the console's only read
+  // that needs no credential of the host's: the coordinator's stored view is the
+  // caller's own database read (`roles/firebasedatabase.viewer`), so the console
+  // asks it with no App key, no Bitbucket credential and no host read. A
+  // repository the coordinator has never reconciled answers the runs half with
+  // `"stored": false` rather than refusing, which is what makes this read safe
+  // on an installation whose coordinator was never turned on.
+  //
+  // **`--from-store` and `--all` are fixed, and they are not arguments.** `--all`
+  // is the wrapper the document's `repos` array needs: without it the read
+  // answers one repository's view, and refuses when the local config lists none
+  // or several -- neither of which is the question a project view asks. Both are
+  // words of the argv rather than an argument schema because the screen has no
+  // control that would turn either off, which is the same reason
+  // `installation.list` fixes `--json`.
+  //
+  // **`--repo` is deliberately no part of this operation.** The read is about the
+  // project's whole repository set, and a renderer that could name one repository
+  // could ask a question this screen does not draw. `--since` is absent for the
+  // reason the screen claims no age: the stored view is a document that has
+  // already been written, so a window would filter a figure nothing recomputes.
+  {
+    name: 'coordinator.status',
+    method: 'coordinatorStatus',
+    command: 'coordinator status',
+    flags: ['--from-store', '--all', '--json'],
+    summary: 'every repository of the installation, from the coordinator’s stored view',
+    args: [],
+  },
 ] as const satisfies readonly ConsoleOperation[]
 
 /** OperationName is the closed union of the surface's operation names. */
@@ -838,9 +876,16 @@ export const CONSOLE_OPERATION_NAMES: readonly OperationName[] = Object.freeze(
 
 /** ALLOWED_OPERATION_FLAGS is the whole of what an operation may fix. `--json`
  * asks for the document the console draws; `--url` is `logs RUN --url`, which is
- * its own argv. Anything else an operation might want to fix is on
- * `NEVER_REACHABLE`'s flag rows. */
-export const ALLOWED_OPERATION_FLAGS: readonly string[] = Object.freeze(['--json', '--url'])
+ * its own argv; `--from-store` and `--all` are `coordinator status`'s two, fixed
+ * together because the stored view and the project-wide wrapper are one question
+ * and no screen control turns either off. Anything else an operation might want
+ * to fix is on `NEVER_REACHABLE`'s flag rows. */
+export const ALLOWED_OPERATION_FLAGS: readonly string[] = Object.freeze([
+  '--json',
+  '--url',
+  '--from-store',
+  '--all',
+])
 
 /**
  * operationFor returns the table entry for a name, and throws on a name that is
