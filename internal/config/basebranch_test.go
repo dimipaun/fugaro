@@ -38,3 +38,33 @@ func TestEffectiveBaseBranch(t *testing.T) {
 		})
 	}
 }
+
+// TestSetsGitBaseBranch pins the question EffectiveBaseBranch's fileSets
+// argument asks of a checkout's text: does it write git.base_branch at all.
+// The value alone cannot answer it — a resolved config fills main in — so a
+// caller that compared against main would read a file that sets nothing as a
+// file that chose main, and a project on master would never be used.
+func TestSetsGitBaseBranch(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		yaml string
+		want bool
+	}{
+		{name: "set", yaml: "git:\n  base_branch: develop\n", want: true},
+		{name: "set to main", yaml: "git:\n  base_branch: main\n", want: true},
+		{name: "beside another git key", yaml: "git:\n  provider: github\n  base_branch: master\n", want: true},
+		{name: "absent", yaml: "git:\n  provider: github\n"},
+		{name: "no git block", yaml: "version: 1\n"},
+		{name: "an empty document", yaml: ""},
+		{name: "explicit null", yaml: "git:\n  base_branch:\n"},
+		{name: "another block's key", yaml: "agent:\n  base_branch: develop\n"},
+		{name: "not a mapping", yaml: "version: 1\ngit: []\n"},
+		{name: "merged in", yaml: "git:\n  <<: {base_branch: develop}\n", want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := SetsGitBaseBranch([]byte(tc.yaml)); got != tc.want {
+				t.Errorf("SetsGitBaseBranch(%q) = %v, want %v", tc.yaml, got, tc.want)
+			}
+		})
+	}
+}

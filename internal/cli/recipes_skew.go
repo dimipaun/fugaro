@@ -420,6 +420,18 @@ func compressionRequested(ctx context.Context, env *cloudEnv, spec *task.Spec) (
 // release the service ships in, so the constant cannot move without them.
 const cascadeSince = "0.10.0"
 
+// baseBranchSince is the first fugaro release whose runner reads a task's
+// base_branch (the project's default base branch a launch resolves): an older
+// runner refuses the whole task at bootstrap, since task.Parse decodes with
+// DisallowUnknownFields. Unlike every other *Since gate here the launch is
+// never refused over it — baseBranchSkew drops the field and says so — because
+// what the field carries is a default: the run it would have targeted the
+// project's base branch on runs on the installation's base instead, and a
+// launch that works today must keep working. It must equal the release that
+// ships the field; docs/release.md ("Before you tag") has the checklist
+// verify it.
+const baseBranchSince = "0.12.1"
+
 // rigorSince is the first fugaro release whose config reader knows
 // fugaro.yaml's rigor: block and the project layer's defaults.rigor
 // (docs/rigor-modes). Both files are decoded with KnownFields, so a runner
@@ -591,6 +603,63 @@ func releaseOf(ref string) (string, bool) {
 		return "", false
 	}
 	return m[2], true
+}
+
+// baseBranchSkew drops spec.BaseBranch when the job's image runs a fugaro
+// older than baseBranchSince, and says so on warn: such a runner refuses the
+// whole task at bootstrap (task.Parse decodes with DisallowUnknownFields), so
+// carrying the field would turn a launch that works today into a run that dies
+// after it was paid for. The launch is never refused — the project's base
+// branch is a default, and the run it is dropped for targets the installation's
+// base branch instead, which is what every launch did before this field — and
+// the field's own absence keeps a launch that resolved no project default (the
+// common case) byte-identical to the previous release's.
+//
+// The judge is the one the other gates use: a checkout: clone job runs the
+// installation's base image itself (checkCloneImageSince's judge, the ref
+// base_images.base names), and a derived image runs the binary of the base its
+// build record was built FROM (checkImageSince's). An image neither judge can
+// show — no build record, a record without a base_ref, a base with no release
+// tag — is left carrying the field: what the image reads cannot be shown, and
+// the alternative, dropping a project default on a development image whose
+// runner does read it, is a silent change of the branch the run targets, which
+// nothing in the run reports. The read's own failure is dropped for the same
+// reason: this gate's only power is to omit a field, and a launch is not worth
+// refusing over a database read that the launch's other gates make anyway.
+func baseBranchSkew(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, clone bool, warn io.Writer) {
+	b := spec.BaseBranch
+	if b == "" {
+		return
+	}
+	rel, known := "", false
+	if clone {
+		rel, known = releaseOf(env.lc.BaseImage(config.BaseKind))
+	} else {
+		rel, known = recordBaseRelease(ctx, env, slug, spec)
+	}
+	if !known || !imagePredates(rel, baseBranchSince) {
+		return
+	}
+	spec.BaseBranch = ""
+	fmt.Fprintf(warn, "the job image predates %s and ignores the project's base branch %s; refresh it with fugaro image refresh\n", baseBranchSince, b)
+}
+
+// recordBaseRelease is the release of the base image the build record of slug
+// workflow names, and whether a record said so at all.
+func recordBaseRelease(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) (string, bool) {
+	b, err := env.recordBucket(ctx)
+	if err != nil {
+		return "", false
+	}
+	data, _, err := b.Read(ctx, imagecheck.RecordKey(slug, spec.Workflow))
+	if err != nil {
+		return "", false
+	}
+	rec, err := imagecheck.ParseRecord(data)
+	if err != nil || rec.BaseRef == "" {
+		return "", false
+	}
+	return releaseOf(rec.BaseRef)
 }
 
 // checkCloneImageSince is checkImageSince for a checkout: clone workflow:

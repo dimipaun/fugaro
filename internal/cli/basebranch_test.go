@@ -1,0 +1,292 @@
+package cli
+
+import (
+	"bytes"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
+)
+
+// baseBranchCheckout makes the working directory a checkout of repo with the
+// given fugaro.yaml, and gives origin the remote-tracking refs of main,
+// develop and master. A branch of "" leaves HEAD detached: that is the
+// checkout whose own branch never decides the ref (checkoutBranchOnOrigin),
+// so the launch's ref is the base branch itself and the test reads the
+// layers' answer rather than the checkout's.
+func baseBranchCheckout(t *testing.T, repo, yaml, branch string) {
+	t.Helper()
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q", "-b", "main")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:"+repo+".git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": yaml, "README.md": "code\n"})
+	testutil.Git(t, dir, "add", "-A")
+	testutil.Git(t, dir, "commit", "-q", "-m", "init")
+	for _, b := range []string{"main", "develop", "master"} {
+		testutil.Git(t, dir, "update-ref", "refs/remotes/origin/"+b, "HEAD")
+	}
+	switch branch {
+	case "":
+		testutil.Git(t, dir, "checkout", "-q", "--detach", "HEAD")
+	case "main":
+	default:
+		testutil.Git(t, dir, "checkout", "-q", "-b", branch)
+	}
+	t.Chdir(dir)
+}
+
+// baseBranchYAML is a fugaro.yaml whose git: block is exactly gitBlock.
+func baseBranchYAML(gitBlock string) string {
+	return "version: 1\nproject: aurora\n" + gitBlock + "workflows:\n  web: { commands: { build: sh b.sh, test: sh t.sh } }\n"
+}
+
+// noBaseBranchYAML writes no git.base_branch at all: the file the project's
+// own default applies to.
+const noBaseBranchYAML = "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  web: { commands: { build: sh b.sh, test: sh t.sh } }\n"
+
+// publishBaseBranch writes the policy node a launcher reads the project's
+// default base branch from, with the rules marker that makes the node visible
+// to it (projectpolicy.Read).
+func publishBaseBranch(t *testing.T, db *gcpfake.RTDB, branch string) {
+	t.Helper()
+	node := map[string]any{"version": projectpolicy.Version, "allow_repos": []string{"github/acme/other"}, "budget": map[string]any{"mode": "off"}}
+	if branch != "" {
+		node["base_branch"] = branch
+	}
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	db.Set(projectpolicy.PathShared(), node)
+}
+
+// addOtherRepo enrolls acme/other in the fixture's local config and deploys
+// its job. It is the repository the launches below use: the fixture's own
+// acme/app entry sets base_branch: main, which would answer the repository
+// layer for every one of them.
+func addOtherRepo(t *testing.T, f *cloudFixture) {
+	t.Helper()
+	f.appendConfig(t, "  acme/other: { provider: github, workflows: [web] }\n")
+	f.run.AddJob(gcp.JobName(mustSlug("github", "acme/other"), "web"), "2", "4Gi")
+	// Its job image is built from a base that reads the project's base branch,
+	// which is the state every other gate here is judged against too (the
+	// seal's, when the launch mints a budget token).
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "web", "ghcr.io/dimipaun/fugaro-base:"+baseBranchSince)
+}
+
+// TestLaunchBaseBranchReadsThePublishedPolicy is layer 3's other half: a
+// launcher whose own config sets no base_branch reads the project's default
+// from the policy node the owner published, each case on its own installation
+// (the read is memoized per command), and the installation config's own value
+// wins over the published one when both are set.
+func TestLaunchBaseBranchReadsThePublishedPolicy(t *testing.T) {
+	cases := []struct {
+		name, local, published, want, wantSource string
+	}{
+		{"the published node", "", "master", "master", config.BaseBranchSourceProject},
+		// Both halves of layer 3 print the same source: they are one layer, the
+		// installation's own value winning over the one published for it.
+		{"the installation config wins", "develop", "master", "develop", config.BaseBranchSourceProject},
+		{"a node without the key", "", "", "main", config.SourceDefault},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			db := gcpfake.NewRTDB(t)
+			addOtherRepo(t, f)
+			f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+db.URL+", token_signer: "+testSigner+" }\n")
+			if tc.local != "" {
+				f.appendConfig(t, "base_branch: "+tc.local+"\n")
+			}
+			publishBaseBranch(t, db, tc.published)
+			baseBranchCheckout(t, "acme/other", noBaseBranchYAML, "main")
+			b, source := launchBaseBranch(t.Context(), fileEnv(t, f), "acme/other")
+			if b != tc.want || source != tc.wantSource {
+				t.Fatalf("base/source = %q/%q, want %q/%q", b, source, tc.want, tc.wantSource)
+			}
+		})
+	}
+	t.Run("a read that fails leaves the layers above", func(t *testing.T) {
+		f := newCloudFixture(t)
+		addOtherRepo(t, f)
+		// A database nothing answers on: the project's default is unreadable,
+		// and the launch still has a base branch — the two layers above it, and
+		// the default — because a policy read is never worth refusing a launch
+		// over (the launch's own policy gate reports the read when it matters).
+		f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: http://127.0.0.1:1/, token_signer: "+testSigner+" }\n")
+		baseBranchCheckout(t, "acme/other", noBaseBranchYAML, "main")
+		b, source := launchBaseBranch(t.Context(), fileEnv(t, f), "acme/other")
+		if b != "main" || source != config.SourceDefault {
+			t.Fatalf("base/source = %q/%q, want main/default", b, source)
+		}
+	})
+	t.Run("the two layers above skip the read", func(t *testing.T) {
+		f := newCloudFixture(t)
+		addOtherRepo(t, f)
+		f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: http://127.0.0.1:1/, token_signer: "+testSigner+" }\n")
+		baseBranchCheckout(t, "acme/other", baseBranchYAML("git: { provider: github, base_branch: develop }\n"), "main")
+		b, source := launchBaseBranch(t.Context(), fileEnv(t, f), "acme/other")
+		if b != "develop" || source != config.BaseBranchSourceFile {
+			t.Fatalf("base/source = %q/%q, want develop/"+config.BaseBranchSourceFile, b, source)
+		}
+	})
+}
+
+// TestBaseBranchPrecedenceInTheLauncher pins the order every layer wins in
+// (config.EffectiveBaseBranch): the checkout's committed fugaro.yaml when it
+// sets git.base_branch, else the local config's repos.<r>.base_branch, else
+// the project's base_branch, else main.
+//
+// The first case is the ruling's reversal: before it, the launcher put the
+// local config's repos.<r>.base_branch above the checkout's file, so an
+// installation's entry overrode the branch a repository's own reviewed file
+// names.
+func TestBaseBranchPrecedenceInTheLauncher(t *testing.T) {
+	t.Run("the file beats the installation config", func(t *testing.T) {
+		f := newCloudFixture(t) // its acme/app entry sets base_branch: main
+		// Detached: the checkout's own branch never decides the ref, so the ref
+		// read here is the layers'. Before the reversal, the local config's main
+		// won and the run was cut from main.
+		baseBranchCheckout(t, "acme/app", baseBranchYAML("git: { provider: github, base_branch: develop }\n"), "")
+		_, errOut, err := execute(t, "run", "--run-id", "20261027-100000-abcd", "A task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		spec := readSpec(t, f, "20261027-100000-abcd")
+		if spec.Ref != "develop" {
+			t.Fatalf("ref = %q, want develop (the checkout's fugaro.yaml, not the local config's main)", spec.Ref)
+		}
+		if spec.BaseBranch != "" {
+			t.Errorf("base_branch = %q, want none: the file sets the key, so its own value is the base", spec.BaseBranch)
+		}
+		if strings.Contains(errOut, "refresh") {
+			t.Errorf("stderr:\n%s", errOut)
+		}
+	})
+	t.Run("the project default when the file sets nothing", func(t *testing.T) {
+		f := newCloudFixture(t)
+		addOtherRepo(t, f)
+		f.appendConfig(t, "base_branch: master\n")
+		baseBranchCheckout(t, "acme/other", noBaseBranchYAML, "master")
+		if _, _, err := execute(t, "run", "--repo", "acme/other", "--run-id", "20261027-100000-abcd", "A task"); err != nil {
+			t.Fatal(err)
+		}
+		spec := readSpecOf(t, f, mustSlug("github", "acme/other"), "20261027-100000-abcd")
+		if spec.Ref != "master" || spec.BaseBranch != "master" {
+			t.Fatalf("ref/base_branch = %q/%q, want master/master", spec.Ref, spec.BaseBranch)
+		}
+	})
+	t.Run("an explicit ref writes no field", func(t *testing.T) {
+		f := newCloudFixture(t)
+		addOtherRepo(t, f)
+		f.appendConfig(t, "base_branch: master\n")
+		baseBranchCheckout(t, "acme/other", noBaseBranchYAML, "master")
+		if _, _, err := execute(t, "run", "--repo", "acme/other", "--ref", "develop", "--run-id", "20261027-100000-abcd", "A task"); err != nil {
+			t.Fatal(err)
+		}
+		spec := readSpecOf(t, f, mustSlug("github", "acme/other"), "20261027-100000-abcd")
+		if spec.Ref != "develop" || spec.BaseBranch != "" {
+			t.Fatalf("ref/base_branch = %q/%q, want develop and no field: the run reads its configuration from the ref it was given", spec.Ref, spec.BaseBranch)
+		}
+	})
+}
+
+// TestBaseBranchSkew pins the one gate that omits a field rather than
+// refusing a launch (baseBranchSkew), on the fixtures the other *Since gates
+// use: a checkout: clone job is judged on the base image its workflow runs
+// (checkCloneImageSince's judge), and a derived one on the base its build
+// record was built from (checkImageSince's). A job image neither judge can
+// show keeps the field: dropping a project's base branch on one is a silent
+// change of the branch the run targets.
+func TestBaseBranchSkew(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	newSpec := func() *task.Spec {
+		return &task.Spec{Version: 1, RunID: "20261027-100000-abcd", Repo: "acme/app", Ref: "master", BaseBranch: "master", Workflow: "web", Task: "x"}
+	}
+	wantSkew := "the job image predates " + baseBranchSince + " and ignores the project's base branch master; refresh it with fugaro image refresh"
+	for _, tc := range []struct {
+		name, baseImage, wantBase, wantWarn string
+	}{
+		{"older than baseBranchSince", "ghcr.io/dimipaun/fugaro-base:0.12.0", "", wantSkew},
+		{"at baseBranchSince", "ghcr.io/dimipaun/fugaro-base:" + baseBranchSince, "master", ""},
+		{"newer", "ghcr.io/dimipaun/fugaro-base:0.13.0", "master", ""},
+		{"no base image at all", "", "master", ""},
+		{"a dev ref", "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c", "master", ""},
+	} {
+		t.Run("clone: "+tc.name, func(t *testing.T) {
+			lc := *env.lc
+			lc.BaseImages = map[string]string{}
+			if tc.baseImage != "" {
+				lc.BaseImages[config.BaseKind] = tc.baseImage
+			}
+			e := *env
+			e.lc = &lc
+			spec := newSpec()
+			var warn bytes.Buffer
+			baseBranchSkew(t.Context(), &e, appSlug, spec, true, &warn)
+			if spec.BaseBranch != tc.wantBase {
+				t.Errorf("base_branch = %q, want %q", spec.BaseBranch, tc.wantBase)
+			}
+			if !strings.Contains(warn.String(), tc.wantWarn) || (tc.wantWarn == "" && warn.Len() != 0) {
+				t.Errorf("stderr %q, want %q", warn.String(), tc.wantWarn)
+			}
+		})
+	}
+	t.Run("a derived image's old build record", func(t *testing.T) {
+		writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.12.0")
+		spec := newSpec()
+		var warn bytes.Buffer
+		baseBranchSkew(t.Context(), env, appSlug, spec, false, &warn)
+		if spec.BaseBranch != "" {
+			t.Errorf("base_branch = %q, want none: the record's base predates %s", spec.BaseBranch, baseBranchSince)
+		}
+		if !strings.Contains(warn.String(), wantSkew) {
+			t.Errorf("stderr %q, want %q", warn.String(), wantSkew)
+		}
+	})
+	t.Run("a derived image at baseBranchSince keeps the field", func(t *testing.T) {
+		writeBuildRecord(t, f, appSlug, "web", "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:"+baseBranchSince)
+		spec := newSpec()
+		var warn bytes.Buffer
+		baseBranchSkew(t.Context(), env, appSlug, spec, false, &warn)
+		if spec.BaseBranch != "master" || warn.Len() != 0 {
+			t.Errorf("base_branch = %q, stderr %q; want the field kept and nothing said", spec.BaseBranch, warn.String())
+		}
+	})
+	t.Run("a derived image with no record is left alone", func(t *testing.T) {
+		// A fixture of its own: a build record is one object per workflow, and
+		// the subtests above stored one.
+		spec := newSpec()
+		var warn bytes.Buffer
+		baseBranchSkew(t.Context(), fileEnv(t, newCloudFixture(t)), appSlug, spec, false, &warn)
+		if spec.BaseBranch != "master" || warn.Len() != 0 {
+			t.Errorf("base_branch = %q, stderr %q; want the field kept and nothing said without a record", spec.BaseBranch, warn.String())
+		}
+	})
+}
+
+// TestBaseBranchOnAFollowUp: a --pr follow-up carries the base of the run it
+// continues, which is the branch its configuration is read from — the
+// runner's readBaseConfig refuses a file whose base is not the run's ref, and
+// the file this follow-up reads sets nothing.
+func TestBaseBranchOnAFollowUp(t *testing.T) {
+	f := newCloudFixture(t)
+	root := firstRunSpec(rootID)
+	root.Ref, root.BaseBranch = "master", "master"
+	seedSpec(t, f, root, false)
+	rec := prRecord(rootID, "", 7, 1)
+	rec.StartedAt = time.Now().Add(-72 * time.Hour)
+	writeRecord(t, f, rootID, rec)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "also rename x"); err != nil {
+		t.Fatal(err)
+	}
+	spec := readSpec(t, f, fuID)
+	if spec.Ref != "master" || spec.BaseBranch != "master" {
+		t.Fatalf("follow-up ref/base_branch = %q/%q, want master/master", spec.Ref, spec.BaseBranch)
+	}
+}

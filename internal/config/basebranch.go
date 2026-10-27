@@ -1,5 +1,7 @@
 package config
 
+import "gopkg.in/yaml.v3"
+
 // DefaultBaseBranch is the base branch of a repository that names none.
 const DefaultBaseBranch = "main"
 
@@ -35,4 +37,25 @@ func EffectiveBaseBranch(file string, fileSets bool, repo, project string) (bran
 		return project, BaseBranchSourceProject
 	}
 	return DefaultBaseBranch, SourceDefault
+}
+
+// SetsGitBaseBranch reports whether a fugaro.yaml's own text writes
+// git.base_branch, at any value: the question EffectiveBaseBranch's fileSets
+// argument asks. It reads the same tree Resolve merges (merge keys expanded,
+// a key YAML reads as other than a string refused), so it answers about the
+// document the resolution answered about; a key written as an explicit null
+// sets nothing, exactly as it does there. A document that does not decode
+// answers false, and the caller's own parse is what reports why.
+func SetsGitBaseBranch(data []byte) bool {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return false
+	}
+	tree, ps := docTree(&doc)
+	if len(ps) > 0 {
+		return false
+	}
+	git, _ := tree["git"].(map[string]any)
+	v, ok := git["base_branch"]
+	return ok && v != nil
 }
