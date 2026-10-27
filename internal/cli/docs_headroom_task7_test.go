@@ -5,23 +5,6 @@ import (
 	"testing"
 )
 
-// sliceBetween returns the part of s from the first occurrence of from to the
-// first occurrence of to after it, so a claim can be read inside one section
-// of a long document rather than anywhere in it.
-func sliceBetween(t *testing.T, s, from, to string) string {
-	t.Helper()
-	i := strings.Index(s, from)
-	if i < 0 {
-		t.Fatalf("document does not contain %q", from)
-	}
-	rest := s[i:]
-	j := strings.Index(rest, to)
-	if j < 0 {
-		t.Fatalf("document does not contain %q after %q", to, from)
-	}
-	return rest[:j]
-}
-
 // TestHeadroomTask7NoteCorrections pins the corrections the review of #1162
 // asked for in the Task 7 note (docs/plans/2026-10-12-headroom-compression.md,
 // its revised 2026-10-27 note) and in the design it cites, so the false
@@ -58,6 +41,9 @@ func TestHeadroomTask7NoteCorrections(t *testing.T) {
 		"~746 MB",
 		"3812 MB",
 		"fetches its ML models from `huggingface.co` when it *runs*",
+		// The derived figures the 746 MB correction changed with it.
+		"~1.9 times the ~400 MB ceiling",
+		"~0.56 GB over the current budget",
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("the Task 7 note no longer says %q", want)
@@ -69,15 +55,21 @@ func TestHeadroomTask7NoteCorrections(t *testing.T) {
 		"`pywin32` appears in the universal lock for Windows only",
 		`design §5's "materially heavier"`,
 		"beacon is on unless",
+		"more than four times what the base image has left",
+		"~0.67 GB over the current budget",
 	} {
 		if strings.Contains(plan, banned) {
 			t.Errorf("the Task 7 note still carries the withdrawn claim %q", banned)
 		}
 	}
 
-	l2 := sliceBetween(t, plan, "Check L2. Can Headroom's own configuration", "Check L3.")
-	if !strings.Contains(l2, "Task 7") {
-		t.Error("Check L2 no longer points at the Task 7 note")
+	// Check L2's own parenthetical already sends the reader to "whatever Task 7
+	// found", so the pointer this correction adds is what is pinned — the bare
+	// words "Task 7" are there with or without it, and would assert nothing.
+	l2 := mdBetween(t, "docs/plans/2026-10-12-headroom-compression.md", plan,
+		"Check L2. Can Headroom's own configuration", "Check L3.")
+	if !strings.Contains(l2, "its Corrections block records that Headroom fetches its ML models at run time") {
+		t.Error("Check L2 no longer points at the Task 7 revised note and its Corrections block")
 	}
 
 	// The correction to the size-limit sentence rests on the design's own

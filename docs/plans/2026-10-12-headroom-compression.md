@@ -1795,8 +1795,8 @@ and GitHub's release API.
   The wheel is Apache-2.0 (`License-Expression: Apache-2.0`), its console
   script is `headroom=headroom.cli:main`, and `headroom --version` reports
   `headroom, version 0.40.0`.
-- **The closure is more than double the ~400 MB ceiling this run was given,
-  and more than four times what the base image has left.** The ~400 MB figure
+- **The closure is ~1.9 times the ~400 MB ceiling this run was given,
+  and about four times what the base image has left.** The ~400 MB figure
   is **not this plan's and not the design's** — it is the owner's 2026-10-27
   instruction for this task, recorded here as the run's acceptance criterion
   rather than as a rule the tree carries. The tree carries a limit, just a
@@ -1920,7 +1920,8 @@ budget decision before it is a Headroom one: either raise
 hash-pinned model cache beside the venv, or ship the structural-only path
 (`HEADROOM_DISABLE_KOMPRESS=1` and `HEADROOM_OFFLINE=1`, the shape that was
 measured working under `--network none`) and accept that the ML compressors
-are off — the second is still ~0.67 GB over the current budget, so neither
+are off — the second is still ~0.56 GB over the current budget (746 MB
+against the 188 MB the base image has left), so neither
 route fits without the owner raising it. **Either way the no-egress test is
 still owed**: a structural-only shape needs it just as much, since the
 measurement above is the only thing that would have to be re-run against
