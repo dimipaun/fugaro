@@ -11,7 +11,7 @@ agenda (D403). **Where this file disagrees with `spec.md`, this file wins.**
 | Four landing pages, GA4, cookie banner | `website/` is a built Astro site (`website/src/pages`); GA4 loads only after consent (`website/data/site.yaml`, `firebase.json` CSP). No campaign pages, no pricing page |
 | Meta Pixel, LinkedIn Insight Tag, Calendly embed | Nothing. `docs/website/reconciliation.md` D106 admits one third party (GA4 behind the consent gate); the CSP in `firebase.json` has no `frame-src` |
 | SECURITY doc | `SECURITY.md` and `website/content/security.md` (a rule file, `credentials-service.md`, loads when either is touched) |
-| `fugaro estimate` | Not there. The pieces are: `internal/pricing` (price table, catalog), `priceTableFor` in `internal/cli/prices.go`, `agent.Usage` per model in `internal/agent/stream.go`, `runstore.Cost` |
+| `fugaro estimate` | Not there. The pieces are: `internal/pricing` (price table, catalog), `priceTableFor` in `internal/cli/prices.go`, `agent.Usage` per model in `internal/agent/agent.go`, `runstore.Cost` |
 | Raw token counts per job | Not stored. `runstore.Cost` holds dollars (`ModelBy`, `RouteBy`); open PR #1115 adds only cache read/write totals |
 | SSO, audit logs | Nothing in code |
 | Hotfix mode (people series) | `docs/rigor-modes/` names Hotfix |
@@ -43,7 +43,7 @@ figures only from an owner-run aggregation of at least `internal/stats.MinRuns` 
 repository, run, branch, task or person named, and a "not a promise" line. A competitor comparison needs
 a source and a date. The pages carry a figure from the variant config only once that aggregation exists;
 until then the config holds the sentinel `unmeasured` and the page refuses to build with a figure that
-is not backed (task L2.3).
+is not backed (task G2.1).
 
 **F7 (Wrong): `opus-4.5`.** The agenda's demo command (`fugaro estimate --pr N --model opus-4.5`, in the business agenda) names a model
 the price table does not have. `internal/pricing/table.go` has `claude-opus-5-5` and `claude-opus-5`;
@@ -53,13 +53,12 @@ any other with the list of known IDs.
 
 **F8 (Gap): tokens per model are not on the run record.** `pricing.Usage` (input, output, cache read,
 cache write 5m and 1h, web searches) is what the gateway prices; `agent.Usage` (`internal/agent/agent.go`)
-is what the agent stream reports per model; `budget.ModelUse` already carries a model's in, out, cache read
-and cache write for the day counter (`internal/runner/budget_session.go`). `runstore.Cost` keeps dollars
+is what the agent stream reports per model, with one cache-creation count and no 5m/1h split; `budget.ModelUse` (`internal/budget/model.go`) already carries a model's in, out, cache read and cache write for the day counter, and `internal/runner/budget_session.go` books all cache creation as 5m. `runstore.Cost` keeps dollars
 only (`ModelBy`, `RouteBy`), and #1115 (open) adds only cache read/write totals. Two paths fill the cost:
 with the gateway on, `internal/runner/cost.go` fills `ModelBy` from the gateway's ledger; without it
 (`auth: oauth`, `model_source: claude-code`) the only source is `agent.Result.ModelUsage`. Both need
 filling or `estimate` would refuse every subscription run. The record gains per-model tokens (additive,
-optional, with the 5m/1h cache-write split kept); runs recorded before that have none, and `estimate`
+optional; the 5m/1h split is kept on the gateway path and is not available on the subscription path, which records all cache creation as 5m, as the budget does). #1115's cache read/write totals are the sums of the per-model figures, and a test pins the equality. `runview.cost` rebuilds a run's cost and drops `ModelBy`, so `estimate` reads the stored `Record.Cost` directly. Runs recorded before that have none, and `estimate`
 refuses them by name (pre-1.0: no backfill).
 
 **F9 (Gap): what an estimate means.** Another model uses other token counts and retries, and the price
@@ -91,7 +90,7 @@ files; the pages render without them and the flag turns on with the first file.
 follow-ups); `estimate --pr N` reuses that lookup and, when more than one run matches, lists them and asks
 for `--run`, rather than sum or pick one.
 
-**F17 (Gap): one consent covers analytics only.** The consent state is one stored granted/denied value for
+**F17 (Gap): one consent covers analytics only.** (The marketing choice is asked only on the four campaign pages, by a campaign variant of the banner there; every other page, and every visitor who never opens one, is unchanged.) The consent state is one stored granted/denied value for
 the analytics banner (`website/public/scripts/consent-early.js`, `site.js`), and withdrawal deletes only
 GA4's cookies. Loading advertising trackers under it would treat an analytics consent as an advertising
 one, under privacy text that does not name those vendors. D401 therefore needs a separate marketing
@@ -109,10 +108,15 @@ and the D302 row of `docs/licensing/reconciliation.md` say nothing moves out of 
 amended with the notice (T1), not before. D106 in `docs/website/reconciliation.md` and the CSP line in
 `.claude/rules/website.md` ("the analytics host, nothing else") are amended by task G2.3.
 
-**F20 (Gap): campaign pages must not index, and media must be self-hosted.** The sitemap is generated in
-`website/src/content.ts` and the base layout, so the four noindex pages must be excluded from it. D107
-requires media to be self-hosted or on an allowed host, so a variant's video is a file under `website/`,
-never a YouTube or Vimeo URL, which would be a fourth third party D401 never allowed.
+**F20 (Gap): campaign pages must not index, and media must be self-hosted.** The site builds no
+sitemap (`website/astro.config.mjs` has no integrations; `content.ts` returns no sitemap URL), so the four
+pages need only `noindex` and a canonical to the home page; adding a sitemap would add a dependency and is
+not planned. `Base.astro` always renders the navigation and a self-canonical, so the pages need a campaign
+mode of it (task G2.2). D107 requires media to be self-hosted or on an allowed host, so a variant's video
+is a file under `website/`, never a YouTube or Vimeo URL, which would be a fourth third party D401 never
+allowed.
+
+**F22 (Gap): UTMs and GA4.** GA4 receives the page's origin and path only (`site.js`), and the privacy page says no query is reported. UTM values go to the Calendly URL and nowhere else; they are not put into the `wa.me` text (which would show them to the visitor and send campaign data to a vendor the privacy text does not name), and attribution in GA4 would be a privacy-text change that is the owner's.
 
 **F21 (Gap): the benchmarking line of spec §13.** "Alongside actual cost" asks for the estimate shown next
 to each job's cost; this plan builds only the on-demand command. Showing it in `fugaro diagnose` or the
@@ -128,6 +132,7 @@ console is left out.
 | **D403** | Where do the engineering and business sections live? | Split: engineering in `docs/go-to-market/`, business in a private place. Cost: `spec.md` is an excerpt, not verbatim | **2026-10-26: as recommended.** The owner is creating a private repository, `fugaro-business`, for the marketing, sales and business material. This PR holds none of it and no plan task writes to it |
 | **D404** | What does the plan gate on, given "1.0"? | A named launch gate, "launch-ready", on whatever release the owner cuts. Cost: no fixed date | **2026-10-26: as recommended.** The owner picks the version number at the cut |
 | **D405** | GitHub stars on the pages? | Owner-run refresh file. Cost: can go stale | **2026-10-26: NOT the recommendation.** Omit stars until the number is worth showing. *Why:* no data file to keep fresh. The social-proof section ships with design-partner logos only, hidden until one exists |
+| **D406** | Does the per-file `ee/` notice (D400) go in now, or with counsel's licence text? | With counsel's text (T1 option b): the notice then names a licence that exists. Cost: files stay unmarked until L4.1 | **Pending: the owner has not answered.** No task writes a notice; G5.1 records the note only |
 
 **Resolutions (one defensible answer, not questions):**
 
@@ -145,7 +150,7 @@ console is left out.
 
 ## Open tensions and open items for the owner
 
-**T1 (D400 against D302 and the licensing reconciliation).** Files in a repository whose `LICENSE` is
+**T1 (D400 against D302 and the licensing reconciliation; D406 asks).** Files in a repository whose `LICENSE` is
 MIT cannot be marked "covered by the `ee/` licence" until that licence text exists (L4.1 waits on
 counsel), and the console has already been released under MIT, which those copies keep. Choices: (a) mark
 them now with a neutral notice that names `LICENSING.md` and says the licence of these files is

@@ -10,6 +10,7 @@ explicit go; answering a decision approved none of them.
 
 The owner's answers of 2026-10-26 that shape it:
 
+- **D406 is pending** (the notice's timing); D400-D405 are answered.
 - **D400** (not the recommendation): the console, mobile app, coordinator and orchestrators stay where
   they are, to be marked as covered by the `ee/` licence and moved later. Only the note (G5.1) is a task
   here; the notice itself waits on T1.
@@ -72,10 +73,10 @@ upstream response carries.
 
 - **Files:** `internal/runstore/cost.go`, `internal/runstore/cost_test.go`, `schemas/result.schema.json`
   (the `cost` object only), `schemas/schemas_test.go`.
-- **Interfaces:** consumes `pricing.Usage`'s counts; produces `Cost.ModelTokens`, a map from model to
+- **Interfaces:** consumes `pricing.Usage`'s counts (gateway path) and `agent.Usage` (subscription path, whose single cache-creation count is booked as 5m); produces `Cost.ModelTokens`, a map from model to
   `{input, output, cache_read, cache_write_5m, cache_write_1h}` int64, `omitempty`.
 - **Schema change:** additive optional property under `cost`, `additionalProperties: false` kept.
-- **Tests:** `TestCostModelTokensRoundTrip`, `TestCostModelTokensOmittedWhenEmpty`, and in `schemas` a
+- **Tests:** `TestCostModelTokensRoundTrip`, `TestCostModelTokensOmittedWhenEmpty`, `TestCostCacheTotalsEqualModelTokensSums` (#1115's totals), and in `schemas` a
   case that validates a record with and without the field.
 - **Command:** `go test ./internal/runstore/ ./schemas/ -run 'TestCostModelTokens|Result' -count=1`
 - **Depends on:** open PRs #1115, #1107 and #1111 merged (all edit `cost.go` or the schema).
@@ -85,15 +86,14 @@ upstream response carries.
 
 ### G1.2 The runner fills the tokens, on both cost paths
 
-- **Files:** `internal/runner/cost.go`, `internal/runner/runner.go` (and the one gateway file that exposes
-  the per-model sum, found first: U1), with their tests.
+- **Files:** `internal/runner/cost.go`, `internal/runner/runner.go`, `internal/runner/gateway.go` (where `endGatewayStage` reads the stage report), `internal/gateway/gateway.go` and `internal/gateway/ledger.go` (the per-call sum, which #1115 already extends), with their tests.
 - **Interfaces:** with the gateway on, sums the gateway's per-call `pricing.Usage` under the model the
   gateway priced; without it, copies `agent.Result.ModelUsage`. Produces filled `Cost.ModelTokens`.
 - **Tests:** `TestRunFillsModelTokensGateway` (two models; a call whose usage is unparsed adds no tokens;
-  a response naming another model adds no key), `TestRunFillsModelTokensSubscription` (`auth: oauth`).
+  a response naming another model adds no key), `TestRunFillsModelTokensSubscription` (`auth: oauth`; all cache creation lands in `cache_write_5m`).
 - **Command:** `go test ./internal/runner/ -run 'TestRunFillsModelTokens' -count=1` (the package takes
   about 25 minutes in full: name the tests).
-- **Depends on:** G1.1; #1107, #1110, #1111 and #1115 merged (all write `runner.go` or `cost.go`).
+- **Depends on:** G1.1; #1107, #1108, #1110, #1111, #1115, #1071 and #1072 merged or rebased on (all write `runner.go`, `cost.go`, `gateway.go` or the gateway files).
 - **Commit:** `runner: record each model's tokens on the run's cost`
 - **Red step:** both tests fail with an empty `ModelTokens`.
 - **Reviewer tier:** `opus + mandatory independent review` (the gateway holds the model credential and
@@ -104,12 +104,12 @@ upstream response carries.
 - **Files:** `internal/cli/estimate.go` (new), `internal/cli/estimate_test.go` (new),
   `internal/cli/root.go` (one registration line), `website/content/cli-reference.md` (regenerated with
   `go run ./internal/clidoc`, never edited by hand).
-- **Interfaces:** consumes run records, `priceTableFor`, `Cost.ModelTokens` and the `onPR` lookup;
+- **Interfaces:** consumes the stored `Record.Cost` (never `runview`'s rebuilt row), `priceTableFor`, `Cost.ModelTokens` and the `onPR` lookup;
   produces `fugaro estimate (--run ID | --pr N) --model ID [--json]`. With several runs on a PR it lists
   them and asks for `--run`.
 - **Tests:** `TestEstimateReprices`, `TestEstimateRefusesRunWithoutTokens`,
   `TestEstimateRefusesUnknownModel` (names the known IDs), `TestEstimateLabelsEstimate`,
-  `TestEstimateStaleCatalog`, `TestEstimateByPR`, `TestEstimateSeveralRunsOnAPR`, and the existing
+  `TestEstimateStaleCatalog`, `TestEstimateByPR`, `TestEstimateSeveralRunsOnAPR`, `TestEstimateReadsStoredCost` (a record whose `runview` row would drop `ModelTokens`), and the existing
   `TestCliReferenceIsCurrent` in `internal/clidoc`.
 - **Command:** `go test ./internal/cli/ ./internal/clidoc/ -run 'TestEstimate|TestCliReference' -count=1`
 - **Depends on:** G1.1.
@@ -117,16 +117,14 @@ upstream response carries.
 - **Red step:** each estimate test fails with "unknown command"; the reference test fails until regenerated.
 - **Reviewer tier:** standard.
 
-### G1.4 Plugin skill, docs and the live-check row
+### G1.4 Plugin skill
 
-- **Files:** `plugin/skills/working/SKILL.md`, `docs/gcp-live-checklist.md` (Check 162 and its register
-  row), the docs tests' pins if any move.
+- **Files:** `plugin/skills/working/SKILL.md`, and the docs tests' pins if any move.
 - **Tests:** `go test ./internal/cli/ -run Docs -count=1`, `go test ./plugin/... -count=1`.
 - **Command:** the two above.
 - **Depends on:** G1.3.
-- **Commit:** `docs: the estimate command in the working skill, and Check 162`
-- **Red step:** the plugin test that checks every command a skill names against the CLI fails if the skill
-  names `estimate` before G1.3 exists.
+- **Commit:** `docs: the estimate command in the working skill`
+- **Red step:** the plugin test that checks every command a skill names against the CLI fails when the working skill is asserted to name `estimate` before the line is added.
 - **Reviewer tier:** standard.
 
 **Slice G2: the four landing pages.** Ships alone after the owner supplies the inputs (G2.5).
@@ -140,9 +138,7 @@ upstream response carries.
   (empty).
 - **Schema/config change:** `landing.yaml` is new; paths are the four message names, unique, no
   `/landing` prefix.
-- **Tests:** unknown field is an error; duplicate path is an error; a proof number carries a source that
-  names the owner-run aggregation (D96-D97) or the sentinel `unmeasured`, and a non-sentinel figure with
-  no source fails the build; a video is a path under `website/`, an `http(s)` URL fails; the WhatsApp text
+- **Tests:** unknown field is an error; duplicate path is an error; a proof number carries a `source` naming a data file under `website/data/` that records its sample size, at least `min_runs` (D96-D97), or the sentinel `unmeasured`, and a figure whose source file is missing or too small fails the build; a video is a path under `website/`, an `http(s)` URL fails; the WhatsApp text
   names the variant.
 - **Command:** `cd website && node --test test/landing-data.mjs`
 - **Depends on:** none.
@@ -154,14 +150,12 @@ upstream response carries.
 
 - **Files:** `website/src/pages/[variant].astro` (new, or four thin pages if the router cannot do it
   without a collision with the existing routes: decided at the start by building), new files under
-  `website/src/components/`, `website/src/content.ts` is **not** touched (G2.1 owns it), the sitemap
-  exclusion in `website/astro.config.mjs`, `website/test/landing-pages.mjs` (new).
+  `website/src/components/`,   `website/src/layouts/Base.astro` (a campaign mode: no navigation, `noindex`, canonical to the home page), `website/test/landing-pages.mjs` (new). `content.ts` is not touched (G2.1 owns it).
 - **Interfaces:** consumes `loadLanding()`; no navigation, a minimal footer (GitHub and docs; no pricing
   link, since no pricing page exists and pricing is outside this repository).
-- **Tests:** the four paths build; each is `noindex` with a canonical to the home page and absent from
-  the sitemap; section order matches the spec; no email form; Book a demo is a plain link and the page is
+- **Tests:** the four paths build; each is `noindex` with a canonical to the home page; section order matches the spec; no email form; Book a demo is a plain link and the page is
   complete without the video file and without any logo (the social-proof section is hidden while
-  `partner_logos` is empty); the mobile-viewport check the site's responsive tests use.
+  `partner_logos` is empty); a static check that the layout's responsive rules cover the campaign mode (the website tests have no browser; the rendered mobile and desktop check is owner-run, G2.5).
 - **Command:** `cd website && npm run build && node --test test/landing-pages.mjs`
 - **Depends on:** G2.1.
 - **Commit:** `website: /save, /control, /scale and /crew from one template`
@@ -170,20 +164,19 @@ upstream response carries.
 
 ### G2.3 Marketing consent and the three loads
 
-- **Files:** `website/public/scripts/consent-early.js`, `website/public/scripts/site.js`, `firebase.json`
+- **Files:** `website/public/scripts/consent-early.js`, `website/public/scripts/site.js`, `website/src/lib/consent-key.mjs`, `website/src/components/ConsentBanner.astro` (a campaign variant that asks the marketing choice; `Base.astro` stays G2.2's), `firebase.json`
   (the CSP header only), `website/data/site.yaml`, `website/src/pages/privacy.astro`,
   `docs/website/reconciliation.md` (an amendment note on D106), `.claude/rules/website.md` (the CSP
   line), and the tests that pin them: `website/test/origins.mjs`, `brand.mjs`, `consent.mjs`,
   `layout.mjs`, `privacy.mjs`, plus `internal/cli/docs_website_boundary_test.go` if it pins the CSP.
 - **Interfaces:** a separate marketing purpose in the consent state, with a consent version that asks
   existing visitors again; loaders for the pixel, the insight tag and the Calendly script that run only
-  with that purpose granted and only on the four paths; withdrawal removes the trackers' cookies.
+  with that purpose granted and only on the four paths; withdrawal removes the first-party cookies the trackers set (cookies on the vendors' own domains and scripts already loaded persist until a reload, which the privacy text says).
 - **Config change:** `site.yaml` gains the three public identifiers and the origins (as the file's own
-  rule says, load origins are admitted by the consent check, not `allowed_hosts`); the CSP widens by
-  exactly the documented origins and gains a `frame-src`, site-wide (F18). **The owner approves the
+  rule says, load origins are admitted by the consent check, not `allowed_hosts`); the CSP widens site-wide (F18) by exactly the origins each vendor documents, per directive (`script-src`, `img-src`, `connect-src`, `style-src` for Calendly's stylesheet, and a new `frame-src`); the test holds that exact per-directive list. **The owner approves the
   privacy wording and the rules-file line** before the task merges.
 - **Tests:** no request to any of the three before the marketing purpose is granted, including after an
-  analytics-only consent; none on a non-campaign page; withdrawal stops them and clears their cookies; the
+  analytics-only consent; none on a non-campaign page; withdrawal stops them and clears the first-party cookies (for example `_fbp`); the
   privacy page names the three; the CSP lists exactly the new origins; the existing CSP and single-header
   tests are amended to the new exact list.
 - **Command:** `cd website && node --test test/origins.mjs test/brand.mjs test/consent.mjs test/layout.mjs test/privacy.mjs && npm run check`
@@ -196,15 +189,13 @@ upstream response carries.
 ### G2.4 Key events, UTM pass-through and the live-check rows
 
 - **Files:** `website/public/scripts/site.js` (the file G2.3 wrote, a later level),
-  `website/test/landing-events.mjs` (new), `docs/gcp-live-checklist.md` (Checks 160 and 161 and their
-  register rows).
+  `website/test/landing-events.mjs` (new).
 - **Interfaces:** emits `demo_booked`, `install_click` and `whatsapp_click` to GA4 after analytics consent;
-  accepts `demo_booked` only from a message whose `origin` is Calendly's; passes only allow-listed `utm_*`
-  values, length-capped and encoded, into the Calendly URL and the `wa.me` text.
+  accepts `demo_booked` only from a message whose `origin` is Calendly's; passes only allow-listed `utm_*` values, length-capped and encoded, into the Calendly URL (F22: not into the `wa.me` text, not into GA4).
 - **Tests:** each event fires once on its action and not before consent; a message from another origin
   does not fire `demo_booked`; UTMs reach the Calendly URL; hostile values (script text, an over-long
   value, a non-`utm_` key) are dropped or encoded; absent UTMs leave the URL unchanged.
-- **Command:** `cd website && node --test test/landing-events.mjs`, and `go test ./internal/cli/ -run Docs -count=1`
+- **Command:** `cd website && node --test test/landing-events.mjs`
 - **Depends on:** G2.3.
 - **Commit:** `website: landing key events and UTM pass-through`
 - **Red step:** the tests fail because the events are not emitted.
@@ -215,9 +206,8 @@ upstream response carries.
 - The owner supplies: the Calendly link, the WhatsApp Business number, the proof figure's aggregation, the
   video and the `/crew` imagery (each only when they exist; the pages build without them), and any partner
   logo with the partner's written permission.
-- The owner types `scripts/deploy-website.sh` from the owner's clone for a preview (dry-run first), then
-  the promote workflow. No agent performs any step.
-- **Check 160:** all key events fire in GA4 DebugView after consent and none before. **Check 161:** a test
+- The owner types `scripts/deploy-website.sh --channel <name> --dry-run`, then the same without `--dry-run`, from the owner's clone for a preview (without `--channel` the script deploys live), then the promote workflow. The owner also looks at the four pages on a phone and a desktop. No agent performs any step.
+- **Check 160:** with both consents, all key events fire in GA4 DebugView and none fires before; with analytics only, Calendly is a plain link. **Check 161:** a test
   booking carries its UTM source into Calendly.
 - **Depends on:** G2.4.
 
@@ -248,6 +238,16 @@ upstream response carries.
 - **Red step:** none (documentation).
 - **Reviewer tier:** standard.
 
+### G6.1 The live-check register rows
+
+- **Files:** `docs/gcp-live-checklist.md` (Checks 160, 161 and 162, each with its section and register row,
+  marked NOT RUN).
+- **Tests:** `go test ./internal/cli/ -run Docs -count=1`
+- **Depends on:** G1.3, G2.3.
+- **Commit:** `docs: register Checks 160-162`
+- **Red step:** the docs test that cross-checks register rows against sections fails with a row and no section.
+- **Reviewer tier:** standard.
+
 **Check 162: OWNER-RUN, after G1.2 and G1.3 are released.** The owner runs `fugaro estimate --run <ID>
 --model <the run's own model>` on one finished sandbox run with no long-context calls and a fresh catalog;
 the figure is within a few percent of the record's `model_usd` (F9 lists why it is not exact) and the
@@ -256,14 +256,14 @@ owner judges it. Checks 163-169 are reserved and unused.
 ## Parallel execution
 
 Edges, from the "Depends on" lines: open PRs #1115, #1107, #1110, #1111 (external) → G1.1 → {G1.2, G1.3};
-G1.3 → G1.4; G2.1 → G2.2 → G2.3 → G2.4 → G2.5; G3.1, G5.1 and G2.1 have no dependency.
+G1.3 → G1.4; G2.1 → G2.2 → G2.3 → G2.4 → G2.5; G1.3 and G2.3 → G6.1; G3.1, G5.1 and G2.1 have no dependency. The levels below assume the open PRs have merged; if they slip, G1 slips with them and nothing else.
 
 | Level | Tasks (run concurrently) |
 | --- | --- |
 | L0 | G1.1 (after the open PRs merge), G2.1, G3.1, G5.1 |
 | L1 | G1.2, G1.3, G2.2 |
 | L2 | G1.4, G2.3 |
-| L3 | G2.4 |
+| L3 | G2.4, G6.1 |
 | L4 | G2.5 (owner-run), Check 162 once released |
 
 **Critical path:** G2.1 → G2.2 → G2.3 → G2.4 → G2.5. It is sequential because each task builds on the
@@ -275,22 +275,30 @@ G1.3 → G1.4) is independent of it.
 | File | Writers | Levels |
 | --- | --- | --- |
 | `website/public/scripts/site.js` | G2.3, G2.4 | L2, L3 (never together) |
-| `docs/gcp-live-checklist.md` | G1.4, G2.4 | L2, L3 |
+| `docs/gcp-live-checklist.md` | G6.1 | L3 |
 | `website/src/content.ts` | G2.1 | L0 |
-| `website/astro.config.mjs` | G2.2 | L1 |
+| `website/src/layouts/Base.astro` | G2.2 | L1 |
+| `website/src/components/ConsentBanner.astro`, `website/src/lib/consent-key.mjs` | G2.3 | L2 |
 | `website/test/origins.mjs`, `brand.mjs`, `consent.mjs`, `layout.mjs`, `privacy.mjs` | G2.3 | L2 |
 | `internal/runstore/cost.go`, `schemas/result.schema.json` | G1.1 (after #1115, #1107, #1111) | L0 |
-| `internal/runner/cost.go`, `internal/runner/runner.go` | G1.2 (after #1107, #1110, #1111, #1115) | L1 |
+| `internal/runner/cost.go`, `runner.go`, `gateway.go`, `internal/gateway/gateway.go`, `ledger.go` | G1.2 (after the open PRs below) | L1 |
 | `internal/cli/root.go`, `website/content/cli-reference.md` | G1.3 | L1 |
 | `plugin/skills/working/SKILL.md` | G1.4 | L2 |
 | `docs/licensing/README.md` | G5.1 | L0 |
 
+**Open PRs that write the same files (each a dependency until merged, or the task rebases on it first):** #1107, #1108, #1110, #1111, #1115, #1071, #1072 (`runner.go` and friends); #864 (`site.js`, `consent.mjs`); #1072, #1114, #907 (`cli-reference.md`, the working skill); #1112, #917, #864 (`docs/gcp-live-checklist.md`); #831 (`root.go`).
+
 No level holds two writers of one file. A change to any task's Files re-checks this table; an open PR that
 writes a file named above is a dependency until it merges.
 
+## What "launch-ready" is (D404)
+
+G1.1-G1.4 (estimate), G2.1-G2.5 (the pages, with Checks 160-161), G3.1 (the security note, approved by the
+owner), G6.1 and Check 162. The funnel metrics of spec §13 are the GA4 key events of G2.4.
+
 ## Not in this plan
 
-SSO, audit logs, the contract and DPA (D402, the owner's legal part), the per-file `ee/` notice and the
+SSO, audit logs, the contract and DPA (D402, the owner's legal part), the support promise and SOC 2 (the spec defers SOC 2), the per-file `ee/` notice and the
 four stale statements (T1, F19), the price and what a seat buys (T2), the estimate shown beside each
 job's cost (F21), the X drafting agent, lead lists, outreach, the videos and every other item of the
 agenda's action table (D403, R5).
