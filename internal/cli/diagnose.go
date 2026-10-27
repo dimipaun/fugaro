@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/logtail"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
@@ -45,7 +46,15 @@ type Diagnosis struct {
 	Failed       []string         `json:"failed,omitempty"`   // the last test record's failed tests
 	Flaky        []string         `json:"flaky,omitempty"`    // the last test record's flaky tests
 	Findings     []runner.Finding `json:"findings,omitempty"` // the last review's findings
-	AgentMessage string           `json:"agent_message,omitempty"`
+	// Tolerated is the findings the run's resolved mode let through: the
+	// record's own block (T3.4), each entry's score, the mode that tolerated
+	// it, the label the score derives and the reviewer's clipped line for it.
+	// It is a different fact from Findings above, which is the last review
+	// whether or not the mode blocked it. Absent when the record carries no
+	// block, which is every run that tolerated nothing, and every record
+	// written before the field existed.
+	Tolerated    *runstore.ToleratedFindings `json:"tolerated,omitempty"`
+	AgentMessage string                      `json:"agent_message,omitempty"`
 	LogTail      []string         `json:"log_tail,omitempty"`
 	ReportPath   string           `json:"report_path"`
 	// ArtifactPaths are where the run's artifacts live in the runs bucket:
@@ -206,10 +215,18 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		if n := seniorRound(rec.Reviews); n > 0 {
 			if res, ok := transcriptResult(ctx, s, "review-"+strconv.Itoa(n)); ok {
 				for _, f := range runner.ParseVerdict(res).Findings {
-					d.Findings = append(d.Findings, runner.Finding{Severity: red(f.Severity), File: red(f.File), Summary: red(f.Summary)})
+					// The score travels with the finding when the transcript
+					// carries one (D3's four optional properties) and stays
+					// absent when it does not, so a transcript from before the
+					// score existed renders exactly as it did.
+					d.Findings = append(d.Findings, runner.Finding{
+						Severity: red(f.Severity), File: red(f.File), Summary: red(f.Summary),
+						Likelihood: f.Likelihood, Impact: f.Impact, FixCost: f.FixCost, Class: red(f.Class),
+					})
 				}
 			}
 		}
+		d.Tolerated = toleratedOf(rec.Tolerated, red)
 		d.AgentMessage = logtail.Clip(red(agentMessage(ctx, s, rec)), agentMessageBytes)
 	}
 
@@ -408,6 +425,43 @@ func followUpLine(fu *runstore.FollowUp) string {
 	return line
 }
 
+// toleratedOf is the record's tolerated block as the diagnosis carries it: the
+// same block, with every string in it redacted. The record is job-writable, so
+// a title is the reviewer's own words for a finding and text this process did
+// not write — it is clipped to the length the record itself bounds it to
+// before it is printed, since a record no writer of this repository produced
+// may carry a longer one. The score and the label are printed as recorded: the
+// label is derived from the axes when the record is written (D2), so diagnose
+// reads back one opinion rather than making a second one.
+func toleratedOf(t *runstore.ToleratedFindings, red func(string) string) *runstore.ToleratedFindings {
+	if t == nil {
+		return nil
+	}
+	out := &runstore.ToleratedFindings{Total: t.Total, Findings: make([]runstore.ToleratedFinding, 0, len(t.Findings))}
+	for _, f := range t.Findings {
+		f.Title = clipRunes(red(f.Title), runstore.MaxToleratedTitle)
+		f.Label = rigor.Label(red(string(f.Label)))
+		f.Mode = rigor.Mode(red(string(f.Mode)))
+		f.Class = rigor.Class(red(string(f.Class)))
+		out.Findings = append(out.Findings, f)
+	}
+	return out
+}
+
+// scoreCell is a finding's score as diagnose prints it beside the finding's
+// own row, "" for one the reviewer left unscored — which is what keeps a
+// transcript from before the score existed rendering exactly as it did. Every
+// part is named rather than printed as a tuple of numbers: the axes and the
+// class are what a reader checks a mode's threshold against (D2, D3), and a
+// bare tuple leaves the reader to remember which number was which.
+func scoreCell(likelihood, impact, fixCost int, class string) string {
+	s := rigor.Score{Likelihood: likelihood, Impact: impact, FixCost: fixCost, Class: rigor.Class(class)}
+	if !s.Scored() {
+		return ""
+	}
+	return fmt.Sprintf(" (likelihood %d, impact %d, fix cost %d, class %s)", s.Likelihood, s.Impact, s.FixCost, oneLine(class))
+}
+
 // lastTest is the last test record of recs.
 func lastTest(recs []verify.Record) (verify.Record, bool) {
 	for i := len(recs) - 1; i >= 0; i-- {
@@ -579,7 +633,38 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 			if f.File != "" {
 				loc = " " + oneLine(f.File) + ":"
 			}
-			fmt.Fprintf(&b, "  [%s]%s %s\n", oneLine(f.Severity), loc, oneLine(f.Summary))
+			fmt.Fprintf(&b, "  [%s]%s%s %s\n", oneLine(f.Severity),
+				scoreCell(f.Likelihood, f.Impact, f.FixCost, f.Class), loc, oneLine(f.Summary))
+		}
+	}
+	// The findings the resolved mode let through (T4.1), under the review
+	// they came from: what the run left open, and the score and the mode that
+	// left it open. One block per mode, in the order the modes appear: a run
+	// resolves one mode (D9), so this is one block, and a record carrying two
+	// reads as two rather than as whichever happened to be listed first.
+	if t := d.Tolerated; t != nil && len(t.Findings) > 0 {
+		var modes []string
+		byMode := map[string][]runstore.ToleratedFinding{}
+		for _, f := range t.Findings {
+			m := oneLine(string(f.Mode))
+			if _, ok := byMode[m]; !ok {
+				modes = append(modes, m)
+			}
+			byMode[m] = append(byMode[m], f)
+		}
+		for _, mode := range modes {
+			fmt.Fprintf(&b, "\nTolerated by %s\n", mode)
+			for _, f := range byMode[mode] {
+				fmt.Fprintf(&b, "  [%s]%s %s\n", oneLine(string(f.Label)),
+					scoreCell(f.Likelihood, f.Impact, f.FixCost, string(f.Class)), oneLine(f.Title))
+			}
+		}
+		// The record keeps the first runstore.MaxTolerated findings and its
+		// total is what the mode really tolerated, so a list shorter than its
+		// total says so rather than reading as the whole of it (F19).
+		if t.Total > len(t.Findings) {
+			fmt.Fprintf(&b, "  showing %d of %d tolerated findings (the record keeps the first %d)\n",
+				len(t.Findings), t.Total, runstore.MaxTolerated)
 		}
 	}
 	if d.AgentMessage != "" {

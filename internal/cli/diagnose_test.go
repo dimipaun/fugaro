@@ -3,10 +3,15 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -781,4 +787,251 @@ func TestDiagnoseShowsCacheLineOnlyWhenNonZero(t *testing.T) {
 			t.Fatalf("%d read/%d write: json cost = %+v", tc.read, tc.write, d.Row.Cost)
 		}
 	}
+}
+
+// updateDiagnoseGolden rewrites testdata/diagnose_tolerated.golden. It is a
+// flag of its own: the package's other goldens already own -update,
+// -update-review, -update-retire, -update-cloudrun and -update-coordinator,
+// and a second flag.Bool of the same name panics.
+var updateDiagnoseGolden = flag.Bool("update-diagnose", false, "rewrite testdata/diagnose_tolerated.golden")
+
+// toleratedTwo is the block T4.1's fixtures store: two findings a Pro run let
+// through, in the reviewer's order, each carrying the score the mode's table
+// read. The labels are the ones the score derives (D2), and the fixture is a
+// real record's shape rather than a stricter one.
+func toleratedTwo() *runstore.ToleratedFindings {
+	return &runstore.ToleratedFindings{Total: 2, Findings: []runstore.ToleratedFinding{
+		{Title: "the retry ceiling differs by one when a job is requeued twice", Label: rigor.Low, Mode: rigor.Pro,
+			Likelihood: 4, Impact: 2, FixCost: 3, Class: rigor.Maintainability},
+		{Title: "the retry section still describes the legacy table", Label: rigor.Nit, Mode: rigor.Pro,
+			Likelihood: 2, Impact: 1, FixCost: 1, Class: rigor.Cosmetic},
+	}}
+}
+
+// scoredReview is review-2's transcript of the tolerated fixtures: its first
+// finding carries rigor Slice 2's four optional properties, its second is the
+// shape every finding had before them, so one diagnosis shows both.
+const scoredReview = `{"type":"result","subtype":"success","result":"x","structured_output":{"verdict":"changes","findings":[` +
+	`{"severity":"high","likelihood":4,"impact":5,"fix_cost":2,"class":"correctness",` +
+	`"file":"internal/queue/retry.go","summary":"the backoff ceiling differs by one when a job is requeued twice"},` +
+	`{"severity":"minor","file":"docs/queue.md","summary":"the retry section still describes the legacy table"}]}}`
+
+// unscoredReview is the same round as a transcript written before the score
+// existed: neither finding carries one.
+const unscoredReview = `{"type":"result","subtype":"success","result":"x","structured_output":{"verdict":"changes","findings":[` +
+	`{"severity":"high","file":"internal/queue/retry.go","summary":"the backoff ceiling differs by one when a job is requeued twice"}]}}`
+
+// seedToleratedRun stores a finished run under id: a record with the given
+// tolerated block (nil for a run that tolerated nothing) and review-2's
+// transcript, review. The run never launched, so the diagnosis is the bucket's
+// own documents and nothing that depends on when the test runs.
+func seedToleratedRun(t *testing.T, f *cloudFixture, id string, tolerated *runstore.ToleratedFindings, review string) {
+	t.Helper()
+	seedSpec(t, f, firstRunSpec(id), false)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, id)
+	cost := runstore.NewCost(1.25, 0, runstore.BasisAPIList)
+	if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web",
+		Status: runstore.StatusFailed, Stage: "writeback", Outcome: runstore.OutcomeDraft,
+		Reason: "tests failing on the final commit", CostUSD: 1.25, Cost: &cost,
+		Reviews:   []runstore.ReviewSummary{{Round: 2, Tier: runstore.TierSenior, Verdict: "changes", Findings: 2}},
+		Tolerated: tolerated}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutFile(ctx, "transcripts/review-2.jsonl", []byte(review+"\n"), "application/x-ndjson"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestDiagnoseToleratedGolden: the whole human output of a run whose mode let
+// findings through, byte for byte — the score columns the last review's
+// findings gained, the tolerated block with the mode, the label and the score
+// that decided each entry, and the truncation line's absence when nothing was
+// truncated.
+func TestDiagnoseToleratedGolden(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260101-000000-abcd"
+	seedToleratedRun(t, f, id, toleratedTwo(), scoredReview)
+	human, errOut, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatalf("diagnose: %v\n%s", err, errOut)
+	}
+	path := filepath.Join("testdata", "diagnose_tolerated.golden")
+	if *updateDiagnoseGolden {
+		if err := os.WriteFile(path, []byte(human), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("no golden file: run go test ./internal/cli -run TestDiagnoseToleratedGolden -update-diagnose")
+		}
+		t.Fatal(err)
+	}
+	if string(want) != human {
+		t.Errorf("diagnose's output changed (go test -update-diagnose to accept):\n%s\nwant:\n%s", human, want)
+	}
+}
+
+// TestDiagnoseToleratedJSONFields is the console's half, asserted field by
+// field rather than by unmarshalling into Diagnosis: the console reads these
+// documents in another language, so a key this adds, renames or drops is a
+// silent break there and has to fail here.
+func TestDiagnoseToleratedJSONFields(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260101-000010-abcd"
+	seedToleratedRun(t, f, id, toleratedTwo(), scoredReview)
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	tol, _ := doc["tolerated"].(map[string]any)
+	if tol == nil {
+		t.Fatalf("the document carries no tolerated block:\n%s", out)
+	}
+	if got := keysOfDoc(tol); !slices.Equal(got, []string{"findings", "total"}) {
+		t.Errorf("tolerated keys = %v, want [findings total]", got)
+	}
+	if total, _ := tol["total"].(float64); total != 2 {
+		t.Errorf("tolerated.total = %v, want 2", tol["total"])
+	}
+	entries, _ := tol["findings"].([]any)
+	if len(entries) != 2 {
+		t.Fatalf("tolerated.findings = %v, want two entries", tol["findings"])
+	}
+	first, _ := entries[0].(map[string]any)
+	if got := keysOfDoc(first); !slices.Equal(got, []string{"class", "fix_cost", "impact", "label", "likelihood", "mode", "title"}) {
+		t.Errorf("a tolerated entry's keys = %v, want the seven the record keeps", got)
+	}
+	for _, want := range []struct {
+		key  string
+		got  any
+		want any
+	}{
+		{"title", first["title"], "the retry ceiling differs by one when a job is requeued twice"},
+		{"label", first["label"], "low"},
+		{"mode", first["mode"], "pro"},
+		{"likelihood", first["likelihood"], float64(4)},
+		{"impact", first["impact"], float64(2)},
+		{"fix_cost", first["fix_cost"], float64(3)},
+		{"class", first["class"], "maintainability"},
+	} {
+		if want.got != want.want {
+			t.Errorf("tolerated.findings[0].%s = %v, want %v", want.key, want.got, want.want)
+		}
+	}
+	// The last review's own findings: the scored one carries the four
+	// properties beside the three it always had, the unscored one only those.
+	findings, _ := doc["findings"].([]any)
+	if len(findings) != 2 {
+		t.Fatalf("findings = %v, want two", doc["findings"])
+	}
+	scored, _ := findings[0].(map[string]any)
+	if got := keysOfDoc(scored); !slices.Equal(got, []string{"class", "file", "fix_cost", "impact", "likelihood", "severity", "summary"}) {
+		t.Errorf("a scored finding's keys = %v", got)
+	}
+	for k, want := range map[string]any{"likelihood": float64(4), "impact": float64(5), "fix_cost": float64(2), "class": "correctness"} {
+		if scored[k] != want {
+			t.Errorf("findings[0].%s = %v, want %v", k, scored[k], want)
+		}
+	}
+	plain, _ := findings[1].(map[string]any)
+	if got := keysOfDoc(plain); !slices.Equal(got, []string{"file", "severity", "summary"}) {
+		t.Errorf("an unscored finding's keys = %v, want the three it always had", got)
+	}
+}
+
+// TestDiagnoseUnscoredFindingIsUnchanged: a transcript from before the score
+// existed renders exactly as it did — the same row, and no score line and no
+// score key anywhere — so an old run stays readable.
+func TestDiagnoseUnscoredFindingIsUnchanged(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260101-000020-abcd"
+	seedToleratedRun(t, f, id, nil, unscoredReview)
+	human, _, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "\nFindings (last review)\n  [high] internal/queue/retry.go: the backoff ceiling differs by one when a job is requeued twice\n"
+	if !strings.Contains(human, want) {
+		t.Errorf("an unscored finding's row changed:\n%s\nwant:\n%s", human, want)
+	}
+	if strings.Contains(human, "score") || strings.Contains(human, "Tolerated") {
+		t.Errorf("an unscored finding grew a score line, or a run with no tolerated block grew one:\n%s", human)
+	}
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"likelihood", "impact", "fix_cost", "class", "tolerated"} {
+		if strings.Contains(out, `"`+key+`"`) {
+			t.Errorf("an unscored finding's document carries %q:\n%s", key, out)
+		}
+	}
+}
+
+// TestDiagnoseToleratedTruncatedSaysSo: the record keeps the first
+// runstore.MaxTolerated findings and its total is what the mode really
+// tolerated, so a list shorter than its total says so instead of reading as
+// the whole of it (F19).
+func TestDiagnoseToleratedTruncatedSaysSo(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260101-000030-abcd"
+	tol := toleratedTwo()
+	tol.Total = 137
+	seedToleratedRun(t, f, id, tol, scoredReview)
+	human, _, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "showing 2 of 137 tolerated findings (the record keeps the first 100)\n"; !strings.Contains(human, want) {
+		t.Errorf("a truncated tolerated list does not say so (%q missing):\n%s", want, human)
+	}
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil || !strings.Contains(out, `"total": 137`) {
+		t.Errorf("the document's total is not the record's: %s, %v", out, err)
+	}
+}
+
+// TestDiagnoseToleratedTitleIsUntrusted: a tolerated title is the reviewer's
+// own sentence, and the record is job-writable, so it goes through the
+// redaction and oneLine paths the findings already do: a credential in it is
+// redacted and a line break in it cannot forge a second report field.
+func TestDiagnoseToleratedTitleIsUntrusted(t *testing.T) {
+	const secret = "ghp_test0123456789abcdef"
+	t.Setenv("FUGARO_BITBUCKET_TOKEN", secret)
+	f := newCloudFixture(t)
+	const id = "20260101-000040-abcd"
+	tol := toleratedTwo()
+	tol.Findings[0].Title = "the mirror at https://person-1:" + secret + "@example.com/repo-a is stale\nReason:   the run succeeded"
+	seedToleratedRun(t, f, id, tol, scoredReview)
+	for _, args := range [][]string{{"diagnose"}, {"diagnose", "--json"}} {
+		out, _, err := execute(t, append(args, id)...)
+		if err != nil || strings.Contains(out, secret) || !strings.Contains(out, "[REDACTED]") {
+			t.Fatalf("%v = %s, %v", args, out, err)
+		}
+	}
+	human, _, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(human, "\nReason:") {
+		t.Errorf("a title's line break forged a second report field:\n%s", human)
+	}
+	if !strings.Contains(human, "is stale?Reason:   the run succeeded\n") {
+		t.Errorf("the title is not one-lined onto its own row:\n%s", human)
+	}
+}
+
+// keysOfDoc is a decoded document object's own keys, sorted, for the
+// field-by-field comparisons above: the set is what a rename moves.
+func keysOfDoc(m map[string]any) []string {
+	return slices.Sorted(maps.Keys(m))
 }
