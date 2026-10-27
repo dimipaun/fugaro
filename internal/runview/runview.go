@@ -574,6 +574,10 @@ func cost(r *runstore.Record, e *backend.Execution, prices PriceBook, now time.T
 	}
 	if stored != nil {
 		c.CatalogStale = stored.CatalogStale
+		// The cache token totals travel for the same reason the staleness
+		// flag does: only the run's own gateway counted them, and no
+		// execution the row re-prices can recompute them (P12).
+		c.CacheReadTokens, c.CacheWriteTokens = stored.CacheReadTokens, stored.CacheWriteTokens
 		// The notional part travels with the model figure: the row is a view
 		// of the record's charge, and rebuilding the totals from ModelUSD and
 		// ModelBasis alone would bill a cascade run's tier-A dollars as money

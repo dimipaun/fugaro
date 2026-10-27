@@ -956,3 +956,37 @@ func TestProviderRunStartsWithNoAnthropicKey(t *testing.T) {
 		}
 	}
 }
+
+// TestResultJSONCacheTokenTotals (P12): the run's prompt-cache read and write
+// token totals reach result.json's cost, summed from the gateway's own ledger
+// of its calls' usage — the figure design §3's prompt-caching risk is read
+// from. They are token counts, so nothing prices them.
+func TestResultJSONCacheTokenTotals(t *testing.T) {
+	use := pricing.Usage{Input: 1000, CacheWrite5m: 30, CacheWrite1h: 5, CacheRead: 400, Output: 500}
+	g := providerRun(t, providerPinned(t), "enforce", "50",
+		[]anthropicfake.Reply{anthropicfake.Compat{}.MessageOK(deepseek, use)}, "acme/app")
+
+	var status int
+	var body string
+	rec, err := g.run(t, callDeepseek(&status, &body, implement("feature")), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	// Both cache TTLs are cache writes: the run wrote 35 tokens to the cache.
+	if rec.Cost == nil || rec.Cost.CacheReadTokens != 400 || rec.Cost.CacheWriteTokens != 35 {
+		t.Fatalf("cost = %+v, want 400 cache reads and 35 cache writes", rec.Cost)
+	}
+	stored, err := g.store.ReadRecord(context.Background())
+	if err != nil || stored.Cost == nil || stored.Cost.CacheReadTokens != 400 || stored.Cost.CacheWriteTokens != 35 {
+		t.Fatalf("stored cost = %+v, %v", stored.Cost, err)
+	}
+	raw, err := json.Marshal(rec.Cost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"cache_read_tokens":400`, `"cache_write_tokens":35`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("result.json's cost lacks %s: %s", want, raw)
+		}
+	}
+}

@@ -250,11 +250,17 @@ type run struct {
 	// D140): the two are disjoint, and their sum is the run's whole model
 	// figure (record.CostUSD, cost.model_usd). Only a cascade run's calls
 	// carry a tier, so gwNotional is 0 for every other run.
-	gw           *gateway.Server
-	gwAgent      *agent.Gateway
-	gwClosed     bool
-	gwUsed       pricing.Micros
-	gwNotional   pricing.Micros
+	gw         *gateway.Server
+	gwAgent    *agent.Gateway
+	gwClosed   bool
+	gwUsed     pricing.Micros
+	gwNotional pricing.Micros
+	// gwCacheRead and gwCacheWrite are the run's prompt-cache read and write
+	// token totals, taken from the gateway's ledger when it closes: what the
+	// run's record carries so a reader can see whether the cache behaved as
+	// the design's compression risk (§3) says it should (P12).
+	gwCacheRead  int64
+	gwCacheWrite int64
 	lastStage    *gateway.StageReport
 	modelBy      map[string]pricing.Micros
 	routeBy      map[string]pricing.Micros

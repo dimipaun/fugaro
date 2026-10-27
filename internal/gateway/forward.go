@@ -943,7 +943,7 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, partial bool) outco
 	o.tokens = u.Input + u.CacheWrite5m + u.CacheWrite1h + u.CacheRead + u.Output
 	// What this call had cached is what a switch after it re-reads (F24), and
 	// it is known because this call's usage was read.
-	o.cacheRead, o.usageRead = u.CacheRead, true
+	o.cacheRead, o.cacheWrite, o.usageRead = u.CacheRead, u.CacheWrite5m+u.CacheWrite1h, true
 	if !partial {
 		o.amount, o.settled = reported, settledUsage
 		if pr != nil && t.acc.hasReported {
