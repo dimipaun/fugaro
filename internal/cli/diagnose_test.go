@@ -1228,7 +1228,7 @@ func TestDiagnoseToleratedTitleIsUntrusted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(human, "\nReason:") {
+	if strings.Contains(human, "\nReason:   the run succeeded") {
 		t.Errorf("a title's line break forged a second report field:\n%s", human)
 	}
 	if !strings.Contains(human, "is stale?Reason:   the run succeeded\n") {

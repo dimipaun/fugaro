@@ -536,6 +536,7 @@ exactly its own tags and nothing is nested under a `process` or `checks` key:
 | `verify` | `[]verify.Record` | **yes** | `result.json`'s verify records |
 | `failed`, `flaky` | `[]string` | **yes** | the last test record's failed and flaky tests |
 | `findings` | `[]runner.Finding` | **yes** | the last review's findings |
+| `likelihood`, `impact`, `fix_cost`, `class` | int, int, int, string | **yes** | the score of one of `findings`, when its transcript carried one (rigor D3's four optional properties, read back here by T4.1): the three axes are 1–5 and `class` is `runner.VerdictSchema`'s enum. Each is absent when the transcript did not have it, so a finding from a transcript written before the score existed — every transcript a run made before rigor mode shipped — carries none of the four and reads in the document exactly as it always did |
 | `agent_message` | string | **yes** | capped at `agentMessageBytes` = 4 KiB |
 | `log_tail` | `[]string` | **yes** | the newest `diagnoseLogLines` = 30 lines |
 | `report_path` | string | no | |

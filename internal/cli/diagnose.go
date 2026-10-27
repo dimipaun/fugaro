@@ -55,15 +55,7 @@ type Diagnosis struct {
 	Failed       []string         `json:"failed,omitempty"`   // the last test record's failed tests
 	Flaky        []string         `json:"flaky,omitempty"`    // the last test record's flaky tests
 	Findings     []runner.Finding `json:"findings,omitempty"` // the last review's findings
-	// Tolerated is the findings the run's resolved mode let through: the
-	// record's own block (T3.4), each entry's score, the mode that tolerated
-	// it, the label the score derives and the reviewer's clipped line for it.
-	// It is a different fact from Findings above, which is the last review
-	// whether or not the mode blocked it. Absent when the record carries no
-	// block, which is every run that tolerated nothing, and every record
-	// written before the field existed.
-	Tolerated    *runstore.ToleratedFindings `json:"tolerated,omitempty"`
-	AgentMessage string                      `json:"agent_message,omitempty"`
+	AgentMessage string           `json:"agent_message,omitempty"`
 	LogTail      []string         `json:"log_tail,omitempty"`
 	ReportPath   string           `json:"report_path"`
 	// ArtifactPaths are where the run's artifacts live in the runs bucket:
@@ -255,7 +247,6 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 				}
 			}
 		}
-		d.Tolerated = toleratedOf(rec.Tolerated, red)
 		d.AgentMessage = logtail.Clip(red(agentMessage(ctx, s, rec)), agentMessageBytes)
 	}
 
@@ -496,29 +487,6 @@ func followUpLine(fu *runstore.FollowUp) string {
 		line += fmt.Sprintf(" (%d untrusted: %s)", n, strings.TrimPrefix(names, ", "))
 	}
 	return line
-}
-
-// toleratedOf is the record's tolerated block as the diagnosis carries it: the
-// same block, with every string in it redacted. The record is job-writable, so
-// a title is the reviewer's own words for a finding and text this process did
-// not write — it is clipped to the length the record itself bounds it to
-// before it is printed, since a record no writer of this repository produced
-// may carry a longer one. The score and the label are printed as recorded: the
-// label is derived from the axes when the record is written (D2), so diagnose
-// reads back one opinion rather than making a second one.
-func toleratedOf(t *runstore.ToleratedFindings, red func(string) string) *runstore.ToleratedFindings {
-	if t == nil {
-		return nil
-	}
-	out := &runstore.ToleratedFindings{Total: t.Total, Findings: make([]runstore.ToleratedFinding, 0, len(t.Findings))}
-	for _, f := range t.Findings {
-		f.Title = clipRunes(red(f.Title), runstore.MaxToleratedTitle)
-		f.Label = rigor.Label(red(string(f.Label)))
-		f.Mode = rigor.Mode(red(string(f.Mode)))
-		f.Class = rigor.Class(red(string(f.Class)))
-		out.Findings = append(out.Findings, f)
-	}
-	return out
 }
 
 // scoreCell is a finding's score as diagnose prints it beside the finding's

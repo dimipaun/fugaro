@@ -555,6 +555,9 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(doctorOutput{}), reflect.TypeOf(doctorCheck{}),
 		reflect.TypeOf(report.JSONDoc{}), reflect.TypeOf(report.JSONLine{}),
 		reflect.TypeOf(report.JSONTokens{}), reflect.TypeOf(Diagnosis{}),
+		// §6.1: one of the last review's findings, whose four optional score
+		// properties the contract's own row names (rigor T4.1).
+		reflect.TypeOf(runner.Finding{}),
 		reflect.TypeOf(configListDoc{}), reflect.TypeOf(configListInstallation{}),
 		reflect.TypeOf(configListCheckout{}),
 		reflect.TypeOf(plan.Document{}), reflect.TypeOf(plan.Node{}),
