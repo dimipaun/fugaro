@@ -517,7 +517,7 @@ func (r *rend) figures(tier int, b Bar, counted, spent, notional budget.Micros, 
 		}
 		parts = append(parts, seg{fmt.Sprintf("%s%s of %s (%.0f%%%s)", lbl, USD(b.Used), USD(b.Cap), b.Percent, capWarn(b.Percent, r.g.warn)), ""})
 	case b.Has:
-		parts = append(parts, seg{fmt.Sprintf("%.0f%% of %s", b.Percent, USD(b.Cap)), pctColour(b.Percent)})
+		parts = append(parts, seg{fmt.Sprintf("%.0f%%%s of %s", b.Percent, capWarn(b.Percent, r.g.warn), USD(b.Cap)), pctColour(b.Percent)})
 	case tier >= 2:
 		parts = append(parts, seg{"counted " + USD(counted) + ", no cap", ""})
 	default:
