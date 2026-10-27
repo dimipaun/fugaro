@@ -714,6 +714,9 @@ probe account carries predefined grants only).
 | 113 | The phone app's page, and every claim on it marked shipped or planned (zoom-diagrams plan §3, Part 3; D239, D240, D241, D242): `/mobile/` is the app's own page and it is a **"coming soon"** page, so it carries a **preview badge** over its headline reading "Coming soon" (D240's third condition) and **no date anywhere** — no year, no month, no season, in the page's text, its title or its description (D240's first condition) — and **every bullet is marked**: the claims of `website/data/mobile-claims.yaml` render as two lists under two headings, *What the app does today* and *What is still to come*, each card carrying its own word, **Shipped** or **Planned**, so the mark is a word and not a colour alone (D240's second condition, D241's answer: shipped is status and spend, planned is the roster, switching by name, the wake word, QR pairing and the three roles); the **wake word's bullet says the listening and the recognition happen on the phone** and the page names no speech service and no cloud (D242); **nothing asks a reader for anything** — no form, no field, no button, no `mailto:`, no third party, no waitlist (D239) — and the page shows **no empty frame**: with no row in `website/data/mobile-screens.yaml` there is no slider, no heading and no picture-shaped hole, and when your captures land the slider appears with this page's own slot and ids (D251); and the page reads at a phone's width, with the marks and the badge legible at 360, 390 x 844 and 320 | See "Check 113" below; **you** run it, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the live site — read-only, no account, no cloud project touched, no `fugaro` command, and **No agent runs any step of it**. The pictures are yours and are **not** in this tree: step 6's second half is written and cannot be run until they land, and an unrun step is not a pass | One browser, a hard reload, one look at the page, one look at the menu, and one narrow viewport. Nothing is created, enabled, linked or written, and no address is entered anywhere. **USER-RUN, NOT RUN.** |
 | 124 | The Cloud Batch backend's own live check (compute-backend plan `docs/plans/2026-10-19-compute-backend.md`, its Task 12; design `docs/design/compute-backend.md` — **57 is this backend's reserved number and 124 is a second one taken above it**, which the claim paragraph above states with the overlap named: 57's section is Task 12's and this check's parts are the owner's, so the two are read together rather than one replacing the other; the opt-in `--provision-batch` backend, shipped in 0.9.5, whose live check was never written — 57a measured it in hand-made scripts and 57b lives inside that plan): **four owner-run parts.** **124a** — `fugaro setup --provision-batch --project fugaro`: the plan the compute root prints (the two APIs, the run accounts' IAM, the reaper's and the preload's accounts and their two custom roles, the Cloud NAT and its router, the preload's scheduled rebuild, the reaper's job), the typed confirmation nothing is applied before, the apply's `provisioned; the preloaded boot image …` line, the second run's `No changes: the compute backend's provisioning matches the plan.`, and the two read-backs — the lines `fugaro doctor`'s Batch half prints, which is the one `info batch-artifact-boundary: …` line it always prints for an installation carrying a `batch:` block and `fugaro doctor: everything checked is ok`; the other seven ids print nothing while their read is OK, so a `warning batch-…: …` line is the finding — and `fugaro validate`'s refusal, which is the pass today and `<path> is valid` after **the enable task**. **This part is the only one runnable now**: `internal/localcfg` refuses `backend: cloud-batch` (`backend "cloud-batch" is not enabled yet (this build runs cloud-run)`) until the plan's Task 10, so **124b, 124c and 124d are written and cannot be run yet**. **124b** — one ordinary sandbox task through a Batch job to its **draft pull request**, then declined and its branch deleted (Bitbucket, the sandbox's own repository). **124c** — a forced preemption: the run's own VM, selected by the label value the **job itself** records (`fugaro_run=<slug>-<run-id>`, never a typed name, and the step refuses a VM whose label is not its own job's), deleted by hand; the job must end `FAILED` with the task's exit code equal to the value read out of the tree (`grep -n 'preemptExitCode =' internal/backend/batch/run.go` — the number has one home and is written nowhere under `docs/`), and `fugaro runs ls` must read `failed (preempted)` — a **derived** reading, because nothing writes a preempted run's record; the reaper then reports what it would reap and what it reaped. **no Fugaro run is Spot today**, so this is a **simulated** reclaim and the design's §7.2 step 7 stays unrun. **124d** — the check's own cost and the cleanup: the runs' dollars, the budget lease released, and `gcloud batch jobs list` / `gcloud compute instances list` diffed against the before-state the check recorded, with the installation's own provisioning — **the installation's own, never deleted**: the preload image family, the reaper's and the preload's service accounts, **the two custom roles**, the Cloud NAT and its router, the preload rebuild's and the reaper sweep's scheduler jobs, the reaper job — named as what no restore here may touch | See "Check 124a"–"Check 124d" below; **you** run it, on installation `fugaro` (GCP project `fugaro-dev`, never `belong`), a sandbox checkout only, at your own terminal, with the guard block re-run before every part; the apply's confirmation and `fugaro setup` are refused a coding agent's session, and **no agent performs any step of the check** | 124a: one installation-root apply and the compute root's, one Cloud Build for the preload image and the scheduled rebuilds after it, and nothing else; 124b and 124c: **two** small sandbox runs on Batch (one ordinary, one preempted by hand), the check's own dollars recorded in 124d, with the batch jobs' own records kept. Nothing in the register is deleted by the check except 124b's declined pull request and its branch, and **the installation's own provisioning is never deleted**. **USER-RUN, NOT RUN — and 124b, 124c and 124d are written and cannot be run yet**, for the reason the sections record in as many words: `backend: cloud-batch` is refused by `internal/localcfg` until the enable task (the plan's Task 10, "to build"). |
 | 130 | The licence detectors after the open-core skeleton ([`docs/licensing/`](licensing/implementation-plan.md), its Check 130, task L1.10, and the reconciliation's F8 and U1 under the owner's **O2** answer of 2026-10-24; the block **130–134** is that work's and only 130 is written): that GitHub **still reports MIT** for the repository with the skeleton's new root `LICENSING.md` beside an untouched `LICENSE` — read twice and recorded both times, as the repository page's own licence label and the file it opens, and as the licence API's machine-readable reading (`spdx_id: MIT`, `key: mit`, and **`path: LICENSE`**, so the file GitHub classified is the untouched one and not the new statement file, which is what a `path` of `LICENSING.md` would mean) — and that **`LICENSING.md` renders on GitHub** as a page whose every relative link works: `LICENSE`, `ee/README.md`, the vendored skills' `.agents/LICENSE` and the README's trademark paragraph anchor. **What it is not:** pkg.go.dev's classification (U2, not this check's after O2) and the release labels — the plugin manifest's, the Homebrew cask's and the archive's — which stay `MIT` at 0.11.0 because the release build sets no `ee` tag (D303 as amended) and move together in the release that first sets it (plan slice L5) | See "Check 130" below; **you** run it, read-only, in a browser and with three `curl` calls against `api.github.com` — the repository read out of the checkout's origin and cross-checked against `go.mod`, so the tree and the page are the same repository — on no cloud project and no installation, never `belong`, holding no credential and writing nothing anywhere, and **no agent runs any step of it**. Its guard stops until task L1.3's `LICENSING.md` is in the tree, so it is run in full by task L1.11, after L1.3 merges | Nothing: three anonymous API reads, which spend part of the anonymous rate limit and change nothing; no image, no bucket, no model call, no Terraform, no node and no file. **USER-RUN, NOT RUN.** |
+| 145 | The Bitbucket read consumer's facts ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 145, task T2.8 and the script T2.7 writes; the reconciliation's U1–U5, U8, U11, U12, U14 and U15): the sandbox consumer read from a file **you** name and never printed — the token's lifetime (U1); whether the `client_credentials` grant returns a refresh token and whether a single minted token can be revoked (U2); whether the token reaches a second workspace you belong to (U3); whether the sandbox's plan admits consumers (U4); the workspace's seat count before and after (U5); whether IP allowlisting applies to OAuth tokens, and U8 stays **UNVERIFIED** if the plan offers none (U8); whether the token response lists the granted scopes (U11); whether two grants return distinct tokens (U12); whether creating a consumer needs workspace-admin rights and whether the token then reaches admin endpoints (U14); and whether the consumer must be marked private (U15). **It gates the read mint (O4):** tasks T2.3 and T3.1 do not merge before this check passes, and if U3 shows reach beyond the workspace, D360 and D361 go back to the owner before T2.3 merges. It also shows that a write with the read token is refused | See "Check 145" below; **you** run it at your own terminal, on sandbox workspaces only, never `belong`, with the consumer file you name and the script never printing it, and **no agent runs any step of it**. The script lands with task **T2.7**; this section is task **T0.2**'s and carries no steps of its own until then | A sandbox workspace and a second one you belong to, one read consumer created as the installing person, and two `client_credentials` grants; the script's own Restore says what it leaves behind. **USER-RUN, NOT RUN.** |
+| 146 | The coordinator sweep reads a Bitbucket repository through the service, and its GitHub views are unchanged ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 146, task T2.10 and the script T2.9 writes; D361 and D362): on a sandbox installation with the credentials service on, the sweep's stored view for a Bitbucket repository is **read** rather than `StaleUnsupported`, and the installation's GitHub views — the ones the sweep already writes — are unchanged | See "Check 146" below; **you** run it on a sandbox installation, never `belong`, and **no agent runs any step of it**: `scripts/live-checks/check146.sh --installation <sandbox>`. The script lands with task **T2.9**; this section is task **T0.2**'s and carries no steps of its own until then | One sandbox installation with the service on and one sweep; the script's own Restore says what it leaves behind. **USER-RUN, NOT RUN.** |
+| 149 | The console shows the stored view on the owner's own machine ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 149 and task T1.3; D364, and U9 end to end): `fugaro coordinator status --from-store --all --json --project <name>` reads the stored view as the signed-in person with **no key**, and the console's project view renders it — the read the console could not make while it had to run `coordinator status` itself | See "Check 149" below; **you** run it at your own terminal, on your own machine, read-only, and **no agent runs any step of it** | Nothing: two reads and one window. No project is written, no run is launched and no credential is minted. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -9991,3 +9994,130 @@ runs, **U1** — that GitHub keeps reporting MIT once `LICENSING.md` sits beside
 - **Never touch `belong`, EdgeWeb or EdgeServer**: no step here reads or writes a cloud project at
   all, and the only host this check fetches is `api.github.com` and the pages of the one public
   repository the checkout's origin names.
+
+## Check 145: the Bitbucket read consumer's facts — its lifetime, its reach, the plan, the seats, the scopes and the creator's rights, and the gate on the read mint (sandbox workspaces only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **T0.2** of the Bitbucket-credentials plan
+([bitbucket-credentials/implementation-plan.md](bitbucket-credentials/implementation-plan.md), its
+"Checks this plan takes (Checks 145–154)" and its task **T2.8**). The script that runs it is task
+**T2.7**'s — `scripts/live-checks/check145.sh`, with its own test `check145_test.sh` — and the owner
+runs it in **T2.8**. Until T2.7 lands, **the script lands with T2.7** and this section carries no
+steps of its own: what it records now is the number, the questions the check answers and the gate it
+holds.
+
+**Why the check exists.** Every one of the questions below is a fact about Bitbucket Cloud's OAuth
+consumers that no source in this tree can settle, and the reconciliation carries each as
+**UNVERIFIED** rather than as a reading: the pages disagree with each other and with the token
+endpoint, and the credential this work builds is minted from a consumer the installing person
+creates. The plan's O4 ruling makes this check a **precondition** rather than a follow-up: the read
+mint is written to answers, so it may not merge before they exist.
+
+**What the script reports**, one line per question, with the reconciliation's own numbers:
+
+- **U1** — the token's lifetime: whether a `client_credentials` token lasts one hour (the swagger
+  page) or two (the support page).
+- **U2** — whether the grant returns a **refresh token**, and whether a single minted token can be
+  revoked.
+- **U3** — whether the token reaches only the consumer's own workspace or **every workspace its
+  owner can reach**, read with the second sandbox workspace you belong to.
+- **U4** — whether OAuth consumers and repository access tokens need any paid plan; the check runs
+  on the sandbox's own plan.
+- **U5** — the workspace's **seat count before and after**, so whether an access token or a
+  consumer's owner uses a paid seat is recorded rather than assumed.
+- **U8** — whether IP allowlisting applies to OAuth tokens. If the sandbox's plan offers no
+  allowlisting, **U8 stays UNVERIFIED** and task **T2.11** says so in `SECURITY.md` for the read
+  token.
+- **U11** — whether the token response **lists the granted scopes**. The service cannot read a
+  consumer's configured scopes, so if it does not, the minimum-scope rule (G7) rests on Check 147
+  alone, and the plan says so where that reading is written.
+- **U12** — whether repeated grants return **distinct tokens**, which bears on attribution and on
+  the audit line every mint writes.
+- **U14** — whether creating a consumer needs **workspace-admin rights**, and whether the token then
+  carries admin reach beyond its scopes.
+- **U15** — whether the consumer must be marked **private**.
+
+The script ends with a `CHECK 145 RESULT` block, like `check90.sh`, for you to paste back.
+
+**What you type** (task T2.8):
+
+```bash
+scripts/live-checks/check145.sh --consumer-file <path> --workspace <sandbox> --second-workspace <sandbox-2>
+```
+
+The script reads the sandbox consumer from the file **you** name and **never prints it** — its own
+test (`bash scripts/live-checks/check145_test.sh`, run against a local fake with no network) fails
+if the secret is ever echoed.
+
+**The gate this check holds (O4).** Tasks **T2.3** and **T3.1** — the read mint, and the parked run
+mint — do not merge before this check passes. **If U3 shows reach beyond the workspace**, D360 and
+D361, and with them the read consumer's reach, go back to the owner before T2.3 merges. The check
+also shows that **a write with the read token is refused**, which is the read-only guard T2.3 is
+written to.
+
+**Restore.** This section lands none: the script's own Restore says what it leaves behind, and
+nothing here creates, deletes or writes anything. The consumer is the one the runbook's task
+(**T2.6**) has you create as the installing person, with read scopes only. **Never run any step
+against `belong`**: the workspaces this check names are sandboxes, and **no agent runs any step of
+it**.
+
+## Check 146: the coordinator sweep reads a Bitbucket repository through the service, and its GitHub views are unchanged (a sandbox installation with the service on, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **T0.2** of the Bitbucket-credentials plan
+([bitbucket-credentials/implementation-plan.md](bitbucket-credentials/implementation-plan.md), its
+"Checks this plan takes (Checks 145–154)" and its task **T2.10**). The script that runs it is task
+**T2.9**'s — `scripts/live-checks/check146.sh`, with its own test `check146_test.sh` — and the owner
+runs it in **T2.10**. Until T2.9 lands, **the script lands with T2.9** and this section carries no
+steps of its own.
+
+**What the check measures.** The coordinator sweep, on a sandbox installation with the credentials
+service on (D361's read-scoped consumer, held by the service under D362), against a **Bitbucket**
+repository:
+
+- the repository's stored view is **read** rather than marked `StaleUnsupported` — the marker the
+  sweep writes today for a provider it cannot read;
+- the installation's **GitHub views are unchanged**: the sweep's GitHub half reads exactly what it
+  read before this work, so the Bitbucket path is an addition rather than a rewrite.
+
+The script's own test is the register's red step for this check: it **fails on a sweep log showing
+`StaleUnsupported`**.
+
+**What you type** (task T2.10):
+
+```bash
+scripts/live-checks/check146.sh --installation <sandbox>
+```
+
+**What it depends on.** The script is written after **T2.4** (the Terraform that lets the coordinator
+job call the service) and **T2.5** (the sweep itself), and it is run after **T2.9**; the section and
+the row are **T0.2**'s.
+
+**Restore.** This section lands none: the script's own Restore says what it leaves behind. The check
+reads a sandbox installation and writes nothing to the repository it reads. **Never run any step
+against `belong`**, and **no agent runs any step of it**.
+
+## Check 149: the console shows the stored view on the owner's own machine (your own machine, read-only; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **T0.2** of the Bitbucket-credentials plan
+([bitbucket-credentials/implementation-plan.md](bitbucket-credentials/implementation-plan.md), its
+"Checks this plan takes (Checks 145–154)" and its task **T1.3**). There is no script: the check is
+two things the owner does by hand, and it is the one check of the block that runs on **your own
+machine** with no cloud project, no installation and no credential.
+
+**What the check confirms.** **U9** end to end: whether a console child can make the D364 read — the
+coordinator's stored view (`coordinator/repos/<slug>/`), read as the signed-in person through
+`roles/firebasedatabase.viewer`, with **no App key and no Bitbucket credential**. U9 is largely
+settled by the code already: the console spawns reads that depend on ADC (`budget.show`, through
+`console/src/main/spawn.ts`) and `CHILD_ENV_KEYS` carries `HOME`. So what this check confirms is the
+**new view**, not the mechanism — the console's project view could not be built while it had to run
+`coordinator status` itself, and this is the reading that says the replacement works on a real
+machine.
+
+**What you do** (task T1.3, which depends on **T1.2** — the console view — and on **T0.2**):
+
+1. Type `fugaro coordinator status --from-store --all --json --project <name>` and read the stored
+   view it prints.
+2. Open the console's project view and read the same view there.
+
+**Restore.** Nothing is created, so there is nothing to undo: two reads and one window. No project
+is written, no run is launched, no credential is minted, and the check holds no secret to paste
+back. **No agent runs any step of it.**

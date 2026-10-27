@@ -304,12 +304,10 @@ func bitbucketCitedPaths(doc string) []string {
 // way, so it cannot rot into a hiding place for a path that has landed.
 //
 // The list shrinks as the tasks land, and the test says so when it does not:
-// T0.1's own file left it in the commit that wrote this guard (the pin test is
-// checked like every other cited path now), and T0.2's leaves it in the commit
-// that registers the checks.
+// T0.1's own file left it in the commit that wrote this guard and T0.2's in the
+// commit that registered the checks, so both are checked like every other cited
+// path now.
 var bitbucketWillCreate = map[string]string{
-	// T0.2's file, cited by the task that writes it and not written yet.
-	"internal/cli/docs_checks_145_149_test.go": "T0.2",
 	// S1: the key-free stored-view read.
 	"internal/cli/coordinator_view.go":      "T1.1",
 	"internal/cli/coordinator_view_test.go": "T1.1",
