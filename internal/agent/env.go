@@ -43,6 +43,16 @@ type EnvSpec struct {
 	// gets the gateway's URL and per-run token, never the real model
 	// credential (see GatewayVars). It is an error with auth: oauth.
 	Gateway *Gateway
+	// Compression, when set, points Claude Code at the context-compression
+	// sidecar, which chains to the gateway. It is an error with auth: oauth
+	// or vertex -- neither gives Claude Code a gateway token the sidecar
+	// could forward, and a vertex run routes by ANTHROPIC_VERTEX_BASE_URL,
+	// which Compression never touches -- and an error without a Gateway:
+	// the sidecar holds no credential of its own, so the run would have to
+	// send it the real key. config.Validate and the runner's own bootstrap
+	// refuse both combinations earlier; BuildEnv refuses them again at the
+	// point closest to the credential.
+	Compression *CompressionProxy
 	// Docker is whether this run's workflow asked for `docker: true`
 	// (design compute-backend.md §4.2): the one fact that lets DOCKER_HOST
 	// through, because it is the one fact that says a socket was mounted
@@ -103,6 +113,14 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 	for _, k := range slices.Sorted(maps.Keys(p)) {
 		if v := p[k]; config.IsProviderKeyEnv(k) && len(v) >= 4 {
 			secretValues = append(secretValues, v)
+		}
+	}
+	if spec.Compression != nil {
+		if spec.Auth == "oauth" || spec.Auth == "vertex" {
+			return nil, nil, fmt.Errorf("agent.compression cannot be combined with auth: %s: it routes %s's calls its own way, so the sidecar could only be skipped, never used", spec.Auth, spec.Auth)
+		}
+		if spec.Gateway == nil {
+			return nil, nil, fmt.Errorf("agent.compression needs the budget gateway, and this run has none: the sidecar holds no credential of its own to send to Anthropic")
 		}
 	}
 	secretNames := slices.Clone(spec.Secrets)
@@ -194,6 +212,12 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 		}
 		maps.Copy(out, vars)
 	}
+	if spec.Compression != nil {
+		// After the gateway's own write, not before: the sidecar is where
+		// Claude Code's calls go first, and GatewayVars has just put the
+		// gateway's URL here.
+		out["ANTHROPIC_BASE_URL"] = spec.Compression.BaseURL
+	}
 	if spec.PathPrepend != "" {
 		if out["PATH"] != "" {
 			out["PATH"] = spec.PathPrepend + string(os.PathListSeparator) + out["PATH"]
@@ -210,6 +234,12 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 // Gateway is where Claude Code sends its model calls instead of the
 // provider: the gateway's loopback URL and its per-run token.
 type Gateway struct{ BaseURL, Token string }
+
+// CompressionProxy is the context-compression sidecar Claude Code's model
+// calls route through first, which chains them on to the gateway. It is a
+// loopback URL and nothing else: the per-run token Claude Code presents is
+// the gateway's own, and travels in ANTHROPIC_API_KEY, not here.
+type CompressionProxy struct{ BaseURL string }
 
 // noProxyLoopback is added to NO_PROXY and no_proxy with a gateway, so a
 // configured proxy never sees the agent's calls to it.

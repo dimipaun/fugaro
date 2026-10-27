@@ -711,6 +711,104 @@ func TestBuildEnvGatewayOAuthRefused(t *testing.T) {
 	}
 }
 
+// TestBuildEnvUnchangedWithNoCompression pins the whole environment a
+// gateway run gets today, byte for byte, against the parent and spec of
+// TestBuildEnvGatewayDropsRealKey: a nil Compression adds no key and
+// changes no value (P3's "nil: off, today's behaviour, unchanged").
+func TestBuildEnvUnchangedWithNoCompression(t *testing.T) {
+	parent := []string{"PATH=/bin", "ANTHROPIC_API_KEY=placeholder-api-key", "ANTHROPIC_BASE_URL=https://elsewhere.invalid", "NPM_TOKEN=npm-456"}
+	env, secrets, err := BuildEnv(parent, EnvSpec{Auth: "api-key", Gateway: &Gateway{BaseURL: "http://127.0.0.1:4000", Token: "tok-abc"}, Secrets: []string{"NPM_TOKEN"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"ANTHROPIC_API_KEY=tok-abc", "ANTHROPIC_BASE_URL=http://127.0.0.1:4000",
+		"NO_PROXY=127.0.0.1,localhost", "NPM_TOKEN=npm-456", "PATH=/bin", "no_proxy=127.0.0.1,localhost",
+	}
+	if !slices.Equal(env, want) {
+		t.Fatalf("env = %q\nwant   %q", env, want)
+	}
+	if !slices.Equal(secrets, []string{"placeholder-api-key", "npm-456"}) {
+		t.Fatalf("secrets = %v", secrets)
+	}
+}
+
+// Compression chains in front of the gateway, so it needs one, and needs an
+// auth that gives Claude Code a gateway token to present to the sidecar.
+// oauth has no gateway at all, and a vertex run writes
+// ANTHROPIC_VERTEX_BASE_URL -- a base-URL shape Compression never touches --
+// so admitting it would silently skip the sidecar rather than refuse it,
+// the opposite of failing closed (P3).
+func TestBuildEnvRefusesCompressionWithOAuth(t *testing.T) {
+	parent := []string{"CLAUDE_CODE_OAUTH_TOKEN=oauth-token-for-tests-1234"}
+	if _, _, err := BuildEnv(parent, EnvSpec{Auth: "oauth", Compression: &CompressionProxy{BaseURL: "http://127.0.0.1:9100"}}); err == nil ||
+		!strings.Contains(err.Error(), "agent.compression") {
+		t.Fatalf("oauth + compression: err = %v, want a refusal naming agent.compression", err)
+	}
+}
+
+func TestBuildEnvRefusesCompressionWithVertex(t *testing.T) {
+	parent := []string{"CLOUD_ML_REGION=us-east5", "ANTHROPIC_VERTEX_PROJECT_ID=p"}
+	if _, _, err := BuildEnv(parent, EnvSpec{Auth: "vertex", Compression: &CompressionProxy{BaseURL: "http://127.0.0.1:9100"}}); err == nil ||
+		!strings.Contains(err.Error(), "agent.compression") {
+		t.Fatalf("vertex + compression: err = %v, want a refusal naming agent.compression", err)
+	}
+}
+
+// The sidecar holds no credential of its own: the gateway's per-run token is
+// what Claude Code presents, through the sidecar, to the gateway. A run with
+// no gateway would have to send the real key to the sidecar instead, so it is
+// refused here as it is by config.Validate and the runner's own bootstrap
+// (P9, defense in depth at the point closest to the credential).
+func TestBuildEnvRefusesCompressionWithoutGateway(t *testing.T) {
+	parent := []string{"ANTHROPIC_API_KEY=key-123"}
+	if _, _, err := BuildEnv(parent, EnvSpec{Auth: "api-key", Compression: &CompressionProxy{BaseURL: "http://127.0.0.1:9100"}}); err == nil ||
+		!strings.Contains(err.Error(), "agent.compression") {
+		t.Fatalf("compression without a gateway: err = %v, want a refusal naming agent.compression", err)
+	}
+}
+
+// TestBuildEnvRoutesThroughCompressionNotGateway: with compression on, Claude
+// Code talks to the sidecar and never to the gateway directly, and none of the
+// gateway's credentials reach the sidecar's address. The sidecar's URL carries
+// no credential (CompressionProxy holds a BaseURL and nothing else), the
+// gateway's address appears in no variable at all, the only variable holding
+// the gateway's token is the api key Claude Code presents through the sidecar,
+// and the real key stays registered for redaction and out of the environment.
+//
+// Mutation (put the compression step before maps.Copy(out, vars), as an
+// earlier draft of the plan had it): the gateway's write clobbers it and the
+// ANTHROPIC_BASE_URL assertion fails.
+func TestBuildEnvRoutesThroughCompressionNotGateway(t *testing.T) {
+	const realKey = "placeholder-api-key"
+	gw := &Gateway{BaseURL: "http://127.0.0.1:9000", Token: "gateway-token-abcdef"}
+	sidecar := &CompressionProxy{BaseURL: "http://127.0.0.1:9100"}
+	env, secrets, err := BuildEnv([]string{"PATH=/bin", "ANTHROPIC_API_KEY=" + realKey}, EnvSpec{Auth: "api-key", Gateway: gw, Compression: sidecar})
+	if err != nil {
+		t.Fatalf("BuildEnv = %v", err)
+	}
+	if !slices.Contains(env, "ANTHROPIC_BASE_URL="+sidecar.BaseURL) {
+		t.Fatalf("ANTHROPIC_BASE_URL does not point at the sidecar: %v", env)
+	}
+	for _, kv := range env {
+		if strings.Contains(kv, gw.BaseURL) {
+			t.Errorf("the gateway's address is in the agent's environment: %s", kv)
+		}
+		if strings.Contains(kv, realKey) {
+			t.Errorf("the gateway's real key is in the agent's environment: %s", kv)
+		}
+		if strings.Contains(kv, gw.Token) && kv != "ANTHROPIC_API_KEY="+gw.Token {
+			t.Errorf("the gateway's token reached the sidecar in another variable: %s", kv)
+		}
+	}
+	if !slices.Contains(env, "ANTHROPIC_API_KEY="+gw.Token) {
+		t.Errorf("Claude Code has no token to present through the sidecar: %v", env)
+	}
+	if !slices.Contains(secrets, realKey) {
+		t.Errorf("the gateway's real key is not registered for redaction: %v", secrets)
+	}
+}
+
 func TestBuildEnvNoGatewayUnchanged(t *testing.T) {
 	env, secrets, err := BuildEnv([]string{"PATH=/bin", "ANTHROPIC_API_KEY=key-123"}, EnvSpec{Auth: "api-key"})
 	if err != nil {
