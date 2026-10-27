@@ -184,7 +184,7 @@ A run's coder can be a non-Anthropic model served by OpenRouter — one key for 
 
 - For the GCP backend, the only one today: a Google account that may create a GCP project and link billing to it. `fugaro setup` creates the project, as you, so you are its Owner, and enables the APIs it needs ([prerequisites](docs/gcp-setup.md#prerequisites); if your organization restricts either: [what to ask IT](docs/gcp-setup.md#not-an-owner)).
 - `gcloud` signed in with Application Default Credentials, and Terraform 1.9 or newer (before 2.0) on `PATH`.
-- A GitHub or Bitbucket Cloud repository, and a GitHub App or a Bitbucket repository access token for it.
+- A GitHub or Bitbucket Cloud repository, and a GitHub App or a Bitbucket access token for it — a repository access token, or one workspace or project access token stored once for many repositories through the allow-list ([docs/git-providers.md](docs/git-providers.md#one-workspace-or-project-token-for-many-repositories)).
 - A Claude credential: a subscription token (`claude setup-token`), an Anthropic API key, or Vertex AI.
 - Claude Code, for `/fugaro:setup` and the plugin.
 - macOS or Linux (Windows: untested). Docker is optional, for local image builds.

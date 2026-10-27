@@ -467,8 +467,9 @@ const doc = (path: string, fragment: string): string =>
           <p class="gs-step-line">
             gcloud credentials with a quota project, Terraform 1.9+, and{' '}
             <a href={doc('docs/git-providers.md', 'credentials')}>repository access</a>: a GitHub
-            App with four repository permissions on GitHub, or a repository access token on
-            Bitbucket.
+            App with four repository permissions on GitHub, or a Bitbucket access token on
+            Bitbucket — a repository access token, or one workspace or project access token stored
+            once for many repositories.
           </p>
         </div>
         <a class="gs-step-link" href={doc('docs/gcp-setup.md', 'prerequisites')}>Preconditions</a>
