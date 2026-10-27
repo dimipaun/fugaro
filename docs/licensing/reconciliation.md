@@ -23,7 +23,7 @@ checks **130–134** (the highest check section written in the register on `main
 **119** and **123** are claimed by the console-windows and console dependency graph plans, and
 open PR #1022 takes **124**; **130** is free either way).
 Findings are **F1–F27**; resolutions (one defensible answer) are **R1–R8**; decisions
-**D300–D310** are used and **D311–D319** are reserved and unused; checks **131–134** are reserved
+**D300–D311** are used (D311 on 2026-10-26) and **D312–D319** are reserved and unused; checks **131–134** are reserved
 and unused.
 
 ## Headline: spec concept → what the repository already has
@@ -439,6 +439,63 @@ unused.
 - **O3 — The hosted CLA app** is an install the owner makes (task L0.2) and is not on the 0.11.0
   critical path: `CONTRIBUTING.md` says no outside pull request is merged before its author signs,
   which holds whether or not the app is installed yet.
+
+## Amendment 2026-10-26 (D311)
+
+**D311 — the owner's ruling of 2026-10-26, not a recommendation of this file.** The desktop
+console, the mobile app and `ee/` carry one business licence, the same text in three files with
+only the product's name changed: [`console/LICENSE.md`](../../console/LICENSE.md) ("Fugaro
+Console"), [`mobile/LICENSE.md`](../../mobile/LICENSE.md) ("Fugaro Mobile") and
+[`ee/LICENSE`](../../ee/LICENSE) ("Fugaro Enterprise Edition"). The ruling's parts:
+
+- **The terms are the enterprise terms F27 reads**, adopted in substance from vendor B's
+  `ee/LICENSE` and drafted in its structure, not copied: production use needs the Fugaro
+  Subscription Terms (or another written agreement) and a subscription for the correct number of
+  user seats; modifying and publishing patches is allowed, with the licensor keeping the rights in
+  them; copying and modifying for development and testing needs no subscription; nothing else is
+  granted; third-party components keep their own licences; an "as is" disclaimer.
+- **Seats are users of the component**: one seat per person who uses it.
+- **No client-side carve-out.** Vendor B's text puts client-side assets under MIT; this one does
+  not. The console's renderer bundle and everything its windows load are under the business
+  licence, and so is the mobile app's bundle.
+- **From console 0.113.0.** Console releases up to and including 0.112.0 stay under the MIT
+  licence they were released under, and so does every directory's source as published before the
+  change (F4). No mobile release has been published (`docs/release-streams.yaml` holds the stream
+  at `0.0.0` and no `mobile-v*` tag exists), so the app's licence applies from its first release.
+  Nothing under `ee/` has ever been released.
+- **Applied before counsel has read it.** Each file's first line is `DRAFT FOR COUNSEL REVIEW: not
+  yet reviewed by counsel`, and the owner removes it when counsel has read the text. The
+  Subscription Terms do not exist yet: each licence names them as `<URL TO BE PUBLISHED>`, and the
+  owner publishes them or replaces that sentence before a component is distributed under it.
+
+**What it changes here.** **D302 is reversed for the console and the mobile app**: they no longer
+stay core MIT. F4's fact stands: what was published under MIT stays MIT, and anyone may keep using
+and forking it. The console is the first component licensed outside the MIT core after the `ee/`
+skeleton. **T1 and D305:** `ee/LICENSE` lands now as a draft instead of after counsel; task L4.1
+is brought forward with that difference (its hash test against an approved text waits for
+counsel), and the reserved state of 0.11.0 ends: `TestDocsEEReserved` became
+`TestDocsEELicensed`, and the staged `core-without-ee.yml` skips the renamed test. **D309:** the
+boundary tests under `internal/eeboundary/` are unchanged and stay green; no boundary check yet
+covers `console/` or `mobile/`, which are separate npm projects outside the Go module (F11), and
+`shared/` stays MIT although the mobile app imports it and the core's Go tests read it, so a
+module moving between `mobile/` and `shared/` changes licence (an open item for the owner).
+**D303 and T3** are unchanged: the released CLI binary carries no `ee/` code until a release sets
+the `ee` tag.
+
+**The contribution rule, changed 2026-10-26 by the owner.** The owner confirmed being the sole
+copyright holder of `console/`, `mobile/`, `shared/` and `ee/` (no outside contributor in their
+history, F3), including the code committed under each of the owner's three addresses; one address
+is used from here on. `CONTRIBUTING.md` now says: the core takes contributions under MIT with the
+signed CLA, as before; `console/`, `mobile/` and `ee/` take them from anybody who accepts that
+directory's licence and has signed the same CLA, which must grant the relicensing rights for those
+directories. **D305 consequence:** the sentence that `ee/` "takes no contributions while it is
+reserved" (plan L1.4) is gone with the reservation's licence state. The CLA text is counsel's
+(O1) and the bot install is the owner's (L0.2, O3), so an outside pull request to these
+directories waits until the bot is live.
+
+Besides F27's URLs, the two vendors are named once more, in this note only: the draft is adapted
+in structure from GitLab's and PostHog's published `ee/LICENSE` texts, and whether that adaptation
+is permitted is one of counsel's questions (T1 (a)).
 
 ## UNVERIFIED
 

@@ -8,4 +8,4 @@
 - [ ] `gofmt`, `go vet ./...` and `go test -race ./...` pass; the tagged tests for the area I touched pass
 - [ ] Docs updated (README, `docs/`, schemas) where behavior or a flag changed
 - [ ] No secrets, tokens or personal data in the diff, fixtures or logs
-- [ ] I have signed the Contributor License Agreement, which an outside pull request needs ([CONTRIBUTING.md](CONTRIBUTING.md))
+- [ ] I have signed the Contributor License Agreement, which an outside pull request needs, and a change under `console/`, `mobile/` or `ee/` accepts that directory's licence ([CONTRIBUTING.md](CONTRIBUTING.md))

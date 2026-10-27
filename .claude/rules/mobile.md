@@ -6,6 +6,7 @@ paths:
 
 # Mobile app (Expo) and shared modules
 
+- **Two licences meet here** (`LICENSING.md`, D311): `mobile/` is under the draft business licence in `mobile/LICENSE.md`, `shared/` stays MIT. Moving code from `mobile/` into `shared/` (or the other way) changes its licence, so it is the owner's decision, not a refactor. Never edit the licence text itself.
 - Run `npm test` in `mobile/` and in `shared/` (`node --test`). CI runs neither until `docs/pending-workflows/shared-tests.yml` is copied in, so your local run is the only check.
 - Each module's `index.js` is its only entry point; import from it, never around it. Where an `index.test.js` asserts the exported surface as an exact set, a new export is a decision and goes into that test.
 - The scan tests fence these rules; extend a scan's list on purpose and never weaken its pattern:

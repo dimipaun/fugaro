@@ -6,6 +6,13 @@ file) and O2 (`LICENSE` stays pure MIT; the scope statement is a new `LICENSING.
 D301, not the recommendation), and amended D303 (not the recommendation): one released binary,
 key-gated, with ee code compiled in by an `ee` build tag the release sets; none at 0.11.0. Each task in the plan still needs the owner's own go.
 
+**Amended 2026-10-26 by the owner's ruling D311** ([reconciliation.md](reconciliation.md#amendment-2026-10-26-d311)):
+`console/` (from console 0.113.0), `mobile/` and `ee/` are under one business licence, drafted in
+the structure of the enterprise terms the spec names, with no client-side MIT carve-out, and
+applied **before counsel has read it**. The console is the first component licensed outside the
+MIT core after the `ee/` skeleton. This reverses D302 for the console and the mobile app, and
+brings plan task L4.1 forward with a draft rather than an approved text.
+
 Spec owner: the repository owner. Spec received 2026-10-24; reconciled against `origin/main` at
 `e924481cd` the same day.
 
@@ -19,7 +26,7 @@ Spec owner: the repository owner. Spec received 2026-10-24; reconciled against `
 
 | Numbers | State |
 | --- | --- |
-| **D300–D319** | this work's block. **D300–D310** written and answered 2026-10-24 (D305 not the recommendation); **D311–D319** reserved and unused. Taken above the highest decision written under `docs/` on `main` (D271) and in open PRs (D260); **D272–D299** are left unused so that reconciliations started the same day cannot collide with this block |
+| **D300–D319** | this work's block. **D300–D310** written and answered 2026-10-24 (D305 not the recommendation); **D311** the owner's ruling of 2026-10-26 (the business licence for `console/`, `mobile/` and `ee/`); **D312–D319** reserved and unused. Taken above the highest decision written under `docs/` on `main` (D271) and in open PRs (D260); **D272–D299** are left unused so that reconciliations started the same day cannot collide with this block |
 | **Checks 130–134** | this work's block. **130** written by plan task L1.10 and run by the owner (L1.11): GitHub still reports MIT and `LICENSING.md` renders — the section and its register row are in `docs/gcp-live-checklist.md`, and both are **NOT RUN** until L1.11; **131–134** reserved and unused. The highest check section written on `main` was 113 when the block was taken; 119 and 123 are claimed by the console-windows and console dependency graph plans, and open PR #1022 takes 124; 130 was free either way |
 
 ## Headline

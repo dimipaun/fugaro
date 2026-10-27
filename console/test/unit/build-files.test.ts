@@ -72,9 +72,11 @@ const preloads = filesNamed('src/preload', '.ts').map((name) => `dist/preload/${
  * `console.css` would package an app that opens a window with no style in it,
  * which is the failure this test exists for. The notices file is not a build
  * output, but it ships beside the worker whose licence it carries, so it is
- * named here too. */
+ * named here too, and so is the console's own licence (`LICENSE.md`, D311),
+ * which the packed app carries from 0.113.0. */
 const compiled = compiledModules()
 const bundlerOutputs = [
+  'LICENSE.md',
   'THIRD_PARTY_NOTICES.md',
   'dist/bundle/console.css',
   'dist/bundle/console.js',

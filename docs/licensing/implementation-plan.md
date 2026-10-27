@@ -36,6 +36,15 @@ the 0.11.0 slice while being, by ruling, not a 0.11.0 deliverable). No task id w
 different purpose except L1.2, whose earlier content (copying the approved `ee/LICENSE`) moved,
 unchanged, to the new L4.1.
 
+**Amended 2026-10-26 by the owner's ruling D311** ([reconciliation.md](reconciliation.md#amendment-2026-10-26-d311)):
+`console/LICENSE.md`, `mobile/LICENSE.md` and `ee/LICENSE` land together as a draft counsel has not
+read. That brings **L4.1** forward without L0.1: `ee/README.md`, `LICENSING.md`, the ee and
+licensing docs tests, the staged `core-without-ee.yml` skip list and `CONTRIBUTING.md` moved as
+L4.1 lists, `TestDocsEELicenceIsTheApprovedText` waits for the approved text, and the website's two
+licence elements are unchanged because both still read true (`ee/` is still reserved for
+organisation features, and `LICENSING.md` still says which parts the MIT licence does not cover).
+**L2.2** gains `console/LICENSE.md` in `build.files` and `console/package.json`'s `license` field.
+
 Out of scope here (R7): the spec's Task 3 (extension points) and Task 4 (workspaces), the
 `cmd/fugaro/ee_on.go` assembly file and the `ee/register` package (D303 as amended) belong to the
 workspaces plan, which takes D302, D303, D308 and D309 as inputs.

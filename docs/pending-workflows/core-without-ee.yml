@@ -69,7 +69,7 @@ jobs:
       # Everything but internal/runner, minus the tests that read the real
       # ee/. The -skip list is eeReadingTests and nothing else.
       - name: the core's tests, without the tests that read ee/
-        run: go test -timeout 30m -skip '^(TestDocsEEReserved|TestDocsLicensingStatement)$' $(go list ./... | grep -v internal/runner)
+        run: go test -timeout 30m -skip '^(TestDocsEELicensed|TestDocsLicensingStatement)$' $(go list ./... | grep -v internal/runner)
       # internal/runner alone, at the bound CONTRIBUTING.md gives it, with no
       # skip: it is the long package, it is not run twice, and no test of it
       # reads ee/.
