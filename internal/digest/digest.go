@@ -30,6 +30,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/stats"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -296,13 +297,23 @@ func Build(recs []runstore.Record, p Period) Digest {
 	return capTo(d, MaxBytes)
 }
 
-// recipeName is the record's recipe as the report names it: a catalog
-// recipe's own name, and every other name -- a repository names its own
-// recipe file -- "other" (G1). A record that names no recipe is one no
-// catalog recipe accounts for, which is what "other" says.
+// recipeName is the record's recipe as the report names it: the catalog
+// recipe's own name, and "other" for every name that is not one (G1).
+//
+// The name alone is not the recipe: a repository's own recipe file, and a
+// project layer's, may reuse a catalog name and shadow the built-in one, so
+// only a run whose recipe came from the catalog is counted under a catalog
+// label -- otherwise one repository's own loop and its figures would sit
+// where a reader reads the catalog's. It is the rule internal/stats publishes
+// by, and a name the catalog retired keeps its figures under the name the
+// catalog carries now. A record that names no recipe is one no catalog recipe
+// accounts for, which is what "other" says.
 func recipeName(rec *runstore.Record) string {
-	if rec.Recipe != nil && knownRecipe(rec.Recipe.Name) {
-		return rec.Recipe.Name
+	if rec.Recipe == nil {
+		return other
+	}
+	if name, ok := stats.ShippedName(rec.Recipe.Name, rec.Recipe.Source); ok {
+		return name
 	}
 	return other
 }

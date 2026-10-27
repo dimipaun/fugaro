@@ -72,8 +72,8 @@ type Pattern struct {
 	Subject string
 	// Periods are the period keys the rule read, oldest first, and Figures
 	// are its figures, one per period, as exact decimal strings: whether a
-	// week raised the flag, the review share of a month's cost in millionths,
-	// a recipe's median cost in dollars, or a week's halts over its runs.
+	// week raised the flag, the review share of a month's cost, a recipe's
+	// median cost in dollars, or a week's halts over its runs.
 	Periods []string
 	Figures []string
 }
@@ -369,28 +369,32 @@ func ReadSummaries(reports [][]byte) ([]Summary, []string) {
 // median is the median of the months' medians, the only per-recipe figure a
 // summary carries.
 //
-// months are one year's, in any order, and the year is the newest of them. A
-// summary whose key is not a month key this package writes, or whose figures
-// are not ones this package writes, is not one of the year's months and
-// contributes nothing (G1, G5).
+// months are one year's, in any order, and the year is the newest of them: a
+// month of another year is not one of the year's and contributes nothing, so
+// a caller handing every committed summary gets that year's figures rather
+// than twelve years in one. A summary whose key is not a month key this
+// package writes, whose figures are not ones this package writes, or which
+// repeats a month another one already named, is likewise not one of the
+// year's months (G1, G5).
 func RollUp(months []Summary) Summary {
 	kept := make([]Summary, 0, len(months))
-	for _, m := range months {
-		if dim, ok := periodDim(m.Period); !ok || dim != report.ByMonth || !m.figuresOK() {
-			continue
+	for _, m := range byPeriod(months)[report.ByMonth] {
+		if m.figuresOK() {
+			kept = append(kept, m)
 		}
-		kept = append(kept, m)
 	}
 	if len(kept) == 0 {
 		return Summary{}
 	}
-	sort.SliceStable(kept, func(i, j int) bool { return kept[i].Period < kept[j].Period })
 	year := kept[len(kept)-1].Period[:4]
 	s := Summary{Period: year, Start: year + "-01-01", End: year + "-12-31"}
 
 	var billed, notional, review budget.Micros
 	medians := map[string][]budget.Micros{}
 	for _, m := range kept {
+		if m.Period[:4] != year {
+			continue
+		}
 		s.Runs += m.Runs
 		s.Shown += m.Shown
 		s.Flagged += m.Flagged
