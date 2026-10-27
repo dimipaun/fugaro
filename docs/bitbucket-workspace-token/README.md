@@ -18,14 +18,28 @@ On the same day the owner also answered:
 - **D477:** bump the policy version, which was **not the recommendation**, so 0.13.0 is a lockstep
   upgrade.
 
-D464–D468, D473 (proposed) and D476 wait for the owner. Each task needs the owner's own explicit go.
+In a later round the same day the owner answered the rest:
+
+- **D464:** yes, in 0.12.1: `*` within one path segment of `allow_data_to`, such as
+  `myworkspace/*`. A bare `*`, `*/*` and a wildcard workspace are refused, and there are at most two
+  `*` and never a regular expression. This was **not the recommendation**. Run
+  20261027-212846-dc73 builds it.
+- **D465:** the derived `bitbucket_token` policy block, checked by the runner.
+- **D466:** yes, `fugaro doctor` warns about an overriding own copy.
+- **D467:** documentation in 0.12.1.
+- **D468:** no; the docs carry the "not yet live-checked" label.
+- **D473:** yes.
+- **D476:** no, the trust rule is kept and the risk stated. This was **not the recommendation**.
+- **T2:** Cloud-compatible API roots only; Data Center stays out.
+
+No decision is pending. Each task still needs the owner's own explicit go.
 
 **Spec owner:** the Fugaro owner. **Date:** 2026-10-27. **Base:** `main` at `a5f521f1c`.
 
 | Release | Tasks |
 | --- | --- |
-| **0.12.1** | **T1.1** (docs and the `SECURITY.md` reach statement) and **T1.2** (CLI help text, comments and message wording), **both APPROVED 2026-10-27**. Per-repository jobs are unchanged, and there is no behaviour change. Check 180 (T1.3, T1.4) stays owner-run and comes later: no Premium sandbox workspace is known |
-| **0.13.0** | **T2.1–T2.11**: Bitbucket in shared project jobs, the node's derived Bitbucket block enforced by the runner and checked at publish and deploy, the doctor warning, the API-root pin (T2.8, on), review-only refusing the token's own pull requests (T2.10, if D476), the policy version 4 and its lockstep release notes (T2.11), the phase-3 docs and Check 181. None is approved. **T3.1** (a workspace pattern) only if D464 says so |
+| **0.12.1** | Run **dc73** (the `allow_data_to` wildcard, D464) first. Then **T1.1** (docs and the `SECURITY.md` reach statement) and **T1.2** (CLI help text, comments and message wording), **both APPROVED 2026-10-27**, which launch after dc73 merges. Per-repository jobs are unchanged. Check 180 (T1.3, T1.4) stays owner-run and comes later: no Premium sandbox workspace is known |
+| **0.13.0** | **T2.1–T2.11**: Bitbucket in shared project jobs, the node's derived Bitbucket block enforced by the runner and checked at publish and deploy, the doctor warning, the API-root pin (T2.8, on), the policy version 4 and its lockstep release notes (T2.11), the phase-3 docs and Check 181. None is approved. **T2.10 is off** (D476), and **T3.1 is superseded** by dc73 (D464) |
 
 The headline finding: storing one workspace or project token for many repositories **already
 works**. It runs through the `project_secrets.bitbucket-token` allow-list and
@@ -35,7 +49,7 @@ nothing. The docs present that path as an exception, so the 0.12.1 slice is docs
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The owner's request of 2026-10-27, verbatim |
-| [reconciliation.md](reconciliation.md) | What exists (§2); Atlassian's facts (§3); findings F1–F18 (§4); decisions D460–D477 (§5); the release split (§6); tensions T1–T2 and open items O1–O7 (§7); UNVERIFIED U1–U8 (§9). **Where it disagrees with `spec.md`, it wins** |
+| [reconciliation.md](reconciliation.md) | What exists (§2); Atlassian's facts (§3); findings F1–F18 (§4); decisions D460–D477, all answered 2026-10-27 (§5); the release split (§6); tensions T1–T2 and open items O1–O7 (§7); UNVERIFIED U1–U8 (§9). **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Slices S1–S3; tasks T1.1–T1.4, T2.1–T2.11 (T2.5 folded into T2.9) and T3.1, each with its files, tests, red step, command and reviewer tier; levels, critical path, shared-files table, and Checks 180–181. **Nothing in it is approved** |
 
 ## Typos fixed in the spec
@@ -46,5 +60,5 @@ None.
 
 | Block | Use |
 | --- | --- |
-| **D460–D489** | **D460–D477** are written (D460–D463, D474, D475 and D477 ruled; D464–D468, D473 and D476 pending; D469–D472 resolutions). **D478–D489** are reserved and unused. The block sits above the subscriptions work's D430–D459, on `main` and in every open PR |
+| **D460–D489** | **D460–D477** are written (all ruled 2026-10-27; D469–D472 are resolutions). **D478–D489** are reserved and unused. The block sits above the subscriptions work's D430–D459, on `main` and in every open PR |
 | **Checks 180–189** | **180–181** are proposed (owner-run, NOT RUN). **182–189** are reserved and unused. The block sits above Checks 170–179 |
