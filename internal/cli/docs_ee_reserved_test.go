@@ -47,7 +47,8 @@ func TestDocsEELicensed(t *testing.T) {
 	for _, want := range []string{
 		"Fugaro Enterprise Edition",
 		"LicenseRef-Fugaro-Enterprise",
-		"[URL TO BE PUBLISHED]",
+		// Without the scheme: flattenDoc turns "//" into a space.
+		"fugaro.dev/legal/subscription-terms",
 		"[CLA URL TO BE PUBLISHED]",
 		// Counsel's coverage sentence names the three directories, and the
 		// console's half is spelled from the boundary test's own constant: the

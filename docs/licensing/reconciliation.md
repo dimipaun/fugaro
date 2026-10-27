@@ -567,6 +567,11 @@ Still open: the Enterprise seat floor (the owner's) and the late-payment interes
 The draft's counsel list gains the items the session added. The licence files, the CLA and
 `LICENSING.md` are not edited, and the draft is still **not in force**.
 
+
+## Amendment 2026-10-27 (the Subscription Terms URL)
+
+The owner chose `https://fugaro.dev/legal/subscription-terms` as the Subscription Terms URL and had it written into the four licence files (L4.4). The page is published only after counsel approves the text (L4.3); until then the link does not resolve. The CLA placeholder is unchanged.
+
 ## UNVERIFIED
 
 - **U1** — **Moot after O2** (`LICENSE` is not changed). What stays unverified is only that GitHub
