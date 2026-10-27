@@ -8394,3 +8394,168 @@ func consoleProductName(t *testing.T) string {
 	}
 	return pkg.Build.ProductName
 }
+
+// TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown pins §5.1 rule 11 — the
+// launch, the console's one write — and the never table's moved row, which is
+// the fence that rule moves.
+//
+// Rule 11 was added by the console v2 plan's V2.5.1 (2026-10-27) and amended the
+// same day by the owner's rulings and by an independent security review, and it
+// is the contract the code lands against (V2.5.1a). It is prose, so nothing else
+// holds it: the allow-list table and rule 5's count are deliberately NOT moved by
+// this design — they move with the code, in one commit, in V2.5.1a — and the
+// "never" table is the one table this rule does edit. The sentences below are
+// the claims that review found missing or untrue (the repository conversion, the
+// confirmation window, the recorded base branch, the working directory, the one
+// row allowed to write to a child, the format characters, the `=` forms, the
+// deadline, the rate limits and the replay rule), so this test is what keeps a
+// later rewrite from dropping one.
+//
+// The mutations it fails on: deleting any pinned sentence (each names itself);
+// re-wrapping one is not a mutation, because the rule is read as one run of
+// whitespace; putting rule 11's row on the allow-list table, or moving rule 5's
+// "twenty-three operations", before V2.5.1a lands (the checks after the table);
+// and restoring a bare `run` to the never table, which would read as a
+// permission for the one argv this rule writes rather than for every other one.
+func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
+	const path = "docs/design/desktop-console.md"
+	doc := readDoc(t, path)
+
+	start := strings.Index(doc, "\n11. **The launch is the console's one write")
+	if start < 0 {
+		t.Fatalf("%s has no §5.1 rule 11: the launch's fence is not written down", path)
+	}
+	end := strings.Index(doc[start:], "\n### 5.2 ")
+	if end < 0 {
+		t.Fatalf("%s never closes §5.1: no `### 5.2` heading follows rule 11", path)
+	}
+	rule := flattenDoc(doc[start : start+end])
+
+	for _, want := range []struct{ why, text string }{
+		{"the one exact argv, in its fixed order",
+			"run --task-file - --json --run-id <run id> --repo <owner/name> [--title=<T>] [--plan-task=<P>] --project <name> [--config <path>]"},
+		{"a value that rides its own flag word cannot be read as a flag",
+			"a value after `=` is part of the flag's own word"},
+		{"the row and the code it needs land together",
+			"the operation, the preload method and the argv builder"},
+		{"a moved row is a plan and not a permission",
+			"the console spawns no `run` argv at all"},
+		{"the closed schema's five fields",
+			"`installation`, `repository`, `task`, `title` and `planTask`"},
+		{"the repository identity the records carry",
+			"`<provider>/<owner>/<name>`"},
+		{"the conversion to what --repo takes",
+			"drop the first `<provider>/` segment"},
+		{"the providers the console can open a pull request on",
+			"**`github` or `bitbucket`**"},
+		{"the example that shows the conversion",
+			"`github/owner/repo-a` becomes `owner/repo-a`"},
+		{"only the identity is read from a checkout row, never its path",
+			"Only the identity is read from those rows, never the path"},
+		{"the task text's bound, and why it is not the CLI's",
+			"at most 16 KiB of valid UTF-8 with no NUL byte"},
+		{"the task never reaches the argv",
+			"The task text goes to the child on stdin and never into the argv"},
+		{"one row is allowed to write to a child",
+			"the one row that gets `'pipe'` on stdin"},
+		{"every other row's stdin, and the type that pins it",
+			"the console never writes to a child"},
+		{"the test that holds the other rows",
+			"a test pins `'ignore'` for every other row of the spawn table"},
+		{"the confirmation is a window the main process owns",
+			"a modal window of its own"},
+		{"and it is not a native message box",
+			"`dialog.showMessageBox` is not used"},
+		{"the operator reads the whole task rather than a summary",
+			"the whole task text, displayed in full and scrollable"},
+		{"the fields the window shows, and nothing else",
+			"the installation, the repository, the ref, the title, the plan task, the run id"},
+		{"the argv the window shows",
+			"the exact argv field by field"},
+		{"cancelling is what a stray Enter does",
+			"**Cancel is the default button**"},
+		{"the renderer cannot reach the window",
+			"cannot answer for the operator"},
+		{"a run is cut from a branch the installation records",
+			"the installation's **recorded base branch**"},
+		{"which is not a field the document carries yet",
+			"The requirement above holds when it lands"},
+		{"a repository with no record is refused, and the refusal is actionable",
+			"names the repository and what to set"},
+		{"the launch runs from the app's own directory, not the operator's checkout",
+			"always the app's own private, empty directory, never the operator's checkout"},
+		{"which is what keeps the checkout's branch out of the ref",
+			"the branch the working directory's checkout is on"},
+		{"format characters are refused wherever a value is read",
+			"Unicode format characters (`Cf`), the bidi overrides"},
+		{"the task is never shown raw",
+			"strips the format characters out of the displayed text"},
+		{"a launch is not a read, so it has its own deadline",
+			"`LAUNCH_TIMEOUT_MS` is not `READ_TIMEOUT_MS`"},
+		{"how a launch is stopped",
+			"`SIGTERM`, then `SIGKILL` after `SHUTDOWN_GRACE_MS`"},
+		{"a killed launch proves nothing and is not retried",
+			"the launch's outcome is unknown"},
+		{"a repeat of a launch in flight joins it rather than racing it",
+			"is attached to the launch in flight"},
+		{"a repeat of an answered launch is answered from the record",
+			"answered from the app's own record"},
+		{"the rate that keeps a click from becoming a queue of windows",
+			"windows are opened at most three times a minute per installation"},
+		{"the limit across the whole app",
+			"at most two launches in flight across the whole app"},
+		{"the cool-down the owner accepted",
+			"a ten-second cool-down"},
+		{"the WSL route's named refusal",
+			"runs inside a WSL distribution and cannot carry a title"},
+		{"and the task still arrives there",
+			"on the same stdin the cell pipe carries"},
+		{"the spawn log records the launch and still no task text",
+			"records no task text"},
+		{"the surfaces the operator reaches it from",
+			"the Runs screen is the only place"},
+	} {
+		if !strings.Contains(rule, want.text) {
+			t.Errorf("%s §5.1 rule 11 no longer says %s:\n  want %q", path, want.why, want.text)
+		}
+	}
+
+	if strings.Contains(rule, "64 KiB") {
+		t.Errorf("%s §5.1 rule 11 still bounds the task at 64 KiB: the operator confirms by reading it, so the bound is 16 KiB", path)
+	}
+
+	if !strings.Contains(doc, "**The dashboard's surface is twenty-three operations**") {
+		t.Errorf("%s no longer says the surface is twenty-three operations: rule 5's count moves with the code, in one commit, in V2.5.1a — not in this design", path)
+	}
+
+	var neverRows [][]string
+	for _, cells := range docTableAfter(t, path, doc, "| Never (the \"nothing else\" table) |") {
+		neverRows = append(neverRows, cells)
+	}
+	if len(neverRows) == 0 {
+		t.Fatalf("%s: no row follows the never table's header; update this test's marker", path)
+	}
+	// The row's first token is the form it refuses: a row that still LEADS with a
+	// bare `run` is the old row, and it reads as a permission for the one argv
+	// rule 11 writes. A `run` inside the row's prose (the moved row names the
+	// argv it excludes) is not what this checks.
+	sawRetry := false
+	for _, cells := range neverRows {
+		switch tok := firstBacktick(cells[0]); tok {
+		case "run --retry":
+			sawRetry = true
+		case "run":
+			t.Errorf("%s's never table still leads a row with a bare `run`: rule 11 moved that row to `run --retry` and every other `run` argv", path)
+		}
+	}
+	if !sawRetry {
+		t.Errorf("%s's never table does not start a row at `run --retry`: rule 11 moved the `run` row, and this is the row it moved to", path)
+	}
+
+	for _, cells := range docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |") {
+		argv := firstBacktick(cells[0])
+		if argv == "run" || strings.HasPrefix(argv, "run ") {
+			t.Errorf("%s's allow-list table carries %q: it gains rule 11's row in one commit with the operation, in V2.5.1a, and not before", path, argv)
+		}
+	}
+}
