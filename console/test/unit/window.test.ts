@@ -1317,8 +1317,11 @@ describe('the refusal document in the bundle', () => {
   it('is a real file in the tree the handler serves, checked against the working tree', () => {
     // `bundleRoot` is this checkout's `src/renderer`, and the read above would
     // have thrown had the document not been added to the bundle at all.
-    expect(refusalHTML.trimStart().startsWith('<!doctype html>')).toBe(true)
-    expect(indexHTML.trimStart().startsWith('<!doctype html>')).toBe(true)
+    // The licence notice every tracked file starts with is an HTML comment here,
+    // so the doctype follows it.
+    const doctypeAfterNotice = /^\s*(<!--[\s\S]*?-->\s*)*<!doctype html>/i
+    expect(doctypeAfterNotice.test(refusalHTML)).toBe(true)
+    expect(doctypeAfterNotice.test(indexHTML)).toBe(true)
   })
 })
 
