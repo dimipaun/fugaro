@@ -149,14 +149,69 @@ func periodDim(key string) (report.Dim, bool) {
 	return "", false
 }
 
-// window is the newest n summaries of a series, and whether the series holds
-// that many at all: a rule that needs four weeks of history does not fire on
-// three of them (G5's absent, never zero).
+// window is the newest n summaries of a series, and whether they are n
+// periods running: a rule reads the last four weeks, not the last four weeks
+// a repository happens to have committed, so a gap in the series means the
+// rule does not fire (G5's absent, never zero). It is the same for a series
+// that holds fewer than n of them.
 func window(series []Summary, n int) ([]Summary, bool) {
 	if len(series) < n {
 		return nil, false
 	}
-	return series[len(series)-n:], true
+	recent := series[len(series)-n:]
+	for i := 1; i < len(recent); i++ {
+		if !consecutive(recent[i-1].Period, recent[i].Period) {
+			return nil, false
+		}
+	}
+	return recent, true
+}
+
+// consecutive is whether b is the period right after a: the next week of the
+// year, across its end, or the next month, across December.
+func consecutive(a, b string) bool {
+	switch {
+	case weekKeyRE.MatchString(a) && weekKeyRE.MatchString(b):
+		ya, wa := weekOf(a)
+		yb, wb := weekOf(b)
+		return yb == ya && wb == wa+1 || yb == ya+1 && wa == isoWeeks(ya) && wb == 1
+	case monthKeyRE.MatchString(a) && monthKeyRE.MatchString(b):
+		ya, ma := monthOf(a)
+		yb, mb := monthOf(b)
+		return yb == ya && mb == ma+1 || yb == ya+1 && ma == 12 && mb == 1
+	}
+	return false
+}
+
+// weekOf is an ISO week key's year and week. The key is one weekKeyRE
+// matched, so both parse.
+func weekOf(key string) (year, week int) {
+	year, _ = strconv.Atoi(key[:4])
+	week, _ = strconv.Atoi(key[6:])
+	return year, week
+}
+
+// monthOf is a month key's year and month.
+func monthOf(key string) (year, month int) {
+	year, _ = strconv.Atoi(key[:4])
+	month, _ = strconv.Atoi(key[5:])
+	return year, month
+}
+
+// isoWeeks is how many ISO weeks a year has: 53 when it begins on a Thursday
+// or is a leap year beginning on a Wednesday, 52 otherwise. 2026 is such a
+// year, which is what makes 2026-W53 and 2027-W01 consecutive.
+func isoWeeks(year int) int {
+	jan1 := time.Date(year, time.January, 1, 0, 0, 0, 0, time.UTC)
+	if jan1.Weekday() == time.Thursday || (jan1.Weekday() == time.Wednesday && isLeap(year)) {
+		return 53
+	}
+	return 52
+}
+
+// isLeap is whether year is a leap year in the Gregorian calendar.
+func isLeap(year int) bool {
+	return year%4 == 0 && (year%100 != 0 || year%400 == 0)
 }
 
 // flagRecurs is D326's first rule.
@@ -369,32 +424,32 @@ func ReadSummaries(reports [][]byte) ([]Summary, []string) {
 // median is the median of the months' medians, the only per-recipe figure a
 // summary carries.
 //
-// months are one year's, in any order, and the year is the newest of them: a
-// month of another year is not one of the year's and contributes nothing, so
-// a caller handing every committed summary gets that year's figures rather
-// than twelve years in one. A summary whose key is not a month key this
-// package writes, whose figures are not ones this package writes, or which
-// repeats a month another one already named, is likewise not one of the
+// months are one year's, in any order, and year is which year is being rolled
+// up: the caller knows it -- a report is of a period, not of whatever month
+// happens to sort newest in the folder -- so a committed month of another
+// year, ahead of the report's own period or behind it, is not one of the
+// year's months and contributes nothing. A summary whose key is not a month
+// key this package writes, whose figures are not ones this package writes, or
+// which repeats a month another one already named, is likewise not one of the
 // year's months (G1, G5).
-func RollUp(months []Summary) Summary {
+func RollUp(year string, months []Summary) Summary {
+	if !yearKeyRE.MatchString(year) {
+		return Summary{}
+	}
 	kept := make([]Summary, 0, len(months))
 	for _, m := range byPeriod(months)[report.ByMonth] {
-		if m.figuresOK() {
+		if m.Period[:4] == year && m.figuresOK() {
 			kept = append(kept, m)
 		}
 	}
 	if len(kept) == 0 {
 		return Summary{}
 	}
-	year := kept[len(kept)-1].Period[:4]
 	s := Summary{Period: year, Start: year + "-01-01", End: year + "-12-31"}
 
 	var billed, notional, review budget.Micros
 	medians := map[string][]budget.Micros{}
 	for _, m := range kept {
-		if m.Period[:4] != year {
-			continue
-		}
 		s.Runs += m.Runs
 		s.Shown += m.Shown
 		s.Flagged += m.Flagged
@@ -438,12 +493,12 @@ func (s Summary) check() error {
 	if !ok {
 		return errors.New("the period key is not one this report writes")
 	}
-	key, start, err := report.PeriodKey(dim, s.Start)
-	if err != nil || key != s.Period || start != s.Start {
-		return errors.New("the period does not begin at its own first day")
-	}
-	if _, err := time.Parse("2006-01-02", s.End); err != nil || s.End < s.Start {
-		return errors.New("the period's last day is not a date of the period")
+	// The period's own last day is part of its shape, not a second date to
+	// compare: a month that says it ends on the 30th is a block this report
+	// did not write, and one a reader would take for a shorter month.
+	p, err := NewPeriod(dim, s.Start)
+	if err != nil || p.Key != s.Period || p.Start != s.Start || p.End != s.End {
+		return errors.New("the period is not one this report writes, from its first day to its last")
 	}
 	if !s.figuresOK() {
 		return errors.New("a figure or a count is not one this report writes")
