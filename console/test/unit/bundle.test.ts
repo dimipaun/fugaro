@@ -465,6 +465,7 @@ describe('the bundle in a document', () => {
       'live',
       'spend',
       'projects',
+      'coordinator',
     ])
     // And the panel holds the Live screen's own refusal rather than a dashboard
     // of zeros: this bridge carries the two handshake methods and **no read at

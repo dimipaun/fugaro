@@ -496,15 +496,18 @@ test.describe('the renderer entry, in the real window', () => {
       )
       expect(typeof snapshot.receivedAt, 'the snapshot carries no arrival stamp').toBe('string')
 
-      // And the navigation offers Live alone: Spend is the withheld view, and
-      // Projects is the `caps` view, which this mode withholds with it. A Spend
-      // entry here would be a door to a screen whose read the gate refuses.
+      // And the navigation offers Live and Coordinator: Spend is the withheld
+      // view, and Projects is the `caps` view, which this mode withholds with
+      // it. A Spend entry here would be a door to a screen whose read the gate
+      // refuses. Coordinator is not withheld: its read is repository state and
+      // not money, so it is reachable in this mode like `plan.status`'s screen
+      // (design section 5.1 rule 5, `VIEWS` in `src/renderer/entry.ts`).
       const nav = await launched.page.evaluate(() =>
         [...document.querySelectorAll('nav.console-views button.console-view')].map((button) =>
           button.getAttribute('data-view'),
         ),
       )
-      expect(nav).toEqual(['live'])
+      expect(nav).toEqual(['live', 'coordinator'])
       // And nothing behind the withheld views was read: the spawn log holds the
       // handshake's `version` and the live `watch`, and no `report`.
       const reducedLog = launched.records()
@@ -691,6 +694,7 @@ test.describe('the renderer entry, in the real window', () => {
         'Live',
         'Spend',
         'Projects',
+        'Coordinator',
       ])
       await expect(
         launched.page.locator('nav.console-views button.console-view[aria-current="true"]'),

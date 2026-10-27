@@ -147,7 +147,7 @@ export interface LiveFeed {
 }
 
 /**
- * FugaroSource is the interface every screen talks to. The thirteen reads are the
+ * FugaroSource is the interface every screen talks to. The fourteen reads are the
  * CLI documents of design section 2.1 that the dashboard draws
  * (`docs/json-contract.md` section 2), one method each, named after the thing on
  * screen rather than after the CLI verb -- so a screen that says `listRuns` does
@@ -201,6 +201,26 @@ export interface FugaroSource {
    * rather than read from wherever the console happens to be running.
    */
   planStatus(args: ValidatedArguments): Promise<Snapshot>
+  /**
+   * coordinatorStatus is the project view: every repository the installation's
+   * local config lists, drawn from the view the coordinator's sweep last stored
+   * (`coordinator status --from-store --all --json`, Bitbucket credentials
+   * T1.2, D364).
+   *
+   * It is the one read here that asks nothing of the host: the stored view is
+   * the caller's own database read (`roles/firebasedatabase.viewer`), so there
+   * is no App key, no Bitbucket credential and no host call behind it. A
+   * repository the coordinator has never reconciled answers the runs half with
+   * `"stored": false` rather than refusing -- which is the state this console
+   * draws as "the runs alone", and the reason the read is safe on an
+   * installation whose coordinator was never turned on.
+   *
+   * Its two flags (`--from-store`, `--all`) are words of the spawn row and never
+   * arguments: an implementation must not let a caller turn either off, since
+   * the question is the *project's* whole repository set and a read without
+   * `--from-store` would be a host call this console has no credential for.
+   */
+  coordinatorStatus(args: ValidatedArguments): Promise<Snapshot>
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot>
   readRunLogs(args: ValidatedArguments): Promise<Snapshot>
   runLogLink(args: ValidatedArguments): Promise<TextSnapshot>
@@ -370,6 +390,7 @@ export function handlersFor(
     'runs.list': (args) => source.listRuns(args),
     'runs.stats': (args) => source.statsRuns(args),
     'plan.status': (args) => source.planStatus(args),
+    'coordinator.status': (args) => source.coordinatorStatus(args),
     'run.diagnose': (args) => source.diagnoseRun(args),
     'run.logs': (args) => source.readRunLogs(args),
     'run.logLink': async (args) => (await source.runLogLink(args)).text,
