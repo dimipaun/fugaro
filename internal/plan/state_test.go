@@ -1,6 +1,8 @@
 package plan
 
 import (
+	"encoding/json"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -404,6 +406,55 @@ func TestCriticalAndLevels(t *testing.T) {
 	}
 }
 
+// TestStateNodeCarriesNeeds: a node carries the ids it needs, taken from the
+// plan's own edges, sorted by id and de-duplicated — and it carries them
+// whether or not the task they name is in this read. The edge belongs to the
+// graph, and a read that collapsed a closed task into its release's counter has
+// not removed the edge that names it.
+func TestStateNodeCarriesNeeds(t *testing.T) {
+	doc := joinDoc()
+	// C needs two tasks, written out of order and twice over: the sort and the
+	// de-duplication are both load-bearing, and a read that passed the edges
+	// through as they were written would fail here.
+	doc.Edges = []Edge{
+		{Task: "C", Needs: "B", Reason: "C reads what B writes"},
+		{Task: "C", Needs: "A", Reason: "C reads what A writes"},
+		{Task: "C", Needs: "A", Reason: "C reads what A writes"},
+		{Task: "B", Needs: "A", Reason: "B reads what A writes"},
+	}
+	merged := runFact("r1", "100000", "the-plan/A", statusSucceeded)
+	merged.Outcome = outcomeReady
+	merge := mergedPRs([]string{merged.PRURL}, nil)
+
+	all := statePlan(t, doc, []RunFact{merged}, StateOptions{All: true, Merge: merge})
+	if got := strings.Join(nodeOf(t, all, "C").Needs, ","); got != "A,B" {
+		t.Errorf("C needs %q, want %q: sorted by id and de-duplicated", got, "A,B")
+	}
+	if got := nodeOf(t, all, "A").Needs; len(got) != 0 {
+		t.Errorf("A needs %v, want none", got)
+	}
+	// Absent on the wire and never null: a task that needs nothing writes no
+	// key at all, which is the shape the console's decoder reads as `[]`.
+	encoded, err := json.Marshal(nodeOf(t, all, "A"))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(encoded), "needs") {
+		t.Errorf("a node that needs nothing marshals as %s, want no needs key", encoded)
+	}
+
+	// Without --all the merged task A is not listed, and B still names it.
+	open := statePlan(t, doc, []RunFact{merged}, StateOptions{Merge: merge})
+	for _, n := range open.Nodes {
+		if n.ID == "A" {
+			t.Fatalf("A is closed and --all was not asked for, so it is not listed: %+v", open.Nodes)
+		}
+	}
+	if got := strings.Join(nodeOf(t, open, "B").Needs, ","); got != "A" {
+		t.Errorf("B needs %q without --all, want %q: the edge is the graph's, not this read's", got, "A")
+	}
+}
+
 // TestReleaseNamesAndFinished: a release box's name comes from the catalogue
 // and is spent one minor at a time; finished says whether the stream has
 // already shipped the release the box is for.
@@ -531,7 +582,10 @@ func TestPlanIDScopesTheJoinedRuns(t *testing.T) {
 		t.Fatalf("nodes = %+v, want %+v", scoped.Nodes, all.Nodes)
 	}
 	for i := range all.Nodes {
-		if all.Nodes[i] != scoped.Nodes[i] {
+		// A node carries a list of ids now, so the two are compared by value
+		// rather than with `!=`: a node type with a slice in it is no longer a
+		// comparable one, and the claim here is equality either way.
+		if !reflect.DeepEqual(all.Nodes[i], scoped.Nodes[i]) {
 			t.Errorf("node %s = %+v over the subset, %+v over every run", all.Nodes[i].ID, scoped.Nodes[i], all.Nodes[i])
 		}
 	}
