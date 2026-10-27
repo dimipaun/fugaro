@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/budget"
 )
 
 // --json is the machine view and stays unfiltered (design generic-tool
@@ -88,6 +90,78 @@ func TestWatchJSONPlanTask(t *testing.T) {
 	if strings.Count(string(data), `"plan_task"`) != 3 {
 		t.Fatalf("plan_task keys = %d, want 3 (the two joined rows and the ready row):\n%s",
 			strings.Count(string(data), `"plan_task"`), data)
+	}
+}
+
+// watch --json carries a live run's draft pull request number (task GV2.5 of
+// the console dependency graph plan): a draft PR opens early in a run, so the
+// row the feed draws while the run is still working carries the number, and the
+// console's graph screen does not have to wait for the run to finish (or for a
+// `plan status` refresh) to show it.
+//
+// It is the number the run's own record holds (runview.Row.RecordPR, the value
+// `runs ls --json` prints as record_pr): the run writes the registry entry's
+// prUrl from that same record the moment its draft PR opens
+// (internal/runner/prflow.go's notePR, and checkPullRequest for a follow-up),
+// and the entry is what a live row is built from — so no new read is made for
+// it. The number comes out of that URL through this package's own anchored
+// GitHub pattern (ghPRURL, internal/watch/prstate.go), the reading MergeNow and
+// PRRepo do before they build gh's argv, where the number is already an int
+// (prRef.number): the URL is structure here, not text to scrape.
+//
+// Mutation (leaving the field off the live row's JSONRun): the first assertion
+// fails, the document carrying no pr_number at all.
+func TestLiveRunCarriesDraftPR(t *testing.T) {
+	v := View{Now: t0, Day: "2026-10-03", Mode: "enforce", Conn: Connection{Kind: ConnLive},
+		Repos: []RepoBlock{{Slug: "acme__app", Name: "acme/app", Runs: []RunRow{
+			runRow("acme__app", "r-draft", budget.AgentEntry{Repo: "acme/app", Stage: "implement",
+				PRURL: "https://github.com/acme/app/pull/412"}, t0),
+		}}}}
+	doc := BuildJSON("aurora", v)
+	if len(doc.Runs) != 1 {
+		t.Fatalf("runs = %+v, want the one live row", doc.Runs)
+	}
+	if doc.Runs[0].PRNumber != 412 {
+		t.Fatalf("live pr_number = %d, want the registry prUrl's 412", doc.Runs[0].PRNumber)
+	}
+	data, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"pr_number":412`) {
+		t.Fatalf("the live document carries no pr_number:\n%s", data)
+	}
+}
+
+// TestLiveRunWithoutPRHasNoField: a live run that has recorded no pull request
+// carries no `pr_number` key at all — neither a run that has opened none nor
+// one whose registry prUrl is not a GitHub pull request URL, which this
+// package's pattern reads as no number rather than as a guess. Absent means
+// "none recorded", never `0`: a repository numbers its pull requests from 1, so
+// a zero would be a number no run can have, and the console reads the two
+// differently (`optionalInt` maps absent to `null`).
+func TestLiveRunWithoutPRHasNoField(t *testing.T) {
+	v := View{Now: t0, Day: "2026-10-03", Mode: "enforce", Conn: Connection{Kind: ConnLive},
+		Repos: []RepoBlock{{Slug: "acme__app", Name: "acme/app", Runs: []RunRow{
+			runRow("acme__app", "r-none", budget.AgentEntry{Repo: "acme/app", Stage: "implement"}, t0),
+			runRow("acme__app", "r-bitbucket", budget.AgentEntry{Repo: "acme/app", Stage: "implement",
+				PRURL: "https://bitbucket.org/acme/app/pull-requests/9"}, t0),
+		}}}}
+	doc := BuildJSON("aurora", v)
+	if len(doc.Runs) != 2 {
+		t.Fatalf("runs = %+v, want both live rows", doc.Runs)
+	}
+	for _, r := range doc.Runs {
+		if r.PRNumber != 0 {
+			t.Fatalf("%s pr_number = %d, want none", r.Run, r.PRNumber)
+		}
+	}
+	data, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "pr_number") {
+		t.Fatalf("a live run with no pull request carries the key:\n%s", data)
 	}
 }
 

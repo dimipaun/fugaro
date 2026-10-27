@@ -585,6 +585,13 @@ export interface RunView {
    * (`shared/launcher.ts`), so the document's own text stays whole for the Run
    * screen and for a reader of the model. */
   readonly launchedBy: string
+  /** prNumber is the pull request number the run has recorded, once it has one
+   * (`pr_number`, GV2.5): a draft PR opens early in a run, so a live row
+   * carries the number before the run finishes. `null` is "the run has recorded
+   * no pull request", which is not the same fact as `0` -- a repository numbers
+   * its pull requests from 1. It is never a link: the console builds none from
+   * a feed value (design section 5.1 rule 2). */
+  readonly prNumber: number | null
 }
 
 /**
@@ -820,6 +827,16 @@ export const REPO_KEYS = [
  * **label**: an id the plan's own document spells a node with, never a person
  * and never free prose.
  *
+ * **`pr_number` arrived with the same plan's GV2.5** (a live run's draft pull
+ * request number, the run's own `record_pr`), between `plan_task` and
+ * `credential` in `JSONRun`. Unlike `plan_task` it **is** read: the graph screen
+ * joins a run to a node and shows that node's pull request, and this is the
+ * number the node already carries once `plan status` has seen it, a refresh
+ * earlier. It is decoded with `optionalInt`, so absent is `null` -- "the run has
+ * recorded no pull request" -- and not `0`, which no repository numbering from 1
+ * ever issues. A number, never a link: the console builds none from a feed value
+ * (design section 5.1 rule 2).
+ *
  * Exported so `schema.test.ts` can pin it against the struct, as it pins
  * `RECORD_KEYS` and `REPO_KEYS`. */
 export const RUN_KEYS = [
@@ -849,6 +866,7 @@ export const RUN_KEYS = [
   'account',
   'launched_by',
   'plan_task',
+  'pr_number',
   'credential',
   'waiting_until',
 ]
@@ -1102,6 +1120,10 @@ function runAt(raw: unknown, index: number, where: string): RunView {
     workflow: optionalText(run, 'workflow', field, where),
     requestedBy: optionalText(run, 'requested_by', field, where),
     launchedBy: optionalText(run, 'launched_by', field, where),
+    // `pr_number` is `omitempty` on the wire: absent means the run has recorded
+    // no pull request, and `null` here is that fact rather than a value nobody
+    // filled in (`optionalInt`, as on a finished run).
+    prNumber: optionalInt(run, 'pr_number'),
   }
 }
 

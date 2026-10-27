@@ -447,6 +447,11 @@ const FULL_LIVE_RUN: JSONDoc = Object.freeze({
   // its own `launch.json` recorded it. `JSONRun` and `JSONFinished` carry it;
   // the Live screen draws no column for it yet (GV2.3's graph is the reader).
   plan_task: 'setup-wizard/W1.3',
+  // GV2.5: the pull request number the run has recorded, once it has one — a
+  // draft PR opens early in a run, so this row carries it while the run is
+  // still working. It is read, where `plan_task` beside it is only accepted
+  // and not yet drawn.
+  pr_number: 411,
   // 0.10.0 (credentials-service C1.21): the name of the credential the run's
   // cascade is spending on -- a name, never a value -- and the instant a run
   // held up for one expects to resume at. Both are `JSONRun`'s alone: a
@@ -511,6 +516,10 @@ describe('both document shapes decode', () => {
     // `queued_note` is `omitempty`: absent is the normal case, and it reads as
     // "the bucket was read", which is not the same as an empty sentence.
     expect(value.queuedNote).toBeNull()
+    // `pr_number` is `omitempty` on a live run too, and this recording predates
+    // the key (GV2.5): absent reads as "no pull request recorded", never as the
+    // `0` no repository numbering from 1 ever issues.
+    expect(value.runs[0]?.prNumber).toBeNull()
   })
 
   it('reads a queued run, whose round the CLI writes as a dash', () => {
@@ -611,6 +620,9 @@ describe('both document shapes decode', () => {
     // `launched_by` is decoded now, whole (owner request 2026-10-18): the
     // Started-by column's short form is the screen's cut, not the model's.
     expect(result.value.runs[0]?.launchedBy).toBe('redacted@example.invalid')
+    // GV2.5's `pr_number` is read on a live row as it is on a finished one: the
+    // number, where the key is absent it is `null` (the record above).
+    expect(result.value.runs[0]?.prNumber).toBe(411)
     expect(result.value.finished[0]?.run).toBe('20261015-113000-aa02')
     expect(result.value.finished[0]?.prNumber).toBe(411)
   })
