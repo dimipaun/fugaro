@@ -2789,8 +2789,8 @@ a scratch copy of the staged file and turned the named test red:
 
 ## The e2e goldens: how to re-record them, and what is committed today
 
-The eight golden screenshots are committed under `test/e2e/__screenshots__/`, one
-per screen per theme per platform (`playwright.config.ts`'s
+Six screens take goldens, each writing one file per screen per theme per platform
+under `test/e2e/__screenshots__/` (`playwright.config.ts`'s
 `snapshotPathTemplate` adds `-{platform}`):
 
 | Screen | Spec | Files on one platform |
@@ -2799,6 +2799,8 @@ per screen per theme per platform (`playwright.config.ts`'s
 | Spend | `test/e2e/spend.spec.ts` | `spend/light-<platform>.png`, `spend/dark-<platform>.png` |
 | Projects | `test/e2e/projects.spec.ts` | `projects/light-<platform>.png`, `projects/dark-<platform>.png` |
 | Run detail | `test/e2e/run.spec.ts` | `run/light-<platform>.png`, `run/dark-<platform>.png` |
+| Graph | `test/e2e/graph.spec.ts` | `graph/light-<platform>.png`, `graph/dark-<platform>.png` |
+| Coordinator | `test/e2e/coordinator.spec.ts` | `coordinator/light-<platform>.png`, `coordinator/dark-<platform>.png` |
 
 `<platform>` is `process.platform` — `darwin` or `linux`. macOS and Linux draw
 different pixels, so **each platform's set is recorded on that platform**, and
@@ -2810,6 +2812,8 @@ cd console && npm run build && npx playwright test live.spec.ts --update-snapsho
 cd console && npm run build && npx playwright test spend.spec.ts --update-snapshots
 cd console && npm run build && npx playwright test projects.spec.ts --update-snapshots
 cd console && npm run build && npx playwright test run.spec.ts --update-snapshots
+cd console && npm run build && npx playwright test graph.spec.ts --update-snapshots
+cd console && npm run build && npx playwright test coordinator.spec.ts --update-snapshots
 ```
 
 On Linux, Electron needs a display, so each line takes `xvfb-run --auto-servernum`
@@ -2821,7 +2825,7 @@ overrides `updateSnapshots: 'none'` for that one run. Add `--workers=1` for a
 recording run: `fullyParallel: false` keeps one file's tests in one worker, and
 one worker keeps the whole run in one.
 
-`test/support/goldens.ts` is what the four specs share, and it is why a golden
+`test/support/goldens.ts` is what the six specs share, and it is why a golden
 fails legibly rather than with a bare pixel diff:
 
 - **`expectGolden`** takes every recording. On a **comparison** run,
@@ -2850,7 +2854,9 @@ fails legibly rather than with a bare pixel diff:
   theme travels as a `data-theme` attribute the renderer stamps.)
 
 **What is committed today is darwin only, and it is superseded.** The eight
-`*-darwin.png` files are the recording of **2026-10-18**: macOS 26.7 (Darwin
+`*-darwin.png` files — the Live, Spend, Projects and Run pairs; the Graph and the
+Coordinator have **no** baseline on either platform, their cases having landed
+after this recording — are the recording of **2026-10-18**: macOS 26.7 (Darwin
 25.6.0, x64), Node 22.23.3, `@playwright/test` 1.64.1, Electron 44.7.2 (the
 lockfile's versions), device scale factor 1 as the specs launch the window (the
 PNGs are 1164 px wide), at main `82ba600d`, recorded with `npm run build` then
@@ -2871,10 +2877,13 @@ styling, and that is what makes them superseded: the theme landed after them
 (Tasks 6.1-6.5; the newest file in
 `src/renderer/theme/`, `base.css`, was last touched by `6d107527` on 2026-10-19),
 which is why they are superseded: re-record them on the Mac with the command above
-and commit the result. Until that is done the four golden tests fail on darwin
-with that command in the message rather than with a bare pixel diff — which is
-the intended state, and not a regression to chase. **Linux baselines are not
-committed** and have never been recorded; they need a Linux machine with a
+and commit the result. Until that is done the four superseded screens' golden
+tests fail on darwin with that command in the message rather than with a bare
+pixel diff — which is the intended state, and not a regression to chase. The
+Graph's and the Coordinator's four golden cases have nothing to compare against
+anywhere, so they fail with that same command on darwin and with its `xvfb-run`
+form on Linux until the owner records them in the release PR. **Linux baselines
+are not committed** and have never been recorded; they need a Linux machine with a
 display (`xvfb-run`).
 
 **CI does not compare any golden today.** `.github/workflows/console-tests.yml`
