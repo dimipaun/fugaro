@@ -19,10 +19,12 @@ import (
 
 	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -1003,24 +1005,68 @@ var updateDiagnoseGolden = flag.Bool("update-diagnose", false, "rewrite testdata
 
 // toleratedTwo is the block T4.1's fixtures store: two findings a Pro run let
 // through, in the reviewer's order, each carrying the score the mode's table
-// read. The labels are the ones the score derives (D2), and the fixture is a
-// real record's shape rather than a stricter one.
+// read. It is a record a run can really have written — the two entries are two
+// of scoredReview's own findings, with their score and their title, and Pro
+// tolerates both: the nit is under its floor of 4, and the low one is the
+// "extremely rare, high-effort" escape its own row names (likelihood 1 with a
+// fix cost of 4). assertFixtureIsStorable reads it back as such, so a later
+// edit to a score, a label or a mode cannot leave a fixture no run can store.
 func toleratedTwo() *runstore.ToleratedFindings {
 	return &runstore.ToleratedFindings{Total: 2, Findings: []runstore.ToleratedFinding{
 		{Title: "the retry ceiling differs by one when a job is requeued twice", Label: rigor.Low, Mode: rigor.Pro,
-			Likelihood: 4, Impact: 2, FixCost: 3, Class: rigor.Maintainability},
-		{Title: "the retry section still describes the legacy table", Label: rigor.Nit, Mode: rigor.Pro,
+			Likelihood: 1, Impact: 4, FixCost: 4, Class: rigor.Correctness},
+		{Title: "the retry table test does not cover a requeue after a drain", Label: rigor.Nit, Mode: rigor.Pro,
 			Likelihood: 2, Impact: 1, FixCost: 1, Class: rigor.Cosmetic},
 	}}
 }
 
 // scoredReview is review-2's transcript of the tolerated fixtures: its first
-// finding carries rigor Slice 2's four optional properties, its second is the
-// shape every finding had before them, so one diagnosis shows both.
+// two findings are the tolerated ones, scored with rigor Slice 2's four
+// optional properties, and its third is the shape every finding had before
+// them — unscored, so it blocks in every mode (D4) and is in no tolerated
+// block. One diagnosis therefore shows both shapes and both outcomes.
 const scoredReview = `{"type":"result","subtype":"success","result":"x","structured_output":{"verdict":"changes","findings":[` +
-	`{"severity":"high","likelihood":4,"impact":5,"fix_cost":2,"class":"correctness",` +
-	`"file":"internal/queue/retry.go","summary":"the backoff ceiling differs by one when a job is requeued twice"},` +
-	`{"severity":"minor","file":"docs/queue.md","summary":"the retry section still describes the legacy table"}]}}`
+	`{"severity":"minor","likelihood":1,"impact":4,"fix_cost":4,"class":"correctness",` +
+	`"file":"internal/queue/retry.go","summary":"the retry ceiling differs by one when a job is requeued twice"},` +
+	`{"severity":"nit","likelihood":2,"impact":1,"fix_cost":1,"class":"cosmetic",` +
+	`"file":"internal/queue/retry_test.go","summary":"the retry table test does not cover a requeue after a drain"},` +
+	`{"severity":"high","file":"docs/queue.md","summary":"the retry section still describes the legacy table"}]}}`
+
+// assertFixtureIsStorable reads tolerated back the way the runner writes it:
+// runstore.NewTolerated keeps an entry only when its score is readable and
+// derives its label from that score (D2), and the runner files an entry only
+// for a finding of the last review the mode tolerates, with the finding's own
+// score and title (T3.4). An entry whose label its score does not derive, or
+// whose mode blocks it, or whose score and title no finding of review carries,
+// is a record no run can have written — and a reviewer reading the fixture
+// should not have to work that out.
+func assertFixtureIsStorable(t *testing.T, tolerated *runstore.ToleratedFindings, review string) {
+	t.Helper()
+	res, found, err := agent.ParseStream(strings.NewReader(review+"\n"), nil)
+	if err != nil || !found {
+		t.Fatalf("the fixture's transcript is not one diagnose can read: %v, found %v", err, found)
+	}
+	findings := runner.ParseVerdict(res).Findings
+	for i, e := range tolerated.Findings {
+		s := rigor.Score{Likelihood: e.Likelihood, Impact: e.Impact, FixCost: e.FixCost, Class: e.Class}
+		if !s.Scored() {
+			t.Errorf("tolerated.findings[%d] carries no readable score", i)
+			continue
+		}
+		if got := s.Label(); e.Label != got {
+			t.Errorf("tolerated.findings[%d] is labelled %s, which its score derives as %s", i, e.Label, got)
+		}
+		if rigor.Blocks(e.Mode, s) {
+			t.Errorf("tolerated.findings[%d] is filed under %s, which blocks that score", i, e.Mode)
+		}
+		if !slices.ContainsFunc(findings, func(f runner.Finding) bool {
+			return f.Likelihood == e.Likelihood && f.Impact == e.Impact && f.FixCost == e.FixCost &&
+				rigor.Class(f.Class) == e.Class && f.Summary == e.Title
+		}) {
+			t.Errorf("tolerated.findings[%d] is not one of the review's findings, score and title alike: %+v", i, e)
+		}
+	}
+}
 
 // unscoredReview is the same round as a transcript written before the score
 // existed: neither finding carries one.
@@ -1059,7 +1105,9 @@ func seedToleratedRun(t *testing.T, f *cloudFixture, id string, tolerated *runst
 func TestDiagnoseToleratedGolden(t *testing.T) {
 	f := newCloudFixture(t)
 	const id = "20260101-000000-abcd"
-	seedToleratedRun(t, f, id, toleratedTwo(), scoredReview)
+	tol := toleratedTwo()
+	assertFixtureIsStorable(t, tol, scoredReview)
+	seedToleratedRun(t, f, id, tol, scoredReview)
 	human, errOut, err := execute(t, "diagnose", id)
 	if err != nil {
 		t.Fatalf("diagnose: %v\n%s", err, errOut)
@@ -1124,31 +1172,37 @@ func TestDiagnoseToleratedJSONFields(t *testing.T) {
 		{"title", first["title"], "the retry ceiling differs by one when a job is requeued twice"},
 		{"label", first["label"], "low"},
 		{"mode", first["mode"], "pro"},
-		{"likelihood", first["likelihood"], float64(4)},
-		{"impact", first["impact"], float64(2)},
-		{"fix_cost", first["fix_cost"], float64(3)},
-		{"class", first["class"], "maintainability"},
+		{"likelihood", first["likelihood"], float64(1)},
+		{"impact", first["impact"], float64(4)},
+		{"fix_cost", first["fix_cost"], float64(4)},
+		{"class", first["class"], "correctness"},
 	} {
 		if want.got != want.want {
 			t.Errorf("tolerated.findings[0].%s = %v, want %v", want.key, want.got, want.want)
 		}
 	}
-	// The last review's own findings: the scored one carries the four
-	// properties beside the three it always had, the unscored one only those.
+	// The last review's own findings: the two the mode tolerated carry the
+	// four properties beside the three every finding has, and the third — the
+	// one the reviewer left unscored — only those three.
 	findings, _ := doc["findings"].([]any)
-	if len(findings) != 2 {
-		t.Fatalf("findings = %v, want two", doc["findings"])
+	if len(findings) != 3 {
+		t.Fatalf("findings = %v, want three", doc["findings"])
 	}
-	scored, _ := findings[0].(map[string]any)
-	if got := keysOfDoc(scored); !slices.Equal(got, []string{"class", "file", "fix_cost", "impact", "likelihood", "severity", "summary"}) {
-		t.Errorf("a scored finding's keys = %v", got)
-	}
-	for k, want := range map[string]any{"likelihood": float64(4), "impact": float64(5), "fix_cost": float64(2), "class": "correctness"} {
-		if scored[k] != want {
-			t.Errorf("findings[0].%s = %v, want %v", k, scored[k], want)
+	for i, want := range []map[string]any{
+		{"likelihood": float64(1), "impact": float64(4), "fix_cost": float64(4), "class": "correctness"},
+		{"likelihood": float64(2), "impact": float64(1), "fix_cost": float64(1), "class": "cosmetic"},
+	} {
+		scored, _ := findings[i].(map[string]any)
+		if got := keysOfDoc(scored); !slices.Equal(got, []string{"class", "file", "fix_cost", "impact", "likelihood", "severity", "summary"}) {
+			t.Errorf("scored findings[%d]'s keys = %v", i, got)
+		}
+		for k, v := range want {
+			if scored[k] != v {
+				t.Errorf("findings[%d].%s = %v, want %v", i, k, scored[k], v)
+			}
 		}
 	}
-	plain, _ := findings[1].(map[string]any)
+	plain, _ := findings[2].(map[string]any)
 	if got := keysOfDoc(plain); !slices.Equal(got, []string{"file", "severity", "summary"}) {
 		t.Errorf("an unscored finding's keys = %v, want the three it always had", got)
 	}
@@ -1183,10 +1237,14 @@ func TestDiagnoseUnscoredFindingIsUnchanged(t *testing.T) {
 	}
 }
 
-// TestDiagnoseToleratedTruncatedSaysSo: the record keeps the first
-// runstore.MaxTolerated findings and its total is what the mode really
-// tolerated, so a list shorter than its total says so instead of reading as
-// the whole of it (F19).
+// TestDiagnoseToleratedTruncatedSaysSo: the record's total is what the mode
+// really tolerated and its list is what was kept — bounded when it was written
+// and again on read, because the record is an object a hand can edit — so a
+// total above the entries says how many the list does not show instead of
+// reading as the whole of it (F19). The line says nothing about where the rest
+// are: a hand-edited record's entries were never bounded at all, so the claim
+// that they sit in the record would be false for exactly the record this
+// guards against.
 func TestDiagnoseToleratedTruncatedSaysSo(t *testing.T) {
 	f := newCloudFixture(t)
 	const id = "20260101-000030-abcd"
@@ -1197,12 +1255,40 @@ func TestDiagnoseToleratedTruncatedSaysSo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "showing 2 of 137 tolerated findings (the record keeps the first 100)\n"; !strings.Contains(human, want) {
+	if want := "  … and 135 more tolerated findings\n"; !strings.Contains(human, want) {
 		t.Errorf("a truncated tolerated list does not say so (%q missing):\n%s", want, human)
 	}
 	out, _, err := execute(t, "diagnose", "--json", id)
 	if err != nil || !strings.Contains(out, `"total": 137`) {
 		t.Errorf("the document's total is not the record's: %s, %v", out, err)
+	}
+}
+
+// TestDiagnoseToleratedModesAreKeptApart: a run resolves one mode (D9), so a
+// real record's entries name one; the block is grouped by the mode each entry
+// carries rather than printed as one list, so a hand-edited record that names
+// two reads as two rather than as whichever was listed first. Each entry stays
+// under its own mode, in the order the modes appear, and the tail's line
+// closes the last block — the entries are in the reviewer's order and the cut
+// is at the end of that order, so that is the only block it belongs to.
+func TestDiagnoseToleratedModesAreKeptApart(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260101-000050-abcd"
+	tol := toleratedTwo()
+	tol.Findings[1].Mode = rigor.Startup
+	tol.Total = 5
+	seedToleratedRun(t, f, id, tol, scoredReview)
+	human, _, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "\nTolerated by pro\n" +
+		"  [low] (likelihood 1, impact 4, fix cost 4, class correctness) the retry ceiling differs by one when a job is requeued twice\n" +
+		"\nTolerated by startup\n" +
+		"  [nit] (likelihood 2, impact 1, fix cost 1, class cosmetic) the retry table test does not cover a requeue after a drain\n" +
+		"  … and 3 more tolerated findings\n"
+	if !strings.Contains(human, want) {
+		t.Errorf("two modes' entries are not one block per mode, each entry under its own:\n%s\nwant:\n%s", human, want)
 	}
 }
 

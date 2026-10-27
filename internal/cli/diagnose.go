@@ -693,19 +693,24 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 			}
 			byMode[m] = append(byMode[m], f)
 		}
-		for _, mode := range modes {
+		for i, mode := range modes {
 			fmt.Fprintf(&b, "\nTolerated by %s\n", mode)
 			for _, f := range byMode[mode] {
 				fmt.Fprintf(&b, "  [%s]%s %s\n", oneLine(string(f.Label)),
 					scoreCell(f.Likelihood, f.Impact, f.FixCost, string(f.Class)), oneLine(f.Title))
 			}
-		}
-		// The record keeps the first runstore.MaxTolerated findings and its
-		// total is what the mode really tolerated, so a list shorter than its
-		// total says so rather than reading as the whole of it (F19).
-		if t.Total > len(t.Findings) {
-			fmt.Fprintf(&b, "  showing %d of %d tolerated findings (the record keeps the first %d)\n",
-				len(t.Findings), t.Total, runstore.MaxTolerated)
+			// The block's total is how many findings the mode really
+			// tolerated, so a list shorter than that says how many it does
+			// not show rather than reading as the whole of it (F19). It says
+			// nothing about where the rest are: the list is short because it
+			// was bounded when it was written and bounded again here, and a
+			// hand-edited record — the one this guards against — need never
+			// have been bounded at all. It closes the last block, which is
+			// the only one it can belong to: the entries keep the reviewer's
+			// order and the cut is at the end of that order.
+			if i == len(modes)-1 && t.Total > len(t.Findings) {
+				fmt.Fprintf(&b, "  … and %d more tolerated findings\n", t.Total-len(t.Findings))
+			}
 		}
 	}
 	if d.AgentMessage != "" {

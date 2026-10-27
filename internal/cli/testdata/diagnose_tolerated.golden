@@ -5,9 +5,10 @@ Cost: ≈ $1.25 (model $1.25 + compute $0.00, estimate)
 Report:   runs/acme-app-dc4d4e59e884fc44/20260101-000000-abcd/report.md
 
 Findings (last review)
-  [high] (likelihood 4, impact 5, fix cost 2, class correctness) internal/queue/retry.go: the backoff ceiling differs by one when a job is requeued twice
-  [minor] docs/queue.md: the retry section still describes the legacy table
+  [minor] (likelihood 1, impact 4, fix cost 4, class correctness) internal/queue/retry.go: the retry ceiling differs by one when a job is requeued twice
+  [nit] (likelihood 2, impact 1, fix cost 1, class cosmetic) internal/queue/retry_test.go: the retry table test does not cover a requeue after a drain
+  [high] docs/queue.md: the retry section still describes the legacy table
 
 Tolerated by pro
-  [low] (likelihood 4, impact 2, fix cost 3, class maintainability) the retry ceiling differs by one when a job is requeued twice
-  [nit] (likelihood 2, impact 1, fix cost 1, class cosmetic) the retry section still describes the legacy table
+  [low] (likelihood 1, impact 4, fix cost 4, class correctness) the retry ceiling differs by one when a job is requeued twice
+  [nit] (likelihood 2, impact 1, fix cost 1, class cosmetic) the retry table test does not cover a requeue after a drain
