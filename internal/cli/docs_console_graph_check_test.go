@@ -78,6 +78,12 @@ func TestDocsCheck123IsRegistered(t *testing.T) {
 		"release/mac-universal/fugaro console.app",
 		// The setting the second half of the check turns on.
 		"reduce motion",
+		// The one cloud read the check makes: the app spawns the installation's
+		// own `fugaro plan status --json` and the graph's state words are that
+		// read's. A section claiming "no cloud project" would be wrong about the
+		// check it describes, so the read is pinned rather than left to prose.
+		"plan status --json",
+		"runs bucket",
 	} {
 		if !strings.Contains(flat, want) {
 			t.Errorf("Check 123's section does not say %q: the check is owner-run, has not been run, and is about the packed app's graph under the owner's own accessibility setting", want)
