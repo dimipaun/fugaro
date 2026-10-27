@@ -2209,11 +2209,22 @@ p.graph-empty {
    * 4.4, and the amendment's fourth rule). */
   section.graph svg .graph-node-comet {
     fill: CanvasText;
-    animation: none;
   }
 
   section.graph svg .graph-node-pulse {
     stroke: CanvasText;
+  }
+
+  /* `animation: none` is written on the selectors the motion block animates and
+   * not on the shorter ones above: a media query adds no specificity, so
+   * `section.graph svg .graph-node-comet` loses to
+   * `section.graph svg .graph-node[data-state='implementing'] .graph-node-comet`
+   * wherever it is written, and the streak would keep running in the one mode
+   * that has no motion. */
+  section.graph svg .graph-node[data-state='implementing'] .graph-node-comet,
+  section.graph svg .graph-node[data-state='in review'] .graph-node-comet,
+  section.graph svg .graph-node[data-state='fixing'] .graph-node-comet,
+  section.graph svg .graph-node[data-critical='true'] .graph-node-pulse {
     animation: none;
   }
 

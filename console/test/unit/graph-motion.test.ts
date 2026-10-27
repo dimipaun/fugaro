@@ -185,6 +185,22 @@ function inArm(arm: RegExp): readonly Rule[] {
 const REDUCED = /prefers-reduced-motion:\s*reduce/
 const FORCED = /forced-colors:\s*active/
 
+/** armMisses is the selectors an arm animates but does not stop: the arm has to
+ * turn an animation off **on the selector that turned it on**, because a media
+ * query adds no specificity -- `section.graph svg .graph-node-comet` loses to
+ * `section.graph svg .graph-node[data-state='implementing'] .graph-node-comet`
+ * wherever either is written, so a shorter selector in the arm is a mark that
+ * keeps moving in a mode that has no motion. */
+function armMisses(arm: RegExp): readonly string[] {
+  const off = inArm(arm)
+    .filter((rule) => !animates(rule))
+    .flatMap((rule) => rule.selector.split(',').map((one) => one.trim()))
+  return animationRules()
+    .filter(animates)
+    .flatMap((rule) => rule.selector.split(',').map((one) => one.trim()))
+    .filter((selector) => !off.includes(selector))
+}
+
 /** selectedBy is the text of every selector of the rules `matches` picks, so a
  * claim about what an arm covers is one string a reader can check. */
 function selectors(rules: readonly Rule[], matches: (rule: Rule) => boolean): string {
@@ -307,6 +323,10 @@ describe('the graph’s motion in the stylesheets', () => {
     expect(
       selectors(arm, (rule) => rule.declarations.some((one) => one.property === 'stroke-dasharray' && one.value === 'none')),
     ).toContain('graph-edge-path')
+    // And every one of the three is turned off where it was turned on, so the
+    // still style above is the one a browser computes rather than one a longer
+    // selector in the motion block overrules.
+    expect(armMisses(REDUCED), 'reduced motion leaves an animated selector running').toEqual([])
     // And the freeze the arm is written beside is still the global one: the graph
     // restates its own states, it does not replace the rule every other screen
     // still needs.
@@ -328,6 +348,7 @@ describe('the graph’s motion in the stylesheets', () => {
     for (const rule of arm) {
       expect(rule.selector, 'a forced-colors animation rule is not the graph screen’s').toContain('section.graph')
     }
+    expect(armMisses(FORCED), 'forced colors leaves an animated selector running').toEqual([])
   })
 })
 
