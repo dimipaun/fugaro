@@ -1029,3 +1029,24 @@ func TestLaunchWarnsAtEightyPercent(t *testing.T) {
 		t.Fatalf("the project's warning is missing:\n%s", errOut)
 	}
 }
+
+// TestLaunchNotesAZeroCapInObserve: under enforce a zero daily cap refuses the
+// launch, and the refusal is what speaks; under observe the launch happens,
+// and there it carries the same 100% note `fugaro budget show` prints and
+// watch's bar draws for a zero cap — the three surfaces agree that zero is a
+// cap, not an unset one.
+func TestLaunchNotesAZeroCapInObserve(t *testing.T) {
+	f := newLaunchBudget(t, "observe")
+	f.db.Set("config/mode", "observe")
+	f.db.Set(budget.PathCapsRepo(appSlug), map[string]any{"repo": "acme/app", "dailyMicros": 0})
+	_, errOut, err := runBudget(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errOut, "budget: the repository's daily cap: $0.00 of $0.00 counted (100.0%)") {
+		t.Fatalf("a zero cap drew no note:\n%s", errOut)
+	}
+	if !launchedAny(f) {
+		t.Fatal("observe must still launch")
+	}
+}
