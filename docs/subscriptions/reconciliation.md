@@ -17,9 +17,9 @@ figure, the cell below records its structure and says "price: private" or "figur
 **Numbers this work holds:** decisions **D430–D459** and checks **170–179**, taken above the
 go-to-market work's D400–D429 and Checks 160–169 (`docs/go-to-market/README.md`) and the Bitbucket
 credentials work's D360–D389 and Checks 145–154, on `main` and in the docs of every open PR.
-**D430–D448** are written and answered; **D449–D459** are reserved and unused. **Checks 170–178**
-are named by the plan, owner-run and not run; **179** is reserved and unused. Findings are
-**F1–F40**, resolutions **R1–R6**, tensions **T1–T23** (T1–T9 from the first reading, T10–T23 from
+**D430–D448** are written and answered; **D449–D459** are reserved and unused. **Checks 170–179**
+are named by the plan, owner-run and not run. Findings are
+**F1–F47**, resolutions **R1–R6**, tensions **T1–T23** (T1–T9 from the first reading, T10–T23 from
 the answers), the owner's answers to the Terms draft's questions **B1–B17**, UNVERIFIED **U1–U12**.
 
 ## Headline: spec concept → what the repository already has
@@ -108,12 +108,13 @@ credentials service (`internal/creds`, `internal/credsvc`), rigor modes (`intern
 `fugaro watch` are MIT and in every release from `v0.11.0` to `v0.12.0`. *Consequence:* R4.
 
 **F9 — Rule: the coordinator is MIT, released and on `main`.** `internal/coordinator/` and
-`internal/cli/coordinator.go`, `internal/cli/coordinator_view.go` are in tags `v0.11.0` through
-`v0.12.0`; 0.12.0's notes ship `fugaro coordinator status --from-store`
+`internal/cli/coordinator.go` are in tags `v0.11.0` through `v0.12.0`; `internal/cli/coordinator_view.go`
+first ships in `v0.12.0`, whose notes add `fugaro coordinator status --from-store`
 (`docs/releases/v0.12.0.md`). D302 (2026-10-24, the recommendation) kept the coordinator and the
 central orchestrators in core MIT; D400 (2026-10-26, not the recommendation) asked to mark them as
-covered by the business licence in place, which counsel's text (scoped to the three directories)
-does not do. *Consequence:* D434; T10.
+covered by the business licence in place and to record a note to move them into `ee/` later
+(`docs/go-to-market/reconciliation.md`); counsel's text (scoped to the three directories) does not
+cover in-place files. D434 therefore carries out D400's later move for future versions. *Consequence:* D434; T10.
 
 **F10 — Gap: shared central orchestrators are not built on `main`.** `docs/central-orchestrator/`
 holds the spec and plan (P0–P9); open PR #831 builds P2 (`fugaro orchestrator add|rm|ls`) as core
@@ -155,8 +156,16 @@ reaches. *Consequence:* D440 (the owner chose a hosted service); T13; R5 amended
 tag (`images/base/Dockerfile`, `images/history/Dockerfile`, `images/credentials/Dockerfile`), so
 they carry no `ee/` code and no key check. *Consequence:* R1, which F32 puts under strain.
 
-**F20 — Gap: "read-only" is undefined per feature.** No feature defines a read-only mode; the
-console's launch, cancel and the kill switch are actions. *Consequence:* T12; S6.1.
+**F20 — Gap: "read-only" is undefined per feature, and the console is read-only today.** No
+feature defines a read-only mode. The console spawns fifteen operations
+(`console/src/main/spawn.ts`: `live.watch`, `budget.show`, `spend.report`, `runs.list`,
+`runs.stats`, `plan.status`, `run.diagnose`, `run.logs`, `run.logLink`, `secrets.inventory`,
+`accounts.inventory`, `cli.version`, `environment.report`, `installation.list`,
+`coordinator.status`), all reads: it has no launch, cancel or kill-switch action
+(`docs/design/desktop-console.md` D2, D14). The app's cancel is a mailbox action addressed to
+the `orchestrator` agent (`shared/mailbox-schema/vectors.json`). *Consequence:* for the console as
+built, "read-only after lapse" can only hide or keep paid views (Spend, the coordinator's project
+view, seats); console v2's planned launch would be the first action a lapse could gate. T12; S6.1.
 
 **F21 — Rule: who the licensor is.** `LICENSE`, `ee/LICENSE`, `console/LICENSE.md`,
 `mobile/LICENSE.md` and `LICENSES/LicenseRef-Fugaro-Enterprise.txt` each say `Copyright (c) 2026`
@@ -210,9 +219,12 @@ new parts can move, with the store and intent API left in core or an extension p
 **F32 — Rule (new): the coordinator's scheduled job runs the CLI from a job image.**
 `deploy/terraform/gcp/modules/installation/coordinator.tf` runs `/usr/local/bin/fugaro coordinator
 sweep` from `var.coordinator.image` (the coordinator plan's P5). The job images build `fugaro`
-untagged (F19). *Consequence:* a coordinator in `ee/` needs an `ee`-tagged build inside the
-customer's cloud, which R1 (no licence state on the run path) and the image builds do not allow
-today (T10).
+untagged (F19), and the coordinator job's image **is the history image**: "one CLI binary
+serves both jobs" (`internal/infra/firebase.go`, `CoordinatorImageExists`). `images/base/Dockerfile`
+copies `cmd`, `internal`, `images` and `deploy/terraform`, never `ee/`, so the image pipeline cannot
+build an `ee`-tagged CLI today. *Consequence:* a coordinator in `ee/` needs an `ee`-tagged build
+inside the customer's cloud, which would also put `ee/` code into the `budget history` job, or a
+new image with its own mirror entry; R1 and the image builds allow neither today (T10).
 
 **F33 — Rule (new): `internal/report` has four consumers.** `internal/cli/report.go` (`fugaro
 report`), `internal/cli/runs_digest.go` and `internal/digest` (`fugaro runs digest`, 0.12.0, the
@@ -238,8 +250,10 @@ has a key" means every console and app installation holds its organisation's key
 
 **F36 — Rule (new): an open PR edits the four licence files.** #1140 ("the Subscription Terms URL
 in the four licence files") changes `ee/LICENSE`, `console/LICENSE.md`, `mobile/LICENSE.md`,
-`LICENSES/LicenseRef-Fugaro-Enterprise.txt`, `LICENSING.md` and `ee/README.md`, among others; the
-copyright-line commit of B9 touches the same files. *Consequence:* sequencing (T18).
+`LICENSES/LicenseRef-Fugaro-Enterprise.txt`, `LICENSING.md`, `ee/README.md`,
+`docs/licensing/subscription-terms.md`, `docs/licensing/implementation-plan.md`,
+`docs/licensing/reconciliation.md` and `internal/cli/docs_ee_reserved_test.go`; the copyright-line
+commit of B9, the Terms amendment run and the licence-document changes touch the same files. *Consequence:* sequencing (T18).
 
 **F37 — Gap (new): post-lapse read-only is not a licence right.** Licence 11.1 ends the production
 right "under clause 1" at lapse, and Terms §17.4 says the Customer stops Production Use. A console
@@ -262,6 +276,47 @@ read-only; the MIT CLI is unaffected. Stated, not a tension.
 "a covered-versions date" in the key, which in the first proposal carried the perpetual fallback;
 D436 drops the fallback. *Consequence:* open item O4: what the date does (nothing; or it limits a
 key to versions released before it, which would gate upgrades within a paid term).
+
+**F41 — Gap (new): no path gets a key into the products.** Licensing L3.1 left key storage open;
+there is no CLI key file, no console screen to enter one, no app storage. The console spawns
+`report --json` and `coordinator status` (F20), which D434 and D444 would gate, so the key must
+reach the spawned CLI; the console's spawn allow-list holds exact argv
+(`.claude/rules/console.md`), and a key in argv is visible to every local process. *Consequence:*
+S2.1 decides storage and hand-off (never argv); S2.7, S2.8 build entry.
+
+**F42 — Gap (new): paid keys have no issuance path.** D440 covers free keys and the manual queue.
+Nothing mints a key on a Team purchase through the merchant of record, reissues it at a monthly or
+annual renewal, stops reissue on cancellation, or mints an Enterprise key. *Consequence:* the
+signing service takes the merchant's purchase events (signature-verified, idempotent) and the admin
+page mints Enterprise keys (S3.1, S3.2, Check 179).
+
+**F43 — Gap (new): the no-key and upgrade states.** D438 gives every user a key. A console 0.112.0
+user (MIT, no key) who upgrades to 0.113.0 has none. *Consequence:* S6.1 defines what a console or
+app with no key shows, and whether development and testing use (licence 3.1) needs one (T12).
+
+**F44 — Rule (new): the website and its privacy page forbid what D440 adds.** The site's CSP
+carries `form-action 'self'` (stated in `website/src/pages/mobile.astro` and held by the site's
+tests), so a form posting to another origin is blocked; `website/test/privacy.mjs` rule 5 ("The
+project operates no host the software talks to") and the privacy page's "nothing the Fugaro
+project operates" describe a project that runs no service. *Consequence:* the CSP, the privacy
+copy and rule 5 change only with the owner's approval (`.claude/rules/website.md`); S3.3, S7.3.
+
+**F45 — Rule (new): the CLI reference and the plugin read the untagged tree.**
+`TestCliReferenceNamesEveryCommandAndFlag` (`internal/cli/docs_website_cliref_test.go`) checks
+`website/content/cli-reference.md` against the untagged command tree, and the plugin's tests check
+every command a skill names. After D434 and D444 the untagged tree has no `coordinator` or `report`.
+*Consequence:* S1.1 decides which tree the reference and the skills describe.
+
+**F46 — Gap (new): the digest inside a run.** The working skill schedules `fugaro runs digest`
+through "a run launched to write the report" (`plugin/skills/working/SKILL.md`). The run images
+are untagged (R1). *Consequence:* if T11 moves the digest, a run can no longer write it.
+
+**F47 — Gap (new): the open-source check and the key's binding.** A repository URL and an email
+prove no control of the repository, so anyone can claim a well-known public project; and a key
+binds to an organisation (F35) that nothing in the product compares with the installation, so one
+free key can be shared without limit, and "a subscribing organisation gets no free seat" cannot be
+checked. With no revocation a leaked one-year key stays valid. *Consequence:* T13; proof of control
+in S3.1; the limits stated in the key section below.
 
 ## Tensions from the first reading (T1–T9), as the answers leave them
 
@@ -308,18 +363,18 @@ answers are private (D430).
 | **D431** | Licence for `ee/`, `console/`, `mobile/` (T1) | **Keep counsel's business licence; drop the FSL.** *Reason:* the FSL frees internal production use (F2) | FSL-1.1-MIT or closed binaries | **2026-10-27: the recommendation.** Keep counsel's licence; drop the FSL. *Why:* approved by counsel and not revisited |
 | **D432** | Is the console and app free for one user? (T2, T5) | **A no-fee Community plan in the Terms, one seat per organisation**, counsel confirming clause 1.1 | Paid from seat one | **2026-10-27: partly not the recommendation.** One free seat per organisation, **only for an organisation with no subscription**, intended for proof of concept and evaluation; a subscribing organisation pays for every user and gets no free seat. Teams whose projects are entirely public under an OSI licence get Team free. Counsel confirms it fits the licence. *Why:* the owner replaced an earlier "free for any individual" answer that conflicted with the seat model. Follow-through: T13, T15 |
 | **D433** | What is a seat? (T4) | **Keep the licence's words; read-only users excluded in the Terms**; every launcher, operator or admin through the Software is a seat | The spec's wording incl. CLI launchers: costs a seat the licence cannot require | **2026-10-27: not the recommendation.** A seat is **anyone who launches jobs, by any means** (console, mobile, CLI, agent), defined as a **pricing rule in the Subscription Terms**; read-only viewers are free once the viewer role exists (D446). *Why (owner's note):* the CLI is MIT, so this binds only subscribing organisations; counsel words it. Follow-through: T14, T21 |
-| **D434** | The coordinator: Team or core? (T6) | **Core stays core**; only new organisation-only parts born in `ee/`; amends D400 | Move future versions into `ee/`: costs D302's "nothing moves out", an MIT fork point | **2026-10-27: not the recommendation.** **Future coordinator versions move to the business-licensed folder**; the released MIT version stays available as a fork point. Amends **D302** and **D400**. *Why (owner's note):* the released MIT version remains the fork point. Follow-through: T10 |
-| **D435** | Central orchestrators and the hosted MCP server | **Born in `ee/`**, through `ee/register` | Core MIT as planned | **2026-10-27: the recommendation.** Both start in the business-licensed folder (paid). *Why:* not on `main`, not released. Follow-through: T20 (open PR #831) |
+| **D434** | The coordinator: Team or core? (T6) | **Core stays core**; only new organisation-only parts born in `ee/`; amends D400 | Move future versions into `ee/`: costs D302's "nothing moves out", an MIT fork point | **2026-10-27: not the recommendation.** **Future coordinator versions move to the business-licensed folder**; the released MIT version stays available as a fork point. Amends **D302**; carries out **D400**'s later move. *Why (owner's note):* the released MIT version remains the fork point. Follow-through: T10 |
+| **D435** | Central orchestrators and the hosted MCP server | **Born in `ee/`**, through `ee/register` | Core MIT as planned | **2026-10-27: the recommendation.** Both start in the business-licensed folder (paid). *Why (inferred; the owner gave none):* not on `main`, not released. Follow-through: T20 (open PR #831) |
 | **D436** | Perpetual fallback after a lapse (T3) | **Yes, through Terms §10.4 Option B** | No fallback (licence 11.1) | **2026-10-27: not the recommendation.** **No perpetual fallback.** After the grace period (B17), every console and mobile user drops to **read-only**; paid features are off. The MIT CLI keeps launching and cancelling jobs. *Why (owner's note):* this reverses "launching is never gated" for the console and the app only, which the owner confirmed; counsel confirms. Follow-through: T12, F37 |
 | **D437** | What a lapse does in the product (T9) | **Paid features off with a banner; launch, cancel and every core action never gated** | Read-only for every paid feature | **2026-10-27: not the recommendation; merged into D436.** *Why:* the owner answered lapse once, as D436 |
 | **D438** | The licence key (extends D308) | `tier`, `features`, `seats`, `expires`, `covers_until`; `ReleaseDate` in every build; seats warned, never enforced | D308 as is | **2026-10-27: not the recommendation.** A **signed offline key for every user, including free users**, issued automatically by a **hosted signing service** (D440). Contents: tier, features, seats, expiry, covered-versions date. *Why (owner's note):* the signing service holds the private key and is secured like the credentials service; validation stays offline, so an outage blocks only new keys. Follow-through: T13, F35, F40 (O4) |
 | **D439** | How seats are counted in the product | **An advisory estimate**: launchers and operators lists plus run requesters over 90 days, beside the licensed seats; nothing stored or sent | Firebase Auth listing; none | **2026-10-27: the recommendation.** *Owner's note:* under D433 the estimate counts **all launchers**. Follow-through: T14 |
 | **D440** | The trial and key issuance | **Owner-minted trial keys by hand** | A signing service; an unsigned self-started trial | **2026-10-27: not the recommendation.** A **self-serve key website**. Open source: a repository URL plus an email, checked automatically (every repository public under an OSI licence), a one-year key. Commercial free seat: a company domain plus a work email on that domain (no free-mail domains), a three-month key, renewable, **one per organisation enforced by email domain**. A **manual request form** for special cases (for example free-mail users and multi-seat trials) feeds a **queue that notifies the owner**, who approves and mints keys from an **admin page**. *Why:* resolves the session's conflict between hand-minted keys and a key for everyone (D438). Amends licensing R8 and R5. Follow-through: T13 |
-| **D441** | Who sells and who is the licensor? (T7) | **A dedicated entity before the first paid sale**, holding the copyright, named as Licensor | Interim under the owner's existing company | **2026-10-27: the recommendation.** A new dedicated entity before the first paid sale, named as Licensor in the Terms; with B9, the copyright is **assigned to it now**. *Why:* one owner of rights, contracts and the CLA's Project Owner. Follow-through: T18 |
-| **D442** | Merchant of record | **A merchant of record for Team checkout; Enterprise direct** | Sell directly everywhere | **2026-10-27: the recommendation.** **Paddle** for Team checkout as merchant of record, handling sales taxes on its sales; Enterprise signed and invoiced directly by the entity. Fee rates and the tax plan: private. *Why:* no sales-tax registration abroad for self-serve sales |
-| **D443** | Commercial terms (T8) | (a) figures private; (b) audit for Enterprise only, Team self-certified true-up; (c) annual discount, prorated additions, reductions at renewal; (d) no startup discount yet | Audit for every plan; a startup discount now | **2026-10-27: partly not the recommendation.** (a) Prices private; (b) formal audit for Enterprise only, Team self-certifies at renewal (true-up); (c) an annual discount (figure private), additions prorated, reductions at renewal; **(d) a startup discount is added** (B13), against the recommendation. *Why:* the owner wants an early-stage offer beside the programs |
-| **D444** | Spend and audit exports for Enterprise | **Only net-new exports**; `fugaro report` and the credentials audit log stay MIT | Charge for existing exports | **2026-10-27: not the recommendation.** **Spend and cost reports (`fugaro report` and similar) move to the business-licensed folder for future versions**; the credentials service's audit log stays MIT. *Why:* the owner places organisation-wide spend reporting in the paid line. Follow-through: T11 |
-| **D445** | Free programs | **No-fee Order Forms on application**, renewed yearly; academic by institutions only | A clause in the Terms | **2026-10-27: partly not the recommendation.** Open source **automatic** (D440's checked key). Academic institutions get Team free and nonprofits a discount (figure private), both by a short application renewed yearly. *Why:* open source needs no paperwork once the check is automatic. Follow-through: T15 |
+| **D441** | Who sells and who is the licensor? (T7) | **A dedicated entity before the first paid sale**, holding the copyright, named as Licensor | Interim under the owner's existing company | **2026-10-27: the recommendation.** A new dedicated entity before the first paid sale, named as Licensor in the Terms; with B9, the copyright is **assigned to it now**. *Why (inferred; the owner gave none):* one owner of rights, contracts and the CLA's Project Owner. Follow-through: T18 |
+| **D442** | Merchant of record | **A merchant of record for Team checkout; Enterprise direct** | Sell directly everywhere | **2026-10-27: the recommendation.** **Paddle** for Team checkout as merchant of record, handling sales taxes on its sales; Enterprise signed and invoiced directly by the entity. Fee rates and the tax plan: private. *Why (inferred; the owner gave none):* no sales-tax registration abroad for self-serve sales |
+| **D443** | Commercial terms (T8) | (a) figures private; (b) audit for Enterprise only, Team self-certified true-up; (c) annual discount, prorated additions, reductions at renewal; (d) no startup discount yet | Audit for every plan; a startup discount now | **2026-10-27: partly not the recommendation.** (a) Prices private; (b) formal audit for Enterprise only, Team self-certifies at renewal (true-up); (c) an annual discount (figure private), additions prorated, reductions at renewal; **(d) a startup discount is added** (B13), against the recommendation. *Why:* none given; the startup discount's terms are B13's |
+| **D444** | Spend and audit exports for Enterprise | **Only net-new exports**; `fugaro report` and the credentials audit log stay MIT | Charge for existing exports | **2026-10-27: not the recommendation.** **Spend and cost reports (`fugaro report` and similar) move to the business-licensed folder for future versions**; the credentials service's audit log stays MIT. *Why:* none given. Follow-through: T11 |
+| **D445** | Free programs | **No-fee Order Forms on application**, renewed yearly; academic by institutions only | A clause in the Terms | **2026-10-27: partly not the recommendation.** Open source **automatic** (D440's checked key). Academic institutions get Team free and nonprofits a discount (figure private), both by a short application renewed yearly. *Why (inferred; the owner gave none):* open source is checked automatically by D440. Follow-through: T15 |
 | **D446** | Multi-user roles (F6) | **A separate design before any build**, on the existing lists plus a read-only list | Roles inside the console only | **2026-10-27: the recommendation, widened.** A separate design first; viewer, operator and admin roles **enforced system-wide, the cloud included**, not just in the console. It creates D433's free viewer. Follow-through: T16 |
 | **D447** | How paid features switch on | **The key-gated single binary of D303** (`ee` build tag) | Honour only | **2026-10-27: the recommendation.** Lapse per D436. Follow-through: T21 |
 | **D448** | Sequencing | **Settle D431–D433 and D436 before console 0.113.0 and the first mobile release** | Release first | **2026-10-27: the recommendation.** D431, D432, D433 and D436 are decided; **counsel signs off D432, D433 and D436 before console 0.113.0 and the first mobile release**. Follow-through: T17 |
@@ -379,7 +434,9 @@ change and an `ee` binary in the customer's cloud; (c) reverses the owner's answ
 
 **T11 — (D444) Spend and cost reports in the business-licensed folder.** Facts: `fugaro report` is
 MIT and released; `internal/report` also feeds `fugaro runs digest` (0.12.0, MIT, the periodic
-reviews), the console's Spend screen and a pinned docs test (F33); the `working` skill teaches
+reviews), the console's Spend screen and a pinned docs test (F33); a run launched to write the
+digest runs an untagged CLI (F46); the CLI reference and the plugin tests read the untagged tree
+(F45); the `working` skill teaches
 both commands and the plugin tests check them against the CLI; the credentials audit log stays MIT
 (the owner's note). Questions: does the digest move with the report (it is a cost report of one
 repository)? Does `internal/report` (the library) move, or only the command? Which commands are
@@ -394,12 +451,15 @@ production right at lapse, consistent with no fallback (F15); but **read-only us
 against a production installation is still production use**, so the read-only state needs an
 express post-lapse grant in the Terms (F37); Terms §10.4 Option B and §17.4 must change; the spec's
 "never block work" and the first proposal's D437 are reversed for the console and the app; the MIT
-CLI keeps launching and cancelling. Open per feature: does read-only keep **cancel** and the
-**kill switch** in the console and the app (the spec's "never paywall safety", R4)? Does it keep
-`fugaro watch`'s graphical view, the run logs, the Spend screen? What does a free evaluator's
-expired key do (F39)? Choices: (a) read-only keeps viewing, cancel and the kill switch; (b)
-read-only is viewing only and safety actions go to the CLI; (c) the console stops entirely and the
-Terms say so.
+CLI keeps launching and cancelling. **The console is read-only already** (F20): it launches,
+cancels and kills nothing, so a lapse can only remove views. Open: which views survive (live
+watch, logs, Spend, the coordinator's project view, seats); whether console v2's planned launch is
+the first gated action; the app's **cancel**, which goes through the mailbox to the
+`orchestrator` agent that D435 makes paid, so a lapsed app may lose cancel (the spec's "never
+paywall safety", R4); what a console or app with **no key** shows, including a 0.112.0 user
+upgrading (F43); what a free evaluator's expired key does (F39). Choices: (a) read-only keeps every
+current view and the app's cancel; (b) read-only keeps the free core's views (watch, logs) and
+hides the paid ones; (c) the console and the app stop entirely and the Terms say so.
 
 **T13 — (D438, D440) A hosted signing service and key website.** A new Fugaro-hosted component
 with a new trust boundary: whoever reaches the signing key mints any key for any tier. Facts and
@@ -418,7 +478,15 @@ spec's "no Fugaro-hosted dependency" becomes "no hosted dependency at runtime". 
 the console has no sign-in, so the key binds to an organisation and a seat count, not a person
 (F35); an MIT-CLI-only user needs no key (the CLI is not the Software). (7) **Order**: the service
 issues keys as the Licensor, so it needs the entity first (D441). (8) **The admin page**: a second
-authenticated surface that can mint any key. Amends R5, licensing R8, D308 and D440's first
+authenticated surface that can mint any key: its authentication, step-up, CSRF defence, escaping
+of applicants' free text (a stored script there could mint), an audit log of its mints and
+per-tier limits are unspecified. (9) **Paid keys**: purchase, renewal and cancellation events from
+the merchant of record, verified and idempotent (F42). (10) **Proof of control** for the
+open-source check and the unbound key (F47); the "second key for a domain" answer must not reveal
+whether a domain holds one; verification tokens single-use and expiring. (11) **Where the code
+lives**: in `ee/keyservice/` it is published Software with its checks visible; in the private
+repository it is not; a security trade-off, not only a location. (12) **The website and privacy
+page** forbid a project-run host today (F44). Amends R5, licensing R8, D308 and D440's first
 recommendation. The owner rules on hosting, operator, retention and the admin page's
 authentication before S3 builds.
 
@@ -453,7 +521,7 @@ on S6 (the read-only state) if it must ship with them.
 `LICENSE` (which, through the CLA's definition, also changes the CLA's Project Owner),
 `ee/LICENSE`, `console/LICENSE.md`, `mobile/LICENSE.md` and
 `LICENSES/LicenseRef-Fugaro-Enterprise.txt`, after the assignment is signed (the licensing plan
-allows this edit only on the owner's go, licensing F27.4). The Terms' Licensor placeholder (§1.1),
+allows this edit only on the owner's go, the licensing reconciliation's F27, fact 4). The Terms' Licensor placeholder (§1.1),
 the website, the Paddle account and the signing service's issuer follow. Open PR #1140 edits the
 same licence files (F36) and should land or close first. Counsel: whether the approved licence
 must name the entity as Licensor. Accountant: the mechanics and the tax treatment of the assignment.
@@ -517,7 +585,8 @@ owner-run deploy and never committed.
 **T23 — (B8) Supported versions.** `SECURITY.md` supports "only the latest 0.x release"; B8 supports
 the current and the previous minor release for the paid tiers. Whether `SECURITY.md` changes for
 the core too, or the Terms carry their own rule for the Software only. `SECURITY.md` is pinned by
-docs tests.
+docs tests. The plan carries it to counsel (S0.2) and to a `SECURITY.md` task on the owner's
+ruling (S0.5).
 
 ## Open items
 
@@ -550,7 +619,11 @@ Extends D308; nothing here is built. The design note is licensing plan L3.1
   and the private business repository (R5 as amended).
 - **Known limits:** the source is visible, so a determined user can remove the check; a clock set
   back extends `expires` (D308's admitted limit); no revocation, so a leaked key works until it
-  expires. The Terms are the enforcement.
+  expires; the key names an organisation that nothing compares with the installation, so one key
+  can be shared across users and organisations and a subscriber's use of a free key cannot be
+  detected (F47). The Terms are the enforcement.
+- **Storage and hand-off** (F41): S2.1 decides where each product keeps the key and how the
+  console passes it to the CLI it spawns, never in argv.
 
 ## UNVERIFIED
 

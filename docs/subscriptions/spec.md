@@ -7,7 +7,8 @@ Oct 27, 2026 · Dimi Paun
 > "SLA and support" section's hours, the billing lines of "Billing and trial", the "Contracting
 > entity" and "Refunds" sections, the Enterprise audit line's figures and the nonprofit program's
 > row live in the owner's private business repository. Everything below is the owner's text,
-> unedited; only those lines are left out, and this note is the excerpt's own.
+> unedited except one name substitution the folder README lists; only those lines are left out,
+> and this note is the excerpt's own.
 
 ## Context and principles
 

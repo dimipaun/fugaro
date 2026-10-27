@@ -18,8 +18,8 @@ carries a figure.
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The owner's "Fugaro Subscriptions Spec", an excerpt: the commercial lines are left out (its opening note lists them) |
-| [reconciliation.md](reconciliation.md) | Findings F1–F40 against the code, the licence files and the earlier rulings; decisions D430–D448 with the owner's answers; B1–B17; resolutions R1–R6; tensions T1–T23 (T10–T23 open, T19 the Terms amendment list); open items O1–O5; UNVERIFIED U1–U12. **Where it disagrees with `spec.md`, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Slices S0 (Terms and licence docs), S1 (the moves into `ee/`), S2 (the key and verifiers), S3 (the signing service), S4 (seat estimate), S5 (roles design), S6 (lapse state), S7 (website), S8 (owner, counsel, accountant); levels, critical path, shared files, Checks 170–178. Nothing in it is approved |
+| [reconciliation.md](reconciliation.md) | Findings F1–F47 against the code, the licence files and the earlier rulings; decisions D430–D448 with the owner's answers; B1–B17; resolutions R1–R6; tensions T1–T23 (T10–T23 open, T19 the Terms amendment list); open items O1–O5; UNVERIFIED U1–U12. **Where it disagrees with `spec.md`, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Slices S0 (Terms and licence docs), S1 (the moves into `ee/`), S2 (the key and verifiers), S3 (the signing service), S4 (seat estimate), S5 (roles design), S6 (lapse state), S7 (website), S8 (owner, counsel, accountant); levels, critical path, shared files, Checks 170–179. Nothing in it is approved |
 
 ## Deviations from the owner's text
 
@@ -35,7 +35,7 @@ carries a figure.
 | Numbers | State |
 | --- | --- |
 | **D430–D459** | this work's block. **D430–D448** written and answered 2026-10-27; **D449–D459** reserved and unused. Taken above the go-to-market work's D400–D429 and the Bitbucket credentials work's D360–D389, on `main` and in every open PR |
-| **Checks 170–179** | this work's block. **170–178** are named by the plan, owner-run and not run (S3.6 registers them); **179** is reserved and unused. Taken above the go-to-market work's Checks 160–169 |
+| **Checks 170–179** | this work's block. **170–179** are named by the plan, owner-run and not run (S3.6 registers them). Taken above the go-to-market work's Checks 160–169 |
 
 ## Headline
 
