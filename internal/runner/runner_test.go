@@ -498,6 +498,99 @@ func TestRigorRoundMomentRaisesTheModeFromTheRunsOwnDiff(t *testing.T) {
 	}
 }
 
+// seniorRounds counts the senior review rounds a record holds, which is what a
+// run's mode ceiling is spent on: a first-line round is not one.
+func seniorRounds(rec *runstore.Record) int {
+	n := 0
+	for _, rv := range rec.Reviews {
+		if rv.Tier != runstore.TierFirst {
+			n++
+		}
+	}
+	return n
+}
+
+// TestReviewRoundsTheModeRaisedBetweenRoundsBounds: T3.2's ceiling is read
+// under F6's precedence and read again on every round, so a mode a run raises
+// between rounds buys the rounds that remain and never reaches back to the ones
+// already spent (D22). The repository asks for four rounds and starts at
+// Startup, whose ceiling is two: without the raise the loop would stop after
+// round 2, and the diff round 1's fix writes matches the Critical area, so the
+// run spends the four rounds the precedence asked for.
+func TestReviewRoundsTheModeRaisedBetweenRoundsBounds(t *testing.T) {
+	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "review_rounds: 2", "review_rounds: 4", 1)
+	cfg = strings.Replace(cfg, "agent:\n",
+		"rigor:\n  default: startup\n  areas:\n    - { name: app, match: \"feature.txt\", mode: critical }\nagent:\n", 1)
+	h := newHarness(t, cfg, nil)
+	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
+		verifyTest(t, ctx, req)
+		return agent.Result{}, nil
+	}
+	rec, err := h.run(t, implement("feature"), review("changes", 1), fix, review("changes", 1), fix, review("changes", 1), fix, review("changes", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := seniorRounds(rec); got != 4 {
+		t.Fatalf("the run spent %d senior rounds; want 4 — Startup's ceiling must not stop the rounds the raised mode bought (D22)", got)
+	}
+	if rec.Rigor == nil || rec.Rigor.Mode != rigor.Critical {
+		t.Fatalf("the record's mode = %+v; want critical, or the case proves nothing", rec.Rigor)
+	}
+}
+
+// TestReviewRoundsUnconfiguredRepositoryIsUnchanged: the mode's ceiling is read
+// only where the repository opted in (reviewRoundCeiling), the gate the
+// findings policy reads too. A repository that configures no rigor keeps the
+// rounds F6 gives it, whatever mode it resolved for its budget (D19's ruling):
+// it asks for five and spends five, though the Pro it resolves has a lower
+// ceiling.
+func TestReviewRoundsUnconfiguredRepositoryIsUnchanged(t *testing.T) {
+	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "review_rounds: 2", "review_rounds: 5", 1)
+	h := newHarness(t, cfg, nil)
+	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
+		verifyTest(t, ctx, req)
+		return agent.Result{}, nil
+	}
+	rec, err := h.run(t, implement("feature"), review("changes", 1), fix, review("changes", 1), fix, review("changes", 1), fix, review("changes", 1), fix, review("changes", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := seniorRounds(rec); got != 5 {
+		t.Fatalf("the run spent %d senior rounds; want the five the repository asked for, unlowered by the mode it resolved", got)
+	}
+	if rec.Rigor == nil || rec.Rigor.Mode != rigor.Default {
+		t.Fatalf("the record's mode = %+v; want the default, or the case proves nothing", rec.Rigor)
+	}
+}
+
+// TestReviewRoundsTheModesCeilingLowers: T3.2's ceiling lowers the rounds F6
+// agrees on, and it lowers them where it acts — in the loop's own bound, not
+// only in the plan the loop no longer reads for its exit. The repository opted
+// in and runs at POC, whose ceiling is two, and asks for three: the run spends
+// two senior rounds, one fewer than the precedence gave it.
+func TestReviewRoundsTheModesCeilingLowers(t *testing.T) {
+	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "review_rounds: 2", "review_rounds: 3", 1)
+	cfg = strings.Replace(cfg, "agent:\n", "rigor:\n  default: poc\nagent:\n", 1)
+	h := newHarness(t, cfg, nil)
+	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
+		verifyTest(t, ctx, req)
+		return agent.Result{}, nil
+	}
+	rec, err := h.run(t, implement("feature"), review("changes", 1), fix, review("changes", 1), fix, review("changes", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := seniorRounds(rec); got != 2 {
+		t.Fatalf("the run spent %d senior rounds; want 2 — POC's ceiling lowers the three the repository asked for (D7b)", got)
+	}
+	if rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("outcome = %q; want a draft: the run stopped on the ceiling with a finding open", rec.Outcome)
+	}
+}
+
 // TestFilingDoesNotSpendTheFinalizeReserveOnTheSuite: a run that left a
 // round open files its item at finalize, on finalize's context, which the
 // finalize reserve bounds. Filing only ever follows a round that did not ship,
