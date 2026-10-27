@@ -96,6 +96,7 @@ import {
   isConsoleSenderUrl,
   isSenderOnDocument,
   isNeverReachable,
+  operationFor,
   readStoredCompatibility,
   reducedModeHandlers,
   registerConsoleHandlers,
@@ -578,6 +579,11 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   { command: 'report', kind: 'allowed', where: 'internal/cli/report.go:53' },
   { command: 'runs ls', kind: 'allowed', where: 'internal/cli/runs.go:87' },
   { command: 'runs stats', kind: 'allowed', where: 'internal/cli/runs_stats.go:110' },
+  // Plan GV2.1: the graph screen's read, and the one command of this list whose
+  // subject is the *checkout* rather than the project -- it walks the graph
+  // artifacts under the checkout's own `docs/`, so its cwd is part of the
+  // question (`internal/cli/plan_status.go:58`).
+  { command: 'plan status', kind: 'allowed', where: 'internal/cli/plan_status.go:58' },
   { command: 'diagnose', kind: 'allowed', where: 'internal/cli/diagnose.go:87' },
   { command: 'logs', kind: 'allowed', where: 'internal/cli/logs.go:45' },
   { command: 'secrets ls', kind: 'allowed', where: 'internal/cli/secrets.go:536' },
@@ -654,12 +660,16 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * `--dir D` on doctor is main-process state rather than a renderer argument, so
  * both are absent from these strings.
  *
- * **The list and this surface are the same thirteen argvs.** Until the owner's
- * design ruling of 2026-10-25 there were twelve here and the thirteenth
- * (`config list --json`, the installations picker's own read) was pinned where
- * the picker's table was; the installation rail made that read the dashboard's
- * own operation, so the document and `CONSOLE_OPERATIONS` are now compared
- * argv for argv with nothing held back.
+ * **It is thirteen argvs, and this surface is fourteen.** The thirteenth is
+ * `config list --json`, the rail's own read (owner's design ruling of
+ * 2026-10-25): until that ruling there were twelve here and it was pinned where
+ * the picker's table was, and the ruling made the read the dashboard's own
+ * operation. The fourteenth is GV2.1's `plan status --json`, which the design
+ * has **not carried**: the read is named for the console (the console-v2 plan's
+ * GV1.6, which ships the document, and GV2.1, which is this operation, and
+ * `console/docs/json-contract.md` §6.12) but neither section 2.1's thirteen rows
+ * nor §5.1 rule 6's table has grown a row for it, so it is owed to both and is
+ * pinned separately below.
  */
 const DESIGN_ARGV: readonly string[] = [
   'watch --json',
@@ -677,6 +687,16 @@ const DESIGN_ARGV: readonly string[] = [
   'config list --json',
 ]
 
+/**
+ * DESIGN_ARGV_OWED is the one argv this surface spawns that the design's table
+ * does not carry yet, named on its own so that the gap is a pinned fact rather
+ * than a row that quietly passed for an allowed one. The test below is the union
+ * of the two, so the surface still cannot grow an argv the design does not name
+ * -- and the day §5.1's table gains the row, the mutation this list exists for
+ * (move it into `DESIGN_ARGV`) is the whole edit.
+ */
+const DESIGN_ARGV_OWED: readonly string[] = ['plan status --json']
+
 /** argvOf is an operation's command and the flags it fixes, as one string. */
 function argvOf(operation: ConsoleOperation): string | null {
   if (operation.command === null) return null
@@ -693,7 +713,13 @@ function operationsDriving(command: string): readonly ConsoleOperation[] {
 describe("the allow-list's read-only invariant", () => {
   it('is exactly the design section 3.4 rule 2 allow-list, argv for argv', () => {
     const driven = CONSOLE_OPERATIONS.map(argvOf).filter((argv): argv is string => argv !== null)
-    expect([...driven].sort()).toEqual([...DESIGN_ARGV].sort())
+    // The design's thirteen, plus the one argv the design names for the console
+    // that its §5.1 table has not grown a row for yet. Written as a union rather
+    // than as one fourteen-entry list so that the owed row cannot pass for an
+    // allowed one: an argv on neither list fails here, and so does one that
+    // moves between them without the design.
+    expect([...driven].sort()).toEqual([...DESIGN_ARGV, ...DESIGN_ARGV_OWED].sort())
+    expect(driven).toHaveLength(DESIGN_ARGV.length + DESIGN_ARGV_OWED.length)
   })
 
   it('has exactly eight operations spawn nothing at all, and names each of them', () => {
@@ -980,6 +1006,10 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   // No `--all-users`: the operation has no such key, because the command
   // resolves the view itself (see `CONSOLE_OPERATIONS`' own comment).
   'runs.stats': { since: '7d' },
+  // No `path`, no `checkout`, no `dir`: the read's directory is the
+  // installation's own, and this payload is the whole of what a renderer may
+  // say to it (plan GV2.1, constraint C1).
+  'plan.status': { all: false },
   'run.diagnose': { run: '20261016-121029-4a1b' },
   'run.logs': { run: '20261016-121029-4a1b' },
   'run.logLink': { run: '20261016-121029-4a1b' },
@@ -1310,6 +1340,50 @@ describe('the argument schemas', () => {
         JSON.stringify(name),
       ).toBe(false)
     }
+  })
+
+  it('refuses a directory in `plan.status`’s payload, and the refusal is this schema’s own key list', () => {
+    // **The security claim of plan GV2.1 (constraint C1), as a test.** The plan
+    // read is *about* the installation's checkout: the CLI resolves `docs/` from
+    // the child's working directory, so a payload that could name a directory
+    // would be a renderer choosing what the console reads -- and a document
+    // would then describe a tree the operator never chose. The directory is not
+    // a key of this schema, and the operation's argv cannot carry one
+    // (`src/main/spawn.ts`'s row has no `--dir` and no positional word).
+    //
+    // The refusal is the key list's and not a rule about paths anywhere: a
+    // payload may carry a path on the operation that *means* to take one
+    // (`installation.checkout`, the rail's own door), and that control is below.
+    // A mutation that added a `path`, `dir`, `checkout` or `cwd` key to
+    // `CONSOLE_OPERATIONS['plan.status'].args` makes this case fail on that
+    // word, which is what "the console cannot be asked to read a directory it
+    // was handed" means as a test rather than as a review.
+    for (const key of ['path', 'dir', 'checkout', 'cwd', 'directory', 'docs']) {
+      const decision = validateArguments('plan.status', { ...WELL_FORMED['plan.status'], [key]: '/etc' })
+      expect(decision.ok, `plan.status accepted a ${key}`).toBe(false)
+      // The *reason* is half the claim: a refusal that came from the value's
+      // grammar would still pass the line above while the key was there to be
+      // filled in with a directory that happened to parse.
+      expect(decision.ok ? '' : decision.reason, key).toBe(`plan.status takes no ${key}`)
+    }
+    // And the whole of what this operation declares, so a key that *is* admitted
+    // and that could carry a directory fails here by name rather than needing a
+    // reader to notice it above.
+    expect(operationFor('plan.status').args.map((spec) => spec.key)).toEqual(['all'])
+    // The near-miss that matters more than the six above: the declared key, with
+    // a path in it. `all` is a boolean the argv builder turns into `--all`, and
+    // a string here must not become a word.
+    expect(validateArguments('plan.status', { all: '/etc' }).ok).toBe(false)
+    expect(validateArguments('plan.status', { all: '--all' }).ok).toBe(false)
+    // ...and the control, so the refusals above read as this operation's schema
+    // rather than as a surface that refuses every path: `installation.checkout`
+    // takes one, and its payload is the one place a renderer may spell it.
+    expect(
+      validateArguments('installation.checkout', {
+        project: 'aurora',
+        checkout: '/home/operator/src/aurora',
+      }).ok,
+    ).toBe(true)
   })
 
   it('takes no key it does not declare, for every operation', () => {
@@ -1757,7 +1831,7 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these twenty-one, and no others".
+ * channel. The claim is "these twenty-two, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
@@ -1774,7 +1848,10 @@ describe('the spend read’s arguments', () => {
  * and the five writers are the picker's own operations reached from the
  * dashboard's document instead of the picker window's. Read that as a diff
  * against the previous version of this list: six rows, in one place, and no
- * method renamed.
+ * method renamed. **Plan GV2.1 added the twenty-second** (`plan.status` /
+ * `planStatus`, the plan graph joined to the runs working on it -- the read
+ * L5b's reasoning covers, one command further) and left the other twenty-one
+ * exactly where they were.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
@@ -1782,6 +1859,7 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['spend.report', 'runReport'],
   ['runs.list', 'listRuns'],
   ['runs.stats', 'statsRuns'],
+  ['plan.status', 'planStatus'],
   ['run.diagnose', 'diagnoseRun'],
   ['run.logs', 'readRunLogs'],
   ['run.logLink', 'runLogLink'],
@@ -1828,7 +1906,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these twenty-one, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
+  it('is exactly these twenty-two, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -1845,11 +1923,11 @@ describe('the frozen list of operations the preload exposes', () => {
     // unmutated surface is asserted clean first.
     expect(surfaceOffences(SHIPPED_SURFACE)).toEqual([])
 
-    // A twenty-second channel: what each task added must stay one row, and the
+    // A twenty-third channel: what each task added must stay one row, and the
     // next task that adds a read cannot do it quietly.
-    const twentySecond = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
-    expect(twentySecond).toContain('fleet.report: a channel this console does not ship')
-    expect(twentySecond).toContain('22 rows, and this console ships 21')
+    const twentyThird = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
+    expect(twentyThird).toContain('fleet.report: a channel this console does not ship')
+    expect(twentyThird).toContain('23 rows, and this console ships 22')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -1863,7 +1941,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('20 rows, and this console ships 21')
+    expect(withoutTheNewRow).toContain('21 rows, and this console ships 22')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -1878,8 +1956,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the twenty-one methods and nothing else', () => {
-    // The bridge the window is handed: the twenty-one methods and the names,
+  it('is frozen, and hands the window a bridge with the twenty-two methods and nothing else', () => {
+    // The bridge the window is handed: the twenty-two methods and the names,
     // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -2901,14 +2979,16 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: seventeen of the surface's twenty-one operations,
+    // The non-vacuity half: eighteen of the surface's twenty-two operations,
     // all of them reachable in a reduced mode (the handshake is the one the loop
     // skips and its own test covers; `installation.current`, Task 3.4b, is among
-    // the seventeen, because a reduced console's header still names its
+    // the eighteen, because a reduced console's header still names its
     // installation, and the rail's own six are too -- a reduced console still
     // has a rail, and the store it reads is not a figure the mode withholds).
+    // `plan.status` is one of them: a plan graph is not a spend, a cap or a kill
+    // control, so there is no figure for the mode to withhold.
     // A wrapper that refused the whole surface would fail here.
-    expect(THE_OPEN_OPERATIONS.length).toBe(17)
+    expect(THE_OPEN_OPERATIONS.length).toBe(18)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(

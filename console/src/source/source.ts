@@ -57,7 +57,7 @@ import type { Notice } from '../main/spawn'
 /**
  * JSONDoc is the CLI's document as it arrived: a JSON object, undecoded. It is
  * the type the whole console passes around, and the reason it is not a union of
- * the twelve shapes is that a source is not allowed to decide which shape a
+ * the thirteen shapes is that a source is not allowed to decide which shape a
  * document is -- that is Task 2.0's job, in one place, against the contract.
  */
 export type JSONDoc = Readonly<Record<string, unknown>>
@@ -147,13 +147,13 @@ export interface LiveFeed {
 }
 
 /**
- * FugaroSource is the interface every screen talks to. The twelve reads are the
- * twelve documents of design section 2.1 that the dashboard draws
+ * FugaroSource is the interface every screen talks to. The thirteen reads are the
+ * CLI documents of design section 2.1 that the dashboard draws
  * (`docs/json-contract.md` section 2), one method each, named after the thing on
  * screen rather than after the CLI verb -- so a screen that says `listRuns` does
- * not change when the verb behind it does. (Section 2.1's thirteenth row, the
- * picker's own `fugaro config list --json`, is the picker window's read and
- * reaches no screen through this interface.)
+ * not change when the verb behind it does. (Section 2.1's picker row,
+ * `fugaro config list --json`, is the picker window's read and reaches no screen
+ * through this interface.)
  *
  * The arguments are the *validated* arguments of Task 1.2's schema, not a
  * renderer payload: a source is downstream of the validation, and an
@@ -190,6 +190,17 @@ export interface FugaroSource {
    * document does not say who the caller is.
    */
   statsRuns(args: ValidatedArguments): Promise<Snapshot>
+  /**
+   * planStatus is the plan graph joined to the runs working on it
+   * (`plan status --json`, GV2.1). It is the one read whose *directory* is part
+   * of the question: the CLI resolves `docs/` from the process's working
+   * directory, so the document answers about the installation's own checkout and
+   * about nothing else. That directory is never an argument here -- a renderer
+   * has no way to name one (`src/main/ipc.ts`), and an implementation must not
+   * invent one -- which is why an installation with no checkout is refused
+   * rather than read from wherever the console happens to be running.
+   */
+  planStatus(args: ValidatedArguments): Promise<Snapshot>
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot>
   readRunLogs(args: ValidatedArguments): Promise<Snapshot>
   runLogLink(args: ValidatedArguments): Promise<TextSnapshot>
@@ -259,6 +270,17 @@ export interface InstallationSurface {
  * the machine, this process simply has no store behind the operation.
  */
 export const NO_INSTALLATION_SURFACE = 'this console has no installation store'
+
+/**
+ * NO_PLAN_CHECKOUT is what `plan.status` answers for an installation that
+ * records no checkout. The read is *about* a directory -- the CLI resolves
+ * `docs/` from its working directory -- so with no checkout there is no
+ * question to ask, and the console says which fact is missing instead of
+ * running the child somewhere arbitrary. It is the console's own sentence
+ * because the CLI is never asked: this is a state of the installation store,
+ * not a refusal from a command.
+ */
+export const NO_PLAN_CHECKOUT = 'this installation records no checkout, and the plan read is about its docs/ directory'
 
 /**
  * handlersFor answers the whole IPC surface from one source. It is a function
@@ -347,6 +369,7 @@ export function handlersFor(
     'spend.report': (args) => source.runReport(args),
     'runs.list': (args) => source.listRuns(args),
     'runs.stats': (args) => source.statsRuns(args),
+    'plan.status': (args) => source.planStatus(args),
     'run.diagnose': (args) => source.diagnoseRun(args),
     'run.logs': (args) => source.readRunLogs(args),
     'run.logLink': async (args) => (await source.runLogLink(args)).text,

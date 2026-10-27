@@ -36,6 +36,7 @@ describe('the stub’s command keys', () => {
       'report',
       'runs ls',
       'runs stats',
+      'plan status',
       'diagnose',
       'logs',
       'logs --url',

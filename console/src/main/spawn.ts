@@ -635,6 +635,33 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     dirFlag: false,
   },
   {
+    // The Plan screen's read (plan GV2.1), and the one row whose subject is the
+    // **checkout**: `plan status` walks the artifacts under the child's own
+    // working directory, which is the installation's recorded checkout when it
+    // has one. The directory is therefore the spawn's cwd and not a word here --
+    // `plan.status` has no `--dir` and no positional, and `dirFlag` is false for
+    // every command but `doctor`. An installation with no checkout is refused
+    // before this row is reached (`createBoundSource`), because the private
+    // working directory holds no `docs/` and a read there would be a document
+    // about nothing.
+    //
+    // It is also the **one row §5.1 rule 6's table does not carry**: the design
+    // names the read for the console (the console-v2 plan's GV1.6 and GV2.1, and
+    // `console/docs/json-contract.md` §6.12) and neither section 2.1's rows nor
+    // §5.1's table has grown a row for it, so it is owed to both. The words here
+    // are the command's own (`newPlanStatusCmd`), the way every other row's are.
+    //
+    // `--all` is the screen's own control and the row's one declared argument;
+    // `--json` is fixed. `--gcp-project` and `--region` are flags of the CLI's
+    // cloud group that this console never emits: neither is on `SPAWN_FLAGS`, so
+    // `assertArgvFlags` would refuse an argv carrying one.
+    operation: 'plan.status',
+    words: ['plan', 'status', '--json'],
+    takesProject: true,
+    args: [{ key: 'all', flag: '--all', kind: 'boolean' }],
+    dirFlag: false,
+  },
+  {
     operation: 'run.diagnose',
     words: ['diagnose', '--json'],
     takesProject: true,

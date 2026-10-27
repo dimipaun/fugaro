@@ -1239,10 +1239,15 @@ says.
 **Command:** `internal/cli/plan_status.go` `newPlanStatusCmd` / `runPlanStatus`.
 **Document:** `planStatusDoc`, indented (`printPlanStatus`), both in
 `internal/cli/plan_status.go` — cited by symbol, not by line, for §6.11's
-reason. This is the third command in this document the console **does not spawn
-yet**: it is the data behind the graph screen's per-task state (console v2 plan
-GV1.6), and the section is here so the screen that follows reads a shape off the
-code rather than assuming one from a design.
+reason. This is the third command in this document the console did not spawn
+when the section was written, and **the console spawns it now**: plan GV2.1 put
+it on the surface (`plan.status` in `console/src/main/ipc.ts`), as the data
+behind the graph screen's per-task state (console v2 plan GV1.6). The section
+stays here for §6.11's reason — the screen reads a shape off the code rather
+than assuming one from a design. The design's own exact-argv table has not
+carried a row for it yet: the read is named for the console by the console-v2
+plan (GV1.6 and GV2.1) and by this section, not by §5.1, so the row is owed
+there.
 
 **It is a cloud read, unlike `plan graph`.** A task's state is a *run's* state,
 and a run lives in the runs bucket of the selected project — so this command
