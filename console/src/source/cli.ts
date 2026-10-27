@@ -721,13 +721,14 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
   const feeds = new Map<string, LiveFeed>()
 
   /**
-   * planReads holds the last `plan status` document per (binding, arguments),
-   * with the console clock of the read that produced it. It is cleared wherever
+   * planReads holds the last `plan status` read per (binding, argv) -- the
+   * promise itself, so a read still in flight is shared -- with the console
+   * clock of the moment it finished, `null` while it runs. It is cleared wherever
    * `feeds` is: both are answers about the binding that is being dropped, and a
    * cached plan graph for a directory the console has stopped showing is the
    * same defect as a live feed for one.
    */
-  const planReads = new Map<string, { readonly snapshot: Snapshot; readonly at: number }>()
+  const planReads = new Map<string, { readonly reading: Promise<Snapshot>; at: number | null }>()
 
   /** nowMs is the console's own clock in milliseconds, the one the sources are
    * built with (`options.clock`), so a test that moves the clock moves this
@@ -966,23 +967,32 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      * other half, where the console refuses to guess one.
      *
      * The cadence is `PLAN_STATUS_MIN_INTERVAL_MS`, keyed by the binding *and*
-     * the arguments, because `--all` is a different document and not a wider
-     * one. The `at` recorded is the clock reading **after** the child answered,
-     * so the interval is a floor on the time between two spawns rather than on
-     * the time between a spawn and the next request.
+     * the argv the arguments become (`--all` is a different document, not a
+     * wider one; `all: false` is the same argv as no `all`). The entry is the
+     * read itself, **in flight** as well as answered, so calls that arrive while
+     * the child runs share it rather than each spawning one, and a refused read
+     * holds the floor like an answered one. The `at` recorded is the clock
+     * reading **after** the child finished, so the interval is a floor on the
+     * time between two spawns rather than on the time between a spawn and the
+     * next request.
      */
     planStatus: async (args) => {
       const installation = deps.installation()
       if (installation === null) throw noInstallation()
       if (installation.checkout === undefined) throw new SourceRefusal(NO_PLAN_CHECKOUT)
-      const key = `${bindingKey(installation)}\u0000${JSON.stringify(sortedArguments(args))}`
+      const key = `${bindingKey(installation)}\u0000${args['all'] === true ? '--all' : ''}`
       const cached = planReads.get(key)
-      if (cached !== undefined && nowMs() - cached.at < PLAN_STATUS_MIN_INTERVAL_MS) {
-        return cached.snapshot
+      if (cached !== undefined && (cached.at === null || nowMs() - cached.at < PLAN_STATUS_MIN_INTERVAL_MS)) {
+        return cached.reading
       }
-      const snapshot = await read('plan.status', (source) => source.planStatus(args))
-      planReads.set(key, { snapshot, at: nowMs() })
-      return snapshot
+      const reading = read('plan.status', (source) => source.planStatus(args))
+      const entry: { readonly reading: Promise<Snapshot>; at: number | null } = { reading, at: null }
+      planReads.set(key, entry)
+      const settled = (): void => {
+        entry.at = nowMs()
+      }
+      reading.then(settled, settled)
+      return reading
     },
     diagnoseRun: (args) => read('run.diagnose', (source) => source.diagnoseRun(args)),
     readRunLogs: (args) => read('run.logs', (source) => source.readRunLogs(args)),

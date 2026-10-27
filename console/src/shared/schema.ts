@@ -1328,14 +1328,14 @@ export function knownTopLevelKeys(shape: ConsoleDocument['shape']): readonly str
 
 /** PLAN_STATES is `plan.StateNode.State`'s closed set, in the CLI's own order
  * (`internal/plan/state.go`). */
-export const PLAN_STATES: readonly string[] = Object.freeze([
+export const PLAN_STATES = Object.freeze([
   'running',
   'done',
   'cancelled',
   'blocked',
   'ready',
   'not-started',
-])
+] as const) satisfies readonly string[]
 
 /** PlanState is one of them, as a type: a screen switches on it and the switch
  * is exhaustive, which is what `PLAN_STATES` being the whole list buys. */
@@ -1488,7 +1488,30 @@ function planStateAt(raw: unknown, field: string, where: string): PlanState {
   const state = stringAt(raw, field, where)
   const known = PLAN_STATES.find((candidate) => candidate === state)
   if (known === undefined) return refuse('unknown-value', field, where)
-  return known as PlanState
+  return known
+}
+
+/** PLAN_MAX_LEVEL bounds a node's `level`: a place in a dependency chain is a
+ * small whole number, and one past this is a document no plan screen draws. */
+export const PLAN_MAX_LEVEL = 1000
+
+/** planLevelAt is `intAt` held to the level's own range, 0 to `PLAN_MAX_LEVEL`. */
+function planLevelAt(raw: unknown, field: string, where: string): number {
+  const level = intAt(raw, field, where)
+  if (level < 0 || level > PLAN_MAX_LEVEL) return refuse('not-a-number', field, where)
+  return level
+}
+
+/** planPrNumberAt is a node's `pr_number`: absent or `null` is "no pull request
+ * recorded"; anything else must be a positive whole number. A fraction, a
+ * negative or a numeral in a string is refused by name rather than read as no
+ * pull request, because an identifier that is wrong is not one that is absent. */
+function planPrNumberAt(raw: Record<string, unknown>, key: string, field: string, where: string): number | null {
+  const value = raw[key]
+  if (value === undefined || value === null) return null
+  const at = `${field}.${key}`
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) return refuse('not-a-number', at, where)
+  return value
 }
 
 function planNodeAt(raw: unknown, index: number, plan: string, where: string): PlanNodeView {
@@ -1500,7 +1523,7 @@ function planNodeAt(raw: unknown, index: number, plan: string, where: string): P
     title: stringAt(required(node, 'title', field, where), `${field}.title`, where),
     state: planStateAt(required(node, 'state', field, where), `${field}.state`, where),
     closed: boolAt(required(node, 'closed', field, where), `${field}.closed`, where),
-    level: intAt(required(node, 'level', field, where), `${field}.level`, where),
+    level: planLevelAt(required(node, 'level', field, where), `${field}.level`, where),
     critical: boolAt(required(node, 'critical', field, where), `${field}.critical`, where),
     // The five `omitempty` keys of the node. Absent and `null` both mean the
     // CLI had nothing to say: no target version, no run joined, no stage, no
@@ -1509,7 +1532,7 @@ function planNodeAt(raw: unknown, index: number, plan: string, where: string): P
     release: optionalText(node, 'release', field, where),
     run: optionalText(node, 'run', field, where),
     stage: optionalText(node, 'stage', field, where),
-    prNumber: optionalInt(node, 'pr_number'),
+    prNumber: planPrNumberAt(node, 'pr_number', field, where),
     mark: optionalText(node, 'mark', field, where),
   }
 }

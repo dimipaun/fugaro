@@ -750,7 +750,7 @@ opens `~/.config/fugaro` (§3.4 rule 7).
 
 **Who reads it.** Since the owner's design ruling of 2026-10-25 it is the
 installation rail's read: the dashboard's `installation.list` operation (one of
-the surface's twenty-one, `CONSOLE_OPERATIONS` in `src/main/ipc.ts`), answered by
+the surface's twenty-two, `CONSOLE_OPERATIONS` in `src/main/ipc.ts`), answered by
 the same dispatcher the picker window uses. The console reads two of the
 `warnings` lines by their wording, to mark the rail's rows
 (`src/main/installationstate.ts`): `<path> could not be read: <reason>`, matched
@@ -1244,10 +1244,12 @@ when the section was written, and **the console spawns it now**: plan GV2.1 put
 it on the surface (`plan.status` in `console/src/main/ipc.ts`), as the data
 behind the graph screen's per-task state (console v2 plan GV1.6). The section
 stays here for §6.11's reason — the screen reads a shape off the code rather
-than assuming one from a design. The design's own exact-argv table has not
-carried a row for it yet: the read is named for the console by the console-v2
-plan (GV1.6 and GV2.1) and by this section, not by §5.1, so the row is owed
-there.
+than assuming one from a design. Its argv is design §5.1 rule 6's
+`plan status --json` row: at most `--all` (GD6's "everything" toggle), plus
+`--project <name>` and `--config <path>` like every other cloud row, and **no
+path** — the checkout reaches the CLI as the spawn's own working directory, from
+the installation's record and never from the renderer. The console asks for it
+at most once a minute per installation and arguments.
 
 **It is a cloud read, unlike `plan graph`.** A task's state is a *run's* state,
 and a run lives in the runs bucket of the selected project — so this command

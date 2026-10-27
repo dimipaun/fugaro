@@ -419,19 +419,13 @@ describe('the spawn table and the argv it builds', () => {
   })
 
   it('fixes the design allow-list exactly: fourteen argvs, thirteen commands, twelve of them with --project', () => {
-    // The design's §5.1 rule 6 table is the whole allow-list, and **thirteen of
-    // this table's argvs are the document's thirteen, argv for argv**: the
-    // rail's read (`config list --json`, the case above) used to be the picker's
-    // own row in a second table, and the owner's ruling of 2026-10-25 moved it
-    // onto this one. Plan GV2.1's `plan status --json` is the console's
-    // fourteenth and is **not on the document's table yet**: the design names
-    // the read for the console (GV1.6/GV2.1 and
-    // `console/docs/json-contract.md` §6.12) and §5.1 has not grown the row, so
-    // the console is one argv ahead of the design until it does. The two lists
-    // are held in step by hand on purpose: the Go side pins the document's
-    // thirteen (`internal/cli/docs_desktop_console_test.go`,
+    // The design's §5.1 rule 6 table is the whole allow-list, argv for argv:
+    // the rail's read (`config list --json`, the case above) used to be the
+    // picker's own row in a second table until the owner's ruling of 2026-10-25,
+    // and plan GV2.1's `plan status --json` is the fourteenth. The Go side pins
+    // the document's list (`internal/cli/docs_desktop_console_test.go`,
     // TestDocsDesktopConsoleDesignAllowListIsExactArgv) and this case pins the
-    // console's fourteen, which is that thirteen plus the owed row.
+    // console's; the two are held in step by hand on purpose.
     expect([...SPAWN_COMMANDS].map((row) => row.words.join(' '))).toEqual([
       'watch --json',
       'budget show --json',

@@ -172,7 +172,7 @@ describe('the built preload, as Electron loads it', () => {
     expect(Object.keys(window ?? {}).sort()).toEqual([CONSOLE_BRIDGE_KEY])
     const api = (window ?? {})[CONSOLE_BRIDGE_KEY] as Record<string, unknown>
     expect(Object.isFrozen(api)).toBe(true)
-    // The fifteen methods and the two fields, by name -- and the fields are the
+    // Every operation's method and the two fields, by name -- and the fields are the
     // bridge's own, so a method renamed in one file and not the other fails here.
     expect(Object.keys(api).sort()).toEqual(
       ['operations', 'version', ...CONSOLE_OPERATIONS.map((operation) => operation.method)].sort(),

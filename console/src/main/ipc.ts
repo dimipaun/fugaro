@@ -343,17 +343,11 @@ export interface ConsoleOperation {
  * Spend screen's by-person view), which the table narrowed to this task's own
  * argument: see its comment below.
  *
- * **GV2.1's `plan status --json` is this surface's fourteenth argv, and the one
- * the design has not carried yet.** The read is named for the console -- the
- * console-v2 plan's GV1.6, which ships the document, and GV2.1, which is this
- * operation, and `console/docs/json-contract.md` §6.12, which describes it --
- * but neither section 2.1's thirteen rows nor §5.1 rule 6's table has grown a
- * row for it, so the row is **owed to both** and the console is one argv ahead
- * of the design's allow-list until it lands. `internal/cli/project.go`'s
- * `consoleReadPaths` and `docs_desktop_console_test.go` record the same gap from
- * the Go side. Until then this table is the whole statement of that argv, and
- * `plan.status`'s own comment below says why the directory it reads in never
- * reaches it.
+ * **GV2.1's `plan status --json` is this surface's fourteenth argv**: section
+ * 2.1's fourteenth row and §5.1 rule 6's `plan status --json` row (the
+ * console-v2 plan's GV1.6 ships the document, GV2.1 is this operation, and
+ * `console/docs/json-contract.md` §6.12 describes it). `plan.status`'s own
+ * comment below says why the directory it reads in never reaches it.
  *
  * The thirteenth **operation** (the row, not an argv) is the startup
  * handshake's answer (`startup.compatibility`, the console's own state, which
@@ -542,10 +536,8 @@ export const CONSOLE_OPERATIONS = [
   // checkout's own `docs/` and joins them to the runs of that checkout's
   // repository, so the child has to run *in* the checkout.
   //
-  // It is also the **one argv the design's §5.1 rule 6 table does not carry**
-  // (the paragraph above says what is owed): the flags below are the command's
-  // own, read off `newPlanStatusCmd` the way every other row's are, and §5.1's
-  // `--all` allowance is one the row is owed rather than one it already has.
+  // Its flags are the command's own, read off `newPlanStatusCmd` the way every
+  // other row's are, and §5.1 rule 6's row permits exactly `--all` among them.
   //
   // **The directory is therefore not a key of this schema, and never a word of
   // its argv.** The main process sets the child's working directory from the

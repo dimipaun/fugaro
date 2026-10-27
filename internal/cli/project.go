@@ -177,10 +177,9 @@ func providerForHost(host string) string {
 }
 
 // consoleReadCtxKey marks the commands the desktop console spawns as reads:
-// docs/design/desktop-console.md §5.1's exact-argv allow-list, plus the two
-// reads that design names for the console and whose allow-list rows the
-// console task adds (`config list --json` for the installation list, D13 and
-// §12 item 8; `plan graph --json` for the graph document, V2.2.1).
+// docs/design/desktop-console.md §5.1's exact-argv allow-list, plus the one
+// read that design names for the console and whose allow-list row the console
+// task adds (`plan graph --json` for the graph document, V2.2.1).
 //
 // It is set once, from the command's own path, in NewRootCmd's
 // PersistentPreRun, and read in one place: recordCheckout. A console read
@@ -226,14 +225,14 @@ var consoleReadPaths = map[string]bool{
 	"fugaro accounts ls": true,
 	"fugaro version":     true,
 	"fugaro doctor":      true,
-	// The ones the design names and §5.1 has not carried a row for yet (the
-	// console task adds them). config list and plan graph resolve no checkout
-	// today; plan status does (it is a cloud read of the checkout's own
-	// repository's runs), and it writes nothing, the remembered checkouts
-	// included.
 	"fugaro config list": true,
-	"fugaro plan graph":  true,
+	// plan status resolves the checkout (it is a cloud read of the checkout's
+	// own repository's runs) and writes nothing, the remembered checkouts
+	// included.
 	"fugaro plan status": true,
+	// The one the design names and §5.1 has not carried a row for yet (the
+	// console task adds it); it resolves no checkout today.
+	"fugaro plan graph": true,
 }
 
 // selectProject picks the project config a cloud command acts on

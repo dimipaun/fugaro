@@ -39,6 +39,7 @@ import {
   PLAN_KEYS,
   PLAN_NODE_KEYS,
   PLAN_RELEASE_KEYS,
+  PLAN_MAX_LEVEL,
   PLAN_STATES,
   PLAN_STATUS_KEYS,
   PLAN_STREAM_KEYS,
@@ -55,7 +56,7 @@ import {
   knownTopLevelKeys,
   wireTextClass,
 } from '../../src/shared/schema'
-import type { PlanStatusView } from '../../src/shared/schema'
+import type { PlanState, PlanStatusView } from '../../src/shared/schema'
 import type { LiveDocument } from '../../src/shared/schema'
 import type { JSONDoc } from '../../src/source/source'
 import { loadFixture } from '../../src/source/fixture'
@@ -1287,6 +1288,35 @@ describe('the plan status document (plan GV2.1)', () => {
     const fractional = patched(PLAN_STATUS, ['plans', 0, 'nodes', 0, 'level'], 1.5)
     expect(planRefusal(fractional).name).toBe('not-a-number')
     expect(planRefusal(fractional).field).toBe('plans[0].nodes[0].level')
+  })
+
+  it('reads a pull request number only as a positive whole number, and a level only within its bound', () => {
+    // A pull request number is an identifier: a fraction, a negative, a zero or
+    // a numeral in a string is not one, and reading it as "no pull request"
+    // would hide that the document is wrong.
+    for (const bad of [-3.5, -3, 0, 2.5, '7', true]) {
+      const refusal = planRefusal(patched(PLAN_STATUS, ['plans', 0, 'nodes', 0, 'pr_number'], bad))
+      expect(refusal.name, String(bad)).toBe('not-a-number')
+      expect(refusal.field, String(bad)).toBe('plans[0].nodes[0].pr_number')
+    }
+    expect(planDecoded(patched(PLAN_STATUS, ['plans', 0, 'nodes', 0, 'pr_number'], 7)).plans[0]?.nodes[0]?.prNumber).toBe(7)
+    expect(planDecoded(patched(PLAN_STATUS, ['plans', 0, 'nodes', 0, 'pr_number'], null)).plans[0]?.nodes[0]?.prNumber).toBeNull()
+    // A level is a place in a dependency chain: whole, not negative, and not
+    // larger than any plan this console would draw.
+    for (const bad of [-1, PLAN_MAX_LEVEL + 1, 1e9]) {
+      const refusal = planRefusal(patched(PLAN_STATUS, ['plans', 0, 'nodes', 0, 'level'], bad))
+      expect(refusal.name, String(bad)).toBe('not-a-number')
+      expect(refusal.field, String(bad)).toBe('plans[0].nodes[0].level')
+    }
+    expect(planDecoded(patched(PLAN_STATUS, ['plans', 0, 'nodes', 0, 'level'], PLAN_MAX_LEVEL)).plans[0]?.nodes[0]?.level).toBe(PLAN_MAX_LEVEL)
+  })
+
+  it('types a plan state as the six words and nothing else', () => {
+    const known: PlanState = 'not-started'
+    expect(PLAN_STATES).toContain(known)
+    // @ts-expect-error 'paused' is not one of the six states
+    const unknown: PlanState = 'paused'
+    expect(PLAN_STATES).not.toContain(unknown)
   })
 
   it('refuses a state that is not one of the six, by name', () => {

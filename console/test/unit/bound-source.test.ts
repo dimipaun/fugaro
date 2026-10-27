@@ -426,4 +426,49 @@ describe('the plan read, whose directory is the binding’s', () => {
       source: 'configured',
     })
   })
+
+  it('holds the once-a-minute floor against concurrent calls, failed reads and equivalent arguments', async () => {
+    // Review (a): the floor was a cache of *answered* reads, so ten calls in
+    // the same instant spawned ten children, a failed read was spawned again at
+    // once, and `{}` and `{ all: false }` -- the same argv -- were two keys.
+    let spawned = 0
+    let fail = false
+    let release: () => void = () => undefined
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const at = Date.parse('2026-10-15T12:00:00Z')
+    let now = at
+    const source = createBoundSource({
+      installation: () => ({ ...FIRST, checkout: '/home/operator/src/acme' }),
+      clock: () => new Date(now),
+      create: async () =>
+        ({
+          version: async () => ({ text: FIRST.id, receivedAt: '2026-10-15T12:00:00Z' }),
+          close: async () => undefined,
+          planStatus: async (): Promise<Snapshot> => {
+            spawned += 1
+            await held
+            if (fail) throw new Error('the CLI refused')
+            return { document: { read: spawned }, receivedAt: '2026-10-15T12:00:00Z', sequence: spawned, day: null, rolled: false, notices: [] }
+          },
+        }) as unknown as CliSource,
+    })
+
+    const calls = Array.from({ length: 10 }, (_, index) => source.planStatus(index % 2 === 0 ? {} : { all: false }))
+    release()
+    const answers = await Promise.all(calls)
+    expect(spawned, 'concurrent calls each spawned a child').toBe(1)
+    for (const answer of answers) expect(answer).toBe(answers[0])
+
+    // A failed read holds the floor too: the next call inside the minute is
+    // answered with the same refusal rather than a second child.
+    now = at + PLAN_STATUS_MIN_INTERVAL_MS
+    fail = true
+    await expect(source.planStatus({})).rejects.toThrow()
+    expect(spawned).toBe(2)
+    now += 1_000
+    await expect(source.planStatus({ all: false })).rejects.toThrow()
+    expect(spawned, 'a failed read was spawned again inside the minute').toBe(2)
+  })
 })

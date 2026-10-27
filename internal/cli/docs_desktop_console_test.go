@@ -828,8 +828,7 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// against this constructor like any other command's.
 	"backlog list": newBacklogListCmd,
 	// §6.12 documents the graph joined to the runs (GV1.6, the CLI release after 0.11.4), and the
-	// console spawns it since GV2.1 — the design's §5.1 table still has not grown a row for it,
-	// which is what `namedNotAllowed` above records. Its flags — including the cloud
+	// console spawns it since GV2.1, as §5.1 rule 6's `plan status --json` row. Its flags — including the cloud
 	// ones, which this command carries and `plan graph` does not — are checked
 	// against this constructor like any other command's.
 	"plan status": newPlanStatusCmd,
@@ -1119,6 +1118,9 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// window shares. It carries no --project and no --config, so it is absent from the
 		// contract document's flag inventory below, which is about flags.
 		"config list --json",
+		// The graph screen's per-task state (console v2 plan GV2.1, the
+		// `plan.status` operation): read-only, no path in the argv.
+		"plan status --json",
 	}
 	rows := docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |")
 	got := map[string]bool{}
@@ -1205,17 +1207,18 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Twelve commands: the eleven dashboard reads (logs has two argvs) and the
-	// picker's `config list --json` (D13's amendment of 2026-10-20).
-	if len(allowed) != 12 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 12 (logs has two argvs)", path, argvs, len(allowed))
+	// Thirteen commands: the eleven dashboard reads (logs has two argvs), the
+	// rail's `config list --json` (D13's amendment of 2026-10-20) and the
+	// graph screen's `plan status --json` (GV2.1).
+	if len(allowed) != 13 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 13 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
-	// except the reads the design names for the console and §5.1 has not
-	// grown a row for yet (V2.2.1, the graph document, and GV1.6, the graph
-	// joined to its runs). Another name is a command someone decided the
-	// console spawns, and that is a design change, not a table entry.
-	namedNotAllowed := map[string]bool{"fugaro plan graph": true, "fugaro plan status": true}
+	// except the read the design names for the console and §5.1 has not grown
+	// a row for yet (V2.2.1, the graph document). Another name is a command
+	// someone decided the console spawns, and that is a design change, not a
+	// table entry.
+	namedNotAllowed := map[string]bool{"fugaro plan graph": true}
 	for cmdPath := range consoleReadPaths {
 		if !allowed[cmdPath] && !namedNotAllowed[cmdPath] {
 			t.Errorf("consoleReadPaths carries %q, which is neither an argv §5.1 allows nor a read the design names for the console (%v): the read-only list is the design's, not this file's", cmdPath, namedNotAllowed)

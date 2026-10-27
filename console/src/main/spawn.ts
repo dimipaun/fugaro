@@ -645,11 +645,9 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     // working directory holds no `docs/` and a read there would be a document
     // about nothing.
     //
-    // It is also the **one row §5.1 rule 6's table does not carry**: the design
-    // names the read for the console (the console-v2 plan's GV1.6 and GV2.1, and
-    // `console/docs/json-contract.md` §6.12) and neither section 2.1's rows nor
-    // §5.1's table has grown a row for it, so it is owed to both. The words here
-    // are the command's own (`newPlanStatusCmd`), the way every other row's are.
+    // It is §5.1 rule 6's `plan status --json` row (the console-v2 plan's GV2.1;
+    // its document is `console/docs/json-contract.md` §6.12). The words here are
+    // the command's own (`newPlanStatusCmd`), the way every other row's are.
     //
     // `--all` is the screen's own control and the row's one declared argument;
     // `--json` is fixed. `--gcp-project` and `--region` are flags of the CLI's
