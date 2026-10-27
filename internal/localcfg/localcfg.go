@@ -199,11 +199,23 @@ type Config struct {
 	// `fugaro doctor`'s own cli-version check ignores both); nil or true
 	// leaves it on. Operator-only, like claude_accounts: never published to
 	// the runs bucket (Shared).
-	UpdateCheck *bool           `yaml:"update_check,omitempty"`
-	User        string          `yaml:"user,omitempty"`
-	MaxParallel int             `yaml:"max_parallel"`
-	Endpoints   Endpoints       `yaml:"endpoints,omitempty"`
-	Repos       map[string]Repo `yaml:"repos"`
+	UpdateCheck *bool     `yaml:"update_check,omitempty"`
+	User        string    `yaml:"user,omitempty"`
+	MaxParallel int       `yaml:"max_parallel"`
+	Endpoints   Endpoints `yaml:"endpoints,omitempty"`
+	// BaseBranch is the project's default base branch: the one repositories
+	// of this installation run against when neither their own committed
+	// fugaro.yaml nor their repos.<r>.base_branch entry names one (the
+	// precedence is config.EffectiveBaseBranch). It is the same word a repo's
+	// entry uses, one level up — a project that uses master everywhere sets
+	// it once here, and a repository that differs overrides it in its own
+	// file. The owner's, and the only one of the three sites that is
+	// published: `fugaro project policy publish` copies it into the policy
+	// node, which is where the runner reads it, while the value itself never
+	// travels in the shared config a launcher can write (Shared drops it,
+	// like each repo's).
+	BaseBranch string          `yaml:"base_branch,omitempty"`
+	Repos      map[string]Repo `yaml:"repos"`
 	// notes are warnings added after parsing (AddWarning), such as a
 	// published shared config's dropped legacy base_images entries.
 	notes []string
@@ -1272,6 +1284,9 @@ func (c *Config) validate() error {
 		if err := checkEndpoint(ep.url); err != nil {
 			bad("endpoints.%s: %v", ep.name, err)
 		}
+	}
+	if c.BaseBranch != "" && !config.ValidBranchName(c.BaseBranch) {
+		bad("base_branch %q is not a plain git branch name (the project's default base branch)", c.BaseBranch)
 	}
 	for repo, r := range c.Repos {
 		if !repoRE.MatchString(repo) {

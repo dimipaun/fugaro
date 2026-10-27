@@ -94,6 +94,7 @@ batch:
 max_parallel: 7
 endpoints: { run: "http://127.0.0.1:1/", no_auth: true }
 update_check: false
+base_branch: trunk
 repos:
   acme/web: { provider: github, base_branch: main, workflows: [web] }
 `
@@ -130,7 +131,7 @@ func TestSharedSubsetNeverLeaksOwnerOrPersonalFields(t *testing.T) {
 	// operator's own and stays in their config after it has been published to
 	// the node (nothing here reads it again, but Shared must not be the thing
 	// that clears it).
-	if lc.Terraform.StateBucket == "" || lc.User == "" || lc.Bucket == "" || len(lc.Providers) != 1 || len(lc.ClaudeAccounts) != 1 || lc.Routing == nil || lc.Routing.Claude == nil || lc.Repos["acme/web"].BaseBranch != "main" || lc.Build.ServiceAccount == "" || lc.UpdateCheck == nil || lc.CredentialsService == nil {
+	if lc.Terraform.StateBucket == "" || lc.User == "" || lc.Bucket == "" || len(lc.Providers) != 1 || len(lc.ClaudeAccounts) != 1 || lc.Routing == nil || lc.Routing.Claude == nil || lc.Repos["acme/web"].BaseBranch != "main" || lc.BaseBranch != "trunk" || lc.Build.ServiceAccount == "" || lc.UpdateCheck == nil || lc.CredentialsService == nil {
 		t.Errorf("Shared modified its receiver: %+v", lc)
 	}
 }
@@ -576,5 +577,29 @@ func TestMergeSharedNeverCarriesProfiles(t *testing.T) {
 	}
 	if len(local.Profiles) != 2 {
 		t.Error("Shared/MergeShared cleared the local profiles")
+	}
+}
+
+// TestMergeSharedNeverPublishesTheProjectBaseBranch: the installation
+// config's top-level base_branch is the owner's, published to the policy
+// node (fugaro project policy publish) and never to the runs bucket's
+// shared file, which any launcher can write — a machine that could flip
+// every repository's base branch by writing there is the shape the
+// per-repo key is already kept out of. So a publish from a machine whose
+// own config sets one writes none, and one that does not never adopts the
+// published.
+func TestMergeSharedNeverPublishesTheProjectBaseBranch(t *testing.T) {
+	existing := sharedBase(t, "base_branch: trunk\n")
+	local := sharedBase(t, "")
+	got := MergeShared(existing, local)
+	if got.BaseBranch != "" {
+		t.Errorf("MergeShared adopted the published base_branch %q", got.BaseBranch)
+	}
+	local = sharedBase(t, "base_branch: master\n")
+	if got := MergeShared(existing, local); got.BaseBranch != "" {
+		t.Errorf("MergeShared published the local base_branch %q", got.BaseBranch)
+	}
+	if existing.BaseBranch != "trunk" || local.BaseBranch != "master" {
+		t.Error("MergeShared modified an input's base_branch")
 	}
 }
