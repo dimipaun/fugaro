@@ -49,10 +49,11 @@ export const LAUNCH_TIMEOUT_MS = 120_000
 
 /** The confirmation rate, in design section 5.1 rule 11's own numbers: windows
  * are opened at most three times a minute per installation and six times a
- * minute across the whole app. The cap is on **opening the confirmation**, not
- * on accepting one: a refused window is still a window that took the operator's
- * attention, and a stream of them is a denial of service against the person at
- * the keyboard rather than against the CLI. */
+ * minute across the whole app. The cap is on the **confirmation request**, not
+ * on accepting one: the request is what this process works for -- the name is
+ * read against the records before any window exists -- so a refused window and a
+ * launch that never builds both count, and a stream of them is a denial of
+ * service against the person at the keyboard rather than against the CLI. */
 export const CONFIRM_RATE_WINDOW_MS = 60_000
 export const CONFIRM_RATE_PER_INSTALLATION = 3
 export const CONFIRM_RATE_APP = 6
@@ -368,9 +369,12 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
    * before the first `await`, the second message of a burst already sees the
    * first's reservation.
    *
-   * The rate is recorded when the window opens, not when it is answered: the
-   * operator's attention is what this bounds. The stored list is pruned to the
-   * window as it is written, so it cannot grow without bound.
+   * The rate is recorded when the **request** arrives -- window or not, and for
+   * a request whose build refuses and opens no window at all -- rather than when
+   * it is answered: what it bounds is how often this process is made to work on
+   * a launch (the records read is the work, and a request that never builds
+   * still made it), which is the operator's own rate of asking. The stored list
+   * is pruned to the window as it is written, so it cannot grow without bound.
    */
   function reserve(installation: string, at: number): string {
     reservations += 1

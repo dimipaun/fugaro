@@ -61,6 +61,8 @@ import type { SpawnLogWriter } from './spawnlog'
 import { parseInstallationsDocument } from './installlist'
 import { createLaunchRunner, DECLINING_CONFIRMER } from './launch'
 import type { FrozenLaunch, LaunchRequest, TargetLookup } from './launch'
+import { launchFingerprint } from './launchrules'
+import type { LaunchRecordFacts } from './launchrules'
 import type { InstallationsListReply } from './onboarding'
 import { reducedModeHandlers, registerConsoleHandlers, startupCompatibility } from './ipc'
 import type { ConsoleHandlers, ValidatedArguments } from './ipc'
@@ -621,50 +623,31 @@ async function launchLookUpWith(project: string, log: SpawnLogWriter): Promise<T
       binaryPath: resolution.value.path,
       cliVersion: resolution.value.version,
       records: found,
-      fingerprint: launchFingerprint(record, row),
+      fingerprint: launchFingerprint(launchRecordFacts(record, row)),
       ...(configPath === '' ? {} : { configPath }),
       ...(distro === '' ? {} : { distro }),
     },
   }
 }
 
-/**
- * launchFingerprint is the identity of the record a launch was cut from: the
- * fields of this console's own stored installation, plus the rail's row for it.
- *
- * **It exists because "the name is still saved" is not "the installation is
- * still the one this launch is for".** A record removed and added again under
- * the same name is a new `id` -- and possibly the same binary path, which is why
- * the id is in here -- and an operator who re-chooses the binary, the
- * distribution or the checkout, or whose rail row stopped being saved or started
- * refusing, has changed what a `fugaro run` for that name would do. Both halves
- * are read here and at the answer (`launchStillRecorded`), and the launcher
- * freezes this string into the launch, so the comparison is against what the
- * window was opened *for* and not against the name it was opened under.
- *
- * The row's own fields are in it rather than only the record's because the row
- * is the rail's answer, and the launch's window shows it: a row that is no
- * longer `saved`, or whose checkouts changed under it, is a window whose
- * installation moved.
- */
-function launchFingerprint(
+/** launchRecordFacts is `launchrules.ts`'s `LaunchRecordFacts` read off this
+ * console's two stores: its own installation file, and the rail's row for it.
+ * The rail's `listed` and `checkouts` are answers of a `config list` read that
+ * can fail and succeed again between the lookup and the answer, so they are not
+ * part of the identity; see `LaunchRecordFacts`. */
+function launchRecordFacts(
   record: StoredInstallation | undefined,
   row: InstallationsListReply['rows'][number],
-): string {
-  return JSON.stringify([
-    record?.id ?? '',
-    record?.project ?? '',
-    record?.binaryPath ?? '',
-    record?.distro ?? '',
-    record?.configPath ?? '',
-    record?.checkout ?? '',
-    row.project,
-    row.saved,
-    row.listed,
-    row.mode,
-    row.checkout ?? '',
-    [...row.checkouts].sort(),
-  ])
+): LaunchRecordFacts {
+  return {
+    id: record?.id ?? '',
+    project: record?.project ?? '',
+    binaryPath: record?.binaryPath ?? '',
+    distro: record?.distro ?? '',
+    configPath: record?.configPath ?? '',
+    checkout: record?.checkout ?? '',
+    saved: row.saved,
+  }
 }
 
 /** launchStillRecorded is the check that makes "an installation removed, or
@@ -679,7 +662,7 @@ async function launchStillRecorded(launch: FrozenLaunch): Promise<boolean> {
   if (listed === null) return false
   const row = listed.rows.find((candidate) => candidate.project === launch.project)
   if (row === undefined || !row.saved) return false
-  return launchFingerprint(storedRecord(launch.project), row) === launch.fingerprint
+  return launchFingerprint(launchRecordFacts(storedRecord(launch.project), row)) === launch.fingerprint
 }
 
 /**

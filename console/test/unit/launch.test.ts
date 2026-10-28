@@ -312,11 +312,11 @@ function runner(options: {
   readonly timers?: Timers
   /** `now` is the **limits'** clock (monotonic in production, `performance.now`)
    * and `wallClock` the run id's (`Date.now`); both default to `NOW` so that a
-   * test's first launch is `RUN_ID`. `systemClocks` leaves both real, for the
-   * one test that asserts the limits do not read the wall clock. */
+   * test's first launch is `RUN_ID`. The one test that asserts the limits do not
+   * read the wall clock builds its launcher without either, so that it exercises
+   * the production defaults rather than this helper's stand-ins for them. */
   readonly now?: () => number
   readonly wallClock?: () => number
-  readonly systemClocks?: boolean
   readonly stillRecorded?: (launch: FrozenLaunch) => boolean | Promise<boolean>
   /** `lookUp` replaces the records entirely: the one test that needs a lookup
    * answering for an installation other than the one asked about cannot use the
@@ -324,9 +324,8 @@ function runner(options: {
    * name it was given). */
   readonly lookUp?: (project: string) => TargetLookup | Promise<TargetLookup>
 }): ReturnType<typeof createLaunchRunner> {
-  const system = options.systemClocks === true
-  const now = options.now ?? ((): number => (system ? performance.now() : NOW))
-  const wallClock = options.wallClock ?? ((): number => (system ? Date.now() : now()))
+  const now = options.now ?? ((): number => NOW)
+  const wallClock = options.wallClock ?? now
   const held = options.target ?? target()
   const lookUp = options.lookUp
   const shared = {
@@ -343,18 +342,23 @@ function runner(options: {
   if (lookUp !== undefined) {
     return createLaunchRunner({ ...shared, lookUp: async (project) => lookUp(project) })
   }
-  return createLaunchRunner({
-    ...shared,
-    lookUp: (project: string) =>
-      Promise.resolve(
-        held.project === '' || project === ''
-          ? { ok: false, reason: `no installation named ${JSON.stringify(project)} is one this console’s records carry` }
-          : // The launcher refuses a target whose project is not the name it was
-            // asked about, so a test that launches a *second* installation gets
-            // the same records under that installation's own name.
-            { ok: true, target: project === held.project ? held : { ...held, project } },
-      ),
-  })
+  return createLaunchRunner({ ...shared, lookUp: (project: string) => Promise.resolve(recordsFor(held, project)) })
+}
+
+/** recordsFor is the console's own lookup shape: the target under the name it
+ * was asked about, or the records refusing a name they do not carry. A
+ * `project: ''` target is the records refusing every name. */
+function recordsFor(held: LaunchTarget, project: string): TargetLookup {
+  if (held.project === '' || project === '') {
+    return {
+      ok: false,
+      reason: `no installation named ${JSON.stringify(project)} is one this console’s records carry`,
+    }
+  }
+  // The launcher refuses a target whose project is not the name it was asked
+  // about, so a test that launches a *second* installation gets the same records
+  // under that installation's own name.
+  return { ok: true, target: project === held.project ? held : { ...held, project } }
 }
 
 interface LaunchRequestLike {
@@ -951,8 +955,21 @@ describe('the launch limits', () => {
     // for; set back, it locks the installation out until real time catches up.
     // The limits therefore read a monotonic clock (`performance.now`), and the
     // wall clock is kept for the one thing that needs a date: the run id.
+    //
+    // The launcher is built here **without** `now` or `wallClock`, so what this
+    // case exercises is the production default itself and not the helper's
+    // injected stand-in for it: a default reverted to `Date.now` would pass a
+    // test whose clocks the helper supplies.
     const spawner = completingSpawner()
-    const held = runner({ confirmer: answeringConfirmer(true), spawner, systemClocks: true })
+    const held = createLaunchRunner({
+      confirmer: answeringConfirmer(true),
+      stillRecorded: () => true,
+      appEnv: { HOME: '/home/person-1' },
+      spawner,
+      timers: neverFires(),
+      random: countingRandom(),
+      lookUp: (project) => Promise.resolve(recordsFor(target(), project)),
+    })
     expect((await held.launch(request())).ok).toBe(true)
 
     const real = Date.now

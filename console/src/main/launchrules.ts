@@ -553,6 +553,64 @@ export function checkLaunchBranch(branch: string): LaunchValue<string> {
 }
 
 // ---------------------------------------------------------------------------
+// The record a launch is cut from.
+// ---------------------------------------------------------------------------
+
+/**
+ * LaunchRecordFacts is the part of the stored installation, and of the rail's
+ * row for it, that a launch's identity is made of. It is deliberately the
+ * *facts* and not either of the two objects (`installationstate.ts`'s `RowFacts`
+ * is the same shape for the same reason): this module is the pure-rules module
+ * and the entry point is the only place the record and the row exist together.
+ *
+ * Every field is one whose change alters what a `fugaro run` for this name
+ * would do -- and **only** such a field. In particular the rail's `listed` flag
+ * and its live `checkouts` list are *not* in here: both are answers of the CLI's
+ * own `config list` read, which can fail for one read and succeed for the next
+ * (a row the CLI did not enumerate is still `saved`), and an identity that moved
+ * with a transient read failure would decline a launch the operator had already
+ * confirmed, drawn as their own cancel with no sentence naming the read.
+ */
+export interface LaunchRecordFacts {
+  /** the stored record's own id: a removal and a re-add under the same name is
+   * a new record, and possibly one with the same binary path */
+  readonly id: string
+  readonly project: string
+  readonly binaryPath: string
+  readonly distro: string
+  readonly configPath: string
+  readonly checkout: string
+  /** the rail's own `saved` flag for the row */
+  readonly saved: boolean
+}
+
+/**
+ * launchFingerprint is the identity of the record a launch was cut from, as one
+ * string a caller freezes and a test compares.
+ *
+ * **It exists because "the name is still saved" is not "the installation is
+ * still the one this launch is for".** A record removed and added again under
+ * the same name is a new `id` -- and possibly the same binary path, which is why
+ * the id is in here -- and an operator who re-chooses the binary, the
+ * distribution or the checkout has changed what a `fugaro run` for that name
+ * would do. The entry point freezes this string into the launch and compares a
+ * fresh one at the answer (`launchStillRecorded`), so the comparison is against
+ * what the window was opened *for* and not against the name it was opened
+ * under.
+ */
+export function launchFingerprint(facts: LaunchRecordFacts): string {
+  return JSON.stringify([
+    facts.id,
+    facts.project,
+    facts.binaryPath,
+    facts.distro,
+    facts.configPath,
+    facts.checkout,
+    facts.saved,
+  ])
+}
+
+// ---------------------------------------------------------------------------
 // The reply.
 // ---------------------------------------------------------------------------
 
