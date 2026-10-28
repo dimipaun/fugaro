@@ -80,6 +80,15 @@ const (
 	// repository cannot spend the bound before the walk reaches a report run's
 	// own record.
 	digestOpenPRs = 5
+	// digestOpenAsks bounds the provider asks the walk makes (digestOpenBranches):
+	// one per record of the manifest whose pull request the step cannot rule out
+	// for free, and the manifest may name up to 5000 records (T3.6). Generous
+	// on purpose -- a repository whose runs use its own recipe pays one ask per
+	// such run, and the window is 40 days -- but finite, because a record is
+	// untrusted input and the calls are the one thing here that costs money and
+	// time. The walk stops at the bound with a warning; a report run behind it
+	// is not seen, and the period it holds is written again.
+	digestOpenAsks = 500
 	// digestMaxPR bounds a pull-request number read from a record: a record is
 	// untrusted input, and a number outside this is not one this provider
 	// serves (internal/digest caps its own the same way).

@@ -228,6 +228,11 @@ func DriveCheckpoints(t *testing.T) (tick func()) {
 // CheckpointersRunning is how many checkpoint goroutines are alive.
 func CheckpointersRunning() int32 { return checkpointersRunning.Load() }
 
+// DigestOpenAsks is the bound on the provider asks the digest step's walk of
+// the manifest may make (digestOpenBranches), for a test that seeds more
+// records than the bound.
+const DigestOpenAsks = digestOpenAsks
+
 // The checkpoint schedule's durations, for tests that move a fake clock.
 const (
 	CheckpointQuiet    = checkpointQuiet

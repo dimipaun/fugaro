@@ -4,18 +4,21 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"gocloud.dev/blob"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/backlog"
 	"github.com/dimipaun/fugaro/internal/digest"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -1434,7 +1437,7 @@ func TestDigestFilesRestoreFailureDrafts(t *testing.T) {
 		review("changes", 1),
 		digestFixStep("printf 'edited by the fix stage\\n' >> "+rel+
 			" && git add -A && git commit -q --amend --no-edit"+
-			` && sed -i "s/\"head_sha\": *\"[0-9a-f]*\"/\"head_sha\": \"$(git rev-parse HEAD)\"/" "$FUGARO_STATE_DIR"/verify/*.json`),
+			` && sed -i.bak "s/\"head_sha\": *\"[0-9a-f]*\"/\"head_sha\": \"$(git rev-parse HEAD)\"/" "$FUGARO_STATE_DIR"/verify/*.json && rm -f "$FUGARO_STATE_DIR"/verify/*.json.bak`),
 		review("ship", 0),
 	)
 	if err != nil {
@@ -1491,4 +1494,209 @@ func TestDigestFilesRestoreDraftsWithoutATestRun(t *testing.T) {
 	if pr := onlyPR(t, h.provider); !pr.Draft {
 		t.Error("the pull request is not a draft, though nothing says which commit holds the reports")
 	}
+}
+
+// TestDigestRunFilesNoItems: a report run's branch is the reports and nothing
+// else (T3.3), so the items a run's own review would otherwise file under
+// docs/backlog/ are not written: their text is a model-written finding, which
+// is exactly what the digest step's own commit must not carry. The repository
+// here configures rigor and its one review round leaves a finding open, which
+// is what files an item on any other run.
+//
+// Mutation (let the filing stand): the branch carries a second commit adding
+// docs/backlog/, and the pull request is no longer the generated reports.
+func TestDigestRunFilesNoItems(t *testing.T) {
+	const own = "20261020-101500-aaaa"
+	spec := digestSpecRounds(1, own)
+	cfg := testutil.FixtureFiles(t)["fugaro.yaml"] + "rigor: { default: startup }\n"
+	h := newHarnessFiles(t, cfg, spec, nil)
+	clk := digestClock(h)
+	digestGCSBucket(t, h, spec)
+	now := clk.Now()
+	digestRecord(t, h.bucket, repoSlug, own, now.AddDate(0, 0, -1), 1.5, nil)
+
+	rec, err := h.run(t, review("changes", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	branch := "fugaro/" + runID
+	for _, path := range digestFiles(t, h, branch) {
+		if strings.HasPrefix(path, backlog.Dir+"/") {
+			t.Errorf("the report run's branch holds %s; a report run's pull request is the reports and nothing else", path)
+		}
+	}
+	if len(rec.Backlog) != 0 {
+		t.Errorf("the record names the items %v a report run filed; it must file none", rec.Backlog)
+	}
+	digestAssertGeneratedOnly(t, h, branch, now)
+}
+
+// TestDigestRunPushesNoCheckpoint: a report run pushes no checkpoint. What a
+// stage leaves on the branch is discarded at finalize (digestFinalize), so a
+// tip pushed while a stage runs would be a state of the branch -- a commit of
+// the agent's -- that no run of this recipe ever meant to publish, whatever
+// finalize pushes after it. The stage here commits a file, which is what a
+// boundary checkpoint would push.
+//
+// Mutation (checkpoint as any other run does): the stage's commit reaches the
+// remote at the stage boundary.
+func TestDigestRunPushesNoCheckpoint(t *testing.T) {
+	const own = "20261020-101500-aaaa"
+	spec := digestSpecRounds(2, own)
+	h := newHarnessFiles(t, "", spec, nil)
+	clk := digestClock(h)
+	digestGCSBucket(t, h, spec)
+	now := clk.Now()
+	digestRecord(t, h.bucket, repoSlug, own, now.AddDate(0, 0, -1), 1.5, nil)
+
+	var pushed int
+	runner.SetCheckpointPushedSeam(t, func() { pushed++ })
+
+	rec, err := h.run(t,
+		review("changes", 1),
+		digestFixStep("printf 'a stage wrote this\\n' > notes.md && git add -A && git commit -qm 'a stage commit'"),
+		review("ship", 0),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("record = status %s, outcome %s, reason %q", rec.Status, rec.Outcome, rec.Reason)
+	}
+	if pushed != 0 {
+		t.Errorf("the report run pushed %d checkpoint(s); its branch must hold only the commit the digest step made", pushed)
+	}
+	branch := "fugaro/" + runID
+	digestAssertGeneratedOnly(t, h, branch, now)
+}
+
+// TestDigestRunRefusesALeftoverCommit: the leftover commit at finalize must not
+// be able to carry anything but the digest step's own bytes. A stage that
+// writes a git clean filter and the .git/info/attributes that switches it on --
+// both files git reads from the checkout and neither of them tracked -- makes
+// `git add -A` stage different bytes than the step committed, so the leftover
+// commit would be a commit of the agent's and the pull request would carry it.
+// The run is refused instead, and the pull request stays a draft with the
+// reason.
+//
+// Mutation (commit what the leftover commit finds): the run reports itself on
+// the strength of the report bytes it no longer has.
+func TestDigestRunRefusesALeftoverCommit(t *testing.T) {
+	const own = "20261020-101500-aaaa"
+	spec := digestSpecRounds(2, own)
+	h := newHarnessFiles(t, "", spec, nil)
+	clk := digestClock(h)
+	digestGCSBucket(t, h, spec)
+	now := clk.Now()
+	digestRecord(t, h.bucket, repoSlug, own, now.AddDate(0, 0, -1), 1.5, nil)
+
+	rec, err := h.run(t,
+		review("changes", 1),
+		digestFixStep(`git config filter.rot.clean "tr a-z A-Z" && printf '* filter=rot\n' > .git/info/attributes`),
+		review("ship", 0),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("record = status %s, outcome %s, reason %q; want the run refused", rec.Status, rec.Outcome, rec.Reason)
+	}
+	if !strings.Contains(rec.Reason, "after the commit the digest step made") {
+		t.Errorf("reason = %q, want it to say work was committed after the digest step's own commit", rec.Reason)
+	}
+	if pr := onlyPR(t, h.provider); !pr.Draft {
+		t.Error("the pull request is not a draft, though the branch is not the commit the digest step made")
+	}
+}
+
+// TestDigestStepCapsTheProviderAsks: how many times the step asks the provider
+// about a pull request is bounded, whatever the manifest's length. The
+// launcher's manifest names up to 5000 records (T3.6), and one record whose
+// recipe is not the catalog's costs an ask (digestOpenBranches): without the
+// bound a repository whose runs mostly use its own recipe would spend
+// thousands of calls on a walk whose answers are almost all "not a report
+// run's". The bound is what the step stops at, with a warning naming it, and
+// the price is that a report run behind the bound is not seen -- the period it
+// holds is written again.
+//
+// Mutation (ask about every record): the walk makes one call per record of the
+// manifest.
+func TestDigestStepCapsTheProviderAsks(t *testing.T) {
+	const own = "20261019-090000-bbbb"
+	ids := []string{own}
+	for i := 0; i <= runner.DigestOpenAsks; i++ {
+		ids = append(ids, fmt.Sprintf("20261001-0000%02d-%04x", i/60, i))
+	}
+	spec := digestSpec(ids...)
+	h := newHarnessFiles(t, "", spec, nil)
+	clk := digestClock(h)
+	digestGCSBucket(t, h, spec)
+	var logs bytes.Buffer
+	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	asks := &digestAsks{Provider: h.provider}
+	h.deps.OpenProvider = gitprov.Static(asks)
+	now := clk.Now()
+	digestRecord(t, h.bucket, repoSlug, own, now.AddDate(0, 0, -1), 1.5, nil)
+	for i, id := range ids[1:] {
+		number := digestFirstPRNumber + i
+		digestRecord(t, h.bucket, repoSlug, id, now.AddDate(0, 0, -1), 1, func(rec *runstore.Record) {
+			rec.Recipe = &runstore.RecipeRecord{Name: "house", Source: string(recipe.SourceRepo)}
+			rec.PR = &runstore.PRRef{Number: number, URL: "https://example.invalid/pr"}
+		})
+		h.provider.State.PRs = append(h.provider.State.PRs, fake.PRState{
+			PR: gitprov.PR{Number: number}, Spec: gitprov.PRSpec{Branch: "fugaro/" + id, Base: "main"}, State: gitprov.PRMerged,
+		})
+	}
+
+	rec, err := h.run(t, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("record = status %s, outcome %s, reason %q", rec.Status, rec.Outcome, rec.Reason)
+	}
+	if got := asks.walk(); got > runner.DigestOpenAsks {
+		t.Errorf("the step asked the provider %d times about the manifest's records; want at most %d", got, runner.DigestOpenAsks)
+	}
+	if !strings.Contains(logs.String(), "stopped asking") {
+		t.Errorf("the step did not warn that it stopped asking about the manifest's records:\n%s", logs.String())
+	}
+	if !fileInTree(t, h.remote, "fugaro/"+runID, digestDayPath(now.AddDate(0, 0, -1))) {
+		t.Error("the step wrote no report, though the bound is not meant to stop the reports")
+	}
+}
+
+// digestFirstPRNumber is the first pull-request number a test's own records
+// name: the fake provider numbers the run's own pull request after the ones a
+// test seeded (its state's length plus one), so a number well above them tells
+// the walk's asks from every other read the run makes.
+const digestFirstPRNumber = 1000
+
+// digestAsks counts the provider reads the digest step's walk made, which are
+// the ones for a pull request a test's own records name (digestFirstPRNumber
+// and up).
+type digestAsks struct {
+	gitprov.Provider
+	mu   sync.Mutex
+	nums []int
+}
+
+func (a *digestAsks) PullRequest(ctx context.Context, n int) (gitprov.PRInfo, error) {
+	a.mu.Lock()
+	a.nums = append(a.nums, n)
+	a.mu.Unlock()
+	return a.Provider.PullRequest(ctx, n)
+}
+
+// walk is how many of the asks were the walk's.
+func (a *digestAsks) walk() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	count := 0
+	for _, n := range a.nums {
+		if n >= digestFirstPRNumber {
+			count++
+		}
+	}
+	return count
 }

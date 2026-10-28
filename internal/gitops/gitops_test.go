@@ -425,6 +425,44 @@ func TestResetToDiscardsACommitMadeAfterRef(t *testing.T) {
 	}
 }
 
+// TestResetToIgnoresAReplaceRef: a refs/replace/<sha> entry -- which the run's
+// own agent can write into the checkout's .git, and which git otherwise
+// honours when it looks an object up -- must not decide what ResetTo puts the
+// working tree at. ResetTo is the runner putting the branch back to a commit
+// it made itself (gate.go's runAutofix, digest.go's digestFinalize), and that
+// commit's own tree is the whole point of it.
+//
+// Mutation (run the reset without --no-replace-objects): the working tree is
+// the replacement object's, so the branch holds content no commit of this
+// run's ever had.
+func TestResetToIgnoresAReplaceRef(t *testing.T) {
+	repo, _ := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	step, err := repo.HeadSHA(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"evil.txt": "evil\n"})
+	testutil.Git(t, repo.Dir, "add", "-A")
+	testutil.Git(t, repo.Dir, "commit", "--quiet", "-m", "evil")
+	testutil.Git(t, repo.Dir, "replace", step, testutil.Git(t, repo.Dir, "rev-parse", "HEAD"))
+
+	if err := repo.ResetTo(ctx, step); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := repo.HeadSHA(ctx); err != nil || got != step {
+		t.Fatalf("HEAD = %s, %v, want %s", got, err, step)
+	}
+	if _, err := os.Stat(filepath.Join(repo.Dir, "evil.txt")); !os.IsNotExist(err) {
+		t.Fatal("the replacement object's file survived ResetTo: the working tree is not the commit's own")
+	}
+	if data, err := os.ReadFile(filepath.Join(repo.Dir, "README.md")); err != nil || string(data) != "hello\n" {
+		t.Fatalf("README.md = %q, %v, want the commit's own content", data, err)
+	}
+}
+
 func TestCommitAllAheadAndClean(t *testing.T) {
 	repo, _ := setup(t)
 	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
