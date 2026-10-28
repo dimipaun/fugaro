@@ -155,6 +155,29 @@ type TierExpectations struct {
 	Large   TierExpectation
 }
 
+// For is ts's expectation for t, and the zero TierExpectation for a value that
+// is no tier of the vocabulary. It is the one lookup from the vocabulary to the
+// field that holds a tier's expectation, so a reader — the run that records
+// what a tier expects (plan T8.1) — asks for a tier by name rather than
+// spelling the four fields out again.
+//
+// A tier added to tier.Tiers does not fail to compile here: the switch's
+// missing case returns the zero expectation, which TestTierDefaultsFromProjectLayer
+// catches by walking the vocabulary against the shipped figures.
+func (ts TierExpectations) For(t tier.Tier) TierExpectation {
+	switch t {
+	case tier.Trivial:
+		return ts.Trivial
+	case tier.Small:
+		return ts.Small
+	case tier.Medium:
+		return ts.Medium
+	case tier.Large:
+		return ts.Large
+	}
+	return TierExpectation{}
+}
+
 // withDefaults is t with every key it leaves at zero replaced by d's. A key it
 // does set is kept exactly as written, looser than the default included: the
 // project layer is the one layer that may loosen a guardrail.

@@ -23,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/tier"
 )
 
 // followUpLookback is how far back fugaro run --pr looks for a pull
@@ -77,6 +78,15 @@ type prChain struct {
 	// mode a follow-up keeps (D12, resolvePR) — imposes nothing, which is what
 	// the record of an older run says.
 	Rigor rigor.Mode
+	// Tier is the tier the previous run recorded (runstore.TierRecord.Tier),
+	// when it recorded a readable one: a follow-up keeps it, as it keeps the
+	// mode above, so a chain of follow-ups stays the one envelope its pull
+	// request was dispatched under. Empty — no record, or a block no reader
+	// may trust — imposes nothing, which is what the record of an older run
+	// says. Unlike the mode there is no axis to raise along: a tier is an
+	// expectation and not a guardrail (G6 keeps the cap out of it), so --tier
+	// replaces the kept one rather than being held to it.
+	Tier tier.Tier
 }
 
 // readRunRecord reads a run's result.json; tests replace it.
@@ -199,6 +209,12 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 		// the run it describes resolved.
 		if bounded := rec.Rigor.Bounded(); bounded != nil && bounded.Mode != rigor.Hotfix {
 			c.Rigor = bounded.Mode
+		}
+		// The tier this run recorded, bounded the same way: the record is an
+		// object the job's service account can write, so a block naming a tier
+		// no runner resolved is the same answer as no block at all.
+		if bounded := rec.Tier.Bounded(); bounded != nil {
+			c.Tier = bounded.Tier
 		}
 	}
 	recorded := c.Ref != ""
@@ -469,6 +485,7 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 		(o.token != "" && o.token != cmp.Or(have.OAuthToken, config.DefaultClaudeAccount)) ||
 		(o.planTask != "" && have.PlanTask != o.planTask) ||
 		(o.rigor != "" && string(have.Rigor) != o.rigor) ||
+		(o.tier != "" && string(have.Tier) != o.tier) ||
 		(len(o.paths) > 0 && !slices.Equal(have.Paths, o.paths)) {
 		return nil, userErr("run ID %s already holds a different task", o.runID)
 	}
@@ -632,12 +649,16 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	if err != nil {
 		return nil, err
 	}
+	// The follow-up's tier is the flag's when it is given, else the tier the
+	// run it continues recorded: the envelope its pull request was dispatched
+	// under, which a follow-up of it keeps (resolvePR). No flag and no
+	// recorded tier is no expectation at all.
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: c.Ref, BaseBranch: specBaseBranch(c.Ref), Workflow: workflow, Task: text,
 		Title:          cmp.Or(o.title, c.Title),
 		PlanTask:       o.planTask,
 		CompressionOff: c.CompressionOff,
 		Branch:         c.Branch, PR: o.pr[0], PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch, Recipe: rcp,
-		Rigor: mode, Paths: o.paths}
+		Rigor: mode, Paths: o.paths, Tier: cmp.Or(tier.Tier(o.tier), c.Tier)}
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()
 	}

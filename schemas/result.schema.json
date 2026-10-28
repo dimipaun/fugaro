@@ -386,6 +386,17 @@
         "revision": { "type": "string", "maxLength": 120, "description": "The revision of the configuration the mode was read from, origin/<base branch> (D25), so a run whose other keys came from the checked-out ref can be told apart from the mode it ran under (F35's 'two answers' made visible). Absent when the run could not name it." }
       }
     },
+    "tier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tier", "expected_usd", "expected_minutes"],
+      "description": "The expectation tier the run was dispatched at and what Fugaro expected a run of that tier to cost and take (docs/task-governance/implementation-plan.md T8.1, D330): fugaro run --tier, or the tier a --pr follow-up keeps from its PR, and the expectation the run's governance resolved for it (governance.tiers). Neither figure is a cap: the deployed per-run cap stays the ceiling whatever a tier expects (G6), so an expected cost above the cap is an expectation the run still stops at the cap for. Absent — never a block with an empty tier — for a run that carried no tier, which is every record written before this field existed, so an old reader sees the record it always saw and version stays 1 (the field is additive).",
+      "properties": {
+        "tier": { "enum": ["trivial", "small", "medium", "large"], "description": "The tier (internal/tier's vocabulary). An unknown value is not a tier any runner resolved, and internal/runstore's TierRecord.Bounded refuses a block carrying one." },
+        "expected_usd": { "type": "number", "minimum": 0, "maximum": 1000, "description": "What a run of the tier is expected to cost, in dollars (policy.TierExpectation.ExpectedUSD). At most 1000, the bound a record read back is clamped to (runstore.MaxTierExpectedUSD)." },
+        "expected_minutes": { "type": "integer", "minimum": 0, "maximum": 10080, "description": "What a run of the tier is expected to take, in minutes (policy.TierExpectation.ExpectedMinutes). At most 10080, a week, the bound a record read back is clamped to (runstore.MaxTierExpectedMinutes)." }
+      }
+    },
     "backlog": {
       "type": "array",
       "description": "The ids of the backlog items this run filed for what it left open, in the order it filed them (docs/rigor-modes/implementation-plan.md T4.5, D9, D26). The item files are on the run's branch and in its pull request, where `fugaro backlog list` reads them. Nothing consumes this property yet — neither `fugaro diagnose` nor the console's run row carries the ids — and it is written anyway, because the record is what survives the run. Absent — never an empty list — for a run that filed none, which is every record written before this field existed, so an old reader sees the record it always saw.",

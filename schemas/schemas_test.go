@@ -2930,3 +2930,63 @@ func TestSchemaGovernanceBoundsMatchGo(t *testing.T) {
 		}
 	}
 }
+
+// TestResultSchemaTierMatchesTheGoVocabulary pins result.schema.json's tier
+// block to the Go side in both directions: the tier enum to tier.Tiers (the one
+// closed vocabulary the task spec, the configuration and the CLI share), and
+// the two figures' bounds to the constants a record read back is clamped to
+// (runstore.MaxTierExpectedUSD, MaxTierExpectedMinutes). An enum narrower than
+// the vocabulary is a result.json a consumer validating against the published
+// schema refuses, while a value only the enum knows is a tier no run can carry,
+// and a bound only one side knows is either a record the schema calls
+// impossible or a figure the schema lets a task choose.
+//
+// It is the same pin TestSchemaGovernanceTiersMatchTheGoVocabulary makes for
+// the configuration's governance.tiers, on the record's own copy of the tier.
+func TestResultSchemaTierMatchesTheGoVocabulary(t *testing.T) {
+	want := make([]string, 0, len(tier.Tiers))
+	for _, tt := range tier.Tiers {
+		want = append(want, string(tt))
+	}
+	data, err := os.ReadFile("result.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	block, ok := doc["properties"].(map[string]any)["tier"].(map[string]any)
+	if !ok {
+		t.Fatal("result.schema.json: no tier block")
+	}
+	props, _ := block["properties"].(map[string]any)
+	raw, ok := props["tier"].(map[string]any)["enum"].([]any)
+	if !ok {
+		t.Fatal(`result.schema.json: tier.tier has no enum`)
+	}
+	var got []string
+	for _, v := range raw {
+		s, ok := v.(string)
+		if !ok {
+			t.Fatalf("result.schema.json: tier.tier enum entry %v is not a string", v)
+		}
+		got = append(got, s)
+	}
+	if !sameStrings(got, want) {
+		t.Errorf("result.schema.json tier.tier = %v, internal/tier's Tiers = %v", got, want)
+	}
+	for key, wantMax := range map[string]int{
+		"expected_usd":     runstore.MaxTierExpectedUSD,
+		"expected_minutes": runstore.MaxTierExpectedMinutes,
+	} {
+		maximum, ok := props[key].(map[string]any)["maximum"].(float64)
+		if !ok {
+			t.Errorf("result.schema.json: tier.%s has no maximum", key)
+			continue
+		}
+		if int(maximum) != wantMax {
+			t.Errorf("result.schema.json: tier.%s maximum = %v, want %d (runstore's bound)", key, maximum, wantMax)
+		}
+	}
+}

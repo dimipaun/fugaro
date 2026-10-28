@@ -724,6 +724,15 @@ type Record struct {
 	// existed, and a run that died before bootstrap — so an old reader sees
 	// the record it always saw.
 	Rigor *RigorRecord `json:"rigor,omitempty"`
+	// Tier is the expectation tier the run was dispatched at and the cost and
+	// duration Fugaro expects a run of that tier to have
+	// (docs/task-governance/implementation-plan.md T8.1, D330): the launcher's
+	// fugaro run --tier, or the tier a --pr follow-up keeps from its PR, and
+	// the expectation the run's governance resolved for it. Absent for a run
+	// that carried no tier — every record written before this field existed
+	// included — and the two figures are expectations and never caps: the
+	// deployed per-run cap stays the ceiling whatever a tier expects (G6).
+	Tier *TierRecord `json:"tier,omitempty"`
 	// Backlog is the ids of the backlog items this run filed for what it
 	// left open, in the order it filed them: the `<YYYYMMDD-NN>` names
 	// their files under docs/backlog/ are known by (docs/rigor-modes/
