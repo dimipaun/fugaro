@@ -117,9 +117,9 @@ func (r *run) updateCost() {
 		// for: their calls were charged conservatively (design §6.1), so
 		// the record naming them is what explains the figure a reader sees
 		// (on a provider route nothing else does: the provider's own
-		// reported cost is recorded, never charged). List bounds the names
-		// the record carries, however many distinct tiers the calls came
-		// back at.
+		// reported cost is recorded, and floors that charge rather than
+		// pricing it). List bounds the names the record carries, however
+		// many distinct tiers the calls came back at.
 		c.ServiceTiers = r.serviceTiers.List()
 		notional = r.gwNotional.USD()
 		// The catalog only prices the routes' models, so its staleness is a

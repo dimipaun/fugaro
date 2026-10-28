@@ -129,8 +129,10 @@ type usageAcc struct {
 	in, cc, cr, out, w5, w1, web field
 	speed, tier, geo             json.RawMessage
 	// reported is the cost a provider put in the usage object (OpenRouter's
-	// usage.cost, in USD), in micros. It is only recorded for comparison
-	// with the charge and never settles a call.
+	// usage.cost, in USD), in micros. It is recorded for comparison with the
+	// charge and never settles a call the table priced; on a provider route
+	// it is the floor under the charge for a service tier no one prices
+	// (forward.go's fromUsage).
 	reported    pricing.Micros
 	hasReported bool
 }

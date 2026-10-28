@@ -169,7 +169,7 @@ type StageReport struct {
 	ByTier        map[string]pricing.Micros
 	ByModel       map[string]pricing.Micros // by serving model
 	ByRoute       map[string]pricing.Micros // by provider route (Claude calls have none)
-	Reported      pricing.Micros            // what providers said their calls cost: for comparison, never charged
+	Reported      pricing.Micros            // what providers said their calls cost: for comparison, and the floor under an unpriced tier's charge
 	Unreconciled  pricing.Micros            // charged from reservations, not from reported usage
 	Overrun       pricing.Micros            // charged above the calls' reservations
 	WouldHalt     int                       // observe: calls enforce would have refused
@@ -183,7 +183,7 @@ type StageReport struct {
 	// rather than refused, so the tier is a fact the run reports and not a
 	// violation (internal/pricing, ConservativeTierMultiplier). The names are
 	// the provider's own, clipped; nothing here treats one as a claim about
-	// the price, which is the table's. What the report carries is bounded
+	// the price, which is the table's. What the report prints is bounded
 	// (ServiceTierSet.List): a provider answering a different tier on every
 	// call grows the count, never the report.
 	ServiceTiers ServiceTierSet

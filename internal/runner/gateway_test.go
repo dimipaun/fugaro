@@ -789,8 +789,9 @@ func tierPriority() anthropicfake.Reply {
 // TestServiceTierNotedInRecord: a call charged conservatively for an
 // unpriced service tier is in the run's model figure, so the record names
 // the tier: the reader of a provider run has no other way to explain the
-// figure (its provider-reported cost is recorded, never charged) and the
-// stage log is not part of the record. The stage itself goes on.
+// figure (its provider-reported cost is recorded, and floors that charge
+// rather than pricing it) and the stage log is not part of the record. The
+// stage itself goes on.
 func TestServiceTierNotedInRecord(t *testing.T) {
 	g := newGW(t, gwConfig(t, ""), "observe", "", tierPriority())
 	var st []int

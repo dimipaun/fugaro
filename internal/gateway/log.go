@@ -17,7 +17,7 @@ type callLog struct {
 	stream                     bool
 	usage                      pricing.Usage // reported
 	reserved, charged          pricing.Micros
-	reported                   pricing.Micros // what the provider said it cost; recorded, never charged
+	reported                   pricing.Micros // what the provider said it cost; recorded, and the floor under an unpriced tier's charge
 	pricedAs, settled          string
 	sessionID, agentID         string
 	errorType                  string

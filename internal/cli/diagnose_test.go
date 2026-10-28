@@ -1135,8 +1135,8 @@ func TestDiagnoseNamesChargedServiceTiers(t *testing.T) {
 		want  string
 	}{
 		{nil, ""},
-		{[]string{`usage.service_tier "priority"`}, `Tier:     usage.service_tier "priority" charged at 2x the rates the call was priced at (no published price for the tier)`},
-		{[]string{`usage.service_tier "priority"`, `usage.service_tier 12`}, `Tier:     usage.service_tier "priority", usage.service_tier 12 charged at 2x the rates the call was priced at (no published price for the tier)`},
+		{[]string{`usage.service_tier "priority"`}, `Tier:     usage.service_tier "priority" charged at 2x the rates the call was priced at, or the provider's reported cost if dearer (no published price for the tier)`},
+		{[]string{`usage.service_tier "priority"`, `usage.service_tier 12`}, `Tier:     usage.service_tier "priority", usage.service_tier 12 charged at 2x the rates the call was priced at, or the provider's reported cost if dearer (no published price for the tier)`},
 	} {
 		id := fmt.Sprintf("20260927-19000%d-aaaa", i)
 		exec := seedRun(t, f, id, "", "someone@example.com", true)

@@ -349,7 +349,7 @@ func TestServiceTierPriorityChargedConservatively(t *testing.T) {
 	r := h.gw.EndStage()
 	want := cost(t, sonnet, u) * pricing.ConservativeTierMultiplier
 	if r.Used != want {
-		t.Errorf("used %d, want %d (the call's own rates, at the conservative multiple)", r.Used, want)
+		t.Errorf("used %d, want %d (the rates the call was priced at, at the conservative multiple)", r.Used, want)
 	}
 	if want <= cost(t, sonnet, u) {
 		t.Errorf("the conservative charge %d is no dearer than the standard %d", want, cost(t, sonnet, u))

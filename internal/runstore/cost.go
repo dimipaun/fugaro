@@ -51,7 +51,9 @@ type Cost struct {
 	// have no route and are not in it.
 	RouteBy map[string]float64 `json:"route_by,omitempty"`
 	// ReportedUSD is what providers said their calls cost, summed. It is
-	// recorded to compare with the charge and never settles a call.
+	// recorded to compare with the charge, and on a provider route it is the
+	// floor under the charge for a service tier no one prices: it never
+	// prices a call the table priced.
 	ReportedUSD float64 `json:"reported_usd,omitempty"`
 	// Unreconciled is the USD charged from reservations rather than from
 	// reported usage.
