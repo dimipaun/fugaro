@@ -343,6 +343,8 @@ func TestGovernanceHaltWhileCheckpointPollRuns(t *testing.T) {
 		// overlaps the halt from there — the overlap this test is about.
 		// Waiting on the halt's own answer as well means a refused halt fails
 		// here instead of spinning forever, and the deadline bounds the wait.
+		poll := time.NewTicker(time.Millisecond)
+		defer poll.Stop()
 		deadline := time.After(10 * time.Second)
 		for !b.h.Halted() {
 			select {
@@ -350,7 +352,7 @@ func TestGovernanceHaltWhileCheckpointPollRuns(t *testing.T) {
 				t.Fatalf("GovernanceHalt returned %v, so the run never halted", ok)
 			case <-deadline:
 				t.Fatal("the halt was never recorded")
-			case <-time.After(time.Millisecond):
+			case <-poll.C:
 			}
 		}
 		// The poll goes on while the halt waits for it: it writes the pushed
