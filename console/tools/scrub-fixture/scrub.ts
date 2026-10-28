@@ -67,6 +67,10 @@ export const SCRUB_PROJECT = 'example-project'
 export const INVENTED_SPEND: readonly number[] = Object.freeze([0.15, 0.4, 0.11, 0.03, 0.1, 0.07, 0.03, 0.04, 0.01])
 /** INVENTED_CAP_USD is the invented daily cap, in place of the real one. */
 export const INVENTED_CAP_USD = 50
+/** INVENTED_LEASE_USD is the invented outstanding lease, in place of the real
+ * one: what the installation currently holds, which is a real dollar figure
+ * whatever the amount. */
+export const INVENTED_LEASE_USD = 0.2
 /**
  * TIME_SHIFT_RANGE_MS bounds the clock shift drawn for one run: plus or minus
  * 400 days. Wide enough that the offset cannot be guessed, and narrow enough
@@ -612,14 +616,16 @@ function scrubTotalOrRepo(value: unknown, path: string, repoN: number | undefine
     slug: invent(`github-com-example-owner-example-repo${repoN === 1 ? '' : `-${repoN}`}`),
     repo: invent(inventedRepo),
     counted_usd: num, spent_usd: num, notional_usd: num, runs: num, run_hours: num, // recomputed below
-    // `daily_cap_usd` and `percent` are *float64 in internal/watch/json.go's
-    // JSONTotal and JSONRepo: the document writes null for both when the
-    // repository has no cap. `leased_usd` is the third such pointer -- the
-    // outstanding lease -- and is accepted as optional for the same reason the
-    // console's decoders name it ahead of the CLI (owner, 2026-10-28): the day a
-    // release writes it, a recording must not be refused whole for the key.
+    // `daily_cap_usd`, `percent` and `leased_usd` are the three *float64 of
+    // internal/watch/json.go's JSONTotal and JSONRepo: the document writes null
+    // for the first two when the repository has no cap, and for the third when
+    // no lease is outstanding. `leased_usd` is named here for the same reason
+    // the console's decoders name it ahead of the CLI (owner, 2026-10-28) --
+    // the day a release writes it, a recording must not be refused whole for
+    // the key -- and its amount is invented like the other dollar figures,
+    // because a lease is what the installation currently holds.
     percent: nullableNum,
-    leased_usd: nullableNum,
+    leased_usd: (v, p) => (v === null ? null : typeof v === 'number' ? INVENTED_LEASE_USD : refuse(p, 'not a number')),
     daily_cap_usd: (v, p) => (v === null ? null : typeof v === 'number' ? INVENTED_CAP_USD : refuse(p, 'not a number')),
     burn: (v, p) => (isObj(v) ? applyRules(v, p, BURN_RULES) : refuse(p, 'not an object')),
     kill: (v, p) => scrubKill(v, p, shiftMs),

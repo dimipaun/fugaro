@@ -182,16 +182,12 @@ lease currently holds — and `max_reserve_usd` is the **ceiling** on any one
 lease. Neither is the other, and neither is a cap: a cap is `daily_cap_usd`,
 and §3's `global`/`showRepo` carry the rest.
 
-**How the console reads it — one rule, stated once.** Absent, `null` and a
-non-finite number are **unavailable** (`n/a`, never `0` — a document with
-nothing to say about a lease has not leased nothing); a finite, non-negative
-number is **measured**. One edge differs between the two closed decoders, and is
-stated here so neither is misread: `src/shared/schema.ts`'s `optionalMoneyAt`
-draws a non-finite number `n/a`, while **in the digest a non-finite number is
-refused** (`RANGE`, `shared/digest/index.js`), so a document this console draws
-`n/a` is one the digest refuses whole. Any other value — a string, a boolean, a
-negative — is handled **the way the decoder that owns the document handles a
-shape it cannot read**, which is the whole of the rule:
+**How the console reads it — one rule, stated once.** Absent and `null` are
+**unavailable** (`n/a`, never `0` — a document with nothing to say about a lease
+has not leased nothing); a finite, non-negative number is **measured**. Any
+other value — a string, a boolean, a negative — is handled **the way the decoder
+that owns the document handles a shape it cannot read**, which is the whole of
+the rule:
 
   * the console's **closed** decoders (`src/shared/schema.ts`, and the digest)
     refuse the document by the field's wire path (`total.leased_usd`,
@@ -204,6 +200,15 @@ shape it cannot read**, which is the whole of the rule:
     no document at all, and draws `n/a` for every number it cannot read (§3).
     So a `compute_usd` that is not a number is `n/a` there — not a second rule,
     but the same one in the one place that cannot refuse.
+
+The rule above is about the values a document can carry, and a non-finite
+number is not one of them: JSON has no `NaN` or `Infinity` literal, and Go's
+encoder refuses to marshal either, so no document a command emits can hold one.
+The decoders still answer differently if one reaches them —
+`src/shared/schema.ts`'s `optionalMoneyAt` draws it `n/a`, while **in the
+digest a non-finite number is refused** (`RANGE`, `shared/digest/index.js`) —
+which is a fact about their code, not a case a screen reading a document will
+meet.
 
 **No screen draws it yet**; the Spend redesign is the reader.
 
