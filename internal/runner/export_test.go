@@ -166,6 +166,17 @@ func (h *RunHandle) IsCancelled() bool                  { return h.r.isCancelled
 // a governance halt's own stop of the stage's checkpointer begins to wait.
 func (h *RunHandle) Halted() bool { return h.r.haltValue() != nil }
 
+// StageCkptStopRegistered reports whether the running stage's checkpointer stop
+// is registered: what a mid-stage halt reads before it stops the poll and waits
+// for it (stopStageCheckpointer). A test that cannot call the halt itself —
+// its own writes are only ordered when its caller is the run goroutine or one
+// it joins, which the panic path has neither of — probes the read with this.
+func (h *RunHandle) StageCkptStopRegistered() bool {
+	h.r.mu.Lock()
+	defer h.r.mu.Unlock()
+	return h.r.stageCkptStop != nil
+}
+
 // Secrets is the values the run's redactor knows at the moment the hook is
 // called, and Redact is that redactor: together they are how a test asserts
 // that something the run holds (the launch's seal key) is registered before

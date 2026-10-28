@@ -641,10 +641,12 @@ func (r *run) save(ctx context.Context) {
 // under it is consistent with them; every other field is written by the run's
 // own goroutine, which is the one that saves, and by the checkpoint poll,
 // which is a goroutine of its own and writes the run branch's tip (C1.10's
-// poll) — the poll's own writes are ordered with its own save, and the one
-// save the run goroutine makes while a poll is alive, the governance halt's,
-// is ordered after that poll as well, because the halt stops it and waits for
-// it first (governanceHalt, stopStageCheckpointer, checkpoint.go).
+// poll) — the poll's own writes are ordered with its own save, and a save the
+// governance halt makes while a poll is alive is ordered after that poll as
+// well, because the halt stops it and waits for it first (governanceHalt,
+// stopStageCheckpointer, checkpoint.go). Mid-stage that save is not the run
+// goroutine's: a tripwire fires the halt on a goroutine of its own, which the
+// run goroutine joins before its own unlocked writes (the paragraph below).
 //
 // What the copy does not cover is a writer that holds neither r.mu nor that
 // ordering: the run goroutine's own unlocked writes between stages (the

@@ -103,8 +103,10 @@ func (r *run) startCheckpoints(stageCtx context.Context, stage string) (stop fun
 	return sync.OnceFunc(func() { cancel(); <-done })
 }
 
-// setStageCkptStop registers the running stage's checkpointer stop, or nil
-// when the stage has none (startCheckpoints returned a no-op).
+// setStageCkptStop registers the running stage's checkpointer stop, or clears
+// it with nil once the stage is over. A stage with no poll is not registered as
+// nil: startCheckpoints returns a no-op func(){} for one, so the field always
+// holds something callable.
 func (r *run) setStageCkptStop(stop func()) {
 	r.mu.Lock()
 	r.stageCkptStop = stop
@@ -116,8 +118,8 @@ func (r *run) setStageCkptStop(stop func()) {
 // run's record or the pull request, and its caller is the only writer left.
 //
 // It is a no-op between stages and for a run that never checkpoints
-// (startCheckpoints registers a no-op for one), which is what makes it safe to
-// call from anywhere: a run with no poll goroutine has nothing to stop. A
+// (startCheckpoints registers a no-op for one): a run with no poll goroutine
+// has nothing to stop, so any goroutine but the poll's own may call it. A
 // governance halt stops the poll with it before writing the checkpoint's
 // report to the pull request (governanceHalt), because the poll writes the same
 // pull-request state and the same record (prflow.go) and is still alive
