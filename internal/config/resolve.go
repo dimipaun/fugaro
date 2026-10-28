@@ -22,6 +22,13 @@ const (
 // SourceProfile is the source of a value a profile set.
 func SourceProfile(name string) string { return "profile " + name }
 
+// IsLayerSource is whether src names the project layer rather than the
+// repository's own file: SourceProject, or a SourceProfile of one of the
+// layer's profiles. SourceDefault and SourceRepo are not.
+func IsLayerSource(src string) bool {
+	return src == SourceProject || strings.HasPrefix(src, "profile ")
+}
+
 // CodeNeedsLayer is the Code of a problem that only a project layer can
 // solve: a profile named, or no workflows, with no layer given.
 const CodeNeedsLayer = "needs_project_layer"

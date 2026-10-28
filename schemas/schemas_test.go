@@ -1948,6 +1948,20 @@ func TestPolicyRecordSchema(t *testing.T) {
 	if err := check(policied); err != nil {
 		t.Errorf("schema rejects a record whose ceiling came from the project's policy: %v", err)
 	}
+	// A stage timeout the run's own timeouts.stage bounds at least as tightly
+	// is one of policy.ignored too, and Clamped is what marks it: its key,
+	// source and from can read exactly like a value a tighter layer capped
+	// (T7.6, runner.noteStageTimeoutClamped). The ignored item admits no other
+	// key, so a stored clamp entry needs the property here.
+	clamped := &runstore.PolicyRecord{
+		Effective: runstore.PolicyEffective{Mode: "enforce", PerRunUSD: 5},
+		Sources:   map[string]string{"governance.stage_timeout.implement": policy.SourceCeiling},
+		Ignored: []runstore.PolicyIgnored{{Key: "governance.stage_timeout.implement", Value: "1h", Effective: "40m",
+			Source: policy.SourceCeiling, From: policy.SourceBranch, Clamped: true}},
+	}
+	if err := check(clamped); err != nil {
+		t.Errorf("schema rejects a clamped stage timeout: %v", err)
+	}
 	empty := &runstore.PolicyRecord{Effective: runstore.PolicyEffective{AllowedModels: []string{}}}
 	if err := check(empty); err != nil {
 		t.Errorf("schema rejects an empty allow-list: %v", err)
