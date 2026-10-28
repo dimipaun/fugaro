@@ -473,7 +473,7 @@ describe('the confirmation window’s sender gate', () => {
 describe('the confirmation window, and how it is cancelled', () => {
   it('is a modal window over the hardened preferences and the confirm preload, and nothing else', async () => {
     const parent = fakeConfirmWindow()
-    const { confirmer, windows } = confirmOver({ parent: () => parent })
+    const { confirmer, windows, session } = confirmOver({ parent: () => parent })
     confirmer.open(viewFixture(), recordingDecider().decide)
     await untilSettled()
 
@@ -482,9 +482,14 @@ describe('the confirmation window, and how it is cancelled', () => {
     expect(window.options['parent']).toBe(parent)
     expect(window.options['show']).toBe(false)
     expect(window.options['title']).toBe(CONFIRM_WINDOW_TITLE)
+    // The window is built on the very session the denial was installed on: the
+    // two names have to be the same object, or a caller that passed a non-default
+    // session would deny a session this window never uses.
+    expect((window.options['webPreferences'] as { session?: unknown }).session).toBe(session.value)
     expect(window.options['webPreferences']).toStrictEqual({
       ...consoleWebPreferences(),
       preload: confirmPreloadPath(APP_PATH),
+      session: session.value,
     })
     // One load, of the confirm document, and shown only when it says it is ready.
     expect(window.loaded).toStrictEqual([CONFIRM_ENTRY_URL])
@@ -505,8 +510,9 @@ describe('the confirmation window, and how it is cancelled', () => {
 
   it('denies every permission on its own session, installed once at creation', async () => {
     // Defence in depth: the window must not rely on the request and check
-    // handlers the dashboard installs on `session.defaultSession`, because a
-    // window of its own may be built on a session that is not that one. The
+    // handlers the dashboard installs on `session.defaultSession`. The denial and
+    // the window are the **same** session (`confirmOptions` sets it), so a caller
+    // that passes a non-default session denies the session its window uses. The
     // handlers are put in place when the confirmer is built -- not per `open` --
     // so a second window reuses the ones the first was covered by.
     const { confirmer, windows, session } = confirmOver()
@@ -525,6 +531,10 @@ describe('the confirmation window, and how it is cancelled', () => {
     confirmer.open(viewFixture(), recordingDecider().decide)
     await untilSettled()
     expect(windows).toHaveLength(2)
+    // Every window is built on the session whose permissions were denied.
+    for (const window of windows) {
+      expect((window.options['webPreferences'] as { session?: unknown }).session).toBe(session.value)
+    }
     // Still the two handlers from creation: `open` installs nothing of its own.
     expect(session.installed).toStrictEqual({ request: 1, check: 1 })
     expect(session.requestHandler()).toBe(request)

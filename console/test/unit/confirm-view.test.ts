@@ -476,6 +476,14 @@ describe('the confirmation document and its view', () => {
     expect(rule, 'screens.css carries no rule for the task box').not.toBeNull()
     expect(rule?.[1]).toMatch(/overflow:\s*auto/)
     expect(rule?.[1]).toMatch(/max-height:\s*\S+/)
+    // `pre-wrap` with `anywhere` is the other half of "bounded": this document's
+    // `main` sits in the body grid's `auto` column, whose base size is the item's
+    // min-content contribution, and a `<pre>` at its default `white-space: pre`
+    // makes that contribution the longest line -- so one unbroken line would widen
+    // the column and scroll the page sideways. `pre-wrap` allows a wrap and
+    // `anywhere` lets an unbroken value break.
+    expect(rule?.[1]).toMatch(/white-space:\s*pre-wrap/)
+    expect(rule?.[1]).toMatch(/overflow-wrap:\s*anywhere/)
     // The class is on the box the document declares, so the rule is not styling
     // nothing.
     expect(html).toContain('class="console-confirm-task"')
