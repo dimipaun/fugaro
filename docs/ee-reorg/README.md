@@ -1,7 +1,7 @@
 # Governance, the cost report and the coordinator move under `ee/`
 
 **Status: plan only; nothing is implemented; no task approved.** Decisions D520–D536 are written
-with recommendations and **unanswered**. The CLI 0.13.0 tag is held until governance is under
+with recommendations; D520, D521 and D524–D527 are answered (2026-10-29), the rest are **unanswered**. The CLI 0.13.0 tag is held until governance is under
 `ee/` (the owner's ruling).
 
 **Spec owner:** the Fugaro owner. **Ruling:** 2026-10-29. **Reconciled against** `origin/main` at
@@ -17,7 +17,7 @@ records the correction, and the plan follows it.
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The owner's ruling, **verbatim** (before the correction) |
-| [reconciliation.md](reconciliation.md) | The correction (§0), findings F1–F18 (with F16a–F16c) against the code, resolutions R1–R8, decisions D520–D536 (unanswered), open items O1–O6, UNVERIFIED U1–U6. **Where it disagrees with `spec.md`, it wins** |
+| [reconciliation.md](reconciliation.md) | The correction (§0), findings F1–F18 (with F16a–F16c) against the code, resolutions R1–R8, decisions D520–D536 (D520, D521, D524–D527 answered; the rest unanswered), open items O1–O6, UNVERIFIED U1–U6. **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Slices E0–E3, tasks E0.1–E3.4 (with E1.7; E2.4 withdrawn), levels L0–L8, the critical path, the shared-files table, Checks 200–201. Supersedes subscriptions S1.1–S1.5, S1.7, S1.9. **Nothing in it is approved** |
 
 ## Typos fixed in the spec
@@ -28,7 +28,7 @@ None. It is byte for byte as received.
 
 | Block | Use |
 | --- | --- |
-| **D520–D549** | this work's block. **D520–D536** written, unanswered; **D537–D549** reserved and unused. Taken above the highest decision on `main` (D519, secrets-brokering's block D490–D519) and in every open PR's docs (D260) |
+| **D520–D549** | this work's block. **D520–D536** written, D520/D521/D524–D527 answered and the rest unanswered; **D537–D549** reserved and unused. Taken above the highest decision on `main` (D519, secrets-brokering's block D490–D519) and in every open PR's docs (D260) |
 | **Checks 200–209** | this work's block. **200–201** proposed by the plan (written by E3.4, run by the owner, NOT RUN); **202–209** reserved and unused. Above Checks 190–199 (secrets-brokering) |
 
 ## Known discrepancy left in place

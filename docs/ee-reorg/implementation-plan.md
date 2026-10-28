@@ -7,7 +7,7 @@ wins), including the owner's correction of 2026-10-29: **the digest stays MIT**.
 at `028b46357`, 2026-10-28.
 
 **Status: plan only. Nothing is implemented, and NO TASK IS APPROVED.** Each task needs the owner's
-explicit go. Decisions D520–D536 are **unanswered**; every task names the decisions it assumes, and
+explicit go. Decisions D520, D521 and D524–D527 are **answered** (2026-10-29: the recommendations taken; D526's O1 stays open and the 0.13.0 tag stays held until counsel answers); the rest of D520–D536 are **unanswered**; every task names the decisions it assumes, and
 an answer that differs from the recommendation re-plans the tasks that name it.
 
 It **supersedes** subscriptions tasks S1.1, S1.2, S1.3, S1.4, S1.5, S1.7 and S1.9 (their content is
