@@ -313,9 +313,9 @@ runs each task as a job in the Customer's own cloud project (today, a Google Clo
 against the Customer's own repositories; the desktop console is an application on the Customer's
 machines that drives the Core's command-line tool; the mobile app reads the Customer's own Firebase
 database; the optional credentials service and the coordinator are designed to run in the
-Customer's own cloud project (both are part of the Core today, not of the Software). The Licensor
-operates no server that these components report to. The Key Service (section 8.3) is a website a
-person visits to obtain a key; the Software never contacts it.
+Customer's own cloud project (the credentials service is part of the Core today, not of the
+Software). The Licensor operates no server that these components report to. The Key Service
+(section 8.3) is a website a person visits to obtain a key; the Software never contacts it.
 
 9.2 **What the Licensor does not receive.** Through the Software, the Licensor does not receive the
 Customer's repositories, source code, tasks, prompts, model output, credentials, run records,
