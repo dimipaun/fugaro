@@ -21,6 +21,8 @@
 // Nothing here opens a window. `index.ts` wires the handler with
 // `DECLINING_CONFIRMER`; nothing else may.
 
+import { randomBytes } from 'node:crypto'
+
 import type { ChildSpawner, SpawnPlan, Timers } from './spawn'
 import { cliSentence, planFor, privateWorkingDirectory, runToCompletion, spawnedArgv } from './spawn'
 import type { SpawnLogWriter } from './spawnlog'
@@ -88,6 +90,22 @@ function newRunID(now: Date, random: () => number): string {
     `-${pad(now.getUTCHours(), 2)}${pad(now.getUTCMinutes(), 2)}${pad(now.getUTCSeconds(), 2)}`
   const tail = Math.floor(random() * 0x10000)
   return `${stamp}-${tail.toString(16).padStart(4, '0')}`
+}
+
+/**
+ * cryptoRandom is the default source of the id's four hex digits, and it is
+ * `node:crypto`'s two bytes rather than `Math.random`'s because of what a
+ * collision costs: two launches in the same UTC second whose tails collide
+ * produce one id, the CLI's claim then holds it, and the second launch comes
+ * back `already-launched` -- which D23 has this console draw as a **fact rather
+ * than an error**, so a confirmed launch that spends nothing would say nothing
+ * about why. `task.NewRunID` draws its own tail from `crypto/rand`
+ * (`internal/task/task.go`), so this is the same source as the id it is shaped
+ * like. The digits are not a secret and nothing here is key material: this is
+ * collision-freedom, not unpredictability.
+ */
+function cryptoRandom(): number {
+  return randomBytes(2).readUInt16BE(0) / 0x10000
 }
 
 /** LaunchRequest is the five validated fields the operation carries, and it is
@@ -272,7 +290,7 @@ function refusedOutcome(reason: string, runId: string | null = null): LaunchOutc
  */
 export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
   const now = deps.now ?? Date.now
-  const random = deps.random ?? Math.random
+  const random = deps.random ?? cryptoRandom
 
   /** every confirmation opened in the last minute, app-wide */
   const opened: number[] = []
@@ -295,6 +313,37 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
     stamps.filter((stamp) => at - stamp < CONFIRM_RATE_WINDOW_MS).length
 
   /**
+   * hold registers a launch as in flight **when its window opens**, and not when
+   * its child starts, because an open window is exactly what the two in-flight
+   * caps are about: "a launch that is unsettled" is a click the operator has not
+   * answered yet as much as it is a child that is running, and a renderer that
+   * leans on this operation can have several windows open in one tick -- before
+   * any cool-down exists, since a cool-down starts at an accepted launch. Held
+   * from the window rather than from the spawn, the caps and their two refusal
+   * sentences are true of the whole unsettled interval.
+   *
+   * The entry is released on every path out of that interval: an answer of no, a
+   * launch declined because the installation moved, a child that finished, and a
+   * child that could not start. A confirmer therefore owes this launcher exactly
+   * one answer per window it opens (`LaunchConfirmer`), and both of the ways a
+   * window is answered here -- `answer()`, and the `decide` the confirmer was
+   * handed -- go through `settle`, so no window can leave an entry held.
+   */
+  function hold(launch: FrozenLaunch): void {
+    inFlight.add(launch.runId)
+    inFlightByInstallation.set(launch.project, launch.runId)
+  }
+
+  /** release frees a run id, and the installation's entry only when that entry
+   * is still **this** run's: an earlier launch finishing must never clear a later
+   * one's hold, which would admit a third launch beside a second that is still
+   * in flight. */
+  function release(runId: string, project: string): void {
+    inFlight.delete(runId)
+    if (inFlightByInstallation.get(project) === runId) inFlightByInstallation.delete(project)
+  }
+
+  /**
    * build freezes the whole spawn, and it is the only place a launch's argv is
    * built. Every refusal it can make is made **before** the confirmer is asked,
    * which is what "the window does not open for a launch that cannot happen"
@@ -306,6 +355,25 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
     const looked = await deps.lookUp(request.installation)
     if (!looked.ok) return looked
     const target = looked.target
+
+    // The target's project **is** the name that was asked for, and this is what
+    // makes the two in-flight keys one key: the ceilings at the top of `launch`
+    // are read against the name a renderer sent, and the hold is taken against
+    // the project of the frozen object -- so a lookup that answered with another
+    // installation's records would hold a name nobody asked about and leave the
+    // asked-for one free. The console's own lookup cannot do that (it builds the
+    // target from the argument it was given), which is why this is a refusal by
+    // name rather than a silent correction: a launcher whose two halves can
+    // disagree about which installation a launch is for is a fence with a gap in
+    // it, whatever the one caller does today.
+    if (target.project !== request.installation) {
+      return {
+        ok: false,
+        reason:
+          `the records answered for ${JSON.stringify(target.project)} when ${JSON.stringify(request.installation)} ` +
+          'was asked about: a launch is built for one installation or for none',
+      }
+    }
 
     // The floor is a **version comparison** and not membership in the console's
     // supported range: the range is minor-granular and the floor is a patch, so
@@ -445,8 +513,7 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
       outcome = refusedOutcome(launchOutcomeUnknown(launch.runId, why), launch.runId)
       outcome = Object.freeze({ ...outcome, outcomeUnknown: true })
     }
-    inFlight.delete(launch.runId)
-    inFlightByInstallation.delete(launch.project)
+    release(launch.runId, launch.project)
     outcomes.set(launch.runId, outcome)
     return outcome
   }
@@ -497,6 +564,7 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
     if (launch === undefined) return refusedOutcome(DECLINED_CANCELLED, runId)
     if (!yes) {
       const declined = refusedOutcome(reason ?? DECLINED_CANCELLED, runId)
+      release(runId, launch.project)
       outcomes.set(runId, declined)
       return declined
     }
@@ -505,12 +573,11 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
     // installation this process no longer has.
     if (!(await deps.stillRecorded(launch.project))) {
       const declined = refusedOutcome(DECLINED_CANCELLED, runId)
+      release(runId, launch.project)
       outcomes.set(runId, declined)
       return declined
     }
     coolDownUntil.set(launch.project, now() + LAUNCH_COOL_DOWN_MS)
-    inFlight.add(runId)
-    inFlightByInstallation.set(launch.project, runId)
     return spawn(launch)
   }
 
@@ -521,6 +588,12 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
       // console work -- a spawn of `config list`, a store read -- on every
       // message. The name it gave is the key, and a name that is not an
       // installation is refused by rate as readily as by identity.
+      //
+      // The two in-flight caps are read against `hold`, which is taken when a
+      // window opens: an open window is one of the launches counted, so a burst
+      // of `run.launch` messages in a single tick -- before any cool-down
+      // exists -- cannot open a second window for an installation, nor a third
+      // app-wide.
       const at = now()
       if (inFlightByInstallation.has(request.installation)) {
         return refusedOutcome(
@@ -566,6 +639,10 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
       if (opened.length > CONFIRM_RATE_APP * 4) opened.splice(0, opened.length - CONFIRM_RATE_APP * 4)
       perInstallation.set(request.installation, recent)
       frozen.set(built.launch.runId, built.launch)
+      // The hold is taken here, with the window: from this line until the
+      // window is answered and its child is done, this run id counts against
+      // both in-flight caps.
+      hold(built.launch)
 
       const decided = new Promise<LaunchAnswer>((resolve) => {
         pending.set(built.launch.runId, resolve)

@@ -38,7 +38,7 @@ import {
   createLaunchRunner,
   launchOutcomeUnknown,
 } from '../../src/main/launch'
-import type { FrozenLaunch, LaunchConfirmer, LaunchTarget } from '../../src/main/launch'
+import type { FrozenLaunch, LaunchConfirmer, LaunchTarget, TargetLookup } from '../../src/main/launch'
 import { RUN_LAUNCH_EQUALS_FLAGS, assertArgvFlags, spawnedArgv } from '../../src/main/spawn'
 import type { ChildSpawner, SpawnOptionsLike, SpawnedChildLike, Timers } from '../../src/main/spawn'
 import type { RecordedSpawn, SpawnLogWriter } from '../../src/main/spawnlog'
@@ -89,6 +89,7 @@ interface TypedChild extends SpawnedChildLike {
   readonly ended: readonly boolean[]
   emitStdout(text: string): void
   emitStderr(text: string): void
+  failStdin(error: Error): void
   exit(code: number | null, signal: string | null): void
 }
 
@@ -100,12 +101,16 @@ function typedChild(): TypedChild {
   const closes: ((code: number | null, signal: string | null) => void)[] = []
   const written: string[] = []
   const ended: boolean[] = []
+  const stdinErrors: ((error: Error) => void)[] = []
   const child = {
     stdout: { on: (_event: string, listener: (chunk: Buffer | string) => void) => stdout.push(listener) },
     stderr: { on: (_event: string, listener: (chunk: Buffer | string) => void) => stderr.push(listener) },
     stdin: {
       write: (chunk: Uint8Array) => written.push(new TextDecoder().decode(chunk)),
       end: () => ended.push(true),
+      // The one stream this console writes to. Its failure is an `error` event
+      // on this object, so the fake records the listener that has to be there.
+      on: (_event: 'error', listener: (error: Error) => void) => stdinErrors.push(listener),
     },
     on(event: 'spawn' | 'error' | 'exit' | 'close', listener: (() => void) | ((...args: unknown[]) => void)) {
       // Node fires `spawn` on the tick after the process exists; this fake fires
@@ -122,6 +127,9 @@ function typedChild(): TypedChild {
     },
     emitStderr: (text: string) => {
       for (const listener of stderr) listener(text)
+    },
+    failStdin: (error: Error) => {
+      for (const listener of stdinErrors) listener(error)
     },
     exit: (code: number | null, signal: string | null) => {
       for (const listener of exits) listener(code, signal)
@@ -218,20 +226,36 @@ function recordingTimers(): Timers & { readonly delays: readonly number[] } {
 }
 
 /** heldConfirmer is a confirmer whose answer the test gives, so a launch can be
- * inspected while its window is open. */
-function heldConfirmer(): LaunchConfirmer & { readonly opened: readonly FrozenLaunch[]; decide(yes: boolean): void } {
+ * inspected while its window is open. It holds **one answer per window**, keyed
+ * by run id: several windows can be open at once, which is exactly the state
+ * the in-flight caps are about. `decide` answers the oldest window still open,
+ * which is what a test with a single window reads. */
+function heldConfirmer(): LaunchConfirmer & {
+  readonly opened: readonly FrozenLaunch[]
+  readonly openRunIds: readonly string[]
+  decide(yes: boolean): void
+  decideWindow(runId: string, yes: boolean): void
+} {
   const opened: FrozenLaunch[] = []
-  let decide: ((yes: boolean, reason?: string) => void) | null = null
+  const waiting = new Map<string, (yes: boolean, reason?: string) => void>()
+  const decideWindow = (runId: string, yes: boolean): void => {
+    const held = waiting.get(runId)
+    waiting.delete(runId)
+    held?.(yes)
+  }
   return {
     opened,
     open(launch, answer) {
       opened.push(launch)
-      decide = answer
+      waiting.set(launch.runId, answer)
     },
-    decide(yes: boolean) {
-      const held = decide
-      decide = null
-      held?.(yes)
+    decide(yes) {
+      const oldest = [...waiting.keys()][0]
+      if (oldest !== undefined) decideWindow(oldest, yes)
+    },
+    decideWindow,
+    get openRunIds(): readonly string[] {
+      return [...waiting.keys()]
     },
   }
 }
@@ -276,14 +300,36 @@ function runner(options: {
   readonly timers?: Timers
   readonly now?: () => number
   readonly stillRecorded?: () => boolean
+  /** `lookUp` replaces the records entirely: the one test that needs a lookup
+   * answering for an installation other than the one asked about cannot use the
+   * default, which is the console's own shape (the target is built from the
+   * name it was given). */
+  readonly lookUp?: (project: string) => TargetLookup | Promise<TargetLookup>
 }): ReturnType<typeof createLaunchRunner> {
   const held = options.target ?? target()
+  const lookUp = options.lookUp
+  if (lookUp !== undefined) {
+    return createLaunchRunner({
+      lookUp: async (project) => lookUp(project),
+      confirmer: options.confirmer,
+      stillRecorded: options.stillRecorded ?? (() => true),
+      appEnv: { HOME: '/home/person-1' },
+      ...(options.spawner === undefined ? {} : { spawner: options.spawner }),
+      ...(options.log === undefined ? {} : { log: options.log }),
+      timers: options.timers ?? neverFires(),
+      now: options.now ?? (() => NOW),
+      random: countingRandom(),
+    })
+  }
   return createLaunchRunner({
     lookUp: (project: string) =>
       Promise.resolve(
-        held.project === ''
+        held.project === '' || project === ''
           ? { ok: false, reason: `no installation named ${JSON.stringify(project)} is one this console’s records carry` }
-          : { ok: true, target: held },
+          : // The launcher refuses a target whose project is not the name it was
+            // asked about, so a test that launches a *second* installation gets
+            // the same records under that installation's own name.
+            { ok: true, target: project === held.project ? held : { ...held, project } },
       ),
     confirmer: options.confirmer,
     stillRecorded: options.stillRecorded ?? (() => true),
@@ -562,6 +608,24 @@ describe('the refusals come before the window', () => {
     expect(confirmer.opened).toHaveLength(0)
   })
 
+  it('refuses records that answer for an installation other than the one asked about', async () => {
+    // The in-flight caps are read against the name a renderer sent and the hold
+    // is taken against the frozen object's own project. A lookup answering with
+    // another installation's records would make those two different keys, so the
+    // launcher refuses the disagreement rather than launching the wrong one.
+    const confirmer = heldConfirmer()
+    const held = runner({
+      confirmer,
+      lookUp: () => ({ ok: true, target: target({ project: OTHER_PROJECT }) }),
+    })
+
+    const outcome = await held.launch(request({ installation: PROJECT }))
+    expect(outcome.ok).toBe(false)
+    expect(outcome.reason).toContain(OTHER_PROJECT)
+    expect(outcome.reason).toContain(PROJECT)
+    expect(confirmer.opened).toHaveLength(0)
+  })
+
   it('refuses an installation whose records set a config path of their own', async () => {
     const confirmer = heldConfirmer()
     const held = runner({ confirmer, target: target({ configPath: '/home/person-1/elsewhere.yaml' }) })
@@ -734,6 +798,59 @@ describe('the launch limits', () => {
     expect(spawner.calls).toHaveLength(1)
 
     void first
+  })
+
+  it('counts a window that is still open, for the installation and across the app', async () => {
+    // The caps cover the whole unsettled interval and not only the child: a
+    // renderer leaning on this operation sends its messages in one tick, and
+    // every one of them arrives before any child exists -- and before any
+    // cool-down, which starts at an *accepted* launch. Held only from the
+    // spawn, both refusals below would be untrue of exactly the burst they
+    // exist for.
+    const confirmer = heldConfirmer()
+    const spawner = quietSpawner()
+    const held = runner({ confirmer, spawner })
+
+    const first = held.launch(request({ installation: PROJECT }))
+    await untilSettled()
+    expect(confirmer.opened).toHaveLength(1)
+
+    const sameInstallation = await held.launch(request({ installation: PROJECT }))
+    expect(sameInstallation.ok).toBe(false)
+    expect(sameInstallation.reason).toContain('already in flight')
+    expect(confirmer.opened).toHaveLength(1)
+
+    const second = held.launch(request({ installation: OTHER_PROJECT }))
+    await untilSettled()
+    expect(confirmer.opened).toHaveLength(2)
+
+    const third = await held.launch(request({ installation: 'third' }))
+    expect(third.ok).toBe(false)
+    expect(third.reason).toContain('two launches are already in flight')
+    expect(confirmer.opened).toHaveLength(2)
+    expect(spawner.calls).toHaveLength(0)
+
+    // Answering a window releases its hold, and only its own: the other
+    // installation's window is still open, and the answered installation's
+    // entry is gone -- so it can be asked for again, and the app-wide cap is
+    // back at two and refuses a third installation once more.
+    confirmer.decideWindow(RUN_ID, false)
+    await untilSettled()
+    expect(confirmer.openRunIds).toHaveLength(1)
+
+    const again = held.launch(request({ installation: PROJECT }))
+    await untilSettled()
+    expect(confirmer.opened).toHaveLength(3)
+    expect(confirmer.openRunIds).toHaveLength(2)
+
+    const fourth = await held.launch(request({ installation: 'third' }))
+    expect(fourth.ok).toBe(false)
+    expect(fourth.reason).toContain('two launches are already in flight')
+
+    for (const leftover of confirmer.openRunIds) confirmer.decideWindow(leftover, false)
+    void first
+    void second
+    void again
   })
 
   it('runs at most two launches at once across the app, and refuses the third rather than queueing it', async () => {

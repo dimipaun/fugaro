@@ -865,6 +865,68 @@ export async function probeInstallation(
 }
 
 /**
+ * resolveLaunchBinary answers which `fugaro` a **launch** for one stored
+ * installation would run, and it is `probeInstallation`'s resolution without
+ * its classification: the launch refuses a CLI below its own floor with the
+ * launcher's sentence (`launchrules.ts`'s `launchSupported`) rather than with
+ * this module's "cannot drive" one, so what is left here is the path and the
+ * version.
+ *
+ * **It exists because the record decides the route, and a launch must run the
+ * CLI the record names.** A record's `binaryPath` is an override and its
+ * `distro` is the WSL route (T-D1, D2(a)): under a distribution the recorded
+ * paths are Linux spellings *inside* it, which the host cannot `stat` at all
+ * (F4, F15), and the question "is it there, and does it run?" is the
+ * distribution's -- asked through the same `version` probe, by
+ * `resolveInstalledBinary`'s WSL branch. Reading only the record's project and
+ * then walking the host's well-known locations would resolve some other
+ * `fugaro` for an installation whose own record points elsewhere -- a different
+ * CLI, a different config, a different credential -- and report it as this
+ * installation's, which is the one thing a launch must never do.
+ */
+export async function resolveLaunchBinary(
+  record: StoredInstallation,
+  deps: Omit<ValidationDeps, 'verify' | 'fs'>,
+): Promise<
+  { readonly ok: true; readonly value: { readonly path: string; readonly version: string } } | { readonly ok: false; readonly reason: string }
+> {
+  const env = deps.appEnv ?? {}
+  const target: SpawnTarget = { project: record.project }
+  const distro = record.distro ?? ''
+  const binaryPath = record.binaryPath ?? ''
+  // The working directory is the private one and never the record's checkout:
+  // the probe is a read of the installation, and rule 5 puts a child with no
+  // checkout of its own in the directory the console owns (a launch itself
+  // never runs in the checkout at all -- `launch.ts` says why).
+  const resolution = await withSpawnLog(env, deps.spawnLog, (log) => {
+    const shared = {
+      appEnv: env,
+      target,
+      ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }),
+      log,
+    }
+    if (distro !== '') {
+      return resolveInstalledBinary({
+        ...shared,
+        binaryPath,
+        distro,
+        ...(deps.wslPath === undefined ? {} : { wslPath: deps.wslPath }),
+        directory: (deps.workingDirectory ?? privateWorkingDirectory)(),
+      })
+    }
+    return resolveBinary({
+      ...shared,
+      ...(binaryPath === '' ? {} : { configuredPath: binaryPath }),
+      ...(deps.home === undefined ? {} : { home: deps.home }),
+      ...(deps.prefixes === undefined ? {} : { prefixes: deps.prefixes }),
+      directory: (deps.workingDirectory ?? privateWorkingDirectory)(),
+    })
+  })
+  if (!resolution.ok) return { ok: false, reason: resolution.reason }
+  return { ok: true, value: { path: resolution.path, version: resolution.version } }
+}
+
+/**
  * validateInstallation is the check that runs when an installation is given a
  * **checkout** -- the one thing the picker may set, from the directories the CLI
  * itself listed for that installation -- and it stops at the first refusal:

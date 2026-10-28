@@ -52,7 +52,6 @@ import {
   cliSentence,
   planFor,
   privateWorkingDirectory,
-  resolveBinary,
   resolveHandshakeBinary,
   runToCompletion,
 } from './spawn'
@@ -67,7 +66,13 @@ import type { ConsoleHandlers, ValidatedArguments } from './ipc'
 import { handlersFor } from '../source/source'
 import { createBoundSource } from '../source/cli'
 import type { BoundInstallation } from '../source/cli'
-import { createInstallationFileStore, installationStorePath, withResolvedBinary } from './installations'
+import {
+  createInstallationFileStore,
+  installationStorePath,
+  resolveLaunchBinary,
+  withResolvedBinary,
+} from './installations'
+import type { StoredInstallation } from './installations'
 import type { ActiveInstallation } from './installations'
 import type { CliCompatibility } from '../shared/version'
 import { NO_INSTALLATION_SURFACE } from '../source/source'
@@ -463,14 +468,21 @@ function launchRequest(args: ValidatedArguments): LaunchRequest {
  * cannot be checked is not one a launch may be built for. */
 const LAUNCH_NO_RECORDS = 'this console cannot read its installation records yet, and a launch needs one it can check'
 
-/** storedConfigPath is the config path this console's own records hold for one
- * installation, read from the file the picker's registry reads and not from a
- * second source: an installation's `configPath` is a legacy field the app only
- * ever reads (`installations.ts`), and a launch is the one place it matters.
- * `undefined` covers both "no record" and "no store", and the two are the same
- * answer here for a reason -- the caller refuses every path that is *set*, so
- * the states that hide a field are the states that pass no `--config`. */
-function storedConfigPath(project: string): string | undefined {
+/** storedRecord is this console's own record for one installation, read from the
+ * file the picker's registry reads and not from a second source: the record
+ * carries the three fields a launch needs from the machine rather than from the
+ * CLI -- the `binaryPath` override, the config path and the distribution the CLI
+ * runs inside (or `installations.ts`'s `StoredInstallation` for why each is
+ * there). `undefined` covers both "no record" and "no store": a console that
+ * cannot read its own file has no override to honour, and the ambient
+ * resolution the CLI does anyway is the answer that spends nothing.
+ *
+ * **The whole record is read in one place on purpose.** Reading a field at a
+ * time is how a launch ends up resolving the CLI the *host* has while the
+ * record it was given points at another one -- inside a distribution, or at a
+ * path the operator chose -- and that is a different CLI, a different config and
+ * a different credential. */
+function storedRecord(project: string): StoredInstallation | undefined {
   let store
   try {
     store = createInstallationFileStore({
@@ -486,7 +498,7 @@ function storedConfigPath(project: string): string | undefined {
   }
   const read = store.load()
   if (!read.ok) return undefined
-  return read.file.installations.find((record) => record.project === project)?.configPath
+  return read.file.installations.find((record) => record.project === project)
 }
 
 /** pickerList is the rail's own read, asked of the picker directly: `list` is
@@ -517,17 +529,20 @@ async function pickerList(): Promise<InstallationsListReply | null> {
  * refused **before** any window is asked about, which is design section 5.1
  * rule 11's own order.
  *
- * **The record's `configPath` is read from the console's own file and not from
- * the rail's reply**, which carries a row's project, its checkouts and its state
- * and no config path at all. Rule 11 refuses an installation whose `configPath`
- * is set and is not that project's own projects-file path; this console cannot
- * compute that path -- working out which file the CLI would resolve for a
- * project means reading the CLI's configuration directory, which section 3.4
- * rule 7 forbids the app to do -- so **every** stored `configPath` is refused,
- * which is the strict direction of the same rule. `storedConfigPath` is that
- * read, and an unreadable store answers `undefined`: a field this console cannot
- * see is a field it does not pass, and passing no `--config` is the ambient
- * resolution the CLI does anyway rather than a path nothing checked.
+ * **The route and the binary come from the console's own record and not from the
+ * rail's reply**, which carries a row's project, its checkouts and its state and
+ * neither of those. `storedRecord` is that read and `resolveLaunchBinary`
+ * (`installations.ts`) is the resolution: an installation whose record names a
+ * `binaryPath` is resolved at that path rather than through the host's walk, and
+ * an installation whose record names a `distro` is resolved *inside* that
+ * distribution, so the launcher's own by-name refusal of the WSL route
+ * (`launch.ts`) is reached with the truth rather than with a host CLI this
+ * installation does not run.
+ *
+ * The record's `configPath` is carried into the target and not passed: every
+ * stored `configPath` is refused before a window opens (see the note on that
+ * refusal below), and that refusal is what makes the field visible rather than
+ * ignored.
  */
 async function launchLookUp(project: string): Promise<TargetLookup> {
   const listed = await pickerList()
@@ -539,19 +554,29 @@ async function launchLookUp(project: string): Promise<TargetLookup> {
       reason: `no installation named ${JSON.stringify(project)} is one this console’s records carry`,
     }
   }
-  const resolution = await resolveBinary({
+  // A row the rail has and this console's own file does not is resolved as the
+  // ambient installation the CLI would use: no override, no distribution. The
+  // record's three fields are then handed to the launcher as they are read, so
+  // the refusal it makes about them is made about the real ones.
+  const record = storedRecord(project)
+  const distro = record?.distro ?? ''
+  const resolution = await resolveLaunchBinary(record ?? { id: '', project }, {
     appEnv: process.env,
     home: app.getPath('home'),
-    directory: privateWorkingDirectory(),
-    target: { project: '' },
-    log: createSpawnLog(process.env),
+    spawnLog: createSpawnLog(process.env),
   })
   if (!resolution.ok) return { ok: false, reason: resolution.reason }
+  // The records read runs on the same route as the resolution: under a
+  // distribution the CLI is a Linux program and no host path reaches it, so the
+  // read goes through `wsl.exe` with that record's distro -- the route
+  // `probeInstallation` takes, and the one the launcher refuses for a *launch*
+  // before any window opens.
   const plan = planFor('installation.list', {}, {
     target: { project: '' },
-    binaryPath: resolution.path,
+    binaryPath: resolution.value.path,
     directory: privateWorkingDirectory(),
     appEnv: process.env,
+    ...(distro === '' ? {} : { wsl: { distro } }),
   })
   let run
   try {
@@ -571,15 +596,16 @@ async function launchLookUp(project: string): Promise<TargetLookup> {
   if (found === undefined) {
     return { ok: false, reason: `the CLI listed no installation named ${JSON.stringify(project)}` }
   }
-  const configPath = storedConfigPath(project)
+  const configPath = record?.configPath ?? ''
   return {
     ok: true,
     target: {
       project,
-      binaryPath: resolution.path,
-      cliVersion: resolution.version,
+      binaryPath: resolution.value.path,
+      cliVersion: resolution.value.version,
       records: found,
-      ...(configPath === undefined ? {} : { configPath }),
+      ...(configPath === '' ? {} : { configPath }),
+      ...(distro === '' ? {} : { distro }),
     },
   }
 }

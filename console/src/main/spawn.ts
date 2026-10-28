@@ -1774,6 +1774,11 @@ function readText(
 export interface WritableLike {
   write(chunk: Uint8Array): unknown
   end(): unknown
+  /** `on` is here for the write's own failure: a child that exits before it
+   * drains its stdin closes the read end, and the resulting `EPIPE` arrives as
+   * an `error` event -- which, unheard, is an uncaught exception in the main
+   * process. See the write in `runToCompletion`. */
+  on(event: 'error', listener: (error: Error) => void): unknown
 }
 
 /** SpawnedChildLike is the slice of `ChildProcess` this module uses, as an
@@ -2557,6 +2562,17 @@ export function runToCompletion(
       // waited for -- a child that exits without reading must not hang the
       // console, and the deadline below is what bounds the whole thing.
       if (deps.stdinBytes !== undefined) {
+        // An `error` listener, because this is the one child whose stdin the
+        // console writes to: a CLI (or a `wsl.exe`) that exits before draining
+        // it -- a bad flag, a config refusal, an `sh -c` that dies at once --
+        // closes the read end, and the write's `EPIPE` arrives as an `error`
+        // event on the socket. With nothing listening, Node raises that as an
+        // uncaught exception in the **main process**: a crashed console on the
+        // one row the design allows to write to a child. The failure it
+        // describes is already handled where every other failure is -- the
+        // child's exit code, its stderr and the deadline below -- so there is
+        // nothing to do here but not crash.
+        child.stdin?.on('error', () => undefined)
         child.stdin?.write(deps.stdinBytes)
         child.stdin?.end()
       }

@@ -42,6 +42,7 @@
 // of its argv, cwd and environment, which is what makes these tests about what a
 // real machine would see rather than about the console's self-consistency.
 
+import { EventEmitter } from 'node:events'
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -3459,6 +3460,44 @@ describe('the one-shot read', () => {
     expect(result.stdout).toBe('{"v":"€"}\n')
     expect(result.stderr).toBe('é')
     expect(result.stdout).not.toContain('\uFFFD')
+  })
+
+  it('does not let a launch’s stdin failure escape as an uncaught exception', async () => {
+    // The task text is the console's one write to a child, and a child that
+    // exits before draining the pipe -- a CLI that refuses a flag, a `wsl.exe`
+    // that dies at once -- closes the read end: the write's `EPIPE` then
+    // arrives as an `error` event on that socket. An `EventEmitter` with no
+    // `error` listener **throws** on that emit, and an uncaught exception in
+    // the main process is a crashed console on the one row the design lets
+    // write. This stdin is a real `EventEmitter`, so the emit below throws
+    // exactly as Node's socket would if the module's listener were missing.
+    const stdin = new EventEmitter() as EventEmitter & {
+      write(chunk: Uint8Array): boolean
+      end(): boolean
+    }
+    const written: Uint8Array[] = []
+    let ended = false
+    stdin.write = (chunk: Uint8Array) => {
+      written.push(chunk)
+      return true
+    }
+    stdin.end = () => {
+      ended = true
+      return true
+    }
+    const child = { ...scriptedChild(), stdin }
+    const task = new TextEncoder().encode('a task\n')
+    const read = runToCompletion(plan(), { spawner: () => child, timers: manualTimers(), stdinBytes: task })
+    // The task is written and the stream ended without waiting, both at
+    // `spawn`, which is where the child process exists.
+    expect(written).toEqual([task])
+    expect(ended).toBe(true)
+    // ...and the failure of that write is not the launch's outcome: the
+    // console hears it, and still settles on the child's own exit code.
+    expect(() => stdin.emit('error', new Error('EPIPE'))).not.toThrow()
+    child.exit(7, null)
+    const result = await read
+    expect(result.code).toBe(7)
   })
 })
 
