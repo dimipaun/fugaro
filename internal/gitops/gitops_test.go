@@ -1076,6 +1076,11 @@ func TestOpenOrCloneStripsFromTheStart(t *testing.T) {
 
 func TestPushFastForwardPushesAndSkipsWhenCurrent(t *testing.T) {
 	repo, remote := setup(t)
+	// A decoy pushurl: git pushes to a remote's pushurl when it is given the
+	// remote's name, so the push below landing on remote is what shows it went
+	// to origin's URL — the one the call read — and not to the name.
+	decoy := testutil.NewRemote(t, map[string]string{"README.md": "decoy\n"})
+	testutil.Git(t, repo.Dir, "config", "remote.origin.pushurl", decoy)
 	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
 		t.Fatal(err)
 	}
@@ -1101,10 +1106,12 @@ func TestPushFastForwardPushesAndSkipsWhenCurrent(t *testing.T) {
 	if got := testutil.Git(t, remote, "rev-parse", "refs/heads/fugaro/x"); got != two {
 		t.Fatalf("remote = %s, want %s", got, two)
 	}
-	// Pushed to the URL, not the remote's name: no remote-tracking ref,
-	// so no ref lock the agent's own git could meet.
-	if got := testutil.Git(t, repo.Dir, "for-each-ref", "refs/remotes/origin/fugaro/"); got != "" {
-		t.Fatalf("the push wrote a local ref: %q", got)
+	// Pushed to origin's URL, not to the remote's name: a push to the name
+	// would have followed remote.origin.pushurl to the decoy instead. (A URL
+	// push no longer means no remote-tracking ref in the checkout; see
+	// PushFastForward.)
+	if got := testutil.Git(t, decoy, "for-each-ref", "refs/heads/fugaro/"); got != "" {
+		t.Fatalf("the push went to origin's pushurl: %q", got)
 	}
 }
 

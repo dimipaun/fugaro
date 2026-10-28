@@ -25,7 +25,7 @@ The M9e rule E1 ("the remote branch is always a verified state") made the push w
 
    **Every stage boundary** pushes at once. After `implement`, `fix`, `review` and `review_first`, `afterStage` pushes whatever the stage left committed and unpushed. This push skips the quiet period and the minute: the agent is idle, the stage's work is complete, and a run has only a handful of boundaries. The worst case is therefore **60 pushes an hour** (one a minute) plus one per boundary.
 
-   The push is **fast-forward only** and is never forced. It uses the runner's own credentials (`refreshGitAuth`). It pushes the tip's SHA, and it pushes to origin's URL so that no local ref is written. It never commits, never reads or changes the working tree, and never takes `index.lock`.
+   The push is **fast-forward only** and is never forced. It uses the runner's own credentials (`refreshGitAuth`). It pushes the tip's SHA, and it pushes to origin's URL rather than to the remote's name, so a `remote.origin.pushurl` the agent sets later cannot send the push somewhere the URL check never saw. (On git ≥ 2.56 that URL push does write a remote-tracking ref after all: git resolves a URL that uniquely matches a configured remote to that remote and updates its tracking ref from its fetch refspec, and there is no opt-out.) It never commits, never reads or changes the working tree, and never takes `index.lock`.
 
    **Not a git hook.** A `post-commit` hook would fire exactly at each commit, but the agent owns the checkout:
    - it can disable or skip hooks (`core.hooksPath`, removing `.git/hooks`, plumbing commits through `commit-tree` and `update-ref`);

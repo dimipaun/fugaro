@@ -66,7 +66,7 @@ func (p *PRState) MergeNow(ctx context.Context, url string) (merged, known bool)
 	// lookup per pull request.
 	cctx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
-	state, err := p.ask(cctx, ref)
+	state, err := p.askFn(cctx, ref)
 	if err != nil {
 		if errors.Is(err, errGHNotFound) {
 			p.mu.Lock()
