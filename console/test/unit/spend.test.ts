@@ -477,6 +477,76 @@ const PERSON_REPORT: JSONDoc = {
 }
 
 /**
+ * MODE_ROWS is a by-mode report: `report --by mode` reads the run records
+ * rather than the spend history (`source: "run-records"`, and not degraded), so
+ * a row's key is a rigor mode or the CLI's own `none` (`internal/report/
+ * report.go`'s `ModeNone`) for a run whose record carries no mode -- or one
+ * this build does not know, which reads as `none` rather than as the raw text.
+ * There is no `start` (a mode is not a period), `calls` is 0 and `run_hours` is
+ * null (a run record carries neither), and a row with no estimated run reads
+ * compute `n/a` rather than 0.
+ */
+const MODE_ROWS = [
+  {
+    key: 'pro',
+    end: '2026-10-15',
+    partial: false,
+    model_micros: 1_500_000,
+    model_usd: '1.500000',
+    notional_micros: null,
+    notional_usd: null,
+    compute_micros: 250_000,
+    compute_usd: '0.250000',
+    compute_estimated: true,
+    run_hours: null,
+    runs: 1,
+    calls: 0,
+  },
+  {
+    key: 'none',
+    end: '2026-10-17',
+    partial: false,
+    model_micros: 500_000,
+    model_usd: '0.500000',
+    notional_micros: 3_000_000,
+    notional_usd: '3.000000',
+    compute_micros: null,
+    compute_usd: null,
+    compute_estimated: false,
+    run_hours: null,
+    runs: 2,
+    calls: 0,
+  },
+] as const
+
+const MODE_REPORT: JSONDoc = {
+  project: 'fugaro-demo',
+  source: 'run-records',
+  degraded: false,
+  by: 'mode',
+  since: '2026-10-12',
+  until: '2026-10-15',
+  weeks: 'iso-utc-monday',
+  rows: MODE_ROWS,
+  totals: {
+    key: 'TOTAL',
+    end: '2026-10-17',
+    partial: false,
+    model_micros: 2_000_000,
+    model_usd: '2.000000',
+    notional_micros: 3_000_000,
+    notional_usd: '3.000000',
+    compute_micros: 250_000,
+    compute_usd: '0.250000',
+    compute_estimated: true,
+    run_hours: null,
+    runs: 3,
+    calls: 0,
+  },
+  warnings: [],
+}
+
+/**
  * THE_REPOS is `budget show --json`'s `repos` array with one repository at each
  * binding scope the CLI can name: a repository with its own two caps, one whose
  * per-run cap comes from the repository default, and one whose per-run cap
@@ -615,10 +685,12 @@ function sourceConstant(relative: string, name: string): string {
 }
 
 describe('the Spend screen constants', () => {
-  it('are the CLI\'s seven breakdowns, by name, and cannot drift from them', () => {
+  it('are the CLI\'s eight breakdowns, by name, and cannot drift from them', () => {
     // `internal/report/report.go`'s `Dim` values, one by one: the switch draws
     // the CLI's vocabulary, and a word the CLI renamed would leave the switch
-    // offering a breakdown `report` refuses.
+    // offering a breakdown `report` refuses. The whole list against the CLI's
+    // own `--by` help is `report-dimensions.test.ts`; this is the same fact
+    // held name by name.
     const go = 'internal/report/report.go'
     expect(sourceConstant(go, 'ByDay')).toBe('"day"')
     expect(sourceConstant(go, 'ByWeek')).toBe('"week"')
@@ -627,8 +699,9 @@ describe('the Spend screen constants', () => {
     expect(sourceConstant(go, 'ByRepo')).toBe('"repo"')
     expect(sourceConstant(go, 'ByModel')).toBe('"model"')
     expect(sourceConstant(go, 'ByPerson')).toBe('"person"')
+    expect(sourceConstant(go, 'ByMode')).toBe('"mode"')
 
-    expect(SPEND_DIMENSIONS).toEqual(['day', 'week', 'month', 'year', 'repo', 'model', 'person'])
+    expect(SPEND_DIMENSIONS).toEqual(['day', 'week', 'month', 'year', 'repo', 'model', 'person', 'mode'])
   })
 
   it('bounds a day series at the CLI\'s own reportMaxDays, on both sides of it', () => {
@@ -1009,6 +1082,53 @@ describe('the person breakdown', () => {
     expect(text).not.toContain('ada@example.com')
     expect(text).not.toContain('ada')
     expect(keyClass('person', 'ada@example.com')).toBe('person')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The by-mode breakdown (`report --by mode`).
+// ---------------------------------------------------------------------------
+
+describe('the by-mode breakdown', () => {
+  it('is a word the console knows, so a by-mode document is drawn and not read as unknown', () => {
+    // Red before `mode` was in `SPEND_DIMENSIONS`: `dimensionOf('mode')` was
+    // null, so the screen took the unknown-breakdown path -- the switch drew
+    // "an unknown breakdown" and the note said it could not name the grouping.
+    const model = buildSpendModel(MODE_REPORT, BUDGET)
+    expect(model.dimensionKnown).toBe(true)
+    expect(model.dimension).toBe('mode')
+    expect(model.notes).toEqual([])
+    expect(model.rows.map((row) => row.key)).toEqual(['pro', 'none'])
+    // The switch offers every word, and `mode` is the one the document asked for.
+    expect(model.switches.map((one) => one.dimension)).toEqual([...SPEND_DIMENSIONS])
+    expect(model.switches.find((one) => one.dimension === 'mode')).toMatchObject({
+      enabled: true,
+      current: true,
+    })
+  })
+
+  it('draws a mode and the CLI\'s own `none` as labels, never as an error', () => {
+    const tree = renderSpend(factory, buildSpendModel(MODE_REPORT, BUDGET), 'light')
+    // A mode word and `none` take the free-text class, exactly as a model name
+    // does -- so `none` is its own row and not the switch's unknown word.
+    expect(keyClass('mode', 'pro')).toBe('label')
+    expect(keyClass('mode', 'none')).toBe('label')
+    expect(texts(tree, 'spend-key')).toEqual(['pro', 'none'])
+    expect(all(tree, 'spend-dim-unknown')).toEqual([])
+    expect(drawn(tree)).not.toContain('an unknown breakdown')
+  })
+
+  it('keeps the money grammar: the three accounts stay apart and are never summed', () => {
+    const model = buildSpendModel(MODE_REPORT, BUDGET)
+    const tree = renderSpend(factory, model, 'light')
+    // The notional row is marked and the row with no estimated run reads `n/a`;
+    // no cell is model + notional or model + compute.
+    expect(texts(tree, 'spend-notional')).toEqual([UNAVAILABLE_MARK, `${NOTIONAL_MARK}$3.00`])
+    expect(texts(tree, 'spend-compute')).toEqual(['est. $0.25', UNAVAILABLE_MARK])
+    expect(drawn(tree)).not.toContain('$3.50')
+    expect(drawn(tree)).not.toContain('$2.25')
+    // A mode row carries no run-hours, so the column is `n/a` and never `0.00 h`.
+    expect(texts(tree, 'spend-run-hours')).toEqual([UNAVAILABLE_MARK, UNAVAILABLE_MARK])
   })
 })
 
@@ -1629,7 +1749,7 @@ describe('the caps panel', () => {
 // ---------------------------------------------------------------------------
 
 describe('the breakdown switch', () => {
-  it('draws the seven words and marks the document\'s own', () => {
+  it('draws the eight words and marks the document\'s own', () => {
     const tree = renderSpend(factory, modelOf(), 'light')
     const dims = all(tree, 'spend-dim')
     expect(dims.map((dim) => dim.textContent)).toEqual([
@@ -1640,6 +1760,7 @@ describe('the breakdown switch', () => {
       'repo',
       'model',
       'person',
+      'mode',
     ])
     expect(dims.filter((dim) => dim.getAttribute('data-current') === 'true').map((dim) => dim.textContent)).toEqual([
       'day',
@@ -1647,7 +1768,7 @@ describe('the breakdown switch', () => {
     expect(one(tree, 'spend-switch').getAttribute('data-known')).toBe('true')
   })
 
-  it('names an eighth breakdown as unknown without echoing its word', () => {
+  it('names a ninth breakdown as unknown without echoing its word', () => {
     // An `by` this build does not know is a newer CLI, and the console says so
     // in its own words: the value is not drawn, the same rule the Live screen's
     // unknown flags follow.
