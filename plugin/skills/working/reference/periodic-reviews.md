@@ -84,6 +84,6 @@ A run that failed is never retried automatically, and no report launches one. A 
 
 Some lessons are about Fugaro itself rather than about this repository. The user decides whether one is worth sending to Fugaro's maintainers:
 
-- **Draft it with the user, redacted.** No repository name, no run IDs, no person's name or account, no task text: a public issue is public.
+- **Draft it with `fugaro runs digest --submit-draft`.** It prints the period's figures redacted — no repository name, no run IDs, no person's name or account, no task text — and sends nothing: a public issue is public.
 - **Submit only through `gh issue create --web`**, which opens the browser and leaves the submit button to the user. The agent never submits a learning on its own, and never runs that command in any other form: a learning goes out only after the person's word.
 - **Leave it out of the skill.** A submitted learning is input for the maintainers, who rewrite it into a normal pull request with review. It is never pasted into a skill.

@@ -21,6 +21,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/testutil"
+	"github.com/dimipaun/fugaro/internal/updatecheck"
 )
 
 // submitRepo is the invented repository every fixture here is of. The draft
@@ -76,12 +77,22 @@ func TestSubmitDraftHasNoRepoNameOrRunID(t *testing.T) {
 			t.Errorf("the draft carries %q:\n%s", absent, out)
 		}
 	}
+	// And no person: a record is untrusted input and the issue the draft is
+	// pasted into is public, so an address or an account name reaching it is
+	// the case this redaction exists for (G1, D323).
+	for _, absent := range []string{"@", "person-1", "someone"} {
+		if strings.Contains(out, absent) {
+			t.Errorf("the draft carries %q:\n%s", absent, out)
+		}
+	}
 	for _, want := range []string{
 		"run-1",
 		"run-2",
 		// The one command that sends the learning, run by the person, in a
-		// browser (D327).
-		"gh issue create --web --template skill_learning.yml",
+		// browser (D327) -- against Fugaro's repository, because the form lives
+		// there and `gh` would otherwise resolve the user's own from the
+		// checkout this command read.
+		"gh issue create --web --template skill_learning.yml -R " + updatecheck.Repo,
 		// The line the person replaces with the lesson.
 		"<write the lesson here",
 		"2026-10-25",
@@ -89,6 +100,29 @@ func TestSubmitDraftHasNoRepoNameOrRunID(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("the draft does not carry %q:\n%s", want, out)
 		}
+	}
+}
+
+// TestSubmitDraftIsDeterministic is G3 for the draft: nothing in the renderer
+// reads a clock, and every map it walks is walked in sorted key order, so the
+// same records give byte-identical bytes. A person who prints a draft twice
+// reads the same draft.
+func TestSubmitDraftIsDeterministic(t *testing.T) {
+	f, slug := submitFixture(t)
+	digestClock(t, "2026-10-27")
+	fin := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
+	seedSubmitRun(t, f, slug, "20261025-120000-abcd", fin)
+	seedSubmitRun(t, f, slug, "20261025-130000-abcd", fin)
+
+	print := func() string {
+		out, errOut, err := execute(t, "runs", "digest", "--period", "day", "--date", "2026-10-25", "--submit-draft")
+		if err != nil {
+			t.Fatalf("runs digest --submit-draft: %v (%s)", err, errOut)
+		}
+		return out
+	}
+	if first, second := print(), print(); first != second {
+		t.Errorf("the draft is not byte-identical when printed twice:\n%s\nwant:\n%s", second, first)
 	}
 }
 

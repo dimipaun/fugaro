@@ -27,7 +27,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/digest"
-	"github.com/dimipaun/fugaro/internal/report"
+	"github.com/dimipaun/fugaro/internal/updatecheck"
 )
 
 // digestSubmitNotice is the draft's first line: a machine-readable marker
@@ -40,11 +40,17 @@ const digestSubmitNotice = "<!-- fugaro runs digest --submit-draft: a draft, not
 // figures and never the lesson, which is the person's own reading of them.
 const digestSubmitLesson = "<write the lesson here: what these runs show, and what you would change>"
 
-// digestSubmitCommand is the one line that sends a learning. It is the exact
-// command the issue form expects, and the command is never run here: --web
-// opens the form in the person's browser, so the person holds the submit
-// button (D327).
-const digestSubmitCommand = "gh issue create --web --template skill_learning.yml"
+// digestSubmitCommand is the one line that sends a learning. It is the command
+// the issue form expects, and it is never run here: --web opens the form in the
+// person's browser, so the person holds the submit button (D327).
+//
+// -R names Fugaro's own repository, because `gh issue create --web` resolves
+// the repository from the working directory -- which is the checkout this
+// command just read, the user's own -- and the "Skill learning" form lives only
+// in Fugaro's repository. Without it a person who follows the draft lands on
+// their own repository's new-issue form, which carries no such template, and
+// files the learning in the wrong place.
+const digestSubmitCommand = "gh issue create --web --template skill_learning.yml -R " + updatecheck.Repo
 
 // digestSubmitDraft is the learning draft: the patterns the fixed rules found,
 // the period's runs renumbered, the figures, the line for the lesson, and the
@@ -58,8 +64,8 @@ func digestSubmitDraft(s digest.Summary, runs []digest.Run, patterns []digest.Pa
 	b.WriteString(digestSubmitNotice + "\n\n")
 	b.WriteString("# Skill learning draft\n\n")
 	b.WriteString("A draft for a \"Skill learning\" issue. It leaves this repository, so it carries no\n" +
-		"repository name and no run ID -- the runs below are renumbered -- and no person.\n" +
-		"Read it, write the lesson, and send it yourself.\n\n")
+		"repository name, no run ID and no person. Read it, write the lesson, and send it\n" +
+		"yourself.\n\n")
 	b.Write(digest.PatternsMarkdown(patterns))
 	b.WriteString("\n")
 	if len(runs) > 0 {
@@ -74,22 +80,22 @@ func digestSubmitDraft(s digest.Summary, runs []digest.Run, patterns []digest.Pa
 }
 
 // digestSubmitRuns is the period's runs as the draft shows them: the report's
-// own row figures (D323's set) with the run IDs renumbered, because a run ID
-// names this repository and one of its runs and the draft leaves the
-// repository. The numbering follows the order the report lists the rows in --
-// flagged first, then the dearest of the rest -- which is fixed, so the same
-// records give the same numbers (G3).
+// own table, with the run IDs renumbered, because a run ID names this
+// repository and one of its runs and the draft leaves the repository. The
+// numbering follows the order the report lists the rows in -- flagged first,
+// then the dearest of the rest -- which is fixed, so the same records give the
+// same numbers (G3).
 func digestSubmitRuns(runs []digest.Run) string {
+	renumbered := make([]digest.Run, len(runs))
+	copy(renumbered, runs)
+	for i := range renumbered {
+		renumbered[i].ID = fmt.Sprintf("run-%d", i+1)
+	}
 	var b strings.Builder
 	b.WriteString("## Runs\n\n")
-	b.WriteString("| run | status | pr | base | reviews | billed | notional | flags |\n")
-	b.WriteString("| --- | --- | --- | --- | --- | --- | --- | --- |\n")
-	for i, r := range runs {
-		fmt.Fprintf(&b, "| `run-%d` | %s | %s | %s | %d | %s | %s | %s |\n",
-			i+1, r.Status, submitPR(r.PR), submitBase(r.Base), r.Reviews,
-			report.USD(r.Billed), report.USD(r.Notional), submitFlags(r.Flags))
-	}
-	b.WriteString("\n")
+	b.WriteString("Renumbered: a run ID names this repository and one of its runs, and this draft\n" +
+		"leaves the repository.\n\n")
+	b.WriteString(digest.RunsTable(renumbered))
 	return b.String()
 }
 
@@ -145,35 +151,4 @@ func submitRecipes(recipes map[string]string) string {
 		out = append(out, fmt.Sprintf("%s $%s", name, recipes[name]))
 	}
 	return strings.Join(out, ", ")
-}
-
-// submitPR is a pull-request number as the draft shows it: a number, or "-"
-// for a run that has no pull request of its own.
-func submitPR(n int) string {
-	if n < 1 {
-		return "-"
-	}
-	return fmt.Sprintf("#%d", n)
-}
-
-// submitBase is the diff base as the draft shows it (G1, reconciliation O6):
-// the record's own base branch is free text a task could steer, so a reader is
-// told only whether the record names one.
-func submitBase(named bool) string {
-	if named {
-		return "yes"
-	}
-	return "no"
-}
-
-// submitFlags is a run's flags as one cell.
-func submitFlags(flags []digest.Flag) string {
-	if len(flags) == 0 {
-		return "-"
-	}
-	out := make([]string, 0, len(flags))
-	for _, f := range flags {
-		out = append(out, f.String())
-	}
-	return strings.Join(out, "; ")
 }

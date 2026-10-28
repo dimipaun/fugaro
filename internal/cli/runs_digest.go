@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/updatecheck"
 )
 
 // fugaro runs digest -- one closed period's report of one repository, written
@@ -156,10 +157,11 @@ func newRunsDigestCmd() *cobra.Command {
 			"file as a \"Skill learning\" issue, and it sends nothing. The draft leaves the\n" +
 			"repository, so it carries no repository name and no run ID -- the runs are\n" +
 			"renumbered run-1, run-2, ... -- and it ends with the one command that sends it,\n" +
-			"gh issue create --web --template skill_learning.yml, which the person runs\n" +
-			"themselves. --dir still names the folder the committed reports the pattern rules\n" +
-			"read live in; nothing is written there, so --stdout and --json are refused beside\n" +
-			"it.",
+			"gh issue create --web --template skill_learning.yml -R " + updatecheck.Repo + ",\n" +
+			"which the person runs themselves: the form lives in Fugaro's repository, and -R\n" +
+			"is what reaches it from the checkout this command read. --dir still names the\n" +
+			"folder the committed reports the pattern rules read live in; nothing is written\n" +
+			"there, so --stdout and --json are refused beside it.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runRunsDigest(cmd, &o) },
 	}
@@ -170,7 +172,7 @@ func newRunsDigestCmd() *cobra.Command {
 	f.StringVar(&o.dir, "dir", digestDefaultDir, "the folder the reports live in, relative to the working directory")
 	f.BoolVar(&o.stdout, "stdout", false, "print the report instead of writing it")
 	f.BoolVar(&o.asJSON, "json", false, "print the summary block and the patterns as JSON")
-	f.BoolVar(&o.submitDraft, "submit-draft", false, "print a redacted learning draft to file as a \"Skill learning\" issue; sends nothing")
+	f.BoolVar(&o.submitDraft, "submit-draft", false, "print a redacted learning draft for a \"Skill learning\" issue; sends nothing")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
