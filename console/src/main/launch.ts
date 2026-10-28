@@ -140,6 +140,15 @@ export interface LaunchTarget {
   readonly cliVersion: string
   /** the base branches and repositories its `config list --json` read carried */
   readonly records: LaunchRecords
+  /** fingerprint is the identity of the **record** this target was read from:
+   * the entry point builds it from the stored installation and the rail's row
+   * for it, this file freezes it into the launch, and the entry point compares a
+   * fresh one at the answer. "The name is still saved" is not "the installation
+   * is still the one this launch is for" -- a removal and a re-add under the
+   * same name, or an edit of the binary, the distribution or the checkouts, is a
+   * different installation, and a launch cut for the old one closes as a
+   * cancel. */
+  readonly fingerprint: string
 }
 
 /** TargetLookup is the answer of the record read: the target, or the console's
@@ -171,6 +180,9 @@ export interface FrozenLaunch {
    * given: the same text, encoded once. */
   readonly taskText: string
   readonly taskBytes: Uint8Array
+  /** the record's own fingerprint, as `LaunchTarget` answers it: what the
+   * answer-time read is compared against (`LaunchDeps.stillRecorded`). */
+  readonly fingerprint: string
   readonly argv: readonly string[]
   readonly cwd: string
   readonly env: Readonly<Record<string, string>>
@@ -243,20 +255,34 @@ export interface LaunchDeps {
    * read; a name the records do not carry is `ok: false`. */
   readonly lookUp: (project: string) => Promise<TargetLookup>
   readonly confirmer: LaunchConfirmer
-  /** stillRecorded answers whether an installation is in the records *now*: a
-   * window whose installation was removed or re-chosen while it was open closes
-   * as a cancel, and this is the check that makes that true rather than
-   * promised. It may be async because the records are read from the CLI's own
-   * list, and a stale answer here is a launch for an installation the operator
-   * has just removed. */
-  readonly stillRecorded: (project: string) => Promise<boolean> | boolean
+  /** stillRecorded answers whether the **same** installation is in the records
+   * now: a window whose installation was removed, re-added or changed while it
+   * was open closes as a cancel, and this is the check that makes that true
+   * rather than promised. It is handed the whole frozen launch, because the name
+   * alone cannot answer it -- the launch carries the record's fingerprint and
+   * the implementation compares a fresh one against it. It may be async because
+   * the records are read from the CLI's own list, and a stale answer here is a
+   * launch for an installation the operator has just removed. A read that
+   * refuses or throws answers no; see `settle`. */
+  readonly stillRecorded: (launch: FrozenLaunch) => Promise<boolean> | boolean
   readonly appEnv: Readonly<Record<string, string | undefined>>
   readonly spawner?: ChildSpawner
   readonly log?: SpawnLogWriter
   readonly timers?: Timers
-  /** now and random are the clock and the id's hex tail, both injectable so the
-   * rate limits, the cool-down and the run id are testable without waiting. */
+  /** now, wallClock and random are the two clocks and the id's hex tail, all
+   * injectable so the limits, the cool-down and the run id are testable without
+   * waiting.
+   *
+   * `now` is the **limits'** clock, and it is monotonic (`performance.now`) and
+   * deliberately not the wall clock: the in-flight entries, the cool-down and
+   * the two rate windows are elapsed-time bounds, and a wall clock somebody
+   * moves -- an operator, NTP, a laptop waking from sleep with a wrong time --
+   * would either lock an installation out of launching until real time caught up
+   * or free it early. `wallClock` is the run id's, and it *is* the wall clock
+   * (`Date.now`), because the id's stamp is the UTC second the run was cut in
+   * and the CLI reads it as one. */
   readonly now?: () => number
+  readonly wallClock?: () => number
   readonly random?: () => number
 }
 
@@ -280,6 +306,14 @@ function refusedOutcome(reason: string, runId: string | null = null): LaunchOutc
   return Object.freeze({ ok: false, runId, result: null, reason, outcomeUnknown: false, replayed: false })
 }
 
+/** unknownOutcome is the one spelling of a launch this process was cut off
+ * from: a spawn that threw, or a child killed by a signal. It is a refusal with
+ * `outcomeUnknown` set, so the run id is kept and the sentence
+ * (`launchOutcomeUnknown`) names the two reads that settle it. */
+function unknownOutcome(why: string, runId: string): LaunchOutcome {
+  return Object.freeze({ ...refusedOutcome(launchOutcomeUnknown(runId, why), runId), outcomeUnknown: true })
+}
+
 /**
  * createLaunchRunner builds the launcher. It holds four pieces of state and all
  * four live only in memory, for the life of the process: the confirmation
@@ -289,7 +323,8 @@ function refusedOutcome(reason: string, runId: string | null = null): LaunchOutc
  * the installations file, and nothing else).
  */
 export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
-  const now = deps.now ?? Date.now
+  const now = deps.now ?? ((): number => performance.now())
+  const wallClock = deps.wallClock ?? Date.now
   const random = deps.random ?? cryptoRandom
 
   /** every confirmation opened in the last minute, app-wide */
@@ -298,9 +333,15 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
   const perInstallation = new Map<string, number[]>()
   const coolDownUntil = new Map<string, number>()
   /** the id of the launch in flight for each installation, and every id in
-   * flight (the app-wide cap is the size of this set) */
+   * flight (the app-wide cap is the size of this set). A launch is in here from
+   * its reservation, under a token, until its run id replaces that token. */
   const inFlightByInstallation = new Map<string, string>()
   const inFlight = new Set<string>()
+  /** how many reservations this process has taken, and the prefix that keeps a
+   * reservation's token from ever reading as a run id (`newRunID`'s shape has no
+   * colon in it) */
+  let reservations = 0
+  const RESERVATION_PREFIX = 'reservation:'
   /** a window that is open: the run id to the `decide` its answer resolves */
   const pending = new Map<string, (answer: LaunchAnswer) => void>()
   /** the frozen object of every window this process opened, so a replayed answer
@@ -313,23 +354,61 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
     stamps.filter((stamp) => at - stamp < CONFIRM_RATE_WINDOW_MS).length
 
   /**
-   * hold registers a launch as in flight **when its window opens**, and not when
-   * its child starts, because an open window is exactly what the two in-flight
-   * caps are about: "a launch that is unsettled" is a click the operator has not
-   * answered yet as much as it is a child that is running, and a renderer that
-   * leans on this operation can have several windows open in one tick -- before
-   * any cool-down exists, since a cool-down starts at an accepted launch. Held
-   * from the window rather than from the spawn, the caps and their two refusal
-   * sentences are true of the whole unsettled interval.
+   * reserve takes a launch's **synchronous** claim on the limits -- the
+   * installation's in-flight slot, one place in the app-wide count, and the
+   * confirmation's rate stamp -- and returns the token that names it until the
+   * launch is built and has a run id of its own.
    *
-   * The entry is released on every path out of that interval: an answer of no, a
-   * launch declined because the installation moved, a child that finished, and a
-   * child that could not start. A confirmer therefore owes this launcher exactly
-   * one answer per window it opens (`LaunchConfirmer`), and both of the ways a
-   * window is answered here -- `answer()`, and the `decide` the confirmer was
-   * handed -- go through `settle`, so no window can leave an entry held.
+   * **Synchronous is the whole point.** The three checks above it are reads, and
+   * the write used to happen after `build` was awaited: every message of a
+   * same-tick burst read the limits before any of them had written, so one
+   * installation's burst opened as many windows as the renderer could send,
+   * against caps of one in flight and three a minute -- and the second window's
+   * hold then *overwrote* the first's entry for that installation. Written here,
+   * before the first `await`, the second message of a burst already sees the
+   * first's reservation.
+   *
+   * The rate is recorded when the window opens, not when it is answered: the
+   * operator's attention is what this bounds. The stored list is pruned to the
+   * window as it is written, so it cannot grow without bound.
    */
-  function hold(launch: FrozenLaunch): void {
+  function reserve(installation: string, at: number): string {
+    reservations += 1
+    const token = `${RESERVATION_PREFIX}${String(reservations)}`
+    inFlight.add(token)
+    inFlightByInstallation.set(installation, token)
+    const mine = perInstallation.get(installation) ?? []
+    perInstallation.set(
+      installation,
+      [...mine, at].filter((stamp) => at - stamp < CONFIRM_RATE_WINDOW_MS),
+    )
+    opened.push(at)
+    if (opened.length > CONFIRM_RATE_APP * 4) opened.splice(0, opened.length - CONFIRM_RATE_APP * 4)
+    return token
+  }
+
+  /**
+   * commit turns a reservation into the **run-id hold**, once the launch is
+   * built: the same three structures, now named by the run id the window is
+   * opened under, so the hold is the one the caps read and `release` frees.
+   *
+   * A launch is held **from its reservation until its child is done**, and not
+   * from its spawn, because an open window is exactly what the two in-flight
+   * caps are about: "a launch that is unsettled" is a click the operator has not
+   * answered yet as much as it is a child that is running. Held from the
+   * reservation, the caps and their two refusal sentences are true of the whole
+   * unsettled interval.
+   *
+   * The entry is released on every path out of that interval: a build that
+   * refuses or throws, a confirmer that throws, an answer of no, a launch
+   * declined because the installation moved, a child that finished, and a child
+   * that could not start. A confirmer therefore owes this launcher exactly one
+   * answer per window it opens (`LaunchConfirmer`), and both of the ways a window
+   * is answered here -- `answer()`, and the `decide` the confirmer was handed --
+   * go through `settle`, so no window can leave an entry held.
+   */
+  function commit(token: string, launch: FrozenLaunch): void {
+    inFlight.delete(token)
     inFlight.add(launch.runId)
     inFlightByInstallation.set(launch.project, launch.runId)
   }
@@ -452,7 +531,7 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
     const planTask = checkLaunchPlanTask(request.planTask)
     if (!planTask.ok) return { ok: false, reason: planTask.reason }
 
-    const runId = newRunID(new Date(now()), random)
+    const runId = newRunID(new Date(wallClock()), random)
     // The child's working directory is always the app's own private, empty
     // directory -- never the operator's checkout, the installation's recorded
     // one included. `newRunRef` cuts a run from the branch the *working
@@ -487,6 +566,7 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
         planTask: planTask.value,
         taskText: task.value.text,
         taskBytes: encoded,
+        fingerprint: target.fingerprint,
         argv: plan.argv,
         cwd: plan.cwd,
         env: plan.env,
@@ -507,11 +587,10 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
         timeoutMs: LAUNCH_TIMEOUT_MS,
         stdinBytes: launch.taskBytes,
       })
-      outcome = decodeReply(launch, result.code, result.stdout, result.stderr)
+      outcome = decodeReply(launch, result.code, result.signal, result.stdout, result.stderr)
     } catch (error) {
       const why = error instanceof Error ? error.message : String(error)
-      outcome = refusedOutcome(launchOutcomeUnknown(launch.runId, why), launch.runId)
-      outcome = Object.freeze({ ...outcome, outcomeUnknown: true })
+      outcome = unknownOutcome(why, launch.runId)
     }
     release(launch.runId, launch.project)
     outcomes.set(launch.runId, outcome)
@@ -524,9 +603,19 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
   function decodeReply(
     launch: FrozenLaunch,
     code: number | null,
+    signal: string | null,
     stdout: string,
     stderr: string,
   ): LaunchOutcome {
+    // A signal is **not** an exit status, and this check comes first because a
+    // killed child answers `code: null`: a CLI killed from outside -- the
+    // operator's task manager, a session ending, a machine shutting down --
+    // would otherwise be reported as "exited with status null", a refusal that
+    // says the launch did not happen, when this console in fact knows nothing
+    // about what the CLI did before it was killed. It may have claimed the run
+    // id and started a container, so the answer keeps the run id and says the
+    // outcome is unknown.
+    if (signal !== null) return unknownOutcome(`the launch was killed by ${signal}`, launch.runId)
     if (code !== 0) {
       const sentence = cliSentence(stderr)
       return refusedOutcome(sentence ?? `the launch exited with status ${String(code)}`, launch.runId)
@@ -558,27 +647,44 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
     })
   }
 
-  /** settle is the answer path: the one place a window's yes reaches a spawn. */
+  /** settle is the answer path: the one place a window's yes reaches a spawn,
+   * and the one place every entry it and `launch` took is released. */
   async function settle(runId: string, yes: boolean, reason?: string): Promise<LaunchOutcome> {
     const launch = frozen.get(runId)
     if (launch === undefined) return refusedOutcome(DECLINED_CANCELLED, runId)
-    if (!yes) {
-      const declined = refusedOutcome(reason ?? DECLINED_CANCELLED, runId)
+    try {
+      if (!yes) {
+        const declined = refusedOutcome(reason ?? DECLINED_CANCELLED, runId)
+        outcomes.set(runId, declined)
+        return declined
+      }
+      // An installation removed, re-added or changed while the window was open
+      // closes it as a cancel: the frozen object is the launch, and the launch
+      // is for a record this process no longer has.
+      //
+      // A read that **rejects** answers no rather than propagating: the check
+      // exists so that a launch cannot outlive the installation it was cut for,
+      // and a store this process cannot read is not evidence that it can. A
+      // rejection let out of here would leave the hold taken and this
+      // installation unable to launch again for the life of the process -- and
+      // the decline it turns into spawns nothing, which is the direction that
+      // spends nothing.
+      let still = false
+      try {
+        still = await deps.stillRecorded(launch)
+      } catch {
+        still = false
+      }
+      if (!still) {
+        const declined = refusedOutcome(DECLINED_CANCELLED, runId)
+        outcomes.set(runId, declined)
+        return declined
+      }
+      coolDownUntil.set(launch.project, now() + LAUNCH_COOL_DOWN_MS)
+      return await spawn(launch)
+    } finally {
       release(runId, launch.project)
-      outcomes.set(runId, declined)
-      return declined
     }
-    // An installation removed or re-chosen while the window was open closes it
-    // as a cancel: the frozen object is the launch, and the launch is for an
-    // installation this process no longer has.
-    if (!(await deps.stillRecorded(launch.project))) {
-      const declined = refusedOutcome(DECLINED_CANCELLED, runId)
-      release(runId, launch.project)
-      outcomes.set(runId, declined)
-      return declined
-    }
-    coolDownUntil.set(launch.project, now() + LAUNCH_COOL_DOWN_MS)
-    return spawn(launch)
   }
 
   return {
@@ -586,14 +692,20 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
       // The ceilings come first, and deliberately before the records are read:
       // a renderer leaning on this operation must not be able to make the
       // console work -- a spawn of `config list`, a store read -- on every
-      // message. The name it gave is the key, and a name that is not an
-      // installation is refused by rate as readily as by identity.
+      // message. The name it gave is the key, and a name that is **not** an
+      // installation is refused by rate as readily as by identity, because the
+      // stamp is taken (below, in `reserve`) before the records are read rather
+      // than only once a launch has been built: without that, a stream of names
+      // the store does not carry would cost this process a full read each and
+      // never a stamp.
       //
-      // The two in-flight caps are read against `hold`, which is taken when a
-      // window opens: an open window is one of the launches counted, so a burst
-      // of `run.launch` messages in a single tick -- before any cool-down
-      // exists -- cannot open a second window for an installation, nor a third
-      // app-wide.
+      // The two in-flight caps and the two rates are read here and **written
+      // synchronously below, before the first `await`**: an open window is one
+      // of the launches counted, so a burst of `run.launch` messages in a single
+      // tick -- before any cool-down exists -- cannot open a second window for
+      // an installation, nor a third app-wide. Reading the limits here and
+      // writing them after `build` had awaited would let every message of that
+      // burst through all four checks.
       const at = now()
       if (inFlightByInstallation.has(request.installation)) {
         return refusedOutcome(
@@ -628,33 +740,54 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
         )
       }
 
-      const built = await build(request)
-      if (!built.ok) return refusedOutcome(built.reason)
+      // The three writes the checks above were reads of. `reserve` is
+      // synchronous and it is the last thing before the first `await`, so the
+      // next message of a same-tick burst sees this launch already counted.
+      const token = reserve(request.installation, at)
+      let held: FrozenLaunch | null = null
+      try {
+        const built = await build(request)
+        // A refusal from `build` **keeps the rate stamp**: a request that cannot
+        // be built is still a request the operator's console had to read the
+        // records for, and a renderer that asked for a launch that never builds
+        // must not be able to ask without limit. The slot and the app-wide count
+        // are freed, because nothing is in flight.
+        if (!built.ok) return refusedOutcome(built.reason)
 
-      // The rate is recorded when the window opens, not when it is answered:
-      // the operator's attention is what this bounds. The stored list is pruned
-      // to the window as it is written, so it cannot grow without bound.
-      const recent = [...mine, at].filter((stamp) => at - stamp < CONFIRM_RATE_WINDOW_MS)
-      opened.push(at)
-      if (opened.length > CONFIRM_RATE_APP * 4) opened.splice(0, opened.length - CONFIRM_RATE_APP * 4)
-      perInstallation.set(request.installation, recent)
-      frozen.set(built.launch.runId, built.launch)
-      // The hold is taken here, with the window: from this line until the
-      // window is answered and its child is done, this run id counts against
-      // both in-flight caps.
-      hold(built.launch)
+        frozen.set(built.launch.runId, built.launch)
+        commit(token, built.launch)
+        held = built.launch
 
-      const decided = new Promise<LaunchAnswer>((resolve) => {
-        pending.set(built.launch.runId, resolve)
-      })
-      deps.confirmer.open(built.launch, (yes, reason) => {
-        const resolve = pending.get(built.launch.runId)
-        if (resolve === undefined) return
-        pending.delete(built.launch.runId)
-        resolve(reason === undefined ? { yes } : { yes, reason })
-      })
-      const answered = await decided
-      return settle(built.launch.runId, answered.yes, answered.reason)
+        const decided = new Promise<LaunchAnswer>((resolve) => {
+          pending.set(built.launch.runId, resolve)
+        })
+        try {
+          deps.confirmer.open(built.launch, (yes, reason) => {
+            const resolve = pending.get(built.launch.runId)
+            if (resolve === undefined) return
+            pending.delete(built.launch.runId)
+            resolve(reason === undefined ? { yes } : { yes, reason })
+          })
+        } catch {
+          // A confirmer that throws is a window that did not open: there is
+          // nobody to ask, so the launch is declined here rather than left
+          // pending -- a `decided` nothing will ever resolve would hold this run
+          // id, and its installation's slot, for the life of the process.
+          pending.delete(built.launch.runId)
+          const declined = refusedOutcome(DECLINED_CANCELLED, built.launch.runId)
+          outcomes.set(built.launch.runId, declined)
+          return declined
+        }
+        const answered = await decided
+        return await settle(built.launch.runId, answered.yes, answered.reason)
+      } finally {
+        // The one exit this file's own paths do not cover: if `build` or the
+        // confirmer threw outright, the reservation (or the hold `settle` has
+        // already freed) is released here. `release` is idempotent, so the
+        // ordinary paths through `settle` are unaffected by it.
+        if (held === null) release(token, request.installation)
+        else release(held.runId, held.project)
+      }
     },
 
     async answer(runId: string, yes: boolean): Promise<LaunchOutcome | undefined> {

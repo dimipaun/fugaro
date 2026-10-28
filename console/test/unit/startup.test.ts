@@ -872,6 +872,36 @@ describe('the entry point is wired to the handshake', () => {
     expect(indexSource).not.toContain('child_process')
   })
 
+  it('writes one spawn log per launch lookup, and closes it on every path out', () => {
+    // The lookup is two children -- the binary resolution and the records read
+    // -- and rule 10's log is one writer with one descriptor. Two writers opened
+    // per call and never closed leaked a descriptor for every `run.launch` the
+    // renderer asked about, refusals included, which is the cheapest way to ask
+    // for a great many. So the entry point opens one, hands it to both children,
+    // and closes it in a `finally` -- and the work is a function of its own so
+    // that the `finally` has something to wrap.
+    const lookup = bodyOf('async function launchLookUp(')
+    expect((lookup.match(/createSpawnLog\(/g) ?? []).length, 'one log per call').toBe(1)
+    expect(lookup).toContain('log.close()')
+    const work = bodyOf('async function launchLookUpWith(')
+    expect(work, 'a second writer beside the one log').not.toContain('createSpawnLog(')
+    expect(work).toContain('spawnLog: log')
+    expect(work).toContain('runToCompletion(plan, { log })')
+  })
+
+  it('compares the launch’s record fingerprint at the answer, not the name alone', () => {
+    // "The name is still saved" is not "the installation is still the one this
+    // launch is for": a record removed and re-added under the same name, or one
+    // whose binary, distribution or checkout moved, is a different installation,
+    // and a launch cut for the old one must close as a cancel. The launch
+    // freezes the fingerprint and the answer-time read compares a fresh one
+    // (`launchFingerprint`, `launch.ts`'s `stillRecorded`).
+    expect(bodyOf('async function launchLookUpWith(')).toContain('fingerprint: launchFingerprint(')
+    const still = bodyOf('async function launchStillRecorded(')
+    expect(still).toContain('launchFingerprint(')
+    expect(still).toContain('launch.fingerprint')
+  })
+
   it('hands `activate` to the lifecycle, whose behaviour is tested above', () => {
     // The behaviour -- a refused console reopens as the refusal, the startup
     // is single-flight -- is `createConsoleLifecycle`'s, driven in 'the
