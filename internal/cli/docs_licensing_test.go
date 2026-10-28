@@ -119,14 +119,21 @@ func TestDocsLicensingStatement(t *testing.T) {
 		}
 	}
 
-	// The link to `ee/README.md` is checked against the page it points at: what
-	// "reserved" means is that page's to say, and a statement that pointed a
-	// reader at a page contradicting it would read as correct on both sides.
-	// This read is why the test's name is in eeReadingTests.
-	reserved := strings.ToLower(flattenDoc(readRealEE(t, "README.md")))
-	for _, want := range []string{"reserved", "not published yet"} {
-		if !strings.Contains(reserved, want) {
-			t.Errorf("ee/README.md, the page %s links for what `ee/` is, never says %q: the statement and the page it points at have to agree on what the folder is for and on the Subscription Terms being the document that is not published yet, or one of the two is describing a directory that does not exist", path, want)
+	// The link to `ee/README.md` is checked against the page it points at: a
+	// statement that pointed a reader at a page contradicting it would read as
+	// correct on both sides. The Subscription Terms being the document the
+	// licence names and does not publish is the fact the two pages share after
+	// D532 (2026-10-29): the page's "reserved for net-new organisation
+	// features" became what the folder holds -- the business-licensed features,
+	// new ones and those the owner moved out of the core -- while
+	// `LICENSING.md`'s own "reserved"/"excluded" wording is re-aligned by task
+	// E3.1, so the cross-check pins the shared fact rather than a word one of
+	// the two is about to drop. This read is why the test's name is in
+	// eeReadingTests.
+	eePage := strings.ToLower(flattenDoc(readRealEE(t, "README.md")))
+	for _, want := range []string{"not published yet"} {
+		if !strings.Contains(eePage, want) {
+			t.Errorf("ee/README.md, the page %s links for what `ee/` is, never says %q: the statement and the page it points at have to agree that the Subscription Terms are the document the licence names and does not publish, or one of the two is describing a directory that does not exist", path, want)
 		}
 	}
 }
