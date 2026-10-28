@@ -52,6 +52,13 @@ import { DIST, SITE, builtPages, cssRules, findAll, parse, servedFile, siteFacts
 const LANDING = loadLanding()
 const FACTS = siteFacts()
 
+/** The home page, as the canonical URL is composed from site.yaml's origin (`Base.astro`). */
+const HOME = new URL('/', FACTS.canonicalURL).href
+
+/** The repository, from `website/data/site.yaml`: the secondary call to action links it. */
+const REPOSITORY = /^repository:\s*(\S+)\s*$/m.exec(readFileSync(path.join(SITE, 'data', 'site.yaml'), 'utf8'))?.[1]
+assert.ok(REPOSITORY, 'website/data/site.yaml carries no `repository:` line, and the campaign pages\' install link is that fact')
+
 // The sections the spec writes, top to bottom, and the marker the template names each one with.
 // The order is the spec's own list (spec §6): hero, proof number, how it works, social proof,
 // calls to action.
@@ -96,7 +103,6 @@ test('the four campaign paths build, one page each', () => {
 })
 
 test('each campaign page is noindex, canonical to the home page, and absent from every sitemap', () => {
-  const home = `${FACTS.canonicalURL}/`
   for (const { variant, rel } of PAGES) {
     const { html } = pageOf(rel)
     const doc = parse(html)
@@ -111,7 +117,7 @@ test('each campaign page is noindex, canonical to the home page, and absent from
     assert.equal(canonical.length, 1, `${rel} carries ${canonical.length} canonical links; a page carries one`)
     assert.equal(
       canonical[0].attrs.get('href'),
-      home,
+      HOME,
       `${rel} is canonical to ${JSON.stringify(canonical[0].attrs.get('href'))}: the four pages are variants of the home page's promise and point at it, so the four do not compete with each other or with the site's own page for one query (spec §6, F14)`,
     )
     assert.ok(!(canonical[0].attrs.get('href') ?? '').includes(variant.path), `${rel} is canonical to itself`)
@@ -215,7 +221,7 @@ test('there is no email form, and the calls to action are a plain booking link a
 
     const install = findAll(doc, (el) => el.name === 'a' && textOf(el).trim() === 'Install free')
     assert.equal(install.length, 1, `${rel} carries ${install.length} "Install free" links; the secondary call to action is the repository (spec §6)`)
-    assert.equal(install[0].attrs.get('href'), FACTS.repository, `${rel}'s install link is ${JSON.stringify(install[0].attrs.get('href'))}, and site.yaml names the repository (${FACTS.repository})`)
+    assert.equal(install[0].attrs.get('href'), REPOSITORY, `${rel}'s install link is ${JSON.stringify(install[0].attrs.get('href'))}, and site.yaml names the repository (${REPOSITORY})`)
   }
 })
 
@@ -234,8 +240,17 @@ test('no partner logo is rendered, and the social-proof section is hidden while 
       !sectionsOf(html).includes('social-proof'),
       `${rel} renders the social-proof section while website/data/landing.yaml names no partner: the section is hidden until one exists (F11, D405)`,
     )
-    const logos = findAll(doc, (el) => el.name === 'img' && !(el.attrs.get('class') ?? '').split(/\s+/).includes('site-wordmark'))
-    assert.deepEqual(logos.map((el) => el.attrs.get('src')), [], `${rel} renders a logo beside the site's own: the only picture on a campaign page is the wordmark's (F11, D405)`)
+    // Every picture on the page is one the data file names: the site's own wordmark, and — when
+    // the file carries them — a variant's media and the partners' logos. A picture the file does
+    // not name is a logo or a photograph nobody gave permission for, which is what F11 and F12
+    // refuse and what the empty `partner_logos` above is the state of today.
+    const named = new Set(['/logo.png', ...PAGES.map(({ variant }) => variant.image), ...LANDING.partnerLogos.map((logo) => logo.image)].filter(Boolean))
+    for (const src of findAll(doc, (el) => el.name === 'img').map((el) => el.attrs.get('src'))) {
+      assert.ok(
+        named.has(src),
+        `${rel} renders the picture ${JSON.stringify(src)}, which website/data/landing.yaml does not name: every picture on a campaign page is the file's, and a partner's is shown only with that partner's written permission (F11, F12, D405)`,
+      )
+    }
   }
 })
 
@@ -283,7 +298,7 @@ test('the campaign pages carry no section menu, and a footer of the repository, 
     const footers = findAll(doc, 'footer')
     assert.equal(footers.length, 1, `${rel} carries ${footers.length} footers; the campaign mode has one`)
     const hrefs = [...walk(footers[0])].filter((el) => el.name === 'a').map((el) => el.attrs.get('href') ?? '')
-    for (const want of [FACTS.repository, '/docs/', '/privacy/']) {
+    for (const want of [REPOSITORY, '/docs/', '/privacy/']) {
       assert.ok(
         hrefs.includes(want),
         `${rel}'s footer links ${JSON.stringify(hrefs)}: the minimal footer carries the repository, the docs and the privacy statement — the statement is where consent is withdrawn, and the banner on the page links it (W1.12, G2.2)`,

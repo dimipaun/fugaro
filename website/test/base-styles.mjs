@@ -2402,6 +2402,21 @@ export function navFailures(html, rel) {
   const all = [...walk(doc)]
 
   const navs = all.filter((el) => el.name === 'nav' && (el.attrs.get('class') ?? '').split(/\s+/).includes('site-nav'))
+
+  // **A campaign page carries no menu at all** (go-to-market plan, Task G2.2; spec §6). The four
+  // landing pages `/save`, `/control`, `/scale` and `/crew` are one message for one audience, so
+  // the site's nine sections are not a choice a visitor who arrived from an ad is offered: the
+  // page's own calls to action are, and the footer keeps the three links a reader looks for.
+  // The mode is read off the page's own chrome rather than off a list of routes, so a campaign
+  // page that grew the menu back is refused here instead of passing because its path is listed —
+  // and the wordmark, which is the whole of that chrome, is still held to its own rule below.
+  if (all.some((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('campaign-header'))) {
+    if (navs.length !== 0) {
+      return [`${rel}: the page is a campaign page and carries ${navs.length} section navs; a campaign page has none — the campaign mode's header is the wordmark alone (spec §6, G2.2)`]
+    }
+    return out
+  }
+
   if (navs.length !== 1) return [`${rel}: the page carries ${navs.length} section navs; it has one`]
   const nav = navs[0]
   if (!(nav.attrs.get('aria-label') ?? '').trim()) fail('the section nav has an empty label: a screen reader lists landmarks by name')
@@ -2590,11 +2605,18 @@ function navRefusals(html, rel = 'docs/index.html') {
   return navFailures(html, rel)
 }
 
+// A campaign page in the shape the layout's campaign mode writes it (G2.2): the chrome class
+// and the wordmark, and no menu. The refusal below grows the menu back onto it.
+const CAMPAIGN_HEADER = `<header class="campaign-header">${FIXTURE_WORDMARK}</header>`
+
 test('the menu passes its own rule, so each refusal below is the one thing it breaks', () => {
   assert.deepEqual(navRefusals(fixturePage()), [])
   // The home page: the menu's own Home link is the one element marked current, and the wordmark
   // — the other link to `/` — carries no mark of its own (the owner's feedback of 2026-10-21).
   assert.deepEqual(navRefusals(fixturePage({ nav: fixtureNav({ current: '/' }) }), 'index.html'), [])
+  // A campaign page is the second shape that passes, and it passes by having no menu: the page
+  // is one message for one audience and the header is the wordmark alone (spec §6, G2.2).
+  assert.deepEqual(navRefusals(`<!DOCTYPE html><html lang="en"><head><title>t</title></head><body>${CAMPAIGN_HEADER}</body></html>`, 'save/index.html'), [])
 })
 
 test('every menu refusal fires on the defect it names', () => {
@@ -2668,6 +2690,11 @@ test('every menu refusal fires on the defect it names', () => {
       /not in its own element/,
     ],
     ['no wordmark at all', fixturePage({ wordmark: '' }), /no wordmark link to the home page/],
+    [
+      'a campaign page that grew the menu back',
+      `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><header class="campaign-header">${FIXTURE_WORDMARK}${fixtureNav()}</header></body></html>`,
+      /is a campaign page and carries 1 section navs/,
+    ],
   ]
   for (const [what, html, expected] of cases) {
     const failures = navRefusals(html)
