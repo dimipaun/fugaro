@@ -2886,7 +2886,7 @@ The launch refuses before it starts anything: **`The launch stops before any exe
 fugaro project repos add bitbucket/edgeappinc/fugarosandbox --project fugaro
 ```
 
-**(b) The run's own.** A launcher can start a Cloud Run job directly, so the launch-side check is advisory and the run's own admission check is the one that counts (`docs/project-layer.md:15`, `SECURITY.md`'s D10 paragraph). Reach it the way the D10 bypass does — start one execution of the sandbox's job through the API with `FUGARO_RUN` overridden to **another slug** (`internal/backend/gcp/run.go` is the launcher sending `FUGARO_RUN` as `spec.Repo.Slug + "/" + spec.RunID`; `gcloud run jobs execute --update-env-vars` is the same override by hand):
+**(b) The run's own.** A launcher can start a Cloud Run job directly, so the launch-side check is advisory and the run's own admission check is the one that counts (`docs/project-layer.md:17`, `SECURITY.md`'s D10 paragraph). Reach it the way the D10 bypass does — start one execution of the sandbox's job through the API with `FUGARO_RUN` overridden to **another slug** (`internal/backend/gcp/run.go` is the launcher sending `FUGARO_RUN` as `spec.Repo.Slug + "/" + spec.RunID`; `gcloud run jobs execute --update-env-vars` is the same override by hand):
 
 ```bash
 fugaro project repos rm bitbucket/edgeappinc/fugarosandbox --project fugaro

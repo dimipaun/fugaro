@@ -56,7 +56,7 @@ A **workspace access token** or a **project access token** (both Bitbucket Premi
 
 **Rotation.** Store the new token as a new version of the same secret, wait for the running executions to end, and then revoke the old token.
 
-**Migration from a repository's own copy.** A repository's own `bitbucket-token` copy wins over the project copy until its versions are disabled **and** its `fugaro update --repo --allow-delete` has run, which is what replaces the job's IAM member.
+**Migration from a repository's own copy.** A repository's own `bitbucket-token` copy wins over the project copy until its versions are disabled **and** `fugaro update --repo` has run with `--allow-delete '<address>'` for each address its refusal names (the job's `google_secret_manager_secret_iam_member.job["bitbucket-token"]`), which is what replaces the job's IAM member.
 
 **One name on every repository.** With one token, every enrolled repository's pull requests and comments carry the same author — the token's name — so name it once, for everyone.
 
@@ -123,7 +123,7 @@ An installation may opt into a separately deployed **credentials service** ([doc
 
 ## What the agent gets (design §6.2)
 
-The agent's environment carries a short-lived, repository-scoped token. For Bitbucket this is the mounted token's own value — a repository access token, or the workspace or project access token where the operator opted in. It is a convenience, not a security boundary (design §6.1).
+On GitHub the agent's environment carries a short-lived, repository-scoped token. On Bitbucket it is the mounted token's own long-lived value: a repository access token, or the workspace or project access token where the operator opted in. It is a convenience, not a security boundary (design §6.1).
 
 - `FUGARO_GIT_TOKEN` and `FUGARO_GIT_USERNAME`, used by the credential helper below.
 - `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_n` and `GIT_CONFIG_VALUE_n`. These install a credential helper, scoped to the origin's host, that answers from the two variables above. They also reset any other helper configured for that host. Plain `git push` and `git fetch` just work.

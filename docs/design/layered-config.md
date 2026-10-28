@@ -115,7 +115,7 @@ The table is `config.Scopes` in code; `docs/project-layer.md` prints it, and a d
 | `version`, `project`, `gcp_project` | | | yes | | they identify the repository and anchor the project layer |
 | `profile` | | | yes | | the project chooses its default with `default_profile` |
 | `git.provider` | yes | | yes | | |
-| `git.base_branch` | | | yes | | a project-wide branch would let a bucket writer point image builds at an unreviewed branch (the shared config refuses `repos.<r>.base_branch` for the same reason) |
+| `git.base_branch` | | | yes | | a project-wide branch would let a bucket writer point image builds at an unreviewed branch (the shared config refuses `repos.<r>.base_branch` and the project's top-level `base_branch` for the same reason; the latter is published to the policy node instead) |
 | `git.pr.labels`, `early_draft`, `checkpoints` | yes | | yes | | |
 | `git.pr.reviewers` | | | yes | | reviewers are people of one repository |
 | `agent.auth`, `models.*`, `first_line_review`, `first_line_rounds` | yes | | yes | | |
@@ -182,7 +182,7 @@ gcp_project: acme-fugaro
 
 That file is exactly the owner's "about two settings". Three cases need more:
 
-- `git.base_branch:` when the branch is not `main` (decision L12);
+- `git.base_branch:` when the branch is not the project's default (decision L12);
 - `profile: <name>` when the project has no `default_profile`, or the repository wants another profile;
 - `git.provider:` when the project layer does not set it.
 

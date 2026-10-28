@@ -25,7 +25,7 @@ func TestDocsWarnAboutAProjectWideGitCredential(t *testing.T) {
 	}{
 		{"../../SECURITY.md", []string{
 			"A project-wide git credential is not narrow.",
-			"`fugaro secrets set bitbucket-token --project-wide` (or `github-app-key`) stores one workspace token, or one App key, for the whole installation",
+			"`fugaro secrets set bitbucket-token --project-wide` (or `github-app-key`) stores one workspace or project access token, or one App key, for the whole installation",
 			"the App key mints tokens for every repository the App is installed on",
 			"Use it only where that reach is what you mean.",
 		}},
@@ -303,7 +303,7 @@ func TestDocsStateTheBitbucketProjectTokenReach(t *testing.T) {
 		// Rotation (F3).
 		"Store the new token as a new version of the same secret, wait for the running executions to end, and then revoke the old token.",
 		// Migration off a repository's own copy (F4).
-		"wins over the project copy until its versions are disabled **and** its `fugaro update --repo --allow-delete` has run",
+		"wins over the project copy until its versions are disabled **and** `fugaro update --repo` has run with `--allow-delete '<address>'` for each address its refusal names (the job's `google_secret_manager_secret_iam_member.job[\"bitbucket-token\"]`)",
 		// The cross-repository path an operator must not trust (F17).
 		"never put the token's own account ID in `followup.trusted`",
 		// The review risk the owner accepted rather than mitigated (D476).
