@@ -27,6 +27,10 @@
 //      because a value the CLI refuses is a launch that fails *after* the
 //      operator confirmed the window. A plan task is a shape and not prose: an
 //      id that is not `<plan>/<task>` is refused here, whatever a title may be.
+//      A title is also returned the way the CLI would store it -- trimmed and
+//      rewritten by `safetext.Field`, which drops invisible characters and
+//      collapses runs of whitespace -- because the value in the window has to
+//      be the value in the argv.
 //   3. **The reply is decoded closed.** A field the decoder does not know
 //      refuses the whole reply rather than being ignored, because the values it
 //      carries are drawn as the CLI's own facts.
@@ -184,6 +188,48 @@ const FORMAT_RE = /\p{Cf}/u
  * end a line in every rendered document a person reads. */
 const LINE_BREAK_RE = /[\n\r\u0085\u2028\u2029]/u
 
+/** SPOOFING_RE is `internal/safetext`'s `spoofing(r)`: the bidi embeddings,
+ * overrides and isolates, the zero-width space, joiners and word joiner, the
+ * soft hyphen, the grapheme joiner, the Hangul fillers, the invisible
+ * operators, the variation selectors and the tag characters. It is **wider
+ * than `FORMAT_RE`**, and that is the point of it being written out here:
+ * U+034F, U+115F, U+1160, U+17B4, U+17B5, U+3164, U+FFA0, U+FE00-U+FE0F and
+ * U+E0100-U+E01EF are not format characters, so a `Cf` test passes them while
+ * `safetext.Field` -- which the CLI puts a title through -- drops every one. */
+const SPOOFING_RE =
+  /[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069\u3164\ufe00-\ufe0f\ufeff\uffa0\u{e0000}-\u{e007f}\u{e0100}-\u{e01ef}]/u
+
+/**
+ * fieldRewrite is `internal/safetext`'s own `fieldRewrite`, which the CLI
+ * applies to a title before it stores it (`titleFlag`'s `safetext.Field`):
+ * every whitespace character becomes a space, every spoofing character is
+ * dropped, and the runs of spaces left behind collapse to one.
+ *
+ * The rest of `safetext.Field` is not mirrored, because it cannot be reached
+ * from here: `Strip`'s escape sequences, C0/C1 controls, tab and line
+ * separators are refused by `textCharacterProblem` before this runs, and so
+ * are the format characters -- which is why the half of the spoofing set that
+ * is *not* `Cf` is what this function exists for. `strings.ToValidUTF8` has
+ * nothing to do here for the same reason (a lone surrogate is refused first),
+ * and neither has `Field`'s cut to `FieldMax`: `MAX_LAUNCH_TITLE_RUNES` is far
+ * below it, and a cut title would be one the run does not keep.
+ *
+ * It is only ever called on a value that passed that cap, so its own loop is
+ * bounded by it.
+ */
+function fieldRewrite(text: string): string {
+  let spaced = ''
+  for (const character of text) {
+    const code = character.codePointAt(0) ?? 0
+    if (GO_TRIM_SPACE.has(code)) spaced += ' '
+    else if (!SPOOFING_RE.test(character)) spaced += character
+  }
+  // Splitting on " " alone is exact: every `unicode.IsSpace` character became
+  // one, and the only whitespace JavaScript knows that Go's set does not --
+  // U+FEFF -- was dropped as a spoofing character.
+  return spaced.split(' ').filter((part) => part !== '').join(' ')
+}
+
 /** PLAN_TASK_ELEM_RE is one "/"-separated element of a plan task id, and it is
  * `internal/task`'s `PlanTaskElemRE` (`task.PlanTaskProblem`, the list the
  * launcher and the runner share): letters, digits, '.', '_' and '-', starting
@@ -219,8 +265,26 @@ function textCharacterProblem(value: string, noun: string): string {
  * passed, and `null` is that absence. Its presence with nothing in it is
  * refused, whitespace included (`titleFlag` trims the flag and
  * `task.TitleProblem` refuses what is left: "is empty (or nothing but
- * whitespace)"), and the value returned is the trimmed one, because the CLI
- * trims the flag too -- the value in the window is then the value in the argv.
+ * whitespace)").
+ *
+ * The value returned is the one the run stores: the trimmed value with the
+ * CLI's own rewrite applied to it (`titleFlag`'s `safetext.Field`, mirrored by
+ * `fieldRewrite`: every whitespace character to one space, the spoofing
+ * characters dropped). The window is drawn from what this returns, so a title
+ * of "a  b" is confirmed and sent as "a b" -- the value the run keeps -- rather
+ * than shown as the operator typed it and stored as something else.
+ *
+ * That rewrite can empty a value the trim did not, so the emptiness check runs
+ * a second time on the rewritten one, with the CLI's own sentence for it: a
+ * title of nothing but Hangul fillers, joiners or variation selectors is
+ * refused here, before a window opens, instead of by the CLI *after* the
+ * operator confirmed it.
+ *
+ * The order is the CLI's: the length and character rules are the ones
+ * `task.TitleProblem` applies to the **trimmed** flag, and `safetext.Field`
+ * runs after them. Checking the rewritten value instead would admit a title of
+ * 100 characters plus a variation selector, which the CLI counts as 101 and
+ * refuses.
  */
 export function checkLaunchTitle(title: string | null | undefined): LaunchValue<string | null> {
   if (title === null || title === undefined) return { ok: true, value: null }
@@ -235,7 +299,16 @@ export function checkLaunchTitle(title: string | null | undefined): LaunchValue<
   }
   const problem = textCharacterProblem(trimmed, 'the title')
   if (problem !== '') return { ok: false, reason: problem }
-  return { ok: true, value: trimmed }
+  const stored = fieldRewrite(trimmed)
+  // `safetext.Field`'s result holds no leading, trailing or doubled space, so
+  // the CLI's own `strings.TrimSpace(o.title) == ""` is this test.
+  if (stored === '') {
+    return {
+      ok: false,
+      reason: 'the title is empty (or nothing but whitespace and invisible characters)',
+    }
+  }
+  return { ok: true, value: stored }
 }
 
 /**

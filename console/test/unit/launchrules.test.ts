@@ -127,6 +127,54 @@ describe('the title and the plan task', () => {
     expect(value(checkLaunchPlanTask('  plan/task '))).toBe('plan/task')
   })
 
+  it('refuses a title that is nothing but invisible characters, with the CLI’s own sentence', () => {
+    // The CLI checks emptiness **twice**: `task.TitleProblem` on the trimmed
+    // flag ("is empty (or nothing but whitespace)"), and again after
+    // `safetext.Field` has dropped what it drops -- "is empty (or nothing but
+    // whitespace and invisible characters)". These values pass the first check
+    // and are emptied by the second, so a rule that mirrored only the first
+    // would admit a title the CLI refuses *after* the operator confirmed the
+    // window, which is the failure this module exists to prevent.
+    //
+    // The characters below are the half of `safetext`'s spoofing set that is
+    // **not** `\p{Cf}`, so the format-character rule does not see them: the
+    // Hangul fillers U+3164 and U+FFA0, U+115F and U+1160, the grapheme joiner
+    // U+034F, the Khmer and variation selectors.
+    for (const invisible of ['\u3164', '\uffa0', '\u115f', '\u1160', '\u034f', '\ufe0f', '\u{e0100}']) {
+      expect(reason(checkLaunchTitle(invisible)), JSON.stringify(invisible)).toContain('invisible characters')
+    }
+    // Whitespace around them does not save the value: the trim happens first
+    // and the rewrite then empties what is left.
+    expect(reason(checkLaunchTitle(' \u3164\ufe0f '))).toContain('invisible characters')
+  })
+
+  it('returns the title the CLI would store, not the one the operator typed', () => {
+    // `titleFlag` stores `safetext.Field(title)`, so the run keeps neither the
+    // run of spaces nor the characters that rewrite drops. What this rule
+    // returns is what the window is drawn from, so it is the rewritten value:
+    // a window that showed "a  b" for a run that keeps "a b" would be showing
+    // a value the argv does not carry.
+    expect(value(checkLaunchTitle('a  b'))).toBe('a b')
+    expect(value(checkLaunchTitle('the \u2003 fix'))).toBe('the fix')
+    expect(value(checkLaunchTitle('a\u00a0b'))).toBe('a b')
+    expect(value(checkLaunchTitle('a\u3000\u2009b'))).toBe('a b')
+    // Inside prose these characters are dropped, not refused -- that is
+    // `Field`'s own treatment, and the value the run stores has them gone. The
+    // format characters are the ones the console refuses instead (the headline
+    // rule above), because those are the ones a reader cannot see at all.
+    expect(value(checkLaunchTitle('a\u3164b'))).toBe('ab')
+    expect(value(checkLaunchTitle('a\ufe0fb'))).toBe('ab')
+    // The rewrite happens **after** the cap, in the CLI's own order
+    // (`task.TitleProblem` then `safetext.Field`): 100 characters plus a
+    // variation selector is 101 to the CLI and is refused, not silently cut to
+    // the cap by the rewrite.
+    const titleAt = 'a'.repeat(MAX_LAUNCH_TITLE_RUNES)
+    expect(reason(checkLaunchTitle(`${titleAt}\ufe0f`))).toContain(String(MAX_LAUNCH_TITLE_RUNES))
+    expect(value(checkLaunchTitle(`${titleAt.slice(0, MAX_LAUNCH_TITLE_RUNES - 1)}\ufe0f`))).toHaveLength(
+      MAX_LAUNCH_TITLE_RUNES - 1,
+    )
+  })
+
   it('holds a plan task to the CLI’s own shape, not to the title’s prose rules', () => {
     // task.PlanTaskProblem: `<plan>/<task>`, at least two elements, none empty,
     // "." or "..", each in PlanTaskElemRE. A value it refuses is a launch the
