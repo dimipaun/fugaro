@@ -155,6 +155,20 @@ drift from it.
 | `burn` | `JSONBurn` | — | no | as above |
 | `kill` | `*JSONKill` | — | no | **null = not killed** |
 
+**`leased_usd` is on `JSONTotal` and on every `JSONRepo`, and no CLI release
+writes it yet** (the owner approved it on 2026-10-28, ahead of the CLI that will
+emit it): the dollars a lease currently holds reserved. The console reads it as
+**optional** on both shapes, because it is a key no document carries today and
+the day one does it must not be an unknown key that refuses the feed whole. An
+absent key, `null` or a non-finite number is **unavailable** — `n/a`, never
+`0`, since a document with nothing to say about a lease has not leased nothing —
+and a finite, non-negative number is **measured**. It is read **strictly** where
+the money fields beside it are not: a string, a boolean or a negative at it is a
+refusal by the field's own wire path (`total.leased_usd`, `repos[0].leased_usd`),
+because a key no version writes and a value of the wrong shape is a document this
+console does not understand rather than one it has not learned to read. **No
+screen draws it yet**; the Spend redesign is the reader.
+
 ### `JSONRun` (`internal/watch/json.go`) — a live or queued run
 
 | Field | Type | Unit | omitempty | Availability state |
@@ -298,6 +312,15 @@ or `none`; `perRunCapSource`), `counted_usd`, `spent_usd`,
 `running` `[]showRun`. **`per_run_cap_source` is the "binding scope named"
 the design's §6.2 Spend screen draws** — it is already in the document and
 needs no CLI change (§4.3's "not a gap" note).
+
+**`compute_usd` is approved on each `showRepo` and no CLI release writes it
+yet** (the owner approved it on 2026-10-28, with §2's `leased_usd`): a
+`*float64` of the repository's compute dollars, an **estimate** by design
+(`runstore.Cost.ComputeUSD`, the same account §4 reports). The console reads it
+as **optional** — an absent key or `null` is **unavailable** (`n/a`, never `0`),
+a number is **estimated** — and **no screen draws it yet**; the Spend redesign
+is the reader. It is the one key of this block not in `showRepo` today, and the
+row reader accepts it ahead of the struct.
 
 `showRun`: `slug`, `run`, `repo`°, `workflow`°, `title`°,
 `stage`°, `round` (**int**, `omitempty` — unlike `watch`'s string),

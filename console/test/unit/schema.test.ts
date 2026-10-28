@@ -766,8 +766,14 @@ describe('both document shapes decode', () => {
       'slug', 'repo', 'counted_usd', 'spent_usd', 'notional_usd',
       'daily_cap_usd', 'percent', 'burn', 'kill',
     ]
-    expect([...REPO_KEYS].sort()).toEqual([...fromTheStruct].sort())
-    expect(REPO_KEYS.length).toBe(fromTheStruct.length)
+    // `leased_usd` is not a `JSONRepo` key: the owner approved it on
+    // 2026-10-28 and no CLI release writes it, so `REPO_KEYS` carries it as an
+    // *optional* addition beside the struct's own keys -- which is why the
+    // recorded entry below, a real `watch --json` document, still has exactly
+    // the struct's keys and still decodes.
+    const approvedNotEmitted = ['leased_usd']
+    expect([...REPO_KEYS].sort()).toEqual([...fromTheStruct, ...approvedNotEmitted].sort())
+    expect(REPO_KEYS.length).toBe(fromTheStruct.length + approvedNotEmitted.length)
     for (const notARepository of ['runs', 'run_hours']) {
       expect(REPO_KEYS, notARepository).not.toContain(notARepository)
       // The same two keys are the total's, and the document above still writes
@@ -973,6 +979,59 @@ describe('a document missing a field the screens read fails decoding by name', (
     const gone = decoded(without(first, ['total', 'daily_cap_usd']))
     expect(gone.total.dailyCapUsd.value).toBeNull()
     expect(gone.total.countedUsd.value).toBe(12.5)
+  })
+
+  it('accepts `leased_usd` as optional on a total and on a repository, and refuses a wrong value', () => {
+    // The owner approved `leased_usd` on the `watch --json` `total` object and
+    // on every `repos[]` entry on 2026-10-28, ahead of the CLI release that
+    // will emit it, and neither struct writes it today. So the console accepts
+    // it as an *optional* money key on both shapes -- absent is `n/a`, never a
+    // lease of `$0.00` -- and a value that *is* there is read.
+    const absent = decoded(first)
+    expect(absent.total.leasedUsd.value).toBeNull()
+    expect(absent.total.leasedUsd.state).toBe('unavailable')
+    expect(formatReading(absent.total.leasedUsd, 'usd')).toBe(UNAVAILABLE_MARK)
+    expect(absent.repos[0]?.leasedUsd.state).toBe('unavailable')
+
+    const present = decoded(
+      patched(patched(first, ['total', 'leased_usd'], 3.5), ['repos', 0, 'leased_usd'], 1.25),
+    )
+    expect(present.total.leasedUsd.state).toBe('measured')
+    expect(present.total.leasedUsd.value).toBe(3.5)
+    expect(present.repos[0]?.leasedUsd.state).toBe('measured')
+    expect(present.repos[0]?.leasedUsd.value).toBe(1.25)
+
+    // A `null` is the contract's own "nothing to say" (`*float64`), the same
+    // fact as an absent key and not a measured zero.
+    const nulled = decoded(patched(first, ['total', 'leased_usd'], null))
+    expect(nulled.total.leasedUsd.state).toBe('unavailable')
+    expect(nulled.total.leasedUsd.value).toBeNull()
+
+    // A value of the wrong shape, or a negative one, is refused by its wire
+    // path rather than half-read: `leased_usd` is a key no CLI writes yet, so a
+    // document carrying something else at it is a document this console does
+    // not understand.
+    for (const [path, value, field] of [
+      [['total', 'leased_usd'], '3.5', 'total.leased_usd'],
+      [['total', 'leased_usd'], -1, 'total.leased_usd'],
+      [['repos', 0, 'leased_usd'], true, 'repos[0].leased_usd'],
+      [['repos', 0, 'leased_usd'], -0.5, 'repos[0].leased_usd'],
+    ] as const) {
+      const refusal = refusalFor(patched(first, path, value))
+      expect(refusal.name, `${field} = ${String(value)}`).toBe('not-a-number')
+      expect(refusal.field, `${field} = ${String(value)}`).toBe(field)
+    }
+
+    // And naming the new key did not open the shape: a key nobody approved is
+    // still an unknown-key refusal beside it.
+    for (const [path, field] of [
+      [['total', 'leased'], 'total.leased'],
+      [['repos', 0, 'leased'], 'repos[0].leased'],
+    ] as const) {
+      const refusal = refusalFor(patched(first, path, 1))
+      expect(refusal.name, field).toBe('unknown-key')
+      expect(refusal.field, field).toBe(field)
+    }
   })
 
   it('refuses a field that is there with the wrong type, naming it too', () => {

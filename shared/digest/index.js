@@ -81,10 +81,18 @@ const LIST = 'list';
 const KILL_FIELDS = Object.freeze({ by: STRING, at: STRING, reason: STRING });
 const BURN_FIELDS = Object.freeze({ known: BOOLEAN, usd_per_min: NUMBER, fast: BOOLEAN });
 const CONNECTION_FIELDS = Object.freeze({ state: STRING, reason: STRING, age_seconds: NUMBER });
+// `leased_usd` is the one field here `internal/watch/json.go` does not write
+// yet: the owner approved it (2026-10-28) for `total` and every `repos[]`
+// entry, so it is named here -- accepted, and refused when it carries the
+// wrong shape, like every other NUMBER below -- rather than becoming an
+// unknown field the day a CLI starts emitting it. The digest produces nothing
+// from it: no item, no field on the summary, for the same reason the console's
+// schema draws nothing with it yet.
 const TOTAL_FIELDS = Object.freeze({
   counted_usd: NUMBER,
   spent_usd: NUMBER,
   notional_usd: NUMBER,
+  leased_usd: NUMBER,
   daily_cap_usd: NUMBER,
   percent: NUMBER,
   burn: OBJECT,
@@ -98,6 +106,7 @@ const REPO_FIELDS = Object.freeze({
   counted_usd: NUMBER,
   spent_usd: NUMBER,
   notional_usd: NUMBER,
+  leased_usd: NUMBER,
   daily_cap_usd: NUMBER,
   percent: NUMBER,
   burn: OBJECT,
