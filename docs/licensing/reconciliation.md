@@ -506,16 +506,34 @@ governing law and venue are Ontario, Canada (the owner's ruling of 2026-10-27); 
 the wording and its enforceability against contributors outside Canada. Plan task L0.1's CLA-text item is drafted;
 L0.2, the owner's CLA Assistant install, is written out as a checklist in
 [implementation-plan.md](implementation-plan.md#l02--install-the-hosted-cla-app-owner-run). The
-`[CLA URL TO BE PUBLISHED]` placeholder in the three licence files stays until the owner has
-created the Gist.
+`[CLA URL TO BE PUBLISHED]` placeholder was in the three licence files until the owner created the
+Gist; the amendment of 2026-10-29 below fills it.
 
 ## Amendment 2026-10-28 (the CLA is final)
 
 Counsel reviewed [CLA.md](CLA.md) and blessed it as-is, with no operative clause changed. The draft
 banner and the `(draft)` marker on its version line are gone, so the file is the agreement as
-counsel approved it. The `[CLA URL TO BE PUBLISHED]` placeholder stays in the three licence files
-until the owner creates the Gist, and the owner's CLA Assistant install (L0.2) is unchanged; the
-note at the top of CLA.md still tells the owner how to keep the Gist in step with the file.
+counsel approved it. The `[CLA URL TO BE PUBLISHED]` placeholder stayed in the three licence files
+until the owner created the Gist (filled on 2026-10-29, below), and the owner's CLA Assistant
+install (L0.2) is unchanged; the note at the top of CLA.md tells the owner how to keep the Gist in
+step with the file.
+
+## Amendment 2026-10-29 (the CLA's URL is published)
+
+The owner published the contributor licence agreement as a Gist (one Markdown file, `fugaro-cla.md`,
+renamed from `gistfile1.txt` before publication) and gave the URL to be used exactly as given:
+https://gist.githubusercontent.com/dimipaun/d5bb5db937f973b25be5778ce14ec8dd/raw/64918c7fc0f782327db82e7e790db53c3d47d09f/fugaro-cla.md.
+That is a raw link pinned to one revision of the Gist, and the Gist's file is byte-identical to
+the agreement block of [CLA.md](CLA.md), a trailing newline aside. `[CLA URL TO BE PUBLISHED]` is
+replaced by that URL in `ee/LICENSE`, `console/LICENSE.md`, `mobile/LICENSE.md` and the byte copy in
+`LICENSES/LicenseRef-Fugaro-Enterprise.txt` -- the placeholder token the only change, so the files
+stay byte-identical to each other -- and in the pin of
+`internal/cli/docs_ee_reserved_test.go`. Plan task L0.2's checklist item for it is ticked in
+[implementation-plan.md](implementation-plan.md#l02--install-the-hosted-cla-app-owner-run).
+**Because the URL names a revision, editing the Gist later does not change what the licence files
+say**: a new revision needs a new URL written into the licence files, which is a change counsel
+should see. The Subscription Terms page is still not published (L4.3), CLA Assistant is still to be
+installed (the CONTRIBUTING gate), and `docs/ee-reorg/` is untouched: it is on another branch.
 
 ## Amendment 2026-10-28 (the CLA Assistant install)
 
@@ -588,7 +606,7 @@ The draft's counsel list gains the items the session added. The licence files, t
 
 ## Amendment 2026-10-27 (the Subscription Terms URL)
 
-The owner chose `https://fugaro.dev/legal/subscription-terms` as the Subscription Terms URL and had it written into the four licence files (L4.4). The page is published only after counsel approves the text (L4.3); until then the link does not resolve. The CLA placeholder is unchanged.
+The owner chose `https://fugaro.dev/legal/subscription-terms` as the Subscription Terms URL and had it written into the four licence files (L4.4). The page is published only after counsel approves the text (L4.3); until then the link does not resolve. The CLA's placeholder was unchanged by this amendment; it is filled by the amendment of 2026-10-29 above.
 
 ## UNVERIFIED
 

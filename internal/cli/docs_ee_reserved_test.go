@@ -49,7 +49,11 @@ func TestDocsEELicensed(t *testing.T) {
 		"LicenseRef-Fugaro-Enterprise",
 		// Without the scheme: flattenDoc turns "//" into a space.
 		"fugaro.dev/legal/subscription-terms",
-		"[CLA URL TO BE PUBLISHED]",
+		// The CLA's published URL (plan task L0.2's last step, 2026-10-29),
+		// again without the scheme: the raw Gist link is pinned to a revision,
+		// so a Gist edited later does not change the agreement the licence
+		// names, and a new revision needs a new URL here.
+		"gist.githubusercontent.com/dimipaun/d5bb5db937f973b25be5778ce14ec8dd/raw/64918c7fc0f782327db82e7e790db53c3d47d09f/fugaro-cla.md",
 		// Counsel's coverage sentence names the three directories, and the
 		// console's half is spelled from the boundary test's own constant: the
 		// floor of docs_console_boundary_test.go's mention scan is the string a
