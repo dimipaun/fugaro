@@ -1125,25 +1125,35 @@ func TestDiagnosePutsTheComputeSourceOnItsOwnLine(t *testing.T) {
 // over the Cost line: without it a reader has a figure nothing explains --
 // on a provider route the charge is the dearer of that multiple and the
 // provider's own reported cost, so the tier's name is what explains the
-// figure. A run whose calls were all priced normally prints no such line.
+// figure. That second figure is named only for a run that recorded one: a
+// Claude run has no route and no report. A run whose calls were all priced
+// normally prints no such line at all.
 func TestDiagnoseNamesChargedServiceTiers(t *testing.T) {
 	f := newCloudFixture(t)
 	ctx := context.Background()
 	b, _ := blob.OpenBucket(ctx, f.bucket)
 	defer b.Close()
 	for i, tc := range []struct {
-		tiers []string
-		want  string
+		tiers    []string
+		reported float64
+		want     string
 	}{
-		{nil, ""},
-		{[]string{`usage.service_tier "priority"`}, `Tier:     usage.service_tier "priority" charged at 2x the rates the call was priced at, or the provider's reported cost if dearer (no published price for the tier)`},
-		{[]string{`usage.service_tier "priority"`, `usage.service_tier 12`}, `Tier:     usage.service_tier "priority", usage.service_tier 12 charged at 2x the rates the call was priced at, or the provider's reported cost if dearer (no published price for the tier)`},
+		{nil, 0, ""},
+		{[]string{`usage.service_tier "priority"`}, 0, `Tier:     usage.service_tier "priority" charged at 2x the rates the call was priced at (no published price for the tier)`},
+		{[]string{`usage.service_tier "priority"`}, 1.5, `Tier:     usage.service_tier "priority" charged at 2x the rates the call was priced at, or the provider's reported cost with the route fee if dearer (no published price for the tier)`},
+		{[]string{`usage.service_tier "priority"`, `usage.service_tier 12`}, 1.5, `Tier:     usage.service_tier "priority", usage.service_tier 12 charged at 2x the rates the call was priced at, or the provider's reported cost with the route fee if dearer (no published price for the tier)`},
 	} {
 		id := fmt.Sprintf("20260927-19000%d-aaaa", i)
 		exec := seedRun(t, f, id, "", "someone@example.com", true)
 		s := runstore.Open(b, appSlug, id)
 		cost := runstore.NewCost(1.23, 0, runstore.BasisAPIList)
 		cost.ServiceTiers = tc.tiers
+		// The reported cost is what decides the clause: a run with none --
+		// every Claude run -- has no figure to name, and the line stops at
+		// the multiple.
+		if tc.reported > 0 {
+			cost.ReportedUSD, cost.RouteBy = tc.reported, map[string]float64{"openrouter": 2}
+		}
 		if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
 			Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady, CostUSD: 1.23, Cost: &cost}); err != nil {
 			t.Fatal(err)
@@ -1190,6 +1200,7 @@ func TestDiagnoseRendersTheServiceTierCounter(t *testing.T) {
 	s := runstore.Open(b, appSlug, id)
 	cost := runstore.NewCost(1.23, 0, runstore.BasisAPIList)
 	cost.ServiceTiers = tiers
+	cost.ReportedUSD, cost.RouteBy = 1.5, map[string]float64{"openrouter": 2}
 	if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
 		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady, CostUSD: 1.23, Cost: &cost}); err != nil {
 		t.Fatal(err)
@@ -1198,7 +1209,7 @@ func TestDiagnoseRendersTheServiceTierCounter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "Tier:     " + strings.Join(tiers, ", ") + " charged at 2x the rates the call was priced at, or the provider's reported cost if dearer (no published price for the tier)"
+	want := "Tier:     " + strings.Join(tiers, ", ") + " charged at 2x the rates the call was priced at, or the provider's reported cost with the route fee if dearer (no published price for the tier)"
 	if !strings.Contains(human, want+"\n") {
 		t.Fatalf("want %q:\n%s", want, human)
 	}

@@ -871,11 +871,11 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		s.logUsageUnparsed(p.model, rt.provider, "not_readable", nil)
 		return reserved
 	case tee.sse && tee.complete && !tee.broken && !tee.acc.negative():
-		return s.fromUsage(tee, p, rt.provider, false)
+		return s.fromUsage(tee, p, rt.provider, w0, false)
 	case tee.sse && tee.started && !tee.broken && !tee.acc.negative():
-		return s.fromUsage(tee, p, rt.provider, true)
+		return s.fromUsage(tee, p, rt.provider, w0, true)
 	case !tee.sse && eof && tee.complete:
-		return s.fromUsage(tee, p, rt.provider, false)
+		return s.fromUsage(tee, p, rt.provider, w0, false)
 	}
 	reserved.unparsed = true
 	reserved.errorType = tee.errorType
@@ -907,9 +907,10 @@ func (s *Server) logUsageUnparsed(model string, pr *Route, reason string, events
 // pin: the dearer of the two rates per dimension, or the table's maximum
 // when the table doesn't know it; the route's fee is added to the
 // charge; and a service tier no one prices is charged at least the cost the
-// provider itself reported for the call. A partial call is charged its
-// reported input and cache tokens plus the reserved output.
-func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, partial bool) outcome {
+// provider itself reported for the call, up to the reservation w the call
+// already made. A partial call is charged its reported input and cache
+// tokens plus the reserved output.
+func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, w pricing.Micros, partial bool) outcome {
 	serving := t.model
 	if serving == "" {
 		serving = p.model
@@ -1000,9 +1001,18 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, partial bool) outco
 	// only raise the charge, never lower it, and a report the gateway refused
 	// to record -- below zero, above maxReportedUSD, not a number -- is not a
 	// floor either, since hasReported is set only inside those bounds.
+	//
+	// The floor stops at the reservation the call already made, w.
+	// maxReportedUSD bounds a figure recorded for comparison, not a charge,
+	// and this report is the one part of the charge the gateway cannot check
+	// against anything of its own: unclamped, a report at that bound would
+	// charge a single call millions of times its own worst case, halt the run
+	// and write that figure into result.json. So the report raises the charge
+	// as far as the reservation and no further; above it a charge is what the
+	// call's own usage made it, exactly as before this rule.
 	floor := pricing.Micros(0)
 	if o.charge.serviceTier != "" && pr != nil && t.acc.hasReported {
-		floor = pricing.WithFee(t.acc.reported, fee)
+		floor = min(pricing.WithFee(t.acc.reported, fee), w)
 	}
 	o.usage = u
 	o.model = serving

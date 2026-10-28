@@ -295,14 +295,23 @@ func rawUsage(t *testing.T, ev anthropicfake.Event, frag string) anthropicfake.E
 // tier other than standard -- so on a provider route that reported what the
 // call cost, the provider's own figure is a floor under the charge: the
 // dearer of the conservative figure and the report with the route's fee, the
-// same fee handling every provider charge already carries. It can only raise
-// the charge, never lower it: a report below the conservative figure leaves
-// the figure alone, and so does a call that reported no cost at all.
+// same fee handling every provider charge already carries, and no more than
+// the reservation the call made (the next test). It can only raise the
+// charge, never lower it: a report below the conservative figure leaves the
+// figure alone, and so does a call that reported no cost at all. A charge
+// the floor raised is still not an overrun -- it stops at the reservation --
+// and it is priced from usage the whole way, so none of it is unreconciled.
 func TestUnpricedTierChargedAtLeastReportedCost(t *testing.T) {
 	u := pricing.Usage{Input: 1000, Output: 500}
+	body := msg(dsModel, 4000, `"stream":true`)
 	cons := cost(t, dsModel, u) * pricing.ConservativeTierMultiplier
 	if cons <= cost(t, dsModel, u) {
 		t.Fatalf("the fixture's conservative charge %d is no dearer than the standard one", cons)
+	}
+	// The reservation the call makes, which is what caps the floor.
+	res := func(fee float64) pricing.Micros { return pricing.WithFee(worst(t, dsModel, body, 4000, ""), fee) }
+	if cons >= res(0) {
+		t.Fatalf("the fixture's conservative charge %d already fills the reservation %d", cons, res(0))
 	}
 	for _, c := range []struct {
 		name, cost string
@@ -310,15 +319,15 @@ func TestUnpricedTierChargedAtLeastReportedCost(t *testing.T) {
 		want       pricing.Micros
 		reported   pricing.Micros
 	}{
-		{"reported above the conservative figure", "0.05", 0, 50_000, 50_000},
-		{"reported above it, with the route fee", "0.05", 10, 55_000, 50_000},
+		{"reported above the conservative figure", "0.05", 0, res(0), 50_000},
+		{"reported above it, with the route fee", "0.05", 10, res(10), 50_000},
 		{"reported below the conservative figure", "0.001", 0, cons, 1_000},
 		{"reported below it, with the route fee", "0.001", 10, pricing.WithFee(cons, 10), 1_000},
 		{"reported exactly the conservative figure", "0.006", 0, cons, 6_000},
 		{"no reported cost", "", 0, cons, 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			call, rep := settleCase(t, c.fee, msg(dsModel, 4000, `"stream":true`), tierCostReply(t, u, "priority", c.cost))
+			call, rep := settleCase(t, c.fee, body, tierCostReply(t, u, "priority", c.cost))
 			if got := pricing.Micros(num(call["charged_micros"])); got != c.want {
 				t.Errorf("charged %d, want %d (the conservative figure is %d)", got, c.want, cons)
 			}
@@ -334,7 +343,96 @@ func TestUnpricedTierChargedAtLeastReportedCost(t *testing.T) {
 			if rep.Used != c.want || rep.Reported != c.reported {
 				t.Errorf("stage used %d reported %d, want %d and %d", rep.Used, rep.Reported, c.want, c.reported)
 			}
+			if rep.Overrun != 0 || rep.Unreconciled != 0 {
+				t.Errorf("stage overrun %d unreconciled %d, want 0 and 0: the floor stops at the reservation and prices usage",
+					rep.Overrun, rep.Unreconciled)
+			}
 		})
+	}
+}
+
+// TestUnpricedTierFloorIsBoundedByTheReservation: the floor stops at the
+// reservation the call already made. maxReportedUSD bounds a figure recorded
+// for comparison, not a charge, and the provider's report is the one part of
+// this charge the gateway cannot check against anything of its own: unclamped,
+// a report at that bound would charge a single call millions of times its own
+// worst case, halt the run on the cap and write that figure into
+// result.json. What a report may do is raise the charge as far as the
+// reservation; a charge above the reservation stays what the call's own usage
+// made it -- an overrun, logged and counted as one -- exactly as before this
+// rule, and the floor adds nothing to it.
+func TestUnpricedTierFloorIsBoundedByTheReservation(t *testing.T) {
+	body := msg(dsModel, 4000, `"stream":true`)
+	w := worst(t, dsModel, body, 4000, "")
+	u := pricing.Usage{Input: 1000, Output: 500}
+	cons := cost(t, dsModel, u) * pricing.ConservativeTierMultiplier
+	if cons >= w {
+		t.Fatalf("the fixture's conservative charge %d already fills the reservation %d", cons, w)
+	}
+	// The largest report the gateway records (maxReportedUSD, a million
+	// dollars): a figure five orders of magnitude over the reservation.
+	const huge = "1000000"
+	call, rep := settleCase(t, 0, body, tierCostReply(t, u, "priority", huge))
+	if got := pricing.Micros(num(call["charged_micros"])); got != w {
+		t.Errorf("charged %d, want the reservation %d: a report may raise the charge to it, never past it", got, w)
+	}
+	if rep.Used != w || rep.Overrun != 0 {
+		t.Errorf("stage used %d overrun %d, want the reservation %d and no overrun", rep.Used, rep.Overrun, w)
+	}
+	// A usage that overruns the reservation on its own still does: the
+	// charge is the conservative multiple of what the call used, and the
+	// part above the reservation is the overrun. The report is not what
+	// makes it, and the floor does not add to it.
+	over := pricing.Usage{Input: 1000, Output: 8000}
+	big := cost(t, dsModel, over) * pricing.ConservativeTierMultiplier
+	if big <= w {
+		t.Fatalf("the fixture's overrunning usage charges %d, not over the reservation %d", big, w)
+	}
+	call, rep = settleCase(t, 0, body, tierCostReply(t, over, "priority", huge))
+	if got := pricing.Micros(num(call["charged_micros"])); got != big {
+		t.Errorf("charged %d, want the conservative %d of a usage over the reservation", got, big)
+	}
+	if rep.Overrun != big-w {
+		t.Errorf("overrun %d, want %d: the part of the charge above its reservation", rep.Overrun, big-w)
+	}
+}
+
+// TestUnpricedTierFloorOnAPartialCall: a partial call is charged its reported
+// input and cache tokens plus the reserved output, and the floor applies to it
+// too -- without it a call that was cut short could settle below what the
+// provider says it cost, which is the hole the floor closes. The floor is
+// still bounded by the reservation, and the part of the charge the usage does
+// not explain is unreconciled, exactly as it is with no floor at all.
+func TestUnpricedTierFloorOnAPartialCall(t *testing.T) {
+	body := msg(dsModel, 1, `"stream":true`)
+	w := worst(t, dsModel, body, 1, "")
+	// A cut stream: message_start's usage (input only, no output), no
+	// message_delta and no message_stop.
+	ev := []anthropicfake.Event{streamEvent("message_start", `{"type":"message_start","message":{"id":"m","model":"`+dsModel+
+		`","content":[],"usage":{"input_tokens":10,"output_tokens":0,"service_tier":"priority","cost":0.004}}}`)}
+	ev = append(ev, anthropicfake.TextEvents("ok")...)
+	r := feeRouted(t, 0, nil, routedStage, dsRoute, anthropicfake.Reply{Status: http.StatusOK, Events: ev})
+	if resp, b := r.post(body); resp.StatusCode != http.StatusOK {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	call, rep := r.logs.lastCall(t), r.gw.EndStage()
+	// What the usage explains: the reported input, at the conservative
+	// multiple. The gateway measures the charge against the table price of
+	// the usage it read, before the reserved output is added to it, so the
+	// reserved output is unreconciled here along with the floor.
+	table := pricing.WithFee(satMul(cost(t, dsModel, pricing.Usage{Input: 10}), pricing.ConservativeTierMultiplier), 0)
+	floor := pricing.WithFee(4_000, 0) // the report, with the route's fee
+	if floor <= table || floor > w {
+		t.Fatalf("the fixture's floor %d does not sit between the table's %d and the reservation %d", floor, table, w)
+	}
+	if got := pricing.Micros(num(call["charged_micros"])); got != floor {
+		t.Errorf("charged %d, want the floor %d", got, floor)
+	}
+	if call["settled"] != settledPartial {
+		t.Errorf("settled %v, want a partial settle", call["settled"])
+	}
+	if rep.Overrun != 0 || rep.Unreconciled != floor-table {
+		t.Errorf("stage overrun %d unreconciled %d, want 0 and %d", rep.Overrun, rep.Unreconciled, floor-table)
 	}
 }
 

@@ -671,10 +671,19 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		// doesn't know -- so the line says that and not "its own rates", which
 		// would be wrong for a call the table priced at maximum rates, or one
 		// the response also priced as a surprise. The multiple is an assumed
-		// ceiling and not a published price, so the line names the other
-		// figure the charge can be, which is the dearer of the two.
-		fmt.Fprintf(&b, "Tier:     %s charged at %dx the rates the call was priced at, or the provider's reported cost if dearer (no published price for the tier)\n",
+		// ceiling and not a published price, so where a provider reported a
+		// cost the charge may be that figure with the route fee instead, and
+		// the line says so -- in the warning's own words, and with the fee
+		// named, because the Reported line below shows the report without it.
+		// The clause is printed only when the record carries a report at all:
+		// a Claude call has no route, so a report cannot exist for it, and a
+		// provider that sent none floors nothing.
+		line := fmt.Sprintf("%s charged at %dx the rates the call was priced at",
 			oneLine(strings.Join(r.Cost.ServiceTiers, ", ")), pricing.ConservativeTierMultiplier)
+		if d.Reported > 0 {
+			line += ", or the provider's reported cost with the route fee if dearer"
+		}
+		fmt.Fprintf(&b, "Tier:     %s (no published price for the tier)\n", line)
 	}
 	if r.Cost.CatalogStale {
 		// The run charged, and over-counted on purpose: the catalog it
