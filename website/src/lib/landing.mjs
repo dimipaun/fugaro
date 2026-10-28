@@ -72,10 +72,10 @@ const VARIANT_KEYS = ['headline', 'image', 'path', 'proof_number', 'supporting_l
 const PROOF_KEYS = ['source', 'value']
 const LOGO_KEYS = ['image', 'name']
 
-/** A word the page's look keys off — a variant's `tone` and a partner logo's `name`: neither may
- * carry punctuation, a slash or a space that would become a selector that matches nothing. A
- * variant's path is held to the same charset by the route check in `variant()` below, which reads
- * it as the path it is rather than as a word. */
+/** A tone: the word the page's look keys off, so it carries no punctuation, a slash or a space
+ * that would become a selector that matches nothing. A partner logo's `name` is not this: it is
+ * the partner's own name, read as written. A variant's path is held to the same charset by the
+ * route check in `variant()` below, which reads it as the path it is rather than as a word. */
 const WORD = /^[a-z][a-z0-9-]*$/
 
 /**
@@ -234,13 +234,7 @@ function partnerLogo(value, index, file) {
   const what = `partner_logos[${index}]`
   const entry = asMap(value, file, what)
   refuseUnknownKeys(entry, LOGO_KEYS, file)
-  const name = asString(entry.name, file, `${what}.name`)
-  if (!WORD.test(name)) {
-    throw new Error(
-      `${file}: ${what}.name is ${JSON.stringify(name)}, and a logo's name is a word the page's look keys off — lowercase letters, digits and dashes, with no punctuation, slash or space that would become a selector that matches nothing (F11, D405).`,
-    )
-  }
-  return { name, image: selfHosted(entry.image, file, `${what}.image`) }
+  return { name: asString(entry.name, file, `${what}.name`), image: selfHosted(entry.image, file, `${what}.image`) }
 }
 
 /**
