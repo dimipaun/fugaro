@@ -135,7 +135,7 @@ and the licence text verbatim.
 It is stale in three ways, none of them about `elkjs`:
 
 1. **"The Fugaro console ships one file that is not ours" is false of the artifact.** The packaged
-   app is an Electron app: `electron` 44.7.2 is pinned in `devDependencies` and in the
+   app is an Electron app: `electron` 45.0.0 is pinned in `devDependencies` and in the
    `electronDownload.checksums` block, and electron-builder wraps the asar in Electron's own runtime —
    Chromium, Node and their third-party notices. Those are not in this file, and the sentence that
    says only one file is not the console's invites a reader to stop looking. Electron's own notice

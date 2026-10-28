@@ -115,7 +115,7 @@ export interface LeftAloneFuse {
   /** name, as `FlippedFuse.name`: the pinned package's own name for the fuse. */
   readonly name: string
   readonly option: FuseV1Options
-  /** upstreamDefault is the state the pinned Electron 44.7.2 ships the fuse
+  /** upstreamDefault is the state the pinned Electron 45.0.0 ships the fuse
    * in, read off the real binary; the hook refuses a wire that disagrees. */
   readonly upstreamDefault: boolean
   readonly why: string
@@ -221,7 +221,7 @@ export interface BeyondPinFuse {
 }
 
 /**
- * BEYOND_PIN_FUSES is every fuse on the pinned Electron 44.7.2 wire past the
+ * BEYOND_PIN_FUSES is every fuse on the pinned Electron 45.0.0 wire past the
  * nine `@electron/fuses` 2.1.3 knows. There is none: the package names every
  * fuse the binary carries. The list stays because an Electron bump can run
  * ahead of the package again, and `fuses.test.ts` reads the real binary's wire
