@@ -2359,6 +2359,66 @@ describe('the WSL resolution path', () => {
     expect(script).not.toContain('rm -rf')
   })
 
+  it('hands the CLI a hostile title as exactly one word, for all five shell shapes', async () => {
+    // The single quote above is one of five shapes a shell reads as syntax. The
+    // title is the launch's one hostile-shaped value -- it is the row's one
+    // `=`-form word, and `assertDistroWordsAreSafe` screens only the words a
+    // caller supplies as bare values, so `--title=…` reaches the wrapper
+    // unscreened -- and on the WSL route every word of the row becomes a word of
+    // a `sh -c` script. A double quote ends the quoting, a backslash escapes the
+    // closing quote, and a `$( )` or a backtick is a command the operator never
+    // asked this console to run.
+    //
+    // So all five are driven all the way through the wrapper to the CLI, and the
+    // claim is the **CLI's own report of its argv**: the title arrived once, as
+    // one word, spelled exactly as it was typed, with no word beside it that the
+    // shell invented. An assertion on the script's text would only say the
+    // console quoted what it wrote.
+    const titles = [
+      "the owner's backlog",
+      'a "quoted" title',
+      'a\\backslash',
+      'a $(touch pwned) title',
+      'a `touch pwned` title',
+    ]
+    const host = freshDirectory()
+    const wsl = installWslStub(host, { distros: TWO_DISTROS })
+    // The fake `wsl.exe` resolves the bare name `fugaro` through a relative
+    // `distro` entry, so the distribution's directory here is the one the stub
+    // was installed into -- and the paths name the test's own operator, never a
+    // real one.
+    for (const [index, title] of titles.entries()) {
+      const plan = planFor(
+        'run.launch',
+        { task: 'summarise the backlog', repository: 'acme/app', title },
+        contextFor('run.launch', {
+          binaryPath: FUGARO_BINARY_NAME,
+          directory: host,
+          wsl: { distro: 'Ubuntu', directory: host, executable: wsl.binary },
+        }),
+      )
+      const result = await runToCompletion(plan, { timeoutMs: 10_000 })
+      expect(result.code, title).toBe(0)
+      const child = wsl.children()[index]
+      expect(child, `${JSON.stringify(title)} started no CLI`).toBeDefined()
+      // The stub's own argv, which starts at `run`: the program word is the
+      // script's `exec` target and not an argument of the child it becomes.
+      expect(child?.argv, title).toStrictEqual([
+        'run',
+        '--task-file',
+        '-',
+        '--json',
+        '--run-id',
+        LAUNCH_RUN_ID,
+        '--repo',
+        'acme/app',
+        `--title=${title}`,
+        '--project',
+        PROJECT,
+      ])
+    }
+  })
+
   it('resolves a stored installation inside its distribution, and starts the CLI there', async () => {
     const arrangement = wslRoot()
     const resolution = await resolveInside(arrangement)
@@ -4011,6 +4071,21 @@ describe('the source scan', () => {
     // regexed, because a negative lookahead here backtracks into passing.
     const source = codeOnly('main/spawn.ts')
     expect((source.match(/shell:/g) ?? []).length).toBe((source.match(/shell: false/g) ?? []).length)
+  })
+
+  it('takes stdin bytes from the launch, and from nowhere else in src/', () => {
+    // `stdinBytes` is the one way a caller hands a child bytes on its standard
+    // input, and the launch is its one caller: the task text must reach `fugaro
+    // run` without ever being an argv word or a spawn-log line (rule 11), and a
+    // second caller would be a second child this console writes to. The scan is
+    // over every `.ts` file under `src/`, so the next module that reaches for it
+    // fails here rather than in review -- the mechanism in `main/spawn.ts` and
+    // the one caller in `main/launch.ts`, and nothing else.
+    const callers = srcFiles()
+      .filter((file) => file.source.includes('stdinBytes'))
+      .map((file) => file.path)
+    expect([...callers].sort()).toEqual(['main/launch.ts', 'main/spawn.ts'])
+    expect(codeOnly('main/launch.ts')).toContain('stdinBytes: launch.taskBytes')
   })
 
   it('hands the real spawner `shell: false`, as a literal, and never `true`', () => {

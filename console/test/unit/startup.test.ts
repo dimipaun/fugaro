@@ -881,6 +881,59 @@ describe('the entry point is wired to the handshake', () => {
     expect(indexSource).not.toContain('child_process')
   })
 
+  it('writes one spawn log per launch lookup, and closes it on every path out', () => {
+    // The lookup is two children -- the binary resolution and the records read
+    // -- and rule 10's log is one writer with one descriptor. Two writers opened
+    // per call and never closed leaked a descriptor for every `run.launch` the
+    // renderer asked about, refusals included, which is the cheapest way to ask
+    // for a great many. So the entry point opens one, hands it to both children,
+    // and closes it in a `finally` -- and the work is a function of its own so
+    // that the `finally` has something to wrap.
+    //
+    // The close is pinned **inside the `finally`** and not merely somewhere in
+    // the function: a close moved after the `try` (so it runs only when the
+    // lookup succeeded) is the same leak on every refusal path, which is what
+    // this case is about.
+    const lookup = bodyOf('async function launchLookUp(')
+    expect((lookup.match(/createSpawnLog\(/g) ?? []).length, 'one log per call').toBe(1)
+    const finallyAt = lookup.indexOf('finally {')
+    expect(finallyAt, 'the log is closed outside a `finally`').toBeGreaterThan(-1)
+    expect(lookup.slice(finallyAt), 'the close is not in the `finally`').toContain('log.close()')
+    const work = bodyOf('async function launchLookUpWith(')
+    expect(work, 'a second writer beside the one log').not.toContain('createSpawnLog(')
+    expect(work).toContain('spawnLog: log')
+    expect(work).toContain('runToCompletion(plan, { log })')
+  })
+
+  it('compares the launch’s record fingerprint at the answer, not the name alone', () => {
+    // "The name is still saved" is not "the installation is still the one this
+    // launch is for": a record removed and re-added under the same name, or one
+    // whose binary, distribution or checkout moved, is a different installation,
+    // and a launch cut for the old one must close as a cancel. The launch
+    // freezes the fingerprint and the answer-time read compares a fresh one
+    // (`launchrules.ts`'s `launchFingerprint`, `launch.ts`'s `stillRecorded`).
+    expect(bodyOf('async function launchLookUpWith(')).toContain('fingerprint: launchFingerprint(')
+    const still = bodyOf('async function launchStillRecorded(')
+    expect(still).toContain('launchFingerprint(')
+    expect(still).toContain('launch.fingerprint')
+    // The identity itself is `launchrules.ts`'s and is tested there field by
+    // field; what the entry point can still get wrong is which fields it hands
+    // it, so each record field is pinned here, and the row's `saved` with them.
+    // A field dropped from this mapping is a field the answer-time read stops
+    // noticing, silently, however correct `launchFingerprint` is.
+    const facts = bodyOf('function launchRecordFacts(')
+    for (const field of ['id', 'project', 'binaryPath', 'distro', 'configPath', 'checkout']) {
+      expect(facts, `${field} is not in the launch’s identity`).toContain(`record?.${field} ?? ''`)
+    }
+    expect(facts).toContain('saved: row.saved')
+    // And the rail's live read is not: `listed` and `checkouts` come from a
+    // `config list` that can fail on one read and succeed on the next, and an
+    // identity that moved with it would decline a launch the operator had
+    // already confirmed.
+    expect(facts).not.toContain('row.listed')
+    expect(facts).not.toContain('row.checkouts')
+  })
+
   it('hands `activate` to the lifecycle, whose behaviour is tested above', () => {
     // The behaviour -- a refused console reopens as the refusal, the startup
     // is single-flight -- is `createConsoleLifecycle`'s, driven in 'the

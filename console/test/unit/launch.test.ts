@@ -22,10 +22,19 @@
 //     frozen object's own words and nothing else";
 //   - a launch that took a second child per installation, or a third across the
 //     app, fails the ceiling tests;
-//   - a killed launch reported as "not launched" fails "names the run id it
-//     cannot speak for, and never says the launch did not happen".
+//   - a hold or a rate stamp written *after* `build` is awaited fails "opens one
+//     window for a same-tick burst on one installation, and two app-wide", which
+//     is the burst those limits exist for;
+//   - a limit read off the wall clock fails "reads the limits from a clock that
+//     only moves forward, never from the wall clock";
+//   - a confirmer that throws, or a still-recorded read that rejects, leaving
+//     the hold taken fails the two tests beside it in "a launch that was
+//     stopped, and one that failed outright";
+//   - a killed launch reported as "not launched", or as an exit status of null,
+//     fails "names the run id it cannot speak for, and never says the launch did
+//     not happen" and "reports a child killed by a signal as unknown".
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   CONFIRM_RATE_APP,
@@ -280,12 +289,15 @@ async function untilSettled(): Promise<void> {
   for (let turn = 0; turn < 12; turn += 1) await Promise.resolve()
 }
 
+const FINGERPRINT = '["record-1","sandbox","/usr/local/bin/fugaro","","",""]'
+
 function target(overrides: Partial<LaunchTarget> = {}): LaunchTarget {
   return {
     project: PROJECT,
     binaryPath: BINARY,
     cliVersion: CLI_VERSION,
     records: { baseBranch: BRANCH, repositories: [{ repository: RECORDED_REPOSITORY, baseBranch: '' }] },
+    fingerprint: FINGERPRINT,
     ...overrides,
   }
 }
@@ -298,48 +310,55 @@ function runner(options: {
   readonly spawner?: ChildSpawner
   readonly log?: SpawnLogWriter
   readonly timers?: Timers
+  /** `now` is the **limits'** clock (monotonic in production, `performance.now`)
+   * and `wallClock` the run id's (`Date.now`); both default to `NOW` so that a
+   * test's first launch is `RUN_ID`. The one test that asserts the limits do not
+   * read the wall clock builds its launcher without either, so that it exercises
+   * the production defaults rather than this helper's stand-ins for them. */
   readonly now?: () => number
-  readonly stillRecorded?: () => boolean
+  readonly wallClock?: () => number
+  readonly stillRecorded?: (launch: FrozenLaunch) => boolean | Promise<boolean>
   /** `lookUp` replaces the records entirely: the one test that needs a lookup
    * answering for an installation other than the one asked about cannot use the
    * default, which is the console's own shape (the target is built from the
    * name it was given). */
   readonly lookUp?: (project: string) => TargetLookup | Promise<TargetLookup>
 }): ReturnType<typeof createLaunchRunner> {
+  const now = options.now ?? ((): number => NOW)
+  const wallClock = options.wallClock ?? now
   const held = options.target ?? target()
   const lookUp = options.lookUp
-  if (lookUp !== undefined) {
-    return createLaunchRunner({
-      lookUp: async (project) => lookUp(project),
-      confirmer: options.confirmer,
-      stillRecorded: options.stillRecorded ?? (() => true),
-      appEnv: { HOME: '/home/person-1' },
-      ...(options.spawner === undefined ? {} : { spawner: options.spawner }),
-      ...(options.log === undefined ? {} : { log: options.log }),
-      timers: options.timers ?? neverFires(),
-      now: options.now ?? (() => NOW),
-      random: countingRandom(),
-    })
-  }
-  return createLaunchRunner({
-    lookUp: (project: string) =>
-      Promise.resolve(
-        held.project === '' || project === ''
-          ? { ok: false, reason: `no installation named ${JSON.stringify(project)} is one this console’s records carry` }
-          : // The launcher refuses a target whose project is not the name it was
-            // asked about, so a test that launches a *second* installation gets
-            // the same records under that installation's own name.
-            { ok: true, target: project === held.project ? held : { ...held, project } },
-      ),
+  const shared = {
     confirmer: options.confirmer,
     stillRecorded: options.stillRecorded ?? (() => true),
     appEnv: { HOME: '/home/person-1' },
     ...(options.spawner === undefined ? {} : { spawner: options.spawner }),
     ...(options.log === undefined ? {} : { log: options.log }),
     timers: options.timers ?? neverFires(),
-    now: options.now ?? (() => NOW),
+    now,
+    wallClock,
     random: countingRandom(),
-  })
+  }
+  if (lookUp !== undefined) {
+    return createLaunchRunner({ ...shared, lookUp: async (project) => lookUp(project) })
+  }
+  return createLaunchRunner({ ...shared, lookUp: (project: string) => Promise.resolve(recordsFor(held, project)) })
+}
+
+/** recordsFor is the console's own lookup shape: the target under the name it
+ * was asked about, or the records refusing a name they do not carry. A
+ * `project: ''` target is the records refusing every name. */
+function recordsFor(held: LaunchTarget, project: string): TargetLookup {
+  if (held.project === '' || project === '') {
+    return {
+      ok: false,
+      reason: `no installation named ${JSON.stringify(project)} is one this console’s records carry`,
+    }
+  }
+  // The launcher refuses a target whose project is not the name it was asked
+  // about, so a test that launches a *second* installation gets the same records
+  // under that installation's own name.
+  return { ok: true, target: project === held.project ? held : { ...held, project } }
 }
 
 interface LaunchRequestLike {
@@ -853,6 +872,118 @@ describe('the launch limits', () => {
     void again
   })
 
+  it('opens one window for a same-tick burst on one installation, and two app-wide', async () => {
+    // The state the reservation exists for. Every message of a burst arrives in
+    // one tick, so every one of them reads the limits before any of them has
+    // written: with the hold and the rate stamp taken after `build` was awaited,
+    // one installation's five messages opened **five** windows against caps of
+    // one in flight and three a minute, and the second window's hold overwrote
+    // the first's entry for that installation -- which is how the caps stopped
+    // counting it at all. The reservation is synchronous and it is the last
+    // thing before the first `await`, so the second message already sees the
+    // first.
+    const confirmer = heldConfirmer()
+    const spawner = quietSpawner()
+    const held = runner({ confirmer, spawner })
+
+    const oneInstallation = [0, 1, 2, 3, 4].map(() => held.launch(request({ installation: PROJECT })))
+    await untilSettled()
+    expect(confirmer.opened).toHaveLength(1)
+    expect(spawner.calls).toHaveLength(0)
+    for (const launch of confirmer.opened) confirmer.decideWindow(launch.runId, false)
+    const refused = (await Promise.all(oneInstallation)).filter((outcome) =>
+      outcome.reason.includes('already in flight'),
+    )
+    expect(refused).toHaveLength(4)
+
+    // ...and across the app: eight installations, two windows, six refusals --
+    // not eight windows, and not the third and fourth installations' messages
+    // slipping past the app-wide cap on their way to the rate check.
+    const appConfirmer = heldConfirmer()
+    const appHeld = runner({ confirmer: appConfirmer, spawner: quietSpawner() })
+    const app = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight'].map((installation) =>
+      appHeld.launch(request({ installation })),
+    )
+    await untilSettled()
+    expect(appConfirmer.opened).toHaveLength(2)
+    for (const launch of appConfirmer.opened) appConfirmer.decideWindow(launch.runId, false)
+    const appRefused = (await Promise.all(app)).filter((outcome) =>
+      outcome.reason.includes('two launches are already in flight'),
+    )
+    expect(appRefused).toHaveLength(6)
+  })
+
+  it('charges a build that refused its rate stamp, and frees the slot it had reserved', async () => {
+    // Two halves of the reservation. A request that cannot be built still made
+    // this process read the records, so it costs a rate stamp like any other --
+    // otherwise a renderer could ask a launch that never builds without limit.
+    // And nothing is in flight for it, so the installation's slot and the
+    // app-wide count are freed: a reservation that leaked here would refuse a
+    // real launch two leaks later with a sentence about launches in flight that
+    // are not in flight at all.
+    const spawner = quietSpawner()
+    const unbuildable = runner({ confirmer: heldConfirmer(), spawner, target: { ...target(), project: '' } })
+    for (let attempt = 0; attempt < CONFIRM_RATE_PER_INSTALLATION; attempt += 1) {
+      const outcome = await unbuildable.launch(request())
+      expect(outcome.ok).toBe(false)
+      expect(outcome.reason).toContain('records carry')
+    }
+    expect((await unbuildable.launch(request())).reason).toContain(
+      `${String(CONFIRM_RATE_PER_INSTALLATION)} launches`,
+    )
+    expect(spawner.calls).toHaveLength(0)
+
+    const mixed = runner({
+      confirmer: answeringConfirmer(true),
+      spawner: completingSpawner(),
+      lookUp: (project) =>
+        project === PROJECT
+          ? { ok: true, target: target() }
+          : { ok: false, reason: `no installation named ${JSON.stringify(project)} is one this console’s records carry` },
+    })
+    for (const installation of ['gone-one', 'gone-two', 'gone-three']) {
+      expect((await mixed.launch(request({ installation }))).ok).toBe(false)
+    }
+    expect((await mixed.launch(request({ installation: PROJECT }))).ok).toBe(true)
+  })
+
+  it('reads the limits from a clock that only moves forward, never from the wall clock', async () => {
+    // The limits are elapsed-time bounds, and the wall clock is a value the
+    // operator, NTP or a machine waking from sleep can move. A cool-down bound
+    // to `Date.now` is an hour in the past the moment the clock is set forward,
+    // which frees a launch the operator has just been told to wait ten seconds
+    // for; set back, it locks the installation out until real time catches up.
+    // The limits therefore read a monotonic clock (`performance.now`), and the
+    // wall clock is kept for the one thing that needs a date: the run id.
+    //
+    // The launcher is built here **without** `now` or `wallClock`, so what this
+    // case exercises is the production default itself and not the helper's
+    // injected stand-in for it: a default reverted to `Date.now` would pass a
+    // test whose clocks the helper supplies.
+    const spawner = completingSpawner()
+    const held = createLaunchRunner({
+      confirmer: answeringConfirmer(true),
+      stillRecorded: () => true,
+      appEnv: { HOME: '/home/person-1' },
+      spawner,
+      timers: neverFires(),
+      random: countingRandom(),
+      lookUp: (project) => Promise.resolve(recordsFor(target(), project)),
+    })
+    expect((await held.launch(request())).ok).toBe(true)
+
+    const real = Date.now
+    const moved = vi.spyOn(Date, 'now').mockImplementation(() => real() + 3_600_000)
+    try {
+      const paused = await held.launch(request())
+      expect(paused.ok).toBe(false)
+      expect(paused.reason).toContain('10 seconds')
+      expect(spawner.calls).toHaveLength(1)
+    } finally {
+      moved.mockRestore()
+    }
+  })
+
   it('runs at most two launches at once across the app, and refuses the third rather than queueing it', async () => {
     const confirmer = answeringConfirmer(true)
     const spawner = quietSpawner()
@@ -905,6 +1036,27 @@ describe('the reply', () => {
     expect(outcome.reason).toContain('surprise')
   })
 
+  it('reports a child killed by a signal as unknown, and never as an exit status', async () => {
+    // A signal is not an exit status: a CLI killed from outside answers
+    // `code: null`, and reading that as "exited with status null" reports a
+    // launch the console knows nothing about as one that did not happen. It may
+    // have claimed the run id and started a container before it was killed, so
+    // the answer keeps the run id and says the outcome is unknown.
+    const child = typedChild()
+    const spawner: ChildSpawner = () => {
+      queueMicrotask(() => child.exit(null, 'SIGKILL'))
+      return child
+    }
+    const outcome = await runner({ confirmer: answeringConfirmer(true), spawner }).launch(request())
+    expect(outcome.ok).toBe(false)
+    expect(outcome.outcomeUnknown).toBe(true)
+    expect(outcome.runId).toBe(RUN_ID)
+    expect(outcome.reason).toContain('SIGKILL')
+    expect(outcome.reason).toContain(RUN_ID)
+    expect(outcome.reason).toContain('fugaro runs ls --json')
+    expect(outcome.reason).not.toContain('status null')
+  })
+
   it('refuses a reply from a CLI that exited non-zero, in the CLI’s own words', async () => {
     const child = typedChild()
     const spawner: ChildSpawner = () => {
@@ -928,6 +1080,64 @@ describe('a launch that was stopped, and one that failed outright', () => {
     expect(sentence).toContain('fugaro runs ls --json')
     expect(sentence).toContain(`fugaro diagnose ${RUN_ID} --json`)
     expect(sentence).not.toContain('not launched')
+  })
+
+  it('declines, and frees the hold, when the confirmer itself throws', async () => {
+    // A confirmer is a seam the next part fills, and a window that cannot be
+    // opened is a launch nobody can answer. Thrown out of the operation, the
+    // hold taken for this launch would never be released -- no answer is coming
+    // -- so the installation could not be launched again for the life of the
+    // process. It settles as a decline, which spawns nothing.
+    const held = heldConfirmer()
+    let calls = 0
+    const confirmer: LaunchConfirmer = {
+      open(launch, decide) {
+        calls += 1
+        if (calls === 1) throw new Error('the confirmation window is gone')
+        held.open(launch, decide)
+      },
+    }
+    const spawner = quietSpawner()
+    const launcher = runner({ confirmer, spawner })
+
+    const outcome = await launcher.launch(request())
+    expect(outcome.ok).toBe(false)
+    expect(outcome.reason).toBe(DECLINED_CANCELLED)
+    expect(outcome.outcomeUnknown).toBe(false)
+    expect(spawner.calls).toHaveLength(0)
+
+    // The hold is gone, and only this launch's: the very next launch for the
+    // same installation opens a window rather than being refused as in flight.
+    const second = launcher.launch(request())
+    await untilSettled()
+    expect(held.opened).toHaveLength(1)
+    for (const launch of held.opened) held.decideWindow(launch.runId, false)
+    expect((await second).reason).toBe(DECLINED_CANCELLED)
+  })
+
+  it('declines, and frees the hold, when the still-recorded read rejects', async () => {
+    // The other way a window is answered leaves a hold behind: `stillRecorded`
+    // reads the console's own records and the CLI's list, either of which can
+    // fail. A rejection let out of the launcher would leave the hold taken, and
+    // an installation the operator can never launch again is a denial of
+    // service this console performs on itself. A read that cannot answer
+    // answers no, which spawns nothing.
+    const spawner = quietSpawner()
+    const launcher = runner({
+      confirmer: answeringConfirmer(true),
+      spawner,
+      stillRecorded: () => Promise.reject(new Error('the store is unreadable')),
+    })
+
+    const outcome = await launcher.launch(request())
+    expect(outcome.ok).toBe(false)
+    expect(outcome.reason).toBe(DECLINED_CANCELLED)
+    expect(outcome.outcomeUnknown).toBe(false)
+    expect(spawner.calls).toHaveLength(0)
+
+    const second = await launcher.launch(request())
+    expect(second.reason).toBe(DECLINED_CANCELLED)
+    expect(second.reason).not.toContain('already in flight')
   })
 
   it('reports a spawn that threw as unknown, keeps the run id, and releases the in-flight entry', async () => {

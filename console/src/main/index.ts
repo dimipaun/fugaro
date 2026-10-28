@@ -57,9 +57,12 @@ import {
 } from './spawn'
 import type { SpawnTarget } from './spawn'
 import { createSpawnLog } from './spawnlog'
+import type { SpawnLogWriter } from './spawnlog'
 import { parseInstallationsDocument } from './installlist'
 import { createLaunchRunner, DECLINING_CONFIRMER } from './launch'
-import type { LaunchRequest, TargetLookup } from './launch'
+import type { FrozenLaunch, LaunchRequest, TargetLookup } from './launch'
+import { launchFingerprint } from './launchrules'
+import type { LaunchRecordFacts } from './launchrules'
 import type { InstallationsListReply } from './onboarding'
 import { reducedModeHandlers, registerConsoleHandlers, startupCompatibility } from './ipc'
 import type { ConsoleHandlers, ValidatedArguments } from './ipc'
@@ -545,6 +548,22 @@ async function pickerList(): Promise<InstallationsListReply | null> {
  * ignored.
  */
 async function launchLookUp(project: string): Promise<TargetLookup> {
+  // **One log for the whole call, and it is closed here.** The resolution and
+  // the records read are two children of one lookup, and rule 10's log is a
+  // writer with a descriptor: two writers opened per call and never closed is a
+  // descriptor leaked for every launch a renderer asks about -- including the
+  // ones that are refused, which is the cheapest way to ask for a great many. So
+  // the two children share the one writer, and the `finally` releases it on
+  // every path out, the refusals included.
+  const log = createSpawnLog(process.env)
+  try {
+    return await launchLookUpWith(project, log)
+  } finally {
+    log.close()
+  }
+}
+
+async function launchLookUpWith(project: string, log: SpawnLogWriter): Promise<TargetLookup> {
   const listed = await pickerList()
   if (listed === null) return { ok: false, reason: LAUNCH_NO_RECORDS }
   const row = listed.rows.find((candidate) => candidate.project === project)
@@ -563,7 +582,7 @@ async function launchLookUp(project: string): Promise<TargetLookup> {
   const resolution = await resolveLaunchBinary(record ?? { id: '', project }, {
     appEnv: process.env,
     home: app.getPath('home'),
-    spawnLog: createSpawnLog(process.env),
+    spawnLog: log,
   })
   if (!resolution.ok) return { ok: false, reason: resolution.reason }
   // The records read runs on the same route as the resolution: under a
@@ -580,7 +599,7 @@ async function launchLookUp(project: string): Promise<TargetLookup> {
   })
   let run
   try {
-    run = await runToCompletion(plan, { log: createSpawnLog(process.env) })
+    run = await runToCompletion(plan, { log })
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : 'the CLI could not list the installations' }
   }
@@ -604,21 +623,46 @@ async function launchLookUp(project: string): Promise<TargetLookup> {
       binaryPath: resolution.value.path,
       cliVersion: resolution.value.version,
       records: found,
+      fingerprint: launchFingerprint(launchRecordFacts(record, row)),
       ...(configPath === '' ? {} : { configPath }),
       ...(distro === '' ? {} : { distro }),
     },
   }
 }
 
-/** launchStillRecorded is the check that makes "an installation removed while
- * its window is open closes as a cancel" true rather than promised: it re-reads
- * the rail's own records and answers whether the console still carries the
- * installation the frozen object was built for. */
-async function launchStillRecorded(project: string): Promise<boolean> {
+/** launchRecordFacts is `launchrules.ts`'s `LaunchRecordFacts` read off this
+ * console's two stores: its own installation file, and the rail's row for it.
+ * The rail's `listed` and `checkouts` are answers of a `config list` read that
+ * can fail and succeed again between the lookup and the answer, so they are not
+ * part of the identity; see `LaunchRecordFacts`. */
+function launchRecordFacts(
+  record: StoredInstallation | undefined,
+  row: InstallationsListReply['rows'][number],
+): LaunchRecordFacts {
+  return {
+    id: record?.id ?? '',
+    project: record?.project ?? '',
+    binaryPath: record?.binaryPath ?? '',
+    distro: record?.distro ?? '',
+    configPath: record?.configPath ?? '',
+    checkout: record?.checkout ?? '',
+    saved: row.saved,
+  }
+}
+
+/** launchStillRecorded is the check that makes "an installation removed, or
+ * changed, while its window is open closes as a cancel" true rather than
+ * promised: it re-reads the rail's own records and this console's own file, and
+ * answers whether the installation the frozen object was built for is still
+ * **the same one** -- the name still saved, and the fingerprint
+ * (`launchFingerprint`) unchanged. A row that disappeared, a name that was
+ * re-added, and a record whose fields moved all answer no. */
+async function launchStillRecorded(launch: FrozenLaunch): Promise<boolean> {
   const listed = await pickerList()
   if (listed === null) return false
-  const row = listed.rows.find((candidate) => candidate.project === project)
-  return row !== undefined && row.saved
+  const row = listed.rows.find((candidate) => candidate.project === launch.project)
+  if (row === undefined || !row.saved) return false
+  return launchFingerprint(launchRecordFacts(storedRecord(launch.project), row)) === launch.fingerprint
 }
 
 /**
