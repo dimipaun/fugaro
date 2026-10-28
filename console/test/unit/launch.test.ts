@@ -662,7 +662,6 @@ describe('the run id, and the second it is cut in', () => {
     await untilSettled()
 
     expect(confirmer.opened.map((launch) => launch.runId)).toStrictEqual([RUN_ID, '20261028-152618-0001'])
-    expect(new Set(confirmer.opened.map((launch) => launch.runId)).size).toBe(2)
 
     for (const open of confirmer.openRunIds) confirmer.decideWindow(open, false)
     void first
@@ -933,8 +932,8 @@ describe('the launch limits', () => {
     // outlives its window is memory the renderer chooses: at the app-wide cap of
     // six a minute, a stream of names is 8,600 small entries a day, for the life
     // of the process. The entry is dropped with its last stamp, and this reads
-    // the map itself -- it is in a closure, and the size of it is the whole
-    // property.
+    // the map's own keys -- it is in a closure, and which names it still holds is
+    // the whole property.
     let at = NOW
     const held = runner({ confirmer: DECLINING_CONFIRMER, now: () => at })
     const caught = catchRateMap()
