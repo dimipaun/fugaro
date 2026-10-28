@@ -2908,13 +2908,15 @@ writes a file, so a caller can read a report before committing it.
 
 --submit-draft prints neither: it prints a redacted learning draft a person can
 file as a "Skill learning" issue, and it sends nothing. The draft leaves the
-repository, so it carries no repository name and no run ID -- the runs are
-renumbered run-1, run-2, ... -- and it ends with the one command that sends it,
-gh issue create --web --template skill_learning.yml -R dimipaun/fugaro,
-which the person runs themselves: the form lives in Fugaro's repository, and -R
-is what reaches it from the checkout this command read. --dir still names the
-folder the committed reports the pattern rules read live in; nothing is written
-there, so --stdout and --json are refused beside it.
+repository, so it carries no repository name and no run ID -- a period other
+than a year renumbers its runs run-1, run-2, ... (a yearly draft rolls the
+months up and has no run rows) -- and it ends with the one command that opens
+the issue form, gh issue create --web -R dimipaun/fugaro, which the
+person runs themselves: the form lives in Fugaro's repository and -R is what
+reaches it from the checkout this command read, and the person picks the
+"Skill learning" form in the browser, because --web ignores --template. --dir
+still names the folder the committed reports the pattern rules read live in;
+nothing is written there, so --stdout and --json are refused beside it.
 
 Usage: `fugaro runs digest`
 
