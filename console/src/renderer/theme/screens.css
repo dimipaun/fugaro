@@ -208,6 +208,8 @@ li.projects-secret,
 li.projects-account,
 li.degraded-run,
 li.run-stage,
+li.run-spend-stage,
+li.run-tolerated-finding,
 li.run-log-line {
   display: flex;
   flex-wrap: wrap;
@@ -235,6 +237,8 @@ ul.projects-seen-list,
 ul.projects-account-list,
 ol.degraded-runs,
 ol.run-stage-list,
+ol.run-spend-stage-list,
+ol.run-tolerated-list,
 ol.run-log-list,
 ol.run-log-tail,
 div.spend-accounts,
@@ -245,6 +249,8 @@ section.spend-people,
 section.projects-panel,
 section.run-ledger,
 section.run-stages,
+section.run-spend-stages,
+section.run-tolerated,
 section.run-pr,
 section.run-logs,
 section.run-diagnosis,
@@ -1029,6 +1035,44 @@ span.run-stage-passed,
 span.run-stage-deadline {
   color: var(--text-muted);
   font-size: var(--font-size-xs);
+}
+
+/* The run's spend by stage and the findings its mode tolerated: two panels of
+ * the same shape as the timeline's -- a muted name and a word, then the figures
+ * the document wrote, right-aligned and tabular so a column of dollars reads
+ * down as a column. `run-tolerated-mode` is a mode word and takes the Rigor
+ * row's chip treatment; `run-tolerated-title` is the reviewer's own sentence
+ * and is drawn at the body size, like the diagnosis panel's finding summaries.
+ * Nothing here is coloured: every one of these figures is measured, notional or
+ * n/a, and a tone would be a judgement this screen does not make. */
+span.run-spend-stage-name,
+span.run-tolerated-label,
+span.run-tolerated-mode,
+span.run-tolerated-class {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+span.run-tolerated-title {
+  font-size: var(--font-size-base);
+}
+
+p.run-spend-stages-more,
+p.run-tolerated-total,
+p.run-tolerated-more,
+p.run-tolerated-none {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+span.run-spend-stage-usd,
+span.run-spend-stage-notional,
+span.run-tolerated-likelihood,
+span.run-tolerated-impact,
+span.run-tolerated-fix-cost {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 /* The pull request is drawn as text with **no link at all**: `run.link` is
@@ -2227,6 +2271,8 @@ span.coordinator-unread-retry {
   li.projects-job,
   li.degraded-run,
   li.run-stage,
+  li.run-spend-stage,
+  li.run-tolerated-finding,
   li.run-log-line,
   div.unavailable-body,
   #picker-warnings li,
@@ -2412,6 +2458,8 @@ span.coordinator-unread-retry {
   ol.spend-series,
   section.run-ledger,
   section.run-stages,
+  section.run-spend-stages,
+  section.run-tolerated,
   section.run-pr,
   section.run-logs,
   section.run-diagnosis,
@@ -2433,6 +2481,8 @@ span.coordinator-unread-retry {
   li.projects-account,
   li.degraded-run,
   li.run-stage,
+  li.run-spend-stage,
+  li.run-tolerated-finding,
   li.run-log-line,
   div.live-kill,
   div.spend-kill,

@@ -19,12 +19,19 @@
 //      `diagnose` does not -- and is an `unavailable` reading naming the field
 //      when it does not. This screen does not invent a deadline, and it does not
 //      invent one from `started_at` either.
-//   3. **Per-stage spend, which no document carries.** `diagnose` gives spend by
-//      **route** and by **model** (`route_by`, `model_by`), not by stage, so
-//      each stage's spend is an `unavailable` reading whose sentence says
-//      exactly that, and the two splits the document does carry are drawn as
-//      their own lists. A screen that divided a total by the number of stages
-//      would be inventing a figure about money.
+//   3. **The run's own spend by stage, and what its mode let through.** The
+//      document's top-level `stages` is the run's per-stage record
+//      (`runstore.StageTiming`: the calls, the sub-agents and the dollars each
+//      stage's model spend came to), and it is drawn as its own panel. A verify
+//      record carries no spend, so the timeline's spend cell says that and
+//      names that panel -- or, when the document carries no `stages`, says so
+//      instead. The `tolerated` block is the findings the run's resolved mode
+//      let through, drawn under the total it carries. Neither panel sums,
+//      divides or derives a figure: every number on them is one the document
+//      wrote, and the two splits `diagnose` does carry, by **route** and by
+//      **model** (`route_by`, `model_by`), are drawn as their own lists below.
+//      A screen that divided a total by the number of stages would be inventing
+//      a figure about money.
 //   4. **The pull request as text, and no link.** Design section 4.3's gap 7:
 //      no document names the provider (GitHub or Bitbucket Cloud), so a link
 //      rebuilt from the repository and the number **cannot** be built for every
@@ -262,6 +269,57 @@ export interface RunSpendSplit {
   readonly usd: Reading
 }
 
+/**
+ * RunSpendStage is one stage of the run's own spend record: the document's
+ * top-level `stages`, one `runstore.StageTiming` each. It is the run's spend by
+ * stage, which the verify timeline beside it is not -- a verify record carries
+ * no spend at all.
+ *
+ * `calls` and `agents` are **pointers** on the wire, so a stage nobody counted
+ * has the key absent and a stage counted at zero has a zero: the two are
+ * different facts, and the absent one is drawn as an `unavailable` reading
+ * saying so rather than as a zero.
+ */
+export interface RunSpendStage {
+  readonly name: string
+  readonly duration: Reading
+  readonly calls: Reading
+  readonly agents: Reading
+  /** `usd` is what the stage's calls cost and `notional` the notional part of
+   * it (D140); the two are never summed, here or anywhere else. */
+  readonly usd: Reading
+  readonly notional: Reading
+}
+
+/** RunToleratedFinding is one finding the run's resolved mode let through
+ * (`runstore.ToleratedFinding`). The three score axes are numbers the reviewer
+ * wrote and are drawn as such; `mode`, `label` and `class` are the write path's
+ * own vocabulary, which a hand-edited record need not respect, so they are
+ * strings this screen draws as text. */
+export interface RunToleratedFinding {
+  readonly title: string
+  readonly label: string
+  readonly mode: string
+  readonly likelihood: Reading
+  readonly impact: Reading
+  readonly fixCost: Reading
+  /** the wire key is `class`: the reviewer's own word for what kind of finding
+   * this is, and not a CSS class or an ECMAScript keyword here */
+  readonly scoreClass: string
+}
+
+/** RunTolerated is the findings the run's resolved mode let through, as the
+ * document's `tolerated` block: the total it carries and the entries it lists.
+ * `total` is how many findings the mode really tolerated and is **never below**
+ * the entries listed, so a shorter list is not the whole of it. */
+export interface RunTolerated {
+  readonly total: Reading
+  readonly findings: readonly RunToleratedFinding[]
+  /** `dropped` is how many entries this screen's own bound left out, which is a
+   * fact about the panel rather than about the run. */
+  readonly dropped: Reading
+}
+
 /** RunDiagnosis is the rest of the document: what the run's diagnosis says. */
 export interface RunDiagnosis {
   readonly failed: readonly string[]
@@ -308,6 +366,15 @@ export interface RunReplay {
 export interface RunModel {
   readonly row: RunRow
   readonly ledger: RunLedger
+  /** the run's spend by stage: the document's top-level `stages`, which is the
+   * run's own per-stage record and not the verify timeline below. */
+  readonly spendStages: readonly RunSpendStage[]
+  /** `spendStagesDropped` is how many stages the panel's bound left out. */
+  readonly spendStagesDropped: Reading
+  /** the findings the run's resolved mode tolerated, or `null` when the document
+   * carries no `tolerated` block -- which is what a run that tolerated nothing
+   * looks like. */
+  readonly tolerated: RunTolerated | null
   readonly stages: readonly RunStage[]
   readonly halt: RunHalt | null
   readonly pullRequest: RunPullRequest
@@ -451,21 +518,101 @@ function ledgerOf(row: Record<string, unknown>): RunLedger {
   }
 }
 
-/** STAGE_SPEND_BECAUSE is the sentence every stage's spend carries, and it says
- * what the document gives instead -- which is the whole point: `route_by` and
- * `model_by` are the splits `diagnose` produces, and a per-stage split is not
- * one of them. */
+/** STAGE_SPEND_BECAUSE is the sentence a verify record's spend cell carries: a
+ * verify record has no spend of its own, and the run's spend by stage is the
+ * document's top-level `stages`, which the "spend by stage" panel draws. */
 const STAGE_SPEND_BECAUSE =
-  'no document carries spend by stage: `diagnose` reports it by route and by model, and those are drawn below'
+  'a verify record carries no spend: the run\'s spend by stage is the "spend by stage" panel, and `diagnose`\'s own splits are drawn below'
+
+/** STAGE_SPEND_NO_STAGES is the same honesty for a document with no `stages` at
+ * all: there is no panel to point at, so the cell says which key is missing
+ * rather than naming one that is not drawn. */
+const STAGE_SPEND_NO_STAGES =
+  'the document carries no stages: a verify record carries no spend, and no document gives spend by stage for this run'
 
 /** DEADLINE_BECAUSE is the same honesty for a deadline the row does not carry. */
 const DEADLINE_BECAUSE = 'the document has no row.deadline'
+
+/**
+ * RUN_SPEND_STAGES_MAX and RUN_TOLERATED_MAX are how many entries of each new
+ * panel this screen draws, and they are the CLI's own bounds: `diagnoseStages`
+ * (`internal/cli/diagnose.go`) and `runstore.MaxTolerated`. The document is an
+ * object a hand can edit, so the length it carries is not a length this screen
+ * trusts -- it draws this many entries and counts the rest, rather than
+ * building a list nobody bounded.
+ */
+export const RUN_SPEND_STAGES_MAX = 128
+export const RUN_TOLERATED_MAX = 100
+
+/** NOT_COUNTED_BECAUSE is what a stage's `calls` or `agents` says when the key
+ * is absent: `calls` and `agents` are pointers on the wire, so absent means
+ * nobody counted the stage, which is a different fact from a stage counted at
+ * zero. */
+const NOT_COUNTED_BECAUSE = 'not counted for this stage'
+
+/** countedAt reads one of the two pointer counts: a number the document carries
+ * is measured (zero included), an absent key is the sentence above, and anything
+ * else is `readNumber`'s own refusal. */
+function countedAt(record: Record<string, unknown>, key: string, field: string): Reading {
+  if (record[key] === null || record[key] === undefined) return unavailable(NOT_COUNTED_BECAUSE)
+  return readNumber(record[key], field)
+}
+
+/** spendStagesOf reads the document's top-level `stages` (`runstore.StageTiming`)
+ * into the panel's rows, bounded at `RUN_SPEND_STAGES_MAX`. An entry that is not
+ * an object is skipped rather than thrown on: the record is a hand-editable
+ * object and a screen that threw would draw nothing at all. */
+function spendStagesOf(raw: unknown): readonly RunSpendStage[] {
+  const records = arrayAt(raw) ?? []
+  const stages: RunSpendStage[] = []
+  for (const item of records.slice(0, RUN_SPEND_STAGES_MAX)) {
+    const record = objectAt(item)
+    if (record === null) continue
+    stages.push({
+      name: textAt(record['name']) ?? '',
+      duration: readNumber(record['duration_s'], 'stages[].duration_s'),
+      calls: countedAt(record, 'calls', 'stages[].calls'),
+      agents: countedAt(record, 'agents', 'stages[].agents'),
+      usd: readNumber(record['model_usd'], 'stages[].model_usd'),
+      notional: readNumber(record['model_notional_usd'], 'stages[].model_notional_usd'),
+    })
+  }
+  return stages
+}
+
+/** toleratedOf reads the document's `tolerated` block, bounded at
+ * `RUN_TOLERATED_MAX` on read as it is on write. `null` for a document that
+ * carries no block, which is what a run that tolerated nothing looks like. */
+function toleratedOf(raw: unknown): RunTolerated | null {
+  const block = objectAt(raw)
+  if (block === null) return null
+  const entries = arrayAt(block['findings']) ?? []
+  const findings: RunToleratedFinding[] = []
+  for (const item of entries.slice(0, RUN_TOLERATED_MAX)) {
+    const finding = objectAt(item)
+    if (finding === null) continue
+    findings.push({
+      title: textAt(finding['title']) ?? '',
+      label: textAt(finding['label']) ?? '',
+      mode: textAt(finding['mode']) ?? '',
+      likelihood: readNumber(finding['likelihood'], 'tolerated.findings[].likelihood'),
+      impact: readNumber(finding['impact'], 'tolerated.findings[].impact'),
+      fixCost: readNumber(finding['fix_cost'], 'tolerated.findings[].fix_cost'),
+      scoreClass: textAt(finding['class']) ?? '',
+    })
+  }
+  return {
+    total: readNumber(block['total'], 'tolerated.total'),
+    findings,
+    dropped: measured(Math.max(0, entries.length - RUN_TOLERATED_MAX)),
+  }
+}
 
 /** stagesOf builds the timeline. Each verify record is a stage; when the
  * document carries none, the row's own stage is the one row of the timeline --
  * a run that has not reached its verify gate has a stage and no records, and
  * drawing nothing for it would be drawing a run with no stages at all. */
-function stagesOf(row: Record<string, unknown>, raw: unknown): readonly RunStage[] {
+function stagesOf(row: Record<string, unknown>, raw: unknown, spendBecause: string): readonly RunStage[] {
   const records = arrayAt(raw) ?? []
   const deadline = deadlineState(row)
   const stages: RunStage[] = []
@@ -476,11 +623,11 @@ function stagesOf(row: Record<string, unknown>, raw: unknown): readonly RunStage
     // a record whose outcome this screen does not know, and `false` would draw
     // it as a failure.
     const passed = typeof record['passed'] === 'boolean' ? record['passed'] : null
-    stages.push(stageOf(textAt(record['kind']) ?? textAt(record['stage']) ?? '', record, passed, deadline))
+    stages.push(stageOf(textAt(record['kind']) ?? textAt(record['stage']) ?? '', record, passed, deadline, spendBecause))
   }
   if (stages.length === 0) {
     const stage = textAt(row['stage'])
-    if (stage !== null && stage !== '') stages.push(stageOf(stage, {}, null, deadline))
+    if (stage !== null && stage !== '') stages.push(stageOf(stage, {}, null, deadline, spendBecause))
   }
   return stages
 }
@@ -493,6 +640,7 @@ function stageOf(
   record: Record<string, unknown>,
   passed: boolean | null,
   deadline: string | null,
+  spendBecause: string,
 ): RunStage {
   return {
     stage,
@@ -500,7 +648,7 @@ function stageOf(
     tests: readNumber(record['tests'], 'verify[].tests'),
     failures: readNumber(record['failures'], 'verify[].failures'),
     duration: readNumber(record['duration_s'], 'verify[].duration_s'),
-    spend: unavailable(STAGE_SPEND_BECAUSE),
+    spend: unavailable(spendBecause),
     deadline,
     deadlineBecause: deadline === null ? DEADLINE_BECAUSE : null,
   }
@@ -640,6 +788,11 @@ export function buildRunModel(inputs: RunInputs): RunModel {
   const window = parseLogWindow(inputs.logs)
   const shown = window.lines.slice(Math.max(0, window.lines.length - RUN_LOG_CAP))
 
+  // The run's own spend by stage, and the verify timeline beside it: the
+  // timeline's spend cell names the panel exactly when the panel is drawn.
+  const rawStages = arrayAt(document['stages'])
+  const spendStages = spendStagesOf(rawStages)
+
   // The kept ring is read, never fed: drawing a screen is not an arrival.
   const buffer = inputs.replay instanceof ReplayBuffer ? inputs.replay : ringOf(inputs.replay ?? [])
   const bounds = buffer.bounds()
@@ -671,7 +824,14 @@ export function buildRunModel(inputs: RunInputs): RunModel {
       rigor: readRigor(row['rigor']),
     },
     ledger: ledgerOf(row),
-    stages: stagesOf(row, document['verify']),
+    spendStages,
+    spendStagesDropped: measured(Math.max(0, (rawStages?.length ?? 0) - RUN_SPEND_STAGES_MAX)),
+    tolerated: toleratedOf(document['tolerated']),
+    stages: stagesOf(
+      row,
+      document['verify'],
+      spendStages.length > 0 ? STAGE_SPEND_BECAUSE : STAGE_SPEND_NO_STAGES,
+    ),
     halt: haltOf(document['halt']),
     pullRequest: {
       repository,
@@ -925,8 +1085,77 @@ function ledgerPanel(factory: ScreenFactory, model: RunLedger): ScreenElement {
   return element
 }
 
-/** stagePanel is the timeline: one row per stage, with its outcome, its counts
- * and -- the two figures no document carries -- its spend and its deadline. */
+/** spendStagesPanel is the run's own spend by stage: the document's top-level
+ * `stages`, one row per stage, with the calls, the sub-agents and the dollars
+ * that stage's model spend came to. Nothing here is derived -- no sum, no share,
+ * and no total divided by the number of stages.
+ *
+ * The panel is drawn exactly when the document carries at least one stage; a
+ * document with none has no panel, and the timeline's spend cells say that the
+ * document carries no stages instead. */
+function spendStagesPanel(factory: ScreenFactory, model: RunModel): ScreenElement {
+  const element = make(factory, 'section', 'run-spend-stages')
+  literal(cell(element, factory, 'h2', 'run-panel-title'), 'spend by stage')
+  const list = cell(element, factory, 'ol', 'run-spend-stage-list')
+  for (const stage of model.spendStages) {
+    const row = cell(list, factory, 'li', 'run-spend-stage')
+    textCell(row, factory, 'span', stage.name, 'label', 'stages[].name', 'run-spend-stage-name')
+    numberCell(row, factory, 'span', stage.duration, 'seconds', 'run-spend-stage-duration')
+    numberCell(row, factory, 'span', stage.calls, 'count', 'run-spend-stage-calls')
+    numberCell(row, factory, 'span', stage.agents, 'count', 'run-spend-stage-agents')
+    numberCell(row, factory, 'span', stage.usd, 'usd', 'run-spend-stage-usd')
+    numberCell(row, factory, 'span', stage.notional, 'usd', 'run-spend-stage-notional')
+  }
+  // What this screen's own bound left out is a reading, so a panel that stopped
+  // at the bound does not read as the whole of the run's record.
+  if (model.spendStagesDropped.value !== null && model.spendStagesDropped.value > 0) {
+    const note = cell(element, factory, 'p', 'run-spend-stages-more')
+    literal(note, 'stages not drawn:')
+    numberCell(note, factory, 'span', model.spendStagesDropped, 'count', 'run-spend-stage-more')
+  }
+  return element
+}
+
+/** toleratedPanel is the findings the run's resolved mode let through, under the
+ * total the block carries. The total is the document's own figure and is drawn
+ * beside the entries rather than replaced by their count: the block is bounded
+ * when it is written and bounded again here, so a list shorter than the total is
+ * not the whole of what the mode tolerated.
+ *
+ * A document with no block at all tolerated nothing, and `renderRun` draws that
+ * as one line rather than as an empty panel. */
+function toleratedPanel(factory: ScreenFactory, tolerated: RunTolerated): ScreenElement {
+  const element = make(factory, 'section', 'run-tolerated')
+  literal(cell(element, factory, 'h2', 'run-panel-title'), 'tolerated by the mode')
+  const total = cell(element, factory, 'p', 'run-tolerated-total')
+  literal(total, 'findings the mode tolerated:')
+  numberCell(total, factory, 'span', tolerated.total, 'count', 'run-tolerated-count')
+  const list = cell(element, factory, 'ol', 'run-tolerated-list')
+  for (const finding of tolerated.findings) {
+    const row = cell(list, factory, 'li', 'run-tolerated-finding')
+    textCell(row, factory, 'span', finding.title, 'sentence', 'tolerated.findings[].title', 'run-tolerated-title')
+    textCell(row, factory, 'span', finding.label, 'label', 'tolerated.findings[].label', 'run-tolerated-label')
+    // The mode is the one word of the finding this console has its own
+    // vocabulary for, so it is drawn through the same table the header's Rigor
+    // row uses; an unknown mode is the record's own word, as text.
+    rigorWord(cell(row, factory, 'span', 'run-tolerated-mode'), rigorModeWord, finding.mode, 'tolerated.findings[].mode')
+    numberCell(row, factory, 'span', finding.likelihood, 'count', 'run-tolerated-likelihood')
+    numberCell(row, factory, 'span', finding.impact, 'count', 'run-tolerated-impact')
+    numberCell(row, factory, 'span', finding.fixCost, 'count', 'run-tolerated-fix-cost')
+    textCell(row, factory, 'span', finding.scoreClass, 'label', 'tolerated.findings[].class', 'run-tolerated-class')
+  }
+  if (tolerated.dropped.value !== null && tolerated.dropped.value > 0) {
+    const note = cell(element, factory, 'p', 'run-tolerated-more')
+    literal(note, 'findings not drawn:')
+    numberCell(note, factory, 'span', tolerated.dropped, 'count', 'run-tolerated-dropped')
+  }
+  return element
+}
+
+/** stagePanel is the timeline: one row per stage, with its outcome and its
+ * counts. Its spend is the figure no document carries -- a verify record has
+ * none -- so the cell is an `n/a` naming the panel that does carry the run's
+ * spend by stage, or naming the missing key when there is no such panel. */
 function stagePanel(factory: ScreenFactory, model: RunModel): ScreenElement {
   const element = make(factory, 'section', 'run-stages')
   literal(cell(element, factory, 'h2', 'run-panel-title'), 'stages')
@@ -1144,6 +1373,16 @@ export function renderRun(factory: ScreenFactory, model: RunModel, theme: RunThe
   root.setAttribute('data-theme', theme)
   root.append(header(factory, model))
   root.append(ledgerPanel(factory, model.ledger))
+  // The run's own spend by stage, then what its mode let through: the two
+  // panels are the document's, and neither is drawn when the document carries
+  // nothing for it. A run that tolerated nothing has no block at all, and that
+  // absence is drawn as the one line it means.
+  if (model.spendStages.length > 0) root.append(spendStagesPanel(factory, model))
+  if (model.tolerated === null) {
+    literal(cell(root, factory, 'p', 'run-tolerated-none'), 'nothing tolerated')
+  } else {
+    root.append(toleratedPanel(factory, model.tolerated))
+  }
   root.append(stagePanel(factory, model))
   root.append(pullRequestPanel(factory, model.pullRequest))
   root.append(logsPanel(factory, model.logs))

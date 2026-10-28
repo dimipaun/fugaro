@@ -50,6 +50,8 @@ import type { ProjectsInputs, ScreenElement, ScreenFactory } from '../../src/ren
 import {
   PR_NO_LINK_REASON,
   RUN_LOG_CAP,
+  RUN_SPEND_STAGES_MAX,
+  RUN_TOLERATED_MAX,
   buildRunModel,
   linkFor,
   parseLogWindow,
@@ -961,15 +963,16 @@ describe('buildRunModel', () => {
     expect(model.ledger.compute.value).toBe(0.5)
     expect(model.ledger.compute.state).toBe('estimated')
     expect(model.ledger.total.value).toBe(1.75)
-    // Per-stage spend is a reading the document does not carry: `diagnose`
-    // reports spend by route and by model, so the stage's figure is n/a with
-    // that sentence rather than a total divided by the number of stages.
+    // Per-stage spend is a reading a verify record does not carry: the run's
+    // spend by stage is the document's top-level `stages` and its own panel, so
+    // the cell is n/a with the sentence that says which of the two it looked
+    // for -- here the missing key, because this document has no `stages`.
     expect(model.stages).toHaveLength(1)
     expect(model.stages[0]?.stage).toBe('test')
     expect(model.stages[0]?.passed).toBe(true)
     expect(model.stages[0]?.tests.value).toBe(1182)
     expect(model.stages[0]?.spend.state).toBe('unavailable')
-    expect(model.stages[0]?.spend.because).toContain('by route and by model')
+    expect(model.stages[0]?.spend.because).toContain('the document carries no stages')
     // And the deadline: `runview.Row` carries none, so the timeline says which
     // field it looked for rather than inventing a deadline from `started_at`.
     expect(model.stages[0]?.deadline).toBeNull()
@@ -1164,6 +1167,121 @@ describe('buildRunModel', () => {
     // is not a decision this console can describe.
     const half = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, rigor: { mode: 'pro' } } }
     expect(buildRunModel(runInputs({ diagnosis: half })).row.rigor).toBeNull()
+  })
+
+  it('spend by stage reads calls and agents absent as not counted and zero as zero', () => {
+    // The document's top-level `stages` is the run's own per-stage record
+    // (`runstore.StageTiming`), and `calls`/`agents` are pointers on the wire:
+    // a stage nobody counted has the key absent, which is not the same fact as
+    // a stage counted at zero. A screen that read the absent key as a zero
+    // would say the stage made no calls.
+    const stages = [
+      {
+        name: 'implement',
+        started_at: '2026-10-15T11:01:00Z',
+        duration_s: 420,
+        calls: 42,
+        agents: 3,
+        model_usd: 1.1,
+        model_notional_usd: 0,
+      },
+      // No `calls`, no `agents`: nobody counted this stage.
+      {
+        name: 'review',
+        started_at: '2026-10-15T11:08:00Z',
+        duration_s: 95,
+        model_usd: 0.15,
+        model_notional_usd: 0,
+      },
+      // Counted, and the count is zero.
+      {
+        name: 'verify',
+        started_at: '2026-10-15T11:10:00Z',
+        duration_s: 42,
+        calls: 0,
+        agents: 0,
+        model_usd: 0,
+        model_notional_usd: 0,
+      },
+    ]
+    const model = buildRunModel(runInputs({ diagnosis: { ...DIAGNOSIS, stages } }))
+    expect(model.spendStages.map((stage) => stage.name)).toEqual(['implement', 'review', 'verify'])
+    expect(model.spendStages[0]?.calls.value).toBe(42)
+    expect(model.spendStages[0]?.agents.value).toBe(3)
+    expect(model.spendStages[0]?.duration.value).toBe(420)
+    expect(model.spendStages[0]?.usd.value).toBe(1.1)
+    expect(model.spendStages[0]?.notional.value).toBe(0)
+    // The absent pair: no value, and the sentence that says which fact it is.
+    expect(model.spendStages[1]?.calls.value).toBeNull()
+    expect(model.spendStages[1]?.calls.because).toBe('not counted for this stage')
+    expect(model.spendStages[1]?.agents.state).toBe('unavailable')
+    // The counted zero: a measured zero, which is a figure the document wrote.
+    expect(model.spendStages[2]?.calls.value).toBe(0)
+    expect(model.spendStages[2]?.calls.state).toBe('measured')
+    expect(model.spendStages[2]?.agents.value).toBe(0)
+    // An entry that is not an object is skipped, never thrown on: the record is
+    // an object a hand can edit.
+    const malformed = buildRunModel(runInputs({ diagnosis: { ...DIAGNOSIS, stages: [null, 'review', stages[0]] } }))
+    expect(malformed.spendStages.map((stage) => stage.name)).toEqual(['implement'])
+    // A document with no `stages` at all draws no panel, and the timeline says
+    // which key is missing rather than naming a panel that is not there.
+    const none = buildRunModel(runInputs())
+    expect(none.spendStages).toEqual([])
+    expect(none.spendStagesDropped.value).toBe(0)
+    expect(none.stages[0]?.spend.because).toContain('the document carries no stages')
+    // With stages, the timeline's spend cell names the panel instead.
+    expect(model.stages[0]?.spend.because).toContain('"spend by stage" panel')
+  })
+
+  it('spend by stage bounds a hand-edited list at 128', () => {
+    // `diagnoseStages` bounds the list when it is written; the document is an
+    // object a hand can edit, so the screen bounds it again and counts what it
+    // left out rather than drawing a list nobody bounded.
+    const stages = Array.from({ length: RUN_SPEND_STAGES_MAX + 2 }, (_, index) => ({
+      name: `stage-${String(index)}`,
+      duration_s: index,
+      calls: index,
+      agents: 0,
+      model_usd: 0.1,
+      model_notional_usd: 0,
+    }))
+    const model = buildRunModel(runInputs({ diagnosis: { ...DIAGNOSIS, stages } }))
+    expect(model.spendStages).toHaveLength(RUN_SPEND_STAGES_MAX)
+    expect(model.spendStages.at(-1)?.name).toBe(`stage-${String(RUN_SPEND_STAGES_MAX - 1)}`)
+    expect(model.spendStagesDropped.value).toBe(2)
+  })
+
+  it('tolerated is null when the block is absent and keeps total above the listed entries', () => {
+    // A run that tolerated nothing has no block at all -- never an empty one --
+    // and the model says so with `null` rather than with an empty panel.
+    expect(buildRunModel(runInputs()).tolerated).toBeNull()
+    const findings = [
+      {
+        title: 'the backoff ceiling is a constant here',
+        label: 'low',
+        mode: 'pro',
+        likelihood: 2,
+        impact: 2,
+        fix_cost: 1,
+        class: 'style',
+      },
+    ]
+    const model = buildRunModel(runInputs({ diagnosis: { ...DIAGNOSIS, tolerated: { findings, total: 4 } } }))
+    // `total` is how many findings the mode really tolerated and is never below
+    // the entries listed: the console draws it as the document wrote it rather
+    // than as the length of the list beside it.
+    expect(model.tolerated?.total.value).toBe(4)
+    expect(model.tolerated?.findings).toHaveLength(1)
+    expect(model.tolerated?.findings[0]?.title).toBe('the backoff ceiling is a constant here')
+    expect(model.tolerated?.findings[0]?.mode).toBe('pro')
+    expect(model.tolerated?.findings[0]?.likelihood.value).toBe(2)
+    expect(model.tolerated?.findings[0]?.scoreClass).toBe('style')
+    expect(model.tolerated?.dropped.value).toBe(0)
+    // The list is bounded here too, and what it left out is a reading.
+    const many = Array.from({ length: RUN_TOLERATED_MAX + 3 }, () => findings[0])
+    const bounded = buildRunModel(runInputs({ diagnosis: { ...DIAGNOSIS, tolerated: { findings: many, total: many.length } } }))
+    expect(bounded.tolerated?.findings).toHaveLength(RUN_TOLERATED_MAX)
+    expect(bounded.tolerated?.dropped.value).toBe(3)
   })
 })
 
@@ -1444,6 +1562,56 @@ describe('renderRun', () => {
     expect(one(row, 'run-rigor-mode').textContent).toBe('Pro')
     expect(one(row, 'run-rigor-from').textContent).toBe('the repository')
     expect(all(row, 'run-rigor-area')).toHaveLength(0)
+  })
+
+  it('draws the spend by stage panel and the findings the mode tolerated', () => {
+    const stages = [
+      { name: 'implement', duration_s: 420, calls: 42, agents: 3, model_usd: 1.1, model_notional_usd: 0 },
+      { name: 'review', duration_s: 95, model_usd: 0.15, model_notional_usd: 0 },
+    ]
+    const tolerated = {
+      findings: [
+        { title: 'the retry table is stale', label: 'low', mode: 'pro', likelihood: 2, impact: 2, fix_cost: 1, class: 'style' },
+      ],
+      total: 4,
+    }
+    const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis: { ...DIAGNOSIS, stages, tolerated } })), 'light')
+    const spend = one(tree, 'run-spend-stages')
+    expect(texts(spend, 'run-spend-stage-name')).toEqual(['implement', 'review'])
+    expect(texts(spend, 'run-spend-stage-calls')).toEqual(['42', 'n/a'])
+    expect(texts(spend, 'run-spend-stage-agents')).toEqual(['3', 'n/a'])
+    expect(texts(spend, 'run-spend-stage-usd')).toEqual(['$1.10', '$0.15'])
+    // The absent counts say which fact they are, in the cell's title.
+    expect(all(spend, 'run-spend-stage-calls')[1]?.getAttribute('title')).toBe('not counted for this stage')
+    const mode = one(tree, 'run-tolerated')
+    // The console's own word for the mode, and the document's own for the rest.
+    expect(texts(mode, 'run-tolerated-mode')).toEqual(['Pro'])
+    expect(texts(mode, 'run-tolerated-label')).toEqual(['low'])
+    expect(one(mode, 'run-tolerated-count').textContent).toBe('4')
+  })
+
+  it('a tolerated title is drawn as text, never markup', () => {
+    // A title is a reviewer's own sentence, stored in a record a hand can edit:
+    // it reaches the screen through `putText`, so a title holding markup is the
+    // literal characters and never an element.
+    const title = '<img src=x onerror=1>'
+    const tolerated = {
+      findings: [{ title, label: 'low', mode: 'pro', likelihood: 2, impact: 2, fix_cost: 1, class: 'style' }],
+      total: 1,
+    }
+    const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis: { ...DIAGNOSIS, tolerated } })), 'light')
+    expect(one(tree, 'run-tolerated-title').textContent).toBe(title)
+    expect(walk(tree).map((node) => node.tag)).not.toContain('img')
+  })
+
+  it('draws no panel for a run that tolerated nothing, and says so in one line', () => {
+    // The block is absent -- never empty -- for a run that tolerated nothing,
+    // and the absence is one line rather than a panel with no rows in it.
+    const tree = renderRun(factory, buildRunModel(runInputs()), 'light')
+    expect(all(tree, 'run-tolerated')).toHaveLength(0)
+    expect(one(tree, 'run-tolerated-none').textContent).toBe('nothing tolerated')
+    // The same for the run's spend by stage: no `stages`, no panel.
+    expect(all(tree, 'run-spend-stages')).toHaveLength(0)
   })
 })
 

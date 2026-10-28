@@ -487,13 +487,15 @@ whole answer is the run detail's Rigor row (§2.6).
 
 ### 2.6 Run detail — `console/src/renderer/screens/run.ts`
 
-Reached from a `live-run` row. Regions in tree order: header → ledger → stages → pull
-request → logs → diagnosis → replay → warnings.
+Reached from a `live-run` row. Regions in tree order: header → ledger → spend by stage →
+tolerated by the mode → stages → pull request → logs → diagnosis → replay → warnings.
 
 | Group | Class hooks |
 |---|---|
 | Header | `run-header`, `run-id`, `run-repo`, `run-workflow`, `run-status`, `run-outcome`, `run-stage`, `run-branch`, `run-requested-by`, `run-started-by`, `run-flags`, `run-settled`, `run-stale`, `run-follow-up`, `run-halt`, `run-halt-word`, `run-halt-reason`, `run-halt-scope`, `run-halt-at`, `run-halt-detail`, `run-rigor`, `run-rigor-word`, `run-rigor-mode`, `run-rigor-from-word`, `run-rigor-from`, `run-rigor-area`, `run-rigor-area-name`, `run-rigor-area-mode` |
 | Ledger | `run-ledger`, `run-ledger-model`, `run-ledger-model-value`, `run-ledger-compute`, `run-ledger-compute-value`, `run-ledger-total`, `run-ledger-total-value`, `run-number`, `run-panel-title` |
+| Spend by stage | `run-spend-stages`, `run-spend-stage-list`, `run-spend-stage`, `run-spend-stage-name`, `run-spend-stage-duration`, `run-spend-stage-calls`, `run-spend-stage-agents`, `run-spend-stage-usd`, `run-spend-stage-notional`, `run-spend-stages-more`, `run-spend-stage-more` |
+| Tolerated by the mode | `run-tolerated`, `run-tolerated-total`, `run-tolerated-count`, `run-tolerated-list`, `run-tolerated-finding`, `run-tolerated-title`, `run-tolerated-label`, `run-tolerated-mode`, `run-tolerated-likelihood`, `run-tolerated-impact`, `run-tolerated-fix-cost`, `run-tolerated-class`, `run-tolerated-more`, `run-tolerated-dropped`, `run-tolerated-none` |
 | Stages | `run-stages`, `run-stage-list`, `run-stage`, `run-stage-name`, `run-stage-passed`, `run-stage-tests`, `run-stage-failures`, `run-stage-duration`, `run-stage-spend`, `run-stage-deadline` |
 | Pull request | `run-pr`, `run-pr-repo`, `run-pr-number`, `run-pr-sep`, `run-pr-url`, `run-pr-reason` |
 | Logs | `run-logs`, `run-log-list`, `run-log-line`, `run-log-time`, `run-log-severity`, `run-log-stage`, `run-log-message`, `run-log-note`, `run-log-dropped`, `run-log-of`, `run-log-total`, `run-log-refused`, `run-log-refused-count`, `run-log-link`, `run-log-link-note`, `run-log-tail`, `run-log-tail-line` |
@@ -507,14 +509,29 @@ navigating attribute).
 States: terminal / still running / settled / stale draft / follow-up (header flags, as
 text); halted (`div.run-halt`, the word `HALTED`); stage passed/failed (`run-stage-passed`
 with `passed`/`failed`); deadline ok/near/over (`run-stage-deadline`), or `n/a` when the
-document has no deadline; a stage spend that is always `n/a` (no document carries spend by
-stage); a pull request with **no link at all** (`run.link` is typed `null`, and
-`PR_NO_LINK_REASON` explains why); logs bounded ("lines not drawn: N of M") and a count of
-refused lines; replay scrubbed / not scrubbed.
+document has no deadline; a verify record's spend always `n/a` (no verify record carries
+one: the run's spend by stage is the spend-by-stage panel's, or the cell names the missing
+`stages` key when the document carries none); a stage's calls or sub-agents `n/a` with the
+sentence "not counted for this stage" when the document left the pointer absent, and a
+measured `0` when it counted the stage at zero; a pull request with **no link at all**
+(`run.link` is typed `null`, and `PR_NO_LINK_REASON` explains why); logs bounded ("lines
+not drawn: N of M") and a count of refused lines; replay scrubbed / not scrubbed.
 
-Readings: money (`usd`) throughout the ledger, the diagnosis route and model splits, the
-reported/charged pair; counts for tests, failures, dropped lines, follow-up PRs and
-comments, replay records; **seconds** for a stage's duration and the replay window.
+Readings: money (`usd`) throughout the ledger, the spend-by-stage rows, the diagnosis route
+and model splits, the reported/charged pair; counts for tests, failures, dropped lines,
+calls, sub-agents, tolerated findings and their score axes, follow-up PRs and comments,
+replay records; **seconds** for a stage's duration and the replay window.
+
+**The spend-by-stage and tolerated panels are the document's own two blocks, and neither is
+drawn when the document carries nothing for it.** `section.run-spend-stages` draws the
+top-level `stages` -- `runstore.StageTiming`, the run's own per-stage record -- one
+`li.run-spend-stage` per stage, bounded at the CLI's own `diagnoseStages` (128) with the
+rest counted in `p.run-spend-stages-more`. `section.run-tolerated` draws the `tolerated`
+block: the `total` it carries (never below the entries listed, and drawn beside them rather
+than replaced by their count), then one `li.run-tolerated-finding` per finding, bounded at
+`runstore.MaxTolerated` (100). A run that tolerated nothing has no block at all, and
+`p.run-tolerated-none` is the one line that says so. Neither panel sums, divides or derives
+a figure: every number on them is one the document wrote.
 
 **The Rigor row is the one place the whole block is drawn.** `div.run-rigor` is appended to
 the header only when the record carries a block, and it draws four things in tree order:
