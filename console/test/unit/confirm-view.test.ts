@@ -203,7 +203,9 @@ function aView(overrides: Partial<ConfirmFields> = {}): ConfirmFields {
 
 /** fakeBridge is the confirmation window's whole surface, recording what it was
  * asked. */
-function fakeBridge(options: { readonly fields?: ConfirmReply } = {}): {
+function fakeBridge(
+  options: { readonly fields?: ConfirmReply; readonly fieldsError?: Error } = {},
+): {
   readonly bridge: ConfirmBridge
   readonly answered: readonly boolean[]
   readonly calls: string[]
@@ -213,6 +215,7 @@ function fakeBridge(options: { readonly fields?: ConfirmReply } = {}): {
   const bridge: ConfirmBridge = {
     fields: async () => {
       calls.push('fields')
+      if (options.fieldsError !== undefined) throw options.fieldsError
       return options.fields ?? { ok: true, data: aView() }
     },
     answer: async (yes: boolean) => {
@@ -291,7 +294,7 @@ describe('the confirmation document and its view', () => {
     expect(text, 'confirm.html holds an on* handler attribute').not.toMatch(/\son[a-z]+\s*=/i)
   })
 
-  it('draws every value as a literal text node, and the fake refuses markup', async () => {
+  it('draws every value as a literal text node, through an element with no markup slot', async () => {
     // The headline: the values of this window are untrusted-by-default (a
     // repository's title, a task text), and rule 11's answer is that each is a
     // **text node**. A view that wrote any of them as markup would have the
@@ -306,8 +309,9 @@ describe('the confirmation document and its view', () => {
     expect(document.created.filter((tag) => tag === 'img' || tag === 'a' || tag === 'b')).toEqual([])
     expect([...new Set(document.created)].sort()).toEqual(['button', 'dd', 'dt'])
 
-    // The mutation proof, and the reason the fake has no markup slot: the same
-    // value written through one is recorded as a failure and refused.
+    // The fake's contract, made exact: the element the view writes through has
+    // no markup slot at all, so a write to one is recorded and refused -- a view
+    // that reached for `innerHTML` would fail here rather than draw markup.
     const victim = element('confirm-task')
     expect(() => {
       ;(victim as unknown as { innerHTML: string }).innerHTML = HOSTILE_TASK
@@ -419,6 +423,45 @@ describe('the confirmation document and its view', () => {
     await actions.button(CANCEL_LABEL).fire('click', 0)
     expect(answered).toEqual([false])
     expect(calls).toEqual(['fields', 'answer'])
+  })
+
+  it('leaves a focused Cancel in place when reading the launch throws', async () => {
+    // Cancel is drawn and focused *before* the launch is read, so a `fields()`
+    // that rejects -- not the refusal above, which answers -- leaves the window
+    // with the one control that declines rather than a window with nothing on it.
+    // Escape, Enter and the close box already decline in the main process; this
+    // is the document's own half of "there is always a way out".
+    const document = fakeDocument()
+    const { bridge } = fakeBridge({ fieldsError: new Error('the read threw') })
+    await expect(mountConfirm(document, bridge)).rejects.toThrow('the read threw')
+
+    const actions = document.byId.get('confirm-actions') as FakeElement
+    expect(actions.children.map((child) => child.textContent)).toEqual([CANCEL_LABEL])
+    expect(actions.button(CANCEL_LABEL).focused).toBe(true)
+    expect(actions.children.some((child) => child.textContent === CONFIRM_LABEL)).toBe(false)
+  })
+
+  it('wraps a long field value rather than widening the window', async () => {
+    // A repository title, a ref or a path can be thousands of characters with no
+    // space to break at, and the dashboard's grid puts `main` in the `auto`
+    // column: an unbroken value widens it and scrolls the page sideways. The
+    // `dl` carries the hook the stylesheet's `overflow-wrap: anywhere` rule
+    // selects.
+    const screens = readFileSync(
+      fileURLToPath(new URL('../../src/renderer/theme/screens.css', import.meta.url)),
+      'utf8',
+    )
+    const rule = /\.console-confirm-fields\s+dd\s*\{([^}]*)\}/.exec(screens)
+    expect(rule, 'screens.css carries no rule wrapping the field values').not.toBeNull()
+    expect(rule?.[1]).toMatch(/overflow-wrap:\s*anywhere/)
+    expect(markup(html)).toMatch(/<dl id="confirm-fields" class="console-confirm-fields">/)
+
+    // The value reaches its `dd` whole -- the rule wraps it, the view does not
+    // cut it. (The fake DOM cannot lay out, so the wrap itself is the
+    // stylesheet's; the visual result is V2.5.1c's e2e.)
+    const ref = 'x'.repeat(4_096)
+    const { document } = await mount({ fields: { ok: true, data: aView({ ref }) } })
+    expect(fieldValue(document, 'Ref')).toBe(ref)
   })
 
   it('gives the task box a rule that scrolls it, and a bound', () => {

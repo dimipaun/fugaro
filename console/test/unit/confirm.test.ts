@@ -22,6 +22,8 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
+import type { Session } from 'electron'
+
 import { DECLINED_CANCELLED, confirmView, createLaunchRunner } from '../../src/main/launch'
 import type {
   ConfirmView,
@@ -152,14 +154,57 @@ function fakeIpcMain(): IpcMainLike & {
   }
 }
 
-/** confirmOver builds the confirmer over fakes, and keeps the windows it built. */
+type FakeSession = {
+  readonly value: Session
+  readonly requestHandler: () => RequestHandler | null
+  readonly checkHandler: () => (() => boolean) | null
+  readonly installed: { request: number; check: number }
+}
+
+type RequestHandler = (
+  contents: unknown,
+  permission: string,
+  callback: (granted: boolean) => void,
+) => void
+
+/** fakeSession records both of the handlers `denyEveryPermission` installs, and
+ * how many times each was installed: the confirmation window denies every
+ * permission on its **own** session rather than relying on the handlers the
+ * other windows put on `session.defaultSession`, so a test has to be able to say
+ * which session was denied and that it was denied once. */
+function fakeSession(): FakeSession {
+  let request: RequestHandler | null = null
+  let check: (() => boolean) | null = null
+  const installed = { request: 0, check: 0 }
+  const session = {
+    setPermissionRequestHandler(handler: RequestHandler): void {
+      request = handler
+      installed.request += 1
+    },
+    setPermissionCheckHandler(handler: () => boolean): void {
+      check = handler
+      installed.check += 1
+    },
+  }
+  return {
+    value: session as unknown as Session,
+    requestHandler: () => request,
+    checkHandler: () => check,
+    installed,
+  }
+}
+
+/** confirmOver builds the confirmer over fakes, and keeps the windows and the
+ * session it built them with. */
 function confirmOver(options: { readonly parent?: () => FakeWindow | null } = {}): {
   readonly confirmer: LaunchConfirmer
   readonly ipcMain: ReturnType<typeof fakeIpcMain>
   readonly windows: FakeWindow[]
+  readonly session: FakeSession
 } {
   const ipcMain = fakeIpcMain()
   const windows: FakeWindow[] = []
+  const session = fakeSession()
   const BrowserWindow = function BrowserWindow(this: unknown, opts: Record<string, unknown>) {
     const window = fakeConfirmWindow(opts)
     windows.push(window)
@@ -171,8 +216,9 @@ function confirmOver(options: { readonly parent?: () => FakeWindow | null } = {}
     parent: (options.parent ?? (() => null)) as never,
     appPath: APP_PATH,
     entryUrl: CONFIRM_ENTRY_URL,
+    session: session.value,
   })
-  return { confirmer, ipcMain, windows }
+  return { confirmer, ipcMain, windows, session }
 }
 
 /** ask delivers one message over one channel with a forged event: the whole of
@@ -457,6 +503,33 @@ describe('the confirmation window, and how it is cancelled', () => {
     expect(window.options['modal']).toBe(true)
   })
 
+  it('denies every permission on its own session, installed once at creation', async () => {
+    // Defence in depth: the window must not rely on the request and check
+    // handlers the dashboard installs on `session.defaultSession`, because a
+    // window of its own may be built on a session that is not that one. The
+    // handlers are put in place when the confirmer is built -- not per `open` --
+    // so a second window reuses the ones the first was covered by.
+    const { confirmer, windows, session } = confirmOver()
+    expect(session.installed).toStrictEqual({ request: 1, check: 1 })
+
+    const request = session.requestHandler()
+    expect(request, 'the session has no permission request handler').not.toBeNull()
+    let granted: boolean | null = null
+    request?.(null, 'media', (answer) => {
+      granted = answer
+    })
+    expect(granted).toBe(false)
+    expect(session.checkHandler()?.()).toBe(false)
+
+    confirmer.open(viewFixture(), recordingDecider().decide)
+    confirmer.open(viewFixture(), recordingDecider().decide)
+    await untilSettled()
+    expect(windows).toHaveLength(2)
+    // Still the two handlers from creation: `open` installs nothing of its own.
+    expect(session.installed).toStrictEqual({ request: 1, check: 1 })
+    expect(session.requestHandler()).toBe(request)
+  })
+
   it('is never built through dialog, which cannot show a 16 KiB task scrollably', () => {
     // The design names the window rather than a message box, and the mutation
     // this catches is a later edit reaching for the easy one. What is read is the
@@ -624,6 +697,38 @@ describe('the confirmation window, and how it is cancelled', () => {
     // A 404 after a decision is not a second one.
     window.fire('closed')
     expect(decider.calls).toStrictEqual([[false, undefined]])
+  })
+
+  it('decides nothing on a response code it could not read, and the close declines with no child started', async () => {
+    // The same fail-closed pin as the 404 above, but observed at the only place
+    // that matters: the child that was **not** started. A `-1` -- a response code
+    // Electron could not read -- decides nothing by itself, so the window is
+    // still open; it is the close (or Escape) that declines, and a declined
+    // launch starts no child.
+    const closed = confirmOver()
+    const closedSpawner = countingSpawner()
+    void aLaunch(runnerOver(closed.confirmer, closedSpawner))
+    await untilSettled()
+    const closedWindow = closed.windows[0] as FakeWindow
+
+    closedWindow.webContents.fire('did-navigate', {}, CONFIRM_ENTRY_URL, -1, '')
+    expect(closedWindow.closeRequested()).toBe(false)
+    closedWindow.fire('closed')
+    await untilSettled()
+    expect(closedSpawner.calls).toStrictEqual([])
+
+    const escaped = confirmOver()
+    const escapedSpawner = countingSpawner()
+    void aLaunch(runnerOver(escaped.confirmer, escapedSpawner))
+    await untilSettled()
+    const escapedWindow = escaped.windows[0] as FakeWindow
+
+    escapedWindow.webContents.fire('did-navigate', {}, CONFIRM_ENTRY_URL, -1, '')
+    const event = keyEvent()
+    escapedWindow.webContents.fire('before-input-event', event, { type: 'keyDown', key: 'Escape' })
+    expect(event.prevented).toBe(true)
+    await untilSettled()
+    expect(escapedSpawner.calls).toStrictEqual([])
   })
 
   it('does not show a window that was already decided', () => {

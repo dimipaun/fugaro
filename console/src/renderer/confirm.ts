@@ -134,9 +134,12 @@ export interface ConfirmDocument {
  * window shows and re-reading could show a different one -- and it returns when
  * the window is drawn.
  *
- * The order is the point: the fields are read, the window is drawn, and only
- * then are the buttons attached, so a window that was drawn from a refusal never
- * has a confirming button to click at all.
+ * The order is the point. **Cancel goes in first, before the launch is read**:
+ * a `fields()` that never resolves, or that rejects rather than answering, must
+ * still leave a focused way out, so the window is never one with nothing to
+ * click. Once the fields arrive the confirming button joins it, the confirming
+ * button first and Cancel second, Cancel still the focused one; a refusal draws
+ * its sentence and no confirming button at all.
  */
 export async function mountConfirm(document: ConfirmDocument, bridge: ConfirmBridge): Promise<void> {
   const status = document.getElementById('confirm-status')
@@ -166,13 +169,18 @@ export async function mountConfirm(document: ConfirmDocument, bridge: ConfirmBri
     await bridge.answer(false)
   })
 
+  // Cancel before the launch is read: a `fields()` that rejects, or that never
+  // answers, must leave the operator a focused way out rather than a window with
+  // no control on it. Escape, Enter and the close box already decline in the
+  // main process; this is the document's own half of the same rule.
+  if (actions !== null) actions.replaceChildren(cancel)
+  cancel.focus()
+
   const reply = await bridge.fields()
   if (!reply.ok) {
     // A refusal is a window that may not spawn: the sentence is the main
     // process's, drawn as text, and Cancel is the only control left.
     if (status !== null) status.textContent = reply.reason
-    if (actions !== null) actions.replaceChildren(cancel)
-    cancel.focus()
     return
   }
 

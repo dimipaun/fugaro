@@ -41,15 +41,15 @@
   </head>
   <body>
     <!--
-      The whole of this document is four empty containers and a heading: every
-      row, both buttons and the task text are built by `src/renderer/confirm.ts`,
-      which is the one script below. That is rule 11's "renders every value as a
-      text node" written as a structure rather than as a promise -- there is no
-      value in this file for a value to be markup in.
+      The whole of this document is an `h1`, an `h2`, a status `p`, a `dl`, a
+      `pre` and a `div`: every row, both buttons and the task text are built by
+      `src/renderer/confirm.ts`, which is the one script below. That is rule 11's
+      "renders every value as a text node" written as a structure rather than as
+      a promise -- there is no value in this file for a value to be markup in.
 
       `#confirm-task` is the whole task text, never cut: it is a `<pre>` so the
       text keeps the shape it was written with, and the stylesheet bounds it and
-      scrolls it rather than the document shortening it. The two classes below
+      scrolls it rather than the document shortening it. The three classes below
       are this window's hooks in the theme (design §2.13): its document carries
       classes rather than the picker's ids, because the id scan in
       `installations-view.test.ts` holds every id `screens.css` selects to the
@@ -58,7 +58,7 @@
     <main>
       <h1>Confirm this run</h1>
       <p id="confirm-status">Reading the launch…</p>
-      <dl id="confirm-fields"></dl>
+      <dl id="confirm-fields" class="console-confirm-fields"></dl>
       <h2>The task, as submitted</h2>
       <pre id="confirm-task" class="console-confirm-task"></pre>
       <div id="confirm-actions" class="console-confirm-actions"></div>

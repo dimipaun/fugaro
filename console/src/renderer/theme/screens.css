@@ -1341,6 +1341,15 @@ main p {
   font-size: var(--font-size-sm);
 }
 
+/* A field value is a repository title, a ref or a path, and one of those can be
+ * thousands of characters with no space to break at. The dashboard's grid puts
+ * `main` in the `auto` column, so a value like that widens the column and
+ * scrolls the whole page sideways; `anywhere` lets a long value wrap inside the
+ * `dd` rather than move the window. The `dl` carries the hook. */
+.console-confirm-fields dd {
+  overflow-wrap: anywhere;
+}
+
 /* The two answers are buttons and a button's boundary is `--border-strong` (the
  * role table the picker's controls read from). The rule is one rule for both
  * because the view gives them the same treatment: it draws the confirming button

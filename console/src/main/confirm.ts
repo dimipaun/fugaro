@@ -41,13 +41,18 @@
 
 import { join } from 'node:path'
 
-import type { BrowserWindow, BrowserWindowConstructorOptions } from 'electron'
+import type { BrowserWindow, BrowserWindowConstructorOptions, Session } from 'electron'
 
 import type { ConfirmView, LaunchConfirmer } from './launch'
 import type { ConsoleEventLike, IpcMainLike } from './ipc'
 import { SENDER_REFUSAL } from './ipc'
 import { APP_ORIGIN } from './protocol'
-import { consoleWebPreferences, denyPageTitleUpdate, installWebContentsSecurity } from './window'
+import {
+  consoleWebPreferences,
+  denyEveryPermission,
+  denyPageTitleUpdate,
+  installWebContentsSecurity,
+} from './window'
 
 /** CONFIRM_CHANNEL_PREFIX is the whole of this window's IPC surface, and it is a
  * prefix of its own: neither the dashboard's `fugaro:console/` nor the picker's
@@ -118,6 +123,14 @@ export interface ConfirmWindowDeps {
   /** the document this window loads, which is `CONFIRM_ENTRY_URL` in the shipped
    * app and an argument here so a test can read which URL was loaded. */
   readonly entryUrl: string
+  /** session is the Electron `Session` this window's permissions are denied on.
+   * It is a dependency rather than a read of `session.defaultSession` on purpose:
+   * the confirmation window denies every permission on **its own** session
+   * (defence in depth), so it does not rely on the request and check handlers the
+   * dashboard installs on `session.defaultSession` -- a window built on another
+   * session would otherwise be left with whatever that session allows. Part 2b-3
+   * passes the real session at the entry point. */
+  readonly session: Session
 }
 
 /** confirmOptions is the confirmation window's construction options: the
@@ -222,6 +235,15 @@ export function createConfirmWindow(deps: ConfirmWindowDeps): LaunchConfirmer {
     finish(entry, raw)
     return { ok: true, data: { answered: true } }
   })
+
+  // Every permission is denied on this window's own session, once, here at
+  // creation rather than per `open`: the denial is a property of the session the
+  // window is built on, so it is in place before the first window exists and a
+  // second window reuses it. It is not `buildHardenedWindow`'s call because that
+  // path creates its own window and its own load, and this module reads the
+  // window's `webContents` once and attaches listeners of its own between
+  // construction and the load (see `open`).
+  denyEveryPermission(deps.session)
 
   return Object.freeze({
     open(view: ConfirmView, decide: (yes: boolean, reason?: string) => void): void {
