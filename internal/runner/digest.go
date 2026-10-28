@@ -259,8 +259,8 @@ func (r *run) rememberDigestStep(ctx context.Context) error {
 // stage runs, so being on it is not enough to be the step's commit. What is read
 // instead is what the step recorded in this process before any stage ran
 // (rememberDigestStep), which no stage's git or state-directory writes can
-// change; the run's oldest test record
-// (verify.Records, oldest first) is then checked against it, because the step
+// change; the run's oldest test record (verify.Records, oldest first) is then
+// checked against it, because the step
 // verifies its own commit before any stage runs (digestStep), so that record is
 // the one made on the step's commit. A stage that amended the commit and rewrote
 // the record's head_sha to name its own leaves a branch that still holds a

@@ -1378,7 +1378,8 @@ func TestDigestRunAddsNoOtherFile(t *testing.T) {
 // the digest step's own commit (an amend) leaves the branch holding no commit
 // whose bytes this run generated, and the reports are put back to the step's own
 // commit all the same: what says which commit that is is the commit the step
-// recorded in this process before any stage ran, which no stage can write.
+// recorded in this process before any stage ran, which no stage's git or
+// state-directory writes can change.
 //
 // Mutation (read the branch's first own commit instead, as the first cut did):
 // the amended commit is taken for the step's, its edit stays in the pull request,
