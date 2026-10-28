@@ -60,6 +60,7 @@ const eeBoundaryPackage = "internal/eeboundary/"
 var eeReadingTests = []string{
 	"TestDocsEELicensed",
 	"TestDocsLicensingLicenceRefCopy",
+	"TestDocsLicensingOneWording",
 	"TestDocsLicensingStatement",
 }
 

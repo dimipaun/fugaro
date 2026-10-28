@@ -15,20 +15,37 @@ brings plan task L4.1 forward with a draft rather than an approved text.
 
 **Amended 2026-10-27: counsel's text replaces the draft.** `ee/LICENSE`, `console/LICENSE.md` and
 `mobile/LICENSE.md` now carry counsel's revised text, one wording in all three, with no draft banner. It
-still names two documents that are not published: the Subscription Terms and the contributor licence
-agreement, shown as bracketed placeholders that a later change fills. Counsel's other items are
+named two documents as bracketed placeholders that a later change fills: the Subscription Terms,
+still a placeholder today, and the contributor licence agreement, whose placeholder was filled on
+2026-10-29 (see below). Counsel's other items are
 handled so: the root `LICENSE` stays pure MIT and `README.md` and `LICENSING.md` state the three
 directories (the owner's ruling of 2026-10-27, keeping O2); `README.md`, `LICENSE` and `LICENSING.md`
 state no client-side MIT exception (counsel's 2.1, checked: none found); SPDX notices on every file in
 `console/` and `mobile/`, a `LICENSES/` directory and the copyleft and app-store audit
 ([dependency-audit.md](dependency-audit.md)) are one
-follow-up run; the CLA text is counsel's and final, approved as-is on 2026-10-28, while its URL and the CONTRIBUTING gate wait on the owner's Gist and CLA Assistant install, and the owner's
+follow-up run; the CLA text is counsel's and final, approved as-is on 2026-10-28, whose URL the owner published on 2026-10-29 (see below) while the CONTRIBUTING gate still waits on the CLA Assistant install, and the owner's
 ruling of 2026-10-27 is that they arrive together for `ee/`, `console/` and `mobile/`, not one directory
 at a time. Questions
 for counsel: the covered coordinator and orchestrator code lives outside the three directories and stays
 MIT until it moves; the note that the licence "applies only to code added or changed after it is adopted"
 sits beside a clause covering "every file" under the directories; and the Licensor is defined only
 through Subscription Terms that do not exist yet, while the copyright line names the owner personally.
+
+**Amended 2026-10-29: the CLA's URL is published, and the placeholder is gone.** The owner published
+the contributor licence agreement as a Gist -- one Markdown file, `fugaro-cla.md`, renamed from
+`gistfile1.txt` before publication, holding only the agreement text of [CLA.md](CLA.md) and
+byte-identical to it but for a trailing newline as the owner read them -- nothing in the tree can
+check a network resource (U9 in [reconciliation.md](reconciliation.md#unverified)). The licence files now name its raw URL pinned to
+that revision,
+https://gist.githubusercontent.com/dimipaun/d5bb5db937f973b25be5778ce14ec8dd/raw/64918c7fc0f782327db82e7e790db53c3d47d09f/fugaro-cla.md,
+where `[CLA URL TO BE PUBLISHED]` stood, in `ee/LICENSE`, `console/LICENSE.md`, `mobile/LICENSE.md`
+and the `LICENSES/` copy (the placeholder token the only change: the one wording is unchanged,
+`ee/LICENSE` and the `LICENSES/` copy stay byte for byte, and the console's and the mobile app's
+files stay the same Markdown),
+and the docs test's pin moved with them. **The URL is revision-pinned, so editing the Gist later does
+not change it**: a new revision needs a new URL in the licence files, a change counsel should see.
+That is plan task L0.2's last item; CLA Assistant is still to be installed (the CONTRIBUTING gate),
+and the Subscription Terms page is still not published (L4.3).
 
 **Amended 2026-10-27: the Subscription Terms draft.** [subscription-terms.md](subscription-terms.md)
 drafts the Fugaro Subscription Terms the licence names, for counsel to review; it is **not in
@@ -48,10 +65,10 @@ force** and still awaits counsel (plan task L4.5,
 **Amended 2026-10-28: CLA Assistant is installed.** The owner installed CLA Assistant on
 `dimipaun/fugaro`, so the agreement has its two reader-facing surfaces: the signing link in
 `CONTRIBUTING.md`'s `## Licensing of contributions` section and the badge in the README's opening
-(the app's own, which the owner supplied). The rest of L0.2's checklist — the Gist's raw URL in the
-three licence files, the allow-list, the visible status and the test pull request — is the owner's
-and is not recorded here; the `[CLA URL TO BE PUBLISHED]` placeholder those three files carry is
-L4.4 and waits on the Gist.
+(the app's own, which the owner supplied). The Gist's raw URL is now in the licence files (the
+`[CLA URL TO BE PUBLISHED]` placeholder is gone). The rest of L0.2's checklist — the allow-list and
+the visible status — is the owner's and is not recorded here; its test pull request waits for the
+first outside contribution, since the owner controls no second GitHub account.
 
 Spec owner: the repository owner. Spec received 2026-10-24; reconciled against `origin/main` at
 `e924481cd` the same day.

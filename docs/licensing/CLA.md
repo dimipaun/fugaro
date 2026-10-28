@@ -1,13 +1,20 @@
 > **Note for the owner, not part of the agreement.** CLA Assistant reads the agreement from a
-> GitHub Gist holding one Markdown file, and shows a contributor everything in that file. To
-> create it: open <https://gist.github.com>, create a gist named `fugaro-cla.md` (secret or
-> public; the agreement is meant to be read by anybody, so public is the usual choice), and paste
-> into it **only the text between the `BEGIN AGREEMENT` and `END AGREEMENT` lines below**, without
-> those two lines and without this note. Save, open the file's
-> **Raw** view, and give that URL to CLA Assistant (plan task L0.2). Editing the gist later changes
-> the agreement for new signatures, so after the agreement is edited here, update the gist from
-> this file and keep the two in step. The allow-listed bots are part of the app's configuration,
-> not of this text.
+> GitHub Gist holding one Markdown file, and shows a contributor everything in that file. The
+> Gist now exists (plan task L0.2): its file is named `fugaro-cla.md` (renamed from
+> `gistfile1.txt` before publication) and holds only the text between the `BEGIN AGREEMENT` and
+> `END AGREEMENT` lines below, without those two lines and without this note -- the owner read the
+> two against each other when publishing, and U9 in
+> [reconciliation.md](reconciliation.md#unverified) records that no test in the tree can check a
+> network resource. The licence files
+> name its revision-pinned raw URL,
+> <https://gist.githubusercontent.com/dimipaun/d5bb5db937f973b25be5778ce14ec8dd/raw/64918c7fc0f782327db82e7e790db53c3d47d09f/fugaro-cla.md>,
+> and CLA Assistant is given the same URL. **That URL does not change when the Gist is edited**:
+> it names one revision, so a later edit to the Gist leaves the licence files naming the revision
+> they were given. To publish a new revision, edit the Gist from this file (keeping the two in
+> step) and then replace that URL in `ee/LICENSE`, `console/LICENSE.md`, `mobile/LICENSE.md` and
+> the `LICENSES/` copy with the new revision's raw URL -- a change counsel should see, because it
+> is the agreement a licensee is pointed at. The allow-listed bots are part of the app's
+> configuration, not of this text.
 
 <!-- BEGIN AGREEMENT -->
 

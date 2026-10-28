@@ -145,8 +145,10 @@ single click-through signature in CLA Assistant. **Amended 2026-10-28: counsel r
 it as-is**, with no operative clause changed, so L0.1's CLA-text item is closed and L0.2 installs it
 as it stands. L0.2 is the owner's CLA Assistant install, in these steps:
 
-- [ ] Create the Gist from `CLA.md` as its top note says (only the agreement text), and copy the
-  file's **Raw** URL.
+- [x] Create the Gist from `CLA.md` as its top note says (only the agreement text), and copy the
+  file's **Raw** URL. **DONE 2026-10-29:** the Gist's file is `fugaro-cla.md` (renamed from
+  `gistfile1.txt` before publication); the URL the owner gave is revision-pinned, so editing the
+  Gist later does not change it and a new revision needs a new URL in the licence files.
 - [ ] Sign in to <https://cla-assistant.io> with GitHub.
 - [ ] **Configure CLA**: choose the repository `dimipaun/fugaro` and paste the Gist's raw URL.
 - [ ] Allow-list `fugaro-dev[bot]` and `dependabot[bot]` (bots do not sign).
@@ -155,8 +157,10 @@ as it stands. L0.2 is the owner's CLA Assistant install, in these steps:
   signature; a bot-authored pull request passes without one.
 - [ ] Optional, a repository setting the owner clicks: require the CLA check on `main` in the
   branch protection rules.
-- [ ] Replace `[CLA URL TO BE PUBLISHED]` in `console/LICENSE.md`, `mobile/LICENSE.md` and
-  `ee/LICENSE` with the Gist's URL (a separate change, after the Gist exists).
+- [x] Replace `[CLA URL TO BE PUBLISHED]` in `console/LICENSE.md`, `mobile/LICENSE.md` and
+  `ee/LICENSE` with the Gist's URL (a separate change, after the Gist exists). **DONE 2026-10-29:**
+  the four licence files (the `LICENSES/` copy included) and the docs test's pin now name the
+  Gist's revision-pinned raw URL, and nothing else changed.
 
 **Amended 2026-10-28: the app is installed.** The owner installed CLA Assistant on
 `dimipaun/fugaro`, and the repository publishes the two surfaces a contributor meets: the signing
@@ -564,11 +568,11 @@ reads, stores or knows about keys (D308 with D303 as amended).
 - **Commit:** `docs(licensing): the Subscription Terms, amended to the owner's answers (for counsel)`
 
 #### L4.4 — Fill the Subscription Terms URL in the licence files
-- **Status 2026-10-27:** the URL (`https://fugaro.dev/legal/subscription-terms`, the owner's choice) is filled in `ee/LICENSE`, `console/LICENSE.md`, `mobile/LICENSE.md` and the `LICENSES/` copy, and the docs test pins it; the page itself (L4.3) is still to be published after counsel approves the text. The CLA placeholder stays until the owner has created the Gist.
+- **Status 2026-10-27:** the URL (`https://fugaro.dev/legal/subscription-terms`, the owner's choice) is filled in `ee/LICENSE`, `console/LICENSE.md`, `mobile/LICENSE.md` and the `LICENSES/` copy, and the docs test pins it; the page itself (L4.3) is still to be published after counsel approves the text. **Status 2026-10-29:** the CLA's placeholder is gone too -- L0.2's last item, done in a separate change: the four licence files and the docs test's pin name the Gist's revision-pinned raw URL, and the Subscription Terms page is the one document still unpublished.
 - **Files:** `ee/LICENSE`, `console/LICENSE.md`, `mobile/LICENSE.md` (`[URL TO BE PUBLISHED]`
   becomes L4.3's URL, the only change), `internal/cli/docs_ee_reserved_test.go` (its pinned
   placeholder follows), `LICENSING.md` and `ee/README.md` (they stop saying the Subscription Terms
-  are not published yet; the CLA's placeholder is its own step).
+  are not published yet; the CLA's placeholder is its own step, L0.2's last item, done 2026-10-29).
 - **Depends on:** L4.3 published. A separate change from the draft on purpose: the licence files
   are counsel's text, and they change only once the document they name exists.
 - **Reviewer tier:** mandatory independent review (licence text). **OWNER-RUN:** no, after the
