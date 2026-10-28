@@ -62,6 +62,11 @@ type prChain struct {
 	// Chosen is the recipe the runner chose for the previous run (its record's),
 	// when that run's task named none; nil when unknown, absent or default.
 	Chosen *runstore.RecipeRecord
+	// Rigor is the mode the previous run recorded (runstore.RigorRecord.Mode),
+	// when it recorded a readable one: a follow-up keeps it and may only raise
+	// it (T5.2, D6, F14). Empty — no record, or a block no reader may trust —
+	// imposes nothing, which is what the record of an older run says.
+	Rigor rigor.Mode
 }
 
 // readRunRecord reads a run's result.json; tests replace it.
@@ -151,20 +156,30 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 	c.CompressionOff = prev.CompressionOff
 	c.Recipe = prev.Recipe
 	c.Title = prev.Title
-	if c.Recipe == nil {
+	// The previous run's record, read once for the two things only it knows:
+	// the mode that run resolved, which a follow-up keeps and may only raise
+	// (T5.2), and the recipe the runner chose for it, which a follow-up keeps
+	// when its task names none. A record that cannot be read is a refusal
+	// either way, and the mode is the half that makes it fail closed: a
+	// follow-up that read no mode would let --mode lower one this launch could
+	// not see. The block goes through RigorRecord.Bounded, the reader's own
+	// bound: the record is an object the job's service account can write, so a
+	// block no reader may trust is the same answer as no block at all.
+	rec, err := readRunRecord(ctx, runstore.Open(env.bucket.Bucket, slug, c.Previous.RunID))
+	switch {
+	case errors.Is(err, runstore.ErrNotFound):
+	case corruptObject(err):
+		return nil, userErr("run %s's result.json is unreadable (%v), so the mode it ran under and the recipe the runner chose for it are unknown; nothing was launched", c.Previous.Run, err)
+	case err != nil:
+		return nil, remote(fmt.Errorf("reading the record of run %s to keep its mode and its recipe: %w; nothing was launched", c.Previous.Run, err))
+	default:
 		// The runner chose this run's recipe (agent.recipe at the ref); a
 		// follow-up keeps it, as the runner ignores agent.recipe on follow-ups.
-		// A run with no record yet carries nothing; any other failure to read
-		// it stops the launch, as a different loop must never run silently.
-		rec, err := readRunRecord(ctx, runstore.Open(env.bucket.Bucket, slug, c.Previous.RunID))
-		switch {
-		case errors.Is(err, runstore.ErrNotFound):
-		case corruptObject(err):
-			return nil, userErr("run %s's result.json is unreadable (%v), so the recipe the runner chose for it is unknown; nothing was launched", c.Previous.Run, err)
-		case err != nil:
-			return nil, remote(fmt.Errorf("reading the record of run %s to keep its recipe: %w; nothing was launched", c.Previous.Run, err))
-		case rec.Recipe != nil && rec.Recipe.Name != recipe.DefaultName && recipe.NameRE.MatchString(rec.Recipe.Name):
+		if c.Recipe == nil && rec.Recipe != nil && rec.Recipe.Name != recipe.DefaultName && recipe.NameRE.MatchString(rec.Recipe.Name) {
 			c.Chosen = rec.Recipe
+		}
+		if bounded := rec.Rigor.Bounded(); bounded != nil {
+			c.Rigor = bounded.Mode
 		}
 	}
 	recorded := c.Ref != ""
@@ -573,12 +588,19 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	// number (the run it follows holds the node), and a chain that kept
 	// re-claiming a task would say the task is running again with every
 	// follow-up. An explicit --plan-task claims one for this run itself.
+	//
+	// The mode this follow-up runs at (T5.2, D6, F14) is resolved here,
+	// before the spec is built, so a request it refuses writes nothing.
+	mode, err := followUpRigor(o, c)
+	if err != nil {
+		return nil, err
+	}
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: c.Ref, BaseBranch: specBaseBranch(c.Ref), Workflow: workflow, Task: text,
 		Title:          cmp.Or(o.title, c.Title),
 		PlanTask:       o.planTask,
 		CompressionOff: c.CompressionOff,
 		Branch:         c.Branch, PR: o.pr[0], PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch, Recipe: rcp,
-		Rigor: rigor.Mode(o.rigor), Paths: o.paths}
+		Rigor: mode, Paths: o.paths}
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()
 	}
@@ -589,6 +611,30 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		return nil, userErr("%v", err)
 	}
 	return spec, nil
+}
+
+// followUpRigor is the mode a follow-up asks for (T5.2, D6, F14): the
+// launcher's --mode raised to the mode the PR's previous run recorded, or that
+// recorded mode alone when no flag is given, so a chain of follow-ups cannot
+// walk a pull request's rigor back. Two requests are refused instead of
+// resolved. One below the recorded mode, naming what the PR carries: a
+// follow-up is the comment-sourced surface (F13), so its own flag would
+// otherwise be the way down. And hotfix, which is off the axis and ranks below
+// every on-axis mode, and which an operator reaches with their own run under
+// the base branch's opt-in, never through --pr (D12).
+//
+// A record that carries no readable mode — an older run, or one that died
+// before bootstrap — imposes nothing: Strictest skips the empty value, so the
+// flag stands exactly as it does on a first run.
+func followUpRigor(o *runOptions, c *prChain) (rigor.Mode, error) {
+	req := rigor.Mode(o.rigor)
+	if req == rigor.Hotfix {
+		return "", userErr("--mode hotfix is an operator's own run, not a follow-up's: it is reached by fugaro run --mode hotfix under the base branch's opt-in (D12), never through --pr %d", o.pr[0])
+	}
+	if req != "" && req.Rank() < c.Rigor.Rank() {
+		return "", userErr("--mode %s is lower than %s, the mode the runs on PR #%d recorded; a follow-up may raise a pull request's mode and never lower it", req, c.Rigor, o.pr[0])
+	}
+	return rigor.Strictest(req, c.Rigor), nil
 }
 
 // recheckFollowUp runs the PR's checks again for a stored follow-up about

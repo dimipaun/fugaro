@@ -2797,10 +2797,12 @@ and --retry takes none (the stored task keeps its own).
 It may raise the mode the run resolves from its own configuration
 (rigor.default and rigor.areas in fugaro.yaml, the project layer's defaults)
 and never lower it, so a launch that asks for less cannot outvote a repository
-that asked for more. --path PATH declares a path this run will touch,
-repeatable, matched against those area rules before the run starts; without
-either flag the run resolves from its configuration alone. Both are recorded
-in the run's record and named in the pull request's status line.
+that asked for more. A follow-up (--pr) keeps the mode the PR's runs recorded
+and may only raise it: asking for less is refused, and so is hotfix, which
+only an operator's own run reaches. --path PATH declares a path this run will
+touch, repeatable, matched against those area rules before the run starts;
+without either flag the run resolves from its configuration alone. Both are
+recorded in the run's record and named in the pull request's status line.
 
 Usage: `fugaro run [TEXT]`
 
@@ -2815,7 +2817,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for run |
 | `--json` | bool | `false` | no | print machine-readable output |
-| `--mode` | string | "" | no | the rigor mode to ask for: poc, startup, pro, critical, hotfix; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it; without it the run resolves from those layers alone |
+| `--mode` | string | "" | no | the rigor mode to ask for: poc, startup, pro, critical, hotfix; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it, and takes no hotfix; without it the run resolves from those layers alone |
 | `--no-budget-check` | bool | `false` | no | skip the launch pre-check of the budget (kill switches, missing caps, no headroom); the run is held to the same limits when it starts |
 | `--no-compression` | bool | `false` | no | turn agent.compression off for this run only, overriding fugaro.yaml; there is no flag to turn it on, which is a reviewed fugaro.yaml change |
 | `--path` | stringArray | `[]` | no | declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none resolves from its configuration alone |

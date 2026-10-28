@@ -241,10 +241,12 @@ func newRunCmd() *cobra.Command {
 			"It may raise the mode the run resolves from its own configuration\n" +
 			"(rigor.default and rigor.areas in fugaro.yaml, the project layer's defaults)\n" +
 			"and never lower it, so a launch that asks for less cannot outvote a repository\n" +
-			"that asked for more. --path PATH declares a path this run will touch,\n" +
-			"repeatable, matched against those area rules before the run starts; without\n" +
-			"either flag the run resolves from its configuration alone. Both are recorded\n" +
-			"in the run's record and named in the pull request's status line.",
+			"that asked for more. A follow-up (--pr) keeps the mode the PR's runs recorded\n" +
+			"and may only raise it: asking for less is refused, and so is hotfix, which\n" +
+			"only an operator's own run reaches. --path PATH declares a path this run will\n" +
+			"touch, repeatable, matched against those area rules before the run starts;\n" +
+			"without either flag the run resolves from its configuration alone. Both are\n" +
+			"recorded in the run's record and named in the pull request's status line.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runRun(cmd, &o, args) },
 	}
@@ -263,7 +265,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's ("+strings.Join(recipe.CatalogNames(), ", ")+"); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
 	f.StringVar(&o.token, "token", "", "named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's)")
 	f.StringArrayVar(&o.attach, "attach", nil, "attach a file to the run: repeatable, uploaded to the run's own inputs/ and downloaded by a mode: artifact run into the checkout's inputs/ (needs a mode: artifact recipe; refused on a run ID that already has a task)")
-	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.ModeList()+"; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it; without it the run resolves from those layers alone")
+	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.ModeList()+"; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it, and takes no hotfix; without it the run resolves from those layers alone")
 	f.StringArrayVar(&o.paths, "path", nil, "declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none resolves from its configuration alone")
 	f.IntVar(&o.attempts, "attempts", 0, "launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe")
 	f.BoolVar(&o.noCompression, "no-compression", false, "turn agent.compression off for this run only, overriding fugaro.yaml; there is no flag to turn it on, which is a reviewed fugaro.yaml change")

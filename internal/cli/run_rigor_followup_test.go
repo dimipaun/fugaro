@@ -164,7 +164,7 @@ func TestFollowUpCommentCannotSetTheMode(t *testing.T) {
 			opens++
 		case l == "<<<end-fugaro-comments-"+nonce+">>>":
 			closes++
-		case strings.HasPrefix(l, "[") && !strings.HasPrefix(l, "    "):
+		case strings.HasPrefix(l, "[inline]") || strings.HasPrefix(l, "[review]") || strings.HasPrefix(l, "[general]"):
 			// A header line the block itself wrote.
 		case l == "" || strings.HasPrefix(l, "    "):
 			// A body line, indented so it can pass for nothing else, or blank.
