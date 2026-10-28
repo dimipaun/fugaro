@@ -38,6 +38,7 @@
       "!dist/main/fuses.js",
       "dist/preload/index.js",
       "dist/preload/installations.js",
+      "dist/preload/confirm.js",
       "dist/shared/**/*.js",
       "dist/source/**/*.js",
       "!dist/source/fixture.js",

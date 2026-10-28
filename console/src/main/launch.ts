@@ -33,6 +33,7 @@ import {
   checkLaunchTask,
   checkLaunchTitle,
   decodeLaunchResult,
+  displayTaskText,
   launchRepoArgument,
   recordedBaseBranch,
 } from './launchrules'
@@ -72,7 +73,7 @@ export const MAX_IN_FLIGHT = 2
 /** DECLINED_UNBUILT is the production confirmer's answer, and the sentence is
  * deliberately about this tree rather than about the operator's click: nothing
  * asked them anything. It is the refusal a shipped console gives every launch
- * until V2.5.1b's window lands. */
+ * until 2b's window lands. */
 export const DECLINED_UNBUILT = 'the launch confirmation window is not built yet'
 
 /** DECLINED_CANCELLED is what a declined window answers with once 2b builds it:
@@ -251,11 +252,63 @@ export interface LaunchOutcome {
 }
 
 /**
- * LaunchConfirmer is the seam V2.5.1b fills with the window. `open` is handed
- * the frozen launch and a `decide` it calls when the operator answers -- the
- * main process's own path, which is what `answer(runId, yes)` reaches from the
- * window's preload; the renderer asks for the window and **cannot answer for the
- * operator**.
+ * ConfirmView is the whole of what the confirmation window is shown, and it is a
+ * **copy** rather than the frozen launch: the launch carries the plan, the
+ * child's environment, its working directory and `taskBytes`, and a window is
+ * the one place in this app that is not the main process. The bytes are the
+ * sharpest of the four -- a `Uint8Array` is an object `Object.freeze` cannot
+ * freeze, so a renderer handed one could write into the buffer the child is
+ * spawned with. Nothing here is anything but a string, a number or an array of
+ * strings, and the whole view is deep-frozen, so what the window reads cannot be
+ * changed under it between the paint and the answer.
+ *
+ * The field names are the operator's rather than this file's: `installation` is
+ * the project, `ref` the recorded base branch. `recordedRepository` and
+ * `repository` are both shown because the conversion between them is a decision
+ * the operator should see rather than infer.
+ */
+export interface ConfirmView {
+  readonly runId: string
+  readonly installation: string
+  readonly recordedRepository: string
+  readonly repository: string
+  readonly ref: string
+  readonly title: string | null
+  readonly planTask: string | null
+  /** the whole command line the yes-answer spawns, program word included and
+   * field by field, so the window shows what is spawned and not a summary of it. */
+  readonly argv: readonly string[]
+  readonly taskByteLength: number
+  /** the task's text, whole and never cut, with the format characters removed
+   * (`displayTaskText`). It is the text the operator reads, not a preview: the
+   * window is scrollable for exactly this. */
+  readonly taskText: string
+}
+
+/** confirmView is the one conversion from the frozen launch to what the window
+ * is shown, and it is a pure function of the launch for that reason -- a second
+ * spelling of these fields would be a second thing to keep in step. */
+export function confirmView(launch: FrozenLaunch): ConfirmView {
+  return Object.freeze({
+    runId: launch.runId,
+    installation: launch.project,
+    recordedRepository: launch.recordedRepository,
+    repository: launch.repository,
+    ref: launch.branch,
+    title: launch.title,
+    planTask: launch.planTask,
+    argv: Object.freeze([...launchSpawnedArgv(launch)]),
+    taskByteLength: launch.taskBytes.byteLength,
+    taskText: displayTaskText(launch.taskText),
+  })
+}
+
+/**
+ * LaunchConfirmer is the seam 2b fills with the window. `open` is handed the
+ * **display-only view** of the frozen launch and a `decide` it calls when the
+ * operator answers -- the main process's own path, which is what `answer(runId,
+ * yes)` reaches from the window's preload; the renderer asks for the window and
+ * **cannot answer for the operator**.
  *
  * `decide`'s second parameter is **the confirmer's own sentence for a decline**,
  * and it exists for exactly one reason: the sentence the operator is shown for a
@@ -267,13 +320,13 @@ export interface LaunchOutcome {
  * from the operator is the cancel sentence and nothing else.
  */
 export interface LaunchConfirmer {
-  open(launch: FrozenLaunch, decide: (yes: boolean, reason?: string) => void): void
+  open(view: ConfirmView, decide: (yes: boolean, reason?: string) => void): void
 }
 
 /** DECLINING_CONFIRMER is V2.5.1a's production implementation: it declines every
  * launch, by name, so the shipped app has no way to a `run` child at all. */
 export const DECLINING_CONFIRMER: LaunchConfirmer = Object.freeze({
-  open: (_launch: FrozenLaunch, decide: (yes: boolean, reason?: string) => void): void => {
+  open: (_view: ConfirmView, decide: (yes: boolean, reason?: string) => void): void => {
     decide(false, DECLINED_UNBUILT)
   },
 })
@@ -893,7 +946,7 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
           pending.set(built.launch.runId, resolve)
         })
         try {
-          deps.confirmer.open(built.launch, (yes, reason) => {
+          deps.confirmer.open(confirmView(built.launch), (yes, reason) => {
             const resolve = pending.get(built.launch.runId)
             if (resolve === undefined) return
             pending.delete(built.launch.runId)

@@ -63,8 +63,8 @@ import {
   createLaunchRunner,
   launchOutcomeUnknown,
 } from '../../src/main/launch'
-import type { FrozenLaunch, LaunchConfirmer, LaunchTarget, TargetLookup } from '../../src/main/launch'
-import { RUN_LAUNCH_EQUALS_FLAGS, assertArgvFlags, spawnedArgv } from '../../src/main/spawn'
+import type { ConfirmView, FrozenLaunch, LaunchConfirmer, LaunchTarget, TargetLookup } from '../../src/main/launch'
+import { RUN_LAUNCH_EQUALS_FLAGS, assertArgvFlags, privateWorkingDirectory } from '../../src/main/spawn'
 import type { ChildSpawner, SpawnOptionsLike, SpawnedChildLike, Timers } from '../../src/main/spawn'
 import type { RecordedSpawn, SpawnLogWriter } from '../../src/main/spawnlog'
 
@@ -269,12 +269,12 @@ function recordingTimers(): Timers & { readonly delays: readonly number[] } {
  * the in-flight caps are about. `decide` answers the oldest window still open,
  * which is what a test with a single window reads. */
 function heldConfirmer(): LaunchConfirmer & {
-  readonly opened: readonly FrozenLaunch[]
+  readonly opened: readonly ConfirmView[]
   readonly openRunIds: readonly string[]
   decide(yes: boolean): void
   decideWindow(runId: string, yes: boolean): void
 } {
-  const opened: FrozenLaunch[] = []
+  const opened: ConfirmView[] = []
   const waiting = new Map<string, (yes: boolean, reason?: string) => void>()
   const decideWindow = (runId: string, yes: boolean): void => {
     const held = waiting.get(runId)
@@ -283,9 +283,9 @@ function heldConfirmer(): LaunchConfirmer & {
   }
   return {
     opened,
-    open(launch, answer) {
-      opened.push(launch)
-      waiting.set(launch.runId, answer)
+    open(view, answer) {
+      opened.push(view)
+      waiting.set(view.runId, answer)
     },
     decide(yes) {
       const oldest = [...waiting.keys()][0]
@@ -299,12 +299,12 @@ function heldConfirmer(): LaunchConfirmer & {
 }
 
 /** answeringConfirmer is the other half: it answers every window as it opens. */
-function answeringConfirmer(yes: boolean): LaunchConfirmer & { readonly opened: readonly FrozenLaunch[] } {
-  const opened: FrozenLaunch[] = []
+function answeringConfirmer(yes: boolean): LaunchConfirmer & { readonly opened: readonly ConfirmView[] } {
+  const opened: ConfirmView[] = []
   return {
     opened,
-    open(launch, decide) {
-      opened.push(launch)
+    open(view, decide) {
+      opened.push(view)
       decide(yes)
     },
   }
@@ -455,12 +455,12 @@ describe('the launch, and the argv it writes', () => {
     const launched = held.launch(request())
     await untilSettled()
 
-    const frozen = confirmer.opened[0] as FrozenLaunch
+    const view = confirmer.opened[0] as ConfirmView
     // The vector starts at the program word, so the design's row string -- which
     // spells the CLI's own argv -- is everything after it.
-    expect(frozen.argv.slice(1).join(' ')).toBe(rowArgv())
-    expect(frozen.argv[0]).toBe(BINARY)
-    expect(frozen.argv.slice(1)).toStrictEqual([
+    expect(view.argv.slice(1).join(' ')).toBe(rowArgv())
+    expect(view.argv[0]).toBe(BINARY)
+    expect(view.argv.slice(1)).toStrictEqual([
       'run',
       '--task-file',
       '-',
@@ -483,10 +483,10 @@ describe('the launch, and the argv it writes', () => {
     const launched = held.launch(request({ title: 'the backlog', planTask: 'backlog/triage' }))
     await untilSettled()
 
-    const frozen = confirmer.opened[0] as FrozenLaunch
-    expect(frozen.argv.slice(1).join(' ')).toBe(rowArgv({ title: 'the backlog', planTask: 'backlog/triage' }))
-    expect(frozen.argv.filter((word) => word.startsWith('--title'))).toStrictEqual(['--title=the backlog'])
-    expect(frozen.argv.filter((word) => word.startsWith('--plan-task'))).toStrictEqual(['--plan-task=backlog/triage'])
+    const view = confirmer.opened[0] as ConfirmView
+    expect(view.argv.slice(1).join(' ')).toBe(rowArgv({ title: 'the backlog', planTask: 'backlog/triage' }))
+    expect(view.argv.filter((word) => word.startsWith('--title'))).toStrictEqual(['--title=the backlog'])
+    expect(view.argv.filter((word) => word.startsWith('--plan-task'))).toStrictEqual(['--plan-task=backlog/triage'])
 
     confirmer.decide(false)
     await launched
@@ -498,9 +498,9 @@ describe('the launch, and the argv it writes', () => {
     const launched = held.launch(request({ title: '-draft' }))
     await untilSettled()
 
-    const frozen = confirmer.opened[0] as FrozenLaunch
-    expect(frozen.argv).toContain('--title=-draft')
-    expect(frozen.argv).not.toContain('-draft')
+    const view = confirmer.opened[0] as ConfirmView
+    expect(view.argv).toContain('--title=-draft')
+    expect(view.argv).not.toContain('-draft')
 
     confirmer.decide(false)
     await launched
@@ -575,38 +575,43 @@ describe('the launch, and the argv it writes', () => {
 })
 
 describe('the frozen spawn', () => {
-  it('spawns the frozen object’s own words and nothing else, and freezes it', async () => {
+  it('spawns the frozen object’s own words and nothing else, and freezes the view', async () => {
     const confirmer = heldConfirmer()
     const spawner = completingSpawner()
     const held = runner({ confirmer, spawner })
     const launched = held.launch(request())
     await untilSettled()
 
-    const frozen = confirmer.opened[0] as FrozenLaunch
-    expect(Object.isFrozen(frozen)).toBe(true)
-    expect(Object.isFrozen(frozen.argv)).toBe(true)
+    // The window is handed the display-only view, and the view is what the
+    // spawn's own words are read against: the same fields, deep-frozen, with
+    // nothing of the plan, the environment or the task's bytes in it.
+    const view = confirmer.opened[0] as ConfirmView
+    expect(Object.isFrozen(view)).toBe(true)
+    expect(Object.isFrozen(view.argv)).toBe(true)
 
     confirmer.decide(true)
     const outcome = await launched
     expect(outcome.ok).toBe(true)
 
     const call = spawner.calls[0] as SpawnCall
-    expect(call.args).toStrictEqual(frozen.argv.slice(1))
+    expect(call.command).toBe(view.argv[0])
+    expect(call.args).toStrictEqual(view.argv.slice(1))
     expect(call.command).toBe(BINARY)
-    expect(call.options.cwd).toBe(frozen.cwd)
-    expect(spawnedArgv(frozen.plan)).toStrictEqual([call.command, ...call.args])
+    // The child runs in the console's own private, empty directory, and not in
+    // the operator's checkout: the frozen launch's cwd is what it always was.
+    expect(call.options.cwd).toBe(privateWorkingDirectory({}))
   })
 
-  it('carries the run id in `task.NewRunID`’s shape and the task’s own bytes', async () => {
+  it('carries the run id in `task.NewRunID`’s shape and the task’s own size', async () => {
     const confirmer = heldConfirmer()
     const held = runner({ confirmer })
     const launched = held.launch(request({ task: 'a task with an em dash — in it' }))
     await untilSettled()
 
-    const frozen = confirmer.opened[0] as FrozenLaunch
-    expect(frozen.runId).toBe(RUN_ID)
-    expect(frozen.taskText).toBe('a task with an em dash — in it')
-    expect(new TextDecoder().decode(frozen.taskBytes)).toBe(frozen.taskText)
+    const view = confirmer.opened[0] as ConfirmView
+    expect(view.runId).toBe(RUN_ID)
+    expect(view.taskText).toBe('a task with an em dash — in it')
+    expect(view.taskByteLength).toBe(new TextEncoder().encode('a task with an em dash — in it').byteLength)
 
     confirmer.decide(false)
     await launched
@@ -810,7 +815,7 @@ describe('the confirmation seam', () => {
     const launched = held.launch(request())
     await untilSettled()
 
-    const runId = (confirmer.opened[0] as FrozenLaunch).runId
+    const runId = (confirmer.opened[0] as ConfirmView).runId
     expect(await held.answer(runId, true)).toBeUndefined()
     const first = await launched
     expect(first.ok).toBe(true)

@@ -491,9 +491,11 @@ describe('the packaging configuration the fuses belong to', () => {
     // seven files -- `SERVED_FILES` in src/main/protocol.ts -- are listed by
     // name, or a packaged console opens a window with no page in it. The
     // preloads are named exactly: the dashboard window loads
-    // `dist/preload/index.js` and the picker's window
-    // `dist/preload/installations.js` (Task 3.4b), and nothing else under that
-    // directory ships. Only `.js`, the documents, the served stylesheet (Task
+    // `dist/preload/index.js`, the picker's window
+    // `dist/preload/installations.js` (Task 3.4b) and the launch confirmation
+    // window `dist/preload/confirm.js` (V2.5.1a part 2b-1), and nothing else
+    // under that directory ships. Only `.js`, the documents, the served
+    // stylesheet (Task
     // 6.2, which every document links), the worker's notices file
     // (`THIRD_PARTY_NOTICES.md`, GV2.2) and the console's own licence
     // (`LICENSE.md`, D311) are shipped, so no source map is;
@@ -508,6 +510,7 @@ describe('the packaging configuration the fuses belong to', () => {
       '!dist/main/fuses.js',
       'dist/preload/index.js',
       'dist/preload/installations.js',
+      'dist/preload/confirm.js',
       'dist/shared/**/*.js',
       'dist/source/**/*.js',
       '!dist/source/fixture.js',
