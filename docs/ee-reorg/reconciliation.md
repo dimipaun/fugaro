@@ -267,7 +267,8 @@ would fail the plugin's flag check. *Consequence:* E3.1; D536 and E1.7 (the tagg
   `refuseGovernanceSkew`) and `fugaro validate` (`governanceImageWarnings`, which today takes no image
   argument) then warn when a repository or the project layer
   sets `governance:` and the job image is `core`. A warning, not a refusal: a core runner ignores the
-  block (D522), so nothing breaks. The marker is advisory: a self-built image can claim `ee` without
+  block (D522), so nothing breaks. An image with **no** carrier (every image before E1.4, and every
+  dev image) is "unknown" and gets no edition warning, which is today's behaviour. The marker is advisory: a self-built image can claim `ee` without
   the tag and silence the warning (R5's point); the carrier is written from the image's own `fugaro`
   at build time, so it at least never disagrees with an honest build.
 - **R4 — T27 (b) in practice.** A paid command or governance in a tagged binary runs and prints one
@@ -311,7 +312,7 @@ Every answer cell is empty: nothing here is answered. Recommendation first.
 | **D533** | Release notes for 0.13.0 | **A "Licensing" highlight and a `### For operators` entry: per installation, `fugaro update` (re-pins the base and copies the history image the coordinator's sweep runs; `fugaro update --base base` for the base alone); per repository, `fugaro image refresh` in each repository's checkout so its workflow images rebuild on the tagged base; an installation that keeps a core (self-built) image gets the warnings of D522** | No operator step: an installation on a 0.12.x image keeps refusing `governance:` (F9), which is today's behaviour anyway | |
 | **D534** | The CLA and outside contributions to the moved files | **None needed: no outside author (F15). The owner confirms the legal reading of agent-written code (O3)** | Ask counsel before moving: delays nothing technical but holds 0.13.0 | |
 | **D535** | After the move, an untagged CLI's launches are not declared to the coordinator (F16a) | **Accept: the released binary is tagged (T21), so only source builds are affected; their runs still appear through the sweep, which reads the runs bucket** | Keep the declarer in core: a piece of the coordinator stays MIT, against D434 | |
-| **D536** | Which command tree do the CLI reference and the plugin checks read (F18)? | **The tagged tree, through `ee/`: a generator `go run ./ee/clidoc` (it imports `ee/register` and calls the exported `internal/clidoc` generator) writes `website/content/cli-reference.md`, and an `ee/clidoc` test holds it current; the core test keeps checking that every core command and flag is in the file. The plugin's flag checks for a paid command run in an `ee/` test; the core plugin tests accept a paid command name through the stub list of E1.1.** One binary ships (T21), so the reference describes it | **The untagged tree:** the reference and the skills lose `fugaro report` and `coordinator`, which the released binary has | |
+| **D536** | Which command tree do the CLI reference and the plugin checks read (F18)? | **The tagged tree, through `ee/`: a generator `go run ./ee/clidoc` (it imports `ee/register` and a new importable `internal/clidoc/cliref` package split out of `internal/clidoc`, which is `package main`) writes `website/content/cli-reference.md`, and an `ee/clidoc` test holds it current; the core test keeps checking that every core command and flag is in the file. The plugin's flag checks for a paid command run in an `ee/` test; the core plugin tests accept a paid command name through the stub list of E1.1.** One binary ships (T21), so the reference describes it | **The untagged tree:** the reference and the skills lose `fugaro report` and `coordinator`, which the released binary has | |
 
 ## 5. Open tensions and open items for the owner
 
@@ -325,6 +326,10 @@ Every answer cell is empty: nothing here is answered. Recommendation first.
   `coordinator status`; under D523 a tagged CLI only adds a stderr line, so no screen breaks. No
   tension remains if D523 is answered as recommended; if the owner prefers S2.3 first, T27's original
   question returns.
+- **O6.** Between the governance move (E2.3) and the tagged images (E1.4), images built from `main`
+  ignore `governance:` and the history image's sweep hits the stub; a dogfood installation should
+  not refresh from `main` in that window. The owner confirms that, or asks for E1.4 to be reordered
+  (which needs the relabel earlier, F16c).
 - **O5.** `docs/subscriptions/` must record T27 (b), the reversal and the correction of T11 (none),
   D524's amendment of R1/S1.7/S1.9 and the moved scope; E0.1 does it once the decisions are answered.
 
@@ -333,8 +338,10 @@ Every answer cell is empty: nothing here is answered. Recommendation first.
 - **U1.** Whether `images.yml` (the workflow that builds the base and history images) passes build
   arguments that a `-tags ee` change in the Dockerfiles needs; read only through
   `images/build-base.sh` and the Dockerfiles. A workflow change is staged, never edited (E1.4).
-- **U2.** Whether a derived image with a user's own Dockerfile (`images/derived/Dockerfile.tmpl`
-  `FROM` the base) could replace `fugaro`; nothing found that does.
+- **U2.** A derived image built from a repository's own saved Dockerfile (`images/derived/Dockerfile.tmpl`
+  invites saving and editing it) can override the edition carrier or replace `/usr/local/bin/fugaro`.
+  That predates the move and only silences a warning (R3, R5); how many repositories do so is not
+  known.
 - **U3.** The cost of `-tags ee` on the base image's size budget (`images/size-budget.sh`); the
   governance code is small, but the coordinator and report libraries pull `internal/rtdb` and
   Firestore clients that the binary already links.

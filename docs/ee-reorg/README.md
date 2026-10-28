@@ -17,8 +17,8 @@ records the correction, and the plan follows it.
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The owner's ruling, **verbatim** (before the correction) |
-| [reconciliation.md](reconciliation.md) | The correction (§0), findings F1–F18 (with F16a–F16c) against the code, resolutions R1–R8, decisions D520–D536 (unanswered), open items O1–O5, UNVERIFIED U1–U6. **Where it disagrees with `spec.md`, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Slices E0–E3, tasks E0.1–E3.4 (with E1.7), levels L0–L8, the critical path, the shared-files table, Checks 200–201. Supersedes subscriptions S1.1–S1.5, S1.7, S1.9. **Nothing in it is approved** |
+| [reconciliation.md](reconciliation.md) | The correction (§0), findings F1–F18 (with F16a–F16c) against the code, resolutions R1–R8, decisions D520–D536 (unanswered), open items O1–O6, UNVERIFIED U1–U6. **Where it disagrees with `spec.md`, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Slices E0–E3, tasks E0.1–E3.4 (with E1.7; E2.4 withdrawn), levels L0–L8, the critical path, the shared-files table, Checks 200–201. Supersedes subscriptions S1.1–S1.5, S1.7, S1.9. **Nothing in it is approved** |
 
 ## Typos fixed in the spec
 
