@@ -23,7 +23,12 @@
 //      present and is not an array. Two tolerances are deliberate and are made where they are used: an
 //      **absent** optional field reads as the empty value (a row with no
 //      `gcp_project`, a document with no `warnings` — in both cases the CLI sent
-//      nothing, so nothing is hidden), and `checkouts`, where what is tolerated
+//      nothing, so nothing is hidden) — and **`base_branch` is the one exception
+//      to that rule**, because for it an absent key and an empty value are two
+//      different facts (§6.8): absent is an older CLI that does not report base
+//      branches, `''` is a config that records none, and the launch draws a
+//      different sentence for each. It is read by `branchField` below rather than
+//      by `textField` for exactly that reason — and `checkouts`, where what is tolerated
 //      is an **element** and not the field: a `checkouts` that is not an array
 //      carries no directory the operator could be offered, and an element that is
 //      not a non-empty string is not a directory the CLI printed (its own field
@@ -294,7 +299,13 @@ function branchField(entry: Record<string, unknown>, key: string): BranchField {
   const value = entry[key]
   if (value === undefined) return { kind: 'absent' }
   if (typeof value !== 'string') return { kind: 'unreadable' }
-  return { kind: 'branch', value: value.length > MAX_DOCUMENT_STRING ? value.slice(0, MAX_DOCUMENT_STRING) : value }
+  // A value past the document bound is `unreadable` rather than cut down to it:
+  // this string is what the launch is cut from and what the confirmation window
+  // shows, so a silently shortened one would name a branch the run does not use
+  // -- the same lie `textField` avoids by only ever cutting a *warning* line,
+  // which is display text and nothing else.
+  if (value.length > MAX_DOCUMENT_STRING) return { kind: 'unreadable' }
+  return { kind: 'branch', value }
 }
 
 /** CheckoutRows is what one installation's `checkouts` array yields: the two

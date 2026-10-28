@@ -93,6 +93,7 @@ import { REDUCED_VIEWS, hidesView, unreadableCompatibility } from '../shared/ver
 import type { CliCompatibility, ReducedView } from '../shared/version'
 import { APP_ENTRY_URL, APP_HOST, APP_SCHEME } from './protocol'
 import { validateExternalUrl } from './window'
+import { checkLaunchPlanTask, checkLaunchTask, checkLaunchTitle } from './launchrules'
 
 /**
  * IPC_VERSION is the version of the surface `src/preload/index.ts` exposes to
@@ -265,6 +266,9 @@ export type ArgumentKind =
   | 'link'
   | 'installationName'
   | 'installationCheckout'
+  | 'launchTask'
+  | 'launchTitle'
+  | 'launchPlanTask'
 
 /** ArgumentSpec is one field of an operation's closed argument schema. */
 export interface ArgumentSpec {
@@ -330,10 +334,43 @@ export interface ConsoleOperation {
   readonly summary: string
   /** `args` is the closed schema: the keys, and nothing but the keys. */
   readonly args: readonly ArgumentSpec[]
+  /**
+   * `payloadWidth` replaces `MAX_PAYLOAD_WIDTH` for the one operation whose
+   * legitimate payload is larger than that bound: `run.launch`, whose task text
+   * may be 16 KiB. It is a column rather than a widening of the global bound,
+   * because the bound every other read is held to is a fact about those reads.
+   */
+  readonly payloadWidth?: number
 }
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Twenty-three operations, and the table
+ * LAUNCH_TASK_RAW_LIMIT, LAUNCH_TITLE_RAW_LIMIT and LAUNCH_PLAN_TASK_RAW_LIMIT
+ * are the **raw** bounds on the launch's three strings, and they are four times
+ * the content caps rule 11 sets (`launchrules.ts`'s 16 KiB, 100 runes and 128
+ * bytes). They are not the caps: the caps are the rules', and they are checked
+ * after these, on the *trimmed* value. What these do is bound the work this
+ * process does on a string a renderer chose -- a raw task string of many
+ * megabytes is refused by its length before anything measures or trims it --
+ * and they are deliberately generous enough that no legitimate value can hit
+ * them: a task is at most 16 KiB *after* its surrounding whitespace is trimmed,
+ * so four times that is far above anything the schema admits.
+ *
+ * **The launch's own payload width is the other half of the same rule.**
+ * `MAX_PAYLOAD_WIDTH` is 4096 and the task alone may legitimately be 16 KiB, so
+ * `run.launch` carries its own width (`payloadWidth` on the operation) rather
+ * than widening the bound every read is held to.
+ */
+export const LAUNCH_TASK_RAW_LIMIT = 4 * 16 * 1024
+export const LAUNCH_TITLE_RAW_LIMIT = 4 * 100
+export const LAUNCH_PLAN_TASK_RAW_LIMIT = 4 * 128
+/** LAUNCH_PAYLOAD_WIDTH bounds the launch's whole payload: its four raw limits,
+ * the two names, the five keys' names and a margin. It is a bound on a payload
+ * this console wrote a schema for, so it is the sum of what that schema admits. */
+export const LAUNCH_PAYLOAD_WIDTH =
+  LAUNCH_TASK_RAW_LIMIT + LAUNCH_TITLE_RAW_LIMIT + LAUNCH_PLAN_TASK_RAW_LIMIT + 4096
+
+/**
+ * CONSOLE_OPERATIONS is the whole surface. Twenty-four operations, and the table
  * is the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
@@ -621,6 +658,57 @@ export const CONSOLE_OPERATIONS = [
         kind: 'runId',
         required: true,
         why: '`logs RUN --url`, which is its own argv and is never combined with `--json`.',
+      },
+    ],
+  },
+  {
+    name: 'run.launch',
+    method: 'launchRun',
+    // The command path carries the row's two fixed words as well as its name,
+    // because rule 11's argv has `--task-file -` in it -- the literal word `-`
+    // is what sends the task down the child's stdin instead of onto the command
+    // line -- and those two words are not flags a *screen* controls, which is
+    // all `flags` holds (and all `ALLOWED_OPERATION_FLAGS` admits). Rule 11's
+    // argv is therefore this pair as one string: `run --task-file - --json`.
+    command: 'run --task-file -',
+    flags: ['--json'],
+    summary: 'the console’s one write: one launch of `fugaro run` for a named installation',
+    // The five fields, and nothing else: no `--pr`, no `--retry`, no `--recipe`,
+    // no mode, no path, no ref, no workflow, no budget escape. Every one of them
+    // is on `NEVER_REACHABLE`'s argv rows below, because a closed schema is not
+    // enough on its own -- `argvFor` builds the vector from this schema, so a
+    // field that is not here cannot reach a child.
+    payloadWidth: LAUNCH_PAYLOAD_WIDTH,
+    args: [
+      {
+        key: 'installation',
+        kind: 'installationName',
+        required: true,
+        why: 'which installation launches — a name the main process’s own records carry, checked against them before any window is asked.',
+      },
+      {
+        key: 'repository',
+        kind: 'repository',
+        required: true,
+        why: 'the checkout to run in — a `checkouts[]` identity the installation’s own `config list --json` read carried, so the console never invents a repository.',
+      },
+      {
+        key: 'task',
+        kind: 'launchTask',
+        required: true,
+        why: 'the task itself, written to the child’s stdin as `--task-file -` — it is in no argv word and in no log line.',
+      },
+      {
+        key: 'title',
+        kind: 'launchTitle',
+        required: false,
+        why: '`--title=<T>`, one word, `=` form only, and only when the operator filled it in.',
+      },
+      {
+        key: 'planTask',
+        kind: 'launchPlanTask',
+        required: false,
+        why: '`--plan-task=<P>`, one word, `=` form only, and only when the operator filled it in.',
       },
     ],
   },
@@ -913,19 +1001,32 @@ export function channelForOperation(name: OperationName): string {
   return IPC_CHANNEL_PREFIX + operationFor(name).name
 }
 
-/** NeverReachableShape says what kind of thing an entry forbids. */
-export type NeverReachableShape = 'command' | 'flag'
+/** NeverReachableShape says what kind of thing an entry forbids.
+ *
+ * `command` is a whole command path, `flag` is one flag on any command, and
+ * **`argv`** is one flag on one command -- the shape rule 11's fence needs, and
+ * the reason it needs it: `run` is no longer forbidden as a *command*, because
+ * exactly one of its argument vectors is the console's one write. A row that
+ * named the bare command would refuse that one too, and a row that named only
+ * the flag would refuse `--retry` on every command rather than on the one whose
+ * sibling is the launch. */
+export type NeverReachableShape = 'command' | 'flag' | 'argv'
 
 /** NeverReachable is one row of the never table. */
 export interface NeverReachable {
   /** `shape` distinguishes a whole command from a flag on an allowed one. */
   readonly shape: NeverReachableShape
-  /** `value` is the command path, or the flag. */
+  /** `value` is the command path, the flag, or -- for an `argv` row -- the flag
+   * that one command may not carry. */
   readonly value: string
   /** `why` is why the console must never reach it. */
   readonly why: string
   /** `where` is the symbol or document it was read from. */
   readonly where: string
+  /** `command` is the command an `argv` row is about, and is absent from the
+   * other two shapes: a `command` row *is* the command, and a `flag` row is
+   * about every command at once. */
+  readonly command?: string
 }
 
 /**
@@ -972,11 +1073,133 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     why: 'a write: it cancels a run',
     where: 'internal/cli/cancel.go:72',
   },
+  // `run` itself is not on this table, and that is the whole of V2.5.1a's fence
+  // move: `run` is the console's one write (D22), and it is allowed **as exactly
+  // one argument vector** -- the `run.launch` operation above, whose words are
+  // fixed by design section 3.4 rule 11 and whose schema has five fields and no
+  // flag among them. What stays refused is every *sibling* of that vector, and
+  // these rows are argv-shaped rather than command-shaped so that they refuse
+  // the siblings without refusing the one: `value` is the flag, `command` is the
+  // command it may not ride on, and `run.launch`'s own flags (`--json`) are on
+  // none of them.
   {
-    shape: 'command',
-    value: 'run',
-    why: 'a write: it launches a run, and a run spends money',
-    where: 'internal/cli/run.go:134',
+    shape: 'argv',
+    command: 'run',
+    value: '--pr',
+    why: 'a follow-up launch on an existing pull request’s branch: no decision in this tree authorizes it, and the owner ruled on 2026-10-27 that it stays off the launch row until he revisits it (rule 11’s open points)',
+    where: 'internal/cli/run.go:265',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--retry',
+    why: 'relaunches the stored task of a run that never started, and the owner has not ruled it in: D34’s “not yet” (V2.5.2, unscheduled)',
+    where: 'internal/cli/run.go:263',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--attempts',
+    why: 'launches two to four independent runs of one task as a best-of-N batch, so it multiplies one spend by up to four',
+    where: 'internal/cli/run.go:271',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--batch',
+    why: 'the label those best-of-N runs are grouped under in `fugaro runs ls`; it means nothing without `--attempts`, and a group label the app invented would be the app naming rows in the operator’s run list',
+    where: 'internal/cli/run.go:259',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--no-budget-check',
+    why: 'skips the launch pre-check of the budget -- kill switches, missing caps, no headroom -- which is the check D22’s answer rests on',
+    where: 'internal/cli/run.go:274',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--token',
+    why: 'chooses the Claude credential a run uses; a credential is not screen state',
+    where: 'internal/cli/run.go:267',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--recipe',
+    why: 'picks the recipe (task loop) a run is held to, a reviewed `fugaro.yaml` or project-layer fact rather than screen state',
+    where: 'internal/cli/run.go:266',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--mode',
+    why: 'the rigor mode, another reviewed configuration fact a renderer must not name',
+    where: 'internal/cli/run.go:269',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--path',
+    why: 'declares a path the run will touch, matched against the rigor.areas rules: a path is what the surface must never carry',
+    where: 'internal/cli/run.go:270',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--ref',
+    why: 'the ref is the CLI’s own resolution through every config layer, and the console requires a *recorded* base branch instead of naming one; a ref from the renderer is a spend cut from a branch nobody wrote down',
+    where: 'internal/cli/run.go:256',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--workflow',
+    why: 'chooses which workflow runs, another configuration fact rather than screen state',
+    where: 'internal/cli/run.go:257',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--total-timeout',
+    why: 'overrides the workflow’s own total timeout, which is a run’s ceiling and a reviewed configuration fact',
+    where: 'internal/cli/run.go:264',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--no-compression',
+    why: 'turns agent.compression off for one run, overriding `fugaro.yaml`: a configuration change that is reviewed where it lives',
+    where: 'internal/cli/run.go:272',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--attach',
+    why: 'uploads files into the run’s own inputs/: a path from the renderer by another name',
+    where: 'internal/cli/run.go:268',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--gcp-project',
+    why: 'would let a renderer name a cloud project, which is the boundary §3.4 rule 3 draws: the project comes from the installation’s record',
+    where: 'internal/cli/cloud.go:55',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--region',
+    why: 'would let a renderer name a region, for the same reason as `--gcp-project`',
+    where: 'internal/cli/cloud.go:56',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '',
+    why: 'a positional TEXT task: `run` takes at most one (`cobra.MaximumNArgs(1)`) and refuses it together with `--task-file`, so a positional task is not a form the launch row can take — the task goes to the child on stdin and is in no argv word',
+    where: 'internal/cli/run.go:206 (Use: "run [TEXT]"), :251',
   },
   {
     shape: 'command',
@@ -1199,6 +1422,21 @@ export function isNeverReachable(operation: {
   for (const entry of NEVER_REACHABLE) {
     if (entry.shape === 'command' && entry.value === operation.command) return entry
     if (entry.shape === 'flag' && operation.flags.includes(entry.value)) return entry
+    // An `argv` row is about one word on one command, and it matches an
+    // operation whose command path is that command *or* a longer path under it,
+    // because the launch's own command carries two fixed words of its argv
+    // (`run --task-file -`). The word itself is looked for in the whole vector
+    // the operation states -- the command's words and the flags it fixes -- so
+    // an excluded flag spelled into either half is refused, and the launch,
+    // which names none of them and fixes one `--json`, is clear of every row.
+    // The empty value is the positional-TEXT row: no operation can name a
+    // positional word at all, so nothing here can match it, and the argv the
+    // surface actually builds is what `console/test/unit/ipc.test.ts` reads it
+    // against.
+    if (entry.shape === 'argv' && entry.value !== '' && entry.command !== null && operation.command !== null) {
+      const under = entry.command === operation.command || operation.command.startsWith(`${entry.command} `)
+      if (under && [...operation.command.split(' '), ...operation.flags].includes(entry.value)) return entry
+    }
   }
   return null
 }
@@ -1534,8 +1772,22 @@ function validateValue(
   if (typeof value !== 'string') return refuse(`${spec.key} must be a string`)
   const limit = kindLimit(spec.kind)
   if (value.length > limit) return refuse(`${spec.key} is longer than ${limit} characters`)
-  const hidden = hiddenCharacterReason(value)
-  if (hidden !== null) return refuse(`${spec.key} carries ${hidden}`)
+  // **The launch's three are the one exception to the hidden-character rule,
+  // and only because their own rule already covers it.** `hiddenCharacterReason`
+  // refuses every control character, which is right for a value with a grammar
+  // and wrong for the task text: a task is prose and multi-line by design, and
+  // the newline is a character it is *made* of. The title and the plan task are
+  // held to the same clause by `launchrules.ts`'s own checker (a control
+  // character, a format character, a line break beyond the first, a spoofing
+  // sequence), which runs below -- so `--title`/`--plan-task` do not lose the
+  // check, they get a stricter one, and the task text is refused for a NUL and
+  // for anything that is not valid UTF-8 there rather than here.
+  const launchKind =
+    spec.kind === 'launchTask' || spec.kind === 'launchTitle' || spec.kind === 'launchPlanTask'
+  if (!launchKind) {
+    const hidden = hiddenCharacterReason(value)
+    if (hidden !== null) return refuse(`${spec.key} carries ${hidden}`)
+  }
   switch (spec.kind) {
     case 'repository':
       if (!REPOSITORY_RE.test(value)) return refuse(`${spec.key} must be a repository as owner/name`)
@@ -1608,6 +1860,27 @@ function validateValue(
         return refuse(`${spec.key} must be an absolute directory path`)
       }
       return { ok: true, value }
+    case 'launchTask': {
+      // Part 1's own rule (`launchrules.ts`, the only place the caps and the
+      // trim live): the trimmed text, the 16 KiB cap, valid UTF-8, no NUL.
+      const decision = checkLaunchTask(value)
+      return decision.ok ? { ok: true, value: decision.value.text } : refuse(`${spec.key} ${decision.reason}`)
+    }
+    case 'launchTitle': {
+      const decision = checkLaunchTitle(value)
+      // A `null` cannot happen here: the value is a string, because every
+      // string kind is refused above when it is not one. An empty title is a
+      // title the operator did not fill in, and the renderer leaves the key out
+      // for that -- so an empty string is a refusal rather than a silent
+      // "no title", which is what the checker says in its own sentence.
+      if (!decision.ok) return refuse(`${spec.key} ${decision.reason}`)
+      return decision.value === null ? refuse(`${spec.key} must be a title`) : { ok: true, value: decision.value }
+    }
+    case 'launchPlanTask': {
+      const decision = checkLaunchPlanTask(value)
+      if (!decision.ok) return refuse(`${spec.key} ${decision.reason}`)
+      return decision.value === null ? refuse(`${spec.key} must be a plan task`) : { ok: true, value: decision.value }
+    }
     default:
       return refuse(`${operation} does not take ${spec.key}`)
   }
@@ -1684,6 +1957,20 @@ function kindLimit(kind: ArgumentKind): number {
       return MAX_INSTALLATION_NAME_LENGTH
     case 'installationCheckout':
       return MAX_INSTALLATION_CHECKOUT_LENGTH
+    // The launch's three (design §5.1 rule 11). Each bound is a **small
+    // multiple of the content cap** the rule itself sets -- four times the
+    // task's 16 KiB, four times the title's 100 runes, four times the plan
+    // task's 128 bytes -- and it is here, in the check that runs before any
+    // grammar, so that a renderer cannot make this process work on a string
+    // four hundred times the size of the thing it is going to refuse. The
+    // constants that name the real caps are `launchrules.ts`'s, and they are
+    // what refuses a value inside the multiple.
+    case 'launchTask':
+      return LAUNCH_TASK_RAW_LIMIT
+    case 'launchTitle':
+      return LAUNCH_TITLE_RAW_LIMIT
+    case 'launchPlanTask':
+      return LAUNCH_PLAN_TASK_RAW_LIMIT
     default:
       return 0
   }
@@ -1746,8 +2033,10 @@ export function validateArguments(name: OperationName, raw: unknown): ArgumentDe
   // per-kind bounds below are read one key at a time, so this is what keeps a
   // payload of eight arguments each just inside its own bound from being eight
   // times larger than anything a screen sends.
-  if (payloadWidth(supplied, keys) > MAX_PAYLOAD_WIDTH) {
-    return refuse(`${operation.name} takes a payload of at most ${MAX_PAYLOAD_WIDTH} characters`)
+  if (payloadWidth(supplied, keys) > (operation.payloadWidth ?? MAX_PAYLOAD_WIDTH)) {
+    return refuse(
+      `${operation.name} takes a payload of at most ${String(operation.payloadWidth ?? MAX_PAYLOAD_WIDTH)} characters`,
+    )
   }
 
   const specs = operation.args.filter((spec) => keys.includes(spec.key) || spec.required)
