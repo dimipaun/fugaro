@@ -64,8 +64,10 @@ type prChain struct {
 	Chosen *runstore.RecipeRecord
 	// Rigor is the mode the previous run recorded (runstore.RigorRecord.Mode),
 	// when it recorded a readable one: a follow-up keeps it and may only raise
-	// it (T5.2, D6, F14). Empty — no record, or a block no reader may trust —
-	// imposes nothing, which is what the record of an older run says.
+	// it (T5.2, D6, F14). Empty — no record, a block no reader may trust, or a
+	// readable block whose mode is hotfix, which is off the axis and so not a
+	// mode a follow-up keeps (D12, resolvePR) — imposes nothing, which is what
+	// the record of an older run says.
 	Rigor rigor.Mode
 }
 
@@ -634,7 +636,7 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 // the same way.
 func followUpRigor(o *runOptions, c *prChain) (rigor.Mode, error) {
 	req := rigor.Mode(o.rigor)
-	if err := refuseFollowUpRigor(req, c.Rigor, o.pr[0], "--mode", ""); err != nil {
+	if err := refuseFollowUpRigor(req, c.Rigor, c.Previous.Run, o.pr[0], "--mode", ""); err != nil {
 		return "", err
 	}
 	return rigor.Strictest(req, c.Rigor), nil
@@ -643,26 +645,32 @@ func followUpRigor(o *runOptions, c *prChain) (rigor.Mode, error) {
 // refuseFollowUpRigor is the raise-only rule of a follow-up's mode (T5.2, D6,
 // F14), as a refusal: req is the mode the launch asks for — the flag's on a
 // fresh follow-up, the request a stored task already carries on a reused one —
-// and recorded is the mode the runs on the pull request recorded. Two requests
-// are refused instead of resolved. One below the recorded mode, naming what
-// the PR carries: a follow-up is the comment-sourced surface (F13), so its own
-// flag would otherwise be the way down. And hotfix, which is off the axis and
-// ranks below every on-axis mode, and which an operator reaches with their own
-// run under the base branch's opt-in, never through --pr (D12).
+// and recorded is the mode one run on the pull request recorded: the last to
+// update it (c.Previous), which is the one record resolvePR reads and so the
+// only one the rule judges. recordedBy names that run, because the refusal says
+// which record it read rather than "the runs on PR #N", a claim over runs
+// nobody looked at — a run on the PR that pushed nothing is skipped by
+// resolvePR, and the mode it recorded is not part of this rule.
+//
+// Two requests are refused instead of resolved. One below the recorded mode,
+// naming what the PR carries: a follow-up is the comment-sourced surface (F13),
+// so its own flag would otherwise be the way down. And hotfix, which is off the
+// axis and ranks below every on-axis mode, and which an operator reaches with
+// their own run under the base branch's opt-in, never through --pr (D12).
 //
 // A zero req asks for nothing, and is never below a mode the PR recorded:
 // resolving one is the caller's (Strictest, in followUpRigor), and only a
 // stored task, reused as it is, has no resolution left to make — which is why
 // recheckFollowUp asks this with the task's own request. subject names the
 // request in the refusal's sentence, and cure what the launcher does instead.
-func refuseFollowUpRigor(req, recorded rigor.Mode, pr int, subject, cure string) error {
+func refuseFollowUpRigor(req, recorded rigor.Mode, recordedBy string, pr int, subject, cure string) error {
 	switch {
 	case req == rigor.Hotfix:
 		return userErr("%s asks for hotfix, which is an operator's own run and not a follow-up's: it is reached by fugaro run --mode hotfix under the base branch's opt-in (D12), never through --pr %d%s",
 			subject, pr, cure)
 	case req != "" && req.Rank() < recorded.Rank():
-		return userErr("%s asks for %s, lower than %s, the mode the runs on PR #%d recorded; a follow-up may raise a pull request's mode and never lower it%s",
-			subject, req, recorded, pr, cure)
+		return userErr("%s asks for %s, lower than %s, the mode run %s, the last to update PR #%d, recorded; a follow-up may raise a pull request's mode and never lower it%s",
+			subject, req, recorded, recordedBy, pr, cure)
 	}
 	return nil
 }
@@ -696,12 +704,12 @@ func recheckFollowUp(ctx context.Context, env *cloudEnv, slug string, spec *task
 	// the cure is a new follow-up, which resolves the mode again.
 	subject := fmt.Sprintf("the stored task of run %s/%s", slug, spec.RunID)
 	cure := fmt.Sprintf("; start a new follow-up: fugaro run --pr %d", spec.PR)
-	if err := refuseFollowUpRigor(rigor.Mode(spec.Rigor), c.Rigor, spec.PR, subject, cure); err != nil {
+	if err := refuseFollowUpRigor(rigor.Mode(spec.Rigor), c.Rigor, c.Previous.Run, spec.PR, subject, cure); err != nil {
 		return err
 	}
 	if spec.Rigor == "" && c.Rigor != "" {
-		return userErr("%s asks for no rigor mode, but the runs on PR #%d recorded %s, which a follow-up keeps%s",
-			subject, spec.PR, c.Rigor, cure)
+		return userErr("%s asks for no rigor mode, but run %s, the last to update PR #%d, recorded %s, which a follow-up keeps%s",
+			subject, c.Previous.Run, spec.PR, c.Rigor, cure)
 	}
 	return nil
 }

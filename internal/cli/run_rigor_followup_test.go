@@ -39,8 +39,10 @@ func noTaskStored(t *testing.T, f *cloudFixture, id string) bool {
 
 // TestFollowUpRefusesALowerMode: --mode on a follow-up may raise the mode the
 // PR's runs recorded and never lower it (T5.2, D6, F14). The refusal names the
-// mode the PR carries, and it happens before anything is written: no
-// task.json, no execution.
+// run whose record the rule read — the last to update the PR, which is the one
+// run resolvePR reads — rather than "the runs on PR #7", which would claim a
+// rule over runs whose records nobody read. It happens before anything is
+// written: no task.json, no execution.
 //
 // Red step: the flag is accepted and the stored task asks for poc.
 func TestFollowUpRefusesALowerMode(t *testing.T) {
@@ -48,8 +50,9 @@ func TestFollowUpRefusesALowerMode(t *testing.T) {
 	seedRootRigor(t, f, rootID, rigor.Pro)
 	writeBuildRecord(t, f, appSlug, "web", release0111)
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--mode", "poc", "also rename x")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--mode asks for poc") || !strings.Contains(err.Error(), string(rigor.Pro)) {
-		t.Fatalf("err = %v, want exit 1 naming the mode the PR carries", err)
+	if ExitCode(err) != ExitUserError ||
+		!strings.Contains(err.Error(), "--mode asks for poc, lower than pro, the mode run "+appSlug+"/"+rootID+", the last to update PR #7, recorded") {
+		t.Fatalf("err = %v, want exit 1 naming the run that recorded the mode the PR carries", err)
 	}
 	if n := len(f.run.Executions()); n != 0 {
 		t.Fatalf("%d executions, want none", n)
@@ -179,8 +182,9 @@ func TestStoredFollowUpReappliesTheRaiseOnlyRule(t *testing.T) {
 				fu.Rigor = c.stored
 				seedSpec(t, f, fu, false)
 				_, _, err := execute(t, shape.args...)
-				if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), c.wantPhrase) || !strings.Contains(err.Error(), string(rigor.Critical)) {
-					t.Fatalf("err = %v, want exit 1 saying the stored task %s", err, c.wantPhrase)
+				if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), c.wantPhrase) || !strings.Contains(err.Error(), string(rigor.Critical)) ||
+					!strings.Contains(err.Error(), "run "+appSlug+"/"+rootID+", the last to update PR #7, recorded") {
+					t.Fatalf("err = %v, want exit 1 saying the stored task %s, against the run that recorded critical", err, c.wantPhrase)
 				}
 				if n := len(f.run.Executions()); n != 0 {
 					t.Fatalf("%d executions, want none", n)
@@ -249,6 +253,33 @@ func TestStoredFollowUpWithPathsIsGatedUnderItsPaths(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "(rigor: )") {
 		t.Errorf("the refusal names a rigor mode the stored task does not carry: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
+
+// TestRetryOfAFirstRunIsGatedUnderItsFlags: the follow-up branch of the gate's
+// subject is for a launch that passed no flag and still carries a mode kept
+// from a PR. A launch that passed no flag, carries a mode and follows no PR —
+// --retry of a first run that was launched with --mode, or of a review — is
+// described by the flags, which is where its request came from; it keeps
+// nothing from any PR, and saying it does would name a rule that never ran.
+//
+// Mutation (drop the spec.IsFollowUp() term from rigorGateSubject): the
+// refusal claims the mode a follow-up keeps from its PR.
+func TestRetryOfAFirstRunIsGatedUnderItsFlags(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", release085)
+	spec := firstRunSpec(rootID)
+	spec.Rigor = rigor.Critical
+	seedSpec(t, f, spec, false)
+	_, _, err := execute(t, "run", "--retry", rootID)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "the run's own rigor request (--mode, --path) needs a job image whose runner knows the rigor request") {
+		t.Fatalf("err = %v, want exit 1 naming the flags the stored request came from", err)
+	}
+	if strings.Contains(err.Error(), "a follow-up keeps") {
+		t.Errorf("the refusal calls a launch that follows no PR a follow-up: %v", err)
 	}
 	if n := len(f.run.Executions()); n != 0 {
 		t.Fatalf("%d executions, want none", n)
