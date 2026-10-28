@@ -533,6 +533,16 @@ type StageTiming struct {
 	// is not the same fact as a stage counted at zero.
 	Calls  *int `json:"calls,omitempty"`
 	Agents *int `json:"agents,omitempty"`
+	// Repeats is the most times one identical shell command ran in this
+	// stage, counted by the relay from the stage's own stream for every auth
+	// mode (task-governance T1.4). It is a count and never the command, a
+	// hash of it or any argument: a command can carry a token or a path, and
+	// this record is read by every launcher and by the digest's report. It is
+	// a pointer for the same reason Calls and Agents are: a stage nobody
+	// counted has the field absent, which is not the same fact as a stage
+	// counted at zero, and a record written before the field existed carries
+	// none.
+	Repeats *int `json:"repeats,omitempty"`
 	// ModelUSD is what this stage's calls cost, in USD, whatever model they
 	// were on: under the gateway, every call the stage's report carried,
 	// the background model's (haiku, say) included. The stages sum to

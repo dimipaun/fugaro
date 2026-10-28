@@ -58,6 +58,10 @@ const (
 	MaxStageAgents = 3
 	// MaxFixRounds is the most fix rounds a run may have.
 	MaxFixRounds = 1
+	// RepeatedCommandThreshold is the times one identical shell command may
+	// run in one stage before the run is flagged (T1.4, D332): at the
+	// threshold or past it the stage is looping on the same command.
+	RepeatedCommandThreshold = 5
 )
 
 // The flag names: the report's own vocabulary, never a word a record chose.
@@ -66,10 +70,18 @@ const (
 	FlagSubagents   = "subagents"
 	FlagHalt        = "halt"
 	FlagFixRounds   = "fix_rounds"
+	// FlagRepeatedCommand is a stage that ran one identical shell command
+	// RepeatedCommandThreshold times or more: the loop tripwire, which the
+	// digest reports and nothing acts on (T1.4, G8).
+	FlagRepeatedCommand = "repeated_command"
+	// FlagReviewScope is a run whose review range covered paths the run's own
+	// commits never changed, so the reviewer read work this run did not do
+	// (T1.4, T5.2, T7.3).
+	FlagReviewScope = "review_scope"
 )
 
 // FlagNames is every flag this report raises, in the order it prints.
-var FlagNames = []string{FlagReviewCalls, FlagSubagents, FlagHalt, FlagFixRounds}
+var FlagNames = []string{FlagReviewCalls, FlagSubagents, FlagHalt, FlagFixRounds, FlagRepeatedCommand, FlagReviewScope}
 
 // other is what a value outside its known set renders as (G1).
 const other = "other"
@@ -386,6 +398,12 @@ func flags(rec *runstore.Record) []Flag {
 	if fixRounds(rec) > MaxFixRounds {
 		out = append(out, Flag{Name: FlagFixRounds})
 	}
+	if repeatedCommand(rec) {
+		out = append(out, Flag{Name: FlagRepeatedCommand})
+	}
+	if reviewScope(rec) {
+		out = append(out, Flag{Name: FlagReviewScope})
+	}
 	return out
 }
 
@@ -425,6 +443,26 @@ func fixRounds(rec *runstore.Record) int {
 		}
 	}
 	return n
+}
+
+// repeatedCommand reports whether any stage of the record ran one identical
+// shell command RepeatedCommandThreshold times or more: a stage looping on
+// the same command spends calls without getting anywhere. The record carries
+// the count alone, so nothing here reads a command (T1.4).
+func repeatedCommand(rec *runstore.Record) bool {
+	for _, s := range rec.Stages {
+		if n, ok := count(s.Repeats); ok && n >= RepeatedCommandThreshold {
+			return true
+		}
+	}
+	return false
+}
+
+// reviewScope reports whether the record says the review range covered paths
+// the run's own commits never changed (T5.2): the reviewer was handed work
+// this run did not do. Report only -- the stop is T7.3's (D332).
+func reviewScope(rec *runstore.Record) bool {
+	return rec.ReviewScope != nil && len(rec.ReviewScope.Outside) > 0
 }
 
 // stages is every stage name's figures over the period's runs, in name order

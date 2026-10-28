@@ -60,6 +60,23 @@ type Relay struct {
 	// tool_use blocks naming the sub-agent tool. The runner records it as
 	// the stage's agents, gateway or not (task-governance T1.3).
 	SubAgents int
+
+	// Repeats is the most times one identical shell command ran in this
+	// stream, and 0 when it carried no shell command at all. The runner
+	// records it as the stage's repeats, and the digest reads it as the loop
+	// tripwire: a stage running the same command five times or more is
+	// spending calls without progress (task-governance T1.4, D332). It is a
+	// count and never the command, which can carry a token or a path.
+	Repeats int
+
+	// commands counts each distinct shell command this stage has run, keyed
+	// by the command itself: "identical" is the exact string, and nothing
+	// shorter than the command can say which runs are the same one. The keys
+	// are held for as long as the stream is being read and are never logged,
+	// rendered or written anywhere -- only Repeats leaves this struct -- and
+	// they are no larger than the stage's own transcript, which the runner
+	// already holds whole.
+	commands map[string]int
 }
 
 // subAgentTools are the tool names Claude Code spawns a sub-agent with: the
@@ -155,6 +172,9 @@ func (r *Relay) line(raw []byte) {
 				if subAgentTools[c.Name] {
 					r.SubAgents++
 				}
+				if c.Name == "Bash" {
+					r.countCommand(c.Input)
+				}
 				s := "tool " + r.redact(c.Name) + ": " + r.toolSummary(c.Input)
 				r.log.Info(r.msg(s, relayToolBytes), "event", "tool")
 				if r.OnTool != nil {
@@ -175,6 +195,28 @@ func (r *Relay) line(raw []byte) {
 		}
 	case "result":
 		r.log.Info(r.msg("result "+r.redact(ev.Subtype), relayToolBytes), "event", "result", "cost_usd", ev.Cost, "is_error", ev.IsError)
+	}
+}
+
+// countCommand adds one run of a shell command to the stage's tally and keeps
+// Repeats at the largest count any one command reached. The command itself
+// stays in the tally's key and nowhere else: what a reader of the record gets
+// is a count (task-governance T1.4).
+func (r *Relay) countCommand(input json.RawMessage) {
+	var m map[string]string
+	if json.Unmarshal(input, &m) != nil {
+		return
+	}
+	command := m["command"]
+	if command == "" {
+		return
+	}
+	if r.commands == nil {
+		r.commands = map[string]int{}
+	}
+	r.commands[command]++
+	if r.commands[command] > r.Repeats {
+		r.Repeats = r.commands[command]
 	}
 }
 
