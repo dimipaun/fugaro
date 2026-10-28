@@ -44,7 +44,7 @@ version: 1
 # and as the inline embed behind the marketing consent (G2.3, D401). The page adds the UTM
 # parameters it is allowed to pass through (F22, G2.4); the file writes the link itself, with no
 # query of its own.
-calendly_url: https://calendly.com/dimi-fugaro/30min
+calendly_url: https://calendly.com/dimi-fugaro/demo
 
 # The WhatsApp Business number in the `wa.me` form: digits alone, the country code first, with
 # no plus, no spaces and no punctuation. It is written as a string so that its YAML kind is not
