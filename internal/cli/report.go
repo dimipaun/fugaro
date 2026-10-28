@@ -424,8 +424,8 @@ func reportByMode(ctx context.Context, cmd *cobra.Command, o *reportOptions, lc 
 // modeRecords is the by-mode grouping's input: one Rec per run of the window,
 // dated on its launch day, carrying the rigor mode its record resolved and the
 // money its record settled. A run whose record is missing or unreadable did
-// launch, so it counts once among the runs and adds nothing to the money: its
-// spend is unknown, and 0 would be a figure.
+// launch, so it counts once among the runs and adds nothing to the money: the
+// row it lands in reads 0 in the money columns, and nothing on the wire marks it.
 func modeRecords(objs []runObject, to int64) []report.Rec {
 	var recs []report.Rec
 	for _, o := range objs {

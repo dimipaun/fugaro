@@ -442,9 +442,11 @@ func TestReportByModeGroupsRuns(t *testing.T) {
 		t.Fatalf("the table carries an escape:\n%q", out)
 	}
 	// A run record carries no run hours, so no row of this grouping has one to
-	// show: run_hours is no figure anywhere in the document -- the key null
-	// where it appears, and never the 0 a reader would take for a measured hour,
-	// though the pro row above has a known compute.
+	// show: run_hours is null on every row and in the totals -- never the 0 a
+	// reader would take for a measured hour -- though the pro row above has a
+	// known compute. The key itself stays, as the contract pins
+	// (JSONLine.RunHours carries no omitempty), so an omitempty added later
+	// fails here rather than passing quietly.
 	raw, _, err := execute(t, "report", "--json", "--by", "mode", "--since", "2026-10-01")
 	if err != nil {
 		t.Fatal(err)
@@ -461,8 +463,8 @@ func TestReportByModeGroupsRuns(t *testing.T) {
 		t.Fatalf("rows %+v, totals %+v: the document carries no run_hours to read", doc.Rows, doc.Totals)
 	}
 	for _, l := range lines {
-		if got := string(l["run_hours"]); got != "" && got != "null" {
-			t.Errorf("run_hours = %s, want no figure: a by-mode row knows no run hours, and a number here is one a reader would take for measured", got)
+		if got := string(l["run_hours"]); got != "null" {
+			t.Errorf("run_hours = %q, want null on every row: a by-mode row knows no run hours, and the key is pinned present with no figure in it", got)
 		}
 	}
 }
@@ -540,7 +542,8 @@ func TestReportByModeTruncation(t *testing.T) {
 
 // TestReportByModeUnreadableRecord: a run whose result.json the bucket holds and
 // this build cannot read did launch, so it counts once among the runs and adds
-// nothing to the money -- in no money column, and not a zero figure either.
+// nothing to the money: the row it lands in reads 0 in the money columns, and
+// nothing on the wire marks it.
 func TestReportByModeUnreadableRecord(t *testing.T) {
 	f := newReportFixture(t)
 	seedModeRun(t, f.cloudFixture, appSlug, "20261016-120000-aaaa", "pro", runstore.NewCost(1.50, 0.25, runstore.BasisAPIList))
