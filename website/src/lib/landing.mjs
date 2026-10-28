@@ -72,9 +72,10 @@ const VARIANT_KEYS = ['headline', 'image', 'path', 'proof_number', 'supporting_l
 const PROOF_KEYS = ['source', 'value']
 const LOGO_KEYS = ['image', 'name']
 
-/** A tone, a path's name and a logo's name: words the page's look and the site's routes key off,
- * so none of them may carry punctuation, a slash or a space that would become a selector or a
- * second route segment. */
+/** A tone: the word the page's look keys off, so it carries no punctuation, a slash or a space
+ * that would become a selector that matches nothing. A partner logo's `name` is not this: it is
+ * the partner's own name, read as written. A variant's path is held to the same charset by the
+ * route check in `variant()` below, which reads it as the path it is rather than as a word. */
 const WORD = /^[a-z][a-z0-9-]*$/
 
 /**
@@ -91,6 +92,24 @@ function selfHosted(value, file, what) {
   if (!/^\/(?!\/)[A-Za-z0-9._~\-/]*$/.test(text) || text.split('/').includes('..')) {
     throw new Error(
       `${file}: ${what} is ${JSON.stringify(text)}, and a variant's media is a self-hosted path under website/public/ — a file this site serves, never an absolute URL. An external player or image host is a fourth third party the marketing consent (G2.3, D401) never admitted, and the page builds without the file until the owner produces it (F14, F20, D107).`,
+    )
+  }
+  return text
+}
+
+/**
+ * One line of a variant's copy that the hero prints: a headline or the supporting line under it.
+ * A blank string is refused rather than rendered, because a headline or a supporting line with
+ * nothing in it is a hero with a hole where the campaign copy goes — and this file is the only
+ * place that copy is written, so there is no other sentence to fall back to (G2.1).
+ *
+ * @param {*} value @param {string} file @param {string} what
+ */
+function copyLine(value, file, what) {
+  const text = asString(value, file, what)
+  if (text.trim() === '') {
+    throw new Error(
+      `${file}: ${what} is ${JSON.stringify(text)}, and the hero prints it as the campaign's own copy. A blank ${what} is a hero with a hole where the copy goes: this file is the only place a variant's headline and supporting line are written, so there is nothing to render in its place (G2.1).`,
     )
   }
   return text
@@ -195,8 +214,8 @@ function variant(value, index, file, site) {
   return {
     name,
     path: route,
-    headline: asString(entry.headline, file, `${what}.headline`),
-    supportingLine: asString(entry.supporting_line, file, `${what}.supporting_line`),
+    headline: copyLine(entry.headline, file, `${what}.headline`),
+    supportingLine: copyLine(entry.supporting_line, file, `${what}.supporting_line`),
     tone,
     proofNumber: proofNumber(entry.proof_number, file, `${what}.proof_number`, site),
     whatsappText: text,

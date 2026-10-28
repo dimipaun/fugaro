@@ -74,6 +74,12 @@ partner_logos: []
 #                   came from -- the spec writes the pattern, and the loader refuses a message
 #                   that names another variant or none (spec section 6).
 #
+# Two more refusals the loader applies here. A blank `headline` or `supporting_line` is refused:
+# the hero prints both, and this file is the only place that copy is written, so an empty value is
+# a hero with a hole in it rather than a default to fall back on. And a variant's `tone` is a
+# lowercase word, which the page's look keys off -- unlike a `name` in `partner_logos`, which is
+# the partner's own name and is read as written.
+#
 # `video` and `image` are absent from every variant: no campaign video exists yet and the /crew
 # cat imagery is the owner's file, and a variant that names neither builds and renders without
 # it (F14, G2.5). They land here as `/videos/save.mp4` and `/images/crew-cat.png` -- a path the
