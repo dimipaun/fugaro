@@ -163,6 +163,38 @@ func (c *Config) Enrolls(provider, repo string) bool {
 	return false
 }
 
+// RepoFor is the repos: entry for repo, matched in canonical form
+// (task.CanonicalRepo: ASCII-folded, without a trailing ".git"). It is the one
+// lookup a launch resolves repos.<r>.base_branch through: `fugaro run`'s own
+// cloudEnv.localRepo is this function, and `fugaro config list --json` reads
+// its base_branch column through it as well, because the branch that document
+// shows has to be the branch the run is cut from (docs/design/desktop-console.md
+// §5.1 rule 11).
+//
+// Two entries can name one repository — "acme/app" and "acme/app.git", or two
+// spellings the fold merges — and the entry that answers is the first of the
+// sorted keys: the same entry on every read of unchanged files rather than
+// whichever key a map iteration reached first (Enrolls' own reason, one
+// function over).
+//
+// A repo that is not a canonical owner/name has no entry, and a nil config —
+// one that could not be read — names no repository at all: both fail closed.
+func (c *Config) RepoFor(repo string) (Repo, bool) {
+	if c == nil {
+		return Repo{}, false
+	}
+	want, err := task.CanonicalRepo(repo)
+	if err != nil {
+		return Repo{}, false
+	}
+	for _, name := range slices.Sorted(maps.Keys(c.Repos)) {
+		if canonical, err := task.CanonicalRepo(name); err == nil && canonical == want {
+			return c.Repos[name], true
+		}
+	}
+	return Repo{}, false
+}
+
 // CheckoutPath is one remembered checkout: an absolute path, and when it was
 // first recorded (the order the bound drops by).
 type CheckoutPath struct {
