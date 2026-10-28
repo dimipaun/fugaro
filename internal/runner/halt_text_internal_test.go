@@ -18,7 +18,7 @@ func TestHaltTextNamesEachGovernanceStop(t *testing.T) {
 		reason runstore.HaltReason
 		want   string
 	}{
-		{runstore.HaltStageBudget, "a stage passed the budget for it"},
+		{runstore.HaltStageBudget, "a stage passed its own budget"},
 		{runstore.HaltReviewRatio, "review spent more calls than the ratio allows for the implementation it read"},
 		{runstore.HaltFanout, "a stage used more sub-agents than the maximum"},
 		{runstore.HaltReviewScope, "the review range covers files this run never changed"},

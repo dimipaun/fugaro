@@ -182,7 +182,7 @@ func haltReasonText(h runstore.Halt) string {
 	case runstore.HaltCredsRulesDenied:
 		return "the database's rules refused this run's credential state"
 	case runstore.HaltStageBudget:
-		return "a stage passed the budget for it"
+		return "a stage passed its own budget"
 	case runstore.HaltReviewRatio:
 		return "review spent more calls than the ratio allows for the implementation it read"
 	case runstore.HaltFanout:
@@ -203,9 +203,10 @@ func haltReasonText(h runstore.Halt) string {
 //
 // detail is the runner's own account of what the tripwire saw — a count, a
 // figure, a stage name — and never task text. The checkpoint's trigger,
-// why_over and estimate_usd come from the record itself; done, next and
-// hard_instructions stay empty until the stopping agent answers the checkpoint
-// prompt (T7.2, wired in T7.3).
+// why_over and estimate_usd are the runner's own too: the reason it was
+// handed, its words for that reason, and the model spend the record had
+// reached. done, next and hard_instructions stay empty until the stopping
+// agent answers the checkpoint prompt (T7.2, wired in T7.3).
 func (r *run) governanceHalt(ctx context.Context, reason runstore.HaltReason, detail string) bool {
 	h := runstore.Halt{Reason: reason, Scope: "run", At: r.d.Now().UTC(), Detail: detail}
 	if !r.haltNow(h) {

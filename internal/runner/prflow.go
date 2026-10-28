@@ -475,8 +475,9 @@ func toleratedPart(pol FindingsPolicy, last runstore.ReviewSummary) string {
 // runner's words for why the run is over, and whichever of the stopping
 // agent's three answers the checkpoint stage filled (T7.3). Only fields that
 // are set are rendered — a checkpoint written before that stage exists carries
-// the trigger and the runner's own two facts alone — and every one of them is
-// untrusted text rendered the way the rest of the section's free text is.
+// the trigger and the runner's own two facts alone — and every one of them
+// goes through inlineText, so the fields the agent fills cannot forge section
+// markup.
 //
 // The trigger is in a code span so it reads as the vocabulary value it is; the
 // estimate says whose figure it is, because it is the record's model spend and

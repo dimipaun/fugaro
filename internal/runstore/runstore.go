@@ -346,7 +346,7 @@ func boundReviewScopeFiles(paths []string, budget *int) ([]string, bool) {
 }
 
 // MaxCheckpointText bounds one free-text field of a checkpoint report, in
-// runes, like MaxToleratedTitle bounds a finding's title: two of the three
+// runes, like MaxToleratedTitle bounds a finding's title: three of its four
 // free-text fields are a model's own answer and the record is a small object
 // every listing reads.
 const MaxCheckpointText = 500
@@ -362,10 +362,12 @@ const MaxCheckpointText = 500
 // the model spend the record had reached, which is the figure a continuation
 // starts from and the only money figure the record carries before a tier's
 // expectation exists (T8.1). Done, Next and HardInstructions are the stopping
-// agent's answer to the checkpoint prompt (prompts.go, wired in T7.3), so
-// they are empty for every checkpoint written before that stage exists and
-// for every run a per-run cap or a stage timeout stops, which gets no
-// checkpoint call (T7.2).
+// agent's answer to the checkpoint prompt (prompts.go, wired in T7.3): empty
+// in every checkpoint written before that stage exists, and after it in every
+// governance stop that gets no checkpoint call — a stage timeout, or any
+// governance stop of an oauth run (T7.2). A stop that is not a governance one
+// writes no block at all, which is why a run the per-run cap halted carries
+// none.
 //
 // Absent — never an empty block — for a run that did not take a governance
 // halt, and in records from before this field existed: the field is additive,
