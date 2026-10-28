@@ -2443,6 +2443,30 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 // that is exhausted at that instant. A fourth answer ends the run named.
 const maxCredentialResumes = 3
 
+// stageTimeout is a stage's own wall-clock ceiling, read off the run's
+// resolved policy (T7.6): the effective stage_timeout of the one merge every
+// governance key goes through, so the project layer's block is the ceiling,
+// the default branch's file and the repository's own may only tighten it, and
+// a value that would loosen an upper layer is recorded in result.json and
+// warned about like any other (policy.Merge, PolicyKeyPath). Zero means the
+// run resolved none, and the stage is bounded by the run's own
+// timeouts.stage alone.
+//
+// Only the three stages governance bounds have one: an artifact run's plan
+// and render steps are not among them (T7.1).
+func (r *run) stageTimeout(stage string) time.Duration {
+	t := r.policy.Governance.StageTimeout
+	switch {
+	case config.IsReviewStage(stage):
+		return t.Review
+	case stage == "fix":
+		return t.Fix
+	case stage == "implement":
+		return t.Implement
+	}
+	return 0
+}
+
 // stageOnce is one attempt at a stage: the whole of what stage did before
 // C1.17, including its own failure handling.
 func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opts stageOpts) (agent.Result, bool, error) {
@@ -2520,9 +2544,23 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	if dl, ok := deadlineCtx.Deadline(); ok {
 		r.beginBudgetStage(name, n, dl)
 	}
+	// The stage's own governance.stage_timeout, when the run resolved one: it
+	// only ever shortens a stage, so a value at or above the run's own
+	// timeouts.stage leaves that bound in charge and is dropped here rather
+	// than given a deadline of its own. deadlineCtx stays the context that
+	// says which of the two ended the stage (below): it is done only when the
+	// run's own bound, or the finalize reserve under it, is what fired.
+	own := r.stageTimeout(name)
+	ownCtx, cancelOwn := deadlineCtx, context.CancelFunc(func() {})
+	if own > 0 && own < r.budget.Stage {
+		ownCtx, cancelOwn = context.WithTimeout(deadlineCtx, own)
+	} else {
+		own = 0
+	}
+	defer cancelOwn()
 	// The halt's way to stop this stage: cancelling with the halt as the
 	// cause, which StageError reads.
-	stageCtx, cancelCause := context.WithCancelCause(deadlineCtx)
+	stageCtx, cancelCause := context.WithCancelCause(ownCtx)
 	r.mu.Lock()
 	r.haltStage = cancelCause
 	extra := r.stageExtra
@@ -2574,6 +2612,17 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.setStageCkptStop(nil)
 	}()
 	res, err := r.d.Agent.Run(stageCtx, req)
+	// What ended the stage is what was already true when the agent returned:
+	// the stage's own deadline is the one that fired, and not the run's own
+	// bound — or the finalize reserve under it — whose context is the parent
+	// and which is done too whenever one of those fired. Read straight away,
+	// so an agent that returned a failure of its own a moment before its
+	// stage ran out keeps that failure rather than being read as a stop. A
+	// stage whose result arrived as its deadline did is not stopped either:
+	// its work is done, the same way a result that races the run's own
+	// timeouts.stage is a stage that succeeded.
+	cutByOwn := errors.Is(stageCtx.Err(), context.DeadlineExceeded) && deadlineCtx.Err() == nil
+	ownTimedOut := own > 0 && err != nil && cutByOwn
 	stopCheckpoints()
 	stopWatch()
 	// An oauth run has no gateway: its stage's own cost figure is its
@@ -2634,6 +2683,25 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	if h := r.haltValue(); h != nil {
 		r.save(ctx)
 		return res, false, &HaltError{*h}
+	}
+	// A stage that reached its own governance.stage_timeout is a governance
+	// stop, not a failed stage: the run halts with the checkpoint report the
+	// other tripwires leave, and the detail is the runner's own word for the
+	// bound that fired (T7.6, D329, G7). The run's own timeouts.stage is not
+	// this — a stage that ends at that bound is the failure it has always
+	// been — which is why own is zero unless it was the tighter of the two.
+	//
+	// It runs here, on the run goroutine and after the stage's spend and
+	// history above are recorded, which is the ordering governanceHalt
+	// requires of its caller. A cancel that landed first keeps the run
+	// cancelled: governanceHalt then records nothing, and the stage fails the
+	// way it would have without the timeout.
+	if ownTimedOut {
+		if r.governanceHalt(ctx, runstore.HaltStageBudget, "time") {
+			if h := r.haltValue(); h != nil {
+				return res, false, &HaltError{*h}
+			}
+		}
 	}
 	// What the gateway saw a moment ago decides the stage before the
 	// credential service's answer does: a call the gateway refused as a
