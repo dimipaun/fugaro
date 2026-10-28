@@ -447,10 +447,10 @@ function unknownOutcome(why: string, runId: string): LaunchOutcome {
  * run id replays from. Nothing here is written to disk (rule 10: the app writes
  * the spawn log, when asked, and the installations file, and nothing else).
  *
- * Two of those grow with the process's own history rather than with what is
- * unsettled, and each is bounded where it can be: `issuedRunIds` keeps one short
- * string per launch for the life of the process, which is what makes a drawn id
- * unmistakably this process's, and `outcomes` is capped at
+ * The two that grow with the launches this process has run, rather than with
+ * what is unsettled, are each bounded where they can be: `issuedRunIds` keeps one
+ * short string per launch for the life of the process, which is what makes a
+ * drawn id unmistakably this process's, and `outcomes` is capped at
  * `MAX_RECORDED_OUTCOMES` because a replayed answer is an answer and not a
  * promise about every id ever used.
  */
