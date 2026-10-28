@@ -80,6 +80,8 @@ Write each lesson where the next run will read it — the project's `CLAUDE.md` 
 
 A run that failed is never retried automatically, and no report launches one. A relaunch is the user's decision, and it says why the first attempt failed and what changed: the task, the recipe, the account, or the configuration. One that repeats the first attempt spends the same money for the same result.
 
+**A report run is launched again, never retried or continued.** `fugaro run --retry RUN` refuses a run whose recipe holds the `digest` step, and `fugaro run --pr N` cannot continue one either: a report run lists the records it may read and refuses while another report run of this repository is going, and neither a retry (which carries the listing its first launch made) nor a follow-up (which carries none) reads the records the period's reports are written from. A report that has to be written again is a new report run — `fugaro run --recipe run-digest "TEXT"` — not a relaunch of the old one. Say so instead of relaunching, and never reach for `--retry` on a run that wrote a report.
+
 ## 7. Sharing a learning with Fugaro
 
 Some lessons are about Fugaro itself rather than about this repository. The user decides whether one is worth sending to Fugaro's maintainers:
