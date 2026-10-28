@@ -158,6 +158,13 @@ as it stands. L0.2 is the owner's CLA Assistant install, in these steps:
 - [ ] Replace `[CLA URL TO BE PUBLISHED]` in `console/LICENSE.md`, `mobile/LICENSE.md` and
   `ee/LICENSE` with the Gist's URL (a separate change, after the Gist exists).
 
+**Amended 2026-10-28: the app is installed.** The owner installed CLA Assistant on
+`dimipaun/fugaro`, and the repository publishes the two surfaces a contributor meets: the signing
+link in `CONTRIBUTING.md`'s `## Licensing of contributions` section and the app's badge in the
+README's opening. The boxes above that only the owner's own session can confirm — the Gist and its
+raw URL, the allow-list, the visible status, the test pull request and the branch-protection
+setting — stay unchecked here, and the three licence files keep their placeholder until L4.4.
+
 ### Slice L1 — the 0.11.0 skeleton (D306)
 
 #### L1.1 — The boundary and notice tests

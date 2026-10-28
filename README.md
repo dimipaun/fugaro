@@ -6,6 +6,8 @@
 
 Ephemeral cloud jobs that turn tasks into pull requests.
 
+<a href="https://cla-assistant.io/dimipaun/fugaro"><img src="https://cla-assistant.io/readme/badge/dimipaun/fugaro" alt="CLA assistant" /></a>
+
 Website: [fugaro.dev](https://fugaro.dev)
 
 *Fugax* is Latin for "fleeting." Fugaro runs long, self-contained coding-agent loops (implement, test, review, fix, compile, open a pull request) in throwaway cloud containers instead of on your laptop. Each task gets its own Cloud Run job execution in your own Google Cloud project, runs Claude Code headless to completion, pushes its work, opens a pull request and disappears. Google Cloud is the only backend.
