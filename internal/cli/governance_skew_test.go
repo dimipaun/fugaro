@@ -176,6 +176,12 @@ func TestRepoEngineRefusesGovernanceOnAnOlderBaseImage(t *testing.T) {
 	}{
 		{"repo", head + "governance: { review_ratio: 3 }\n" + wf, "", "fugaro.yaml's governance: block of"},
 		{"layer", head + wf, "version: 1\nproject: aurora\ngcp_project: proj-1234\ngovernance: { review_ratio: 20 }\n", "the project layer's governance: block"},
+		// governance.tiers is the same key for the skew gate: an older runner's
+		// KnownFields decoder refuses a tiers-only block exactly like any other
+		// governance: line, so the gate has to judge the block and not one of its
+		// keys (T8.1).
+		{"repo tiers only", head + "governance: { tiers: { trivial: { max_subagents: 3 } } }\n" + wf, "", "fugaro.yaml's governance: block of"},
+		{"layer tiers only", head + wf, "version: 1\nproject: aurora\ngcp_project: proj-1234\ngovernance: { tiers: { trivial: { max_subagents: 3 } } }\n", "the project layer's governance: block"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			r := newInitRig(t)
@@ -429,7 +435,7 @@ func validateGovernance(t *testing.T, governanceLines string) (validateOutput, e
 // image (the installation's base, and a workflow's own). An explicit null
 // counts: it is the key an older runner refuses.
 func TestValidateWarnsThatGovernanceNeedsEveryJobImage(t *testing.T) {
-	for _, lines := range []string{"governance: { review_ratio: 3 }\n", "governance:\n"} {
+	for _, lines := range []string{"governance: { review_ratio: 3 }\n", "governance:\n", "governance: { tiers: { trivial: { max_subagents: 3 } } }\n"} {
 		doc, err := validateGovernance(t, lines)
 		if err != nil {
 			t.Fatalf("%q: err = %v, want a valid file", lines, err)
