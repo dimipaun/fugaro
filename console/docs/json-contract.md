@@ -398,14 +398,19 @@ the exported writer, not a `cli`-side struct. Indented two spaces
 `"iso-utc-monday"`** — the ISO week convention is declared, not inferred),
 `rows` `[]JSONLine`, `totals` `JSONLine`, `warnings` `[]string`.
 
-`JSONLine`: `key`, `start`°, `end`°, `partial` bool,
-`model_micros` int64, `model_usd` string, `notional_micros` `*int64`,
+`JSONLine`: `key`, `start`°, `end`°, `partial` bool, `unreadable`° bool,
+`model_micros` `*int64`, `model_usd` `*string`, `notional_micros` `*int64`,
 `notional_usd` `*string`, `compute_micros` `*int64`, `compute_usd` `*string`,
 `compute_estimated` bool, `run_hours` `*float64`, `runs` int64, `calls` int64,
 `tokens` `*JSONTokens`°.
 
 - **`*_usd` are exact decimal strings of the integer `*_micros`** (`USD6`), not
   floats: the console parses the string, and micros is the integer of record.
+- **`model_micros`/`model_usd` are null exactly when the row is `unreadable`**
+  — a by-mode row every one of whose runs' records the CLI could not read
+  (`Row.Unreadable`, `internal/report/report.go`; only `--by mode` sets it).
+  The row still counts its `runs`, and null is *unavailable*, never a measured
+  `0`. Every other row writes both keys, so a number there is a measurement.
 - **`notional_micros`/`notional_usd` are null when not tracked** —
   `w.NotionalTracked` (`jsonLine`). That is *unavailable*,
   and it is **notional**, never added to a real total (design §6.2, "one
@@ -442,8 +447,11 @@ the exported writer, not a `cli`-side struct. Indented two spaces
   - Every run counts **once**, on its launch day, so `runs` is the row's run
     count and `--since`/`--until` bound it by that day. A run whose record the
     bucket holds and the CLI cannot read did launch: it counts once in `runs`
-    and adds nothing to the money columns, so a row made only of such runs
-    reads `0` and nothing on the wire marks it.
+    and adds nothing to the money columns. A row made only of such runs is
+    marked **`unreadable: true`** and its money keys are **null** —
+    *unavailable*, never the measured `0` the sums would carry (`n/a` in the
+    table and the CSV) — while a row holding one readable record keeps its
+    sums and carries no mark.
   - `calls` is `0` on this grouping's rows, as on `--by person`'s: a run record
     carries no call count, and the column is not drawn. A window holding more
     runs than the read opens is reported to its newest runs, and `warnings[]`

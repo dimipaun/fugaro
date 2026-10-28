@@ -15,6 +15,9 @@
 //   - Compute is "n/a" when no run of the row had its compute estimated, never
 //     0; "-" (null in JSON) means the figure is not recorded for that
 //     breakdown (compute per model or per person).
+//   - A row every one of whose records was unreadable carries no measurement:
+//     it is marked unreadable and its money columns read "n/a" (null in JSON),
+//     never the 0 the sums would carry.
 //   - The runner records one dollar figure per model, billed or notional. By
 //     model, a day with no billed spend counts it all as notional, a day with
 //     no notional as billed, and a mixed day splits it in the day's
@@ -78,6 +81,9 @@ type Rec struct {
 	// day rollups carry no mode, so only the run-record reader sets it and
 	// only the by-mode grouping reads it; "" is ModeNone's row.
 	Mode string
+	// Unreadable marks a run whose record the reader could not read at all, so
+	// not one of its figures is known. It still counts as a run.
+	Unreadable bool
 }
 
 // Compute states of a Row.
@@ -93,6 +99,10 @@ type Row struct {
 	Start   string // first day of a period (YYYY-MM-DD), "" otherwise
 	End     string // last day seen in the row
 	Partial bool
+	// Unreadable: every record of the row was unreadable, so the money below
+	// is no measurement and the renderers write n/a rather than a 0. A row
+	// with even one readable record is a measured row.
+	Unreadable bool
 
 	Spent, Notional, Compute budget.Micros
 	NotionalTracked          bool
@@ -145,6 +155,11 @@ type acc struct {
 	row           Row
 	estimatedRuns int64
 	runs          int64
+	// allUnreadable is the AND of the row's records' marks; readable says at
+	// least one record went through addRecord, so a grouping that never adds
+	// one is not read as a row of unreadable records.
+	allUnreadable bool
+	readable      bool
 }
 
 // PeriodKey is the key and the first day of date's period for a time grouping.
@@ -177,7 +192,7 @@ func Build(recs []Rec, d Dim) Report {
 	get := func(key, start string) *acc {
 		a, ok := groups[key]
 		if !ok {
-			a = &acc{row: Row{Key: Text(key), Start: start}}
+			a = &acc{row: Row{Key: Text(key), Start: start}, allUnreadable: true}
 			groups[key] = a
 			order = append(order, key)
 		}
@@ -343,6 +358,8 @@ func markDay(a *acc, r Rec) {
 }
 
 func addRecord(a *acc, r Rec) {
+	a.readable = true
+	a.allUnreadable = a.allUnreadable && r.Unreadable
 	a.row.Spent = satAdd(a.row.Spent, r.SpentMicros)
 	a.row.Notional = satAdd(a.row.Notional, r.NotionalMicros)
 	a.row.Compute = satAdd(a.row.Compute, r.ComputeMicros)
@@ -354,6 +371,7 @@ func addRecord(a *acc, r Rec) {
 }
 
 func finish(a *acc) {
+	a.row.Unreadable = a.readable && a.allUnreadable
 	if a.row.ComputeState == ComputeNotTracked {
 		return
 	}

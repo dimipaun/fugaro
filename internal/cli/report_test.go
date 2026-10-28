@@ -541,9 +541,9 @@ func TestReportByModeTruncation(t *testing.T) {
 }
 
 // TestReportByModeUnreadableRecord: a run whose result.json the bucket holds and
-// this build cannot read did launch, so it counts once among the runs and adds
-// nothing to the money: the row it lands in reads 0 in the money columns, and
-// nothing on the wire marks it.
+// this build cannot read did launch, so it counts once among the runs and its
+// money was never measured. A row made only of such runs is marked unreadable
+// and carries null money -- never the 0 a reader would take for a measurement.
 func TestReportByModeUnreadableRecord(t *testing.T) {
 	f := newReportFixture(t)
 	seedModeRun(t, f.cloudFixture, appSlug, "20261016-120000-aaaa", "pro", runstore.NewCost(1.50, 0.25, runstore.BasisAPIList))
@@ -554,12 +554,140 @@ func TestReportByModeUnreadableRecord(t *testing.T) {
 	if p := by["pro"]; p.runs != "1" || p.model != "1.500000" || p.compute == nil || *p.compute != "0.250000" {
 		t.Fatalf("pro %+v", by)
 	}
-	if n, ok := by["none"]; !ok || n.runs != "1" || n.model != "0.000000" || n.notional != "0.000000" || n.compute != nil {
-		t.Fatalf("the unreadable run's row = %+v, want it counted once and priced nowhere", by)
-	}
 	if o.Totals.Runs != 2 || o.Totals.ModelMicros != 1_500_000 {
 		t.Fatalf("totals = %+v, want both runs and one run's money", o.Totals)
 	}
+	raw := f.rawJSON(t, "--by", "mode", "--since", "2026-10-01")
+	none, ok := raw.rows["none"]
+	if !ok {
+		t.Fatalf("the unreadable run's row is missing: %+v", raw.rows)
+	}
+	if got := rawJSONString(none, "unreadable"); got != "true" {
+		t.Errorf("the unreadable run's row unreadable = %s, want true", got)
+	}
+	for _, k := range []string{"model_micros", "model_usd", "notional_micros", "notional_usd", "compute_micros", "compute_usd", "run_hours"} {
+		if got := rawJSONString(none, k); got != "null" {
+			t.Errorf("the unreadable run's row %s = %s, want null: the money was never measured, and 0 is a measurement", k, got)
+		}
+	}
+	if got := rawJSONString(none, "runs"); got != "1" {
+		t.Errorf("the unreadable run's row runs = %s, want the run counted", got)
+	}
+	if got, ok := raw.rows["pro"]["unreadable"]; ok {
+		t.Errorf("a readable row carries unreadable = %s", got)
+	}
+	if got, ok := raw.totals["unreadable"]; ok {
+		t.Errorf("the totals row carries unreadable = %s: totals keep the measured sums", got)
+	}
+	// The human table and the CSV say n/a for the same row, never 0.00.
+	out, errOut, err := execute(t, "report", "--by", "mode", "--since", "2026-10-01")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, errOut)
+	}
+	if !strings.Contains(modeLine(t, out, "none"), "n/a") {
+		t.Errorf("the unreadable row's table line reads no n/a:\n%s", out)
+	}
+	out, errOut, err = execute(t, "report", "--csv", "--by", "mode", "--since", "2026-10-01")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, errOut)
+	}
+	if !strings.Contains(csvLine(t, out, "none"), "n/a") {
+		t.Errorf("the unreadable row's CSV line reads no n/a:\n%s", out)
+	}
+}
+
+// TestReportByModeUnreadableRecordMixedRow: a row of one readable record and one
+// the build cannot read is a measured row: it keeps the readable run's sums and
+// carries no unreadable mark, because something in it was read.
+func TestReportByModeUnreadableRecordMixedRow(t *testing.T) {
+	f := newReportFixture(t)
+	seedModeRun(t, f.cloudFixture, appSlug, "20261016-120000-aaaa", "", runstore.NewCost(2.00, 0, runstore.BasisAPIList))
+	seedCorruptRun(t, f.cloudFixture, appSlug, "20261017-120000-bbbb")
+
+	raw := f.rawJSON(t, "--by", "mode", "--since", "2026-10-01")
+	none, ok := raw.rows["none"]
+	if !ok {
+		t.Fatalf("rows %+v", raw.rows)
+	}
+	if got, ok := none["unreadable"]; ok {
+		t.Errorf("a row with a readable record carries unreadable = %s", got)
+	}
+	if got := rawJSONString(none, "model_usd"); got != `"2.000000"` {
+		t.Errorf("model_usd = %s, want the readable run's money", got)
+	}
+	if got := rawJSONString(none, "runs"); got != "2" {
+		t.Errorf("runs = %s, want both runs", got)
+	}
+	if o := f.json(t, "--by", "mode", "--since", "2026-10-01"); o.Totals.ModelMicros != 2_000_000 || o.Totals.Runs != 2 {
+		t.Errorf("totals = %+v, want the readable run's money over both runs", o.Totals)
+	}
+}
+
+// rawRepDoc is a report document as a test reads it when a null has to be told
+// from a zero and an absent key from a present one.
+type rawRepDoc struct {
+	rows   map[string]map[string]json.RawMessage
+	totals map[string]json.RawMessage
+}
+
+// rawJSON runs the report and keys its rows, and its totals row, by row key.
+func (f *reportFixture) rawJSON(t *testing.T, args ...string) rawRepDoc {
+	t.Helper()
+	out, errOut, err := execute(t, append([]string{"report", "--json"}, args...)...)
+	if err != nil {
+		t.Fatalf("%v\nstderr: %s", err, errOut)
+	}
+	var doc struct {
+		Rows   []map[string]json.RawMessage `json:"rows"`
+		Totals map[string]json.RawMessage   `json:"totals"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("%v in %s", err, out)
+	}
+	d := rawRepDoc{rows: map[string]map[string]json.RawMessage{}, totals: doc.Totals}
+	for _, r := range doc.Rows {
+		var key string
+		if err := json.Unmarshal(r["key"], &key); err != nil {
+			t.Fatalf("%v in %s", err, out)
+		}
+		d.rows[key] = r
+	}
+	return d
+}
+
+// rawJSONString is one key of a raw row as text: "null" for a null, the quoted
+// value for a string, the bare digits for a number.
+func rawJSONString(row map[string]json.RawMessage, key string) string {
+	v, ok := row[key]
+	if !ok {
+		return "<absent>"
+	}
+	return string(v)
+}
+
+// modeLine is the table line of one by-mode row, found by its key in the first
+// column.
+func modeLine(t *testing.T, out, key string) string {
+	t.Helper()
+	for _, line := range strings.Split(out, "\n") {
+		if f := strings.Fields(line); len(f) > 1 && f[0] == key {
+			return line
+		}
+	}
+	t.Fatalf("the table has no %q row:\n%s", key, out)
+	return ""
+}
+
+// csvLine is the CSV record of one row, found by its key in the first column.
+func csvLine(t *testing.T, out, key string) string {
+	t.Helper()
+	for _, line := range strings.Split(out, "\n") {
+		if f := strings.Split(line, ","); len(f) > 1 && strings.TrimSpace(f[0]) == key {
+			return line
+		}
+	}
+	t.Fatalf("the CSV has no %q row:\n%s", key, out)
+	return ""
 }
 
 // TestReportByModeJSONSource: the document names the run records as its source,

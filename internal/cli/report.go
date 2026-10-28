@@ -63,19 +63,22 @@ func newReportCmd() *cobra.Command {
 			"Monday (2026-W40). --by repo|model|person groups across the range, and --by mode\n" +
 			"groups by the rigor mode each run resolved (poc, startup, pro, critical, hotfix,\n" +
 			"and none for a run whose record carries no mode, or carries one this version does\n" +
-			"not know), read from the run records and not from this history. Dollars are\n" +
-			"exact (integer micro-dollars). Model $, NOTIONAL~ (a subscription's list-price\n" +
-			"figure, never billed) and COMPUTE $ are separate columns and never summed;\n" +
-			"compute reads n/a when no run's compute was estimated. A person is the stored\n" +
-			"requester address; `unknown` is spend, and runs, with no requester recorded.\n" +
-			"By model, a subscription model's dollars are notional (priced from its tokens,\n" +
-			"so they can differ slightly from the run's recorded notional total).\n\n" +
+			"not know), read from the run records and not from this history: a mode row made\n" +
+			"only of runs whose records could not be read is marked unreadable and reads n/a,\n" +
+			"never 0. Dollars are exact (integer micro-dollars). Model $, NOTIONAL~ (a\n" +
+			"subscription's list-price figure, never billed) and COMPUTE $ are separate\n" +
+			"columns and never summed; compute reads n/a when no run's compute was estimated.\n" +
+			"A person is the stored requester address; `unknown` is spend, and runs, with no\n" +
+			"requester recorded. By model, a subscription model's dollars are notional\n" +
+			"(priced from its tokens, so they can differ slightly from the run's recorded\n" +
+			"notional total).\n\n" +
 			"--csv writes RFC 4180 with spreadsheet-safe cells (a cell starting with = + - @\n" +
 			"is prefixed with '). --json prints {project, source, degraded, by, since, until,\n" +
-			"weeks, rows[{key, start, end, partial, model_micros, model_usd, notional_micros,\n" +
-			"notional_usd, compute_micros, compute_usd, compute_estimated, run_hours, runs,\n" +
-			"calls, tokens}], totals, warnings}; *_usd are exact decimal strings and null\n" +
-			"means n/a or not recorded for that breakdown.\n\n" +
+			"weeks, rows[{key, start, end, partial, unreadable, model_micros, model_usd,\n" +
+			"notional_micros, notional_usd, compute_micros, compute_usd, compute_estimated,\n" +
+			"run_hours, runs, calls, tokens}], totals, warnings}; *_usd are exact decimal\n" +
+			"strings and null means n/a or not recorded for that breakdown (an unreadable\n" +
+			"row carries null money).\n\n" +
 			"A project without Firestore history says so and shows run-record totals instead\n" +
 			"(from the runs bucket, not budget history).",
 		Args: cobra.NoArgs,
@@ -425,7 +428,8 @@ func reportByMode(ctx context.Context, cmd *cobra.Command, o *reportOptions, lc 
 // dated on its launch day, carrying the rigor mode its record resolved and the
 // money its record settled. A run whose record is missing or unreadable did
 // launch, so it counts once among the runs and adds nothing to the money: the
-// row it lands in reads 0 in the money columns, and nothing on the wire marks it.
+// record is marked unreadable, so a row made only of such runs reads n/a rather
+// than the 0 a reader would take for a measured spend.
 func modeRecords(objs []runObject, to int64) []report.Rec {
 	var recs []report.Rec
 	for _, o := range objs {
@@ -443,6 +447,8 @@ func modeRecords(objs []runObject, to int64) []report.Rec {
 			if c.Cost != nil {
 				applyCost(&rec.DayRecord, *c.Cost)
 			}
+		} else {
+			rec.Unreadable = true
 		}
 		recs = append(recs, rec)
 	}

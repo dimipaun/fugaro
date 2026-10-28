@@ -364,7 +364,7 @@ func TestByModelSplitsBilledFromNotional(t *testing.T) {
 	if err := json.Unmarshal(j.Bytes(), &doc); err != nil {
 		t.Fatal(err)
 	}
-	if doc.Rows[0].ModelMicros != 0 || doc.Rows[0].NotionalMicros == nil || *doc.Rows[0].NotionalMicros != 90_132_148 {
+	if doc.Rows[0].ModelMicros == nil || *doc.Rows[0].ModelMicros != 0 || doc.Rows[0].NotionalMicros == nil || *doc.Rows[0].NotionalMicros != 90_132_148 {
 		t.Fatalf("json %+v", doc.Rows[0])
 	}
 }
@@ -455,5 +455,80 @@ func TestByModeGroupsRecordedModes(t *testing.T) {
 	}
 	if !strings.Contains(b.String(), "n/a") || !strings.Contains(b.String(), "no rigor mode") {
 		t.Fatalf("table:\n%s", b.String())
+	}
+}
+
+// modeRec is one by-mode grouping input: a run's launch day, its mode and the
+// money its record settled.
+func modeRec(mode string, runs int64, spent int64, unreadable bool) Rec {
+	return Rec{
+		DayRecord:  budget.DayRecord{Date: "2026-10-01", SpentMicros: budget.Micros(spent), Runs: runs},
+		Mode:       mode,
+		Unreadable: unreadable,
+	}
+}
+
+// TestByModeUnreadableRowIsNotAMeasuredZero: a row made only of records the
+// reader could not read carries the unreadable mark and null money -- n/a in
+// the table and the CSV, never the 0 the sums would carry; a row holding one
+// readable record keeps its sums and no mark; and the totals row keeps the
+// measured sums it has always carried.
+func TestByModeUnreadableRowIsNotAMeasuredZero(t *testing.T) {
+	all := Build([]Rec{modeRec("pro", 1, 0, true)}, ByMode)
+	if len(all.Rows) != 1 || !all.Rows[0].Unreadable || all.Rows[0].Runs != 1 {
+		t.Fatalf("an all-unreadable row = %+v, want it marked and still counted", all.Rows)
+	}
+	if all.Totals.Unreadable {
+		t.Errorf("the totals row is marked unreadable: totals keep the measured sums")
+	}
+	var b bytes.Buffer
+	if err := Table(&b, all, Meta{Since: "2026-10-01", Un: "2026-10-02"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(b.String(), "\n") {
+		if f := strings.Fields(line); len(f) > 1 && f[0] == "pro" {
+			if !strings.Contains(line, "n/a") || strings.Contains(line, "0.00") {
+				t.Errorf("the unreadable row's table line = %q, want n/a and no 0.00", line)
+			}
+		}
+	}
+	var c bytes.Buffer
+	if err := CSV(&c, all); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(c.String(), "n/a") {
+		t.Errorf("the CSV reads no n/a:\n%s", c.String())
+	}
+	var j bytes.Buffer
+	if err := JSON(&j, all, Meta{Since: "2026-10-01", Un: "2026-10-02"}); err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Rows   []map[string]json.RawMessage `json:"rows"`
+		Totals map[string]json.RawMessage   `json:"totals"`
+	}
+	if err := json.Unmarshal(j.Bytes(), &doc); err != nil {
+		t.Fatalf("%v in %s", err, j.String())
+	}
+	if got := string(doc.Rows[0]["unreadable"]); got != "true" {
+		t.Errorf("unreadable = %q, want true", got)
+	}
+	for _, k := range []string{"model_micros", "model_usd", "notional_micros", "notional_usd", "compute_micros", "compute_usd", "run_hours"} {
+		if got := string(doc.Rows[0][k]); got != "null" {
+			t.Errorf("%s = %q, want null", k, got)
+		}
+	}
+	if _, ok := doc.Totals["unreadable"]; ok {
+		t.Errorf("the totals row carries unreadable: %v", doc.Totals)
+	}
+	if got := string(doc.Totals["model_usd"]); got == "null" {
+		t.Errorf("the totals row's model_usd = null, want the measured sum it has always carried")
+	}
+
+	// One readable record in the row: the sums are measurements, so the row is
+	// not marked and its money is written.
+	mixed := Build([]Rec{modeRec("pro", 1, 2_000_000, false), modeRec("pro", 1, 0, true)}, ByMode)
+	if len(mixed.Rows) != 1 || mixed.Rows[0].Unreadable || mixed.Rows[0].Spent != 2_000_000 || mixed.Rows[0].Runs != 2 {
+		t.Fatalf("a mixed row = %+v, want the readable sums and no mark", mixed.Rows)
 	}
 }
