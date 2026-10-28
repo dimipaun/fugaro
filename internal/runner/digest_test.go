@@ -1619,13 +1619,25 @@ func TestDigestRunPushesNothingBeforeFinalize(t *testing.T) {
 }
 
 // TestDigestRunRefusesALeftoverCommit: the leftover commit at finalize must not
-// be able to carry anything but the digest step's own bytes. A stage that
-// writes a git clean filter and the .git/info/attributes that switches it on --
-// both files git reads from the checkout and neither of them tracked -- makes
-// `git add -A` stage different bytes than the step committed, so the leftover
-// commit would be a commit of the agent's and the pull request would carry it.
-// The run is refused instead, and the pull request stays a draft with the
-// reason.
+// be able to carry anything but the digest step's own bytes. A stage plants an
+// untracked file that the finalize reset itself hands to `git add -A`: the file
+// is ignored, and the rule that ignores it lives in a file the same
+// `git clean -fd` deletes (core.excludesFile, an untracked file of the stage's).
+// The clean keeps the ignored file and removes the excludes file, so after it
+// the file is untracked and nothing ignores it and `git add -A` stages it --
+// every time, with no dependence on the clock. The leftover commit would then
+// be a commit of the agent's and the pull request would carry it. The run is
+// refused instead, and the pull request stays a draft with the reason.
+//
+// The other shape of the same guard -- a clean filter the stage writes plus the
+// .git/info/attributes that switches it on, which makes `git add -A` stage
+// different bytes than the step committed -- is not planted here: git re-runs a
+// clean filter only on an index entry whose stat data is stale or racily clean,
+// and the reset that runs first rewrites the tracked files and their index
+// entries moments before the leftover commit, so whether anything is staged
+// depends on which timestamp tick the two land in (6 failures in 30 runs of
+// `-race -count=30`). Nothing a stage can write makes that deterministic, and
+// the production guard is sound either way (digestRefuseChangedBranch).
 //
 // Mutation (commit what the leftover commit finds): the run reports itself on
 // the strength of the report bytes it no longer has.
@@ -1640,7 +1652,7 @@ func TestDigestRunRefusesALeftoverCommit(t *testing.T) {
 
 	rec, err := h.run(t,
 		review("changes", 1),
-		digestFixStep(`git config filter.rot.clean "tr a-z A-Z" && printf '* filter=rot\n' > .git/info/attributes`),
+		digestFixStep(`printf 'leftover\n' > excl && echo x > leftover && git config core.excludesFile "$PWD/excl"`),
 		review("ship", 0),
 	)
 	if err != nil {

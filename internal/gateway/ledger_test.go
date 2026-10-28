@@ -9,6 +9,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -363,8 +364,8 @@ func TestServiceTierPriorityChargedConservatively(t *testing.T) {
 	if len(r.Violations) != 0 {
 		t.Errorf("violations %q: a provider's own tier must not fail the stage", r.Violations)
 	}
-	if len(r.ServiceTiers) != 1 || r.ServiceTiers[0] != `usage.service_tier "priority"` {
-		t.Errorf("service tiers %q, want the tier recorded under its own name", r.ServiceTiers)
+	if tiers := r.ServiceTiers.List(); len(tiers) != 1 || tiers[0] != `usage.service_tier "priority"` {
+		t.Errorf("service tiers %q, want the tier recorded under its own name", tiers)
 	}
 	call := h.logs.lastCall(t)
 	if call["priced_as"] != "tier" || call["service_tier"] != `"priority"` {
@@ -409,13 +410,55 @@ func TestUnpricedServiceTiersChargedConservatively(t *testing.T) {
 			if len(r.Violations) != 0 {
 				t.Errorf("violations %q", r.Violations)
 			}
-			if len(r.ServiceTiers) != 1 || r.ServiceTiers[0] != c.recorded {
-				t.Errorf("service tiers %q, want [%s]", r.ServiceTiers, c.recorded)
+			if tiers := r.ServiceTiers.List(); len(tiers) != 1 || tiers[0] != c.recorded {
+				t.Errorf("service tiers %q, want [%s]", tiers, c.recorded)
 			}
 			if got := h.logs.lastCall(t)["service_tier"]; got == nil || got == "" {
 				t.Errorf("the call log names no tier: %v", h.logs.lastCall(t))
 			}
 		})
+	}
+}
+
+// TestServiceTiersAreCapped: a provider that answers a different service
+// tier on every call cannot grow the stage's report with the call count. A
+// tier the table has no multiplier for no longer ends its stage (design
+// §6.1), so nothing else bounds the names one stage records: the report
+// carries the first MaxServiceTiers distinct names, in the order they came
+// back, and one "+N more" entry counting the distinct names beyond them.
+// The count is of distinct names and not of calls -- the last four calls
+// here repeat tiers already recorded, and it is unchanged -- every call is
+// still charged conservatively and still in the report's figure, and the
+// entry is not a tier name.
+func TestServiceTiersAreCapped(t *testing.T) {
+	u := pricing.Usage{Input: 1000, Output: 500}
+	const distinct, calls = 20, 24
+	script := make([]anthropicfake.Reply, calls)
+	for i := range script {
+		rep := anthropicfake.StreamOK(sonnet, u)
+		rep.Events[0] = withUsage(t, rep.Events[0], map[string]any{"service_tier": fmt.Sprintf("tier-%02d", i%distinct)})
+		script[i] = rep
+	}
+	h := newHarness(t, script...)
+	for i := range calls {
+		if resp, body := h.post(msg(sonnet, 1000, `"stream":true`)); resp.StatusCode != http.StatusOK {
+			t.Fatalf("call %d: status %d, body %s", i, resp.StatusCode, body)
+		}
+	}
+	r := h.gw.EndStage()
+	want := make([]string, 0, MaxServiceTiers+1)
+	for i := range MaxServiceTiers {
+		want = append(want, fmt.Sprintf(`usage.service_tier "tier-%02d"`, i))
+	}
+	want = append(want, fmt.Sprintf("+%d more", distinct-MaxServiceTiers))
+	if got := r.ServiceTiers.List(); !slices.Equal(got, want) {
+		t.Errorf("service tiers %q, want %q", got, want)
+	}
+	if want := cost(t, sonnet, u) * pricing.ConservativeTierMultiplier * calls; r.Used != want {
+		t.Errorf("used %d, want %d: every call is charged, capped names or not", r.Used, want)
+	}
+	if len(r.Violations) != 0 {
+		t.Errorf("violations %q: a provider's own tier must not fail the stage", r.Violations)
 	}
 }
 
@@ -449,7 +492,7 @@ func TestServiceTierMissingIsUnchanged(t *testing.T) {
 			if r.Used != cost(t, sonnet, u) {
 				t.Errorf("used %d, want the standard charge %d", r.Used, cost(t, sonnet, u))
 			}
-			if len(r.Violations) != 0 || len(r.ServiceTiers) != 0 {
+			if len(r.Violations) != 0 || len(r.ServiceTiers.List()) != 0 {
 				t.Errorf("report %+v", r)
 			}
 			if _, has := h.logs.lastCall(t)["service_tier"]; has {
@@ -469,7 +512,7 @@ func TestServiceTierStandardIsUnchanged(t *testing.T) {
 	h := newHarness(t, rep)
 	h.post(msg(sonnet, 1000, `"stream":true`))
 	r := h.gw.EndStage()
-	if r.Used != cost(t, sonnet, u) || len(r.Violations) != 0 || len(r.ServiceTiers) != 0 {
+	if r.Used != cost(t, sonnet, u) || len(r.Violations) != 0 || len(r.ServiceTiers.List()) != 0 {
 		t.Errorf("report %+v", r)
 	}
 }

@@ -311,7 +311,9 @@ type run struct {
 	// those calls were charged conservatively rather than failing the
 	// stage, and the record carries the names so the figure they are in
 	// explains itself (gateway.StageReport's ServiceTiers, design §6.1).
-	serviceTiers []string
+	// The set is bounded when the record is written, not while the run goes
+	// on (gateway.ServiceTierSet.List).
+	serviceTiers gateway.ServiceTierSet
 	provider     gitprov.Provider
 	providerKind string
 	providerFrom string          // where providerKind came from, for mismatch errors

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -21,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/lock"
@@ -804,6 +806,53 @@ func TestServiceTierNotedInRecord(t *testing.T) {
 	}
 	if !strings.Contains(g.logs.String(), "service tiers charged conservatively") {
 		t.Fatalf("no line naming the tiers:\n%s", g.logs.String())
+	}
+}
+
+// tierScript is n replies, each answering at a different service tier the
+// price table has no multiplier for: the shape a provider that never repeats
+// itself sends.
+func tierScript(n int) []anthropicfake.Reply {
+	out := make([]anthropicfake.Reply, n)
+	for i := range out {
+		rep := anthropicfake.MessageOK(sonnet, pricing.Usage{Input: 1000, Output: 100})
+		rep.Body = strings.Replace(rep.Body, `"service_tier":"standard"`, fmt.Sprintf(`"service_tier":"tier-%02d"`, i), 1)
+		out[i] = rep
+	}
+	return out
+}
+
+// TestServiceTiersCappedInRecord: however many distinct tiers a run's calls
+// come back at, the record names MaxServiceTiers of them and counts the rest
+// in one entry. A tier no longer ends its stage (design §6.1), so a provider
+// answering a different one on every call would otherwise grow result.json
+// with the call count; the stage log carries the same bounded list. The run
+// still succeeds and every call is still charged.
+func TestServiceTiersCappedInRecord(t *testing.T) {
+	const distinct = 20
+	g := newGW(t, gwConfig(t, ""), "observe", "", tierScript(distinct)...)
+	var st []int
+	made := make([]call, distinct)
+	for i := range made {
+		made[i] = call{sonnet, 4000}
+	}
+	rec, err := g.run(t, calling(&st, implement("feature"), made...), review("ship", 0))
+	if err != nil || rec.Cost == nil {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("status = %q: a provider's own tier must not fail the stage", rec.Status)
+	}
+	want := make([]string, 0, gateway.MaxServiceTiers+1)
+	for i := range gateway.MaxServiceTiers {
+		want = append(want, fmt.Sprintf(`usage.service_tier "tier-%02d"`, i))
+	}
+	want = append(want, fmt.Sprintf("+%d more", distinct-gateway.MaxServiceTiers))
+	if !slices.Equal(rec.Cost.ServiceTiers, want) {
+		t.Fatalf("service_tiers = %q, want %q", rec.Cost.ServiceTiers, want)
+	}
+	if !strings.Contains(g.logs.String(), fmt.Sprintf("+%d more", distinct-gateway.MaxServiceTiers)) {
+		t.Fatalf("the stage log does not carry the entry the record does:\n%s", g.logs.String())
 	}
 }
 
