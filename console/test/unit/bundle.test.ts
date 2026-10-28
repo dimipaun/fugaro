@@ -314,9 +314,9 @@ describe('the served root npm run build leaves', () => {
     for (const specifier of specifiers) expect(isRelative(specifier ?? '')).toBe(true)
     expect(confirmation).not.toMatch(/\beval\s*\(/)
     expect(confirmation).not.toMatch(/new\s+Function\s*\(/)
-    // The three documents are three windows and three registries, and each
-    // bundle names only its own entry: a bundle that carried another window's
-    // modules would be a second surface in a document that has one script.
+    // Each bundle is one window's script and one registry, and each names only
+    // its own entry: a bundle that carried another window's modules would be a
+    // second surface in a document that has one script.
     for (const [other, otherEntry] of [
       ['console.js', '/renderer/entry.js'],
       ['installations.js', '/renderer/installations.js'],

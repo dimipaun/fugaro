@@ -13,9 +13,10 @@
 // It is a third preload rather than a second document on one of the others for
 // the reason `src/preload/installations.ts` gives: the dashboard's preload
 // exposes twenty-four rows and the picker's six, and this document has no
-// business with any of them. The three documents are served from the same origin
-// (`app://console`), so the only thing that separates their surfaces is that each
-// window is built with its own preload and each channel prefix is gated on the
+// business with any of them. Every document of the bundle is served from the
+// same origin (`app://console`), so the only thing that separates their surfaces
+// is that each window is built with its own preload and each channel prefix is
+// gated on the
 // sender -- and here the gate is stronger than a document check: `src/main/
 // confirm.ts` answers only the `webContents` of an open confirmation window.
 //

@@ -19,8 +19,8 @@
 //     `installations.html`, or the picker's preload, or the compiled tree,
 //     fails here by name rather than shipping an app that draws an empty window.
 //
-// The list is **read off the tree** rather than written out, so a third document
-// or a third preload is covered the day it is added: every `.html` under
+// The list is **read off the tree** rather than written out, so the next
+// document or the next preload is covered the day it is added: every `.html` under
 // `src/renderer` is served by the `app://` handler, every `.ts` under
 // `src/preload` compiles to a preload a window loads by absolute path, and every
 // `.ts` under `src/` compiles into `dist/` because that is what
