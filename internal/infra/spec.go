@@ -486,18 +486,10 @@ func resolve(in Inputs) (*repoCtx, error) {
 }
 
 // localRepo is the local config's entry for repo, matched as fugaro run
-// matches it (owner/name without regard to case).
+// matches it (localcfg.Config.RepoFor, the one lookup every reader of
+// repos.<r> resolves through).
 func localRepo(lc *localcfg.Config, repo string) (localcfg.Repo, bool) {
-	want, err := task.CanonicalRepo(repo)
-	if err != nil {
-		return localcfg.Repo{}, false
-	}
-	for _, k := range slices.Sorted(maps.Keys(lc.Repos)) {
-		if c, err := task.CanonicalRepo(k); err == nil && c == want {
-			return lc.Repos[k], true
-		}
-	}
-	return localcfg.Repo{}, false
+	return lc.RepoFor(repo)
 }
 
 // bucketName is the runs bucket's name, which IAM conditions need: the

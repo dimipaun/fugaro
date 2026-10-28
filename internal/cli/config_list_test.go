@@ -314,7 +314,7 @@ func configListWriteState(t *testing.T, body string) string {
 // out of reach — docs/design/desktop-console.md §5.1 rule 11), so a fixture
 // needs a way to set them without enrolling anything else. A later enrollRepo
 // adds to the block this writes.
-func configListRecordBaseBranch(t *testing.T, project, projectBranch, repo, repoBranch string) {
+func configListRecordBaseBranch(t *testing.T, project, projectBranch string, entries ...[2]string) {
 	t.Helper()
 	path, err := localcfg.ProjectPath(os.Getenv, project)
 	if err != nil {
@@ -328,8 +328,11 @@ func configListRecordBaseBranch(t *testing.T, project, projectBranch, repo, repo
 	if projectBranch != "" {
 		add += "base_branch: " + projectBranch + "\n"
 	}
-	if repo != "" {
-		add += "repos:\n  " + repo + ": { base_branch: " + repoBranch + " }\n"
+	for i, entry := range entries {
+		if i == 0 {
+			add += "repos:\n"
+		}
+		add += "  " + entry[0] + ": { base_branch: " + entry[1] + " }\n"
 	}
 	if err := os.WriteFile(path, append(b, add...), 0o600); err != nil {
 		t.Fatal(err)
@@ -352,7 +355,13 @@ func TestConfigListCarriesTheRecordedBaseBranch(t *testing.T) {
 	isolateProjects(t, dir)
 	writeProject(t, "aurora", "aurora-gcp")
 	writeProject(t, "bramble", "bramble-gcp")
-	configListRecordBaseBranch(t, "aurora", "trunk", "acme/app", "dev")
+	// The second entry is keyed the way a hand-edited config can leave it —
+	// the repository with the ".git" — because the launch resolves its own
+	// repos.<r> entry in canonical form: the row has to print the branch that
+	// run is cut from, not the branch a stricter spelling would have found
+	// (localcfg.Config.RepoFor, cloudEnv.localRepo).
+	configListRecordBaseBranch(t, "aurora", "trunk",
+		[2]string{"acme/app", "dev"}, [2]string{"acme/dotted.git", "release"})
 	enrollRepo(t, "aurora", "acme/other")
 
 	// A checkout whose own fugaro.yaml names a base branch: the field is not
@@ -365,6 +374,10 @@ func TestConfigListCarriesTheRecordedBaseBranch(t *testing.T) {
 	// listed and records no base branch.
 	other := checkoutsAt(t, filepath.Join(dir, "src", "other"), checkoutsProjectYAML("aurora"), "https://github.com/acme/other.git")
 	checkoutsRemember(t, "aurora", other, "https://github.com/acme/other.git")
+	// A repository whose only repos: entry is spelled "acme/dotted.git": the
+	// launch finds that entry, so the row prints its branch.
+	dotted := checkoutsAt(t, filepath.Join(dir, "src", "dotted"), checkoutsProjectYAML("aurora"), "https://github.com/acme/dotted.git")
+	checkoutsRemember(t, "aurora", dotted, "https://github.com/acme/dotted.git")
 	// And a repository aurora's repos: map does not name at all.
 	unrecorded := checkoutsAt(t, filepath.Join(dir, "src", "unrecorded"), checkoutsProjectYAML("aurora"), "https://github.com/acme/unrecorded.git")
 	checkoutsRemember(t, "aurora", unrecorded, "https://github.com/acme/unrecorded.git")
@@ -388,11 +401,16 @@ func TestConfigListCarriesTheRecordedBaseBranch(t *testing.T) {
 	for _, c := range configListCheckoutsOf(t, doc, "aurora") {
 		rows[c.Repository] = c
 	}
-	if len(rows) != 3 {
-		t.Fatalf("aurora's checkout rows = %+v, want the three remembered paths", rows)
+	if len(rows) != 4 {
+		t.Fatalf("aurora's checkout rows = %+v, want the four remembered paths", rows)
 	}
 	if got := rows["github/acme/app"].BaseBranch; got != "dev" {
 		t.Errorf("github/acme/app's base_branch = %q, want the repository's own recorded value", got)
+	}
+	// The entry is spelled with a ".git" the repository is not: the launch
+	// resolves it anyway (task.CanonicalRepo), so the row carries its branch.
+	if got := rows["github/acme/dotted"].BaseBranch; got != "release" {
+		t.Errorf("github/acme/dotted's base_branch = %q, want the acme/dotted.git entry's value", got)
 	}
 	for _, repo := range []string{"github/acme/other", "github/acme/unrecorded"} {
 		if got := rows[repo].BaseBranch; got != "" {

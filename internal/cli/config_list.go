@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -376,29 +375,21 @@ func validIdentity(id localcfg.CheckoutIdentity) bool {
 // recordedBaseBranch is the base branch the installation records for one
 // repository: repos.<owner/name>.base_branch in its project config, "" when
 // that config names no such entry, records no branch for it, or could not be
-// read (lc nil, which fails closed exactly as Enrolls does).
+// read (lc nil, which fails closed exactly as RepoFor does).
 //
-// The entry is resolved the way enrollment resolves it — the exact spelling
-// first, then the ASCII fold over the *sorted* keys — because the two facts are
-// read for the same row: a config that names one repository under two
-// spellings ("acme/app" and "Acme/App") must not answer "enrolled" from one
-// entry and a base branch from another, and the answer must be the same on
-// every read of unchanged files rather than whichever entry a map iteration
-// reached first (Enrolls' own reason, configRepo's lookup for the write path).
+// The entry is resolved by localcfg.Config.RepoFor, which is the lookup a
+// launch resolves repos.<r>.base_branch through as well
+// (cloudEnv.localRepo). One resolver for the two readers is the point: the
+// branch printed here is the branch the run is cut from, so an entry spelled
+// "acme/app.git", or two spellings of one repository, cannot make this row say
+// one branch and the run use another (docs/design/desktop-console.md §5.1
+// rule 11, "the branch the window shows is the branch the run is cut from").
 func recordedBaseBranch(lc *localcfg.Config, repo string) string {
-	if lc == nil {
+	r, ok := lc.RepoFor(repo)
+	if !ok {
 		return ""
 	}
-	if r, ok := lc.Repos[repo]; ok {
-		return r.BaseBranch
-	}
-	folded := task.ASCIILower(repo)
-	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {
-		if task.ASCIILower(name) == folded {
-			return lc.Repos[name].BaseBranch
-		}
-	}
-	return ""
+	return r.BaseBranch
 }
 
 // validateCheckoutPath re-validates one remembered path, on the read: the
