@@ -207,23 +207,36 @@ func haltReasonText(h runstore.Halt) string {
 // handed, its words for that reason, and the model spend the record had
 // reached. done, next and hard_instructions stay empty until the stopping
 // agent answers the checkpoint prompt (T7.2, wired in T7.3).
+//
+// It runs on the run's own goroutine: the pull-request state it writes through
+// belongs to that goroutine (prflow.go), and the tripwires that call it read
+// the stage's own accounting, which that goroutine owns.
 func (r *run) governanceHalt(ctx context.Context, reason runstore.HaltReason, detail string) bool {
 	h := runstore.Halt{Reason: reason, Scope: "run", At: r.d.Now().UTC(), Detail: detail}
 	if !r.haltNow(h) {
 		return false
 	}
-	// The report has to reach the record and the pull request whatever
-	// happens next: recording the halt cancelled the stage this was called
-	// from, so the caller's context may already be done.
+	// The report has to reach the record and the pull request whatever happens
+	// next: the halt recorded above is what the run's halt watcher acts on, and
+	// it cancels the stage after its grace period — so the context this was
+	// called with, the stage's own when the tripwire was a stage's, can be done
+	// before either write lands.
 	ctx = context.WithoutCancel(ctx)
+	// The record is read and written under r.mu: the stage's checkpoint poll
+	// goroutine is still alive here (the halt stops it, but only once the
+	// watcher's grace period is over) and it snapshots the whole record under
+	// this same lock, so a write outside it is one a save can copy halfway.
+	//
 	// The record's own model figure is the only money figure a checkpoint can
 	// carry before a tier's expectation exists (T8.1), and it is what a
 	// continuation starts from.
+	r.mu.Lock()
 	r.rec.Checkpoint = runstore.NewCheckpoint(runstore.Checkpoint{
 		Trigger:     string(h.Reason),
 		WhyOver:     haltReasonText(h),
 		EstimateUSD: r.rec.CostUSD,
 	})
+	r.mu.Unlock()
 	r.save(ctx)
 	r.checkpointPR(ctx, reason)
 	return true
@@ -235,28 +248,37 @@ func (r *run) governanceHalt(ctx context.Context, reason runstore.HaltReason, de
 // the pull request to be made ready. A failure only warns — finalize settles
 // the pull request and writes the same report into its final section.
 func (r *run) checkpointPR(ctx context.Context, reason runstore.HaltReason) {
-	if r.rec.PR == nil {
-		if r.rec.PushedHead == "" || !r.cfg.Git.PR.EarlyDraftOn() {
+	// Which pull request, which tip and which stage, taken under r.mu for the
+	// reason governanceHalt writes the checkpoint there: the stage's checkpoint
+	// poll goroutine is still alive and snapshots the record under the same
+	// lock, so these are read where its save cannot be reading them.
+	r.mu.Lock()
+	pr, pushed, stage := r.rec.PR, r.rec.PushedHead, r.rec.Stage
+	r.mu.Unlock()
+	if pr == nil {
+		if pushed == "" || !r.cfg.Git.PR.EarlyDraftOn() {
 			// Nothing to open on: no commit of this run is on the branch yet,
 			// so finalize is what opens the pull request. A run with the early
 			// draft off has no mid-run status section by design.
 			return
 		}
-		r.openDraftPR(ctx, r.rec.Stage, true)
+		r.openDraftPR(ctx, stage, true)
 		return
 	}
 	// during: the stage this was called from is still unwinding, so the
 	// section says a checkpoint landed inside it rather than after it.
-	err := r.writeStatus(ctx, r.rec.PR.Number, r.redact(r.runningSection(r.rec.Stage, true)), statusCallTimeout)
+	err := r.writeStatus(ctx, pr.Number, r.redact(r.runningSection(stage, true)), statusCallTimeout)
 	switch {
 	case err == nil:
 		r.noteStatusWritten(ctx, r.d.Now())
 	case errors.Is(err, gitprov.ErrPRNotOpen):
-		r.pr.gone = true
-		r.d.Log.Warn("the pull request is no longer open; the checkpoint was not written to it", "pr", r.rec.PR.Number)
+		// The flag that stops later status updates is left to the poll's own
+		// next write (prflow.go): it reads r.pr every tick from its own
+		// goroutine, and the run is ending within the halt's grace period.
+		r.d.Log.Warn("the pull request is no longer open; the checkpoint was not written to it", "pr", pr.Number)
 	default:
 		r.d.Log.Warn("writing the checkpoint to the pull request failed; finalize writes the report",
-			"pr", r.rec.PR.Number, "reason", string(reason), "err", r.redact(err.Error()))
+			"pr", pr.Number, "reason", string(reason), "err", r.redact(err.Error()))
 	}
 }
 
