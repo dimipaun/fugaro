@@ -181,8 +181,11 @@ repositories (G2), so the slug check is tested, not assumed. Stage budgets (T7.2
 - **Files.** `internal/agent/relay.go` (per stage, the most times one identical shell command ran),
   `internal/agent/agent.go` (`Result.Repeats`), `internal/runner/cost.go` (`StageTiming.Repeats`),
   `internal/runstore/runstore.go`, `schemas/result.schema.json`, `internal/digest/digest.go` (two
-  report-only flags: a stage with `repeats` ≥ 5, the loop tripwire; a run whose `review_scope.outside`
-  (T5.2) is non-empty, the review-scope flag).
+  report-only flags: a stage with `repeats` ≥ 5, the loop tripwire; and, the review-scope flag, a run
+  whose `review_scope` (T5.2) was narrowed to its own commits and then moved off them
+  (`why_not` = `range-moved`) with a non-empty, untruncated `outside`). D332's reading: a
+  non-applicable `outside` is a fact about the run, never a mismatch, so a flag on any non-empty
+  `outside` would fire on nearly every run; the owner may still want that wider rule (open item O9).
 - **Tests.** `TestRelayCountsRepeatedCommand`, `TestDigestFlagsRepeatsAndReviewScope`.
 - **Command.** `GOFLAGS=-p=2 go test ./internal/agent ./internal/runner ./internal/digest ./schemas -run 'Repeat|ReviewScope|Schema' -count=1 -timeout 30m`
 - **Red step.** No stage records repeats; the digest flags neither.

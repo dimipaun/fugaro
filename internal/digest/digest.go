@@ -468,10 +468,14 @@ func repeatedCommand(rec *runstore.Record) bool {
 // branch that merged its base leaves, a follow-up's, a review run's, an
 // autofix's -- records outside paths as a fact about the run and is never a
 // mismatch (D332), so it is not drift and is not flagged, and neither is a
-// moved range that handed the reviewer nothing implement had not written.
+// moved range that handed the reviewer nothing implement had not written. A
+// truncated comparison is not flagged either: Outside is taken over the two
+// bounded lists (runstore.NewReviewScope), so a capped ImplementFiles can
+// name a path the run did change, and a flag raised from a set that is not
+// the whole one would be a false positive (runstore.MaxReviewScopeFiles).
 func reviewScopeDrift(rec *runstore.Record) bool {
 	sc := rec.ReviewScope
-	return sc != nil && sc.WhyNot == runstore.ReviewScopeRangeMoved && len(sc.Outside) > 0
+	return sc != nil && !sc.Truncated && sc.WhyNot == runstore.ReviewScopeRangeMoved && len(sc.Outside) > 0
 }
 
 // stages is every stage name's figures over the period's runs, in name order
