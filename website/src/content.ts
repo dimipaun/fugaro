@@ -158,6 +158,11 @@ function readBytes(file: string, what: string): string {
 // `|-`, `>`, `>-`) and comments — and everything outside it is an error with a line
 // number, never a guess. A fact file that grows a construct this reader has not been
 // taught fails the build loudly, which is the same rule as a missing file.
+//
+// `parseYAML` and the validators below are exported because every data file the site reads
+// is read by them: a second reader would be a second dialect, and the two would disagree
+// about a comment, a float or a duplicate key before anyone noticed. `src/lib/landing.mjs`
+// is the one caller outside this module (go-to-market plan, Task G2.1).
 // ---------------------------------------------------------------------------------------
 
 type Scalar = string | number | boolean | null
@@ -243,7 +248,7 @@ function stripComment(text: string): string {
   return text
 }
 
-function parseYAML(raw: string, file: string): Value {
+export function parseYAML(raw: string, file: string): Value {
   const lines = splitLines(raw)
   let i = 0
 
@@ -428,25 +433,25 @@ function parseYAML(raw: string, file: string): Value {
 // What a key that is not there reads as, in the messages below: "not written in the file"
 // rather than the word `undefined`, because the reader of a build error is looking at the
 // file, not at this module.
-function describe(value: Value): string {
+export function describe(value: Value): string {
   return value === undefined ? 'not written in the file' : JSON.stringify(value)
 }
 
-function asMap(value: Value, file: string, what: string): { [key: string]: Value } {
+export function asMap(value: Value, file: string, what: string): { [key: string]: Value } {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new Error(`${file}: ${what} is ${describe(value)}, and it is read as a map of keys to values, so nothing below it can be read (W1.3 step 2).`)
   }
   return value
 }
 
-function asList(value: Value, file: string, what: string): Value[] {
+export function asList(value: Value, file: string, what: string): Value[] {
   if (!Array.isArray(value)) {
     throw new Error(`${file}: ${what} is ${describe(value)}, and it is read as a list, so nothing below it can be read (W1.3 step 2).`)
   }
   return value
 }
 
-function asString(value: Value, file: string, what: string): string {
+export function asString(value: Value, file: string, what: string): string {
   if (typeof value !== 'string') {
     throw new Error(`${file}: ${what} is ${describe(value)}, and it is read as a string — every fact the site renders is written down, and none of them has a default (W1.3 step 2).`)
   }
@@ -513,7 +518,7 @@ function keysOf(map: { [key: string]: Value }): string[] {
   return Object.keys(map).sort()
 }
 
-function refuseUnknownKeys(map: { [key: string]: Value }, allowed: string[], file: string): void {
+export function refuseUnknownKeys(map: { [key: string]: Value }, allowed: string[], file: string): void {
   for (const key of keysOf(map)) {
     if (!allowed.includes(key)) {
       throw new Error(
