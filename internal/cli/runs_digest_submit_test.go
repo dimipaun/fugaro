@@ -88,11 +88,15 @@ func TestSubmitDraftHasNoRepoNameOrRunID(t *testing.T) {
 	for _, want := range []string{
 		"run-1",
 		"run-2",
-		// The one command that sends the learning, run by the person, in a
+		// The one command that opens the issue form, run by the person, in a
 		// browser (D327) -- against Fugaro's repository, because the form lives
 		// there and `gh` would otherwise resolve the user's own from the
 		// checkout this command read.
-		"gh issue create --web --template skill_learning.yml -R " + updatecheck.Repo,
+		"gh issue create --web -R " + updatecheck.Repo,
+		// The form the person picks in the chooser --web opens: it is not a
+		// --template flag, because --web ignores one, so the draft has to say
+		// which form to select and where it lives.
+		".github/ISSUE_TEMPLATE/skill_learning.yml",
 		// The line the person replaces with the lesson.
 		"<write the lesson here",
 		"2026-10-25",
@@ -100,6 +104,12 @@ func TestSubmitDraftHasNoRepoNameOrRunID(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("the draft does not carry %q:\n%s", want, out)
 		}
+	}
+	// And no --template: `gh issue create --web` ignores it and opens the
+	// chooser instead, so a draft carrying one would hand the person a flag
+	// the browser drops and a form it never selected.
+	if strings.Contains(out, "--template") {
+		t.Errorf("the draft carries --template, which `gh issue create --web` ignores:\n%s", out)
 	}
 }
 

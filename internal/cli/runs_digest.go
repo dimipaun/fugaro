@@ -155,13 +155,15 @@ func newRunsDigestCmd() *cobra.Command {
 			"writes a file, so a caller can read a report before committing it.\n\n" +
 			"--submit-draft prints neither: it prints a redacted learning draft a person can\n" +
 			"file as a \"Skill learning\" issue, and it sends nothing. The draft leaves the\n" +
-			"repository, so it carries no repository name and no run ID -- the runs are\n" +
-			"renumbered run-1, run-2, ... -- and it ends with the one command that sends it,\n" +
-			"gh issue create --web --template skill_learning.yml -R " + updatecheck.Repo + ",\n" +
-			"which the person runs themselves: the form lives in Fugaro's repository, and -R\n" +
-			"is what reaches it from the checkout this command read. --dir still names the\n" +
-			"folder the committed reports the pattern rules read live in; nothing is written\n" +
-			"there, so --stdout and --json are refused beside it.",
+			"repository, so it carries no repository name and no run ID -- a period other\n" +
+			"than a year renumbers its runs run-1, run-2, ... (a yearly draft rolls the\n" +
+			"months up and has no run rows) -- and it ends with the one command that opens\n" +
+			"the issue form, gh issue create --web -R " + updatecheck.Repo + ", which the\n" +
+			"person runs themselves: the form lives in Fugaro's repository and -R is what\n" +
+			"reaches it from the checkout this command read, and the person picks the\n" +
+			"\"Skill learning\" form in the browser, because --web ignores --template. --dir\n" +
+			"still names the folder the committed reports the pattern rules read live in;\n" +
+			"nothing is written there, so --stdout and --json are refused beside it.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runRunsDigest(cmd, &o) },
 	}

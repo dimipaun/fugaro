@@ -392,7 +392,8 @@ routine launches it: `fugaro run --recipe run-digest "periodic run review"` (R8)
   (regenerated).
 - **Interfaces.** Prints a learning draft: the pattern or flag, the figures (D323's set, run IDs
   replaced by `run-1`… because the draft leaves the repository), the lesson the person writes, and
-  the exact `gh issue create --web --template skill_learning.yml` line. Sends nothing.
+  the exact `gh issue create --web -R dimipaun/fugaro` line, with the "Skill learning" form to pick
+  in the chooser `--web` opens (`--web` ignores `--template`). Sends nothing.
 - **Tests.** `TestSubmitDraftHasNoRepoNameOrRunID`, `TestSubmitDraftSendsNothing` (no network seam
   called).
 - **Command.** `go run ./internal/clidoc && GOFLAGS=-p=2 go test ./internal/cli ./internal/clidoc -run 'SubmitDraft|CliRef' -count=1 -timeout 30m`

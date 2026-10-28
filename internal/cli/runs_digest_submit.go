@@ -40,17 +40,26 @@ const digestSubmitNotice = "<!-- fugaro runs digest --submit-draft: a draft, not
 // figures and never the lesson, which is the person's own reading of them.
 const digestSubmitLesson = "<write the lesson here: what these runs show, and what you would change>"
 
-// digestSubmitCommand is the one line that sends a learning. It is the command
-// the issue form expects, and it is never run here: --web opens the form in the
-// person's browser, so the person holds the submit button (D327).
+// digestSubmitCommand is the one line that opens the issue form. It is the
+// command the draft carries, and it is never run here: --web opens the form in
+// the person's browser, so the person holds the submit button (D327).
 //
 // -R names Fugaro's own repository, because `gh issue create --web` resolves
 // the repository from the working directory -- which is the checkout this
 // command just read, the user's own -- and the "Skill learning" form lives only
 // in Fugaro's repository. Without it a person who follows the draft lands on
-// their own repository's new-issue form, which carries no such template, and
-// files the learning in the wrong place.
-const digestSubmitCommand = "gh issue create --web --template skill_learning.yml -R " + updatecheck.Repo
+// their own repository's new-issue form, which carries no such form, and files
+// the learning in the wrong place.
+//
+// --template is deliberately absent: `gh issue create --web` ignores it and
+// opens the repository's own chooser instead, so the draft names the form to
+// pick there (digestSubmitForm) rather than passing a flag the browser drops.
+const digestSubmitCommand = "gh issue create --web -R " + updatecheck.Repo
+
+// digestSubmitForm is the form the person picks in the browser, named by the
+// path it lives at in Fugaro's repository. --web opens the chooser rather than
+// one form, so the draft says which form to pick and where it is.
+const digestSubmitForm = ".github/ISSUE_TEMPLATE/skill_learning.yml"
 
 // digestSubmitDraft is the learning draft: the patterns the fixed rules found,
 // the period's runs renumbered, the figures, the line for the lesson, and the
@@ -75,7 +84,9 @@ func digestSubmitDraft(s digest.Summary, runs []digest.Run, patterns []digest.Pa
 	fmt.Fprintf(&b, "## The lesson\n\n%s\n\n", digestSubmitLesson)
 	b.WriteString("## Send it\n\n")
 	b.WriteString("Nothing has been sent. Review the draft, then open the issue form in your browser\n" +
-		"with:\n\n```sh\n" + digestSubmitCommand + "\n```\n")
+		"with:\n\n```sh\n" + digestSubmitCommand + "\n```\n\n" +
+		"`--web` opens the form chooser rather than one form, so pick \"Skill learning\"\n" +
+		"(" + digestSubmitForm + "), paste the draft and send it.\n")
 	return []byte(b.String())
 }
 
