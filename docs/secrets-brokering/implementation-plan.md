@@ -33,7 +33,7 @@ spec, the reconciliation wins.
     **D505:** per-repository jobs first; shared jobs wait for C3.9. **D506:** the token in the
     bundle.
 - **Provisional:** the re-planned Bitbucket S2's release split and the amendments it needs follow
-  this plan's reading until the owner rules on **O2**; **O1** and **O3–O5** are open too
+  this plan's reading until the owner rules on **O2**; **O1** and **O3–O6** are open too
   (reconciliation §7).
 - **Review round 1 (2026-10-27)** reshaped B1.1 (the branch rule keys on `task.BranchRE`, the claim
   names the run's pull requests, no launcher skew constant), B1.4 and B1.5 (`GET /user` allowed,
@@ -41,6 +41,12 @@ spec, the reconciliation wins.
   `internal/gateway`, after B1.5, mirroring the existing wire contract), B1.7 (an explicit per-policy
   switch so S1 is inert on upgrade; pagination), the Terraform tasks' files and commands, the fakes,
   and the edges.
+- **Review round 2 (2026-10-27)** made the flip per repository (it follows `proxy: true` and the
+  allow-list, not the opt-in alone), withheld `fb` from review and artifact runs, bound pull-request
+  writes to the source repository and the destination, added a git-credential kind to the bundle,
+  widened the guard, added a launch-time image check (`proxySince`), named the missing REST calls,
+  files, Terraform commands and register-recording tasks, and listed cross-repository fetches as a
+  consequence (O6).
 
 ## Conventions every part follows
 
@@ -67,19 +73,20 @@ spec, the reconciliation wins.
 
 | # | Constraint | Pinned by |
 | --- | --- | --- |
-| G1 | No real Bitbucket token is ever in a job of an opted-in installation once its flip is on: not in an env, a mount or the runner's memory | B1.7 (no token read), B1.13 (mount and accessor dropped), Check 192 |
+| G1 | No real Bitbucket token is in a **run** job of a proxied repository once its flip is on: not in an env, a mount or the runner's memory. The daily image-check job and builds keep the build account's copy until S4 | B1.7 (no token read), B1.13 (mount and accessor dropped), Check 192 |
 | G2 | A push names only `refs/heads/<fb>`; no ref deletion, no tag; a non-run ref is refused **before** any pack byte is forwarded | B1.3, B1.4, B1.5 |
-| G3 | The repository is taken from the classified request and must equal the run identity's repository (bound to the job's account by `Authenticator`) and be admitted by the published `bitbucket_token` block with `proxy: true` | B1.4, B1.5, BW-T2.1 amended |
-| G4 | REST is an allow-list of the calls `bitbucket.Provider` makes (`GET /user` included, read-only), for that repository; every pull-request write is bound to the run (G12); `/workspaces`, pipelines, settings and every other path are refused | B1.4 |
+| G3 | The repository is taken from the classified request and must equal the calling job account's repository (`JobAccount.Repo`, which `Server.ServeHTTP` already binds to the identity's slug through `s.jobs`) and be admitted by the published `bitbucket_token` block with `proxy: true` | B1.4, B1.5, BW-T2.1 amended |
+| G4 | REST is an allow-list of the calls `bitbucket.Provider` makes (`GET /user`, the repository, `commit/{rev}`, the pull-request list with its `q=` query, pull-request reads, create, update, comments), for that repository; every pull-request write is bound to the run (G12); merge, approve, decline, `/workspaces`, pipelines, settings and every other path are refused | B1.4 |
 | G5 | The forwarder holds no credential: it attaches the job's ID token, the run identity and the job name, nothing else; it listens on loopback only; it never forwards the caller's `Authorization` | B1.6 |
-| G6 | `fb` always matches `task.BranchRE` (which `task.Spec` validation already requires of every branch a run may continue), and either equals `fugaro/<fr>` or names a run id that sorts before `fr` | B1.1 |
-| G7 | One audit line per proxied request, names only (R2); no header, body or token in a line | B1.5 |
+| G6 | `fb` is minted only for runs that push (first runs and follow-ups), always matches `task.BranchRE` (which `task.Spec` validation already requires of every branch a run may continue), and either equals `fugaro/<fr>` or names a run id that sorts before `fr`. A review or artifact run has no `fb`, so the proxy refuses every push and every pull-request write but its own review comments on `fpr` | B1.1, B1.4 |
+| G7 | One audit line per proxied request, names only (R2); no header, body or token in a line; a pushed ref is logged only when it equals `fb`, otherwise as the refusal class `other_ref` (caller text is never echoed) | B1.5 |
 | G8 | The kill switches and the run's outcome stop the proxy exactly as they stop a model call (D504) | B1.5 |
-| G9 | Without the opt-in **and** the policy's `proxy: true`, nothing changes: no forwarder, no claim needed, the job mounts and uses its token as today (D502) | B1.7, B1.8 |
+| G9 | Without the opt-in **and** `proxy: true` for that repository (the operator's entry, with the repository in `allow_data_to`), nothing changes: no forwarder, no claim needed, and the job keeps mounting and using its token, **after the flip too**: the flip drops the mount only for proxied repositories (D502) | B1.7, B1.8, B1.13 |
 | G10 | The guard fails on any new Secret Manager reader not in the exceptions table | B0.2 |
 | G11 | A git request never outlives its credentials (D495) | B1.6 |
-| G12 | A pull-request write (create, update, comment, ready, reviewers) is allowed only when the pull request's source branch is `fb` or its number is in `fpr`; a create's body names `fb` as its source and cannot set another destination than the repository's | B1.4, B1.5 |
-| G13 | The upstream URL is rebuilt from the classified workspace, repository and action, never copied from the raw path; redirects are not followed; a gzip-encoded receive-pack body is refused | B1.3, B1.5 |
+| G12 | A pull-request write (create, update, comment, ready, reviewers) is allowed only when the pull request's **source repository is the run's repository** and its source branch is `fb`, or (comments only) its number is in `fpr`; a create names `fb` and the run's repository as its source; an update never changes `destination`; merge, approve and decline are never allowed | B1.4, B1.5 |
+| G13 | The upstream URL is rebuilt from the classified workspace, repository and action, never copied from the raw path; redirects are not followed; a gzip-encoded receive-pack body is refused; git's large-push probe (an update request of only a flush packet) passes as a no-op | B1.3, B1.5 |
+| G14 | A run whose image predates the proxy is not launched on a proxied repository (its runner would use the mount or fail) | B1.7's launch check |
 
 **Attacker's view, for every review:** the agent can read the runner's `/proc` and the metadata
 server (F5), so it holds the run identity and can mint the job's ID token. Review every rule as if
@@ -109,9 +116,9 @@ plan; this table says what happens to each task, and the levels below include th
 
 | Task there | Here |
 | --- | --- |
-| T2.1 (the node's block, `bitbucket_api_roots`, profile rules, policy v4) | **0.14.0, amended** (BW-T2.1): `VersionSince[4]` is 0.14.0's; the block is derived from `project_secrets.bitbucket-token.allow_data_to` **whether or not a profile mounts the token** (a per-repository proxied job needs it as its admission source); it gains `proxy bool`, from the operator's `project_secrets.bitbucket-token.proxy` (G3, G9). The one version bump of D493 |
+| T2.1 (the node's block, `bitbucket_api_roots`, profile rules, policy v4) | **0.14.0, amended** (BW-T2.1): `VersionSince[4]` is 0.14.0's; the block is derived from `project_secrets.bitbucket-token.allow_data_to` **whether or not a profile mounts the token** (a per-repository proxied job needs it as its admission source); it gains `proxy bool`, from the operator's `project_secrets.bitbucket-token.proxy`, which this amendment adds to `config.ProjectSecret` (`internal/config/project_secrets.go`, accepted on `bitbucket-token` only, with its tests) (G3, G9). The one version bump of D493 |
 | T2.3 (publish derives the block) | **0.14.0, amended** (BW-T2.3): it publishes the amended block and `proxy` |
-| T2.8 (the API-root pin) | **0.14.0, unchanged** (BW-T2.8). Under the proxy it protects the **non-proxied** repositories, whose runner still holds the token; a proxied run's adapter does not read `FUGARO_BITBUCKET_API_URL` (B1.7). An owner-listed root is not served through the proxy in S1 (O4) |
+| T2.8 (the API-root pin) | **0.14.0, unchanged** (BW-T2.8). Under the proxy it protects the **non-proxied** repositories, whose runner still holds the token; a proxied run's adapter does not read `FUGARO_BITBUCKET_API_URL` (B1.7). An owner-listed root is not served through the proxy in S1 (O4). **Cost of O2's reading:** the pin, ruled for 0.13.0 (D474), reaches non-proxied installations one release later |
 | T2.9 (the runner enforces the block) | **Replaced** by the service's check (B1.4, B1.5): a runner-side check binds nothing the agent cannot bypass (F5) |
 | T2.2, T2.4, T2.6, T2.7 (Bitbucket shared jobs, the own-copy warning, phase-3 docs, Check 181) | **Wait for S5** (D505). T2.4's warning is moot for proxied repositories |
 | T2.11 (the 0.13.0 lockstep notes) | **Replaced** by B1.13's `release-0.14.0-operators.md`, which carries the v4 lockstep steps; T2.11's shared-job step waits for S5 |
@@ -131,14 +138,17 @@ plan; this table says what happens to each task, and the levels below include th
   Secret Manager API), the decision that keeps it (D145, D491, D506 …) and its **exit slice** (S1,
   S3, S4, or "never" for the service's own grant and for operator code). The rows are
   reconciliation §3, plus the Batch backend (`internal/backend/batch` `Options.Secrets`) and the
-  build request built in Go (`internal/backend/gcp/build.go`), plus the operator packages that
-  import the Secret Manager API (`internal/backend/gcp`, `internal/infra`, `internal/cli` `creds.go`
-  and doctor) as `operator` rows. B0.2 parses this table.
+  build request built in Go (`internal/backend/gcp/build.go`), plus the managed projects' `fmgd-` secrets (the deployer's `secretmanager.secrets.setIamPolicy` in
+  `modules/installation/deployer.tf` lets a managed plan grant readers), plus every Go **file** that
+  imports the Secret Manager API, each with its kind: `internal/credsvc/bundle.go` and
+  `internal/cli/credentials_serve.go` are the service's runtime; `internal/backend/gcp/secrets.go`,
+  `internal/cli/creds.go` and the `internal/infra` files are operator code. B0.2 parses this table.
 - **Schema/rules/config change:** none.
-- **Tests:** `TestSecretReadersTableShape` (every row has an ID, a kind, a decision and an exit
-  slice named in this plan's Slices table), `TestSecretsBrokeringReadmeStatus` (the README's status
-  line; it reads the README, which B0.4 writes at the same level, and pins only the status line).
-- **Command:** `go test ./internal/cli/ -run 'TestSecretReadersTableShape|TestSecretsBrokeringReadmeStatus' -count=1`
+- **Tests:** `TestDocsSecretReadersTableShape` (every row has an ID, a kind, a decision and an exit
+  slice named in this plan's Slices table), `TestDocsSecretsBrokeringReadmeStatus` (the README's
+  status line; it reads the README, which B0.4 writes at the same level, and pins only the status
+  line). Both match `-run Docs`, so every later docs task's command runs them.
+- **Command:** `go test ./internal/cli/ -run 'TestDocsSecretReadersTableShape|TestDocsSecretsBrokeringReadmeStatus' -count=1`
 - **Red step:** the shape test first, against a table with a row whose exit slice is `S9`: it fails.
 - **Depends on:** none. **Reviewer tier:** standard.
 - **Commit:** `docs(secrets-brokering): who reads Secret Manager today, each exception with its decision and exit`
@@ -149,16 +159,19 @@ plan; this table says what happens to each task, and the levels below include th
   (index row for `secret-readers.md`).
 - **Interfaces consumed:** B0.1's table.
 - **Behaviour:** the test finds every reader and maps each to one table row: in
-  `deploy/terraform/gcp/**/*.tf`, every `google_secret_manager_secret_iam_member` with
-  `roles/secretmanager.secretAccessor` and every `secret_key_ref` (by module and resource name); in
-  `images/**/cloudbuild.yaml`, `availableSecrets`; in non-test Go under `internal/` and `cmd/`, every
-  import of `google.golang.org/api/secretmanager/v1` and every construction of an
-  `AvailableSecrets` or a Batch `secretVariables` value (by package). A hit with no row fails; a
+  `deploy/terraform/gcp/**/*.tf`, every `google_secret_manager_secret_iam_member`, `_iam_binding` and
+  `_iam_policy`, every project-level grant of a role that carries `secretmanager.versions.access`
+  (a predefined Secret Manager role or a custom role listing it), every `secret_key_ref` and every
+  `volumes { secret }` (by module and resource name); in `images/**/cloudbuild.yaml`,
+  `availableSecrets`; in non-test Go under `internal/` and `cmd/`, every import of
+  `google.golang.org/api/secretmanager/v1` and every construction of an `AvailableSecrets` or a
+  Batch `secretVariables` value (by **file**, so a new reader file in a listed package fails). A hit with no row fails; a
   row with no hit fails, so the table cannot go stale. A row maps to a resource or a package, so a
   per-class split inside one resource (the job's accessor covers the git token, model keys and
   workflow `secrets:`) is the table's `what` column, not a separate hit.
-- **Tests:** `TestEverySecretReaderIsAListedException`, `TestEveryListedExceptionStillExists`.
-- **Command:** `go test ./deploy/terraform/ -run 'TestEverySecretReaderIsAListedException|TestEveryListedExceptionStillExists' -count=1`
+- **Tests:** `TestEverySecretReaderIsAListedException`, `TestEveryListedExceptionStillExists`,
+  `TestSecretReaderScanFindsBindingsVolumesAndCustomRoles` (on fixture `.tf` text).
+- **Command:** `go test ./deploy/terraform/ -run 'TestEverySecretReader|TestEveryListedException|TestSecretReaderScan' -count=1`
 - **Red step:** run against B0.1's table with one row deleted: the first test fails naming the
   resource.
 - **Depends on:** B0.1. **Reviewer tier:** opus + mandatory independent review (it fences secret
@@ -170,8 +183,9 @@ plan; this table says what happens to each task, and the levels below include th
 - **Files:** `internal/cli/doctor_secret_readers.go` (new); `internal/cli/doctor_secret_readers_test.go` (new); `internal/cli/doctor.go` (registration only); `internal/gcpfake/runservices.go` (new: a Cloud Run v2 services fake with `getIamPolicy`), `internal/gcpfake/runservices_test.go` (new).
 - **Behaviour:** `secret-readers-unexpected` (warning): every `secretAccessor` member on every
   container of the installation's project that is not one of the account classes Fugaro creates
-  for that container (computed forward, as `doctorProjectSecretAccessorChecks` does), or is a
-  principal outside the installation. Owners and Editors are reported once, as info (F3).
+  for that container (computed forward, as `doctorProjectSecretAccessorChecks` does; the managed
+  `fmgd-` accounts on `fmgd-` containers are a known class), or is a principal outside the
+  installation. Owners and Editors are reported once, as info (F3).
   `credentials-service-deployers` (info, only when the installation opted in): the principals that
   hold, on the project or on the service, `roles/owner`, `roles/editor`, `roles/run.admin`,
   `roles/run.developer` or a custom role whose permissions include `run.services.update`, and those
@@ -216,21 +230,32 @@ plan; this table says what happens to each task, and the levels below include th
 - **Gate:** if the 32 MiB push passes on HTTP/1.1, S1 is built on HTTP/1.1; otherwise B1.5 and the
   service serve h2c end to end, and B1.5 records that before it starts.
 
+#### B0.6: Check 190's result recorded
+
+- **Files:** `docs/gcp-live-checklist.md` (section 190's run record, the owner's block as pasted).
+- **Tests:** the register's docs pins. **Command:** `go test ./internal/cli/ -run Docs -count=1`.
+- **Red step:** none (a record); the docs pins must stay green.
+- **Depends on:** B0.5. **Reviewer tier:** standard.
+- **Commit:** `docs(live-checks): Check 190's run, as the owner reported it`
+
 ### S1 (0.14.0)
 
 #### B1.1: The branch and pull-request claims (D497a as amended, F28, G6) — SECURITY-SENSITIVE
 
 - **Files:** `internal/budget/token/token.go` (`Claims.Branch` as `fb`, `Claims.PRs` as `fpr`, at
-  most four), `internal/budget/token/mint.go`, `internal/budget/token/token_test.go`;
+  most four), `internal/budget/token/mint.go`, `internal/budget/token/exchange.go` (`Session.Claims`
+  reads `fb` and `fpr` back, for B1.7), `internal/budget/token/token_test.go`;
   `internal/cli/launch_budget.go` (`mintBudgetToken` passes the task's branch — `fugaro/<run id>`
-  for a first run, `task.Spec.Branch` for a follow-up — and `PR` or `ReviewPRs`),
+  for a first run, `task.Spec.Branch` for a follow-up, **none** for a review or artifact run — and
+  `PR` or `ReviewPRs`),
   `internal/cli/launch_budget_test.go`; `internal/credsvc/auth.go` (`Identity.Branch`,
   `Identity.PRs`, G6), `internal/credsvc/auth_test.go`.
 - **Interfaces produced:** `Identity.Branch string` and `Identity.PRs []int` (empty for an identity
   minted without the claims).
-- **Tests:** `TestMintCarriesBranchAndPRClaims`, `TestLaunchMintsTheTaskBranchAndPRs`,
+- **Tests:** `TestMintCarriesBranchAndPRClaims`, `TestSessionClaimsReadsBranchAndPRs`,
+  `TestLaunchMintsTheTaskBranchAndPRs`, `TestLaunchMintsNoBranchForReviewOrArtifact`,
   `TestAuthBranchMustMatchBranchRE`, `TestAuthBranchOwnOrEarlierRun`, `TestAuthIdentityWithoutBranchClaim`.
-- **Command:** `go test ./internal/budget/token/ ./internal/credsvc/ -run 'Branch|PRClaim' -count=1 && go test ./internal/cli/ -run 'TestLaunchMintsTheTaskBranchAndPRs' -count=1`
+- **Command:** `go test ./internal/budget/token/ ./internal/credsvc/ -run 'Branch|PRClaim|SessionClaims' -count=1 && go test ./internal/cli/ -run 'TestLaunchMints' -count=1`
 - **Red step:** `TestAuthBranchMustMatchBranchRE` with `fb = main`: accepted before the check.
 - **Depends on:** none in S1 (L1 only to stay off BW-T2.1's fixture sweep). **Reviewer tier:** opus + mandatory independent review.
 - **Commit:** `token, credsvc: the run identity names its branch and pull requests, and the branch is always a Fugaro branch`
@@ -238,9 +263,9 @@ plan; this table says what happens to each task, and the levels below include th
 #### B1.2: The Bitbucket token in the bundle (D506) — SECURITY-SENSITIVE
 
 - **Files:** `internal/credsvc/bundle.go`, `internal/credsvc/bundle_test.go`; `schemas/creds-bundle.schema.json`; `internal/cli/creds.go` (`creds set bitbucket-token`, `creds ls`), `internal/cli/creds_test.go`.
-- **Interfaces produced:** `Bundle.BitbucketToken()` returning the value and its name for audit, never logged.
-- **Tests:** `TestBundleBitbucketTokenStrict` (unknown keys, oversize, empty), `TestCredsSetBitbucketToken` (stdin only, refused in an agent's session), `TestCredsLsNamesBitbucketToken`.
-- **Command:** `go test ./internal/credsvc/ -run TestBundleBitbucketToken -count=1 && go test ./internal/cli/ -run 'TestCredsSetBitbucketToken|TestCredsLsNamesBitbucketToken' -count=1`
+- **Interfaces produced:** a new entry kind (`KindGit`), so `Bundle.Credentials()` (model kinds only) and the cascade never see it; `Bundle.BitbucketToken()` selects by that kind, never by name, and returns the value and its name for audit, never logged.
+- **Tests:** `TestBundleBitbucketTokenStrict` (unknown keys, oversize, empty), `TestBundleGitKindNeverACascadeCandidate`, `TestBundleModelAccountNamedBitbucketTokenRefused`, `TestCredsSetBitbucketToken` (stdin only, refused in an agent's session), `TestCredsLsNamesBitbucketToken`.
+- **Command:** `go test ./internal/credsvc/ -run 'TestBundleBitbucketToken|TestBundleGitKind|TestBundleModelAccountNamedBitbucketToken' -count=1 && go test ./internal/cli/ -run 'TestCredsSetBitbucketToken|TestCredsLsNamesBitbucketToken' -count=1`
 - **Red step:** the strict-schema test with a `bitbucket-token` key: refused as unknown today.
 - **Depends on:** none in S1 (L1, as B1.1). **Reviewer tier:** opus + mandatory independent review.
 - **Commit:** `credsvc, creds: the bundle holds the Bitbucket token, written by creds set`
@@ -253,10 +278,12 @@ plan; this table says what happens to each task, and the levels below include th
   `old new ref`, the first carrying capabilities after a NUL, which is split off before the ref is
   compared — and returns the bytes read so the caller forwards them unchanged before the pack.
   Refuses an oversized section, a malformed length, a missing flush and any `push-cert` (the runner
-  never signs). The caller refuses a `Content-Encoding` other than identity before calling it.
+  never signs). An update request of only a flush packet (git's probe before a large chunked push,
+  `http.postBuffer`) returns an empty list, which the rules pass as a no-op. The caller refuses a
+  `Content-Encoding` other than identity before calling it.
 - **Tests:** table tests from git's documented update-request examples (with and without
   `shallow`), `FuzzReadUpdateRequest`, `TestReadUpdateRequestBoundedRead`, `TestPushCertRefused`,
-  `TestRefComparedAfterNUL`.
+  `TestRefComparedAfterNUL`, `TestUpdateRequestFlushOnlyProbe`.
 - **Command:** `go test ./internal/gitproxy/ -run 'UpdateRequest|PushCert|RefCompared' -count=1 && go test ./internal/gitproxy/ -run '^$' -fuzz FuzzReadUpdateRequest -fuzztime 60s`
 - **Red step:** `TestReadUpdateRequestBoundedRead` with a 1 GiB declared section: no bound exists yet.
 - **Depends on:** none. **Reviewer tier:** opus + mandatory independent review.
@@ -269,18 +296,21 @@ plan; this table says what happens to each task, and the levels below include th
   `projectpolicy.MatchRepo`. **Produced:** `Classify(method, path string, query url.Values) (Request, error)`
   (git info/refs, upload-pack, receive-pack, or a named REST call, with the workspace and the
   repository; dot segments, encoded separators and case are refused or canonicalised exactly as
-  `task.CanonicalRepo` does); `Decide(req Request, id Identity, block *projectpolicy.BitbucketToken) Verdict`;
-  `CheckPRWrite(pr PRFacts, id Identity) Verdict` for G12, which the service calls with facts it
-  fetched itself.
+  `task.CanonicalRepo` does); `Decide(req Request, id Identity, repo string, block *projectpolicy.BitbucketToken) Verdict`, where
+  `repo` is the calling job account's `JobAccount.Repo`; `CheckPRWrite(pr PRFacts, body []byte, id Identity, repo string) Verdict`
+  for G12 (source repository and branch, destination unchanged), which the service calls with facts
+  it fetched itself.
 - **Rules:** git fetch of the identity's repository; git push only after B1.3, each update a
-  `refs/heads/<fb>` update (force allowed), no zero new id, no `refs/tags/`; REST only the calls
-  `bitbucket.Provider` makes (`GET /user` read-only, the repository read, pull-request reads,
-  create, update, comments, ready, reviewers), for that repository; the repository admitted by the
+  `refs/heads/<fb>` update (force allowed), no zero new id, no `refs/tags/`, none at all without
+  `fb`; REST only the calls `bitbucket.Provider` makes (G4), for that repository, with G12 on every
+  pull-request write; the repository admitted by the
   block with `proxy: true`; everything else refused with a reason name.
 - **Tests:** `TestRulesFetchOtherRepositoryRefused`, `TestRulesPushOnlyRunBranch`, `TestRulesPushDeleteRefused`,
   `TestRulesTagRefused`, `TestRulesRESTAllowList` (one case per `bitbucket.Provider` method,
   `GET /user` allowed, `/workspaces` and pipelines refused), `TestRulesPRWriteBoundToRun` (another
-  pull request's update, comment and ready refused; a create naming another source refused),
+  pull request's update, comment and ready refused; a create naming another source refused; a fork
+  with the same branch name refused; an update changing `destination` refused; merge, approve and
+  decline refused), `TestRulesReviewRunCommentsOnlyOnFPR`, `TestRulesNoBranchNoPush`,
   `TestRulesNotAdmittedByBlock`, `TestRulesProxyFalse`, `TestRulesPathTricks`.
 - **Command:** `go test ./internal/gitproxy/ -run 'TestRules' -count=1`
 - **Red step:** `TestRulesPushOnlyRunBranch` with a `refs/heads/main` update: no rule yet.
@@ -293,15 +323,17 @@ plan; this table says what happens to each task, and the levels below include th
   `internal/credsvc/server.go` (`ServeHTTP`'s method-and-path gate admits `GET` and `POST` under the
   Bitbucket prefix only; `routeAct`), `internal/credsvc/wire.go` (the prefix), `internal/credsvc/audit.go`
   (purposes `git` and `bitbucket-api`), `internal/cli/credentials_serve.go` (wiring).
-- **Behaviour:** after `RequestFromHTTP`, `Authenticator.Verify` and the kill switches, `Classify`
-  and `Decide`; for a pull-request write, a `GET` of that pull request with the bundle's token and
+- **Behaviour:** after `RequestFromHTTP`, `Authenticator.Verify`, the job-account binding
+  (`s.jobs`, `JobAccount.Repo`) and the kill switches, `Classify` and `Decide`; for a pull-request write, a `GET` of that pull request with the bundle's token and
   `CheckPRWrite`; on allow, the upstream URL rebuilt from the classified parts on `bitbucket.org` or
   `api.bitbucket.org/2.0`, the caller's credentials dropped, the bundle's token attached
   (`x-token-auth` Basic for git, Bearer for REST), both directions streamed, no redirect followed,
-  no pack buffered. One audit line per request. An owner-listed API root is not served (O4).
+  no pack buffered, under a git-route upstream timeout of 60 minutes (the model path's
+  `upstreamTimeout` is 30). One audit line per request (G7). An owner-listed API root is not served
+  (O4).
 - **Tests:** `TestBitbucketRouteForwardsFetch`, `TestBitbucketRoutePushRefusedBeforeAnyPackByte` (the
   fake upstream sees zero bytes), `TestBitbucketRouteGzipPushRefused`, `TestBitbucketRouteStreamsLargePack`,
-  `TestBitbucketRouteUpstreamURLRebuilt`, `TestBitbucketRouteNoRedirect`, `TestBitbucketRoutePRWriteChecksSource`,
+  `TestBitbucketRouteUpstreamURLRebuilt`, `TestBitbucketRouteNoRedirect`, `TestBitbucketRoutePRWriteChecksSource`, `TestBitbucketRouteBindsJobAccountRepo`, `TestBitbucketRouteAuditNeverEchoesRef`,
   `TestBitbucketRouteOneAuditLinePerRequest`, `TestBitbucketRouteKillSwitch`, `TestBitbucketRouteEndedRun`,
   `TestBitbucketRouteNoTokenInErrors`; `TestServiceHasNoAdminRoutes` stays green (its paths are
   outside the prefix).
@@ -313,15 +345,16 @@ plan; this table says what happens to each task, and the levels below include th
 #### B1.6: The runner's loopback forwarder (D495, G5, G11) — SECURITY-SENSITIVE
 
 - **Files:** `internal/gateway/gitforward.go` (new), `internal/gateway/gitforward_test.go` (new),
-  `internal/gateway/service_contract_test.go` (the forwarder's copy of the prefix and headers held
-  to `internal/credsvc/wire.go`, as the gateway's model-path copies already are).
+  `internal/gateway/service_contract_test.go` (`TestGitForwardMirrorsCredsvc`: the forwarder's copy
+  of the prefix and headers held to `internal/credsvc/wire.go`, beside the existing
+  `TestServiceConstantsMirrorCredsvc` and `TestServiceRulesMirrorCredsvc`).
 - **Behaviour:** listens on `127.0.0.1` only; for each request attaches a fresh job ID token
   (Cloud Run IAM), the current run identity and the job name (`X-Fugaro-Run-Job`), drops any
   `Authorization` the caller sent, forwards to the service under the Bitbucket prefix, streams.
   Holds no Bitbucket credential.
 - **Tests:** `TestGitForwardLoopbackOnly`, `TestGitForwardAttachesFreshTokens`, `TestGitForwardDropsCallerAuthorization`,
   `TestGitForwardStreams`, the contract test.
-- **Command:** `go test ./internal/gateway/ -run 'TestGitForward|Contract' -count=1`
+- **Command:** `go test ./internal/gateway/ -run 'TestGitForward|MirrorsCredsvc|TestServiceRulesMirrorCredsvc' -count=1`
 - **Red step:** `TestGitForwardDropsCallerAuthorization`: no forwarder yet.
 - **Depends on:** B1.5 (the prefix in the wire contract). **Reviewer tier:** opus + mandatory independent review.
 - **Commit:** `gateway: a loopback forwarder for git and Bitbucket that holds nothing and signs every request fresh`
@@ -337,30 +370,40 @@ plan; this table says what happens to each task, and the levels below include th
   (start the forwarder, rewrite `https://bitbucket.org/` to the forwarder with
   `url.<forwarder>.insteadOf` in the runner's and the agent's git environment, credential helper
   variables carrying no token; refuse at bootstrap, with a message naming the launcher's version,
-  an identity without `fb`), `internal/runner/project.go` (`remoteHost` and `admissionCheck` accept
-  the forwarder's endpoint for a proxied Bitbucket run); `internal/runner/gitproxy_test.go` (new).
+  an identity without `fb` on a first run or a follow-up; a review or artifact run needs none), `internal/runner/project.go` (`remoteHost` and `admissionCheck` accept
+  the forwarder's endpoint for a proxied Bitbucket run); `internal/runner/gitproxy_test.go` (new);
+  `internal/cli/launch_budget.go` and `internal/cli/recipes_skew.go` (`proxySince`: the launcher
+  refuses to launch a proxied repository's run on an image whose base predates S1, as
+  `checkCloneImageSince` does for `sealSince`), `internal/cli/launch_budget_test.go`.
 - **Tests:** `TestProxiedBitbucketReadsNoToken`, `TestProxiedBitbucketAgentEnvHasNoToken`,
   `TestProxiedRemoteRewrite`, `TestProxiedPagingThroughForwarder`, `TestProxiedRefusesIdentityWithoutBranch`,
-  `TestProxyFalseUnchanged`, and the existing `TestBitbucketUnchanged`
+  `TestProxiedReviewRunNeedsNoBranch`, `TestLaunchRefusesProxiedRunOnOldImage`, `TestProxyFalseUnchanged`, and the existing `TestBitbucketUnchanged`
   (`internal/runner/git_service_internal_test.go`) stays green.
-- **Command:** `go test ./internal/gitprov/... -run 'Proxied' -count=1 && go test ./internal/runner/ -run 'TestProxied|TestProxyFalseUnchanged|TestBitbucketUnchanged' -count=1 -timeout 20m`
+- **Command:** `go test ./internal/gitprov/... -run 'Proxied' -count=1 && go test ./internal/runner/ -run 'TestProxied|TestProxyFalseUnchanged|TestBitbucketUnchanged' -count=1 -timeout 20m && go test ./internal/cli/ -run 'TestLaunchRefusesProxiedRunOnOldImage' -count=1`
 - **Red step:** `TestProxiedBitbucketReadsNoToken` with the switch on: the token is still read.
 - **Depends on:** B1.6, BW-T2.8 (same `runner.go`), BW-T2.1 (the `proxy` field). **Reviewer tier:** opus + mandatory independent review.
 - **Commit:** `runner: a proxied Bitbucket run reaches Bitbucket only through the service`
 
 #### B1.8: The Bitbucket flip list, inert (D500)
 
-- **Files:** `internal/config/providers.go` (`ProxiedGitSecretNames = []string{}`, read by
-  `IsServiceHeldSecretEnv`); `internal/infra/spec.go`, `internal/infra/spec_test.go`;
+- **Files:** `internal/config/providers.go` (`ProxiedGitSecretNames = []string{}`);
+  `internal/infra/spec.go` (a per-repository `bitbucket_proxied` fact computed from the local
+  config: the installation opted in, `proxy: true`, the repository in `allow_data_to`),
+  `internal/infra/readiness.go` (its loop over the service-held names learns the proxied list),
+  `internal/infra/spec_test.go`; `.claude/rules/credentials-service.md` (paths gain
+  `internal/gitproxy/**` and `internal/gateway/gitforward*.go`; a rule that `ProxiedGitSecretNames`
+  stays empty until the owner's go after Check 191);
   `deploy/terraform/gcp/modules/workflow/sa.tf` (`proxied_git_secret_names`, mirrored);
   `deploy/terraform/terraform_test.go` (the mirror guard); `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl`;
   `internal/infra/tf/testdata/golden/*` (regenerated by `scripts/gen-golden-plans.sh`).
-- **Behaviour:** with the list empty nothing changes. Filled and the installation opted in, the
-  job loses its accessor on and its mount of `bitbucket-token`; the build account keeps its own
+- **Behaviour:** with the list empty nothing changes. Filled, only a repository whose
+  `bitbucket_proxied` is true loses its job's accessor on and mount of `bitbucket-token`; every other
+  Bitbucket repository, opted-in installation or not, keeps both (G9); the build account keeps its own
   (exception, exit S4). `ServiceHeldSecretNames` is not touched.
 - **Tests:** `TestProxiedGitSecretNamesMatchTheModule`, `TestEmptyProxiedListChangesNothing`,
-  `TestFilledProxiedListDropsMountAndAccessor` (the list overridden in the test), the tftest run.
-- **Command:** `terraform fmt -check -recursive deploy/terraform && go test ./internal/infra/ ./deploy/terraform/ -run 'ProxiedGitSecret|ProxiedList' -count=1 && go test -tags terraform ./internal/infra/... -count=1`
+  `TestFilledProxiedListDropsMountAndAccessor` (the list overridden in the test),
+  `TestFilledProxiedListKeepsNonProxiedRepositories`, the tftest run.
+- **Command:** `terraform fmt -check -recursive deploy/terraform && for r in installation repo; do d=$(mktemp -d); TF_DATA_DIR=$d terraform -chdir=deploy/terraform/gcp/roots/$r init -backend=false -lockfile=readonly && TF_DATA_DIR=$d terraform -chdir=deploy/terraform/gcp/roots/$r validate && TF_DATA_DIR=$d terraform -chdir=deploy/terraform/gcp/roots/$r test || exit 1; done && tflint --chdir=deploy/terraform && sh deploy/terraform/scan.sh && go test ./internal/infra/ ./deploy/terraform/ -run 'ProxiedGitSecret|ProxiedList' -count=1 && go test -tags terraform ./internal/infra/... -count=1` (as `.claude/rules/terraform.md` lists, one `TF_DATA_DIR` per root outside the tree)
 - **Red step:** `TestProxiedGitSecretNamesMatchTheModule`: neither side exists.
 - **Depends on:** none. **Reviewer tier:** opus + mandatory independent review.
 - **Commit:** `config, infra, terraform: the Bitbucket token's flip list, empty`
@@ -369,13 +412,14 @@ plan; this table says what happens to each task, and the levels below include th
 
 - **Files:** `internal/cli/doctor_brokering.go` (new), `internal/cli/doctor_brokering_test.go` (new),
   `internal/cli/doctor.go` (registration and the opt-in `--check-bitbucket-token` flag),
-  `internal/localcfg/localcfg.go` (the operator's `credentials.rotation_days`),
-  `internal/cli/sharedcfg.go` (`sharedForbidden` keeps it local).
+  `internal/localcfg/localcfg.go` (the operator's `secret_rotation_days`), `internal/localcfg/shared.go`
+  (`Shared()` drops it), `internal/cli/sharedcfg.go` (`sharedForbidden` keeps it local).
 - **Checks:** `credentials-service-deployed` (the service and every job account's invoker grant,
   through B0.3's Run services fake and client); `bundle-bitbucket-token` (`creds ls` names it on an
-  installation that publishes `proxy: true`); `bitbucket-token-mounted` (a repository job still
-  mounting a Bitbucket token on an installation whose flip is on); `secret-rotation-age` (the latest
-  version's age against `credentials.rotation_days`, warning only); `bitbucket-token-valid` (only
+  installation that publishes `proxy: true`); `bitbucket-direct` (on any opted-in installation: a
+  Bitbucket repository that is not proxied, info; after the flip, a proxied repository whose job
+  still mounts a token, warning); `secret-rotation-age` (the latest version's age against
+  `secret_rotation_days`, warning only); `bitbucket-token-valid` (only
   with `--check-bitbucket-token`: reads the bundle with the owner's own credentials, in memory,
   refused in an agent's session, and makes one `GET /repositories/<repo>` per proxied repository,
   as `--check-github-app` does for the App); `model-key-in-agent` (budget off, or no service, for a
@@ -400,7 +444,9 @@ plan; this table says what happens to each task, and the levels below include th
   publishes `proxy: true` and fills the flip; the build account still holds the token until S4; cold
   starts and no redundancy (D501); revocation is the kill switch and `fugaro cancel` (D504), and
   until the run's outcome is written (by the runner or the sweeper) an identity and a job ID token
-  taken before a cancel keep working, for at most the ID token's hour.
+  taken before a cancel keep working, for at most the ID token's hour; a proxied run fetches only
+  its own repository, so submodules and private git dependencies in other repositories are refused
+  (O6).
 - **Command:** `go run ./internal/clidoc && go test ./internal/cli/ -run Docs -count=1 && go test ./deploy/terraform/ -run 'TestEverySecretReader|TestEveryListedException' -count=1`
 - **Red step:** a pin for the R3 sentence in `docs_security_test.go`, before the text: it fails.
 - **Depends on:** B1.5, B1.7. **Reviewer tier:** opus + mandatory independent review.
@@ -414,10 +460,11 @@ plan; this table says what happens to each task, and the levels below include th
 - **Check 191** (before the flip): on installation `fugaro`, opted in, a sandbox Bitbucket
   repository published with `proxy: true`: a run clones, pushes checkpoints and opens its pull
   request through the service; hand-made requests with the run's identity to another repository,
-  to `main`, a tag, a delete, another pull request's update and `/workspaces` are refused and
-  audited; after the run ends its identity is refused.
+  to `main`, a tag, a delete, another pull request's update, a merge and `/workspaces` are refused
+  and audited; a review-only run's push is refused; after the run ends its identity is refused.
 - **Check 192** (`--after-flip`): the job no longer mounts `bitbucket-token` and its account has
-  no accessor on it; a run still succeeds; `fugaro doctor` reports `bitbucket-token-mounted` clean.
+  no accessor on it; a run still succeeds; `fugaro doctor` reports `bitbucket-direct` clean for the repository; a non-proxied Bitbucket
+  repository of the same installation still mounts its token and runs.
 - **Tests:** `check191_test.sh` (the project guard, `--dry-run`, and that `--after-flip` asserts
   the mount and the accessor are gone).
 - **Command:** `bash scripts/live-checks/check191_test.sh && go test ./internal/cli/ -run Docs -count=1`
@@ -427,15 +474,19 @@ plan; this table says what happens to each task, and the levels below include th
 
 #### B1.12: Check 191 — OWNER-RUN
 
-- **What the owner types,** installation `fugaro` only, never `belong`, from a dev build with S1:
-  1. `fugaro update` (installation-wide: re-applies the installation root, so the service runs the
-     S1 image; add `--provision-credentials` only if the installation is not yet opted in, typed at a
-     real terminal).
+- **The dev build:** `go install ./cmd/fugaro` from a clean checkout of `main` after B1.10 and
+  B1.11 merge, as earlier owner-run checks used dev builds.
+- **What the owner types,** installation `fugaro` only, never `belong`:
+  1. `fugaro update --provision-credentials` (installation-wide; at a real terminal; on an
+     installation already opted in it re-applies the installation root, so the service runs the S1
+     image).
   2. `fugaro creds set bitbucket-token < <file holding the sandbox token>`
-  3. In the local config, `project_secrets.bitbucket-token.proxy: true` with the sandbox repository
-     in `allow_data_to`; then the v4 lockstep publish as `release-0.14.0-operators.md` orders it
-     (`fugaro project policy publish --delete`, then `fugaro project policy publish`).
-  4. `CHECK191_REPO=<workspace>/<sandbox repository> bash scripts/live-checks/check191.sh`; paste
+  3. Add to the local config's `project_secrets` (the file `fugaro update` reads), exactly:
+     `bitbucket-token: {allow_data_to: [<workspace>/<sandbox repository>], proxy: true}`.
+  4. `fugaro project policy publish --delete` then `fugaro project policy publish` (the v4 lockstep
+     order `release-0.14.0-operators.md` states).
+  5. From the sandbox repository's checkout: `fugaro update --repo`.
+  6. `CHECK191_REPO=<workspace>/<sandbox repository> bash scripts/live-checks/check191.sh`; paste
      the `CHECK 191 RESULT` block back.
 - **Depends on:** B1.10, B1.11, B1.13's operator-notes draft (written first, flip list still
   empty), BW-T2.3.
@@ -444,14 +495,16 @@ plan; this table says what happens to each task, and the levels below include th
 
 - **Files, part one (with B1.11's level):** `docs/secrets-brokering/release-0.14.0-operators.md`
   (new: the v4 lockstep publish, storing the token with `creds set`, setting `proxy: true`,
-  re-applying each proxied repository from its checkout with `fugaro update --repo`, rotating both
-  copies while S4 is open). **Part two (after B1.12 PASS and the owner's go):**
+  re-applying each proxied repository from its checkout with `fugaro update --repo`, rebuilding
+  images below `proxySince`, rotating both copies while S4 is open, and the cross-repository fetch
+  consequence, O6). **Part two (after B1.12 PASS and the owner's go):**
   `internal/config/providers.go` (`ProxiedGitSecretNames = []string{"bitbucket-token"}`);
   `deploy/terraform/gcp/modules/workflow/sa.tf` (the mirror); `deploy/terraform/terraform_test.go`;
   `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl`; `internal/infra/tf/testdata/golden/*`;
-  `docs/secrets-brokering/secret-readers.md` (the job row's `what` loses the Bitbucket token).
+  `docs/secrets-brokering/secret-readers.md` (the job row's `what` loses the Bitbucket token for
+  proxied repositories).
 - **Tests:** B1.8's `TestFilledProxiedListDropsMountAndAccessor`, now on the real list; the tftest.
-- **Command:** `terraform fmt -check -recursive deploy/terraform && go test ./internal/infra/ ./deploy/terraform/ -run 'ProxiedGitSecret|ProxiedList|TestEverySecretReader' -count=1 && go test -tags terraform ./internal/infra/... -count=1`
+- **Command:** B1.8's command, plus `go test ./deploy/terraform/ -run 'TestEverySecretReader' -count=1 && go test ./internal/cli/ -run Docs -count=1`
 - **Red step:** a copy of `TestFilledProxiedListDropsMountAndAccessor` that reads the real list: it
   fails while the list is empty.
 - **Depends on:** part one: B1.10; part two: B1.12 PASS and the owner's go. **Reviewer tier:** opus + mandatory independent review.
@@ -463,6 +516,13 @@ plan; this table says what happens to each task, and the levels below include th
   `CHECK191_REPO=<workspace>/<sandbox repository> bash scripts/live-checks/check191.sh --after-flip`;
   paste the `CHECK 192 RESULT` block back.
 - **Depends on:** B1.13 part two, on a dev build; B1.9.
+
+#### B1.15 and B1.16: Checks 191 and 192 recorded
+
+- **Files:** `docs/gcp-live-checklist.md` (each section's run record, the owner's block as pasted).
+- **Command:** `go test ./internal/cli/ -run Docs -count=1`. **Red step:** none (a record).
+- **Depends on:** B1.12 (B1.15), B1.14 (B1.16). **Reviewer tier:** standard.
+- **Commit:** `docs(live-checks): Check 191's run` / `docs(live-checks): Check 192's run`
 
 #### BW-T2.1, BW-T2.3, BW-T2.8
 
@@ -496,23 +556,24 @@ moved to 0.14.0 and, for T2.1 and T2.3, amended as the re-planned table above sa
 | D499 | B0.2 |
 | D500 | B1.8, B1.13, B1.14 |
 | D501/D502 | No minimum instances or probe in any task; B0.3's deployer read; B1.10 states the consequence; B1.7 (opt-in and `proxy: true` only) |
-| D503 | B0.3 (a); B1.9 (b)–(d) and the spec's "token invalid" |
+| D503 | B0.3 (a); B1.9 (b)–(d) (`bitbucket-direct` on any opted-in installation) and the spec's "token invalid" |
 | D504 | B1.5 (G8); B1.10 (and the cancel window) |
 | D505 | B1.7 (per-repository only); B5.1 |
 | D506 | B1.2; B1.12 step 2 |
 
 ## Parallel execution
 
-**Edges** (from the "Depends on" lines): B0.1→B0.2; B0.4→B0.5; (BW-T1.3→B0.4 if both are in
+**Edges** (from the "Depends on" lines): B0.1→B0.2; B0.4→B0.5→B0.6; (BW-T1.3→B0.4 if both are in
 0.13.0). BW-T2.1→{BW-T2.3, BW-T2.8, B1.4, B1.7}; B1.3→B1.4; {B1.1, B1.2, B1.4}→B1.5; B1.5→B1.6;
 {B1.2, B1.8, B0.3}→B1.9; {B1.6, BW-T2.8}→B1.7; {B1.5, B1.7}→B1.10; {B1.5, B1.7, B1.9}→B1.11;
 B1.10→B1.13 part one; {B1.10, B1.11, B1.13 part one, BW-T2.3}→B1.12; B1.12→B1.13 part two→B1.14;
-B1.9→B1.14. B0.5's result gates B1.5's start.
+B1.9→B1.14; B1.12→B1.15; B1.14→B1.16. B0.5's result gates B1.5's start.
 
 | Release | Level | Tasks (concurrent) |
 | --- | --- | --- |
 | 0.13.0 | L0 | B0.1, B0.3, B0.4 |
 | 0.13.0 | L1 | B0.2, B0.5 (OWNER-RUN) |
+| 0.13.0 | L2 | B0.6 |
 | 0.14.0 | L0 | BW-T2.1, B1.3, B1.8 |
 | 0.14.0 | L1 | B1.1, B1.2, B1.4, BW-T2.3, BW-T2.8 |
 | 0.14.0 | L2 | B1.5, B1.9 |
@@ -521,15 +582,16 @@ B1.9→B1.14. B0.5's result gates B1.5's start.
 | 0.14.0 | L5 | B1.10, B1.11 |
 | 0.14.0 | L6 | B1.13 part one |
 | 0.14.0 | L7 | B1.12 (OWNER-RUN) |
-| 0.14.0 | L8 | B1.13 part two |
+| 0.14.0 | L8 | B1.13 part two, B1.15 |
 | 0.14.0 | L9 | B1.14 (OWNER-RUN) |
+| 0.14.0 | L10 | B1.16 |
 
 B1.1 and B1.2 sit at L1 rather than L0 only because BW-T2.1 rewrites policy fixtures in
 `internal/credsvc` and `internal/cli` tests.
 
 **Critical path:** S0: B0.4 → B0.5 (the owner's run gates S1's design). S1: B1.3 → B1.4 → B1.5 →
-B1.6 → B1.7 → B1.10 → B1.13 part one → B1.12 (owner) → B1.13 part two → B1.14 (owner), with
-BW-T2.1 → B1.4 joining it. Ten levels in 0.14.0, two of them owner-run checks.
+B1.6 → B1.7 → B1.10 → B1.13 part one → B1.12 (owner) → B1.13 part two → B1.14 (owner) → B1.16,
+with BW-T2.1 → B1.4 joining it. Eleven levels in 0.14.0, two of them owner-run checks.
 
 **Shared files** (every file written by more than one task, with the levels; no level holds two
 writers):
@@ -540,14 +602,19 @@ writers):
 | `docs/secrets-brokering/secret-readers.md` | B0.1 (0.13.0 L0), B1.10 (L5), B1.13 part two (L8) |
 | `internal/cli/docs_secrets_brokering_test.go` | B0.1 (0.13.0 L0), B1.10 (L5) |
 | `internal/cli/doctor.go` | B0.3 (0.13.0 L0), B1.9 (0.14.0 L2) |
-| `docs/gcp-live-checklist.md` | B0.4 (0.13.0 L0; after BW-T1.3 if scheduled), B1.11 (L5) |
+| `docs/gcp-live-checklist.md` | B0.4 (0.13.0 L0; after BW-T1.3 if scheduled), B0.6 (0.13.0 L2), B1.11 (L5), B1.15 (L8), B1.16 (L10) |
 | `internal/config/providers.go` | B1.8 (L0), B1.13 part two (L8) |
+| `internal/infra/spec.go`, `readiness.go` | B1.8 (L0) only |
 | `deploy/terraform/gcp/modules/workflow/sa.tf`, `deploy/terraform/terraform_test.go`, `roots/repo/tests/repo.tftest.hcl`, the golden plans | B1.8 (L0), B1.13 part two (L8) |
 | `internal/credsvc/auth.go`, `auth_test.go` | BW-T2.1's fixture sweep (L0, `auth_test.go` at most), B1.1 (L1) |
 | `internal/credsvc/wire.go`, `server.go`, `audit.go` | B1.5 (L2) only; B1.6's contract test reads `wire.go` |
 | `internal/cli/credentials_serve.go` | B1.5 (L2) only |
 | `internal/runner/runner.go` | BW-T2.8 (L1), B1.7 (L4) |
-| `internal/localcfg/localcfg.go` | BW-T2.3 (L1), B1.9 (L2) |
+| `internal/cli/launch_budget.go`, `launch_budget_test.go` | BW-T2.1's fixture sweep (L0, the test at most), B1.1 (L1), B1.7 (L4) |
+| `internal/cli/recipes_skew.go` | B1.7 (L4) only |
+| `internal/config/project_secrets.go` | BW-T2.1 amended (L0) only |
+| `.claude/rules/credentials-service.md` | B1.8 (L0) only |
+| `internal/localcfg/localcfg.go`, `internal/localcfg/shared.go` | BW-T2.3 (L1), B1.9 (L2) |
 | `internal/cli/sharedcfg.go` | BW-T2.3 (L1, if it touches `sharedForbidden`), B1.9 (L2) |
 | `internal/gcpfake/runservices.go` | B0.3 (0.13.0 L0) only |
 
@@ -571,4 +638,10 @@ writers):
 - **A cancelled run's identity works until its outcome is written** (D504; B1.10 states it).
 - **HTTP/1 body limits** (U2): if Check 190 fails the large push, the service needs h2c end to end
   before S1 starts.
-- **The policy v4 bump is a lockstep upgrade** (D477), now in 0.14.0 (O2).
+- **The policy v4 bump is a lockstep upgrade** (D477), now in 0.14.0 (O2); O3's "an older launcher
+  is refused" holds only with v4 in 0.14.0 (under O2's alternative, B1.7's bootstrap refusal is the
+  only guard).
+- **Cross-repository fetches are refused for a proxied run** (submodules, private git
+  dependencies): O6.
+- **The operator steps live in a draft file** until the release PR copies them into
+  `### For operators`, as T2.11 of the Bitbucket plan does; the release PR must not forget it.
