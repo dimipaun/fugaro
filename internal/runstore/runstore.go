@@ -68,6 +68,31 @@ const (
 	// dropping it would hide the run's credential from the dashboard, and
 	// retrying it forever would fill the log instead of the operator's queue.
 	HaltCredsRulesDenied HaltReason = "creds_rules_denied"
+
+	// The governance stops (docs/task-governance T6.1, D329, G7) are the
+	// reasons a tripwire stops a run: every one of them is a halt with a
+	// checkpoint report on the record and a draft pull request, never a
+	// silent kill, and each is a value the runner sets from its own state —
+	// never task text — so the report, the digest and the pull request can
+	// render it.
+	//
+	// HaltStageBudget is a stage that passed its own budget: its dollars,
+	// its calls, its tokens, or the stage's own timeout (T7.2, T7.6).
+	HaltStageBudget HaltReason = "stage_budget"
+	// HaltReviewRatio is review that spent more calls than the ratio allows
+	// for the implementation it read — max(review_floor_calls, N × the
+	// implement stage's calls) (T7.2).
+	HaltReviewRatio HaltReason = "review_ratio"
+	// HaltFanout is a stage that used more distinct sub-agents than the
+	// maximum (T7.2).
+	HaltFanout HaltReason = "fanout"
+	// HaltReviewScope is a review handed a range covering files the run's
+	// own commits never changed, so the reviewer would have read another
+	// branch's work (T7.3, D332).
+	HaltReviewScope HaltReason = "review_scope"
+	// HaltExpectedExceeded is a run that passed the cost its tier expected
+	// of it (T8.2, D330).
+	HaltExpectedExceeded HaltReason = "expected_exceeded"
 )
 
 // Halt is why and when a run was halted.
