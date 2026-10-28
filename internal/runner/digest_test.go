@@ -748,15 +748,17 @@ func TestDigestStepSkipsUnreadableReportTask(t *testing.T) {
 			},
 		},
 		{
-			name: "a read that fails otherwise",
-			seed: func(t *testing.T, h *harness, g *gcpfake.GCS) {
-				prev := &task.Spec{Version: 1, RunID: previous, Repo: "acme/app", Ref: "main", Workflow: "app",
-					Task: "Periodic run review", Recipe: &task.Recipe{Name: "report", Source: string(recipe.SourceRepo)},
-					DigestRuns: []string{own}}
-				if err := h.store.Sibling(previous).WriteTask(context.Background(), prev); err != nil {
+			name: "a task.json over the size the store reads",
+			seed: func(t *testing.T, h *harness, _ *gcpfake.GCS) {
+				// A read that fails for a reason that is not "the object is
+				// not there" and not a parse error: the launcher's own task
+				// read fails its listing on this one too (its corrupt-object
+				// vocabulary is launch.json's and result.json's, not the
+				// task's), and so does the step.
+				big := bytes.Repeat([]byte(" "), runstore.MaxRecordBytes+1)
+				if err := h.store.Sibling(previous).PutFile(context.Background(), "task.json", big, "application/json"); err != nil {
 					t.Fatal(err)
 				}
-				g.FailObjectGetsAfter(digestBucket, h.store.Sibling(previous).Prefix()+"task.json", 0)
 			},
 			fails: true,
 		},
