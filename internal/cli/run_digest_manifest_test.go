@@ -473,15 +473,18 @@ func TestDigestRepoRecipeImageGate(t *testing.T) {
 	writeBuildRecord(t, f, appSlug, "web", digestOldImage)
 	reportRecipeCheckout(t)
 	seedManifestRun(t, f, "acme/app", appSlug, manifestRunID(time.Now().Add(-time.Hour)))
+	// Minted from the wall clock the manifest's window reads, not fixed: the
+	// launch's own ID is read as a mint time like any other run's.
+	runID := manifestRunID(time.Now())
 
-	_, _, err := execute(t, "run", "--repo", "acme/app", "--recipe", "report", "--run-id", "20261028-120000-abcd", "Periodic run review")
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--recipe", "report", "--run-id", runID, "Periodic run review")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro 0.13.0 or later") {
 		t.Fatalf("err = %v, want the digest release's own refusal", err)
 	}
 	if n := len(f.run.Executions()); n != 0 {
 		t.Fatalf("%d executions started, want none", n)
 	}
-	if _, err := runstore.Open(statsBucket(t, f), appSlug, "20261028-120000-abcd").ReadTask(context.Background()); err == nil {
+	if _, err := runstore.Open(statsBucket(t, f), appSlug, runID).ReadTask(context.Background()); err == nil {
 		t.Fatal("the refused launch stored a task")
 	}
 }
