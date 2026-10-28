@@ -1880,7 +1880,7 @@ seam the renderer entry (Task 3.4a) needs to answer the dashboard's
   shared and
   source modules under `dist/**` except the two Task 4.1 excludes by name.
   `test/unit/build-files.test.ts` reads that list off the tree rather than
-  repeating it, so a fourth document or a fourth preload is covered when it is
+  repeating it, so the next document or the next preload is covered when it is
   added, and a file that works here but is missing from the shipped bundle
   fails a named test instead of shipping — the stylesheet is the one
   `bundlerOutputs` names by hand, and that is why a `build.files` that dropped
