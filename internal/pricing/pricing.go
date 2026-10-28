@@ -167,6 +167,36 @@ const (
 // charged at a multiple of the table's rates.
 const SurpriseMultiplier = 2
 
+// StandardTier is the usage.service_tier value of a call served at the
+// model's own rates: the one service tier whose multiplier the table knows
+// (1). It is also how a tier the table does not price is told from one it
+// does, which is why the gateway's allowed list is this constant and not a
+// second spelling of "standard".
+const StandardTier = "standard"
+
+// ConservativeTierMultiplier scales the charge for a response whose
+// usage.service_tier names a tier the table does not price. No provider
+// publishes a multiplier for its other tiers -- Anthropic's Priority Tier,
+// which a response reports as "priority" and which a provider's endpoint
+// can serve a call from without the agent having asked for anything, among
+// them -- so the table has no real number to charge one at and must not
+// invent one. Such a call is charged at this multiple of the rates it would
+// otherwise be priced at -- the serving model's own, or the table's maximum
+// for a model the table doesn't know -- instead: never the standard price,
+// which under-charges a tier that costs more than it, and never 0, which is
+// free. The rates are the call's own and not the dearest row in the table:
+// a tier premium is a multiple of what the model costs, and charging a
+// cheap model a dear one's rates would inflate the record and the shared
+// day counters tens of times over, and halt a run on a cap the model's own
+// rates would have stayed under.
+//
+// It is the dearest multiple the table knows anywhere (SurpriseMultiplier,
+// fast mode's premium) and is deliberately not smaller, so a tier nobody
+// has priced can only ever over-count. A tier whose real multiplier gets
+// published belongs in the table as its own number, with a source and a
+// checkedAt beside the rates it scales, and not as a loosening of this one.
+const ConservativeTierMultiplier = SurpriseMultiplier
+
 // Limits on a rate: every rate finite and at least 0, input and output
 // more than 0 and at most MaxPerM, multipliers at most MaxMultiplier.
 const (

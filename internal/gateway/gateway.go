@@ -176,7 +176,16 @@ type StageReport struct {
 	UsageUnparsed int                       // 2xx calls settled at their reservation
 	Tokens        int64                     // reported tokens: input, cache writes, cache reads and output
 	Violations    []string                  // what the stage asked for that isn't allowed, first first
-	Waited        int                       // calls told to retry (429) because in-flight calls held the budget
+	// ServiceTiers are the usage.service_tier values this stage's responses
+	// reported that the table has no multiplier for ("priority" among them),
+	// each recorded once, first first. Such a call is charged the
+	// conservative multiple of the table's maximum rates rather than
+	// refused, so the tier is a fact the run reports and not a violation
+	// (internal/pricing, ConservativeTierMultiplier). The names are the
+	// provider's own, clipped; nothing here treats one as a claim about the
+	// price, which is the table's.
+	ServiceTiers []string
+	Waited       int // calls told to retry (429) because in-flight calls held the budget
 }
 
 // Halt says why the gateway stopped forwarding calls.
@@ -558,6 +567,7 @@ func (s *Server) stageReport(st *stageState) StageReport {
 		rep.ByRoute[k] = v
 	}
 	rep.Violations = append([]string(nil), st.rep.Violations...)
+	rep.ServiceTiers = append([]string(nil), st.rep.ServiceTiers...)
 	return rep
 }
 

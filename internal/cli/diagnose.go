@@ -659,6 +659,16 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	if r.Cost.CacheReadTokens != 0 || r.Cost.CacheWriteTokens != 0 {
 		fmt.Fprintf(&b, "Cache:    %d read, %d write (tokens)\n", r.Cost.CacheReadTokens, r.Cost.CacheWriteTokens)
 	}
+	if len(r.Cost.ServiceTiers) > 0 {
+		// A provider answered at a tier the price table has no multiplier
+		// for: that call was charged conservatively rather than failing its
+		// stage (design §6.1), so the Cost line above counts a figure the
+		// reader cannot otherwise explain -- on a provider route nothing
+		// else names it, since the provider's own reported cost is recorded
+		// and never charged.
+		fmt.Fprintf(&b, "Tier:     %s charged at %dx its own rates (no published price for the tier)\n",
+			oneLine(strings.Join(r.Cost.ServiceTiers, ", ")), pricing.ConservativeTierMultiplier)
+	}
 	if r.Cost.CatalogStale {
 		// The run charged, and over-counted on purpose: the catalog it
 		// priced from was past its own 30 days (design §7, P7).

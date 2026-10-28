@@ -23,6 +23,11 @@ type callLog struct {
 	errorType                  string
 	maxTokens                  int64  // the request's
 	toolTypes                  string // the request's distinct tool types ("custom" for a client tool)
+	// serviceTier is the usage.service_tier a response reported that the
+	// table has no multiplier for: the call was charged conservatively and
+	// the tier is recorded here under the provider's own name. "" for a
+	// priced tier, the standard one included.
+	serviceTier string
 }
 
 func (s *Server) logCall(c callLog) {
@@ -50,6 +55,9 @@ func (s *Server) logCall(c callLog) {
 	}
 	if c.route != "" {
 		attrs = append(attrs, "route", c.route)
+	}
+	if c.serviceTier != "" {
+		attrs = append(attrs, "service_tier", logValue(c.serviceTier))
 	}
 	if c.reported > 0 {
 		attrs = append(attrs, "reported_micros", int64(c.reported))

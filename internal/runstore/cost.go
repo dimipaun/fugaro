@@ -71,6 +71,15 @@ type Cost struct {
 	// UsageUnparsed counts calls settled at their reservation because
 	// their usage could not be read.
 	UsageUnparsed int `json:"usage_unparsed,omitempty"`
+	// ServiceTiers names the service tiers the run's calls came back at
+	// that the price table has no multiplier for -- `usage.service_tier
+	// "priority"`, spelled as a violation is. Those calls were charged the
+	// conservative multiple of their own rates (design §6.1) rather than
+	// failing their stage, so the run's model_usd counts that charge: the
+	// name is what explains the figure to a reader who cannot see the
+	// stage logs, and on a provider route it is the only thing that does,
+	// since a provider's own reported cost is not what settles.
+	ServiceTiers []string `json:"service_tiers,omitempty"`
 	// CatalogStale is true when the built-in provider price catalog was
 	// older than its own 30-day threshold, so every model it priced was
 	// charged the dearest end of its tier's range rather than the end the

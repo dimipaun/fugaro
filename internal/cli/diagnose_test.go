@@ -1118,6 +1118,55 @@ func TestDiagnosePutsTheComputeSourceOnItsOwnLine(t *testing.T) {
 	}
 }
 
+// TestDiagnoseNamesChargedServiceTiers: a run whose calls came back at a
+// service tier the price table has no multiplier for charged them
+// conservatively (design §6.1), so diagnose names the tier and the multiple
+// over the Cost line: without it a reader has a figure nothing explains --
+// on a provider route the provider's own reported cost is recorded and
+// never charged. A run whose calls were all priced normally prints no such
+// line.
+func TestDiagnoseNamesChargedServiceTiers(t *testing.T) {
+	f := newCloudFixture(t)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	for i, tc := range []struct {
+		tiers []string
+		want  string
+	}{
+		{nil, ""},
+		{[]string{`usage.service_tier "priority"`}, `Tier:     usage.service_tier "priority" charged at 2x its own rates (no published price for the tier)`},
+		{[]string{`usage.service_tier "priority"`, `usage.service_tier 12`}, `Tier:     usage.service_tier "priority", usage.service_tier 12 charged at 2x its own rates (no published price for the tier)`},
+	} {
+		id := fmt.Sprintf("20260927-19000%d-aaaa", i)
+		exec := seedRun(t, f, id, "", "someone@example.com", true)
+		s := runstore.Open(b, appSlug, id)
+		cost := runstore.NewCost(1.23, 0, runstore.BasisAPIList)
+		cost.ServiceTiers = tc.tiers
+		if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+			Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady, CostUSD: 1.23, Cost: &cost}); err != nil {
+			t.Fatal(err)
+		}
+		human, _, err := execute(t, "diagnose", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := 0
+		for _, ln := range strings.Split(human, "\n") {
+			if strings.HasPrefix(ln, "Tier:") {
+				lines++
+			}
+		}
+		if tc.want == "" {
+			if lines != 0 {
+				t.Fatalf("a run charged no tier premium printed a tier line:\n%s", human)
+			}
+		} else if lines != 1 || !strings.Contains(human, tc.want+"\n") {
+			t.Fatalf("want exactly %q:\n%s", tc.want, human)
+		}
+	}
+}
+
 // TestDiagnoseShowsCacheLineOnlyWhenNonZero (P12): the run's prompt-cache
 // read and write token totals get one line of their own, and a run that
 // recorded neither -- no gateway, or a gateway run whose calls hit no cache

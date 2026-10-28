@@ -2692,6 +2692,35 @@ func TestResultSchemaAcceptsCacheFields(t *testing.T) {
 	}
 }
 
+// TestResultSchemaAcceptsServiceTiers: the run's cost object carries the
+// service tiers its calls came back at that the price table has no
+// multiplier for (design §6.1). Those calls were charged conservatively, so
+// the names are what explains the figure the record holds -- on a provider
+// route nothing else does. Pinned here for the same reason the cache totals
+// are: cost's additionalProperties is false, so a field the record writes
+// and the schema does not name is a record the schema rejects.
+func TestResultSchemaAcceptsServiceTiers(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	head := `{"version":1,"run_id":"20261027-100000-abcd","status":"succeeded","stage":"writeback","outcome":"ready","cost_usd":1.23,"started_at":"2026-10-27T10:00:00Z","cost":{"model_usd":1.23,"compute_usd":0,"compute_estimated":false,"total_usd":1.23,"estimate":true,"model_basis":"api-list"`
+	validate := func(lit string) error {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(head + lit + `}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	for _, lit := range []string{``, `,"service_tiers":["usage.service_tier \"priority\""]`, `,"service_tiers":[]`} {
+		if err := validate(lit); err != nil {
+			t.Errorf("schema rejects cost%s: %v", lit, err)
+		}
+	}
+	for _, lit := range []string{`,"service_tiers":"priority"`, `,"service_tiers":[7]`, `,"service_tiers":[""]`} {
+		if err := validate(lit); err == nil {
+			t.Errorf("schema accepts cost%s", lit)
+		}
+	}
+}
+
 // TestTaskSchemaBaseBranchMatchesTheGoRule ties the task schema's
 // `base_branch` property to the Go rule it mirrors (config.ValidBranchName,
 // the one validator fugaro.yaml's git.base_branch, the installation
