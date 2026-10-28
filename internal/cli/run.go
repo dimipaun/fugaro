@@ -1082,7 +1082,7 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	// The report run's manifest is listed here, once per launch (or per
 	// batch: every attempt of one shares it), and before the launch itself,
 	// so a repository already writing its reports is refused before any
-	// cloud work -- and so a batch's second attempt does not read the
+	// cloud work — and so a batch's second attempt does not read the
 	// first's stored task as a report run still going.
 	digestRuns, err := digestManifest(ctx, env, slug, root, rcp, time.Now())
 	if err != nil {

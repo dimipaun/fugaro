@@ -51,10 +51,10 @@ func seedManifestRun(t *testing.T, f *cloudFixture, repo, slug, id string, runs 
 }
 
 // finishManifestRun gives the run a record in a terminal status.
-func finishManifestRun(t *testing.T, f *cloudFixture, slug, id string) {
+func finishManifestRun(t *testing.T, f *cloudFixture, repo, slug, id string) {
 	t.Helper()
 	at := time.Now()
-	rec := &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Status: runstore.StatusSucceeded,
+	rec := &runstore.Record{Version: 1, RunID: id, Repo: repo, Workflow: "web", Status: runstore.StatusSucceeded,
 		StartedAt: at.Add(-time.Minute), FinishedAt: &at}
 	if err := runstore.Open(statsBucket(t, f), slug, id).WriteRecord(context.Background(), rec); err != nil {
 		t.Fatal(err)
@@ -77,8 +77,8 @@ func launchWith(t *testing.T, f *cloudFixture, name, runID string) *task.Spec {
 
 // TestDigestManifestThisRepositoryOnly is the headline: the manifest a
 // report run carries names the runs of this repository and no other. The
-// digest step reads the records it is named and never lists -- a bucket
-// listing is a call the job's own grant cannot hold -- so this list alone
+// digest step reads the records it is named and never lists — a bucket
+// listing is a call the job's own grant cannot hold — so this list alone
 // decides which records a run reads, and one naming another repository's run
 // would put that repository's figures into this repository's committed
 // report.
@@ -110,8 +110,8 @@ func TestDigestManifestThisRepositoryOnly(t *testing.T) {
 }
 
 // TestDigestManifestBounded: the manifest is this repository's runs of the
-// last 40 days -- the month the reports cover plus the seven days the digest
-// step catches up -- newest first and at most task.MaxDigestRuns of them.
+// last 40 days — the month the reports cover plus the seven days the digest
+// step catches up — newest first and at most task.MaxDigestRuns of them.
 func TestDigestManifestBounded(t *testing.T) {
 	now := time.Now()
 	recent := []string{
@@ -171,7 +171,7 @@ func TestDigestLaunchRefusedWhileOneRuns(t *testing.T) {
 		t.Fatal("the refused launch stored a task")
 	}
 
-	finishManifestRun(t, f, appSlug, running)
+	finishManifestRun(t, f, "acme/app", appSlug, running)
 	spec := launchWith(t, f, "run-digest", "20261028-130000-abcd")
 	// The run that finished is still a record of this repository, so the
 	// manifest of the launch that follows it names it.
@@ -182,7 +182,7 @@ func TestDigestLaunchRefusedWhileOneRuns(t *testing.T) {
 
 // TestDigestManifestRepoRecipe: the report recipe need not be the catalog's.
 // A repository's own recipe is resolved from the checkout, and its file is
-// where the launcher reads that the first step is the digest step -- the
+// where the launcher reads that the first step is the digest step — the
 // task carries the recipe's name alone, so nothing in the task says whether
 // the run is a report run.
 func TestDigestManifestRepoRecipe(t *testing.T) {

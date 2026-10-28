@@ -12,9 +12,9 @@ import (
 // This file writes the manifest a report run carries (task-governance plan
 // T3.6): the run records of this repository that its digest step may read.
 //
-// A report run reads the records it is handed and never lists -- a listing is
+// A report run reads the records it is handed and never lists — a listing is
 // a bucket-level call the job's grant cannot hold (docs/design/bucket-iam.md,
-// V7) -- so what a job may read is decided here, on the machine that holds
+// V7) — so what a job may read is decided here, on the machine that holds
 // the person's credentials and already lists runs for fugaro runs ls.
 
 // digestManifestWindow is how far back the launcher lists this repository's
@@ -50,7 +50,7 @@ var digestManifestMax = task.MaxDigestRuns
 // recipe.UsesDigest); every other launch stores no manifest, so the field
 // stays absent from its task the way an older release wrote it.
 //
-// rcp is the recipe the launch resolved -- nil for the catalog default -- and
+// rcp is the recipe the launch resolved — nil for the catalog default — and
 // root the checkout it resolved that recipe from, "" when there is none. A
 // repository recipe carries its name alone, so its file is read from root the
 // way refuseFollowUpRepoRecipe reads it; a recipe the launcher cannot read
@@ -97,8 +97,8 @@ func digestRecipe(root string, rcp *task.Recipe) bool {
 	return task.RecipeUsesDigest(rcp.YAML)
 }
 
-// refuseReportRunInFlight refuses the launch when one of ids -- this
-// repository's runs, newest first -- is a report run that has not finished.
+// refuseReportRunInFlight refuses the launch when one of ids — this
+// repository's runs, newest first — is a report run that has not finished.
 // A report run is one whose task carries a manifest (the launcher writes
 // digest_runs only for one, and the decoder refuses it under any other
 // recipe), and it has not finished when it has no record, or a record still
@@ -110,7 +110,7 @@ func digestRecipe(root string, rcp *task.Recipe) bool {
 // can still be going (checkMaxParallelFor's bound, which is why the horizon
 // is shared), and it keeps this to about a day of records. An unreadable
 // object leaves a run unrecognised or, when only its record is corrupt,
-// counted as going -- fail closed, and for no longer than the horizon.
+// counted as going — fail closed, and for no longer than the horizon.
 func refuseReportRunInFlight(ctx context.Context, env *cloudEnv, slug string, ids []string, now time.Time) error {
 	horizon, err := activeHorizon(ctx, env)
 	if err != nil {
