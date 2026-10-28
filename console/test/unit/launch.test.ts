@@ -28,8 +28,8 @@
 //   - a limit read off the wall clock fails "reads the limits from a clock that
 //     only moves forward, never from the wall clock";
 //   - a run id drawn without checking it against the ids this process already
-//     holds -- one id for two launches in one second, whose `pending` entry and
-//     issued id then overwrite each other -- fails "redraws the four hex
+//     holds -- one id for two launches in one second, whose `pending` entries
+//     then overwrite each other -- fails "redraws the four hex
 //     digits when the id it drew is one this process already holds", and an id
 //     drawn (rather than claimed) where the launch is built fails "claims the id
 //     with the reservation, so a same-tick pair cannot draw one id", and a
