@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -1164,6 +1165,42 @@ func TestDiagnoseNamesChargedServiceTiers(t *testing.T) {
 		} else if lines != 1 || !strings.Contains(human, tc.want+"\n") {
 			t.Fatalf("want exactly %q:\n%s", tc.want, human)
 		}
+	}
+}
+
+// TestDiagnoseRendersTheServiceTierCounter: a run that came back at more
+// distinct unpriced tiers than the record names carries the gateway's own
+// "+N more" entry as the last element of cost.service_tiers (it is
+// ServiceTierSet.List that is bounded, not the count), and diagnose prints
+// the list as it stands. Dropping the entry would read as a run that saw
+// only the MaxServiceTiers names above it, which is the over-claim the bound
+// exists to avoid.
+func TestDiagnoseRendersTheServiceTierCounter(t *testing.T) {
+	f := newCloudFixture(t)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	tiers := make([]string, 0, gateway.MaxServiceTiers+1)
+	for i := range gateway.MaxServiceTiers {
+		tiers = append(tiers, fmt.Sprintf(`usage.service_tier "tier-%02d"`, i))
+	}
+	tiers = append(tiers, "+3 more")
+	const id = "20260927-190009-aaaa"
+	exec := seedRun(t, f, id, "", "someone@example.com", true)
+	s := runstore.Open(b, appSlug, id)
+	cost := runstore.NewCost(1.23, 0, runstore.BasisAPIList)
+	cost.ServiceTiers = tiers
+	if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady, CostUSD: 1.23, Cost: &cost}); err != nil {
+		t.Fatal(err)
+	}
+	human, _, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Tier:     " + strings.Join(tiers, ", ") + " charged at 2x the rates the call was priced at, or the provider's reported cost if dearer (no published price for the tier)"
+	if !strings.Contains(human, want+"\n") {
+		t.Fatalf("want %q:\n%s", want, human)
 	}
 }
 
