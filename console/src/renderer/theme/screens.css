@@ -1040,17 +1040,20 @@ span.run-stage-deadline {
 /* The run's spend by stage and the findings its mode tolerated: two panels of
  * the same shape as the timeline's -- a muted name and a word, then the figures
  * the document wrote, right-aligned and tabular so a column of dollars reads
- * down as a column. `run-tolerated-mode` is a mode word and takes the Rigor
- * row's chip treatment; `run-tolerated-title` is the reviewer's own sentence
+ * down as a column. `run-tolerated-mode` is a mode word and is drawn the way
+ * the Rigor row draws one; `run-tolerated-title` is the reviewer's own sentence
  * and is drawn at the body size, like the diagnosis panel's finding summaries.
  * Nothing here is coloured: every one of these figures is measured, notional or
  * n/a, and a tone would be a judgement this screen does not make. */
 span.run-spend-stage-name,
 span.run-tolerated-label,
-span.run-tolerated-mode,
 span.run-tolerated-class {
   color: var(--text-muted);
   font-size: var(--font-size-xs);
+}
+
+span.run-tolerated-mode {
+  font-weight: var(--weight-semibold);
 }
 
 span.run-tolerated-title {
@@ -2365,6 +2368,14 @@ span.coordinator-unread-retry {
   span.run-follow-up-word,
   span.run-follow-up-comments-word,
   span.run-finding-severity,
+  span.run-spend-stage-name,
+  span.run-tolerated-label,
+  span.run-tolerated-mode,
+  span.run-tolerated-class,
+  p.run-spend-stages-more,
+  p.run-tolerated-total,
+  p.run-tolerated-more,
+  p.run-tolerated-none,
   p.run-ledger-model,
   p.run-ledger-compute,
   p.run-ledger-total,
