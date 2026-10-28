@@ -401,6 +401,11 @@ data every later governance step (G§7.3–7.9) and self-calibration read. G§7.
   skill's half-cap look stays the manual form), and G§5's idle-spin and edits-back-and-forth
   tripwires (nothing records file changes per model call, so there is no data). The loop tripwire
   the plan builds is the repeated identical command (plan T1.4), report only (D332).
+- **O9 — The review-scope flag's rule.** T1.4 flags a run whose `review_scope` was narrowed to its
+  own commits and then moved off them (`why_not` = `range-moved`) with a non-empty, untruncated
+  `outside`. That is D332's reading: a non-applicable `outside` is a fact about the run and never a
+  mismatch, so the wider rule the plan first wrote (any non-empty `outside`) would fire on nearly
+  every run. The owner may still want the wider rule; nothing here is decided.
 
 ## 7. UNVERIFIED
 

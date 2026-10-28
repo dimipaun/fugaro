@@ -358,6 +358,23 @@ func TestDigestFlagsRepeatsAndReviewScopeDrift(t *testing.T) {
 		rec.ReviewScope = sc
 		return rec
 	}
+	// A truncated comparison never raises the flag: Outside is taken over the
+	// two bounded lists (runstore.NewReviewScope), so a capped ImplementFiles
+	// can name a path the run did change. Here the review range moved off the
+	// run's commits and added a path implement never wrote -- real drift -- but
+	// implement's list was capped at runstore.MaxReviewScopeFiles, so the
+	// comparison is over sets that are not the whole ones and nothing is
+	// trusted.
+	wrote := make([]string, 0, runstore.MaxReviewScopeFiles+5)
+	for i := range runstore.MaxReviewScopeFiles + 5 {
+		wrote = append(wrote, fmt.Sprintf("w%03d.go", i))
+	}
+	movedTruncated := runstore.NewReviewScope(false, runstore.ReviewScopeRangeMoved,
+		wrote, append([]string{"a.go"}, wrote...))
+	if !movedTruncated.Truncated || len(movedTruncated.Outside) == 0 {
+		t.Fatalf("the fixture is not a truncated comparison with an outside: truncated %v, outside %v",
+			movedTruncated.Truncated, movedTruncated.Outside)
+	}
 	for _, tc := range []struct {
 		name string
 		sc   *runstore.ReviewScope
@@ -370,6 +387,7 @@ func TestDigestFlagsRepeatsAndReviewScopeDrift(t *testing.T) {
 		{"a range kept wider on purpose", runstore.NewReviewScope(false, runstore.ReviewScopeNoNarrowerRange, []string{"a.go"}, []string{"a.go", "b.go"}), false},
 		{"a review run with no implement set", runstore.NewReviewScope(false, runstore.ReviewScopeReviewRun, nil, []string{"b.go"}), false},
 		{"a comparison whose reads failed", runstore.NewReviewScope(false, runstore.ReviewScopeReadFailed, nil, nil), false},
+		{"a moved range whose lists were truncated", movedTruncated, false},
 	} {
 		got := flagOf(scope(tc.sc))
 		if tc.want {

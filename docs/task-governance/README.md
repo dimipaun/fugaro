@@ -1,15 +1,18 @@
 # Task governance and periodic run reviews
 
-**Status (2026-10-27): partly implemented — T1.1–T1.3, T2.1–T2.3, T3.1, T4.1, T4.3 and T5.1 are on
-`main`; no other task of this plan has merged.** The
+**Status (2026-10-28): partly implemented — T1.1–T1.4, T2.1–T2.3, T3.1, T3.2, T3.6, T4.1–T4.3,
+T5.1, T5.2, T6.1, T6.2 and T7.1 are on `main`; no other task of this plan has merged.** The
 rigor plan's T4.2 (a run's report listing the findings its mode tolerated, #1156) is on `main` too,
 and is not a task of this plan. Every stage's record carries `calls` (the gateway's stage report,
-absent without a gateway) and `agents` (the sub-agent tool calls the relay counted on the stage's
-own stream, for every auth mode); the gateway's count of distinct agent IDs
+absent without a gateway), `agents` (the sub-agent tool calls the relay counted on the stage's
+own stream, for every auth mode) and `repeats` (the most times one identical shell command ran in
+the stage, the relay's count, T1.4); the gateway's count of distinct agent IDs
 (`gateway.StageReport.Agents`, T1.2) is never recorded, and nothing reads it yet: T7.2's fan-out
 stop is what will. `internal/digest` builds a period's runs as a redacted, deterministic report
-(T2.1). The owner answered decisions D320–D333 on 2026-10-26 (D320 not the recommendation), which
-approves the reconciliation; each task of the plan still needs the owner's own explicit go.
+(T2.1) and raises the two report-only flags T1.4 feeds — a stage at five repeats or more, and a
+review-scope drift. The owner answered decisions D320–D333 on 2026-10-26 (D320 not the
+recommendation), which approves the reconciliation; each task of the plan still needs the owner's
+own explicit go.
 
 **Spec owner:** the Fugaro owner. **Dates:** governance spec 2026-10-22; periodic-reviews request
 2026-10-25. **Base:** `main` at `d5898f9b8` (`release: v0.11.4`).
@@ -21,7 +24,7 @@ outcome, review rounds and halt) and overlap the same existing commands and skil
 | --- | --- |
 | [spec.md](spec.md) | The task governance spec (2026-10-22), **verbatim** |
 | [spec-periodic-reviews.md](spec-periodic-reviews.md) | The periodic run-review request (2026-10-25, dictated), **verbatim** |
-| [reconciliation.md](reconciliation.md) | Findings F1–F38 against the code, resolutions R1–R8, decisions D320–D333 with the owner's answers of 2026-10-26, D320 followed through (§5.1), tensions T1–T3, items O1–O8, UNVERIFIED U1–U8. **Where it disagrees with either spec, it wins** |
+| [reconciliation.md](reconciliation.md) | Findings F1–F38 against the code, resolutions R1–R8, decisions D320–D333 with the owner's answers of 2026-10-26, D320 followed through (§5.1), tensions T1–T3, items O1–O9, UNVERIFIED U1–U8. **Where it disagrees with either spec, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Eight slices, 30 tasks, six parallel levels, the critical path, the shared-files table, Checks 135–139. Nothing in it is approved |
 
 ## Typos fixed in the specs
