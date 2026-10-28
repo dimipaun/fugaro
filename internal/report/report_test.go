@@ -419,3 +419,41 @@ func TestByPersonCountsRunsWithoutShares(t *testing.T) {
 		t.Fatalf("%+v", rep.Rows)
 	}
 }
+
+// TestByModeGroupsRecordedModes: the key is the mode the vocabulary knows, and
+// none for a record that carries no mode or text that is not one -- never the
+// raw text; the money and the notional stay apart.
+func TestByModeGroupsRecordedModes(t *testing.T) {
+	if d, err := ParseDim("mode"); err != nil || d != ByMode {
+		t.Fatalf("ParseDim(mode) = %q, %v", d, err)
+	}
+	mk := func(mode string, spent, notional, compute int64) Rec {
+		r := rec("2026-10-01", "app", spent, notional, compute)
+		r.Mode = mode
+		return r
+	}
+	rep := Build([]Rec{
+		mk("pro", 2_000_000, 0, 100),
+		mk("critical", 3_000_000, 0, 0),
+		mk("HOTFIX", 0, 9_000_000, 0),
+		mk("", 1_000_000, 5_000_000, 0),
+	}, ByMode)
+	if got := strings.Join(keys(rep), ","); got != "critical,pro,none" {
+		t.Fatalf("mode keys %s", got)
+	}
+	if rep.Totals.Spent != 6_000_000 || rep.Totals.Notional != 14_000_000 || rep.Totals.Runs != 4 {
+		t.Fatalf("totals %+v", rep.Totals)
+	}
+	for _, r := range rep.Rows {
+		if strings.Contains(r.Key, "HOTFIX") {
+			t.Fatalf("the raw text reached a key: %+v", rep.Rows)
+		}
+	}
+	var b bytes.Buffer
+	if err := Table(&b, rep, Meta{Since: "2026-10-01", Un: "2026-10-02"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "n/a") || !strings.Contains(b.String(), "no rigor mode") {
+		t.Fatalf("table:\n%s", b.String())
+	}
+}
