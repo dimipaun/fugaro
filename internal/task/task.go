@@ -244,6 +244,25 @@ type Spec struct {
 	// launcher's image gate refuses an --attach launch at such a job before
 	// this field is ever set (plan P9).
 	Inputs []InputFile `json:"inputs,omitempty"`
+	// DigestRuns is the manifest of a report run (task-governance T3.6): the
+	// run IDs of the records the digest step may read, which the launching
+	// CLI listed from this repository's own prefix. Nil for every launch
+	// that is not a report run, so a spec this release writes for one is
+	// byte-identical to what the previous release wrote.
+	//
+	// It is the launcher's list and nobody else's: the job reads each named
+	// record by name and never lists (a list is a bucket-level call the
+	// per-repository grant cannot hold, docs/design/bucket-iam.md), so this
+	// field is what decides which records a run reads — the reason T3.6 is
+	// reviewed as a security change. The runner reads the IDs of its own
+	// repository's prefix only, whatever this list says (G2).
+	//
+	// It is accepted only with a recipe whose first step is digest (Validate,
+	// RecipeUsesDigest): the digest step is the only reader, so a manifest
+	// under any other recipe names records for a loop that never reads them.
+	// A runner before this field refuses the spec outright (Parse disallows
+	// unknown fields), which is the skew every new task field has.
+	DigestRuns []string `json:"digest_runs,omitempty"`
 }
 
 // MaxDeclaredPaths bounds the paths one launch may declare (Spec.Paths,
@@ -272,6 +291,30 @@ const MaxDeclaredPathBytes = 200
 // title over the cap is a refusal, not a truncation: two jobs told apart by
 // their titles must not be told apart by the part that was cut off.
 const MaxTitleRunes = 100
+
+// MaxDigestRuns bounds a report run's manifest (Spec.DigestRuns): the newest
+// this many of the repository's runs, which is what the launcher lists and
+// what the job then reads, one record at a time. The cap is the launcher's
+// own listing bound (internal/cli/run_digest_manifest.go), and it is here so
+// that the decoder refuses a hand-written task.json naming more: every ID is
+// a record the run would read and a figure a report would carry, and a list
+// past the cap is not one any launcher writes.
+const MaxDigestRuns = 5000
+
+// RecipeUsesDigest reports whether the recipe text yaml holds a recipe whose
+// first step is the digest step (recipe.UsesDigest), which is the only recipe
+// a task carrying digest_runs may name. "" is not one: it is a task with no
+// recipe at all, and a repository recipe, which carries its name alone — the
+// runner reads that file at the task's ref, so the launcher, which resolves
+// it from the checkout, is where its steps are judged
+// (internal/cli/run_digest_manifest.go).
+func RecipeUsesDigest(yaml string) bool {
+	if yaml == "" {
+		return false
+	}
+	rcp, ps := recipe.Parse([]byte(yaml))
+	return len(ps) == 0 && recipe.UsesDigest(rcp)
+}
 
 // TitleProblem reports what is wrong with a run's own title t — "" when
 // nothing is — for the two places one is accepted: the launcher, at fugaro
@@ -812,6 +855,34 @@ func (s *Spec) Validate() error {
 		}
 		if pl.Generation < 0 {
 			bad("task spec: project_layer.generation must not be negative")
+		}
+	}
+	// The report run's manifest (T3.6): the records the digest step may read.
+	// The IDs are shape-checked, since every one of them names an object the
+	// job will read, and the list is bounded; both are also the schema's own
+	// rules (schemas/task.schema.json).
+	//
+	// A manifest is accepted only under a recipe whose first step is digest,
+	// the step that reads it. A repository recipe carries only its name here
+	// (Recipe.YAML is empty by the rule above), so the text to judge is not
+	// in this spec: the launcher judges the file it resolved and refuses a
+	// manifest it cannot vouch for, and the runner resolves that recipe at
+	// the task's ref. Every other recipe carries its text, and a manifest
+	// under one is refused here.
+	if len(s.DigestRuns) > 0 {
+		if len(s.DigestRuns) > MaxDigestRuns {
+			bad("task spec: digest_runs must name at most %d runs", MaxDigestRuns)
+		}
+		for i, id := range s.DigestRuns {
+			if !ValidRunID(id) {
+				bad("task spec: digest_runs[%d] %q must look like 20260926-221530-a1b2", i, id)
+			}
+		}
+		switch {
+		case s.Recipe == nil:
+			bad("task spec: digest_runs needs a recipe whose first step is digest")
+		case s.Recipe.Source != string(recipe.SourceRepo) && !RecipeUsesDigest(s.Recipe.YAML):
+			bad("task spec: digest_runs needs a recipe whose first step is digest, and recipe %s is not one", s.Recipe.Name)
 		}
 	}
 	return errors.Join(errs...)
