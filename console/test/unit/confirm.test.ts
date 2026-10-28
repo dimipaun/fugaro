@@ -87,17 +87,30 @@ function fakeContents(url: string) {
 /** fakeConfirmWindow is one `BrowserWindow` this module builds. `close()` marks
  * the close as asked for and does **not** fire `closed`, because Electron does
  * not either: a test fires that itself, which is what keeps "a second answer
- * before the window is gone" and "a close decides no" two separate states. */
+ * before the window is gone" and "a close decides no" two separate states.
+ *
+ * `destroy()` is Electron's own destruction, and it is what makes `webContents`
+ * throw: the real getter does exactly that once the window is destroyed, and
+ * `closed` fires only afterwards. A test that fires `closed` after `destroy()`
+ * is the state in which a `closed` listener that read the getter again would
+ * throw instead of deciding. */
 function fakeConfirmWindow(options: Record<string, unknown> = {}) {
   const windowHandlers = new Map<string, Handler[]>()
   const contents = fakeContents(CONFIRM_ENTRY_URL)
   let closeRequested = false
+  let destroyed = false
   let shown = 0
   const window = {
     options,
-    webContents: contents,
+    get webContents() {
+      if (destroyed) throw new Error('Object has been destroyed')
+      return contents
+    },
     loaded: [] as string[],
-    isDestroyed: (): boolean => closeRequested,
+    destroy(): void {
+      destroyed = true
+    },
+    isDestroyed: (): boolean => destroyed || closeRequested,
     closeRequested: (): boolean => closeRequested,
     shown: (): number => shown,
     loadURL: async (url: string): Promise<void> => {
@@ -516,6 +529,114 @@ describe('the confirmation window, and how it is cancelled', () => {
     await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)
     window.fire('closed')
     expect(decider.calls).toStrictEqual([[true, undefined]])
+  })
+
+  it('decides no when the window is closed and destroyed, without reading a getter that throws', async () => {
+    const { confirmer, ipcMain, windows } = confirmOver()
+    const decider = recordingDecider()
+    confirmer.open(viewFixture(), decider.decide)
+    const window = windows[0] as FakeWindow
+    // The `webContents` the module keyed its entry by, read while the window is
+    // alive -- which is the only way to name it once the window is destroyed.
+    const contents = window.webContents
+
+    // Electron's own order, and the reason the entry keeps its `webContents`:
+    // the window is destroyed first, `closed` fires afterwards, and by then
+    // `window.webContents` throws. A `closed` listener that read the getter again
+    // would throw here -- before it deleted the entry or decided -- and the
+    // launch would never settle: no child, and the run id the console's own
+    // in-flight maps hold for the life of the process.
+    window.destroy()
+    expect(() => window.webContents).toThrow('Object has been destroyed')
+    expect(() => {
+      window.fire('closed')
+    }).not.toThrow()
+    expect(decider.calls).toStrictEqual([[false, undefined]])
+
+    // And the entry is gone from the map rather than merely answered: the
+    // destroyed window's own `webContents` reaches neither channel.
+    expect(
+      await ask(ipcMain, confirmChannel('fields'), { sender: contents, senderFrame: contents.mainFrame }),
+    ).toStrictEqual({ ok: false, reason: SENDER_REFUSAL })
+  })
+
+  it('closes an open window as a cancel when the run is named, and decides no once', () => {
+    const { confirmer, windows } = confirmOver()
+    const decider = recordingDecider()
+    confirmer.open(viewFixture(), decider.decide)
+    const window = windows[0] as FakeWindow
+
+    confirmer.close(RUN_ID)
+    expect(decider.calls).toStrictEqual([[false, undefined]])
+    expect(window.closeRequested()).toBe(true)
+
+    // The close the decision was, and the second close of the same run: neither
+    // decides again.
+    confirmer.close(RUN_ID)
+    window.fire('closed')
+    expect(decider.calls).toStrictEqual([[false, undefined]])
+  })
+
+  it('decides nothing when the named run has no window open', async () => {
+    const { confirmer, ipcMain, windows } = confirmOver()
+    const decider = recordingDecider()
+    confirmer.open(viewFixture(), decider.decide)
+    const window = windows[0] as FakeWindow
+
+    // A run id nothing is open for -- the answer already arrived, or the window
+    // never opened. Rule 11's close is not a way to decide a spent run id.
+    confirmer.close('20261028-152618-b7d1')
+    expect(decider.calls).toStrictEqual([])
+    expect(window.closeRequested()).toBe(false)
+
+    // Nor is it a second decision once the operator has answered.
+    await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)
+    confirmer.close(RUN_ID)
+    expect(decider.calls).toStrictEqual([[true, undefined]])
+  })
+
+  it('decides no when the served root answers the document with a 404', async () => {
+    const { confirmer, windows } = confirmOver()
+    const decider = recordingDecider()
+    confirmer.open(viewFixture(), decider.decide)
+    const window = windows[0] as FakeWindow
+
+    // What `serveAppRequest` returns for a path the bundle does not hold: a 404
+    // `textResponse` with a body, which `loadURL` **resolves** -- so the window
+    // would show `no such file in the bundle` and stay open for ever if the
+    // navigation's status were not read.
+    window.webContents.fire('did-navigate', {}, CONFIRM_ENTRY_URL, 404, 'Not Found')
+    expect(decider.calls).toStrictEqual([[false, undefined]])
+    expect(window.closeRequested()).toBe(true)
+
+    // And a response code Electron could not read is not a refusal: `-1` is what
+    // it reports when there is no code to report, and a document that loaded must
+    // not be cancelled by a check that could not tell.
+    const other = confirmOver()
+    const kept = recordingDecider()
+    other.confirmer.open(viewFixture(), kept.decide)
+    const live = other.windows[0] as FakeWindow
+    live.webContents.fire('did-navigate', {}, CONFIRM_ENTRY_URL, -1, '')
+    live.webContents.fire('did-navigate', {}, CONFIRM_ENTRY_URL, 200, 'OK')
+    expect(kept.calls).toStrictEqual([])
+    expect(live.closeRequested()).toBe(false)
+
+    // A 404 after a decision is not a second one.
+    window.fire('closed')
+    expect(decider.calls).toStrictEqual([[false, undefined]])
+  })
+
+  it('does not show a window that was already decided', () => {
+    const { confirmer, windows } = confirmOver()
+    const decider = recordingDecider()
+    confirmer.open(viewFixture(), decider.decide)
+    const window = windows[0] as FakeWindow
+
+    // The 404 can arrive before the first paint: `show` is on `ready-to-show`,
+    // which is later, and a closed window must not be shown by it.
+    window.webContents.fire('did-navigate', {}, CONFIRM_ENTRY_URL, 404, 'Not Found')
+    window.fire('ready-to-show')
+    expect(window.shown()).toBe(0)
   })
 
   it('drops the window’s view once it is gone', async () => {

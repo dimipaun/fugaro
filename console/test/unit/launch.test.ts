@@ -292,6 +292,12 @@ function heldConfirmer(): LaunchConfirmer & {
       if (oldest !== undefined) decideWindow(oldest, yes)
     },
     decideWindow,
+    // The window going away on its own: rule 11's installation moved while the
+    // window is open. A run with no window open is not a cancel, exactly as the
+    // real confirmer's `close` is.
+    close(runId) {
+      decideWindow(runId, false)
+    },
     get openRunIds(): readonly string[] {
       return [...waiting.keys()]
     },
@@ -306,6 +312,10 @@ function answeringConfirmer(yes: boolean): LaunchConfirmer & { readonly opened: 
     open(view, decide) {
       opened.push(view)
       decide(yes)
+    },
+    // Nothing stays open to be closed.
+    close() {
+      return undefined
     },
   }
 }
@@ -1334,6 +1344,9 @@ describe('a launch that was stopped, and one that failed outright', () => {
         if (calls === 1) throw new Error('the confirmation window is gone')
         held.open(launch, decide)
       },
+      close(runId) {
+        held.close(runId)
+      },
     }
     const spawner = quietSpawner()
     const launcher = runner({ confirmer, spawner })
@@ -1351,6 +1364,33 @@ describe('a launch that was stopped, and one that failed outright', () => {
     expect(held.opened).toHaveLength(1)
     for (const launch of held.opened) held.decideWindow(launch.runId, false)
     expect((await second).reason).toBe(DECLINED_CANCELLED)
+  })
+
+  it('settles as a cancel, spawning nothing, when an open window is closed by name', async () => {
+    // Rule 11: an installation removed or re-chosen while the window is open
+    // closes the window as a cancel. The caller -- `index.ts`, which is watching
+    // the records -- names the run; the seam's `close` is how it says so, and
+    // what comes back is the ordinary decline: no child, and the console's own
+    // cancel sentence rather than the CLI's.
+    const confirmer = heldConfirmer()
+    const spawner = quietSpawner()
+    const launcher = runner({ confirmer, spawner })
+
+    const launched = launcher.launch(request())
+    await untilSettled()
+    expect(confirmer.opened).toHaveLength(1)
+    const window = confirmer.opened[0] as ConfirmView
+    expect(confirmer.openRunIds).toStrictEqual([window.runId])
+
+    confirmer.close(window.runId)
+    const outcome = await launched
+    expect(outcome.ok).toBe(false)
+    expect(outcome.reason).toBe(DECLINED_CANCELLED)
+    expect(spawner.calls).toHaveLength(0)
+    // A close for a run id nothing has open decides nothing, so a second one
+    // after the answer changes no outcome.
+    confirmer.close(window.runId)
+    expect(confirmer.openRunIds).toStrictEqual([])
   })
 
   it('declines, and frees the hold, when the still-recorded read rejects', async () => {

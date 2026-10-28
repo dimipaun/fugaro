@@ -73,7 +73,7 @@ export const MAX_IN_FLIGHT = 2
 /** DECLINED_UNBUILT is the production confirmer's answer, and the sentence is
  * deliberately about this tree rather than about the operator's click: nothing
  * asked them anything. It is the refusal a shipped console gives every launch
- * until 2b's window lands. */
+ * until V2.5.1b's window lands. */
 export const DECLINED_UNBUILT = 'the launch confirmation window is not built yet'
 
 /** DECLINED_CANCELLED is what a declined window answers with once 2b builds it:
@@ -304,7 +304,7 @@ export function confirmView(launch: FrozenLaunch): ConfirmView {
 }
 
 /**
- * LaunchConfirmer is the seam 2b fills with the window. `open` is handed the
+ * LaunchConfirmer is the seam V2.5.1b fills with the window. `open` is handed the
  * **display-only view** of the frozen launch and a `decide` it calls when the
  * operator answers -- the main process's own path, which is what `answer(runId,
  * yes)` reaches from the window's preload; the renderer asks for the window and
@@ -318,9 +318,17 @@ export function confirmView(launch: FrozenLaunch): ConfirmView {
  * operator closed (`DECLINED_CANCELLED`). It is optional, and the window's own
  * main-side path (`answer(runId, yes)`) never passes one: a decline that came
  * from the operator is the cancel sentence and nothing else.
+ *
+ * `close` is the seam's **second half**, and it is here because rule 11's "an
+ * installation removed or re-chosen while the window is open closes the window
+ * as a cancel" is a thing the caller knows and the window does not: the caller
+ * names the run whose window should go away, the window decides no, and the
+ * cancel that follows is the ordinary decline -- nothing is spawned, and the
+ * frozen launch the run id holds is not touched.
  */
 export interface LaunchConfirmer {
   open(view: ConfirmView, decide: (yes: boolean, reason?: string) => void): void
+  close(runId: string): void
 }
 
 /** DECLINING_CONFIRMER is V2.5.1a's production implementation: it declines every
@@ -329,6 +337,9 @@ export const DECLINING_CONFIRMER: LaunchConfirmer = Object.freeze({
   open: (_view: ConfirmView, decide: (yes: boolean, reason?: string) => void): void => {
     decide(false, DECLINED_UNBUILT)
   },
+  // No window is ever opened, so none is ever open to close: `open` has already
+  // decided, and there is nothing here for a close to cancel.
+  close: (_runId: string): void => undefined,
 })
 
 /** The console's own sentence for a launch that was stopped before it answered.

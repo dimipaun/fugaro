@@ -31,6 +31,13 @@
 // What the window is shown is `ConfirmView`, a deep-frozen copy built once by
 // `confirmView` -- never the `FrozenLaunch`, which carries the plan, the child's
 // environment and the task's `Uint8Array`.
+//
+// **The other way a window goes away.** `close(runId)` is the caller's, and it
+// is rule 11's "an installation removed or re-chosen while the window is open
+// closes the window as a cancel": the caller -- `index.ts`, which is watching
+// the records -- names the run, and the window goes away declined. It is the
+// seam's second half because the window cannot know this for itself: what it was
+// built from is frozen and deliberately never re-read.
 
 import { join } from 'node:path'
 
@@ -134,11 +141,21 @@ export function confirmOptions(
 }
 
 /** ConfirmEntry is one open window: the view it may read, the `decide` its answer
- * resolves, and whether it has answered yet. It lives until the window is gone. */
+ * resolves, and whether it has answered yet. It lives until the window is gone.
+ *
+ * `contents` is the window's own `webContents`, **read once while the window is
+ * alive and kept here**. Electron's `BrowserWindow.webContents` getter throws
+ * once the window is destroyed, and `closed` fires after that: a `closed`
+ * listener that read the getter again would throw before it could delete the
+ * entry or decide, leaving the launch unsettled -- and the run id, the
+ * installation's in-flight reservation and one of the app-wide slots held -- for
+ * the life of the process. The map is keyed by this same value, so a window that
+ * is gone is reachable by neither channel. */
 interface ConfirmEntry {
   readonly view: ConfirmView
   readonly decide: (yes: boolean, reason?: string) => void
   readonly window: BrowserWindow
+  readonly contents: BrowserWindow['webContents']
   answered: boolean
 }
 
@@ -176,12 +193,17 @@ export function createConfirmWindow(deps: ConfirmWindowDeps): LaunchConfirmer {
 
   /** finish is the one path to a decision, and it is reachable at most once per
    * window: an answer already given is not given again, and the close that
-   * follows it is not a cancel. */
+   * follows it is not a cancel.
+   *
+   * The close is the decision's *consequence*, so a window that is already gone
+   * is not closed again: `close()` on a destroyed window throws, and the path
+   * that reaches here with one is the `closed` listener's, whose decision has
+   * already been given above. */
   function finish(entry: ConfirmEntry, yes: boolean): void {
     if (entry.answered) return
     entry.answered = true
     entry.decide(yes)
-    entry.window.close()
+    if (!entry.window.isDestroyed()) entry.window.close()
   }
 
   deps.ipcMain.handle(confirmChannel('fields'), (event) => {
@@ -204,12 +226,16 @@ export function createConfirmWindow(deps: ConfirmWindowDeps): LaunchConfirmer {
       const window = new deps.BrowserWindow(
         confirmOptions(confirmPreloadPath(deps.appPath), deps.parent()),
       )
-      const entry: ConfirmEntry = { view, decide, window, answered: false }
-      entries.set(window.webContents, entry)
+      // Read the window's `webContents` once, here, while it is alive: every
+      // listener below (and the `closed` one especially) has to be able to name
+      // it after the window is destroyed, and the getter throws by then.
+      const contents = window.webContents
+      const entry: ConfirmEntry = { view, decide, window, contents, answered: false }
+      entries.set(contents, entry)
 
       // The three denials every window of this app gets: no navigation, no
       // popup and no `<webview>`, on this window's own `webContents`.
-      installWebContentsSecurity(window.webContents)
+      installWebContentsSecurity(contents)
 
       // And the title stays this process's: Electron applies a page's `<title>`
       // over the one the window was constructed with, and this window's title
@@ -222,32 +248,71 @@ export function createConfirmWindow(deps: ConfirmWindowDeps): LaunchConfirmer {
       // Escape are the window's own two ways out, both declined, whatever
       // modifiers they carry. Only a click on the confirming button -- which
       // arrives as `answer(true)` on the channel above -- confirms.
-      window.webContents.on('before-input-event', (event, input) => {
+      contents.on('before-input-event', (event, input) => {
         if (input.type !== 'keyDown') return
         if (input.key !== 'Enter' && input.key !== 'Escape') return
         event.preventDefault()
         finish(entry, false)
       })
 
+      // The served root answers a path it does not hold with a **404 text
+      // response**, and `loadURL` *resolves* on that: a console packaged without
+      // the document would show the operator `no such file in the bundle` in a
+      // window that never cancels. So the navigation's own status is read here,
+      // from the status Electron reports for the response the handler returned.
+      // A code that is not a number -- Electron's `-1`, for a response code it
+      // could not read -- is not a refusal: a document that loaded must not be
+      // cancelled by a check that could not tell.
+      contents.on('did-navigate', (_event, _url, code) => {
+        if (typeof code === 'number' && code >= 400) finish(entry, false)
+      })
+
       // `closed` is every path by which the window goes away -- the operator's
       // close box, a parent that closed, a decision above -- and a window that
-      // went away without an answer is the operator declining.
+      // went away without an answer is the operator declining. `contents` rather
+      // than `window.webContents`: the window is destroyed by the time this runs,
+      // and the getter would throw before either line below it.
       window.on('closed', () => {
-        entries.delete(window.webContents)
+        entries.delete(contents)
         finish(entry, false)
       })
 
       window.once('ready-to-show', () => {
+        // A window already decided and closed does not get to show itself: the
+        // 404 above can arrive before the first paint.
+        if (entry.answered) return
         window.show()
       })
 
-      // A document that did not load is a cancel rather than a window left open:
-      // `show` is on `ready-to-show`, so a failed load would leave a window
-      // nobody can see and nobody can close, holding this launch's run id and its
-      // installation's slot for the life of the process.
+      // A load that **rejects** -- a scheme that was never registered, an aborted
+      // navigation, a window destroyed under it -- is a cancel rather than a
+      // window left open: `show` is on `ready-to-show`, so a load that failed
+      // that way would leave a window nobody can see and nobody can close,
+      // holding this launch's run id and its installation's slot for the life of
+      // the process. The 404 is not this path; it is the `did-navigate` check
+      // above.
       void window.loadURL(deps.entryUrl).catch(() => {
         finish(entry, false)
       })
+    },
+
+    /**
+     * close is rule 11's "an installation removed or re-chosen while the window is
+     * open closes the window as a cancel": the caller names the run whose window
+     * is open, and the window goes away declined, with no reason of its own -- the
+     * operator answered nothing, so the sentence is the cancel sentence.
+     *
+     * A run with no window open is **not** a cancel and nothing here decides: an
+     * answer that has already arrived and a window that never opened are both
+     * states where the launch is settled or on its way to being settled, and a
+     * close that decided anyway would be a second decision on a spent run id.
+     */
+    close(runId: string): void {
+      for (const entry of entries.values()) {
+        if (entry.view.runId !== runId) continue
+        finish(entry, false)
+        return
+      }
     },
   })
 }
