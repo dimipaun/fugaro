@@ -797,7 +797,7 @@ span.spend-point-value {
   text-align: right;
 }
 
-/* `(partial)`, `hollow` and `records unreadable` are Spend's own honesty
+/* `(partial)`, `hollow` and `no readable record` are Spend's own honesty
  * states, and each carries the marker text (design section 3.5; §2.4's states).
  * An unreadable row's money was never measured, so its `n/a` cells take the
  * same warning tone as a partial day rather than reading as a figure.

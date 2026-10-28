@@ -408,10 +408,11 @@ panel does select it.
 States: killed (the kill banner, `data-killed="true"`); partial/hollow
 (`data-partial="true"` / `data-hollow="true"` plus the `(partial)` marker text in
 `span.spend-partial`); unreadable (`data-unreadable="true"` on a `li.spend-row` or on
-`div.spend-totals` plus the marker text `records unreadable` in `span.spend-unreadable`;
+`div.spend-totals` plus the marker text `no readable record` in `span.spend-unreadable`;
 the money cells are `n/a`, never `$0.00`, and the row keeps its `runs` — a by-mode row is
-unreadable exactly when every run record behind it was, and the totals line exactly when
-every row it sums is); gap (a day with no document → `data-state="gap"`, `data-height="—"`,
+unreadable exactly when no run behind it has a readable record (a record the build cannot
+read, or one not written yet), and the totals line exactly when every row it sums is);
+gap (a day with no document → `data-state="gap"`, `data-height="—"`,
 reason in `title`); unavailable (caps absent: `data-available="false"` and the sentence
 "…every cap here is n/a, not zero"); empty per account (a `gap` reading, `data-state="gap"`);
 degraded (`span.spend-degraded` with `data-degraded="true"` and the word `degraded`);
@@ -439,7 +440,7 @@ Formatting: money is `usd` (2 decimals, grouping, sign before `$`), shares are `
 `count` (0 decimals). Exported: `SPEND_DEFAULT_CONTROLS = {since:'30d', until:null,
 by:'day', persons:false}`, `SPEND_PICKER_WINDOWS = ['7d','30d','90d','12w']`,
 `SPEND_DIMENSIONS` (eight), `SPEND_ACCOUNTS = ['model','notional','compute']`,
-`PARTIAL_MARKER = '(partial)'`, `UNREADABLE_MARKER = 'records unreadable'`.
+`PARTIAL_MARKER = '(partial)'`, `UNREADABLE_MARKER = 'no readable record'`.
 
 ### 2.5 Projects — `console/src/renderer/screens/projects.ts`
 
@@ -602,6 +603,7 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 | unavailable | `data-state="unavailable"`: Live (**the cap bar**, `bar()`), Spend (a point), Projects (**the panel state**, beside `read` and `not-built`), degraded (the cap line). **Not the sparkline's bars**: their state is the bar's own height, `measured` or `gap` (`spark()`, `live.ts` 896-925), so `[data-state='unavailable']` selects no bar of a burn window. `data-available="false"`: Spend's caps panel. The text `n/a` with a reason in `title`: **every** screen | **Run writes no `data-state` at all** — its numbers go through `putReading`, which sets the text and, for a value with no number, the `title` reason, and nothing else (§2.6), so a `[data-state]` colour rule selects nothing on that screen |
 | notional / estimated | the text marks: Live, Spend, Projects, Run, degraded. The attribute `data-state`: **Spend alone** | `NOTIONAL~` / `est.` are `formatReading`'s marks, so they appear wherever a notional or estimated reading is drawn, on all five screens (Live's repository and total notional figures, §2.3; the subscription model and the estimated compute on Projects and Run, §2.5, §2.6; the degraded compute, §2.7). The **attribute** `data-state="notional"` / `"estimated"` is written by Spend alone, on `.spend-point` (and on the single point an account with nothing to draw appends), and it is the **account's** state, not the breakdown on the axis: `SPEND_ACCOUNTS` is three charts, and each of the three reads its own column into its own state — `model_micros` → `measured`, `notional_micros` → `notional`, `compute_micros` → `estimated` (`microsReading`, `spend.ts` 512-536) — with the point copying that reading's state into the attribute (`point()`, 1521). `data-dimension` is the switch's word for the x-axis (`day\|week\|month\|year\|repo\|model\|person\|mode`) and decides nothing here: the notional chart is notional whether the rows are days or repositories. Projects' `data-state` is its panel state, Live's comes from a `percent` reading, Run writes none, and the degraded cap is always `unavailable` |
 | partial / hollow | Spend | `data-partial="true"` / `data-hollow="true"` + the `(partial)` marker |
+| unreadable | Spend | `data-unreadable="true"` on the row / `div.spend-totals` + the `no readable record` marker |
 | degraded | Spend | `span.spend-degraded` with `data-degraded="true"` |
 | polling (no Firebase) | degraded | `data-kind="no-firebase"` + `data-state="polling"` |
 | no binary / refused | unavailable | `data-kind="no-binary"` / `"refused"` |

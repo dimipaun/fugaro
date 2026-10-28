@@ -419,8 +419,14 @@ the exported writer, not a `cli`-side struct. Indented two spaces
   absent one is `false`, so a measured row is unchanged; an unreadable row's
   model, notional and compute cells are the `n/a` an absent `*_micros` already
   gives (`readNumber(null)`), never `$0.00`, and the row line adds the
-  console's own sentence `records unreadable` beside them
-  (`UNREADABLE_MARKER`). The row's `runs` is still drawn: the run launched.
+  console's own sentence `no readable record` beside them
+  (`UNREADABLE_MARKER`). The sentence names the fact a corrupt record and a run
+  that has not written one share — "unreadable" alone would misname the
+  in-flight run, the usual `none` row of a window that reaches into today — so
+  each `n/a` cell's `title` is `no readable record for these runs`
+  (`microsReading`) rather than `readNumber`'s "the document has no
+  `model_micros`" for a key that is present and `null`. The row's `runs` is
+  still drawn: the run launched.
   **The totals line is read the same way** (`SpendTotals.unreadable`,
   `totalsOf`), so a window in which every row is unreadable draws a `TOTAL` of
   `n/a`s with the same sentence rather than the `$0.00` that sums nothing.
