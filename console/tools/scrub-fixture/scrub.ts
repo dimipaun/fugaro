@@ -616,14 +616,12 @@ function scrubTotalOrRepo(value: unknown, path: string, repoN: number | undefine
     slug: invent(`github-com-example-owner-example-repo${repoN === 1 ? '' : `-${repoN}`}`),
     repo: invent(inventedRepo),
     counted_usd: num, spent_usd: num, notional_usd: num, runs: num, run_hours: num, // recomputed below
-    // `daily_cap_usd`, `percent` and `leased_usd` are the three *float64 of
+    // `daily_cap_usd` and `percent` are the two *float64 of
     // internal/watch/json.go's JSONTotal and JSONRepo: the document writes null
-    // for the first two when the repository has no cap, and for the third when
-    // no lease is outstanding. `leased_usd` is named here for the same reason
-    // the console's decoders name it ahead of the CLI (owner, 2026-10-28) --
-    // the day a release writes it, a recording must not be refused whole for
-    // the key -- and its amount is invented like the other dollar figures,
-    // because a lease is what the installation currently holds.
+    // for both when the repository has no cap. `leased_usd` is the
+    // owner-approved key (2026-10-28) no release writes yet, named so a later
+    // recording is not refused whole; its amount is invented like the other
+    // dollar figures.
     percent: nullableNum,
     leased_usd: (v, p) => (v === null ? null : typeof v === 'number' ? INVENTED_LEASE_USD : refuse(p, 'not a number')),
     daily_cap_usd: (v, p) => (v === null ? null : typeof v === 'number' ? INVENTED_CAP_USD : refuse(p, 'not a number')),
