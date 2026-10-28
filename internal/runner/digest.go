@@ -368,14 +368,59 @@ func (r *run) digestReport(p digest.Period, recs []runstore.Record, rows []diges
 	return digest.FileBody(digest.Markdown(d), rows, p, cur), cur, true, nil
 }
 
+// digestPath is one of this step's own paths under the checkout, with every
+// component of it checked for a symbolic link first.
+//
+// The path is the step's own (digest.Dir and the layout inside it), but the
+// tree it sits in is the base branch's, and anyone who can commit to that
+// branch chooses what the components are: a docs/fugaro-reviews that is a link
+// to the repository root, or a README.md inside it that is a link to the root
+// README, would make a write land outside the report folder -- on a file the
+// pull request then shows as changed, and over a file no report run may touch.
+// A component that is a link is refused, and the step fails rather than writing
+// anywhere else. The last component is what the caller's own open refuses with
+// O_NOFOLLOW (writeDigestFile), so a link planted between this check and that
+// open is caught too; the components above it are what only this walk sees.
+func (r *run) digestPath(rel string) (string, error) {
+	path := r.d.WorkDir
+	for _, part := range strings.Split(rel, "/") {
+		if part == "" || part == "." {
+			continue
+		}
+		path = filepath.Join(path, part)
+		fi, err := os.Lstat(path)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			// What is not there yet is the step's to create.
+			return filepath.Join(r.d.WorkDir, filepath.FromSlash(rel)), nil
+		case err != nil:
+			return "", fmt.Errorf("reading %s: %w", rel, err)
+		case fi.Mode()&os.ModeSymlink != 0:
+			return "", fmt.Errorf("%s is a symbolic link, and the digest step neither reads nor writes through one: the report folder is the repository's to shape, but a link there would put a generated report somewhere no report run may write", rel)
+		}
+	}
+	return filepath.Join(r.d.WorkDir, filepath.FromSlash(rel)), nil
+}
+
 // writeDigestFile writes one generated file into the checkout. rel is one of
 // this file's own paths, never a name a record or a file chose.
 func (r *run) writeDigestFile(rel string, body []byte) error {
-	path := filepath.Join(r.d.WorkDir, filepath.FromSlash(rel))
+	path, err := r.digestPath(rel)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("creating %s: %w", filepath.Dir(rel), err)
 	}
-	if err := os.WriteFile(path, body, 0o644); err != nil {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|oNoFollow, 0o644)
+	if err != nil {
+		return fmt.Errorf("writing %s: %w", rel, err)
+	}
+	if _, err := f.Write(body); err != nil {
+		f.Close()
+		return fmt.Errorf("writing %s: %w", rel, err)
+	}
+	if err := f.Close(); err != nil {
 		return fmt.Errorf("writing %s: %w", rel, err)
 	}
 	return nil
@@ -390,7 +435,10 @@ func (r *run) writeDigestFile(rel string, body []byte) error {
 // D321's is a report renamed out of the layout: no row at all, logged the same
 // way, so a report does not leave the index without a word.
 func (r *run) digestRows() ([]digest.Row, error) {
-	dir := filepath.Join(r.d.WorkDir, filepath.FromSlash(digest.Dir))
+	dir, err := r.digestPath(digest.Dir)
+	if err != nil {
+		return nil, err
+	}
 	years, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -433,7 +481,11 @@ func (r *run) digestRows() ([]digest.Row, error) {
 			continue
 		}
 		row := digest.Row{Dim: dim, Key: key, Rel: rel}
-		s, read := digest.ReadRow(filepath.Join(dir, filepath.FromSlash(rel)), key)
+		path, err := r.digestPath(digest.Dir + "/" + rel)
+		if err != nil {
+			return nil, err
+		}
+		s, read := digest.ReadRow(path, key)
 		if read {
 			row.Summary, row.Read = s, true
 		} else {
