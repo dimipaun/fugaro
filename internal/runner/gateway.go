@@ -708,8 +708,10 @@ func (r *run) checkBudget() error {
 // warnReportedGap logs, once, when the providers' own cost figures are more
 // than reportedGapPct above what the gateway charged on the provider routes
 // without the route fee, which providers don't report (the table price
-// settles, so a high report means a wrong price or a served-by fallback; a
-// low one only means Fugaro over-charged).
+// settles, except where the report floors an unpriced tier's charge up to the
+// call's reservation, so a high report means a wrong price, a served-by
+// fallback, or a tier report above that reservation; a low one only means
+// Fugaro over-charged).
 func (r *run) warnReportedGap() {
 	r.mu.Lock()
 	var charged pricing.Micros
