@@ -246,6 +246,18 @@ const MICROS_PER_USD = 1_000_000
 export const PARTIAL_MARKER = '(partial)'
 
 /**
+ * UNREADABLE_MARKER is the console's sentence beside a row whose every run
+ * record was unreadable (`JSONLine.Unreadable`, contract section 4). Only
+ * `report --by mode` sets the mark: a record the build cannot read, or one the
+ * run has not written yet, still means the run launched, so it counts once in
+ * `runs` and the money keys are `null`. The figures beside this sentence are
+ * therefore the `n/a` the reader already draws for an absent key -- never a
+ * `$0.00` that would read as a measurement. The words are the console's own;
+ * `report`'s table and CSV draw `n/a` there and name no mark.
+ */
+export const UNREADABLE_MARKER = 'records unreadable'
+
+/**
  * RESERVE_LABEL is the words the caps panel puts beside `max_reserve_usd`. They
  * are the CLI's own words for the same fact: `printShow` in
  * `internal/cli/budget.go` writes "largest single lease (max reserve): %s" on a
@@ -328,6 +340,10 @@ export interface SpendRow {
   readonly partial: boolean
   /** a partial row is drawn hollow */
   readonly hollow: boolean
+  /** every run record behind the row was unreadable, so its money keys are
+   * `null` and the row is drawn `n/a` (`JSONLine.Unreadable`; absent -- and so
+   * `false` -- on a measured row) */
+  readonly unreadable: boolean
   readonly model: Reading
   readonly notional: Reading
   readonly compute: Reading
@@ -781,6 +797,7 @@ function rowOf(raw: unknown): SpendRow | null {
     end: textAt(line['end']),
     partial,
     hollow: partial,
+    unreadable: boolAt(line['unreadable']),
     model: microsReading(line, 'model_micros', 'model'),
     notional: microsReading(line, 'notional_micros', 'notional'),
     compute: microsReading(line, 'compute_micros', 'compute'),
@@ -2208,6 +2225,7 @@ function rowLine(factory: ScreenFactory, model: SpendModel, row: SpendRow): Scre
   const element = make(factory, 'li', 'spend-row')
   element.setAttribute('data-partial', row.partial ? 'true' : 'false')
   element.setAttribute('data-hollow', row.hollow ? 'true' : 'false')
+  element.setAttribute('data-unreadable', row.unreadable ? 'true' : 'false')
   const keyed = textCell(element, factory, 'span', row.key, keyClass(model.dimension, row.key), 'rows[].key', 'spend-key')
   element.setAttribute('data-key', drawnKey(keyed))
   numberCell(element, factory, 'span', row.model, 'usd', 'spend-model')
@@ -2219,6 +2237,7 @@ function rowLine(factory: ScreenFactory, model: SpendModel, row: SpendRow): Scre
     numberCell(element, factory, 'span', row.tokens.in, 'count', 'spend-tokens-in')
     numberCell(element, factory, 'span', row.tokens.out, 'count', 'spend-tokens-out')
   }
+  if (row.unreadable) literal(cell(element, factory, 'span', 'spend-unreadable'), UNREADABLE_MARKER)
   if (row.partial) literal(cell(element, factory, 'span', 'spend-partial'), PARTIAL_MARKER)
   return element
 }
