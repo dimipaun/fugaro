@@ -7,8 +7,7 @@ wins), including the owner's correction of 2026-10-29: **the digest stays MIT**.
 at `028b46357`, 2026-10-28.
 
 **Status: plan only. Nothing is implemented, and NO TASK IS APPROVED.** Each task needs the owner's
-explicit go. Decisions D520, D521, D524–D527 and D536 are **answered** (2026-10-29: the recommendations taken; O1 is answered by the owner as "publish the CLA Gist URL first, then release", so the 0.13.0 tag stays held until E3.5 has merged and the E-slices are done); D522, D523 and D528–D535 are **unanswered**; every task names the decisions it assumes, and
-an answer that differs from the recommendation re-plans the tasks that name it.
+explicit go. Decisions D520–D536 are all **answered** (2026-10-29: the recommendations taken except D523, D531 and D533; O1 is answered by the owner as "publish the CLA Gist URL first, then release", so the 0.13.0 tag stays held until E3.5 has merged and the E-slices are done). **D523 (no notice at all until the verifier, the key-minting service and the launch are ready), D531 (edit the Terms text now, E3.6) and D533 (0.13.0 notes: no operator steps) re-plan the tasks below**; O3 stays the owner's confirmation and O7 is a new open tension. Every task names the decisions it assumes.
 
 It **supersedes** subscriptions tasks S1.1, S1.2, S1.3, S1.4, S1.5, S1.7 and S1.9 (their content is
 carried here, task by task, with the changes the ruling forces) and **depends on** S1.6 (carried as
@@ -22,7 +21,7 @@ The owner's answers that shape it (given, not re-asked):
   coordinator (command and library) move too (D434, D444); the digest stays MIT (T11, the 2026-10-29
   correction); the credentials service's audit log stays MIT;
 - in-flight governance work finishes in `internal/` and moves **once** afterwards;
-- T27 (b): paid commands warn, not refuse, until enforcement ships;
+- T27 (b): paid commands warn, not refuse, until enforcement ships: **DEFERRED with the key work (D523, 2026-10-29): no licence notice or warning anywhere until the verifier, the key-minting service and the launch are ready; for now everything is available to all;**
 - one key-gated binary with the `ee` tag, relabelled (D447/T21).
 
 ## Conventions every part follows
@@ -55,9 +54,9 @@ The owner's answers that shape it (given, not re-asked):
 | # | Constraint | Pinned by |
 | --- | --- | --- |
 | G1 | The core builds and its tests pass with `ee/` deleted | E1.6 (`core-without-ee.yml`, staged), every E2 task's untagged command |
-| G2 | An untagged runner (a core job image) decodes `governance:`, `tier`, `expected_scope`, warns in the run log and never refuses them; launch-side warnings follow the job image's edition, never the launcher's (D522, R3, F9) | E1.2 `TestUntaggedRunnerIgnoresGovernanceWithAWarning`, E1.3 `TestGovernanceOnACoreImageWarns`, `TestTaggedImageFromAnUntaggedLauncherDoesNotWarn` |
+| G2 | An untagged runner (a core job image) decodes `governance:`, `tier`, `expected_scope`, warns in the run log (a statement that the block is ignored in this build, not a licensing warning, D523) and never refuses them; launch-side warnings follow the job image's edition, never the launcher's (D522, R3, F9) | E1.2 `TestUntaggedRunnerIgnoresGovernanceWithAWarning`, E1.3 `TestGovernanceOnACoreImageWarns`, `TestTaggedImageFromAnUntaggedLauncherDoesNotWarn` |
 | G3 | An untagged `fugaro report` / `fugaro coordinator` exits non-zero with the Enterprise message, not "unknown command" (D522) | E1.1 `TestUntaggedPaidCommandSaysWhy` |
-| G4 | A tagged paid command's notice is on stderr only; `--json` stdout parses (R4) | E2.1, E2.2 `TestNoticeNeverOnStdout` |
+| G4 | DEFERRED (D523): no notice exists; when one is added with the key work, it is on stderr only and `--json` stdout parses (R4) | E2.1, E2.2 `TestNoticeNeverOnStdout` (deferred) |
 | G5 | The digest builds and runs untagged and inside a run (T11) | E2.2 `TestDigestNeedsNoEE` (S1.5's, kept) |
 | G6 | `diagnose` and the digest read governance halts and checkpoints in an untagged build (D521, D529) | E1.2 `TestDiagnoseReadsACheckpointUntagged` |
 | G7 | Spend caps, the 80% warning and the kill switch behave identically tagged and untagged (D520) | E2.3 `TestCapsUnchangedByTheTag` |
@@ -109,7 +108,7 @@ stage halts? Does a core runner given a `governance:` block ever refuse a run?
   - the `report.USD6` gap in the digest's MIT copy (F6) and `consoleReadPaths` (F6);
   - the governance split of D521, symbol by symbol from reconciliation F7: which types stay, which
     functions move to `ee/governance`, and the four hooks of R2 with their core defaults;
-  - the untagged behaviour table of D522 and the notice of D523;
+  - the untagged behaviour table of D522 (D523: no notice is written, deferred);
   - the edition marker's carrier (R3: an OCI label read by the gate, or a field in the build record);
   - the images (D524) and why the credentials image stays untagged;
   - which command tree `website/content/cli-reference.md` and the plugin tests read: the tagged one,
@@ -229,15 +228,14 @@ takes over in untagged builds).
   tag is set and before the label, E3.2's extended `TestEETagNeedsTheLabels` fails.
 - **Depends on:** E3.2 (the relabel and the label gate over the images land first, F16c), D524,
   D525. **Reviewer:** opus + mandatory independent review (licence and supply chain).
-- **For operators (0.13.0 notes, E3.3):** per installation `fugaro update`; per repository
-  `fugaro image refresh` (D533).
+- **For operators:** none in the 0.13.0 notes (D533, 2026-10-29); see open item O7.
 - **Commit:** `images: base and history carry the ee build; credentials stays core (D524)`.
 
 #### E1.5 `ee/register` and the assembly file
 
 - **Files:** `ee/register/register.go` (new; sets the edition), `ee/register/register_test.go` (new),
   `cmd/fugaro/ee_on.go` (new).
-- **Tests:** `TestRegisterFollowsTheGatingModel` (T27 (b): register, notice on stderr),
+- **Tests:** `TestRegisterFollowsTheGatingModel` (T27 (b): register; the notice on stderr is DEFERRED, D523),
   `TestTaggedBuildReportsEE` (in `ee/register`: after its `init`, the edition is `ee`; it fails while
   the edition defaults to `core`). E2.1–E2.3 each add, in their own test file, an **identity** test
   (`TestTaggedBinaryWiresTheCoordinator`, `…TheReport`, `…TheGovernance`), checking that the hook holds `ee/`'s
@@ -369,7 +367,7 @@ reused.*
   `internal/runner/runnertest`), `TestCapsUnchangedByTheTag` (G7; in `ee/governance`, hook set and
   unset, since the core cannot import `ee/`), `TestTaggedRunnerHaltsAsBefore` (in `ee/governance`),
   `TestUntaggedPolicyIgnoresGovernance`, `TestUntaggedRunnerIgnoresGovernanceWithAWarning` (core, now
-  the real defaults), `TestTaggedJobLogsTheEnforcementNotice` (D523), `TestTaggedBinaryWiresTheGovernance`.
+  the real defaults), (`TestTaggedJobLogsTheEnforcementNotice` is DEFERRED with the key work, D523), `TestTaggedBinaryWiresTheGovernance`.
 - **Command:** `go test ./internal/policy ./internal/config -count=1 && GOFLAGS=-p=2 go test ./internal/runner -run 'Policy|Governance|Halt|StageTimeout|Untagged' -count=1 -timeout 30m && go test ./internal/cli/ -run 'ProjectPolicy|Validate|Governance' -count=1 && go test ./ee/governance/ ./ee/register/ -count=1 && go test ./internal/eeboundary/ -count=1`.
 - **Red step:** `TestTaggedRunnerHaltsAsBefore` and `TestUntaggedPolicyIgnoresGovernance` fail while
   the defaults are today's.
@@ -414,8 +412,12 @@ reused.*
 
 - **Files:** `docs/releases/v0.13.0.md` (new, or the next-notes file the release process uses),
   `website/data/release-summaries.yaml` (one line, no backticks).
-- **Content:** the Licensing highlight (D533); what 0.12.x users keep (R1, with F3's corrected
-  facts: `fugaro report` since v0.1.0, `calls`/`agents` since v0.11.6); `### For operators`: **per
+- **Content (D533, 2026-10-29): the notes only say that licensing updates, with NO operator steps
+  ("nothing to do for now") and NO licence warning (D523); no `### For operators` entry for this.
+  Open tension O7: governance reaches an installation only after it refreshes its images; the owner
+  decides whether to add a one-line "refresh images to get governance" note, not a required step.**
+  The older content below is superseded where it conflicts: the Licensing highlight; what 0.12.x users keep (R1, with F3's corrected
+  facts: `fugaro report` since v0.1.0, `calls`/`agents` since v0.11.6); the superseded `### For operators` text: **per
   installation** `fugaro update` (the base pin and the history image the sweep runs; U5 confirms the
   exact command); **per repository** `fugaro image refresh` in each repository's checkout; a job
   image built without the tag ignores `governance:` with a warning in the run log.
@@ -433,7 +435,7 @@ reused.*
   `ee`; `fugaro runs digest --period
   day` runs from a source build without the tag.
 - **Check 201:** the console's Spend and project views against the released 0.13.0 CLI show data,
-  and the stderr notice does not break them.
+  (no stderr notice exists, D523; the check also confirms none appears).
 - **OWNER-RUN:** the owner runs both in the sandbox repository only (`fugaro run --task-file
   <task>`, `fugaro runs ls`, `fugaro diagnose RUN`; the console pointed at the installed CLI). No
   agent performs any step.
@@ -460,7 +462,7 @@ E1.1, E1.2, E1.3 ← E0.3 + the in-flight gate. E1.6 ← E0.3. E1.5 ← E1.1, E1
 E1.7 ← E1.5.
 E2.1 ← E1.5, E1.7. E2.2 ← E2.1, E1.2 + the in-flight gate. E2.3 ← E1.2, E1.5 + the
 in-flight gate.
-E3.1 ← E2.2, E2.3. E3.2 ← E3.1, E1.6 (the owner's copy done). E3.5 ← the owner's Gist Raw URL. E3.3 ← E3.1.
+E3.1 ← E2.2, E2.3. E3.2 ← E3.1, E1.6 (the owner's copy done). E3.5 ← the owner's Gist Raw URL. E3.6 has no predecessor (not on the critical path). E3.3 ← E3.1.
 E1.4 ← E3.2 (no public image carries `ee/` before the relabel, F16c).
 The 0.13.0 tag ← E3.2, E1.4, E3.3, E3.5. E3.4 ← the tag.
 
@@ -527,14 +529,36 @@ must cover the images before an image takes the tag).
 | Check | Measures | Written by | Run by |
 | --- | --- | --- | --- |
 | **200** | Governance halts in a job from the tagged image; the edition reads `ee`; the digest runs from an untagged source build | E3.4 | the owner, sandbox only |
-| **201** | The console's Spend and project views work against the tagged CLI with its stderr notice | E3.4 | the owner |
+| **201** | The console's Spend and project views work against the tagged CLI (no stderr notice, D523) | E3.4 | the owner |
+
+#### E3.6 Drop "and the coordinator" from the website's Subscription Terms (D531, owner-ruled)
+
+- **Files:** `website/content/subscription-terms.md`, `docs/licensing/subscription-terms.md` (the
+  same sentence in both; F2); the website tests and docs pins that read the sentence, if any.
+- **Content:** remove "and the coordinator" from "the optional credentials service and the
+  coordinator … (both are part of the Core today, not of the Software)", so the sentence names the
+  credentials service only. The owner ruled on 2026-10-29 to edit now, without waiting for counsel's
+  S0.4; the owner tells counsel in the next revision round. Nothing else changes.
+- **Tests:** `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1`, and `npm run check` in
+  `website/`. **Red step:** none (docs). **Depends on:** nothing. **Reviewer:** standard.
+- **Commit:** `docs(licensing): the Subscription Terms no longer call the coordinator Core (D531)`.
+
+#### E4.1 The key-minting service lives under `ee/` (owner ruling 2026-10-29; DEFERRED)
+
+- **Note, not a task to start:** the licensing key-minting service (owner-operated: Cloud Run plus a
+  non-exportable KMS signing key in a dedicated Fugaro GCP project) belongs under `ee/` (for example
+  `ee/keysvc/`). Its deploy is owner-run, and it is deferred with the key work (D523): it is built
+  with the verifier and the launch, not in 0.13.0. Subscriptions S3 (the owner-operated key service)
+  places it elsewhere; `docs/subscriptions/README.md` carries a dated pointer to this note, not a rewrite.
+- **Depends on:** the key work (subscriptions S2, S3). **Not on the critical path.**
 
 **202–209** stay reserved and unused. Subscriptions Check 178 (the coordinator's key-gated job) is
 not needed while T27 (b) holds and no key is mounted (D524); E0.1 marks it deferred.
 
 ## Release actions
 
-- **0.13.0, per installation:** `fugaro update`, so jobs run the tagged base and the coordinator's
+- **0.13.0 (D533, 2026-10-29): no operator steps in the notes** ("nothing to do for now"); O7 is
+  the owner's open tension. The text below is the superseded plan: per installation `fugaro update`, so jobs run the tagged base and the coordinator's
   sweep runs the tagged history image (U5 confirms the command). **Per repository:** `fugaro image
   refresh` in each repository's checkout, so its workflow images rebuild on the tagged base. Without
   them an installation on a 0.12.x image keeps refusing `governance:` as it does today.

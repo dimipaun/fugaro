@@ -49,7 +49,9 @@ Counsel's business licence stays (D431). After the rulings of 2026-10-27:
   released MIT versions stay the fork point.
 - **The key.** One offline key per organisation, expiry only, renewed 30 days early (O4, T26).
 - **The key service.** It is owner-operated in a dedicated GCP project and built after the entity
-  exists; until then, keys are minted by hand (T13).
+  exists; until then, keys are minted by hand (T13). **Pointer, 2026-10-29:** the owner ruled that
+  the key-minting service belongs under `ee/` (for example `ee/keysvc/`), its deploy owner-run and
+  deferred with the key work; see `docs/ee-reorg/implementation-plan.md` (E4.1).
 - **Lapse.** After the 30-day grace the console and the app keep reading and cancelling (T12).
 - **The first licensed releases.** Console 0.113.0 and the first mobile release ship honour-based
   once counsel signs off (T17).
