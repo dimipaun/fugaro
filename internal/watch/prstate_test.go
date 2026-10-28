@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"context"
 	"errors"
 	"net/url"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -491,53 +493,79 @@ func TestPRStateDisabled(t *testing.T) {
 	}
 }
 
-// Many rows resolve, never more than Concurrency gh processes run at once, and
-// two of them really do run at once.
+// The bound is *reached*: with more rows than slots, Concurrency lookups are
+// inside at once, and never more than that.
 //
-// The timeout is prStateTestTimeout: this test asserts an ANSWER (the peak), so
-// it must not also be a test of how fast a loaded machine can fork and exec a
-// shell. A gh killed at a short budget would answer nothing, and a killed gh
-// never runs its own decrement, which would leave the counter reading a peak
-// that is not there.
+// The lookup here is the test's own function, held open until the test lets it
+// go, so the answer is about the semaphore and nothing else: no process has to
+// start, and no clock decides it. Counting overlapping *processes* from
+// outside cannot answer this question — a machine under fork pressure can start
+// the second gh late, or fail to start it at all (a lookup that never ran fails
+// open, silently), and a gh the lookup timeout kills never runs its own
+// decrement — and the test that asked it that way read "peak concurrency = 1
+// after 20s" on CI. The timeout below is a dead man's switch: it is reached
+// only if lookups stop starting altogether.
 func TestPRStateBoundsConcurrency(t *testing.T) {
-	dir := t.TempDir()
-	live := filepath.Join(dir, "live")
-	peak := filepath.Join(dir, "peak")
-	gate := filepath.Join(dir, "gate")
-	// The script counts how many copies of itself are running at once, the
-	// only way to see the bound from outside. The counter is updated under a
-	// mkdir mutex: the reads and writes race otherwise, and a lost increment
-	// would look like a bound that is not there.
-	lock := filepath.Join(dir, "lock")
-	with := func(body string) string {
-		return "while ! mkdir " + lock + " 2>/dev/null; do sleep 0.01; done\n" + body + "\nrmdir " + lock + "\n"
+	var mu sync.Mutex
+	var live, peak int
+	entered := make(chan struct{}, 8)
+	release := make(chan struct{})
+	p := NewPRState(PRStateOptions{Concurrency: 2, Timeout: prStateTestTimeout})
+	p.askFn = func(context.Context, prRef) (prStateKind, error) {
+		mu.Lock()
+		live++
+		peak = max(peak, live)
+		mu.Unlock()
+		entered <- struct{}{}
+		<-release // hold the slot until the test has read what it needs
+		mu.Lock()
+		live--
+		mu.Unlock()
+		return prOpen, nil
 	}
-	// Every call holds its slot until the test opens the gate, so the overlap
-	// is a handshake and not a race against the clock: on a loaded machine the
-	// second process could otherwise start only after the first one's fixed
-	// sleep was over, and the peak would read one. The wait is bounded below
-	// the lookup timeout so a gate that never opens fails the test, not hangs it.
-	calls := fakeGH(t,
-		with("n=$(cat "+live+" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "+live+"\n"+
-			"p=$(cat "+peak+" 2>/dev/null || echo 0); [ \"$n\" -gt \"$p\" ] && echo $n > "+peak)+
-			"i=0; while [ ! -e "+gate+" ] && [ $i -lt 2500 ]; do sleep 0.01; i=$((i+1)); done\n"+
-			with("n=$(cat "+live+" 2>/dev/null || echo 0); echo $((n-1)) > "+live)+
-			"echo OPEN\n")
-	readPeak := func() int {
-		b, err := os.ReadFile(peak)
-		if os.IsNotExist(err) {
-			return 0
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		n, err := strconv.Atoi(strings.TrimSpace(string(b)))
-		if err != nil {
-			return 0
-		}
-		return n
+	var rows []ReadyRow
+	for i := 10; i < 18; i++ {
+		rows = append(rows, readyRow("https://github.com/acme/app/pull/"+strconv.Itoa(i), i))
 	}
+	if got := p.Filter(rows); len(got) != len(rows) {
+		t.Fatalf("kept %d rows, want all of them listed while unknown", len(got))
+	}
+	// Two lookups must end up inside at once, and both stay there: the second
+	// one starting is the overlap the semaphore exists to allow.
+	for i := range 2 {
+		select {
+		case <-entered:
+		case <-time.After(prStateTestTimeout):
+			t.Fatalf("%d of 2 lookups entered in %s: the second never started", i, prStateTestTimeout)
+		}
+	}
+	// Both slots are the held lookups', so a third cannot be inside at all —
+	// which is the whole of what the bound says.
+	if free := cap(p.sem) - len(p.sem); free != 0 {
+		t.Fatalf("%d of %d slots free with 2 lookups inside", free, cap(p.sem))
+	}
+	close(release)
+	waitLookups(p)
+	mu.Lock()
+	got, in := peak, live
+	mu.Unlock()
+	if got != 2 {
+		t.Fatalf("peak lookups at once = %d, want exactly 2: the semaphore's bound, and the overlap it exists to allow", got)
+	}
+	if in != 0 {
+		t.Fatalf("%d lookups still inside after all of them finished", in)
+	}
+	if got := p.Filter(rows); len(got) != len(rows) {
+		t.Fatalf("kept %d rows, want every open one", len(got))
+	}
+}
 
+// Many rows against real gh processes: every row is asked exactly once, and
+// every open one stays on the list. The bound is not this test's claim (see
+// TestPRStateBoundsConcurrency); what it adds is that the lookups it counts are
+// the ones production runs, spawned and answered by a real gh.
+func TestPRStateAsksEveryRowWithRealGH(t *testing.T) {
+	calls := fakeGH(t, "echo OPEN\n")
 	p := NewPRState(PRStateOptions{Concurrency: 2, Timeout: prStateTestTimeout})
 	var rows []ReadyRow
 	for i := 10; i < 18; i++ {
@@ -546,37 +574,12 @@ func TestPRStateBoundsConcurrency(t *testing.T) {
 	if got := p.Filter(rows); len(got) != len(rows) {
 		t.Fatalf("kept %d rows, want all of them listed while unknown", len(got))
 	}
-	// The bound has to be *reached*: with the gate shut, two lookups must end
-	// up inside gh at once however slowly the processes start. A peak that
-	// never reaches two means the test no longer sees the overlap it exists for.
-	deadline := time.Now().Add(20 * time.Second)
-	for readPeak() < 2 {
-		if time.Now().After(deadline) {
-			t.Fatalf("peak concurrency = %d after 20s with the gate shut, want 2: the overlap the semaphore exists to allow", readPeak())
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	// Both slots are now held until the gate opens, so a third lookup must be
-	// waiting on the semaphore: give it time to show up if the bound leaked.
-	// Load can only hide a leak here, never fail a correct semaphore.
-	time.Sleep(300 * time.Millisecond)
-	if n := len(ghCalls(t, calls)); n != 2 {
-		t.Fatalf("calls with both slots held = %d, want 2: a third lookup ran outside the bound", n)
-	}
-	if err := os.WriteFile(gate, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
 	waitLookups(p)
 	if got := p.Filter(rows); len(got) != len(rows) {
 		t.Fatalf("kept %d rows, want every open one", len(got))
 	}
 	if n := len(ghCalls(t, calls)); n != len(rows) {
-		t.Fatalf("calls = %d, want %d", n, len(rows))
-	}
-	// The peak is read exactly: two is the semaphore's bound, so a higher
-	// reading is a lookup that ran outside it.
-	if n := readPeak(); n != 2 {
-		t.Fatalf("peak concurrency = %d, want exactly 2: the semaphore's bound, and the overlap it exists to allow", n)
+		t.Fatalf("calls = %d, want %d: one per row, and no row asked twice", n, len(rows))
 	}
 }
 
