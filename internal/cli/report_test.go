@@ -420,13 +420,50 @@ func TestReportByModeGroupsRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, errOut)
 	}
-	for _, want := range []string{"by mode", "MODE", "pro", "critical", "none", "run records", "n/a"} {
+	for _, want := range []string{"by mode", "pro", "critical", "none", "run records", "n/a"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the table lacks %q:\n%s", want, out)
 		}
 	}
+	// The key column is MODE, which the bare word cannot show: the "MODEL $"
+	// column beside it satisfies a search for "MODE". The header's own fields
+	// are the fact.
+	var head []string
+	for _, line := range strings.Split(out, "\n") {
+		if f := strings.Fields(line); len(f) > 1 && f[0] == "MODE" {
+			head = f
+			break
+		}
+	}
+	if len(head) == 0 || head[1] != "MODEL" {
+		t.Errorf("the table's key column is not MODE beside MODEL $: its header reads %q\n%s", strings.Join(head, " "), out)
+	}
 	if strings.ContainsRune(out, 0x1b) {
 		t.Fatalf("the table carries an escape:\n%q", out)
+	}
+	// A run record carries no run hours, so no row of this grouping has one to
+	// show: run_hours is no figure anywhere in the document -- the key null
+	// where it appears, and never the 0 a reader would take for a measured hour,
+	// though the pro row above has a known compute.
+	raw, _, err := execute(t, "report", "--json", "--by", "mode", "--since", "2026-10-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Rows   []map[string]json.RawMessage `json:"rows"`
+		Totals map[string]json.RawMessage   `json:"totals"`
+	}
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		t.Fatalf("%v in %s", err, raw)
+	}
+	lines := append(doc.Rows, doc.Totals)
+	if len(lines) < 2 {
+		t.Fatalf("rows %+v, totals %+v: the document carries no run_hours to read", doc.Rows, doc.Totals)
+	}
+	for _, l := range lines {
+		if got := string(l["run_hours"]); got != "" && got != "null" {
+			t.Errorf("run_hours = %s, want no figure: a by-mode row knows no run hours, and a number here is one a reader would take for measured", got)
+		}
 	}
 }
 
@@ -660,7 +697,7 @@ func TestNoHistoryMarkMessage(t *testing.T) {
 }
 
 func TestReportDimParsing(t *testing.T) {
-	for _, s := range []string{"day", "week", "month", "year", "repo", "model", "person"} {
+	for _, s := range []string{"day", "week", "month", "year", "repo", "model", "person", "mode"} {
 		if _, err := report.ParseDim(s); err != nil {
 			t.Error(s, err)
 		}
