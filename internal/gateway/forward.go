@@ -683,6 +683,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request, rt route
 		s.settle(st, w0, out.charge)
 		cl.charged, cl.settled, cl.pricedAs, cl.servingModel, cl.usage, cl.errorType, cl.reported =
 			out.amount, out.settled, out.pricedAs, out.servingModel, out.usage, out.errorType, out.reported
+		cl.serviceTier = out.charge.serviceTier
 		s.logCall(cl)
 	}()
 	// The tier the service's answer carried, whatever outcome the call
@@ -897,8 +898,10 @@ func (s *Server) logUsageUnparsed(model string, pr *Route, reason string, events
 
 // fromUsage prices a call from the usage the response reported: at the
 // serving model's rates, the table's maximum for an unknown model, or the
-// maximum times SurpriseMultiplier when the response was priced in a
-// dimension the request didn't allow. On a provider route (pr, else nil) a
+// maximum times the dearest multiple the table knows when the response
+// reported a pricing dimension it has no price for (a speed or inference
+// geography the request didn't allow, a service tier no provider publishes
+// a multiplier for). On a provider route (pr, else nil) a
 // serving model other than the pinned one is never priced lower than the
 // pin: the dearer of the two rates per dimension, or the table's maximum
 // when the table doesn't know it; and the route's fee is added to the
@@ -929,11 +932,31 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, partial bool) outco
 		}
 	}
 	fee := pr.feePct()
-	if what := t.acc.surprise(); what != "" {
-		rates, mult = s.o.Prices.Max(), pricing.SurpriseMultiplier
-		o.pricedAs = pricedSurprise
-		o.violation = fmt.Sprintf("the response for model %s reported %s, which the budget doesn't price", logValue(serving), what)
-		s.log.Warn("budget: surprise pricing", "model", logValue(serving), "what", what)
+	// A dimension the table has no price for is charged at the table's
+	// maximum rates times the dearest multiple it knows for that dimension:
+	// never at the standard price, never free. A service tier is the tier
+	// the provider itself served the call from -- the agent's request said
+	// nothing about it, and a provider can answer with one at any time -- so
+	// it is recorded on the stage, in the call log and in a warning, and the
+	// stage goes on: failing the stage is what turns one provider's field
+	// into a dead run. A speed or an inference geography the request chose
+	// stays a violation.
+	if dims := t.acc.unpricedDims(); len(dims) > 0 {
+		rates, o.pricedAs, mult = s.o.Prices.Max(), pricedSurprise, int64(1)
+		for _, d := range dims {
+			if !d.tier {
+				mult = max(mult, int64(pricing.SurpriseMultiplier))
+				s.log.Warn("budget: surprise pricing", "model", logValue(serving), "what", d.String())
+				if o.violation == "" {
+					o.violation = fmt.Sprintf("the response for model %s reported %s, which the budget doesn't price", logValue(serving), d)
+				}
+				continue
+			}
+			mult = max(mult, int64(pricing.ConservativeTierMultiplier))
+			o.charge.serviceTier = d.value
+			s.log.Warn("budget: service tier not priced", "model", logValue(serving), "service_tier", d.value,
+				"charged_as", fmt.Sprintf("%dx the table's maximum rates", mult))
+		}
 	}
 	u := t.acc.usage(rates, p.cacheTTL)
 	reported := pricing.WithFee(satMul(rates.Cost(u), mult), fee)

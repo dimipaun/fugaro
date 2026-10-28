@@ -84,13 +84,21 @@ func (s *Server) reserve(ctx context.Context, st *stageState, w pricing.Micros) 
 type charge struct {
 	amount       pricing.Micros
 	unreconciled pricing.Micros
-	model        string         // the serving model, for ByModel
-	unparsed     bool           // a 2xx settled at its reservation
-	tokens       int64          // reported tokens
-	sent         bool           // the call reached the upstream (it counts as a call)
-	violation    string         // a surprise pricing dimension
-	route        string         // the provider route the call went to; "" is Anthropic
-	reported     pricing.Micros // the cost the provider reported, never charged
+	model        string // the serving model, for ByModel
+	unparsed     bool   // a 2xx settled at its reservation
+	tokens       int64  // reported tokens
+	sent         bool   // the call reached the upstream (it counts as a call)
+	violation    string // a surprise pricing dimension
+	// serviceTier is the usage.service_tier value the response reported and
+	// the call was charged conservatively for, as a message shows it
+	// (`"priority"`, `12` for a value that isn't a string). It is recorded
+	// on the stage and in the call log, and it is not a violation: the
+	// provider's own answer, not the agent's request, is where it came
+	// from, and the conservative charge is what bounds it. "" for every
+	// call the table priced, the standard tier included.
+	serviceTier string
+	route       string         // the provider route the call went to; "" is Anthropic
+	reported    pricing.Micros // the cost the provider reported, never charged
 	// agentID is Claude Code's x-claude-code-agent-id for this call: the
 	// sub-agent that made it, or "" for the main session. The stage's
 	// report counts the distinct ones.
@@ -204,6 +212,14 @@ func (s *Server) settle(st *stageState, w pricing.Micros, c charge) {
 	r.Tokens = int64(satAdd(pricing.Micros(r.Tokens), pricing.Micros(c.tokens)))
 	if c.violation != "" && !contains(r.Violations, c.violation) {
 		r.Violations = append(r.Violations, c.violation)
+	}
+	if c.serviceTier != "" {
+		// Recorded the way a violation is, field and value, so a reader can
+		// tell the two apart at a glance: this one was charged, not refused.
+		what := "usage.service_tier " + c.serviceTier
+		if !contains(r.ServiceTiers, what) {
+			r.ServiceTiers = append(r.ServiceTiers, what)
+		}
 	}
 	if over > 0 {
 		s.log.Warn("budget: call cost more than its reservation", "stage", st.st.Name, "model", logValue(c.model),

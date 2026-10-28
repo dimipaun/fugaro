@@ -302,22 +302,171 @@ func TestMessageDeltaCumulativeLastWins(t *testing.T) {
 	}
 }
 
-func TestServiceTierPriorityIsSurprise(t *testing.T) {
+// TestServiceTierPriorityChargedConservatively: a real run died on a
+// provider (OpenRouter's deepseek) answering usage.service_tier "priority":
+// the response was priced at the table's maximum rates times
+// SurpriseMultiplier AND recorded as a violation, and a violation fails the
+// stage. The charge stays the conservative one -- the ledger counts it, so
+// the caps bind on it -- and the tier is recorded instead of failing the
+// run: the agent asked for nothing the budget forbids, and a provider can
+// answer with a tier at any time.
+func TestServiceTierPriorityChargedConservatively(t *testing.T) {
 	u := pricing.Usage{Input: 1000, Output: 500}
 	rep := anthropicfake.StreamOK(sonnet, u)
 	rep.Events[0] = withUsage(t, rep.Events[0], map[string]any{"service_tier": "priority"})
 	h := newHarness(t, rep)
 	h.post(msg(sonnet, 1000, `"stream":true`))
 	r := h.gw.EndStage()
-	want := maxRates().Cost(u) * pricing.SurpriseMultiplier
+	want := maxRates().Cost(u) * pricing.ConservativeTierMultiplier
 	if r.Used != want {
-		t.Errorf("used %d, want %d (the maximum rates, doubled)", r.Used, want)
+		t.Errorf("used %d, want %d (the maximum rates, at the conservative multiple)", r.Used, want)
 	}
-	if len(r.Violations) != 1 || !strings.Contains(r.Violations[0], `service_tier "priority"`) {
-		t.Errorf("violations %q", r.Violations)
+	if want <= cost(t, sonnet, u) || want <= maxRates().Cost(u) {
+		t.Errorf("the conservative charge %d is no dearer than the standard %d or the maximum-rate %d one",
+			want, cost(t, sonnet, u), maxRates().Cost(u))
 	}
-	if call := h.logs.lastCall(t); call["priced_as"] != "surprise" {
+	if r.Overrun == 0 {
+		t.Error("a call charged above its reservation was not counted as overrun: the charge was capped at the reservation")
+	}
+	if len(r.Violations) != 0 {
+		t.Errorf("violations %q: a provider's own tier must not fail the stage", r.Violations)
+	}
+	if len(r.ServiceTiers) != 1 || r.ServiceTiers[0] != `usage.service_tier "priority"` {
+		t.Errorf("service tiers %q, want the tier recorded under its own name", r.ServiceTiers)
+	}
+	call := h.logs.lastCall(t)
+	if call["priced_as"] != "surprise" || call["service_tier"] != `"priority"` {
 		t.Errorf("log %v", call)
+	}
+	if l := h.gw.Ledger(); l.Used != want || l.Reserved != 0 {
+		t.Errorf("ledger %+v", l)
+	}
+	if !strings.Contains(h.logs.String(), "service tier not priced") {
+		t.Errorf("no warning naming the tier:\n%s", h.logs.String())
+	}
+}
+
+// TestUnpricedServiceTiersChargedConservatively: every tier name the table
+// has no multiplier for is charged the same conservative figure and
+// recorded, whatever the response sent: a tier nobody has heard of, the
+// empty string, a value that isn't a string at all, and a name far longer
+// than a log line should hold. None of them is a violation, and none is
+// priced as standard or as free.
+func TestUnpricedServiceTiersChargedConservatively(t *testing.T) {
+	u := pricing.Usage{Input: 1000, Output: 500}
+	want := maxRates().Cost(u) * pricing.ConservativeTierMultiplier
+	huge := strings.Repeat("x", 5000)
+	for _, c := range []struct {
+		name, recorded string
+		sent           any
+	}{
+		{"a tier nobody has heard of", `usage.service_tier "super-turbo"`, "super-turbo"},
+		{"the empty string", `usage.service_tier ""`, ""},
+		{"a value that isn't a string", "usage.service_tier 12", 12},
+		{"a name longer than a log line", `usage.service_tier "` + huge[:maxLogValue] + `"`, huge},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rep := anthropicfake.StreamOK(sonnet, u)
+			rep.Events[0] = withUsage(t, rep.Events[0], map[string]any{"service_tier": c.sent})
+			h := newHarness(t, rep)
+			h.post(msg(sonnet, 1000, `"stream":true`))
+			r := h.gw.EndStage()
+			if r.Used != want {
+				t.Errorf("used %d, want %d", r.Used, want)
+			}
+			if len(r.Violations) != 0 {
+				t.Errorf("violations %q", r.Violations)
+			}
+			if len(r.ServiceTiers) != 1 || r.ServiceTiers[0] != c.recorded {
+				t.Errorf("service tiers %q, want [%s]", r.ServiceTiers, c.recorded)
+			}
+			if got := h.logs.lastCall(t)["service_tier"]; got == nil || got == "" {
+				t.Errorf("the call log names no tier: %v", h.logs.lastCall(t))
+			}
+		})
+	}
+}
+
+// TestServiceTierMissingIsUnchanged: a response that reports no tier at all
+// (the ordinary case, and the one the fixtures carry) is priced exactly as
+// it always was: the serving model's rates, nothing conservative, nothing
+// recorded. Both shapes of answer are covered, since a provider route
+// settles either.
+func TestServiceTierMissingIsUnchanged(t *testing.T) {
+	u := pricing.Usage{Input: 1000, Output: 500}
+	for _, c := range []struct {
+		name, body string
+		rep        anthropicfake.Reply
+	}{
+		{"streamed", msg(sonnet, 1000, `"stream":true`), anthropicfake.StreamOK(sonnet, u)},
+		{"buffered", msg(sonnet, 1000), anthropicfake.MessageOK(sonnet, u)},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHarness(t, c.rep)
+			h.post(c.body)
+			r := h.gw.EndStage()
+			if r.Used != cost(t, sonnet, u) {
+				t.Errorf("used %d, want the standard charge %d", r.Used, cost(t, sonnet, u))
+			}
+			if len(r.Violations) != 0 || len(r.ServiceTiers) != 0 {
+				t.Errorf("report %+v", r)
+			}
+			if _, has := h.logs.lastCall(t)["service_tier"]; has {
+				t.Errorf("the call log names a tier that was never reported: %v", h.logs.lastCall(t))
+			}
+		})
+	}
+}
+
+// TestServiceTierStandardIsUnchanged: the standard tier is the one the
+// table prices, so a response naming it is priced at the model's own rates
+// and recorded nowhere.
+func TestServiceTierStandardIsUnchanged(t *testing.T) {
+	u := pricing.Usage{Input: 1000, Output: 500}
+	rep := anthropicfake.StreamOK(sonnet, u)
+	rep.Events[0] = withUsage(t, rep.Events[0], map[string]any{"service_tier": "standard"})
+	h := newHarness(t, rep)
+	h.post(msg(sonnet, 1000, `"stream":true`))
+	r := h.gw.EndStage()
+	if r.Used != cost(t, sonnet, u) || len(r.Violations) != 0 || len(r.ServiceTiers) != 0 {
+		t.Errorf("report %+v", r)
+	}
+}
+
+// TestServiceTierChargeBindsTheCap: the conservative charge is money the
+// caps count. A call charged over its reservation is charged whole (that is
+// the fail-closed direction), and the cap refuses what comes next: the
+// guarantee is unchanged, only the stage no longer dies.
+func TestServiceTierChargeBindsTheCap(t *testing.T) {
+	// A whole context of reported input for a one-token request: the
+	// conservative charge is above the call's own reservation, so the cap
+	// cannot hold a second such call.
+	long := strings.Repeat("a", 200_000)
+	body := fmt.Sprintf(`{"model":%q,"max_tokens":1,"messages":[{"role":"user","content":%q}]}`, sonnet, long)
+	w := worst(t, sonnet, body, 1, "")
+	u := pricing.Usage{Input: 200_000}
+	rep := anthropicfake.StreamOK(sonnet, u)
+	rep.Events[0] = withUsage(t, rep.Events[0], map[string]any{"service_tier": "priority"})
+	h := newHarnessWith(t, enforceCap(w), rep, rep)
+	resp, b := h.post(body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the first call: %d %s", resp.StatusCode, b)
+	}
+	rep1 := h.gw.EndStage()
+	want := maxRates().Cost(u) * pricing.ConservativeTierMultiplier
+	if rep1.Used != want {
+		t.Errorf("used %d, want %d", rep1.Used, want)
+	}
+	if rep1.Used <= w {
+		t.Fatalf("the fixture charges %s, not over its %s reservation: the cap is not what it should test",
+			dollars(rep1.Used), dollars(w))
+	}
+	h.gw.BeginStage(defaultStage)
+	if resp, b := h.post(body); resp.StatusCode != http.StatusForbidden || !strings.Contains(b, "run cap") {
+		t.Errorf("the call after a conservative charge over the cap: %d %s, want a 403 naming the run cap", resp.StatusCode, b)
+	}
+	if l := h.gw.Ledger(); l.Used < w {
+		t.Errorf("the ledger counts %s, want the conservative charge over the %s cap", dollars(l.Used), dollars(w))
 	}
 }
 

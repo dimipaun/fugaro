@@ -249,3 +249,35 @@ func TestFromUSD(t *testing.T) {
 		t.Errorf("USD() = %v", got)
 	}
 }
+
+// TestConservativeTierMultiplierIsNeverStandardOrFree: a service tier the
+// table has no multiplier for (Anthropic's Priority Tier, which a response
+// reports as "priority", and anything else a provider names) is charged at
+// ConservativeTierMultiplier times the table's maximum rates. The number
+// must stay above the standard price -- 1, the model's own rates -- and
+// above anything the table prices, so an unpriced tier can only ever
+// over-count; and StandardTier must stay the one spelling of the tier the
+// gateway prices at 1.
+func TestConservativeTierMultiplierIsNeverStandardOrFree(t *testing.T) {
+	if ConservativeTierMultiplier <= 1 {
+		t.Errorf("ConservativeTierMultiplier is %v: an unpriced tier charged at or below 1 is charged as standard", ConservativeTierMultiplier)
+	}
+	if ConservativeTierMultiplier < SurpriseMultiplier {
+		t.Errorf("ConservativeTierMultiplier is %v, below the dearest multiple the table knows (%v)", ConservativeTierMultiplier, SurpriseMultiplier)
+	}
+	if MaxMultiplier < ConservativeTierMultiplier {
+		t.Errorf("MaxMultiplier is %d, below the conservative tier multiplier %v: no rate could be validated at it",
+			MaxMultiplier, ConservativeTierMultiplier)
+	}
+	if StandardTier != "standard" {
+		t.Errorf("StandardTier is %q: the gateway's allowed list and the responses it reads must agree on one spelling", StandardTier)
+	}
+	// The conservative charge is dearer than the same usage at the table's
+	// own maximum rates, for every model in the table: nothing priced there
+	// can be cheaper than the tier nobody has priced.
+	u := Usage{Input: 1000, CacheWrite5m: 10, CacheWrite1h: 20, CacheRead: 30, Output: 40}
+	max := testTable().Max().Cost(u)
+	if got := max * Micros(ConservativeTierMultiplier); got <= max {
+		t.Errorf("the conservative charge %d is not above the maximum-rate charge %d", got, max)
+	}
+}

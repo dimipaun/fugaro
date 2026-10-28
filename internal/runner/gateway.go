@@ -455,6 +455,14 @@ func (r *run) endGatewayStage(stage string) ([]string, int64) {
 	if rep.WouldHalt > 0 {
 		log.Warn("budget: calls the cap would have refused", "calls", rep.WouldHalt)
 	}
+	// A response that named a service tier the table has no multiplier for
+	// was charged the conservative multiple rather than failing the stage:
+	// the run says which tiers, so an operator reading the log can tell a
+	// provider's own tier from a price that is wrong (gateway.StageReport's
+	// ServiceTiers).
+	if len(rep.ServiceTiers) > 0 {
+		log.Warn("budget: service tiers charged conservatively", "tiers", strings.Join(rep.ServiceTiers, ", "))
+	}
 	return rep.Violations, rep.Tokens
 }
 
