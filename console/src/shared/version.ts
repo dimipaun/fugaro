@@ -87,8 +87,63 @@ export const CLI_VERSION_BUILT_AGAINST = '0.8.1'
  * -- the patch levels of a minor are not a compatibility axis (the JSON
  * contract is), and a console that refused `0.8.2` because it was built against
  * `0.8.1` would refuse every patch release.
+ *
+ * **`0.11` is V2.5.1a's own addition, and the set is no longer only "the built
+ * minor plus the previous one".** The launch operation carries `--plan-task`,
+ * whose release is `LAUNCH_CLI_FLOOR`'s `0.11.2`, and a floor above every minor
+ * this range held means the operation would be offered to no installation the
+ * console supports: the range is what says "this console drives this CLI with
+ * its full dashboard", so it has to reach the minor the floor lives in, while
+ * `CLI_VERSION_BUILT_AGAINST` stays the release the JSON documents were read
+ * from (moving it is a claim about every figure on every screen, not this
+ * task's). The range is therefore a *set*, and the gap it now has (0.9, 0.10)
+ * is honest: those releases are drawn in the reduced mode, exactly as they are
+ * today.
  */
-export const SUPPORTED_CLI_MINORS: readonly string[] = Object.freeze(['0.7', '0.8'])
+export const SUPPORTED_CLI_MINORS: readonly string[] = Object.freeze(['0.7', '0.8', '0.11'])
+
+/**
+ * LAUNCH_CLI_FLOOR is the oldest CLI the launch operation may be offered to:
+ * the release `--plan-task` arrived in, which is the newest flag that
+ * operation's argv carries (`internal/cli/recipes_skew.go`'s
+ * `planTaskSince = "0.11.2"`; a title's `titlesSince` is `0.8.5`, and
+ * `--run-id` and `--task-file` are older still).
+ *
+ * It is a **patch-level** floor, and it is deliberately not a member of
+ * `SUPPORTED_CLI_MINORS`: that set is minor-granular, so `0.11.0` and `0.11.1`
+ * are inside "0.11" and still below this. Membership in the range says which
+ * CLI the console draws its dashboard for; this constant says which CLI one
+ * operation may be started on, and the two questions are asked separately
+ * (`launchSupported` and `classifyCliVersion`).
+ */
+export const LAUNCH_CLI_FLOOR = '0.11.2'
+
+/**
+ * launchSupported answers whether one version line may be launched with, by
+ * comparing it against `LAUNCH_CLI_FLOOR` at the patch level.
+ *
+ * The order of the tests is the rule, and each refusal is on the safe side of a
+ * spend. An unreadable line, a `dev` build and a prerelease are all `false`: the
+ * first two cannot be placed at all, and `parseCliVersion` deliberately does not
+ * compare a prerelease tail (`0.11.2-rc.1` is read as `0.11.2`), so accepting
+ * one here would launch with a release that has not happened. A line at or above
+ * the floor -- including a build-metadata tail, which is the same release --
+ * answers `true`, and a line below it answers `false` however close: `0.11.1`
+ * does not carry the flag the argv names.
+ */
+export function launchSupported(version: string): boolean {
+  const parsed = parseCliVersion(version)
+  const floor = parseCliVersion(LAUNCH_CLI_FLOOR)
+  if (!parsed.ok || parsed.version.kind !== 'release') return false
+  if (!floor.ok || floor.version.kind !== 'release') return false
+  const [core = ''] = parsed.version.raw.replace(/^v/, '').split('+')
+  if (core.includes('-')) return false
+  const { major, minor, patch } = parsed.version
+  const { major: floorMajor, minor: floorMinor, patch: floorPatch } = floor.version
+  if (major !== floorMajor) return major > floorMajor
+  if (minor !== floorMinor) return minor > floorMinor
+  return patch >= floorPatch
+}
 
 /**
  * CLI_HARD_FLOOR_VERSION is the version below which the console refuses (D7).
