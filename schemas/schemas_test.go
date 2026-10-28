@@ -2426,3 +2426,61 @@ func TestProjectLayerSchemaGovernance(t *testing.T) {
 		}
 	}
 }
+
+// TestSchemaGovernanceBoundsMatchGo: the counting keys of the block carry an
+// upper bound in both schemas and the same bound in config.validateGovernance,
+// so the two surfaces a file meets — `fugaro validate`, which reads Go, and
+// the published schema a repository's CI may check against — refuse the same
+// numbers. A bound only one of them knows is a red check nobody can reproduce
+// from the file, or a number a run reads that the schema called impossible.
+// The stage budgets are excluded on purpose: a fraction is bounded by the
+// stageFraction def (under 1), which validateGovernance checks directly, with
+// no Go figure to hold equal.
+func TestSchemaGovernanceBoundsMatchGo(t *testing.T) {
+	for _, tc := range []struct {
+		file    string
+		maximum map[string]int
+	}{
+		{"fugaro.schema.json", map[string]int{
+			"review_ratio":       config.MaxReviewRatio,
+			"review_floor_calls": config.MaxReviewFloorCalls,
+			"max_subagents":      config.MaxGovernanceSubagents,
+		}},
+		{"project-layer.schema.json", map[string]int{
+			"review_ratio":       config.MaxReviewRatio,
+			"review_floor_calls": config.MaxReviewFloorCalls,
+			"max_subagents":      config.MaxGovernanceSubagents,
+		}},
+	} {
+		data, err := os.ReadFile(tc.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(data, &doc); err != nil {
+			t.Fatal(err)
+		}
+		gov, ok := doc["properties"].(map[string]any)["governance"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s: no governance block", tc.file)
+		}
+		props, _ := gov["properties"].(map[string]any)
+		for key, want := range tc.maximum {
+			got, ok := props[key].(map[string]any)["maximum"].(float64)
+			if !ok {
+				t.Errorf("%s: governance.%s has no maximum", tc.file, key)
+				continue
+			}
+			if int(got) != want {
+				t.Errorf("%s: governance.%s maximum = %v, want %d (config's bound)", tc.file, key, got, want)
+			}
+		}
+		tokens, ok := doc["$defs"].(map[string]any)["stageTokens"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s: no stageTokens def", tc.file)
+		}
+		if got, _ := tokens["maximum"].(float64); int(got) != config.MaxStageTokens {
+			t.Errorf("%s: stageTokens maximum = %v, want %d (config's bound)", tc.file, got, config.MaxStageTokens)
+		}
+	}
+}

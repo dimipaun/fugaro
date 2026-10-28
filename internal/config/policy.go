@@ -58,7 +58,7 @@ func PolicyOf(data []byte) (Policy, error) {
 		for i := 0; i+1 < len(m.Content); i += 2 {
 			k, v := m.Content[i].Value, m.Content[i+1]
 			if k == "<<" {
-				return Policy{}, fmt.Errorf("policy: a top-level merge key (<<) is not supported: write budget: and agent: out")
+				return Policy{}, fmt.Errorf("policy: a top-level merge key (<<) is not supported: write budget:, governance: and agent: out")
 			}
 			if lk := strings.ToLower(k); (lk == "budget" || lk == "agent" || lk == "governance") && k != lk {
 				return Policy{}, fmt.Errorf("policy: %q: the key must be spelt %q", k, lk)

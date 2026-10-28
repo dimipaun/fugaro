@@ -21,7 +21,9 @@ import (
 // into every int64 key of fugaro.yaml as 2, max_run_tokens included, and the
 // JSON Schema is the surface that refuses it (fugaro.schema.json's integer
 // type). Making governance the one block that reads the raw node would be a
-// rule of its own for a key no run can use wrongly twice.
+// rule of its own for a key no run can use wrongly twice. The counting keys do
+// carry an upper bound, though, and it is the schema's own (the constants
+// above validateGovernance, held equal by TestSchemaGovernanceBoundsMatchGo).
 func TestGovernanceStrictDecode(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -51,6 +53,9 @@ func TestGovernanceStrictDecode(t *testing.T) {
 		{"a block that is not a mapping", "governance: 0.7\n", false},
 		{"a stage block that is not a mapping", "governance: { stage_budget: 0.7 }\n", false},
 		{"a later release's key", "governance: { tiers: { trivial: { max_subagents: 3 } } }\n", false},
+		{"a ratio above the schema's bound", "governance: { review_ratio: 1001 }\n", false},
+		{"a fan-out above the schema's bound", "governance: { max_subagents: 101 }\n", false},
+		{"a token ceiling above the schema's bound", "governance: { stage_tokens: { review: 1000000000001 } }\n", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			_, ps := Parse([]byte(minimalYAML + c.yaml))
@@ -198,5 +203,45 @@ func TestGovernanceAbsentIsOutOfTheHash(t *testing.T) {
 	}
 	if _, ok := m["governance"]; ok {
 		t.Errorf("a config with no governance: block marshals a key for it: %s", data)
+	}
+}
+
+// TestGovernanceCeilingReachesTheResolvedConfig settles where the two
+// surfaces live: both are on one resolved config. The project layer's block —
+// the ceiling's input, the one layer that may loosen a guardrail — is
+// Config.Layer.Governance, and the repository's own block, which may only
+// tighten it, is Config.Governance. That is why internal/projectpolicy needs
+// no governance member: the published policy node is a different document
+// (config/policy/shared, the owner's `fugaro project policy publish`) and
+// carries no layer blocks at all — it has no rigor member either — so a
+// governance key there would be a second home T7.2's wiring does not read.
+// Governance lives in the layer file, published by `fugaro config publish
+// FILE`.
+func TestGovernanceCeilingReachesTheResolvedConfig(t *testing.T) {
+	l := mustLayer(t, testLayer+"governance:\n  review_ratio: 20\n  stage_budget: { implement: 0.9 }\n")
+	c, _, ps := Resolve([]byte(minimalRepo+"governance:\n  review_ratio: 3\n"), l)
+	if len(ps) > 0 {
+		t.Fatalf("problems: %v", ps)
+	}
+	if c.Layer == nil || c.Layer.Governance == nil || c.Layer.Governance.ReviewRatio != 20 ||
+		c.Layer.Governance.StageBudget.Implement != 0.9 {
+		t.Fatalf("the layer's block is not on the resolved config: %+v", c.Layer.Governance)
+	}
+	if c.Governance == nil || c.Governance.ReviewRatio != 3 || c.Governance.StageBudget.Implement != 0 {
+		t.Fatalf("the repository's block = %+v", c.Governance)
+	}
+	// The merge is what brings them together, and the repository's tighter
+	// value is the effective one (G6) while a key only the layer writes keeps
+	// the layer's, which is the loosening the project layer is allowed.
+	ceiling := policy.Layer{Governance: c.Layer.Governance.Policy()}.Governance.WithDefaults()
+	// The middle layer is the default branch's own file, which a repository
+	// that keeps the block only on its branch does not write.
+	e := policy.Merge(policy.Layer{Governance: ceiling}, policy.Layer{}, policy.Layer{Governance: c.Governance.Policy()})
+	if e.Governance.ReviewRatio != 3 || e.Governance.StageBudget.Implement != 0.9 {
+		t.Fatalf("effective governance = %+v", e.Governance)
+	}
+	if e.Sources[policy.KeyReviewRatio] != policy.SourceBranch ||
+		e.Sources[policy.KeyStageBudgetImplement] != policy.SourceCeiling {
+		t.Errorf("sources = %v", e.Sources)
 	}
 }

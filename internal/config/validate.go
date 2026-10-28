@@ -408,6 +408,26 @@ func validateRigor(p string, mode rigor.Mode, areas []rigor.Area) []Problem {
 	return ps
 }
 
+// The governance bounds: the highest value each counting key of the block may
+// carry, and the figures schemas/fugaro.schema.json states for the same keys
+// (held equal by TestSchemaGovernanceBoundsMatchGo, the way
+// MaxOutputTokensLimit is held to the schema's own 128000). Two surfaces read
+// the same file — `fugaro validate` and the published schema a repository's CI
+// may check against — and a value one refuses while the other accepts is a red
+// check nobody can reproduce, or a number a run reads that the schema called
+// impossible. The bounds are generous: what they stop is a figure no run could
+// mean, not a figure a project would choose.
+const (
+	MaxReviewRatio      = 1000
+	MaxReviewFloorCalls = 100000
+	// MaxGovernanceSubagents is the most distinct sub-agents one stage may be
+	// allowed to start. The spec's own incident, a review fanning out to about
+	// ten, is already stopped by the default of 5; this is the ceiling on what
+	// a project may raise it to.
+	MaxGovernanceSubagents = 100
+	MaxStageTokens         = 1000000000000
+)
+
 // validateGovernance reports a governance block's problems, each at
 // p.<key>: p is "governance" for the repository's own block and the project
 // layer's alike, so one function states the rules for both (the same "one
@@ -425,7 +445,8 @@ func validateRigor(p string, mode rigor.Mode, areas []rigor.Area) []Problem {
 // 0 and null mean "unset" everywhere here — the key takes Fugaro's default —
 // so only a negative number or a non-positive duration is a problem. A
 // duration key left out is unset too; one written as 0s is refused, as every
-// other duration in fugaro.yaml is (validateTimeouts).
+// other duration in fugaro.yaml is (validateTimeouts). The counting keys are
+// bounded above by the constants above, which the schema states too.
 func validateGovernance(p string, g *Governance) []Problem {
 	if g == nil {
 		return nil
@@ -435,18 +456,21 @@ func validateGovernance(p string, g *Governance) []Problem {
 		ps = append(ps, Problem{Path: path, Message: fmt.Sprintf(format, args...)})
 	}
 	for _, c := range []struct {
-		key string
-		v   int64
+		key    string
+		v, max int64
 	}{
-		{"review_ratio", g.ReviewRatio},
-		{"review_floor_calls", g.ReviewFloorCalls},
-		{"max_subagents", g.MaxSubagents},
-		{"stage_tokens.implement", g.StageTokens.Implement},
-		{"stage_tokens.review", g.StageTokens.Review},
-		{"stage_tokens.fix", g.StageTokens.Fix},
+		{"review_ratio", g.ReviewRatio, MaxReviewRatio},
+		{"review_floor_calls", g.ReviewFloorCalls, MaxReviewFloorCalls},
+		{"max_subagents", g.MaxSubagents, MaxGovernanceSubagents},
+		{"stage_tokens.implement", g.StageTokens.Implement, MaxStageTokens},
+		{"stage_tokens.review", g.StageTokens.Review, MaxStageTokens},
+		{"stage_tokens.fix", g.StageTokens.Fix, MaxStageTokens},
 	} {
-		if c.v < 0 {
+		switch {
+		case c.v < 0:
 			add(p+"."+c.key, "must not be negative")
+		case c.v > c.max:
+			add(p+"."+c.key, "must be at most %d", c.max)
 		}
 	}
 	for _, c := range []struct {
