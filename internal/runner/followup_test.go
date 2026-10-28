@@ -1369,10 +1369,8 @@ func TestFollowUpUnknownPRAuthor(t *testing.T) {
 // run's base, and a hand-written task.json went past no launcher at all.
 //
 // Mutation (drop the r.follow arm of the digest refusal in runner.go): the
-// reason becomes the image one below ("holds a digest step, which this job
-// image's runner does not execute yet") on this release — and on the release
-// that ships the step, no refusal at all: the run writes an empty report and
-// opens an ordinary pull request for it.
+// follow-up gets past the recipe and starts the digest step, which fails for
+// want of a manifest, so the reason names no rule and no pull request.
 func TestFollowUpNeverRunsAReportRecipe(t *testing.T) {
 	const yaml = "version: 1\nname: rundigest\nsteps:\n  - digest: {}\n  - review: { max_rounds: 1 }\n"
 	h := followUpHarness(t, "", nil)
