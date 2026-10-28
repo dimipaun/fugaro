@@ -523,11 +523,12 @@ step with the file.
 The owner published the contributor licence agreement as a Gist (one Markdown file, `fugaro-cla.md`,
 renamed from `gistfile1.txt` before publication) and gave the URL to be used exactly as given:
 https://gist.githubusercontent.com/dimipaun/d5bb5db937f973b25be5778ce14ec8dd/raw/64918c7fc0f782327db82e7e790db53c3d47d09f/fugaro-cla.md.
-That is a raw link pinned to one revision of the Gist, and the Gist's file is byte-identical to
-the agreement block of [CLA.md](CLA.md), a trailing newline aside. `[CLA URL TO BE PUBLISHED]` is
+That is a raw link pinned to one revision of the Gist, and the owner read the Gist's file as
+byte-identical to the agreement block of [CLA.md](CLA.md), a trailing newline aside (U9: no test in
+the tree can check a network resource). `[CLA URL TO BE PUBLISHED]` is
 replaced by that URL in `ee/LICENSE`, `console/LICENSE.md`, `mobile/LICENSE.md` and the byte copy in
-`LICENSES/LicenseRef-Fugaro-Enterprise.txt` -- the placeholder token the only change, so the files
-stay byte-identical to each other -- and in the pin of
+`LICENSES/LicenseRef-Fugaro-Enterprise.txt` -- the placeholder token the only change, so the one
+wording is what it was and `ee/LICENSE` and the `LICENSES/` copy stay byte for byte -- and in the pin of
 `internal/cli/docs_ee_reserved_test.go`. Plan task L0.2's checklist item for it is ticked in
 [implementation-plan.md](implementation-plan.md#l02--install-the-hosted-cla-app-owner-run).
 **Because the URL names a revision, editing the Gist later does not change what the licence files
@@ -625,3 +626,11 @@ The owner chose `https://fugaro.dev/legal/subscription-terms` as the Subscriptio
 - **U7** — **Resolved 2026-10-24** (F27): both texts read over HTTPS, URLs and commits cited.
 - **U8** — Which source-available licences are published expressly for reuse, and their terms
   (T1 choice (ii)); not read.
+- **U9** — That the published Gist's file is byte-identical to the agreement block of
+  [CLA.md](CLA.md), a trailing newline aside (the 2026-10-29 amendment). The owner read the two
+  against each other when publishing; **nothing in the tree can check it**, because every test here
+  is hermetic and reads no network. Re-read it if the Gist is ever re-published:
+  `sed -n '/BEGIN AGREEMENT/,/END AGREEMENT/p' docs/licensing/CLA.md` against
+  `curl -s https://gist.githubusercontent.com/dimipaun/d5bb5db937f973b25be5778ce14ec8dd/raw/64918c7fc0f782327db82e7e790db53c3d47d09f/fugaro-cla.md`.
+  A mismatch would not reach a licensee through the licence files until a new revision's URL is
+  written into them, which is the step counsel sees.

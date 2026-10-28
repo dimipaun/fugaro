@@ -2,7 +2,10 @@
 > GitHub Gist holding one Markdown file, and shows a contributor everything in that file. The
 > Gist now exists (plan task L0.2): its file is named `fugaro-cla.md` (renamed from
 > `gistfile1.txt` before publication) and holds only the text between the `BEGIN AGREEMENT` and
-> `END AGREEMENT` lines below, without those two lines and without this note. The licence files
+> `END AGREEMENT` lines below, without those two lines and without this note -- the owner read the
+> two against each other when publishing, and U9 in
+> [reconciliation.md](reconciliation.md#unverified) records that no test in the tree can check a
+> network resource. The licence files
 > name its revision-pinned raw URL,
 > <https://gist.githubusercontent.com/dimipaun/d5bb5db937f973b25be5778ce14ec8dd/raw/64918c7fc0f782327db82e7e790db53c3d47d09f/fugaro-cla.md>,
 > and CLA Assistant is given the same URL. **That URL does not change when the Gist is edited**:
