@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/recipe"
@@ -27,23 +29,26 @@ const digestManifestWindow = 40 * 24 * time.Hour
 
 // digestManifestMax bounds the manifest: the newest this many runs.
 // task.MaxDigestRuns is the same bound the decoder applies to the field, so
-// the launcher can never write a task its own decoder refuses.
+// the launcher can never write a task its own decoder refuses. A repository
+// busier than this has the cut said out loud (digestManifest), since the
+// records left out are records this month's report will not carry.
 var digestManifestMax = task.MaxDigestRuns
 
 // digestManifest returns the run IDs a report run launched now may read: this
 // repository's runs of the last digestManifestWindow, newest first and at
 // most digestManifestMax of them, or nil for a launch that is not a report
 // run. It refuses the launch while one of this repository's report runs is
-// still going (refuseReportRunInFlight). It is the one place that decides
-// which records a report run reads, and so a security change (G2, T3.6):
+// still going (refuseReportRunInFlight), and says on warn when the cap cut
+// the list. It is the one place that decides which records a report run
+// reads, and so a security change (G2, T3.6):
 //
 //   - this repository only: the listing is runs/<this repository's slug>/,
 //     so no manifest can name another repository's run. On a project job the
 //     bucket does not isolate repositories (G2, T3.2), so there the runner's
 //     own slug check is the guard and this is only the second one.
-//   - bounded: newest first, at most digestManifestMax. The decoder checks
-//     each ID's shape (task.Validate) and schemas/task.schema.json checks it
-//     again.
+//   - bounded: newest first, at most digestManifestMax, with the cut warned
+//     about rather than made in silence. The decoder checks each ID's shape
+//     (task.Validate) and schemas/task.schema.json checks it again.
 //   - one report run at a time: a schedule that fires twice does not pay for
 //     two runs writing the same reports.
 //
@@ -59,7 +64,7 @@ var digestManifestMax = task.MaxDigestRuns
 // base and refuses a bad one itself, and a manifest under a recipe that is
 // not a report recipe is read by nothing (the digest step is its only
 // reader).
-func digestManifest(ctx context.Context, env *cloudEnv, slug, root string, rcp *task.Recipe, now time.Time) ([]string, error) {
+func digestManifest(ctx context.Context, env *cloudEnv, slug, root string, rcp *task.Recipe, now time.Time, warn io.Writer) ([]string, error) {
 	if !digestRecipe(root, rcp) {
 		return nil, nil
 	}
@@ -68,6 +73,12 @@ func digestManifest(ctx context.Context, env *cloudEnv, slug, root string, rcp *
 		return nil, remote(err)
 	}
 	if len(ids) > digestManifestMax {
+		// Said out loud, because the cut is silent otherwise and it changes
+		// what the report carries: the run writes the reports of the records
+		// it is handed, so a repository busier than the cap has the oldest of
+		// them left out of this month's report rather than of a later one.
+		fmt.Fprintf(warn, "note: %s has %d runs in the last %d days, more than a report run reads at once; its report covers the newest %d\n",
+			slug, len(ids), int(digestManifestWindow.Hours()/24), digestManifestMax)
 		ids = ids[:digestManifestMax]
 	}
 	if err := refuseReportRunInFlight(ctx, env, slug, ids, now); err != nil {

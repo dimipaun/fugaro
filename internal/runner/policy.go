@@ -403,11 +403,19 @@ func sourcesText(m map[string]string) string {
 	return strings.Join(parts, " ")
 }
 
-// PolicyKeyPath is where a policy key lives in fugaro.yaml.
+// PolicyKeyPath is where a policy key lives in fugaro.yaml: the governance
+// keys under a governance: block of their own, the agent's output limits under
+// agent:, and everything else — the budget's cost and model policy — under
+// budget:.
 func PolicyKeyPath(key string) string {
 	switch key {
 	case policy.KeyMaxRunTokens, policy.KeyMaxOutputCoder, policy.KeyMaxOutputReviewer:
 		return "agent." + key
+	case policy.KeyReviewRatio, policy.KeyReviewFloorCalls, policy.KeyMaxSubagents,
+		policy.KeyStageBudgetImplement, policy.KeyStageBudgetReview, policy.KeyStageBudgetFix,
+		policy.KeyStageTokensImplement, policy.KeyStageTokensReview, policy.KeyStageTokensFix,
+		policy.KeyStageTimeoutImplement, policy.KeyStageTimeoutReview, policy.KeyStageTimeoutFix:
+		return "governance." + key
 	}
 	return "budget." + key
 }

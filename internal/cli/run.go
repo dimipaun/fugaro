@@ -663,6 +663,11 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			if err := checkCloneRigorImage(ctx, env, spec, warn); err != nil {
 				return launchResult{}, err
 			}
+			// The governance: gate, judged the same way and for the same
+			// reason: see checkGovernanceImage.
+			if err := checkCloneGovernanceImage(ctx, env, spec, warn); err != nil {
+				return launchResult{}, err
+			}
 			// The run's own rigor request, gated on the field the same way:
 			// a runner older than rigorRequestSince refuses a task carrying
 			// rigor or paths outright (task.Parse decodes with
@@ -731,6 +736,11 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			// than on a task field: see checkRigorImage. Unconditional, since
 			// the repository's file alone can carry the key.
 			if err := checkRigorImage(ctx, env, slug, spec, kind, warn); err != nil {
+				return launchResult{}, err
+			}
+			// The governance: gate, the same shape as the clone branch's
+			// above and for the same reason.
+			if err := checkGovernanceImage(ctx, env, slug, spec, kind, warn); err != nil {
 				return launchResult{}, err
 			}
 			// The same gate as the clone branch's above, and for the same
@@ -1086,7 +1096,7 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	// refused without launching anything. A batch never reaches this with a
 	// report recipe (chooseRecipe refuses --attempts for one), so no
 	// attempt reads another's stored task as a report run still going.
-	digestRuns, err := digestManifest(ctx, env, slug, root, rcp, time.Now())
+	digestRuns, err := digestManifest(ctx, env, slug, root, rcp, time.Now(), warn)
 	if err != nil {
 		return nil, err
 	}
@@ -2246,6 +2256,21 @@ func retrySpec(ctx context.Context, env *cloudEnv, ref string) (string, *task.Sp
 	// launch, before any build-record read or the launch itself.
 	if err := claudeAccountAllowed(env, spec.Repo, cmp.Or(spec.OAuthToken, config.DefaultClaudeAccount), checkoutAgentAuth(checkout())); err != nil {
 		return "", nil, err
+	}
+	// A report run is refused, the way a follow-up carrying one is
+	// (refuseFollowUpReportMode): --retry launches the task of a first
+	// launch as it stands, so the manifest it carries is the one that launch
+	// listed, stale by now, and none of the checks a fresh report launch
+	// makes — digestManifest's in-flight refusal among them — run at all. A
+	// repository has one report run at a time because both would write the
+	// same reports, and a stale manifest writes a report of records that
+	// have moved on; the launcher of a fresh report run lists them again.
+	// The task says it is one two ways: the manifest itself (digest_runs is
+	// accepted under no other recipe, task.Validate), which is the only one
+	// that speaks for a repository recipe, and the recipe's text or file,
+	// for a report run whose manifest came out empty.
+	if spec.Recipe != nil && (len(spec.DigestRuns) > 0 || digestRecipe(checkoutRoot(ctx, spec.Repo), spec.Recipe)) {
+		return "", nil, userErr("run %s/%s is a report run, and --retry launches the task of its first launch as it stands: its manifest is stale by now, and a repository has one report run at a time, because both would write the same reports — launch a new report run with fugaro run --recipe %s", slug, runID, spec.Recipe.Name)
 	}
 	return slug, spec, nil
 }

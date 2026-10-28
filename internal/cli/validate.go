@@ -1631,6 +1631,7 @@ func newValidateCmd() *cobra.Command {
 				warnings = append(warnings, config.CheckWarnings(cfg, filepath.Dir(path))...)
 				warnings = append(warnings, cloneWorkflowWarnings(cfg)...)
 				warnings = append(warnings, rigorImageWarnings(cfg)...)
+				warnings = append(warnings, governanceImageWarnings(cfg)...)
 				pp, pw, pn := providerProblems(cmd.Context(), ecfg, lc, claimed)
 				problems, warnings, notes = append(problems, pp...), append(warnings, pw...), append(notes, pn...)
 				rtp, rtn := routingProblems(cmd.Context(), ecfg, lc, routes, lcErr)

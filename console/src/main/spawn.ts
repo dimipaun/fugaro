@@ -760,7 +760,7 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
  * ARGUMENT_RE is the alphabet a *renderer* argument may use. It is deliberately
  * a whitelist rather than a blacklist: a repository is `owner/name`, a run id is
  * `YYYYMMDD-HHMMSS-xxxx`, a day is `YYYY-MM-DD`, `--since` is `Nd`/`3h`/`0` or
- * `report`'s `12w`, `--by` is one of `report`'s seven words -- the schema is
+ * `report`'s `12w`, `--by` is one of `report`'s eight words -- the schema is
  * what closes that set, and this alphabet only has to be wide enough for it --
  * and a pull request reaches this function as the digits its `IntVar` reads, so
  * every legitimate value is covered -- and whitespace, quotes, `$`, `;`, `|`, `&`, `<`, `>`,

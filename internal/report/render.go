@@ -24,12 +24,17 @@ type Meta struct {
 
 // columns of the table and CSV for a dimension.
 func (r Report) header() []string {
-	key := map[Dim]string{ByDay: "DAY", ByWeek: "WEEK (ISO, UTC)", ByMonth: "MONTH", ByYear: "YEAR", ByRepo: "REPOSITORY", ByModel: "MODEL", ByPerson: "PERSON"}[r.By]
+	key := map[Dim]string{ByDay: "DAY", ByWeek: "WEEK (ISO, UTC)", ByMonth: "MONTH", ByYear: "YEAR", ByRepo: "REPOSITORY", ByModel: "MODEL", ByPerson: "PERSON", ByMode: "MODE"}[r.By]
 	switch r.By {
 	case ByModel:
 		return []string{key, "MODEL $", "NOTIONAL~", "IN", "OUT", "CACHE-READ", "CACHE-WRITE"}
 	case ByPerson:
 		return []string{key, "MODEL $", "NOTIONAL~", "RUNS"}
+	case ByMode:
+		// Run records carry no call count and no run hours, so the columns
+		// they cannot fill are not there, the way the by-person row leaves
+		// out the day records' columns.
+		return []string{key, "MODEL $", "NOTIONAL~", "COMPUTE $", "RUNS"}
 	}
 	return []string{key, "MODEL $", "NOTIONAL~", "COMPUTE $", "RUN-HOURS", "RUNS", "CALLS"}
 }
@@ -55,6 +60,12 @@ func (r Report) cells(w Row, dollars bool) []string {
 		return []string{money(w.Spent), notional, fmt.Sprint(w.In), fmt.Sprint(w.Out), fmt.Sprint(w.CR), fmt.Sprint(w.CW)}
 	case ByPerson:
 		return []string{money(w.Spent), notional, fmt.Sprint(w.Runs)}
+	case ByMode:
+		compute := "n/a"
+		if w.ComputeState == ComputeKnown {
+			compute = money(w.Compute)
+		}
+		return []string{money(w.Spent), notional, compute, fmt.Sprint(w.Runs)}
 	}
 	compute, hours := "n/a", "n/a"
 	if w.ComputeState == ComputeKnown {
@@ -106,6 +117,14 @@ func Table(w io.Writer, rep Report, m Meta) error {
 		for _, row := range rep.Rows {
 			if row.Key == budget.UnknownPerson {
 				fmt.Fprintln(w, "unknown: spend and runs with no requester recorded")
+				break
+			}
+		}
+	}
+	if rep.By == ByMode {
+		for _, row := range rep.Rows {
+			if row.Key == ModeNone {
+				fmt.Fprintln(w, ModeNone+": runs whose record carries no rigor mode, and runs whose recorded mode is not one this build knows")
 				break
 			}
 		}

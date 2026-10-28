@@ -162,6 +162,10 @@ func (h *RunHandle) MarkCancelled() bool                { return h.r.markCancell
 func (h *RunHandle) Stage() string                      { return h.r.rec.Stage }
 func (h *RunHandle) IsCancelled() bool                  { return h.r.isCancelled() }
 
+// Halted reports whether a halt has been recorded yet, which marks the instant
+// a governance halt's own stop of the stage's checkpointer begins to wait.
+func (h *RunHandle) Halted() bool { return h.r.haltValue() != nil }
+
 // Secrets is the values the run's redactor knows at the moment the hook is
 // called, and Redact is that redactor: together they are how a test asserts
 // that something the run holds (the launch's seal key) is registered before
@@ -316,4 +320,11 @@ func SetArtifactStagedSeam(t *testing.T, f func()) {
 	prev := artifactStagedSeam
 	artifactStagedSeam = f
 	t.Cleanup(func() { artifactStagedSeam = prev })
+}
+
+// DigestRecords runs the digest step's manifest read against store alone, so a
+// test can watch which objects one manifest makes it ask for.
+func DigestRecords(ctx context.Context, store *runstore.Store, ids []string) ([]runstore.Record, int, error) {
+	r := &run{d: Deps{Store: store}}
+	return r.digestRecords(ctx, ids)
 }

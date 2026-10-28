@@ -1672,7 +1672,7 @@ describe('the day and window arguments', () => {
 })
 
 describe('the closed sets', () => {
-  const dimensions = ['day', 'week', 'month', 'year', 'repo', 'model', 'person']
+  const dimensions = ['day', 'week', 'month', 'year', 'repo', 'model', 'person', 'mode']
   for (const value of dimensions) {
     it(`accepts the report dimension ${value}`, () => {
       expect(validateArguments('spend.report', { by: value }).ok).toBe(true)

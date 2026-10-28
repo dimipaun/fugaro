@@ -208,9 +208,26 @@ func haltReasonText(h runstore.Halt) string {
 // reached. done, next and hard_instructions stay empty until the stopping
 // agent answers the checkpoint prompt (T7.2, wired in T7.3).
 //
-// It runs on the run's own goroutine: the pull-request state it writes through
-// belongs to that goroutine (prflow.go), and the tripwires that call it read
-// the stage's own accounting, which that goroutine owns.
+// It may be called mid-stage, and the stage's checkpoint poll goroutine is
+// alive then: that poll writes the same pull-request state and the same record
+// (prflow.go, checkpoint.go). So this function stops the poll and waits for it
+// before it writes anything itself — against the poll it is exactly one writer
+// from that point on, and the poll's last write is ordered before the record
+// this function saves. It must not be called from the poll goroutine, which
+// would make that wait a wait on itself.
+//
+// Stopping the poll is only part of the ordering this function needs, and it
+// is the caller that supplies the rest: the run goroutine writes the record
+// itself, without r.mu, between the agent returning and the stage that
+// follows — the stage's spend and history (stageOnce's res.CostUSD and its
+// Stages entry, updateCost's rec.Cost) and afterStage's boundary push and
+// status write. A halt on a goroutine that neither is the run's nor is joined
+// by it before those writes races them. So T7.2 must call this from the run
+// goroutine, or from a goroutine the run goroutine joins before it writes any
+// of that — the stage's own halt watcher (watchHalt, which stopWatch joins) is
+// the one such goroutine a stage has today. A tripwire that has to run on a
+// goroutine of its own brings those writers under r.mu first, which is why
+// this comment says so rather than leaving the next caller to guess.
 func (r *run) governanceHalt(ctx context.Context, reason runstore.HaltReason, detail string) bool {
 	h := runstore.Halt{Reason: reason, Scope: "run", At: r.d.Now().UTC(), Detail: detail}
 	if !r.haltNow(h) {
@@ -222,14 +239,14 @@ func (r *run) governanceHalt(ctx context.Context, reason runstore.HaltReason, de
 	// called with, the stage's own when the tripwire was a stage's, can be done
 	// before either write lands.
 	ctx = context.WithoutCancel(ctx)
-	// The record is read and written under r.mu: the stage's checkpoint poll
-	// goroutine is still alive here (the halt stops it, but only once the
-	// watcher's grace period is over) and it snapshots the whole record under
-	// this same lock, so a write outside it is one a save can copy halfway.
-	//
-	// The record's own model figure is the only money figure a checkpoint can
-	// carry before a tier's expectation exists (T8.1), and it is what a
-	// continuation starts from.
+	// One writer, and the poll first: a run with no live poll goroutine — a
+	// follow-up, an artifact run, checkpoints off, or a tripwire firing
+	// between stages — has nothing to stop and writes as it is.
+	r.stopStageCheckpointer()
+	// The record is read and written under r.mu, as every mid-stage writer of
+	// it is: the record's own model figure is the only money figure a
+	// checkpoint can carry before a tier's expectation exists (T8.1), and it
+	// is what a continuation starts from.
 	r.mu.Lock()
 	r.rec.Checkpoint = runstore.NewCheckpoint(runstore.Checkpoint{
 		Trigger:     string(h.Reason),
@@ -247,11 +264,15 @@ func (r *run) governanceHalt(ctx context.Context, reason runstore.HaltReason, de
 // something to read, and the draft is where they read it. It never asks for
 // the pull request to be made ready. A failure only warns — finalize settles
 // the pull request and writes the same report into its final section.
+//
+// Its caller has stopped the stage's checkpointer and waited for it
+// (governanceHalt), so this is the run's only writer of pull-request state for
+// the rest of the stage.
 func (r *run) checkpointPR(ctx context.Context, reason runstore.HaltReason) {
-	// Which pull request, which tip and which stage, taken under r.mu for the
-	// reason governanceHalt writes the checkpoint there: the stage's checkpoint
-	// poll goroutine is still alive and snapshots the record under the same
-	// lock, so these are read where its save cannot be reading them.
+	// Which pull request, which tip and which stage, read in one go: the
+	// record's writers outside the run goroutine hold r.mu (recordCredential,
+	// recordSwitch), and a save copies the whole record under it
+	// (recordSnapshot).
 	r.mu.Lock()
 	pr, pushed, stage := r.rec.PR, r.rec.PushedHead, r.rec.Stage
 	r.mu.Unlock()
@@ -272,9 +293,9 @@ func (r *run) checkpointPR(ctx context.Context, reason runstore.HaltReason) {
 	case err == nil:
 		r.noteStatusWritten(ctx, r.d.Now())
 	case errors.Is(err, gitprov.ErrPRNotOpen):
-		// The flag that stops later status updates is left to the poll's own
-		// next write (prflow.go): it reads r.pr every tick from its own
-		// goroutine, and the run is ending within the halt's grace period.
+		// The top-level flag that stops later status updates (prflow.go) is
+		// left as it is: nothing more is written to this pull request anyway —
+		// the stage ends with the halt — and finalize reads its state itself.
 		r.d.Log.Warn("the pull request is no longer open; the checkpoint was not written to it", "pr", pr.Number)
 	default:
 		r.d.Log.Warn("writing the checkpoint to the pull request failed; finalize writes the report",

@@ -47,7 +47,13 @@ const (
 // the PR if this does not. A variable so a test can shorten it.
 var earlyOpenTimeout = time.Minute
 
-// prFlow is the run's early-PR state. Only the run goroutine touches it.
+// prFlow is the run's early-PR state. While a stage runs, its checkpoint poll
+// goroutine is the only one that touches it (prflow.go's openDraftPR and
+// statusUpdate are reached from the poll, checkpoint.go); between stages, and
+// after that poll's stop has returned, the run goroutine's own boundary and
+// finalize paths do. A governance halt in the middle of a stage stops the poll
+// and waits for it before it touches any of this (governanceHalt, halt.go), so
+// the two never write it at once.
 type prFlow struct {
 	lastStatus time.Time // when the last status update was attempted
 	fails      int       // consecutive failed updates
@@ -483,8 +489,14 @@ func toleratedPart(pol FindingsPolicy, last runstore.ReviewSummary) string {
 // estimate says whose figure it is, because it is the record's model spend and
 // not a forecast of what finishing would cost. "" for every run that did not
 // take a governance halt.
+//
+// The report is read under r.mu (checkpointValue), the lock the halt writes it
+// under (governanceHalt). Today the halt has stopped the stage's checkpoint
+// poll before either happens, so no poll renders this section beside that
+// write; the copy is what keeps a reader whole if the stopping agent's answers
+// are later filled in through the same report (T7.3).
 func (r *run) checkpointReportPart() string {
-	cp := r.rec.Checkpoint
+	cp := r.checkpointValue()
 	if cp == nil {
 		return ""
 	}
@@ -505,6 +517,20 @@ func (r *run) checkpointReportPart() string {
 		parts = append(parts, "hard to satisfy: "+inlineText(cp.HardInstructions))
 	}
 	return strings.Join(parts, "; ")
+}
+
+// checkpointValue is a copy of the record's checkpoint report, or nil: it is
+// read under r.mu, where the halt writes it (governanceHalt), and copied
+// rather than taken by pointer because the fields a later stage fills in are
+// written through it (T7.3).
+func (r *run) checkpointValue() *runstore.Checkpoint {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.rec.Checkpoint == nil {
+		return nil
+	}
+	cp := *r.rec.Checkpoint
+	return &cp
 }
 
 // backlogPart is the section's account of the items the run wrote: the ids it

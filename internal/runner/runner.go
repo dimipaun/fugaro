@@ -373,6 +373,12 @@ type run struct {
 	filedFrom string
 	// ckpt is the checkpoint pushes' state (checkpoint.go).
 	ckpt checkpointState
+	// stageCkptStop is the running stage's checkpointer stop — startCheckpoints'
+	// return — and nil between stages; guarded by mu. It is what lets a
+	// mid-stage governance halt stop that goroutine and wait for it before it
+	// writes any pull-request state of its own (governanceHalt, halt.go;
+	// stopStageCheckpointer, checkpoint.go), so exactly one writer is left.
+	stageCkptStop func()
 	// skipPR is set when the check gate already ended the run (clean, or an
 	// infra error of its own, gate.go): finalize, which still runs after,
 	// does nothing more. A review run and an artifact run set it for their
@@ -641,8 +647,19 @@ func (r *run) save(ctx context.Context) {
 // under it is consistent with them; every other field is written by the run's
 // own goroutine, which is the one that saves, and by the checkpoint poll,
 // which is a goroutine of its own and writes the run branch's tip (C1.10's
-// poll) — the poll's own writes are ordered with its own save, which is what
-// makes the copy enough here rather than a lock held around the write.
+// poll) — the poll's own writes are ordered with its own save, and the one
+// save the run goroutine makes while a poll is alive, the governance halt's,
+// is ordered after that poll as well, because the halt stops it and waits for
+// it first (governanceHalt, stopStageCheckpointer, checkpoint.go).
+//
+// What the copy does not cover is a writer that holds neither r.mu nor that
+// ordering: the run goroutine's own unlocked writes between stages (the
+// stage's cost and spend, afterStage's branch tip). No lock is held around
+// them, so a save made from a goroutine they are not ordered with would encode
+// a record they are still writing — which is why a governance halt must be
+// called by the run goroutine or by one it joins before those writes
+// (governanceHalt, halt.go). That is what makes the copy enough here rather
+// than a lock held around the write.
 //
 // The copy is shallow, and that is deliberate: the callback goroutines only
 // ever append to the record's slices and set scalars, both under the lock, so
@@ -1439,6 +1456,18 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// gate refuses a digest launch against a release image that predates the
 	// step (digestSince, internal/cli/recipes_skew.go).
 	r.digest = recipe.UsesDigest(rcp)
+	// A follow-up cannot run one whatever this image executes: a report run
+	// is launched on its own, because it lists the records it may read and
+	// refuses while another report run of the repository is going
+	// (digestManifest, internal/cli/run_digest_manifest.go), and a follow-up
+	// carries no manifest at all — the launcher writes one for a fresh
+	// report launch only. Refused here, keyed on the RESOLVED recipe, which
+	// is the arm the launcher's own report refusals cannot be: a repository
+	// recipe by name is read here, at this run's base, and not there
+	// (refuseFollowUpReportMode, internal/cli/recipes_resolve.go).
+	if r.follow != nil && recipe.UsesDigest(rcp) {
+		return fmt.Errorf("recipe %s holds the digest step, which writes this repository's run reports; this task continues pull request #%d, and a report run is launched on its own — it lists the records it may read and refuses while another report run of the repository is going — so it cannot continue one", rrec.Name, spec.PR)
+	}
 	switch {
 	case r.review && rcp.Mode != recipe.ModeReview:
 		return fmt.Errorf("recipe %s is not mode: review, but the task names pull requests to review", rrec.Name)
@@ -2527,9 +2556,21 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		stopWatch = sync.OnceFunc(func() { close(done); watching.Wait() })
 	}
 	// Checkpoints run only while the agent does: stopped (and waited for)
-	// the moment it returns, and by the defer if it panics.
+	// the moment it returns, and by the defer if it panics. The stop is
+	// registered while it is live so a mid-stage governance halt can stop it
+	// too, before it writes pull-request state of its own (governanceHalt).
 	stopCheckpoints := r.startCheckpoints(stageCtx, name)
-	defer stopCheckpoints()
+	r.setStageCkptStop(stopCheckpoints)
+	defer func() {
+		// Stopped first, and only then unregistered: on the panic path — the
+		// only path where this defer runs with the poll still alive — a halt
+		// on another goroutine must find the stop and wait on it rather than
+		// read a nil and write the record while the poll's in-flight tick
+		// still is. stop is idempotent, so the normal path, where the stop
+		// above already ran it, is unaffected.
+		stopCheckpoints()
+		r.setStageCkptStop(nil)
+	}()
 	res, err := r.d.Agent.Run(stageCtx, req)
 	stopCheckpoints()
 	stopWatch()

@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/lock"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -1355,5 +1356,40 @@ func TestFollowUpUnknownPRAuthor(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "did not name the pull request's author") {
 		t.Fatalf("no warning in the log:\n%s", logs.String())
+	}
+}
+
+// TestFollowUpNeverRunsAReportRecipe: a report run is launched on its own —
+// it lists the records it may read and refuses while another report run of
+// the repository is going — and a follow-up carries no manifest at all, so a
+// report recipe reaching one would write the reports of records that run
+// never read. The launcher refuses the recipe it can resolve or account for
+// (refuseFollowUpReportMode, internal/cli/recipes_resolve.go); this is the
+// backstop for the ones it cannot: the task's recipe is read here, at this
+// run's base, and a hand-written task.json went past no launcher at all.
+//
+// Mutation (drop the r.follow arm of the digest refusal in runner.go): the
+// reason becomes the image one below ("holds a digest step, which this job
+// image's runner does not execute yet") on this release — and on the release
+// that ships the step, no refusal at all: the run writes an empty report and
+// opens an ordinary pull request for it.
+func TestFollowUpNeverRunsAReportRecipe(t *testing.T) {
+	const yaml = "version: 1\nname: rundigest\nsteps:\n  - digest: {}\n  - review: { max_rounds: 1 }\n"
+	h := followUpHarness(t, "", nil)
+	h.followUpRecipe(t, followID, runID, "Have another look.", &task.Recipe{
+		Name: "rundigest", Source: string(recipe.SourceProject), YAML: yaml, SHA256: recipe.Sum([]byte(yaml))})
+	pushes := countPushes(t, h.harness)
+	rec, err := h.run(t)
+	if err == nil || rec.Status != runstore.StatusInfraError {
+		t.Fatalf("rec = %+v, err = %v; want an infra_error", rec, err)
+	}
+	if !strings.Contains(rec.Reason, "cannot continue one") || !strings.Contains(rec.Reason, "pull request #1") {
+		t.Fatalf("the reason does not name the rule and the pull request: %q", rec.Reason)
+	}
+	if len(h.agent.calls) != 0 {
+		t.Fatalf("the agent ran %d times, want none", len(h.agent.calls))
+	}
+	if n := pushes(); n != 0 {
+		t.Fatalf("%d pushes, want none", n)
 	}
 }

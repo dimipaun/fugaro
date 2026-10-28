@@ -34,8 +34,9 @@ import (
 // read goes through this run's own store, so each object is under
 // runs/<this repository's slug>/. On a project job, whose bucket condition
 // reaches every repository's runs/ (G2), that check is the only guard there
-// is, so it comes first and an ID of any other shape is refused before a
-// record is read. There is no listing: a list is a bucket-level call the job's
+// is, so it comes first: every ID in the manifest is checked before the first
+// record is read, and one ID of any other shape refuses the step with nothing
+// read. There is no listing: a list is a bucket-level call the job's
 // grant cannot hold (design bucket-iam.md V7).
 //
 // Nothing here is a model call, and no word a record holds reaches a written
@@ -191,7 +192,8 @@ func (r *run) writeDueReports(ctx context.Context) ([]string, error) {
 // digestRecords reads every record the manifest names: each one by name, under
 // this run's own repository prefix, and never a listing.
 //
-// An ID that is not a run ID's shape is refused before anything is read. It
+// Every ID is checked before any record is read, so an ID that is not a run
+// ID's shape refuses the step with nothing read, wherever it sits. It
 // becomes part of an object name (runstore.Store.Sibling), so an ID carrying a
 // path, another repository's slug or a scheme is exactly the read this step
 // must not make: on a project job the bucket condition does not isolate
@@ -204,13 +206,15 @@ func (r *run) digestRecords(ctx context.Context, ids []string) ([]runstore.Recor
 	if r.d.Store == nil {
 		return nil, 0, errors.New("this run has no runs bucket, so the digest step cannot read a record")
 	}
-	recs := make([]runstore.Record, 0, len(ids))
-	dropped := 0
 	for _, id := range ids {
 		if !task.ValidRunID(id) {
 			return nil, 0, fmt.Errorf("the digest step's manifest names %q, which is not a run ID: a report run reads only the records of its own repository (runs/%s/), so the run is refused before any record is read",
 				safetext.OneLine(safetext.Strip(id)), r.d.Store.Slug())
 		}
+	}
+	recs := make([]runstore.Record, 0, len(ids))
+	dropped := 0
+	for _, id := range ids {
 		rec, err := r.d.Store.Sibling(id).ReadRecord(ctx)
 		var syntax *json.SyntaxError
 		var types *json.UnmarshalTypeError

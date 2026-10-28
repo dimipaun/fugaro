@@ -284,6 +284,8 @@ return spend.readSpend(read, controls, ${JSON.stringify(BUDGET)}, readPeople).th
 interface Screen {
   readonly theme: string | null
   readonly accounts: readonly (string | null)[]
+  /** the breakdown switch's own words, in the order it draws them */
+  readonly dimensions: readonly string[]
   readonly titles: readonly string[]
   readonly peaks: readonly string[]
   readonly segments: readonly (string | null)[]
@@ -335,6 +337,7 @@ function screen(page: Page): Promise<Screen> {
     return {
       theme: scope.querySelector('.spend')?.getAttribute('data-theme') ?? null,
       accounts: attributes('.spend-account', 'data-account'),
+      dimensions: texts('.spend-dim'),
       titles: texts('.spend-account-title'),
       peaks: texts('.spend-peak'),
       segments: attributes('.spend-series', 'data-segments'),
@@ -775,6 +778,11 @@ test.describe('the Spend screen', () => {
 
     expect(drawn.theme).toBe('light')
     expect(drawn.accounts).toEqual(['model', 'notional', 'compute'])
+    // The breakdown switch offers the CLI's whole `--by` vocabulary, the
+    // by-mode word among it: the report this screen read is by day, and a
+    // breakdown the console's table did not carry would be refused on the wire
+    // before the window ever asked for it.
+    expect(drawn.dimensions).toContain('mode')
     // Three charts, three axis tops: a shared scale would put a notional bar
     // and a billed bar at heights that invite the comparison the design forbids.
     expect(drawn.titles).toEqual([

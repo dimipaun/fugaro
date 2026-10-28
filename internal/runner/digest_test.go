@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/report"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -317,6 +318,31 @@ func TestDigestStepRefusesForeignSlug(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "dropped=1") {
 		t.Errorf("the step did not log the one record it read past:\n%s", logs.String())
+	}
+}
+
+// TestDigestRecordsChecksEveryIDBeforeAnyRead: a manifest whose first ID is
+// this repository's own and whose second is a path into another repository's
+// prefix is refused with not one call made to the bucket. The shape check is
+// the only guard a project job has (G2), so it must judge the whole manifest
+// before the first read, not each ID as the read loop reaches it.
+//
+// Mutation (check each ID inside the read loop): the first record is read
+// before the second ID is refused, and the bucket log is not empty.
+func TestDigestRecordsChecksEveryIDBeforeAnyRead(t *testing.T) {
+	g := gcpfake.NewGCS(t)
+	bucket := g.Bucket(t, digestBucket).Bucket
+	const own = "20261020-101500-aaaa"
+	digestRecord(t, bucket, repoSlug, own, time.Date(2026, 10, 20, 11, 0, 0, 0, time.UTC), 1, nil)
+	store := runstore.Open(bucket, repoSlug, runID)
+
+	before := len(g.Requests())
+	_, _, err := runner.DigestRecords(context.Background(), store, []string{own, "../other/20261020-110000-cccc"})
+	if err == nil || !strings.Contains(err.Error(), "not a run ID") {
+		t.Fatalf("err = %v; want the manifest refused for an ID that is not a run ID", err)
+	}
+	if calls := digestCalls(g, before); len(calls) != 0 {
+		t.Errorf("the bucket got %d calls before the manifest was refused; want none: %v", len(calls), calls)
 	}
 }
 

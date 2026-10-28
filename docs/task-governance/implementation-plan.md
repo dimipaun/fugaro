@@ -392,7 +392,8 @@ routine launches it: `fugaro run --recipe run-digest "periodic run review"` (R8)
   (regenerated).
 - **Interfaces.** Prints a learning draft: the pattern or flag, the figures (D323's set, run IDs
   replaced by `run-1`… because the draft leaves the repository), the lesson the person writes, and
-  the exact `gh issue create --web --template skill_learning.yml` line. Sends nothing.
+  the exact `gh issue create --web -R dimipaun/fugaro` line, with the "Skill learning" form to pick
+  in the chooser `--web` opens (`--web` ignores `--template`). Sends nothing.
 - **Tests.** `TestSubmitDraftHasNoRepoNameOrRunID`, `TestSubmitDraftSendsNothing` (no network seam
   called).
 - **Command.** `go run ./internal/clidoc && GOFLAGS=-p=2 go test ./internal/cli ./internal/clidoc -run 'SubmitDraft|CliRef' -count=1 -timeout 30m`
@@ -501,7 +502,10 @@ routine launches it: `fugaro run --recipe run-digest "periodic run review"` (R8)
 **T7.1 — the configuration**
 - **Files.** `internal/config/config.go`, `internal/config/policy.go`, `internal/config/validate.go`,
   `internal/config/layer.go` (the project layer), `internal/policy/merge.go` (the tighten-only
-  merge, beside `tightenCap`), `internal/projectpolicy/policy.go` (the published project layer),
+  merge, beside `tightenCap`), `internal/projectpolicy/policy.go` (the published project layer,
+  read and not written: the policy node carries no layer block — no `rigor` member either — so the
+  layer file published by `fugaro config publish FILE` is governance's only home, and
+  `internal/config`'s `TestGovernanceCeilingReachesTheResolvedConfig` is what says so),
   `schemas/fugaro.schema.json`, `schemas/project-layer.schema.json`.
 - **Keys and defaults.** `governance.review_ratio` (N, default 5) and `governance.review_floor_calls`
   (default 20); `governance.stage_budget.implement` (default 0.7 of the per-run cap),
@@ -713,7 +717,7 @@ dependencies.
 | `website/content/cli-reference.md` (generated) | T2.3 (L3), T8.1 (L4), T4.2 (L5) |
 | `internal/recipe/recipe.go`, `internal/recipe/catalog/run-digest.yaml` (new), `schemas/recipe.schema.json` | T3.1 (L0) |
 | `internal/config/config.go`, `internal/policy/merge.go`, `schemas/fugaro.schema.json`, `schemas/project-layer.schema.json` | T7.1 (L0), T8.1 (L4) |
-| `internal/config/policy.go`, `internal/config/validate.go`, `internal/config/layer.go`, `internal/projectpolicy/policy.go` | T7.1 (L0) |
+| `internal/config/policy.go`, `internal/config/validate.go`, `internal/config/layer.go` | T7.1 (L0) |
 | `internal/config/defaults.go` | T8.1 (L4) |
 | `plugin/skills/working/SKILL.md`, `reference/periodic-reviews.md` (new), the new plugin test | T4.1 (L4) |
 | `plugin/skills/working/reference/diagnose.md` | T6.2 (L5) |

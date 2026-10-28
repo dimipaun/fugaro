@@ -3110,6 +3110,11 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := r.gateRigor(o, repo, lc, cfg); err != nil {
 		return err
 	}
+	// The governance: block, in either file, is the same kind of break, on
+	// governanceSince.
+	if err := r.gateGovernance(o, repo, lc, cfg); err != nil {
+		return err
+	}
 	if !o.forget {
 		w := r.w
 		if o.printVars {
@@ -3490,6 +3495,22 @@ func (r *initRun) gateRigor(o *initOptions, repo string, lc *localcfg.Config, cf
 		w = r.cmd.ErrOrStderr()
 	}
 	return refuseRigorSkew(repo, cfg.RepoRigorSet, cfg.Layer.SetsRigor(), lc.BaseImage(config.BaseKind), w)
+}
+
+// gateGovernance is fugaro update --repo's gate for governanceSince:
+// refuseGovernanceSkew, with gateRigor's escapes and for its reason — the
+// repository's half is the key being written (RepoGovernanceSet) rather than
+// the block being set, because an explicit null (`governance:`) is a line an
+// older runner's KnownFields decoder refuses too.
+func (r *initRun) gateGovernance(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseGovernanceSkew(repo, cfg.RepoGovernanceSet, cfg.Layer.SetsGovernance(), lc.BaseImage(config.BaseKind), w)
 }
 
 // checkVertexBudget refuses a repository whose fugaro.yaml authenticates
