@@ -1310,6 +1310,48 @@ main p {
   border-style: dashed;
 }
 
+/* ---- The launch confirmation window (design section 5.1 rule 11) ----------
+ *
+ * The window's document is hand-written HTML like the picker's, but its hooks
+ * are **classes rather than ids**: the scan in `installations-view.test.ts`
+ * reads this file for id selectors and holds every one of them to the ids
+ * `installations.html` declares, so a second document's ids here would read as
+ * undeclared there.
+ *
+ * The task box is the reason this section exists. Rule 11 shows the **whole**
+ * task text, never cut, so the box is bounded and scrolls rather than the
+ * document shortening it -- and a 16 KiB task that pushed the two buttons off
+ * the window would be a window an operator cannot answer.
+ */
+
+pre.confirm-task {
+  max-height: 40vh;
+  margin: 0 0 var(--space-md);
+  padding: var(--space-xs);
+  overflow: auto;
+  color: var(--text);
+  background: var(--surface-alt);
+  border: var(--rule-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+/* The two answers are buttons and a button's boundary is `--border-strong` (the
+ * role table the picker's controls read from): Cancel is the default, so it is
+ * the one drawn first and the one a keyboard reaches. */
+.confirm-actions button {
+  padding: var(--space-2xs) var(--space-xs);
+  color: var(--text);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.confirm-actions button:hover {
+  color: var(--accent-ink);
+}
+
 /* ---- Graph (design section 2.11) ------------------------------------------
  *
  * The Graph draws one model twice: a picture, and the list that is the same
