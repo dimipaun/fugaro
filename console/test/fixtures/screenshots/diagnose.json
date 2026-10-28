@@ -65,6 +65,69 @@
   "draft_note": "the pull request is a draft until the flaky test is settled",
   "route_by": { "agent": 4.11, "review": 1.62, "verify": 0.69 },
   "model_by": { "claude-sonnet-4-5-20250929": 5.02, "claude-opus-4-1": 1.4 },
+  "stages": [
+    {
+      "name": "implement",
+      "started_at": "2026-10-20T10:31:02Z",
+      "duration_s": 612,
+      "calls": 412,
+      "agents": 3,
+      "model_usd": 3.2,
+      "model": "claude-sonnet-4-5-20250929",
+      "model_notional_usd": 7.4
+    },
+    {
+      "name": "review",
+      "started_at": "2026-10-20T10:41:14Z",
+      "duration_s": 344,
+      "calls": 268,
+      "agents": 2,
+      "model_usd": 2.1,
+      "model": "claude-opus-4-1",
+      "model_notional_usd": 4.95
+    },
+    {
+      "name": "verify",
+      "started_at": "2026-10-20T10:46:58Z",
+      "duration_s": 246,
+      "calls": 0,
+      "model_usd": 1.12,
+      "model": "claude-sonnet-4-5-20250929",
+      "model_notional_usd": 2.55
+    }
+  ],
+  "tolerated": {
+    "total": 5,
+    "findings": [
+      {
+        "title": "the requeue path keeps the legacy retry ceiling",
+        "label": "internal/queue/retry.go",
+        "mode": "startup",
+        "likelihood": 2,
+        "impact": 3,
+        "fix_cost": 1,
+        "class": "tolerable"
+      },
+      {
+        "title": "the retry table test does not cover the drain branch",
+        "label": "internal/queue/retry_test.go",
+        "mode": "startup",
+        "likelihood": 2,
+        "impact": 1,
+        "fix_cost": 1,
+        "class": "tolerable"
+      },
+      {
+        "title": "the queue document still describes the retired table",
+        "label": "docs/queue.md",
+        "mode": "pro",
+        "likelihood": 1,
+        "impact": 1,
+        "fix_cost": 2,
+        "class": "cosmetic"
+      }
+    ]
+  },
   "reported_usd": 6.51,
   "charge_usd": 6.42,
   "reported_warning": "the providers reported $6.51 for these calls and the price table charged $6.42",

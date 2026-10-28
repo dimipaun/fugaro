@@ -244,6 +244,17 @@ interface Screen {
   readonly ledgerModel: string
   readonly ledgerCompute: string
   readonly ledgerTotal: string
+  /** the run's own spend by stage, from the document's top-level `stages` */
+  readonly spendStageNames: readonly string[]
+  readonly spendStageCalls: readonly string[]
+  readonly spendStageAgents: readonly string[]
+  readonly spendStageAgentReasons: readonly (string | null)[]
+  readonly spendStageUsd: readonly string[]
+  /** the findings the run's mode tolerated, from the document's `tolerated`
+   * block: the total the block carries and the entries it lists */
+  readonly toleratedTotal: string
+  readonly toleratedTitles: readonly string[]
+  readonly toleratedModes: readonly string[]
   readonly stageNames: readonly string[]
   readonly stagePassed: readonly string[]
   readonly stageTests: readonly string[]
@@ -302,6 +313,18 @@ function screen(page: Page): Promise<Screen> {
       ledgerModel: text('.run-ledger-model-value'),
       ledgerCompute: text('.run-ledger-compute-value'),
       ledgerTotal: text('.run-ledger-total-value'),
+      spendStageNames: texts('.run-spend-stages .run-spend-stage-name'),
+      spendStageCalls: texts('.run-spend-stages .run-spend-stage-calls'),
+      spendStageAgents: texts('.run-spend-stages .run-spend-stage-agents'),
+      // A stage whose `calls`/`agents` pointer the document left absent is not a
+      // stage that counted zero: the cell says `n/a` and its title says which.
+      spendStageAgentReasons: all('.run-spend-stages .run-spend-stage-agents').map((one) =>
+        one.getAttribute('title'),
+      ),
+      spendStageUsd: texts('.run-spend-stages .run-spend-stage-usd'),
+      toleratedTotal: text('.run-tolerated-total'),
+      toleratedTitles: texts('.run-tolerated-title'),
+      toleratedModes: texts('.run-tolerated-mode'),
       stageNames: texts('.run-stages .run-stage-name'),
       stagePassed: texts('.run-stages .run-stage-passed'),
       stageTests: texts('.run-stages .run-stage-tests'),
@@ -424,6 +447,40 @@ const DIAGNOSIS: JSONDoc = {
   report_path: 'runs/example/20261015-110030-4a5b/report.json',
   route_by: { 'anthropic-api': 0.9 },
   model_by: { 'claude-sonnet-5': 1.25 },
+  // The run's own per-stage record, whose `model_usd` is the ledger's model
+  // figure split the way the CLI counted it. `verify` carries no `agents`
+  // pointer at all: the CLI's own `StageTiming` writes those as pointers, so an
+  // absent one means the stage was not counted, not that it counted zero.
+  stages: [
+    { name: 'implement', duration_s: 612, calls: 412, agents: 3, model_usd: 0.8, model_notional_usd: 1.84 },
+    { name: 'review', duration_s: 344, calls: 268, agents: 2, model_usd: 0.3, model_notional_usd: 0.71 },
+    { name: 'verify', duration_s: 60, calls: 41, model_usd: 0.15, model_notional_usd: 0.34 },
+  ],
+  // The mode let these through, and the block's `total` is above the two it
+  // lists: the CLI bounds the list, so a shorter list is not the whole of it.
+  tolerated: {
+    total: 3,
+    findings: [
+      {
+        title: 'the retry ceiling differs between the two paths',
+        label: 'internal/queue/retry.go',
+        mode: 'startup',
+        likelihood: 2,
+        impact: 3,
+        fix_cost: 1,
+        class: 'tolerable',
+      },
+      {
+        title: 'the table test misses the drain branch',
+        label: 'internal/queue/retry_test.go',
+        mode: 'startup',
+        likelihood: 2,
+        impact: 1,
+        fix_cost: 1,
+        class: 'tolerable',
+      },
+    ],
+  },
   reported_usd: 1.2,
   charge_usd: 1.25,
 }
@@ -570,12 +627,13 @@ test.describe('the Run detail screen', () => {
     expect(drawn.stageNames).toEqual(['build', 'test'])
     expect(drawn.stagePassed).toEqual(['passed', 'failed'])
     expect(drawn.stageTests).toEqual(['0', '1,182'])
-    // Per-stage spend is on no document this tree produces: `diagnose` reports
-    // it by route and by model, so the cell says `n/a` and its title says what
-    // the document gives instead rather than inventing a split.
+    // Per-stage spend is on no verify record: the run's spend by stage is the
+    // document's top-level `stages`, which the panel above the timeline draws,
+    // so the cell says `n/a` and its title names that panel rather than
+    // inventing a split.
     expect(drawn.stageSpend).toEqual(['n/a', 'n/a'])
     for (const reason of drawn.stageSpendReasons) {
-      expect(reason).toContain('by route and by model')
+      expect(reason).toContain('spend by stage')
     }
     // A `runview.Row` carries no deadline, so each stage draws the reason in
     // the cell's title -- the same two outcomes `putText` has: the safe thing
@@ -584,6 +642,31 @@ test.describe('the Run detail screen', () => {
     for (const reason of drawn.stageDeadlineReasons) {
       expect(reason).toContain('row.deadline')
     }
+  })
+
+  test('draws the run’s spend by stage and the findings the mode tolerated', async () => {
+    await mount(DIAGNOSIS, logLines(3), LOG_LINK, ARRIVALS, null, 'light')
+    const drawn = await screen(page)
+
+    expect(drawn.spendStageNames).toEqual(['implement', 'review', 'verify'])
+    // The calls and the sub-agents a stage was counted at, and the dollars its
+    // model spend came to: every figure is one the document wrote.
+    expect(drawn.spendStageCalls).toEqual(['412', '268', '41'])
+    expect(drawn.spendStageAgents).toEqual(['3', '2', 'n/a'])
+    expect(drawn.spendStageUsd).toEqual(['$0.80', '$0.30', '$0.15'])
+    // `verify` carries no `agents` pointer, which is not a stage that counted
+    // zero: the cell says `n/a` and its title says what the absence means.
+    expect(drawn.spendStageAgentReasons[2]).toContain('not counted for this stage')
+    expect(drawn.spendStageAgentReasons[0]).toBeNull()
+
+    // The mode's own word for each finding, and the block's total drawn beside
+    // the entries rather than replaced by their count.
+    expect(drawn.toleratedTotal).toContain('3')
+    expect(drawn.toleratedTitles).toEqual([
+      'the retry ceiling differs between the two paths',
+      'the table test misses the drain branch',
+    ])
+    expect(drawn.toleratedModes).toEqual(['Startup', 'Startup'])
   })
 
   test('draws a deadline the row does carry, and only then', async () => {
