@@ -247,23 +247,26 @@ func TestRigorSinceIsTheReleaseRigorShipsIn(t *testing.T) {
 	}
 }
 
-// rigorSkewHead and rigorSkewWorkflow are the repository file the launch tests
-// below check out: the workflow svc, whose job the fixture has.
+// configSkewHead and configSkewWorkflow are the repository file the config-key
+// launch tests below check out — rigor_skew_test.go's and
+// governance_skew_test.go's alike: the workflow svc, whose job the fixture
+// has.
 const (
-	rigorSkewHead     = "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nagent: { auth: api-key }\n"
-	rigorSkewWorkflow = "workflows:\n  svc: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+	configSkewHead     = "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nagent: { auth: api-key }\n"
+	configSkewWorkflow = "workflows:\n  svc: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 )
 
-// rigorSkewCheckout makes the working directory a checkout of acme/other whose
+// configSkewCheckout makes the working directory a checkout of acme/other whose
 // fugaro.yaml is repoYAML, committed at the ref a launch of it resolves
-// (rigorSkewHead's git.base_branch: develop), and returns the directory.
+// (configSkewHead's git.base_branch: develop), and returns the directory.
 //
-// The commit is the point: rigorLaunchSources' judge is the file the run
+// The commit is the point: both config-key source reads' judge
+// (rigorLaunchSources, governanceLaunchSources) is the file the run
 // checks out rather than the launcher's working tree (cascadeRefConfig), and a
 // checkout with nothing committed leaves readFugaroYAMLAtRef failing, so every
 // test that used one fell back to checkoutConfig and exercised the ref read
 // nowhere.
-func rigorSkewCheckout(t *testing.T, f *cloudFixture, repoYAML string) string {
+func configSkewCheckout(t *testing.T, f *cloudFixture, repoYAML string) string {
 	t.Helper()
 	testutil.IsolateGit(t)
 	f.run.AddJob(gcp.JobName(mustSlug("github", "acme/other"), "svc"), "2", "4Gi")
@@ -307,7 +310,7 @@ func TestRunRefusesRigorOnAnOlderBaseImage(t *testing.T) {
 	} {
 		t.Run(c.rel, func(t *testing.T) {
 			f := newCloudFixture(t)
-			rigorSkewCheckout(t, f, rigorSkewHead+"rigor: { default: hotfix }\n"+rigorSkewWorkflow)
+			configSkewCheckout(t, f, configSkewHead+"rigor: { default: hotfix }\n"+configSkewWorkflow)
 			writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+c.rel)
 			_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
 			if !c.refused {
@@ -344,7 +347,7 @@ func TestRunRefusesRigorOnAnOlderBaseImage(t *testing.T) {
 // run that dies at bootstrap on a line the operator did write.
 func TestRunRefusesANullRigorBlockOnAnOlderBaseImage(t *testing.T) {
 	f := newCloudFixture(t)
-	rigorSkewCheckout(t, f, rigorSkewHead+"rigor:\n"+rigorSkewWorkflow)
+	configSkewCheckout(t, f, configSkewHead+"rigor:\n"+configSkewWorkflow)
 	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, rigorSince, -1))
 	wantRefused(t, f, "fugaro.yaml's rigor: block of acme/other needs a job image whose runner knows the rigor: block (fugaro "+rigorSince+" or later)",
 		"run", "--run-id", "20261008-100000-abcd", "A task")
@@ -395,7 +398,7 @@ func TestRunRefusesRigorOnACloneWorkflowsOlderBaseImage(t *testing.T) {
 	f := newCloudFixture(t)
 	older := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, rigorSince, -1)
 	f.appendConfig(t, "base_images: {base: "+older+"}\n")
-	rigorSkewCheckout(t, f, rigorSkewHead+"rigor: { default: hotfix }\n"+
+	configSkewCheckout(t, f, configSkewHead+"rigor: { default: hotfix }\n"+
 		"workflows:\n  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n")
 	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
 	if ExitCode(err) != ExitUserError {
@@ -416,7 +419,7 @@ func TestRunRefusesRigorOnACloneWorkflowsOlderBaseImage(t *testing.T) {
 // title gate has (a launch with no --title carries no field to refuse).
 func TestRunDoesNotGateAFileThatWritesNoRigor(t *testing.T) {
 	f := newCloudFixture(t)
-	rigorSkewCheckout(t, f, rigorSkewHead+rigorSkewWorkflow)
+	configSkewCheckout(t, f, configSkewHead+configSkewWorkflow)
 	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, rigorSince, -1))
 	if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task"); err != nil {
 		t.Fatalf("a file that writes no rigor: block must not be gated: %v", err)
@@ -431,11 +434,11 @@ func TestRunDoesNotGateAFileThatWritesNoRigor(t *testing.T) {
 // dies at bootstrap on the key.
 func TestRunJudgesTheRefsFileNotTheWorkingTree(t *testing.T) {
 	older := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, rigorSince, -1)
-	withBlock := rigorSkewHead + "rigor: { default: hotfix }\n" + rigorSkewWorkflow
+	withBlock := configSkewHead + "rigor: { default: hotfix }\n" + configSkewWorkflow
 	t.Run("the ref writes it", func(t *testing.T) {
 		f := newCloudFixture(t)
-		dir := rigorSkewCheckout(t, f, withBlock)
-		testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": rigorSkewHead + rigorSkewWorkflow})
+		dir := configSkewCheckout(t, f, withBlock)
+		testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": configSkewHead + configSkewWorkflow})
 		writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", older)
 		_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
 		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro.yaml's rigor: block of acme/other") {
@@ -444,7 +447,7 @@ func TestRunJudgesTheRefsFileNotTheWorkingTree(t *testing.T) {
 	})
 	t.Run("the working tree writes it", func(t *testing.T) {
 		f := newCloudFixture(t)
-		dir := rigorSkewCheckout(t, f, rigorSkewHead+rigorSkewWorkflow)
+		dir := configSkewCheckout(t, f, configSkewHead+configSkewWorkflow)
 		testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": withBlock})
 		writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", older)
 		if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task"); err != nil {

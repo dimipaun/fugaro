@@ -164,3 +164,35 @@ func TestPolicyPricesBuildOnTheRunsOwnTable(t *testing.T) {
 		t.Errorf("%s: the owner's override did not apply: %+v", ds, m.Rates)
 	}
 }
+
+// TestPolicyKeyPathGovernance: a governance key is reported under the
+// governance: block of fugaro.yaml, which is where it is written, and not
+// under budget:, which is where the cost and model policy lives. Both readers
+// of the path — the ignored-key warning a run logs (policyRecord) and the
+// problem fugaro validate annotates (internal/cli/validate.go) — name a line
+// of the file, so a governance key sent to budget.<key> would send its
+// operator to a block that cannot carry it.
+func TestPolicyKeyPathGovernance(t *testing.T) {
+	for _, key := range []string{
+		policy.KeyReviewRatio, policy.KeyReviewFloorCalls, policy.KeyMaxSubagents,
+		policy.KeyStageBudgetImplement, policy.KeyStageBudgetReview, policy.KeyStageBudgetFix,
+		policy.KeyStageTokensImplement, policy.KeyStageTokensReview, policy.KeyStageTokensFix,
+		policy.KeyStageTimeoutImplement, policy.KeyStageTimeoutReview, policy.KeyStageTimeoutFix,
+	} {
+		if got := PolicyKeyPath(key); got != "governance."+key {
+			t.Errorf("PolicyKeyPath(%q) = %q, want governance.%s", key, got, key)
+		}
+	}
+	for _, c := range []struct{ key, want string }{
+		{policy.KeyPerRunUSD, "budget.per_run_usd"},
+		{policy.KeyMode, "budget.mode"},
+		{policy.KeyAllowedModels, "budget.allowed_models"},
+		{policy.KeyMaxRunTokens, "agent.max_run_tokens"},
+		{policy.KeyMaxOutputCoder, "agent.max_output_tokens.coder"},
+		{policy.KeyMaxOutputReviewer, "agent.max_output_tokens.reviewer"},
+	} {
+		if got := PolicyKeyPath(c.key); got != c.want {
+			t.Errorf("PolicyKeyPath(%q) = %q, want %q", c.key, got, c.want)
+		}
+	}
+}
