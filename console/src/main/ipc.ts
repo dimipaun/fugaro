@@ -1128,7 +1128,7 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     shape: 'argv',
     command: 'run',
     value: '--recipe',
-    why: 'picks the recipe (task loop) a run is held to, a reviewed `fugaro.yaml` or project-layer fact rather than screen state',
+    why: 'picks the recipe (task loop) a run is held to, a reviewed configuration fact or project-layer one rather than screen state',
     where: 'internal/cli/run.go:266',
   },
   {
@@ -1170,7 +1170,7 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     shape: 'argv',
     command: 'run',
     value: '--no-compression',
-    why: 'turns agent.compression off for one run, overriding `fugaro.yaml`: a configuration change that is reviewed where it lives',
+    why: 'turns agent.compression off for one run, overriding the project’s reviewed configuration: a change that is reviewed where it lives',
     where: 'internal/cli/run.go:272',
   },
   {

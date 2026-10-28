@@ -866,9 +866,18 @@ describe('the entry point is wired to the handshake', () => {
     expect(indexSource).toContain('resolveHandshakeBinary(')
     expect(indexSource).toContain('privateWorkingDirectory()')
     // The resolver's reason quotes what the binary printed, so the entry point
-    // hands over the category and never the reason.
-    expect(indexSource).toContain('versionReadFrom(resolution)')
-    expect(indexSource).not.toContain('.reason')
+    // hands over the category and never the reason -- **of the reader**, which
+    // is what this pair is about, and the reason the two assertions below read
+    // `readCliVersion`'s own body rather than the file. `launchLookUp`
+    // (V2.5.1a part 2a) does hand `resolution.reason` on, as the `TargetLookup`
+    // refusal the launcher's screen draws, and that is the launch's seam in
+    // `launch.ts` rather than a version category: a file-wide scan would make
+    // the reader's rule a rule about a function it does not govern, and the
+    // next legitimate reason would be argued away instead of the reader being
+    // held.
+    const reader = bodyOf('async function readCliVersion()')
+    expect(reader).toContain('versionReadFrom(resolution)')
+    expect(reader).not.toContain('.reason')
     expect(indexSource).not.toContain('child_process')
   })
 
@@ -1038,8 +1047,8 @@ describe('the entry point puts the surface on ipcMain, and only when it may', ()
     // every read; now the surface is `createBoundSource`, whose reads resolve
     // the installation the picker made active and build the one `CliSource` for
     // it. What is still true, and is what this test is for: **the entry point
-    // starts no child itself**. It names no spawn, and the one binary it
-    // resolves is the handshake's -- everything else goes through the source,
+    // starts no child itself**. It names no spawn, and the two binaries it
+    // resolves are named below -- everything else goes through the source,
     // where `src/source/cli.ts` is the only place a process is created.
     expect(indexSource).toContain('createBoundSource(')
     // The installation is read at message time, from the picker, and the
@@ -1049,10 +1058,18 @@ describe('the entry point puts the surface on ipcMain, and only when it may', ()
     expect(indexSource).toContain('installation: activeBinding')
     expect(indexSource).not.toContain('child_process')
     expect(indexSource).not.toContain('spawn(')
-    // The one resolution in the file is the handshake's, and it is the only
-    // `resolveBinary` call: an operation that resolved a binary for itself would
-    // be a second answer to "which fugaro is this console driving".
-    expect(indexSource.match(/resolve\w*Binary\(/g) ?? []).toHaveLength(1)
+    // The two resolutions in the file, and both by name. V2.5.1a part 2a added
+    // the second one on purpose: a launch resolves the CLI **the record names**
+    // (`resolveLaunchBinary`, `src/main/installations.ts`) -- inside that
+    // record's distribution, or at its own `binaryPath` -- instead of walking
+    // the host's locations, which is the substitution the record exists to
+    // prevent. Naming both keeps the guard this assertion was: a third site, or
+    // an operation that resolved a binary for itself, is still a second answer
+    // to "which fugaro is this console driving".
+    expect([...(indexSource.match(/resolve\w*Binary\(/g) ?? [])].sort()).toEqual([
+      'resolveHandshakeBinary(',
+      'resolveLaunchBinary(',
+    ])
     expect(indexSource).not.toContain('FUGARO_BIN')
     // The kill switch has no operation of its own (C10), so nothing here names
     // one: the field travels inside `live.watch`.

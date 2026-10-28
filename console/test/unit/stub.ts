@@ -62,9 +62,11 @@ export interface StubAnswer {
 
 /** StubScenario keys answers by the command the stub was asked for: the command
  * path the *child* sees, which `commandKey` reads off its argv. The keys are
- * `STUB_COMMAND_KEYS` -- `version`, `watch`, `budget show`, `report`,
- * `runs ls`, `diagnose`, `logs`, `logs --url`, `secrets ls`, `accounts ls`,
- * `doctor` -- derived from the console's spawn table rather than written here.
+ * exactly `STUB_COMMAND_KEYS`, derived from the console's spawn table rather
+ * than written here, and deliberately not spelled out again in this sentence:
+ * the list that used to be here had drifted twice (it was missing `config
+ * list`, `coordinator status` and `run`), and `stub.test.ts` is where a written
+ * out list belongs, because a test is what fails when the table grows.
  * `installStub` refuses a key this list cannot produce, so the spawn table's
  * spelling (`logs --json`) is a loud error and not a silent fallback. */
 export interface StubScenario {
