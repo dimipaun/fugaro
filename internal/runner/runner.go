@@ -2854,8 +2854,11 @@ func (r *run) finalize(ctx context.Context) error {
 	}
 	// A report run's last word before anything is pushed: the files it commits
 	// under docs/fugaro-reviews/ are the runner's own, byte for byte
-	// (digest.go, T3.2's call, which T3.3 fills).
-	if err := r.digestFinalize(ctx); err != nil {
+	// (digest.go, T3.2's call, which T3.3 fills). The commit it put the branch
+	// back to is held to once more after the leftover commit below, because
+	// that is the last moment before the push.
+	step, err := r.digestFinalize(ctx)
+	if err != nil {
 		return err
 	}
 	base := r.cfg.Git.BaseBranch
@@ -2876,6 +2879,10 @@ func (r *run) finalize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("committing leftover work: %w", err)
 	}
+	// A report run's branch must still be the commit the digest step made, and
+	// nothing committed on top of it: what finalize commits is what the pull
+	// request carries (digest.go's digestRefuseChangedBranch).
+	r.digestRefuseChangedBranch(ctx, step, committed)
 	if r.follow == nil {
 		// A follow-up's branch is already ahead of its base: when its
 		// agent adds nothing, the report says so rather than an empty
@@ -3172,6 +3179,13 @@ func openFindings(rs []runstore.ReviewSummary) *runstore.ReviewSummary {
 // and one file name, and merging both branches would be a conflict over one
 // path rather than a union of two.
 func (r *run) fileOpenItems(ctx context.Context) bool {
+	// A report run files nothing, whatever its repository configures: its
+	// branch is the reports and nothing else (digest.go, T3.3), and an item is
+	// a model-written finding about the run's review, which is exactly what the
+	// digest step's own commit must not carry.
+	if r.digest {
+		return false
+	}
 	// A halted or cancelled run was stopped mid-loop: its last round is not
 	// one it finished acting on, and its push needs the time a filing spends.
 	if r.haltValue() != nil || r.isCancelled() {

@@ -80,6 +80,15 @@ const (
 	// repository cannot spend the bound before the walk reaches a report run's
 	// own record.
 	digestOpenPRs = 5
+	// digestOpenAsks bounds the provider asks the walk makes (digestOpenBranches):
+	// one per record of the manifest whose pull request the step cannot rule out
+	// for free, and the manifest may name up to 5000 records (T3.6). Generous
+	// on purpose -- a repository whose runs use its own recipe pays one ask per
+	// such run, and the window is 40 days -- but finite, because a record is
+	// untrusted input and the calls are the one thing here that costs money and
+	// time. The walk stops at the bound with a warning; a report run behind it
+	// is not seen, and the period it holds is written again.
+	digestOpenAsks = 500
 	// digestMaxPR bounds a pull-request number read from a record: a record is
 	// untrusted input, and a number outside this is not one this provider
 	// serves (internal/digest caps its own the same way).
@@ -145,21 +154,28 @@ func (r *run) digestStep(ctx context.Context) error {
 // ready: the reason is recorded and the pull request stays a draft, whatever
 // the branch holds, for a person to look at.
 //
+// The step's commit is returned, and "" when this run is no report run's or the
+// reports could not be put back: finalize reads the branch's tip against it once
+// the leftover commit has run (digestRefuseChangedBranch), because the reset is
+// the runner's own work over a checkout whose .git is the agent's -- a filter
+// driver or a replacement object could still leave that commit carrying other
+// bytes.
+//
 // The error is for the call site's shape and is never produced: a run whose
 // reports cannot be put back is a run that failed with a reason a person reads
 // (r.fail), and returning from here instead would leave finalize before it
 // records what happened, so the run would end without the reason the report run
 // was refused.
-func (r *run) digestFinalize(ctx context.Context) error {
+func (r *run) digestFinalize(ctx context.Context) (string, error) {
 	if !r.digest {
-		return nil
+		return "", nil
 	}
 	defer digestStepCommits.Delete(r.d.StateDir)
 	step, err := r.digestStepCommit()
 	if err != nil {
 		r.d.Log.Warn("the reports the digest step generated cannot be put back", "err", r.redact(err.Error()))
 		r.fail(r.redact(err.Error()))
-		return nil
+		return "", nil
 	}
 	if changed, err := r.repo.ChangedFiles(ctx, step); err == nil && len(changed) > 0 {
 		// What a stage wrote is dropped here rather than shown on the pull
@@ -172,18 +188,56 @@ func (r *run) digestFinalize(ctx context.Context) error {
 	if err := r.repo.ResetTo(ctx, step); err != nil {
 		r.d.Log.Warn("putting the branch back to the digest step's commit failed", "err", r.redact(err.Error()))
 		r.fail("the branch could not be put back to the commit the digest step made, so the reports in the pull request are not the generator's")
-		return nil
+		return step, nil
 	}
-	return nil
+	return step, nil
+}
+
+// digestRefuseChangedBranch refuses a report run whose branch is no longer the
+// digest step's own commit once the leftover commit has run, which is the last
+// moment before the push: what finalize commits from here on is what the pull
+// request carries, so a commit it made -- or a HEAD that is not the step's --
+// is the agent's bytes in the commit that is pushed.
+//
+// The reset above cannot be the whole guard, because it is git reading a
+// checkout whose .git the agent wrote: a clean filter with the .git/info/
+// attributes that switch it on makes `git add -A` stage different bytes than
+// the step committed, and a replacement object makes what git reads a tree of
+// the agent's choosing. Nothing that leaves HEAD at the step's commit and
+// stages nothing can put other bytes in the push, since a push sends commits.
+//
+// step is the commit the step made, "" when this run is no report run's or the
+// reports could not be put back -- a run that already failed, and one this
+// refuses again for the same reason a person reads.
+func (r *run) digestRefuseChangedBranch(ctx context.Context, step string, committed bool) {
+	if !r.digest {
+		return
+	}
+	if committed {
+		r.fail("a stage left work that was committed at finalize, after the commit the digest step made, so the reports in the pull request are not the generator's")
+		return
+	}
+	head, err := r.repo.HeadSHANoReplace(ctx)
+	switch {
+	case err != nil:
+		r.d.Log.Warn("reading the branch's tip for the digest step's own commit failed", "err", r.redact(err.Error()))
+		r.fail("the branch's tip could not be read, so nothing says the reports in the pull request are the generator's")
+	case step == "" || head != step:
+		r.fail("the branch is not at the commit the digest step made, so the reports in the pull request are not the generator's")
+	}
 }
 
 // digestStepCommits is the commit the digest step made, per state directory:
-// the step's word to this process, which no stage of the run can reach. The
-// branch cannot say it and neither can a verify record -- the checkout's history
-// is the agent's while a stage runs, and so is the state directory it writes the
-// pull request's text in, so a stage that amends the step's commit and rewrites
-// the record naming it leaves both looking like the step's own work
-// (digestStepCommit).
+// the step's word to this process, which no stage's git or state-directory
+// writes can change. The branch cannot say it and neither can a verify record --
+// the checkout's history is the agent's while a stage runs, and so is the state
+// directory it writes the pull request's text in, so a stage that amends the
+// step's commit and rewrites the record naming it leaves both looking like the
+// step's own work (digestStepCommit). What a stage can still reach is this
+// process's memory, the way it reaches anything else the runner holds (it runs
+// as the same user and can read /proc; SECURITY.md, "What one run's agent can
+// reach"), which is why the commit this holds is checked against the record
+// before it is put back.
 var digestStepCommits sync.Map
 
 // rememberDigestStep records the commit the step just made, before the recipe's
@@ -204,8 +258,9 @@ func (r *run) rememberDigestStep(ctx context.Context) error {
 // come from the run's own history -- and that history is the agent's while a
 // stage runs, so being on it is not enough to be the step's commit. What is read
 // instead is what the step recorded in this process before any stage ran
-// (rememberDigestStep), which no stage can write; the run's oldest test record
-// (verify.Records, oldest first) is then checked against it, because the step
+// (rememberDigestStep), which no stage's git or state-directory writes can
+// change; the run's oldest test record (verify.Records, oldest first) is then
+// checked against it, because the step
 // verifies its own commit before any stage runs (digestStep), so that record is
 // the one made on the step's commit. A stage that amended the commit and rewrote
 // the record's head_sha to name its own leaves a branch that still holds a
@@ -416,9 +471,15 @@ func digestDuePeriods(now time.Time) []digest.Period {
 // however many newer records the manifest holds. Everything about the record is
 // untrusted input, so the number is bounded and the branch name is checked
 // against the shape every run branch has before it reaches a refspec.
+//
+// The asks are bounded of their own (digestOpenAsks), because the manifest may
+// name up to 5000 records and every one of them whose recipe is not the
+// catalog's costs a call. The walk stops at the bound with a warning: what it
+// has not asked about it treats as a run that is no report run's, so a period
+// such a run holds is written again rather than left unwritten.
 func (r *run) digestOpenBranches(ctx context.Context, recs []runstore.Record) ([]string, error) {
 	var out []string
-	found := 0
+	found, asked := 0, 0
 	for i := range recs {
 		rec := &recs[i]
 		if rec.PR == nil || rec.PR.Number < 1 || rec.PR.Number > digestMaxPR {
@@ -430,9 +491,15 @@ func (r *run) digestOpenBranches(ctx context.Context, recs []runstore.Record) ([
 		if name, ok := stats.ShippedName(rec.Recipe.Name, rec.Recipe.Source); ok && name != digestRecipeName {
 			continue
 		}
+		if asked >= digestOpenAsks {
+			r.d.Log.Warn("the digest step stopped asking whether a record's pull request is an open report run's: it reached its bound of provider asks, so a period an open report run holds may be written again",
+				"asks", digestOpenAsks, "records", len(recs))
+			break
+		}
 		if r.provider == nil {
 			return nil, errors.New("this run has no git provider, so the digest step cannot tell an open report from a merged one")
 		}
+		asked++
 		pr, err := r.provider.PullRequest(ctx, rec.PR.Number)
 		if err != nil {
 			return nil, fmt.Errorf("reading pull request #%d of a report run: %w", rec.PR.Number, err)
