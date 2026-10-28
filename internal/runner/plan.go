@@ -44,10 +44,10 @@ func planOf(rcp *recipe.Recipe, derived bool, a config.Agent, providers map[stri
 	for _, s := range rcp.Steps {
 		// A check step is the gate (checkGateSteps), and an artifact
 		// recipe's plan and render are artifactHasPlan's; neither is a
-		// planStep. A digest step has no arm here either, and cannot reach
-		// one: it is the runner's own work, and bootstrap refuses a recipe
-		// holding it (UsesDigest) before planOf is called, so no plan is
-		// ever built with the step silently dropped.
+		// planStep. A digest step has no arm here either: it is the runner's
+		// own work, dispatched in agentLoop in place of implement
+		// (digest.go), so no plan is ever built with the step silently
+		// dropped.
 		switch s.Kind {
 		case recipe.StepFirstLine:
 			if derived && !a.FirstLineOn(providers) {

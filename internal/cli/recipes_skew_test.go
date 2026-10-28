@@ -127,8 +127,8 @@ func TestCheckRecipeImageDigestSince(t *testing.T) {
 // a checkout: clone workflow, where there is no derived image and so no build
 // record: the same digest step raises checkCloneImageSince's threshold on
 // base_images.base itself, so a release image older than digestSince is
-// refused, while a base image that is not a release only warns (the runner
-// refuses the recipe itself there).
+// refused, while a base image that is not a release only warns (a runner
+// old enough to lack the step refuses the recipe there).
 func TestCheckCloneRecipeImageDigestSince(t *testing.T) {
 	f := newCloudFixture(t)
 	env := fileEnv(t, f)

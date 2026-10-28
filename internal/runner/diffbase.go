@@ -245,9 +245,21 @@ func (r *run) reviewScopeNotOwnCommits() string {
 // reviewScopeSkippedImplement is why this run has no implement set, "" when it
 // has one: the check step's commands.fix committed and the run skipped
 // implement (the Fixed gate, gate.go's skipImplement), so the run's own
-// commits are the fix's work rather than implement's.
+// commits are the fix's work rather than implement's; or the recipe's first
+// step is the digest step, which the runner executes itself and which no
+// implement stage follows at all (digest.go, task-governance T3.2).
+//
+// A report run records ReviewScopeDigestRun: it has no implement stage either,
+// so it has no implement set to compare its range with, but it is not a review
+// run -- a reader has to be able to tell the two apart by the field that says
+// why the comparison does not apply, and the run that wrote the record is not
+// the one a consumer can ask. The digest step is reached before any review
+// round, so the comparison is never taken for a report run.
 func (r *run) reviewScopeSkippedImplement() string {
-	if r.rec.Gate == "fixed" {
+	switch {
+	case r.digest:
+		return runstore.ReviewScopeDigestRun
+	case r.rec.Gate == "fixed":
 		return runstore.ReviewScopeAutofix
 	}
 	return ""

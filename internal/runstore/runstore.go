@@ -196,6 +196,13 @@ const (
 	// ReviewScopeReviewRun: a review run has no implement stage, so it has
 	// no implement set to compare the range with.
 	ReviewScopeReviewRun = "review-run"
+	// ReviewScopeDigestRun: a report run's first step is the digest step
+	// (internal/runner/digest.go, task-governance T3.2), which the runner
+	// executes itself in place of implement: the run has no implement set to
+	// compare the range with either. Its own value, not ReviewScopeReviewRun's:
+	// a reader has to be able to tell a report run from a review run by the
+	// field that says why the comparison does not apply.
+	ReviewScopeDigestRun = "digest-run"
 	// ReviewScopeAutofix: the check step's commands.fix committed and the run
 	// skipped implement (gate.go, the Fixed gate): the run's own work is the
 	// fix's, not implement's.

@@ -321,3 +321,10 @@ func SetArtifactStagedSeam(t *testing.T, f func()) {
 	artifactStagedSeam = f
 	t.Cleanup(func() { artifactStagedSeam = prev })
 }
+
+// DigestRecords runs the digest step's manifest read against store alone, so a
+// test can watch which objects one manifest makes it ask for.
+func DigestRecords(ctx context.Context, store *runstore.Store, ids []string) ([]runstore.Record, int, error) {
+	r := &run{d: Deps{Store: store}}
+	return r.digestRecords(ctx, ids)
+}

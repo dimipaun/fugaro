@@ -174,6 +174,12 @@ type run struct {
 	// gateSteps are the recipe's leading check steps (gate.go), run before
 	// implement; nil for a recipe with none.
 	gateSteps []recipe.Step
+	// digest is whether the resolved recipe's first step is the digest step
+	// (recipe.UsesDigest, T3.1): a report run, whose first step the runner
+	// executes itself -- the reports it writes are its own work, with no
+	// model call and no implement stage (digest.go, T3.2). Set once at
+	// bootstrap, from the recipe the run resolved.
+	digest bool
 	// review is whether this run is mode: review (reviewmode.go, Task 12
 	// of the generic-tool plan): set from spec.ReviewPRs at bootstrap,
 	// before the recipe is resolved, the same way follow is set from
@@ -1440,17 +1446,16 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return err
 	}
 	// The digest step is the runner's own work (T3.2): it writes the run
-	// reports the repository is missing and commits them, with no model
-	// call, and planOf has no arm for it. A run that got past this point
-	// would drop the step, spend a full implement stage on the recipe's
-	// prompt and open an ordinary pull request in its name — the opposite of
-	// what run-digest asks for. Refused here, right after the recipe is
-	// resolved and before any stage: the launcher's image gate refuses a
-	// digest launch against a release image (digestSince,
-	// internal/cli/recipes_skew.go), and this is the backstop for the
-	// launches it cannot judge — a development or hand-pushed base image
-	// only warns there, and a hand-written task.json never passes it at all.
-	//
+	// reports the repository is missing and commits them, with no model call,
+	// and planOf has no arm for it (it must be the first step of a mode:
+	// implement recipe, recipe.order). Marked here, right after the recipe is
+	// resolved and before any stage, and dispatched in agentLoop in place of
+	// implement: a run that reached implement instead would spend a full
+	// stage on the recipe's prompt and open an ordinary pull request in its
+	// name — the opposite of what run-digest asks for. The launcher's image
+	// gate refuses a digest launch against a release image that predates the
+	// step (digestSince, internal/cli/recipes_skew.go).
+	r.digest = recipe.UsesDigest(rcp)
 	// A follow-up cannot run one whatever this image executes: a report run
 	// is launched on its own, because it lists the records it may read and
 	// refuses while another report run of the repository is going
@@ -1459,15 +1464,9 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// report launch only. Refused here, keyed on the RESOLVED recipe, which
 	// is the arm the launcher's own report refusals cannot be: a repository
 	// recipe by name is read here, at this run's base, and not there
-	// (refuseFollowUpReportMode, internal/cli/recipes_resolve.go). It comes
-	// before the arm below so that this is the reason a follow-up is refused
-	// by, on an image that has the step and on one that does not.
+	// (refuseFollowUpReportMode, internal/cli/recipes_resolve.go).
 	if r.follow != nil && recipe.UsesDigest(rcp) {
 		return fmt.Errorf("recipe %s holds the digest step, which writes this repository's run reports; this task continues pull request #%d, and a report run is launched on its own — it lists the records it may read and refuses while another report run of the repository is going — so it cannot continue one", rrec.Name, spec.PR)
-	}
-	if recipe.UsesDigest(rcp) {
-		return fmt.Errorf("recipe %s holds a digest step, which this job image's runner does not execute yet: the run would skip the step and open an ordinary pull request instead. Upgrade the job image of %s workflow %s (fugaro image refresh --repo %s --workflow %s) to one whose runner writes the run reports",
-			rrec.Name, r.spec.Repo, r.spec.Workflow, r.spec.Repo, r.spec.Workflow)
 	}
 	switch {
 	case r.review && rcp.Mode != recipe.ModeReview:
@@ -2101,7 +2100,7 @@ func (r *run) agentLoop(ctx context.Context) {
 			// usual, on top of whatever the gate found (nothing, here).
 		case g.Fixed:
 			r.rec.Gate = "fixed"
-			r.verifyOnce(ctx, verify.KindTest)
+			r.verifyOnce(ctx, verify.KindTest, "the check gate's autofix commit")
 			// A follow-up still runs implement with its own instructions,
 			// on top of the autofix commit the gate already made; only a
 			// first run (nothing else asked of it) skips straight to review.
@@ -2111,6 +2110,39 @@ func (r *run) agentLoop(ctx context.Context) {
 		default:
 			req.Prompt = GatePrompt(req.Prompt, g)
 		}
+	}
+	// The digest step takes implement's place (digest.go, T3.2): a report run's
+	// work is the runner's own, so it starts no implement stage and no model
+	// call before its review. Like the gate, it either ends the run (nothing is
+	// due: no pull request to open) or hands what it committed to the review
+	// loop below, which is the recipe's one senior round.
+	if r.digest {
+		if err := r.digestStep(ctx); err != nil {
+			// A halt recorded while the step read or committed outranks the
+			// error, exactly as it does around the check gate.
+			if h := r.haltValue(); h != nil {
+				r.endHalted(ctx, h)
+				return
+			}
+			if errors.Is(context.Cause(ctx), ErrCancelled) && r.markCancelled() {
+				r.endCancelled(ctx, "cancelled during the digest step")
+			} else {
+				r.failInfra(ctx, err)
+			}
+			return
+		}
+		if r.skipPR {
+			// The step read and committed outside r.stage(), the way the
+			// gate's own commands do, so nothing re-checked a halt (a budget
+			// cap, a kill switch, the token cap) recorded while it ran: no
+			// review round follows this path to check it (g.Clean's own
+			// haltValue check is the same guard on the same race).
+			if h := r.haltValue(); h != nil {
+				r.endHalted(ctx, h)
+			}
+			return // nothing was due: the step ended the run with no pull request
+		}
+		skipImplement = true
 	}
 	// "" until implement actually runs and starts one: a Fixed gate skips
 	// implement, so there is no session yet for fix (below) to resume.
@@ -2747,6 +2779,12 @@ func (r *run) finalize(ctx context.Context) error {
 		// failInfra), status, outcome and the stored report all theirs:
 		// there is nothing left to commit, push or open a pull request for.
 		return nil
+	}
+	// A report run's last word before anything is pushed: the files it commits
+	// under docs/fugaro-reviews/ are the runner's own, byte for byte
+	// (digest.go, T3.2's call, which T3.3 fills).
+	if err := r.digestFinalize(ctx); err != nil {
+		return err
 	}
 	base := r.cfg.Git.BaseBranch
 	halt := r.haltValue()

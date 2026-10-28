@@ -240,11 +240,12 @@ const recipesV07Since = "0.7.0"
 // Like artifactsSince it carries no shipped flag: refusing every image that
 // predates the step is exactly the direction this gate wants, and an image
 // with no release tag (a dev build, a hand-pushed one) only warns, the same
-// as for every other *Since constant here — the runner refuses the recipe
-// itself in that case (internal/runner/runner.go, right after
-// resolveRecipe), so a warning cannot let a digest run through as an
-// ordinary implement run and open a pull request the recipe never asked
-// for. It names 0.13.0, the release the report run ships in, which is not
+// as for every other *Since constant here — safe either way, since a
+// runner old enough to lack the step refuses the recipe as a step kind it
+// cannot read, and one that has it runs the report run
+// (internal/runner/digest.go), so a warning cannot let a digest run through
+// as an ordinary implement run and open a pull request the recipe never
+// asked for. It names 0.13.0, the release the report run ships in, which is not
 // tagged yet: docs/release.md's checklist verifies the constant against the
 // tag actually cut, the way planTaskSince's bullet records.
 const digestSince = "0.13.0"
