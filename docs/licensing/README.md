@@ -65,10 +65,10 @@ force** and still awaits counsel (plan task L4.5,
 **Amended 2026-10-28: CLA Assistant is installed.** The owner installed CLA Assistant on
 `dimipaun/fugaro`, so the agreement has its two reader-facing surfaces: the signing link in
 `CONTRIBUTING.md`'s `## Licensing of contributions` section and the badge in the README's opening
-(the app's own, which the owner supplied). The rest of L0.2's checklist — the Gist's raw URL in the
-three licence files, the allow-list, the visible status and the test pull request — is the owner's
-and is not recorded here; the `[CLA URL TO BE PUBLISHED]` placeholder those three files carry is
-L4.4 and waits on the Gist.
+(the app's own, which the owner supplied). The Gist's raw URL is now in the licence files (the
+`[CLA URL TO BE PUBLISHED]` placeholder is gone). The rest of L0.2's checklist — the allow-list and
+the visible status — is the owner's and is not recorded here; its test pull request waits for the
+first outside contribution, since the owner controls no second GitHub account.
 
 Spec owner: the repository owner. Spec received 2026-10-24; reconciled against `origin/main` at
 `e924481cd` the same day.
