@@ -93,10 +93,10 @@ function newRunID(now: Date, random: () => number): string {
   return `${stamp}-${tail.toString(16).padStart(4, '0')}`
 }
 
-/** RUN_ID_DRAWS is how many times `build` redraws the id's four hex digits
+/** RUN_ID_DRAWS is how many times `launch` redraws the id's four hex digits
  * before it refuses the launch: the stamp is the UTC second and cannot be
- * redrawn, so a second collision once this second's ids are taken is a
- * collision twice over, and a retry that cannot succeed is a hang rather than a
+ * redrawn, so a collision that survives eight draws is one this process cannot
+ * draw its way out of, and a retry that cannot succeed is a hang rather than a
  * launch. */
 const RUN_ID_DRAWS = 8
 
