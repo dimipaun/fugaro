@@ -340,6 +340,33 @@ func TestFollowUpWithNoRecordedModeImposesNothing(t *testing.T) {
 	}
 }
 
+// TestFollowUpOfAnUnrecordedRunIsNotGated: the gate is the field's, and a
+// follow-up of a run that recorded no rigor carries neither field, so its
+// launch must be the one the previous release made — nothing judged before the
+// run, and a task with no key that release did not write.
+//
+// No build record is written here on purpose: that is what makes the absence of
+// a gate the thing the test holds. The gate reads the record before it judges
+// anything (checkImageSince refuses one that is missing), so a launch this gate
+// reaches at all fails, whatever the record would have said.
+func TestFollowUpOfAnUnrecordedRunIsNotGated(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRootRigor(t, f, rootID, "")
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "also rename x"); err != nil {
+		t.Fatal(err)
+	}
+	if spec := readSpec(t, f, fuID); spec.Rigor != "" || len(spec.Paths) != 0 {
+		t.Fatalf("rigor = %q, paths = %v, want neither: the run recorded no mode to keep", spec.Rigor, spec.Paths)
+	}
+	data, err := runstore.Open(fileEnv(t, f).bucket.Bucket, appSlug, fuID).ReadFile(t.Context(), "task.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := string(data); strings.Contains(s, "rigor") || strings.Contains(s, "paths") {
+		t.Fatalf("the stored task carries a key the previous release did not write:\n%s", s)
+	}
+}
+
 // TestFollowUpCommentCannotSetTheMode: a follow-up is the comment-sourced
 // surface (F13), so a comment must have no route to the run's mode at all. The
 // mode reaches the run through the task alone — the launcher's --mode and the
