@@ -104,6 +104,19 @@ func (l *ProjectLayer) SetsRigor() bool {
 	return ok
 }
 
+// SetsGovernance reports whether the layer's text writes governance:, at any
+// value: a runner before governanceSince decodes the layer with KnownFields,
+// so the key alone is what it refuses, and Governance's zero value cannot
+// tell an empty block from none. The key is top-level, not under defaults:
+// (TestProjectLayerGovernanceIsTopLevel), so the tree is read at the root.
+func (l *ProjectLayer) SetsGovernance() bool {
+	if l == nil {
+		return false
+	}
+	_, ok := l.tree["governance"]
+	return ok
+}
+
 // LayerRigor is defaults.rigor: the same two keys the repository's own
 // rigor: block carries, because either layer may set either of them
 // (docs/project-layer.md §5).

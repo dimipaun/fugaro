@@ -245,3 +245,74 @@ func TestGovernanceCeilingReachesTheResolvedConfig(t *testing.T) {
 		t.Errorf("sources = %v", e.Sources)
 	}
 }
+
+// TestSetsGovernanceReadsTheKeyNotTheValue: a runner before 0.13.0 decodes the
+// project layer with KnownFields, so what it refuses is governance: being
+// written at all, and an empty block is refused exactly like a full one. The
+// skew gate in fugaro update --repo asks this, so the answer has to come from
+// the text: Governance is a value, and its zero value cannot tell
+// `governance: {}` from a layer that never wrote the key.
+func TestSetsGovernanceReadsTheKeyNotTheValue(t *testing.T) {
+	const head = "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+	for _, c := range []struct {
+		text string
+		want bool
+	}{
+		{head + "governance: { review_ratio: 20 }\n", true},
+		{head + "governance: {}\n", true},
+		{head + "governance:\n", true},
+		{head + "defaults:\n  git: { provider: github }\n", false},
+		{head, false},
+	} {
+		if got := mustLayer(t, c.text).SetsGovernance(); got != c.want {
+			t.Errorf("SetsGovernance() = %v, want %v for\n%s", got, c.want, c.text)
+		}
+	}
+	if (*ProjectLayer)(nil).SetsGovernance() {
+		t.Error("a nil layer sets nothing")
+	}
+	// The placement is read at the root, not under defaults:: the layer the
+	// method is handed is one ParseProjectLayer accepted, and that one refuses
+	// defaults.governance outright (TestProjectLayerGovernanceIsTopLevel), so
+	// the only key this can ever find is the top-level one.
+}
+
+// TestRepoGovernanceSetReadsTheKeyNotTheValue: the repository's own file gets
+// the same answer SetsGovernance gives a project layer, and for the same
+// reason — a runner before 0.13.0 decodes fugaro.yaml with KnownFields, so
+// what it refuses is the key being written at all, an explicit null included.
+// Governance is a value and cannot answer (`governance:` decodes to a nil
+// pointer), and the skew gates read this field rather than that one.
+func TestRepoGovernanceSetReadsTheKeyNotTheValue(t *testing.T) {
+	layer := mustLayer(t, testLayer)
+	for _, c := range []struct {
+		text string
+		want bool
+	}{
+		{minimalRepo + "governance: { review_ratio: 3 }\n", true},
+		{minimalRepo + "governance: {}\n", true},
+		{minimalRepo + "governance:\n", true},
+		{minimalRepo + "git: { pr: { labels: [mine] } }\n", false},
+		{minimalRepo, false},
+	} {
+		cfg, _, ps := Resolve([]byte(c.text), layer)
+		if len(ps) > 0 {
+			t.Fatalf("%s: %v", c.text, ps)
+		}
+		if cfg.RepoGovernanceSet != c.want {
+			t.Errorf("RepoGovernanceSet = %v, want %v for\n%s", cfg.RepoGovernanceSet, c.want, c.text)
+		}
+	}
+	// The answer is the file's own key, never the merged one: a file that
+	// writes the key over a layer that sets nothing still counts.
+	null, _, ps := Resolve([]byte(minimalRepo+"governance:\n"), layer)
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	if !null.RepoGovernanceSet {
+		t.Error("a file that writes governance: over a project layer lost its own key")
+	}
+	if null.Governance != nil {
+		t.Errorf("a null block resolved a value: %+v", null.Governance)
+	}
+}

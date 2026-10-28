@@ -79,6 +79,13 @@ type Config struct {
 	// the file with KnownFields and refuses it on the key alone). Like
 	// RepoRigor it is never part of the file or of SHA256.
 	RepoRigorSet bool `yaml:"-" json:"-"`
+	// RepoGovernanceSet is whether the repository's own file wrote the
+	// governance: key at all, at any value, the question RepoRigorSet answers
+	// for rigor: Governance cannot answer for an explicit null (`governance:`,
+	// which decodes to a nil block), and a runner older than governanceSince
+	// refuses the key alone. Like the fields above it is never part of the
+	// file or of SHA256.
+	RepoGovernanceSet bool `yaml:"-" json:"-"`
 }
 
 // Rigor is fugaro.yaml's rigor: block and the project layer's defaults.rigor

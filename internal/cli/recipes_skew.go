@@ -483,6 +483,19 @@ const rigorSince = "0.11.0"
 // nothing writes neither field and is never gated.
 const rigorRequestSince = "0.11.1"
 
+// governanceSince is the first fugaro release whose config reader knows
+// fugaro.yaml's governance: block and the project layer's governance: block
+// (docs/task-governance/spec.md). Both files are decoded with KnownFields, so
+// a runner built from an older base image refuses either key at bootstrap; the
+// project layer's key does it to every repository of the project at once.
+// Like rigorSince the judge is the installation's base image and the gate is
+// fugaro update --repo's (refuseGovernanceSkew); fugaro run gates the launch
+// too (checkGovernanceImage, checkCloneGovernanceImage), but only from a
+// checkout of the repository, where it can read the file the run will, so
+// outside one only fugaro update --repo checks. docs/release.md ("Before you
+// tag") has the checklist verify it equals the release that ships the key.
+const governanceSince = "0.13.0"
+
 // asksForRigor reports whether a launch asks for a rigor mode or declares a
 // path: the two task fields a runner older than rigorRequestSince refuses
 // outright, and so the condition the launch's own gate is written on. A
@@ -998,14 +1011,23 @@ func checkCloneRigorImage(ctx context.Context, env *cloudEnv, spec *task.Spec, w
 // such a launch is not gated — its bootstrap, which reads the file this
 // launcher could not, is what refuses the key then.
 func rigorLaunchSources(ctx context.Context, env *cloudEnv, spec *task.Spec) (fromRepo, fromLayer bool) {
-	cfg := cascadeRefConfig(ctx, env, spec)
-	if cfg == nil {
-		cfg = checkoutConfig(ctx, spec.Repo)
-	}
+	cfg := launchFileConfig(ctx, env, spec)
 	if cfg == nil {
 		return false, false
 	}
 	return cfg.RepoRigorSet, cfg.Layer.SetsRigor()
+}
+
+// launchFileConfig is the configuration a launch's config-key image gates
+// (rigorLaunchSources, governanceLaunchSources) judge: the file the run will
+// check out, from cascadeRefConfig, with the launcher's own checkout standing
+// in when the ref cannot be read.
+func launchFileConfig(ctx context.Context, env *cloudEnv, spec *task.Spec) *config.Config {
+	cfg := cascadeRefConfig(ctx, env, spec)
+	if cfg == nil {
+		cfg = checkoutConfig(ctx, spec.Repo)
+	}
+	return cfg
 }
 
 // rigorImageWarnings warns, once, that a configuration which writes the key —
@@ -1031,6 +1053,107 @@ func rigorImageWarnings(c *config.Config) []config.Problem {
 		subject = "the project layer's defaults.rigor"
 	}
 	return []config.Problem{{Path: "rigor", Message: subject + " needs fugaro " + rigorSince + " or later in the job image that runs it, and in the CLI of everyone who reads this file: an older runner decodes the file strictly and refuses the run at bootstrap. Run fugaro update --base base in your own terminal window to move the installation's base image, and fugaro image refresh for a workflow's own derived image"}}
+}
+
+// refuseGovernanceSkew refuses fugaro update --repo, before any cloud effect,
+// when the repository's fugaro.yaml writes a governance: block (fromRepo) or
+// the project layer it resolves over writes governance: (fromLayer) and the
+// installation's base image predates governanceSince. The states of ref are
+// read as refuseRigorSkew reads them: no base image passes, one that is not a
+// release only warns.
+func refuseGovernanceSkew(repo string, fromRepo, fromLayer bool, ref string, warn io.Writer) error {
+	if !fromRepo && !fromLayer {
+		return nil
+	}
+	subject, alt := governanceSubject(repo, fromRepo, fromLayer)
+	switch rel, ok := releaseOf(ref); {
+	case ref == "":
+		return nil
+	case !ok:
+		fmt.Fprintf(warn, "warning: %s cannot be judged: the installation's base image is %s, which is not a release base image, so whether its runner reads the key is not checked\n",
+			subject, pluginwire.Printable(ref))
+	case imagePredates(rel, governanceSince):
+		return userErr("%s needs a job image whose runner reads it (fugaro %s or later), but the installation's base image is %s, release %s: an older runner decodes the file strictly and refuses the run at bootstrap on a key it does not know. Run fugaro update --base base in your own terminal window to move the installation's base image to a current release, or %s",
+			subject, governanceSince, pluginwire.Printable(ref), rel, alt)
+	}
+	return nil
+}
+
+// governanceSubject names, for refuseGovernanceSkew's messages, which file
+// wrote the key, and the way out that file's author has: the repository's
+// block is the repository's to remove, while the layer's is read by every
+// repository of the project. The layer's key is a top-level key of the layer
+// file, like the repository's own, rather than a defaults.rigor.
+func governanceSubject(repo string, fromRepo, fromLayer bool) (subject, alt string) {
+	const layerAlt = "remove the governance: block from the project layer and publish it again: until then every repository of the project whose job image predates it fails the same way"
+	switch {
+	case fromRepo && fromLayer:
+		return "fugaro.yaml's governance: block and the project layer's governance: block of " + repo,
+			"remove the governance: block from fugaro.yaml and " + layerAlt
+	case fromLayer:
+		return "the project layer's governance: block (read for " + repo + ")", layerAlt
+	}
+	return "fugaro.yaml's governance: block of " + repo, "remove the governance: block from fugaro.yaml"
+}
+
+// governanceKnows names, for the image gate's messages, the key the job
+// image's runner has to know: the message reads "needs a job image whose
+// runner knows <this>", so it has to name whichever of the two the config
+// wrote.
+func governanceKnows(fromRepo, fromLayer bool) string {
+	switch {
+	case fromRepo && fromLayer:
+		return "the governance: block and the project layer's governance: block"
+	case fromLayer:
+		return "the project layer's governance: block"
+	}
+	return "the governance: block"
+}
+
+// checkGovernanceImage and checkCloneGovernanceImage are the launch's own
+// governanceSince gate, for a workflow whose job image is a derived one and
+// for a checkout: clone workflow respectively, the pair every other
+// per-workflow image gate has (checkImageSince and checkCloneImageSince),
+// judged on the key the configuration the run will read writes
+// (governanceLaunchSources). The refusal names the fix that kind of image has
+// — fugaro image refresh for a built image, fugaro update --base base for the
+// installation's own — and the way out the file's author has, from
+// governanceSubject.
+//
+// The image is the judge because that is where the reader is: a runner older
+// than governanceSince decodes fugaro.yaml and the project layer with
+// KnownFields, so the key alone kills the run at bootstrap, before the agent
+// starts and after the launch was paid for.
+func checkGovernanceImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
+	fromRepo, fromLayer := governanceLaunchSources(ctx, env, spec)
+	if !fromRepo && !fromLayer {
+		return nil
+	}
+	subject, alt := governanceSubject(spec.Repo, fromRepo, fromLayer)
+	return checkImageSince(ctx, env, slug, spec, kind, governanceSince, subject, governanceKnows(fromRepo, fromLayer), "; or "+alt, warn)
+}
+
+// checkCloneGovernanceImage is checkGovernanceImage for a checkout: clone
+// workflow: see checkCloneImageSince.
+func checkCloneGovernanceImage(ctx context.Context, env *cloudEnv, spec *task.Spec, warn io.Writer) error {
+	fromRepo, fromLayer := governanceLaunchSources(ctx, env, spec)
+	if !fromRepo && !fromLayer {
+		return nil
+	}
+	subject, alt := governanceSubject(spec.Repo, fromRepo, fromLayer)
+	return checkCloneImageSince(env.lc, spec, governanceSince, subject, governanceKnows(fromRepo, fromLayer), "; or "+alt, warn)
+}
+
+// governanceLaunchSources reports, for the launch's governanceSince gate,
+// whether the configuration the run will read writes the key: the
+// repository's fugaro.yaml (fromRepo) or the project layer it resolves over
+// (fromLayer), read the way rigorLaunchSources reads them.
+func governanceLaunchSources(ctx context.Context, env *cloudEnv, spec *task.Spec) (fromRepo, fromLayer bool) {
+	cfg := launchFileConfig(ctx, env, spec)
+	if cfg == nil {
+		return false, false
+	}
+	return cfg.RepoGovernanceSet, cfg.Layer.SetsGovernance()
 }
 
 // refuseCatalogSwitches refuses fugaro update --repo, before any cloud effect,

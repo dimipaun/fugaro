@@ -663,6 +663,11 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			if err := checkCloneRigorImage(ctx, env, spec, warn); err != nil {
 				return launchResult{}, err
 			}
+			// The governance: gate, judged the same way and for the same
+			// reason: see checkGovernanceImage.
+			if err := checkCloneGovernanceImage(ctx, env, spec, warn); err != nil {
+				return launchResult{}, err
+			}
 			// The run's own rigor request, gated on the field the same way:
 			// a runner older than rigorRequestSince refuses a task carrying
 			// rigor or paths outright (task.Parse decodes with
@@ -731,6 +736,11 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			// than on a task field: see checkRigorImage. Unconditional, since
 			// the repository's file alone can carry the key.
 			if err := checkRigorImage(ctx, env, slug, spec, kind, warn); err != nil {
+				return launchResult{}, err
+			}
+			// The governance: gate, the same shape as the clone branch's
+			// above and for the same reason.
+			if err := checkGovernanceImage(ctx, env, slug, spec, kind, warn); err != nil {
 				return launchResult{}, err
 			}
 			// The same gate as the clone branch's above, and for the same
