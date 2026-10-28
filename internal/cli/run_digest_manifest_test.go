@@ -473,10 +473,12 @@ func TestDigestManifestRepoRecipe(t *testing.T) {
 // a name, read at the run's own ref). Without that the launch is judged by
 // recipesSince, passes, and stores a task whose digest_runs a runner older
 // than digestSince refuses at bootstrap — a job started, and paid for, over a
-// field nobody can read. The gate is the field's, so a launch of the same
-// recipe that lists nothing (a repository with no runs in the window carries
-// no manifest) is not gated here: the older runner refuses the recipe itself
-// in that case, which is the backstop recipesSince's own arm has always had.
+// field nobody can read. The gate is the field's, and a report launch always
+// carries one: a launch of the same recipe that lists nothing never reaches
+// the gate at all, since digestManifest refuses the empty listing before it
+// (TestDigestEmptyListingRefused). The recipe's own arm of recipeSinceFor
+// still judges a task that carries the recipe's text and no manifest, which no
+// launch of this release writes.
 //
 // Mutation (drop the `len(spec.DigestRuns) > 0` arm of recipeSinceFor): this
 // test launches, and fails on both the missing refusal and the stored task.
