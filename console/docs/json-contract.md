@@ -441,8 +441,9 @@ the exported writer, not a `cli`-side struct. Indented two spaces
     class for.
   - Every run counts **once**, on its launch day, so `runs` is the row's run
     count and `--since`/`--until` bound it by that day. A run whose record the
-    bucket holds and the CLI cannot read did launch: it counts once and is in no
-    money column — *unavailable*, never `0`.
+    bucket holds and the CLI cannot read did launch: it counts once in `runs`
+    and adds nothing to the money columns, so a row made only of such runs
+    reads `0` and nothing on the wire marks it.
   - `calls` is `0` on this grouping's rows, as on `--by person`'s: a run record
     carries no call count, and the column is not drawn. A window holding more
     runs than the read opens is reported to its newest runs, and `warnings[]`

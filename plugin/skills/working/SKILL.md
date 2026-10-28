@@ -50,7 +50,7 @@ On a pull request that was retargeted, check the base its runs recorded before l
 - `fugaro watch` is the live screen of spend, repositories and running agents. It is a terminal screen only the user can read; for a snapshot you can read, run `fugaro watch --once`.
 - `fugaro logs <run>` prints the run's logs, `-f` follows them.
 - `fugaro diagnose <run>` explains one run: its stage, reason, tests, review findings, the agent's last word, cost and pull request.
-- `fugaro report --by repo` (or `day`, `week`, `month`, `model`, `person`) shows what the project spent.
+- `fugaro report --by repo` (or `day`, `week`, `month`, `year`, `model`, `person`, `mode`) shows what the project spent.
 - `fugaro budget show` shows the caps, today's counters and any kill switch.
 
 ## Cancel and retry
