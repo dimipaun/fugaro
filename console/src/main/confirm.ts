@@ -126,6 +126,14 @@ export interface ConfirmWindowDeps {
   /** session is the Electron `Session` the confirmation window is built on **and**
    * has its permissions denied on: `confirmOptions` sets it as the window's
    * `webPreferences.session`, so the denial and the window name the same session.
+   *
+   * It must be the session the `app://` handler serves, which is
+   * `session.defaultSession` -- `protocol.handle` registers the scheme there and
+   * nowhere else. A window built on a partition issues its
+   * `app://console/confirm.html` request in that partition, where nothing
+   * answers, so the document fails to load and there is no window to confirm
+   * anything: every launch is declined.
+   *
    * It is a dependency rather than a read of `session.defaultSession` on purpose:
    * the confirmation window denies every permission on its own session (defence
    * in depth), so it does not rely on the request and check handlers the
@@ -142,11 +150,10 @@ export interface ConfirmWindowDeps {
  *
  * `session` is set here rather than left to Electron's default because the
  * window's permission denial in `createConfirmWindow` is installed on that same
- * session: without it the denial would land on `session.defaultSession` while
- * the window was built on whatever the caller meant, and a caller that passed a
- * non-default session would deny a session the window never uses. Setting it is
- * what makes "the confirm window denies every permission on its own session"
- * true of the window rather than of the dependency. */
+ * session: without it the window would be built on `session.defaultSession`
+ * while the denial landed on the caller's session. Setting it is what makes
+ * "the confirm window denies every permission on its own session" true of the
+ * window rather than of the dependency. */
 export function confirmOptions(
   preloadPath: string,
   parent: BrowserWindow | null,
