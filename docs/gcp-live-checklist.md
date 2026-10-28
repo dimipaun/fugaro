@@ -10170,12 +10170,12 @@ types no other installation's name and reads no project but the sandbox's.
 # Every name this check uses, and the only installation it may touch: the
 # sandbox's runs bucket, the repository it reads, a sibling repository of the
 # same installation, that repository's job account, and one settled run of each.
-: "${RUNS_BUCKET:?the sandbox installation's runs bucket, <runs-bucket>}"
-: "${SLUG:?the sandbox repository's slug, <slug>}"
+: "${RUNS_BUCKET:?the sandbox runs bucket, <runs-bucket>}"
+: "${SLUG:?the sandbox repository slug, <slug>}"
 : "${SIBLING_SLUG:?a second repository of the same installation, its own slug}"
-: "${JOB_ACCOUNT:?the sandbox repository's job account, <job-account>}"
-: "${RUN_ID:?a settled run id of ${SLUG}, <run-id>}"
-: "${SIBLING_RUN_ID:?a settled run id of ${SIBLING_SLUG}, <run-id>}"
+: "${JOB_ACCOUNT:?the sandbox repository job account, <job-account>}"
+: "${RUN_ID:?a settled run id of the repository above, <run-id>}"
+: "${SIBLING_RUN_ID:?a settled run id of the sibling repository above, <run-id>}"
 
 # A refusal read off the repository's own prefix would prove nothing, and a
 # sibling that IS the repository is the one way to make that mistake.
@@ -10204,13 +10204,8 @@ printf 'CHECK 135 SETUP: owner %s, bucket gs://%s, repository %s (run %s), sibli
    ```bash
    gcloud iam service-accounts get-iam-policy "${JOB_ACCOUNT:?re-run the Check 135 setup block}" \
      --format=json >"${W:?re-run the Check 135 setup block}/job-policy.before.json"
-   python3 - "${W}/job-policy.before.json" "${OWNER}" <<'PY'
-   import json, sys
-   pol = json.load(open(sys.argv[1])); owner = sys.argv[2]
-   print("TokenCreator held before this check:",
-         any(b.get("role") == "roles/iam.serviceAccountTokenCreator" and owner in b.get("members", [])
-             for b in pol.get("bindings", [])))
-   PY
+   python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); o=sys.argv[2]; print("TokenCreator held before this check:", any(b.get("role")=="roles/iam.serviceAccountTokenCreator" and o in b.get("members",[]) for b in p.get("bindings",[])))' \
+     "${W}/job-policy.before.json" "${OWNER}"
    gcloud iam service-accounts add-iam-policy-binding "${JOB_ACCOUNT}" \
      --member="user:${OWNER}" --role="roles/iam.serviceAccountTokenCreator"
    ```
@@ -10388,7 +10383,7 @@ printf 'CHECK 136 SETUP: repository %s, %s\n' "$SLUG" "$(head -1 "${W}/recipe.tx
    ```bash
    # The run's branch, fetched by name and read as a tree: the report files are
    # what the digest step committed, and the layout is read out of the tree.
-   git fetch --no-tags origin "fugaro/${RUN_ID:?step 1's run id}"
+   git fetch --no-tags origin "fugaro/${RUN_ID:?the run id step 1 printed}"
    git ls-tree -r --name-only FETCH_HEAD -- docs/fugaro-reviews
    git grep -nE '[[:alnum:]._%+-]+@[[:alnum:].-]+\.[A-Za-z]{2,}' FETCH_HEAD -- docs/fugaro-reviews \
      && echo "Check 136: an address is in a committed report, and D323 says none may be" \
@@ -10408,7 +10403,7 @@ printf 'CHECK 136 SETUP: repository %s, %s\n' "$SLUG" "$(head -1 "${W}/recipe.tx
 
    ```bash
    DAY=<YYYY-MM-DD>   # a day period the pull request wrote
-   git show "FETCH_HEAD:docs/fugaro-reviews/${DAY%%-*}/${DAY}.md" | sed -n '/^```json$/,/^```$/p'
+   git show "FETCH_HEAD:docs/fugaro-reviews/${DAY%%-*}/${DAY}.md"
    fugaro runs ls --json --since 72h >"${W}/ls.json"
    ```
 
