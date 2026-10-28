@@ -1,13 +1,11 @@
-DRAFT FOR COUNSEL REVIEW: not reviewed by counsel; not yet installed
-
 > **Note for the owner, not part of the agreement.** CLA Assistant reads the agreement from a
 > GitHub Gist holding one Markdown file, and shows a contributor everything in that file. To
 > create it: open <https://gist.github.com>, create a gist named `fugaro-cla.md` (secret or
 > public; the agreement is meant to be read by anybody, so public is the usual choice), and paste
 > into it **only the text between the `BEGIN AGREEMENT` and `END AGREEMENT` lines below**, without
-> those two lines, without this note and without the status line above. Save, open the file's
+> those two lines and without this note. Save, open the file's
 > **Raw** view, and give that URL to CLA Assistant (plan task L0.2). Editing the gist later changes
-> the agreement for new signatures, so after counsel's changes land here, update the gist from
+> the agreement for new signatures, so after the agreement is edited here, update the gist from
 > this file and keep the two in step. The allow-listed bots are part of the app's configuration,
 > not of this text.
 
@@ -15,7 +13,7 @@ DRAFT FOR COUNSEL REVIEW: not reviewed by counsel; not yet installed
 
 # Fugaro Contributor License Agreement
 
-Version 1.0 (draft)
+Version 1.0
 
 Thank you for contributing to Fugaro. This agreement sets out the terms on which you give us your
 contributions. You keep the copyright in your contribution; you give the Project Owner a broad

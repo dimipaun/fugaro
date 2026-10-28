@@ -141,8 +141,9 @@ first non-Go file under `ee/`.
 
 **Amended 2026-10-27: L0.1's CLA-text item is drafted.** The agreement's text is
 [CLA.md](CLA.md), drafted on the owner's request of 2026-10-26/27 as one Markdown document for a
-single click-through signature in CLA Assistant, and **not yet read by counsel**: counsel reviews
-it under L0.1 before L0.2 installs it. L0.2 is the owner's CLA Assistant install, in these steps:
+single click-through signature in CLA Assistant. **Amended 2026-10-28: counsel reviewed it and blessed
+it as-is**, with no operative clause changed, so L0.1's CLA-text item is closed and L0.2 installs it
+as it stands. L0.2 is the owner's CLA Assistant install, in these steps:
 
 - [ ] Create the Gist from `CLA.md` as its top note says (only the agreement text), and copy the
   file's **Raw** URL.
