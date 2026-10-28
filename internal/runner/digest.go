@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/stats"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/verify"
 )
 
 // The digest step is the report run's own work (task-governance plan T3.2,
@@ -106,6 +107,16 @@ var (
 func (r *run) digestStep(ctx context.Context) error {
 	started := r.d.Now()
 	written, err := r.writeDueReports(ctx)
+	if err == nil && len(written) > 0 {
+		// The commit the step just made carries the verified test run the
+		// pull request's readiness is decided on (outcome.go's Decide), made
+		// the way the check step's own autofix commit makes one (gate.go's
+		// Fixed branch): no stage of this recipe could make it, since the
+		// digest step takes implement's place and no model writes a report,
+		// and without it every report run's pull request would be a draft
+		// whose reason names a test run no step of the recipe was asked for.
+		r.verifyOnce(ctx, verify.KindTest, "the digest step's reports")
+	}
 	r.rec.Stages = append(r.rec.Stages, runstore.StageTiming{
 		Name: digestStageName, StartedAt: started.UTC(), DurationS: r.d.Now().Sub(started).Seconds(),
 	})
@@ -235,8 +246,11 @@ func (r *run) digestRecords(ctx context.Context, ids []string) ([]runstore.Recor
 		}
 		if !task.ValidRunID(rec.RunID) || rec.FinishedAt == nil {
 			// The report's own rule: a record whose run ID is not a run ID,
-			// or that has not finished, is not one of any period's runs.
+			// or that has not finished, is not one of any period's runs, so
+			// it is counted as one the reports read past rather than handed
+			// to them to skip again (internal/digest's Build skips it too).
 			dropped++
+			continue
 		}
 		recs = append(recs, *rec)
 	}

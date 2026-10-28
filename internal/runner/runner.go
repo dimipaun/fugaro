@@ -2071,7 +2071,7 @@ func (r *run) agentLoop(ctx context.Context) {
 			// usual, on top of whatever the gate found (nothing, here).
 		case g.Fixed:
 			r.rec.Gate = "fixed"
-			r.verifyOnce(ctx, verify.KindTest)
+			r.verifyOnce(ctx, verify.KindTest, "the check gate's autofix commit")
 			// A follow-up still runs implement with its own instructions,
 			// on top of the autofix commit the gate already made; only a
 			// first run (nothing else asked of it) skips straight to review.
