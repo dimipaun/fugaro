@@ -1496,6 +1496,8 @@ func TestResultSchemaHalted(t *testing.T) {
 		runstore.HaltKillSwitch, runstore.HaltRunCap, runstore.HaltRepoDailyCap, runstore.HaltGlobalDailyCap,
 		runstore.HaltNoCap, runstore.HaltTokenCap, runstore.HaltBudgetUnavailable, runstore.HaltBudgetTokenExpired,
 		runstore.HaltNoCredential, runstore.HaltCredsRulesDenied,
+		runstore.HaltStageBudget, runstore.HaltReviewRatio, runstore.HaltFanout,
+		runstore.HaltReviewScope, runstore.HaltExpectedExceeded,
 	} {
 		if err := check(r); err != nil {
 			t.Errorf("schema rejects halt reason %q: %v", r, err)
@@ -1503,6 +1505,179 @@ func TestResultSchemaHalted(t *testing.T) {
 	}
 	if err := check("other"); err == nil {
 		t.Error(`schema accepts halt reason "other"`)
+	}
+}
+
+// TestResultSchemaCheckpoint: the checkpoint block a governance halt leaves
+// validates, and the schema refuses the shapes that would let a reader render
+// something the runner did not write — a trigger outside the governance set
+// (the enum is what makes the value safe to render, so a cap's reason is not
+// a checkpoint's trigger), an unknown key, a text field past
+// runstore.MaxCheckpointText, a negative figure and a trigger that is not a
+// string. A record with no checkpoint writes no key at all: absent is the
+// fact "this run did not take a governance halt", which an empty block would
+// blur.
+func TestResultSchemaCheckpoint(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 9, 30, 10, 0, 0, 0, time.UTC)
+	rec := runstore.Record{
+		Version: 1, RunID: "20260930-100000-abcd", Status: runstore.StatusHalted, Stage: "review", Outcome: runstore.OutcomeDraft,
+		Reason: "halted: " + string(runstore.HaltFanout), CostUSD: 1, StartedAt: at,
+		Halt: &runstore.Halt{Reason: runstore.HaltFanout, Scope: "run", At: at, Detail: "2 sub-agents"},
+		Checkpoint: runstore.NewCheckpoint(runstore.Checkpoint{
+			Trigger: string(runstore.HaltFanout), WhyOver: "more sub-agents than the maximum", EstimateUSD: 1,
+		}),
+	}
+	validate := func(t *testing.T, data []byte) error {
+		t.Helper()
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	marshal := func(t *testing.T, rec runstore.Record) []byte {
+		t.Helper()
+		data, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+
+	data := marshal(t, rec)
+	if err := validate(t, data); err != nil {
+		t.Fatalf("schema rejects a checkpoint record: %v\n%s", err, data)
+	}
+
+	// The checkpoint a halt writes before the checkpoint stage exists (T7.3)
+	// carries the trigger alone, and that is the whole block.
+	first := rec
+	first.Checkpoint = runstore.NewCheckpoint(runstore.Checkpoint{Trigger: string(runstore.HaltStageBudget)})
+	firstData := marshal(t, first)
+	if err := validate(t, firstData); err != nil {
+		t.Fatalf("schema rejects a checkpoint of the trigger alone: %v\n%s", err, firstData)
+	}
+	if !bytes.Contains(firstData, []byte(`"checkpoint":{"trigger":"stage_budget"}`)) {
+		t.Errorf("a checkpoint of the trigger alone marshals %s", firstData)
+	}
+
+	// No checkpoint is an absent key, not an empty block.
+	none := rec
+	none.Checkpoint = nil
+	noneData := marshal(t, none)
+	if bytes.Contains(noneData, []byte("checkpoint")) {
+		t.Errorf("a record with no checkpoint writes one: %s", noneData)
+	}
+	if err := validate(t, noneData); err != nil {
+		t.Fatalf("schema rejects a governance halt with no checkpoint: %v\n%s", err, noneData)
+	}
+
+	for _, tc := range []struct {
+		name string
+		rec  runstore.Record
+		from string
+		to   string
+		why  string
+	}{
+		{name: "trigger outside the governance set", from: `"trigger":"fanout"`, to: `"trigger":"kill_switch"`, why: "a cap's reason is not a checkpoint's trigger"},
+		{name: "an unknown key", from: `"trigger":"fanout"`, to: `"who":"x","trigger":"fanout"`, why: "the block is closed"},
+		{name: "a trigger that is not a string", from: `"trigger":"fanout"`, to: `"trigger":1`, why: "the enum is what makes the value safe to render"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bad := bytes.Replace(data, []byte(tc.from), []byte(tc.to), 1)
+			if bytes.Equal(bad, data) {
+				t.Fatalf("no %s in %s", tc.from, data)
+			}
+			if err := validate(t, bad); err == nil {
+				t.Errorf("schema accepts %s (%s): %s", tc.name, tc.why, bad)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name string
+		cp   *runstore.Checkpoint
+	}{
+		{"a text field past the bound", &runstore.Checkpoint{Trigger: string(runstore.HaltFanout), Next: strings.Repeat("n", runstore.MaxCheckpointText+1)}},
+		{"a negative figure", &runstore.Checkpoint{Trigger: string(runstore.HaltFanout), EstimateUSD: -1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bad := rec
+			bad.Checkpoint = tc.cp
+			badData := marshal(t, bad)
+			if err := validate(t, badData); err == nil {
+				t.Errorf("schema accepts %s: %s", tc.name, badData)
+			}
+		})
+	}
+}
+
+// TestResultSchemaCheckpointAgreeWithGo pins result.schema.json's checkpoint
+// block to internal/runstore's own vocabulary and bound, in both directions.
+// The trigger enum and the text bound are hand-written copies of
+// runstore.GovernanceHaltReasons and runstore.MaxCheckpointText, and the
+// runner writes a checkpoint for every reason the former names: a reason the
+// enum lacks is a result.json a consumer validating against the published
+// schema refuses, a value only the enum knows is a trigger no run can write,
+// and a bound that is not the one NewCheckpoint clips to is a wire that either
+// accepts what the runner never writes or refuses what it did.
+//
+// The Go side is read from runstore rather than listed here, so a reason added
+// to it without the schema fails this test instead of silently widening the
+// gap the next time someone reads the enum above.
+func TestResultSchemaCheckpointAgreeWithGo(t *testing.T) {
+	data, err := os.ReadFile("result.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	props, _ := doc["properties"].(map[string]any)
+	cp, ok := props["checkpoint"].(map[string]any)
+	if !ok {
+		t.Fatal("result.schema.json: no checkpoint property")
+	}
+	fields, ok := cp["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("result.schema.json: checkpoint has no properties")
+	}
+
+	trigger, _ := fields["trigger"].(map[string]any)
+	raw, ok := trigger["enum"].([]any)
+	if !ok {
+		t.Fatal("result.schema.json: checkpoint.trigger has no enum")
+	}
+	var got []string
+	for _, v := range raw {
+		s, ok := v.(string)
+		if !ok {
+			t.Fatalf("result.schema.json: checkpoint.trigger enum entry %v is not a string", v)
+		}
+		got = append(got, s)
+	}
+	var want []string
+	for _, reason := range runstore.GovernanceHaltReasons() {
+		want = append(want, string(reason))
+	}
+	if len(want) == 0 {
+		t.Fatal("runstore names no governance halt reason: this test proves nothing")
+	}
+	if !sameStrings(got, want) {
+		t.Errorf("result.schema.json checkpoint.trigger = %v, runstore.GovernanceHaltReasons() = %v", got, want)
+	}
+
+	for _, name := range []string{"done", "why_over", "next", "hard_instructions"} {
+		field, ok := fields[name].(map[string]any)
+		if !ok {
+			t.Fatalf("result.schema.json: checkpoint.%s is missing", name)
+		}
+		if got := field["maxLength"]; got != float64(runstore.MaxCheckpointText) {
+			t.Errorf("result.schema.json checkpoint.%s maxLength = %v, want runstore.MaxCheckpointText (%d)",
+				name, got, runstore.MaxCheckpointText)
+		}
 	}
 }
 

@@ -205,6 +205,26 @@ func PickPrompt(review, promptFile string, nums []int, dirs []string) string {
 	return b.String()
 }
 
+// checkpointPrompt is what the stopping agent is asked when a governance
+// tripwire halts a run (T6.1, D329, G7): the three fields of the checkpoint
+// report the runner cannot fill itself. It is the report's only model-written
+// part, so it asks for exactly those three and for nothing else, and it asks
+// for a report rather than for work — the run has already stopped, and the
+// person reading it decides whether a continuation is worth starting.
+//
+// T7.2's checkpoint stage sends it from a fresh session, given the runner's own
+// summary of the stop, and T7.3 wires the answers into the record's done, next
+// and hard_instructions. No run sends it before then, and a run the per-run cap
+// or a stage timeout stops never gets the stage at all, so those checkpoints
+// carry the runner's own fields alone.
+const checkpointPrompt = `The run of your task has been stopped by a governance limit on what it was allowed to spend, not by a problem with the work. You will not do any work now. From what you know of the task and of how far the run got, answer with exactly three labelled lines and nothing else:
+
+Done: what the work had finished when it stopped.
+Next: what the work would do next to finish the task.
+Hard instructions: anything in the task's instructions you found hard to satisfy or contradictory, or "none".
+
+This report goes to the person who decides whether to continue the run, so say what is true rather than what sounds finished. Do not run commands, do not change any file, and do not ask questions.`
+
 // GatePrompt is the implement prompt with the check gate's failures (gate.go)
 // added as untrusted output: one block per failure, each wrapped against
 // prompt injection (gateBlock). task is the prompt the gate ran ahead of

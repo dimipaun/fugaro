@@ -283,6 +283,47 @@ func TestNewReviewScopeBoundsWhatItStores(t *testing.T) {
 	}
 }
 
+// TestNewCheckpointBoundsWhatItStores: the three fields a model answers the
+// checkpoint prompt with are a model's output in a record every listing
+// reads, so each is clipped to MaxCheckpointText; the trigger and the money
+// figure are the runner's own and pass through. A checkpoint a governance
+// halt writes before the checkpoint stage exists carries the trigger alone,
+// and that marshals as the trigger alone — an absent field, not an empty
+// string, which is how a reader tells "the agent said nothing" from "nothing
+// asked it".
+func TestNewCheckpointBoundsWhatItStores(t *testing.T) {
+	long := strings.Repeat("w", MaxCheckpointText+50)
+	cp := NewCheckpoint(Checkpoint{
+		Trigger:          string(HaltStageBudget),
+		Done:             long,
+		WhyOver:          long,
+		Next:             long,
+		HardInstructions: long,
+		EstimateUSD:      1.25,
+	})
+	for name, got := range map[string]string{
+		"done":              cp.Done,
+		"why_over":          cp.WhyOver,
+		"next":              cp.Next,
+		"hard_instructions": cp.HardInstructions,
+	} {
+		if n := len([]rune(got)); n != MaxCheckpointText {
+			t.Errorf("%s = %d runes, want %d", name, n, MaxCheckpointText)
+		}
+	}
+	if cp.Trigger != string(HaltStageBudget) || cp.EstimateUSD != 1.25 {
+		t.Errorf("NewCheckpoint = %+v, want the trigger and the figure as written", cp)
+	}
+
+	data, err := json.Marshal(NewCheckpoint(Checkpoint{Trigger: string(HaltFanout)}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != `{"trigger":"fanout"}` {
+		t.Errorf("a checkpoint of the trigger alone marshals %s", data)
+	}
+}
+
 func TestCancelMarker(t *testing.T) {
 	s := newStore(t)
 	if ok, err := s.CancelRequested(ctx); err != nil || ok {

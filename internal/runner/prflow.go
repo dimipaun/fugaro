@@ -470,6 +470,43 @@ func toleratedPart(pol FindingsPolicy, last runstore.ReviewSummary) string {
 	return ", tolerated at " + inlineText(string(pol.Mode)) + " (" + inlineText(strings.Join(labels, ", ")) + ")"
 }
 
+// checkpointReportPart is the section's checkpoint report, written when a
+// governance stop halted the run (T6.1, D329, G7): the tripwire's trigger, the
+// runner's words for why the run is over, and whichever of the stopping
+// agent's three answers the checkpoint stage filled (T7.3). Only fields that
+// are set are rendered — a checkpoint written before that stage exists carries
+// the trigger and the runner's own two facts alone — and every one of them
+// goes through inlineText, so the fields the agent fills cannot forge section
+// markup.
+//
+// The trigger is in a code span so it reads as the vocabulary value it is; the
+// estimate says whose figure it is, because it is the record's model spend and
+// not a forecast of what finishing would cost. "" for every run that did not
+// take a governance halt.
+func (r *run) checkpointReportPart() string {
+	cp := r.rec.Checkpoint
+	if cp == nil {
+		return ""
+	}
+	parts := []string{"checkpoint `" + inlineText(cp.Trigger) + "`"}
+	if cp.WhyOver != "" {
+		parts = append(parts, inlineText(cp.WhyOver))
+	}
+	if cp.Done != "" {
+		parts = append(parts, "done: "+inlineText(cp.Done))
+	}
+	if cp.Next != "" {
+		parts = append(parts, "next: "+inlineText(cp.Next))
+	}
+	if cp.EstimateUSD > 0 {
+		parts = append(parts, fmt.Sprintf("estimate $%.2f (the model spend so far)", cp.EstimateUSD))
+	}
+	if cp.HardInstructions != "" {
+		parts = append(parts, "hard to satisfy: "+inlineText(cp.HardInstructions))
+	}
+	return strings.Join(parts, "; ")
+}
+
 // backlogPart is the section's account of the items the run wrote: the ids it
 // filed and the ids it closed as the follow-up that fixed them, beside the
 // review line that says what was left open, so a reader of the pull request can
@@ -571,11 +608,15 @@ func (r *run) updated(label string) string {
 
 // runningSection is the section while the run is in progress: after stage
 // ended, or (during) at a checkpoint in the middle of it. A first run's
-// pushed commit without a passing clean test is marked not verified.
+// pushed commit without a passing clean test is marked not verified, and a
+// halt recorded while the stage it stopped is still unwinding says so rather
+// than "Running" (governanceHalt writes the section before the stage ends).
 func (r *run) runningSection(stage string, during bool) string {
 	records, _ := verify.Records(r.d.StateDir)
 	head := "**Running**"
 	switch {
+	case r.haltValue() != nil:
+		head = "**Halted**"
 	case r.follow != nil:
 		head = "**Follow-up running**"
 	case r.rec.PushedHead != "" && !pushedVerified(records, r.rec.PushedHead):
@@ -592,7 +633,7 @@ func (r *run) runningSection(stage string, during bool) string {
 			what = p
 		}
 	}
-	return r.sectionLines(head, what, verifyPart(records), r.pushedPart(records), r.costPart(), r.updated("updated"))
+	return r.sectionLines(head, what, r.checkpointReportPart(), verifyPart(records), r.pushedPart(records), r.costPart(), r.updated("updated"))
 }
 
 // pushedVerified reports whether sha has a passing test on a clean tree.
@@ -627,7 +668,7 @@ func (r *run) finalSection(ready bool, reason string, records []verify.Record) s
 	case r.rec.Status == runstore.StatusCancelled:
 		head = "**Cancelled**"
 	}
-	return r.sectionLines(head, why, r.rigorPart(), verifyPart(records), reviewsPart(r.rec.Reviews, r.findingsPolicy()), r.narrowText, r.backlogPart(), r.costPart(), r.updated("finished"))
+	return r.sectionLines(head, why, r.checkpointReportPart(), r.rigorPart(), verifyPart(records), reviewsPart(r.rec.Reviews, r.findingsPolicy()), r.narrowText, r.backlogPart(), r.costPart(), r.updated("finished"))
 }
 
 // ---- finalize ----

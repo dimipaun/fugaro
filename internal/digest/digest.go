@@ -102,6 +102,9 @@ var (
 		string(runstore.HaltNoCap), string(runstore.HaltTokenCap),
 		string(runstore.HaltBudgetUnavailable), string(runstore.HaltBudgetTokenExpired),
 		string(runstore.HaltNoCredential), string(runstore.HaltCredsRulesDenied),
+		string(runstore.HaltStageBudget), string(runstore.HaltReviewRatio),
+		string(runstore.HaltFanout), string(runstore.HaltReviewScope),
+		string(runstore.HaltExpectedExceeded),
 	}
 	// stageNames is the record's own stage vocabulary plus the one name the
 	// runner writes into a run's stage timings and the record's stage enum

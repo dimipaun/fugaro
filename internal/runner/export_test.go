@@ -87,6 +87,10 @@ func SetMarkLockReleasing(t *testing.T, f func(l *lock.Lock, ctx context.Context
 // RecordWriteTimeout exposes recordWriteTimeout.
 const RecordWriteTimeout = recordWriteTimeout
 
+// PRAttempts exposes prAttempts: how many times one open of the pull request
+// tries before it gives up.
+const PRAttempts = prAttempts
+
 // MaxCredentialResumes exposes maxCredentialResumes.
 const MaxCredentialResumes = maxCredentialResumes
 
@@ -148,7 +152,11 @@ func (h *RunHandle) NoteExhausted(reset time.Time) {
 // gateway_service_internal_test.go).
 func (h *RunHandle) ServiceAnswer(a gateway.ServiceAnswer) { h.r.serviceAnswer(a) }
 
-func (h *RunHandle) HaltNow(hl runstore.Halt) bool      { return h.r.haltNow(hl) }
+func (h *RunHandle) HaltNow(hl runstore.Halt) bool { return h.r.haltNow(hl) }
+func (h *RunHandle) GovernanceHalt(ctx context.Context, reason runstore.HaltReason, detail string) bool {
+	return h.r.governanceHalt(ctx, reason, detail)
+}
+
 func (h *RunHandle) CancelHaltedStage(hl runstore.Halt) { h.r.cancelHaltedStage(hl) }
 func (h *RunHandle) MarkCancelled() bool                { return h.r.markCancelled() }
 func (h *RunHandle) Stage() string                      { return h.r.rec.Stage }

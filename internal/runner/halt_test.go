@@ -88,6 +88,148 @@ func TestHaltMidImplementOpensDraft(t *testing.T) {
 	}
 }
 
+// governHalt halts the run the way a governance tripwire does (T6.1): the
+// runner's own path, not HaltNow, so the checkpoint report is written.
+func governHalt(b *handleBox, reason runstore.HaltReason, detail string) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if !b.h.GovernanceHalt(ctx, reason, detail) {
+			t.Error("GovernanceHalt was refused")
+		}
+		return agent.Result{}, nil
+	}
+}
+
+// TestGovernanceHaltWritesCheckpoint: a governance stop is a halt that leaves
+// a checkpoint report on the record — the trigger the runner set from its own
+// constants, the runner's words for why the run is over, and the model spend
+// the record had reached — and the three fields the stopping agent answers
+// (done, next, hard_instructions) are empty until the checkpoint stage is
+// wired (T7.3). The record is saved with the report, not only returned.
+func TestGovernanceHaltWritesCheckpoint(t *testing.T) {
+	b := newHandleBox(t)
+	h := newHarness(t, "", nil)
+	rec, err := h.run(t, implement("feature"), governHalt(b, runstore.HaltStageBudget, "implement spent $1.00 of $0.70"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("record = %+v", rec)
+	}
+	if rec.Halt == nil || rec.Halt.Reason != runstore.HaltStageBudget || rec.Halt.Scope != "run" {
+		t.Fatalf("halt = %+v", rec.Halt)
+	}
+	cp := rec.Checkpoint
+	if cp == nil {
+		t.Fatal("a governance halt left no checkpoint")
+	}
+	if cp.Trigger != string(runstore.HaltStageBudget) {
+		t.Errorf("trigger = %q, want %q", cp.Trigger, runstore.HaltStageBudget)
+	}
+	if cp.WhyOver == "" {
+		t.Error("why_over is empty: the runner's own words for the stop are its to fill")
+	}
+	// implement reported $1.00 and the review stage has not finished, so the
+	// record's figure at the halt is that stage's alone.
+	if cp.EstimateUSD != 1 {
+		t.Errorf("estimate_usd = %v, want the record's 1", cp.EstimateUSD)
+	}
+	if cp.Done != "" || cp.Next != "" || cp.HardInstructions != "" {
+		t.Errorf("checkpoint = %+v, want the agent's three fields empty (T7.3)", cp)
+	}
+	stored, err := h.store.ReadRecord(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Checkpoint == nil || *stored.Checkpoint != *cp {
+		t.Fatalf("stored checkpoint = %+v, want %+v", stored.Checkpoint, cp)
+	}
+}
+
+// TestGovernanceHaltDraftsPR is the headline: a governance halt opens or
+// updates the pull request as a draft carrying the checkpoint, and never asks
+// for it to be made ready — the reviewers and labels a ready PR carries are
+// never applied, whatever the run found before it stopped. Both sections the
+// halt writes are checked: the one it writes itself, while the stage it
+// stopped is still unwinding, and the run's final one, which replaces it.
+func TestGovernanceHaltDraftsPR(t *testing.T) {
+	b := newHandleBox(t)
+	h := prHarness(t, prCfg(t, 2, ""))
+	halt := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if !b.h.GovernanceHalt(ctx, runstore.HaltFanout, "review spawned 7 sub-agents of 5") {
+			t.Error("GovernanceHalt was refused")
+		}
+		during := onlyPR(t, h.provider)
+		if !during.Draft {
+			t.Error("the halt wrote to a pull request that is ready")
+		}
+		for _, want := range []string{"**Halted**", "checkpoint during stage `review`", "checkpoint `fanout`", "estimate $1.00"} {
+			if !strings.Contains(during.Body, want) {
+				t.Errorf("the section the halt wrote lacks %q:\n%s", want, during.Body)
+			}
+		}
+		return agent.Result{}, nil
+	}
+	rec, err := h.run(t, implement("feature"), halt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("record = %+v", rec)
+	}
+	pr := onlyPR(t, h.provider)
+	if !pr.Draft {
+		t.Fatal("a governance halt's pull request is ready")
+	}
+	if len(pr.Reviewers) != 0 || len(pr.Labels) != 0 {
+		t.Fatalf("a governance halt's draft carries reviewers %v / labels %v", pr.Reviewers, pr.Labels)
+	}
+	if n := count(ops(h), "ApplyReady", ""); n != 0 {
+		t.Fatalf("ApplyReady was called %d times on a governance halt", n)
+	}
+	if strings.Contains(pr.Body, "**Ready for review**") {
+		t.Fatalf("the pull request says it is ready:\n%s", pr.Body)
+	}
+	if !strings.Contains(pr.Body, "**Halted**") {
+		t.Fatalf("the pull request does not say the run halted:\n%s", pr.Body)
+	}
+	for _, want := range []string{
+		"checkpoint `fanout`",
+		"more sub-agents than the maximum",
+		"estimate $1.00",
+		"review spawned 7 sub-agents of 5",
+	} {
+		if !strings.Contains(pr.Body, want) {
+			t.Errorf("the pull request's status section lacks %q:\n%s", want, pr.Body)
+		}
+	}
+}
+
+// TestGovernanceHaltOpensTheDraft: when the run's branch is pushed but the
+// draft never opened — the boundary's own open failed — the halt opens it, so
+// the stop reaches a person even if finalize then cannot (a push that fails
+// after an expired token ends the run with no pull request at all).
+func TestGovernanceHaltOpensTheDraft(t *testing.T) {
+	b := newHandleBox(t)
+	h := prHarness(t, prCfg(t, 2, ""))
+	h.provider.FailEnsure = runner.PRAttempts // the boundary's open fails; the halt's succeeds
+	rec, err := h.run(t, implement("feature"), governHalt(b, runstore.HaltFanout, "review spawned 9 sub-agents of 5"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Checkpoint == nil {
+		t.Fatalf("record = %+v", rec)
+	}
+	pr := onlyPR(t, h.provider)
+	if !pr.Draft {
+		t.Fatal("the halt opened a ready pull request")
+	}
+	for _, want := range []string{"**Halted**", "checkpoint `fanout`", "estimate $1.00"} {
+		if !strings.Contains(pr.Body, want) {
+			t.Errorf("the pull request the halt opened lacks %q:\n%s", want, pr.Body)
+		}
+	}
+}
+
 func TestHaltLeftoversCommitMessage(t *testing.T) {
 	b := newHandleBox(t)
 	h := newHarness(t, "", nil)
