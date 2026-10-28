@@ -370,6 +370,17 @@ test('an unknown key is refused, at every level of the document', () => {
   assert.match(proof, /extra/, `an unknown proof_number key was accepted: the guard reads exactly the value and the source the file writes — the message was ${JSON.stringify(proof)}`)
 })
 
+test('a blank headline or supporting line is refused, never rendered as a hole', () => {
+  const headline = refusal({ change: only('/save', { headline: '' }) })
+  assert.match(headline, /headline/, `a variant with a blank headline was accepted: the hero prints the headline, and an empty one is a hero with nothing where the campaign's own copy goes — the message was ${JSON.stringify(headline)}`)
+
+  const spaces = refusal({ change: only('/save', { headline: '   ' }) })
+  assert.match(spaces, /headline/, `a headline of spaces was accepted: a value that is blank once trimmed is an empty headline with a different spelling — the message was ${JSON.stringify(spaces)}`)
+
+  const supporting = refusal({ change: only('/save', { supportingLine: '' }) })
+  assert.match(supporting, /supporting_line/, `a variant with a blank supporting line was accepted: the hero prints the headline with one line under it, and the file is the only place that line is written — the message was ${JSON.stringify(supporting)}`)
+})
+
 test('a WhatsApp message that does not name its own variant is refused', () => {
   const other = refusal({ change: only('/save', { whatsapp: whatsappText('scale') }) })
   assert.match(other, /save|scale/, `a pre-fill message naming another variant was accepted: the message names the page the visitor came from, which is the whole of why it is per variant (spec §6) — the message was ${JSON.stringify(other)}`)
@@ -398,19 +409,22 @@ test('the booking link and the number are validated where the file writes them',
 test('a partner logo is a name and a self-hosted image, and a broken entry is refused', () => {
   // The name is plainly fake, as the plan's own conventions require: the file names no partner
   // until the owner has that partner's written permission (F12, R3).
-  const landing = read({ logos: [{ name: 'TESTPARTNER', image: '/images/partners/testpartner.svg' }] })
+  const landing = read({ logos: [{ name: 'testpartner', image: '/images/partners/testpartner.svg' }] })
 
   assert.deepEqual(
     landing.partnerLogos,
-    [{ name: 'TESTPARTNER', image: '/images/partners/testpartner.svg' }],
+    [{ name: 'testpartner', image: '/images/partners/testpartner.svg' }],
     'a well-formed partner logo was not read: the list is what the social-proof section renders once a partner has given written permission (F11, F12, D405)',
   )
 
-  const remote = refusal({ logos: [{ name: 'TESTPARTNER', image: 'https://example.com/logo.svg' }] })
+  const remote = refusal({ logos: [{ name: 'testpartner', image: 'https://example.com/logo.svg' }] })
   assert.match(remote, /self-hosted/, `a logo on another host was accepted: a partner's logo is self-hosted like the rest of the site's media (F20, D107) — the message was ${JSON.stringify(remote)}`)
 
   const unnamed = refusal({ logos: [{ image: '/images/partners/x.svg' }] })
   assert.match(unnamed, /name/, `a logo with no name was accepted: an entry that renders a picture nobody is named beside is not social proof — the message was ${JSON.stringify(unnamed)}`)
+
+  const spaced = refusal({ logos: [{ name: '"test partner"', image: '/images/partners/x.svg' }] })
+  assert.match(spaced, /name/, `a logo name carrying a space was accepted: a logo's name is a word the page's look keys off, so a space or a punctuation mark in it would become a selector that matches nothing (F11, D405) — the message was ${JSON.stringify(spaced)}`)
 })
 
 // ---- the reader, and the file the loader opens --------------------------------------------
@@ -433,11 +447,23 @@ test('a trailing "# …" is a comment, not part of the value', () => {
 
 test('a construct the site\'s reader does not understand is refused, never guessed at', () => {
   // An alias, an anchor, a tag and a flow mapping are the constructs the reader refuses by name:
-  // taken for text each of them is a fact that renders as `*spec` or `{a: 1}` on a page.
-  const message = refusalOf(document().replace('    headline: "Same PRs, a tenth of the price."', '    headline: *spec_headline'))
+  // taken for text each of them is a fact that renders as `*spec_headline`, `&spec_headline`,
+  // `!str …` or `{a: 1}` on a page. Each is put where the headline goes, so the refusal of every
+  // one has to name line 7 and the construct it is.
+  const headlineLine = '    headline: "Same PRs, a tenth of the price."'
+  const CONSTRUCTS = [
+    { construct: 'alias', value: '*spec_headline' },
+    { construct: 'anchor', value: '&spec_headline' },
+    { construct: 'tag', value: '!str spec_headline' },
+    { construct: 'flow mapping', value: '{a: 1}' },
+  ]
 
-  assert.match(message, /alias/, `an alias was accepted as a value: the reader resolves no YAML reference, and a value it does not understand is an error rather than a string that renders wrongly — the message was ${JSON.stringify(message)}`)
-  assert.match(message, /:7:/, `the refusal of a construct the reader does not understand names no line, so the editor is not told where it is — the message was ${JSON.stringify(message)}`)
+  for (const { construct, value } of CONSTRUCTS) {
+    const message = refusalOf(document().replace(headlineLine, `    headline: ${value}`))
+
+    assert.match(message, new RegExp(construct), `the ${construct} ${JSON.stringify(value)} was not refused as a construct the reader does not understand: a value it does not resolve is an error rather than a string that renders wrongly on the page — the message was ${JSON.stringify(message)}`)
+    assert.match(message, /:7:/, `the refusal of the ${construct} names no line, so the editor is not told where it is — the message was ${JSON.stringify(message)}`)
+  }
 })
 
 test('a missing file, an empty file and a version this reader does not know are refused', (t) => {
