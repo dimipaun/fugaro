@@ -886,7 +886,7 @@ func TestDigestRunsRefusedWithoutDigestRecipe(t *testing.T) {
 		{"recipe text that is not a recipe", base(&Recipe{Name: "solo", Source: "catalog", SHA256: recipe.Sum([]byte("x")), YAML: "x"}, "20260927-100000-abcd"), "needs a recipe whose first step is digest"},
 		{"not a run ID", base(digest, "yesterday"), "must look like 20260926-221530-a1b2"},
 		{"an empty ID", base(digest, ""), "must look like 20260926-221530-a1b2"},
-		{"too many", base(digest, manyIDs(MaxDigestRuns+1)...), "at most 5000 runs"},	} {
+		{"too many", base(digest, manyIDs(MaxDigestRuns+1)...), "at most 5000 runs"}} {
 		err := tc.spec.Validate()
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: err = %v, want it to mention %q", tc.name, err, tc.want)
