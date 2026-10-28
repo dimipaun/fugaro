@@ -1,0 +1,22 @@
+version: 1
+project: aurora
+git: { provider: github }
+agent:
+  auth: api-key
+governance:
+  review_ratio: 4
+  review_floor_calls: 12
+  max_subagents: 3
+  stage_budget:
+    implement: 0.6
+    review: 0.4
+    fix: 0.2
+  stage_tokens:
+    implement: 1500000
+    review: 800000
+  stage_timeout:
+    implement: 45m
+    review: 30m
+    fix: 20m
+workflows:
+  server: { commands: { build: make, test: make test } }

@@ -63,6 +63,17 @@ type ProjectLayer struct {
 	// KnownFields).
 	ClaudeModels map[string][]string `yaml:"claude_models"`
 
+	// Governance is the project's governance: block (docs/task-governance).
+	// A top-level key on purpose, like ClaudeModels and for a sharper reason:
+	// the defaults: overlay is replace-not-tighten (resolve.go), so a
+	// governance: under defaults: would let a repository's own block replace
+	// the project's value with a looser one instead of tightening it. Read
+	// here, the two meet only in the merge (internal/policy), which only ever
+	// takes the tighter — which is the whole of "the project layer sets them,
+	// a repository may only tighten" (D331). It is the one layer that may
+	// loosen Fugaro's own defaults (policy.Governance.WithDefaults).
+	Governance *Governance `yaml:"governance"`
+
 	// Raw is the exact text, SHA256 its hex sha256.
 	Raw    []byte `yaml:"-"`
 	SHA256 string `yaml:"-"`
@@ -165,7 +176,7 @@ func LayerSum(data []byte) string {
 	return hex.EncodeToString(s[:])
 }
 
-var layerTopKeys = []string{"version", "project", "gcp_project", "defaults", "profiles", "default_profile", "claude_models"}
+var layerTopKeys = []string{"version", "project", "gcp_project", "defaults", "profiles", "default_profile", "claude_models", "governance"}
 
 // layerReserved are keys a later release defines; this one refuses them
 // with a message saying so.
@@ -582,6 +593,7 @@ func validateLayer(l *ProjectLayer, a LayerAnchor) []Problem {
 		add("defaults.agent.max_budget_usd", "must be a finite number, not negative")
 	}
 	ps = append(ps, validateRigor("defaults.rigor", d.Rigor.Default, d.Rigor.Areas)...)
+	ps = append(ps, validateGovernance("governance", l.Governance)...)
 	for _, p := range validateAgentModels(Agent{Model: ag.Model, Models: ag.Models}) {
 		p.Path = "defaults." + p.Path
 		ps = append(ps, p)
