@@ -112,6 +112,77 @@ describe('the installation list document', () => {
     expect(wrong.ok && [...(wrong.document.installations[0]?.checkouts ?? [])]).toEqual([])
   })
 
+  it('reads the recorded base branch, of the installation and of each repository', () => {
+    // Rule 11's read (§6.8): the branch the launch window shows, and the branch
+    // the run is cut from, are the same one, and the app's working directory is
+    // empty -- so the installation's own value and each repository's own value
+    // are the only two the console can have.
+    const answer = parsed({
+      installations: [
+        {
+          name: 'sandbox',
+          gcp_project: 'p',
+          region: 'r',
+          base_branch: 'trunk',
+          checkouts: [
+            { repository: 'github/o/app', path: '/src/app', base_branch: 'dev', enrolled: true, valid: true },
+            // No branch of its own: the installation's value is the layer below
+            // it, and '' is what says so.
+            { repository: 'github/o/other', path: '/src/other', base_branch: '', enrolled: true, valid: true },
+            // A stale row records its repository's branch just the same: which
+            // branch a repository runs against is a fact of the project config
+            // and not of the directory that path named.
+            { repository: 'github/o/gone', path: '/src/gone', base_branch: 'release', enrolled: true, valid: false, reason: 'missing' },
+            // A row that names no repository is not a repository record, and
+            // its path is still offered on its own terms.
+            { path: '/src/anon', base_branch: 'dev', valid: true },
+          ],
+        },
+      ],
+      warnings: [],
+    })
+    expect(answer.ok).toBe(true)
+    if (!answer.ok) return
+    const row = answer.document.installations[0]
+    expect(row?.baseBranch).toBe('trunk')
+    expect(row?.repositories).toEqual([
+      { repository: 'github/o/app', baseBranch: 'dev' },
+      { repository: 'github/o/other', baseBranch: '' },
+      { repository: 'github/o/gone', baseBranch: 'release' },
+    ])
+    // The paths are the list they always were: only a row the CLI re-validated
+    // is offered as a working directory.
+    expect([...(row?.checkouts ?? [])]).toEqual(['/src/app', '/src/other', '/src/anon'])
+  })
+
+  it('reads an absent base branch as unrecorded, and refuses one that is not text', () => {
+    // Absent is what an older CLI sends, and it means "unrecorded" -- never a
+    // refusal, which would hide every installation on the machine.
+    const older = parsed({ installations: [{ name: 'sandbox', gcp_project: 'p', region: 'r' }], warnings: [] })
+    expect(older.ok && older.document.installations[0]?.baseBranch).toBe('')
+    expect(older.ok && [...(older.document.installations[0]?.repositories ?? [])]).toEqual([])
+    const rowWithout = parsed({
+      installations: [{ name: 'sandbox', checkouts: [{ repository: 'github/o/app', path: '/src/app', valid: true }] }],
+    })
+    expect(rowWithout.ok && rowWithout.document.installations[0]?.repositories).toEqual([
+      { repository: 'github/o/app', baseBranch: '' },
+    ])
+
+    // Present and not a string is a document this console does not understand:
+    // the value is shown as the branch the run is cut from, so reading it as
+    // "unrecorded" would move that branch in silence.
+    const wrongInstallation = parsed({ installations: [{ name: 'sandbox', base_branch: 7 }] })
+    expect(wrongInstallation.ok).toBe(false)
+    const wrongRow = parsed({
+      installations: [
+        { name: 'sandbox', checkouts: [{ repository: 'github/o/app', path: '/src/app', base_branch: { branch: 'main' } }] },
+      ],
+    })
+    expect(wrongRow.ok).toBe(false)
+    expect(wrongRow.ok === false && wrongRow.reason).toContain('sandbox')
+    expect(wrongRow.ok === false && wrongRow.reason).toContain('base_branch')
+  })
+
   it('refuses a row whose checkouts run past the bound, rather than drawing a shortened row', () => {
     // **The bound is named, not applied behind the screen's back.**
     // `docs/design/console-styling.md` §2.2 says the picker's buttons are the

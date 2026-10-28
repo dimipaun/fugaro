@@ -815,6 +815,7 @@ and one entry of `installations`:
 | `region` | string | never | never | `""` when the config could not be read |
 | `shared_merged` | bool | never | never | whether this machine holds the installation's published shared config |
 | `shared_checked_at` | string | never | **yes** | RFC 3339 UTC; null exactly when `shared_merged` is false |
+| `base_branch` | string | **yes** (an older CLI) | never | the installation's own recorded base branch — its project config's top-level `base_branch`; `""` when it records none |
 | `checkouts` | array | **yes** (an older CLI) | never | the repositories of this project this machine remembers a checkout of, one entry per path; `[]` when none is remembered |
 
 and one entry of `installations[].checkouts`:
@@ -823,6 +824,7 @@ and one entry of `installations[].checkouts`:
 | --- | --- | --- | --- | --- |
 | `repository` | string | never | never | `<provider>/<owner>/<name>`, the identity the path was recorded under |
 | `path` | string | never | never | the absolute path, made printable and bounded (control and format characters escaped, at most 200 runes) |
+| `base_branch` | string | **yes** (an older CLI) | never | the recorded base branch of this repository — `repos.<owner/name>.base_branch` in the installation's project config; `""` when that entry is absent or records none |
 | `enrolled` | bool | never | never | whether the installation's project config enrolls `repository` in its own `repos:` map — **a local fact**, false when that config could not be read |
 | `valid` | bool | never | never | whether the path is still a checkout of this project and this repository **and that repository is enrolled**, as of this read |
 | `reason` | string | **yes** | never | why it is not, one of `missing`, `not_a_checkout`, `unreadable`, `other_project`, `other_repository`, `not_enrolled`, `not_representable`; **absent exactly when `valid` is true** |
@@ -836,6 +838,29 @@ It is **not** a cloud fact: it is the operator's own `repos:` map in
 `projects/<name>.yaml`, read locally. The published allow-list is the cloud's
 copy of the same decision (project policy publish seeds it from this map) and is
 **not** read here — this command opens no bucket and needs no credentials.
+
+**`base_branch` is on both rows because a launch is cut from a branch and the
+window that confirms it shows that branch** (design §5.1 rule 11: "the branch
+the window shows is the branch the run is cut from"). The CLI resolves that
+branch through one merged order (`internal/cli/basebranch.go`'s
+`launchBaseBranch`, `config.EffectiveBaseBranch`), whose **first** layer is the
+working directory's checkout of the repository — and a console launch never has
+one, because its working directory is the app's own empty directory. The two
+layers a launch can both read and be cut from are the installation's top-level
+`base_branch` and the repository's `repos.<owner/name>.base_branch` — the two
+fields the tables above carry — so the document carries exactly those two and no
+third: a
+repository for which neither is recorded is one the console refuses to launch
+from, with a refusal naming the repository and those two settings, and
+`git.base_branch` in a checkout's `fugaro.yaml` is **never** the answer — an
+operator can set it without moving this row, and a branch read from it would be
+a branch the run is not cut from. Both are read off the machine's own project
+config, like everything else here: the published policy node carries the same
+project default for the runner and this command does not open a bucket to read
+it. Neither field is about the path a row names — they are properties of the
+installation and of the repository — and each is `""` rather than absent when
+the config records none, because absent is this document's word for "an older
+CLI" and a reader must keep the two apart.
 
 **`checkouts` is what makes the first run zero-configuration** (v1 design D13
 and §3.4 rule 7; console v2 plan V2.1.1): the installation list and the local

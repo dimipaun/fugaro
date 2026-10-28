@@ -223,7 +223,7 @@ func TestConfigListNeverCarriesAConfigField(t *testing.T) {
 		name, _, _ := strings.Cut(instType.Field(i).Tag.Get("json"), ",")
 		got = append(got, name)
 	}
-	want := []string{"name", "gcp_project", "region", "shared_merged", "shared_checked_at", "checkouts"}
+	want := []string{"name", "gcp_project", "region", "shared_merged", "shared_checked_at", "base_branch", "checkouts"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("configListInstallation fields = %v, want exactly the named set %v", got, want)
 	}
@@ -306,6 +306,107 @@ func configListWriteState(t *testing.T, body string) string {
 	return path
 }
 
+// configListRecordBaseBranch writes the recorded base branch into project's
+// config: the project's own top-level base_branch, and, when repo is not
+// empty, that repository's repos.<repo>.base_branch. They are the two layers a
+// console launch may be cut from (the launch has no checkout of the repository
+// as its working directory, so the checkout layer of the CLI's merged order is
+// out of reach — docs/design/desktop-console.md §5.1 rule 11), so a fixture
+// needs a way to set them without enrolling anything else. A later enrollRepo
+// adds to the block this writes.
+func configListRecordBaseBranch(t *testing.T, project, projectBranch, repo, repoBranch string) {
+	t.Helper()
+	path, err := localcfg.ProjectPath(os.Getenv, project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	add := ""
+	if projectBranch != "" {
+		add += "base_branch: " + projectBranch + "\n"
+	}
+	if repo != "" {
+		add += "repos:\n  " + repo + ": { base_branch: " + repoBranch + " }\n"
+	}
+	if err := os.WriteFile(path, append(b, add...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestConfigListCarriesTheRecordedBaseBranch is rule 11's read: the branch a
+// launch is cut from is shown in the window, and the branch the run keeps is
+// the CLI's own merged resolution, whose checkout layer a launch never has —
+// so the console requires the installation's recorded value, and this document
+// is where it reads it (V2.5.1a).
+//
+// Both fields come off the LOCAL project config and nothing else: not the
+// checkout's own fugaro.yaml, which the CLI's order reads first and which the
+// app's empty working directory cannot reach, and not the published policy
+// node, which is a network read `config list` does not do. The checkout here
+// writes git.base_branch, and neither field carries it.
+func TestConfigListCarriesTheRecordedBaseBranch(t *testing.T) {
+	dir := t.TempDir()
+	isolateProjects(t, dir)
+	writeProject(t, "aurora", "aurora-gcp")
+	writeProject(t, "bramble", "bramble-gcp")
+	configListRecordBaseBranch(t, "aurora", "trunk", "acme/app", "dev")
+	enrollRepo(t, "aurora", "acme/other")
+
+	// A checkout whose own fugaro.yaml names a base branch: the field is not
+	// that value, whatever its file says.
+	app := checkoutsAt(t, filepath.Join(dir, "src", "app"),
+		checkoutsProjectYAML("aurora")+"git:\n  base_branch: from-the-checkout\n",
+		"https://github.com/acme/app.git")
+	checkoutsRemember(t, "aurora", app, "https://github.com/acme/app.git")
+	// An enrolled repository with no repos entry of its own: the row is
+	// listed and records no base branch.
+	other := checkoutsAt(t, filepath.Join(dir, "src", "other"), checkoutsProjectYAML("aurora"), "https://github.com/acme/other.git")
+	checkoutsRemember(t, "aurora", other, "https://github.com/acme/other.git")
+	// And a repository aurora's repos: map does not name at all.
+	unrecorded := checkoutsAt(t, filepath.Join(dir, "src", "unrecorded"), checkoutsProjectYAML("aurora"), "https://github.com/acme/unrecorded.git")
+	checkoutsRemember(t, "aurora", unrecorded, "https://github.com/acme/unrecorded.git")
+
+	doc, out := configListJSON(t)
+	byName := map[string]configListInstallation{}
+	for _, inst := range doc.Installations {
+		byName[inst.Name] = inst
+	}
+	if got := byName["aurora"].BaseBranch; got != "trunk" {
+		t.Errorf("aurora's base_branch = %q, want the project's own recorded value", got)
+	}
+	// An installation that records none carries "" and not an absent key:
+	// absent is the console's own fact about an older CLI (§6.8), and reading
+	// one as the other would hide which is which.
+	if got, ok := byName["bramble"]; !ok || got.BaseBranch != "" {
+		t.Errorf("bramble's base_branch = %q, want empty for an installation that records none", got.BaseBranch)
+	}
+
+	rows := map[string]configListCheckout{}
+	for _, c := range configListCheckoutsOf(t, doc, "aurora") {
+		rows[c.Repository] = c
+	}
+	if len(rows) != 3 {
+		t.Fatalf("aurora's checkout rows = %+v, want the three remembered paths", rows)
+	}
+	if got := rows["github/acme/app"].BaseBranch; got != "dev" {
+		t.Errorf("github/acme/app's base_branch = %q, want the repository's own recorded value", got)
+	}
+	for _, repo := range []string{"github/acme/other", "github/acme/unrecorded"} {
+		if got := rows[repo].BaseBranch; got != "" {
+			t.Errorf("%s's base_branch = %q, want empty: its config records none", repo, got)
+		}
+	}
+	if strings.Contains(out, "from-the-checkout") {
+		t.Errorf("config list --json carries a base branch from the checkout's own fugaro.yaml:\n%s", out)
+	}
+	if !strings.Contains(out, `"base_branch": ""`) {
+		t.Errorf("config list --json omits an empty base_branch instead of carrying it:\n%s", out)
+	}
+}
+
 // TestConfigListListsTheCheckoutsThisMachineRemembers: the field is the second
 // half of what the console's first run needs (D13, §3.4 rule 7) — the
 // repositories of each installation and where this machine has them — and it
@@ -344,7 +445,7 @@ func TestConfigListListsTheCheckoutsThisMachineRemembers(t *testing.T) {
 	// The schema golden: every key a checkout row can carry, so a field
 	// added to the type fails a named test rather than reaching the console.
 	// The stale row is the one pinned, because it is the one that carries
-	// all four: reason is omitempty, so a valid row carries three keys and a
+	// every key: reason is omitempty, so a valid row carries one fewer and a
 	// reader must read a missing reason as "valid" (the console's JSON
 	// contract §6.8).
 	var top map[string]any
@@ -374,7 +475,7 @@ func TestConfigListListsTheCheckoutsThisMachineRemembers(t *testing.T) {
 	for _, row := range rows {
 		k := keysOf(t, row)
 		if row["valid"] == true {
-			if want := []string{"enrolled", "path", "repository", "valid"}; !reflect.DeepEqual(k, want) {
+			if want := []string{"base_branch", "enrolled", "path", "repository", "valid"}; !reflect.DeepEqual(k, want) {
 				t.Errorf("a valid row's keys = %v, want %v (reason is omitted when there is none)", k, want)
 			}
 			continue
@@ -387,7 +488,7 @@ func TestConfigListListsTheCheckoutsThisMachineRemembers(t *testing.T) {
 	// The named set, spelled out: the checkout is exactly these five fields,
 	// so a localcfg field cannot join the document by a rename or a
 	// promotion.
-	wantCheckout := []string{"repository", "path", "enrolled", "valid", "reason"}
+	wantCheckout := []string{"repository", "path", "base_branch", "enrolled", "valid", "reason"}
 	if got := jsonTags(t, configListCheckout{}); !reflect.DeepEqual(got, wantCheckout) {
 		t.Errorf("configListCheckout fields = %v, want exactly %v", got, wantCheckout)
 	}
