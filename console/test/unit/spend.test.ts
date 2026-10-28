@@ -1269,6 +1269,15 @@ describe('the by-mode breakdown', () => {
     expect(texts(tree, 'spend-run-hours')).toEqual([UNAVAILABLE_MARK, UNAVAILABLE_MARK])
   })
 
+  it('says `no readable record`, the fact a corrupt record and a run in flight share', () => {
+    // The words are the console's own -- `report`'s table and CSV draw `n/a`
+    // on such a row and name no mark -- and they name the fact a corrupt
+    // record and a run that has not written one share, rather than
+    // "unreadable", which misnames the in-flight run: the usual `none` row of
+    // a window that reaches into today.
+    expect(UNREADABLE_MARKER).toBe('no readable record')
+  })
+
   it('reads an unreadable row as `n/a`, not as a measured zero', () => {
     // Red before `rowOf` read `unreadable`: the row was kept, but nothing said
     // why its money was `n/a` rather than `$0.00`, and a reader could not tell
@@ -1282,10 +1291,13 @@ describe('the by-mode breakdown', () => {
 
     const none = rowFor(model, 'none')
     expect(none.unreadable).toBe(true)
-    // A null money key is *unavailable* -- the reading, not a zero.
+    // A null money key is *unavailable* -- the reading, not a zero -- and its
+    // reason is the row's own fact, not "the document has no model_micros": the
+    // key is present and null on purpose, and there was no record to read.
     for (const reading of [none.model, none.notional, none.compute]) {
       expect(reading.state).toBe('unavailable')
       expect(reading.value).toBeNull()
+      expect(reading.because).toBe('no readable record for these runs')
     }
     // The run itself is counted: the record could not be read, but the run did
     // launch, and the CLI counts it once.
@@ -1322,6 +1334,8 @@ describe('the by-mode breakdown', () => {
     expect(texts(unreadableRow, 'spend-model')).toEqual([UNAVAILABLE_MARK])
     expect(texts(unreadableRow, 'spend-notional')).toEqual([UNAVAILABLE_MARK])
     expect(texts(unreadableRow, 'spend-compute')).toEqual([UNAVAILABLE_MARK])
+    // The `n/a`'s own explanation is the row's, in the drawn cell's `title`.
+    expect(one(unreadableRow, 'spend-model').getAttribute('title')).toBe('no readable record for these runs')
     expect(drawn(unreadableRow)).not.toContain('$0.00')
     // The hook is a fact a stylesheet keys off (design §2.4), so it is read
     // back rather than left to the class scan, which reads CSS and not the
@@ -1349,6 +1363,7 @@ describe('the by-mode breakdown', () => {
     for (const reading of [model.totals.model, model.totals.notional, model.totals.compute]) {
       expect(reading.state).toBe('unavailable')
       expect(reading.value).toBeNull()
+      expect(reading.because).toBe('no readable record for these runs')
     }
 
     const tree = renderSpend(factory, model, 'light')
@@ -1358,23 +1373,30 @@ describe('the by-mode breakdown', () => {
     expect(texts(totals, 'spend-total-model')).toEqual([UNAVAILABLE_MARK])
     expect(texts(totals, 'spend-total-notional')).toEqual([UNAVAILABLE_MARK])
     expect(texts(totals, 'spend-total-compute')).toEqual([UNAVAILABLE_MARK])
+    expect(one(totals, 'spend-total-model').getAttribute('title')).toBe('no readable record for these runs')
     expect(texts(totals, 'spend-total-runs')).toEqual(['2'])
     expect(drawn(totals)).not.toContain('$0.00')
   })
 
   it('ignores a per-row key it does not know, so a newer document is not a refusal', () => {
     // The contract grows a row key from one CLI release to the next, and the
-    // console reads the keys it knows: an unknown one is not a version
-    // mismatch and not a refusal.
+    // console reads the keys it knows -- `rowOf` and `totalsOf` reach for each
+    // key by name, so one they never name is simply not read. An unknown extra
+    // key is therefore not a version mismatch and not a refusal, on a readable
+    // row, on the unreadable one, or on the totals line.
     const report: JSONDoc = {
       ...MODE_UNREADABLE_REPORT,
-      rows: [{ ...MODE_UNREADABLE_ROWS[0], something_new: 'from a newer CLI' }],
+      rows: MODE_UNREADABLE_ROWS.map((row) => ({ ...row, something_new: 'from a newer CLI' })),
+      totals: { ...MODE_UNREADABLE_TOTALS, something_new: 'from a newer CLI' },
     }
     const model = buildSpendModel(report, BUDGET)
     expect(model.dimensionKnown).toBe(true)
     expect(model.notes).toEqual([])
-    expect(model.rows.map((row) => row.key)).toEqual(['pro'])
+    expect(model.rows.map((row) => row.key)).toEqual(['pro', 'none'])
     expect(rowFor(model, 'pro').model.value).toBe(1.5)
+    // The unknown key does not disturb the unreadable read either.
+    expect(rowFor(model, 'none').unreadable).toBe(true)
+    expect(model.totals.model.value).toBe(1.5)
   })
 })
 
@@ -2120,6 +2142,11 @@ describe('a report row', () => {
     // The run hours of a day whose compute was not estimated are `null` on the
     // wire (`RunHours` is only set under `ComputeKnown`), which is `n/a`.
     expect(rowFor(modelOf(), '2026-10-13').runHours.state).toBe('unavailable')
+    // A *readable* row's null key keeps `readNumber`'s own sentence: the
+    // row-own reason is the unreadable row's alone, and only a key present and
+    // null because there was no record to read gets it.
+    expect(rowFor(modelOf(), '2026-10-13').notional.because).toBe('the document has no notional_micros')
+    expect(rowFor(modelOf(), '2026-10-13').runHours.because).toBe('the document has no run_hours')
   })
 
   it('carries a model row\'s tokens, and none for a model whose tokens were not tracked', () => {

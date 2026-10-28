@@ -250,12 +250,25 @@ export const PARTIAL_MARKER = '(partial)'
  * record was unreadable (`JSONLine.Unreadable`, contract section 4). Only
  * `report --by mode` sets the mark: a record the build cannot read, or one the
  * run has not written yet, still means the run launched, so it counts once in
- * `runs` and the money keys are `null`. The figures beside this sentence are
- * therefore the `n/a` the reader already draws for an absent key -- never a
+ * `runs` and the money keys are `null`. The words name the fact the two cases
+ * share -- there is no readable record -- rather than "unreadable" alone,
+ * because the usual `none` row of a window that reaches into today is a run
+ * still in flight, whose record is not corrupt but simply not written
+ * (`modeRecords`, `internal/cli/report.go`). The figures beside this sentence
+ * are therefore the `n/a` the reader already draws for an absent key -- never a
  * `$0.00` that would read as a measurement. The words are the console's own;
  * `report`'s table and CSV draw `n/a` there and name no mark.
  */
-export const UNREADABLE_MARKER = 'records unreadable'
+export const UNREADABLE_MARKER = 'no readable record'
+
+/**
+ * NO_RECORD_REASON is the `title` an unreadable row's money cells carry, in
+ * place of `readNumber`'s "the document has no <field>". Such a row's `*_micros`
+ * is present and `null` on purpose -- there was no readable record to measure --
+ * so naming the missing key would be the false sentence the marker exists to
+ * prevent. Every other null keeps `readNumber`'s own reason.
+ */
+const NO_RECORD_REASON = 'no readable record for these runs'
 
 /**
  * RESERVE_LABEL is the words the caps panel puts beside `max_reserve_usd`. They
@@ -736,10 +749,21 @@ function boolAt(raw: unknown): boolean {
  * of them with the flag off is not a shape `report` writes; reading the number
  * would still be reading the same integer, and hiding it would be the worse
  * error of the two.
+ *
+ * On a row the document marks `unreadable` every money key is `null` because
+ * there was no record to read, not because a key is missing, so the `n/a`
+ * carries `NO_RECORD_REASON` rather than `readNumber`'s field sentence. The
+ * flag is passed in, like the account, so a caller that forgets it is a line a
+ * reviewer can see.
  */
-function microsReading(line: Record<string, unknown>, key: string, account: SpendAccount): Reading {
+function microsReading(
+  line: Record<string, unknown>,
+  key: string,
+  account: SpendAccount,
+  unreadable: boolean,
+): Reading {
   const micros = readNumber(line[key], key)
-  if (micros.value === null) return micros
+  if (micros.value === null) return unreadable ? unavailable(NO_RECORD_REASON) : micros
   const usd = micros.value / MICROS_PER_USD
   switch (account) {
     case 'model':
@@ -796,16 +820,17 @@ function rowOf(raw: unknown): SpendRow | null {
   const line = objectAt(raw)
   if (line === null) return null
   const partial = boolAt(line['partial'])
+  const unreadable = boolAt(line['unreadable'])
   return {
     key: textAt(line['key']) ?? '',
     start: textAt(line['start']),
     end: textAt(line['end']),
     partial,
     hollow: partial,
-    unreadable: boolAt(line['unreadable']),
-    model: microsReading(line, 'model_micros', 'model'),
-    notional: microsReading(line, 'notional_micros', 'notional'),
-    compute: microsReading(line, 'compute_micros', 'compute'),
+    unreadable,
+    model: microsReading(line, 'model_micros', 'model', unreadable),
+    notional: microsReading(line, 'notional_micros', 'notional', unreadable),
+    compute: microsReading(line, 'compute_micros', 'compute', unreadable),
     runHours: readNumber(line['run_hours'], 'run_hours'),
     runs: countReading(line, 'runs'),
     calls: countReading(line, 'calls'),
@@ -817,14 +842,15 @@ function rowOf(raw: unknown): SpendRow | null {
  * other and is **not** recomputed from the rows. */
 function totalsOf(raw: unknown): SpendTotals {
   const line = objectAt(raw) ?? {}
+  const unreadable = boolAt(line['unreadable'])
   return {
-    model: microsReading(line, 'model_micros', 'model'),
-    notional: microsReading(line, 'notional_micros', 'notional'),
-    compute: microsReading(line, 'compute_micros', 'compute'),
+    model: microsReading(line, 'model_micros', 'model', unreadable),
+    notional: microsReading(line, 'notional_micros', 'notional', unreadable),
+    compute: microsReading(line, 'compute_micros', 'compute', unreadable),
     runHours: readNumber(line['run_hours'], 'run_hours'),
     runs: countReading(line, 'runs'),
     partial: boolAt(line['partial']),
-    unreadable: boolAt(line['unreadable']),
+    unreadable,
   }
 }
 
