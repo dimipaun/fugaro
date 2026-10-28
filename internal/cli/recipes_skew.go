@@ -502,8 +502,13 @@ func asksForRigor(spec *task.Spec) bool {
 // (T5.2), and naming flags nobody gave would send its reader looking for a
 // mistake they did not make — the request is real all the same, and a runner
 // older than rigorRequestSince refuses the whole task for it.
+//
+// The mode is what makes a request kept rather than asked for, so a follow-up
+// that passed no flag and carries paths alone — a stored task, launched again
+// by --retry — is described by the flags: it carries no mode to name, and
+// "(rigor: )" would report the field's absence as the thing the gate judged.
 func rigorGateSubject(o *runOptions, spec *task.Spec) string {
-	if o.rigor == "" && len(o.paths) == 0 && spec.IsFollowUp() {
+	if o.rigor == "" && len(o.paths) == 0 && spec.IsFollowUp() && spec.Rigor != "" {
 		return fmt.Sprintf("the mode a follow-up keeps from its PR (rigor: %s)", spec.Rigor)
 	}
 	return "the run's own rigor request (--mode, --path)"

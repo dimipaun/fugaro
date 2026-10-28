@@ -178,7 +178,15 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 		if c.Recipe == nil && rec.Recipe != nil && rec.Recipe.Name != recipe.DefaultName && recipe.NameRE.MatchString(rec.Recipe.Name) {
 			c.Chosen = rec.Recipe
 		}
-		if bounded := rec.Rigor.Bounded(); bounded != nil {
+		// A bounded block that recorded hotfix imposes nothing either: hotfix
+		// is off the axis (it ranks below every on-axis mode), so a follow-up
+		// never keeps it. It is D12's own mode — reached by an operator's run
+		// under the base branch's opt-in, and refused outright as a request —
+		// and a follow-up that inherited it would be a second route to it, one
+		// no configuration asked for and one a stored task could then be
+		// refused for on --retry. The record still says hotfix; that is what
+		// the run it describes resolved.
+		if bounded := rec.Rigor.Bounded(); bounded != nil && bounded.Mode != rigor.Hotfix {
 			c.Rigor = bounded.Mode
 		}
 	}
@@ -621,7 +629,9 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 //
 // A record that carries no readable mode — an older run, or one that died
 // before bootstrap — imposes nothing: Strictest skips the empty value, so the
-// flag stands exactly as it does on a first run.
+// flag stands exactly as it does on a first run. A recorded hotfix is dropped
+// before it gets here, for the reason resolvePR gives, so it imposes nothing
+// the same way.
 func followUpRigor(o *runOptions, c *prChain) (rigor.Mode, error) {
 	req := rigor.Mode(o.rigor)
 	if err := refuseFollowUpRigor(req, c.Rigor, o.pr[0], "--mode", ""); err != nil {

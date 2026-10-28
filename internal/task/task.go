@@ -194,9 +194,17 @@ type Spec struct {
 	// Rigor is the mode the run's own launcher asked for (fugaro run
 	// --mode, docs/rigor-modes implementation-plan T1.6): the one input
 	// that may raise the mode the run's layers resolve and never lower it
-	// (D6, F14). "" asks for none, which is every launch that passes no
-	// flag and every spec written before this release — the resolution then
+	// (D6, F14). "" asks for none: every spec written before this release,
+	// every first run that passes no flag, and every follow-up whose pull
+	// request recorded no mode the reader may trust. The resolution then
 	// falls to the layers alone, exactly as it did before the flag existed.
+	//
+	// A --pr follow-up is the one launch that writes this field without a
+	// flag: it keeps the mode the runs on its pull request recorded and may
+	// only raise it (T5.2), so the launcher asks for that mode on the
+	// follow-up's behalf. A recorded hotfix is not a mode it keeps — hotfix is
+	// off the axis, an operator's own mode (D12) — so a record carrying one
+	// leaves the field empty, like any other record that imposes nothing.
 	//
 	// It is called rigor and not mode because Spec.Mode is already taken: it
 	// is the *recipe's* mode (implement, review, artifact), a different
@@ -209,8 +217,9 @@ type Spec struct {
 	// spec (Parse decodes with DisallowUnknownFields), so the launcher gates
 	// a launch that would set it (rigorRequestSince, internal/cli/
 	// recipes_skew.go) rather than let the run fail at bootstrap after the
-	// task was written. A spec that asks for nothing carries neither field
-	// and is byte-identical to what the previous release wrote.
+	// task was written — a follow-up that keeps a mode included, though it
+	// passed no flag. A spec that carries neither field is byte-identical to
+	// what the previous release wrote, and is never gated.
 	//
 	// The vocabulary is closed (D20): a value outside it is refused by
 	// Validate below, by the launcher before it writes anything, and by the

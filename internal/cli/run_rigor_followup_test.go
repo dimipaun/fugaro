@@ -124,6 +124,29 @@ func TestFollowUpRefusesHotfix(t *testing.T) {
 	}
 }
 
+// TestFollowUpNeverKeepsARecordedHotfix: hotfix is off the axis, so it is not
+// a mode a follow-up keeps. The runs on a PR can record it — an operator's own
+// run under the base branch's opt-in (D12) is a run on that branch — and a
+// follow-up that inherited it would be the second route to it that D12 does
+// not have: reached by a launch that asked for nothing, and one --mode hotfix
+// is refused on. The record imposes nothing instead, so the launch asks for
+// none and the runner resolves from the layers.
+//
+// Mutation (drop the bounded.Mode != rigor.Hotfix term from resolvePR): the
+// follow-up stores rigor: hotfix, which is also the stored task the same
+// refusal would then reject on --retry.
+func TestFollowUpNeverKeepsARecordedHotfix(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRootRigor(t, f, rootID, rigor.Hotfix)
+	writeBuildRecord(t, f, appSlug, "web", release0111)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "also rename x"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSpec(t, f, fuID).Rigor; got != "" {
+		t.Fatalf("rigor = %q, want no request: a follow-up never keeps a recorded hotfix", got)
+	}
+}
+
 // TestStoredFollowUpReappliesTheRaiseOnlyRule: --retry and a repeated --run-id
 // launch a stored task as it is, which is the one launch shape whose mode
 // nobody resolves a second time (recheckFollowUp). The raise-only rule has to
@@ -201,6 +224,34 @@ func TestFollowUpKeptModeIsGatedOnTheJobImage(t *testing.T) {
 	}
 	if !noTaskStored(t, f, fuID) {
 		t.Errorf("the refused launch wrote a task.json")
+	}
+}
+
+// TestStoredFollowUpWithPathsIsGatedUnderItsPaths: the gate's subject names the
+// request the spec actually carries. A stored follow-up that declared paths and
+// no mode — a task whose launch passed --path alone, launched again as it is —
+// carries no mode for the follow-up branch to name, so the gate describes it by
+// the flags, which is where its request came from; naming an empty mode would
+// report a field the task does not have.
+//
+// Mutation (drop spec.Rigor != "" from rigorGateSubject's condition): the
+// refusal reads "the mode a follow-up keeps from its PR (rigor: )".
+func TestStoredFollowUpWithPathsIsGatedUnderItsPaths(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRootRigor(t, f, rootID, "")
+	writeBuildRecord(t, f, appSlug, "web", release085)
+	fu := followUpSpec(fuID, rootID, rootID, 7)
+	fu.Paths = []string{"internal/payments/x.go"}
+	seedSpec(t, f, fu, false)
+	_, _, err := execute(t, "run", "--retry", fuID)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "the run's own rigor request (--mode, --path) needs a job image whose runner knows the rigor request") {
+		t.Fatalf("err = %v, want exit 1 naming the flags the stored request came from", err)
+	}
+	if strings.Contains(err.Error(), "(rigor: )") {
+		t.Errorf("the refusal names a rigor mode the stored task does not carry: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
 	}
 }
 
