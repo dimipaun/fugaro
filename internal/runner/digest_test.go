@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,6 +15,7 @@ import (
 
 	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/digest"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -710,43 +712,105 @@ func TestDigestStepSkipsPeriodInOpenPRRepoRecipe(t *testing.T) {
 	}
 }
 
-// TestDigestStepRefusesUnreadableReportTask: a record whose recipe is not the
-// catalog's and whose task cannot be read leaves the step unable to say whether
-// its open pull request is a report run's -- so it fails, rather than reading
-// past a run whose report may already be open. The record has a pull request
-// and a valid run ID, so this is a read the step chose to make, not a broken
-// manifest.
+// TestDigestStepSkipsUnreadableReportTask: a record whose recipe is not the
+// catalog's and whose task cannot be read is not one the step can tell is a
+// report run's, so it is read past with a warning -- the policy the launcher's
+// own listing reads the same object with (internal/cli's readRun: an absent
+// task.json, or one that does not parse, leaves the run unrecognised, and only
+// a read that fails otherwise fails the listing). The period such a run may
+// hold is then written again, which is the price of the one read this step
+// cannot make; a read that fails for any other reason still fails the step,
+// since a bucket that cannot be read is not a repository with no report runs
+// (G5).
 //
-// Mutation (read past an unreadable task): the run writes its reports and opens
-// a pull request over one that may hold the same files.
-func TestDigestStepRefusesUnreadableReportTask(t *testing.T) {
+// Mutation (fail the step on the unreadable task, as the first cut did): the
+// run ends infra_error and the repository gets no report at all.
+func TestDigestStepSkipsUnreadableReportTask(t *testing.T) {
 	const (
 		own      = "20261019-090000-bbbb"
 		previous = "20261018-120000-dddd"
 	)
-	spec := digestSpec(own, previous)
-	h := newHarnessFiles(t, "", spec, nil)
-	clk := digestClock(h)
-	now := clk.Now()
-	digestRecord(t, h.bucket, repoSlug, own, now.AddDate(0, 0, -4), 1.5, nil)
-	digestRecord(t, h.bucket, repoSlug, previous, now.AddDate(0, 0, -10), 3, func(rec *runstore.Record) {
-		rec.Recipe = &runstore.RecipeRecord{Name: "report", Source: string(recipe.SourceRepo)}
-		rec.PR = &runstore.PRRef{Number: 42, URL: "https://example.invalid/pr/42"}
-	})
-	// No task.json for it at all: the record is there and its task is not.
+	for _, tc := range []struct {
+		name  string
+		seed  func(t *testing.T, h *harness, g *gcpfake.GCS)
+		fails bool
+	}{
+		{
+			name: "no task.json at all",
+			seed: func(*testing.T, *harness, *gcpfake.GCS) {},
+		},
+		{
+			name: "a task.json that does not parse",
+			seed: func(t *testing.T, h *harness, _ *gcpfake.GCS) {
+				if err := h.store.Sibling(previous).PutFile(context.Background(), "task.json", []byte("not a task at all"), "application/json"); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "a read that fails otherwise",
+			seed: func(t *testing.T, h *harness, g *gcpfake.GCS) {
+				prev := &task.Spec{Version: 1, RunID: previous, Repo: "acme/app", Ref: "main", Workflow: "app",
+					Task: "Periodic run review", Recipe: &task.Recipe{Name: "report", Source: string(recipe.SourceRepo)},
+					DigestRuns: []string{own}}
+				if err := h.store.Sibling(previous).WriteTask(context.Background(), prev); err != nil {
+					t.Fatal(err)
+				}
+				g.FailObjectGetsAfter(digestBucket, h.store.Sibling(previous).Prefix()+"task.json", 0)
+			},
+			fails: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := digestSpec(own, previous)
+			h := newHarnessFiles(t, "", spec, nil)
+			clk := digestClock(h)
+			g := digestGCSBucket(t, h, spec)
+			var logs bytes.Buffer
+			h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
+			now := clk.Now()
+			digestRecord(t, h.bucket, repoSlug, own, now.AddDate(0, 0, -4), 1.5, nil)
+			digestRecord(t, h.bucket, repoSlug, previous, now.AddDate(0, 0, -10), 3, func(rec *runstore.Record) {
+				rec.Recipe = &runstore.RecipeRecord{Name: "report", Source: string(recipe.SourceRepo)}
+				rec.PR = &runstore.PRRef{Number: 42, URL: "https://example.invalid/pr/42"}
+			})
+			h.provider.State.PRs = append(h.provider.State.PRs, fake.PRState{
+				PR: gitprov.PR{Number: 42}, Spec: gitprov.PRSpec{Branch: "fugaro/" + previous, Base: "main"}, State: gitprov.PROpen,
+			})
+			tc.seed(t, h, g)
 
-	rec, err := h.run(t, review("ship", 0))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rec.Status != runstore.StatusInfraError || rec.Outcome != runstore.OutcomeNone {
-		t.Fatalf("record = status %s, outcome %s, reason %q", rec.Status, rec.Outcome, rec.Reason)
-	}
-	if !strings.Contains(rec.Reason, "to tell whether its open pull request is a report run's") {
-		t.Errorf("reason = %q, want it to say which read failed", rec.Reason)
-	}
-	if hasBranch(t, h.remote, "fugaro/"+runID) {
-		t.Error("the run pushed a branch without telling whether the open pull request was a report run's")
+			rec, err := h.run(t, review("ship", 0))
+			if err != nil {
+				t.Fatal(err)
+			}
+			branch := "fugaro/" + runID
+			if tc.fails {
+				if rec.Status != runstore.StatusInfraError || rec.Outcome != runstore.OutcomeNone {
+					t.Fatalf("record = status %s, outcome %s, reason %q; want the run failed", rec.Status, rec.Outcome, rec.Reason)
+				}
+				if !strings.Contains(rec.Reason, "to tell whether its open pull request is a report run's") {
+					t.Errorf("reason = %q, want it to say which read failed", rec.Reason)
+				}
+				if hasBranch(t, h.remote, branch) {
+					t.Error("the run pushed a branch without telling whether the open pull request was a report run's")
+				}
+				return
+			}
+			if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+				t.Fatalf("record = status %s, outcome %s, reason %q; want the reports written", rec.Status, rec.Outcome, rec.Reason)
+			}
+			if !strings.Contains(logs.String(), "not counted as a report run") {
+				t.Errorf("the step did not warn about the task it could not read:\n%s", logs.String())
+			}
+			// Yesterday's report is written here as well: the run whose task
+			// could not be read is not one whose open report this step can see.
+			// That is what the launcher's own read of the same object costs it
+			// too, and the one-report-run-at-a-time rule is what covers a run
+			// that is still going.
+			if !fileInTree(t, h.remote, branch, digestDayPath(now.AddDate(0, 0, -1))) {
+				t.Error("the step wrote no report for yesterday, though nothing it could read held one")
+			}
+		})
 	}
 }
 
@@ -947,7 +1011,6 @@ func TestDigestStepRefusesASymlinkedReportFolder(t *testing.T) {
 			digestRecord(t, h.bucket, repoSlug, own, clk.Now().AddDate(0, 0, -1), 1.5, nil)
 			readme := h.files["README.md"]
 			digestPlantLink(t, h.remote, c.plant)
-			tip := testutil.Git(t, h.remote, "rev-parse", "refs/heads/main")
 
 			rec, err := h.run(t, review("ship", 0))
 			if err != nil {
@@ -962,12 +1025,207 @@ func TestDigestStepRefusesASymlinkedReportFolder(t *testing.T) {
 			if len(h.agent.calls) != 0 {
 				t.Errorf("the run made %d model calls with a link in the report folder", len(h.agent.calls))
 			}
-			if got := testutil.Git(t, h.remote, "rev-parse", "refs/heads/main"); got != tip {
-				t.Errorf("main moved to %s from %s: the run pushed with a link in the report folder", got, tip)
+			if hasBranch(t, h.remote, "fugaro/"+runID) {
+				t.Error("the run pushed a branch with a link in the report folder")
 			}
 			if got, err := os.ReadFile(filepath.Join(h.deps.WorkDir, "README.md")); err != nil || string(got) != readme {
 				t.Errorf("the checkout's README.md = %q (err %v), want the base branch's %q", got, err, readme)
 			}
 		})
+	}
+}
+
+// digestSpecRounds is digestSpec with the senior review's rounds overridden, so
+// the recipe's one review has a fix round to spend: the catalog run-digest
+// allows a single round, and a stage that writes into the tree is what T3.3's
+// finalize has to answer for.
+func digestSpecRounds(rounds int, ids ...string) *task.Spec {
+	spec := digestSpec(ids...)
+	spec.Overrides.ReviewRounds = &rounds
+	return spec
+}
+
+// digestFixStep is a fix stage's own work: it runs script in the checkout and
+// then verifies, the way a fix round's agent does (firstline_test.go's fixStep).
+func digestFixStep(script string) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, script)
+		verifyTest(t, ctx, req)
+		return agent.Result{}, nil
+	}
+}
+
+// digestStepCommitAt is the commit the digest step made on the remote's branch:
+// the one commit there whose message is the runner's (writeDueReports), which
+// no stage writes.
+func digestStepCommitAt(t *testing.T, h *harness, branch string) string {
+	t.Helper()
+	out := strings.Fields(testutil.Git(t, h.remote, "log", "--format=%H", "--grep=^fugaro: run digest", branch))
+	if len(out) != 1 {
+		t.Fatalf("the branch holds %d commits of the digest step's own, want one: %v", len(out), out)
+	}
+	return out[0]
+}
+
+// digestChanged is what one ref changes against main, and how (git's own status
+// letter): the pull request's diff, read from the remote without a checkout.
+func digestChanged(t *testing.T, h *harness, ref string) map[string]string {
+	t.Helper()
+	out := strings.TrimSpace(testutil.Git(t, h.remote, "diff", "--name-status", "main..."+ref))
+	changed := map[string]string{}
+	if out == "" {
+		return changed
+	}
+	for _, line := range strings.Split(out, "\n") {
+		status, rel, ok := strings.Cut(line, "\t")
+		if !ok {
+			t.Fatalf("git diff --name-status printed %q, want <status>\\t<path>", line)
+		}
+		changed[rel] = status
+	}
+	return changed
+}
+
+// digestAssertGeneratedOnly is what a report run's pull request must be: the
+// digest step's own commit's diff against main, byte for byte, and no other
+// path. The step's commit is the only place the generated bytes are, so a
+// report the step wrote is compared against the bytes it committed there.
+func digestAssertGeneratedOnly(t *testing.T, h *harness, branch string) {
+	t.Helper()
+	step := digestStepCommitAt(t, h, branch)
+	want := digestChanged(t, h, step)
+	if len(want) == 0 {
+		t.Fatal("the digest step's own commit changes nothing against main")
+	}
+	if got := digestChanged(t, h, branch); !maps.Equal(want, got) {
+		t.Errorf("the pull request changes %v; want the reports the digest step generated and nothing else (%v)", got, want)
+	}
+	for rel, status := range want {
+		if status == "D" {
+			continue
+		}
+		if got, want := fileContentAt(t, h.remote, branch, rel), fileContentAt(t, h.remote, step, rel); got != want {
+			t.Errorf("%s in the pull request is not the bytes the digest step generated:\n%q\nwant:\n%q", rel, got, want)
+		}
+	}
+}
+
+// TestDigestFilesEditedByFixAreRestored: a fix round that edits a report -- the
+// one file a review's findings must never change -- leaves the pull request
+// carrying the bytes the digest step generated, not the fix's. The generated
+// bytes are the step's own commit and nowhere else: re-running the generator at
+// finalize would read the checkout's own reports for the patterns a report
+// carries (digestRows), which is exactly the tree the fix edited.
+//
+// Red step (T3.3): the fix's edit survives into the pull request.
+func TestDigestFilesEditedByFixAreRestored(t *testing.T) {
+	const own = "20261020-101500-aaaa"
+	spec := digestSpecRounds(2, own)
+	h := newHarnessFiles(t, "", spec, nil)
+	clk := digestClock(h)
+	digestGCSBucket(t, h, spec)
+	now := clk.Now()
+	digestRecord(t, h.bucket, repoSlug, own, now.AddDate(0, 0, -1), 1.5, nil)
+	rel := digestDayPath(now.AddDate(0, 0, -1))
+
+	rec, err := h.run(t,
+		review("changes", 1),
+		digestFixStep("printf 'edited by the fix stage\\n' >> "+rel+" && git commit -qam 'Address review'"),
+		review("ship", 0),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("record = status %s, outcome %s, reason %q", rec.Status, rec.Outcome, rec.Reason)
+	}
+	branch := "fugaro/" + runID
+	if got := fileContentAt(t, h.remote, branch, rel); strings.Contains(got, "edited by the fix stage") {
+		t.Errorf("%s holds the fix stage's edit:\n%s", rel, got)
+	}
+	digestAssertGeneratedOnly(t, h, branch)
+}
+
+// TestDigestRunAddsNoOtherFile: a fix stage that writes a CLAUDE.md and a skill
+// file -- files a repository would keep -- leaves neither in the pull request,
+// and the report it edited is the step's bytes again. The run's diff against
+// its base is exactly the files the digest step generated under
+// docs/fugaro-reviews/, byte for byte.
+//
+// Mutation (let the stages' work stand, as the stub T3.2 left did): the run
+// pushes the fix's commit, and the pull request adds CLAUDE.md and the skill
+// file.
+func TestDigestRunAddsNoOtherFile(t *testing.T) {
+	const own = "20261020-101500-aaaa"
+	const notes = "CLAUDE.md"
+	const skill = "plugin/skills/working/SKILL.md"
+	spec := digestSpecRounds(2, own)
+	h := newHarnessFiles(t, "", spec, nil)
+	clk := digestClock(h)
+	digestGCSBucket(t, h, spec)
+	now := clk.Now()
+	digestRecord(t, h.bucket, repoSlug, own, now.AddDate(0, 0, -1), 1.5, nil)
+	rel := digestDayPath(now.AddDate(0, 0, -1))
+
+	rec, err := h.run(t,
+		review("changes", 1),
+		digestFixStep("mkdir -p plugin/skills/working && printf '# what the fix stage wrote\\n' > "+notes+
+			" && printf '# a skill the fix stage wrote\\n' > "+skill+
+			" && printf 'edited by the fix stage\\n' >> "+rel+
+			" && git add -A && git commit -qm 'Address review'"),
+		review("ship", 0),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("record = status %s, outcome %s, reason %q", rec.Status, rec.Outcome, rec.Reason)
+	}
+	branch := "fugaro/" + runID
+	digestAssertGeneratedOnly(t, h, branch)
+	for _, path := range []string{notes, skill} {
+		if fileInTree(t, h.remote, branch, path) {
+			t.Errorf("%s is in the pull request; a report run writes only %s/", path, digest.Dir)
+		}
+	}
+}
+
+// TestDigestFilesRestoreFailureDrafts: a fix stage that folds its edit into the
+// digest step's own commit (an amend) leaves a commit no test run of this run
+// names, so nothing says which bytes the step generated, and the reports are
+// not put back: the pull request stays a draft with the reason, whatever the
+// branch holds. What identifies the step's commit is the run's own history,
+// which a stage can rewrite, so the check is the run's first test record -- the
+// step verifies its own commit before any stage runs (digestStep).
+//
+// Mutation (trust the branch's first own commit alone): the amended commit is
+// taken for the step's, the edit stays in the pull request, and the run reports
+// itself ready.
+func TestDigestFilesRestoreFailureDrafts(t *testing.T) {
+	const own = "20261020-101500-aaaa"
+	spec := digestSpecRounds(2, own)
+	h := newHarnessFiles(t, "", spec, nil)
+	clk := digestClock(h)
+	digestGCSBucket(t, h, spec)
+	now := clk.Now()
+	digestRecord(t, h.bucket, repoSlug, own, now.AddDate(0, 0, -1), 1.5, nil)
+	rel := digestDayPath(now.AddDate(0, 0, -1))
+
+	rec, err := h.run(t,
+		review("changes", 1),
+		digestFixStep("printf 'edited by the fix stage\\n' >> "+rel+" && git add -A && git commit -q --amend --no-edit"),
+		review("ship", 0),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("record = status %s, outcome %s, reason %q; want a draft", rec.Status, rec.Outcome, rec.Reason)
+	}
+	if !strings.Contains(rec.Reason, "not the one this run's test run was made on") {
+		t.Errorf("reason = %q, want it to say the commit the reports are in is not the one the run tested", rec.Reason)
+	}
+	if pr := onlyPR(t, h.provider); !pr.Draft {
+		t.Error("the pull request is not a draft, though the reports could not be put back")
 	}
 }
