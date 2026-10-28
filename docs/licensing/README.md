@@ -77,10 +77,13 @@ credentials service and the coordinator were both "part of the Core today, not o
 the coordinator is out of that parenthetical and the credentials service keeps it. That is the
 only sentence changed, and the website page was regenerated from the document
 ([reconciliation.md](reconciliation.md#amendment-2026-10-29-the-coordinator-leaves-the-terms-core)).
+**The move is planned, not landed** (`ee/` holds only its licence and README), so the coordinator
+is still part of the Core by section 2's path definition and the released MIT versions stay MIT.
 Counsel has not been consulted on the edit; the owner tells counsel in the next revision round.
 The licence files are untouched, the draft is still **not in force**, and the broader question of
 where the coordinator's released MIT versions leave the licence's coverage sentence is still
-counsel's (T10, F38).
+counsel's (T10 and F38, in
+[subscriptions/reconciliation.md](../subscriptions/reconciliation.md)).
 
 Spec owner: the repository owner. Spec received 2026-10-24; reconciled against `origin/main` at
 `e924481cd` the same day.
@@ -97,6 +100,7 @@ Spec owner: the repository owner. Spec received 2026-10-24; reconciled against `
 | Numbers | State |
 | --- | --- |
 | **D300–D319** | this work's block. **D300–D310** written and answered 2026-10-24 (D305 not the recommendation); **D311** the owner's ruling of 2026-10-26 (the business licence for `console/`, `mobile/` and `ee/`); **D312–D319** reserved and unused. Taken above the highest decision written under `docs/` on `main` (D271) and in open PRs (D260); **D272–D299** are left unused so that reconciliations started the same day cannot collide with this block |
+| **D531** | the owner's ruling of 2026-10-29 (the coordinator leaves the Terms' Core), written at the owner's own number and not inside this block: above the highest number reserved on `main` (the secrets-brokering work's D519), with **D520–D530** allocated nowhere and left unused as D272–D299 are; the block's own **D312–D319** stay reserved |
 | **Checks 130–134** | this work's block. **130** written by plan task L1.10 and run by the owner (L1.11): GitHub still reports MIT and `LICENSING.md` renders — the section and its register row are in `docs/gcp-live-checklist.md`, and both are **NOT RUN** until L1.11; **131–134** reserved and unused. The highest check section written on `main` was 113 when the block was taken; 119 and 123 are claimed by the console-windows and console dependency graph plans, and open PR #1022 takes 124; 130 was free either way |
 
 ## Headline

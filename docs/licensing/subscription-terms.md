@@ -390,9 +390,11 @@ Software). The Licensor operates no server that these components report to. The 
 
 > **Note for counsel.** Edited 2026-10-29 on the owner's ruling D531 (counsel not yet consulted:
 > tell counsel in the next revision round). The parenthetical above no longer calls the coordinator
-> part of the Core: the coordinator moves under `ee/`, so the words that classified it as Core are
-> removed and the remaining classification names the credentials service alone. Nothing else in
-> counsel's wording changed.
+> part of the Core: the owner has ruled that the coordinator **moves** under `ee/`, so the words
+> that classified it as Core are removed and the remaining classification names the credentials
+> service alone. **The move has not landed yet**: `ee/` holds only its licence and its README
+> today, so under the section 2 definition the coordinator is still part of the Core and its
+> released MIT versions stay MIT until the move ships. Nothing else in counsel's wording changed.
 
 9.2 **What the Licensor does not receive.** Through the Software, the Licensor does not receive the
 Customer's repositories, source code, tasks, prompts, model output, credentials, run records,

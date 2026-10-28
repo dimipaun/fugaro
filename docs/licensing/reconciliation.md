@@ -23,7 +23,11 @@ checks **130–134** (the highest check section written in the register on `main
 **119** and **123** are claimed by the console-windows and console dependency graph plans, and
 open PR #1022 takes **124**; **130** is free either way).
 Findings are **F1–F27**; resolutions (one defensible answer) are **R1–R8**; decisions
-**D300–D311** are used (D311 on 2026-10-26) and **D312–D319** are reserved and unused; checks **131–134** are reserved
+**D300–D311** are used (D311 on 2026-10-26) and **D312–D319** are reserved and unused; **D531**
+is the owner's ruling of 2026-10-29 (the coordinator leaves the Terms' Core), written at the
+owner's own number rather than inside this block: it is above the highest number reserved on
+`main` (the secrets-brokering work's D519), **D520–D530** are allocated nowhere and stay unused as
+D272–D299 are, and this block's D312–D319 stay reserved; checks **131–134** are reserved
 and unused.
 
 ## Headline: spec concept → what the repository already has
@@ -615,6 +619,12 @@ The owner ruled (**D531**, 2026-10-29) that the coordinator moves under `ee/`, a
 Subscription Terms must stop saying it is Core **now**, without waiting for counsel's next revision
 of the text; the owner tells counsel, this being the owner's call and not a recommendation.
 
+**The move is planned, not landed.** `ee/` still holds only `ee/LICENSE` and `ee/README.md`, so
+under section 2's path definition ("the parts of the Fugaro repository outside `ee/`, `console/`
+and `mobile/`") the coordinator is part of the Core today, and its released MIT versions stay MIT.
+The edit is the owner's instruction that the Terms stop reading the other way now; the move itself
+ships with the S1 tasks named below.
+
 **The one sentence changed** is section 9.1 of [subscription-terms.md](subscription-terms.md), in
 the list of what runs where:
 
@@ -637,8 +647,10 @@ step, and its text below the status line is the agreement alone.
 **Not changed.** The four licence files are untouched (D531 edits Terms text, not the licence), as
 are the decision rows that record the earlier answers (D302's "stay core MIT", D434 and T10 in
 [subscriptions/reconciliation.md](../subscriptions/reconciliation.md)): they are what was decided
-then, and the moves themselves are tasks S0.3 and S0.4 of
-[subscriptions/implementation-plan.md](../subscriptions/implementation-plan.md). Counsel's question
+then. The documents that record the moves are tasks S0.3 and S0.4 of
+[subscriptions/implementation-plan.md](../subscriptions/implementation-plan.md); the moves
+themselves are S1.1 (the design), S1.4 (the coordinator's command and library), S1.5
+(`fugaro report`) and S1.9 (the key-gated job image). Counsel's question
 about the licence's own coverage sentence and the coordinator's released MIT versions (F38, T10)
 is untouched by this edit.
 
