@@ -2621,8 +2621,12 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	// bound — or the finalize reserve under it — whose context is the parent
 	// and which is done too whenever one of those fired. Read straight away,
 	// so an agent that returned a failure of its own a moment before its
-	// stage ran out keeps that failure rather than being read as a stop.
-	ownTimedOut := own > 0 && errors.Is(stageCtx.Err(), context.DeadlineExceeded) && deadlineCtx.Err() == nil
+	// stage ran out keeps that failure rather than being read as a stop. A
+	// stage whose result arrived as its deadline did is not stopped either:
+	// its work is done, the same way a result that races the run's own
+	// timeouts.stage is a stage that succeeded.
+	cutByOwn := errors.Is(stageCtx.Err(), context.DeadlineExceeded) && deadlineCtx.Err() == nil
+	ownTimedOut := own > 0 && err != nil && cutByOwn
 	stopCheckpoints()
 	stopWatch()
 	// An oauth run has no gateway: its stage's own cost figure is its
