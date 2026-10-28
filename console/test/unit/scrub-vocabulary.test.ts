@@ -394,6 +394,36 @@ describe('the scrub: the nullable Go fields', () => {
       expect(() => scrubDocument(doc, 0), path).toThrow(/not a number/)
     }
   })
+
+  it('accepts the optional leased_usd on a total and on a repo, the key no CLI writes yet', () => {
+    // §intro's bounded exception: the owner approved `leased_usd` on 2026-10-28
+    // for `total` and every `repos[]` entry ahead of the release that writes it,
+    // and the console's decoders name it now so that release does not refuse
+    // every document whole. The scrub has to name it for the same reason, and
+    // the failure without a rule is the whole document: `applyRules` refuses a
+    // key it has none for, as `an unknown key at $.total.leased_usd`.
+    const doc = raw()
+    at(doc, 'total')['leased_usd'] = 3.5
+    at(doc, 'repos', 0)['leased_usd'] = 3.5
+    const out = scrubDocument(doc, 0)
+    expect(at(out, 'total')['leased_usd']).toBe(3.5)
+    expect(at(out, 'repos', 0)['leased_usd']).toBe(3.5)
+  })
+
+  it('accepts a null leased_usd, which the pointer writes when no lease is outstanding', () => {
+    const doc = raw()
+    at(doc, 'total')['leased_usd'] = null
+    at(doc, 'repos', 0)['leased_usd'] = null
+    const out = scrubDocument(doc, 0)
+    expect(at(out, 'total')['leased_usd']).toBeNull()
+    expect(at(out, 'repos', 0)['leased_usd']).toBeNull()
+  })
+
+  it('refuses a leased_usd that is neither a number nor null, like the other pointers', () => {
+    const doc = raw()
+    at(doc, 'total')['leased_usd'] = 'many'
+    expect(() => scrubDocument(doc, 0)).toThrow(/not a number at \$\.total\.leased_usd/)
+  })
 })
 
 describe('the scrub: the keys the live run shapes write', () => {

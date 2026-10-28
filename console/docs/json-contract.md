@@ -43,10 +43,9 @@ is what keeps the guard below honest: every wire name in a field table outside
 that list is still refused as a field invented from the design.
 `TestDocsDesktopConsoleContractNamesNoInventedField` also fails if a listed key
 later becomes a real JSON key of a shape here, so the list cannot outlive its
-reason. The two keys today are `leased_usd` (§2, and §3's `showRepo` budget
-document) and `compute_usd` (§3) — the latter is already a real key of
-`report --json` (§4), which is why it needs no guard entry and `leased_usd`
-does.
+reason. The two keys today are `leased_usd` (§2) and `compute_usd` (§3) — the
+latter is already a real key of `report --json` (§4), which is why it needs no
+guard entry and `leased_usd` does.
 
 ## 1. The five availability states
 
@@ -186,9 +185,13 @@ and §3's `global`/`showRepo` carry the rest.
 **How the console reads it — one rule, stated once.** Absent, `null` and a
 non-finite number are **unavailable** (`n/a`, never `0` — a document with
 nothing to say about a lease has not leased nothing); a finite, non-negative
-number is **measured**. Any other value — a string, a boolean, a negative — is
-handled **the way the decoder that owns the document handles a shape it cannot
-read**, which is the whole of the rule:
+number is **measured**. One edge differs between the two closed decoders, and is
+stated here so neither is misread: `src/shared/schema.ts`'s `optionalMoneyAt`
+draws a non-finite number `n/a`, while **in the digest a non-finite number is
+refused** (`RANGE`, `shared/digest/index.js`), so a document this console draws
+`n/a` is one the digest refuses whole. Any other value — a string, a boolean, a
+negative — is handled **the way the decoder that owns the document handles a
+shape it cannot read**, which is the whole of the rule:
 
   * the console's **closed** decoders (`src/shared/schema.ts`, and the digest)
     refuse the document by the field's wire path (`total.leased_usd`,

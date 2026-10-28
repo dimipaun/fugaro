@@ -614,8 +614,12 @@ function scrubTotalOrRepo(value: unknown, path: string, repoN: number | undefine
     counted_usd: num, spent_usd: num, notional_usd: num, runs: num, run_hours: num, // recomputed below
     // `daily_cap_usd` and `percent` are *float64 in internal/watch/json.go's
     // JSONTotal and JSONRepo: the document writes null for both when the
-    // repository has no cap.
+    // repository has no cap. `leased_usd` is the third such pointer -- the
+    // outstanding lease -- and is accepted as optional for the same reason the
+    // console's decoders name it ahead of the CLI (owner, 2026-10-28): the day a
+    // release writes it, a recording must not be refused whole for the key.
     percent: nullableNum,
+    leased_usd: nullableNum,
     daily_cap_usd: (v, p) => (v === null ? null : typeof v === 'number' ? INVENTED_CAP_USD : refuse(p, 'not a number')),
     burn: (v, p) => (isObj(v) ? applyRules(v, p, BURN_RULES) : refuse(p, 'not an object')),
     kill: (v, p) => scrubKill(v, p, shiftMs),
