@@ -918,20 +918,21 @@ describe('the entry point is wired to the handshake', () => {
     expect(still).toContain('launch.fingerprint')
     // The identity itself is `launchrules.ts`'s and is tested there field by
     // field; what the entry point can still get wrong is which fields it hands
-    // it, so each record field is pinned here, and the row's `saved` with them.
-    // A field dropped from this mapping is a field the answer-time read stops
-    // noticing, silently, however correct `launchFingerprint` is.
+    // it, so each record field is pinned here. A field dropped from this mapping
+    // is a field the answer-time read stops noticing, silently, however correct
+    // `launchFingerprint` is.
     const facts = bodyOf('function launchRecordFacts(')
     for (const field of ['id', 'project', 'binaryPath', 'distro', 'configPath', 'checkout']) {
       expect(facts, `${field} is not in the launch’s identity`).toContain(`record?.${field} ?? ''`)
     }
-    expect(facts).toContain('saved: row.saved')
-    // And the rail's live read is not: `listed` and `checkouts` come from a
-    // `config list` that can fail on one read and succeed on the next, and an
+    // And the rail's row is not in it at all: `listed` and `checkouts` come from
+    // a `config list` that can fail on one read and succeed on the next, and an
     // identity that moved with it would decline a launch the operator had
-    // already confirmed.
+    // already confirmed; its `saved` flag is true on every path that reaches
+    // this mapping, because both callers refuse an unsaved row before it.
     expect(facts).not.toContain('row.listed')
     expect(facts).not.toContain('row.checkouts')
+    expect(facts).not.toContain('row.saved')
   })
 
   it('hands `activate` to the lifecycle, whose behaviour is tested above', () => {

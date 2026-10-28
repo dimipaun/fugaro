@@ -93,6 +93,38 @@ function newRunID(now: Date, random: () => number): string {
   return `${stamp}-${tail.toString(16).padStart(4, '0')}`
 }
 
+/** RUN_ID_DRAWS is how many times `build` redraws the id's four hex digits
+ * before it refuses the launch: the stamp is the UTC second and cannot be
+ * redrawn, so a second collision once this second's ids are taken is a
+ * collision twice over, and a retry that cannot succeed is a hang rather than a
+ * launch. */
+const RUN_ID_DRAWS = 8
+
+/**
+ * drawRunID is `newRunID` with collision-freedom against the ids **this process
+ * already carries**, and it answers null when every draw was one of them.
+ *
+ * The id has 16 random bits and nothing else: two launches in the same UTC
+ * second whose tails collide would be one id -- `frozen` and `pending` are keyed
+ * by it, so `frozen.set` and `pending.set` would overwrite silently, and the
+ * first window's yes would then spawn the second launch's frozen object under
+ * the first window's answer. Redrawing inside the one place the id is cut,
+ * *before* the window opens, is what keeps that from being reachable at all;
+ * the ids in flight are checked with the frozen ones, because a window that is
+ * open holds its id in `inFlight` before it has anything frozen.
+ *
+ * What is left after the retries is a refusal rather than a shared slot: an id
+ * this process already holds is one an operator's yes could be attached to the
+ * wrong launch, which is worse than asking again a second later.
+ */
+function drawRunID(now: Date, random: () => number, taken: (runId: string) => boolean): string | null {
+  for (let draw = 0; draw < RUN_ID_DRAWS; draw += 1) {
+    const runId = newRunID(now, random)
+    if (!taken(runId)) return runId
+  }
+  return null
+}
+
 /**
  * cryptoRandom is the default source of the id's four hex digits, and it is
  * `node:crypto`'s two bytes rather than `Math.random`'s because of what a
@@ -100,7 +132,10 @@ function newRunID(now: Date, random: () => number): string {
  * produce one id, the CLI's claim then holds it, and the second launch comes
  * back `already-launched` -- which D23 has this console draw as a **fact rather
  * than an error**, so a confirmed launch that spends nothing would say nothing
- * about why. `task.NewRunID` draws its own tail from `crypto/rand`
+ * about why. A collision with an id **this** process holds never reaches the
+ * CLI at all: `drawRunID` redraws the tail and refuses only if every draw is
+ * taken, so what is left here is a second console, or a run cut by hand in the
+ * same second. `task.NewRunID` draws its own tail from `crypto/rand`
  * (`internal/task/task.go`), so this is the same source as the id it is shaped
  * like. The digits are not a secret and nothing here is key material: this is
  * collision-freedom, not unpredictability.
@@ -354,6 +389,20 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
   const withinWindow = (stamps: readonly number[], at: number): number =>
     stamps.filter((stamp) => at - stamp < CONFIRM_RATE_WINDOW_MS).length
 
+  /** pruneExpired drops every installation whose stamps have all fallen out of
+   * the window, key and all: an installation with nothing live in the window is
+   * one whose next launch is its first again, and remembering that it was asked
+   * is exactly the unbounded growth `reserve` sweeps away. Deleting the entry
+   * being iterated is defined for a `Map`, and so is setting a key that is
+   * already there. */
+  function pruneExpired(at: number): void {
+    for (const [installation, stamps] of perInstallation) {
+      const live = stamps.filter((stamp) => at - stamp < CONFIRM_RATE_WINDOW_MS)
+      if (live.length === 0) perInstallation.delete(installation)
+      else perInstallation.set(installation, live)
+    }
+  }
+
   /**
    * reserve takes a launch's **synchronous** claim on the limits -- the
    * installation's in-flight slot, one place in the app-wide count, and the
@@ -373,19 +422,28 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
    * a request whose build refuses and opens no window at all -- rather than when
    * it is answered: what it bounds is how often this process is made to work on
    * a launch (the records read is the work, and a request that never builds
-   * still made it), which is the operator's own rate of asking. The stored list
-   * is pruned to the window as it is written, so it cannot grow without bound.
+   * still made it), which is the operator's own rate of asking. The stored
+   * stamps are pruned to the window as they are written, and the installations
+   * whose stamps have all expired are **dropped from the map** rather than left
+   * behind with an empty list (`pruneExpired`), so neither the list nor the set
+   * of names can grow without bound.
    */
   function reserve(installation: string, at: number): string {
     reservations += 1
     const token = `${RESERVATION_PREFIX}${String(reservations)}`
     inFlight.add(token)
     inFlightByInstallation.set(installation, token)
+    // The map's **keys** are pruned as well as its stamps, and this is the only
+    // thing that keeps it bounded: the installation name is whatever the
+    // renderer sent, so a stream of names -- a renderer bending 6 requests a
+    // minute into 8,600 entries a day -- would otherwise leave one entry per
+    // name for the life of the process. The sweep is over the entries the
+    // window permits and not over every name ever asked for: this whole map is
+    // written at most `CONFIRM_RATE_APP` times a minute (the app-wide rate is
+    // checked before `reserve` is reached), so it holds a handful of entries.
+    pruneExpired(at)
     const mine = perInstallation.get(installation) ?? []
-    perInstallation.set(
-      installation,
-      [...mine, at].filter((stamp) => at - stamp < CONFIRM_RATE_WINDOW_MS),
-    )
+    perInstallation.set(installation, [...mine, at])
     opened.push(at)
     if (opened.length > CONFIRM_RATE_APP * 4) opened.splice(0, opened.length - CONFIRM_RATE_APP * 4)
     return token
@@ -535,7 +593,20 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
     const planTask = checkLaunchPlanTask(request.planTask)
     if (!planTask.ok) return { ok: false, reason: planTask.reason }
 
-    const runId = newRunID(new Date(wallClock()), random)
+    // The id is drawn **unused**, and the refusal that follows is the one this
+    // row makes about its own bookkeeping rather than about the operator: the
+    // four hex digits are the whole of the entropy, so an id this process
+    // already holds is a window whose answer could be attached to another
+    // launch. See `drawRunID`.
+    const runId = drawRunID(new Date(wallClock()), random, (id) => frozen.has(id) || inFlight.has(id))
+    if (runId === null) {
+      return {
+        ok: false,
+        reason:
+          `this console drew ${String(RUN_ID_DRAWS)} run ids that another launch of this process already holds: ` +
+          'the id is the current second and four hex digits, so wait a moment and ask for the launch again',
+      }
+    }
     // The child's working directory is always the app's own private, empty
     // directory -- never the operator's checkout, the installation's recorded
     // one included. `newRunRef` cuts a run from the branch the *working
@@ -739,8 +810,8 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
       }
       if (withinWindow(opened, at) >= CONFIRM_RATE_APP) {
         return refusedOutcome(
-          `${String(CONFIRM_RATE_APP)} launches have been confirmed in the last minute: wait a moment ` +
-            'before asking again',
+          `the console has been asked to confirm ${String(CONFIRM_RATE_APP)} launches in the last minute: ` +
+            'wait a moment before asking again',
         )
       }
 
