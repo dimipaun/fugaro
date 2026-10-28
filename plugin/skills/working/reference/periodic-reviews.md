@@ -82,6 +82,8 @@ A run that failed is never retried automatically, and no report launches one. A 
 
 **A report run is launched again, never retried or continued.** `fugaro run --retry RUN` refuses a run whose recipe holds the `digest` step, and `fugaro run --pr N` cannot continue one either: a report run lists the records it may read and refuses while another report run of this repository is going, and neither a retry (which carries the listing its first launch made) nor a follow-up (which carries none) reads the records the period's reports are written from. A report that has to be written again is a new report run — `fugaro run --recipe run-digest "TEXT"` — not a relaunch of the old one. Say so instead of relaunching, and never reach for `--retry` on a run that wrote a report.
 
+**A launch with nothing to report is refused before anything is started.** The launch lists this repository's runs of the last 40 days — the month the reports cover plus the days the step catches up — and refuses one that has none of them, with `<owner/name> has no runs in the last 40 days: no runs in the period, nothing to report`. Nothing was started, so nothing was spent and nothing failed: the records a report is written from really hold no runs, and there is no report to write. Say that instead of launching again, and leave the cadence to the user.
+
 ## 7. Sharing a learning with Fugaro
 
 Some lessons are about Fugaro itself rather than about this repository. The user decides whether one is worth sending to Fugaro's maintainers:
