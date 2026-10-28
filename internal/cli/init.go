@@ -3231,7 +3231,10 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// secret that already exists. (github-app-key, not bitbucket-token, is
 	// the example: the App key is the one git credential D2's default sweeps
 	// project-wide, while bitbucket-token has no project-wide default at all
-	// -- config.PerRepositorySecret, the owner's ruling of 2026-10-15.)
+	// -- config.PerRepositorySecret, the owner's ruling of 2026-10-15. An
+	// operator holding one workspace or project access token stores it
+	// project-wide by hand, through the allow-list; that is the exception,
+	// not the default.)
 	versions, err := infra.SecretVersions(ctx, c, ready)
 	if err != nil {
 		return r.retireLeftover(spec, initErr(err))

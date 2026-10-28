@@ -308,12 +308,20 @@ boundary, and the value reaches every enrolled repository. A workflow's own
 secret has no project-wide meaning and is stored in the repository's own
 container as before.
 
-bitbucket-token is the exception, and has no project-wide default: a
-Bitbucket credential is a repository access token, issued for one repository
-and usable for no other, so it is always stored in this repository's own
-container and every repository is asked for its own value (docs/git-providers.md).
-Storing it for the project is refused unless project_secrets.bitbucket-token
-allow-lists the repositories it is meant for.
+bitbucket-token has no project-wide default: a Bitbucket credential is
+normally a repository access token, issued for one repository and usable for
+no other, so it is stored in this repository's own container and every
+repository is asked for its own value (docs/git-providers.md). An operator
+who holds one workspace or project access token instead -- the credential
+that reaches many repositories -- stores it once for the project by
+allow-listing the repositories it serves in project_secrets.bitbucket-token,
+usually the whole workspace (myworkspace/*). Storing it for the project is
+refused unless that allow-list names the repositories it is meant for. That
+path is not yet live-checked with a workspace or project token (Check 180).
+
+Copy the project_secrets.bitbucket-token entry to every operator machine's
+local config: the shared config never carries it, and without it
+fugaro update --repo asks for a per-repository token.
 
 An allow_data_to entry may use * inside a segment, never across /: a
 workspace's whole list is written myworkspace/* (and myworkspace/api-* names
@@ -1170,8 +1178,10 @@ value comes from, never any value (this command has no access call at all).
 The default listing is the installation's project-wide containers -- the
 scope secrets set stores to by default for a name that has one -- one row
 per name, with the repositories the local config allows to use each one
-(bitbucket-token is never stored there by default: a repository access
-token serves one repository, so it has only repository copies).
+(bitbucket-token has no project-wide default: a repository access token
+serves one repository, so it is listed here only when an operator has stored
+a workspace or project access token project-wide, which the
+project_secrets.bitbucket-token allow-list opens).
 --project-wide is accepted as a synonym, so existing scripts keep working.
 
 --repo (or a bare --repo, for this checkout's origin) lists one repository

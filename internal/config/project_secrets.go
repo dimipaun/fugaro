@@ -99,8 +99,11 @@ func AllowedForProjectSecret(secrets map[string]ProjectSecret, name, repo string
 // account's own allow_data_to stays its rule, as it already is on main (plan
 // Task 2.1 step 2, finding 12).
 //
-// bitbucket-token is a per-repository credential and is never swept in
-// (PerRepositorySecret, the owner's ruling of 2026-10-15).
+// bitbucket-token is the one name of that kind, and it is never swept in
+// (PerRepositorySecret, the owner's ruling of 2026-10-15); an operator who
+// holds one workspace or project access token still stores it project-wide by
+// hand through an explicit project_secrets entry, which is the whole point of
+// the entry (D461/D464, 2026-10-27).
 //
 // This is the shape question only -- whose project copy Fugaro may speak
 // about -- never the eligibility question. Every site that decides project
@@ -123,15 +126,19 @@ func ProjectScopeByDefault(name string) bool {
 // store it in the repository's own copy, and every repository is asked for its
 // own value.
 //
-// Bitbucket is the one such name (BitbucketSecret). Its credential is a
-// *repository* access token, issued for one repository by design
-// (docs/git-providers.md), and the owner ruled on 2026-10-15 that a Bitbucket
-// credential cannot be scoped project-wide: Bitbucket stays per-repository.
-// Sweeping it into project scope -- which is what D2 did before that ruling --
-// made the first repository's token answer for every other one: fugaro update
-// read the name as covered by the project's copy and never prompted for the
-// next repository, whose runs then authenticated with another repository's
-// write token and failed.
+// Bitbucket is the one such name (BitbucketSecret). Its credential is normally
+// a *repository* access token, issued for one repository by design
+// (docs/git-providers.md), and the owner ruled on 2026-10-15 that such a token
+// cannot be scoped project-wide: Bitbucket stays per-repository by default.
+// The name is still the one an operator may store project-wide by hand, when
+// they hold one workspace or project access token instead and allow-list the
+// repositories it serves (owner ruling, 2026-10-27, Bitbucket design
+// D461/D464): that entry, not this default, is what decides it.
+// Sweeping the name into project scope unconditionally -- which is what D2 did
+// before that ruling -- made the first repository's token answer for every
+// other one: fugaro update read the name as covered by the project's copy and
+// never prompted for the next repository, whose runs then authenticated with
+// another repository's write token and failed.
 //
 // The GitHub App key is deliberately not here: one App serves a team's
 // repositories and is meant to be shared, and SECURITY.md tells an owner who

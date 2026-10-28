@@ -19,7 +19,7 @@ import (
 // None of them ever reaches the agent: it gets a derived token instead
 // (FUGARO_GIT_TOKEN, and GH_TOKEN on GitHub).
 const (
-	EnvBitbucketToken   = "FUGARO_BITBUCKET_TOKEN"             // repository access token
+	EnvBitbucketToken   = "FUGARO_BITBUCKET_TOKEN"             // repository, workspace or project access token
 	EnvBitbucketAPIURL  = "FUGARO_BITBUCKET_API_URL"           // optional API root override
 	EnvGitHubAppID      = "FUGARO_GITHUB_APP_ID"               // GitHub App ID (or client ID)
 	EnvGitHubAppKey     = "FUGARO_GITHUB_APP_PRIVATE_KEY"      // the App's private key, PEM
@@ -71,7 +71,7 @@ func FromEnv(env []string, hc *http.Client, warn func(string)) gitprov.Opener {
 		}
 		switch kind {
 		case gitprov.KindBitbucket:
-			token, err := secret(vars, EnvBitbucketToken, "a Bitbucket repository access token")
+			token, err := secret(vars, EnvBitbucketToken, "a Bitbucket access token")
 			if err != nil {
 				return nil, nil, err
 			}
