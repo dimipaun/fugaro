@@ -7,7 +7,7 @@ wins), including the owner's correction of 2026-10-29: **the digest stays MIT**.
 at `028b46357`, 2026-10-28.
 
 **Status: plan only. Nothing is implemented, and NO TASK IS APPROVED.** Each task needs the owner's
-explicit go. Decisions D520, D521 and D524–D527 are **answered** (2026-10-29: the recommendations taken; D526's O1 stays open and the 0.13.0 tag stays held until counsel answers); the rest of D520–D536 are **unanswered**; every task names the decisions it assumes, and
+explicit go. Decisions D520, D521, D524–D527 and D536 are **answered** (2026-10-29: the recommendations taken; O1 is answered by the owner as "publish the CLA Gist URL first, then release", so the 0.13.0 tag stays held until E3.5 has merged and the E-slices are done); D522, D523 and D528–D535 are **unanswered**; every task names the decisions it assumes, and
 an answer that differs from the recommendation re-plans the tasks that name it.
 
 It **supersedes** subscriptions tasks S1.1, S1.2, S1.3, S1.4, S1.5, S1.7 and S1.9 (their content is
@@ -407,8 +407,7 @@ reused.*
 - **Command:** `go test ./scripts/ -run 'TestEETagNeedsTheLabels|TestGoreleaserReleaseBuild|TestThirdPartyNotices' -count=1 && cd website && npm run check`.
 - **Red step:** set the tag first; `TestEETagNeedsTheLabels` fails until every label changes.
 - **Depends on:** E3.1, E1.6 (the owner's copy done), subscriptions S7.1 if it is approved first
-  (both write `community.astro` and `faq-community.mjs`; whichever lands second rebases), O1 (the owner and counsel on shipping
-  under the current `ee/LICENSE`). **Reviewer:** opus + mandatory independent review.
+  (both write `community.astro` and `faq-community.mjs`; whichever lands second rebases), E3.5 (O1: the CLA placeholder replaced first). **Reviewer:** opus + mandatory independent review.
 - **Commit:** `release: one binary, MIT core plus business-licensed parts (D447, T21)`.
 
 #### E3.3 The 0.13.0 notes
@@ -441,6 +440,17 @@ reused.*
 - **Depends on:** the 0.13.0 tag. **Reviewer:** standard.
 - **Commit:** `docs(checks): 200 and 201, the first tagged release`.
 
+#### E3.5 Replace the CLA placeholder (O1, owner-supplied URL)
+
+- **Files:** every file that carries `[CLA URL TO BE PUBLISHED]` (found with
+  `grep -rn 'CLA URL TO BE PUBLISHED' .`; `ee/LICENSE`, `LICENSES/LicenseRef-Fugaro-Enterprise.txt`, `console/LICENSE.md`, `mobile/LICENSE.md`, the licensing docs and the pin in `internal/cli/docs_ee_reserved_test.go`).
+- **Content:** the owner creates the Gist from `docs/licensing/CLA.md` and sends its Raw URL (a
+  public link, no secret); this task replaces the placeholder with it everywhere. Nothing else changes.
+- **Tests:** the licensing docs pins. **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1`.
+- **Red step:** none (docs). **Depends on:** the owner's Gist Raw URL. **Reviewer:** standard.
+- **On the critical path:** the 0.13.0 tag waits until this PR has merged.
+- **Commit:** `docs(licensing): the CLA's published URL replaces the placeholder`.
+
 ## Parallel execution
 
 ### Edges
@@ -450,9 +460,9 @@ E1.1, E1.2, E1.3 ← E0.3 + the in-flight gate. E1.6 ← E0.3. E1.5 ← E1.1, E1
 E1.7 ← E1.5.
 E2.1 ← E1.5, E1.7. E2.2 ← E2.1, E1.2 + the in-flight gate. E2.3 ← E1.2, E1.5 + the
 in-flight gate.
-E3.1 ← E2.2, E2.3. E3.2 ← E3.1, E1.6 (the owner's copy done), O1. E3.3 ← E3.1.
+E3.1 ← E2.2, E2.3. E3.2 ← E3.1, E1.6 (the owner's copy done). E3.5 ← the owner's Gist Raw URL. E3.3 ← E3.1.
 E1.4 ← E3.2 (no public image carries `ee/` before the relabel, F16c).
-The 0.13.0 tag ← E3.2, E1.4, E3.3. E3.4 ← the tag.
+The 0.13.0 tag ← E3.2, E1.4, E3.3, E3.5. E3.4 ← the tag.
 
 ### Levels
 
@@ -465,13 +475,13 @@ The 0.13.0 tag ← E3.2, E1.4, E3.3. E3.4 ← the tag.
 | **L4** | E2.1 |
 | **L5** | E2.2 |
 | **L6** | E3.1 |
-| **L7** | E3.2, E3.3 |
+| **L7** | E3.2, E3.3, E3.5 |
 | **L8** | E1.4 |
 | **after the tag** | E3.4 (run by the owner) |
 
 **Critical path:** decisions → E0.3 → (in-flight gate) → E1.1 / E1.2 → E1.5 → E1.7 → E2.1 → E2.2 →
 E3.1 → E3.2 → E1.4 → 0.13.0 tag → Check 200. Off it: E2.3 (join at E3.1), the owner's workflow copy
-(E1.6, needed by E3.2) and O1 (E3.2).
+(E1.6, needed by E3.2) and E3.5 (the owner's Gist URL, before the tag).
 
 **Sequential by necessity:** E2.1 → E2.2 (both edit `internal/cli/root.go`,
 `internal/cli/docs_desktop_console_test.go`, `website/content/cli-reference.md`); E1.1 → E1.5 (the
