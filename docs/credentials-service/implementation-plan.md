@@ -670,7 +670,7 @@ Each needs its own plan amendment and the owner's go.
 - **C3.5 The Batch backend** — VM SA gets invoker only (D149) when `backend: cloud-batch` is selectable; Check 97.
 - **C3.6 Tier C for a Claude model** — only after Check 50 has measured cache markers (D150).
 - **C3.7 OAuth refresh** with a per-token lock and Secret Manager version CAS — only if U2 shows a refreshable credential (D139).
-- **C3.8 Proxied push and PR creation** (D145, optional).
+- **C3.8 Proxied push and PR creation** (D145, optional). **Amended 2026-10-27:** for Bitbucket this is now planned in [../secrets-brokering/](../secrets-brokering/implementation-plan.md) (S1, 0.14.0); GitHub through the proxy is deferred there (D497b).
 - **C3.9 Shared jobs** — the service admits runs on phase-3 profile jobs only after the phase-3 shared-job rules are on `main`; Task 3.4a's refusal is lifted then, and the reference record of project-centric §7 becomes the tier-A registry and the source of admissions (D131, O4).
 
 ---
