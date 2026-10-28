@@ -86,6 +86,20 @@ fugaro update --firebase-project <gcp-project-id>   # the installation's own GCP
 
 Don't edit the project's config or `fugaro.yaml` to get around a halt.
 
+### Governance halts
+
+These are reasons a **tripwire** stopped the run, not a limit running out: each leaves a **checkpoint report** on the record and the draft pull request, `checkpoint` in `fugaro diagnose <run> --json`, absent until the checkpoint stage fills `done`, `next` and `hard_instructions`.
+
+The ways on: **Continue** = a `fugaro run --pr N` follow-up (`reference/followup.md`), **Redirect** = that plus a corrective task, **Stop** = nothing. A **second overrun** of the same tripwire is the person's decision: say what a second attempt would change.
+
+| Reason | How to go on |
+|---|---|
+| `stage_budget` — a stage passed its own budget | **Continue** when the work is sound (the raise is the user's, in the project layer); **Redirect** when one part of the task kept overrunning. |
+| `review_ratio` — review spent more calls than its ratio allows | **Redirect**: give the reviewers something new to read (a failing test, a comment); unchanged, it stops the same way. |
+| `fanout` — a stage used more sub-agents than the project layer allows | **Redirect**: fewer, sequential sub-agents, or split the task; the fan-out came from the task, not a budget. |
+| `review_scope` — a review covered files this run never changed | **Stop**, or redirect naming the files that did change: the review recipe and the runner disagree about the range, not the work. |
+| `expected_exceeded` — the run passed the cost its tier expected | **Continue** only when what the run has done is worth what the rest will spend; a tier is an expectation, not a cap. |
+
 ## 5. A Claude usage limit
 
 This applies only to a workflow whose `agent.auth` is `oauth`: a workflow on an API key or the gateway has no personal Claude subscription to run out of, so neither the evidence nor the switch below ever applies to one (the same rule `fugaro run --token` itself enforces at launch). A workflow whose `agent.auth` is `cascade` is not a run this section switches: its tier A is a subscription token the credentials service holds and chooses, so `fugaro accounts ls` cannot answer which account it may use, and `--token NAME` does not name what the service will pick. A cascade run that ran out of tier A is the service's to answer — it marks the credential and moves on to the next tier — and the user's own step is the runbook (https://github.com/dimipaun/fugaro/blob/main/docs/credentials-service/runbook.md).
