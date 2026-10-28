@@ -509,6 +509,14 @@ L0.2, the owner's CLA Assistant install, is written out as a checklist in
 `[CLA URL TO BE PUBLISHED]` placeholder in the three licence files stays until the owner has
 created the Gist.
 
+## Amendment 2026-10-28 (the CLA is final)
+
+Counsel reviewed [CLA.md](CLA.md) and blessed it as-is, with no operative clause changed. The draft
+banner and the `(draft)` marker on its version line are gone, so the file is the agreement as
+counsel approved it. The `[CLA URL TO BE PUBLISHED]` placeholder stays in the three licence files
+until the owner creates the Gist, and the owner's CLA Assistant install (L0.2) is unchanged; the
+note at the top of CLA.md still tells the owner how to keep the Gist in step with the file.
+
 ## Amendment 2026-10-27 (the Subscription Terms draft)
 
 Counsel's licence text of 2026-10-27, in `ee/LICENSE`, `console/LICENSE.md` and
