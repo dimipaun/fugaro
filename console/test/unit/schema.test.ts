@@ -58,6 +58,7 @@ import {
   RECORD_KEYS,
   REPO_KEYS,
   RUN_KEYS,
+  TOTAL_KEYS,
   LIVE_MARKERS,
   NON_TEXT_STRING_KEYS,
   WIRE_TEXT_CLASSES,
@@ -762,10 +763,11 @@ describe('both document shapes decode', () => {
     // version of the CLI can write there -- and decoded the document as
     // understood instead of becoming the skew state, which is the one thing the
     // live half of this module promises for a key it does not know.
-    const fromTheStruct = [
-      'slug', 'repo', 'counted_usd', 'spent_usd', 'notional_usd',
-      'daily_cap_usd', 'percent', 'burn', 'kill',
-    ]
+    // The struct's own keys, read off `internal/watch/json.go` through
+    // `structTags` as the sibling pins in this file read theirs -- the same
+    // finding this test exists for was a hand-written copy agreeing with a
+    // hand-written list, so the copy is gone.
+    const fromTheStruct = structTags(WATCH_SOURCE, 'JSONRepo').map((tag) => tag.key)
     // `leased_usd` is not a `JSONRepo` key: the owner approved it on
     // 2026-10-28 and no CLI release writes it, so `REPO_KEYS` carries it as an
     // *optional* addition beside the struct's own keys -- which is why the
@@ -774,6 +776,10 @@ describe('both document shapes decode', () => {
     const approvedNotEmitted = ['leased_usd']
     expect([...REPO_KEYS].sort()).toEqual([...fromTheStruct, ...approvedNotEmitted].sort())
     expect(REPO_KEYS.length).toBe(fromTheStruct.length + approvedNotEmitted.length)
+    expect(fromTheStruct).toEqual([
+      'slug', 'repo', 'counted_usd', 'spent_usd', 'notional_usd',
+      'daily_cap_usd', 'percent', 'burn', 'kill',
+    ])
     for (const notARepository of ['runs', 'run_hours']) {
       expect(REPO_KEYS, notARepository).not.toContain(notARepository)
       // The same two keys are the total's, and the document above still writes
@@ -795,6 +801,27 @@ describe('both document shapes decode', () => {
     expect(repo?.repo).toBe('r-4c25cf20/r-f1aa9214')
     expect(repo?.countedUsd.value).toBeGreaterThan(0)
     expect(value.total.countedUsd.state).toBe('measured')
+  })
+
+  it("lists every key of `JSONTotal`, and the same one approved addition", () => {
+    // `TOTAL_KEYS` was unexported and pinned against nothing, so this is its
+    // pin, read off the struct the same way as `REPO_KEYS` above: a key added
+    // to `JSONTotal` and not to the list would make `closed()` refuse the whole
+    // feed, which is the drift `REPO_KEYS` and `RECORD_KEYS` were each missing
+    // once. `leased_usd` is the one entry the struct does not have
+    // (`approvedAheadOfTheCLI` in `docs_desktop_console_test.go`, the same
+    // allowance on the Go side).
+    const fromTheStruct = structTags(WATCH_SOURCE, 'JSONTotal').map((tag) => tag.key)
+    expect(fromTheStruct).toEqual([
+      'counted_usd', 'spent_usd', 'notional_usd', 'daily_cap_usd', 'percent',
+      'burn', 'kill', 'runs', 'run_hours',
+    ])
+    expect([...TOTAL_KEYS].sort()).toEqual([...fromTheStruct, 'leased_usd'].sort())
+    expect(TOTAL_KEYS.length).toBe(fromTheStruct.length + 1)
+    // And the recorded total still carries exactly the struct's keys, so the
+    // addition did not come at the cost of the document the fixture holds.
+    const wireTotal = (first as { total?: Record<string, unknown> }).total ?? {}
+    expect(Object.keys(wireTotal).sort()).toEqual([...fromTheStruct].sort())
   })
 
   it('carries notional as the wire wrote it, and never infers it from auth', () => {
@@ -1006,6 +1033,18 @@ describe('a document missing a field the screens read fails decoding by name', (
     const nulled = decoded(patched(first, ['total', 'leased_usd'], null))
     expect(nulled.total.leasedUsd.state).toBe('unavailable')
     expect(nulled.total.leasedUsd.value).toBeNull()
+
+    // And a measured `0` is the other half of that rule: `0` is a lease of
+    // nothing, which is a figure the document took, not the `n/a` an absent one
+    // draws. It is the one value that separates the two, so it is asserted.
+    const zero = decoded(
+      patched(patched(first, ['total', 'leased_usd'], 0), ['repos', 0, 'leased_usd'], 0),
+    )
+    expect(zero.total.leasedUsd.state).toBe('measured')
+    expect(zero.total.leasedUsd.value).toBe(0)
+    expect(formatReading(zero.total.leasedUsd, 'usd')).toBe('$0.00')
+    expect(zero.repos[0]?.leasedUsd.state).toBe('measured')
+    expect(zero.repos[0]?.leasedUsd.value).toBe(0)
 
     // A value of the wrong shape, or a negative one, is refused by its wire
     // path rather than half-read: `leased_usd` is a key no CLI writes yet, so a

@@ -1631,6 +1631,15 @@ describe('the caps panel', () => {
     const row = model.caps.repos[0]
     expect(row?.compute.state).toBe('estimated')
     expect(row?.compute.value).toBe(0.75)
+    // A measured `0` is not the `n/a` an absent key draws -- compute the
+    // document priced at nothing is a figure, and the one value that tells the
+    // two apart.
+    const zero = buildSpendModel(DAY_REPORT, {
+      ...BUDGET,
+      repos: [{ ...THE_REPOS[0], compute_usd: 0 }],
+    })
+    expect(zero.caps.repos[0]?.compute.state).toBe('estimated')
+    expect(zero.caps.repos[0]?.compute.value).toBe(0)
     // And a row without it -- the recorded document, and a `null` alike -- is
     // `n/a`, never `$0.00`.
     expect(modelOf().caps.repos[0]?.compute.state).toBe('unavailable')

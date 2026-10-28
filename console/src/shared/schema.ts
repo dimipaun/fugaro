@@ -790,7 +790,10 @@ export const LIVE_MARKERS: readonly string[] = Object.freeze([
 const CONNECTION_KEYS = ['state', 'reason', 'age_seconds']
 const BURN_KEYS = ['known', 'usd_per_min', 'fast']
 const KILL_KEYS = ['by', 'at', 'reason']
-const TOTAL_KEYS = [
+/** TOTAL_KEYS is `JSONTotal`'s own key set (`internal/watch/json.go`), in the
+ * struct's order. Exported so `schema.test.ts` can pin it against the struct,
+ * as it pins `REPO_KEYS`, `RECORD_KEYS` and `RUN_KEYS`. */
+export const TOTAL_KEYS = [
   'counted_usd',
   'spent_usd',
   'notional_usd',

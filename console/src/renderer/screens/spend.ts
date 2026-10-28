@@ -427,7 +427,15 @@ export interface SpendCapRow {
    * design (`runstore.Cost.ComputeUSD`). The owner approved `compute_usd` on
    * each `showRepo` on 2026-10-28 and no CLI writes it yet, so this reads
    * absent and `null` as `n/a` and draws nothing with it: the Spend redesign
-   * is the screen that will. */
+   * is the screen that will.
+   *
+   * A value that is not a number is `n/a` too, and not a refusal, because this
+   * reader refuses no document at all -- the caps panel is the console's
+   * tolerant reader, and every number it cannot read is `n/a`. The contract
+   * states that as one rule (console/docs/json-contract.md §2): a key named
+   * ahead of its release is handled the way the decoder that owns the document
+   * handles a shape it cannot read; the closed decoders (`shared/schema.ts`,
+   * the digest) refuse it by name, and this one draws `n/a`. */
   readonly compute: Reading
   readonly headroom: Reading
   readonly dailyCap: Reading
