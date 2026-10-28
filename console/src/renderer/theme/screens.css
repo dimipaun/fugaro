@@ -1342,8 +1342,10 @@ main p {
 }
 
 /* The two answers are buttons and a button's boundary is `--border-strong` (the
- * role table the picker's controls read from): Cancel is the default, so it is
- * the one drawn first and the one a keyboard reaches. */
+ * role table the picker's controls read from). The rule is one rule for both
+ * because the view gives them the same treatment: it draws the confirming button
+ * first and Cancel second, and Cancel is the default by being the one focused on
+ * load rather than by being drawn first. */
 .console-confirm-actions button {
   padding: var(--space-2xs) var(--space-xs);
   color: var(--text);

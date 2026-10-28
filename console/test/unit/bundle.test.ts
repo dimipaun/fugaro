@@ -134,6 +134,21 @@ function unwiredClaimsIn(directory: string, names: readonly string[]): { name: s
   return claims
 }
 
+/** registryKeysIn is the keys a bundle's registry actually holds, in the order
+ * the file writes them.
+ *
+ * It is what makes a bundle's "and nothing else" checkable, and it has to be read
+ * off the artefact rather than compared as a substring: `moduleClosure`'s keys are
+ * relative to *that closure's* deepest common directory, so a needle written for
+ * one bundle does not describe a leak into another. `bundle/confirm.js` keys its
+ * one module `/confirm.js`; a leaked entry would re-root that closure to
+ * `src/renderer` and key as `/entry.js`, so a `not.toContain('registry["/renderer/entry.js"]')`
+ * against the confirmation bundle is true whatever the file holds. Comparing key
+ * sets has no such blind spot. */
+function registryKeysIn(bundle: string): string[] {
+  return [...bundle.matchAll(/registry\["([^"]+)"\]\s*=/g)].map((match) => match[1] ?? '')
+}
+
 /** servedNames is `SERVED_FILES` as file names, which is what a directory
  * listing is: `/console.js` is `console.js` in the root. */
 function servedNames(): readonly string[] {
@@ -259,6 +274,11 @@ describe('the served root npm run build leaves', () => {
       )
     }
     expect(closure[closure.length - 1]?.key).toBe('/renderer/installations.js')
+    // ...and nothing *else*: the loop above only asserts containment, so a
+    // bundle that carried a module the picker never requires would pass it. The
+    // key sets are compared both ways, which is the half that fails when a
+    // window's bundle grows another window's module.
+    expect(registryKeysIn(picker).sort()).toEqual(closure.map((module) => module.key).sort())
     const specifiers = requireSpecifiers(picker)
     for (const specifier of specifiers) expect(isRelative(specifier ?? '')).toBe(true)
     expect(picker).not.toMatch(/\beval\s*\(/)
@@ -314,20 +334,16 @@ describe('the served root npm run build leaves', () => {
     for (const specifier of specifiers) expect(isRelative(specifier ?? '')).toBe(true)
     expect(confirmation).not.toMatch(/\beval\s*\(/)
     expect(confirmation).not.toMatch(/new\s+Function\s*\(/)
-    // Each bundle is one window's script and one registry, and each names only
-    // its own entry: a bundle that carried another window's modules would be a
-    // second surface in a document that has one script.
-    for (const [other, otherEntry] of [
-      ['console.js', '/renderer/entry.js'],
-      ['installations.js', '/renderer/installations.js'],
-    ] as const) {
-      expect(confirmation, `the confirmation bundle carries ${other}'s entry`).not.toContain(
-        `registry[${JSON.stringify(otherEntry)}]`,
-      )
-      expect(builtFile(`bundle/${other}`), `${other} carries the confirmation entry`).not.toContain(
-        'registry["/confirm.js"]',
-      )
-    }
+    // The claim this case exists for, and the one a needle cannot make: the
+    // registry holds this closure's keys and no others. It is compared as a set
+    // rather than as three `not.toContain`s, because each closure keys its
+    // modules relative to its own root -- the dashboard's and the picker's span
+    // `src/renderer` and `src/shared`, so theirs read `/renderer/…` and
+    // `/shared/…` while the confirmation's one module reads `/confirm.js`, and a
+    // leaked module is re-keyed to the *receiving* closure's root. A bundle that
+    // carried another window's modules would therefore still satisfy any fixed
+    // needle; it cannot satisfy this.
+    expect(registryKeysIn(confirmation)).toEqual(closure.map((module) => module.key))
   })
 })
 
@@ -347,6 +363,11 @@ describe('the bundle', () => {
     }
     const entryKey = modules[modules.length - 1]?.key
     expect(entryKey, 'the last module of the closure is not the entry').toBe('/renderer/entry.js')
+    // The loop above is containment only: it is satisfied by a bundle that
+    // carries the dashboard's closure *and* a module the dashboard never
+    // requires. The key sets are compared both ways, so the bundle is its
+    // closure and nothing beyond it.
+    expect(registryKeysIn(bundle).sort()).toEqual(modules.map((module) => module.key).sort())
     expect(bundle.trimEnd().endsWith('})();')).toBe(true)
   })
 

@@ -252,7 +252,7 @@ describe('the served documents', () => {
   })
 
   it('give every document exactly one stylesheet, from this origin (Task 6.2)', () => {
-    // One `<link>` per document, and the same one in all three: `./console.css`,
+    // One `<link>` per document, and the same one in all four: `./console.css`,
     // a relative path on this origin, resolved by the bundler as a literal and
     // by the handler as a path under the root. The refusal document is included
     // on purpose -- the one page a console below the floor shows must not be the

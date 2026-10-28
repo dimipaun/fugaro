@@ -1892,7 +1892,8 @@ seam the renderer entry (Task 3.4a) needs to answer the dashboard's
   writes `dist/bundle/installations.js` and `dist/bundle/confirm.js` beside
   `console.js`, each bundle step
   told the others' names so the served root still refuses any file it did not
-  write, and `SERVED_FILES` names all four documents and all four scripts.
+  write, and `SERVED_FILES` names all four documents, the three window scripts,
+  the worker and the stylesheet.
 - **A picker e2e spec.** The picker's coverage is
   `test/unit/installations-store.test.ts`, `test/unit/installations-ipc.test.ts`
   and `test/unit/installations-view.test.ts` (the last drives the view over a
@@ -2925,7 +2926,7 @@ that follows is the record of the stage before that.** Each is named by `THEME_S
 `tools/bundle-renderer/index.ts`, the bundler's stylesheet step concatenates them (in list
 order) into `dist/bundle/console.css`, `/console.css` is one of the entries `SERVED_FILES`
 names — the list `test/unit/bundle.test.ts` holds the served root to, not a filter the
-handler consults — and each of the three documents links it — see the section at the foot of
+handler consults — and each of the four documents links it — see the section at the foot of
 this file.
 `test/unit/bundle.test.ts` fails if a stylesheet `THEME_STYLESHEETS` names still says in its
 own prose that nothing reads it, which is the sentence this paragraph used to open with and

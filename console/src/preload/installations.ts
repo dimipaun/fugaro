@@ -9,7 +9,7 @@
 // to the document that draws the dashboard -- the CLI reads, the startup
 // handshake's answer, `openExternal`'s handover, `installation.current` and the
 // installation rail's six -- and the picker has no business with any of them.
-// The three documents are served from the
+// Every document of the bundle is served from the
 // same origin (`app://console`), so the *only* thing that separates their
 // surfaces is that each window is built with its own preload and each channel
 // prefix is gated on the document that may reach it -- `isSenderOnDocument` in

@@ -20,7 +20,9 @@
 //     button is not in the tab order" (`tabIndex` is -1) and "a keyboard
 //     click does not confirm" (a click with `detail: 0` calls `answer` zero
 //     times), which is what "Cancel is the default button" has to mean once
-//     Enter and Escape are already declined in the main process;
+//     Enter and Escape are already declined in the main process; and a view that
+//     **drew Cancel first** fails the same test's draw-order assertion, which is
+//     what the stylesheet's comment above the two buttons describes;
 //   - a view that **cut or summarised** the task fails "draws the whole task
 //     text", which compares a 16 KiB text's length rather than its presence;
 //   - a view that **hid the argv** behind one line fails "draws the argv one
@@ -327,6 +329,12 @@ describe('the confirmation document and its view', () => {
     expect(actions.button(CANCEL_LABEL).attributes.get('autofocus')).toBe('')
     expect(actions.button(CONFIRM_LABEL).tabIndex).toBe(-1)
     expect(actions.button(CONFIRM_LABEL).focused).toBe(false)
+    // The draw order, pinned because the stylesheet's comment above the two
+    // buttons describes it: the confirming button is drawn first and Cancel
+    // second, and Cancel is the default by being the one focused rather than by
+    // being drawn first. A view that swapped them would leave that comment
+    // describing a document this test does not run.
+    expect(actions.children.map((child) => child.textContent)).toEqual([CONFIRM_LABEL, CANCEL_LABEL])
   })
 
   it('confirms only on a pointer click, and cancels on any click', async () => {

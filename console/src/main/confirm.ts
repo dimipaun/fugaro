@@ -65,10 +65,12 @@ export function confirmChannel(name: ConfirmChannelName): string {
 }
 
 /** CONFIRM_ENTRY_PATH is the window's document, and CONFIRM_ENTRY_URL the URL it
- * loads. Both are this module's rather than `protocol.ts`'s, and the document
- * itself lands in part 2b-2: until then `SERVED_FILES` does not name it, the
- * shipped app never opens this window (`index.ts` wires `DECLINING_CONFIRMER`),
- * and the load's failure is the cancel rather than a window nobody can see. */
+ * loads. Both are this module's rather than `protocol.ts`'s -- the document and
+ * the script beside it are served, `SERVED_FILES` names them (V2.5.1a part
+ * 2b-2a), and this is the URL the window is opened on -- and the shipped app
+ * still never opens the window, because `index.ts` wires `DECLINING_CONFIRMER`
+ * until part 2b-3: a load that failed today would be the cancel rather than a
+ * window nobody can see. */
 export const CONFIRM_ENTRY_PATH = '/confirm.html'
 export const CONFIRM_ENTRY_URL = `${APP_ORIGIN}${CONFIRM_ENTRY_PATH}`
 

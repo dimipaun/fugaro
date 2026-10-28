@@ -73,9 +73,9 @@ frame-ancestors 'none'; object-src 'none'
 used.** `'self'` permits a stylesheet served from `app://console` — the console's own
 bundle — and the policy has no `'unsafe-inline'`, so a `<style>` element and a `style="…"`
 attribute are both refused by the browser whatever the code does. The `<meta
-http-equiv>` copy in each of the three documents is byte-identical to the header:
+http-equiv>` copy in each of the four documents is byte-identical to the header:
 `console/test/unit/csp-document.test.ts` derives the document list from `SERVED_FILES`, so it
-holds **all three** copies equal to the header and to each other, and
+holds **all four** copies equal to the header and to each other, and
 `console/test/unit/window.test.ts` holds the same for the two documents it reads
 (`index.html` and `refusal.html`) alongside the assertion that the policy contains neither
 `unsafe-inline`, `unsafe-eval` nor `*`.
@@ -846,8 +846,9 @@ is not served. The four containers the view looks up (`confirm-status`, `confirm
 `confirm-task`, `confirm-actions`) are the document's own declarations, and the ids and the
 two hooks above are the whole of what the window carries: **no `data-*` of its own, and no
 rule here keyed on a theme attribute**, since the window is one surface with one ground. The
-field rows are the view's `dt`/`dd` pairs and are styled by the two hooks above rather than
-by a hook of their own; a rule that wanted a third adds it here first.
+field rows are the view's `dt`/`dd` pairs and **have no hook of their own**: no rule in this
+file selects them, and they carry only what `base.css`'s reset gives every `dt` and `dd`. A
+rule that wanted one adds it here first.
 
 ---
 
@@ -1859,7 +1860,7 @@ a fetch the CSP's `connect-src` governs, and no script fetches the CSS).
 The evidence a reviewer should require, and which the tests provide:
 
 - `CONTENT_SECURITY_POLICY` is byte-identical before and after, and so is the `<meta>`
-  copy in each of the three documents — held for **all three** by
+  copy in each of the four documents — held for **all four** by
   `console/test/unit/csp-document.test.ts`, whose document list is derived from
   `SERVED_FILES`, and for the two it reads by `console/test/unit/window.test.ts`, whose
   `expect(CONTENT_SECURITY_POLICY).toBe(DESIGN_CSP)` pins the policy itself;
@@ -2269,7 +2270,8 @@ element with no keys. 6.6 (the frames) is last and owner-run.
 - **Scope:** the bundler's stylesheet step (§5.2) — `THEME_STYLESHEETS` **with the files
   that exist at this point** (`tokens.css`, `palette.css`, both from Task 6.1), the
   refusals, the `dist/bundle/console.css` artefact and its ownership; `SERVED_FILES`
-  (§5.3); the three `<link>` elements (§5.4); `build.files` and the README's list (§5.6);
+  (§5.3); the `<link>` elements (§5.4 — three when this task landed, amended to four by
+  V2.5.1a on 2026-10-28); `build.files` and the README's list (§5.6);
   and the tests that pin all of it — `bundle.test.ts`, `csp-document.test.ts`,
   `build-files.test.ts`, and the `style` scan extension to `screen-literals.test.ts` (§5.5).
   **The whole-directory list is not this task's**, and cannot be: the bundler refuses a
@@ -2516,7 +2518,7 @@ console plan's `C`-series style only in shape, and a number is the owner's to gi
   installations file, and nothing else") and needs the owner's ruling the way C8 did;
   (c) a key inside the existing `installations.json`, which is schema-closed and would
   need a version bump; (d) `nativeTheme.themeSource` in the main process, which themes all
-  three documents including the refusal page.
+  four documents including the refusal page.
 - *Recommendation:* (a) for v1, with (d) named as the natural home if the owner later wants
   one — (d) needs no new setting to *decide the colour* but still needs one to *remember*
   the choice. *Why:* v1 writes two files and rule 10 says so in the owner's own words;
