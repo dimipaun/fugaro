@@ -419,19 +419,36 @@ func reportByMode(ctx context.Context, cmd *cobra.Command, o *reportOptions, lc 
 	if truncated {
 		m.Warnings = append(m.Warnings, fmt.Sprintf("the window holds more runs than the %d this report reads: only its newest %d are counted, so a run outside them is in no row", reportMaxRuns, reportMaxRuns))
 	}
-	rep := report.Build(modeRecords(objs, to), report.ByMode)
+	recs, unread := modeRecords(objs, to)
+	rep := report.Build(recs, report.ByMode)
 	rep.NoHours = true
+	if unread.total > 0 {
+		// A total that sums unreadable rows is short, and a reader has to be
+		// told rather than left to take it for the window's whole spend.
+		m.Warnings = append(m.Warnings, fmt.Sprintf(
+			"%d of the window's runs have no record this report can read (%d hold a result.json this build cannot read, %d have none in the bucket): they count in RUNS, and the money is short by whatever they spent",
+			unread.total, unread.corrupt, unread.total-unread.corrupt))
+	}
 	return reportEmit(cmd, o, rep, m)
 }
 
+// modeUnreadable counts the window's runs with no record this report can read:
+// total is every one of them, corrupt the ones whose result.json the bucket
+// holds and this read could not use. The rest have none in the bucket, which is
+// a different fact about the run and the same fact about the money.
+type modeUnreadable struct{ total, corrupt int }
+
 // modeRecords is the by-mode grouping's input: one Rec per run of the window,
 // dated on its launch day, carrying the rigor mode its record resolved and the
-// money its record settled. A run whose record is missing or unreadable did
-// launch, so it counts once among the runs and adds nothing to the money: the
-// record is marked unreadable, so a row made only of such runs reads n/a rather
-// than the 0 a reader would take for a measured spend.
-func modeRecords(objs []runObject, to int64) []report.Rec {
+// money its record settled. A run this report has no readable record for -- the
+// bucket holds a result.json it cannot read, or holds none because the run has
+// not written one -- did launch, so it counts once among the runs and adds
+// nothing to the money: the record is marked unreadable, so a row made only of
+// such runs reads n/a rather than the 0 a reader would take for a measured
+// spend. The two are counted apart so the warning can say which they were.
+func modeRecords(objs []runObject, to int64) ([]report.Rec, modeUnreadable) {
 	var recs []report.Rec
+	var unread modeUnreadable
 	for _, o := range objs {
 		t, err := runstore.RunTime(o.id)
 		if err != nil || budget.Day(t) > to {
@@ -449,10 +466,14 @@ func modeRecords(objs []runObject, to int64) []report.Rec {
 			}
 		} else {
 			rec.Unreadable = true
+			unread.total++
+			if o.recordCorrupt {
+				unread.corrupt++
+			}
 		}
 		recs = append(recs, rec)
 	}
-	return recs
+	return recs, unread
 }
 
 // ------------------------------------------------------------- degraded

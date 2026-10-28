@@ -344,6 +344,10 @@ type runObject struct {
 	id     string
 	launch *runstore.Launch
 	record *runstore.Record
+	// recordCorrupt is "the bucket holds a result.json this read could not
+	// use", as opposed to a run that has not written one. A nil record alone
+	// cannot say which, and the two are different facts about a run.
+	recordCorrupt bool
 }
 
 // readRunObjects reads the window's runs the way runs ls reads them -- the
@@ -419,6 +423,10 @@ func readRunObjects(ctx context.Context, env *cloudEnv, slugs []string, since, u
 	type objects struct {
 		launch *runstore.Launch
 		record *runstore.Record
+		// recordCorrupt is corrupt for the result.json alone, which is the
+		// object a reader of a run's figures needs to tell an unreadable
+		// record from one not written yet.
+		recordCorrupt bool
 		// corrupt is "the bucket holds an object this read could not use" --
 		// a launch.json or a result.json that is unreadable (a syntax error,
 		// an oversized object) rather than absent. It is what tells the two
@@ -449,7 +457,7 @@ func readRunObjects(ctx context.Context, env *cloudEnv, slugs []string, since, u
 		case err == nil:
 			read[i].record = r
 		case corruptObject(err):
-			read[i].corrupt = true
+			read[i].corrupt, read[i].recordCorrupt = true, true
 		default:
 			errs[i] = err
 		}
@@ -471,7 +479,7 @@ func readRunObjects(ctx context.Context, env *cloudEnv, slugs []string, since, u
 		// launcher nobody can read, so it is returned like any other run --
 		// runs ls reports the same object as an error row -- and never
 		// counted among the runs that never started.
-		objs = append(objs, runObject{id: refs[i].id, launch: o.launch, record: o.record})
+		objs = append(objs, runObject{id: refs[i].id, launch: o.launch, record: o.record, recordCorrupt: o.recordCorrupt})
 	}
 	return objs, unlaunched, truncated, nil
 }

@@ -101,7 +101,9 @@ type Row struct {
 	Partial bool
 	// Unreadable: every record of the row was unreadable, so the money below
 	// is no measurement and the renderers write n/a rather than a 0. A row
-	// with even one readable record is a measured row.
+	// with even one readable record is a measured row, and the totals row --
+	// which sums rows rather than records -- is unreadable only when every row
+	// it sums is.
 	Unreadable bool
 
 	Spent, Notional, Compute budget.Micros
@@ -293,7 +295,12 @@ func Build(recs []Rec, d Dim) Report {
 		tot.row.ComputeState = ComputeNotTracked
 	}
 	anyKnown := false
+	// The same rule one level up: a total is no measurement when every row it
+	// sums is none, so a report of nothing but unreadable rows reads n/a
+	// rather than the 0 that sums to.
+	allUnreadable := len(rep.Rows) > 0
 	for _, r := range rep.Rows {
+		allUnreadable = allUnreadable && r.Unreadable
 		tot.row.Spent = satAdd(tot.row.Spent, r.Spent)
 		tot.row.Notional = satAdd(tot.row.Notional, r.Notional)
 		tot.row.Compute = satAdd(tot.row.Compute, r.Compute)
@@ -312,6 +319,7 @@ func Build(recs []Rec, d Dim) Report {
 	if anyKnown {
 		tot.row.ComputeState = ComputeKnown
 	}
+	tot.row.Unreadable = allUnreadable
 	rep.Totals = tot.row
 	return rep
 }
