@@ -74,6 +74,7 @@
       "duration_s": 0,
       "model_usd": 1,
       "name": "implement",
+      "repeats": 0,
       "started_at": "<time>"
     },
     {
@@ -81,6 +82,7 @@
       "duration_s": 0,
       "model_usd": 0.5,
       "name": "review",
+      "repeats": 0,
       "started_at": "<time>"
     }
   ],
