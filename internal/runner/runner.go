@@ -1596,6 +1596,11 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := r.resolvePolicy(ctx, cfg); err != nil {
 		return err
 	}
+	// The tier the task carries and the expectation the policy just resolved
+	// for it (tier.go). Here, and not earlier: the expectation is the run's
+	// own governance's, which resolvePolicy settles, and the tier acts on
+	// nothing yet.
+	r.recordTier()
 	// The plan is derived here, *after* the policy: the routing switch is
 	// applied inside resolvePolicy and rewrites the pins the plan's
 	// first-line decision is read off — Agent.FirstLineOn asks whether the

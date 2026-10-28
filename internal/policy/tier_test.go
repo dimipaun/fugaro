@@ -52,19 +52,7 @@ func TestTierExpectationsAreTheVocabulary(t *testing.T) {
 
 // tierOf reads one tier's expectation out of a set, so a test can walk the
 // vocabulary (tier.Tiers) rather than spell the four fields out four times.
-func tierOf(ts TierExpectations, t tier.Tier) TierExpectation {
-	switch t {
-	case tier.Trivial:
-		return ts.Trivial
-	case tier.Small:
-		return ts.Small
-	case tier.Medium:
-		return ts.Medium
-	case tier.Large:
-		return ts.Large
-	}
-	return TierExpectation{}
-}
+func tierOf(ts TierExpectations, t tier.Tier) TierExpectation { return ts.For(t) }
 
 // TestTierDefaultsFromProjectLayer pins the expectations Fugaro ships (G§3,
 // D332) and the two rules that make them a ceiling a run starts under: a layer

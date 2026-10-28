@@ -2930,3 +2930,79 @@ func TestSchemaGovernanceBoundsMatchGo(t *testing.T) {
 		}
 	}
 }
+
+// TestResultSchemaTierMatchesTheGoVocabulary pins result.schema.json's tier
+// block to the Go side in both directions: the tier enum to tier.Tiers (the one
+// closed vocabulary the task spec, the configuration and the CLI share), and
+// the two figures' bound to the one the configuration side has, which is a
+// floor and no ceiling. An enum narrower than the vocabulary is a result.json a
+// consumer validating against the published schema refuses, while a value only
+// the enum knows is a tier no run can carry; and a ceiling only the record's
+// schema knows is a result.json the runner wrote and a repository's CI calls
+// impossible, because the project layer may loosen a tier past any figure
+// Fugaro ships.
+//
+// It is the same pin TestSchemaGovernanceTiersMatchTheGoVocabulary makes for
+// the configuration's governance.tiers, on the record's own copy of the tier.
+func TestResultSchemaTierMatchesTheGoVocabulary(t *testing.T) {
+	want := make([]string, 0, len(tier.Tiers))
+	for _, tt := range tier.Tiers {
+		want = append(want, string(tt))
+	}
+	data, err := os.ReadFile("result.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	block, ok := doc["properties"].(map[string]any)["tier"].(map[string]any)
+	if !ok {
+		t.Fatal("result.schema.json: no tier block")
+	}
+	props, _ := block["properties"].(map[string]any)
+	raw, ok := props["tier"].(map[string]any)["enum"].([]any)
+	if !ok {
+		t.Fatal(`result.schema.json: tier.tier has no enum`)
+	}
+	var got []string
+	for _, v := range raw {
+		s, ok := v.(string)
+		if !ok {
+			t.Fatalf("result.schema.json: tier.tier enum entry %v is not a string", v)
+		}
+		got = append(got, s)
+	}
+	if !sameStrings(got, want) {
+		t.Errorf("result.schema.json tier.tier = %v, internal/tier's Tiers = %v", got, want)
+	}
+	// The two figures are bounded below and not above, which is the bound the
+	// configuration side has: validateGovernance refuses a negative or
+	// non-finite expectation and nothing else, on purpose, because the project
+	// layer may loosen a tier and an expectation above the per-run cap is still
+	// only an expectation (G6). A maximum here would be a record the runner can
+	// legally write and its own published schema rejects — and a repository's
+	// CI would report a result.json the run itself produced.
+	for _, key := range []string{"expected_usd", "expected_minutes"} {
+		spec, _ := props[key].(map[string]any)
+		if _, ok := spec["maximum"]; ok {
+			t.Errorf("result.schema.json: tier.%s carries a maximum, which the configuration side has none of", key)
+		}
+		if minimum, ok := spec["minimum"].(float64); !ok || minimum != 0 {
+			t.Errorf("result.schema.json: tier.%s minimum = %v, want 0", key, spec["minimum"])
+		}
+	}
+	// A figure the project layer may write and the run resolved is a record the
+	// schema has to accept: the per-run cap, never the schema, is what stops a
+	// run whose expectation is larger than it.
+	lit := `{"version":1,"run_id":"20261028-170609-abcd","status":"succeeded","stage":"finalize","outcome":"ready","cost_usd":0,"started_at":"2026-10-28T17:06:09Z",` +
+		`"tier":{"tier":"large","expected_usd":5000,"expected_minutes":20000}}`
+	inst, err := jsonschema.UnmarshalJSON(strings.NewReader(lit))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compile(t, "result.schema.json").Validate(inst); err != nil {
+		t.Errorf("a record carrying a tier expectation the configuration side permits does not validate: %v", err)
+	}
+}

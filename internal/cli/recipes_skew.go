@@ -500,6 +500,13 @@ const rigorRequestSince = "0.11.1"
 // checkout of the repository, where it can read the file the run will, so
 // outside one only fugaro update --repo checks. docs/release.md ("Before you
 // tag") has the checklist verify it equals the release that ships the key.
+//
+// It is also the release that ships the expectation tier's task field
+// (task.Spec.Tier, fugaro run --tier, plan T8.1): the tier's expectation is
+// read from that same governance: block, so the field and the key arrive
+// together, and a runner older than it refuses a task carrying a tier the way
+// task.Parse's DisallowUnknownFields refuses the key. The launch judges that
+// field too (tierGateSubject), on the same image.
 const governanceSince = "0.13.0"
 
 // asksForRigor reports whether a launch asks for a rigor mode or declares a
@@ -528,6 +535,20 @@ func rigorGateSubject(o *runOptions, spec *task.Spec) string {
 		return fmt.Sprintf("the mode a follow-up keeps from its PR (rigor: %s)", spec.Rigor)
 	}
 	return "the run's own rigor request (--mode, --path)"
+}
+
+// tierGateSubject is what the governanceSince gate calls the tier it judges. A
+// launch that passed --tier is described by it; one that passed nothing and
+// still carries a tier keeps it from the PR it follows, and naming a flag
+// nobody gave would send its reader looking for a mistake they did not make —
+// the tier is real all the same, and a runner older than governanceSince
+// refuses the whole task for it. It is rigorGateSubject's shape for the same
+// reason: the check is the field's, not the flag's.
+func tierGateSubject(o *runOptions, spec *task.Spec) string {
+	if o.tier == "" && spec.IsFollowUp() && spec.Tier != "" {
+		return fmt.Sprintf("the tier a follow-up keeps from its PR (tier: %s)", spec.Tier)
+	}
+	return "the run's own tier request (--tier)"
 }
 
 // needsRecipeImage reports whether a launch needs a runner that knows
