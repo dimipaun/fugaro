@@ -38,6 +38,7 @@ import { join } from 'node:path'
 import { app, BrowserWindow, Menu, ipcMain, protocol, session, shell } from 'electron'
 
 import { handleAppRequests, registerAppScheme } from './protocol'
+import { APP_ENTRY_URL } from './protocol'
 import { consoleIconPath, installDevDockIcon } from './icon'
 import { installInstallationPicker } from './picker'
 import type { InstallationPicker } from './picker'
@@ -61,6 +62,7 @@ import type { SpawnLogWriter } from './spawnlog'
 import { parseInstallationsDocument } from './installlist'
 import { createLaunchRunner, DECLINING_CONFIRMER } from './launch'
 import type { FrozenLaunch, LaunchRequest, TargetLookup } from './launch'
+import { CONFIRM_ENTRY_URL, createConfirmWindow } from './confirm'
 import { launchFingerprint } from './launchrules'
 import type { LaunchRecordFacts } from './launchrules'
 import type { InstallationsListReply } from './onboarding'
@@ -664,11 +666,47 @@ async function launchStillRecorded(launch: FrozenLaunch): Promise<boolean> {
 }
 
 /**
- * launchRunner is the launcher the surface's `run.launch` answers through. Its
- * confirmer is `DECLINING_CONFIRMER` until V2.5.1b's window lands, so no launch
- * this app can be asked for reaches `spawn`.
+ * dashboardWindow is the window the confirmation window is modal over: the
+ * console's dashboard, or none when there is not one -- a refused console, whose
+ * window is the refusal document, and a startup that has not opened a window
+ * yet. `confirmOptions` handles a `null` parent, so this answering nothing is a
+ * state rather than a failure.
+ *
+ * It identifies the dashboard by its **document** rather than by taking the one
+ * window that happens to be open, because the picker's window and an open
+ * confirmation window are `BrowserWindow`s of this app as well: parenting a
+ * confirmation to either would make it modal over the wrong window (and, for
+ * another confirmation, over itself). Only the dashboard loads
+ * `APP_ENTRY_URL`; the refusal document, the picker's and the confirmation's own
+ * are other URLs. `getURL` is read inside the `try` because Electron's getters
+ * throw on a window that is already destroyed, and a window this process cannot
+ * read is not the dashboard.
  */
-const launchRunner = createLaunchRunner({
+function dashboardWindow(): BrowserWindow | null {
+  for (const window of BrowserWindow.getAllWindows()) {
+    try {
+      if (window.webContents.getURL() === APP_ENTRY_URL) return window
+    } catch {
+      continue
+    }
+  }
+  return null
+}
+
+/**
+ * launchRunner is the launcher the surface's `run.launch` answers through, and
+ * the handler reads it **at message time** rather than closing over it. That is
+ * what makes this the fail-closed default rather than the shipped one: its
+ * confirmer is `DECLINING_CONFIRMER`, so a launch that somehow arrives before
+ * `main` has built the confirmation window is refused by name
+ * (`DECLINED_UNBUILT`) and nothing reaches `spawn`.
+ *
+ * `main` replaces it with the same launcher over the window's own confirmer
+ * before any renderer can reach the operation: the surface goes on `ipcMain`
+ * only from `onDecided`, which only `lifecycle.start()` and `choose` reach, both
+ * from inside `main`.
+ */
+let launchRunner = createLaunchRunner({
   lookUp: launchLookUp,
   stillRecorded: launchStillRecorded,
   confirmer: DECLINING_CONFIRMER,
@@ -711,12 +749,14 @@ const gated: ConsoleHandlers = {
   // source, so `handlersFor` leaves it out (`CliBackedHandlers` in
   // `src/source/source.ts` says so from the other side).
   //
-  // **The confirmer is the declining one, and that is V2.5.1a's whole safety
-  // property.** V2.5.1b builds the window; until it lands, `DECLINING_CONFIRMER`
-  // refuses every launch by name (`DECLINED_UNBUILT`), so the shipped app has no
-  // way to a `run` child at all -- the operation, its argv, its reachability
-  // rows and its limits are all in place and tested with a fake confirmer, and
-  // not one of them is reachable from a renderer today.
+  // **A `run` child is spawned only on a yes from the confirmation window's own
+  // top frame.** The two things that make that true are elsewhere: the sender
+  // gate is `createConfirmWindow`'s (`src/main/confirm.ts`), and the launch is
+  // built, frozen and spawned by `launch.ts` only from the answer that window's
+  // own main-side path resolves. What is here is the handler, and it reads
+  // `launchRunner` at message time -- so before `main` has built the window the
+  // declining launcher above answers every launch with `DECLINED_UNBUILT`, and
+  // this operation has no way to a child at all.
   'run.launch': (args) => launchRunner.launch(launchRequest(args)),
 }
 
@@ -844,6 +884,34 @@ async function main(): Promise<void> {
     iconPath: consoleIconPath(app.getAppPath()),
   })
   serveBundle()
+  // **The confirmation window goes live here, and here only** (V2.5.1a part
+  // 2b-3b-1). It is built after `serveBundle`, because this is the run of
+  // `main` that has just made the document it loads answerable, and it is built
+  // before the picker and `lifecycle.start`, because those two are the paths
+  // that put the IPC surface on `ipcMain`: `run.launch` reads `launchRunner` at
+  // message time, so a renderer that can reach the operation is a renderer that
+  // finds the window's confirmer here rather than the declining default.
+  //
+  // `session.defaultSession`, never a partition: `protocol.handle` registers the
+  // `app://` scheme on the default session and nowhere else, so a window on a
+  // partition would issue its document request where nothing answers it and
+  // every launch would be declined. `dashboardWindow` is the parent, so the
+  // window is modal over the dashboard and never over the picker or over another
+  // confirmation.
+  launchRunner = createLaunchRunner({
+    lookUp: launchLookUp,
+    stillRecorded: launchStillRecorded,
+    confirmer: createConfirmWindow({
+      BrowserWindow,
+      ipcMain,
+      parent: dashboardWindow,
+      appPath: app.getAppPath(),
+      entryUrl: CONFIRM_ENTRY_URL,
+      session: session.defaultSession,
+    }),
+    appEnv: process.env,
+    log: createSpawnLog(process.env),
+  })
   picker = installInstallationPicker({
     // `shell` and not `dialog`: the picker has no file dialog any more (owner's
     // ruling of 2026-10-20) and its one external link goes through
@@ -858,6 +926,11 @@ async function main(): Promise<void> {
     // The picker awaits this inside its own serial chain (review S6), so a
     // second choose cannot start until the window this one asked for is up.
     onChosen: (chosen) => {
+      // Rule 11's "re-chosen": a launch names its own installation rather than
+      // the active one, so the installation being chosen again is the window
+      // that must close. Before `lifecycle.choose`, so the cancel is decided
+      // while the old installation's window is still the only one open.
+      launchRunner.cancelFor(chosen.project)
       resolvedBinaries.set(chosen.project, chosen.resolvedBinaryPath)
       return lifecycle.choose(chosen.compatibility).catch(reportAndQuit)
     },
@@ -869,6 +942,15 @@ async function main(): Promise<void> {
     // unconditional.
     onRemoved: () => {
       void boundSource.forget()
+    },
+    // And rule 11's "removed": the launch window's own half of the same fact.
+    // `onRemoved` above is not it -- that one fires only when the removal took
+    // the **active** installation away, and it is handed a record **id**, while
+    // a launch in flight names its own installation and the launcher closes a
+    // window by project. So every removal this console performs closes the
+    // launch that project has open, active row or not.
+    onRecordRemoved: (project) => {
+      launchRunner.cancelFor(project)
     },
   })
   // The menu is installed in **every** mode, `refused` included: choosing an
