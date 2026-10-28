@@ -1,0 +1,310 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
+// The launch's value rules and its reply decoder (docs/design/desktop-console.md
+// §5.1 rule 11): what may become a word of the child's argv, what may be drawn,
+// and what the CLI's reply may say.
+//
+// Nothing here is reachable from the renderer in this change (V2.5.1a part 1):
+// the module is imported by this test alone, and the operation that will call it
+// (`run.launch`, the frozen spawn, the confirmation window) is part 2's. What
+// the tests pin is the rules themselves, so that part 2 has nothing left to
+// decide about them.
+
+import { describe, expect, it } from 'vitest'
+
+import {
+  MAX_LAUNCH_PLAN_TASK_BYTES,
+  MAX_LAUNCH_RESULT_STRING,
+  MAX_LAUNCH_TASK_BYTES,
+  MAX_LAUNCH_TITLE_RUNES,
+  checkLaunchPlanTask,
+  checkLaunchTask,
+  checkLaunchTitle,
+  decodeLaunchResult,
+  displayTaskText,
+  launchRepoArgument,
+  recordedBaseBranch,
+} from '../../src/main/launchrules'
+
+/** value is a rule's admitted value, or a failure naming the refusal -- so a
+ * test that expected a value and got a refusal says so rather than reporting an
+ * `undefined`. */
+function value<T>(answer: { ok: true; value: T } | { ok: false; reason: string }): T {
+  if (!answer.ok) throw new Error(`refused: ${answer.reason}`)
+  return answer.value
+}
+
+/** reason is a rule's refusal sentence, or a failure when it admitted the
+ * value. */
+function reason(answer: { ok: true; value: unknown } | { ok: false; reason: string }): string {
+  if (answer.ok) throw new Error('the rule admitted a value it should have refused')
+  return answer.reason
+}
+
+describe('the task text', () => {
+  it('trims the way the CLI trims, and sends the trimmed bytes', () => {
+    // `internal/cli/run.go`'s `taskText`: `strings.TrimSpace`, then a refusal
+    // when the result is empty. The bytes the window counts are then the bytes
+    // the run keeps.
+    const answer = value(checkLaunchTask('\n\t  do the thing\u00a0\n '))
+    expect(answer.text).toBe('do the thing')
+    expect([...answer.bytes]).toEqual([...new TextEncoder().encode('do the thing')])
+    // U+0085 is whitespace to Go and not to JavaScript's `trim()`, and U+FEFF
+    // is the other way round: both are pinned here, because a trim that used
+    // `String.prototype.trim` would cut one and keep the other.
+    expect(value(checkLaunchTask('\u0085do the thing\u0085')).text).toBe('do the thing')
+    expect(value(checkLaunchTask('\ufeffdo the thing\ufeff')).text).toBe('\ufeffdo the thing\ufeff')
+  })
+
+  it('refuses a task that is empty once trimmed, including one that is only whitespace', () => {
+    for (const text of ['', ' ', '\n\t\r', '\u00a0\u2000\u3000\u0085']) {
+      expect(reason(checkLaunchTask(text)), JSON.stringify(text)).toContain('empty')
+    }
+  })
+
+  it('counts the cap in bytes of UTF-8, after the trim', () => {
+    // 16384 bytes pass and 16385 are refused, and the trim is what makes the
+    // difference: the padded text is over the cap and the trimmed one is not.
+    const at = 'a'.repeat(MAX_LAUNCH_TASK_BYTES)
+    expect(value(checkLaunchTask(at)).bytes.length).toBe(MAX_LAUNCH_TASK_BYTES)
+    expect(reason(checkLaunchTask(`${at}a`))).toContain(String(MAX_LAUNCH_TASK_BYTES))
+    expect(value(checkLaunchTask(`\n${at}\n`)).bytes.length).toBe(MAX_LAUNCH_TASK_BYTES)
+    // A multi-byte character counts as its bytes and not as one: 8192 of them
+    // are exactly the cap, and one more is over it.
+    const wide = 'é'.repeat(MAX_LAUNCH_TASK_BYTES / 2)
+    expect(value(checkLaunchTask(wide)).bytes.length).toBe(MAX_LAUNCH_TASK_BYTES)
+    expect(reason(checkLaunchTask(`${wide}é`))).toContain(String(MAX_LAUNCH_TASK_BYTES))
+  })
+
+  it('refuses a NUL byte and text that is not valid UTF-8', () => {
+    // A lone surrogate is not valid UTF-8: it is refused rather than encoded
+    // as U+FFFD, which would send the run a text the operator never wrote.
+    expect(reason(checkLaunchTask('do \u0000 the thing'))).toContain('NUL')
+    expect(reason(checkLaunchTask('do \ud800 the thing'))).toContain('UTF-8')
+    expect(reason(checkLaunchTask('do \udfff the thing'))).toContain('UTF-8')
+    // A *pair* is a character, and both halves are ordinary text.
+    expect(value(checkLaunchTask('do 😀 the thing')).text).toBe('do 😀 the thing')
+  })
+})
+
+describe('the title and the plan task', () => {
+  it('allows either to be absent, which is not an empty value', () => {
+    for (const absent of [undefined, null]) {
+      expect(value(checkLaunchTitle(absent))).toBeNull()
+      expect(value(checkLaunchPlanTask(absent))).toBeNull()
+    }
+    // Present and empty is a mistake the CLI refuses too (its `--title` with
+    // nothing in it), and it is not the same thing as absent.
+    expect(reason(checkLaunchTitle(''))).toContain('empty')
+    expect(reason(checkLaunchPlanTask(''))).toContain('empty')
+  })
+
+  it('allows the space and the leading dash that the value alphabet refuses', () => {
+    // The whole reason these two words have kinds of their own:
+    // `isSafeArgumentValue`'s `ARGUMENT_RE` and its leading-`-` check refuse
+    // both, and a title may hold both. `spawn.ts` is untouched by this change.
+    for (const title of ['a title with spaces', '-a title that starts like a flag', 'release 2.0: the fix']) {
+      expect(value(checkLaunchTitle(title)), title).toBe(title)
+      expect(value(checkLaunchPlanTask(title)), title).toBe(title)
+    }
+  })
+
+  it('refuses a title or plan task carrying a bidi override or a zero-width joiner, not stripping it', () => {
+    // **The headline rule, and the one mutation proof of this change.** The CLI
+    // would drop these characters (`internal/safetext`'s `unicode.Is(unicode.Cf,
+    // r)`), so a value that passed here would be a value the window showed and
+    // the run never kept. The console refuses on its side instead.
+    //
+    // Mutation (run, restore): delete the `FORMAT_RE` line from
+    // `checkLaunchWord` and every case below stops being refused -- the values
+    // come back through as fine, which is what makes this test the one that
+    // fails when the rule goes.
+    for (const hostile of [
+      'fix \u202egnp.exe', // a right-to-left override: reverses the line a reader sees
+      'fix \u202dgnp.exe', // a left-to-right override, the same family
+      'fix\u200bbroken', // a zero-width space
+      'fix\u200cbroken', // a zero-width non-joiner
+      'fix\u200dbroken', // a zero-width joiner
+      'fix\u2066broken\u2069', // an isolate, which hides a run of text from the surrounding text's direction
+      '\ufefffix', // a byte-order mark in the middle of a value
+    ]) {
+      expect(reason(checkLaunchTitle(hostile)), JSON.stringify(hostile)).toContain('format character')
+      expect(reason(checkLaunchPlanTask(hostile)), JSON.stringify(hostile)).toContain('format character')
+    }
+    // And the refusal is a refusal, not a strip: what comes back is a sentence
+    // and never the text with the character removed.
+    expect(reason(checkLaunchTitle('fix \u202egnp.exe'))).not.toContain('gnp.exe')
+  })
+
+  it('refuses a second line, a control character and a value past its cap', () => {
+    for (const multi of ['one\ntwo', 'one\rtwo', 'one\u2028two', 'one\u2029two']) {
+      expect(reason(checkLaunchTitle(multi)), JSON.stringify(multi)).toContain('more than one line')
+    }
+    for (const control of ['one\ttwo', 'one\u0000two', 'one\u009ftwo']) {
+      expect(reason(checkLaunchTitle(control)), JSON.stringify(control)).toContain('control character')
+    }
+    const titleAt = 'a'.repeat(MAX_LAUNCH_TITLE_RUNES)
+    expect(value(checkLaunchTitle(titleAt))).toBe(titleAt)
+    expect(reason(checkLaunchTitle(`${titleAt}a`))).toContain(String(MAX_LAUNCH_TITLE_RUNES))
+    // The title's cap is in characters and the plan task's in bytes, and the
+    // difference is the point: they are two different kinds of word.
+    expect(value(checkLaunchTitle('é'.repeat(MAX_LAUNCH_TITLE_RUNES)))).toHaveLength(MAX_LAUNCH_TITLE_RUNES)
+    const planAt = 'a'.repeat(MAX_LAUNCH_PLAN_TASK_BYTES)
+    expect(value(checkLaunchPlanTask(planAt))).toBe(planAt)
+    expect(reason(checkLaunchPlanTask(`${planAt}a`))).toContain(String(MAX_LAUNCH_PLAN_TASK_BYTES))
+    expect(reason(checkLaunchPlanTask('é'.repeat(MAX_LAUNCH_PLAN_TASK_BYTES)))).toContain(
+      String(MAX_LAUNCH_PLAN_TASK_BYTES),
+    )
+  })
+})
+
+describe('the task the window draws', () => {
+  it('strips the format characters from the displayed copy and nothing else', () => {
+    // The task itself is not refused for carrying them -- it travels on stdin
+    // and the CLI sanitises what it stores -- but the paragraph a person reads
+    // before spending must not be reorderable.
+    const task = 'fix the \u202edirection\u202c of \u200bthe arrow'
+    expect(displayTaskText(task)).toBe('fix the direction of the arrow')
+    // A control character is shown as it is: this is not the title's rule, and
+    // the window's own text classes are what draw an unnamed control character.
+    expect(displayTaskText('one\ttwo')).toBe('one\ttwo')
+    expect(displayTaskText('😀')).toBe('😀')
+  })
+})
+
+describe('the repository argument', () => {
+  it('drops the provider segment and keeps the owner/name', () => {
+    expect(value(launchRepoArgument('github/owner/repo-a'))).toBe('owner/repo-a')
+    expect(value(launchRepoArgument('bitbucket/owner/repo-a'))).toBe('owner/repo-a')
+  })
+
+  it('refuses anything that is not a provider and a canonical owner/name', () => {
+    for (const recorded of [
+      'gitlab/owner/repo-a', // a provider this tree does not serve
+      'GitHub/owner/repo-a', // the same provider, spelled as the record never is
+      'github/owner', // no name
+      'github/owner/repo-a/extra', // three segments: a path, not a repository
+      'github/../repo-a', // `..` is a path the CLI would resolve elsewhere
+      'github/owner/..',
+      'github/owner/.',
+      'github//repo-a',
+      'github/owner/repo a', // outside the CLI's alphabet
+      'owner/repo-a',
+      '',
+    ]) {
+      expect(reason(launchRepoArgument(recorded)), JSON.stringify(recorded)).not.toBe('')
+    }
+  })
+})
+
+describe('the recorded base branch', () => {
+  const installation = {
+    baseBranch: 'trunk',
+    repositories: [
+      { repository: 'github/owner/repo-a', baseBranch: 'dev' },
+      { repository: 'github/owner/repo-b', baseBranch: '' },
+    ],
+  }
+
+  it('reads the repository’s own value, and the installation’s below it', () => {
+    expect(value(recordedBaseBranch(installation, 'github/owner/repo-a'))).toBe('dev')
+    // An empty row falls through to the installation's own branch rather than
+    // answering with the empty string.
+    expect(value(recordedBaseBranch(installation, 'github/owner/repo-b'))).toBe('trunk')
+  })
+
+  it('refuses with the repository and the two settings, never git.base_branch', () => {
+    const sentence = reason(recordedBaseBranch({ baseBranch: '', repositories: [] }, 'github/owner/repo-a'))
+    expect(sentence).toContain('github/owner/repo-a')
+    expect(sentence).toContain('repos.owner/repo-a.base_branch')
+    expect(sentence).toContain("the project's own base_branch")
+    // The one setting this must never send an operator to: it is a checkout's
+    // file, and moving it does not move the launch.
+    expect(sentence).not.toContain('git.base_branch')
+    expect(reason(recordedBaseBranch({ baseBranch: '', repositories: [] }, 'gitlab/owner/repo-a'))).not.toBe('')
+  })
+})
+
+describe('the launch reply', () => {
+  const REPLY = {
+    project: 'sandbox',
+    run: 'run-1',
+    repo: 'owner/repo-a',
+    run_id: '20261028-120350-5b9b',
+    branch: 'fugaro/20261028-120350-5b9b',
+    ref: 'main',
+    execution: 'fugaro-run-abc',
+    log_url: 'https://example.invalid/logs/1',
+    status: 'launched',
+  }
+
+  it('reads the values the CLI printed, and the launched status as a fact', () => {
+    const answer = value(decodeLaunchResult(JSON.stringify(REPLY)))
+    expect(answer.run).toBe('run-1')
+    expect(answer.runId).toBe('20261028-120350-5b9b')
+    expect(answer.branch).toBe('fugaro/20261028-120350-5b9b')
+    expect(answer.ref).toBe('main')
+    expect(answer.status).toBe('launched')
+    // The optional keys of `launchResult` are read as absence, not as a refusal.
+    expect(answer.pr).toBeNull()
+    expect(answer.recipe).toBeNull()
+    expect(answer.projectLayer).toBeNull()
+    expect(answer.previousRun).toBe('')
+    expect(value(decodeLaunchResult(JSON.stringify({ ...REPLY, status: 'already-launched' }))).status).toBe(
+      'already-launched',
+    )
+    // The two shapes only a follow-up or a planned run carries.
+    const full = value(
+      decodeLaunchResult(
+        JSON.stringify({
+          ...REPLY,
+          pr: 12,
+          previous_run: 'run-0',
+          recipe: { name: 'go', source: 'repo' },
+          project_layer: { sha256: 'a'.repeat(64), generation: 3 },
+        }),
+      ),
+    )
+    expect(full.pr).toBe(12)
+    expect(full.previousRun).toBe('run-0')
+    expect(full.recipe).toEqual({ name: 'go', source: 'repo' })
+    expect(full.projectLayer).toEqual({ sha256: 'a'.repeat(64), generation: 3 })
+  })
+
+  it('refuses a reply carrying a key it does not know', () => {
+    // Rule 11: a field the decoder does not know refuses the whole reply rather
+    // than being ignored -- the values here are drawn as the CLI's own facts.
+    const answer = decodeLaunchResult(JSON.stringify({ ...REPLY, invented: 'x' }))
+    expect(answer.ok).toBe(false)
+    expect(reason(answer)).toContain('invented')
+    // Nested as well: the two objects the CLI emits are closed too.
+    expect(decodeLaunchResult(JSON.stringify({ ...REPLY, recipe: { name: 'go', invented: 'x' } })).ok).toBe(false)
+    expect(
+      decodeLaunchResult(JSON.stringify({ ...REPLY, project_layer: { sha256: 'x', invented: 'x' } })).ok,
+    ).toBe(false)
+  })
+
+  it('refuses a reply that is not the reply, rather than drawing part of it', () => {
+    const bads: readonly [string, string][] = [
+      ['not JSON at all', 'fugaro: this CLI has no run command\n'],
+      ['not an object', '[1,2,3]'],
+      ['an array', '[]'],
+      ['no status', JSON.stringify({ ...REPLY, status: undefined })],
+      ['another status word', JSON.stringify({ ...REPLY, status: 'ok' })],
+      ['no branch', JSON.stringify({ ...REPLY, branch: undefined })],
+      ['a branch that is a number', JSON.stringify({ ...REPLY, branch: 7 })],
+      ['a run that is an object', JSON.stringify({ ...REPLY, run: {} })],
+      ['a pr that is a string', JSON.stringify({ ...REPLY, pr: '12' })],
+      ['a pr that is negative', JSON.stringify({ ...REPLY, pr: -1 })],
+      ['a recipe that is a string', JSON.stringify({ ...REPLY, recipe: 'go' })],
+      ['a recipe with no source', JSON.stringify({ ...REPLY, recipe: { name: 'go' } })],
+      ['a project layer with no sha', JSON.stringify({ ...REPLY, project_layer: { generation: 1 } })],
+      ['a string past the bound', JSON.stringify({ ...REPLY, branch: 'b'.repeat(MAX_LAUNCH_RESULT_STRING + 1) })],
+    ]
+    for (const [what, text] of bads) {
+      const answer = decodeLaunchResult(text)
+      expect(answer.ok, what).toBe(false)
+      expect(reason(answer), what).not.toBe('')
+    }
+  })
+})
