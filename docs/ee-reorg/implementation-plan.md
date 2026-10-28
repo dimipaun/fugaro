@@ -7,7 +7,7 @@ wins), including the owner's correction of 2026-10-29: **the digest stays MIT**.
 at `028b46357`, 2026-10-28.
 
 **Status: plan only. Nothing is implemented, and NO TASK IS APPROVED.** Each task needs the owner's
-explicit go. Decisions D520–D535 are **unanswered**; every task names the decisions it assumes, and
+explicit go. Decisions D520–D536 are **unanswered**; every task names the decisions it assumes, and
 an answer that differs from the recommendation re-plans the tasks that name it.
 
 It **supersedes** subscriptions tasks S1.1, S1.2, S1.3, S1.4, S1.5, S1.7 and S1.9 (their content is
@@ -82,7 +82,7 @@ stage halts? Does a core runner given a `governance:` block ever refuse a run?
   v0.12.1); S1.1–S1.5, S1.7, S1.9 marked superseded by this plan's E-tasks, numbers not reused;
   S1.10 (Check 178) marked deferred until enforcement; S1.8 stands.
 - **Tests:** the Docs suite. **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1`.
-- **Red step:** none (docs). **Depends on:** the owner's answers to D520–D535. **Reviewer:** standard.
+- **Red step:** none (docs). **Depends on:** the owner's answers to D520–D536. **Reviewer:** standard.
 - **Commit:** `docs(subscriptions): T27 (b), the governance move, R1 amended (ee-reorg D524)`.
 
 #### E0.2 `ee/` admits moved code
@@ -109,11 +109,13 @@ stage halts? Does a core runner given a `governance:` block ever refuse a run?
   - the untagged behaviour table of D522 and the notice of D523;
   - the edition marker's carrier (R3: an OCI label read by the gate, or a field in the build record);
   - the images (D524) and why the credentials image stays untagged;
-  - which command tree `website/content/cli-reference.md` and the plugin tests read: the tagged one
-    (one binary ships, T21);
+  - which command tree `website/content/cli-reference.md` and the plugin tests read: the tagged one,
+    through `ee/clidoc` (D536, built by E1.7);
+  - `reportHistory` returns `[]report.Rec` and only `report.go` calls it, so it moves with the
+    command, not into `reportcore.go` (S1.5's list corrected);
   - the helper API an `ee/` command needs from `internal/cli` (S1.1's list).
 - **Tests:** the Docs suite. **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1`.
-- **Red step:** none (design). **Depends on:** D520–D524, D528, D530. **Reviewer:** opus + mandatory
+- **Red step:** none (design). **Depends on:** D520–D524, D528, D530, D536. **Reviewer:** opus + mandatory
   independent review.
 - **Commit:** `docs(design): the core-to-ee moves: coordinator, report, governance`.
 
@@ -149,9 +151,10 @@ E1.1 and E1.3 (T8.1b edits `internal/cli/run.go`), E1.2 and E2.4 (#1216: `intern
 - **Tests:** S1.2's six (`TestRegisteredCommandJoinsTheRoot`, `TestRegisteredCommandCannotShadowACoreCommand`,
   `TestRegisteredCommandCannotReplaceCoreSubcommandsOrPersistentFlags`, `TestLateOrDuplicateRegistrationIsRefused`,
   `TestNoRegistrationLeavesTheRootUnchanged`, `TestLaunchWithoutADeclarerDeclaresNothing`, run against a seam) plus
-  `TestUntaggedPaidCommandSaysWhy`, `TestStubIsReplacedOnlyByItsRegistration` and
-  `TestLaunchStillDeclaresBeforeTheMove`.
-- **Command:** `go test ./internal/cli/ -run 'TestRegistered|TestNoRegistration|TestLateOrDuplicate|TestLaunchWithoutADeclarer|TestLaunchStillDeclares|TestUntaggedPaid|TestStubIs' -count=1 && go test ./internal/eeboundary/ -count=1`.
+  `TestStubSaysWhyThroughASeam` (a test-only stub name, since `report` and `coordinator` are still
+  core commands here; the real `TestUntaggedPaidCommandSaysWhy` is E2.1's and E2.2's),
+  `TestStubIsReplacedOnlyByItsRegistration` and `TestLaunchStillDeclaresBeforeTheMove`.
+- **Command:** `go test ./internal/cli/ -run 'TestRegistered|TestNoRegistration|TestLateOrDuplicate|TestLaunchWithoutADeclarer|TestLaunchStillDeclares|TestStubSaysWhy|TestStubIs' -count=1 && go test ./internal/eeboundary/ -count=1`.
 - **Red step:** the shadowing test fails with no registry.
 - **Depends on:** E0.3, the in-flight gate. **Reviewer:** opus + mandatory independent review.
 - **Commit:** `cli: a command registry, a launch hook and the paid-command stubs`.
@@ -187,14 +190,17 @@ takes over in untagged builds).
 #### E1.3 The edition marker and the gates' warning
 
 - **Files:** `internal/cli/edition.go` (new), `internal/cli/edition_test.go` (new),
-  `internal/cli/recipes_skew.go` (`checkGovernanceImage`, `refuseGovernanceSkew`,
-  `governanceImageWarnings` learn the edition), plus the carrier E0.3 chooses on the Go side.
+  `internal/cli/recipes_skew.go` (`checkGovernanceImage`, `checkCloneGovernanceImage`,
+  `refuseGovernanceSkew` and `governanceImageWarnings` learn the job image's edition; the last gains
+  the image it judges), `internal/cli/validate.go` (its call), plus the carrier E0.3 chooses on the Go
+  side.
 - **Tests:** `TestEditionIsCoreUntagged`, `TestGovernanceOnACoreImageWarns`,
-  `TestTaggedImageFromAnUntaggedLauncherDoesNotWarn`, `TestValidateWarnsGovernanceOnACoreImage`,
+  `TestTaggedImageFromAnUntaggedLauncherDoesNotWarn`, `TestCloneWorkflowOnACoreImageWarns`,
+  `TestValidateWarnsGovernanceOnACoreImage`,
   `TestTierOnACoreImageWarns` (`--tier` judged through `governanceLaunchSources`, so `run.go` is not
   touched), `TestGovernanceOnAnOldImageStillRefuses` (today's skew rule unchanged),
   `TestEditionCannotBeSetByLdflags`.
-- **Command:** `go test ./internal/cli/ -run 'TestEdition|TestGovernanceOn|TestTaggedImageFrom|TestValidateWarnsGovernance|TestTierOnACore' -count=1`.
+- **Command:** `go test ./internal/cli/ -run 'TestEdition|TestGovernanceOn|TestTaggedImageFrom|TestCloneWorkflowOnACore|TestValidateWarnsGovernance|TestTierOnACore' -count=1`.
 - **Red step:** `TestGovernanceOnACoreImageWarns` fails: today a 0.13.0 core image passes silently.
 - **Depends on:** E0.3, the in-flight gate (T8.1b's `--tier`). **Reviewer:** standard.
 - **Commit:** `cli: the binary knows its edition, and governance on a core image warns (R3)`.
@@ -202,7 +208,9 @@ takes over in untagged builds).
 #### E1.4 The base and history images build with the tag; credentials does not
 
 - **Files:** `.dockerignore` (admit `ee/`, F16b), `images/base/Dockerfile`, `images/history/Dockerfile`
-  (`COPY ee ./ee`, `-tags ee`, the edition carrier), `images/build_tags_test.go` (new; S1.7's scan,
+  (`COPY ee ./ee`, `-tags ee`, the edition carrier, and an `org.opencontainers.image.licenses` label
+  naming MIT plus the enterprise licence; the credentials image's label names MIT), `images/credentials/Dockerfile`
+  (the label only), `images/build_tags_test.go` (new; S1.7's scan,
   inverted for base and history, and a context test that `.dockerignore` admits `ee/`),
   `images/base_test.go`, `images/history_test.go`, `images/size-budget.sh` only if U3 needs it; a
   staged change under `docs/pending-workflows/images.yml` with its README section if U1 shows the
@@ -211,8 +219,9 @@ takes over in untagged builds).
   `TestBuildTagScanCatchesPlants`, `TestRunImagesCarryNoKey` (no `COPY` or `ARG` of a key or secret),
   `TestBuildContextAdmitsEE`; and the `docker`-tagged build of the base image (`go test -tags docker
   ./images/ -run TestBase -count=1`), which fails today if the context drops `ee/`.
-- **Command:** `go test ./images/ -run 'TestBaseAndHistory|TestCredentialsImage|TestBuildTagScan|TestRunImagesCarryNoKey|TestBuildContext|TestHistory' -count=1 && go test -tags docker ./images/ -run TestBase -count=1`.
-- **Red step:** `TestBaseAndHistoryBuildFugaroWithTheEETag` fails on today's Dockerfiles.
+- **Command:** `go test ./images/ -run 'TestBaseAndHistory|TestCredentialsImage|TestBuildTagScan|TestRunImagesCarryNoKey|TestBuildContext|TestHistory' -count=1 && go test ./scripts/ -run TestEETagNeedsTheLabels -count=1 && go test -tags docker ./images/ -run TestBase -count=1`.
+- **Red step:** `TestBaseAndHistoryBuildFugaroWithTheEETag` fails on today's Dockerfiles; once the
+  tag is set and before the label, E3.2's extended `TestEETagNeedsTheLabels` fails.
 - **Depends on:** E3.2 (the relabel and the label gate over the images land first, F16c), D524,
   D525. **Reviewer:** opus + mandatory independent review (licence and supply chain).
 - **For operators (0.13.0 notes, E3.3):** per installation `fugaro update`; per repository
@@ -224,14 +233,15 @@ takes over in untagged builds).
 - **Files:** `ee/register/register.go` (new; sets the edition), `ee/register/register_test.go` (new),
   `cmd/fugaro/ee_on.go` (new).
 - **Tests:** `TestRegisterFollowsTheGatingModel` (T27 (b): register, notice on stderr),
-  `TestTaggedBinaryWiresEveryHook` (in `ee/register`: after its `init`, the edition is `ee` and the
-  command, policy, runner and launch hooks are all set — the "hook silently dropped" seam; E2.1–E2.4
-  each extend it with their hook), `go build -tags ee ./cmd/fugaro`, the boundary tests tagged and
+  `TestTaggedBinaryWiresEveryHook` (in `ee/register`: after its `init`, the edition is `ee`; E2.1–E2.4
+  each extend it, in their own test file, with an **identity** check that the hook holds `ee/`'s
+  function, not merely a non-nil one, since until E2.3/E2.4 the policy and runner hooks default to
+  today's non-nil core implementation — the "hook silently dropped" seam), `go build -tags ee ./cmd/fugaro`, the boundary tests tagged and
   untagged. `ee/` packages build without the tag (only `cmd/fugaro/ee_on.go` carries it), so
   `go test ./ee/...` runs them.
 - **Command:** `go test ./internal/eeboundary/ -count=1 && go test ./ee/register/ -count=1 && go build -tags ee ./cmd/fugaro && go build ./cmd/fugaro`.
 - **Red step:** `TestRegisterFollowsTheGatingModel` fails before the package exists.
-- **Depends on:** E1.1, E1.3, E0.2. The boundary tests already admit exactly this route; no
+- **Depends on:** E1.1, E1.2, E1.3, E0.2. The boundary tests already admit exactly this route; no
   boundary-test edit. **Reviewer:** opus + mandatory independent review.
 - **Commit:** `ee: the register package and the one assembly file`.
 
@@ -240,14 +250,33 @@ takes over in untagged builds).
 - **Files:** `docs/pending-workflows/ci.yml` (new staged copy: `go vet -tags ee ./...`, `go test
   -tags ee ./ee/... -count=1`, `go build -tags ee ./cmd/fugaro`, beside the untagged jobs),
   `docs/pending-workflows/README.md` (its section, and that `core-without-ee.yml` is now due),
-  `internal/cli/docs_core_without_ee_workflow_test.go` if the staged file's pinned lines change.
-- **Tests:** the pin tests for the staged workflows. **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'Workflow|Docs' -count=1`.
-- **Red step:** a pin for the tagged job fails until the staged file carries it.
+  `internal/cli/docs_ee_ci_workflow_test.go` (new: pins the tagged vet, test and build steps in the
+  staged file), `internal/cli/docs_core_without_ee_workflow_test.go` if its pinned lines change.
+- **Tests:** `TestStagedCIBuildsBothEditions` (new), the existing core-without-ee pins.
+  **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestStagedCI|Workflow|Docs' -count=1`.
+- **Red step:** `TestStagedCIBuildsBothEditions` fails before the staged file exists.
 - **OWNER-RUN:** the owner copies `docs/pending-workflows/ci.yml` and `core-without-ee.yml` into
   `.github/workflows/` (`cp docs/pending-workflows/{ci,core-without-ee}.yml .github/workflows/`, commit,
   push). No agent performs it.
 - **Depends on:** E0.3. **Reviewer:** standard.
 - **Commit:** `ci(staged): build and test the ee edition beside the core`.
+
+#### E1.7 The tagged command tree for the reference and the plugin checks (D536)
+
+- **Files:** `ee/clidoc/main.go` (new; `go run ./ee/clidoc` imports `ee/register` and calls the
+  exported `internal/clidoc` generator), `ee/clidoc/cliref_test.go` (new; the reference is current
+  against the tagged tree), `internal/clidoc/cliref.go` (the file header names the new command),
+  `internal/clidoc/cliref_test.go` (core: every core command and flag is in the file, a subset
+  check), `internal/cli/docs_website_cliref_test.go` (the same subset rule),
+  `plugin/routing_skill_test.go`, `plugin/setup_skill_test.go` and the shared skill-check helper
+  (a paid command name passes through E1.1's stub list), `ee/plugincheck/skills_test.go` (new; the
+  paid commands' flags named by a skill exist in the tagged tree).
+- **Tests:** `TestCliReferenceIsCurrent` (moved to `ee/clidoc`), `TestCoreCommandsAreInTheReference`,
+  `TestSkillsNamePaidFlagsThatExist`, `TestCoreSkillCheckAcceptsAPaidCommandByName`.
+- **Command:** `go run ./ee/clidoc && go test ./ee/clidoc/ ./ee/plugincheck/ ./internal/clidoc/ -count=1 && go test ./plugin/... -count=1 && go test ./internal/cli/ -run TestDocsWebsiteCliref -count=1 && go test ./internal/eeboundary/ -count=1`.
+- **Red step:** `TestSkillsNamePaidFlagsThatExist` fails before the tagged tree is reachable from a test.
+- **Depends on:** E1.5. **Reviewer:** standard.
+- **Commit:** `clidoc: the reference and the skills read the released (tagged) command tree (D536)`.
 
 ### Slice E2 — the moves (one per feature; behaviour unchanged in the tagged build)
 
@@ -258,36 +287,42 @@ takes over in untagged builds).
   `coordinator_token.json`; new `internal/coordpath/`; re-pointed `internal/cli/run.go` is **not**
   touched here (the hook is E1.1's): `internal/cli/project_cmd.go`, `internal/budget/rules/coordinator_test.go`,
   `emulator_coordinator_test.go`, `rules_test.go`, `internal/cli/doctor_policy_test.go`,
-  `internal/cli/docs_desktop_console_test.go`), plus `ee/register/coordinator.go` (new),
+  `internal/cli/docs_desktop_console_test.go`), plus `internal/cli/run.go` and `internal/cli/extend.go`
+  (the declarer default flips and the `internal/coordinator` import goes), `ee/register/coordinator.go`
+  (new), `ee/register/coordinator_test.go` (new; the identity check),
   `internal/cli/root.go`, `website/content/cli-reference.md` (regenerated), `docs/coordinator/README.md`.
 - **Tests:** `TestUntaggedBuildStillLaunches`, `TestCoordinatorCommandRegistersTagged`,
   `TestNoticeNeverOnStdout` (coordinator status `--json`), the moved tests, the rules tests against
   `internal/coordpath`.
-- **Command:** `go run ./internal/clidoc && go test ./internal/cli/ -run 'TestUntaggedBuild|TestDocsDesktop|TestUntaggedPaid' -count=1 && go test ./internal/budget/rules/ -run Coordinator -count=1 && go test ./ee/coordinator/... ./ee/register/ -count=1 && go test ./internal/eeboundary/ -count=1`.
+- **Command:** `go run ./ee/clidoc && go test ./internal/cli/ -run 'TestUntaggedBuild|TestDocsDesktop|TestUntaggedPaid' -count=1 && go test ./internal/budget/rules/ -run Coordinator -count=1 && go test ./ee/coordinator/... ./ee/register/ -count=1 && go test ./internal/eeboundary/ -count=1`.
 - **Red step:** `TestCoordinatorCommandRegistersTagged` fails while the command is core.
 - **Change beyond S1.4:** the launch hook's core default becomes "declare nothing"; `ee/register/coordinator.go`
   registers today's declarer (D535).
-- **Depends on:** E1.5, E0.4 (`docs/coordinator/README.md`). **Reviewer:** opus + mandatory independent review.
+- **Depends on:** E1.5, E1.7 (the generator), E0.4 (`docs/coordinator/README.md`). **Reviewer:** opus + mandatory independent review.
 - **Commit:** `coordinator: the command and the library move to ee/ (D434, T10)`.
 
 #### E2.2 `fugaro report` moves; the digest keeps its MIT copy (D444, T11; was S1.5)
 
 - **Files:** S1.5's list (moved `internal/report/` → `ee/report/`, the command part of
   `internal/cli/report.go` and `report_test.go` → `ee/report/cli/`; new `internal/cli/reportcore.go`;
-  new `internal/digest/period.go` with `Dim`, `ParseDim`, `PeriodKey`, the period keys, `USD` **and
-  `USD6`** (F6); `internal/digest/digest.go`, `layout.go`, `patterns.go`, `render.go`,
-  `internal/runner/digest.go`, `internal/cli/runs_digest.go` re-pointed), plus `internal/cli/project.go`
+  `reportHistory` moves with the command (it returns `[]report.Rec`); new `internal/digest/period.go`
+  with `Dim`, `ParseDim`, `PeriodKey`, the period keys, `USD` **and `USD6`** (F6);
+  `internal/digest/digest.go`, `layout.go`, `patterns.go`, `render.go`, `internal/runner/digest.go`,
+  `internal/cli/runs_digest.go` and the tests that import `internal/report`
+  (`internal/digest/digest_test.go`, `layout_test.go`, `internal/cli/runs_digest_test.go`,
+  `internal/runner/digest_test.go`) re-pointed), plus `internal/cli/project.go`
   (`consoleReadPaths`), `ee/register/report.go` (new), `internal/cli/root.go`,
-  `internal/cli/docs_desktop_console_test.go`, `website/content/cli-reference.md`,
-  `plugin/skills/working/SKILL.md` (`fugaro report` named as a business-licensed command; the digest
+  `ee/register/report_test.go` (new; the identity check), `internal/cli/docs_desktop_console_test.go`,
+  `website/content/cli-reference.md`, `plugin/skills/working/SKILL.md` (`fugaro report` named as a business-licensed command; the digest
   as free).
 - **Tests:** `TestDigestNeedsNoEE` (an untagged build writes a digest, and `internal/digest` imports
   nothing under `ee/` or `internal/report`), `TestReportCommandRegistersTagged`,
   `TestNoticeNeverOnStdout` (`report --json`), the moved tests, the plugin's command checks against
   the tagged tree.
-- **Command:** `go run ./internal/clidoc && go test ./internal/digest/ -count=1 && go test ./internal/cli/ -run 'TestDigest|TestRunsDigest|TestDocsDesktop|TestReportComputeSources' -count=1 && GOFLAGS=-p=2 go test ./internal/runner -run Digest -count=1 -timeout 30m && go test ./ee/report/... -count=1 && go test ./plugin/... -count=1 && go test ./internal/eeboundary/ -count=1`.
+- **Command:** `go run ./ee/clidoc && go test ./internal/digest/ -count=1 && go test ./internal/cli/ -run 'TestDigest|TestRunsDigest|TestDocsDesktop|TestReportComputeSources' -count=1 && GOFLAGS=-p=2 go test ./internal/runner -run Digest -count=1 -timeout 30m && go test ./ee/report/... -count=1 && go test ./plugin/... -count=1 && go test ./internal/eeboundary/ -count=1`.
 - **Red step:** `TestDigestNeedsNoEE` fails while `internal/digest` imports `internal/report`.
-- **Depends on:** E2.1 (`root.go`, `docs_desktop_console_test.go`, `cli-reference.md`), the in-flight
+- **Depends on:** E2.1 (`root.go`, `docs_desktop_console_test.go`, `cli-reference.md`), E1.2
+  (`internal/digest/render.go`), the in-flight
   gate (#1196, #1215). **Reviewer:**
   opus + mandatory independent review.
 - **Commit:** `report: fugaro report moves to ee/; the digest stays MIT (D444, T11)`.
@@ -298,10 +333,14 @@ takes over in untagged builds).
   `tightenTier` and their tests (`internal/policy/governance_test.go`, `tier_test.go`) →
   `ee/governance/policy.go`, `ee/governance/policy_test.go`; kept and re-pointed:
   `internal/policy/policy.go`, `internal/policy/merge.go` (call the hook), `internal/policy/hook.go`
-  (core default becomes "decode, warn, ignore"); new `ee/register/governance_policy.go`.
-- **Tests:** `TestGovernanceTightenOnly`, `TestGovernanceDefaults` (moved, tagged),
-  `TestCapsUnchangedByTheTag` (G7), `TestUntaggedPolicyIgnoresGovernance`.
-- **Command:** `go test ./internal/policy ./internal/config -count=1 && go test ./ee/governance/ ./ee/register/ -count=1 && go test ./internal/eeboundary/ -count=1`.
+  (core default becomes "decode, warn, ignore"); new `ee/register/governance_policy.go` and
+  `ee/register/governance_policy_test.go` (the identity check).
+- **Tests:** `TestGovernanceTightenOnly`, `TestGovernanceDefaults` (moved to `ee/governance`),
+  `TestCapsUnchangedByTheTag` (G7; in `ee/governance`, with the hook set and unset, since the core
+  cannot import `ee/`), `TestUntaggedPolicyIgnoresGovernance`, and the callers of `policy.Merge` the
+  flip reaches: the governance cases of `internal/runner/policy_internal_test.go`, `halt_test.go` and
+  `internal/cli/project_policy_test.go` (R8: they keep only the core-default path).
+- **Command:** `go test ./internal/policy ./internal/config -count=1 && GOFLAGS=-p=2 go test ./internal/runner -run 'Policy|Governance|Halt' -count=1 -timeout 30m && go test ./internal/cli/ -run 'ProjectPolicy|Validate|Governance' -count=1 && go test ./ee/governance/ ./ee/register/ -count=1 && go test ./internal/eeboundary/ -count=1`.
 - **Red step:** `TestUntaggedPolicyIgnoresGovernance` fails while the default is today's.
 - **Depends on:** E1.2, E1.5. **Reviewer:** opus + mandatory independent review.
 - **Commit:** `governance: the policy and defaults move to ee/ (D521)`.
@@ -312,7 +351,8 @@ takes over in untagged builds).
   the stage-timeout tests (`internal/runner/stage_timeout_test.go` and the internal one #1216 adds) →
   `ee/governance/runner.go`, `ee/governance/runner_test.go`; kept: `governanceHalt`, `checkpointPR`,
   `checkpointReportPart` (the plumbing, D521); `internal/runner/governance_hook.go` (core default
-  becomes "ignore, warn once in the run log"); new `ee/register/governance_runner.go`.
+  becomes "ignore, warn once in the run log"); new `ee/register/governance_runner.go` and
+  `ee/register/governance_runner_test.go` (the identity check).
 - **Tests:** `TestStageTimeoutHaltsWithCheckpoint`, `TestStageTimeoutNeverAboveTimeoutsStage`
   (moved to `ee/governance`, run through `internal/runner/runnertest`), `TestUntaggedRunnerIgnoresGovernanceWithAWarning`
   (in `internal/runner`, now the real default), `TestTaggedRunnerHaltsAsBefore` (in `ee/governance`,
@@ -344,14 +384,16 @@ takes over in untagged builds).
 
 - **Files:** S1.6's list: `.goreleaser.yaml` (`-tags ee`, the cask's licence), every label
   `TestEETagNeedsTheLabels` reads, `scripts/notices_test.go` (`eeTagLabelGaps` also reads the base,
-  history and credentials Dockerfiles, so a tagged image build needs the labels too, F16c), `README.md`, the website's licence wording
+  history and credentials Dockerfiles: one that builds `-tags ee` must carry an
+  `org.opencontainers.image.licenses` label naming the enterprise licence, F16c; E1.4 adds it), `README.md`, the website's licence wording
   (`website/src/pages/community.astro`, `website/test/faq-community.mjs`), `docs/releases/README.md`.
   `LICENSING.md` is E3.1's.
 - **Tests:** `TestEETagNeedsTheLabels`, `TestGoreleaserReleaseBuild`,
   `TestThirdPartyNoticesUnionsTheBuildMatrix` (the tagged build), `faq-community.mjs`.
 - **Command:** `go test ./scripts/ -run 'TestEETagNeedsTheLabels|TestGoreleaserReleaseBuild|TestThirdPartyNotices' -count=1 && cd website && npm run check`.
 - **Red step:** set the tag first; `TestEETagNeedsTheLabels` fails until every label changes.
-- **Depends on:** E3.1, E1.6 (the owner's copy done), O1 (the owner and counsel on shipping
+- **Depends on:** E3.1, E1.6 (the owner's copy done), subscriptions S7.1 if it is approved first
+  (both write `community.astro` and `faq-community.mjs`; whichever lands second rebases), O1 (the owner and counsel on shipping
   under the current `ee/LICENSE`). **Reviewer:** opus + mandatory independent review.
 - **Commit:** `release: one binary, MIT core plus business-licensed parts (D447, T21)`.
 
@@ -374,7 +416,8 @@ takes over in untagged builds).
   (register line).
 - **Check 200:** on the sandbox installation with the released 0.13.0 and refreshed images, a run
   with `governance.stage_timeout.implement` set tiny halts with `stage_budget` and a checkpoint
-  report; `fugaro version` and the image's edition carrier say `ee`; `fugaro runs digest --period
+  report; the image's edition carrier (R3, not `fugaro version`, whose text does not change) says
+  `ee`; `fugaro runs digest --period
   day` runs from a source build without the tag.
 - **Check 201:** the console's Spend and project views against the released 0.13.0 CLI show data,
   and the stderr notice does not break them.
@@ -389,8 +432,9 @@ takes over in untagged builds).
 ### Edges
 
 E0.1, E0.2, E0.3 ← the decisions (E0.2 needs D532 alone). E0.4 ← E0.3.
-E1.1, E1.2, E1.3 ← E0.3 + the in-flight gate. E1.6 ← E0.3. E1.5 ← E1.1, E1.3, E0.2.
-E2.1 ← E1.5, E0.4. E2.2 ← E2.1 + the in-flight gate. E2.3 ← E1.2, E1.5. E2.4 ← E1.2, E1.5 + the
+E1.1, E1.2, E1.3 ← E0.3 + the in-flight gate. E1.6 ← E0.3. E1.5 ← E1.1, E1.2, E1.3, E0.2.
+E1.7 ← E1.5.
+E2.1 ← E1.5, E1.7, E0.4. E2.2 ← E2.1, E1.2 + the in-flight gate. E2.3 ← E1.2, E1.5. E2.4 ← E1.2, E1.5 + the
 in-flight gate.
 E3.1 ← E2.2, E2.3, E2.4. E3.2 ← E3.1, E1.6 (the owner's copy done), O1. E3.3 ← E3.1.
 E1.4 ← E3.2 (no public image carries `ee/` before the relabel, F16c).
@@ -403,48 +447,53 @@ The 0.13.0 tag ← E3.2, E1.4, E3.3. E3.4 ← the tag.
 | **L0** | E0.1, E0.2, E0.3 |
 | **L1** | E0.4, E1.6; E1.1, E1.2, E1.3 once the in-flight gate is clear |
 | **L2** | E1.5 |
-| **L3** | E2.1, E2.3, E2.4 |
-| **L4** | E2.2 |
-| **L5** | E3.1 |
-| **L6** | E3.2, E3.3 |
-| **L7** | E1.4 |
+| **L3** | E1.7, E2.3, E2.4 |
+| **L4** | E2.1 |
+| **L5** | E2.2 |
+| **L6** | E3.1 |
+| **L7** | E3.2, E3.3 |
+| **L8** | E1.4 |
 | **after the tag** | E3.4 (run by the owner) |
 
-**Critical path:** decisions → E0.3 → (in-flight gate) → E1.1 → E1.5 → E2.1 → E2.2 → E3.1 → E3.2 →
-E1.4 → 0.13.0 tag → Check 200. Off it: E1.2 → E2.3/E2.4 (join at E3.1), the owner's workflow copy
+**Critical path:** decisions → E0.3 → (in-flight gate) → E1.1 / E1.2 → E1.5 → E1.7 → E2.1 → E2.2 →
+E3.1 → E3.2 → E1.4 → 0.13.0 tag → Check 200. Off it: E2.3/E2.4 (join at E3.1), the owner's workflow copy
 (E1.6, needed by E3.2) and O1 (E3.2).
 
 **Sequential by necessity:** E2.1 → E2.2 (both edit `internal/cli/root.go`,
 `internal/cli/docs_desktop_console_test.go`, `website/content/cli-reference.md`); E1.1 → E1.5 (the
-registry's interface); E3.1 → E3.2 (the labels read `LICENSING.md`); E3.2 → E1.4 (the label gate
+registry's interface); E1.7 → E2.1 (the generator the moves regenerate the reference with); E3.1 → E3.2 (the labels read `LICENSING.md`); E3.2 → E1.4 (the label gate
 must cover the images before an image takes the tag).
 
 ### Shared files (no level has two writers of one file)
 
 | File | Writers (level) |
 | --- | --- |
-| `internal/cli/root.go` | E1.1 (L1), E2.1 (L3), E2.2 (L4) |
-| `internal/cli/run.go` | E1.1 (L1) |
-| `internal/cli/recipes_skew.go` | E1.3 (L1) |
-| `internal/cli/docs_desktop_console_test.go` | E2.1 (L3), E2.2 (L4) |
-| `internal/cli/docs_licensing_test.go` | E0.2 (L0), E3.1 (L5) |
-| `website/content/cli-reference.md` | E2.1 (L3), E2.2 (L4) |
+| `internal/cli/root.go` | E1.1 (L1), E2.1 (L4), E2.2 (L5) |
+| `internal/cli/run.go`, `internal/cli/extend.go` | E1.1 (L1), E2.1 (L4) |
+| `internal/cli/recipes_skew.go`, `internal/cli/validate.go` | E1.3 (L1) |
+| `internal/cli/docs_desktop_console_test.go` | E2.1 (L4), E2.2 (L5) |
+| `internal/cli/docs_licensing_test.go` | E0.2 (L0), E3.1 (L6) |
+| `internal/cli/project_policy_test.go` | E2.3 (L3) |
+| `internal/cli/docs_website_cliref_test.go`, `internal/clidoc/*`, `plugin/*_test.go`, `ee/clidoc/`, `ee/plugincheck/` | E1.7 (L3) |
+| `website/content/cli-reference.md` | E1.7 (L3), E2.1 (L4), E2.2 (L5) |
 | `internal/policy/policy.go`, `merge.go`, `hook.go` | E1.2 (L1), E2.3 (L3) |
 | `internal/runner/runner.go`, `halt.go`, `governance_hook.go`, `runnertest/` | E1.2 (L1), E2.4 (L3) |
-| `internal/digest/*.go` | E1.2 (L1: `section.go`, `render.go`), E2.2 (L4) |
-| `ee/register/*.go` | E1.5 (L2: `register.go`, `register_test.go`), E2.1 (L3: `coordinator.go`), E2.3 (L3: `governance_policy.go`), E2.4 (L3: `governance_runner.go`), E2.2 (L4: `report.go`) — one file per writer; each extends `TestTaggedBinaryWiresEveryHook` in **its own** test file (`coordinator_test.go`, `governance_policy_test.go`, `governance_runner_test.go`, `report_test.go`) |
+| `internal/runner/policy_internal_test.go`, `halt_test.go` | E2.3 (L3) |
+| `internal/digest/*.go` | E1.2 (L1: `section.go`, `render.go`), E2.2 (L5) |
+| `ee/register/*.go` | E1.5 (L2: `register.go`, `register_test.go`), E2.3 (L3: `governance_policy.go`), E2.4 (L3: `governance_runner.go`), E2.1 (L4: `coordinator.go`), E2.2 (L5: `report.go`) — one file per writer; each extends `TestTaggedBinaryWiresEveryHook` in **its own** test file (`coordinator_test.go`, `governance_policy_test.go`, `governance_runner_test.go`, `report_test.go`) |
 | `ee/governance/` | E2.3 (L3: `policy*.go`), E2.4 (L3: `runner*.go`) — distinct files, one package |
-| `docs/coordinator/README.md` | E0.4 (L1), E2.1 (L3), E3.4 (after the tag) |
-| `LICENSING.md` | E3.1 (L5) |
-| `README.md`, `scripts/notices_test.go`, `.goreleaser.yaml` | E3.2 (L6) |
-| `plugin/skills/working/SKILL.md` | E2.2 (L4) |
-| `.dockerignore`, `images/**` | E1.4 (L7) |
-| `docs/pending-workflows/README.md` | E1.6 (L1); E1.4 (L7) only if U1 needs a staged `images.yml` |
+| `docs/coordinator/README.md` | E0.4 (L1), E2.1 (L4), E3.4 (after the tag) |
+| `LICENSING.md` | E3.1 (L6) |
+| `README.md`, `scripts/notices_test.go`, `.goreleaser.yaml`, `website/src/pages/community.astro`, `website/test/faq-community.mjs` | E3.2 (L7) |
+| `plugin/skills/working/SKILL.md` | E2.2 (L5) |
+| `.dockerignore`, `images/**` | E1.4 (L8) |
+| `docs/pending-workflows/README.md` | E1.6 (L1); E1.4 (L8) only if U1 needs a staged `images.yml` |
+| `internal/cli/docs_ee_ci_workflow_test.go`, `docs/pending-workflows/ci.yml` | E1.6 (L1) |
 | `ee/README.md`, `.claude/rules/ee.md`, `internal/cli/docs_ee_reserved_test.go` | E0.2 (L0) |
 | `docs/subscriptions/*` | E0.1 (L0) |
 | `docs/design/ee-boundary-moves.md` | E0.3 (L0) |
 | `docs/task-governance/*` | E0.4 (L1) |
-| `docs/releases/v0.13.0.md`, `website/data/release-summaries.yaml` | E3.3 (L6) |
+| `docs/releases/v0.13.0.md`, `website/data/release-summaries.yaml` | E3.3 (L7) |
 
 ## Checks this plan takes
 
