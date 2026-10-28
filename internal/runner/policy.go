@@ -415,9 +415,10 @@ func sourcesText(m map[string]string) string {
 }
 
 // PolicyKeyPath is where a policy key lives in fugaro.yaml: the governance
-// keys under a governance: block of their own, the agent's output limits under
-// agent:, and everything else — the budget's cost and model policy — under
-// budget:.
+// keys under a governance: block of their own — a tier's own keys under
+// governance.tiers.<tier>, the block that carries them (policy.TierKey) — the
+// agent's output limits under agent:, and everything else — the budget's cost
+// and model policy — under budget:.
 func PolicyKeyPath(key string) string {
 	switch key {
 	case policy.KeyMaxRunTokens, policy.KeyMaxOutputCoder, policy.KeyMaxOutputReviewer:
@@ -426,6 +427,9 @@ func PolicyKeyPath(key string) string {
 		policy.KeyStageBudgetImplement, policy.KeyStageBudgetReview, policy.KeyStageBudgetFix,
 		policy.KeyStageTokensImplement, policy.KeyStageTokensReview, policy.KeyStageTokensFix,
 		policy.KeyStageTimeoutImplement, policy.KeyStageTimeoutReview, policy.KeyStageTimeoutFix:
+		return "governance." + key
+	}
+	if strings.HasPrefix(key, "tiers.") {
 		return "governance." + key
 	}
 	return "budget." + key

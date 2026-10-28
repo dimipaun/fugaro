@@ -80,6 +80,7 @@ var Scopes = []ScopeRow{
 	{Key: "governance.stage_budget", In: InProject | InRepo, Why: whyGovernance},
 	{Key: "governance.stage_tokens", In: InProject | InRepo, Why: whyGovernance},
 	{Key: "governance.stage_timeout", In: InProject | InRepo, Why: whyGovernance},
+	{Key: "governance.tiers", In: InProject | InRepo, Why: whyGovernance},
 	{Key: "workflows.*.profile", In: InRepo, Why: "it chooses a profile"},
 	{Key: "workflows.*.job_profile", In: InRepo, Why: "it chooses a job profile of the project policy; the policy is the project's, so a repository picks among the profiles it defines and never writes them"},
 	{Key: "workflows.*.base", In: InProfile | InRepo, Why: whyRemoved},

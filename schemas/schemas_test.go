@@ -25,6 +25,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/tier"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
@@ -474,6 +475,62 @@ func TestTaskSchemaRigorRequestMatchesTheGoRules(t *testing.T) {
 	}
 	if paths.Items.Pattern != `\S` {
 		t.Errorf("schema paths items pattern %q does not refuse a blank path, which Spec.Validate does", paths.Items.Pattern)
+	}
+}
+
+// TestTaskSchemaTierMatchesTheGoRules is the same tie for T8.1's two fields:
+// `tier`'s enum is tier.Tiers, and `expected_scope` is bounded exactly as the
+// `paths` list above is (task.MaxDeclaredPaths, task.MaxDeclaredPathBytes, a
+// blank entry refused). A tier added to the vocabulary, or one of those bounds
+// moved, would otherwise leave the published schema — the surface a
+// repository's CI checks a task.json against — describing a field the decoder
+// refuses, or refusing one it reads.
+func TestTaskSchemaTierMatchesTheGoRules(t *testing.T) {
+	data, err := os.ReadFile("task.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var tiers struct {
+		Enum []string `json:"enum"`
+	}
+	if raw, ok := doc.Properties["tier"]; !ok {
+		t.Fatal("task.schema.json has no tier property")
+	} else if err := json.Unmarshal(raw, &tiers); err != nil {
+		t.Fatal(err)
+	}
+	want := make([]string, 0, len(tier.Tiers))
+	for _, tt := range tier.Tiers {
+		want = append(want, string(tt))
+	}
+	if !slices.Equal(tiers.Enum, want) {
+		t.Errorf("schema tier enum %v != tier.Tiers %v", tiers.Enum, want)
+	}
+	var scope struct {
+		MaxItems int `json:"maxItems"`
+		Items    struct {
+			Pattern   string `json:"pattern"`
+			MaxLength int    `json:"maxLength"`
+		} `json:"items"`
+	}
+	if raw, ok := doc.Properties["expected_scope"]; !ok {
+		t.Fatal("task.schema.json has no expected_scope property")
+	} else if err := json.Unmarshal(raw, &scope); err != nil {
+		t.Fatal(err)
+	}
+	if scope.MaxItems != task.MaxDeclaredPaths {
+		t.Errorf("schema expected_scope maxItems %d != task.MaxDeclaredPaths %d", scope.MaxItems, task.MaxDeclaredPaths)
+	}
+	if scope.Items.MaxLength != task.MaxDeclaredPathBytes {
+		t.Errorf("schema expected_scope items maxLength %d != task.MaxDeclaredPathBytes %d", scope.Items.MaxLength, task.MaxDeclaredPathBytes)
+	}
+	if scope.Items.Pattern != `\S` {
+		t.Errorf("schema expected_scope items pattern %q does not refuse a blank entry, which Spec.Validate does", scope.Items.Pattern)
 	}
 }
 
@@ -2676,7 +2733,14 @@ func TestFugaroSchemaGovernance(t *testing.T) {
 		{"governance: { stage_tokens: { review: -1 } }", false},
 		{"governance: { stage_timeout: { render: 5m } }", false},
 		{"governance: { stage_timeout: { fix: 5x } }", false},
-		{"governance: { tiers: { trivial: { max_subagents: 3 } } }", false},
+		{"governance: { tiers: { trivial: { max_subagents: 3 } } }", true},
+		{"governance: { tiers: { trivial: { expected_usd: 0.25, expected_minutes: 10, max_subagents: 3 }, small: { expected_usd: 1, expected_minutes: 30, max_subagents: 3 }, medium: { expected_usd: 3, expected_minutes: 90 }, large: { expected_usd: 8, expected_minutes: 240 } } }", true},
+		{"governance: { tiers: {} }", true},
+		{"governance: { tiers: { enormous: { max_subagents: 3 } } }", false},
+		{"governance: { tiers: { small: { expected_dollars: 1 } } }", false},
+		{"governance: { tiers: { small: { expected_usd: -1 } } }", false},
+		{"governance: { tiers: { small: { expected_minutes: -1 } } }", false},
+		{"governance: { tiers: { small: { max_subagents: 101 } } }", false},
 		{"governance: 0.7", false},
 		{"governance: { stage_budget: 0.7 }", false},
 	} {
@@ -2704,15 +2768,86 @@ func TestProjectLayerSchemaGovernance(t *testing.T) {
 		{"governance: { review_ratio: 20, max_subagents: 12 }", true},
 		{"governance: { stage_budget: { implement: 0.9 } }", true},
 		{"governance: { stage_timeout: { review: 45m } }", true},
+		{"governance: { tiers: { trivial: { expected_usd: 0.5, expected_minutes: 20, max_subagents: 3 } } }", true},
 		{"governance: { review_ratio: -1 }", false},
 		{"governance: { stage_budget: { implement: 1 } }", false},
 		{"governance: { stage_timeout: { implement: 5x } }", false},
 		{"governance: { review_ratio: 3, typo: 1 }", false},
+		{"governance: { tiers: { enormous: { max_subagents: 3 } } }", false},
+		{"governance: { tiers: { small: { expected_minutes: -1 } } }", false},
 		{"defaults:\n  governance: { review_ratio: 3 }", false},
 	} {
 		err := sch.Validate(yamlInstance(t, []byte(head+c.gov+"\n")))
 		if (err == nil) != c.ok {
 			t.Errorf("%s: schema err = %v, want ok=%v", c.gov, err, c.ok)
+		}
+	}
+}
+
+// TestSchemaGovernanceTiersMatchTheGoVocabulary ties both governance blocks'
+// `tiers` object to internal/tier and to policy: the tier names are the only
+// properties and are tier.Tiers, and each tier's own three keys are the policy
+// keys the merge records (KeyExpectedUSD, KeyExpectedMinutes, KeyMaxSubagents)
+// with no fourth. A tier added to the vocabulary without the schemas — or a
+// key added to a tier — would otherwise be a name the decoder refuses while
+// the published schema, the surface a repository's CI checks against, still
+// accepts it.
+func TestSchemaGovernanceTiersMatchTheGoVocabulary(t *testing.T) {
+	wantTiers := make([]string, 0, len(tier.Tiers))
+	for _, tt := range tier.Tiers {
+		wantTiers = append(wantTiers, string(tt))
+	}
+	wantKeys := []string{policy.KeyExpectedUSD, policy.KeyExpectedMinutes, policy.KeyMaxSubagents}
+	slices.Sort(wantKeys)
+	for _, file := range []string{"fugaro.schema.json", "project-layer.schema.json"} {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc struct {
+			Properties map[string]struct {
+				Properties map[string]json.RawMessage `json:"properties"`
+			} `json:"properties"`
+			Defs map[string]struct {
+				Properties map[string]json.RawMessage `json:"properties"`
+			} `json:"$defs"`
+		}
+		if err := json.Unmarshal(data, &doc); err != nil {
+			t.Fatal(err)
+		}
+		gov, ok := doc.Properties["governance"]
+		if !ok {
+			t.Fatalf("%s: no governance block", file)
+		}
+		var tiers struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		}
+		if raw, ok := gov.Properties["tiers"]; !ok {
+			t.Fatalf("%s: no governance.tiers property", file)
+		} else if err := json.Unmarshal(raw, &tiers); err != nil {
+			t.Fatal(err)
+		}
+		var gotTiers []string
+		for name := range tiers.Properties {
+			gotTiers = append(gotTiers, name)
+		}
+		slices.Sort(gotTiers)
+		sorted := slices.Clone(wantTiers)
+		slices.Sort(sorted)
+		if !slices.Equal(gotTiers, sorted) {
+			t.Errorf("%s: governance.tiers properties %v != tier.Tiers %v", file, gotTiers, sorted)
+		}
+		limits, ok := doc.Defs["tierLimits"]
+		if !ok {
+			t.Fatalf("%s: no tierLimits def", file)
+		}
+		var gotKeys []string
+		for name := range limits.Properties {
+			gotKeys = append(gotKeys, name)
+		}
+		slices.Sort(gotKeys)
+		if !slices.Equal(gotKeys, wantKeys) {
+			t.Errorf("%s: tierLimits properties %v != the policy keys %v", file, gotKeys, wantKeys)
 		}
 	}
 }
@@ -2726,6 +2861,11 @@ func TestProjectLayerSchemaGovernance(t *testing.T) {
 // The stage budgets are excluded on purpose: a fraction is bounded by the
 // stageFraction def (under 1), which validateGovernance checks directly, with
 // no Go figure to hold equal.
+//
+// A tier's max_subagents is held to the same bound as the untiered
+// governance.max_subagents: one stage fans out no further because a run
+// declared a tier, so the schema and validateGovernance must refuse the same
+// figures for both.
 func TestSchemaGovernanceBoundsMatchGo(t *testing.T) {
 	for _, tc := range []struct {
 		file    string
@@ -2771,6 +2911,18 @@ func TestSchemaGovernanceBoundsMatchGo(t *testing.T) {
 		}
 		if got, _ := tokens["maximum"].(float64); int(got) != config.MaxStageTokens {
 			t.Errorf("%s: stageTokens maximum = %v, want %d (config's bound)", tc.file, got, config.MaxStageTokens)
+		}
+		limits, ok := doc["$defs"].(map[string]any)["tierLimits"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s: no tierLimits def", tc.file)
+		}
+		tierProps, _ := limits["properties"].(map[string]any)
+		sub, _ := tierProps["max_subagents"].(map[string]any)
+		got, ok := sub["maximum"].(float64)
+		if !ok {
+			t.Errorf("%s: tierLimits.max_subagents has no maximum", tc.file)
+		} else if int(got) != config.MaxGovernanceSubagents {
+			t.Errorf("%s: tierLimits.max_subagents maximum = %v, want %d (config's bound)", tc.file, got, config.MaxGovernanceSubagents)
 		}
 	}
 }

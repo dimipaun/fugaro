@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/tier"
 )
 
 var (
@@ -272,6 +273,27 @@ type Spec struct {
 	// A runner before this field refuses the spec outright (Parse disallows
 	// unknown fields), which is the skew every new task field has.
 	DigestRuns []string `json:"digest_runs,omitempty"`
+	// Tier is the expectation tier of this run (docs/task-governance spec.md §3,
+	// plan T8.1): what the run is expected to cost and take, which selects one
+	// tier of fugaro.yaml's governance.tiers. "" is untiered — every spec
+	// written before this release and every launch that attaches no tier — and
+	// an untiered run has no expectation to be held to.
+	//
+	// The vocabulary is closed (internal/tier): a value outside it is refused
+	// by Validate below, because a near miss is a launcher's bug rather than a
+	// run's opinion about its own size. A runner before the release that reads
+	// this field refuses the whole spec (Parse disallows unknown fields), the
+	// skew every new task field has. No launcher writes it yet, so a spec that
+	// carries a tier was written by hand and the launch-time image gate rigor's
+	// own fields have (rigorRequestSince) is not here for this one.
+	Tier tier.Tier `json:"tier,omitempty"`
+	// ExpectedScope is roughly which files or areas the run is expected to
+	// touch (spec.md §3's expectation envelope). It is paths and not prose:
+	// nothing here reaches a prompt, and each entry is bounded and non-blank
+	// the way Spec.Paths is, because a hand-written task.json is what can make
+	// the list arbitrarily long. Nil for every launch that declares none, which
+	// today is every launch: like Tier above, no launcher writes it yet.
+	ExpectedScope []string `json:"expected_scope,omitempty"`
 }
 
 // MaxDeclaredPaths bounds the paths one launch may declare (Spec.Paths,
@@ -781,6 +803,25 @@ func (s *Spec) Validate() error {
 	// it is what every launch without the flags carries.
 	if s.Rigor != "" && !rigor.Known(s.Rigor) {
 		bad("task spec: rigor %q must be one of %s or empty", s.Rigor, rigor.ModeList())
+	}
+	// The expectation envelope's own two fields (T8.1): the tier's vocabulary
+	// is closed the way rigor's is, and the expected scope is bounded the way
+	// Spec.Paths is — the same constants, because both are lists of paths a
+	// hand-written task.json can make arbitrarily long and every entry of both
+	// is matched against something.
+	if s.Tier != "" && !tier.Known(s.Tier) {
+		bad("task spec: tier %q must be one of %s or empty", s.Tier, tier.List())
+	}
+	if len(s.ExpectedScope) > MaxDeclaredPaths {
+		bad("task spec: expected_scope must name at most %d paths", MaxDeclaredPaths)
+	}
+	for i, p := range s.ExpectedScope {
+		switch {
+		case strings.TrimSpace(p) == "":
+			bad("task spec: expected_scope[%d] is empty", i)
+		case len(p) > MaxDeclaredPathBytes:
+			bad("task spec: expected_scope[%d] is longer than %d bytes", i, MaxDeclaredPathBytes)
+		}
 	}
 	if len(s.Paths) > MaxDeclaredPaths {
 		bad("task spec: paths must name at most %d paths", MaxDeclaredPaths)

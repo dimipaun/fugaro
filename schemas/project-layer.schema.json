@@ -121,6 +121,17 @@
             "review": { "$ref": "#/$defs/duration", "description": "The review stage's own wall-clock ceiling; unset by default." },
             "fix": { "$ref": "#/$defs/duration", "description": "The fix stage's own wall-clock ceiling; unset by default." }
           }
+        },
+        "tiers": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "description": "What a run of each expectation tier is expected to cost and take, and how far one of its stages may fan out (docs/task-governance/spec.md §3, G6). The project sets the expectation its repositories run under, and a repository's own block can only tighten it. A tier is an expectation and never a cap: the deployed per-run cap stays the ceiling, so an expected_usd above it is an expectation the run still stops at the cap for, and no key here moves a cap. A key written as null or 0 sets nothing and takes the tier's default. Fugaro ships trivial $0.25/10m, small $1/30m, medium $3/90m and large $8/240m, with max_subagents 3 for trivial and small and 5 for medium and large.",
+          "properties": {
+            "trivial": { "$ref": "#/$defs/tierLimits", "description": "The trivial tier's expectation: a copy or text tweak of a few lines. Fugaro's default is $0.25, 10 minutes, 3 sub-agents." },
+            "small": { "$ref": "#/$defs/tierLimits", "description": "The small tier's expectation: a single-file feature or bug fix. Fugaro's default is $1, 30 minutes, 3 sub-agents." },
+            "medium": { "$ref": "#/$defs/tierLimits", "description": "The medium tier's expectation: a multi-file change with tests. Fugaro's default is $3, 90 minutes, 5 sub-agents." },
+            "large": { "$ref": "#/$defs/tierLimits", "description": "The large tier's expectation: a cross-cutting refactor. Fugaro's default is $8, 240 minutes, 5 sub-agents." }
+          }
         }
       }
     }
@@ -132,6 +143,16 @@
       "description": "A stage's share of a budget, as a fraction. 0 or null sets nothing and takes Fugaro's default, and 1 or more is refused: the per-run cap stays the ceiling whatever a stage is given (G6)."
     },
     "stageTokens": { "type": ["integer", "null"], "minimum": 0, "maximum": 1000000000000, "description": "A stage's token ceiling, in tokens; 0 or null sets nothing." },
+    "tierLimits": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "description": "One expectation tier's figures (docs/task-governance/spec.md §3, G6). Every key is an expectation and never a cap: the deployed per-run cap stays the ceiling whatever is written here. 0 or null sets nothing and takes the tier's default. The same shape as fugaro.schema.json's.",
+      "properties": {
+        "expected_usd": { "type": ["number", "null"], "minimum": 0, "description": "What a run of this tier is expected to cost, in dollars. 0 or null sets nothing. An expectation above the deployed per-run cap is still only an expectation: the run stops at the cap (G6)." },
+        "expected_minutes": { "type": ["integer", "null"], "minimum": 0, "description": "What a run of this tier is expected to take, in minutes. 0 or null sets nothing." },
+        "max_subagents": { "type": ["integer", "null"], "minimum": 0, "maximum": 100, "description": "How far one stage of a run of this tier may fan out, at most the same 100 governance.max_subagents is bounded by. 0 or null sets nothing." }
+      }
+    },
     "rigorMode": {
       "type": "string",
       "enum": ["poc", "startup", "pro", "critical", "hotfix"],

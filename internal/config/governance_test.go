@@ -11,11 +11,11 @@ import (
 )
 
 // TestGovernanceStrictDecode: governance: is a block like every other one.
-// Its keys are the ones this release models and nothing else — a misspelt
-// key, a stage that has no governance budget (an artifact run's plan and
-// render, T7.1), and a key a later release defines (governance.tiers, T8.1)
-// are all refused rather than read as "no limit". A key left out, or written
-// as null or 0, is unset and takes Fugaro's default (policy.DefaultGovernance).
+// Its keys are the ones this release models and nothing else — a misspelt key,
+// a stage that has no governance budget (an artifact run's plan and render,
+// T7.1), and a tier name outside the vocabulary (governance.tiers, T8.1) are
+// all refused rather than read as "no limit". A key left out, or written as
+// null or 0, is unset and takes Fugaro's default (policy.DefaultGovernance).
 //
 // A count written as a fraction is not one of the cases: yaml.v3 reads 2.5
 // into every int64 key of fugaro.yaml as 2, max_run_tokens included, and the
@@ -52,7 +52,14 @@ func TestGovernanceStrictDecode(t *testing.T) {
 		{"an unreadable timeout", "governance: { stage_timeout: { fix: 5x } }\n", false},
 		{"a block that is not a mapping", "governance: 0.7\n", false},
 		{"a stage block that is not a mapping", "governance: { stage_budget: 0.7 }\n", false},
-		{"a later release's key", "governance: { tiers: { trivial: { max_subagents: 3 } } }\n", false},
+		{"the tiers block", "governance: { tiers: { trivial: { max_subagents: 3 } } }\n", true},
+		{"every tier", "governance: { tiers: { trivial: { expected_usd: 0.25, expected_minutes: 10, max_subagents: 3 }, small: { expected_usd: 1, expected_minutes: 30, max_subagents: 3 }, medium: { expected_usd: 3, expected_minutes: 90 }, large: { expected_usd: 8, expected_minutes: 240 } } }\n", true},
+		{"an unknown tier name", "governance: { tiers: { enormous: { max_subagents: 3 } } }\n", false},
+		{"a tier's own unknown key", "governance: { tiers: { small: { expected_dollars: 1 } } }\n", false},
+		{"a negative expected cost", "governance: { tiers: { small: { expected_usd: -1 } } }\n", false},
+		{"a negative expected duration", "governance: { tiers: { small: { expected_minutes: -1 } } }\n", false},
+		{"a negative tier fan-out", "governance: { tiers: { small: { max_subagents: -1 } } }\n", false},
+		{"a tier fan-out above the schema's bound", "governance: { tiers: { small: { max_subagents: 101 } } }\n", false},
 		{"a ratio above the schema's bound", "governance: { review_ratio: 1001 }\n", false},
 		{"a fan-out above the schema's bound", "governance: { max_subagents: 101 }\n", false},
 		{"a token ceiling above the schema's bound", "governance: { stage_tokens: { review: 1000000000001 } }\n", false},
@@ -70,7 +77,7 @@ func TestGovernanceStrictDecode(t *testing.T) {
 // and the conversion the merge reads is the same numbers (the policy package
 // holds the merge's own shape, config the file's).
 func TestGovernanceReadsAndConverts(t *testing.T) {
-	cfg, ps := Parse([]byte(minimalYAML + "governance:\n  review_ratio: 3\n  max_subagents: 2\n  stage_budget: { fix: 0.25 }\n  stage_timeout: { implement: 45m }\n"))
+	cfg, ps := Parse([]byte(minimalYAML + "governance:\n  review_ratio: 3\n  max_subagents: 2\n  stage_budget: { fix: 0.25 }\n  stage_timeout: { implement: 45m }\n  tiers: { medium: { expected_usd: 2.5, expected_minutes: 60, max_subagents: 4 } }\n"))
 	if len(ps) > 0 {
 		t.Fatalf("problems: %v", ps)
 	}
@@ -84,8 +91,16 @@ func TestGovernanceReadsAndConverts(t *testing.T) {
 	if g.StageTimeout.Implement.Duration != 45*time.Minute || !g.StageTimeout.Implement.Set {
 		t.Fatalf("stage_timeout.implement = %+v", g.StageTimeout.Implement)
 	}
+	if got := g.Tiers.Medium; got != (TierLimits{ExpectedUSD: 2.5, ExpectedMinutes: 60, MaxSubagents: 4}) {
+		t.Fatalf("tiers.medium = %+v", got)
+	}
+	if got := g.Tiers.Trivial; got != (TierLimits{}) {
+		t.Errorf("tiers.trivial = %+v, want unset: a tier the file leaves out sets nothing", got)
+	}
 	want := policy.Governance{ReviewRatio: 3, MaxSubagents: 2,
-		StageBudget: policy.StageBudget{Fix: 0.25}, StageTimeout: policy.StageTimeout{Implement: 45 * time.Minute}}
+		StageBudget:  policy.StageBudget{Fix: 0.25},
+		StageTimeout: policy.StageTimeout{Implement: 45 * time.Minute},
+		Tiers:        policy.TierExpectations{Medium: policy.TierExpectation{ExpectedUSD: 2.5, ExpectedMinutes: 60, MaxSubagents: 4}}}
 	if got := g.Policy(); got != want {
 		t.Errorf("Policy() = %+v, want %+v", got, want)
 	}
@@ -158,12 +173,24 @@ func TestGovernanceCorpus(t *testing.T) {
 	if !g.StageTimeout.Implement.Set || g.StageTimeout.Implement.Duration != 45*time.Minute {
 		t.Errorf("stage_timeout.implement = %+v", g.StageTimeout.Implement)
 	}
+	if got := g.Tiers.Trivial; got != (TierLimits{ExpectedUSD: 0.2, ExpectedMinutes: 8, MaxSubagents: 2}) {
+		t.Errorf("tiers.trivial = %+v", got)
+	}
+	if got := g.Tiers.Medium; got != (TierLimits{ExpectedUSD: 2.5, ExpectedMinutes: 60}) {
+		t.Errorf("tiers.medium = %+v: a tier the file writes only two keys of keeps the third unset", got)
+	}
+	if got := g.Tiers.Small; got != (TierLimits{}) {
+		t.Errorf("tiers.small = %+v, want unset: the file names no small tier", got)
+	}
 	// The unknown key is the decoder's own problem, which carries the line
 	// rather than a path (the block it sits in is what strictDecode names);
-	// the fraction is validateGovernance's, which names the key.
+	// the fraction is validateGovernance's, which names the key. An unknown
+	// tier name is the decoder's too: it is a key of the tiers block, so the
+	// strict reader refuses it before any validation runs.
 	for file, want := range map[string]struct{ path, msg string }{
 		"governance-unknown-key":      {"", "field stage_budgets not found in type config.Governance"},
 		"governance-stage-budget-cap": {"governance.stage_budget.implement", "stays the ceiling"},
+		"governance-tier-unknown":     {"", "field enormous not found in type config.GovernanceTiers"},
 	} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "config", "invalid", file+".yaml"))
 		if err != nil {
@@ -259,6 +286,7 @@ func TestSetsGovernanceReadsTheKeyNotTheValue(t *testing.T) {
 		want bool
 	}{
 		{head + "governance: { review_ratio: 20 }\n", true},
+		{head + "governance: { tiers: { trivial: { max_subagents: 3 } } }\n", true},
 		{head + "governance: {}\n", true},
 		{head + "governance:\n", true},
 		{head + "defaults:\n  git: { provider: github }\n", false},
@@ -290,6 +318,7 @@ func TestRepoGovernanceSetReadsTheKeyNotTheValue(t *testing.T) {
 		want bool
 	}{
 		{minimalRepo + "governance: { review_ratio: 3 }\n", true},
+		{minimalRepo + "governance: { tiers: { trivial: { max_subagents: 3 } } }\n", true},
 		{minimalRepo + "governance: {}\n", true},
 		{minimalRepo + "governance:\n", true},
 		{minimalRepo + "git: { pr: { labels: [mine] } }\n", false},

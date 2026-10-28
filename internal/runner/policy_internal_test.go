@@ -14,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
+	"github.com/dimipaun/fugaro/internal/tier"
 )
 
 // The default branch is fetched and read once per run: a later call gets
@@ -172,6 +173,12 @@ func TestPolicyPricesBuildOnTheRunsOwnTable(t *testing.T) {
 // problem fugaro validate annotates (internal/cli/validate.go) — name a line
 // of the file, so a governance key sent to budget.<key> would send its
 // operator to a block that cannot carry it.
+//
+// A tier's own key is one of those governance keys: the merge spells it
+// "tiers.<tier>.<key>" (policy.TierKey, T8.1), which is a fugaro.yaml path
+// only once governance. is in front of it. The tier loop below walks the
+// vocabulary, so a tier added to internal/tier cannot silently fall through
+// to budget.tiers.<tier>.<key>.
 func TestPolicyKeyPathGovernance(t *testing.T) {
 	for _, key := range []string{
 		policy.KeyReviewRatio, policy.KeyReviewFloorCalls, policy.KeyMaxSubagents,
@@ -181,6 +188,14 @@ func TestPolicyKeyPathGovernance(t *testing.T) {
 	} {
 		if got := PolicyKeyPath(key); got != "governance."+key {
 			t.Errorf("PolicyKeyPath(%q) = %q, want governance.%s", key, got, key)
+		}
+	}
+	for _, tt := range tier.Tiers {
+		for _, key := range []string{policy.KeyExpectedUSD, policy.KeyExpectedMinutes, policy.KeyMaxSubagents} {
+			want := "governance." + policy.TierKey(tt, key)
+			if got := PolicyKeyPath(policy.TierKey(tt, key)); got != want {
+				t.Errorf("PolicyKeyPath(%q) = %q, want %q", policy.TierKey(tt, key), got, want)
+			}
 		}
 	}
 	for _, c := range []struct{ key, want string }{
