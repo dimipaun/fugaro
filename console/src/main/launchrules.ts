@@ -263,11 +263,12 @@ export interface LaunchRecords {
  * installation's own `base_branch`, else a refusal.
  *
  * Both are layers of the CLI's own merged order that a launch can be cut from
- * *and* read (`config.EffectiveBaseBranch`): the checkout's `fugaro.yaml` is the
- * layer above them and the launch has no checkout, and the published policy node
- * is behind a bucket this app does not open. So neither is a fallback here, and
- * the refusal names the two settings an operator can move -- and never
- * `git.base_branch`, which they can set without moving this row.
+ * *and* read (`config.EffectiveBaseBranch`): the layer above them is the
+ * checkout's own committed config, which a launch never has (its working
+ * directory is the app's own, empty), and the published policy node is behind a
+ * bucket this app does not open. So neither is a fallback here, and the refusal
+ * names the two settings an operator can move -- and never the repository's
+ * committed `git` block, which they can set without moving this row.
  *
  * The identity is converted first (`launchRepoArgument`), whose refusal is
  * returned as it stands: a repository this app cannot name is not one it can
