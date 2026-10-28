@@ -1352,12 +1352,16 @@ main p {
   font-size: var(--font-size-sm);
 }
 
-/* A field value is a repository title, a ref or a path, and one of those can be
- * thousands of characters with no space to break at. This document's `main` is
- * the body grid's only child, so it auto-places into the `auto` column, whose
- * base size is the item's min-content contribution: a value like that widens the
- * column and scrolls the whole page sideways. `anywhere` lets a long value wrap
- * inside the `dd` rather than move the window. The `dl` carries the hook. */
+/* A field value is a repository title, a ref or a path, and the bounds are
+ * uneven: a title is at most `MAX_LAUNCH_TITLE_RUNES` characters and a plan task
+ * at most `launchrules.ts`'s own byte cap, but a ref is bounded only by git's ref
+ * rules and an argv word's path only by `PATH_MAX`, and none of them has a space
+ * to break at. A 100-character title with no break already overflows this
+ * document's 720px window. This document's `main` is the body grid's only child,
+ * so it auto-places into the `auto` column, whose base size is the item's
+ * min-content contribution: a value like that widens the column and scrolls the
+ * whole page sideways. `anywhere` lets a long value wrap inside the `dd` rather
+ * than move the window. The `dl` carries the hook. */
 .console-confirm-fields dd {
   overflow-wrap: anywhere;
 }

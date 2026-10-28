@@ -772,12 +772,15 @@ describe('validation', () => {
 // ---------------------------------------------------------------------------
 
 describe('the launch’s resolution', () => {
-  it('runs the binary the record names, and never walks past it', async () => {
+  it('resolves the record’s own binaryPath rather than a host prefix’s fugaro', async () => {
     // V2.5.1a's launch is the one caller that reads an installation's record and
     // then drives a CLI: a record with a `binaryPath` override must be resolved
     // **at that path**, not at whichever `fugaro` the host's well-known
     // locations happen to hold -- a different CLI, a different config, a
-    // different credential, reported as this installation's.
+    // different credential, reported as this installation's. The override is
+    // rule 4's *candidate* and the walk does carry on past one that has gone
+    // (owner's ruling of 2026-10-20); this case is the other half, where it
+    // resolves and the prefix is therefore never reached.
     const root = freshDirectory()
     const own = installStub(join(root, 'own'), { commands: { version: { stdout: '0.11.2\n' } } })
     const decoy = installStub(join(root, 'elsewhere', 'bin'), {

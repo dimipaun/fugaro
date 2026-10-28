@@ -673,7 +673,7 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * `--dir D` on doctor is main-process state rather than a renderer argument, so
  * both are absent from these strings.
  *
- * **It is fifteen argvs, and this surface is sixteen.** The thirteenth is
+ * **It is sixteen argvs, and this surface is the same sixteen.** The thirteenth is
  * `config list --json`, the rail's own read (owner's design ruling of
  * 2026-10-25): until that ruling there were twelve here and it was pinned where
  * the picker's table was, and the ruling made the read the dashboard's own
