@@ -271,6 +271,7 @@ test.describe('the first run, in the real window', () => {
         expect(app.windows()).toHaveLength(1)
         await expect(dashboard.locator('aside.console-rail button.console-rail-row')).toHaveCount(0)
         const opened = app.waitForEvent('window')
+        await dashboard.locator('button.console-switcher-button').click()
         await dashboard.locator('aside.console-rail button.console-rail-add').click()
         const picker = await opened
         await picker.waitForLoadState('load')
