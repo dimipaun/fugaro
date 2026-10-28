@@ -126,7 +126,7 @@ function fakeFuses(wire?: Partial<Record<FuseV1Options, FuseState>>): FuseTools 
     },
     async getCurrentFuseWire(path: string) {
       const flipped: Record<number, FuseState> = {}
-      // The untouched fuses at the states the pinned Electron 44.7.2 ships them
+      // The untouched fuses at the states the pinned Electron 45.0.0 ships them
       // in (read off the real binary: cookie encryption and the browser-process
       // snapshot off, WasmTrapHandlers on), so the fake wire is as long as the
       // real one.
@@ -238,7 +238,7 @@ describe('the three fuses left at their upstream default', () => {
   })
 
   it('carries no fuse beyond the package: the pinned Electron’s nine are all named by it', () => {
-    // Electron 44.7.2's wire holds nine fuses and `@electron/fuses` 2.1.3 names
+    // Electron 45.0.0's wire holds nine fuses and `@electron/fuses` 2.1.3 names
     // all nine, so nothing is left to the beyond-the-pin list.
     expect(BEYOND_PIN_FUSES).toEqual([])
     expect(ACCOUNTED_FUSE_COUNT).toBe(9)

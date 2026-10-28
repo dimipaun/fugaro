@@ -75,7 +75,7 @@ hold the three (`test/unit/{redact,fixture,recorder}.test.ts`).
 
 ## The toolchain, pinned (Task 1.0)
 
-**Electron is pinned to exactly `44.7.2`, and it is bumped on purpose**, with the
+**Electron is pinned to exactly `45.0.0`, and it is bumped on purpose**, with the
 toolchain task and the lockfile in the same commit — the same rule
 `internal/budget/rules/emulator/package.json` states for its own `firebase-tools`
 pin. Electron is not an ordinary dependency: it pulls a large prebuilt runtime
@@ -88,7 +88,7 @@ runtime dependency today; see below):
 
 | Package | Version | Where | Why it is here |
 |---|---|---|---|
-| `electron` | `44.7.2` | `devDependencies` | the app's runtime, bumped on purpose |
+| `electron` | `45.0.0` | `devDependencies` | the app's runtime, bumped on purpose |
 | `typescript` | `7.0.2` | `devDependencies` | `tsc --noEmit` for `npm run typecheck`, and `tsc -p tsconfig.build.json` for `npm run build` (Task 1.1: the build is `tsc` too, because the pinning rule leaves no room for a bundler) |
 | `vitest` | `5.0.5` | `devDependencies` | `npm run test:unit` |
 | `@playwright/test` | `1.64.1` | `devDependencies` | `npm run test:e2e`, Electron driven by `electron.launch` (Task 1.1) |
@@ -107,7 +107,7 @@ test asserts the `dependencies` set is exactly empty until then.
 
 **The Node is pinned exactly too: `engines.node` is `22.23.3`, not a range.**
 It is the version every command in this task was run on, and it is a member of
-both pinned tools' own engine ranges (Electron 44.7.2 declares `>= 22.12.0`,
+both pinned tools' own engine ranges (Electron 45.0.0 declares `>= 22.12.0`,
 Vitest 5.0.5 declares `^22.12.0 || ^24.0.0 || >=26.0.0`), so nothing in the
 toolchain is asking for anything narrower. A range here would have been the one
 float left in a task whose whole subject is exact pins — and the plan already
@@ -147,7 +147,7 @@ install step, because Electron's runtime is not fetched by a lifecycle script
 here.** Electron is not an ordinary dependency — the pin, the download and the
 checksum are hand-bumped and documented rather than floated (design section
 5.2) — but with `--ignore-scripts` the download simply happens later: Electron
-44.7.2 fetches its runtime on the first `require('electron')` (its `index.js`
+45.0.0 fetches its runtime on the first `require('electron')` (its `index.js`
 spawns `install.js` when `path.txt` and `dist/` are missing, printing
 `Downloading Electron binary...`). Verified on this tree: `npm ci
 --ignore-scripts --no-audit --no-fund`, then `require('electron')`, downloads
@@ -2010,7 +2010,7 @@ because "left at its upstream default" is a decision and not an oversight:
 | `GrantFileProtocolExtraPrivileges` | **disabled** | `file://` keeps no extra privileges; the console serves itself over `app://` (Task 1.1). |
 | `EnableCookieEncryption` | *left alone* | The console keeps no cookie store: no sign-in is stored. |
 | `LoadBrowserProcessSpecificV8Snapshot` | *left alone* | A startup optimisation for a browser process that loads web content. |
-| `WasmTrapHandlers` (index 8) | *left alone, enabled* | Upstream default kept: V8's WebAssembly bounds-check strategy loads no code, reads no environment variable or flag, and the console runs no WebAssembly. It was beyond the pin until `@electron/fuses` 2.1 named it; `BEYOND_PIN_FUSES` is now empty, because Electron 44.7.2's nine fuses are all named by the package. |
+| `WasmTrapHandlers` (index 8) | *left alone, enabled* | Upstream default kept: V8's WebAssembly bounds-check strategy loads no code, reads no environment variable or flag, and the console runs no WebAssembly. It was beyond the pin until `@electron/fuses` 2.1 named it; `BEYOND_PIN_FUSES` is now empty, because Electron 45.0.0's nine fuses are all named by the package. |
 
 Three properties of the hook are worth stating here, because they are what make
 the six a fact rather than an intention:
@@ -2048,7 +2048,7 @@ the six a fact rather than an intention:
   differ, so an Electron bump that adds a fuse cannot reach the signer
   unexamined. The three fuses it leaves alone are checked **by value** too: the
   cookie and snapshot fuses must still be disabled and `WasmTrapHandlers` enabled,
-  the defaults the pinned Electron 44.7.2 ships, or the build stops.
+  the defaults the pinned Electron 45.0.0 ships, or the build stops.
   `fuses.test.ts` also reads the real binary's wire when
   `node_modules/electron/dist` is installed, and on macOS runs the real hook over
   a copy of it in a temporary directory; without the binary those two tests skip
@@ -2851,7 +2851,7 @@ fails legibly rather than with a bare pixel diff:
 
 **What is committed today is darwin only, and it is superseded.** The eight
 `*-darwin.png` files are the recording of **2026-10-18**: macOS 26.7 (Darwin
-25.6.0, x64), Node 22.23.3, `@playwright/test` 1.64.1, Electron 44.7.2 (the
+25.6.0, x64), Node 22.23.3, `@playwright/test` 1.64.1, Electron 45.0.0 (the
 lockfile's versions), device scale factor 1 as the specs launch the window (the
 PNGs are 1164 px wide), at main `82ba600d`, recorded with `npm run build` then
 `playwright test --workers=1 --update-snapshots`, and compared twice in a plain
@@ -4402,7 +4402,7 @@ holds (the compiled main process, the preload, the shared and source modules,
 the renderer bundle and its two documents — and *not* `dist/main/fuses.js`,
 which is a build-time hook and not shipped code), `publish` stays `null`, and
 `npmRebuild` stays `false`. **`electronDownload.checksums` grew the Linux
-archive**: `electron-v44.7.2-linux-x64.zip` joins the two darwin zips, so every
+archive**: `electron-v45.0.0-linux-x64.zip` joins the two darwin zips, so every
 Electron archive this build downloads is verified against a hash in this
 repository — a platform whose download was unverified would be the one place the
 pinning story did not hold.

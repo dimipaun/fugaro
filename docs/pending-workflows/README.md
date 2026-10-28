@@ -837,7 +837,7 @@ What it adds, and nothing else in the file moved:
    sign with, so there is nothing to protect. It runs the same three gate checks
    through the same `scripts/release-gate.sh`, installs the same pinned
    toolchain, downloads Electron against the same
-   `electron-v44.7.2-linux-x64.zip` checksum, builds with the same pinned packer
+   `electron-v45.0.0-linux-x64.zip` checksum, builds with the same pinned packer
    (`npm run package:linux`, `--publish never`), and then verifies **what
    ships**: the SHA-256 of the `.AppImage` and the `.deb`, the `.deb` opened with
    `dpkg-deb --info`/`--contents`/`--extract`, the AppImage unpacked with its own
