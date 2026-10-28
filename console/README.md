@@ -2851,7 +2851,7 @@ fails legibly rather than with a bare pixel diff:
 
 **What is committed today is darwin only, and it is superseded.** The eight
 `*-darwin.png` files are the recording of **2026-10-18**: macOS 26.7 (Darwin
-25.6.0, x64), Node 22.23.3, `@playwright/test` 1.64.1, Electron 45.0.0 (the
+25.6.0, x64), Node 22.23.3, `@playwright/test` 1.64.1, Electron 44.7.2 (the
 lockfile's versions), device scale factor 1 as the specs launch the window (the
 PNGs are 1164 px wide), at main `82ba600d`, recorded with `npm run build` then
 `playwright test --workers=1 --update-snapshots`, and compared twice in a plain
@@ -4402,7 +4402,7 @@ holds (the compiled main process, the preload, the shared and source modules,
 the renderer bundle and its two documents — and *not* `dist/main/fuses.js`,
 which is a build-time hook and not shipped code), `publish` stays `null`, and
 `npmRebuild` stays `false`. **`electronDownload.checksums` grew the Linux
-archive**: `electron-v45.0.0-linux-x64.zip` joins the two darwin zips, so every
+archive**: `electron-v44.7.2-linux-x64.zip` joins the two darwin zips, so every
 Electron archive this build downloads is verified against a hash in this
 repository — a platform whose download was unverified would be the one place the
 pinning story did not hold.
