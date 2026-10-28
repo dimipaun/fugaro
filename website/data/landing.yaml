@@ -30,6 +30,14 @@
 # number is the WhatsApp Business number the links open. Neither is a secret, and neither is
 # pasted anywhere else -- the WhatsApp link is derived from the number and the variant's
 # pre-fill message, so the number is written once (R3).
+#
+# **Both are the owner's own, supplied and not invented**: the booking link and the WhatsApp
+# Business number are the two values the owner gave for this task, written here verbatim, and
+# the repository publishes no identifier the owner did not supply (R3 -- a number that reached
+# this file any other way could belong to a stranger, and the page would send visitors to it).
+# A number that changes is changed here, once: the link is derived from it rather than pasted
+# beside it. The task that puts either in front of a visitor is G2.5's (OWNER-RUN), and G2.2
+# and G2.3 render them.
 version: 1
 
 # The owner's Calendly link: the Book a demo call to action, rendered as a plain link (G2.2)

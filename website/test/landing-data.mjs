@@ -7,14 +7,16 @@
 // below:
 //
 //   1. **A published figure is never typed into a page.** `website/data/landing.yaml` holds one
-//      variant per campaign audience, and each variant's `proof_number` is either the sentinel
-//      `unmeasured` or a figure whose `source` names an entry of `website/data/typical-costs.yaml`
-//      — the owner's own measurement of this project's development runs, read through the
-//      existing `loadTypicalCosts(minRuns)` exactly as the caps-and-costs guide reads it, so
-//      D97's minimum stays one number rather than two (F6). The figures of the agenda behind
-//      this work — a percentage saved, "a tenth of the price", a per-PR cost, an hourly rate —
-//      are claims, and every one of them stays out of the file until the owner's aggregation
-//      exists to back it.
+//      variant per campaign audience, and each variant's `proof_number` — the one figure the band
+//      prints as a measurement — is either the sentinel `unmeasured` or a figure whose `source`
+//      names an entry of `website/data/typical-costs.yaml`, the owner's own measurement of this
+//      project's development runs, read through the existing `loadTypicalCosts(minRuns)` exactly
+//      as the caps-and-costs guide reads it, so D97's minimum stays one number rather than two
+//      (F6). The campaign's own rhetoric is copy rather than a measurement — `/save`'s headline
+//      is the spec's "a tenth of the price" — and what the guard refuses is a `proof_number` with
+//      nothing behind it: it judges no figure's truth, wording or roundness, so a figure that
+//      names a measured entry at or above the minimum is read as the file wrote it (there is a
+//      case for exactly that below).
 //   2. **The media is self-hosted.** A variant's video and the `/crew` imagery are paths under
 //      `website/`, never a YouTube or Vimeo URL: an embedded player would be a fourth third
 //      party the consent work never admitted. The pages build without the files, because the
@@ -41,16 +43,20 @@
 //
 // How the cases drive it: the loader is imported directly (it is a plain module, as
 // `consent-key.mjs` and `changelog.mjs` are), a document is built here as YAML text, and the
-// facts a figure may be drawn from are passed in — the same seam `loadLanding()` uses, which is
-// a `loadSite()` result: the site's own `min_runs` and the entries of the measured costs. So a
-// rule is watched failing without a copy of the repository per case.
+// facts a figure may be drawn from are passed in — the same seam `loadLanding()` fills from
+// `loadSiteFacts()` and `loadTypicalCosts(minRuns)`: the site's own `min_runs` and the entries of
+// the measured costs. So a rule is watched failing without a copy of the repository per case, and
+// the file-opening half of the loader is driven against a temp directory of its own — the one
+// seam it has, `readLandingFile(root)`. The YAML text below is read by `content.ts`'s reader,
+// which `landing.mjs` imports rather than copies: one dialect for every data file the site reads.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 
-import { LANDING_FILE, loadLanding, parseLanding } from '../src/lib/landing.mjs'
+import { LANDING_FILE, loadLanding, parseLanding, readLandingFile } from '../src/lib/landing.mjs'
 import { SITE } from './lib/html.mjs'
 
 // ---- the spec's four campaigns, and the shipped file --------------------------------------
@@ -152,11 +158,12 @@ function document({ variants = DEFAULT_VARIANTS, change = () => ({}), append = n
 }
 
 /**
- * The facts a document is read with: `loadSite()`'s own two halves for this rule — the site's
- * `min_runs` (website/data/site.yaml, D97) and the entries `loadTypicalCosts()` returns for
- * website/data/typical-costs.yaml. The ids are that file's own three rows (`task`, `follow_up`,
- * `review`), with their own samples, plus one row below the minimum: the state that file refuses
- * for itself, kept here so the loader's own reading of the threshold is watched failing too.
+ * The facts a document is read with: the site's own two halves for this rule — `min_runs`
+ * (website/data/site.yaml, D97, as `loadSiteFacts()` returns it) and the entries
+ * `loadTypicalCosts(min_runs)` returns for website/data/typical-costs.yaml. The ids are that
+ * file's own three rows (`task`, `follow_up`, `review`), with their own samples, plus one row
+ * below the minimum: the state that file refuses for itself, kept here so the loader's own
+ * reading of the threshold is watched failing too.
  */
 const FACTS = {
   facts: { minRuns: 20 },
@@ -175,16 +182,20 @@ function read(options) {
   return parseLanding(document(options), LANDING_FILE, FACTS)
 }
 
-/** The message the loader refuses a built document with; a case that is accepted fails here, in
- * the case that was watching for the refusal, rather than one case later. */
-function refusal(options) {
-  const text = document(options)
+/** The message the loader refuses a document written here with; a case that is accepted fails
+ * here, in the case that was watching for the refusal, rather than one case later. */
+function refusalOf(text) {
   try {
     parseLanding(text, LANDING_FILE, FACTS)
   } catch (error) {
     return error.message
   }
   assert.fail(`the loader accepted a document it has to refuse, so the rule this case watches was not applied at all:\n${text}`)
+}
+
+/** The message the loader refuses a document built above with. */
+function refusal(options) {
+  return refusalOf(document(options))
 }
 
 /** `change` for one variant: the keys to replace on the variant at `route`. */
@@ -210,14 +221,14 @@ test('the shipped file carries the spec\'s four campaigns, each at its own path'
   }
 })
 
-test('every proof number in the shipped file is the sentinel, and no figure of the agenda is typed in', () => {
+test('every proof number in the shipped file is the sentinel, because no measurement backs a figure yet', () => {
   const landing = loadLanding()
 
   for (const variant of landing.variants) {
     assert.deepEqual(
       variant.proofNumber,
       { value: 'unmeasured', source: 'unmeasured' },
-      `the ${variant.name} variant carries the proof number ${JSON.stringify(variant.proofNumber)}: until the owner's aggregation exists every variant holds the sentinel, so no figure of the agenda — a percentage saved, a per-PR cost, an hourly rate, "a tenth of the price" — is typed into the file, and a figure arrives with the entry of website/data/typical-costs.yaml that backs it (F6, D96, D97)`,
+      `the ${variant.name} variant carries the proof number ${JSON.stringify(variant.proofNumber)}: the band prints one figure as a measurement, and until the owner's aggregation exists no variant publishes one — a percentage saved, a per-PR cost and an hourly rate are claims, and a figure arrives beside the entry of website/data/typical-costs.yaml that backs it (F6, D96, D97)`,
     )
   }
 })
@@ -402,15 +413,57 @@ test('a partner logo is a name and a self-hosted image, and a broken entry is re
   assert.match(unnamed, /name/, `a logo with no name was accepted: an entry that renders a picture nobody is named beside is not social proof — the message was ${JSON.stringify(unnamed)}`)
 })
 
-test('the loader refuses a document it cannot read rather than guessing at it', () => {
-  const text = 'version: 1\ncalendly_url: https://calendly.com/dimi-fugaro/30min\nwhatsapp_number: "14377842426"\npartner_logos: []\nvariants:\n  - path: /save\n    headline: |\n      two lines\n'
-  let message = null
-  try {
-    parseLanding(text, LANDING_FILE, FACTS)
-  } catch (error) {
-    message = error.message
-  }
+// ---- the reader, and the file the loader opens --------------------------------------------
 
-  assert.notEqual(message, null, 'a block scalar was accepted: the file\'s reader understands the subset website/data/landing.yaml uses, and anything outside it is an error with its line number rather than a value that parses into something wrong (W1.3 step 2)')
-  assert.match(message, /block scalar/, `the refusal of a construct the reader does not understand does not name the construct — the message was ${JSON.stringify(message)}`)
+test('a trailing "# …" is a comment, not part of the value', () => {
+  // The reader is `content.ts`'s own, and in it a `#` after whitespace starts a comment. That is
+  // the whole point of importing it rather than writing a second one: a headline that swallowed
+  // an editor's note would be printed with it on the page, and a quoted value followed by a note
+  // would be refused with a message about a quote that closes perfectly well.
+  const noted = document()
+    .replace('    headline: "Same PRs, a tenth of the price."', '    headline: "Same PRs, a tenth of the price." # the spec §6 line')
+    .replace('    tone: savings', "    tone: savings # the audience's register")
+    .replace('      value: unmeasured\n      source: unmeasured', '      value: unmeasured # no figure published yet\n      source: unmeasured')
+  const landing = parseLanding(noted, LANDING_FILE, FACTS)
+
+  assert.equal(landing.variants[0].headline, SPEC[0].headline, `a comment after a quoted headline was read as part of it: the value is ${JSON.stringify(landing.variants[0].headline)}, and the page prints every character of it`)
+  assert.equal(landing.variants[0].tone, 'savings', `a comment after a plain scalar was read as part of it: the tone came back as ${JSON.stringify(landing.variants[0].tone)}, and the page keys a class name off it`)
+  assert.deepEqual(landing.variants[0].proofNumber, { value: 'unmeasured', source: 'unmeasured' }, 'a comment after the sentinel was read as part of it, so the variant that publishes no figure no longer reads as the sentinel (F6)')
+})
+
+test('a construct the site\'s reader does not understand is refused, never guessed at', () => {
+  // An alias, an anchor, a tag and a flow mapping are the constructs the reader refuses by name:
+  // taken for text each of them is a fact that renders as `*spec` or `{a: 1}` on a page.
+  const message = refusalOf(document().replace('    headline: "Same PRs, a tenth of the price."', '    headline: *spec_headline'))
+
+  assert.match(message, /alias/, `an alias was accepted as a value: the reader resolves no YAML reference, and a value it does not understand is an error rather than a string that renders wrongly — the message was ${JSON.stringify(message)}`)
+  assert.match(message, /:7:/, `the refusal of a construct the reader does not understand names no line, so the editor is not told where it is — the message was ${JSON.stringify(message)}`)
+})
+
+test('a missing file, an empty file and a version this reader does not know are refused', (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'fugaro-landing-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+
+  assert.throws(
+    () => readLandingFile(root),
+    /is missing/,
+    'a website directory with no website/data/landing.yaml was read: the loader refuses a missing file rather than returning a document with no campaigns in it, which is four pages with no copy',
+  )
+
+  mkdirSync(path.join(root, 'data'), { recursive: true })
+  writeFileSync(path.join(root, 'data', 'landing.yaml'), '')
+  assert.throws(
+    () => readLandingFile(root),
+    /is empty/,
+    'an empty website/data/landing.yaml was read: an empty file is four empty pages, and the build fails rather than rendering one',
+  )
+
+  // And the other half of the same state: a file carrying a comment and nothing else is not
+  // empty, so it reaches the reader, which refuses it as a file with no document in it rather
+  // than reading it as a document with no keys.
+  const commentOnly = refusalOf('# the four campaigns, not written yet\n')
+  assert.match(commentOnly, /carries no document/, `a landing.yaml carrying nothing but a comment was read: the message was ${JSON.stringify(commentOnly)}`)
+
+  const version = refusalOf(document().replace('version: 1', 'version: 2'))
+  assert.match(version, /version/, `a document written in a version this reader does not know was accepted: the reader knows version 1, and it says so rather than reading the newer file as if it were the one it understands — the message was ${JSON.stringify(version)}`)
 })
