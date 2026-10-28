@@ -186,3 +186,55 @@ func TestRunTierIsGatedOnACloneWorkflow(t *testing.T) {
 		t.Fatalf("%d executions, want none", n)
 	}
 }
+
+// seedRootTier writes a first run's task and the record for it that carries a
+// tier, which is what a --pr follow-up inherits (runstore.TierRecord).
+func seedRootTier(t *testing.T, f *cloudFixture, id string, tt tier.Tier) {
+	t.Helper()
+	seedSpec(t, f, firstRunSpec(id), false)
+	rec := prRecord(id, "", 7, 1)
+	if tt != "" {
+		rec.Tier = &runstore.TierRecord{Tier: tt, ExpectedUSD: 3, ExpectedMinutes: 90}
+	}
+	writeRecord(t, f, id, rec)
+}
+
+// TestFollowUpKeptTierIsGatedOnTheJobImage: a follow-up that passed no --tier
+// still carries the tier it keeps from its PR, so it is gated exactly as a
+// --tier launch is — task.Parse decodes with DisallowUnknownFields, and a
+// runner older than governanceSince refuses the whole task at bootstrap, bytes
+// in the bucket under a run that never starts. The refusal names the tier the
+// follow-up keeps rather than a flag nobody gave.
+func TestFollowUpKeptTierIsGatedOnTheJobImage(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRootTier(t, f, rootID, tier.Medium)
+	writeBuildRecord(t, f, appSlug, "web", release085)
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "also rename x")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "the tier a follow-up keeps from its PR (tier: medium)") {
+		t.Fatalf("err = %v, want exit 1 on an image that predates the field, naming the tier the follow-up keeps", err)
+	}
+	if !noTaskStored(t, f, fuID) {
+		t.Errorf("the refused launch wrote a task.json")
+	}
+}
+
+// TestRetryOfAFirstRunIsGatedUnderItsTierFlag: the follow-up branch of the
+// gate's subject is for a launch that passed no --tier and keeps one from a PR.
+// A --retry of a first run that was launched with --tier follows no PR and
+// keeps nothing from one, so the gate describes it by the flag, which is where
+// its request came from; saying it keeps a tier from a PR would name a rule
+// that never ran.
+func TestRetryOfAFirstRunIsGatedUnderItsTierFlag(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", release085)
+	spec := firstRunSpec(rootID)
+	spec.Tier = tier.Large
+	seedSpec(t, f, spec, false)
+	_, _, err := execute(t, "run", "--retry", rootID)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "the run's own tier request (--tier) needs a job image whose runner knows the tier (fugaro "+governanceSince+" or later)") {
+		t.Fatalf("err = %v, want exit 1 naming the flag the stored request came from", err)
+	}
+	if strings.Contains(err.Error(), "a follow-up keeps") {
+		t.Errorf("the refusal claims the tier comes from a PR for a first run: %v", err)
+	}
+}

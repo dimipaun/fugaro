@@ -9,9 +9,12 @@ import (
 )
 
 // TestTierRecorded pins the record's tier block by exact string: the tier the
-// run was dispatched at and the expectation that tier resolved, which is what
-// `fugaro runs ls`, `fugaro diagnose` and the console read through the same
-// struct (docs/task-governance/implementation-plan.md T8.1, D330).
+// run was dispatched at and the expectation that tier resolved
+// (docs/task-governance/implementation-plan.md T8.1, D330). Nothing reads the
+// block yet — no runview.Row key projects it, so `fugaro runs ls`, `fugaro
+// diagnose` and the console, which read that projection, show no tier — and
+// the exact string is what pins the wire format a reader will be written
+// against.
 func TestTierRecorded(t *testing.T) {
 	rec := Record{Tier: &TierRecord{Tier: tier.Small, ExpectedUSD: 1, ExpectedMinutes: 30}}
 	data, err := json.Marshal(rec)
@@ -45,8 +48,10 @@ func TestTierRecorded(t *testing.T) {
 // job's service account can write, so the block read back is not trusted to be
 // the one a run resolved. A tier outside the vocabulary is not a decision
 // anybody made, and nil is the answer the field's absence gives; the two
-// figures are clamped to the bounds a real run's could fall in, so a tampered
-// record cannot put a number of its own choosing in a report.
+// figures are floored at zero, which no configuration could have written, and
+// left uncapped, because the project layer may loosen a tier past anything
+// Fugaro ships and a reader that clamped it would report a figure the run
+// never resolved.
 func TestTierRecordBoundedRefusesABlockItCannotRead(t *testing.T) {
 	var nilBlock *TierRecord
 	if got := nilBlock.Bounded(); got != nil {
@@ -62,9 +67,12 @@ func TestTierRecordBoundedRefusesABlockItCannotRead(t *testing.T) {
 	if got := kept.Bounded(); got == nil || *got != *kept {
 		t.Errorf("a readable block bounds to %+v, want it unchanged (%+v)", got, kept)
 	}
-	over := &TierRecord{Tier: tier.Large, ExpectedUSD: MaxTierExpectedUSD + 1, ExpectedMinutes: MaxTierExpectedMinutes + 1}
-	if got := over.Bounded(); got == nil || got.ExpectedUSD != MaxTierExpectedUSD || got.ExpectedMinutes != MaxTierExpectedMinutes {
-		t.Errorf("an over-large block bounds to %+v, want both figures at their bounds", got)
+	// A figure larger than anything Fugaro ships is a value the project layer
+	// may legally write, so it is shown as it is: the block was written by a
+	// run that resolved it, and no reader knows better what it resolved.
+	big := &TierRecord{Tier: tier.Large, ExpectedUSD: 5000, ExpectedMinutes: 20000}
+	if got := big.Bounded(); got == nil || *got != *big {
+		t.Errorf("a large but legal block bounds to %+v, want it unchanged (%+v)", got, big)
 	}
 	under := &TierRecord{Tier: tier.Small, ExpectedUSD: -1, ExpectedMinutes: -1}
 	if got := under.Bounded(); got == nil || got.ExpectedUSD != 0 || got.ExpectedMinutes != 0 {

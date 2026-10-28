@@ -732,6 +732,8 @@ type Record struct {
 	// that carried no tier — every record written before this field existed
 	// included — and the two figures are expectations and never caps: the
 	// deployed per-run cap stays the ceiling whatever a tier expects (G6).
+	// Nothing reads it yet, as with Backlog below; it is written because the
+	// record is what survives the run, and T8.2 is what acts on it.
 	Tier *TierRecord `json:"tier,omitempty"`
 	// Backlog is the ids of the backlog items this run filed for what it
 	// left open, in the order it filed them: the `<YYYYMMDD-NN>` names

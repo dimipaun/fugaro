@@ -11,22 +11,13 @@ import "github.com/dimipaun/fugaro/internal/tier"
 //
 // None of it is a cap. The deployed per-run cap stays the ceiling whatever a
 // tier expects (G6), which is why the block carries the two figures and no
-// limit: it is what a reader compares a run's actual cost and duration with,
-// and T8.2 is the one consumer that turns the expected cost into a checkpoint.
+// limit. Nothing reads it yet — no runview.Row key projects it and no report
+// renders it; the record is what survives the run, and T8.2 is the one consumer
+// that will turn the expected cost into a checkpoint.
 //
 // The block is additive and absent for every run that carried no tier — every
 // record written before this field existed included — so an old reader sees
 // the record it always saw.
-
-// MaxTierExpectedUSD and MaxTierExpectedMinutes bound the two figures a record
-// may carry. The record is an object the job's service account can write, so a
-// block read back is not trusted to be the one a run resolved: the shipped
-// figures are at most $8 and 240 minutes (policy.DefaultTierExpectations), and
-// a reader clamps what it shows to these, the way clipRunes clamps a name.
-const (
-	MaxTierExpectedUSD     = 1000
-	MaxTierExpectedMinutes = 7 * 24 * 60
-)
 
 // TierRecord is the tier a run was dispatched at and the expectation that tier
 // resolved: what the run was expected to cost and take.
@@ -41,19 +32,25 @@ type TierRecord struct {
 	ExpectedMinutes int64 `json:"expected_minutes"`
 }
 
-// Bounded is the block as a reader may show it. The tier is trusted only
-// against the closed vocabulary — a value outside it is a block no run
-// resolved, and nil, which is the answer the field's absence gives and what
-// every reader already renders as "no tier" — and the two figures are clamped
-// to the bounds above, so a tampered record cannot put a number of its own
-// choosing in a report.
+// Bounded is the block as a reader may show it. The record is an object the
+// job's service account can write, so a block read back is not trusted to be
+// the one a run resolved: the tier is trusted only against the closed
+// vocabulary, where a value outside it is a block no run resolved and nil —
+// the answer the field's absence gives, and what a reader already renders as
+// "no tier" — is the answer.
+//
+// The two figures are floored at zero and not capped, because a negative
+// expectation is one no configuration could have written (config's
+// validateGovernance refuses it) while a large one is a value the project layer
+// is free to write: it may loosen a tier past anything Fugaro ships, so a
+// reader that clamped it would report a number the run never resolved.
 func (t *TierRecord) Bounded() *TierRecord {
 	if t == nil || !tier.Known(t.Tier) {
 		return nil
 	}
 	return &TierRecord{
 		Tier:            t.Tier,
-		ExpectedUSD:     min(max(t.ExpectedUSD, 0), MaxTierExpectedUSD),
-		ExpectedMinutes: min(max(t.ExpectedMinutes, 0), MaxTierExpectedMinutes),
+		ExpectedUSD:     max(t.ExpectedUSD, 0),
+		ExpectedMinutes: max(t.ExpectedMinutes, 0),
 	}
 }

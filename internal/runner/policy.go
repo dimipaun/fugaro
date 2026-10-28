@@ -80,6 +80,7 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	// travel in the job environment — the project config carries no governance
 	// — it arrives with the task, in the layer the run resolved. The policy
 	// node has no governance either, so policyCeiling leaves it standing.
+	//
 	if l := cfg.Layer; l != nil {
 		ceiling.Governance = l.Governance.Policy()
 	}
