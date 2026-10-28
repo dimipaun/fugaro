@@ -630,8 +630,8 @@ func TestReportByModeUnreadableRecord(t *testing.T) {
 	if got := rawJSONString(raw.totals, "model_usd"); got != `"1.500000"` {
 		t.Errorf("totals model_usd = %s, want the readable run's money", got)
 	}
-	if w := strings.Join(o.Warnings, "\n"); !strings.Contains(w, "1 of the window's runs") || !strings.Contains(w, "short by whatever they spent") {
-		t.Errorf("warnings = %q, want the unreadable run counted and the money called short", o.Warnings)
+	if w := strings.Join(o.Warnings, "\n"); !strings.Contains(w, "1 of the window's runs have a result.json this build cannot read") || !strings.Contains(w, "short by whatever they spent") {
+		t.Errorf("warnings = %q, want the unreadable record counted and the money called short", o.Warnings)
 	}
 	// The human table and the CSV say n/a for the same row, never 0.00.
 	out, errOut, err := execute(t, "report", "--by", "mode", "--since", "2026-10-01")
@@ -678,8 +678,10 @@ func TestReportByModeUnreadableRecordMixedRow(t *testing.T) {
 }
 
 // TestReportByModeRunWithNoRecordYet: a run that launched and has written no
-// result.json is in flight, not unreadable, and the report has no figure for it
-// either way: its row is marked, and the warning says which of the two it was.
+// result.json is in flight, not a record the build could not read, and the
+// report has no figure for it either way: its row is marked and carries null
+// money, and the report warns nothing -- every window reaching into the last
+// minutes holds such a run, so a warning on it would be noise on every report.
 func TestReportByModeRunWithNoRecordYet(t *testing.T) {
 	f := newReportFixture(t)
 	seedLaunchedRun(t, f.cloudFixture, appSlug, "20261016-120000-aaaa")
@@ -696,8 +698,42 @@ func TestReportByModeRunWithNoRecordYet(t *testing.T) {
 	if got := rawJSONString(raw.totals, "unreadable"); got != "true" {
 		t.Errorf("totals unreadable = %s, want true", got)
 	}
-	if w := strings.Join(o.Warnings, "\n"); !strings.Contains(w, "0 hold a result.json this build cannot read, 1 have none in the bucket") {
-		t.Errorf("warnings = %q, want the run counted as having no record in the bucket rather than as an unreadable one", o.Warnings)
+	if w := strings.Join(o.Warnings, "\n"); strings.Contains(w, "cannot read") {
+		t.Errorf("warnings = %q, want nothing said: a run that has written no result.json yet is in flight, not a record this build could not read", o.Warnings)
+	}
+}
+
+// TestReportByModeInFlightRunWarnsNothing: the warning counts the records the
+// bucket holds and this build cannot read, and leaves out the runs that have
+// not written one yet. A window holding both names the corrupt one and counts
+// it alone, so the number a reader acts on is the number of unreadable records.
+func TestReportByModeInFlightRunWarnsNothing(t *testing.T) {
+	f := newReportFixture(t)
+	seedLaunchedRun(t, f.cloudFixture, appSlug, "20261015-120000-aaaa")
+	seedLaunchedRun(t, f.cloudFixture, appSlug, "20261016-120000-bbbb")
+	seedCorruptRun(t, f.cloudFixture, appSlug, "20261017-120000-cccc")
+
+	o := f.json(t, "--by", "mode", "--since", "2026-10-01")
+	w := strings.Join(o.Warnings, "\n")
+	if !strings.Contains(w, "1 of the window's runs have a result.json this build cannot read") {
+		t.Errorf("warnings = %q, want the one corrupt record counted", o.Warnings)
+	}
+	if strings.Contains(w, "3 of the window's runs") || strings.Contains(w, "2 of the window's runs") {
+		t.Errorf("warnings = %q, want the two in-flight runs left out: they are routine and not unreadable records", o.Warnings)
+	}
+	// The in-flight runs are still marked in their row, and the row they share
+	// with the corrupt one carries null money: the mark is about the money, not
+	// about which of the two the run was.
+	raw := f.rawJSON(t, "--by", "mode", "--since", "2026-10-01")
+	none := raw.rows["none"]
+	if got := rawJSONString(none, "unreadable"); got != "true" {
+		t.Errorf("unreadable = %s, want true: not one of the three records was read", got)
+	}
+	if got := rawJSONString(none, "model_usd"); got != "null" {
+		t.Errorf("model_usd = %s, want null", got)
+	}
+	if got := rawJSONString(none, "runs"); got != "3" {
+		t.Errorf("runs = %s, want every run counted", got)
 	}
 }
 

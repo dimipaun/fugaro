@@ -157,11 +157,11 @@ type acc struct {
 	row           Row
 	estimatedRuns int64
 	runs          int64
-	// allUnreadable is the AND of the row's records' marks; readable says at
-	// least one record went through addRecord, so a grouping that never adds
-	// one is not read as a row of unreadable records.
+	// allUnreadable is the AND of the row's records' marks; seen says at least
+	// one record went through addRecord, so a grouping that never adds one is
+	// not read as a row of unreadable records.
 	allUnreadable bool
-	readable      bool
+	seen          bool
 }
 
 // PeriodKey is the key and the first day of date's period for a time grouping.
@@ -366,7 +366,7 @@ func markDay(a *acc, r Rec) {
 }
 
 func addRecord(a *acc, r Rec) {
-	a.readable = true
+	a.seen = true
 	a.allUnreadable = a.allUnreadable && r.Unreadable
 	a.row.Spent = satAdd(a.row.Spent, r.SpentMicros)
 	a.row.Notional = satAdd(a.row.Notional, r.NotionalMicros)
@@ -379,7 +379,7 @@ func addRecord(a *acc, r Rec) {
 }
 
 func finish(a *acc) {
-	a.row.Unreadable = a.readable && a.allUnreadable
+	a.row.Unreadable = a.seen && a.allUnreadable
 	if a.row.ComputeState == ComputeNotTracked {
 		return
 	}

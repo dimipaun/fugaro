@@ -459,9 +459,12 @@ the exported writer, not a `cli`-side struct. Indented two spaces
     its money keys null, exactly when every row it sums is. A total over a
     measured row keeps that row's figures, so a report whose window mixes the
     two reads a `TOTAL` short of what the unreadable runs spent; `warnings[]`
-    says how many runs the read could not read — and of those, how many hold an
-    unreadable record rather than none — so the reader is told the figure is
-    short rather than left to take it for the window's whole spend.
+    says how many runs hold a `result.json` the read could not use, so the
+    reader is told the figure is short rather than left to take it for the
+    window's whole spend. A run that has not written one yet — in flight, which
+    every window reaching into the last minutes holds — is counted and marked
+    in its row like the corrupt one and is **not** warned about: that is
+    routine, and a warning on it would fire on every report.
   - `calls` is `0` on this grouping's rows, as on `--by person`'s: a run record
     carries no call count, and the column is not drawn. A window holding more
     runs than the read opens is reported to its newest runs, and `warnings[]`
