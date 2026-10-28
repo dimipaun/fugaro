@@ -398,14 +398,21 @@ the exported writer, not a `cli`-side struct. Indented two spaces
 `"iso-utc-monday"`** — the ISO week convention is declared, not inferred),
 `rows` `[]JSONLine`, `totals` `JSONLine`, `warnings` `[]string`.
 
-`JSONLine`: `key`, `start`°, `end`°, `partial` bool,
-`model_micros` int64, `model_usd` string, `notional_micros` `*int64`,
+`JSONLine`: `key`, `start`°, `end`°, `partial` bool, `unreadable`° bool,
+`model_micros` `*int64`, `model_usd` `*string`, `notional_micros` `*int64`,
 `notional_usd` `*string`, `compute_micros` `*int64`, `compute_usd` `*string`,
 `compute_estimated` bool, `run_hours` `*float64`, `runs` int64, `calls` int64,
 `tokens` `*JSONTokens`°.
 
 - **`*_usd` are exact decimal strings of the integer `*_micros`** (`USD6`), not
   floats: the console parses the string, and micros is the integer of record.
+- **`model_micros`/`model_usd` are null exactly when the row is `unreadable`**
+  — a by-mode row for which the CLI has no readable run record at all
+  (`Row.Unreadable`, `internal/report/report.go`; only `--by mode` sets it):
+  every run in it either has a `result.json` the build cannot read, or has not
+  written one yet. The row still counts its `runs`, and null is *unavailable*,
+  never a measured `0`. Every other row writes both keys, so a number there is
+  a measurement, and `unreadable` is omitted.
 - **`notional_micros`/`notional_usd` are null when not tracked** —
   `w.NotionalTracked` (`jsonLine`). That is *unavailable*,
   and it is **notional**, never added to a real total (design §6.2, "one
@@ -440,10 +447,21 @@ the exported writer, not a `cli`-side struct. Indented two spaces
     or invented mode reads as `none` rather than as a word the console has no
     class for.
   - Every run counts **once**, on its launch day, so `runs` is the row's run
-    count and `--since`/`--until` bound it by that day. A run whose record the
-    bucket holds and the CLI cannot read did launch: it counts once in `runs`
-    and adds nothing to the money columns, so a row made only of such runs
-    reads `0` and nothing on the wire marks it.
+    count and `--since`/`--until` bound it by that day. A run the CLI has no
+    readable record for — the bucket holds a `result.json` this build cannot
+    read, or holds none because the run has not written one — did launch: it
+    counts once in `runs` and adds nothing to the money columns. A row made
+    only of such runs is marked **`unreadable: true`** and its money keys are
+    **null** — *unavailable*, never the measured `0` the sums would carry
+    (`n/a` in the table and the CSV) — while a row holding one readable record
+    keeps its sums and carries no mark.
+  - **The `totals` row follows the rows the same way**: it is `unreadable`, and
+    its money keys null, exactly when every row it sums is. A total over a
+    measured row keeps that row's figures, so a report whose window mixes the
+    two reads a `TOTAL` short of what the unreadable runs spent; `warnings[]`
+    says how many runs the read could not read — and of those, how many hold an
+    unreadable record rather than none — so the reader is told the figure is
+    short rather than left to take it for the window's whole spend.
   - `calls` is `0` on this grouping's rows, as on `--by person`'s: a run record
     carries no call count, and the column is not drawn. A window holding more
     runs than the read opens is reported to its newest runs, and `warnings[]`

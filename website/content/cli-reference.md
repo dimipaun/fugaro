@@ -2636,20 +2636,23 @@ takes Nd, the last N days up to --until (default 30d); --until defaults to today
 Monday (2026-W40). --by repo|model|person groups across the range, and --by mode
 groups by the rigor mode each run resolved (poc, startup, pro, critical, hotfix,
 and none for a run whose record carries no mode, or carries one this version does
-not know), read from the run records and not from this history. Dollars are
-exact (integer micro-dollars). Model $, NOTIONAL~ (a subscription's list-price
-figure, never billed) and COMPUTE $ are separate columns and never summed;
-compute reads n/a when no run's compute was estimated. A person is the stored
-requester address; `unknown` is spend, and runs, with no requester recorded.
-By model, a subscription model's dollars are notional (priced from its tokens,
-so they can differ slightly from the run's recorded notional total).
+not know), read from the run records and not from this history: a mode row made
+only of runs whose records could not be read is marked unreadable and reads n/a,
+never 0. Dollars are exact (integer micro-dollars). Model $, NOTIONAL~ (a
+subscription's list-price figure, never billed) and COMPUTE $ are separate
+columns and never summed; compute reads n/a when no run's compute was estimated.
+A person is the stored requester address; `unknown` is spend, and runs, with no
+requester recorded. By model, a subscription model's dollars are notional
+(priced from its tokens, so they can differ slightly from the run's recorded
+notional total).
 
 --csv writes RFC 4180 with spreadsheet-safe cells (a cell starting with = + - @
 is prefixed with '). --json prints {project, source, degraded, by, since, until,
-weeks, rows[{key, start, end, partial, model_micros, model_usd, notional_micros,
-notional_usd, compute_micros, compute_usd, compute_estimated, run_hours, runs,
-calls, tokens}], totals, warnings}; *_usd are exact decimal strings and null
-means n/a or not recorded for that breakdown.
+weeks, rows[{key, start, end, partial, unreadable, model_micros, model_usd,
+notional_micros, notional_usd, compute_micros, compute_usd, compute_estimated,
+run_hours, runs, calls, tokens}], totals, warnings}; *_usd are exact decimal
+strings and null means n/a or not recorded for that breakdown (an unreadable
+row carries null money).
 
 A project without Firestore history says so and shows run-record totals instead
 (from the runs bucket, not budget history).
