@@ -335,8 +335,13 @@ func toleratedOf(t *runstore.ToleratedFindings, red func(string) string) *runsto
 // set and a hand-edited record need not have, and the three the stopping agent
 // answers are model output -- and every text field clipped again on read, since
 // the record is an object a hand can edit and the write-side bound
-// (runstore.NewCheckpoint) is not one a reader can count on. nil for a run
-// carrying none, so the key is absent.
+// (runstore.NewCheckpoint) is not one a reader can count on.
+//
+// nil for a run carrying none, and for the block a hand can write that says
+// nothing at all -- `"checkpoint": {}`, which the same hand could put in a
+// record that took no governance halt -- so the key is absent and neither
+// output prints a block with no report in it. A block that says anything, the
+// estimate alone included, is the record's and is printed.
 func checkpointOf(cp *runstore.Checkpoint, red func(string) string) *runstore.Checkpoint {
 	if cp == nil {
 		return nil
@@ -347,6 +352,9 @@ func checkpointOf(cp *runstore.Checkpoint, red func(string) string) *runstore.Ch
 	out.WhyOver = clipRunes(red(out.WhyOver), runstore.MaxCheckpointText)
 	out.Next = clipRunes(red(out.Next), runstore.MaxCheckpointText)
 	out.HardInstructions = clipRunes(red(out.HardInstructions), runstore.MaxCheckpointText)
+	if out == (runstore.Checkpoint{}) {
+		return nil
+	}
 	return &out
 }
 
@@ -770,9 +778,11 @@ func checkpointBlock(cp *runstore.Checkpoint) string {
 	b.WriteString("\nCheckpoint\n")
 	// field writes one labelled line, every later line of a multi-line value
 	// aligned under the first. The label is padded to the longest one used
-	// here, so the values of the block line up.
+	// here, so the values of the block line up. A value's trailing newlines go
+	// the way indent gives the agent message's: a line of nothing but the
+	// alignment padding is not a line of the report.
 	field := func(label, val string) {
-		txt := multiLine(val)
+		txt := strings.TrimRight(multiLine(val), "\n")
 		if txt == "" {
 			return
 		}

@@ -673,6 +673,56 @@ func TestDiagnosePrintsCheckpoint(t *testing.T) {
 			t.Fatalf("%v prints a checkpoint for a run that has none (%v):\n%s", args, err, out)
 		}
 	}
+
+	// The record is an object a hand can edit, so the empty block it can write
+	// -- `{"trigger": ""}` -- is the absent one: a block with no report in it
+	// prints nowhere, rather than as a bare header and a trigger of "".
+	const blank = "20260927-130000-bbb1"
+	e4 := seedRun(t, f, blank, "", "", true)
+	f.run.SetState(e4, backend.StateSucceeded)
+	rec4 := prRecord(blank, e4, 10, 1)
+	rec4.Checkpoint = &runstore.Checkpoint{}
+	writeRecord(t, f, blank, rec4)
+	for _, args := range [][]string{{"diagnose", blank}, {"diagnose", "--json", blank}} {
+		out, _, err := execute(t, args...)
+		if err != nil || strings.Contains(out, "Checkpoint") || strings.Contains(out, `"checkpoint"`) {
+			t.Fatalf("%v prints a checkpoint block the record does not carry (%v):\n%s", args, err, out)
+		}
+	}
+
+	// The bound on read: a hand can write a text field longer than the one the
+	// write path clips to (runstore.NewCheckpoint), and the document clips it
+	// again -- like the stage and tolerated bounds above.
+	const long = "20260927-140000-bbb2"
+	e5 := seedRun(t, f, long, "", "", true)
+	f.run.SetState(e5, backend.StateSucceeded)
+	rec5 := prRecord(long, e5, 11, 1)
+	rec5.Checkpoint = &runstore.Checkpoint{Trigger: "fanout", Done: strings.Repeat("x", runstore.MaxCheckpointText+50)}
+	writeRecord(t, f, long, rec5)
+	out, _, err = execute(t, "diagnose", "--json", long)
+	var d5 Diagnosis
+	if err != nil || json.Unmarshal([]byte(out), &d5) != nil || d5.Checkpoint == nil {
+		t.Fatalf("diagnose --json: %v:\n%s", err, out)
+	}
+	// clipRunes keeps the bound's runes and marks the cut, the way every other
+	// bound here does.
+	if done := d5.Checkpoint.Done; len(done) != runstore.MaxCheckpointText+len("…") || !strings.HasSuffix(done, "…") || len([]rune(done)) != runstore.MaxCheckpointText+1 {
+		t.Fatalf("a hand-edited checkpoint field is %d runes, %q, want the bound %d marked", len([]rune(done)), done[len(done)-3:], runstore.MaxCheckpointText)
+	}
+
+	// A value that ends in a newline: the block prints it without the line of
+	// alignment padding a trailing newline would otherwise leave behind.
+	rec5.Checkpoint = &runstore.Checkpoint{Trigger: "fanout", Done: "the parser\n\n"}
+	writeRecord(t, f, long, rec5)
+	human, _, err = execute(t, "diagnose", long)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(human, "\n") {
+		if line != "" && strings.TrimSpace(line) == "" {
+			t.Fatalf("a checkpoint field's trailing newline left a blank line:\n%q", human)
+		}
+	}
 }
 
 func staleRecord(id, exec string, statusAt time.Time) *runstore.Record {
