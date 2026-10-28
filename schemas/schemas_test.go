@@ -2709,7 +2709,11 @@ func TestResultSchemaAcceptsServiceTiers(t *testing.T) {
 		}
 		return sch.Validate(inst)
 	}
-	for _, lit := range []string{``, `,"service_tiers":["usage.service_tier \"priority\""]`, `,"service_tiers":[]`} {
+	for _, lit := range []string{``, `,"service_tiers":["usage.service_tier \"priority\""]`, `,"service_tiers":[]`,
+		// The record bounds the names it carries: past eight distinct
+		// tiers the last entry counts the rest instead of naming them,
+		// and that entry is an ordinary non-empty string to the schema.
+		`,"service_tiers":["usage.service_tier \"a\"","+12 more"]`} {
 		if err := validate(lit); err != nil {
 			t.Errorf("schema rejects cost%s: %v", lit, err)
 		}

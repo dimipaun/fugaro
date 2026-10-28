@@ -162,9 +162,9 @@ const (
 )
 
 // SurpriseMultiplier scales the charge for a response priced in a
-// dimension the request didn't allow (fast mode, a priority tier, a
-// non-default inference geography): the table can't price it, so it is
-// charged at a multiple of the table's rates.
+// dimension the request didn't allow (fast mode, a non-default inference
+// geography): the table can't price it, so it is charged at a multiple of
+// the table's rates.
 const SurpriseMultiplier = 2
 
 // StandardTier is the usage.service_tier value of a call served at the
