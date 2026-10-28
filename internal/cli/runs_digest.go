@@ -71,13 +71,14 @@ var digestNow = time.Now
 var digestMaxRuns = userStatsMaxRuns
 
 type digestOptions struct {
-	cloud  cloudOptions
-	period string
-	date   string
-	repo   string
-	dir    string
-	stdout bool
-	asJSON bool
+	cloud       cloudOptions
+	period      string
+	date        string
+	repo        string
+	dir         string
+	stdout      bool
+	asJSON      bool
+	submitDraft bool
 }
 
 // digestDoc is runs digest --json's document. The summary block and the
@@ -150,7 +151,15 @@ func newRunsDigestCmd() *cobra.Command {
 			"ones up rather than reading records.\n\n" +
 			"--stdout prints the report instead of writing it, and --json prints the summary\n" +
 			"block and the patterns as {repo, period, summary, patterns[], skipped[]}. Neither\n" +
-			"writes a file, so a caller can read a report before committing it.",
+			"writes a file, so a caller can read a report before committing it.\n\n" +
+			"--submit-draft prints neither: it prints a redacted learning draft a person can\n" +
+			"file as a \"Skill learning\" issue, and it sends nothing. The draft leaves the\n" +
+			"repository, so it carries no repository name and no run ID -- the runs are\n" +
+			"renumbered run-1, run-2, ... -- and it ends with the one command that sends it,\n" +
+			"gh issue create --web --template skill_learning.yml, which the person runs\n" +
+			"themselves. --dir still names the folder the committed reports the pattern rules\n" +
+			"read live in; nothing is written there, so --stdout and --json are refused beside\n" +
+			"it.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runRunsDigest(cmd, &o) },
 	}
@@ -161,6 +170,7 @@ func newRunsDigestCmd() *cobra.Command {
 	f.StringVar(&o.dir, "dir", digestDefaultDir, "the folder the reports live in, relative to the working directory")
 	f.BoolVar(&o.stdout, "stdout", false, "print the report instead of writing it")
 	f.BoolVar(&o.asJSON, "json", false, "print the summary block and the patterns as JSON")
+	f.BoolVar(&o.submitDraft, "submit-draft", false, "print a redacted learning draft to file as a \"Skill learning\" issue; sends nothing")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
@@ -168,6 +178,12 @@ func newRunsDigestCmd() *cobra.Command {
 func runRunsDigest(cmd *cobra.Command, o *digestOptions) error {
 	if o.stdout && o.asJSON {
 		return userErr("--stdout and --json don't go together")
+	}
+	if o.submitDraft && o.stdout {
+		return userErr("--submit-draft prints the draft instead of the report, so --stdout has nothing to print")
+	}
+	if o.submitDraft && o.asJSON {
+		return userErr("--submit-draft prints a learning draft, not JSON; drop --json")
 	}
 	dim, err := digestDim(o.period)
 	if err != nil {
@@ -192,7 +208,7 @@ func runRunsDigest(cmd *cobra.Command, o *digestOptions) error {
 	// that period is not named as skipped: naming it would send a caller to
 	// look for a file this call is about to write over.
 	replaced := ""
-	if !o.stdout && !o.asJSON {
+	if !o.stdout && !o.asJSON && !o.submitDraft {
 		replaced = p.Key
 	}
 	// The committed reports, read once: they are the pattern rules' history,
@@ -207,6 +223,9 @@ func runRunsDigest(cmd *cobra.Command, o *digestOptions) error {
 		cur    digest.Summary
 		head   []byte
 		months []digest.Summary
+		// selected are the report's selected run rows, which --submit-draft
+		// renumbers: a yearly report rolls its months up instead and has none.
+		selected []digest.Run
 	)
 	if p.Dim == report.ByYear {
 		months = digestMonthsOf(rows, p.Key)
@@ -232,6 +251,7 @@ func runRunsDigest(cmd *cobra.Command, o *digestOptions) error {
 		d := digest.Build(recs, p)
 		cur = d.Summary()
 		head = digest.Markdown(d)
+		selected = d.Runs
 	}
 	patterns := digest.Patterns(digestPrev(rows, p), cur)
 	body := append(head, '\n')
@@ -239,6 +259,9 @@ func runRunsDigest(cmd *cobra.Command, o *digestOptions) error {
 
 	doc := digestDoc{Repo: repo, Period: p.Key, Summary: cur, Patterns: patterns, Skipped: folder.skipped}
 	switch {
+	case o.submitDraft:
+		_, err := cmd.OutOrStdout().Write(digestSubmitDraft(cur, selected, patterns))
+		return err
 	case o.stdout:
 		_, err := cmd.OutOrStdout().Write(body)
 		return err
