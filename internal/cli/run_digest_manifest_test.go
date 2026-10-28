@@ -515,3 +515,40 @@ func TestDigestManifestOnlyForReportRuns(t *testing.T) {
 		t.Fatalf("digest_runs = %v, want none", spec.DigestRuns)
 	}
 }
+
+// TestDigestEmptyListingRefused: a repository with no runs in the window has
+// nothing to report, and the launch is refused with a plain message instead of
+// starting a job whose runner refuses the empty manifest it was handed -- a
+// refusal that costs a job started and paid for, and whose own message tells
+// the person to launch with --recipe run-digest, which is what they did. The
+// runner's refusal stays as the backstop for a task written by hand
+// (internal/runner's TestDigestStepRefusesNoManifest).
+//
+// Mutation (drop the empty-listing refusal): both launches start a job, and
+// this fails on the execution count and on the stored task.
+func TestDigestEmptyListingRefused(t *testing.T) {
+	f := digestFixture(t)
+	refuse := func(t *testing.T, name, id string) {
+		t.Helper()
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--recipe", name, "--run-id", id, "Periodic run review")
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "no runs in the period, nothing to report") {
+			t.Fatalf("%s: err = %v, want the empty listing's refusal", name, err)
+		}
+		if n := len(f.run.Executions()); n != 0 {
+			t.Fatalf("%s: %d executions started, want none", name, n)
+		}
+		if _, err := runstore.Open(statsBucket(t, f), appSlug, id).ReadTask(context.Background()); err == nil {
+			t.Fatalf("%s: the refused launch stored a task", name)
+		}
+	}
+	refuse(t, "run-digest", "20261028-120000-abcd")
+	// A repository's own report recipe is judged the same way: the manifest
+	// is the recipe's, not the catalog's.
+	reportRecipeCheckout(t)
+	refuse(t, "report", "20261028-120000-abcd")
+	// The same repository launches as soon as it has one run in the window.
+	seedManifestRun(t, f, "acme/app", appSlug, manifestRunID(time.Now().Add(-time.Hour)))
+	if spec := launchWith(t, f, "report", "20261028-130000-abcd"); len(spec.DigestRuns) != 1 {
+		t.Fatalf("digest_runs = %v, want the one run seeded", spec.DigestRuns)
+	}
+}
