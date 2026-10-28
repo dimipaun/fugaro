@@ -623,7 +623,7 @@ async function launchLookUpWith(project: string, log: SpawnLogWriter): Promise<T
       binaryPath: resolution.value.path,
       cliVersion: resolution.value.version,
       records: found,
-      fingerprint: launchFingerprint(launchRecordFacts(record, row)),
+      fingerprint: launchFingerprint(launchRecordFacts(record)),
       ...(configPath === '' ? {} : { configPath }),
       ...(distro === '' ? {} : { distro }),
     },
@@ -631,14 +631,13 @@ async function launchLookUpWith(project: string, log: SpawnLogWriter): Promise<T
 }
 
 /** launchRecordFacts is `launchrules.ts`'s `LaunchRecordFacts` read off this
- * console's two stores: its own installation file, and the rail's row for it.
- * The rail's `listed` and `checkouts` are answers of a `config list` read that
- * can fail and succeed again between the lookup and the answer, so they are not
- * part of the identity; see `LaunchRecordFacts`. */
-function launchRecordFacts(
-  record: StoredInstallation | undefined,
-  row: InstallationsListReply['rows'][number],
-): LaunchRecordFacts {
+ * console's own installation file -- and off that file **only**, because the
+ * rail's row is not part of a launch's identity: its `listed` and `checkouts`
+ * are answers of a `config list` read that can fail and succeed again between
+ * the lookup and the answer, and its `saved` flag is true on every path that
+ * reaches here (both callers refuse an unsaved row first); see
+ * `LaunchRecordFacts`. */
+function launchRecordFacts(record: StoredInstallation | undefined): LaunchRecordFacts {
   return {
     id: record?.id ?? '',
     project: record?.project ?? '',
@@ -646,7 +645,6 @@ function launchRecordFacts(
     distro: record?.distro ?? '',
     configPath: record?.configPath ?? '',
     checkout: record?.checkout ?? '',
-    saved: row.saved,
   }
 }
 
@@ -662,7 +660,7 @@ async function launchStillRecorded(launch: FrozenLaunch): Promise<boolean> {
   if (listed === null) return false
   const row = listed.rows.find((candidate) => candidate.project === launch.project)
   if (row === undefined || !row.saved) return false
-  return launchFingerprint(launchRecordFacts(storedRecord(launch.project), row)) === launch.fingerprint
+  return launchFingerprint(launchRecordFacts(storedRecord(launch.project))) === launch.fingerprint
 }
 
 /**
