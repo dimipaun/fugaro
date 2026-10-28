@@ -284,12 +284,12 @@ func digestDuePeriods(now time.Time) []digest.Period {
 
 // digestOpenBranches is the branches of this repository's report runs whose
 // pull request is still open: what a report already written but not merged
-// sits on. A run is one of them when its record names the catalog's report
-// recipe and a pull request of its own, and that pull request is open; the
-// branch is the run's own fugaro/<run-id> and is fetched so its tree can be
-// read. Everything about the record is untrusted input, so the number is
-// bounded and the branch name is checked against the shape every run branch
-// has before it reaches a refspec.
+// sits on. A run is one of them when its record names a report run and a pull
+// request of its own, and that pull request is open; the branch is the run's
+// own fugaro/<run-id> and is fetched so its tree can be read. Everything about
+// the record is untrusted input, so the number is bounded and the branch name
+// is checked against the shape every run branch has before it reaches a
+// refspec.
 func (r *run) digestOpenBranches(ctx context.Context, recs []runstore.Record) ([]string, error) {
 	var out []string
 	asked := 0
@@ -304,7 +304,11 @@ func (r *run) digestOpenBranches(ctx context.Context, recs []runstore.Record) ([
 		if rec.Recipe == nil {
 			continue
 		}
-		if name, ok := stats.ShippedName(rec.Recipe.Name, rec.Recipe.Source); !ok || name != digestRecipeName {
+		report, err := r.digestReportRun(ctx, rec)
+		if err != nil {
+			return nil, err
+		}
+		if !report {
 			continue
 		}
 		if r.provider == nil {
@@ -324,6 +328,33 @@ func (r *run) digestOpenBranches(ctx context.Context, recs []runstore.Record) ([
 		out = append(out, "origin/"+pr.SourceBranch)
 	}
 	return out, nil
+}
+
+// digestReportRun reports whether a record is a report run's.
+//
+// The catalog's own report recipe answers it without a read. A repository's or
+// a project's own recipe is named whatever that layer called it, so its record
+// says nothing about its first step, and the launcher writes a manifest for
+// any recipe whose first step is the digest step: what says such a run is a
+// report run is the manifest its task carries, which is the same word the
+// launcher reads (internal/cli's refuseReportRunInFlight). Without it a
+// repository-sourced report run's open pull request is not seen, and the
+// period it already holds is written a second time.
+//
+// A task that cannot be read fails the step rather than being read past: the
+// record has a pull request, so it may be a report run whose report is open,
+// and writing that report again is what this walk exists to prevent. The
+// launcher's own check fails closed on the same read, for the same reason.
+func (r *run) digestReportRun(ctx context.Context, rec *runstore.Record) (bool, error) {
+	if name, ok := stats.ShippedName(rec.Recipe.Name, rec.Recipe.Source); ok {
+		return name == digestRecipeName, nil
+	}
+	spec, err := r.d.Store.Sibling(rec.RunID).ReadTask(ctx)
+	if err != nil {
+		return false, fmt.Errorf("reading the task of run %s, whose recipe %s is not the catalog's, to tell whether its open pull request is a report run's: %w",
+			rec.RunID, safetext.OneLine(safetext.Strip(rec.Recipe.Name)), err)
+	}
+	return len(spec.DigestRuns) > 0, nil
 }
 
 // digestHeld reports whether a report file is already somewhere the run must

@@ -650,6 +650,106 @@ func TestDigestStepSkipsPeriodInOpenPR(t *testing.T) {
 	}
 }
 
+// TestDigestStepSkipsPeriodInOpenPRRepoRecipe: the open report run that holds
+// a period need not name the catalog's recipe. A repository's own report
+// recipe is named whatever the repository called it, so its record says
+// nothing about its first step; what says its pull request is a report run's
+// is the manifest its task carries, the same word the launcher reads when it
+// refuses a second report run (internal/cli's refuseReportRunInFlight). Without
+// it the period the open report already holds is written again, and two pull
+// requests add the same file -- the one thing the one-report-run-at-a-time
+// rule cannot see, since the open run has already finished and its pull
+// request is still unmerged.
+//
+// Mutation (judge the record by its recipe's name alone, as ShippedName does
+// for the catalog's): yesterday's report is written again.
+func TestDigestStepSkipsPeriodInOpenPRRepoRecipe(t *testing.T) {
+	const (
+		own      = "20261019-090000-bbbb"
+		previous = "20261018-120000-dddd"
+	)
+	spec := digestSpec(own, previous)
+	h := newHarnessFiles(t, "", spec, nil)
+	clk := digestClock(h)
+	now := clk.Now()
+	yesterday := now.AddDate(0, 0, -1)
+	digestRecord(t, h.bucket, repoSlug, own, now.AddDate(0, 0, -4), 1.5, nil)
+	digestRecord(t, h.bucket, repoSlug, previous, now.AddDate(0, 0, -10), 3, func(rec *runstore.Record) {
+		rec.Recipe = &runstore.RecipeRecord{Name: "report", Source: string(recipe.SourceRepo)}
+		rec.PR = &runstore.PRRef{Number: 42, URL: "https://example.invalid/pr/42"}
+	})
+	// The repository recipe's task carries the name alone, so the manifest is
+	// the only thing in it that says the run's first step was the digest step.
+	prev := &task.Spec{Version: 1, RunID: previous, Repo: "acme/app", Ref: "main", Workflow: "app",
+		Task: "Periodic run review", Recipe: &task.Recipe{Name: "report", Source: string(recipe.SourceRepo)},
+		DigestRuns: []string{own}}
+	if err := h.store.Sibling(previous).WriteTask(context.Background(), prev); err != nil {
+		t.Fatal(err)
+	}
+	branch := "fugaro/" + runID
+	open := "fugaro/" + previous
+	digestBranchAt(t, h.remote, open, "main", map[string]string{digestDayPath(yesterday): "# the report run that is still open wrote this\n"})
+	h.provider.State.PRs = append(h.provider.State.PRs, fake.PRState{
+		PR: gitprov.PR{Number: 42}, Spec: gitprov.PRSpec{Branch: open, Base: "main"}, State: gitprov.PROpen,
+	})
+
+	rec, err := h.run(t, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("record = status %s, outcome %s, reason %q", rec.Status, rec.Outcome, rec.Reason)
+	}
+	if fileInTree(t, h.remote, branch, digestDayPath(yesterday)) {
+		t.Error("the step wrote yesterday's report, which an open repository-recipe report run already holds")
+	}
+	for i := 2; i <= 7; i++ {
+		if rel := digestDayPath(now.AddDate(0, 0, -i)); !fileInTree(t, h.remote, branch, rel) {
+			t.Errorf("%s is not on the run's branch, though no open report holds it", rel)
+		}
+	}
+}
+
+// TestDigestStepRefusesUnreadableReportTask: a record whose recipe is not the
+// catalog's and whose task cannot be read leaves the step unable to say whether
+// its open pull request is a report run's -- so it fails, rather than reading
+// past a run whose report may already be open. The record has a pull request
+// and a valid run ID, so this is a read the step chose to make, not a broken
+// manifest.
+//
+// Mutation (read past an unreadable task): the run writes its reports and opens
+// a pull request over one that may hold the same files.
+func TestDigestStepRefusesUnreadableReportTask(t *testing.T) {
+	const (
+		own      = "20261019-090000-bbbb"
+		previous = "20261018-120000-dddd"
+	)
+	spec := digestSpec(own, previous)
+	h := newHarnessFiles(t, "", spec, nil)
+	clk := digestClock(h)
+	now := clk.Now()
+	digestRecord(t, h.bucket, repoSlug, own, now.AddDate(0, 0, -4), 1.5, nil)
+	digestRecord(t, h.bucket, repoSlug, previous, now.AddDate(0, 0, -10), 3, func(rec *runstore.Record) {
+		rec.Recipe = &runstore.RecipeRecord{Name: "report", Source: string(recipe.SourceRepo)}
+		rec.PR = &runstore.PRRef{Number: 42, URL: "https://example.invalid/pr/42"}
+	})
+	// No task.json for it at all: the record is there and its task is not.
+
+	rec, err := h.run(t, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusInfraError || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = status %s, outcome %s, reason %q", rec.Status, rec.Outcome, rec.Reason)
+	}
+	if !strings.Contains(rec.Reason, "to tell whether its open pull request is a report run's") {
+		t.Errorf("reason = %q, want it to say which read failed", rec.Reason)
+	}
+	if hasBranch(t, h.remote, "fugaro/"+runID) {
+		t.Error("the run pushed a branch without telling whether the open pull request was a report run's")
+	}
+}
+
 // TestDigestRunReviewScopeNotApplicable: a report run records the review-scope
 // comparison as not applicable, never as a mismatch. It has no implement set to
 // compare the review range with, for the same reason an autofix run has none:
