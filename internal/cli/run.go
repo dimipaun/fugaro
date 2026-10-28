@@ -1079,11 +1079,13 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	if err != nil {
 		return nil, err
 	}
-	// The report run's manifest is listed here, once per launch (or per
-	// batch: every attempt of one shares it), and before the launch itself,
-	// so a repository already writing its reports is refused before any
-	// cloud work — and so a batch's second attempt does not read the
-	// first's stored task as a report run still going.
+	// The report run's manifest is listed here, once per launch, and before
+	// the launch itself: the listing and the horizon it needs are cloud
+	// calls of their own, but they come before the task is stored and the
+	// execution started, so a repository already writing its reports is
+	// refused without launching anything. A batch never reaches this with a
+	// report recipe (chooseRecipe refuses --attempts for one), so no
+	// attempt reads another's stored task as a report run still going.
 	digestRuns, err := digestManifest(ctx, env, slug, root, rcp, time.Now())
 	if err != nil {
 		return nil, err
@@ -1668,6 +1670,17 @@ func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func
 		if forAttempts {
 			return nil, "", userErr("recipe %s is mode: artifact, which renders a deliverable into the run's bucket and opens no pull request; --attempts launches a fresh batch of pull requests and cannot use it", rr.Name)
 		}
+	}
+	// A report recipe reads this repository's own run records and writes the
+	// reports the repository is missing (task-governance plan T3.6), and the
+	// repository has one report run at a time: a batch's attempts are
+	// launched together, each carrying the same manifest, so they would all
+	// write the same reports into their own pull requests. The batch is
+	// refused here, where the recipe is known, rather than by the
+	// in-flight check in resolveAttemptPlan, which a batch's own attempts
+	// cannot see (they are stored only as they launch).
+	if forAttempts && recipe.UsesDigest(rr.Recipe) {
+		return nil, "", userErr("recipe %s writes this repository's run reports, and a repository has one report run at a time; --attempts launches a batch of runs at once and cannot use it", rr.Name)
 	}
 	printRecipeNote(warn, rr, explicit)
 	// An explicit --recipe default overrides agent.recipe, which applies when

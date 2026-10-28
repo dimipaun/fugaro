@@ -535,11 +535,32 @@ func TestTaskSchemaInputs(t *testing.T) {
 // run ID of the one shape, and at most task.MaxDigestRuns of them, which the
 // schema copies and TestTaskSchemaDigestRunsBound ties back to the constant.
 //
-// Mutation (drop the digest_runs property from schemas/task.schema.json): the
-// valid instance below is rejected as an unknown key and this test fails.
+// The task carrying the manifest is marshalled from task.Spec rather than
+// written out, so it reads the Go field's own json tag, the way
+// TestTaskSchemaCompressionOffMatchesTheGoField does: renaming the tag or the
+// schema property stops the two agreeing, and the drift would otherwise be
+// silent, since no Go test reads this document and the launcher's own tests
+// never consult it.
+//
+// Mutation (drop the digest_runs property from schemas/task.schema.json, or
+// rename the Go tag): the marshalled task is rejected as an unknown key and
+// this test fails.
 func TestTaskSchemaDigestRuns(t *testing.T) {
 	sch := compile(t, "task.schema.json")
-	validate := func(lit string) error {
+	validate := func(s task.Spec) error {
+		data, err := json.Marshal(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	// The negative cases below are literals: they carry values task.Spec
+	// itself would not marshal.
+	validateLit := func(lit string) error {
 		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(lit))
 		if err != nil {
 			t.Fatal(err)
@@ -547,12 +568,13 @@ func TestTaskSchemaDigestRuns(t *testing.T) {
 		return sch.Validate(inst)
 	}
 	head := `{"version":1,"run_id":"20261027-093000-abcd","repo":"acme/app","ref":"main","task":"x"`
-	ok := head + `,"digest_runs":["20261026-090000-1234","20261025-080000-abcd"]}`
-	if err := validate(ok); err != nil {
-		t.Fatalf("schema rejects a task carrying a manifest: %v", err)
+	spec := task.Spec{Version: 1, RunID: "20261027-093000-abcd", Repo: "acme/app", Ref: "main", Task: "x"}
+	if err := validate(spec); err != nil {
+		t.Fatalf("schema rejects a task carrying no manifest: %v", err)
 	}
-	if err := validate(head + `}`); err != nil {
-		t.Fatalf("schema rejects a task carrying none: %v", err)
+	spec.DigestRuns = []string{"20261026-090000-1234", "20261025-080000-abcd"}
+	if err := validate(spec); err != nil {
+		t.Fatalf("schema rejects a task carrying a manifest, which fugaro run --recipe run-digest writes: %v", err)
 	}
 	for _, tc := range []struct{ name, lit string }{
 		{"not an array", `,"digest_runs":"20261026-090000-1234"`},
@@ -563,7 +585,7 @@ func TestTaskSchemaDigestRuns(t *testing.T) {
 		{"an upper-case run ID", `,"digest_runs":["20261026-090000-ABCD"]`},
 		{"a null element", `,"digest_runs":[null]`},
 	} {
-		if err := validate(head + tc.lit + `}`); err == nil {
+		if err := validateLit(head + tc.lit + `}`); err == nil {
 			t.Errorf("schema accepts %s: %s", tc.name, tc.lit)
 		}
 	}

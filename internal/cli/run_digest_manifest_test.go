@@ -16,8 +16,9 @@ import (
 )
 
 // digestLaunchImage is the base image a launch with --recipe run-digest
-// needs: the digest step is 0.13.0's (digestSince), so an older build
-// record is refused before the launcher reads a manifest at all.
+// needs: the digest step is 0.13.0's (digestSince), so an older build record
+// is refused at launch — after the manifest is listed, which comes first,
+// but before any execution starts.
 const digestLaunchImage = "ghcr.io/dimipaun/fugaro-base:0.13.0"
 
 // manifestRunID is a run ID of the one shape, minted at.
@@ -50,13 +51,25 @@ func seedManifestRun(t *testing.T, f *cloudFixture, repo, slug, id string, runs 
 	}
 }
 
-// finishManifestRun gives the run a record in a terminal status.
-func finishManifestRun(t *testing.T, f *cloudFixture, repo, slug, id string) {
+// writeManifestRecord gives the run a record in status.
+func writeManifestRecord(t *testing.T, f *cloudFixture, repo, slug, id string, status runstore.Status) {
 	t.Helper()
 	at := time.Now()
-	rec := &runstore.Record{Version: 1, RunID: id, Repo: repo, Workflow: "web", Status: runstore.StatusSucceeded,
-		StartedAt: at.Add(-time.Minute), FinishedAt: &at}
+	rec := &runstore.Record{Version: 1, RunID: id, Repo: repo, Workflow: "web", Status: status, StartedAt: at.Add(-time.Minute)}
+	if status != runstore.StatusRunning {
+		rec.FinishedAt = &at
+	}
 	if err := runstore.Open(statsBucket(t, f), slug, id).WriteRecord(context.Background(), rec); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeManifestLaunch gives the run a launch.json and no record: where a
+// report run sits between its launch and its first status update.
+func writeManifestLaunch(t *testing.T, f *cloudFixture, slug, id string) {
+	t.Helper()
+	l := &runstore.Launch{Version: 1, RunID: id, Backend: "cloud-run", Job: "fugaro-app-web", LaunchedAt: time.Now()}
+	if err := runstore.Open(statsBucket(t, f), slug, id).WriteLaunch(context.Background(), l); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -150,33 +163,74 @@ func TestDigestManifestBounded(t *testing.T) {
 
 // TestDigestLaunchRefusedWhileOneRuns: a repository has one report run at a
 // time, so a launch while one of its report runs is still going is refused
-// before any cloud work, naming the run that holds it. A report run that has
-// finished, and an ordinary run that is still going, do not hold it: the
-// first reads no records any more, the second never reads any.
+// before anything is launched, naming the run that holds it. Every shape a
+// report run can be in while it is going holds the slot -- no record yet,
+// a record still running, a launch.json with no record -- and a run that has
+// finished does not, nor does an ordinary run of the same repository, which
+// never reads a record at all.
 func TestDigestLaunchRefusedWhileOneRuns(t *testing.T) {
-	f := digestFixture(t)
 	now := time.Now()
-	running := manifestRunID(now.Add(-30 * time.Minute))
-	seedManifestRun(t, f, "acme/app", appSlug, running, manifestRunID(now.Add(-2*time.Hour)))
-	seedManifestRun(t, f, "acme/app", appSlug, manifestRunID(now.Add(-45*time.Minute)))
+	ordinary := manifestRunID(now.Add(-45 * time.Minute))
+	for _, tc := range []struct {
+		name string
+		seed func(t *testing.T, f *cloudFixture, id string)
+	}{
+		{"no record yet", func(t *testing.T, f *cloudFixture, id string) {}},
+		{"a record still running", func(t *testing.T, f *cloudFixture, id string) {
+			writeManifestRecord(t, f, "acme/app", appSlug, id, runstore.StatusRunning)
+		}},
+		{"a launch with no record", func(t *testing.T, f *cloudFixture, id string) {
+			writeManifestLaunch(t, f, appSlug, id)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := digestFixture(t)
+			running := manifestRunID(now.Add(-30 * time.Minute))
+			seedManifestRun(t, f, "acme/app", appSlug, running, manifestRunID(now.Add(-2*time.Hour)))
+			tc.seed(t, f, running)
+			seedManifestRun(t, f, "acme/app", appSlug, ordinary)
 
-	_, _, err := execute(t, "run", "--repo", "acme/app", "--recipe", "run-digest", "--run-id", "20261028-120000-abcd", "Periodic run review")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), running) || !strings.Contains(err.Error(), "one report run at a time") {
-		t.Fatalf("second launch: err = %v, want a refusal naming %s", err, running)
+			_, _, err := execute(t, "run", "--repo", "acme/app", "--recipe", "run-digest", "--run-id", "20261028-120000-abcd", "Periodic run review")
+			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), running) || !strings.Contains(err.Error(), "one report run at a time") {
+				t.Fatalf("second launch: err = %v, want a refusal naming %s", err, running)
+			}
+			if n := len(f.run.Executions()); n != 0 {
+				t.Fatalf("%d executions started, want none", n)
+			}
+			if _, err := runstore.Open(statsBucket(t, f), appSlug, "20261028-120000-abcd").ReadTask(context.Background()); err == nil {
+				t.Fatal("the refused launch stored a task")
+			}
+
+			writeManifestRecord(t, f, "acme/app", appSlug, running, runstore.StatusSucceeded)
+			spec := launchWith(t, f, "run-digest", "20261028-130000-abcd")
+			// The run that finished is still a record of this repository, so
+			// the manifest of the launch that follows it names it.
+			if !slices.Contains(spec.DigestRuns, running) {
+				t.Fatalf("digest_runs = %v, want it to name %s", spec.DigestRuns, running)
+			}
+		})
+	}
+}
+
+// TestDigestAttemptsRefused: --attempts launches its attempts together, all
+// of them carrying the manifest the plan resolved once, so a report recipe's
+// batch would write the same reports into several pull requests at once --
+// what the one-report-run-at-a-time refusal above exists to prevent, and
+// which that refusal cannot see, since a batch's attempts are stored only as
+// they launch. The batch is refused where the recipe is known (chooseRecipe),
+// before the manifest is even listed.
+func TestDigestAttemptsRefused(t *testing.T) {
+	f := digestFixture(t)
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--recipe", "run-digest", "--attempts", "2", "Periodic run review")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "one report run at a time") {
+		t.Fatalf("--attempts: err = %v, want the report recipe's refusal", err)
 	}
 	if n := len(f.run.Executions()); n != 0 {
 		t.Fatalf("%d executions started, want none", n)
 	}
-	if _, err := runstore.Open(statsBucket(t, f), appSlug, "20261028-120000-abcd").ReadTask(context.Background()); err == nil {
-		t.Fatal("the refused launch stored a task")
-	}
-
-	finishManifestRun(t, f, "acme/app", appSlug, running)
-	spec := launchWith(t, f, "run-digest", "20261028-130000-abcd")
-	// The run that finished is still a record of this repository, so the
-	// manifest of the launch that follows it names it.
-	if !slices.Contains(spec.DigestRuns, running) {
-		t.Fatalf("digest_runs = %v, want it to name %s", spec.DigestRuns, running)
+	// An ordinary recipe's batch is untouched by it.
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "A task"); err != nil {
+		t.Fatalf("--attempts with an ordinary recipe: %v", err)
 	}
 }
 

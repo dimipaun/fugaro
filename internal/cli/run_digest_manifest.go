@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/recipe"
@@ -19,10 +20,10 @@ import (
 
 // digestManifestWindow is how far back the launcher lists this repository's
 // runs: the month the reports cover plus the seven days the digest step
-// catches up, which is what one report run needs to have read. It is a
-// variable so a test reaches the window without seeding forty days of runs,
-// the way digestNow is for the digest step's own clock.
-var digestManifestWindow = 40 * 24 * time.Hour
+// catches up, which is what one report run needs to have read. A test pins
+// the value by seeding a run just outside it (TestDigestManifestBounded), so
+// it is a constant: there is no seam to keep open for one.
+const digestManifestWindow = 40 * 24 * time.Hour
 
 // digestManifestMax bounds the manifest: the newest this many runs.
 // task.MaxDigestRuns is the same bound the decoder applies to the field, so
@@ -102,29 +103,40 @@ func digestRecipe(root string, rcp *task.Recipe) bool {
 // A report run is one whose task carries a manifest (the launcher writes
 // digest_runs only for one, and the decoder refuses it under any other
 // recipe), and it has not finished when it has no record, or a record still
-// running: the reading fugaro runs shows, with no backend call. A run
-// cancelled before it launched will not write anything, so it does not hold
-// the slot.
+// running: the reading fugaro runs shows, taken from the bucket alone, with
+// no execution lookup. A run cancelled before it launched will not write
+// anything, so it does not hold the slot.
 //
 // Only the runs inside the active horizon are read: nothing minted before it
 // can still be going (checkMaxParallelFor's bound, which is why the horizon
-// is shared), and it keeps this to about a day of records. An unreadable
-// object leaves a run unrecognised or, when only its record is corrupt,
-// counted as going — fail closed, and for no longer than the horizon.
+// is shared), and it keeps this to about a day of records. Those are read
+// through the worker pool fugaro runs ls uses, since a busy repository's day
+// is hundreds of runs at three objects each and the launch should not wait
+// for them one at a time. An unreadable object leaves a run unrecognised or,
+// when only its record is corrupt, counted as going — fail closed, and for
+// no longer than the horizon.
 func refuseReportRunInFlight(ctx context.Context, env *cloudEnv, slug string, ids []string, now time.Time) error {
 	horizon, err := activeHorizon(ctx, env)
 	if err != nil {
 		return err
 	}
 	oldest := now.Add(-horizon)
+	var window []string
 	for _, id := range ids {
 		if at, err := runstore.RunTime(id); err == nil && at.Before(oldest) {
 			break // ids are newest first
 		}
-		ro, err := readRun(ctx, env, slug, id)
-		if err != nil {
-			return remote(err)
-		}
+		window = append(window, id)
+	}
+	objs := make([]runObjects, len(window))
+	errs := make([]error, len(window))
+	parallel(len(window), func(i int) {
+		objs[i], errs[i] = readRun(ctx, env, slug, window[i])
+	})
+	if err := errors.Join(errs...); err != nil {
+		return remote(err)
+	}
+	for i, ro := range objs {
 		in := ro.in
 		if in.Task == nil || len(in.Task.DigestRuns) == 0 {
 			continue
@@ -136,7 +148,7 @@ func refuseReportRunInFlight(ctx context.Context, env *cloudEnv, slug string, id
 			continue
 		}
 		return userErr("run %s/%s is a report run that has not finished; %s has one report run at a time, because both would write the same reports: wait for it, or stop it with fugaro cancel %s",
-			slug, id, slug, id)
+			slug, window[i], slug, window[i])
 	}
 	return nil
 }
