@@ -1247,6 +1247,7 @@ const REPORT_DIMENSIONS: readonly string[] = Object.freeze([
   'repo',
   'model',
   'person',
+  'mode',
 ])
 const SECRET_SCOPES: readonly string[] = Object.freeze(['project-wide', 'repo'])
 
