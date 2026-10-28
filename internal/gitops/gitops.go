@@ -478,6 +478,14 @@ func (r *Repo) HeadSHA(ctx context.Context) (string, error) {
 	return r.git(ctx, "rev-parse", "HEAD")
 }
 
+// HeadSHANoReplace is HeadSHA read with replacement refs ignored: the agent
+// writes the checkout's own .git, so a refs/replace/<sha> it plants must not
+// be able to change what a comparison against a commit the runner remembers
+// reads (digest.go's digestFinalize).
+func (r *Repo) HeadSHANoReplace(ctx context.Context) (string, error) {
+	return r.git(ctx, "--no-replace-objects", "rev-parse", "HEAD")
+}
+
 // IsClean reports whether the working tree has no changes and no untracked files.
 func (r *Repo) IsClean(ctx context.Context) (bool, error) {
 	out, err := r.git(ctx, "status", "--porcelain")
@@ -516,8 +524,14 @@ func (r *Repo) CommitEmpty(ctx context.Context, msg string) error {
 // -fd gives a fresh checkout. Used when a command's output, or its own
 // history, cannot be trusted (gate.go: commands.fix timed out, failed, or
 // committed on its own).
+//
+// The reset runs with --no-replace-objects: the agent writes the checkout's
+// own .git, so a refs/replace/<sha> it plants for ref would otherwise decide
+// the tree this puts the working tree at — the caller resets to a commit the
+// runner made itself and means that commit's own tree. The clean that follows
+// reads no object and needs none.
 func (r *Repo) ResetTo(ctx context.Context, ref string) error {
-	if _, err := r.git(ctx, "reset", "--quiet", "--hard", ref); err != nil {
+	if _, err := r.git(ctx, "--no-replace-objects", "reset", "--quiet", "--hard", ref); err != nil {
 		return err
 	}
 	_, err := r.git(ctx, "clean", "-fd", "--quiet")

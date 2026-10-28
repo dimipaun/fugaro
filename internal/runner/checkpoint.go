@@ -65,9 +65,15 @@ type checkpointState struct {
 // does, whatever its fugaro.yaml says: it pushes no branch at all (design
 // artifact-runs.md §3), and this is the gate that makes that true — the
 // stage-boundary pushes and the mid-stage poll both start from here, so a
-// run that never checkpoints never has a tip pushed for it.
+// run that never checkpoints never has a tip pushed for it. A report run
+// never does either, for the same reason and the same gate: its branch must
+// hold the commit the digest step made and nothing else (digest.go, T3.3),
+// and what a stage commits is discarded at finalize — so a tip pushed while
+// a stage runs would publish a state of the branch no run of the recipe
+// ever meant to, whatever finalize pushes after it. Finalize pushes the
+// step's own commit, once digestFinalize has put the branch back to it.
 func (r *run) checkpointsOn() bool {
-	return r.follow == nil && !r.artifact && r.baseSHA != "" && r.startSHA != "" && r.cfg != nil && r.cfg.Git.PR.CheckpointsOn()
+	return r.follow == nil && !r.artifact && !r.digest && r.baseSHA != "" && r.startSHA != "" && r.cfg != nil && r.cfg.Git.PR.CheckpointsOn()
 }
 
 // startCheckpoints starts the stage's checkpoint goroutine on stageCtx and
