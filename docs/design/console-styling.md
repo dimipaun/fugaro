@@ -379,8 +379,8 @@ warnings → the caps panel.
 | By person | `spend-people`, `spend-people-title`, `spend-people-view`, `spend-people-you`, `spend-people-operator`, `spend-people-since`, `spend-people-until`, `spend-people-bound`, `spend-people-max-runs`, `spend-people-reason`, `spend-people-note`, `spend-people-rows`, `spend-people-totals`, `spend-people-unlaunched-word`, `spend-people-unlaunched`, `spend-person`, `spend-person-user`, `spend-person-total`, `spend-person-currency`, `spend-person-runs`, `spend-person-succeeded`, `spend-person-failed`, `spend-person-halted`, `spend-person-infra`, `spend-person-other`, `spend-person-no-record`, `spend-person-counted`, `spend-person-notional`, `spend-person-counted-runs`, `spend-person-average`, `spend-person-note` |
 
 `data-*`: `data-theme`; `data-current`, `data-enabled`, `data-known` (on the
-`ol.spend-switch` itself, beside the seven words), `data-dimension`
-(`day|week|month|year|repo|model|person`, or `unknown`), `data-day`,
+`ol.spend-switch` itself, beside the eight words), `data-dimension`
+(`day|week|month|year|repo|model|person|mode`, or `unknown`), `data-day`,
 `data-until` (`set` \| `cli`) on the controls; `data-state`
 (`measured|notional|estimated|unavailable|gap`), `data-height`, `data-account`
 (`model|notional|compute`), `data-peak`, `data-segments` on the **chart points and their
@@ -430,7 +430,7 @@ Formatting: money is `usd` (2 decimals, grouping, sign before `$`), shares are `
 (1 decimal, used only for `data-height`), time is `hours` (2 decimals + ` h`), counts are
 `count` (0 decimals). Exported: `SPEND_DEFAULT_CONTROLS = {since:'30d', until:null,
 by:'day', persons:false}`, `SPEND_PICKER_WINDOWS = ['7d','30d','90d','12w']`,
-`SPEND_DIMENSIONS` (seven), `SPEND_ACCOUNTS = ['model','notional','compute']`,
+`SPEND_DIMENSIONS` (eight), `SPEND_ACCOUNTS = ['model','notional','compute']`,
 `PARTIAL_MARKER = '(partial)'`.
 
 ### 2.5 Projects — `console/src/renderer/screens/projects.ts`
