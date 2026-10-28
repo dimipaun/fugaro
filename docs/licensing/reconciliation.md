@@ -517,6 +517,16 @@ counsel approved it. The `[CLA URL TO BE PUBLISHED]` placeholder stays in the th
 until the owner creates the Gist, and the owner's CLA Assistant install (L0.2) is unchanged; the
 note at the top of CLA.md still tells the owner how to keep the Gist in step with the file.
 
+## Amendment 2026-10-28 (the CLA Assistant install)
+
+The owner installed CLA Assistant on `dimipaun/fugaro`. What that closes is the half of L0.2 a
+reader can see: the signing link is published in `CONTRIBUTING.md`'s `## Licensing of
+contributions` section, and the app's badge is in the README's opening, so the requirement and the
+place to sign are on the two pages a contributor reads first. L0.2's remaining steps — the Gist's
+raw URL in the three licence files (L4.4), the allow-list, the status on pull requests and the test
+pull request from a second account — are the owner's own session and are unchanged; the install
+checklist is in [implementation-plan.md](implementation-plan.md#l02--install-the-hosted-cla-app-owner-run).
+
 ## Amendment 2026-10-27 (the Subscription Terms draft)
 
 Counsel's licence text of 2026-10-27, in `ee/LICENSE`, `console/LICENSE.md` and
