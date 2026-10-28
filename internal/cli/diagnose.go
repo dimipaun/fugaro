@@ -109,6 +109,13 @@ type Diagnosis struct {
 	// for a run that tolerated nothing, and for every record written before
 	// the field existed.
 	Tolerated *runstore.ToleratedFindings `json:"tolerated,omitempty"`
+	// Checkpoint is the report a governance halt left (T6.1, D329, G7): why a
+	// tripwire stopped the run, and what a person deciding whether to continue
+	// it needs to know. The record's own block, with every string redacted and
+	// every text field clipped, and absent -- never an empty block -- for a run
+	// that took no governance halt: a budget or credential halt carries none,
+	// and neither does a record written before the field existed.
+	Checkpoint *runstore.Checkpoint `json:"checkpoint,omitempty"`
 }
 
 type diagnoseOptions struct {
@@ -225,6 +232,7 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 			d.ArtifactPaths = append(d.ArtifactPaths, s.Prefix()+runstore.ArtifactPrefix+red(a.Name))
 		}
 		d.Stages, d.Tolerated = stageTimingsOf(rec.Stages, red), toleratedOf(rec.Tolerated, red)
+		d.Checkpoint = checkpointOf(rec.Checkpoint, red)
 		d.Verify = rec.Verify
 		for i := range d.Verify {
 			v := &d.Verify[i]
@@ -320,6 +328,34 @@ func toleratedOf(t *runstore.ToleratedFindings, red func(string) string) *runsto
 	// record claiming fewer than it lists is not one to print as written.
 	out.Total = max(t.Total, len(out.Findings))
 	return out
+}
+
+// checkpointOf is the record's checkpoint for the document: every string
+// redacted -- the trigger and the runner's own words are values the write path
+// set and a hand-edited record need not have, and the three the stopping agent
+// answers are model output -- and every text field clipped again on read, since
+// the record is an object a hand can edit and the write-side bound
+// (runstore.NewCheckpoint) is not one a reader can count on.
+//
+// nil for a run carrying none, and for the block a hand can write that says
+// nothing at all -- `"checkpoint": {}`, which the same hand could put in a
+// record that took no governance halt -- so the key is absent and neither
+// output prints a block with no report in it. A block that says anything, the
+// estimate alone included, is the record's and is printed.
+func checkpointOf(cp *runstore.Checkpoint, red func(string) string) *runstore.Checkpoint {
+	if cp == nil {
+		return nil
+	}
+	out := *cp
+	out.Trigger = red(out.Trigger)
+	out.Done = clipRunes(red(out.Done), runstore.MaxCheckpointText)
+	out.WhyOver = clipRunes(red(out.WhyOver), runstore.MaxCheckpointText)
+	out.Next = clipRunes(red(out.Next), runstore.MaxCheckpointText)
+	out.HardInstructions = clipRunes(red(out.HardInstructions), runstore.MaxCheckpointText)
+	if out == (runstore.Checkpoint{}) {
+		return nil
+	}
+	return &out
 }
 
 // seniorRound is the round of the last senior review (not a first-line one,
@@ -612,6 +648,7 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		}
 		fmt.Fprintf(&b, "%s\n", oneLine(line))
 	}
+	b.WriteString(checkpointBlock(d.Checkpoint))
 	for _, ln := range costLines(r.Cost) {
 		fmt.Fprintf(&b, "%s\n", ln)
 	}
@@ -721,6 +758,49 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// checkpointBlock is a governance halt's checkpoint report (T6.1, D329) as a
+// block of the human output, or "" for a run carrying none.
+//
+// Trigger, Why over and Estimate are the runner's own and always there; Done,
+// Next and Hard come from the stopping agent's answer to the checkpoint prompt
+// (T7.3), so a checkpoint written before that stage exists has them empty and
+// they print as nothing at all -- no label, no empty line, no zero -- rather
+// than as a field the run never filled. The trigger is not dropped as a repeat
+// of the Halted line above: a checkpoint's own report is the thing a person
+// continues from, and it reads whole on its own.
+func checkpointBlock(cp *runstore.Checkpoint) string {
+	if cp == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nCheckpoint\n")
+	// field writes one labelled line, every later line of a multi-line value
+	// aligned under the first. The label is padded to the longest one used
+	// here, so the values of the block line up. A value's trailing newlines go
+	// the way indent gives the agent message's: a line of nothing but the
+	// alignment padding is not a line of the report.
+	field := func(label, val string) {
+		txt := strings.TrimRight(multiLine(val), "\n")
+		if txt == "" {
+			return
+		}
+		lines := strings.Split(txt, "\n")
+		fmt.Fprintf(&b, "  %-10s%s\n", label+":", lines[0])
+		for _, l := range lines[1:] {
+			fmt.Fprintf(&b, "  %-10s%s\n", "", l)
+		}
+	}
+	field("Trigger", cp.Trigger)
+	field("Why over", cp.WhyOver)
+	if cp.EstimateUSD != 0 {
+		fmt.Fprintf(&b, "  %-10s$%.4f\n", "Estimate:", cp.EstimateUSD)
+	}
+	field("Done", cp.Done)
+	field("Next", cp.Next)
+	field("Hard", cp.HardInstructions)
+	return b.String()
 }
 
 // spendList is "name $x, name $y", biggest first.
