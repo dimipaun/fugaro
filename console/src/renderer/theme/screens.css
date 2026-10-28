@@ -797,20 +797,25 @@ span.spend-point-value {
   text-align: right;
 }
 
-/* `(partial)` and `hollow` are Spend's own honesty states, and both carry the
- * marker text (design section 3.5).
+/* `(partial)`, `hollow` and `records unreadable` are Spend's own honesty
+ * states, and each carries the marker text (design section 3.5; §2.4's states).
+ * An unreadable row's money was never measured, so its `n/a` cells take the
+ * same warning tone as a partial day rather than reading as a figure.
  *
  * **The attributes are on the row, not on the marker.** §2.4 puts
- * `data-partial` on the points, the rows and `div.spend-totals`, and
- * `data-hollow` on the points and the rows; `span.spend-partial` inside them
- * holds the text `(partial)` and carries no attribute at all, so a rule
- * spelling it `span.spend-partial[data-partial='true']` selects nothing -- the
+ * `data-partial` on the points, the rows and `div.spend-totals`, `data-hollow`
+ * on the points and the rows, and `data-unreadable` on the rows and
+ * `div.spend-totals`; `span.spend-partial` and `span.spend-unreadable` inside
+ * them hold the marker text and carry no attribute at all, so a rule spelling
+ * one `span.spend-unreadable[data-unreadable='true']` selects nothing -- the
  * tone has to be on the element that knows. */
 li.spend-point[data-partial='true'],
 li.spend-row[data-partial='true'],
 div.spend-totals[data-partial='true'],
 li.spend-point[data-hollow='true'],
-li.spend-row[data-hollow='true'] {
+li.spend-row[data-hollow='true'],
+li.spend-row[data-unreadable='true'],
+div.spend-totals[data-unreadable='true'] {
   color: var(--warn);
 }
 
@@ -2259,6 +2264,7 @@ span.coordinator-unread-retry {
   span.run-follow-up,
   span.run-stale,
   span.spend-partial,
+  span.spend-unreadable,
   span.live-stale-word,
   span.live-burn-unit,
   span.live-repo-name,

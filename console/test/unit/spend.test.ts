@@ -628,6 +628,63 @@ const MODE_UNREADABLE_REPORT: JSONDoc = {
 }
 
 /**
+ * MODE_ALL_UNREADABLE_REPORT is the same read for a window in which **no** run
+ * record could be read, copied verbatim from the CLI's output for
+ * `TestReportByModeEveryRecordUnreadable`'s two corrupt runs. One row and the
+ * totals line are both marked: the document's rule for the totals is that it
+ * follows the rows (`Row.Unreadable`, `report.Build`; contract §4), so a total
+ * that sums nothing but unreadable rows reads `n/a` rather than the `$0.00`
+ * that sums nothing.
+ */
+const MODE_ALL_UNREADABLE_REPORT: JSONDoc = {
+  project: 'aurora',
+  source: 'run-records',
+  degraded: false,
+  by: 'mode',
+  since: '2026-10-01',
+  until: '2026-10-20',
+  weeks: 'iso-utc-monday',
+  rows: [
+    {
+      key: 'none',
+      end: '2026-10-17',
+      partial: false,
+      unreadable: true,
+      model_micros: null,
+      model_usd: null,
+      notional_micros: null,
+      notional_usd: null,
+      compute_micros: null,
+      compute_usd: null,
+      compute_estimated: false,
+      run_hours: null,
+      runs: 2,
+      calls: 0,
+    },
+  ],
+  totals: {
+    key: 'TOTAL',
+    end: '2026-10-17',
+    partial: false,
+    unreadable: true,
+    model_micros: null,
+    model_usd: null,
+    notional_micros: null,
+    notional_usd: null,
+    compute_micros: null,
+    compute_usd: null,
+    compute_estimated: false,
+    run_hours: null,
+    runs: 2,
+    calls: 0,
+  },
+  warnings: [
+    'these rows come from run records (the runs bucket), not the Firestore spend history: a run\'s rigor mode is written in its own record, and every run counts once, on its launch day',
+    '2 of the window\'s runs have no record this report can read (2 hold a result.json this build cannot read, 0 have none in the bucket): they count in RUNS, and the money is short by whatever they spent',
+  ],
+}
+
+/**
  * THE_REPOS is `budget show --json`'s `repos` array with one repository at each
  * binding scope the CLI can name: a repository with its own two caps, one whose
  * per-run cap comes from the repository default, and one whose per-run cap
@@ -1266,8 +1323,43 @@ describe('the by-mode breakdown', () => {
     expect(texts(unreadableRow, 'spend-notional')).toEqual([UNAVAILABLE_MARK])
     expect(texts(unreadableRow, 'spend-compute')).toEqual([UNAVAILABLE_MARK])
     expect(drawn(unreadableRow)).not.toContain('$0.00')
+    // The hook is a fact a stylesheet keys off (design §2.4), so it is read
+    // back rather than left to the class scan, which reads CSS and not the
+    // renderer: an attribute silently dropped would otherwise pass every test.
+    expect(unreadableRow.getAttribute('data-unreadable')).toBe('true')
+    expect(ordinaryRow.getAttribute('data-unreadable')).toBe('false')
     expect(texts(ordinaryRow, 'spend-unreadable')).toEqual([])
     expect(texts(ordinaryRow, 'spend-model')).toEqual(['$1.50'])
+    // The mixed document's total is a measurement, and says so.
+    expect(one(tree, 'spend-totals').getAttribute('data-unreadable')).toBe('false')
+    expect(texts(one(tree, 'spend-totals'), 'spend-unreadable')).toEqual([])
+  })
+
+  it('draws an all-unreadable window\'s total as `n/a` too, never as $0.00', () => {
+    // Red before `totalsOf` read `unreadable`: a window in which every run was
+    // unreadable drew a TOTAL of three `$0.00`-looking `n/a`s with no sentence
+    // saying why, under rows that all carried one, and the false title "the
+    // document has no model_micros" for a key that is present and null.
+    const model = buildSpendModel(MODE_ALL_UNREADABLE_REPORT, BUDGET)
+    expect(model.rows.map((row) => row.key)).toEqual(['none'])
+    expect(rowFor(model, 'none').unreadable).toBe(true)
+    expect(model.totals.unreadable).toBe(true)
+    // The total counted both runs and measured nothing.
+    expect(model.totals.runs.value).toBe(2)
+    for (const reading of [model.totals.model, model.totals.notional, model.totals.compute]) {
+      expect(reading.state).toBe('unavailable')
+      expect(reading.value).toBeNull()
+    }
+
+    const tree = renderSpend(factory, model, 'light')
+    const totals = one(tree, 'spend-totals')
+    expect(totals.getAttribute('data-unreadable')).toBe('true')
+    expect(texts(totals, 'spend-unreadable')).toEqual([UNREADABLE_MARKER])
+    expect(texts(totals, 'spend-total-model')).toEqual([UNAVAILABLE_MARK])
+    expect(texts(totals, 'spend-total-notional')).toEqual([UNAVAILABLE_MARK])
+    expect(texts(totals, 'spend-total-compute')).toEqual([UNAVAILABLE_MARK])
+    expect(texts(totals, 'spend-total-runs')).toEqual(['2'])
+    expect(drawn(totals)).not.toContain('$0.00')
   })
 
   it('ignores a per-row key it does not know, so a newer document is not a refusal', () => {

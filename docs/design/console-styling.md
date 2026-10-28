@@ -372,7 +372,7 @@ warnings → the caps panel.
 | Header | `spend-header`, `spend-project`, `spend-source`, `spend-since`, `spend-until`, `spend-weeks`, `spend-degraded`, `spend-notice` |
 | Picker & switch | `spend-picker`, `spend-window`, `spend-switch`, `spend-dim`, `spend-dim-unknown`, `spend-persons`, `spend-persons-word`, `spend-persons-state`, `spend-persons-note` |
 | Charts | `spend-accounts`, `spend-account`, `spend-account-title`, `spend-peak`, `spend-series`, `spend-point`, `spend-point-key`, `spend-point-value`, `spend-partial`, `spend-compute`, `spend-notional`, `spend-model`, `spend-key`, `spend-num` |
-| Rows | `spend-rows`, `spend-row`, `spend-runs`, `spend-run-hours`, `spend-tokens-in`, `spend-tokens-out` |
+| Rows | `spend-rows`, `spend-row`, `spend-runs`, `spend-run-hours`, `spend-tokens-in`, `spend-tokens-out`, `spend-unreadable` |
 | Totals | `spend-totals`, `spend-totals-word`, `spend-total-model`, `spend-total-notional`, `spend-total-compute`, `spend-total-runs`, `spend-total-run-hours` |
 | Caps | `spend-caps`, `spend-caps-project`, `spend-caps-day`, `spend-caps-mode`, `spend-scope`, `spend-cap-limit`, `spend-cap-word`, `spend-cap-reserve`, `spend-cap-global`, `spend-cap-counted`, `spend-cap-daily`, `spend-cap-per-run`, `spend-cap-notional`, `spend-cap-headroom`, `spend-cap-defaults`, `spend-cap-repos`, `spend-cap-repo`, `spend-cap-repo-name`, `spend-cap-spent`, `spend-kill`, `spend-kill-word`, `spend-kill-by`, `spend-kill-at`, `spend-kill-reason` |
 | Notes | `spend-note`, `spend-warning` |
@@ -387,7 +387,11 @@ warnings → the caps panel.
 accounts** — an `li.spend-row` carries **none of those five**, so a `[data-state]` or
 `[data-height]` rule is a rule about the charts; `data-partial`, `data-hollow`, `data-key`
 on **both** the points and the rows (`data-partial` also on `div.spend-totals`, `data-key`
-also on the caps panel's `li.spend-cap-repo`); `data-degraded` (`true`) on
+also on the caps panel's `li.spend-cap-repo`); `data-unreadable` (`true|false`) on the
+**rows and `div.spend-totals`** — it is the honesty state of a by-mode row whose every run
+record was unreadable, so a rule about it selects the row (or the total) and never the
+`span.spend-unreadable` inside it, which carries the marker text and no attribute;
+`data-degraded` (`true`) on
 `span.spend-degraded`; `data-available`, `data-scope-known`, `data-daily-scope`,
 `data-per-run-scope` (a document word, or `unknown`) on the caps panel, `data-available` also
 on **`section.spend-people`**, where `data-view` (`all|own|unknown`), `data-operator`
@@ -403,7 +407,11 @@ panel does select it.
 
 States: killed (the kill banner, `data-killed="true"`); partial/hollow
 (`data-partial="true"` / `data-hollow="true"` plus the `(partial)` marker text in
-`span.spend-partial`); gap (a day with no document → `data-state="gap"`, `data-height="—"`,
+`span.spend-partial`); unreadable (`data-unreadable="true"` on a `li.spend-row` or on
+`div.spend-totals` plus the marker text `records unreadable` in `span.spend-unreadable`;
+the money cells are `n/a`, never `$0.00`, and the row keeps its `runs` — a by-mode row is
+unreadable exactly when every run record behind it was, and the totals line exactly when
+every row it sums is); gap (a day with no document → `data-state="gap"`, `data-height="—"`,
 reason in `title`); unavailable (caps absent: `data-available="false"` and the sentence
 "…every cap here is n/a, not zero"); empty per account (a `gap` reading, `data-state="gap"`);
 degraded (`span.spend-degraded` with `data-degraded="true"` and the word `degraded`);
@@ -431,7 +439,7 @@ Formatting: money is `usd` (2 decimals, grouping, sign before `$`), shares are `
 `count` (0 decimals). Exported: `SPEND_DEFAULT_CONTROLS = {since:'30d', until:null,
 by:'day', persons:false}`, `SPEND_PICKER_WINDOWS = ['7d','30d','90d','12w']`,
 `SPEND_DIMENSIONS` (eight), `SPEND_ACCOUNTS = ['model','notional','compute']`,
-`PARTIAL_MARKER = '(partial)'`.
+`PARTIAL_MARKER = '(partial)'`, `UNREADABLE_MARKER = 'records unreadable'`.
 
 ### 2.5 Projects — `console/src/renderer/screens/projects.ts`
 

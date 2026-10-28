@@ -403,6 +403,11 @@ export interface SpendTotals {
   readonly runHours: Reading
   readonly runs: Reading
   readonly partial: boolean
+  /** every row the total sums was unreadable, so its money keys are `null` and
+   * the total is drawn `n/a` with the mark -- the document's own rule for the
+   * totals line (`Row.Unreadable`, `report.Build`; contract section 4, "The
+   * `totals` row follows the rows the same way") */
+  readonly unreadable: boolean
 }
 
 /** SpendGlobalCaps is `budget show`'s `global` block, and nothing but it: the
@@ -819,6 +824,7 @@ function totalsOf(raw: unknown): SpendTotals {
     runHours: readNumber(line['run_hours'], 'run_hours'),
     runs: countReading(line, 'runs'),
     partial: boolAt(line['partial']),
+    unreadable: boolAt(line['unreadable']),
   }
 }
 
@@ -2246,12 +2252,14 @@ function rowLine(factory: ScreenFactory, model: SpendModel, row: SpendRow): Scre
 function totalsLine(factory: ScreenFactory, model: SpendModel): ScreenElement {
   const element = make(factory, 'div', 'spend-totals')
   element.setAttribute('data-partial', model.totals.partial ? 'true' : 'false')
+  element.setAttribute('data-unreadable', model.totals.unreadable ? 'true' : 'false')
   literal(cell(element, factory, 'span', 'spend-totals-word'), 'total')
   numberCell(element, factory, 'span', model.totals.model, 'usd', 'spend-total-model')
   numberCell(element, factory, 'span', model.totals.notional, 'usd', 'spend-total-notional')
   numberCell(element, factory, 'span', model.totals.compute, 'usd', 'spend-total-compute')
   numberCell(element, factory, 'span', model.totals.runs, 'count', 'spend-total-runs')
   numberCell(element, factory, 'span', model.totals.runHours, 'hours', 'spend-total-run-hours')
+  if (model.totals.unreadable) literal(cell(element, factory, 'span', 'spend-unreadable'), UNREADABLE_MARKER)
   if (model.totals.partial) literal(cell(element, factory, 'span', 'spend-partial'), PARTIAL_MARKER)
   return element
 }

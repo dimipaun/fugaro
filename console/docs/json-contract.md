@@ -421,6 +421,9 @@ the exported writer, not a `cli`-side struct. Indented two spaces
   gives (`readNumber(null)`), never `$0.00`, and the row line adds the
   console's own sentence `records unreadable` beside them
   (`UNREADABLE_MARKER`). The row's `runs` is still drawn: the run launched.
+  **The totals line is read the same way** (`SpendTotals.unreadable`,
+  `totalsOf`), so a window in which every row is unreadable draws a `TOTAL` of
+  `n/a`s with the same sentence rather than the `$0.00` that sums nothing.
 - **`notional_micros`/`notional_usd` are null when not tracked** —
   `w.NotionalTracked` (`jsonLine`). That is *unavailable*,
   and it is **notional**, never added to a real total (design §6.2, "one
