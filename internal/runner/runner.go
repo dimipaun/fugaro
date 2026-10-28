@@ -2613,11 +2613,13 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.rec.CostUSD += res.CostUSD
 	}
 	r.updateCost()
-	// The relay has seen the whole stream by now, so its count of the
-	// stage's sub-agent tool calls is final: the record carries it as the
-	// stage's agents, for every auth mode (task-governance T1.3).
+	// The relay has seen the whole stream by now, so its counts of the
+	// stage's sub-agent tool calls and of the most times one identical shell
+	// command ran are final: the record carries them as the stage's agents
+	// and repeats, for every auth mode (task-governance T1.3, T1.4).
 	res.SubAgents = relay.SubAgents
-	r.rec.Stages = append(r.rec.Stages, r.stageTiming(name, started, res.CostUSD, res.SubAgents))
+	res.Repeats = relay.Repeats
+	r.rec.Stages = append(r.rec.Stages, r.stageTiming(name, started, res.CostUSD, res.SubAgents, res.Repeats))
 	var errText any // the agent's error may carry a key an upstream echoed
 	if err != nil {
 		errText = r.redact(err.Error())

@@ -312,13 +312,13 @@ func TestDigestFlags(t *testing.T) {
 	}
 }
 
-// TestDigestFlagsRepeatsAndReviewScope (task-governance T1.4, D332): the two
-// report-only tripwires -- a stage that ran one identical shell command
-// RepeatedCommandThreshold times or more, and a review range covering paths
-// the run's own commits never changed (T5.2). Both are read off the record as
-// a count and a set the runner wrote: no command text is read here, and
-// neither flag changes anything about the run.
-func TestDigestFlagsRepeatsAndReviewScope(t *testing.T) {
+// TestDigestFlagsRepeatsAndReviewScopeDrift (task-governance T1.4, D332): the
+// two report-only tripwires -- a stage that ran one identical shell command
+// RepeatedCommandThreshold times or more, and a review the run's own commits
+// no longer cover (T5.2). Both are read off the record as a count and a set
+// the runner wrote: no command text is read here, and neither flag changes
+// anything about the run.
+func TestDigestFlagsRepeatsAndReviewScopeDrift(t *testing.T) {
 	p := week43(t)
 	flagOf := func(rec runstore.Record) []string {
 		var out []string
@@ -346,10 +346,12 @@ func TestDigestFlagsRepeatsAndReviewScope(t *testing.T) {
 		t.Errorf("a stage with no repeats count is flagged: %v", got)
 	}
 
-	// The review-scope flag is a non-empty outside set, whatever the
-	// comparison's own applicable/why-not pair says: a range kept wider on
-	// purpose is a fact about the run, and the flag is about what the
-	// reviewer was handed.
+	// The review-scope flag is the drift T7.3 stops on: the range was narrowed
+	// to the run's own commits and then moved off them, so the reviewer was
+	// handed paths implement never wrote. A range kept wider on purpose is a
+	// fact about the run and never a mismatch (D332), so a wide range, a
+	// follow-up, a review run or an autofix is not flagged -- and neither is
+	// drift that handed the reviewer nothing new.
 	scope := func(sc *runstore.ReviewScope) runstore.Record {
 		rec := run(t, "20261021-090000-abcd", "2026-10-21T09:00:00Z", 0.10, 0,
 			runstore.StageTiming{Name: "implement", Calls: counted(1), Agents: counted(0)})
@@ -363,14 +365,16 @@ func TestDigestFlagsRepeatsAndReviewScope(t *testing.T) {
 	}{
 		{"no comparison at all", nil, false},
 		{"the range is the run's own commits", runstore.NewReviewScope(true, "", []string{"a.go"}, []string{"a.go"}), false},
-		{"a range kept wider on purpose", runstore.NewReviewScope(false, runstore.ReviewScopeNoNarrowerRange, []string{"a.go"}, []string{"a.go", "b.go"}), true},
-		{"a review run with no implement set", runstore.NewReviewScope(false, runstore.ReviewScopeReviewRun, nil, []string{"b.go"}), true},
+		{"the range was narrowed and moved off the run's commits", runstore.NewReviewScope(false, runstore.ReviewScopeRangeMoved, []string{"a.go"}, []string{"a.go", "b.go"}), true},
+		{"the range moved but handed over nothing new", runstore.NewReviewScope(false, runstore.ReviewScopeRangeMoved, []string{"a.go"}, []string{"a.go"}), false},
+		{"a range kept wider on purpose", runstore.NewReviewScope(false, runstore.ReviewScopeNoNarrowerRange, []string{"a.go"}, []string{"a.go", "b.go"}), false},
+		{"a review run with no implement set", runstore.NewReviewScope(false, runstore.ReviewScopeReviewRun, nil, []string{"b.go"}), false},
+		{"a comparison whose reads failed", runstore.NewReviewScope(false, runstore.ReviewScopeReadFailed, nil, nil), false},
 	} {
-		rec := scope(tc.sc)
-		got := flagOf(rec)
+		got := flagOf(scope(tc.sc))
 		if tc.want {
-			if len(got) != 1 || got[0] != FlagReviewScope {
-				t.Errorf("%s = %v, want %s", tc.name, got, FlagReviewScope)
+			if len(got) != 1 || got[0] != FlagReviewScopeDrift {
+				t.Errorf("%s = %v, want %s", tc.name, got, FlagReviewScopeDrift)
 			}
 			continue
 		}
@@ -382,7 +386,7 @@ func TestDigestFlagsRepeatsAndReviewScope(t *testing.T) {
 	// Report only (G8): the flagged run is the run it was, in the row the
 	// report prints like any other.
 	flagged := repeats(RepeatedCommandThreshold)
-	flagged.ReviewScope = runstore.NewReviewScope(false, runstore.ReviewScopeNoNarrowerRange, nil, []string{"b.go"})
+	flagged.ReviewScope = runstore.NewReviewScope(false, runstore.ReviewScopeRangeMoved, nil, []string{"b.go"})
 	row := Build([]runstore.Record{flagged}, p).Runs[0]
 	if row.Status != string(runstore.StatusSucceeded) {
 		t.Errorf("a flagged run's status = %q, want %q: the flags are report only", row.Status, runstore.StatusSucceeded)

@@ -74,14 +74,17 @@ const (
 	// RepeatedCommandThreshold times or more: the loop tripwire, which the
 	// digest reports and nothing acts on (T1.4, G8).
 	FlagRepeatedCommand = "repeated_command"
-	// FlagReviewScope is a run whose review range covered paths the run's own
-	// commits never changed, so the reviewer read work this run did not do
-	// (T1.4, T5.2, T7.3).
-	FlagReviewScope = "review_scope"
+	// FlagReviewScopeDrift is a review the run's own commits no longer cover:
+	// the range was narrowed to them and then moved off them, and it handed
+	// the reviewer paths implement never wrote (T1.4, T5.2, T7.3). The name
+	// is the digest's own and is deliberately not the halt reason it feeds
+	// (runstore.HaltReviewScope): this one is a report line, and reading it
+	// as a stop would be reading a flag as a halt.
+	FlagReviewScopeDrift = "review_scope_drift"
 )
 
 // FlagNames is every flag this report raises, in the order it prints.
-var FlagNames = []string{FlagReviewCalls, FlagSubagents, FlagHalt, FlagFixRounds, FlagRepeatedCommand, FlagReviewScope}
+var FlagNames = []string{FlagReviewCalls, FlagSubagents, FlagHalt, FlagFixRounds, FlagRepeatedCommand, FlagReviewScopeDrift}
 
 // other is what a value outside its known set renders as (G1).
 const other = "other"
@@ -401,8 +404,8 @@ func flags(rec *runstore.Record) []Flag {
 	if repeatedCommand(rec) {
 		out = append(out, Flag{Name: FlagRepeatedCommand})
 	}
-	if reviewScope(rec) {
-		out = append(out, Flag{Name: FlagReviewScope})
+	if reviewScopeDrift(rec) {
+		out = append(out, Flag{Name: FlagReviewScopeDrift})
 	}
 	return out
 }
@@ -458,11 +461,17 @@ func repeatedCommand(rec *runstore.Record) bool {
 	return false
 }
 
-// reviewScope reports whether the record says the review range covered paths
-// the run's own commits never changed (T5.2): the reviewer was handed work
-// this run did not do. Report only -- the stop is T7.3's (D332).
-func reviewScope(rec *runstore.Record) bool {
-	return rec.ReviewScope != nil && len(rec.ReviewScope.Outside) > 0
+// reviewScopeDrift reports whether the record says the reviewer was handed
+// paths the run's own commits never wrote: the range was narrowed to those
+// commits and then moved off them (runstore.ReviewScopeRangeMoved), which is
+// the mismatch T7.3 stops on. A range kept wider on purpose -- the one a
+// branch that merged its base leaves, a follow-up's, a review run's, an
+// autofix's -- records outside paths as a fact about the run and is never a
+// mismatch (D332), so it is not drift and is not flagged, and neither is a
+// moved range that handed the reviewer nothing implement had not written.
+func reviewScopeDrift(rec *runstore.Record) bool {
+	sc := rec.ReviewScope
+	return sc != nil && sc.WhyNot == runstore.ReviewScopeRangeMoved && len(sc.Outside) > 0
 }
 
 // stages is every stage name's figures over the period's runs, in name order

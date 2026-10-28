@@ -105,10 +105,24 @@ func TestRelayCountsRepeatedCommand(t *testing.T) {
 		t.Errorf("Repeats = %d, want 0: the stage ran no shell command", got)
 	}
 
-	// A repeated file read is not a repeated shell command, and neither is a
-	// sub-agent tool call: only a command counts.
+	// A command's tool input can carry other fields, and Claude Code sends
+	// exactly those with the long commands an agent loops on: a timeout (a
+	// number) and run_in_background (a bool). Counting reads the command
+	// field alone, so none of them hides the command.
 	var buf bytes.Buffer
 	r := NewRelay(slog.New(slog.NewJSONHandler(&buf, nil)), nil)
+	for range 5 {
+		_, _ = r.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"go test ./...","timeout":600000,"run_in_background":true}}]}}` + "\n"))
+	}
+	r.Flush()
+	if r.Repeats != 5 {
+		t.Errorf("Repeats = %d, want 5: a timeout and run_in_background do not hide the command", r.Repeats)
+	}
+
+	// A repeated file read is not a repeated shell command, and neither is a
+	// sub-agent tool call: only a command counts.
+	buf.Reset()
+	r = NewRelay(slog.New(slog.NewJSONHandler(&buf, nil)), nil)
 	for range 6 {
 		_, _ = r.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"a.go"}},{"type":"tool_use","name":"Agent","input":{"subagent_type":"Explore","prompt":"x"}}]}}` + "\n"))
 	}

@@ -202,21 +202,25 @@ func (r *Relay) line(raw []byte) {
 // Repeats at the largest count any one command reached. The command itself
 // stays in the tally's key and nowhere else: what a reader of the record gets
 // is a count (task-governance T1.4).
+//
+// The input is decoded into one field rather than a map of strings, because a
+// Bash call carries more than its command -- Claude Code sends timeout (a
+// number) and run_in_background (a bool) with the long commands an agent
+// loops on -- and a decode that fails on any of them would drop exactly the
+// commands this count is for.
 func (r *Relay) countCommand(input json.RawMessage) {
-	var m map[string]string
-	if json.Unmarshal(input, &m) != nil {
-		return
+	var in struct {
+		Command string `json:"command"`
 	}
-	command := m["command"]
-	if command == "" {
+	if json.Unmarshal(input, &in) != nil || in.Command == "" {
 		return
 	}
 	if r.commands == nil {
 		r.commands = map[string]int{}
 	}
-	r.commands[command]++
-	if r.commands[command] > r.Repeats {
-		r.Repeats = r.commands[command]
+	r.commands[in.Command]++
+	if r.commands[in.Command] > r.Repeats {
+		r.Repeats = r.commands[in.Command]
 	}
 }
 

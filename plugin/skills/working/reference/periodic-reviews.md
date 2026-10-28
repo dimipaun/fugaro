@@ -47,7 +47,7 @@ The report holds the period's runs, the flagged ones first and the dearest of th
 - `halt` — the run stopped on a cap or a kill switch.
 - `fix_rounds` — the run needed more than one fix round.
 - `repeated_command` — a stage ran the same shell command five times or more: a loop, not progress.
-- `review_scope` — the review range covered files the run's own commits never changed.
+- `review_scope_drift` — the review range moved: it covered files the run's own commits never changed. A range kept deliberately wider is not this flag.
 
 Read the flagged runs first, then the dearest 10-20% of the period — one or two rows in twenty. The reading is read-only, and it is where the next run gets cheaper.
 
