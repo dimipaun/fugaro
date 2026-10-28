@@ -413,6 +413,17 @@ the exported writer, not a `cli`-side struct. Indented two spaces
   written one yet. The row still counts its `runs`, and null is *unavailable*,
   never a measured `0`. Every other row writes both keys, so a number there is
   a measurement, and `unreadable` is omitted.
+- **The console reads `unreadable` and draws such a row as `n/a`**
+  (`SpendRow.unreadable`, `rowOf` in
+  `console/src/renderer/screens/spend.ts`). The key is read as a boolean and an
+  absent one is `false`, so a measured row is unchanged; an unreadable row's
+  model, notional and compute cells are the `n/a` an absent `*_micros` already
+  gives (`readNumber(null)`), never `$0.00`, and the row line adds the
+  console's own sentence `records unreadable` beside them
+  (`UNREADABLE_MARKER`). The row's `runs` is still drawn: the run launched.
+  **The totals line is read the same way** (`SpendTotals.unreadable`,
+  `totalsOf`), so a window in which every row is unreadable draws a `TOTAL` of
+  `n/a`s with the same sentence rather than the `$0.00` that sums nothing.
 - **`notional_micros`/`notional_usd` are null when not tracked** —
   `w.NotionalTracked` (`jsonLine`). That is *unavailable*,
   and it is **notional**, never added to a real total (design §6.2, "one
