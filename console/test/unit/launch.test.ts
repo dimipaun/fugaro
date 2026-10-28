@@ -60,6 +60,7 @@ import {
   DECLINING_CONFIRMER,
   LAUNCH_COOL_DOWN_MS,
   LAUNCH_TIMEOUT_MS,
+  MAX_RECORDED_OUTCOMES,
   createLaunchRunner,
   launchOutcomeUnknown,
 } from '../../src/main/launch'
@@ -448,6 +449,40 @@ function catchRateMap(): {
   } as unknown as typeof Map.prototype.set)
   return {
     keys: () => [...(caught?.keys() ?? [])],
+    restore: () => spy.mockRestore(),
+  }
+}
+
+/** catchLaunchMaps catches the launcher's two other closure maps, whose **sizes**
+ * are the property: the outcome record (`outcomes`) and the open windows'
+ * frozen launches (`frozen`). Neither is reachable from a test any other way,
+ * and the filter is on each value's shape -- a `LaunchOutcome` carries
+ * `outcomeUnknown` and `replayed`, a `FrozenLaunch` a `plan` and `taskBytes` --
+ * so what the two readings see are those maps and nothing else this test builds.
+ * A map that was never written reads as absent rather than as empty, which is
+ * why the callers assert a size they have made non-zero before reading zero. */
+function catchLaunchMaps(): {
+  readonly outcomes: () => number | undefined
+  readonly frozen: () => number | undefined
+  readonly restore: () => void
+} {
+  let outcomeMap: Map<string, unknown> | undefined
+  let frozenMap: Map<string, unknown> | undefined
+  const set = Map.prototype.set
+  const spy = vi.spyOn(Map.prototype, 'set').mockImplementation(function (
+    this: Map<string, unknown>,
+    key: string,
+    value: unknown,
+  ) {
+    if (typeof value === 'object' && value !== null) {
+      if ('outcomeUnknown' in value && 'replayed' in value) outcomeMap = this
+      if ('plan' in value && 'taskBytes' in value) frozenMap = this
+    }
+    return set.call(this, key, value)
+  } as unknown as typeof Map.prototype.set)
+  return {
+    outcomes: () => outcomeMap?.size,
+    frozen: () => frozenMap?.size,
     restore: () => spy.mockRestore(),
   }
 }
@@ -1108,6 +1143,94 @@ describe('the launch limits', () => {
     } finally {
       caught.restore()
     }
+  })
+
+  it('holds a launch’s frozen object only while its answer is unsettled', async () => {
+    // The frozen object carries the task text and the plan, and both are needed
+    // only until the answer settles: the yes spawns from it, and a replay is
+    // served from `outcomes` instead. Held for the life of the process it would
+    // be one task text per launch ever confirmed.
+    const confirmer = heldConfirmer()
+    const spawner = quietSpawner()
+    const held = runner({ confirmer, spawner })
+    const caught = catchLaunchMaps()
+    try {
+      const launched = held.launch(request())
+      await untilSettled()
+      expect(caught.frozen()).toBe(1)
+      expect(caught.outcomes()).toBeUndefined()
+
+      confirmer.decideWindow(RUN_ID, false)
+      await launched
+      expect(caught.frozen()).toBe(0)
+      expect(caught.outcomes()).toBe(1)
+    } finally {
+      caught.restore()
+    }
+  })
+
+  it('caps the outcomes it replays, and answers an evicted id with nothing', async () => {
+    // Four past the cap, so the cap is what bounds the record rather than the
+    // number of launches this test happens to make: the oldest answer is gone
+    // and the newest is still there.
+    let at = NOW
+    const confirmer = answeringConfirmer(true)
+    const spawner = completingSpawner()
+    const held = runner({ confirmer, spawner, now: () => at, wallClock: () => NOW })
+    const caught = catchLaunchMaps()
+    const launches = MAX_RECORDED_OUTCOMES + 4
+    try {
+      for (let attempt = 0; attempt < launches; attempt += 1) {
+        const outcome = await held.launch(request({ installation: `installation-${String(attempt)}` }))
+        expect(outcome.ok).toBe(true)
+        // Past both rate windows and past the cool-down, so every launch below
+        // is a first one for its own installation rather than a refusal.
+        at += CONFIRM_RATE_WINDOW_MS
+      }
+      expect(caught.outcomes()).toBe(MAX_RECORDED_OUTCOMES)
+      expect(caught.frozen()).toBe(0)
+
+      const ids = confirmer.opened.map((view) => view.runId)
+      expect(ids).toHaveLength(launches)
+      // The evicted id is not a launch this process can speak for any more, and
+      // answering it spawns nothing.
+      expect(await held.answer(ids[0] as string, true)).toBeUndefined()
+      expect((await held.answer(ids[ids.length - 1] as string, true))?.replayed).toBe(true)
+      expect(spawner.calls).toHaveLength(launches)
+    } finally {
+      caught.restore()
+    }
+  })
+
+  it('never draws an id it has already issued, even once its answer is evicted', async () => {
+    let at = NOW
+    const confirmer = answeringConfirmer(true)
+    const spawner = completingSpawner()
+    let tail = 0xa2fc
+    const queued: number[] = []
+    const random = (): number => {
+      const next = queued.length > 0 ? (queued.shift() as number) : tail++
+      return next / 0x10000
+    }
+    const held = runner({ confirmer, spawner, now: () => at, wallClock: () => NOW, random })
+    const launches = MAX_RECORDED_OUTCOMES + 1
+    for (let attempt = 0; attempt < launches; attempt += 1) {
+      expect((await held.launch(request({ installation: `installation-${String(attempt)}` }))).ok).toBe(true)
+      at += CONFIRM_RATE_WINDOW_MS
+    }
+    const evicted = (confirmer.opened[0] as ConfirmView).runId
+    expect(evicted).toBe(RUN_ID)
+    expect(await held.answer(evicted, true)).toBeUndefined()
+
+    // A fresh launch whose first draw lands on that evicted id is refused it and
+    // redraws: the issued ids are kept whether or not the answer is, so a drawn
+    // id is never one this process has already committed.
+    queued.push(0xa2fc, 0x1234)
+    const fresh = held.launch(request({ installation: 'fresh' }))
+    await untilSettled()
+    expect((confirmer.opened[confirmer.opened.length - 1] as ConfirmView).runId).toBe('20261028-152618-1234')
+    expect((await fresh).ok).toBe(true)
+    expect(spawner.calls).toHaveLength(launches + 1)
   })
 
   it('pauses an installation for ten seconds after an accepted launch', async () => {
