@@ -323,7 +323,7 @@ the exported writer, not a `cli`-side struct. Indented two spaces
 `totals`, `warnings`).
 
 `JSONDoc`: `project`, `source`, `degraded` bool, `notice`°,
-`by` (string: `day`/`week`/`month`/`year`/`repo`/`model`/`person`),
+`by` (string: `day`/`week`/`month`/`year`/`repo`/`model`/`person`/`mode`),
 `since`, `until` (UTC dates), `weeks` (**always the literal
 `"iso-utc-monday"`** — the ISO week convention is declared, not inferred),
 `rows` `[]JSONLine`, `totals` `JSONLine`, `warnings` `[]string`.
@@ -347,15 +347,36 @@ the exported writer, not a `cli`-side struct. Indented two spaces
   ComputeKnown` (`jsonLine`), so it is null for the same rows.
   The key carries **no `omitempty`**, so it is always present and **null**
   rather than absent when the hours are not known: read it as
-  *unavailable*, never as a measured `0`. A degraded `report` is the whole
-  document's null case — `reportDegraded` builds on the run records and sets
-  `rep.NoHours = true` (`reportDegraded`), and `source` says
-  `"run-records"`, so every row's `run_hours` is null (there is no flag for
-  this; the path is chosen by whether spend history is enabled).
+  *unavailable*, never as a measured `0`. **Two paths null it, and only one of
+  them is degraded**: a degraded `report` (`reportDegraded`), which builds on
+  the run records and sets `rep.NoHours = true`; and `--by mode`
+  (`reportByMode`), which also reads the run records and sets it — so a
+  document with `degraded` `false` and `notice` absent can carry no
+  `run_hours` at all. Read the key, never the `degraded` flag, as the fact
+  about the hours.
 - **`tokens` is absent entirely when not tracked** (`TokensTracked`).
 - **`partial`** is the design's `(partial)` marker: the day has no final
   Firestore document. A day beyond the retained window is a **gap**, not a row
   of zeros.
+- **`--by mode` is the second shape whose `source` is `"run-records"`, and it is
+  not degraded** (`reportByMode`). A run's rigor mode is written in its own run
+  record and in no rollup of the spend history, so this one breakdown reads the
+  runs bucket whatever the history holds: `degraded` is `false` and `notice` is
+  absent, and the provenance is in `source` and in `warnings[]`. A console must
+  not read `source: "run-records"` as meaning history is missing.
+  - A row's `key` is a mode — `poc`, `startup`, `pro`, `critical`, `hotfix` —
+    or `none` for a run whose record carries no mode, **or carries one this
+    build does not know**: the raw text of a record is never a key, so a future
+    or invented mode reads as `none` rather than as a word the console has no
+    class for.
+  - Every run counts **once**, on its launch day, so `runs` is the row's run
+    count and `--since`/`--until` bound it by that day. A run whose record the
+    bucket holds and the CLI cannot read did launch: it counts once and is in no
+    money column — *unavailable*, never `0`.
+  - `calls` is `0` on this grouping's rows, as on `--by person`'s: a run record
+    carries no call count, and the column is not drawn. A window holding more
+    runs than the read opens is reported to its newest runs, and `warnings[]`
+    says so.
 
 `JSONTokens`: `in`, `out`, `cache_read`, `cache_write`, all
 int64, none `omitempty`.

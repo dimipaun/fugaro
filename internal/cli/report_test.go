@@ -96,6 +96,7 @@ type repOut struct {
 	} `json:"rows"`
 	Totals struct {
 		ModelMicros int64 `json:"model_micros"`
+		Runs        int64 `json:"runs"`
 	} `json:"totals"`
 }
 
@@ -333,6 +334,44 @@ func seedModeRun(t *testing.T, f *cloudFixture, slug, id, mode string, c runstor
 	}
 }
 
+// seedCorruptRun writes a result.json the bucket holds and this build cannot
+// read: the run did start, and its cost is unknown, which is not the same as a
+// run that never started and not the same as one that spent nothing.
+func seedCorruptRun(t *testing.T, f *cloudFixture, slug, id string) {
+	t.Helper()
+	ctx := context.Background()
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	if err := b.WriteAll(ctx, runstore.Open(b, slug, id).Prefix()+"result.json", []byte(`{"version": 1, "run_id": `), nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// withReportMaxRuns lowers the by-mode read's cap for one test, so a window too
+// large to read whole can be driven with three runs rather than thousands.
+func withReportMaxRuns(t *testing.T, n int) {
+	t.Helper()
+	old := reportMaxRuns
+	reportMaxRuns = n
+	t.Cleanup(func() { reportMaxRuns = old })
+}
+
+// modeRows reads a document's rows into the map a by-mode test asserts on.
+func modeRows(o repOut) map[string]modeRow {
+	by := map[string]modeRow{}
+	for _, r := range o.Rows {
+		notional := "-"
+		if r.NotionalUSD != nil {
+			notional = *r.NotionalUSD
+		}
+		by[r.Key] = modeRow{model: r.ModelUSD, notional: notional, runs: fmt.Sprint(r.Runs), compute: r.ComputeUSD}
+	}
+	return by
+}
+
 // modeRow is one by-mode row as a test reads it.
 type modeRow struct {
 	model, notional, runs string
@@ -356,14 +395,7 @@ func TestReportByModeGroupsRuns(t *testing.T) {
 	if len(o.Rows) != 3 {
 		t.Fatalf("rows %+v", o.Rows)
 	}
-	by := map[string]modeRow{}
-	for _, r := range o.Rows {
-		notional := "-"
-		if r.NotionalUSD != nil {
-			notional = *r.NotionalUSD
-		}
-		by[r.Key] = modeRow{model: r.ModelUSD, notional: notional, runs: fmt.Sprint(r.Runs), compute: r.ComputeUSD}
-	}
+	by := modeRows(o)
 	if len(by) != 3 {
 		t.Fatalf("an unknown mode did not read as none: %+v", o.Rows)
 	}
@@ -424,11 +456,79 @@ func TestReportByModeRange(t *testing.T) {
 	}
 }
 
+// TestReportByModePastWindow: --until may end behind the newest run of the
+// bucket, and the runs after it are dropped before the read's cap rather than
+// after it. Dropped after, a couple of runs launched since would use up the
+// read and the window's own runs would be reported as nothing.
+func TestReportByModePastWindow(t *testing.T) {
+	f := newReportFixture(t)
+	withReportMaxRuns(t, 2)
+	seedModeRun(t, f.cloudFixture, appSlug, "20261015-120000-aaaa", "pro", runstore.NewCost(1.00, 0, runstore.BasisAPIList))
+	seedModeRun(t, f.cloudFixture, appSlug, "20261018-120000-bbbb", "critical", runstore.NewCost(8.00, 0, runstore.BasisAPIList))
+	seedModeRun(t, f.cloudFixture, appSlug, "20261019-120000-cccc", "critical", runstore.NewCost(9.00, 0, runstore.BasisAPIList))
+
+	o := f.json(t, "--by", "mode", "--since", "2026-10-14", "--until", "2026-10-16")
+	if len(o.Rows) != 1 || o.Rows[0].Key != "pro" || o.Rows[0].ModelUSD != "1.000000" || o.Rows[0].Runs != 1 {
+		t.Fatalf("a window ending in the past = %+v, want the one run it holds", o.Rows)
+	}
+	// The window holds one run, so nothing was left unread and the report says
+	// nothing about a truncation: the runs it dropped were never the window's.
+	for _, w := range o.Warnings {
+		if strings.Contains(w, "more runs than") {
+			t.Errorf("warnings = %q, want no truncation for a window of one run", o.Warnings)
+		}
+	}
+}
+
+// TestReportByModeTruncation: a window holding more runs than the read opens is
+// reported to its newest runs, and says which, rather than publishing figures a
+// reader would take for the whole window.
+func TestReportByModeTruncation(t *testing.T) {
+	f := newReportFixture(t)
+	withReportMaxRuns(t, 2)
+	seedModeRun(t, f.cloudFixture, appSlug, "20261015-120000-aaaa", "pro", runstore.NewCost(1.00, 0, runstore.BasisAPIList))
+	seedModeRun(t, f.cloudFixture, appSlug, "20261016-120000-bbbb", "pro", runstore.NewCost(2.00, 0, runstore.BasisAPIList))
+	seedModeRun(t, f.cloudFixture, appSlug, "20261017-120000-cccc", "pro", runstore.NewCost(4.00, 0, runstore.BasisAPIList))
+
+	o := f.json(t, "--by", "mode", "--since", "2026-10-01")
+	by := modeRows(o)
+	if len(by) != 1 || by["pro"].runs != "2" || o.Totals.ModelMicros != 6_000_000 || o.Totals.Runs != 2 {
+		t.Fatalf("an over-cap window = %+v, want its newest two runs", o)
+	}
+	warnings := strings.Join(o.Warnings, "\n")
+	if !strings.Contains(warnings, "more runs than the 2") || !strings.Contains(warnings, "newest 2") {
+		t.Errorf("warnings = %q, want the truncation said", o.Warnings)
+	}
+}
+
+// TestReportByModeUnreadableRecord: a run whose result.json the bucket holds and
+// this build cannot read did launch, so it counts once among the runs and adds
+// nothing to the money -- in no money column, and not a zero figure either.
+func TestReportByModeUnreadableRecord(t *testing.T) {
+	f := newReportFixture(t)
+	seedModeRun(t, f.cloudFixture, appSlug, "20261016-120000-aaaa", "pro", runstore.NewCost(1.50, 0.25, runstore.BasisAPIList))
+	seedCorruptRun(t, f.cloudFixture, appSlug, "20261017-120000-bbbb")
+
+	o := f.json(t, "--by", "mode", "--since", "2026-10-01")
+	by := modeRows(o)
+	if p := by["pro"]; p.runs != "1" || p.model != "1.500000" || p.compute == nil || *p.compute != "0.250000" {
+		t.Fatalf("pro %+v", by)
+	}
+	if n, ok := by["none"]; !ok || n.runs != "1" || n.model != "0.000000" || n.notional != "0.000000" || n.compute != nil {
+		t.Fatalf("the unreadable run's row = %+v, want it counted once and priced nowhere", by)
+	}
+	if o.Totals.Runs != 2 || o.Totals.ModelMicros != 1_500_000 {
+		t.Fatalf("totals = %+v, want both runs and one run's money", o.Totals)
+	}
+}
+
 // TestReportByModeJSONSource: the document names the run records as its source,
-// --csv works, and the breakdown needs no spend history at all.
+// --csv works, and the breakdown needs neither the spend history nor the budget
+// database: both fake backends are taken away.
 func TestReportByModeJSONSource(t *testing.T) {
 	f := newReportFixture(t)
 	f.fs.RemoveDatabase()
+	f.db.Refuse(503, "UNAVAILABLE", "", "down")
 	seedModeRun(t, f.cloudFixture, appSlug, "20261019-120000-aaaa", "hotfix", runstore.NewCost(2.00, 0.50, runstore.BasisAPIList))
 
 	o := f.json(t, "--by", "mode", "--since", "2026-10-01")

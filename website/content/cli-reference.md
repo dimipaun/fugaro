@@ -2635,8 +2635,8 @@ takes Nd, the last N days up to --until (default 30d); --until defaults to today
 --by day|week|month|year groups in time; weeks are ISO weeks in UTC, starting on
 Monday (2026-W40). --by repo|model|person groups across the range, and --by mode
 groups by the rigor mode each run resolved (poc, startup, pro, critical, hotfix,
-and none for a run whose record carries no mode), read from the run records and
-not from this history. Dollars are
+and none for a run whose record carries no mode, or carries one this version does
+not know), read from the run records and not from this history. Dollars are
 exact (integer micro-dollars). Model $, NOTIONAL~ (a subscription's list-price
 figure, never billed) and COMPUTE $ are separate columns and never summed;
 compute reads n/a when no run's compute was estimated. A person is the stored

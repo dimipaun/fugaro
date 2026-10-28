@@ -356,6 +356,15 @@ type runObject struct {
 // window too large to read whole publishes, and the caller says so rather
 // than leaving a reader to think the figures cover the whole window.
 //
+// until is the window's end as an instant, and the zero time means no end:
+// runs minted at or after it are outside the window, so they are dropped
+// before the cap rather than after it. A caller whose window can end in the
+// past needs that order -- a run launched since would otherwise take a place
+// the cap keeps for a run of the window, and a window small enough to read
+// whole could come back empty. A run ID this build cannot read as a launch
+// time is kept: dropping it would be this reader deciding the end of the
+// window on a guess.
+//
 // Only launch.json and result.json are read, and neither the task nor the
 // transcript: the launcher is launch.json's own record of itself, and the
 // attribution rules say a run with no launcher recorded is 'unknown' -- a
@@ -376,7 +385,7 @@ type runObject struct {
 // launcher nobody recorded. A run whose corrupt launch.json and absent
 // result.json were read as "never started" would be a run missing from every
 // by-user figure while runs ls shows the same object as an error row.
-func readRunObjects(ctx context.Context, env *cloudEnv, slugs []string, since time.Time, max int) (objs []runObject, unlaunched int, truncated bool, err error) {
+func readRunObjects(ctx context.Context, env *cloudEnv, slugs []string, since, until time.Time, max int) (objs []runObject, unlaunched int, truncated bool, err error) {
 	type ref struct{ slug, id string }
 	var refs []ref
 	for _, slug := range slugs {
@@ -397,6 +406,12 @@ func readRunObjects(ctx context.Context, env *cloudEnv, slugs []string, since ti
 		}
 		return strings.Compare(b.slug, a.slug)
 	})
+	if !until.IsZero() {
+		refs = slices.DeleteFunc(refs, func(r ref) bool {
+			t, err := runstore.RunTime(r.id)
+			return err == nil && !t.Before(until)
+		})
+	}
 	if len(refs) > max {
 		refs, truncated = refs[:max], true
 	}
@@ -464,7 +479,9 @@ func readRunObjects(ctx context.Context, env *cloudEnv, slugs []string, since ti
 // readUserStatsRuns maps the window's run objects to the narrow view
 // internal/userstats aggregates.
 func readUserStatsRuns(ctx context.Context, env *cloudEnv, slugs []string, since time.Time, max int) (userStatsRead, error) {
-	objs, unlaunched, truncated, err := readRunObjects(ctx, env, slugs, since, max)
+	// runs stats has no window end: its --since is the whole window, so the
+	// read is bounded by the cap alone.
+	objs, unlaunched, truncated, err := readRunObjects(ctx, env, slugs, since, time.Time{}, max)
 	if err != nil {
 		return userStatsRead{}, err
 	}
