@@ -46,7 +46,7 @@ Subcommands:
 - `fugaro project` -- The project's policy, its allow-list and the repositories enrolled
 - `fugaro reaper` -- Sweep the Batch jobs and VMs a run has leaked
 - `fugaro recipes` -- List, show, validate and publish recipes, the task loop a run follows after implement
-- `fugaro report` -- Report what the project spent, by day, week, month, year, repository, model or person
+- `fugaro report` -- Report what the project spent, by day, week, month, year, repository, model, person or mode
 - `fugaro restore` -- Rebuild a managed project from zero, into a new GCP project ID, and print what is not restored
 - `fugaro run` -- Launch a task in the cloud; it always ends with a PR
 - `fugaro runs` -- List and inspect runs
@@ -2621,7 +2621,7 @@ This command has no subcommands.
 
 ## `fugaro report`
 
-Report what the project spent, by day, week, month, year, repository, model or person
+Report what the project spent, by day, week, month, year, repository, model, person or mode
 
 Report model spend from the project's spend history.
 
@@ -2633,7 +2633,10 @@ marked (partial). --since and --until are UTC dates (YYYY-MM-DD); --since also
 takes Nd, the last N days up to --until (default 30d); --until defaults to today.
 
 --by day|week|month|year groups in time; weeks are ISO weeks in UTC, starting on
-Monday (2026-W40). --by repo|model|person groups across the range. Dollars are
+Monday (2026-W40). --by repo|model|person groups across the range, and --by mode
+groups by the rigor mode each run resolved (poc, startup, pro, critical, hotfix,
+and none for a run whose record carries no mode), read from the run records and
+not from this history. Dollars are
 exact (integer micro-dollars). Model $, NOTIONAL~ (a subscription's list-price
 figure, never billed) and COMPUTE $ are separate columns and never summed;
 compute reads n/a when no run's compute was estimated. A person is the stored
@@ -2657,7 +2660,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--by` | string | `day` | no | group by day, week, month, year, repo, model or person |
+| `--by` | string | `day` | no | group by day, week, month, year, repo, model, person or mode |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--csv` | bool | `false` | no | print CSV (RFC 4180) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |

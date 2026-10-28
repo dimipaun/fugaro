@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/report"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -301,8 +303,145 @@ func TestReportCSVCLI(t *testing.T) {
 	if _, _, err := execute(t, "report", "--csv", "--json"); err == nil {
 		t.Fatal("--csv with --json accepted")
 	}
-	if _, _, err := execute(t, "report", "--by", "decade"); err == nil || !strings.Contains(err.Error(), "--by") {
+	if _, _, err := execute(t, "report", "--by", "decade"); err == nil || !strings.Contains(err.Error(), "--by") || !strings.Contains(err.Error(), "mode") {
 		t.Fatalf("%v", err)
+	}
+}
+
+// seedModeRun writes one run's result.json under slug, with the rigor mode the
+// run resolved ("" for a record that carries no rigor block), so a test can
+// plant the one fact --by mode groups by.
+func seedModeRun(t *testing.T, f *cloudFixture, slug, id, mode string, c runstore.Cost) {
+	t.Helper()
+	ctx := context.Background()
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	st, err := runstore.RunTime(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fin := st.Add(time.Hour)
+	rec := &runstore.Record{RunID: id, Repo: "acme/app", Status: "succeeded", StartedAt: st, FinishedAt: &fin, Cost: &c, CostUSD: c.ModelUSD}
+	if mode != "" {
+		rec.Rigor = &runstore.RigorRecord{Mode: rigor.Mode(mode)}
+	}
+	if err := runstore.Open(b, slug, id).WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// modeRow is one by-mode row as a test reads it.
+type modeRow struct {
+	model, notional, runs string
+	compute               *string
+}
+
+// TestReportByModeGroupsRuns: the mode is the run's own record's, each run
+// counts once, an unknown mode reads as none and never as the raw text, and
+// the money and the notional stay apart.
+func TestReportByModeGroupsRuns(t *testing.T) {
+	f := newReportFixture(t)
+	seedModeRun(t, f.cloudFixture, appSlug, "20261015-120000-aaaa", "pro", runstore.NewCost(1.50, 0.25, runstore.BasisAPIList))
+	seedModeRun(t, f.cloudFixture, appSlug, "20261016-120000-bbbb", "critical", runstore.NewCost(2.25, 0.10, runstore.BasisAPIList))
+	seedModeRun(t, f.cloudFixture, appSlug, "20261017-120000-cccc", "", runstore.ModelOnlyCost(3.00, runstore.BasisSubscription))
+	seedModeRun(t, f.cloudFixture, appSlug, "20261018-120000-dddd", "turbo", runstore.ModelOnlyCost(0.50, runstore.BasisAPIList))
+
+	o := f.json(t, "--by", "mode", "--since", "2026-10-01")
+	if o.Source != "run-records" || o.Degraded {
+		t.Fatalf("source = %q, degraded = %v", o.Source, o.Degraded)
+	}
+	if len(o.Rows) != 3 {
+		t.Fatalf("rows %+v", o.Rows)
+	}
+	by := map[string]modeRow{}
+	for _, r := range o.Rows {
+		notional := "-"
+		if r.NotionalUSD != nil {
+			notional = *r.NotionalUSD
+		}
+		by[r.Key] = modeRow{model: r.ModelUSD, notional: notional, runs: fmt.Sprint(r.Runs), compute: r.ComputeUSD}
+	}
+	if len(by) != 3 {
+		t.Fatalf("an unknown mode did not read as none: %+v", o.Rows)
+	}
+	if p, ok := by["pro"]; !ok || p.model != "1.500000" || p.runs != "1" || p.notional != "0.000000" || p.compute == nil || *p.compute != "0.250000" {
+		t.Fatalf("pro %+v", by)
+	}
+	if c, ok := by["critical"]; !ok || c.model != "2.250000" || c.runs != "1" || c.compute == nil || *c.compute != "0.100000" {
+		t.Fatalf("critical %+v", by)
+	}
+	// none: the record with no rigor block and the record whose mode is not one
+	// of the vocabulary's, each counted once; the subscription run's figure is
+	// notional and never model money, and no run of the row estimated compute,
+	// so the column reads n/a rather than 0.
+	n, ok := by["none"]
+	if !ok || n.model != "0.500000" || n.runs != "2" || n.notional != "3.000000" || n.compute != nil {
+		t.Fatalf("none %+v", by)
+	}
+	if o.Totals.ModelMicros != 4_250_000 {
+		t.Fatalf("total %d", o.Totals.ModelMicros)
+	}
+	out, errOut, err := execute(t, "report", "--by", "mode", "--since", "2026-10-01")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, errOut)
+	}
+	for _, want := range []string{"by mode", "MODE", "pro", "critical", "none", "run records", "n/a"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the table lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.ContainsRune(out, 0x1b) {
+		t.Fatalf("the table carries an escape:\n%q", out)
+	}
+}
+
+// TestReportByModeRange: a run outside --since/--until is in no row, and --repo
+// filters as it does everywhere else.
+func TestReportByModeRange(t *testing.T) {
+	f := newReportFixture(t)
+	seedModeRun(t, f.cloudFixture, appSlug, "20261010-120000-aaaa", "pro", runstore.NewCost(9.00, 0, runstore.BasisAPIList))
+	seedModeRun(t, f.cloudFixture, appSlug, "20261015-120000-bbbb", "pro", runstore.NewCost(1.00, 0, runstore.BasisAPIList))
+	seedModeRun(t, f.cloudFixture, appSlug, "20261020-120000-cccc", "pro", runstore.NewCost(5.00, 0, runstore.BasisAPIList))
+	seedModeRun(t, f.cloudFixture, "github-other-repo", "20261015-120000-dddd", "pro", runstore.NewCost(7.00, 0, runstore.BasisAPIList))
+
+	// The window: the run before --since and the run after --until are in no
+	// row.
+	o := f.json(t, "--by", "mode", "--since", "2026-10-14", "--until", "2026-10-16", "--repo", "acme/app")
+	if len(o.Rows) != 1 || o.Rows[0].Key != "pro" || o.Rows[0].ModelUSD != "1.000000" || o.Rows[0].Runs != 1 {
+		t.Fatalf("range rows %+v", o.Rows)
+	}
+	// Both repositories of the bucket, over the whole window.
+	if o = f.json(t, "--by", "mode", "--since", "2026-10-01"); o.Totals.ModelMicros != 22_000_000 {
+		t.Fatalf("the whole window = %d, want every repository's runs", o.Totals.ModelMicros)
+	}
+	// --repo names one repository's runs: three of the four.
+	o = f.json(t, "--by", "mode", "--since", "2026-10-01", "--repo", "acme/app")
+	if o.Totals.ModelMicros != 15_000_000 || len(o.Rows) != 1 || o.Rows[0].Runs != 3 {
+		t.Fatalf("--repo acme/app = %+v, want this repository's three runs", o)
+	}
+}
+
+// TestReportByModeJSONSource: the document names the run records as its source,
+// --csv works, and the breakdown needs no spend history at all.
+func TestReportByModeJSONSource(t *testing.T) {
+	f := newReportFixture(t)
+	f.fs.RemoveDatabase()
+	seedModeRun(t, f.cloudFixture, appSlug, "20261019-120000-aaaa", "hotfix", runstore.NewCost(2.00, 0.50, runstore.BasisAPIList))
+
+	o := f.json(t, "--by", "mode", "--since", "2026-10-01")
+	if o.Source != "run-records" || o.Degraded || len(o.Rows) != 1 || o.Rows[0].Key != "hotfix" ||
+		o.Rows[0].ModelUSD != "2.000000" || o.Rows[0].ComputeUSD == nil || *o.Rows[0].ComputeUSD != "0.500000" {
+		t.Fatalf("%+v", o)
+	}
+	if !strings.Contains(strings.Join(o.Warnings, "\n"), "run records") {
+		t.Errorf("warnings = %q, want the run-record source named", o.Warnings)
+	}
+	out, _, err := execute(t, "report", "--csv", "--by", "mode", "--since", "2026-10-01")
+	if err != nil || !strings.Contains(out, "hotfix") || !strings.Contains(out, "2.000000") || !strings.Contains(out, "\r\n") {
+		t.Fatalf("%v\n%q", err, out)
 	}
 }
 
