@@ -508,7 +508,12 @@ func TestPRStateDisabled(t *testing.T) {
 func TestPRStateBoundsConcurrency(t *testing.T) {
 	var mu sync.Mutex
 	var live, peak int
-	entered := make(chan struct{}, 8)
+	var rows []ReadyRow
+	for i := 10; i < 18; i++ {
+		rows = append(rows, readyRow("https://github.com/acme/app/pull/"+strconv.Itoa(i), i))
+	}
+	// Room for one entry per row, so a lookup never blocks sending its own.
+	entered := make(chan struct{}, len(rows))
 	release := make(chan struct{})
 	p := NewPRState(PRStateOptions{Concurrency: 2, Timeout: prStateTestTimeout})
 	p.askFn = func(context.Context, prRef) (prStateKind, error) {
@@ -523,10 +528,6 @@ func TestPRStateBoundsConcurrency(t *testing.T) {
 		mu.Unlock()
 		return prOpen, nil
 	}
-	var rows []ReadyRow
-	for i := 10; i < 18; i++ {
-		rows = append(rows, readyRow("https://github.com/acme/app/pull/"+strconv.Itoa(i), i))
-	}
 	if got := p.Filter(rows); len(got) != len(rows) {
 		t.Fatalf("kept %d rows, want all of them listed while unknown", len(got))
 	}
@@ -536,7 +537,7 @@ func TestPRStateBoundsConcurrency(t *testing.T) {
 		select {
 		case <-entered:
 		case <-time.After(prStateTestTimeout):
-			t.Fatalf("%d of 2 lookups entered in %s: the second never started", i, prStateTestTimeout)
+			t.Fatalf("%d of 2 lookups entered in %s: Concurrency lookups must be inside at once", i, prStateTestTimeout)
 		}
 	}
 	// Both slots are the held lookups', so a third cannot be inside at all —
