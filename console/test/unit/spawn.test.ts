@@ -2401,8 +2401,9 @@ describe('the WSL resolution path', () => {
       expect(result.code, title).toBe(0)
       const child = wsl.children()[index]
       expect(child, `${JSON.stringify(title)} started no CLI`).toBeDefined()
+      // The stub's own argv, which starts at `run`: the program word is the
+      // script's `exec` target and not an argument of the child it becomes.
       expect(child?.argv, title).toStrictEqual([
-        'fugaro',
         'run',
         '--task-file',
         '-',
