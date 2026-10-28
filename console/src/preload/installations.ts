@@ -8,12 +8,14 @@
 // the reason is the surface: `src/preload/index.ts` exposes **twenty-four** rows
 // to the document that draws the dashboard -- the CLI reads, the startup
 // handshake's answer, `openExternal`'s handover, `installation.current` and the
-// installation rail's six -- and the picker has no business with any of them. The two documents are served from the
+// installation rail's six -- and the picker has no business with any of them.
+// Every document of the bundle is served from the
 // same origin (`app://console`), so the *only* thing that separates their
 // surfaces is that each window is built with its own preload and each channel
 // prefix is gated on the document that may reach it -- `isSenderOnDocument` in
-// `src/main/ipc.ts` for the `fugaro:console/` prefix, and `src/main/picker.ts` for
-// the `fugaro:installations/` prefix.
+// `src/main/ipc.ts` for the `fugaro:console/` prefix, `src/main/picker.ts` for
+// the `fugaro:installations/` prefix, and the open confirmation window's own
+// `webContents` in `src/main/confirm.ts` for the `confirm:` prefix.
 //
 // What this file deliberately does not do:
 //

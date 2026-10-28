@@ -1867,9 +1867,11 @@ seam the renderer entry (Task 3.4a) needs to answer the dashboard's
   Task 4.1 (#540) wrote the list and Task 3.4a moved the served root to the
   bundler's output; this task adds its two files to it. `build.files` carries
   the documents the handler serves, as the bundler's copies of
-  `src/renderer/index.html`, `src/renderer/refusal.html` and
-  `src/renderer/installations.html` in `dist/bundle/`; the two bundles,
-  `dist/bundle/console.js` and `dist/bundle/installations.js`; **the served
+  `src/renderer/index.html`, `src/renderer/refusal.html`,
+  `src/renderer/installations.html` and `src/renderer/confirm.html` in
+  `dist/bundle/`; the three bundles,
+  `dist/bundle/console.js`, `dist/bundle/installations.js` and
+  `dist/bundle/confirm.js`; **the served
   stylesheet, `dist/bundle/console.css`** (Task 6.2 — every document links it,
   so an app packaged without it opens a window with no style at all); the three
   preloads a window loads by absolute path, `dist/preload/index.js`,
@@ -1878,16 +1880,20 @@ seam the renderer entry (Task 3.4a) needs to answer the dashboard's
   shared and
   source modules under `dist/**` except the two Task 4.1 excludes by name.
   `test/unit/build-files.test.ts` reads that list off the tree rather than
-  repeating it, so a third document or a third preload is covered when it is
+  repeating it, so the next document or the next preload is covered when it is
   added, and a file that works here but is missing from the shipped bundle
   fails a named test instead of shipping — the stylesheet is the one
   `bundlerOutputs` names by hand, and that is why a `build.files` that dropped
   it fails by name.
 - **The picker's bundle entry** is the bundler's second entry
-  (`pickerBundlePaths` in `tools/bundle-renderer/index.ts`): `npm run build`
-  writes `dist/bundle/installations.js` beside `console.js`, each bundle step
-  told the other's name so the served root still refuses any file it did not
-  write, and `SERVED_FILES` names both documents and both scripts.
+  (`pickerBundlePaths` in `tools/bundle-renderer/index.ts`) and the launch
+  confirmation window's the third (`confirmBundlePaths`, V2.5.1a part 2b-2a):
+  `npm run build`
+  writes `dist/bundle/installations.js` and `dist/bundle/confirm.js` beside
+  `console.js`, each bundle step
+  told the others' names so the served root still refuses any file it did not
+  write, and `SERVED_FILES` names all four documents, the three window scripts,
+  the worker and the stylesheet.
 - **A picker e2e spec.** The picker's coverage is
   `test/unit/installations-store.test.ts`, `test/unit/installations-ipc.test.ts`
   and `test/unit/installations-view.test.ts` (the last drives the view over a
@@ -2297,6 +2303,7 @@ rather than moving it: `build.files` is
  "dist/preload/index.js", "dist/preload/installations.js",
  "dist/preload/confirm.js",
  "dist/shared/**/*.js", "dist/source/**/*.js", "!dist/source/fixture.js",
+ "dist/bundle/confirm.html", "dist/bundle/confirm.js",
  "dist/bundle/console.css", "dist/bundle/console.js",
  "dist/bundle/elk-worker.min.js", "dist/bundle/index.html",
  "dist/bundle/installations.html", "dist/bundle/installations.js",
@@ -2305,8 +2312,10 @@ rather than moving it: `build.files` is
 
 (as amended when Task 3.4a moved the served root to `dist/bundle/`, Task 3.4b
 added the picker's document, script and preload, Task 6.2 added the served
-stylesheet, and GV2.2 added the pinned worker the build copies verbatim and the
-notices file packed beside the app; the paragraph below is Task 4.1's record of its own first list)
+stylesheet, GV2.2 added the pinned worker the build copies verbatim and the
+notices file packed beside the app, and V2.5.1a part 2b-2a added the launch
+confirmation window's document and bundle; the paragraph below is Task 4.1's
+record of its own first list)
 
 — the compiled main process, preload, shared and source modules, the document
 the window actually loads, and nothing else. Two compiled files are excluded by
@@ -2917,7 +2926,7 @@ that follows is the record of the stage before that.** Each is named by `THEME_S
 `tools/bundle-renderer/index.ts`, the bundler's stylesheet step concatenates them (in list
 order) into `dist/bundle/console.css`, `/console.css` is one of the entries `SERVED_FILES`
 names — the list `test/unit/bundle.test.ts` holds the served root to, not a filter the
-handler consults — and each of the three documents links it — see the section at the foot of
+handler consults — and each of the four documents links it — see the section at the foot of
 this file.
 `test/unit/bundle.test.ts` fails if a stylesheet `THEME_STYLESHEETS` names still says in its
 own prose that nothing reads it, which is the sentence this paragraph used to open with and

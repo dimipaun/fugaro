@@ -16,8 +16,11 @@
 // header, and the reason is the surface rather than the layout: the dashboard's
 // document is exposed to twenty-four operations -- the CLI reads, the handshake,
 // the link handover, `installation.current` and the rail's six -- and the
-// picker's job is to add an installation by checkout path. Two documents, two preloads, two channel prefixes, and a sender
-// gate narrowed to one document each (`isSenderOnDocument` in `src/main/ipc.ts`) --
+// picker's job is to add an installation by checkout path. Four documents,
+// three preloads, three channel prefixes, and a sender gate narrowed to one
+// document each (`isSenderOnDocument` in `src/main/ipc.ts`
+// for the dashboard's and the picker's, and the open confirmation window's own
+// `webContents` in `src/main/confirm.ts`) --
 // so a frame on the dashboard cannot reach `fugaro:installations/remove`, and a
 // frame on the picker cannot reach `runs.list`.
 //

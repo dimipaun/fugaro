@@ -73,9 +73,9 @@ frame-ancestors 'none'; object-src 'none'
 used.** `'self'` permits a stylesheet served from `app://console` — the console's own
 bundle — and the policy has no `'unsafe-inline'`, so a `<style>` element and a `style="…"`
 attribute are both refused by the browser whatever the code does. The `<meta
-http-equiv>` copy in each of the three documents is byte-identical to the header:
+http-equiv>` copy in each of the four documents is byte-identical to the header:
 `console/test/unit/csp-document.test.ts` derives the document list from `SERVED_FILES`, so it
-holds **all three** copies equal to the header and to each other, and
+holds **all four** copies equal to the header and to each other, and
 `console/test/unit/window.test.ts` holds the same for the two documents it reads
 (`index.html` and `refusal.html`) alongside the assertion that the policy contains neither
 `unsafe-inline`, `unsafe-eval` nor `*`.
@@ -827,6 +827,31 @@ either of them.
 no time by design, so the marker's stamp is drawn as the string the document holds and never
 reformatted into a date: the console's own sentence about the time it does not have is the
 `coordinator-age` paragraph, and it is drawn as prose.
+
+### 2.13 The launch confirmation window — `console/src/renderer/confirm.html` + `console/src/renderer/confirm.ts`
+
+The modal the main process opens before it spawns a run (`desktop-console.md`, §5.1 rule 11;
+V2.5.1a). It shows one launch — the installation, the repository the
+launch recorded and the one it converted, the ref, the title and the plan task, the run id,
+the command line word by word, the size of the task as submitted and the **whole** task text —
+and asks the operator for one of two answers: cancel, which is the default, or go ahead.
+
+| Region | Hook | What it holds |
+|---|---|---|
+| The task | `console-confirm-task` | the `pre` holding the task text as submitted, drawn in full and bounded, so a long task scrolls inside the box rather than being shortened or pushing the two answers off the window |
+| The answers | `console-confirm-actions` | the row the view appends its two buttons to: the confirming one, and Cancel |
+
+**Its hooks are classes and not the picker's ids**, although its document is hand-written
+HTML like the picker's: the scan in `console/test/unit/installations-view.test.ts` reads this
+stylesheet for id selectors and holds every one of them to the ids `installations.html`
+declares, so a second document's ids in this file would read there as rules for a page that
+is not served. The four containers the view looks up (`confirm-status`, `confirm-fields`,
+`confirm-task`, `confirm-actions`) are the document's own declarations, and the ids and the
+two hooks above are the whole of what the window carries: **no `data-*` of its own, and no
+rule here keyed on a theme attribute**, since the window is one surface with one ground. The
+field rows are the view's `dt`/`dd` pairs and **have no hook of their own**: no rule in this
+file selects them, and they carry only what `base.css`'s reset gives every `dt` and `dd`. A
+rule that wanted one adds it here first.
 
 ---
 
@@ -1805,7 +1830,7 @@ are **different sources, which is what makes the comparison worth making**: `bui
 than ship. **The test's non-vacuity assertion is the load-bearing half**: a name dropped from
 the list, or a file written into `dist/bundle/` that nothing vouches for, still fails.
 
-### 5.4 The three `<link>` elements
+### 5.4 The `<link>` elements
 
 One `<link rel="stylesheet" href="./console.css" />` in the `<head>` of **each** of
 `console/src/renderer/index.html`, `console/src/renderer/installations.html` and `console/src/renderer/refusal.html`, beside the existing CSP `<meta>`:
@@ -1818,6 +1843,12 @@ One `<link rel="stylesheet" href="./console.css" />` in the `<head>` of **each**
   maintains;
 - the refusal document **is included**, and that is the point: the one page a console below
   the floor shows must not be the unstyled one.
+
+**Amended 2026-10-28: `console/src/renderer/confirm.html` is the fourth document and links
+the same file the same way** (the launch confirmation window, §2.13, V2.5.1a). Nothing else
+about this section moves with it: the stylesheet is still one file, still served by the same
+handler under the same directive, and the document the window loads is the one page in the
+bundle whose rules are classes rather than the picker's ids.
 
 ### 5.5 The CSP is unchanged, proved
 
@@ -1832,7 +1863,7 @@ a fetch the CSP's `connect-src` governs, and no script fetches the CSS).
 The evidence a reviewer should require, and which the tests provide:
 
 - `CONTENT_SECURITY_POLICY` is byte-identical before and after, and so is the `<meta>`
-  copy in each of the three documents — held for **all three** by
+  copy in each of the four documents — held for **all four** by
   `console/test/unit/csp-document.test.ts`, whose document list is derived from
   `SERVED_FILES`, and for the two it reads by `console/test/unit/window.test.ts`, whose
   `expect(CONTENT_SECURITY_POLICY).toBe(DESIGN_CSP)` pins the policy itself;
@@ -2242,7 +2273,8 @@ element with no keys. 6.6 (the frames) is last and owner-run.
 - **Scope:** the bundler's stylesheet step (§5.2) — `THEME_STYLESHEETS` **with the files
   that exist at this point** (`tokens.css`, `palette.css`, both from Task 6.1), the
   refusals, the `dist/bundle/console.css` artefact and its ownership; `SERVED_FILES`
-  (§5.3); the three `<link>` elements (§5.4); `build.files` and the README's list (§5.6);
+  (§5.3); the `<link>` elements (§5.4 — three when this task landed, amended to four by
+  V2.5.1a on 2026-10-28); `build.files` and the README's list (§5.6);
   and the tests that pin all of it — `bundle.test.ts`, `csp-document.test.ts`,
   `build-files.test.ts`, and the `style` scan extension to `screen-literals.test.ts` (§5.5).
   **The whole-directory list is not this task's**, and cannot be: the bundler refuses a
@@ -2489,7 +2521,7 @@ console plan's `C`-series style only in shape, and a number is the owner's to gi
   installations file, and nothing else") and needs the owner's ruling the way C8 did;
   (c) a key inside the existing `installations.json`, which is schema-closed and would
   need a version bump; (d) `nativeTheme.themeSource` in the main process, which themes all
-  three documents including the refusal page.
+  four documents including the refusal page.
 - *Recommendation:* (a) for v1, with (d) named as the natural home if the owner later wants
   one — (d) needs no new setting to *decide the colour* but still needs one to *remember*
   the choice. *Why:* v1 writes two files and rule 10 says so in the owner's own words;

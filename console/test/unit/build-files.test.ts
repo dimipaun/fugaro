@@ -19,8 +19,8 @@
 //     `installations.html`, or the picker's preload, or the compiled tree,
 //     fails here by name rather than shipping an app that draws an empty window.
 //
-// The list is **read off the tree** rather than written out, so a third document
-// or a third preload is covered the day it is added: every `.html` under
+// The list is **read off the tree** rather than written out, so the next
+// document or the next preload is covered the day it is added: every `.html` under
 // `src/renderer` is served by the `app://` handler, every `.ts` under
 // `src/preload` compiles to a preload a window loads by absolute path, and every
 // `.ts` under `src/` compiles into `dist/` because that is what
@@ -66,8 +66,9 @@ const documents = filesNamed('src/renderer', '.html').map((name) => `src/rendere
 const preloads = filesNamed('src/preload', '.ts').map((name) => `dist/preload/${name.slice(0, -3)}.js`)
 
 /** compiled is the whole build output the main process and the renderer run
- * from, and the bundler's four outputs are what the documents actually load:
- * the dashboard's entry, the picker's entry, the stylesheet every document
+ * from, and the bundler's five outputs are what the documents actually load:
+ * the dashboard's entry, the picker's entry, the confirmation window's entry
+ * (V2.5.1a), the stylesheet every document
  * links (Task 6.2), and elkjs's layout worker (GV2.2). The stylesheet and the
  * worker are the ones this list catches by name, and that is the whole point of
  * naming them here: a `build.files` that carried the two bundles and not
@@ -80,6 +81,8 @@ const compiled = compiledModules()
 const bundlerOutputs = [
   'LICENSE.md',
   'THIRD_PARTY_NOTICES.md',
+  'dist/bundle/confirm.html',
+  'dist/bundle/confirm.js',
   'dist/bundle/console.css',
   'dist/bundle/console.js',
   'dist/bundle/elk-worker.min.js',

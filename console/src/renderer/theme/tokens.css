@@ -21,7 +21,7 @@
  * This file is WIRED, and Task 6.2 is the task that wired it: the bundler's stylesheet step
  * (`tools/bundle-renderer/index.ts`) names this file and `palette.css` in
  * `THEME_STYLESHEETS`, concatenates them into `dist/bundle/console.css`, `/console.css` is
- * one of the entries the served root admits (`src/main/protocol.ts`), and each of the three
+ * one of the entries the served root admits (`src/main/protocol.ts`), and each of the four
  * documents links it with `<link rel="stylesheet" href="./console.css">`. So a value written
  * here reaches the window on the next `npm run build`, and it reaches it as one served file
  * rather than one per source file: a task that adds a stylesheet to this directory adds it to

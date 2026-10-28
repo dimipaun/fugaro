@@ -63,7 +63,7 @@
 // under `src/renderer/theme/`, named by `THEME_STYLESHEETS` below and by nothing
 // else -- and the served root is a flat allow-list (`SERVED_FILES`), so the
 // directory's files are emitted as **one** file, `dist/bundle/console.css`,
-// served at `/console.css` and linked from each of the three documents. One file
+// served at `/console.css` and linked from each of the four documents. One file
 // and not one per source file, for the reason the scripts are bundled. The step
 // is in this tool because this tool already owns the output directory.
 //
@@ -841,6 +841,19 @@ export function pickerBundlePaths(consoleRoot: string): { readonly entry: string
   }
 }
 
+/** confirmBundlePaths is the third entry (V2.5.1a part 2b-2a): the launch
+ * confirmation window's document script, `dist/renderer/confirm.js`, into
+ * `dist/bundle/confirm.js` beside the other two. It is a bundle of its own for
+ * the reason its document is a document of its own: the window has its own
+ * preload and its own two methods, and neither the dashboard's screens nor the
+ * picker's list has any business in it. */
+export function confirmBundlePaths(consoleRoot: string): { readonly entry: string; readonly out: string } {
+  return {
+    entry: join(consoleRoot, 'dist', 'renderer', 'confirm.js'),
+    out: join(consoleRoot, 'dist', 'bundle', 'confirm.js'),
+  }
+}
+
 /** WORKER_FILE is the one file in the served root that this build neither
  * compiles nor writes: elkjs's layout worker, copied byte for byte out of the
  * pinned package (GV2.2). It is a devDependency rather than a dependency
@@ -898,7 +911,7 @@ export function bundleWorker(worker: { readonly source: string; readonly out: st
  * `bundleStylesheet`, which runs before these; the `siblings` mechanism is what
  * makes it *owned* rather than foreign. */
 export function consoleBundles(consoleRoot: string): readonly BundleOptions[] {
-  const all = [consoleBundlePaths(consoleRoot), pickerBundlePaths(consoleRoot)]
+  const all = [consoleBundlePaths(consoleRoot), pickerBundlePaths(consoleRoot), confirmBundlePaths(consoleRoot)]
   const stylesheet = basename(consoleStylesheet(consoleRoot).out)
   return all.map((bundle) => ({
     ...bundle,
@@ -916,7 +929,7 @@ export function consoleBundles(consoleRoot: string): readonly BundleOptions[] {
  * **order** is a claim a test has to be able to make (review M3).
  *
  * The order is: **every refusal this build can make**, then the stylesheet, then
- * elkjs's worker (GV2.2), then the two renderer bundles. The refusals come
+ * elkjs's worker (GV2.2), then the three renderer bundles. The refusals come
  * first because they are the ones that can stop the build, and a build that
  * stops must not have written anything: with
  * the stylesheet first, a foreign file in `dist/bundle/` was a build failure that
@@ -953,7 +966,7 @@ export function buildConsole(consoleRoot: string): void {
   const bundles = consoleBundles(consoleRoot)
   const first = bundles[0]
   if (first === undefined) {
-    throw new BundleRefusal(`${consoleRoot} has no bundle to write: the console's build writes two`)
+    throw new BundleRefusal(`${consoleRoot} has no bundle to write: the console's build writes three`)
   }
   const directory = dirname(resolve(first.out))
   const stylesheet = consoleStylesheet(consoleRoot)

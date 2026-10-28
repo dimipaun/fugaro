@@ -4,11 +4,12 @@
  * plan Task 6.4; design section 2's inventory, with sections 3.5, 3.7, 3.8, 4.2
  * and 4.4 as the rules it keeps).
  *
- * This is the last layer of the one stylesheet the three documents
+ * This is the last layer of the one stylesheet the four documents
  * link: `tokens.css` is the vocabulary, `palette.css` the value set, `base.css`
  * the reset, the document and the chrome, and this file is the per-screen rules
  * — Live, Spend, Projects, Run detail, the degraded and unavailable screens, the
- * refusal document and the installation picker, in the order section 2
+ * refusal document, the installation picker and the launch confirmation window,
+ * in the order section 2
  * inventories them.
  *
  * **It is wired, and Task 6.2 is what wired the layer it joins.** The bundler
@@ -1308,6 +1309,53 @@ main p {
 #picker-onboarding button:disabled {
   color: var(--text-muted);
   border-style: dashed;
+}
+
+/* ---- The launch confirmation window (design section 5.1 rule 11) ----------
+ *
+ * The window's document is hand-written HTML like the picker's, but its hooks
+ * are **classes rather than ids** (design §2.13): the scan in
+ * `installations-view.test.ts` reads this file for id selectors and holds every
+ * one of them to the ids `installations.html` declares, so a second document's
+ * ids here would read as undeclared there. The names carry the chrome's
+ * `console-` prefix, because this window is chrome the main process owns rather
+ * than a screen the dashboard mounts -- and because that is the vocabulary the
+ * design's inventory scan licenses a hook by.
+ *
+ * The task box is the reason this section exists. Rule 11 shows the **whole**
+ * task text, never cut, so the box is bounded and scrolls rather than the
+ * document shortening it -- and a 16 KiB task that pushed the two buttons off
+ * the window would be a window an operator cannot answer.
+ */
+
+.console-confirm-task {
+  max-height: 40vh;
+  margin: 0 0 var(--space-md);
+  padding: var(--space-xs);
+  overflow: auto;
+  color: var(--text);
+  background: var(--surface-alt);
+  border: var(--rule-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+/* The two answers are buttons and a button's boundary is `--border-strong` (the
+ * role table the picker's controls read from). The rule is one rule for both
+ * because the view gives them the same treatment: it draws the confirming button
+ * first and Cancel second, and Cancel is the default by being the one focused on
+ * load rather than by being drawn first. */
+.console-confirm-actions button {
+  padding: var(--space-2xs) var(--space-xs);
+  color: var(--text);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.console-confirm-actions button:hover {
+  color: var(--accent-ink);
 }
 
 /* ---- Graph (design section 2.11) ------------------------------------------

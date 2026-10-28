@@ -2252,9 +2252,10 @@ export type ConsoleHandlers = { readonly [Name in OperationName]: ConsoleHandler
  *
  * `isConsoleSenderUrl` answers about the *origin*, and it has to: a fragment is
  * how a screen addresses its own views, and refusing `app://console/index.html#spend`
- * would be refusing the console's own window. But two documents are served from
- * that origin -- the dashboard and, from Task 3.4b, the installation picker --
- * and an origin-only check cannot tell them apart. A picker frame that invoked
+ * would be refusing the console's own window. But the origin is not one
+ * document: the dashboard, the installation picker (Task 3.4b) and the launch
+ * confirmation window (V2.5.1a) are all served from it, and an origin-only check
+ * cannot tell them apart. A picker frame that invoked
  * `runs.list`, or a dashboard frame that invoked `fugaro:installations/remove`,
  * would both pass an origin check, so the check is on the **path** the frame is
  * on as well.
