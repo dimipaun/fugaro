@@ -357,9 +357,10 @@ const MaxServiceTiers = 8
 // report, and the run record built from it, with the call count. List bounds
 // what those carry: the first MaxServiceTiers distinct names, then one
 // "+N more" entry standing for the distinct names beyond them. The set itself
-// remembers every name it has seen, since a count of distinct values cannot be
-// kept without them; what a reader, a log line and the stored record pay for
-// is what List prints.
+// keeps every name it has seen -- a count of distinct values cannot be kept
+// without them, and a name per call the run paid for is nothing beside the
+// call -- while what a reader, a log line and the stored record pay for is
+// what List prints.
 type ServiceTierSet struct {
 	names []string
 	seen  map[string]struct{}
