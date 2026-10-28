@@ -905,9 +905,10 @@ func (s *Server) logUsageUnparsed(model string, pr *Route, reason string, events
 // allow. On a provider route (pr, else nil) a
 // serving model other than the pinned one is never priced lower than the
 // pin: the dearer of the two rates per dimension, or the table's maximum
-// when the table doesn't know it; and the route's fee is added to the
-// charge. A partial call is charged its reported input and cache tokens
-// plus the reserved output.
+// when the table doesn't know it; the route's fee is added to the
+// charge; and a service tier no one prices is charged at least the cost the
+// provider itself reported for the call. A partial call is charged its
+// reported input and cache tokens plus the reserved output.
 func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, partial bool) outcome {
 	serving := t.model
 	if serving == "" {
@@ -941,13 +942,15 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, partial bool) outco
 	// A service tier is the tier the provider itself served the call from:
 	// the agent's request said nothing about it, and a provider can answer
 	// with one at any time. It is charged the dearest multiple the table
-	// knows, and recorded on the stage, in the call log and in a warning,
-	// and the stage goes on: failing the stage is what turns one provider's
-	// field into a dead run. Pricing it at the table's maximum rates instead
-	// of its own would charge a cheap model a dearer model's money -- a
-	// DeepSeek call at Claude's rates -- which inflates the record and the
-	// shared day counters and, on a tight cap, halts a run that the model's
-	// own rates would not have.
+	// knows -- an assumed ceiling rather than a published price, so a
+	// provider route that reported what the call cost floors it at that
+	// figure (below) -- and recorded on the stage, in the call log and in a
+	// warning, and the stage goes on: failing the stage is what turns one
+	// provider's field into a dead run. Pricing it at the table's maximum
+	// rates instead of its own would charge a cheap model a dearer model's
+	// money -- a DeepSeek call at Claude's rates -- which inflates the record
+	// and the shared day counters and, on a tight cap, halts a run that the
+	// model's own rates would not have.
 	//
 	// A speed or an inference geography the request chose stays a violation,
 	// and is the dearer case of the two: the table's maximum rates times
@@ -966,8 +969,15 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, partial bool) outco
 			}
 			mult = max(mult, int64(pricing.ConservativeTierMultiplier))
 			o.charge.serviceTier = d.value
+			chargedAs := fmt.Sprintf("%dx the rates the call is priced at", mult)
+			if pr != nil && t.acc.hasReported {
+				// The provider's own report floors this charge (below), so
+				// the line the reader uses to explain the figure says the
+				// figure may be the report and not the multiple.
+				chargedAs += ", or the provider's reported cost with the route fee if dearer"
+			}
 			s.log.Warn("budget: service tier not priced", "model", logValue(serving), "service_tier", d.value,
-				"charged_as", fmt.Sprintf("%dx the rates the call is priced at", mult))
+				"charged_as", chargedAs)
 		}
 		// The tier is what the charge turned on only when the rates were the
 		// model's own: a fallback the route served (`max`) is the more
@@ -981,6 +991,19 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, partial bool) outco
 	}
 	u := t.acc.usage(rates, p.cacheTTL)
 	reported := pricing.WithFee(satMul(rates.Cost(u), mult), fee)
+	// The conservative multiple is an assumed ceiling and not a published
+	// price -- no provider publishes a multiplier for a tier other than
+	// standard -- so on a provider route that reported what the call cost,
+	// the provider's own figure, with the route's fee as every charge on that
+	// route carries it, is a floor under the charge: an unpublished tier
+	// premium never charges less than the provider says the call cost. It can
+	// only raise the charge, never lower it, and a report the gateway refused
+	// to record -- below zero, above maxReportedUSD, not a number -- is not a
+	// floor either, since hasReported is set only inside those bounds.
+	floor := pricing.Micros(0)
+	if o.charge.serviceTier != "" && pr != nil && t.acc.hasReported {
+		floor = pricing.WithFee(t.acc.reported, fee)
+	}
 	o.usage = u
 	o.model = serving
 	o.sent = true
@@ -989,15 +1012,15 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, partial bool) outco
 	// it is known because this call's usage was read.
 	o.cacheRead, o.cacheWrite, o.usageRead = u.CacheRead, u.CacheWrite5m+u.CacheWrite1h, true
 	if !partial {
-		o.amount, o.settled = reported, settledUsage
+		o.amount, o.settled = max(reported, floor), settledUsage
 		if pr != nil && t.acc.hasReported {
-			o.charge.reported = t.acc.reported // a record for comparison: it never prices the call
+			o.charge.reported = t.acc.reported // a record for comparison: it prices the call only where it floors a tier charge
 		}
 		return o
 	}
 	charged := u
 	charged.Output = max(u.Output, p.maxTokens)
-	o.amount = pricing.WithFee(satMul(rates.Cost(charged), mult), fee)
+	o.amount = max(pricing.WithFee(satMul(rates.Cost(charged), mult), fee), floor)
 	o.unreconciled = max(o.amount-reported, 0)
 	o.settled = settledPartial
 	return o
