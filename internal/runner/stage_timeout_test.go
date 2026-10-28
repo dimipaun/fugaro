@@ -191,8 +191,10 @@ func TestStageTimeoutAboveTheRunBoundIsRecorded(t *testing.T) {
 				// Source is the layer the run's own timeouts.stage came
 				// from, which here is the same one that wrote the dropped
 				// governance value: the branch's file or the layer's profile.
+				// Clamped is what separates this entry from the merge's
+				// looser values, which the same key can carry.
 				if ig.Value != "5m0s" || ig.Effective != tc.effective ||
-					ig.Source != tc.from || ig.From != tc.from {
+					ig.Source != tc.from || ig.From != tc.from || !ig.Clamped {
 					t.Errorf("ignored = %+v", ig)
 				}
 			}
@@ -362,7 +364,11 @@ func TestStageTimeoutLooserInTheRepositoryIsRecorded(t *testing.T) {
 	for _, ig := range pol.Ignored {
 		if ig.Key == policy.KeyStageTimeoutImplement {
 			found = true
-			if ig.Value != "5m0s" || ig.Effective != "200ms" || ig.From != policy.SourceBranch {
+			// The same shape a clamp writes — this key, the branch asking,
+			// the ceiling in force — and not a clamp: a tighter layer capped a
+			// looser value, so Clamped stays false and the report keeps it in
+			// the "looser than the project's limits" sentence.
+			if ig.Value != "5m0s" || ig.Effective != "200ms" || ig.From != policy.SourceBranch || ig.Clamped {
 				t.Errorf("ignored = %+v", ig)
 			}
 		}

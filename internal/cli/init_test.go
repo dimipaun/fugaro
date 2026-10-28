@@ -2071,20 +2071,44 @@ func TestInitRefusesAProjectJobDeleteWhateverAllowDeleteNames(t *testing.T) {
 // governance block the way `fugaro validate`'s and the runner's do (T7.1).
 // Merging against a ceiling built from the project config's budget alone let
 // this command pass a file whose stage timeout the run would never apply.
+//
+// The governance-only case is the one the gate has to get right, and the
+// budget-only line has to stay the budget's: a file whose only policy is its
+// governance: block is one the layer's governance can clamp, so the warning
+// must print, and a layer carrying governance and no budget has no ceiling to
+// state — "none (no cap, ...)" would read as one (TestInitRepoSilentWithoutCeiling).
 func TestPrintCeilingCarriesTheProjectLayersGovernance(t *testing.T) {
 	gov := func(d time.Duration) *config.Governance {
 		return &config.Governance{StageTimeout: config.StageTimeout{Implement: config.Duration{Duration: d}}}
 	}
-	lc := &localcfg.Config{Name: "aurora"}
-	cfg := &config.Config{
-		Project:    "aurora",
-		Budget:     &config.Budget{Mode: config.BudgetEnforce, PerRunUSD: 5},
-		Governance: gov(5 * time.Minute),
-		Layer:      &config.ProjectLayer{Governance: gov(200 * time.Millisecond)},
-	}
-	var b strings.Builder
-	printCeiling(&b, lc, cfg)
-	if got := b.String(); !strings.Contains(got, "governance.stage_timeout.implement") || !strings.Contains(got, "200ms") {
-		t.Fatalf("update --repo's ceiling note does not warn about the layer's tighter stage timeout:\n%s", got)
+	// lc is the project config the ceiling comes from; cfg the checkout's file.
+	for _, tc := range []struct {
+		name        string
+		project     *localcfg.Budget
+		file        *config.Budget
+		wantCeiling bool
+	}{
+		{"governance alone", nil, nil, false},
+		{"a budget in the file alone", nil, &config.Budget{Mode: config.BudgetEnforce, PerRunUSD: 5}, false},
+		{"a budget in the project too", &localcfg.Budget{Mode: localcfg.BudgetEnforce, PerRunUSD: 5}, nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lc := &localcfg.Config{Name: "aurora", Budget: tc.project}
+			cfg := &config.Config{
+				Project:    "aurora",
+				Budget:     tc.file,
+				Governance: gov(5 * time.Minute),
+				Layer:      &config.ProjectLayer{Governance: gov(200 * time.Millisecond)},
+			}
+			var b strings.Builder
+			printCeiling(&b, lc, cfg)
+			got := b.String()
+			if !strings.Contains(got, "governance.stage_timeout.implement") || !strings.Contains(got, "200ms") {
+				t.Fatalf("update --repo's ceiling note does not warn about the layer's tighter stage timeout:\n%s", got)
+			}
+			if has := strings.Contains(got, "Budget ceiling"); has != tc.wantCeiling {
+				t.Fatalf("a budget ceiling line printed = %v, want %v:\n%s", has, tc.wantCeiling, got)
+			}
+		})
 	}
 }

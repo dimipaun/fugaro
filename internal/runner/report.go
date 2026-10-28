@@ -446,23 +446,29 @@ func followUpSection(fu *FollowUpSection, reason string) string {
 // and the stage timeouts the run's own timeouts.stage bounds at least as
 // tightly (T7.6), which are not looser than a limit but get a sentence of
 // their own so the report does not call them one. Empty when nothing was.
+//
+// The stage-timeout sentence is for the entries Clamped marks, and only those.
+// A stage timeout a tighter layer capped is a merge entry like any other — its
+// key, source and from can read exactly like a clamp's — and it takes the
+// "looser than the project's limits" sentence, as it should; a key that has
+// both shapes gets a part in each sentence.
 func policyLine(p *runstore.PolicyRecord) string {
 	if p == nil || len(p.Ignored) == 0 {
 		return ""
 	}
 	type entry struct{ first, last runstore.PolicyIgnored }
 	seen, order, fromDefault := map[string]*entry{}, []string{}, false
-	// The stage timeouts, kept apart: the drop's why is the run's own bound
+	// The clamped entries, kept apart: the drop's why is the run's own bound
 	// and never "looser than the project's limits" (the value can come from
 	// the project layer itself), so they must not join the sentence below.
-	var stageKeys []string
-	stage := map[string]runstore.PolicyIgnored{}
+	var clampedKeys []string
+	clamped := map[string]runstore.PolicyIgnored{}
 	for _, ig := range p.Ignored {
-		if isStageTimeoutKey(ig.Key) {
-			if _, ok := stage[ig.Key]; !ok {
-				stageKeys = append(stageKeys, ig.Key)
+		if ig.Clamped {
+			if _, ok := clamped[ig.Key]; !ok {
+				clampedKeys = append(clampedKeys, ig.Key)
 			}
-			stage[ig.Key] = ig
+			clamped[ig.Key] = ig
 			continue
 		}
 		fromDefault = fromDefault || ig.From == policy.SourceDefaultBranch
@@ -491,10 +497,10 @@ func policyLine(p *runstore.PolicyRecord) string {
 		fmt.Fprintf(&b, "**Policy:** %s from fugaro.yaml%s %s looser than %s and %s ignored (%s)\n\n",
 			Plural(n, "value"), where, were, limits, were, strings.Join(parts, "; "))
 	}
-	if n := len(stageKeys); n > 0 {
+	if n := len(clampedKeys); n > 0 {
 		parts := make([]string, n)
-		for i, k := range stageKeys {
-			ig := stage[k]
+		for i, k := range clampedKeys {
+			ig := clamped[k]
 			parts[i] = fmt.Sprintf("%s %s from %s -> %s",
 				PolicyKeyPath(k), policyValue(k, ig.Value), policyFrom(ig.From), policyValue(k, ig.Effective))
 		}
@@ -506,16 +512,6 @@ func policyLine(p *runstore.PolicyRecord) string {
 			Plural(n, "value"), were, strings.Join(parts, "; "))
 	}
 	return b.String()
-}
-
-// isStageTimeoutKey is whether key is one of the three stage timeouts
-// governance bounds (the key stageTimeoutKey maps a stage to).
-func isStageTimeoutKey(key string) bool {
-	switch key {
-	case policy.KeyStageTimeoutImplement, policy.KeyStageTimeoutReview, policy.KeyStageTimeoutFix:
-		return true
-	}
-	return false
 }
 
 // policyFrom names the layer that asked for a dropped stage timeout, as

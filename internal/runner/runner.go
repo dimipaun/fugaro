@@ -2508,9 +2508,12 @@ func stageTimeoutKey(stage string) string {
 //
 // Source is the layer the run's own timeouts.stage came from, which is the
 // bound actually in force: the project layer's governance (the ceiling) when
-// its profile set it, the repository's own file (the branch) otherwise — the
-// same question recordPolicy answers for a merge. Value is the bound the layer
-// in From asked for. From is the layer the stage_timeout key itself came from,
+// its profile set it, the branch when either file set it, and the branch as
+// well when neither did — workflows.*.timeouts.stage is InProfile | InRepo, so
+// the common case, Fugaro's own 40m default, has no layer that set it and is
+// recorded as the branch's, the layer the run's file would have said it in.
+// Value is the bound the layer in From asked for. From is the layer the
+// stage_timeout key itself came from,
 // which for a governance key is the project layer's ceiling or one of the two
 // files, so result.schema.json's `from` carries "ceiling" as well; the two are
 // different layers, and the warning spells them as recordPolicy does
@@ -2533,7 +2536,7 @@ func (r *run) noteStageTimeoutClamped(stage string, own time.Duration) {
 		source = policy.SourceCeiling
 	}
 	ig := runstore.PolicyIgnored{Key: key, Value: own.String(), Effective: r.budget.Stage.String(),
-		Source: source, From: from}
+		Source: source, From: from, Clamped: true}
 	r.mu.Lock()
 	if r.rec.Policy == nil {
 		r.rec.Policy = &runstore.PolicyRecord{}

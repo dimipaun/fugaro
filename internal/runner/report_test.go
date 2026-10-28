@@ -177,7 +177,7 @@ func TestReportToleratedTitleStaysInsideItsCell(t *testing.T) {
 func TestPolicyLineGivesAStageTimeoutItsOwnWording(t *testing.T) {
 	p := &runstore.PolicyRecord{Ignored: []runstore.PolicyIgnored{
 		{Key: policy.KeyPerRunUSD, Value: "20", Effective: "5", Source: policy.SourceDefaultBranch, From: policy.SourceBranch},
-		{Key: policy.KeyStageTimeoutImplement, Value: "1h", Effective: "40m", Source: policy.SourceCeiling, From: policy.SourceCeiling},
+		{Key: policy.KeyStageTimeoutImplement, Value: "1h", Effective: "40m", Source: policy.SourceCeiling, From: policy.SourceCeiling, Clamped: true},
 	}}
 	got := policyLine(p)
 	loose := "**Policy:** 1 value from fugaro.yaml on this branch was looser than the project's limits and was ignored (budget.per_run_usd 20 -> 5)\n\n"
@@ -195,11 +195,34 @@ func TestPolicyLineGivesAStageTimeoutItsOwnWording(t *testing.T) {
 // own file rather than the project layer.
 func TestPolicyLineNamesTheBranchForAStageTimeoutFromTheFile(t *testing.T) {
 	p := &runstore.PolicyRecord{Ignored: []runstore.PolicyIgnored{
-		{Key: policy.KeyStageTimeoutReview, Value: "30m", Effective: "10m", Source: policy.SourceBranch, From: policy.SourceBranch},
+		{Key: policy.KeyStageTimeoutReview, Value: "30m", Effective: "10m", Source: policy.SourceBranch, From: policy.SourceBranch, Clamped: true},
 	}}
 	got := policyLine(p)
 	want := "so 1 value was ignored (governance.stage_timeout.review 30m from fugaro.yaml on this branch -> 10m)"
 	if !strings.Contains(got, want) {
 		t.Errorf("policyLine = %q, want %q", got, want)
+	}
+}
+
+// TestPolicyLineKeepsAMergeDroppedStageTimeoutInTheLooseSentence: a stage
+// timeout a tighter layer capped is a merge entry like any other, and the
+// report must not hand it the clamp's sentence. The two shapes are otherwise
+// identical — here both read key=stage_timeout.implement source=ceiling
+// from=branch — so Clamped is the only thing that tells them apart, and a key
+// carrying both gets a part in each sentence rather than one swallowing the
+// other (T7.6, T7.1).
+func TestPolicyLineKeepsAMergeDroppedStageTimeoutInTheLooseSentence(t *testing.T) {
+	capped := runstore.PolicyIgnored{Key: policy.KeyStageTimeoutImplement, Value: "1h", Effective: "20m",
+		Source: policy.SourceCeiling, From: policy.SourceBranch}
+	clamped := runstore.PolicyIgnored{Key: policy.KeyStageTimeoutImplement, Value: "1h", Effective: "40m",
+		Source: policy.SourceCeiling, From: policy.SourceBranch, Clamped: true}
+	loose := "**Policy:** 1 value from fugaro.yaml on this branch was looser than the project's limits and was ignored (governance.stage_timeout.implement 1h -> 20m)\n\n"
+	if got := policyLine(&runstore.PolicyRecord{Ignored: []runstore.PolicyIgnored{capped}}); got != loose {
+		t.Errorf("a stage timeout a layer capped reads as the clamp's:\n%q\nwant %q", got, loose)
+	}
+	held := "**Policy:** the run's own timeouts.stage bounds a stage at least as tightly as the stage timeout asked for, so 1 value was ignored (governance.stage_timeout.implement 1h from fugaro.yaml on this branch -> 40m)\n\n"
+	want := loose + held
+	if got := policyLine(&runstore.PolicyRecord{Ignored: []runstore.PolicyIgnored{capped, clamped}}); got != want {
+		t.Errorf("one key with both shapes:\n%q\nwant %q", got, want)
 	}
 }
