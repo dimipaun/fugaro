@@ -32,7 +32,13 @@
 //     `pending` entries then overwrite each other -- fails "redraws the four hex
 //     digits when the id it drew is one this process already holds", and an id
 //     drawn (rather than claimed) where the launch is built fails "claims the id
-//     with the reservation, so a same-tick pair cannot draw one id";
+//     with the reservation, so a same-tick pair cannot draw one id", and a
+//     redraw that skips the ids this process has already frozen fails "redraws an
+//     id this process has already answered, so a replay cannot resolve a new
+//     window";
+//   - an id claimed for a launch whose build refused or threw, and never
+//     released, fails "frees the id a refused or thrown build claimed, so the
+//     next launch can take it";
 //   - a per-installation rate entry left behind once its stamps have expired,
 //     which is memory a renderer's stream of names chooses, fails "drops an
 //     installation once its stamps have expired, so the names cannot pile up";
@@ -665,6 +671,72 @@ describe('the run id, and the second it is cut in', () => {
 
     for (const open of confirmer.openRunIds) confirmer.decideWindow(open, false)
     void first
+    void second
+  })
+
+  it('redraws an id this process has already answered, so a replay cannot resolve a new window', async () => {
+    // `frozen` is the third place an id can be, and the one that outlives the
+    // window: an answered launch is released from `claimedRunIds` and from
+    // `inFlight`, and `frozen` keeps its id because a replayed answer still
+    // spawns from it. Drawn again, the id would be re-frozen -- `frozen.set`
+    // overwrites -- and `pending.set` would hand the *new* window's promise to
+    // the old run id, so the next `answer(RUN_ID, …)` (a replay the renderer is
+    // entitled to make) would resolve a window the operator has not answered.
+    const confirmer = heldConfirmer()
+    const spawner = completingSpawner()
+    const held = runner({ confirmer, spawner, random: tails(0xa2fc, 0xa2fc, 0x0001) })
+
+    const first = held.launch(request({ installation: PROJECT }))
+    await untilSettled()
+    confirmer.decideWindow(RUN_ID, false)
+    await first
+
+    // The answered id replays, and the launch that follows it -- in the same
+    // second, drawing the same tail -- gets an id of its own.
+    expect((await held.answer(RUN_ID, true))?.replayed).toBe(true)
+
+    const second = held.launch(request({ installation: OTHER_PROJECT }))
+    await untilSettled()
+    expect(confirmer.opened.map((launch) => launch.runId)).toStrictEqual([RUN_ID, '20261028-152618-0001'])
+
+    // And the replay still answers the first launch rather than the window that
+    // is open now: the new window keeps its own promise, and nothing spawns.
+    expect((await held.answer(RUN_ID, true))?.replayed).toBe(true)
+    expect(confirmer.openRunIds).toStrictEqual(['20261028-152618-0001'])
+    expect(spawner.calls).toHaveLength(0)
+
+    confirmer.decideWindow('20261028-152618-0001', false)
+    void second
+  })
+
+  it('frees the id a refused or thrown build claimed, so the next launch can take it', async () => {
+    // The claim's release for a launch that never reaches `commit`: a request
+    // whose `build` refuses, and one whose records read throws outright, both
+    // claimed an id and opened no window, and the id goes back with the
+    // reservation. Held, it would burn that id for the rest of the second --
+    // and the first launch below proves the release by drawing the same tail
+    // again and being given it.
+    const confirmer = heldConfirmer()
+    const held = runner({
+      confirmer,
+      random: tails(0xa2fc, 0xa2fc, 0xa2fc),
+      lookUp: (project) =>
+        project === 'boom'
+          ? Promise.reject(new Error('the records read blew up'))
+          : Promise.resolve(recordsFor(target(), project)),
+    })
+
+    const refused = await held.launch(request({ repository: 'github/acme/other' }))
+    expect(refused.ok).toBe(false)
+    expect(refused.reason).toContain('carries no checkout')
+
+    await expect(held.launch(request({ installation: 'boom' }))).rejects.toThrow('the records read blew up')
+
+    const second = held.launch(request({ installation: OTHER_PROJECT }))
+    await untilSettled()
+    expect(confirmer.opened.map((launch) => launch.runId)).toStrictEqual([RUN_ID])
+
+    confirmer.decideWindow(RUN_ID, false)
     void second
   })
 

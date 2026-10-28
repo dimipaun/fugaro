@@ -180,11 +180,12 @@ export interface LaunchTarget {
   /** the base branches and repositories its `config list --json` read carried */
   readonly records: LaunchRecords
   /** fingerprint is the identity of the **record** this target was read from:
-   * the entry point builds it from the stored installation and the rail's row
-   * for it, this file freezes it into the launch, and the entry point compares a
+   * the entry point builds it from this console's own stored installation
+   * (`launchrules.ts`'s `LaunchRecordFacts`, which the rail's row is not part
+   * of), this file freezes it into the launch, and the entry point compares a
    * fresh one at the answer. "The name is still saved" is not "the installation
    * is still the one this launch is for" -- a removal and a re-add under the
-   * same name, or an edit of the binary, the distribution or the checkouts, is a
+   * same name, or an edit of the binary, the distribution or the checkout, is a
    * different installation, and a launch cut for the old one closes as a
    * cancel. */
   readonly fingerprint: string
@@ -397,8 +398,14 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
   /** what an already-answered run id answers with, for the life of the process */
   const outcomes = new Map<string, LaunchOutcome>()
 
-  const withinWindow = (stamps: readonly number[], at: number): number =>
-    stamps.filter((stamp) => at - stamp < CONFIRM_RATE_WINDOW_MS).length
+  /** liveStamps is the window's one definition, and it is a function for that
+   * reason: the rate checks **count** these and the sweep **keeps** these, and a
+   * sweep whose predicate drifted from the count's would drop a stamp the rate
+   * still reads (or keep every key forever) without either side looking wrong. */
+  const liveStamps = (stamps: readonly number[], at: number): readonly number[] =>
+    stamps.filter((stamp) => at - stamp < CONFIRM_RATE_WINDOW_MS)
+
+  const withinWindow = (stamps: readonly number[], at: number): number => liveStamps(stamps, at).length
 
   /** pruneExpired drops every installation whose stamps have all fallen out of
    * the window, key and all: an installation with nothing live in the window is
@@ -408,9 +415,9 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
    * already there. */
   function pruneExpired(at: number): void {
     for (const [installation, stamps] of perInstallation) {
-      const live = stamps.filter((stamp) => at - stamp < CONFIRM_RATE_WINDOW_MS)
+      const live = liveStamps(stamps, at)
       if (live.length === 0) perInstallation.delete(installation)
-      else perInstallation.set(installation, live)
+      else perInstallation.set(installation, [...live])
     }
   }
 
@@ -829,38 +836,48 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
       // synchronous and it is the last thing before the first `await`, so the
       // next message of a same-tick burst sees this launch already counted.
       const token = reserve(request.installation, at)
-
-      // The id is drawn **and claimed here**, in the same synchronous block as
-      // the reservation and for the same reason: the four hex digits are the
-      // whole of the id's entropy, and the id keys both maps the answer path
-      // reads -- `frozen` (what a yes spawns) and `pending` (whose `decide` an
-      // answer resolves) -- so two launches sharing one id means the second
-      // window's entries replace the first's and the first window's yes spawns
-      // the second launch. Claimed before this launch's first `await`, the id is
-      // one a same-tick message's draw is already refused; drawn where the
-      // launch is *built* instead, the second message of a same-tick pair would
-      // draw the first's id while the first was still reading its records --
-      // nothing claimed, nothing frozen, nothing committed for it to see.
-      const runId = drawRunID(
-        new Date(wallClock()),
-        random,
-        (id) => claimedRunIds.has(id) || inFlight.has(id) || frozen.has(id),
-      )
-      if (runId === null) {
-        // A refusal about this console's own bookkeeping rather than about the
-        // operator, and before any window: an id this process already holds is
-        // one an operator's yes could be attached to the wrong launch, which is
-        // worse than asking again a second later. The slot goes back with the
-        // refusal; the rate stamp does not, like every other refusal here.
-        release(token, request.installation)
-        return refusedOutcome(
-          `this console drew ${String(RUN_ID_DRAWS)} run ids that another launch of this process already holds: ` +
-            'the id is the current second and four hex digits, so wait a moment and ask for the launch again',
-        )
-      }
-      claimedRunIds.add(runId)
+      // The id, drawn and claimed below, is declared out here so the `finally`
+      // can free it: the draw itself is inside the `try` and not beside the
+      // reservation, because `random` is the source of the id's four hex digits
+      // and a source that throws (`cryptoRandom` reads two bytes from
+      // `node:crypto`) must not take the reservation with it -- the token is in
+      // `inFlight` and in `inFlightByInstallation` from `reserve`, and a throw
+      // between the two would block that installation and hold an app-wide slot
+      // for the life of the process.
+      let runId: string | null = null
 
       try {
+        // The id is drawn **and claimed here**, in the same synchronous block as
+        // the reservation and for the same reason: the four hex digits are the
+        // whole of the id's entropy, and the id keys both maps the answer path
+        // reads -- `frozen` (what a yes spawns) and `pending` (whose `decide` an
+        // answer resolves) -- so two launches sharing one id means the second
+        // window's entries replace the first's and the first window's yes spawns
+        // the second launch. Claimed before this launch's first `await`, the id
+        // is one a same-tick message's draw is already refused; drawn where the
+        // launch is *built* instead, the second message of a same-tick pair
+        // would draw the first's id while the first was still reading its
+        // records -- nothing claimed, nothing frozen, nothing committed for it
+        // to see.
+        runId = drawRunID(
+          new Date(wallClock()),
+          random,
+          (id) => claimedRunIds.has(id) || inFlight.has(id) || frozen.has(id),
+        )
+        if (runId === null) {
+          // A refusal about this console's own bookkeeping rather than about the
+          // operator, and before any window: an id this process already holds is
+          // one an operator's yes could be attached to the wrong launch, which
+          // is worse than asking again a second later. The slot goes back with
+          // the refusal (the `finally`); the rate stamp does not, like every
+          // other refusal here.
+          return refusedOutcome(
+            `this console drew ${String(RUN_ID_DRAWS)} run ids that another launch of this process already holds: ` +
+              'the id is the current second and four hex digits, so wait a moment and ask for the launch again',
+          )
+        }
+        claimedRunIds.add(runId)
+
         const built = await build(request, runId)
         // A refusal from `build` **keeps the rate stamp**: a request that cannot
         // be built is still a request the operator's console had to read the
@@ -895,19 +912,23 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
         const answered = await decided
         return await settle(built.launch.runId, answered.yes, answered.reason)
       } finally {
-        // The one exit this file's own paths do not cover: if `build` or the
-        // confirmer threw outright, the reservation, the id's claim and the hold
-        // (`settle` has already freed the last of them) are released here. All
-        // three are released whatever happened, because they are this call's
-        // whether or not the launch was built: `release(token, …)` frees the
-        // reservation while the installation's entry is still the token,
+        // The one exit this file's own paths do not cover: if the draw, `build`
+        // or the confirmer threw outright, the reservation, the id's claim and
+        // the hold (`settle` has already freed the last of them) are released
+        // here. All three are released whatever happened, because they are this
+        // call's whether or not the launch was built: `release(token, …)` frees
+        // the reservation while the installation's entry is still the token,
         // `release(runId, …)` frees the id and the entry the commit moved it to,
-        // and `claimedRunIds.delete` frees a claim the commit never took over.
-        // `release` is idempotent, so the ordinary paths through `settle` are
-        // unaffected by it.
+        // and `claimedRunIds.delete` frees a claim the commit never took over --
+        // the only release a refused or thrown `build` gets, since it never
+        // reaches `commit`. `release` is idempotent, so the ordinary paths
+        // through `settle` are unaffected by it, and `runId` is null only when
+        // the draw itself threw.
         release(token, request.installation)
-        release(runId, request.installation)
-        claimedRunIds.delete(runId)
+        if (runId !== null) {
+          release(runId, request.installation)
+          claimedRunIds.delete(runId)
+        }
       }
     },
 
