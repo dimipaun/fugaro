@@ -513,8 +513,10 @@ func needsRecipeImage(spec *task.Spec, checkoutRecipe string) bool {
 // when there is none to parse: a repository-sourced recipe carries only its
 // name (the runner re-reads the file at the ref), and a bare agent.recipe
 // name is not resolved here either. Both still get the plain recipesSince
-// gate below; whether either uses a 0.7.0 construct is for the run itself to
-// find out, the same way an older runner already refuses an unknown key.
+// gate below, unless the task carries a report run's manifest, which is a
+// gate of its own whatever the recipe's source (recipeSinceFor); whether
+// either uses a 0.7.0 construct is for the run itself to find out, the same
+// way an older runner already refuses an unknown key.
 func embeddedRecipeOf(spec *task.Spec) *recipe.Recipe {
 	if spec.Recipe == nil || spec.Recipe.YAML == "" {
 		return nil
@@ -527,12 +529,12 @@ func embeddedRecipeOf(spec *task.Spec) *recipe.Recipe {
 }
 
 // checkRecipeImage refuses a launch whose job image runs a fugaro older than
-// recipesSince (decision D2), or than the newer constant an embedded
-// recipe's own constructs need (recipeSinceFor). The judge is the build
-// record's base_ref: the image runs the binary of the base it was built
-// FROM. A non-release base is not judged (one warning); no record, or one
-// without base_ref, is refused. kind is the workflow's base kind, "" when
-// unknown.
+// recipesSince (decision D2), or than the newer constant the task's own
+// recipe — its embedded text, or the manifest it carries — needs
+// (recipeSinceFor). The judge is the build record's base_ref: the image runs
+// the binary of the base it was built FROM. A non-release base is not judged
+// (one warning); no record, or one without base_ref, is refused. kind is the
+// workflow's base kind, "" when unknown.
 func checkRecipeImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
 	subject, alt := "fugaro.yaml's agent.recipe", ""
 	if spec.Recipe != nil {
@@ -549,9 +551,20 @@ func checkRecipeImage(ctx context.Context, env *cloudEnv, slug string, spec *tas
 // recipe the launcher cannot read here — a repository-sourced one, which
 // carries only its name, or a bare agent.recipe name — keeps recipesSince,
 // the same way an older runner refuses its unknown keys at the run.
+//
+// A task carrying digest_runs is judged by the manifest itself, whatever its
+// recipe's source: the field is what says the run executes the digest step
+// (task.Validate accepts it under no other recipe), and for a repository
+// recipe it is the only thing in the task that says so — the recipe's own
+// text is read at the ref, where this launcher cannot look. Without this the
+// launch of a repository's own report recipe would be judged by recipesSince
+// and start a job whose runner refuses the whole task at bootstrap, the
+// manifest being a field it does not know.
 func recipeSinceFor(spec *task.Spec) string {
 	r := embeddedRecipeOf(spec)
 	switch {
+	case len(spec.DigestRuns) > 0:
+		return digestSince
 	case r == nil:
 		return recipesSince
 	case recipe.UsesDigest(r):

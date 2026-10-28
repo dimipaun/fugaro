@@ -1433,6 +1433,21 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// internal/cli/recipes_skew.go), and this is the backstop for the
 	// launches it cannot judge — a development or hand-pushed base image
 	// only warns there, and a hand-written task.json never passes it at all.
+	//
+	// A follow-up cannot run one whatever this image executes: a report run
+	// is launched on its own, because it lists the records it may read and
+	// refuses while another report run of the repository is going
+	// (digestManifest, internal/cli/run_digest_manifest.go), and a follow-up
+	// carries no manifest at all — the launcher writes one for a fresh
+	// report launch only. Refused here, keyed on the RESOLVED recipe, which
+	// is the arm the launcher's own report refusals cannot be: a repository
+	// recipe by name is read here, at this run's base, and not there
+	// (refuseFollowUpReportMode, internal/cli/recipes_resolve.go). It comes
+	// before the arm below so that this is the reason a follow-up is refused
+	// by, on an image that has the step and on one that does not.
+	if r.follow != nil && recipe.UsesDigest(rcp) {
+		return fmt.Errorf("recipe %s holds the digest step, which writes this repository's run reports; this task continues pull request #%d, and a report run is launched on its own — it lists the records it may read and refuses while another report run of the repository is going — so it cannot continue one", rrec.Name, spec.PR)
+	}
 	if recipe.UsesDigest(rcp) {
 		return fmt.Errorf("recipe %s holds a digest step, which this job image's runner does not execute yet: the run would skip the step and open an ordinary pull request instead. Upgrade the job image of %s workflow %s (fugaro image refresh --repo %s --workflow %s) to one whose runner writes the run reports",
 			rrec.Name, r.spec.Repo, r.spec.Workflow, r.spec.Repo, r.spec.Workflow)
