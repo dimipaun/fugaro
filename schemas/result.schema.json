@@ -169,10 +169,24 @@
       "required": ["reason", "scope", "at"],
       "description": "Why the run was halted; set when status is halted.",
       "properties": {
-        "reason": { "enum": ["kill_switch", "run_cap", "repo_daily_cap", "global_daily_cap", "no_cap", "token_cap", "budget_unavailable", "budget_token_expired", "no_credential", "creds_rules_denied"] },
+        "reason": { "enum": ["kill_switch", "run_cap", "repo_daily_cap", "global_daily_cap", "no_cap", "token_cap", "budget_unavailable", "budget_token_expired", "no_credential", "creds_rules_denied", "stage_budget", "review_ratio", "fanout", "review_scope", "expected_exceeded"] },
         "scope": { "enum": ["run", "repo", "global"] },
         "at": { "type": "string", "format": "date-time" },
         "detail": { "type": "string" }
+      }
+    },
+    "checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trigger"],
+      "description": "The report a governance halt leaves (docs/task-governance/implementation-plan.md T6.1, D329, G7): why the run stopped, and what a person deciding whether to continue it needs to know. A governance stop is never a silent kill — it halts the run and opens a draft pull request carrying this report — so the block is written exactly where halt.reason is one of the governance reasons, and no other stop (a cap, a kill switch, a failure) writes one. trigger, why_over and estimate_usd are the runner's own values read from the record; done, next and hard_instructions are the stopping agent's answer to the checkpoint prompt (wired in T7.3), so they are absent for every checkpoint written before that stage exists and for a per-run cap or stage timeout, which gets no checkpoint call. Every text field is bounded at runstore.MaxCheckpointText runes. Absent — never an empty block — for a run that did not take a governance halt, and in records from before this field existed; the field is additive, so an old reader sees the record it always saw and `version` stays 1.",
+      "properties": {
+        "trigger": { "enum": ["stage_budget", "review_ratio", "fanout", "review_scope", "expected_exceeded"], "description": "Which tripwire stopped the run (internal/runstore's governance HaltReason constants): a stage past its own budget, review that spent more calls than the ratio allows, more distinct sub-agents than the maximum, a review range covering files the run's own commits never changed, or a run past the cost its tier expected. The runner sets it from those constants, never from task text, so a reader renders the value itself." },
+        "done": { "type": "string", "minLength": 1, "maxLength": 500, "description": "What the work had finished when the run stopped, in the stopping agent's own words, clipped to 500 runes (runstore.MaxCheckpointText). Model-written: a reader treats it as untrusted text, never as markup." },
+        "why_over": { "type": "string", "minLength": 1, "maxLength": 500, "description": "Why the run is over, in the runner's own words for the trigger it recorded (internal/runner's haltReasonText), so the report says what the tripwire was without repeating the halt's own detail." },
+        "next": { "type": "string", "minLength": 1, "maxLength": 500, "description": "What the work would do next to finish the task, in the stopping agent's own words, bounded the same way." },
+        "estimate_usd": { "type": "number", "minimum": 0, "description": "The money the work had cost when it stopped, as the record's cost_usd holds it: the runner's only money figure for a checkpoint, and the figure a continuation starts from. Notional dollars included, the way cost_usd includes them." },
+        "hard_instructions": { "type": "string", "minLength": 1, "maxLength": 500, "description": "What the work found hard to satisfy or contradictory in its instructions, if anything, in the stopping agent's own words, bounded the same way." }
       }
     },
     "recipe": {

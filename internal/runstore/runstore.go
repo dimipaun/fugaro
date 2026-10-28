@@ -345,6 +345,63 @@ func boundReviewScopeFiles(paths []string, budget *int) ([]string, bool) {
 	return out, trimmed
 }
 
+// MaxCheckpointText bounds one free-text field of a checkpoint report, in
+// runes, like MaxToleratedTitle bounds a finding's title: two of the three
+// free-text fields are a model's own answer and the record is a small object
+// every listing reads.
+const MaxCheckpointText = 500
+
+// Checkpoint is the report a governance halt leaves (T6.1, D329, G7): why
+// the run stopped, and what a person deciding whether to continue it needs to
+// know. Only a governance stop writes one — a run stopped by a cap, a kill
+// switch or a failure carries none — and it is the record half of the draft
+// pull request's checkpoint line.
+//
+// Trigger is one of the governance halt reasons, and WhyOver and EstimateUSD
+// the runner reads from the record: the runner's own words for the stop, and
+// the model spend the record had reached, which is the figure a continuation
+// starts from and the only money figure the record carries before a tier's
+// expectation exists (T8.1). Done, Next and HardInstructions are the stopping
+// agent's answer to the checkpoint prompt (prompts.go, wired in T7.3), so
+// they are empty for every checkpoint written before that stage exists and
+// for every run a per-run cap or a stage timeout stops, which gets no
+// checkpoint call (T7.2).
+//
+// Absent — never an empty block — for a run that did not take a governance
+// halt, and in records from before this field existed: the field is additive,
+// so an old reader sees the record it always saw and the schema's version
+// stays 1.
+type Checkpoint struct {
+	Trigger string `json:"trigger"`
+	// Done is what the work had finished when the run stopped.
+	Done string `json:"done,omitempty"`
+	// WhyOver is why the run is over, in the runner's own words.
+	WhyOver string `json:"why_over,omitempty"`
+	// Next is what the work would do next to finish the task.
+	Next string `json:"next,omitempty"`
+	// EstimateUSD is the money the work had cost when it stopped, as the
+	// record's cost_usd holds it, notional dollars included: an oauth run's
+	// checkpoint carries a figure too, and a reader that needs the billed
+	// part splits it the way it splits the record's own.
+	EstimateUSD float64 `json:"estimate_usd,omitempty"`
+	// HardInstructions is what the work found hard to satisfy or
+	// contradictory in its instructions, if anything.
+	HardInstructions string `json:"hard_instructions,omitempty"`
+}
+
+// NewCheckpoint bounds a checkpoint report's text and returns it to store:
+// every text field is clipped to MaxCheckpointText runes. The trigger is the
+// runner's own reason and is not checked against the governance set here —
+// the runner writes it from those constants — and the number is the record's
+// own.
+func NewCheckpoint(cp Checkpoint) *Checkpoint {
+	cp.Done = clipRunes(cp.Done, MaxCheckpointText)
+	cp.WhyOver = clipRunes(cp.WhyOver, MaxCheckpointText)
+	cp.Next = clipRunes(cp.Next, MaxCheckpointText)
+	cp.HardInstructions = clipRunes(cp.HardInstructions, MaxCheckpointText)
+	return &cp
+}
+
 // MaxTolerated bounds the tolerated findings a record stores. A round's
 // findings are a model's output and the record is a small object every
 // listing reads, so the list is capped and Total says how many there really
@@ -678,6 +735,13 @@ type Record struct {
 	// reader sees the record it always saw and the schema's version stays 1
 	// (F21).
 	Tolerated *ToleratedFindings `json:"tolerated,omitempty"`
+	// Checkpoint is the report a governance halt left (T6.1, D329, G7):
+	// what stopped the run, why it is over and what it would have done
+	// next, written by the runner as the run stops. Absent — never an empty
+	// block — for every run that did not take a governance halt, which is
+	// every record written before this field existed: the field is
+	// additive, so an old reader sees the record it always saw.
+	Checkpoint *Checkpoint `json:"checkpoint,omitempty"`
 }
 
 // MaxBacklogClosed bounds Record.BacklogClosed. A run closes only what the
