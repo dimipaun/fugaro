@@ -534,6 +534,9 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		if err := refuseFollowUpArtifactMode(rr.Recipe, rr.Name); err != nil {
 			return nil, err
 		}
+		if err := refuseFollowUpReportMode(rr.Recipe, rr.Name); err != nil {
+			return nil, err
+		}
 		printRecipeNote(warn, rr, true)
 		rcp = rr.taskRecipe()
 	} else if rcp == nil && c.Chosen != nil {
@@ -551,6 +554,9 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 			return nil, err
 		}
 		if err := refuseFollowUpArtifactMode(inherited, rcp.Name); err != nil {
+			return nil, err
+		}
+		if err := refuseFollowUpReportMode(inherited, rcp.Name); err != nil {
 			return nil, err
 		}
 	} else if rcp != nil {
@@ -613,7 +619,7 @@ func recheckFollowUp(ctx context.Context, env *cloudEnv, slug string, spec *task
 // carryChosenRecipe is the recipe a follow-up keeps when the runner chose the
 // previous run's: a repository recipe by name (the runner reads it at the
 // base), any other resolved now and embedded. A repository recipe is refused
-// for the two modes a follow-up cannot run first (refuseFollowUpRepoRecipe),
+// for the mismatches a follow-up cannot carry (refuseFollowUpRepoRecipe),
 // from this checkout's copy of it; the runner refuses the file it reads at
 // the base when there is none here. A note says what is kept, and that the
 // text changed since when it did.
@@ -645,6 +651,9 @@ func carryChosenRecipe(ctx context.Context, env *cloudEnv, repo string, c *prCha
 			return nil, wrap(err)
 		}
 		if err := refuseFollowUpArtifactMode(rr.Recipe, rr.Name); err != nil {
+			return nil, wrap(err)
+		}
+		if err := refuseFollowUpReportMode(rr.Recipe, rr.Name); err != nil {
 			return nil, wrap(err)
 		}
 		printRecipeNote(warn, rr, true)

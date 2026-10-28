@@ -96,10 +96,32 @@ func refuseFollowUpArtifactMode(rcp *recipe.Recipe, name string) error {
 	return nil
 }
 
-// refuseFollowUpRepoRecipe refuses the same two mismatches for a follow-up
+// refuseFollowUpReportMode refuses rcp for a follow-up (fugaro run --pr N
+// continuing PR N): a report recipe is the digest step's (task-governance
+// T3.6), and the launch that runs one lists the records it may read and
+// refuses it while another report run of the repository is going
+// (digestManifest). A follow-up does neither — it carries no digest_runs at
+// all, and its recipe arrives from the previous run, so even a fresh listing
+// would be someone else's list — so the run would write the reports of a
+// repository whose records it never read, and a second report run could write
+// them beside the one already going. The refusal is chooseRecipe's own, from
+// the other side: there it is a batch that cannot carry a report recipe, here
+// a follow-up that cannot.
+//
+// The runner refuses nothing here: the digest step reads the records it is
+// handed, so a report recipe with no manifest is an empty report rather than
+// a failure, and the pull request it opens would be merged as one.
+func refuseFollowUpReportMode(rcp *recipe.Recipe, name string) error {
+	if recipe.UsesDigest(rcp) {
+		return userErr("recipe %s writes this repository's run reports, and a repository has one report run at a time; a follow-up carries no manifest of the records it may read and skips the in-flight check a fresh launch makes, so it cannot use it — schedule a report run of its own with fugaro run --recipe %s", name, name)
+	}
+	return nil
+}
+
+// refuseFollowUpRepoRecipe refuses the same mismatches for a follow-up
 // that INHERITS a repository recipe by name — the previous task's
 // task.Recipe{Name, Source: repo}, and the chosen recipe carryChosenRecipe
-// keeps the same way — which carries no text for either refusal above to
+// keeps the same way — which carries no text for the refusals above to
 // read. The file is read from the working directory's checkout when there is
 // one; a name that checkout does not have, or a file it cannot parse, is
 // left alone, because the runner reads the name at THIS task's base
@@ -124,7 +146,10 @@ func refuseFollowUpRepoRecipe(ctx context.Context, repo, name string) error {
 	if err := refuseFollowUpReviewMode(rcp, name); err != nil {
 		return err
 	}
-	return refuseFollowUpArtifactMode(rcp, name)
+	if err := refuseFollowUpArtifactMode(rcp, name); err != nil {
+		return err
+	}
+	return refuseFollowUpReportMode(rcp, name)
 }
 
 // projectRecipesNote is why lc's project recipes are not read, or "": as
