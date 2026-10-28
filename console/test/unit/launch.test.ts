@@ -238,6 +238,26 @@ function quietSpawner(): ChildSpawner & { readonly calls: readonly SpawnCall[] }
   return spawner
 }
 
+/** heldSpawner is a spawner whose child does not answer until the test lets it:
+ * the launch stays in flight across several answers, which is the state the
+ * in-flight attach case is about, and `children` is how the test completes it. */
+function heldSpawner(): ChildSpawner & {
+  readonly calls: readonly SpawnCall[]
+  readonly children: readonly TypedChild[]
+} {
+  const calls: SpawnCall[] = []
+  const children: TypedChild[] = []
+  const spawner = ((command: string, args: readonly string[], settings: SpawnOptionsLike) => {
+    calls.push({ command, args, options: settings })
+    const child = typedChild()
+    children.push(child)
+    return child
+  }) as unknown as ChildSpawner & { calls: SpawnCall[]; children: TypedChild[] }
+  Object.defineProperty(spawner, 'calls', { get: () => calls })
+  Object.defineProperty(spawner, 'children', { get: () => children })
+  return spawner
+}
+
 function failingSpawner(why: string): ChildSpawner {
   return () => {
     throw new Error(why)
@@ -826,9 +846,12 @@ describe('the confirmation seam', () => {
     await untilSettled()
 
     const runId = (confirmer.opened[0] as ConfirmView).runId
-    expect(await held.answer(runId, true)).toBeUndefined()
+    // The window's own answer and the launch's are one outcome: the answer
+    // attaches to the launch in flight rather than resolving to nothing.
+    const answered = await held.answer(runId, true)
     const first = await launched
     expect(first.ok).toBe(true)
+    expect(answered).toStrictEqual(first)
 
     const replayed = await held.answer(runId, true)
     expect(replayed?.ok).toBe(true)
@@ -839,6 +862,57 @@ describe('the confirmation seam', () => {
   it('answers a run id this process never opened with nothing at all', async () => {
     const held = runner({ confirmer: DECLINING_CONFIRMER })
     expect(await held.answer('20261028-152618-0000', true)).toBeUndefined()
+  })
+
+  it('attaches a second answer to the launch in flight, and starts one child in all', async () => {
+    // The in-flight case of rule 11's idempotency paragraph: a second answer for
+    // the same window's run id -- the operator's second click, a re-sent IPC
+    // call -- arrives after the window's own `decide` has been resolved and while
+    // the child is still running. It is attached to the launch in flight: it
+    // waits on it and gets its answer, and no second child starts.
+    const confirmer = heldConfirmer()
+    const spawner = heldSpawner()
+    const held = runner({ confirmer, spawner })
+    const launched = held.launch(request())
+    await untilSettled()
+
+    const runId = (confirmer.opened[0] as ConfirmView).runId
+    confirmer.decideWindow(runId, true)
+    await untilSettled()
+    expect(spawner.calls).toHaveLength(1)
+
+    const first = held.answer(runId, true)
+    const second = held.answer(runId, true)
+
+    const child = spawner.children[0] as TypedChild
+    child.emitStdout(launchResult((spawner.calls[0] as SpawnCall).args))
+    child.exit(0, null)
+
+    const [one, two, outcome] = await Promise.all([first, second, launched])
+    expect(one).toBeDefined()
+    expect(two).toBeDefined()
+    for (const answer of [one, two, outcome]) {
+      expect(answer?.ok).toBe(true)
+      expect(answer?.runId).toBe(runId)
+      expect(answer?.result?.run).toBe('run-1')
+    }
+    expect(spawner.calls).toHaveLength(1)
+  })
+
+  it('answers a no for a window that is still open with the cancel refusal, and spawns nothing', async () => {
+    const confirmer = heldConfirmer()
+    const spawner = completingSpawner()
+    const held = runner({ confirmer, spawner })
+    const launched = held.launch(request())
+    await untilSettled()
+
+    const runId = (confirmer.opened[0] as ConfirmView).runId
+    const declined = await held.answer(runId, false)
+    expect(declined?.ok).toBe(false)
+    expect(declined?.runId).toBe(runId)
+    expect(declined?.reason).toBe(DECLINED_CANCELLED)
+    expect((await launched).reason).toBe(DECLINED_CANCELLED)
+    expect(spawner.calls).toHaveLength(0)
   })
 })
 

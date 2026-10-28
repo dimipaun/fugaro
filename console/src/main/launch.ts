@@ -70,6 +70,17 @@ export const LAUNCH_COOL_DOWN_MS = 10_000
 export const MAX_IN_FLIGHT_PER_INSTALLATION = 1
 export const MAX_IN_FLIGHT = 2
 
+/** MAX_RECORDED_OUTCOMES is how many answered run ids this process replays an
+ * answer from, evicting the oldest first: 256. A replay is an operator's second
+ * answer for a window they have just closed, and the limits above allow at most
+ * six windows a minute app-wide, so 256 is more than forty minutes of the
+ * busiest answering this console permits -- far past any replay an operator can
+ * reach -- while each record is one `LaunchOutcome` and the cap keeps the whole
+ * record small for the life of the process. Eviction is not forgetting: an
+ * evicted id stays in `issuedRunIds`, so it is never drawn for a new window, and
+ * an answer for it spawns nothing. */
+export const MAX_RECORDED_OUTCOMES = 256
+
 /** DECLINED_UNBUILT is the production confirmer's answer, and the sentence is
  * deliberately about this tree rather than about the operator's click: nothing
  * asked them anything. It is the refusal a shipped console gives every launch
@@ -113,9 +124,11 @@ const RUN_ID_DRAWS = 8
  * *before* the window opens, is what keeps that from being reachable at all,
  * and `taken` is asked about all three places an id can be: **claimed** (drawn
  * by a launch that is still reading its records), **in flight** (a window that
- * is open) and **frozen** (a launch this process has already answered, whose id
- * a replayed answer still resolves). The claim is the one that makes the check
- * complete, because it is the only one that exists before the launch is built.
+ * is open) and **issued** (an id this process has already committed, which a
+ * replayed answer still resolves -- and which stays known after the launch's own
+ * objects have been dropped, since `issuedRunIds` is strings alone). The claim
+ * is the one that makes the check complete, because it is the only one that
+ * exists before the launch is built.
  *
  * What is left after the retries is a refusal rather than a shared slot: an id
  * this process already holds is one an operator's yes could be attached to the
@@ -394,7 +407,15 @@ export interface LaunchDeps {
 export interface LaunchRunner {
   launch(request: LaunchRequest): Promise<LaunchOutcome>
   /** answer is the confirmation window's own main-side path: the yes/no the
-   * operator gave, for the run id that window was opened under. */
+   * operator gave, for the run id that window was opened under.
+   *
+   * It answers with the outcome `launch` resolves with for that run id. The
+   * first answer for an open window resolves that window's `decide`; every
+   * answer while the launch is still settling -- the first one included, and a
+   * later yes or no, since the child cannot be cancelled from here -- then waits
+   * on the launch in flight. A run id this process has already answered replays
+   * from its own record, and one it never opened answers `undefined` and spawns
+   * nothing. */
   answer(runId: string, yes: boolean): Promise<LaunchOutcome | undefined>
 }
 
@@ -419,12 +440,19 @@ function unknownOutcome(why: string, runId: string): LaunchOutcome {
 }
 
 /**
- * createLaunchRunner builds the launcher. It holds four pieces of state and all
- * four live only in memory, for the life of the process: the confirmation
- * timestamps the rate limits read, the cool-down each installation is under, the
- * launches in flight, and the outcomes an answered run id replays from. Nothing
- * here is written to disk (rule 10: the app writes the spawn log, when asked, and
- * the installations file, and nothing else).
+ * createLaunchRunner builds the launcher. Everything it holds lives only in
+ * memory, for the life of the process: the confirmation timestamps the rate
+ * limits read, the cool-down each installation is under, the launches in flight,
+ * the windows that are open, the ids it has issued, and the outcomes an answered
+ * run id replays from. Nothing here is written to disk (rule 10: the app writes
+ * the spawn log, when asked, and the installations file, and nothing else).
+ *
+ * Two of those grow with the process's own history rather than with what is
+ * unsettled, and each is bounded where it can be: `issuedRunIds` keeps one short
+ * string per launch for the life of the process, which is what makes a drawn id
+ * unmistakably this process's, and `outcomes` is capped at
+ * `MAX_RECORDED_OUTCOMES` because a replayed answer is an answer and not a
+ * promise about every id ever used.
  */
 export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
   const now = deps.now ?? ((): number => performance.now())
@@ -449,6 +477,13 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
    * leaves this set when it enters `inFlight` (`commit`) or when the launch is
    * released without one (`launch`'s `finally`). */
   const claimedRunIds = new Set<string>()
+  /** every run id this process has ever committed, as strings and nothing else.
+   * An id stays here for the life of the process, so it is never drawn again: a
+   * drawn id is one an operator's yes could be attached to the wrong launch, and
+   * the record that makes a replay safe is capped (`outcomes`), so the ids
+   * themselves cannot be. It carries no task text and no plan, which is why the
+   * collision check reads it rather than the frozen objects. */
+  const issuedRunIds = new Set<string>()
   /** how many reservations this process has taken, and the prefix that keeps a
    * reservation's token from ever reading as a run id (`newRunID`'s shape has no
    * colon in it) */
@@ -456,11 +491,34 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
   const RESERVATION_PREFIX = 'reservation:'
   /** a window that is open: the run id to the `decide` its answer resolves */
   const pending = new Map<string, (answer: LaunchAnswer) => void>()
-  /** the frozen object of every window this process opened, so a replayed answer
-   * spawns the same launch and not a rebuilt one */
+  /** the outcome promise of every launch this process has opened a window for
+   * and not yet finished: the run id to the promise `launch` itself resolves
+   * with. It is what an answer attaches to, so a second answer for a window that
+   * is open, or for one whose yes is already running, waits on the launch in
+   * flight rather than starting a second child. The entry is dropped as the
+   * launch settles (`settle`'s `finally`), so it holds nothing settled. */
+  const settling = new Map<string, Promise<LaunchOutcome>>()
+  /** the frozen object of every window this process has open, so a yes spawns
+   * the launch the operator read and not a rebuilt one. It is dropped the moment
+   * the answer settles (`settle`'s `finally`, and the confirmer-threw path), so
+   * a settled launch holds no task text -- what a replay needs is `outcomes`,
+   * which is an answer and not a task. */
   const frozen = new Map<string, FrozenLaunch>()
-  /** what an already-answered run id answers with, for the life of the process */
+  /** what an already-answered run id answers with, capped at
+   * `MAX_RECORDED_OUTCOMES` and written only through `recordOutcome` */
   const outcomes = new Map<string, LaunchOutcome>()
+
+  /** recordOutcome is the one write to `outcomes`, and it is where the cap is
+   * kept. A `Map` iterates in insertion order, so the first key is the oldest
+   * answer: the one an eviction drops once the record is over the cap. */
+  function recordOutcome(runId: string, outcome: LaunchOutcome): void {
+    outcomes.set(runId, outcome)
+    while (outcomes.size > MAX_RECORDED_OUTCOMES) {
+      const oldest = outcomes.keys().next().value
+      if (oldest === undefined) break
+      outcomes.delete(oldest)
+    }
+  }
 
   /** liveStamps is the window's one definition, and it is a function for that
    * reason: the rate checks **count** these and the sweep **keeps** these, and a
@@ -560,6 +618,7 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
     inFlight.delete(token)
     inFlight.add(launch.runId)
     claimedRunIds.delete(launch.runId)
+    issuedRunIds.add(launch.runId)
     inFlightByInstallation.set(launch.project, launch.runId)
   }
 
@@ -749,7 +808,7 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
       outcome = unknownOutcome(why, launch.runId)
     }
     release(launch.runId, launch.project)
-    outcomes.set(launch.runId, outcome)
+    recordOutcome(launch.runId, outcome)
     return outcome
   }
 
@@ -804,14 +863,16 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
   }
 
   /** settle is the answer path: the one place a window's yes reaches a spawn,
-   * and the one place every entry it and `launch` took is released. */
+   * and the one place every entry it and `launch` took is released -- the frozen
+   * object and the settling promise included, because a launch that has answered
+   * holds neither a task text nor a window. */
   async function settle(runId: string, yes: boolean, reason?: string): Promise<LaunchOutcome> {
     const launch = frozen.get(runId)
     if (launch === undefined) return refusedOutcome(DECLINED_CANCELLED, runId)
     try {
       if (!yes) {
         const declined = refusedOutcome(reason ?? DECLINED_CANCELLED, runId)
-        outcomes.set(runId, declined)
+        recordOutcome(runId, declined)
         return declined
       }
       // An installation removed, re-added or changed while the window was open
@@ -833,13 +894,15 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
       }
       if (!still) {
         const declined = refusedOutcome(DECLINED_CANCELLED, runId)
-        outcomes.set(runId, declined)
+        recordOutcome(runId, declined)
         return declined
       }
       coolDownUntil.set(launch.project, now() + LAUNCH_COOL_DOWN_MS)
       return await spawn(launch)
     } finally {
       release(runId, launch.project)
+      frozen.delete(runId)
+      settling.delete(runId)
     }
   }
 
@@ -921,12 +984,12 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
         // is one a same-tick message's draw is already refused; drawn where the
         // launch is *built* instead, the second message of a same-tick pair
         // would draw the first's id while the first was still reading its
-        // records -- nothing claimed, nothing frozen, nothing committed for it
+        // records -- nothing claimed, nothing issued, nothing committed for it
         // to see.
         runId = drawRunID(
           new Date(wallClock()),
           random,
-          (id) => claimedRunIds.has(id) || inFlight.has(id) || frozen.has(id),
+          (id) => claimedRunIds.has(id) || inFlight.has(id) || issuedRunIds.has(id),
         )
         if (runId === null) {
           // A refusal about this console's own bookkeeping rather than about the
@@ -956,6 +1019,15 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
         const decided = new Promise<LaunchAnswer>((resolve) => {
           pending.set(built.launch.runId, resolve)
         })
+        // The promise this call resolves with, kept where `answer` can reach it
+        // from the moment the window opens: an answer that arrives after the
+        // window's own `decide` has been resolved -- the operator clicking
+        // twice, a re-sent IPC call -- attaches to the launch already in flight
+        // and waits on this, rather than returning nothing or starting a second
+        // child. Set here and not after the `await`, so an answer made in the
+        // same tick as the window's own finds it.
+        const settled = decided.then((answer) => settle(built.launch.runId, answer.yes, answer.reason))
+        settling.set(built.launch.runId, settled)
         try {
           deps.confirmer.open(confirmView(built.launch), (yes, reason) => {
             const resolve = pending.get(built.launch.runId)
@@ -967,14 +1039,17 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
           // A confirmer that throws is a window that did not open: there is
           // nobody to ask, so the launch is declined here rather than left
           // pending -- a `decided` nothing will ever resolve would hold this run
-          // id, and its installation's slot, for the life of the process.
+          // id, and its installation's slot, for the life of the process. The
+          // frozen object and the settling promise go with it: no window exists
+          // to answer from either.
           pending.delete(built.launch.runId)
+          frozen.delete(built.launch.runId)
+          settling.delete(built.launch.runId)
           const declined = refusedOutcome(DECLINED_CANCELLED, built.launch.runId)
-          outcomes.set(built.launch.runId, declined)
+          recordOutcome(built.launch.runId, declined)
           return declined
         }
-        const answered = await decided
-        return await settle(built.launch.runId, answered.yes, answered.reason)
+        return await settled
       } finally {
         // The one exit this file's own paths do not cover: if the draw, `build`
         // or the confirmer threw outright, the reservation, the id's claim and
@@ -997,14 +1072,19 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
     },
 
     async answer(runId: string, yes: boolean): Promise<LaunchOutcome | undefined> {
-      // The in-flight case: a second answer for a window that is still open is
-      // attached to that launch, and no second child starts.
+      // The in-flight case: an answer for a window that is still open resolves
+      // that window's `decide` -- the first answer only, as it always has -- and
+      // then waits on the launch itself. A later answer, while the child runs,
+      // finds no `decide` left and waits on the same launch: it is attached to
+      // the launch in flight, a yes and a no alike (the child cannot be
+      // cancelled from here), and no second child starts.
       const resolve = pending.get(runId)
       if (resolve !== undefined) {
         pending.delete(runId)
         resolve({ yes })
-        return undefined
       }
+      const inFlight = settling.get(runId)
+      if (inFlight !== undefined) return await inFlight
       // The replay case: a second answer for a run id that has been answered is
       // answered from this process's own record, and never spawns again.
       const recorded = outcomes.get(runId)
