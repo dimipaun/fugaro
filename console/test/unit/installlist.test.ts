@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   MAX_DISCOVERED_INSTALLATIONS,
+  MAX_DOCUMENT_STRING,
   MAX_WARNING_LINES,
   isCliProjectName,
   parseInstallationsDocument,
@@ -191,6 +192,24 @@ describe('the installation list document', () => {
     expect(wrongRow.ok).toBe(false)
     expect(wrongRow.ok === false && wrongRow.reason).toContain('sandbox')
     expect(wrongRow.ok === false && wrongRow.reason).toContain('base_branch')
+  })
+
+  it('refuses a recorded base branch past the document bound rather than cutting it', () => {
+    // The bound is a refusal here and not a truncation: this string is what the
+    // run is cut from and what the confirmation window shows, so a silently
+    // shortened one would name a branch the run does not use -- the same lie the
+    // warning lines below avoid by being display text and nothing else.
+    const long = 'b'.repeat(MAX_DOCUMENT_STRING + 1)
+    const installation = parsed({ installations: [{ name: 'sandbox', base_branch: long }] })
+    expect(installation.ok).toBe(false)
+    expect(installation.ok === false && installation.reason).toContain('sandbox')
+    const row = parsed({
+      installations: [
+        { name: 'sandbox', checkouts: [{ repository: 'github/o/app', path: '/src/app', base_branch: long }] },
+      ],
+    })
+    expect(row.ok).toBe(false)
+    expect(row.ok === false && row.reason).toContain('base_branch')
   })
 
   it('refuses a row whose checkouts run past the bound, rather than drawing a shortened row', () => {

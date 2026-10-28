@@ -599,8 +599,12 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   // Bitbucket credentials T1.2: the project view's read, the one command here
   // whose subject is the coordinator's *stored* view rather than a live read.
   { command: 'coordinator status', kind: 'allowed', where: 'internal/cli/coordinator.go:560' },
-  // Writers.
-  { command: 'run', kind: 'mutating', where: 'internal/cli/run.go:134' },
+  // **The console's one write** (design §5.1 rule 11, D22). `run` was the
+  // first writer in this list and the one no argv could drive; since V2.5.1a it
+  // is a command the allow-list admits, in exactly one argv, so it is `allowed`
+  // and the test below reads that argv back rather than asserting it is
+  // unreachable.
+  { command: 'run', kind: 'allowed', where: 'internal/cli/run.go:134' },
   { command: 'cancel', kind: 'mutating', where: 'internal/cli/cancel.go:72' },
   // The converge is two doors since W1.2 (`fugaro setup` is the first run and
   // creates; `fugaro update` re-converges and creates nothing) and both apply
@@ -669,15 +673,19 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * `--dir D` on doctor is main-process state rather than a renderer argument, so
  * both are absent from these strings.
  *
- * **It is fourteen argvs, and this surface is fifteen.** The thirteenth is
+ * **It is fifteen argvs, and this surface is sixteen.** The thirteenth is
  * `config list --json`, the rail's own read (owner's design ruling of
  * 2026-10-25): until that ruling there were twelve here and it was pinned where
  * the picker's table was, and the ruling made the read the dashboard's own
  * operation. The fourteenth is GV2.1's `plan status --json` (the graph
- * screen's per-task state; `console/docs/json-contract.md` §6.12), and the
+ * screen's per-task state; `console/docs/json-contract.md` §6.12), the
  * fifteenth is T1.2's `coordinator status --from-store --all --json`, whose two
  * extra words are fixed flags of the row rather than arguments
- * (`console/docs/json-contract.md` §6.13).
+ * (`console/docs/json-contract.md` §6.13), and the sixteenth is V2.5.1a's
+ * launch -- rule 11's exact argv with the words an argument fills
+ * (`--run-id <run id>`, `--repo <owner/name>`, `--title=<T>`,
+ * `--plan-task=<P>`) and the console's own state (`--project`, `--config`)
+ * taken out, which is this file's convention for every row here.
  */
 const DESIGN_ARGV: readonly string[] = [
   'watch --json',
@@ -695,6 +703,9 @@ const DESIGN_ARGV: readonly string[] = [
   'config list --json',
   'plan status --json',
   'coordinator status --from-store --all --json',
+  // Rule 11's argv, `--task-file -` and all: the literal `-` is the word that
+  // sends the task down the child's stdin rather than onto a command line.
+  'run --task-file - --json',
 ]
 
 /** argvOf is an operation's command and the flags it fixes, as one string. */
@@ -705,9 +716,16 @@ function argvOf(operation: ConsoleOperation): string | null {
     : `${operation.command} ${operation.flags.join(' ')}`
 }
 
-/** commandsDriven returns the operations whose command is this one. */
+/** commandsDriven returns the operations whose command is this one. A command
+ * path that *continues* the one asked for is that command's, which is what
+ * makes the launch findable under `run`: its `command` is `run --task-file -`,
+ * because those two words are the row's own and not flags a screen controls. */
 function operationsDriving(command: string): readonly ConsoleOperation[] {
-  return CONSOLE_OPERATIONS.filter((operation) => operation.command === command)
+  return CONSOLE_OPERATIONS.filter(
+    (operation) =>
+      operation.command === command ||
+      (operation.command !== null && operation.command.startsWith(`${command} `)),
+  )
 }
 
 describe("the allow-list's read-only invariant", () => {
@@ -790,6 +808,19 @@ describe("the allow-list's read-only invariant", () => {
     })
   }
 
+  it('drives `run` from the launch alone, and only by rule 11’s argv', () => {
+    // **The turned-around half of the loop above.** Until V2.5.1a every test
+    // here asserted that nothing drove `run`; the write is now drivable through
+    // exactly one operation, and this names it. `operationsDriving` reads the
+    // command path, which for the launch carries its two fixed words, so a
+    // second operation under `run` -- or a launch whose words changed -- fails
+    // here as well as at the argv pin below.
+    const drivers = operationsDriving('run')
+    expect(drivers.map((operation) => operation.name)).toEqual(['run.launch'])
+    const driver = drivers[0]
+    expect(driver === undefined ? null : argvOf(driver)).toBe('run --task-file - --json')
+  })
+
   for (const command of NOT_ON_THIS_TREE) {
     it(`names ${command}, which this tree does not have yet, and does not pretend it does`, () => {
       expect(CLI_COMMANDS.some((entry) => entry.command === command)).toBe(false)
@@ -799,8 +830,14 @@ describe("the allow-list's read-only invariant", () => {
 
   it('names only commands this tree has, or commands explicitly not on it', () => {
     for (const row of NEVER_REACHABLE) {
+      // A flag row names a flag; an argv row names one word *of* a command, so
+      // the command it belongs to is what has to exist. The positional-TEXT row
+      // names no word at all, and its command is the one it is refused on.
       if (row.shape === 'flag') continue
-      const known = CLI_COMMANDS.some((entry) => entry.command === row.value)
+      const known =
+        row.shape === 'argv'
+          ? CLI_COMMANDS.some((entry) => entry.command === row.command)
+          : CLI_COMMANDS.some((entry) => entry.command === row.value)
       expect(known || NOT_ON_THIS_TREE.includes(row.value), `${row.value} (${row.where})`).toBe(true)
     }
   })
@@ -830,7 +867,23 @@ describe("the allow-list's read-only invariant", () => {
     expect(isNeverReachable({ command: 'version', flags: [] })).toBeNull()
 
     expect(isNeverReachable({ command: 'budget kill', flags: ['--json'] })?.value).toBe('budget kill')
-    expect(isNeverReachable({ command: 'run', flags: ['--json'] })?.value).toBe('run')
+    // **`run` is argv-shaped now.** `run --json` is not a vector anybody wrote
+    // -- the launch's own argv carries `--task-file -` and `--run-id` as well --
+    // so it is not refused, and each excluded word is, on its own row.
+    expect(isNeverReachable({ command: 'run', flags: ['--json'] })).toBeNull()
+    expect(isNeverReachable({ command: 'run', flags: ['--json', '--pr'] })?.value).toBe('--pr')
+    expect(isNeverReachable({ command: 'run', flags: ['--json', '--retry'] })?.value).toBe('--retry')
+    expect(isNeverReachable({ command: 'run', flags: ['--json', '--no-budget-check'] })?.value).toBe(
+      '--no-budget-check',
+    )
+    // ...and the launch's own command path is not a `run` the table refuses,
+    // even though it begins with one: it names none of the excluded words.
+    expect(
+      isNeverReachable({ command: 'run --task-file -', flags: ['--json'] }),
+    ).toBeNull()
+    // The words are matched wherever they are spelled, which is what keeps a
+    // later edit from moving one out of `flags` and into the command path.
+    expect(isNeverReachable({ command: 'run --task-file - --pr', flags: ['--json'] })?.value).toBe('--pr')
     expect(isNeverReachable({ command: 'doctor', flags: ['--json', '--check-github-app'] })?.value).toBe(
       '--check-github-app',
     )
@@ -878,13 +931,35 @@ describe('the never-reachable table', () => {
     it(`nothing in the allow-list drives ${row.value}`, () => {
       // This is the plan's red step: adding `budget kill` -- or any row here --
       // to CONSOLE_OPERATIONS makes this test, named for it, fail.
-      const drivers = CONSOLE_OPERATIONS.filter((operation) =>
-        row.shape === 'command'
-          ? operation.command === row.value
-          : flagsOf(operation).includes(row.value),
-      )
+      const drives = (operation: ConsoleOperation): boolean => {
+        if (row.shape === 'command') return operation.command === row.value
+        if (row.shape === 'argv') {
+          // A word of a command's argv: it matches wherever the operation
+          // spells it, in the command path or in the flags it fixes.
+          const under =
+            operation.command === row.command ||
+            (operation.command !== null && operation.command.startsWith(`${row.command ?? ''} `))
+          return under && [...(operation.command?.split(' ') ?? []), ...flagsOf(operation)].includes(row.value)
+        }
+        return flagsOf(operation).includes(row.value)
+      }
+      const drivers = CONSOLE_OPERATIONS.filter(drives)
       expect(drivers.map((operation) => operation.name), row.where).toEqual([])
-      expect(isNeverReachable({ command: row.shape === 'command' ? row.value : null, flags: row.shape === 'flag' ? [row.value] : [] })).toBe(row)
+      if (row.shape === 'argv' && row.value === '') {
+        // The positional-TEXT row is the one row with no word to match: `run`
+        // refuses a positional word *together with* `--task-file`, so the fact
+        // is that this row can never fire -- a command-level match would refuse
+        // the very argv rule 11 writes. Its subject is checked from the other
+        // side, in the launch's own argv test.
+        expect(isNeverReachable({ command: 'run', flags: [] }), row.where).toBeNull()
+        return
+      }
+      expect(
+        isNeverReachable({
+          command: row.shape === 'command' ? row.value : row.shape === 'argv' ? (row.command ?? null) : null,
+          flags: row.shape === 'flag' || row.shape === 'argv' ? [row.value] : [],
+        }),
+      ).toBe(row)
     })
   }
 
@@ -904,20 +979,26 @@ describe('the never-reachable table', () => {
     expect(() => assertReachableSurface(mutated)).toThrow(/never reach/)
   })
 
-  it('refuses a table with a command this tree does not have at all', () => {
+  it('refuses a second `run` argv, which is the mutation this fence moved', () => {
+    // This used to plant an operation named `run.launch` driving `run`, because
+    // *every* `run` argv was forbidden and a planted writer was the whole
+    // question. The launch is real now, so the same mutation is the one that
+    // still matters: a second operation under `run`, carrying a word the design
+    // excludes. It fails before any window exists, which is the point of the
+    // check being at registration.
     expect(() =>
       assertReachableSurface([
         ...CONSOLE_OPERATIONS,
         {
-          name: 'run.launch',
-          method: 'launchRun',
+          name: 'run.retry',
+          method: 'retryRun',
           command: 'run',
-          flags: ['--json'],
-          summary: 'a writer',
+          flags: ['--json', '--retry'],
+          summary: 'a writer nobody ruled on',
           args: [],
         },
       ]),
-    ).toThrow(/run/)
+    ).toThrow(/--retry/)
   })
 
   it('refuses a table with a flag the never table does not even list', () => {
@@ -1014,6 +1095,9 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   // repository set, from the view the coordinator already stored, so this
   // payload is empty on purpose (Bitbucket credentials T1.2).
   'coordinator.status': {},
+  // The five fields, with the two optional ones left out -- which is the argv
+  // rule 11 writes for a launch the operator gave no title and no plan task.
+  'run.launch': { installation: 'sandbox', repository: 'acme/app', task: 'do the thing' },
   'run.diagnose': { run: '20261016-121029-4a1b' },
   'run.logs': { run: '20261016-121029-4a1b' },
   'run.logLink': { run: '20261016-121029-4a1b' },
@@ -1835,7 +1919,7 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these twenty-three, and no others".
+ * channel. The claim is "these twenty-four, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
@@ -1859,7 +1943,11 @@ describe('the spend read’s arguments', () => {
  * (`coordinator.status` / `coordinatorStatus`, the project view's read of the
  * coordinator's stored view -- the first operation here whose document the CLI
  * serves from a store rather than from a live walk) and left the other
- * twenty-two exactly where they were.
+ * twenty-two exactly where they were. **The console v2 plan's V2.5.1a added the
+ * twenty-fourth** (`run.launch` / `launchRun`, the console's one write and the
+ * only operation here that is not a read, rule 11) and left the other twenty-
+ * three exactly where they were: its confirmation is a seam the production app
+ * declines, so the surface grew and the app still spawns nothing.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
@@ -1885,6 +1973,7 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['installation.reveal', 'revealInstallation'],
   ['installation.open', 'openInstallations'],
   ['coordinator.status', 'coordinatorStatus'],
+  ['run.launch', 'launchRun'],
 ]
 
 /**
@@ -1915,7 +2004,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these twenty-three, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
+  it('is exactly these twenty-four, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -1932,11 +2021,11 @@ describe('the frozen list of operations the preload exposes', () => {
     // unmutated surface is asserted clean first.
     expect(surfaceOffences(SHIPPED_SURFACE)).toEqual([])
 
-    // A twenty-fourth channel: what each task added must stay one row, and the
+    // A twenty-fifth channel: what each task added must stay one row, and the
     // next task that adds a read cannot do it quietly.
-    const twentyFourth = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
-    expect(twentyFourth).toContain('fleet.report: a channel this console does not ship')
-    expect(twentyFourth).toContain('24 rows, and this console ships 23')
+    const twentyFifth = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
+    expect(twentyFifth).toContain('fleet.report: a channel this console does not ship')
+    expect(twentyFifth).toContain('25 rows, and this console ships 24')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -1950,7 +2039,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('22 rows, and this console ships 23')
+    expect(withoutTheNewRow).toContain('23 rows, and this console ships 24')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -1965,8 +2054,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the twenty-three methods and nothing else', () => {
-    // The bridge the window is handed: the twenty-three methods and the names,
+  it('is frozen, and hands the window a bridge with the twenty-four methods and nothing else', () => {
+    // The bridge the window is handed: the twenty-four methods and the names,
     // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -2988,7 +3077,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: nineteen of the surface's twenty-three operations,
+    // The non-vacuity half: twenty of the surface's twenty-four operations,
     // all of them reachable in a reduced mode (the handshake is the one the loop
     // skips and its own test covers; `installation.current`, Task 3.4b, is among
     // the nineteen, because a reduced console's header still names its
@@ -2998,8 +3087,11 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     // control, so there is no figure for the mode to withhold. `coordinator.status`
     // (T1.2) is another, and for the same reason: the project view is repository
     // state, not money, so the mode has nothing to withhold from it.
-    // A wrapper that refused the whole surface would fail here.
-    expect(THE_OPEN_OPERATIONS.length).toBe(19)
+    // A wrapper that refused the whole surface would fail here. **The launch is
+    // among the twenty**: a reduced console withholds figures, and a launch is
+    // not a figure -- whether it may be offered at all is rule 11's own floor,
+    // which is a comparison against the handshake's version and not this list.
+    expect(THE_OPEN_OPERATIONS.length).toBe(20)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(

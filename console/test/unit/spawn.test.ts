@@ -141,8 +141,9 @@ const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
  * operations `addCloudFlags` gives `--project` to (`internal/cli/cloud.go:51`,
  * called from each of those constructors), including the two log operations
  * that share the `logs` command -- console L5b's `runs.stats` is the eleventh,
- * plan GV2.1's `plan.status` the twelfth, and Bitbucket credentials T1.2's
- * `coordinator.status` the thirteenth. The complement -- the commands
+ * plan GV2.1's `plan.status` the twelfth, Bitbucket credentials T1.2's
+ * `coordinator.status` the thirteenth, and the console's one write, V2.5.1a's
+ * `run.launch`, the fourteenth. The complement -- the commands
  * that take no
  * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
  * command words the CLI itself uses (`version` and the rail's `config list`),
@@ -163,6 +164,7 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'accounts.inventory',
   'environment.report',
   'coordinator.status',
+  'run.launch',
 ]
 /** freshDirectory is a temporary directory this test owns, one per call. */
 function freshDirectory(prefix = 'fugaro-console-test-'): string {
@@ -217,6 +219,25 @@ function safeContext(overrides: {
     appEnv: overrides.appEnv ?? {},
     ...(overrides.wsl === undefined ? {} : { wsl: overrides.wsl }),
   }
+}
+
+/** LAUNCH_RUN_ID is a run id in `task.NewRunID`'s shape, for the one row whose
+ * argv carries one. It is the launch's own id -- the main process generates it
+ * (`src/main/launch.ts`) -- so every other row's context leaves it out, and
+ * `argvFor` refuses an id on a row that has no `runIdFlag`. */
+const LAUNCH_RUN_ID = '20261028-152618-a2fc'
+
+/** contextFor is the plan context one row is built with: `safeContext` for
+ * every read, and the same plus the run id for the launch, which cannot be
+ * built without one. A loop over the whole table goes through here rather than
+ * asking each row what it needs, so a row that starts requiring a new piece of
+ * main-process state fails in the loop that builds it. */
+function contextFor(
+  operation: OperationName,
+  overrides: Parameters<typeof safeContext>[0] = {},
+): Parameters<typeof planFor>[2] {
+  const context = safeContext(overrides)
+  return operation === 'run.launch' ? { ...context, runId: LAUNCH_RUN_ID } : context
 }
 
 /**
@@ -422,13 +443,15 @@ describe('the spawn table and the argv it builds', () => {
     }).toThrow(/does not start with config list/)
   })
 
-  it('fixes the design allow-list exactly: fifteen argvs, fourteen commands, thirteen of them with --project', () => {
+  it('fixes the design allow-list exactly: sixteen argvs, fifteen commands, fourteen of them with --project', () => {
     // The design's §5.1 rule 6 table is the whole allow-list, argv for argv:
     // the rail's read (`config list --json`, the case above) used to be the
     // picker's own row in a second table until the owner's ruling of 2026-10-25,
     // plan GV2.1's `plan status --json` is the fourteenth, and Bitbucket
     // credentials T1.2's `coordinator status --from-store --all --json` the
-    // fifteenth. The Go side pins
+    // fifteenth, and V2.5.1a's launch the sixteenth -- the one row here that is
+    // a write, and the one whose words carry `--task-file -` (the literal word
+    // `-` puts the task on the child's stdin). The Go side pins
     // the document's list (`internal/cli/docs_desktop_console_test.go`,
     // TestDocsDesktopConsoleDesignAllowListIsExactArgv) and this case pins the
     // console's; the two are held in step by hand on purpose.
@@ -448,12 +471,16 @@ describe('the spawn table and the argv it builds', () => {
       'doctor --json',
       'config list --json',
       'coordinator status --from-store --all --json',
+      'run --task-file - --json',
     ])
     // The twelve *commands* that take the flag (addCloudFlags, internal/cli/
-    // cloud.go:51) are twelve rows plus one: `logs` has two rows, `--json` and
-    // `--url`, and neither of them may be the one that forgets --project.
+    // cloud.go:51) are thirteen rows plus one: `logs` has two rows, `--json`
+    // and `--url`, and neither of them may be the one that forgets --project.
+    // A word is a flag or a separator if it begins with `-`, which is what
+    // keeps the launch's literal `-` -- the argv word that means "read the task
+    // from stdin" -- out of the command path it is compared as.
     const commandsWithProject = SPAWN_COMMANDS.filter((row) => row.takesProject).map((row) =>
-      row.words.filter((word) => !word.startsWith('--')).join(' '),
+      row.words.filter((word) => !word.startsWith('-')).join(' '),
     )
     expect(new Set(commandsWithProject)).toEqual(
       new Set([
@@ -469,9 +496,10 @@ describe('the spawn table and the argv it builds', () => {
         'accounts ls',
         'doctor',
         'coordinator status',
+        'run',
       ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(13)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(14)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))
@@ -481,7 +509,7 @@ describe('the spawn table and the argv it builds', () => {
   it.each(SPAWN_COMMANDS.map((row) => [row.operation, row] as const))(
     '%s puts --project on its argv, from the chosen installation',
     (_name, row: SpawnCommand) => {
-      const argv = argvFor(row.operation, {}, safeContext({ project: 'chosen' }))
+      const argv = argvFor(row.operation, {}, contextFor(row.operation, { project: 'chosen' }))
       // The expectation is written out here rather than read from the row: a
       // test that asks the table what it contains cannot catch the table
       // changing, and "does `watch` carry --project" is the whole question.
@@ -492,7 +520,7 @@ describe('the spawn table and the argv it builds', () => {
         // `COMMANDS_WITHOUT_PROJECT` is keyed by the *command*, not by the
         // operation (`assertSpawnSurface` reads it that way), so the row's own
         // words are what it is asked about.
-        expect(COMMANDS_WITHOUT_PROJECT).toContain(row.words.filter((word) => !word.startsWith('--')).join(' '))
+        expect(COMMANDS_WITHOUT_PROJECT).toContain(row.words.filter((word) => !word.startsWith('-')).join(' '))
         expect(argv).not.toContain('--project')
       }
     },
@@ -736,7 +764,7 @@ describe('the spawn table and the argv it builds', () => {
     // string (`fugaro watch --json --project ${project}` handed to a shell)
     // would carry a space and a whole command in one element.
     for (const row of SPAWN_COMMANDS) {
-      const argv = argvFor(row.operation, {}, safeContext())
+      const argv = argvFor(row.operation, {}, contextFor(row.operation))
       for (const element of argv) {
         expect(element, `${row.operation}: ${element}`).not.toMatch(/[\s;&|`$(){}<>"'\\]/)
       }
@@ -973,7 +1001,9 @@ describe('the wrapper on the spawn plan', () => {
 })
 
 describe('the real spawner', () => {
-  const spawned = (stdio: readonly ['ignore', 'ignore' | 'pipe', 'ignore' | 'pipe']) =>
+  const spawned = (
+    stdio: readonly ['ignore' | 'pipe', 'ignore' | 'pipe', 'ignore' | 'pipe'],
+  ) =>
     nodeSpawner('/bin/sh', ['-c', 'exit 0'], {
       cwd: process.cwd(),
       env: {},
@@ -1003,6 +1033,15 @@ describe('the real spawner', () => {
     expect(read.stdout).not.toBeNull()
     expect(read.stderr).not.toBeNull()
     await closed(read)
+
+    // ...and the one request that asks for stdin, which is the launch's: V2.5.1a
+    // widened that single slot so the task text can be written to the child
+    // rather than spelled onto the command line (rule 11), and the spawner has
+    // to hand back a writable stream when it is asked for one -- a `'pipe'`
+    // that came back `null` would be a launch with nowhere to put its task.
+    const fed = spawned(['pipe', 'pipe', 'pipe'])
+    expect(fed.stdin).not.toBeNull()
+    await closed(fed)
   })
 })
 
@@ -1438,7 +1477,7 @@ describe('the child’s working directory', () => {
 
   it('gives every plan a cwd, so no spawn can inherit the app’s own', () => {
     for (const row of SPAWN_COMMANDS) {
-      const plan = planFor(row.operation, {}, safeContext())
+      const plan = planFor(row.operation, {}, contextFor(row.operation))
       expect(plan.cwd, row.operation).not.toBe('')
       expect(plan.cwd, row.operation).not.toBe('/')
     }
@@ -2276,6 +2315,47 @@ describe('the WSL resolution path', () => {
     expect([...outside.prefix]).toEqual(['-d', 'Ubuntu', '-e'])
     expect([...outside.argv]).not.toContain('--dir')
     expect([...outside.argv]).not.toContain('/Users/owner/AppData/Local/Temp/fugaro-console/cwd')
+  })
+
+  it('keeps the launch’s task out of the wrapper’s script, and shell-quotes its title as one word', () => {
+    // The launch is the one row whose task reaches no argv word at all (§5.1
+    // rule 11), and on the WSL route the row's words become a `sh -c` script,
+    // where every word is a shell word. So the task is nowhere in the script --
+    // it is written to the distribution's stdin, which is the whole reason the
+    // form was chosen -- and the `=`-form title is one word, quoted by the one
+    // quoting function there is. A title is the row's one hostile-shaped value:
+    // `isSafeInstallationValue` does not hold it, because the IPC validator
+    // does, and the shell layer is `shellQuoteWord`.
+    const task = 'summarise the backlog; rm -rf /'
+    const title = "the owner's backlog"
+    const plan = planFor(
+      'run.launch',
+      { task, repository: 'acme/app', title },
+      contextFor('run.launch', {
+        binaryPath: FUGARO_BINARY_NAME,
+        wsl: { distro: 'Ubuntu', directory: '/home/dimi/src', executable: 'C:\\Windows\\System32\\wsl.exe' },
+      }),
+    )
+    expect(plan.command).toBe('C:\\Windows\\System32\\wsl.exe')
+    expect([...plan.prefix]).toEqual(['-d', 'Ubuntu', '--cd', '/home/dimi/src', '-e'])
+    expect([...plan.argv]).toStrictEqual([
+      'fugaro',
+      'run',
+      '--task-file',
+      '-',
+      '--json',
+      '--run-id',
+      LAUNCH_RUN_ID,
+      '--repo',
+      'acme/app',
+      `--title=${title}`,
+      '--project',
+      PROJECT,
+    ])
+    const script = plan.wrapper?.words[2] ?? ''
+    expect(script).toContain(`'--title=the owner'\\''s backlog'`)
+    expect(script).not.toContain(task)
+    expect(script).not.toContain('rm -rf')
   })
 
   it('resolves a stored installation inside its distribution, and starts the CLI there', async () => {
@@ -3925,9 +4005,14 @@ describe('the source scan', () => {
     // Part F adds a fourth site and changes the real spawner's: the stop sent
     // **inside** a distribution (T-F4) reads nothing, so it asks for `'ignore'`
     // on all three, and the real spawner now copies its caller's request
-    // (`[...options.stdio]`) instead of hardcoding the reads' answer. stdin is
-    // still `'ignore'` everywhere -- the type below is what says so for the
-    // spawner's copy, and the literals are listed one by one.
+    // (`[...options.stdio]`) instead of hardcoding the reads' answer.
+    //
+    // **V2.5.1a's launch is the one site whose stdin is not a literal
+    // `'ignore'`**: `runToCompletion` asks for `'pipe'` on that one slot when
+    // its caller passed `stdinBytes`, and only the launch's own call ever does
+    // -- the task text goes down the child's stdin, never onto the command
+    // line. Every other site, and every other row, still says `'ignore'`, and
+    // the two literals below are what keep that a fact rather than a habit.
     const source = codeOnly('main/spawn.ts')
     const optionLines = source.match(/stdio: \[[^\]]*\]/g) ?? []
     expect([...optionLines].sort()).toEqual(
@@ -3935,13 +4020,16 @@ describe('the source scan', () => {
         'stdio: [...options.stdio]',
         "stdio: ['ignore', 'ignore', 'ignore']",
         "stdio: ['ignore', 'pipe', 'pipe']",
-        "stdio: ['ignore', 'pipe', 'pipe']",
+        "stdio: [deps.stdinBytes === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe']",
       ].sort(),
     )
-    // The type the spawner is handed says the same thing, so a caller cannot
-    // widen it -- or hand a child the console's stdin -- without changing this
-    // line too.
-    expect(source).toContain("stdio: readonly ['ignore', 'ignore' | 'pipe', 'ignore' | 'pipe']")
+    // The type the spawner is handed says the same thing: one slot admits
+    // `'pipe'`, and it is the caller's to ask for -- so a read cannot widen it
+    // by accident, and a row that asks for a pipe without saying what to write
+    // is a child that hangs on a stream nobody ends.
+    expect(source).toContain(
+      "stdio: readonly ['ignore' | 'pipe', 'ignore' | 'pipe', 'ignore' | 'pipe']",
+    )
     expect(source).not.toMatch(/stdio:\s*'inherit'/)
     expect(source).not.toMatch(/stdio:\s*\[[^\]]*'inherit'/)
   })

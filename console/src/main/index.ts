@@ -48,15 +48,26 @@ import {
   versionReadFrom,
 } from './window'
 import type { ConsoleWindowDeps, VersionRead } from './window'
-import { privateWorkingDirectory, resolveHandshakeBinary } from './spawn'
+import {
+  cliSentence,
+  planFor,
+  privateWorkingDirectory,
+  resolveBinary,
+  resolveHandshakeBinary,
+  runToCompletion,
+} from './spawn'
 import type { SpawnTarget } from './spawn'
 import { createSpawnLog } from './spawnlog'
+import { parseInstallationsDocument } from './installlist'
+import { createLaunchRunner, DECLINING_CONFIRMER } from './launch'
+import type { LaunchRequest, TargetLookup } from './launch'
+import type { InstallationsListReply } from './onboarding'
 import { reducedModeHandlers, registerConsoleHandlers, startupCompatibility } from './ipc'
-import type { ConsoleHandlers } from './ipc'
+import type { ConsoleHandlers, ValidatedArguments } from './ipc'
 import { handlersFor } from '../source/source'
 import { createBoundSource } from '../source/cli'
 import type { BoundInstallation } from '../source/cli'
-import { withResolvedBinary } from './installations'
+import { createInstallationFileStore, installationStorePath, withResolvedBinary } from './installations'
 import type { ActiveInstallation } from './installations'
 import type { CliCompatibility } from '../shared/version'
 import { NO_INSTALLATION_SURFACE } from '../source/source'
@@ -424,6 +435,180 @@ async function openExternalFromShell(raw: unknown): Promise<void> {
 }
 
 /**
+ * launchRequest narrows the operation's five validated fields to the launcher's
+ * own request. The validator has already refused everything that is not a string
+ * (`ipc.ts`'s kinds), so this is a narrowing and not a check: a value that is
+ * somehow not a string is left out, and the launcher's own rules refuse the
+ * empty field that leaves behind.
+ */
+function launchField(args: ValidatedArguments, key: string): string | undefined {
+  const value = args[key]
+  return typeof value === 'string' ? value : undefined
+}
+
+function launchRequest(args: ValidatedArguments): LaunchRequest {
+  const title = launchField(args, 'title')
+  const planTask = launchField(args, 'planTask')
+  return {
+    installation: launchField(args, 'installation') ?? '',
+    repository: launchField(args, 'repository') ?? '',
+    task: launchField(args, 'task') ?? '',
+    ...(title === undefined ? {} : { title }),
+    ...(planTask === undefined ? {} : { planTask }),
+  }
+}
+
+/** LAUNCH_NO_RECORDS is the refusal a console with no installation surface at
+ * all answers: there are no records to check a name against, and a name that
+ * cannot be checked is not one a launch may be built for. */
+const LAUNCH_NO_RECORDS = 'this console cannot read its installation records yet, and a launch needs one it can check'
+
+/** storedConfigPath is the config path this console's own records hold for one
+ * installation, read from the file the picker's registry reads and not from a
+ * second source: an installation's `configPath` is a legacy field the app only
+ * ever reads (`installations.ts`), and a launch is the one place it matters.
+ * `undefined` covers both "no record" and "no store", and the two are the same
+ * answer here for a reason -- the caller refuses every path that is *set*, so
+ * the states that hide a field are the states that pass no `--config`. */
+function storedConfigPath(project: string): string | undefined {
+  let store
+  try {
+    store = createInstallationFileStore({
+      path: installationStorePath({
+        userData: app.getPath('userData'),
+        env: process.env,
+        home: app.getPath('home'),
+      }),
+    })
+  } catch {
+    // The console has no place to keep its own records, so it has none to read.
+    return undefined
+  }
+  const read = store.load()
+  if (!read.ok) return undefined
+  return read.file.installations.find((record) => record.project === project)?.configPath
+}
+
+/** pickerList is the rail's own read, asked of the picker directly: `list` is
+ * the picker's name for it and not the surface's (`installation.list`), and the
+ * answer is the picker's `ok`/`data` convention unwrapped -- which is what
+ * `source.ts`'s `rail` does for the dashboard and what this file must do for
+ * itself. `null` is every way the read can fail to produce rows: no picker, a
+ * refusal, an answer that is not the shape. */
+async function pickerList(): Promise<InstallationsListReply | null> {
+  const built = picker
+  if (built === null) return null
+  const answer = (await built.answer('list', {})) as
+    | { readonly ok?: unknown; readonly data?: InstallationsListReply }
+    | null
+    | undefined
+  if (answer === null || typeof answer !== 'object' || answer.ok !== true) return null
+  return answer.data ?? null
+}
+
+/**
+ * launchLookUp answers what this process's own records say about one
+ * installation, and it is deliberately built from the two reads that already
+ * exist rather than from a new one: the rail's own `installation.list` (which is
+ * `fugaro config list --json` through the picker) tells this file whether the
+ * console's records carry the name at all, and the document that same command
+ * prints carries the repositories and their recorded base branches the launch
+ * needs. A name the records do not carry -- or that the CLI did not list -- is
+ * refused **before** any window is asked about, which is design section 5.1
+ * rule 11's own order.
+ *
+ * **The record's `configPath` is read from the console's own file and not from
+ * the rail's reply**, which carries a row's project, its checkouts and its state
+ * and no config path at all. Rule 11 refuses an installation whose `configPath`
+ * is set and is not that project's own projects-file path; this console cannot
+ * compute that path -- working out which file the CLI would resolve for a
+ * project means reading the CLI's configuration directory, which section 3.4
+ * rule 7 forbids the app to do -- so **every** stored `configPath` is refused,
+ * which is the strict direction of the same rule. `storedConfigPath` is that
+ * read, and an unreadable store answers `undefined`: a field this console cannot
+ * see is a field it does not pass, and passing no `--config` is the ambient
+ * resolution the CLI does anyway rather than a path nothing checked.
+ */
+async function launchLookUp(project: string): Promise<TargetLookup> {
+  const listed = await pickerList()
+  if (listed === null) return { ok: false, reason: LAUNCH_NO_RECORDS }
+  const row = listed.rows.find((candidate) => candidate.project === project)
+  if (row === undefined || !row.saved) {
+    return {
+      ok: false,
+      reason: `no installation named ${JSON.stringify(project)} is one this console’s records carry`,
+    }
+  }
+  const resolution = await resolveBinary({
+    appEnv: process.env,
+    home: app.getPath('home'),
+    directory: privateWorkingDirectory(),
+    target: { project: '' },
+    log: createSpawnLog(process.env),
+  })
+  if (!resolution.ok) return { ok: false, reason: resolution.reason }
+  const plan = planFor('installation.list', {}, {
+    target: { project: '' },
+    binaryPath: resolution.path,
+    directory: privateWorkingDirectory(),
+    appEnv: process.env,
+  })
+  let run
+  try {
+    run = await runToCompletion(plan, { log: createSpawnLog(process.env) })
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : 'the CLI could not list the installations' }
+  }
+  if (run.signal !== null || run.code !== 0) {
+    return {
+      ok: false,
+      reason: cliSentence(run.stderr) ?? `the CLI exited ${String(run.code)} for its installation list`,
+    }
+  }
+  const parsed = parseInstallationsDocument(run.stdout)
+  if (!parsed.ok) return { ok: false, reason: parsed.reason }
+  const found = parsed.document.installations.find((candidate) => candidate.name === project)
+  if (found === undefined) {
+    return { ok: false, reason: `the CLI listed no installation named ${JSON.stringify(project)}` }
+  }
+  const configPath = storedConfigPath(project)
+  return {
+    ok: true,
+    target: {
+      project,
+      binaryPath: resolution.path,
+      cliVersion: resolution.version,
+      records: found,
+      ...(configPath === undefined ? {} : { configPath }),
+    },
+  }
+}
+
+/** launchStillRecorded is the check that makes "an installation removed while
+ * its window is open closes as a cancel" true rather than promised: it re-reads
+ * the rail's own records and answers whether the console still carries the
+ * installation the frozen object was built for. */
+async function launchStillRecorded(project: string): Promise<boolean> {
+  const listed = await pickerList()
+  if (listed === null) return false
+  const row = listed.rows.find((candidate) => candidate.project === project)
+  return row !== undefined && row.saved
+}
+
+/**
+ * launchRunner is the launcher the surface's `run.launch` answers through. Its
+ * confirmer is `DECLINING_CONFIRMER` until V2.5.1b's window lands, so no launch
+ * this app can be asked for reaches `spawn`.
+ */
+const launchRunner = createLaunchRunner({
+  lookUp: launchLookUp,
+  stillRecorded: launchStillRecorded,
+  confirmer: DECLINING_CONFIRMER,
+  appEnv: process.env,
+  log: createSpawnLog(process.env),
+})
+
+/**
  * gated is the whole surface, and it is the join the two modules describe:
  * `handlersFor` answers the twelve operations that read the CLI -- eleven
  * before console L5b added `runs.stats` (`src/source/source.ts`'s
@@ -452,6 +637,19 @@ const gated: ConsoleHandlers = {
     installations: () => railSurface(),
   }),
   'startup.compatibility': startupCompatibility(storedCompatibility),
+  // **The launch, and the console's one write** (V2.5.1a, design section 5.1
+  // rule 11, D22). It is joined here for the same reason
+  // `startup.compatibility` is: it is not a read of the *active* installation's
+  // source, so `handlersFor` leaves it out (`CliBackedHandlers` in
+  // `src/source/source.ts` says so from the other side).
+  //
+  // **The confirmer is the declining one, and that is V2.5.1a's whole safety
+  // property.** V2.5.1b builds the window; until it lands, `DECLINING_CONFIRMER`
+  // refuses every launch by name (`DECLINED_UNBUILT`), so the shipped app has no
+  // way to a `run` child at all -- the operation, its argv, its reachability
+  // rows and its limits are all in place and tested with a fake confirmer, and
+  // not one of them is reachable from a renderer today.
+  'run.launch': (args) => launchRunner.launch(launchRequest(args)),
 }
 
 /**

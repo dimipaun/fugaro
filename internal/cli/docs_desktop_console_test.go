@@ -1137,7 +1137,7 @@ func firstBacktick(cell string) string {
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
 // §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
-// the fourteen argvs and nothing else -- the console's one spawn table
+// the fifteen argvs and nothing else -- the console's one spawn table
 // (SPAWN_COMMANDS) since the installation rail took the picker's read onto the
 // dashboard's surface -- and a review of an earlier revision found the picker's own
 // read, `config list --json`, absent here, which left the specification
@@ -1176,6 +1176,10 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// it prints the view the sweep stored -- and `--all` is every
 		// repository the installation's config lists.
 		"coordinator status --from-store --all --json",
+		// The launch (console v2 plan V2.5.1a, the `run.launch` operation):
+		// the console's one write and the one thing this table is a fence
+		// against, spelled as rule 11's exact argv and nothing else.
+		"run --task-file - --json --run-id <run id> --repo <owner/name> [--title=<T>] [--plan-task=<P>] --project <name> [--config <path>]",
 	}
 	rows := docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |")
 	got := map[string]bool{}
@@ -1258,17 +1262,17 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 		}
 		cmdPath := "fugaro " + strings.Join(words, " ")
 		allowed[cmdPath] = true
-		if !consoleReadPaths[cmdPath] {
+		if !consoleReadPaths[cmdPath] && !consoleLaunchPaths[cmdPath] {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Fourteen commands: the twelve dashboard reads (logs has two argvs), the
+	// Fifteen commands: the twelve dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
-	// screen's `plan status --json` (GV2.1) and the project view's
+	// screen's `plan status --json` (GV2.1), the project view's
 	// `coordinator status --from-store --all --json` (Bitbucket credentials
-	// T1.2).
-	if len(allowed) != 14 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 14 (logs has two argvs)", path, argvs, len(allowed))
+	// T1.2) and the launch `fugaro run` (V2.5.1a).
+	if len(allowed) != 15 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 15 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
@@ -1282,6 +1286,14 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 		}
 	}
 }
+
+// consoleLaunchPaths is §5.1's allow-list written as an exemption rather
+// than as a hole: `fugaro run` is the console's one write (rule 11, D22), so
+// it is deliberately absent from consoleReadPaths -- a write is not a read
+// and must not be -- and a table that grew a second writer would have to
+// come back here and say so. The reason sits beside the exemption because
+// the exemption is the security claim: one write, named, and nothing else.
+var consoleLaunchPaths = map[string]bool{"fugaro run": true}
 
 // planPhaseRow returns the "What ships" cell of the project-centric plan's
 // phase table row whose Phase cell names phase (a substring of it), and the
@@ -8435,9 +8447,9 @@ func consoleProductName(t *testing.T) string {
 //
 // The mutations it fails on: deleting any pinned sentence (each names itself);
 // re-wrapping one is not a mutation, because the rule is read as one run of
-// whitespace; putting rule 11's row on the allow-list table, or moving rule 5's
-// "twenty-three operations", before V2.5.1a lands (the checks after the table);
-// and restoring a bare `run` to the never table, which would read as a
+// whitespace; carrying a `run` argv on the allow-list table other than rule
+// 11's, or a rule 5 count that disagrees with the code (the checks after the
+// table); and restoring a bare `run` to the never table, which would read as a
 // permission for the one argv this rule writes rather than for every other one.
 func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 	const path = "docs/design/desktop-console.md"
@@ -8453,9 +8465,13 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 	}
 	rule := flattenDoc(doc[start : start+end])
 
+	// The one argv rule 11 writes, spelled once: the pins below and the
+	// allow-list check at the end of this test all speak of this same form,
+	// so a widened argv cannot pass by looking right in one place.
+	const rule11Argv = "run --task-file - --json --run-id <run id> --repo <owner/name> [--title=<T>] [--plan-task=<P>] --project <name> [--config <path>]"
+
 	for _, want := range []struct{ why, text string }{
-		{"the one exact argv, in its fixed order",
-			"run --task-file - --json --run-id <run id> --repo <owner/name> [--title=<T>] [--plan-task=<P>] --project <name> [--config <path>]"},
+		{"the one exact argv, in its fixed order", rule11Argv},
 		{"a value that rides its own flag word cannot be read as a flag",
 			"a value after `=` is part of the flag's own word"},
 		{"the row and the code it needs land together",
@@ -8509,7 +8525,7 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 		{"what the fallback means for a row that cannot pass --ref",
 			"with nothing recorded the CLI resolves `main` and says nothing"},
 		{"the field the console still cannot read",
-			"carry **no `base_branch`**"},
+			"carried **no `base_branch`**"},
 		{"the layer a console launch cannot take its ref from",
 			"for this row it cannot be the source"},
 		{"the two layers it can both read and be cut from",
@@ -8517,11 +8533,11 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 		{"the setting that does not move this row",
 			"which an operator can set without moving this row"},
 		{"the read is a CLI change, not a console-only one",
-			"it is a CLI change rather than a console-only one"},
+			"it was a CLI change rather than a console-only one"},
 		{"and a console-only slice could not build the rule",
 			"a console-only slice could not build this rule at all"},
 		{"what that change adds to the read",
-			"the installation's fields gain the project-level `base_branch`"},
+			"the installation's fields gained the project-level `base_branch`"},
 		{"and why it is not a new operation",
 			"a field on a read the console already has and not a new operation"},
 		{"no field of the schema names a run id",
@@ -8535,9 +8551,9 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 		{"the floor is a comparison, not the range",
 			"a version comparison and not membership in the console's supported range"},
 		{"and the range the console reads today is below it",
-			"**every CLI the console supports today is below the floor**"},
+			"**every CLI the console supported then was below the floor**"},
 		{"which is why this slice moves the range",
-			"moves the supported range to include `0.11` as part of this task"},
+			"moved the supported range to include `0.11`"},
 		{"the task is trimmed, so the window's bytes are the run's",
 			"the bytes the window counts and the operator confirms are the bytes the run keeps"},
 		{"and an empty task is refused before the window opens",
@@ -8618,8 +8634,8 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 		t.Errorf("%s §5.1 rule 11 still bounds the task at 64 KiB: the operator confirms by reading it, so the bound is 16 KiB", path)
 	}
 
-	if !strings.Contains(doc, "**The dashboard's surface is twenty-three operations**") {
-		t.Errorf("%s no longer says the surface is twenty-three operations: rule 5's count moves with the code, in one commit, in V2.5.1a — not in this design", path)
+	if !strings.Contains(doc, "**The dashboard's surface is twenty-four operations**") {
+		t.Errorf("%s no longer says the surface is twenty-four operations: rule 5's count moved with the code when V2.5.1a landed, and the two cannot disagree", path)
 	}
 
 	var neverRows [][]string
@@ -8663,10 +8679,23 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 		t.Errorf("%s's never table does not start a row at `run --retry`: rule 11 moved the `run` row, and this is the row it moved to", path)
 	}
 
+	// Rule 11's row is the allow-list's one `run` argv, and it landed with
+	// V2.5.1a in one commit with the operation. Exactly one row may lead with
+	// `run` and it must be that argv spelled as rule 11 writes it: any other
+	// `run` argv on the table is a second write nobody ruled on, and a `run`
+	// row that leads with anything else is the row the design replaced.
+	launches := 0
 	for _, cells := range docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |") {
 		argv := firstBacktick(cells[0])
-		if argv == "run" || strings.HasPrefix(argv, "run ") {
-			t.Errorf("%s's allow-list table carries %q: it gains rule 11's row in one commit with the operation, in V2.5.1a, and not before", path, argv)
+		if argv != "run" && !strings.HasPrefix(argv, "run ") {
+			continue
 		}
+		launches++
+		if argv != rule11Argv {
+			t.Errorf("%s's allow-list table carries %q: its one `run` row is rule 11's exact argv and nothing else", path, argv)
+		}
+	}
+	if launches != 1 {
+		t.Errorf("%s's allow-list table carries %d `run` argvs, want exactly 1 (rule 11's)", path, launches)
 	}
 }

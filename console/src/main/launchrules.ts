@@ -503,6 +503,55 @@ export function recordedBaseBranch(installation: LaunchRecords, repository: stri
   return { ok: true, value: recorded }
 }
 
+/**
+ * checkLaunchBranch answers whether the branch `recordedBaseBranch` resolved is
+ * one a launch may be cut from, and it is the last check before the window: the
+ * branch comes from a config file the app does not write, and it ends up in the
+ * argv the operator confirms (`--ref` is excluded, so the CLI resolves it from
+ * the same layers -- but the window shows it, and a value the window shows as a
+ * branch must be one the CLI would accept as a ref).
+ *
+ * Its rules are the ones a git ref name has, and no more than the console can
+ * check without re-implementing `git check-ref-format`: **it is non-empty** (a
+ * branch is what the repository is cut from, and an empty one is a resolution
+ * that failed rather than a branch named ""); **it does not begin with `-`**,
+ * because a leading dash is the one spelling that would be read as a flag if it
+ * ever reached an argv and a git ref may not begin with one anyway; **it carries
+ * no control character and no format character** (`\p{Cc}`/`\p{Cf}`), the same
+ * class `textCharacterProblem` refuses in a title and for the same reason -- a
+ * newline or a bidi override can rewrite the line the operator is confirming;
+ * and **it is at most 4096 characters** (`MAX_LAUNCH_RESULT_STRING`, the bound
+ * the decoder holds the CLI's own branch string to, so a value read from a
+ * config and a value read from a reply are held to one limit).
+ *
+ * It is deliberately not a branch-name grammar: the CLI is the authority on
+ * what `--ref` takes, and a console that refused `release/1.2` or a name with a
+ * `~` in it would refuse a branch the run would have used. What is here is what
+ * the console can be sure about -- the classes that must never be displayed or
+ * passed, and the length the rest of this file already bounds.
+ */
+export function checkLaunchBranch(branch: string): LaunchValue<string> {
+  if (branch === '') {
+    return { ok: false, reason: 'the recorded base branch is empty' }
+  }
+  if ([...branch].length > MAX_LAUNCH_RESULT_STRING) {
+    return {
+      ok: false,
+      reason: `the recorded base branch is longer than ${String(MAX_LAUNCH_RESULT_STRING)} characters`,
+    }
+  }
+  if (branch.startsWith('-')) {
+    return { ok: false, reason: 'the recorded base branch begins with `-`, which a git ref may not do' }
+  }
+  if (CONTROL_RE.test(branch)) {
+    return { ok: false, reason: 'the recorded base branch carries a control character' }
+  }
+  if (FORMAT_RE.test(branch)) {
+    return { ok: false, reason: 'the recorded base branch carries a format character' }
+  }
+  return { ok: true, value: branch }
+}
+
 // ---------------------------------------------------------------------------
 // The reply.
 // ---------------------------------------------------------------------------

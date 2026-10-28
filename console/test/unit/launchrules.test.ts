@@ -262,7 +262,12 @@ describe('the title and the plan task', () => {
     expect(reason(checkLaunchTask(megabyte))).toContain(String(MAX_LAUNCH_TASK_BYTES))
     expect(reason(checkLaunchTitle(megabyte))).toContain(String(MAX_LAUNCH_TITLE_RUNES))
     expect(reason(checkLaunchPlanTask(megabyte))).toContain(String(MAX_LAUNCH_PLAN_TASK_BYTES))
-    expect(performance.now() - started).toBeLessThan(100)
+    // A generous bound on purpose: this is a wall-clock assertion about a
+    // linear scan on a loaded machine, so it is set where a *quadratic* check
+    // (minutes, per the measurement above) cannot pass and a slow machine still
+    // does -- a tighter number here would fail for reasons that have nothing to
+    // do with the rule.
+    expect(performance.now() - started).toBeLessThan(1000)
   })
 
   it('refuses a second line, a control character and a value past its cap', () => {
