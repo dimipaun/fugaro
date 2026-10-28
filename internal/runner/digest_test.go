@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -169,6 +170,20 @@ func digestBranchAt(t *testing.T, remote, branch, base string, files map[string]
 	testutil.Git(t, dir, "add", "-A")
 	testutil.Git(t, dir, "commit", "--quiet", "-m", "the report run's own commit")
 	testutil.Git(t, dir, "push", "--quiet", "origin", "HEAD:refs/heads/"+branch)
+}
+
+// digestPlantLink commits one symbolic link onto the remote's main branch: the
+// report folder's components come from the base branch, which whoever can
+// commit to it chooses, and a report run checks that branch out before the step
+// runs.
+func digestPlantLink(t *testing.T, remote string, plant func(t *testing.T, dir string)) {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "plant")
+	testutil.Git(t, filepath.Dir(dir), "clone", "--quiet", remote, dir)
+	plant(t, dir)
+	testutil.Git(t, dir, "add", "-A")
+	testutil.Git(t, dir, "commit", "--quiet", "-m", "the base branch plants a link in the report folder")
+	testutil.Git(t, dir, "push", "--quiet", "origin", "HEAD:refs/heads/main")
 }
 
 // TestDigestStepWritesDueFiles: a report run writes one file per closed day the
@@ -635,6 +650,106 @@ func TestDigestStepSkipsPeriodInOpenPR(t *testing.T) {
 	}
 }
 
+// TestDigestStepSkipsPeriodInOpenPRRepoRecipe: the open report run that holds
+// a period need not name the catalog's recipe. A repository's own report
+// recipe is named whatever the repository called it, so its record says
+// nothing about its first step; what says its pull request is a report run's
+// is the manifest its task carries, the same word the launcher reads when it
+// refuses a second report run (internal/cli's refuseReportRunInFlight). Without
+// it the period the open report already holds is written again, and two pull
+// requests add the same file -- the one thing the one-report-run-at-a-time
+// rule cannot see, since the open run has already finished and its pull
+// request is still unmerged.
+//
+// Mutation (judge the record by its recipe's name alone, as ShippedName does
+// for the catalog's): yesterday's report is written again.
+func TestDigestStepSkipsPeriodInOpenPRRepoRecipe(t *testing.T) {
+	const (
+		own      = "20261019-090000-bbbb"
+		previous = "20261018-120000-dddd"
+	)
+	spec := digestSpec(own, previous)
+	h := newHarnessFiles(t, "", spec, nil)
+	clk := digestClock(h)
+	now := clk.Now()
+	yesterday := now.AddDate(0, 0, -1)
+	digestRecord(t, h.bucket, repoSlug, own, now.AddDate(0, 0, -4), 1.5, nil)
+	digestRecord(t, h.bucket, repoSlug, previous, now.AddDate(0, 0, -10), 3, func(rec *runstore.Record) {
+		rec.Recipe = &runstore.RecipeRecord{Name: "report", Source: string(recipe.SourceRepo)}
+		rec.PR = &runstore.PRRef{Number: 42, URL: "https://example.invalid/pr/42"}
+	})
+	// The repository recipe's task carries the name alone, so the manifest is
+	// the only thing in it that says the run's first step was the digest step.
+	prev := &task.Spec{Version: 1, RunID: previous, Repo: "acme/app", Ref: "main", Workflow: "app",
+		Task: "Periodic run review", Recipe: &task.Recipe{Name: "report", Source: string(recipe.SourceRepo)},
+		DigestRuns: []string{own}}
+	if err := h.store.Sibling(previous).WriteTask(context.Background(), prev); err != nil {
+		t.Fatal(err)
+	}
+	branch := "fugaro/" + runID
+	open := "fugaro/" + previous
+	digestBranchAt(t, h.remote, open, "main", map[string]string{digestDayPath(yesterday): "# the report run that is still open wrote this\n"})
+	h.provider.State.PRs = append(h.provider.State.PRs, fake.PRState{
+		PR: gitprov.PR{Number: 42}, Spec: gitprov.PRSpec{Branch: open, Base: "main"}, State: gitprov.PROpen,
+	})
+
+	rec, err := h.run(t, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("record = status %s, outcome %s, reason %q", rec.Status, rec.Outcome, rec.Reason)
+	}
+	if fileInTree(t, h.remote, branch, digestDayPath(yesterday)) {
+		t.Error("the step wrote yesterday's report, which an open repository-recipe report run already holds")
+	}
+	for i := 2; i <= 7; i++ {
+		if rel := digestDayPath(now.AddDate(0, 0, -i)); !fileInTree(t, h.remote, branch, rel) {
+			t.Errorf("%s is not on the run's branch, though no open report holds it", rel)
+		}
+	}
+}
+
+// TestDigestStepRefusesUnreadableReportTask: a record whose recipe is not the
+// catalog's and whose task cannot be read leaves the step unable to say whether
+// its open pull request is a report run's -- so it fails, rather than reading
+// past a run whose report may already be open. The record has a pull request
+// and a valid run ID, so this is a read the step chose to make, not a broken
+// manifest.
+//
+// Mutation (read past an unreadable task): the run writes its reports and opens
+// a pull request over one that may hold the same files.
+func TestDigestStepRefusesUnreadableReportTask(t *testing.T) {
+	const (
+		own      = "20261019-090000-bbbb"
+		previous = "20261018-120000-dddd"
+	)
+	spec := digestSpec(own, previous)
+	h := newHarnessFiles(t, "", spec, nil)
+	clk := digestClock(h)
+	now := clk.Now()
+	digestRecord(t, h.bucket, repoSlug, own, now.AddDate(0, 0, -4), 1.5, nil)
+	digestRecord(t, h.bucket, repoSlug, previous, now.AddDate(0, 0, -10), 3, func(rec *runstore.Record) {
+		rec.Recipe = &runstore.RecipeRecord{Name: "report", Source: string(recipe.SourceRepo)}
+		rec.PR = &runstore.PRRef{Number: 42, URL: "https://example.invalid/pr/42"}
+	})
+	// No task.json for it at all: the record is there and its task is not.
+
+	rec, err := h.run(t, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusInfraError || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = status %s, outcome %s, reason %q", rec.Status, rec.Outcome, rec.Reason)
+	}
+	if !strings.Contains(rec.Reason, "to tell whether its open pull request is a report run's") {
+		t.Errorf("reason = %q, want it to say which read failed", rec.Reason)
+	}
+	if hasBranch(t, h.remote, "fugaro/"+runID) {
+		t.Error("the run pushed a branch without telling whether the open pull request was a report run's")
+	}
+}
+
 // TestDigestRunReviewScopeNotApplicable: a report run records the review-scope
 // comparison as not applicable, never as a mismatch. It has no implement set to
 // compare the review range with, for the same reason an autofix run has none:
@@ -787,6 +902,71 @@ func TestDigestStepRefusesNoManifest(t *testing.T) {
 				if strings.HasPrefix(rel, "docs/fugaro-reviews/") {
 					t.Errorf("the run wrote %s with no manifest", rel)
 				}
+			}
+		})
+	}
+}
+
+// TestDigestStepRefusesASymlinkedReportFolder: the report folder is a path in
+// the base branch, so whoever can commit there chooses what its components are.
+// A docs/fugaro-reviews that is a link to the repository root, or a README.md
+// inside it that links to the root README, would make a generated report land
+// on a file no report run may write -- the pull request would then carry the
+// root README as changed. Both are refused, nothing is pushed, and the
+// checkout's own root README is left exactly as the base branch had it.
+//
+// Mutation (write through the link, as os.WriteFile does): the root README
+// holds a generated report instead of the fixture's, and this fails.
+func TestDigestStepRefusesASymlinkedReportFolder(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		plant func(t *testing.T, dir string)
+	}{
+		{"the report folder links to the root", func(t *testing.T, dir string) {
+			if err := os.MkdirAll(filepath.Join(dir, "docs"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("..", filepath.Join(dir, "docs", "fugaro-reviews")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"the index links to the root README", func(t *testing.T, dir string) {
+			if err := os.MkdirAll(filepath.Join(dir, "docs", "fugaro-reviews"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("../../README.md", filepath.Join(dir, "docs", "fugaro-reviews", digest.IndexName)); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			const own = "20261020-101500-aaaa"
+			spec := digestSpec(own)
+			h := newHarnessFiles(t, "", spec, nil)
+			clk := digestClock(h)
+			digestRecord(t, h.bucket, repoSlug, own, clk.Now().AddDate(0, 0, -1), 1.5, nil)
+			readme := h.files["README.md"]
+			digestPlantLink(t, h.remote, c.plant)
+			tip := testutil.Git(t, h.remote, "rev-parse", "refs/heads/main")
+
+			rec, err := h.run(t, review("ship", 0))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rec.Status != runstore.StatusInfraError || rec.Outcome != runstore.OutcomeNone {
+				t.Fatalf("record = status %s, outcome %s, reason %q", rec.Status, rec.Outcome, rec.Reason)
+			}
+			if !strings.Contains(rec.Reason, "is a symbolic link") {
+				t.Errorf("reason = %q, want it to name the link it refused", rec.Reason)
+			}
+			if len(h.agent.calls) != 0 {
+				t.Errorf("the run made %d model calls with a link in the report folder", len(h.agent.calls))
+			}
+			if got := testutil.Git(t, h.remote, "rev-parse", "refs/heads/main"); got != tip {
+				t.Errorf("main moved to %s from %s: the run pushed with a link in the report folder", got, tip)
+			}
+			if got, err := os.ReadFile(filepath.Join(h.deps.WorkDir, "README.md")); err != nil || string(got) != readme {
+				t.Errorf("the checkout's README.md = %q (err %v), want the base branch's %q", got, err, readme)
 			}
 		})
 	}

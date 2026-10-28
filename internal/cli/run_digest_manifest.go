@@ -51,6 +51,9 @@ var digestManifestMax = task.MaxDigestRuns
 //     (task.Validate) and schemas/task.schema.json checks it again.
 //   - one report run at a time: a schedule that fires twice does not pay for
 //     two runs writing the same reports.
+//   - something to report: a repository with no runs in the window is refused
+//     here, plainly, rather than by the runner after a job has been started
+//     for a report of nothing.
 //
 // It is written for a recipe whose first step is the digest step (T3.1's
 // recipe.UsesDigest); every other launch stores no manifest, so the field
@@ -71,6 +74,17 @@ func digestManifest(ctx context.Context, env *cloudEnv, slug, root string, rcp *
 	ids, err := runstore.ListRunIDs(ctx, env.bucket.Bucket, slug, now.Add(-digestManifestWindow))
 	if err != nil {
 		return nil, remote(err)
+	}
+	if len(ids) == 0 {
+		// A repository with no runs in the window has nothing to report. The
+		// runner refuses the empty manifest it would be handed
+		// (internal/runner's writeDueReports), but that refusal costs a job
+		// started and paid for, and its message tells the person to launch
+		// with --recipe run-digest, which is what they did. Saying it here is
+		// the plain refusal, before anything is started; the runner's own
+		// stays as the backstop for a task written by hand.
+		return nil, userErr("%s has no runs in the last %d days: no runs in the period, nothing to report",
+			slug, int(digestManifestWindow.Hours()/24))
 	}
 	if len(ids) > digestManifestMax {
 		// Said out loud, because the cut is silent otherwise and it changes

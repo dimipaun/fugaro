@@ -110,7 +110,8 @@ func TestCheckRecipeImageDigestSince(t *testing.T) {
 	// manifest the task carries, and it is judged at the same constant. The
 	// gate is the field's, so the same recipe with no manifest is judged by
 	// recipesSince instead (a repository with no runs to read writes none),
-	// and the older runner refuses the recipe itself at bootstrap.
+	// and the older runner refuses the recipe at bootstrap there: it knows the
+	// step kind and does not execute it.
 	spec.Recipe = &task.Recipe{Name: "report", Source: string(recipe.SourceRepo)}
 	spec.DigestRuns = []string{"20261026-090000-1234"}
 	warn, err = check("ghcr.io/dimipaun/fugaro-base:0.12.0")

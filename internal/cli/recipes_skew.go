@@ -230,24 +230,29 @@ const recipesV07Since = "0.7.0"
 
 // digestSince is the first fugaro release whose runner executes the digest
 // step: it writes the run reports the repository is missing and commits
-// them, with no model call (recipe.UsesDigest). A runner before it refuses
-// the whole recipe as an unknown step kind, so a digest launch against an
-// older job image is refused at launch, by this gate, instead of failing
-// the run at bootstrap — and, in the window between this recipe's release
-// and the step's, an image gate is the only refusal a launcher can make:
-// the step is the runner's own work, so no other release can run it.
+// them, with no model call (recipe.UsesDigest). It gates two things, and a
+// runner before it refuses both: the step, which the recipe itself has
+// carried since 0.12.1 (T3.1) — a 0.12.1 runner knows the step kind and
+// refuses the recipe at bootstrap rather than skipping the step ("does not
+// execute yet") — and the digest_runs manifest a report run carries, which
+// no runner before it knows at all: the task decode is strict, so the field
+// is an unknown one it rejects. A digest launch against an older job image
+// is refused at launch, by this gate, instead of failing the run at
+// bootstrap — and, in the window between this recipe's release and the
+// step's, an image gate is the only refusal a launcher can make: the step is
+// the runner's own work, so no other release can run it.
 //
 // Like artifactsSince it carries no shipped flag: refusing every image that
 // predates the step is exactly the direction this gate wants, and an image
 // with no release tag (a dev build, a hand-pushed one) only warns, the same
-// as for every other *Since constant here — safe either way, since a
-// runner old enough to lack the step refuses the recipe as a step kind it
-// cannot read, and one that has it runs the report run
-// (internal/runner/digest.go), so a warning cannot let a digest run through
-// as an ordinary implement run and open a pull request the recipe never
-// asked for. It names 0.13.0, the release the report run ships in, which is not
-// tagged yet: docs/release.md's checklist verifies the constant against the
-// tag actually cut, the way planTaskSince's bullet records.
+// as for every other *Since constant here — safe either way, since a runner
+// that does not execute the step refuses the recipe at bootstrap, and one
+// that does runs the report run (internal/runner/digest.go), so a warning
+// cannot let a digest run through as an ordinary implement run and open a
+// pull request the recipe never asked for. It names 0.13.0, the release the
+// report run ships in, which is not tagged yet: docs/release.md's checklist
+// verifies the constant against the tag actually cut, the way
+// planTaskSince's bullet records.
 const digestSince = "0.13.0"
 
 // gitSecretIDSince is the first fugaro release whose runner reads
