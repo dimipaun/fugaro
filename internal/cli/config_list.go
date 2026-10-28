@@ -63,7 +63,8 @@ type configListDoc struct {
 // configListInstallation is ONE installation. Every field is one the console
 // needs and no more (V2.1.1): the project name, the GCP project, the region,
 // whether a shared config was merged, when the shared copy was last checked,
-// and where this machine has a checkout of the project's repositories.
+// the base branch its runs are cut from, and where this machine has a checkout
+// of the project's repositories.
 type configListInstallation struct {
 	// Name is the project name, i.e. projects/<name>.yaml's name, which the
 	// file must agree with (LoadProject refuses one that does not).
@@ -90,6 +91,21 @@ type configListInstallation struct {
 	// SharedOfflineFor, which are the constants the reader (fetchSharedConfig)
 	// uses, so this document never claims a freshness of its own.
 	SharedCheckedAt *time.Time `json:"shared_checked_at"`
+	// BaseBranch is the installation's own recorded base branch: the
+	// project-level `base_branch` of projects/<name>.yaml, "" when it records
+	// none. It is one of the two layers a console launch can be cut from, and
+	// the one that answers for every repository of the installation that
+	// records no branch of its own (configListCheckout.BaseBranch,
+	// config.EffectiveBaseBranch's order).
+	//
+	// It is read off that local file and nothing else: not the published policy
+	// node, which carries the same setting for the runner and which
+	// `config list` cannot read without opening a bucket, and not a checkout's
+	// own fugaro.yaml, which the CLI's merged order reads *first* and which a
+	// console launch never has (the launch's working directory is the app's
+	// own, empty), so a branch taken from it would be a branch the run is not
+	// cut from.
+	BaseBranch string `json:"base_branch"`
 	// Checkouts are the repositories this machine remembers a checkout of for
 	// this project, in identity order, oldest path first — and where each of
 	// them is, re-validated on this read. It is what makes the console's
@@ -121,6 +137,20 @@ type configListCheckout struct {
 	// Path is the absolute path that was recorded, made printable and
 	// length-bounded: it is a string off this machine's disk.
 	Path string `json:"path"`
+	// BaseBranch is the recorded base branch of this repository:
+	// repos.<owner/name>.base_branch in the installation's own project config,
+	// "" when that config names no such entry or records no branch for it. It is
+	// the repository's own layer of the two a console launch can be cut from
+	// (configListInstallation.BaseBranch is the other, and answers when this is
+	// empty).
+	//
+	// It is a property of the repository the row was recorded under and not of
+	// the directory the path names: a row whose path has been deleted still
+	// records which branch that repository's runs are cut from, and a row that
+	// is not enrolled or not representable still carries the value the operator
+	// wrote. The reader of this document is what decides whether the row may be
+	// launched from at all.
+	BaseBranch string `json:"base_branch"`
 	// Enrolled is whether this machine's own project config enrolls this
 	// repository (localcfg.Config.Enrolls: the repos: map of
 	// projects/<name>.yaml, the one local fact about enrollment there is — the
@@ -270,6 +300,7 @@ func buildConfigList(ctx context.Context, getenv func(string) string, now time.T
 			continue
 		}
 		inst.GCPProject, inst.Region = lc.GCPProject, lc.Region
+		inst.BaseBranch = lc.BaseBranch
 		if e, ok := localcfg.LoadSharedCache(getenv, name); ok && e.GCPProject == lc.GCPProject {
 			inst.SharedMerged = true
 			checked := e.CheckedAt
@@ -318,6 +349,7 @@ func configListCheckouts(ctx context.Context, known *localcfg.Checkouts, project
 				// fugaro wrote).
 				Repository: pluginwire.Printable(id.Key()),
 				Path:       printed,
+				BaseBranch: recordedBaseBranch(lc, id.Repo),
 				Enrolled:   enrolled,
 				Valid:      valid,
 				Reason:     reason,
@@ -338,6 +370,26 @@ func validIdentity(id localcfg.CheckoutIdentity) bool {
 	}
 	_, err := task.CanonicalRepo(id.Repo)
 	return err == nil
+}
+
+// recordedBaseBranch is the base branch the installation records for one
+// repository: repos.<owner/name>.base_branch in its project config, "" when
+// that config names no such entry, records no branch for it, or could not be
+// read (lc nil, which fails closed exactly as RepoFor does).
+//
+// The entry is resolved by localcfg.Config.RepoFor, which is the lookup a
+// launch resolves repos.<r>.base_branch through as well
+// (cloudEnv.localRepo). One resolver for the two readers is the point: the
+// branch printed here is the branch the run is cut from, so an entry spelled
+// "acme/app.git", or two spellings of one repository, cannot make this row say
+// one branch and the run use another (docs/design/desktop-console.md §5.1
+// rule 11, "the branch the window shows is the branch the run is cut from").
+func recordedBaseBranch(lc *localcfg.Config, repo string) string {
+	r, ok := lc.RepoFor(repo)
+	if !ok {
+		return ""
+	}
+	return r.BaseBranch
 }
 
 // validateCheckoutPath re-validates one remembered path, on the read: the

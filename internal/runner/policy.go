@@ -73,6 +73,16 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	// The ceiling is the job environment's copy of the owner's config, and
 	// sets no output limits (the project config has none).
 	ceiling := envCeiling(c, mode)
+	// The project layer's governance: block joins the ceiling, the way the
+	// project's budget does: it is the one layer that may loosen Fugaro's own
+	// defaults for those keys, and every layer under it only tightens (T7.1,
+	// D331). It is placed here rather than in envCeiling because it does not
+	// travel in the job environment — the project config carries no governance
+	// — it arrives with the task, in the layer the run resolved. The policy
+	// node has no governance either, so policyCeiling leaves it standing.
+	if l := cfg.Layer; l != nil {
+		ceiling.Governance = l.Governance.Policy()
+	}
 	// The project's own policy, when it has published one, *is* the ceiling
 	// for the keys it sets: the node is what the owner says now, where the
 	// copy is what he said when the job was deployed (design §5, plan task
@@ -108,7 +118,7 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 			return fmt.Errorf("fugaro.yaml on the default branch (%s) has an invalid policy, so the run can't tell what the team allows: %w", branch, err)
 		}
 		def = policy.Layer{Mode: p.Mode, PerRunUSD: p.PerRunUSD, PerDayUSD: p.PerDayUSD, MaxRunTokens: p.MaxRunTokens, AllowedModels: p.AllowedModels,
-			MaxOutputCoder: p.MaxOutputTokens.Coder, MaxOutputReviewer: p.MaxOutputTokens.Reviewer}
+			MaxOutputCoder: p.MaxOutputTokens.Coder, MaxOutputReviewer: p.MaxOutputTokens.Reviewer, Governance: p.Governance}
 	}
 
 	e := policy.Merge(ceiling, def, FileLayer(cfg))
@@ -320,7 +330,8 @@ func policySources(e *policy.Effective, fromPolicy map[string]bool) {
 // and what `fugaro validate` checks, built in one place so the two agree.
 func FileLayer(cfg *config.Config) policy.Layer {
 	l := policy.Layer{MaxRunTokens: cfg.Agent.MaxRunTokens,
-		MaxOutputCoder: cfg.Agent.MaxOutputTokens.Coder, MaxOutputReviewer: cfg.Agent.MaxOutputTokens.Reviewer}
+		MaxOutputCoder: cfg.Agent.MaxOutputTokens.Coder, MaxOutputReviewer: cfg.Agent.MaxOutputTokens.Reviewer,
+		Governance: cfg.Governance.Policy()}
 	if b := cfg.Budget; b != nil {
 		l.Mode, l.PerRunUSD, l.PerDayUSD, l.AllowedModels = b.Mode, b.PerRunUSD, b.PerDayUSD, b.AllowedModels
 	}

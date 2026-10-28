@@ -672,6 +672,55 @@ func TestConfigEnrollsPicksTheSameEntryEveryTime(t *testing.T) {
 	}
 }
 
+// TestConfigRepoForPicksTheSameEntryEveryTime: RepoFor is the one lookup
+// repos.<r> is resolved through — fugaro run's own localRepo, and the
+// base_branch column of `fugaro config list --json` — so what it answers has
+// to be the same on every read of unchanged files and the same in both
+// readers. Two keys can name one repository and differ by spelling alone
+// ("acme/app" and "acme/app.git", or two spellings the ASCII fold merges), so
+// the canonical form is compared over the sorted keys: no map iteration order
+// and no exact-spelling shortcut decides which entry answers.
+//
+// Mutation (run, restore): drop the sort (iterate the map) and the second half
+// fails within a few runs (`go test -count=20`), because the answer follows the
+// iteration order; compare the keys as written instead of through
+// task.CanonicalRepo and the first half fails on the trailing ".git".
+func TestConfigRepoForPicksTheSameEntryEveryTime(t *testing.T) {
+	// The entry the launch resolves: the key is the repository with the
+	// ".git" an operator can leave in a hand-edited config, and the branch is
+	// what a run is cut from.
+	dotGit := &Config{Repos: map[string]Repo{"acme/app.git": {BaseBranch: "dev"}}}
+	if r, ok := dotGit.RepoFor("acme/app"); !ok || r.BaseBranch != "dev" {
+		t.Errorf("RepoFor(acme/app) = %+v, %v, want the acme/app.git entry", r, ok)
+	}
+	if r, ok := dotGit.RepoFor("ACME/APP"); !ok || r.BaseBranch != "dev" {
+		t.Errorf("RepoFor(ACME/APP) = %+v, %v, want the same entry as acme/app", r, ok)
+	}
+	// Two spellings of one name, and no exact match for the repository: the
+	// first of the sorted keys answers, every time.
+	folded := &Config{Repos: map[string]Repo{
+		"Acme/App": {BaseBranch: "one"},
+		"ACME/APP": {BaseBranch: "two"},
+	}}
+	for i := range 8 {
+		r, ok := folded.RepoFor("acme/app")
+		if !ok || r.BaseBranch != "two" {
+			t.Fatalf("read %d: RepoFor(acme/app) = %+v, %v, want ACME/APP's entry (the first sorted key) every time", i, r, ok)
+		}
+	}
+	// A repository this tree cannot name, and a config that could not be
+	// read, both name no entry.
+	for _, repo := range []string{"", "acme", "acme/", "/app", "acme/../app", "acme/app/x/y"} {
+		if _, ok := dotGit.RepoFor(repo); ok {
+			t.Errorf("RepoFor(%q) found an entry, want none: it is not a canonical owner/name", repo)
+		}
+	}
+	var nilCfg *Config
+	if _, ok := nilCfg.RepoFor("acme/app"); ok {
+		t.Error("a nil config named a repository, want none")
+	}
+}
+
 // TestConfigEnrollsIsALocalFact: whether a repository is enrolled is read off
 // this machine's own project config's repos: map — the same map `fugaro
 // project policy publish` seeds the published allow-list from — and nothing

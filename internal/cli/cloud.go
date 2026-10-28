@@ -511,18 +511,12 @@ func parseRunRef(ref string) (slug, runID string, err error) {
 	return slug, runID, nil
 }
 
-// localRepo is the local config's entry for repo, matched in canonical form.
+// localRepo is the local config's entry for repo, matched in canonical form
+// (localcfg.Config.RepoFor, which `fugaro config list --json` reads its
+// base_branch column through for the same rows: the branch that document shows
+// has to be the branch this launch is cut from).
 func (e *cloudEnv) localRepo(repo string) (localcfg.Repo, bool) {
-	want, err := task.CanonicalRepo(repo)
-	if err != nil {
-		return localcfg.Repo{}, false
-	}
-	for name, r := range e.lc.Repos {
-		if c, err := task.CanonicalRepo(name); err == nil && c == want {
-			return r, true
-		}
-	}
-	return localcfg.Repo{}, false
+	return e.lc.RepoFor(repo)
 }
 
 // repoSlug is repo's storage slug. Its git provider kind comes from the

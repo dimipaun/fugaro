@@ -161,11 +161,12 @@ type Budget struct {
 // is a bound whose smaller value is the stricter one, which is what makes the
 // merge a single rule (internal/policy).
 //
-// Nothing enforces the block yet: the gateway reads it in a later task
-// (T7.2), and until then a file that writes it is a file that says what its
-// runs will be held to. A key left out, written as null, or written as 0
-// takes Fugaro's default — see policy.DefaultGovernance, which is the one
-// place the defaults are decided.
+// One key is enforced today: the runner bounds a stage by stage_timeout and
+// stops the run with a checkpoint report when the stage runs out (T7.6). The
+// rest are what the gateway reads in a later task (T7.2), and until then a
+// file that writes one of them says what its runs will be held to. A key left
+// out, written as null, or written as 0 takes Fugaro's default — see
+// policy.DefaultGovernance, which is the one place the defaults are decided.
 //
 // The stages are the run's three spend stages. An artifact run's plan and
 // render steps have no governance budget, so neither sub-block has a key for
