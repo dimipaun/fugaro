@@ -30,19 +30,10 @@ func blockedStage(t *testing.T, ctx context.Context, req agent.Request) (agent.R
 	return res, err
 }
 
-// finishedAtTheDeadline is implement's work done, whose result the stage
-// returns as its own bound ends it: the race the runner must read as work
-// done rather than as a stop.
-func finishedAtTheDeadline(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
-	res, err := implement("feature")(t, ctx, req)
-	<-ctx.Done()
-	return res, err
-}
-
-// finishedAtTheRunsDeadline is the same work, returned as the run's own
-// timeouts.stage ends the stage: the convention a stage's own bound follows,
-// and the one this test holds it to.
-func finishedAtTheRunsDeadline(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+// finishedAtTheBound is implement's work done, whose result the stage returns
+// as the bound that ends it fires: the race the runner must read as work done
+// rather than as a stop. Which bound it is is the test's own configuration.
+func finishedAtTheBound(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 	res, err := implement("feature")(t, ctx, req)
 	<-ctx.Done()
 	return res, err
@@ -144,7 +135,7 @@ func TestStageTimeoutStandsWhenTheResultRacesIt(t *testing.T) {
 		"timeouts: { total: 1m, stage: 10s, verify: 5s, finalize_reserve: 5s }",
 		"governance:\n  stage_timeout: { implement: 1s }\n")
 	h := newHarness(t, cfg, nil)
-	rec, err := h.run(t, finishedAtTheDeadline, review("ship", 0))
+	rec, err := h.run(t, finishedAtTheBound, review("ship", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +157,7 @@ func TestStageTimeoutStandsWhenTheResultRacesIt(t *testing.T) {
 func TestStageTimeoutStandsWhenTheRunBoundIsReached(t *testing.T) {
 	h := newHarness(t, stageTimeoutCfg(t,
 		"timeouts: { total: 1m, stage: 1s, verify: 5s, finalize_reserve: 5s }", ""), nil)
-	rec, err := h.run(t, finishedAtTheRunsDeadline, review("ship", 0))
+	rec, err := h.run(t, finishedAtTheBound, review("ship", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
