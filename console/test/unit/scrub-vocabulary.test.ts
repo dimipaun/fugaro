@@ -32,8 +32,9 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  CONNECTION_REASONS, INVENTED_CONNECTION_REASON, TIME_SHIFT_RANGE_MS, VERIFY_CLIP_RUNES, VOCAB,
-  isKnownVerifySummary, isVerifySummary, randomTimeShiftMs, scrubDocument, timeShiftFromDraw,
+  CONNECTION_REASONS, INVENTED_CONNECTION_REASON, INVENTED_LEASE_USD, TIME_SHIFT_RANGE_MS,
+  VERIFY_CLIP_RUNES, VOCAB, isKnownVerifySummary, isVerifySummary, randomTimeShiftMs, scrubDocument,
+  timeShiftFromDraw,
 } from '../../tools/scrub-fixture/scrub'
 import { FINISHED_KEYS, RUN_KEYS } from '../../src/shared/schema'
 
@@ -393,6 +394,43 @@ describe('the scrub: the nullable Go fields', () => {
       holder(doc)[path.endsWith('age_seconds') ? 'age_seconds' : 'percent'] = 'many'
       expect(() => scrubDocument(doc, 0), path).toThrow(/not a number/)
     }
+  })
+
+  it('replaces a leased_usd with the invented lease, the key no CLI writes yet', () => {
+    // §intro's bounded exception: the owner approved `leased_usd` on 2026-10-28
+    // for `total` and every `repos[]` entry ahead of the release that writes it,
+    // and the console's decoders name it now so that release does not refuse
+    // every document whole. The scrub has to name it for the same reason, and
+    // the failure without a rule is the whole document: `applyRules` refuses a
+    // key it has none for, as `an unknown key at $.total.leased_usd`.
+    //
+    // The amount is invented, not copied: a lease is what the installation
+    // currently holds, so it is a real dollar figure like any other, and the
+    // header's rule for those is an invented constant. Copying it through put a
+    // real amount in the committed fixture -- and `removedValues` could not
+    // catch it, since a value that survives is by definition not a removed one.
+    const doc = raw()
+    at(doc, 'total')['leased_usd'] = 7.25
+    at(doc, 'repos', 0)['leased_usd'] = 7.25
+    const out = scrubDocument(doc, 0)
+    expect(at(out, 'total')['leased_usd']).toBe(INVENTED_LEASE_USD)
+    expect(at(out, 'repos', 0)['leased_usd']).toBe(INVENTED_LEASE_USD)
+    expect(JSON.stringify(out)).not.toContain('7.25')
+  })
+
+  it('accepts a null leased_usd, which the pointer writes when no lease is outstanding', () => {
+    const doc = raw()
+    at(doc, 'total')['leased_usd'] = null
+    at(doc, 'repos', 0)['leased_usd'] = null
+    const out = scrubDocument(doc, 0)
+    expect(at(out, 'total')['leased_usd']).toBeNull()
+    expect(at(out, 'repos', 0)['leased_usd']).toBeNull()
+  })
+
+  it('refuses a leased_usd that is neither a number nor null, like the other pointers', () => {
+    const doc = raw()
+    at(doc, 'total')['leased_usd'] = 'many'
+    expect(() => scrubDocument(doc, 0)).toThrow(/not a number at \$\.total\.leased_usd/)
   })
 })
 
