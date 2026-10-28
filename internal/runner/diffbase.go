@@ -249,17 +249,16 @@ func (r *run) reviewScopeNotOwnCommits() string {
 // step is the digest step, which the runner executes itself and which no
 // implement stage follows at all (digest.go, task-governance T3.2).
 //
-// A report run records ReviewScopeReviewRun, the reason whose own statement is
-// the one that holds: the run has no implement stage, so it has no implement
-// set to compare its range with. The record's vocabulary is closed
-// (runstore's reasons, schemas/result.schema.json) and has no value for a
-// digest run, and inventing one would change the record's wire format -- a
-// decision T3.2 is not the place for. The digest step is reached before any
-// review round, so the comparison is never taken for a report run.
+// A report run records ReviewScopeDigestRun: it has no implement stage either,
+// so it has no implement set to compare its range with, but it is not a review
+// run -- a reader has to be able to tell the two apart by the field that says
+// why the comparison does not apply, and the run that wrote the record is not
+// the one a consumer can ask. The digest step is reached before any review
+// round, so the comparison is never taken for a report run.
 func (r *run) reviewScopeSkippedImplement() string {
 	switch {
 	case r.digest:
-		return runstore.ReviewScopeReviewRun
+		return runstore.ReviewScopeDigestRun
 	case r.rec.Gate == "fixed":
 		return runstore.ReviewScopeAutofix
 	}

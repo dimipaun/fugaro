@@ -448,6 +448,62 @@ func TestDigestStepCatchesUpSevenDays(t *testing.T) {
 	if s := digestSummaryAt(t, h, branch, rel); s.Period != week.Key || s.Runs != 1 {
 		t.Errorf("the week's report = period %q, %d runs; want %q and the one run it holds", s.Period, s.Runs, week.Key)
 	}
+	if body := fileContentAt(t, h.remote, branch, digestDayPath(sunday)); !strings.Contains(body, "## Patterns\n") {
+		t.Errorf("yesterday's report carries no Patterns section:\n%s", body)
+	}
+}
+
+// TestDigestStepYearReportCarriesPatterns: a year's report is built from its
+// months rather than from records (a year has no runs of its own to read), and
+// its file still carries the pattern rules every other period's file ends
+// with. The step and the terminal `fugaro runs digest` are two writers of the
+// same tree: a year written here without its rules would be a file the command
+// never regenerates byte for byte, which is the drift one writer's own test
+// cannot see.
+//
+// Mutation (build the year's body from its head alone, as the year path once
+// did): this test fails, finding the year's file without its Patterns section.
+func TestDigestStepYearReportCarriesPatterns(t *testing.T) {
+	const own = "20261020-101500-aaaa"
+	spec := digestSpec(own)
+	h := newHarnessFiles(t, "", spec, nil)
+	clk := digestClock(h)
+	digestGCSBucket(t, h, spec)
+	// A year is due on 1 January, over the months its own year already has
+	// committed: the step rolls one up rather than writing a year of nothing.
+	for clk.Now().Month() != time.January || clk.Now().Day() != 1 {
+		clk.advance(24 * time.Hour)
+	}
+	now := clk.Now()
+	lastYear := now.AddDate(0, 0, -1)
+	month, err := digest.NewPeriod(report.ByMonth, lastYear.Format("2006-01-02"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	committed := digest.Build(nil, month)
+	advanceBranch(t, h.remote, "main", map[string]string{
+		"docs/fugaro-reviews/" + digest.PeriodPath(month.Key): string(digest.FileBody(digest.Markdown(committed), nil, month, committed.Summary())),
+	})
+	digestRecord(t, h.bucket, repoSlug, own, lastYear, 1.5, nil)
+
+	rec, err := h.run(t, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("record = status %s, reason %q", rec.Status, rec.Reason)
+	}
+	year, err := digest.NewPeriod(report.ByYear, lastYear.Format("2006-01-02"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel := "docs/fugaro-reviews/" + digest.PeriodPath(year.Key)
+	if !fileInTree(t, h.remote, "fugaro/"+runID, rel) {
+		t.Fatalf("%s is not on the run's branch, so the year that closed with %s was not written", rel, lastYear.Format("2006-01-02"))
+	}
+	if body := fileContentAt(t, h.remote, "fugaro/"+runID, rel); !strings.Contains(body, "## Patterns\n") {
+		t.Errorf("the year's report carries no Patterns section:\n%s", body)
+	}
 }
 
 // TestDigestStepCommitsAsRunner: the reports are the runner's work and not the
@@ -578,8 +634,8 @@ func TestDigestRunReviewScopeNotApplicable(t *testing.T) {
 	if sc == nil {
 		t.Fatal("the record carries no review_scope")
 	}
-	if sc.Applicable || sc.WhyNot != runstore.ReviewScopeReviewRun {
-		t.Errorf("review_scope = applicable %v, why_not %q; want false and %q", sc.Applicable, sc.WhyNot, runstore.ReviewScopeReviewRun)
+	if sc.Applicable || sc.WhyNot != runstore.ReviewScopeDigestRun {
+		t.Errorf("review_scope = applicable %v, why_not %q; want false and %q", sc.Applicable, sc.WhyNot, runstore.ReviewScopeDigestRun)
 	}
 	if len(sc.ImplementFiles) != 0 || len(sc.ReviewFiles) != 0 || len(sc.Outside) != 0 {
 		t.Errorf("review_scope compares %v against %v; want no comparison", sc.ImplementFiles, sc.ReviewFiles)

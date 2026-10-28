@@ -2103,6 +2103,14 @@ func (r *run) agentLoop(ctx context.Context) {
 			return
 		}
 		if r.skipPR {
+			// The step read and committed outside r.stage(), the way the
+			// gate's own commands do, so nothing re-checked a halt (a budget
+			// cap, a kill switch, the token cap) recorded while it ran: no
+			// review round follows this path to check it (g.Clean's own
+			// haltValue check is the same guard on the same race).
+			if h := r.haltValue(); h != nil {
+				r.endHalted(ctx, h)
+			}
 			return // nothing was due: the step ended the run with no pull request
 		}
 		skipImplement = true
