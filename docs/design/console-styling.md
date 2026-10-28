@@ -389,8 +389,9 @@ accounts** — an `li.spend-row` carries **none of those five**, so a `[data-sta
 on **both** the points and the rows (`data-partial` also on `div.spend-totals`, `data-key`
 also on the caps panel's `li.spend-cap-repo`); `data-unreadable` (`true|false`) on the
 **rows and `div.spend-totals`** — it is the honesty state of a by-mode row whose every run
-record was unreadable, so a rule about it selects the row (or the total) and never the
-`span.spend-unreadable` inside it, which carries the marker text and no attribute;
+has no readable record (a record the build cannot read, or one not written yet), so a rule
+about it selects the row (or the total) and never the `span.spend-unreadable` inside it,
+which carries the marker text and no attribute;
 `data-degraded` (`true`) on
 `span.spend-degraded`; `data-available`, `data-scope-known`, `data-daily-scope`,
 `data-per-run-scope` (a document word, or `unknown`) on the caps panel, `data-available` also

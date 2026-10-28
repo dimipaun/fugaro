@@ -1044,11 +1044,6 @@ describe('a partial day', () => {
     const model = modelOf()
     expect(model.totals.partial).toBe(true)
     expect(PARTIAL_MARKER).toBe('(partial)')
-    // `no readable record` is the console's own sentence, not the CLI's: the
-    // words name the fact a corrupt record and a run still in flight share,
-    // rather than "unreadable", which misnames the in-flight run -- the usual
-    // `none` row of a window that reaches into today.
-    expect(UNREADABLE_MARKER).toBe('no readable record')
   })
 })
 
@@ -1272,6 +1267,15 @@ describe('the by-mode breakdown', () => {
     expect(drawn(tree)).not.toContain('$2.25')
     // A mode row carries no run-hours, so the column is `n/a` and never `0.00 h`.
     expect(texts(tree, 'spend-run-hours')).toEqual([UNAVAILABLE_MARK, UNAVAILABLE_MARK])
+  })
+
+  it('says `no readable record`, the fact a corrupt record and a run in flight share', () => {
+    // The words are the console's own -- `report`'s table and CSV draw `n/a`
+    // on such a row and name no mark -- and they name the fact a corrupt
+    // record and a run that has not written one share, rather than
+    // "unreadable", which misnames the in-flight run: the usual `none` row of
+    // a window that reaches into today.
+    expect(UNREADABLE_MARKER).toBe('no readable record')
   })
 
   it('reads an unreadable row as `n/a`, not as a measured zero', () => {
@@ -2138,6 +2142,11 @@ describe('a report row', () => {
     // The run hours of a day whose compute was not estimated are `null` on the
     // wire (`RunHours` is only set under `ComputeKnown`), which is `n/a`.
     expect(rowFor(modelOf(), '2026-10-13').runHours.state).toBe('unavailable')
+    // A *readable* row's null key keeps `readNumber`'s own sentence: the
+    // row-own reason is the unreadable row's alone, and only a key present and
+    // null because there was no record to read gets it.
+    expect(rowFor(modelOf(), '2026-10-13').notional.because).toBe('the document has no notional_micros')
+    expect(rowFor(modelOf(), '2026-10-13').runHours.because).toBe('the document has no run_hours')
   })
 
   it('carries a model row\'s tokens, and none for a model whose tokens were not tracked', () => {
