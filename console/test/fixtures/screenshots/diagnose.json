@@ -74,7 +74,7 @@
       "agents": 3,
       "model_usd": 3.2,
       "model": "claude-sonnet-4-5-20250929",
-      "model_notional_usd": 7.4
+      "model_notional_usd": 3.2
     },
     {
       "name": "review",
@@ -84,7 +84,7 @@
       "agents": 2,
       "model_usd": 2.1,
       "model": "claude-opus-4-1",
-      "model_notional_usd": 4.95
+      "model_notional_usd": 2.1
     },
     {
       "name": "verify",
@@ -93,7 +93,7 @@
       "calls": 0,
       "model_usd": 1.12,
       "model": "claude-sonnet-4-5-20250929",
-      "model_notional_usd": 2.55
+      "model_notional_usd": 1.12
     }
   ],
   "tolerated": {
@@ -101,25 +101,25 @@
     "findings": [
       {
         "title": "the requeue path keeps the legacy retry ceiling",
-        "label": "internal/queue/retry.go",
+        "label": "low",
         "mode": "startup",
         "likelihood": 2,
         "impact": 3,
         "fix_cost": 1,
-        "class": "tolerable"
+        "class": "correctness"
       },
       {
         "title": "the retry table test does not cover the drain branch",
-        "label": "internal/queue/retry_test.go",
+        "label": "nit",
         "mode": "startup",
         "likelihood": 2,
         "impact": 1,
         "fix_cost": 1,
-        "class": "tolerable"
+        "class": "maintainability"
       },
       {
         "title": "the queue document still describes the retired table",
-        "label": "docs/queue.md",
+        "label": "nit",
         "mode": "pro",
         "likelihood": 1,
         "impact": 1,

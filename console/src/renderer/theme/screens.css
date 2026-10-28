@@ -1063,7 +1063,7 @@ span.run-tolerated-title {
 p.run-spend-stages-more,
 p.run-tolerated-total,
 p.run-tolerated-more,
-p.run-tolerated-none {
+p.run-tolerated-absent {
   color: var(--text-muted);
   font-size: var(--font-size-xs);
 }
@@ -2375,7 +2375,7 @@ span.coordinator-unread-retry {
   p.run-spend-stages-more,
   p.run-tolerated-total,
   p.run-tolerated-more,
-  p.run-tolerated-none,
+  p.run-tolerated-absent,
   p.run-ledger-model,
   p.run-ledger-compute,
   p.run-ledger-total,

@@ -250,6 +250,7 @@ interface Screen {
   readonly spendStageAgents: readonly string[]
   readonly spendStageAgentReasons: readonly (string | null)[]
   readonly spendStageUsd: readonly string[]
+  readonly spendStageNotional: readonly string[]
   /** the findings the run's mode tolerated, from the document's `tolerated`
    * block: the total the block carries and the entries it lists */
   readonly toleratedTotal: string
@@ -322,6 +323,9 @@ function screen(page: Page): Promise<Screen> {
         one.getAttribute('title'),
       ),
       spendStageUsd: texts('.run-spend-stages .run-spend-stage-usd'),
+      // The part of the stage's model figure the plan covered, drawn with the
+      // console's notional mark so the list price is never read as money.
+      spendStageNotional: texts('.run-spend-stages .run-spend-stage-notional'),
       toleratedTotal: text('.run-tolerated-total'),
       toleratedTitles: texts('.run-tolerated-title'),
       toleratedModes: texts('.run-tolerated-mode'),
@@ -450,34 +454,39 @@ const DIAGNOSIS: JSONDoc = {
   // The run's own per-stage record, whose `model_usd` is the ledger's model
   // figure split the way the CLI counted it. `verify` carries no `agents`
   // pointer at all: the CLI's own `StageTiming` writes those as pointers, so an
-  // absent one means the stage was not counted, not that it counted zero.
+  // absent one means the stage was not counted, not that it counted zero. The
+  // two dollars are `omitempty` floats instead, and `model_notional_usd` is the
+  // part of the stage's `model_usd` the plan covered -- never more than it --
+  // so `verify` with no notional key is a measured zero.
   stages: [
-    { name: 'implement', duration_s: 612, calls: 412, agents: 3, model_usd: 0.8, model_notional_usd: 1.84 },
-    { name: 'review', duration_s: 344, calls: 268, agents: 2, model_usd: 0.3, model_notional_usd: 0.71 },
-    { name: 'verify', duration_s: 60, calls: 41, model_usd: 0.15, model_notional_usd: 0.34 },
+    { name: 'implement', duration_s: 612, calls: 412, agents: 3, model_usd: 0.8, model_notional_usd: 0.3 },
+    { name: 'review', duration_s: 344, calls: 268, agents: 2, model_usd: 0.3, model_notional_usd: 0.12 },
+    { name: 'verify', duration_s: 60, calls: 41, model_usd: 0.15 },
   ],
   // The mode let these through, and the block's `total` is above the two it
   // lists: the CLI bounds the list, so a shorter list is not the whole of it.
+  // Each `label` is the score word the axes give (2x3 is Low, 2x1 is a Nit) and
+  // each `class` is one of the classes the record uses.
   tolerated: {
     total: 3,
     findings: [
       {
         title: 'the retry ceiling differs between the two paths',
-        label: 'internal/queue/retry.go',
+        label: 'low',
         mode: 'startup',
         likelihood: 2,
         impact: 3,
         fix_cost: 1,
-        class: 'tolerable',
+        class: 'correctness',
       },
       {
         title: 'the table test misses the drain branch',
-        label: 'internal/queue/retry_test.go',
+        label: 'nit',
         mode: 'startup',
         likelihood: 2,
         impact: 1,
         fix_cost: 1,
-        class: 'tolerable',
+        class: 'maintainability',
       },
     ],
   },
@@ -620,7 +629,7 @@ test.describe('the Run detail screen', () => {
     expect(drawn.text).not.toContain('2026-10-15T11:00:05Z')
   })
 
-  test('draws the stage timeline, with the spend and deadline no document carries', async () => {
+  test('draws the stage timeline, whose spend and deadline no verify record carries', async () => {
     await mount(DIAGNOSIS, logLines(3), LOG_LINK, ARRIVALS, null, 'light')
     const drawn = await screen(page)
 
@@ -654,6 +663,10 @@ test.describe('the Run detail screen', () => {
     expect(drawn.spendStageCalls).toEqual(['412', '268', '41'])
     expect(drawn.spendStageAgents).toEqual(['3', '2', 'n/a'])
     expect(drawn.spendStageUsd).toEqual(['$0.80', '$0.30', '$0.15'])
+    // The notional part is the plan's list price inside the stage's figure, so
+    // it carries the console's notional mark -- and `verify`, with no notional
+    // key at all, is a measured zero rather than a marked one.
+    expect(drawn.spendStageNotional).toEqual(['NOTIONAL~$0.30', 'NOTIONAL~$0.12', '$0.00'])
     // `verify` carries no `agents` pointer, which is not a stage that counted
     // zero: the cell says `n/a` and its title says what the absence means.
     expect(drawn.spendStageAgentReasons[2]).toContain('not counted for this stage')
@@ -835,7 +848,7 @@ test.describe('the Run detail screen', () => {
   test('keeps its state words and its row boundary under forced colors (design section 6.4)', async () => {
     // The Run detail screen's half of the forced-colors smoke (section 4.4, in the half
     // section 6.4 gives this task). This is the densest table in the console: a stage
-    // that is `n/a` because no document carries spend by stage, a deadline that is `n/a`,
+    // cell that is `n/a` because no verify record carries spend, a deadline that is `n/a`,
     // and the halt's own `HALTED` -- each a word rather than a tone, so each survives.
     // The chrome's half is `entry.spec.ts`'s; a smoke, not a golden.
     await mount(DIAGNOSIS, logLines(4), LOG_LINK, ARRIVALS, null, 'light')

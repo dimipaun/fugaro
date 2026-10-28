@@ -26,12 +26,18 @@
 //      record carries no spend, so the timeline's spend cell says that and
 //      names that panel -- or, when the document carries no `stages`, says so
 //      instead. The `tolerated` block is the findings the run's resolved mode
-//      let through, drawn under the total it carries. Neither panel sums,
-//      divides or derives a figure: every number on them is one the document
-//      wrote, and the two splits `diagnose` does carry, by **route** and by
-//      **model** (`route_by`, `model_by`), are drawn as their own lists below.
-//      A screen that divided a total by the number of stages would be inventing
-//      a figure about money.
+//      let through, drawn under the total it carries; a document with no block
+//      gets one line naming the absent key, because a run that tolerated
+//      nothing and a record written before the field existed look the same.
+//      Neither panel sums, divides or derives a figure: every number on them is
+//      one the document wrote, and the two splits `diagnose` does carry, by
+//      **route** and by **model** (`route_by`, `model_by`), are drawn as their
+//      own lists below. A screen that divided a total by the number of stages
+//      would be inventing a figure about money. The two counts are pointers on
+//      the wire (absent means nobody counted the stage) while the two dollars
+//      are `omitempty` floats (absent is a zero), and the notional part is
+//      drawn with the console's notional mark so the plan's list price is never
+//      read as money.
 //   4. **The pull request as text, and no link.** Design section 4.3's gap 7:
 //      no document names the provider (GitHub or Bitbucket Cloud), so a link
 //      rebuilt from the repository and the number **cannot** be built for every
@@ -68,7 +74,7 @@
 // with the class its wire key declares. Nothing here builds markup, sets a
 // navigating attribute or handles an event.
 
-import { measured, readNumber, unavailable } from '../../shared/availability'
+import { measured, notional, readNumber, unavailable } from '../../shared/availability'
 import type { Reading } from '../../shared/availability'
 import { ReplayBuffer, REPLAY_MAX_RECORDS, REPLAY_WINDOW_SECONDS } from '../../shared/replay'
 import type { ReplayArrival, ReplayDocument, ReplayRecord } from '../../shared/replay'
@@ -491,6 +497,14 @@ function modelReading(model: Reading, notional: Reading, basis: string | null): 
   return model
 }
 
+/** modelBasisOf is `runstore.Cost.ModelBasis`, the run's own answer to which
+ * price its model figure is in. The ledger reads it to split the row's figure
+ * and the spend-by-stage panel reads it to place a stage's notional part, so the
+ * traversal is stated once here rather than twice. */
+function modelBasisOf(row: Record<string, unknown>): string | null {
+  return textAt((objectAt(row['cost']) ?? {})['model_basis'])
+}
+
 /** costOf reads `runstore.Cost`. Compute is what `ComputeEstimated` says it is:
  * an estimate when the flag is on, and **not an estimate** -- `unavailable`,
  * with the CLI's own sentence -- when it is off, because the flag off is a
@@ -500,7 +514,7 @@ function modelReading(model: Reading, notional: Reading, basis: string | null): 
  * the same thing about it. */
 function ledgerOf(row: Record<string, unknown>): RunLedger {
   const cost = objectAt(row['cost']) ?? {}
-  const basis = textAt(cost['model_basis'])
+  const basis = modelBasisOf(row)
   const model = readNumber(cost['model_usd'], 'row.cost.model_usd')
   const notional = readNumber(cost['model_notional_usd'], 'row.cost.model_notional_usd')
   const compute = readNumber(cost['compute_usd'], 'row.cost.compute_usd')
@@ -533,6 +547,16 @@ const STAGE_SPEND_NO_STAGES =
 /** DEADLINE_BECAUSE is the same honesty for a deadline the row does not carry. */
 const DEADLINE_BECAUSE = 'the document has no row.deadline'
 
+/** TOLERATED_ABSENT is the one line a document with no `tolerated` block draws.
+ * The absence is **not** the claim "nothing was tolerated": the CLI writes no
+ * block for a run that tolerated nothing, for every record written before the
+ * field existed (`schemas/result.schema.json`), and for a run whose record could
+ * not be read at all (`internal/cli/diagnose.go` only fills `Tolerated` when the
+ * record is there). The document cannot tell those three apart, so the line
+ * names the key that is missing and never the fact. */
+const TOLERATED_ABSENT =
+  'the document carries no tolerated block: a run that tolerated nothing, a record written before this field existed and a run whose record could not be read all look the same here'
+
 /**
  * RUN_SPEND_STAGES_MAX and RUN_TOLERATED_MAX are how many entries of each new
  * panel this screen draws, and they are the CLI's own bounds: `diagnoseStages`
@@ -558,23 +582,60 @@ function countedAt(record: Record<string, unknown>, key: string, field: string):
   return readNumber(record[key], field)
 }
 
+/** moneyAt reads one of the stage's two **floats**, which are the opposite case
+ * to the pointers above: `ModelUSD` and `ModelNotionalUSD` are `omitempty`
+ * (`internal/runstore/runstore.go`), so `encoding/json` writes no key at all for
+ * a zero and a reader cannot tell that zero from the key never having been
+ * written. An absent key is therefore a measured zero -- the value the document
+ * carries -- and never an `n/a`: reading it as unknown would draw `n/a` for the
+ * whole spend of every stage that cost nothing, which is most of them. */
+function moneyAt(record: Record<string, unknown>, key: string, field: string): Reading {
+  if (record[key] === null || record[key] === undefined) return measured(0)
+  return readNumber(record[key], field)
+}
+
+/** stageNotional is the stage's notional part, drawn as **notional** and never
+ * as money: it is what the calls a subscription paid for would have cost at list
+ * rates, and the cell beside it holds the stage's whole model figure, so the two
+ * are the split C1.16 and P12 exist to keep apart (`formatReading` marks a
+ * notional figure `NOTIONAL~$X`).
+ *
+ * The key is `omitempty`, so no key means a zero -- and it also means a record
+ * written before C1.16, which is the case `modelReading` reads the row's own
+ * figure with one panel above: a subscription run's whole stage figure is the
+ * plan's. A notional part of zero is a measured `$0.00` rather than
+ * `NOTIONAL~$0.00`, which would mark nothing as a plan price. */
+function stageNotional(record: Record<string, unknown>, usd: Reading, basis: string | null): Reading {
+  const raw = record['model_notional_usd']
+  if (raw === null || raw === undefined) {
+    const plan = basis === 'subscription' ? usd.value : 0
+    if (plan === null) return unavailable('the document has no stages[].model_notional_usd')
+    return plan === 0 ? measured(0) : notional(plan)
+  }
+  const carried = readNumber(raw, 'stages[].model_notional_usd')
+  if (carried.value === null) return carried
+  return carried.value === 0 ? measured(0) : notional(carried.value)
+}
+
 /** spendStagesOf reads the document's top-level `stages` (`runstore.StageTiming`)
  * into the panel's rows, bounded at `RUN_SPEND_STAGES_MAX`. An entry that is not
  * an object is skipped rather than thrown on: the record is a hand-editable
- * object and a screen that threw would draw nothing at all. */
-function spendStagesOf(raw: unknown): readonly RunSpendStage[] {
+ * object and a screen that threw would draw nothing at all. `basis` is the run's
+ * `cost.model_basis`, which only `stageNotional` needs. */
+function spendStagesOf(raw: unknown, basis: string | null): readonly RunSpendStage[] {
   const records = arrayAt(raw) ?? []
   const stages: RunSpendStage[] = []
   for (const item of records.slice(0, RUN_SPEND_STAGES_MAX)) {
     const record = objectAt(item)
     if (record === null) continue
+    const usd = moneyAt(record, 'model_usd', 'stages[].model_usd')
     stages.push({
       name: textAt(record['name']) ?? '',
       duration: readNumber(record['duration_s'], 'stages[].duration_s'),
       calls: countedAt(record, 'calls', 'stages[].calls'),
       agents: countedAt(record, 'agents', 'stages[].agents'),
-      usd: readNumber(record['model_usd'], 'stages[].model_usd'),
-      notional: readNumber(record['model_notional_usd'], 'stages[].model_notional_usd'),
+      usd,
+      notional: stageNotional(record, usd, basis),
     })
   }
   return stages
@@ -791,7 +852,7 @@ export function buildRunModel(inputs: RunInputs): RunModel {
   // The run's own spend by stage, and the verify timeline beside it: the
   // timeline's spend cell names the panel exactly when the panel is drawn.
   const rawStages = arrayAt(document['stages'])
-  const spendStages = spendStagesOf(rawStages)
+  const spendStages = spendStagesOf(rawStages, modelBasisOf(row))
 
   // The kept ring is read, never fed: drawing a screen is not an arrival.
   const buffer = inputs.replay instanceof ReplayBuffer ? inputs.replay : ringOf(inputs.replay ?? [])
@@ -1122,8 +1183,8 @@ function spendStagesPanel(factory: ScreenFactory, model: RunModel): ScreenElemen
  * when it is written and bounded again here, so a list shorter than the total is
  * not the whole of what the mode tolerated.
  *
- * A document with no block at all tolerated nothing, and `renderRun` draws that
- * as one line rather than as an empty panel. */
+ * A document with no block at all draws no panel, and `renderRun` draws one
+ * line naming the absent key instead -- see `TOLERATED_ABSENT`. */
 function toleratedPanel(factory: ScreenFactory, tolerated: RunTolerated): ScreenElement {
   const element = make(factory, 'section', 'run-tolerated')
   literal(cell(element, factory, 'h2', 'run-panel-title'), 'tolerated by the mode')
@@ -1375,11 +1436,12 @@ export function renderRun(factory: ScreenFactory, model: RunModel, theme: RunThe
   root.append(ledgerPanel(factory, model.ledger))
   // The run's own spend by stage, then what its mode let through: the two
   // panels are the document's, and neither is drawn when the document carries
-  // nothing for it. A run that tolerated nothing has no block at all, and that
-  // absence is drawn as the one line it means.
+  // nothing for it. An absent `tolerated` block is not the claim that nothing
+  // was tolerated, so the line that stands in for the panel says which key is
+  // missing rather than which fact is true.
   if (model.spendStages.length > 0) root.append(spendStagesPanel(factory, model))
   if (model.tolerated === null) {
-    literal(cell(root, factory, 'p', 'run-tolerated-none'), 'nothing tolerated')
+    literal(cell(root, factory, 'p', 'run-tolerated-absent'), TOLERATED_ABSENT)
   } else {
     root.append(toleratedPanel(factory, model.tolerated))
   }

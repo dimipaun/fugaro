@@ -1233,6 +1233,54 @@ describe('buildRunModel', () => {
     expect(model.stages[0]?.spend.because).toContain('"spend by stage" panel')
   })
 
+  it('spend by stage reads the two omitempty floats as zeros, and marks the notional part', () => {
+    // `model_usd` and `model_notional_usd` are `omitempty` floats on the wire
+    // (`internal/runstore/runstore.go`), the opposite case to `calls`/`agents`:
+    // `encoding/json` writes no key for a zero, so an absent key is the value
+    // zero and never an unknown. Reading it as unknown would draw `n/a` for the
+    // whole spend of every stage that cost nothing, and `n/a` for the notional
+    // part of every stage on no plan.
+    const stages = [
+      // Both keys dropped by `omitempty`: nothing billed, nothing notional.
+      { name: 'implement', duration_s: 420 },
+      // A cascade stage: part of its figure is the plan's, and that part is a
+      // notional figure -- `NOTIONAL~$X`, never money (C1.16, P12).
+      { name: 'review', duration_s: 95, model_usd: 2.1, model_notional_usd: 0.6 },
+    ]
+    const model = buildRunModel(runInputs({ diagnosis: { ...DIAGNOSIS, stages } }))
+    expect(model.spendStages[0]?.usd.state).toBe('measured')
+    expect(model.spendStages[0]?.usd.value).toBe(0)
+    expect(model.spendStages[0]?.notional.state).toBe('measured')
+    expect(model.spendStages[0]?.notional.value).toBe(0)
+    expect(model.spendStages[1]?.usd.value).toBe(2.1)
+    expect(model.spendStages[1]?.usd.state).toBe('measured')
+    expect(model.spendStages[1]?.notional.value).toBe(0.6)
+    expect(model.spendStages[1]?.notional.state).toBe('notional')
+    // A record written before the key existed carries none, and then the run's
+    // basis is the fallback the ledger applies to the row's own figure one panel
+    // above: a subscription run's whole stage figure is the plan's.
+    const before = buildRunModel(
+      runInputs({
+        diagnosis: {
+          ...DIAGNOSIS,
+          row: {
+            ...DIAGNOSIS.row,
+            cost: { ...DIAGNOSIS.row.cost, model_usd: 2.1, model_basis: 'subscription' },
+          },
+          stages: [{ name: 'review', duration_s: 95, model_usd: 2.1 }],
+        },
+      }),
+    )
+    expect(before.spendStages[0]?.notional.value).toBe(2.1)
+    expect(before.spendStages[0]?.notional.state).toBe('notional')
+    // The same absent key on an api-list run is a zero and not the whole figure.
+    const listed = buildRunModel(
+      runInputs({ diagnosis: { ...DIAGNOSIS, stages: [{ name: 'review', duration_s: 95, model_usd: 2.1 }] } }),
+    )
+    expect(listed.spendStages[0]?.notional.value).toBe(0)
+    expect(listed.spendStages[0]?.notional.state).toBe('measured')
+  })
+
   it('spend by stage bounds a hand-edited list at 128', () => {
     // `diagnoseStages` bounds the list when it is written; the document is an
     // object a hand can edit, so the screen bounds it again and counts what it
@@ -1263,7 +1311,7 @@ describe('buildRunModel', () => {
         likelihood: 2,
         impact: 2,
         fix_cost: 1,
-        class: 'style',
+        class: 'maintainability',
       },
     ]
     const model = buildRunModel(runInputs({ diagnosis: { ...DIAGNOSIS, tolerated: { findings, total: 4 } } }))
@@ -1275,7 +1323,7 @@ describe('buildRunModel', () => {
     expect(model.tolerated?.findings[0]?.title).toBe('the backoff ceiling is a constant here')
     expect(model.tolerated?.findings[0]?.mode).toBe('pro')
     expect(model.tolerated?.findings[0]?.likelihood.value).toBe(2)
-    expect(model.tolerated?.findings[0]?.scoreClass).toBe('style')
+    expect(model.tolerated?.findings[0]?.scoreClass).toBe('maintainability')
     expect(model.tolerated?.dropped.value).toBe(0)
     // The list is bounded here too, and what it left out is a reading.
     const many = Array.from({ length: RUN_TOLERATED_MAX + 3 }, () => findings[0])
@@ -1567,11 +1615,19 @@ describe('renderRun', () => {
   it('draws the spend by stage panel and the findings the mode tolerated', () => {
     const stages = [
       { name: 'implement', duration_s: 420, calls: 42, agents: 3, model_usd: 1.1, model_notional_usd: 0 },
-      { name: 'review', duration_s: 95, model_usd: 0.15, model_notional_usd: 0 },
+      { name: 'review', duration_s: 95, model_usd: 0.15, model_notional_usd: 0.05 },
     ]
     const tolerated = {
       findings: [
-        { title: 'the retry table is stale', label: 'low', mode: 'pro', likelihood: 2, impact: 2, fix_cost: 1, class: 'style' },
+        {
+          title: 'the retry table is stale',
+          label: 'low',
+          mode: 'pro',
+          likelihood: 2,
+          impact: 2,
+          fix_cost: 1,
+          class: 'maintainability',
+        },
       ],
       total: 4,
     }
@@ -1581,6 +1637,10 @@ describe('renderRun', () => {
     expect(texts(spend, 'run-spend-stage-calls')).toEqual(['42', 'n/a'])
     expect(texts(spend, 'run-spend-stage-agents')).toEqual(['3', 'n/a'])
     expect(texts(spend, 'run-spend-stage-usd')).toEqual(['$1.10', '$0.15'])
+    // The notional cell carries the console's notional mark: it is the plan's
+    // list price and not money the run was billed (C1.16, P12), and a zero
+    // notional part is a measured `$0.00` rather than a marked zero.
+    expect(texts(spend, 'run-spend-stage-notional')).toEqual(['$0.00', 'NOTIONAL~$0.05'])
     // The absent counts say which fact they are, in the cell's title.
     expect(all(spend, 'run-spend-stage-calls')[1]?.getAttribute('title')).toBe('not counted for this stage')
     const mode = one(tree, 'run-tolerated')
@@ -1596,7 +1656,17 @@ describe('renderRun', () => {
     // literal characters and never an element.
     const title = '<img src=x onerror=1>'
     const tolerated = {
-      findings: [{ title, label: 'low', mode: 'pro', likelihood: 2, impact: 2, fix_cost: 1, class: 'style' }],
+      findings: [
+        {
+          title,
+          label: 'low',
+          mode: 'pro',
+          likelihood: 2,
+          impact: 2,
+          fix_cost: 1,
+          class: 'maintainability',
+        },
+      ],
       total: 1,
     }
     const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis: { ...DIAGNOSIS, tolerated } })), 'light')
@@ -1604,12 +1674,16 @@ describe('renderRun', () => {
     expect(walk(tree).map((node) => node.tag)).not.toContain('img')
   })
 
-  it('draws no panel for a run that tolerated nothing, and says so in one line', () => {
-    // The block is absent -- never empty -- for a run that tolerated nothing,
-    // and the absence is one line rather than a panel with no rows in it.
+  it('draws no panel for a document with no tolerated block, and names the absent key in one line', () => {
+    // The block is absent for a run that tolerated nothing, but also for a
+    // record written before the field existed and for a run whose record could
+    // not be read: the absence is one line naming the key that is missing, not
+    // the claim that nothing was tolerated.
     const tree = renderRun(factory, buildRunModel(runInputs()), 'light')
     expect(all(tree, 'run-tolerated')).toHaveLength(0)
-    expect(one(tree, 'run-tolerated-none').textContent).toBe('nothing tolerated')
+    const line = one(tree, 'run-tolerated-absent').textContent ?? ''
+    expect(line).toContain('the document carries no tolerated block')
+    expect(line).not.toContain('nothing tolerated')
     // The same for the run's spend by stage: no `stages`, no panel.
     expect(all(tree, 'run-spend-stages')).toHaveLength(0)
   })
