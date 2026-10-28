@@ -273,24 +273,26 @@ type Spec struct {
 	// A runner before this field refuses the spec outright (Parse disallows
 	// unknown fields), which is the skew every new task field has.
 	DigestRuns []string `json:"digest_runs,omitempty"`
-	// Tier is the expectation tier the launching CLI attached to this run
-	// (docs/task-governance spec.md §3, plan T8.1): what the run is expected to
-	// cost and take. "" is untiered — every spec written before this release
-	// and every launch that attaches no tier — and an untiered run has no
-	// expectation to be held to.
+	// Tier is the expectation tier of this run (docs/task-governance spec.md §3,
+	// plan T8.1): what the run is expected to cost and take, which selects one
+	// tier of fugaro.yaml's governance.tiers. "" is untiered — every spec
+	// written before this release and every launch that attaches no tier — and
+	// an untiered run has no expectation to be held to.
 	//
 	// The vocabulary is closed (internal/tier): a value outside it is refused
 	// by Validate below, because a near miss is a launcher's bug rather than a
 	// run's opinion about its own size. A runner before the release that reads
 	// this field refuses the whole spec (Parse disallows unknown fields), the
-	// skew every new task field has; the launcher gates such a launch, which is
-	// T8.1b's half of this task.
+	// skew every new task field has. No launcher writes it yet, so a spec that
+	// carries a tier was written by hand and the launch-time image gate rigor's
+	// own fields have (rigorRequestSince) is not here for this one.
 	Tier tier.Tier `json:"tier,omitempty"`
 	// ExpectedScope is roughly which files or areas the run is expected to
 	// touch (spec.md §3's expectation envelope). It is paths and not prose:
 	// nothing here reaches a prompt, and each entry is bounded and non-blank
 	// the way Spec.Paths is, because a hand-written task.json is what can make
-	// the list arbitrarily long. Nil for every launch that declares none.
+	// the list arbitrarily long. Nil for every launch that declares none, which
+	// today is every launch: like Tier above, no launcher writes it yet.
 	ExpectedScope []string `json:"expected_scope,omitempty"`
 }
 

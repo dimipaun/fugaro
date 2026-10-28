@@ -1,11 +1,54 @@
 package policy
 
 import (
+	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/tier"
 )
+
+// TestTierExpectationsAreTheVocabulary walks TierExpectations by reflection:
+// every field is one tier of tier.Tiers, and every tier of the vocabulary has
+// a field. The tiers are fields rather than map entries so an unknown tier name
+// is an unknown key the strict decoder refuses, but that leaves nothing at
+// compile time to notice a fifth tier: a tier added to internal/tier and not to
+// this struct would silently set no expectation, and WithDefaults and
+// tightenGovernance would go on naming the four by hand. The field name is the
+// tier's name in Go's spelling (Trivial is tier.Trivial), which is the mapping
+// WithDefaults and tierOf read too. internal/config holds the file's own block
+// equal to the vocabulary the same way (TestGovernanceTiersAreTheVocabulary).
+func TestTierExpectationsAreTheVocabulary(t *testing.T) {
+	typ := reflect.TypeOf(TierExpectations{})
+	if typ.NumField() != len(tier.Tiers) {
+		t.Errorf("TierExpectations has %d fields, want one per tier (%d)", typ.NumField(), len(tier.Tiers))
+	}
+	seen := make(map[tier.Tier]bool, typ.NumField())
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		name := tier.Tier(strings.ToLower(f.Name))
+		if !tier.Known(name) {
+			t.Errorf("TierExpectations.%s is no tier of tier.Tiers (%s)", f.Name, tier.List())
+			continue
+		}
+		seen[name] = true
+		if f.Type != reflect.TypeOf(TierExpectation{}) {
+			t.Errorf("TierExpectations.%s is %s, want a TierExpectation", f.Name, f.Type)
+		}
+	}
+	for _, tt := range tier.Tiers {
+		if !seen[tt] {
+			t.Errorf("tier %q has no field in TierExpectations, so nothing sets its expectation", tt)
+		}
+	}
+	// The defaults the vocabulary is walked with are the four tiers whole: a
+	// tier that had no default would be a field with a zero expectation, which
+	// is also what an untiered run's ceiling must not silently become.
+	if got := DefaultTierExpectations(); tierOf(got, tier.Trivial) == (TierExpectation{}) {
+		t.Errorf("DefaultTierExpectations().Trivial = %+v, want the shipped figures", tierOf(got, tier.Trivial))
+	}
+}
 
 // tierOf reads one tier's expectation out of a set, so a test can walk the
 // vocabulary (tier.Tiers) rather than spell the four fields out four times.

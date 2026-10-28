@@ -133,8 +133,8 @@ func Merge(ceiling Layer, tighten ...Layer) Effective {
 // smaller positive count, fraction or duration wins, a looser one is dropped
 // and recorded, and a zero (or a key the layer left out) is unset and passes
 // the running value through. The keys are named one by one rather than walked
-// by reflection so that a key added to Governance is a compile error here and
-// not a silently unmapped one.
+// by reflection: this is the list a key added to Governance has to be added to,
+// and nothing at compile time notices that it was forgotten.
 func (e *Effective) tightenGovernance(g Governance, src string) {
 	e.tightenInt(&e.Governance.ReviewRatio, g.ReviewRatio, KeyReviewRatio, src)
 	e.tightenInt(&e.Governance.ReviewFloorCalls, g.ReviewFloorCalls, KeyReviewFloorCalls, src)

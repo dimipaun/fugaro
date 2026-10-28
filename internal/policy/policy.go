@@ -142,10 +142,12 @@ type TierExpectation struct {
 }
 
 // TierExpectations is the expectation of every tier of tier.Tiers. The tiers
-// are named one by one rather than held in a map, so a tier added to the
-// vocabulary is a compile error here — tightenGovernance's own reason — and an
-// unknown tier name is an unknown key the strict decoder refuses rather than a
-// map entry nothing checks.
+// are named one by one rather than held in a map, so an unknown tier name is an
+// unknown key the strict decoder refuses (config.GovernanceTiers) rather than a
+// map entry nothing checks. A tier added to the vocabulary is not a compile
+// error here, though: TestTierExpectationsAreTheVocabulary walks this struct by
+// reflection and fails until the new tier has a field, which is also what makes
+// WithDefaults and tightenGovernance name it.
 type TierExpectations struct {
 	Trivial TierExpectation
 	Small   TierExpectation
