@@ -496,6 +496,33 @@ func TestIsCleanIgnoresReplaceRefs(t *testing.T) {
 	}
 }
 
+// TestIsCleanSeesPastAReplaceRefThatMatchesTheIndex is the mirror of the test
+// above: a replacement whose tree equals the index makes a plain `git status`
+// read a tree with staged changes as clean, which would let CommitAll report
+// there was nothing to commit while the agent's work sat uncommitted. The
+// replacement-blind read still sees the staged change.
+func TestIsCleanSeesPastAReplaceRefThatMatchesTheIndex(t *testing.T) {
+	repo, _ := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	head := testutil.Git(t, repo.Dir, "rev-parse", "HEAD")
+	// A staged change, never committed: the index differs from HEAD's tree.
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"a.txt": "a\n"})
+	testutil.Git(t, repo.Dir, "add", "-A")
+	tree := testutil.Git(t, repo.Dir, "write-tree")
+	alt := testutil.Git(t, repo.Dir, "commit-tree", tree, "-p", head, "-m", "the index as a commit")
+	testutil.Git(t, repo.Dir, "replace", head, alt)
+	// The plant does bite a plain read: with replacements on, the index
+	// matches the replacement tree and the staged change reads as clean.
+	if out := testutil.Git(t, repo.Dir, "status", "--porcelain"); out != "" {
+		t.Fatalf("the planted replacement did not hide the staged change from a plain `git status`: %q", out)
+	}
+	if clean, err := repo.IsClean(ctx); err != nil || clean {
+		t.Fatalf("IsClean with a replacement matching the index = %v, %v; want a dirty tree", clean, err)
+	}
+}
+
 func TestCommitAllAheadAndClean(t *testing.T) {
 	repo, _ := setup(t)
 	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {

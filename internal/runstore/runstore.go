@@ -857,15 +857,24 @@ func (e PolicyEffective) MarshalJSON() ([]byte, error) {
 	return json.Marshal(aux)
 }
 
-// PolicyIgnored is a value a layer set that was looser than the limits in
-// force and was dropped. Value and Effective are text; Source is the layer
-// of the effective value and From the layer that asked for Value.
+// PolicyIgnored is a value a layer set that the run dropped. Value and
+// Effective are text; Source is the layer of the effective value and From the
+// layer that asked for Value.
+//
+// Clamped marks the one shape that is not "looser than the limits in force": a
+// stage timeout the run's own timeouts.stage bounds at least as tightly, which
+// the run drops rather than give a deadline of its own (T7.6). It cannot be
+// told from a merge entry by Key, Source and From alone — both can read
+// key=stage_timeout.implement source=ceiling from=branch — so the report would
+// otherwise call a merge-dropped value one the run's own bound made moot, or
+// the other way round; this is the mark that separates them.
 type PolicyIgnored struct {
 	Key       string `json:"key"`
 	Value     string `json:"value"`
 	Effective string `json:"effective"`
 	Source    string `json:"source"`
 	From      string `json:"from"`
+	Clamped   bool   `json:"clamped,omitempty"`
 }
 
 // FollowUp is what a follow-up run acted on (design §4.4).

@@ -566,10 +566,17 @@ export function checkLaunchBranch(branch: string): LaunchValue<string> {
  * Every field is one whose change alters what a `fugaro run` for this name
  * would do -- and **only** such a field. In particular the rail's `listed` flag
  * and its live `checkouts` list are *not* in here: both are answers of the CLI's
- * own `config list` read, which can fail for one read and succeed for the next
- * (a row the CLI did not enumerate is still `saved`), and an identity that moved
- * with a transient read failure would decline a launch the operator had already
- * confirmed, drawn as their own cancel with no sentence naming the read.
+ * own `config list` read, which can fail for one read and succeed for the next,
+ * and an identity that moved with a transient read failure would decline a
+ * launch the operator had already confirmed, drawn as their own cancel with no
+ * sentence naming the read.
+ *
+ * The rail's `saved` flag is not in here either, and it is not an omission: both
+ * call sites answer `false` for an unsaved row **before** they build these facts
+ * (a launch is not cut for a name this console does not carry, and the
+ * answer-time read closes as a cancel), so the flag is true of every set of facts
+ * this console can hold -- a field that can never differ is a field a reader
+ * would take for a distinction.
  */
 export interface LaunchRecordFacts {
   /** the stored record's own id: a removal and a re-add under the same name is
@@ -580,8 +587,6 @@ export interface LaunchRecordFacts {
   readonly distro: string
   readonly configPath: string
   readonly checkout: string
-  /** the rail's own `saved` flag for the row */
-  readonly saved: boolean
 }
 
 /**
@@ -606,7 +611,6 @@ export function launchFingerprint(facts: LaunchRecordFacts): string {
     facts.distro,
     facts.configPath,
     facts.checkout,
-    facts.saved,
   ])
 }
 

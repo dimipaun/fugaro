@@ -441,15 +441,36 @@ func followUpSection(fu *FollowUpSection, reason string) string {
 	return b.String()
 }
 
-// policyLine is the report's note that fugaro.yaml values looser than the
-// limits in force were dropped, one entry per key; empty when none were.
+// policyLine is the report's note that the run dropped values a layer wrote:
+// the fugaro.yaml values looser than the limits in force, one entry per key,
+// and the stage timeouts the run's own timeouts.stage bounds at least as
+// tightly (T7.6), which are not looser than a limit but get a sentence of
+// their own so the report does not call them one. Empty when nothing was.
+//
+// The stage-timeout sentence is for the entries Clamped marks, and only those.
+// A stage timeout a tighter layer capped is a merge entry like any other — its
+// key, source and from can read exactly like a clamp's — and it takes the
+// "looser than the project's limits" sentence, as it should; a key that has
+// both shapes gets a part in each sentence.
 func policyLine(p *runstore.PolicyRecord) string {
 	if p == nil || len(p.Ignored) == 0 {
 		return ""
 	}
 	type entry struct{ first, last runstore.PolicyIgnored }
 	seen, order, fromDefault := map[string]*entry{}, []string{}, false
+	// The clamped entries, kept apart: the drop's why is the run's own bound
+	// and never "looser than the project's limits" (the value can come from
+	// the project layer itself), so they must not join the sentence below.
+	var clampedKeys []string
+	clamped := map[string]runstore.PolicyIgnored{}
 	for _, ig := range p.Ignored {
+		if ig.Clamped {
+			if _, ok := clamped[ig.Key]; !ok {
+				clampedKeys = append(clampedKeys, ig.Key)
+			}
+			clamped[ig.Key] = ig
+			continue
+		}
 		fromDefault = fromDefault || ig.From == policy.SourceDefaultBranch
 		if e := seen[ig.Key]; e != nil {
 			e.last = ig
@@ -458,22 +479,53 @@ func policyLine(p *runstore.PolicyRecord) string {
 		seen[ig.Key] = &entry{ig, ig}
 		order = append(order, ig.Key)
 	}
-	parts := make([]string, len(order))
-	for i, k := range order {
-		e := seen[k]
-		parts[i] = fmt.Sprintf("%s %s -> %s", PolicyKeyPath(k), policyValue(k, e.first.Value), policyValue(k, e.last.Effective))
+	var b strings.Builder
+	if n := len(order); n > 0 {
+		parts := make([]string, n)
+		for i, k := range order {
+			e := seen[k]
+			parts[i] = fmt.Sprintf("%s %s -> %s", PolicyKeyPath(k), policyValue(k, e.first.Value), policyValue(k, e.last.Effective))
+		}
+		where, limits := " on this branch", "the project's limits"
+		if fromDefault {
+			where, limits = "", "the limits set above them"
+		}
+		were := "were"
+		if n == 1 {
+			were = "was"
+		}
+		fmt.Fprintf(&b, "**Policy:** %s from fugaro.yaml%s %s looser than %s and %s ignored (%s)\n\n",
+			Plural(n, "value"), where, were, limits, were, strings.Join(parts, "; "))
 	}
-	n := len(order)
-	where, limits := " on this branch", "the project's limits"
-	if fromDefault {
-		where, limits = "", "the limits set above them"
+	if n := len(clampedKeys); n > 0 {
+		parts := make([]string, n)
+		for i, k := range clampedKeys {
+			ig := clamped[k]
+			parts[i] = fmt.Sprintf("%s %s from %s -> %s",
+				PolicyKeyPath(k), policyValue(k, ig.Value), policyFrom(ig.From), policyValue(k, ig.Effective))
+		}
+		were := "were"
+		if n == 1 {
+			were = "was"
+		}
+		fmt.Fprintf(&b, "**Policy:** the run's own timeouts.stage bounds a stage at least as tightly as the stage timeout asked for, so %s %s ignored (%s)\n\n",
+			Plural(n, "value"), were, strings.Join(parts, "; "))
 	}
-	were := "were"
-	if n == 1 {
-		were = "was"
+	return b.String()
+}
+
+// policyFrom names the layer that asked for a dropped stage timeout, as
+// PolicyIgnored.From spells it (the ceiling there is the project layer's
+// governance, which the run drops when its own timeouts.stage is tighter).
+func policyFrom(from string) string {
+	switch from {
+	case policy.SourceCeiling:
+		return "the project layer"
+	case policy.SourceDefaultBranch:
+		return "the default branch's fugaro.yaml"
+	default:
+		return "fugaro.yaml on this branch"
 	}
-	return fmt.Sprintf("**Policy:** %s from fugaro.yaml%s %s looser than %s and %s ignored (%s)\n\n",
-		Plural(n, "value"), where, were, limits, were, strings.Join(parts, "; "))
 }
 
 // policyValue is a limit's value for the report. An allow-list's models come

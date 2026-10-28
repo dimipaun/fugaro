@@ -94,7 +94,7 @@ Ways on: **Continue** = a `fugaro run --pr N` follow-up, **Redirect** = that plu
 
 | Reason | How to go on |
 |---|---|
-| `stage_budget` — a stage passed its own budget | **Continue** when the work is sound (a raise is the user's, in the project layer); **Redirect** when one part of the task kept overrunning. |
+| `stage_budget` — a stage passed its own budget or time bound (`governance.stage_timeout`; `why_over` names which) | **Continue** when the work is sound (a raise is the user's, in the project layer); **Redirect** when one part kept overrunning. |
 | `review_ratio` — review spent more calls than its ratio allows | **Redirect**: give the reviewers something new to read (a failing test, a comment); unchanged, it stops again. |
 | `fanout` — a stage used more sub-agents than the project layer allows | **Redirect**: fewer, sequential sub-agents, or split the task. |
 | `review_scope` — a review covered files this run never changed | **Stop**, or redirect naming the files that did change: the review recipe and the runner disagree about the range. |
@@ -102,7 +102,7 @@ Ways on: **Continue** = a `fugaro run --pr N` follow-up, **Redirect** = that plu
 
 ## 5. A Claude usage limit
 
-This applies only to a workflow whose `agent.auth` is `oauth`: a workflow on an API key or the gateway has no personal Claude subscription to run out of, so neither the evidence nor the switch below ever applies to one (the same rule `fugaro run --token` itself enforces at launch). A workflow whose `agent.auth` is `cascade` is not a run this section switches: its tier A is a subscription token the credentials service holds and chooses, so `fugaro accounts ls` cannot answer which account it may use, and `--token NAME` does not name what the service will pick. A cascade run that ran out of tier A is the service's to answer — it marks the credential and moves on to the next tier — and the user's own step is the runbook (https://github.com/dimipaun/fugaro/blob/main/docs/credentials-service/runbook.md).
+This applies only to a workflow whose `agent.auth` is `oauth`: an API key or the gateway has no personal Claude subscription to run out of, so the evidence and switch below never apply to one (the same rule `fugaro run --token` enforces at launch). A workflow whose `agent.auth` is `cascade` is not a run this section switches: its tier A is a subscription token the credentials service holds and chooses, so `fugaro accounts ls` cannot answer which account it may use, and `--token NAME` does not name what the service will pick. A cascade run that ran out of tier A is the service's to answer — it marks the credential and moves on to the next tier — and the user's own step is the runbook (https://github.com/dimipaun/fugaro/blob/main/docs/credentials-service/runbook.md).
 
 A `failed` run's evidence can say the run's Claude account ran out of its subscription's usage limit — but only when the evidence is Claude Code's own error, not a summary of work it did: `row.reason`, a `log_tail` line, or an `agent_message` that reads as an error (a crash, a refusal, an abrupt stop). A run that otherwise finished its task normally never counts, even when its own `agent_message` happens to mention usage limits — a task that was *about* usage limits ("document what happens when Claude hits one") can describe them while summarizing finished work, without the run itself ever having hit one.
 

@@ -27,6 +27,21 @@
 //     is the burst those limits exist for;
 //   - a limit read off the wall clock fails "reads the limits from a clock that
 //     only moves forward, never from the wall clock";
+//   - a run id drawn without checking it against the ids this process already
+//     holds -- one id for two launches in one second, whose `frozen` and
+//     `pending` entries then overwrite each other -- fails "redraws the four hex
+//     digits when the id it drew is one this process already holds", and an id
+//     drawn (rather than claimed) where the launch is built fails "claims the id
+//     with the reservation, so a same-tick pair cannot draw one id", and a
+//     redraw that skips the ids this process has already frozen fails "redraws an
+//     id this process has already answered, so a replay cannot resolve a new
+//     window";
+//   - an id claimed for a launch whose build refused or threw, and never
+//     released, fails "frees the id a refused or thrown build claimed, so the
+//     next launch can take it";
+//   - a per-installation rate entry left behind once its stamps have expired,
+//     which is memory a renderer's stream of names chooses, fails "drops an
+//     installation once its stamps have expired, so the names cannot pile up";
 //   - a confirmer that throws, or a still-recorded read that rejects, leaving
 //     the hold taken fails the two tests beside it in "a launch that was
 //     stopped, and one that failed outright";
@@ -39,6 +54,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   CONFIRM_RATE_APP,
   CONFIRM_RATE_PER_INSTALLATION,
+  CONFIRM_RATE_WINDOW_MS,
   DECLINED_CANCELLED,
   DECLINED_UNBUILT,
   DECLINING_CONFIRMER,
@@ -75,6 +91,19 @@ function countingRandom(): () => number {
     const value = tail
     tail += 1
     return value / 0x10000
+  }
+}
+
+/** tails is a random source that answers one queued draw per call, so a test can
+ * force two draws to land on the same tail and then on a different one. A draw
+ * past the queue is an error rather than a default: the collision tests are
+ * about exactly how many times the id was drawn. */
+function tails(...queued: readonly number[]): () => number {
+  const values = [...queued]
+  return () => {
+    const next = values.shift()
+    if (next === undefined) throw new Error('the launcher drew more run ids than this test queued')
+    return next / 0x10000
   }
 }
 
@@ -317,6 +346,10 @@ function runner(options: {
    * the production defaults rather than this helper's stand-ins for them. */
   readonly now?: () => number
   readonly wallClock?: () => number
+  /** `random` is the id's four hex digits, one draw per attempt: the collision
+   * tests are the only callers that need to force two draws to land on the same
+   * id, and they are the reason the tail is injectable at all. */
+  readonly random?: () => number
   readonly stillRecorded?: (launch: FrozenLaunch) => boolean | Promise<boolean>
   /** `lookUp` replaces the records entirely: the one test that needs a lookup
    * answering for an installation other than the one asked about cannot use the
@@ -337,7 +370,7 @@ function runner(options: {
     timers: options.timers ?? neverFires(),
     now,
     wallClock,
-    random: countingRandom(),
+    random: options.random ?? countingRandom(),
   }
   if (lookUp !== undefined) {
     return createLaunchRunner({ ...shared, lookUp: async (project) => lookUp(project) })
@@ -359,6 +392,34 @@ function recordsFor(held: LaunchTarget, project: string): TargetLookup {
   // about, so a test that launches a *second* installation gets the same records
   // under that installation's own name.
   return { ok: true, target: project === held.project ? held : { ...held, project } }
+}
+
+/** catchRateMap catches the launcher's per-installation rate map, which is the
+ * one structure in it a test cannot reach any other way: it lives in a closure,
+ * and `reserve` is the only place in the launcher that writes a `Map` entry
+ * whose value is a **stamp list** under an installation's name -- the in-flight
+ * entry for the same name is a run id string, the cool-down a number, the
+ * pending answers functions and the frozen launches objects. The filter is on
+ * that shape and not on the map, so what `keys` reads is the rate map and
+ * nothing else this test happens to build. */
+function catchRateMap(): {
+  readonly keys: () => readonly string[]
+  readonly restore: () => void
+} {
+  let caught: Map<string, number[]> | undefined
+  const set = Map.prototype.set
+  const spy = vi.spyOn(Map.prototype, 'set').mockImplementation(function (
+    this: Map<string, number[]>,
+    key: string,
+    value: number[],
+  ) {
+    if (Array.isArray(value) && value.every((stamp) => typeof stamp === 'number')) caught = this
+    return set.call(this, key, value)
+  } as unknown as typeof Map.prototype.set)
+  return {
+    keys: () => [...(caught?.keys() ?? [])],
+    restore: () => spy.mockRestore(),
+  }
 }
 
 interface LaunchRequestLike {
@@ -549,6 +610,156 @@ describe('the frozen spawn', () => {
 
     confirmer.decide(false)
     await launched
+  })
+})
+
+describe('the run id, and the second it is cut in', () => {
+  it('redraws the four hex digits when the id it drew is one this process already holds', async () => {
+    // The id is the UTC second plus 16 random bits, and it **keys** the two maps
+    // the answer path reads: `frozen` (what a yes spawns) and `pending` (whose
+    // `decide` an answer resolves). Two launches in one second whose tails
+    // collide are therefore one id, and `frozen.set` and `pending.set` overwrite
+    // silently -- the first window's yes would resolve the second window's
+    // promise and spawn the second launch's frozen object, under a run id both
+    // launches share, so nothing downstream could tell. The draw is repeated
+    // until it is an id this process does not hold; this test forces the
+    // collision by giving the source the same tail twice.
+    const confirmer = heldConfirmer()
+    const spawner = completingSpawner()
+    const held = runner({ confirmer, spawner, random: tails(0xa2fc, 0xa2fc, 0x0001) })
+
+    const first = held.launch(request({ installation: PROJECT }))
+    await untilSettled()
+    const second = held.launch(request({ installation: OTHER_PROJECT }))
+    await untilSettled()
+
+    expect(confirmer.opened.map((launch) => launch.runId)).toStrictEqual([
+      RUN_ID,
+      '20261028-152618-0001',
+    ])
+
+    // And the two windows spawn what each of them froze: the yes on the first
+    // installation's window runs its own argv, which is the launch the
+    // overwriting `frozen.set` used to replace.
+    confirmer.decideWindow(RUN_ID, true)
+    await untilSettled()
+    expect(spawner.calls).toHaveLength(1)
+    expect(spawner.calls[0]?.args).toContain(PROJECT)
+    expect(spawner.calls[0]?.args).not.toContain(OTHER_PROJECT)
+
+    confirmer.decideWindow('20261028-152618-0001', false)
+    void first
+    void second
+  })
+
+  it('claims the id with the reservation, so a same-tick pair cannot draw one id', async () => {
+    // The draw alone is not the property; the **claim** is. Two messages that
+    // arrive in one tick both pass the limits and both start reading their
+    // records, and if the id were drawn where the launch is built, the second
+    // would draw the first's id while the first was still reading -- nothing
+    // frozen, nothing committed, nothing for it to see. Claimed synchronously
+    // with the reservation, the second message's first draw is already an id
+    // this process holds, so it is the redraw that answers.
+    const confirmer = heldConfirmer()
+    const held = runner({ confirmer, random: tails(0xa2fc, 0xa2fc, 0x0001) })
+
+    const first = held.launch(request({ installation: PROJECT }))
+    const second = held.launch(request({ installation: OTHER_PROJECT }))
+    await untilSettled()
+
+    expect(confirmer.opened.map((launch) => launch.runId)).toStrictEqual([RUN_ID, '20261028-152618-0001'])
+
+    for (const open of confirmer.openRunIds) confirmer.decideWindow(open, false)
+    void first
+    void second
+  })
+
+  it('redraws an id this process has already answered, so a replay cannot resolve a new window', async () => {
+    // `frozen` is the third place an id can be, and the one that outlives the
+    // window: an answered launch is released from `claimedRunIds` and from
+    // `inFlight`, and `frozen` keeps its id because a replayed answer still
+    // spawns from it. Drawn again, the id would be re-frozen -- `frozen.set`
+    // overwrites -- and `pending.set` would hand the *new* window's promise to
+    // the old run id, so the next `answer(RUN_ID, …)` (a replay the renderer is
+    // entitled to make) would resolve a window the operator has not answered.
+    const confirmer = heldConfirmer()
+    const spawner = completingSpawner()
+    const held = runner({ confirmer, spawner, random: tails(0xa2fc, 0xa2fc, 0x0001) })
+
+    const first = held.launch(request({ installation: PROJECT }))
+    await untilSettled()
+    confirmer.decideWindow(RUN_ID, false)
+    await first
+
+    // The answered id replays, and the launch that follows it -- in the same
+    // second, drawing the same tail -- gets an id of its own.
+    expect((await held.answer(RUN_ID, true))?.replayed).toBe(true)
+
+    const second = held.launch(request({ installation: OTHER_PROJECT }))
+    await untilSettled()
+    expect(confirmer.opened.map((launch) => launch.runId)).toStrictEqual([RUN_ID, '20261028-152618-0001'])
+
+    // And the replay still answers the first launch rather than the window that
+    // is open now: the new window keeps its own promise, and nothing spawns.
+    expect((await held.answer(RUN_ID, true))?.replayed).toBe(true)
+    expect(confirmer.openRunIds).toStrictEqual(['20261028-152618-0001'])
+    expect(spawner.calls).toHaveLength(0)
+
+    confirmer.decideWindow('20261028-152618-0001', false)
+    void second
+  })
+
+  it('frees the id a refused or thrown build claimed, so the next launch can take it', async () => {
+    // The claim's release for a launch that never reaches `commit`: a request
+    // whose `build` refuses, and one whose records read throws outright, both
+    // claimed an id and opened no window, and the id goes back with the
+    // reservation. Held, it would burn that id for the rest of the second --
+    // and the first launch below proves the release by drawing the same tail
+    // again and being given it.
+    const confirmer = heldConfirmer()
+    const held = runner({
+      confirmer,
+      random: tails(0xa2fc, 0xa2fc, 0xa2fc),
+      lookUp: (project) =>
+        project === 'boom'
+          ? Promise.reject(new Error('the records read blew up'))
+          : Promise.resolve(recordsFor(target(), project)),
+    })
+
+    const refused = await held.launch(request({ repository: 'github/acme/other' }))
+    expect(refused.ok).toBe(false)
+    expect(refused.reason).toContain('carries no checkout')
+
+    await expect(held.launch(request({ installation: 'boom' }))).rejects.toThrow('the records read blew up')
+
+    const second = held.launch(request({ installation: OTHER_PROJECT }))
+    await untilSettled()
+    expect(confirmer.opened.map((launch) => launch.runId)).toStrictEqual([RUN_ID])
+
+    confirmer.decideWindow(RUN_ID, false)
+    void second
+  })
+
+  it('refuses the launch when every draw is an id this process already holds', async () => {
+    // The other side of the redraw, and the reason it is bounded: a source that
+    // keeps answering the same tail cannot be drawn out of the collision, and a
+    // shared slot is worse than a refusal -- the operator's yes would be
+    // attached to another launch. The window does not open, and the refusal
+    // carries no run id, because there is no launch for one to name.
+    const confirmer = heldConfirmer()
+    const held = runner({ confirmer, random: () => RANDOM() })
+
+    const first = held.launch(request({ installation: PROJECT }))
+    await untilSettled()
+    const refused = await held.launch(request({ installation: OTHER_PROJECT }))
+
+    expect(refused.ok).toBe(false)
+    expect(refused.runId).toBe(null)
+    expect(refused.reason).toContain('run ids that another launch of this process already holds')
+    expect(confirmer.opened).toHaveLength(1)
+
+    confirmer.decideWindow(RUN_ID, false)
+    void first
   })
 })
 
@@ -786,6 +997,28 @@ describe('the launch limits', () => {
     expect(refused.ok).toBe(false)
     expect(refused.reason).toContain('6 launches')
     expect(confirmer.opened).toHaveLength(CONFIRM_RATE_APP)
+  })
+
+  it('drops an installation once its stamps have expired, so the names cannot pile up', async () => {
+    // The rate map is keyed by whatever name the renderer sent, so an entry that
+    // outlives its window is memory the renderer chooses: at the app-wide cap of
+    // six a minute, a stream of names is 8,600 small entries a day, for the life
+    // of the process. The entry is dropped with its last stamp, and this reads
+    // the map's own keys -- it is in a closure, and which names it still holds is
+    // the whole property.
+    let at = NOW
+    const held = runner({ confirmer: DECLINING_CONFIRMER, now: () => at })
+    const caught = catchRateMap()
+    try {
+      await held.launch(request({ installation: PROJECT }))
+      expect(caught.keys()).toStrictEqual([PROJECT])
+
+      at += CONFIRM_RATE_WINDOW_MS
+      await held.launch(request({ installation: OTHER_PROJECT }))
+      expect(caught.keys()).toStrictEqual([OTHER_PROJECT])
+    } finally {
+      caught.restore()
+    }
   })
 
   it('pauses an installation for ten seconds after an accepted launch', async () => {

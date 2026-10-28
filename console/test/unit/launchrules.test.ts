@@ -55,7 +55,6 @@ describe('the record a launch is cut from', () => {
     distro: 'Ubuntu',
     configPath: '/home/person-1/.config/fugaro/config.yaml',
     checkout: '/home/person-1/src/app',
-    saved: true,
   }
 
   it('changes for every field that changes what a run for that name would do', () => {
@@ -72,7 +71,6 @@ describe('the record a launch is cut from', () => {
       ['the distribution', { distro: 'Debian' }],
       ['the config path', { configPath: '/home/person-1/other.yaml' }],
       ['the checkout', { checkout: '/home/person-1/src/other' }],
-      ['the rail’s saved flag', { saved: false }],
     ]
     for (const [what, change] of moved) {
       expect(launchFingerprint({ ...RECORD, ...change }), what).not.toBe(whole)
@@ -82,8 +80,8 @@ describe('the record a launch is cut from', () => {
   it('is the same string for the same record, and its own string for an absent one', () => {
     // The comparison's other direction: two reads of one unchanged record are
     // one identity, or every launch would decline. The empty facts are what the
-    // entry point reads for a name its own file no longer carries (`saved:
-    // false`), and they must not be this record's identity.
+    // entry point reads for a name its own file no longer carries, and they must
+    // not be this record's identity.
     expect(launchFingerprint({ ...RECORD })).toBe(launchFingerprint(RECORD))
     const gone: LaunchRecordFacts = {
       id: '',
@@ -92,7 +90,6 @@ describe('the record a launch is cut from', () => {
       distro: '',
       configPath: '',
       checkout: '',
-      saved: false,
     }
     expect(launchFingerprint(gone)).not.toBe(launchFingerprint(RECORD))
   })

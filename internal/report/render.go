@@ -61,6 +61,9 @@ func (r Report) cells(w Row, dollars bool) []string {
 	case ByPerson:
 		return []string{money(w.Spent), notional, fmt.Sprint(w.Runs)}
 	case ByMode:
+		if w.Unreadable {
+			return []string{"n/a", "n/a", "n/a", fmt.Sprint(w.Runs)}
+		}
 		compute := "n/a"
 		if w.ComputeState == ComputeKnown {
 			compute = money(w.Compute)
@@ -189,13 +192,18 @@ func CSV(w io.Writer, rep Report) error {
 // compute_usd (null when n/a or not recorded), compute_estimated, run_hours
 // (null likewise), runs, calls and, by model, tokens {in,out,cache_read,
 // cache_write}. *_usd are exact decimal strings of the integer *_micros.
+// An unreadable row (see JSONLine.Unreadable) writes null for every money key.
 type JSONLine struct {
-	Key              string      `json:"key"`
-	Start            string      `json:"start,omitempty"`
-	End              string      `json:"end,omitempty"`
-	Partial          bool        `json:"partial"`
-	ModelMicros      int64       `json:"model_micros"`
-	ModelUSD         string      `json:"model_usd"`
+	Key     string `json:"key"`
+	Start   string `json:"start,omitempty"`
+	End     string `json:"end,omitempty"`
+	Partial bool   `json:"partial"`
+	// Unreadable: every record of the row was unreadable, so the money keys
+	// are null rather than the 0 a reader would take for a measurement. It is
+	// omitted, and the money is written, for every measured row.
+	Unreadable       bool        `json:"unreadable,omitempty"`
+	ModelMicros      *int64      `json:"model_micros"`
+	ModelUSD         *string     `json:"model_usd"`
 	NotionalMicros   *int64      `json:"notional_micros"`
 	NotionalUSD      *string     `json:"notional_usd"`
 	ComputeMicros    *int64      `json:"compute_micros"`
@@ -232,7 +240,14 @@ type JSONDoc struct {
 
 func jsonLine(w Row, noHours bool) JSONLine {
 	l := JSONLine{Key: Text(w.Key), Start: w.Start, End: w.End, Partial: w.Partial,
-		ModelMicros: int64(w.Spent), ModelUSD: USD6(w.Spent), Runs: w.Runs, Calls: w.Calls}
+		Unreadable: w.Unreadable, Runs: w.Runs, Calls: w.Calls}
+	if w.Unreadable {
+		// Nothing in the row was read, so no money key carries the 0 the sums
+		// would: a consumer reads every one of them as unavailable.
+		return l
+	}
+	m, usd := int64(w.Spent), USD6(w.Spent)
+	l.ModelMicros, l.ModelUSD = &m, &usd
 	if w.NotionalTracked {
 		n, s := int64(w.Notional), USD6(w.Notional)
 		l.NotionalMicros, l.NotionalUSD = &n, &s

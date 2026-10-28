@@ -243,7 +243,7 @@
         },
         "ignored": {
           "type": "array",
-          "description": "Values a layer set that were looser than the limits in force and were dropped.",
+          "description": "Values a layer set that the run dropped: a value looser than the limits in force, or — absent clamped, below — a stage timeout the run's own timeouts.stage bounds at least as tightly (T7.6).",
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -253,7 +253,8 @@
               "value": { "type": "string" },
               "effective": { "type": "string" },
               "source": { "enum": ["ceiling", "default-branch", "branch", "policy"], "description": "The layer of the effective value." },
-              "from": { "enum": ["ceiling", "default-branch", "branch"], "description": "The layer that asked for the dropped value. The ceiling is here for one case: a stage timeout the run's own timeouts.stage bounds at least as tightly, which the run drops and records (T7.6) — the layer that wrote it can be the project layer's governance, which is the ceiling." }
+              "from": { "enum": ["ceiling", "default-branch", "branch"], "description": "The layer that asked for the dropped value. The ceiling is here for one case: a stage timeout the run's own timeouts.stage bounds at least as tightly, which the run drops and records (T7.6) — the layer that wrote it can be the project layer's governance, which is the ceiling." },
+              "clamped": { "type": "boolean", "description": "True for the one shape that is not 'looser than the limits in force': a stage timeout the run's own timeouts.stage bounds at least as tightly, which the run drops rather than give a deadline of its own (T7.6). Absent (false) for the merge's looser values, which is also a stage timeout dropped because a tighter layer capped it — the two cannot be told apart by key, source and from alone." }
             }
           }
         }

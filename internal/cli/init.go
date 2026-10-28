@@ -4084,7 +4084,12 @@ func printCeiling(w io.Writer, lc *localcfg.Config, cfg *config.Config) {
 	if !reflect.DeepEqual(budget, policy.Layer{}) {
 		fmt.Fprintf(w, "Budget ceiling for %s from project %s: %s\n", cfg.Project, lc.Name, ceilingText(budget))
 	}
-	if !setsPolicy(cfg) {
+	// The gate is the file's own policy, governance included: a file whose only
+	// policy is a governance: block is one the layer's governance can clamp, and
+	// setsPolicy knows only the budget keys. The line above is the budget's
+	// alone, though: a project whose layer carries governance and no budget has
+	// no ceiling to state, and "none (no cap, ...)" would read as one.
+	if !setsPolicy(cfg) && cfg.Governance == nil {
 		return
 	}
 	// The ceiling the merge is held against is the run's own (runCeiling),
