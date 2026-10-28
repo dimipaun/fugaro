@@ -95,6 +95,15 @@ const (
 	HaltExpectedExceeded HaltReason = "expected_exceeded"
 )
 
+// GovernanceHaltReasons is every reason a governance tripwire stops a run
+// with (T6.1, D329): the values a checkpoint's trigger can be, and the set
+// result.schema.json's checkpoint.trigger enum and the digest's halt reasons
+// are pinned to. A reason outside it is a budget or a credential halt, which
+// carries no checkpoint and no report.
+func GovernanceHaltReasons() []HaltReason {
+	return []HaltReason{HaltStageBudget, HaltReviewRatio, HaltFanout, HaltReviewScope, HaltExpectedExceeded}
+}
+
 // Halt is why and when a run was halted.
 type Halt struct {
 	Reason HaltReason `json:"reason"`
