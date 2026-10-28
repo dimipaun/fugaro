@@ -1123,9 +1123,9 @@ func TestDiagnosePutsTheComputeSourceOnItsOwnLine(t *testing.T) {
 // service tier the price table has no multiplier for charged them
 // conservatively (design §6.1), so diagnose names the tier and the multiple
 // over the Cost line: without it a reader has a figure nothing explains --
-// on a provider route the provider's own reported cost is recorded and
-// never charged. A run whose calls were all priced normally prints no such
-// line.
+// on a provider route the charge is the dearer of that multiple and the
+// provider's own reported cost, so the tier's name is what explains the
+// figure. A run whose calls were all priced normally prints no such line.
 func TestDiagnoseNamesChargedServiceTiers(t *testing.T) {
 	f := newCloudFixture(t)
 	ctx := context.Background()
