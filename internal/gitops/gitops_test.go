@@ -463,6 +463,39 @@ func TestResetToIgnoresAReplaceRef(t *testing.T) {
 	}
 }
 
+// TestIsCleanIgnoresReplaceRefs: the agent writes the checkout's own .git, so a
+// refs/replace/<sha> it plants must not change what git says the tree is. `git
+// status` compares the index against the tree of HEAD's commit, and a
+// replacement whose tree differs from HEAD's makes a tree with no changes read
+// as staged -- which sends CommitAll off to commit nothing.
+//
+// Mutation (plain `git status`): IsClean is false on a clean tree, and
+// CommitAll fails instead of reporting that there was nothing to commit.
+func TestIsCleanIgnoresReplaceRefs(t *testing.T) {
+	repo, _ := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	base := testutil.Git(t, repo.Dir, "rev-parse", "HEAD")
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"a.txt": "a\n"})
+	if changed, err := repo.CommitAll(ctx, "add a"); err != nil || !changed {
+		t.Fatalf("CommitAll = %v, %v", changed, err)
+	}
+	head := testutil.Git(t, repo.Dir, "rev-parse", "HEAD")
+	testutil.Git(t, repo.Dir, "replace", head, base)
+	// The plant does bite a plain read -- without this the test would pass on
+	// a git that ignored the ref for some other reason.
+	if out := testutil.Git(t, repo.Dir, "status", "--porcelain"); out == "" {
+		t.Fatal("the planted replacement ref changed nothing about a plain `git status`; the test is not exercising it")
+	}
+	if clean, err := repo.IsClean(ctx); err != nil || !clean {
+		t.Fatalf("IsClean with a planted replacement ref = %v, %v; want a clean tree", clean, err)
+	}
+	if changed, err := repo.CommitAll(ctx, "nothing"); err != nil || changed {
+		t.Fatalf("CommitAll with a planted replacement ref = %v, %v; want nothing to commit", changed, err)
+	}
+}
+
 func TestCommitAllAheadAndClean(t *testing.T) {
 	repo, _ := setup(t)
 	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {

@@ -478,17 +478,14 @@ func (r *Repo) HeadSHA(ctx context.Context) (string, error) {
 	return r.git(ctx, "rev-parse", "HEAD")
 }
 
-// HeadSHANoReplace is HeadSHA read with replacement refs ignored: the agent
-// writes the checkout's own .git, so a refs/replace/<sha> it plants must not
-// be able to change what a comparison against a commit the runner remembers
-// reads (digest.go's digestFinalize).
-func (r *Repo) HeadSHANoReplace(ctx context.Context) (string, error) {
-	return r.git(ctx, "--no-replace-objects", "rev-parse", "HEAD")
-}
-
-// IsClean reports whether the working tree has no changes and no untracked files.
+// IsClean reports whether the working tree has no changes and no untracked
+// files. Replacement refs are ignored: `git status` compares the index against
+// the tree of HEAD's commit, so a refs/replace/<sha> the agent plants in the
+// checkout it writes makes a clean tree read as changed (and the other way
+// round), and the callers that decide what to commit have to see the tree this
+// checkout actually has.
 func (r *Repo) IsClean(ctx context.Context) (bool, error) {
-	out, err := r.git(ctx, "status", "--porcelain")
+	out, err := r.git(ctx, "--no-replace-objects", "status", "--porcelain")
 	return out == "", err
 }
 

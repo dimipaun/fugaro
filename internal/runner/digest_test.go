@@ -1571,6 +1571,53 @@ func TestDigestRunPushesNoCheckpoint(t *testing.T) {
 	digestAssertGeneratedOnly(t, h, branch, now)
 }
 
+// TestDigestRunPushesNothingBeforeFinalize: the early draft's push at a stage
+// boundary is off for a report run too, not only the checkpoint. A fix stage's
+// HEAD can be verified (the stage ran the tests itself), which is all afterStage
+// asks before it opens the draft and pushes the verified tip, and a run-digest
+// recipe with a review-rounds override above 1 or a custom recipe with a digest
+// step and a review has fix stages. The push it would make carries a
+// commit of the stage's -- the branch a report run publishes is the generator's
+// bytes and nothing else (T3.3) -- so the remote sees the branch at finalize and
+// at no earlier point.
+//
+// Mutation (leave the early-draft push ungated): the fix stage's commit is on
+// the remote before finalize, with the reports as the stage edited them.
+func TestDigestRunPushesNothingBeforeFinalize(t *testing.T) {
+	const own = "20261020-101500-aaaa"
+	spec := digestSpecRounds(2, own)
+	h := newHarnessFiles(t, "", spec, nil)
+	clk := digestClock(h)
+	digestGCSBucket(t, h, spec)
+	now := clk.Now()
+	digestRecord(t, h.bucket, repoSlug, own, now.AddDate(0, 0, -1), 1.5, nil)
+	rel := digestDayPath(now.AddDate(0, 0, -1))
+
+	rec, err := h.run(t,
+		review("changes", 1),
+		digestFixStep("printf 'edited by the fix stage\\n' >> "+rel+" && git commit -qam 'Address review'"),
+		probe(func(t *testing.T) {
+			if remoteHasBranch(t, h) {
+				t.Error("the report run pushed its branch at a stage boundary, before finalize")
+			}
+			if n := len(h.provider.State.PRs); n != 0 {
+				t.Errorf("the report run opened %d pull request(s) at a stage boundary, want none", n)
+			}
+		}, review("ship", 0)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("record = status %s, outcome %s, reason %q", rec.Status, rec.Outcome, rec.Reason)
+	}
+	branch := "fugaro/" + runID
+	digestAssertGeneratedOnly(t, h, branch, now)
+	if got := fileContentAt(t, h.remote, branch, rel); strings.Contains(got, "edited by the fix stage") {
+		t.Errorf("%s holds the fix stage's edit:\n%s", rel, got)
+	}
+}
+
 // TestDigestRunRefusesALeftoverCommit: the leftover commit at finalize must not
 // be able to carry anything but the digest step's own bytes. A stage that
 // writes a git clean filter and the .git/info/attributes that switches it on --
@@ -1618,10 +1665,13 @@ func TestDigestRunRefusesALeftoverCommit(t *testing.T) {
 // thousands of calls on a walk whose answers are almost all "not a report
 // run's". The bound is what the step stops at, with a warning naming it, and
 // the price is that a report run behind the bound is not seen -- the period it
-// holds is written again.
+// holds is written again. The manifest here holds one record past the bound and
+// every record costs an ask, so the walk stops at exactly the bound.
 //
 // Mutation (ask about every record): the walk makes one call per record of the
-// manifest.
+// manifest, and the count is the manifest's length.
+// Mutation (ask about fewer): the count is under the bound and a report run
+// behind it would go unseen.
 func TestDigestStepCapsTheProviderAsks(t *testing.T) {
 	const own = "20261019-090000-bbbb"
 	ids := []string{own}
@@ -1656,8 +1706,8 @@ func TestDigestStepCapsTheProviderAsks(t *testing.T) {
 	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
 		t.Fatalf("record = status %s, outcome %s, reason %q", rec.Status, rec.Outcome, rec.Reason)
 	}
-	if got := asks.walk(); got > runner.DigestOpenAsks {
-		t.Errorf("the step asked the provider %d times about the manifest's records; want at most %d", got, runner.DigestOpenAsks)
+	if got := asks.walk(); got != runner.DigestOpenAsks {
+		t.Errorf("the step asked the provider %d times about the manifest's records; want exactly %d (one per record up to the bound)", got, runner.DigestOpenAsks)
 	}
 	if !strings.Contains(logs.String(), "stopped asking") {
 		t.Errorf("the step did not warn that it stopped asking about the manifest's records:\n%s", logs.String())

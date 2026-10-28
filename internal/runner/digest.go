@@ -202,9 +202,11 @@ func (r *run) digestFinalize(ctx context.Context) (string, error) {
 // The reset above cannot be the whole guard, because it is git reading a
 // checkout whose .git the agent wrote: a clean filter with the .git/info/
 // attributes that switch it on makes `git add -A` stage different bytes than
-// the step committed, and a replacement object makes what git reads a tree of
-// the agent's choosing. Nothing that leaves HEAD at the step's commit and
-// stages nothing can put other bytes in the push, since a push sends commits.
+// the step committed, so whether anything was staged is IsClean's answer --
+// read with replacement refs ignored (gitops) -- and whether HEAD is still the
+// step's commit is the comparison below. Nothing that leaves HEAD at the step's
+// commit and stages nothing can put other bytes in the push, since a push sends
+// commits.
 //
 // step is the commit the step made, "" when this run is no report run's or the
 // reports could not be put back -- a run that already failed, and one this
@@ -217,7 +219,11 @@ func (r *run) digestRefuseChangedBranch(ctx context.Context, step string, commit
 		r.fail("a stage left work that was committed at finalize, after the commit the digest step made, so the reports in the pull request are not the generator's")
 		return
 	}
-	head, err := r.repo.HeadSHANoReplace(ctx)
+	// Reading HEAD resolves the ref and never reads an object, so a
+	// replacement ref the agent plants cannot change this read: what the
+	// comparison against the step's own commit guards is a HEAD that a stage
+	// moved, and the leftover commit above guards staged bytes.
+	head, err := r.repo.HeadSHA(ctx)
 	switch {
 	case err != nil:
 		r.d.Log.Warn("reading the branch's tip for the digest step's own commit failed", "err", r.redact(err.Error()))
