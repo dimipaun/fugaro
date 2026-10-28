@@ -58,6 +58,10 @@ const (
 	MaxStageAgents = 3
 	// MaxFixRounds is the most fix rounds a run may have.
 	MaxFixRounds = 1
+	// RepeatedCommandThreshold is the times one identical shell command may
+	// run in one stage before the run is flagged (T1.4, D332): at the
+	// threshold or past it the stage is looping on the same command.
+	RepeatedCommandThreshold = 5
 )
 
 // The flag names: the report's own vocabulary, never a word a record chose.
@@ -66,10 +70,21 @@ const (
 	FlagSubagents   = "subagents"
 	FlagHalt        = "halt"
 	FlagFixRounds   = "fix_rounds"
+	// FlagRepeatedCommand is a stage that ran one identical shell command
+	// RepeatedCommandThreshold times or more: the loop tripwire, which the
+	// digest reports and nothing acts on (T1.4, G8).
+	FlagRepeatedCommand = "repeated_command"
+	// FlagReviewScopeDrift is a review the run's own commits no longer cover:
+	// the range was narrowed to them and then moved off them, and it handed
+	// the reviewer paths implement never wrote (T1.4, T5.2, T7.3). The name
+	// is the digest's own and is deliberately not the halt reason it feeds
+	// (runstore.HaltReviewScope): this one is a report line, and reading it
+	// as a stop would be reading a flag as a halt.
+	FlagReviewScopeDrift = "review_scope_drift"
 )
 
 // FlagNames is every flag this report raises, in the order it prints.
-var FlagNames = []string{FlagReviewCalls, FlagSubagents, FlagHalt, FlagFixRounds}
+var FlagNames = []string{FlagReviewCalls, FlagSubagents, FlagHalt, FlagFixRounds, FlagRepeatedCommand, FlagReviewScopeDrift}
 
 // other is what a value outside its known set renders as (G1).
 const other = "other"
@@ -386,6 +401,12 @@ func flags(rec *runstore.Record) []Flag {
 	if fixRounds(rec) > MaxFixRounds {
 		out = append(out, Flag{Name: FlagFixRounds})
 	}
+	if repeatedCommand(rec) {
+		out = append(out, Flag{Name: FlagRepeatedCommand})
+	}
+	if reviewScopeDrift(rec) {
+		out = append(out, Flag{Name: FlagReviewScopeDrift})
+	}
 	return out
 }
 
@@ -425,6 +446,32 @@ func fixRounds(rec *runstore.Record) int {
 		}
 	}
 	return n
+}
+
+// repeatedCommand reports whether any stage of the record ran one identical
+// shell command RepeatedCommandThreshold times or more: a stage looping on
+// the same command spends calls without getting anywhere. The record carries
+// the count alone, so nothing here reads a command (T1.4).
+func repeatedCommand(rec *runstore.Record) bool {
+	for _, s := range rec.Stages {
+		if n, ok := count(s.Repeats); ok && n >= RepeatedCommandThreshold {
+			return true
+		}
+	}
+	return false
+}
+
+// reviewScopeDrift reports whether the record says the reviewer was handed
+// paths the run's own commits never wrote: the range was narrowed to those
+// commits and then moved off them (runstore.ReviewScopeRangeMoved), which is
+// the mismatch T7.3 stops on. A range kept wider on purpose -- the one a
+// branch that merged its base leaves, a follow-up's, a review run's, an
+// autofix's -- records outside paths as a fact about the run and is never a
+// mismatch (D332), so it is not drift and is not flagged, and neither is a
+// moved range that handed the reviewer nothing implement had not written.
+func reviewScopeDrift(rec *runstore.Record) bool {
+	sc := rec.ReviewScope
+	return sc != nil && sc.WhyNot == runstore.ReviewScopeRangeMoved && len(sc.Outside) > 0
 }
 
 // stages is every stage name's figures over the period's runs, in name order

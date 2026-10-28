@@ -1196,6 +1196,8 @@ func TestResultSchemaStageCallsAndAgents(t *testing.T) {
 		{"both counts", head + `,"calls":12,"agents":2}`},
 		{"neither count", head + `}`},
 		{"zero is a count", head + `,"calls":0,"agents":0}`},
+		{"a repeats count", head + `,"repeats":5}`},
+		{"zero repeats", head + `,"repeats":0}`},
 	} {
 		if err := validate(tc.stage); err != nil {
 			t.Errorf("schema rejects a stage with %s: %v", tc.name, err)
@@ -1209,6 +1211,12 @@ func TestResultSchemaStageCallsAndAgents(t *testing.T) {
 		{"negative agents", head + `,"agents":-1}`},
 		{"fractional calls", head + `,"calls":1.5}`},
 		{"string agents", head + `,"agents":"2"}`},
+		{"negative repeats", head + `,"repeats":-1}`},
+		{"fractional repeats", head + `,"repeats":4.5}`},
+		// The count is all a stage keeps of a repeated command (task-governance
+		// T1.4): a command can carry a token or a path, so there is no field a
+		// command string could be written into.
+		{"a command string", head + `,"command":"go test ./..."}`},
 	} {
 		if err := validate(tc.stage); err == nil {
 			t.Errorf("schema accepts %s: %s", tc.name, tc.stage)

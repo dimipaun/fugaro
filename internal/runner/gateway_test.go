@@ -3,6 +3,7 @@ package runner_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -547,6 +548,47 @@ func TestStageTimingOAuthHasNoCalls(t *testing.T) {
 	}
 	if a := rec.Stages[1].Agents; a == nil || *a != 0 {
 		t.Errorf("review agents = %v, want 0 from the relay", a)
+	}
+}
+
+// repeatCalls writes n runs of one identical shell command into the stage's
+// stream, the way the agent's own transcript carries them.
+func repeatCalls(inner step, command string, n int) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		input, err := json.Marshal(map[string]string{"command": command})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < n; i++ {
+			_, _ = req.Transcript.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":` + string(input) + `}]}}` + "\n"))
+		}
+		return inner(t, ctx, req)
+	}
+}
+
+// TestStageTimingRecordsRepeats: a stage's repeats is the relay's count of the
+// most times one identical shell command ran in the stage's own stream, which
+// is the figure the digest's loop flag reads -- the whole path from the
+// stream to the record (task-governance T1.4).
+func TestStageTimingRecordsRepeats(t *testing.T) {
+	g := newGW(t, gwRolesConfig(t), "observe", "",
+		out4k(), // implement: sonnet, one call
+		out4k()) // review: opus, one call
+	var st []int
+	rec, err := g.run(t,
+		calling(&st, repeatCalls(implement("feature"), "go test ./...", 5), call{sonnet, 4000}),
+		calling(&st, repeatCalls(review("ship", 0), "go test ./...", 2), call{opus, 4000}))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	want := []int{5, 2}
+	if len(rec.Stages) != len(want) {
+		t.Fatalf("stages = %+v", rec.Stages)
+	}
+	for i, n := range want {
+		if got := rec.Stages[i].Repeats; got == nil || *got != n {
+			t.Errorf("stage %q repeats = %v, want %d from the relay", rec.Stages[i].Name, got, n)
+		}
 	}
 }
 
