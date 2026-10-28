@@ -126,7 +126,10 @@ func (r *run) verifiedHead(ctx context.Context) (string, bool) {
 // succeeded) and before the next one. A first run opens its draft here, at
 // the end of the first implement or fix stage whose HEAD has a passing test
 // on a clean tree, pushes later verified tips, and keeps the status section
-// current. Nothing here fails the run.
+// current. A report run pushes nothing here: a fix stage's commit is a
+// stage's, and the bytes a report run's pull request carries must be the
+// generator's (digest.go, T3.3), so its branch reaches the remote at finalize
+// and nowhere else. Nothing here fails the run.
 func (r *run) afterStage(ctx context.Context, stage string) {
 	defer func() {
 		// Whatever goes wrong here must not fail the run: finalize still
@@ -140,7 +143,9 @@ func (r *run) afterStage(ctx context.Context, stage string) {
 		return
 	}
 	if r.follow == nil {
-		if r.cfg.Git.PR.EarlyDraftOn() && (stage == "implement" || stage == "fix") {
+		// A report run's only push is finalize's; the checkpoint below is
+		// skipped for it too.
+		if r.cfg.Git.PR.EarlyDraftOn() && !r.digest && (stage == "implement" || stage == "fix") {
 			if sha, ok := r.verifiedHead(ctx); ok {
 				if r.rec.PR == nil {
 					r.openDraft(ctx, sha, stage)
