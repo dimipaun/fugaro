@@ -43,8 +43,8 @@ references decisions by `D#` and findings by `F#`.
   is open item O2 there; until it is ruled, that plan moves T2.1, T2.3 and T2.8 to 0.14.0, amends
   T2.1 and T2.3 (the block is derived whether or not a profile mounts the token, it gains a `proxy`
   switch, and `VersionSince[4]` is 0.14.0's), and replaces T2.11 by its own 0.14.0 operator notes.
-  Every "0.13.0" below for an S2 task reads as that plan says. T1.1's own release mentions of
-  0.13.0 (the API URL lock, the API root, T2.6) read as "a later release" when T1.1 is written.
+  Every "0.13.0" below for an S2 task reads as that plan says. T1.1's own text is unchanged except
+  for the pointer sentence; its release mentions are settled by O2's ruling, not by this note.
   See [../secrets-brokering/implementation-plan.md](../secrets-brokering/implementation-plan.md),
   "The re-planned Bitbucket S2". **T1.1 and T1.2 stay as approved for 0.12.1**, and T1.1 gains one
   sentence: a proxy that keeps the token out of the job is designed in docs/secrets-brokering and
@@ -344,6 +344,7 @@ references decisions by `D#` and findings by `F#`.
     (D474).
   - `internal/projectpolicy/bitbucket.go` (new).
   - `internal/projectpolicy/bitbucket_test.go` (new).
+- **Amended 2026-10-27 (docs/secrets-brokering, D493, provisional on its O2):** the block is derived whether or not a profile mounts the token, it carries `proxy`, `config.ProjectSecret` gains `proxy` (accepted on `bitbucket-token` only), `VersionSince[4]` is 0.14.0's, and T2.11 is replaced by that plan's operator notes. Added tests: `TestProjectSecretProxyOnlyOnBitbucketToken`, `TestDeriveBitbucketTokenWithoutAProfile`, `TestBitbucketTokenBlockCarriesProxy`; red step: `TestDeriveBitbucketTokenWithoutAProfile`, which returns nil today.
 - **Interfaces produced:** T2.2, T2.3, T2.4, T2.8 and T2.9 consume these.
   - `Policy.BitbucketAPIRoots []string` (`bitbucket_api_roots`). It is validated as `https://`
     URLs with no query, fragment or userinfo, and is matched exactly after trimming a trailing `/`.
