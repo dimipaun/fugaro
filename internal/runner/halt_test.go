@@ -148,11 +148,28 @@ func TestGovernanceHaltWritesCheckpoint(t *testing.T) {
 // TestGovernanceHaltDraftsPR is the headline: a governance halt opens or
 // updates the pull request as a draft carrying the checkpoint, and never asks
 // for it to be made ready — the reviewers and labels a ready PR carries are
-// never applied, whatever the run found before it stopped.
+// never applied, whatever the run found before it stopped. Both sections the
+// halt writes are checked: the one it writes itself, while the stage it
+// stopped is still unwinding, and the run's final one, which replaces it.
 func TestGovernanceHaltDraftsPR(t *testing.T) {
 	b := newHandleBox(t)
 	h := prHarness(t, prCfg(t, 2, ""))
-	rec, err := h.run(t, implement("feature"), governHalt(b, runstore.HaltFanout, "review spawned 7 sub-agents of 5"))
+	halt := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if !b.h.GovernanceHalt(ctx, runstore.HaltFanout, "review spawned 7 sub-agents of 5") {
+			t.Error("GovernanceHalt was refused")
+		}
+		during := onlyPR(t, h.provider)
+		if !during.Draft {
+			t.Error("the halt wrote to a pull request that is ready")
+		}
+		for _, want := range []string{"**Halted**", "checkpoint during stage `review`", "checkpoint `fanout`", "estimate $1.00"} {
+			if !strings.Contains(during.Body, want) {
+				t.Errorf("the section the halt wrote lacks %q:\n%s", want, during.Body)
+			}
+		}
+		return agent.Result{}, nil
+	}
+	rec, err := h.run(t, implement("feature"), halt)
 	if err != nil {
 		t.Fatal(err)
 	}
