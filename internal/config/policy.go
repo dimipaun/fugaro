@@ -7,13 +7,14 @@ import (
 	"io"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/policy"
 	"gopkg.in/yaml.v3"
 )
 
-// Policy is the cost and model policy a fugaro.yaml sets: the budget: block
-// plus agent.max_run_tokens and agent.max_output_tokens. A zero field sets
-// nothing (0 is "no value", not "no cap"), so a file without these keys is
-// the zero Policy.
+// Policy is the cost and model policy a fugaro.yaml sets: the budget: block,
+// agent.max_run_tokens, agent.max_output_tokens, and the governance: block. A
+// zero field sets nothing (0 is "no value", not "no cap"), so a file without
+// these keys is the zero Policy.
 type Policy struct {
 	Mode            string
 	PerRunUSD       float64
@@ -21,14 +22,20 @@ type Policy struct {
 	MaxRunTokens    int64
 	MaxOutputTokens RoleTokens
 	AllowedModels   []string
+	// Governance is the file's governance: block (T7.1). It is read here with
+	// the rest of the policy because it is one: a layer of the merge, and the
+	// one a launcher reads a default branch's file for. A file that writes no
+	// block is the zero policy.Governance, which sets no limit.
+	Governance policy.Governance
 }
 
 // PolicyOf reads only the policy keys of a fugaro.yaml: unknown keys
 // elsewhere and invalid values outside the policy are ignored, as ProjectOf
-// does. The policy blocks themselves are strict: budget: and the agent:
-// block (whose unknown keys are refused, so a misspelt max_run_tokens can't
-// pass for "no limit") are checked for unknown keys, and the policy values
-// are validated. An error means the file's policy is unusable.
+// does. The policy blocks themselves are strict: budget:, governance: and
+// the agent: block (whose unknown keys are refused, so a misspelt
+// max_run_tokens can't pass for "no limit") are checked for unknown keys, and
+// the policy values are validated. An error means the file's policy is
+// unusable.
 func PolicyOf(data []byte) (Policy, error) {
 	var root yaml.Node
 	if err := yaml.NewDecoder(bytes.NewReader(data)).Decode(&root); err != nil {
@@ -37,7 +44,7 @@ func PolicyOf(data []byte) (Policy, error) {
 		}
 		return Policy{}, fmt.Errorf("policy: %w", err)
 	}
-	var budgetNode, agentNode *yaml.Node
+	var budgetNode, agentNode, governanceNode *yaml.Node
 	if len(root.Content) == 1 && isNull(root.Content[0]) {
 		return Policy{}, nil
 	}
@@ -53,14 +60,17 @@ func PolicyOf(data []byte) (Policy, error) {
 			if k == "<<" {
 				return Policy{}, fmt.Errorf("policy: a top-level merge key (<<) is not supported: write budget: and agent: out")
 			}
-			if lk := strings.ToLower(k); (lk == "budget" || lk == "agent") && k != lk {
+			if lk := strings.ToLower(k); (lk == "budget" || lk == "agent" || lk == "governance") && k != lk {
 				return Policy{}, fmt.Errorf("policy: %q: the key must be spelt %q", k, lk)
 			}
 			switch k {
-			case "budget", "agent":
+			case "budget", "agent", "governance":
 				dst := &budgetNode
 				if k == "agent" {
 					dst = &agentNode
+				}
+				if k == "governance" {
+					dst = &governanceNode
 				}
 				if *dst != nil {
 					return Policy{}, fmt.Errorf("policy: %s: the key is defined twice", k)
@@ -113,7 +123,21 @@ func PolicyOf(data []byte) (Policy, error) {
 		a.MaxRunTokens, a.MaxOutputTokens = only.MaxRunTokens, only.MaxOutputTokens
 	}
 
+	// The governance block is strict for the same reason budget: is: a
+	// misspelt stage key would otherwise read as "no limit on that stage".
+	var gov *Governance
+	if governanceNode != nil && !isNull(governanceNode) {
+		if governanceNode.Kind != yaml.MappingNode {
+			return Policy{}, fmt.Errorf("policy: governance: must be a mapping")
+		}
+		gov = &Governance{}
+		if err := strictDecode(governanceNode, gov); err != nil {
+			return Policy{}, fmt.Errorf("policy: governance: %w", err)
+		}
+	}
+
 	ps := append(validateBudget(budget), validateAgentTokens(a)...)
+	ps = append(ps, validateGovernance("governance", gov)...)
 	if len(ps) > 0 {
 		msgs := make([]string, len(ps))
 		for i, p := range ps {
@@ -121,7 +145,7 @@ func PolicyOf(data []byte) (Policy, error) {
 		}
 		return Policy{}, fmt.Errorf("policy: %s", strings.Join(msgs, "; "))
 	}
-	p := Policy{MaxRunTokens: a.MaxRunTokens, MaxOutputTokens: a.MaxOutputTokens}
+	p := Policy{MaxRunTokens: a.MaxRunTokens, MaxOutputTokens: a.MaxOutputTokens, Governance: gov.Policy()}
 	if b := budget; b != nil {
 		p.Mode, p.PerRunUSD, p.PerDayUSD, p.AllowedModels = b.Mode, b.PerRunUSD, b.PerDayUSD, b.AllowedModels
 	}

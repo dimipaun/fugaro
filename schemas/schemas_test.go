@@ -2352,3 +2352,77 @@ func TestTaskSchemaBaseBranchMatchesTheGoRule(t *testing.T) {
 		}
 	}
 }
+
+// TestFugaroSchemaGovernance: the governance block's shape, inline snippets
+// like TestSchemaBudgetBlock. Every bound is config.validateGovernance's too:
+// a stage budget is a fraction of the per-run cap and never the cap itself
+// (G6), and 0 (or null) is "unset" in both, so a file may say "no value" the
+// way it says it everywhere else.
+func TestFugaroSchemaGovernance(t *testing.T) {
+	sch := compile(t, "fugaro.schema.json")
+	base := "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  s: { commands: { build: make, test: make } }\n"
+	for _, c := range []struct {
+		gov string
+		ok  bool
+	}{
+		{"governance: { review_ratio: 3, review_floor_calls: 10, max_subagents: 2 }", true},
+		{"governance: { stage_budget: { implement: 0.6, review: 0.4, fix: 0.25 } }", true},
+		{"governance: { stage_tokens: { implement: 1000000, review: 500000, fix: 250000 } }", true},
+		{"governance: { stage_timeout: { implement: 30m, review: 1h30m, fix: 10m } }", true},
+		{"governance:", true},
+		{"governance: {}", true},
+		{"governance: { review_ratio: }", true},
+		{"governance: { review_ratio: 0 }", true},
+		{"governance: { max_subagents: 0 }", true},
+		{"governance: { stage_budget: { implement: 0 } }", true},
+		{"governance: { review_ratio: -1 }", false},
+		{"governance: { review_ratio: 2.5 }", false},
+		{"governance: { review_ratios: 3 }", false},
+		{"governance: { stage_budget: { implement: 1 } }", false},
+		{"governance: { stage_budget: { implement: 1.5 } }", false},
+		{"governance: { stage_budget: { review: -0.5 } }", false},
+		{"governance: { stage_budget: { verify: 0.5 } }", false},
+		{"governance: { stage_tokens: { plan: 1000 } }", false},
+		{"governance: { stage_tokens: { review: -1 } }", false},
+		{"governance: { stage_timeout: { render: 5m } }", false},
+		{"governance: { stage_timeout: { fix: 5x } }", false},
+		{"governance: { tiers: { trivial: { max_subagents: 3 } } }", false},
+		{"governance: 0.7", false},
+		{"governance: { stage_budget: 0.7 }", false},
+	} {
+		err := sch.Validate(yamlInstance(t, []byte(base+c.gov+"\n")))
+		if (err == nil) != c.ok {
+			t.Errorf("%s: schema err = %v, want ok=%v", c.gov, err, c.ok)
+		}
+	}
+}
+
+// TestProjectLayerSchemaGovernance: the layer's own top-level governance
+// block, the same shape and the same bounds (project-layer.schema.json's
+// copy, like rigor). The layer is where the guardrails are loosened, so a
+// looser value than Fugaro's default is valid here and a repository's own
+// file may only tighten it -- which is the merge's rule, not the schema's:
+// the schema refuses what no run could use, and the merge refuses the
+// loosening.
+func TestProjectLayerSchemaGovernance(t *testing.T) {
+	sch := compile(t, "project-layer.schema.json")
+	head := "version: 1\nproject: aurora\ngcp_project: proj-1234\n"
+	for _, c := range []struct {
+		gov string
+		ok  bool
+	}{
+		{"governance: { review_ratio: 20, max_subagents: 12 }", true},
+		{"governance: { stage_budget: { implement: 0.9 } }", true},
+		{"governance: { stage_timeout: { review: 45m } }", true},
+		{"governance: { review_ratio: -1 }", false},
+		{"governance: { stage_budget: { implement: 1 } }", false},
+		{"governance: { stage_timeout: { implement: 5x } }", false},
+		{"governance: { review_ratio: 3, typo: 1 }", false},
+		{"defaults:\n  governance: { review_ratio: 3 }", false},
+	} {
+		err := sch.Validate(yamlInstance(t, []byte(head+c.gov+"\n")))
+		if (err == nil) != c.ok {
+			t.Errorf("%s: schema err = %v, want ok=%v", c.gov, err, c.ok)
+		}
+	}
+}
