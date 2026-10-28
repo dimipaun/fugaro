@@ -79,9 +79,13 @@ func TestDocsGitProvidersStateWhatReachesTheAgentExactly(t *testing.T) {
 	for _, want := range []string{
 		// The credential the agent gets, per provider: the App's key is not in the
 		// agent's environment on GitHub, and on Bitbucket the long-lived
-		// credential's own value is, by design.
+		// credential's own value is, by design. The Bitbucket half used to read
+		// "this repository's access token", which stopped being the whole story
+		// when the owner ruled (2026-10-27, D461) that one workspace or project
+		// access token may serve many repositories: the fact the sentence carries
+		// is the mounted token's own value, whichever token that is.
 		"**None of these variables is in the agent's environment — but what stands behind each one is two different stories, and on Bitbucket the agent does get the long-lived credential's own value.**",
-		"**On Bitbucket it IS this repository's access token**",
+		"**On Bitbucket it IS the mounted token's own value**",
 		"handed to the agent as `FUGARO_GIT_TOKEN` by the credential helper below",
 		"This is a **known limit** of the Bitbucket path",
 		"never the App's private key and never another repository's token",

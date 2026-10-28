@@ -9,6 +9,19 @@ against the recommendation. **The owner amended these on 2026-10-26, after #1104
 - O2 and O7 are answered.
 - T1 is moot until S3 returns.
 
+**Amended 2026-10-27 (the workspace-token plan, T1.1): D462 reverses D363 for operators who opt in.**
+The owner ruled that an operator who holds one **workspace or project access token** may store it once
+for many repositories through the explicit `project_secrets.bitbucket-token` allow-list (D461, D464),
+so an allow-listed run's agent holds a credential that reaches every repository the token covers — the
+whole workspace for a workspace token, one Bitbucket project for a project token — the reach this
+document's D363
+answer, reversed by O1, was written to keep out of every installation. It is now an opt-in the
+operator states, and the allow-list decides only which jobs mount the token, never what it reaches.
+Nothing else of §1–§7 moves: the default stays a repository's own repository access token, the
+allow-list remains the only way a Bitbucket token becomes project-wide, S3 stays parked, and the
+service mints no Bitbucket run token. The reach is stated in `SECURITY.md` and `docs/git-providers.md`;
+the path is not yet live-checked (Check 180, D468).
+
 The amendments are dated in each place they apply. This document is checked against `main` at `ce991d88d` and against
 Bitbucket's own documentation as read on 2026-10-26. Where it disagrees with [spec.md](spec.md),
 this document wins.
