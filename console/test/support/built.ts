@@ -59,12 +59,14 @@ const STALE_LOCK_MS = 60_000
 const WAIT_LIMIT_MS = 120_000
 
 /** OUTPUTS are the files a build produces, as this suite reads them: the entry
- * points Electron loads (with the picker's preload and entry, Task 3.4b) and
- * the seven served files -- the stylesheet among them since Task 6.2 and
- * elkjs's worker since GV2.2, because a `console.css` or a worker that is
- * missing or stale is exactly what the stylesheet and worker cases in
- * `bundle.test.ts` read. */
+ * points Electron loads (with the picker's preload and entry, Task 3.4b, and
+ * the confirmation window's, V2.5.1a) and the nine served files -- the
+ * stylesheet among them since Task 6.2 and elkjs's worker since GV2.2, because a
+ * `console.css` or a worker that is missing or stale is exactly what the
+ * stylesheet and worker cases in `bundle.test.ts` read. */
 const OUTPUTS: readonly string[] = Object.freeze([
+  join(DIST, 'bundle', 'confirm.html'),
+  join(DIST, 'bundle', 'confirm.js'),
   join(DIST, 'bundle', 'console.css'),
   join(DIST, 'bundle', 'console.js'),
   join(DIST, 'bundle', 'elk-worker.min.js'),
@@ -78,6 +80,7 @@ const OUTPUTS: readonly string[] = Object.freeze([
   join(DIST, 'preload', 'confirm.js'),
   join(DIST, 'renderer', 'entry.js'),
   join(DIST, 'renderer', 'installations.js'),
+  join(DIST, 'renderer', 'confirm.js'),
 ])
 
 /** sourced is every `.ts`, `.html` and `.css` file under a directory,
@@ -134,7 +137,7 @@ function isStale(): boolean {
 }
 
 /** build runs the steps `npm run build` runs, in its order: the compiler, then
- * the bundler's own `buildConsole` -- the stylesheet and the two bundles, behind
+ * the bundler's own `buildConsole` -- the stylesheet and the three bundles, behind
  * the served root's foreign-file refusal, which is the same function the command
  * runs rather than a second spelling of its order. */
 function build(): void {

@@ -4,7 +4,7 @@
  * CHROME (desktop-console plan Task 6.3; design section 4, and sections 3.7-3.9
  * for the values it reads).
  *
- * This is the first layer of the one stylesheet the three documents link that
+ * This is the first layer of the one stylesheet the four documents link that
  * paints anything: `tokens.css` is the vocabulary, `palette.css` the value set,
  * and this file is the reset, the window's two-column grid and the rules for the
  * chrome — the installation rail, the installation line, the view nav and the

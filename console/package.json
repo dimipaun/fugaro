@@ -42,6 +42,8 @@
       "dist/shared/**/*.js",
       "dist/source/**/*.js",
       "!dist/source/fixture.js",
+      "dist/bundle/confirm.html",
+      "dist/bundle/confirm.js",
       "dist/bundle/console.css",
       "dist/bundle/console.js",
       "dist/bundle/elk-worker.min.js",

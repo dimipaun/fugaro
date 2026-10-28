@@ -4,11 +4,12 @@
  * plan Task 6.4; design section 2's inventory, with sections 3.5, 3.7, 3.8, 4.2
  * and 4.4 as the rules it keeps).
  *
- * This is the last layer of the one stylesheet the three documents
+ * This is the last layer of the one stylesheet the four documents
  * link: `tokens.css` is the vocabulary, `palette.css` the value set, `base.css`
  * the reset, the document and the chrome, and this file is the per-screen rules
  * — Live, Spend, Projects, Run detail, the degraded and unavailable screens, the
- * refusal document and the installation picker, in the order section 2
+ * refusal document, the installation picker and the launch confirmation window,
+ * in the order section 2
  * inventories them.
  *
  * **It is wired, and Task 6.2 is what wired the layer it joins.** The bundler

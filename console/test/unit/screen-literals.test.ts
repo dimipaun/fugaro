@@ -1041,6 +1041,7 @@ describe('no module under src/renderer writes an inline style', () => {
     // the walk has nothing to find there.
     expect([...RENDERER_FILES]).toEqual([
       'app.ts',
+      'confirm.ts',
       'entry.ts',
       'graph/layout-client.ts',
       'graph/layout.ts',

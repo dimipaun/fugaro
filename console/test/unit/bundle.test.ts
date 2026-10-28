@@ -8,7 +8,8 @@
 // make:
 //
 //   1. **The served root holds exactly `SERVED_FILES`** (`src/main/protocol.ts`)
-//      -- the two documents and the one script, and nothing else. The protocol
+//      -- the four documents, the three window scripts, the layout worker and
+//      the stylesheet, and nothing else. The protocol
 //      handler will serve any file under `dist/bundle/` that a URL names, so the
 //      *directory* is the allow-list, and this test is what holds the directory
 //      to the list a reader can see.
@@ -144,7 +145,7 @@ describe('the served root npm run build leaves', () => {
     // The non-vacuity guard first: an empty list would make the comparison
     // below pass against an empty directory, and the list is what the handler's
     // root is supposed to be.
-    expect(SERVED_FILES.length, 'SERVED_FILES names nothing: the comparison below would be vacuous').toBe(7)
+    expect(SERVED_FILES.length, 'SERVED_FILES names nothing: the comparison below would be vacuous').toBe(9)
     expect(builtListing('bundle')).toEqual(servedNames())
   })
 
@@ -233,7 +234,7 @@ describe('the served root npm run build leaves', () => {
   })
 
   it('holds the documents the sources hold, byte for byte', () => {
-    for (const name of ['index.html', 'installations.html', 'refusal.html']) {
+    for (const name of ['confirm.html', 'index.html', 'installations.html', 'refusal.html']) {
       const source = readFileSync(join(CONSOLE_ROOT, 'src', 'renderer', name), 'utf8')
       // Byte for byte, and not merely equal after parsing: the CSP `<meta>`
       // copy in each document is compared with the header
@@ -262,14 +263,24 @@ describe('the served root npm run build leaves', () => {
     for (const specifier of specifiers) expect(isRelative(specifier ?? '')).toBe(true)
     expect(picker).not.toMatch(/\beval\s*\(/)
     expect(picker).not.toMatch(/new\s+Function\s*\(/)
-    // The build writes both, each told the other's name -- and the stylesheet's
-    // (Task 6.2), which `bundleStylesheet` writes into the same directory: it is
-    // this build's file, not a foreign one, and without the entry here the
-    // served root's foreign-file refusal would reject the stylesheet the
-    // documents link.
+    // The build writes all three, each told the others' names -- and the
+    // stylesheet's (Task 6.2), which `bundleStylesheet` writes into the same
+    // directory: it is this build's file, not a foreign one, and without the
+    // entry here the served root's foreign-file refusal would reject the
+    // stylesheet the documents link.
     expect(consoleBundles(CONSOLE_ROOT).map((bundle) => [bundle.out, bundle.siblings])).toEqual([
-      [join(CONSOLE_ROOT, 'dist', 'bundle', 'console.js'), ['installations.js', 'console.css', 'elk-worker.min.js']],
-      [join(CONSOLE_ROOT, 'dist', 'bundle', 'installations.js'), ['console.js', 'console.css', 'elk-worker.min.js']],
+      [
+        join(CONSOLE_ROOT, 'dist', 'bundle', 'console.js'),
+        ['installations.js', 'confirm.js', 'console.css', 'elk-worker.min.js'],
+      ],
+      [
+        join(CONSOLE_ROOT, 'dist', 'bundle', 'installations.js'),
+        ['console.js', 'confirm.js', 'console.css', 'elk-worker.min.js'],
+      ],
+      [
+        join(CONSOLE_ROOT, 'dist', 'bundle', 'confirm.js'),
+        ['console.js', 'installations.js', 'console.css', 'elk-worker.min.js'],
+      ],
     ])
     // And the stylesheet's own paths are what this build writes: the theme
     // directory in, `dist/bundle/console.css` out.
@@ -277,6 +288,46 @@ describe('the served root npm run build leaves', () => {
       directory: THEME_DIR,
       out: join(CONSOLE_ROOT, 'dist', 'bundle', 'console.css'),
     })
+  })
+
+  it('holds the confirmation window’s bundle, the third entry (V2.5.1a), with its own closure and nothing else', () => {
+    const confirmation = builtFile('bundle/confirm.js')
+    const closure = moduleClosure(builtPath('renderer/confirm.js'))
+    // The view imports its preload's *type* and nothing else, and a type is
+    // erased: the confirmation window's closure is its own entry. That is the
+    // claim worth pinning -- the window runs the view and no shared module, and
+    // a bundle that grew one would be a change to what the window runs.
+    expect(closure.length, 'the confirmation closure is more than its own entry').toBe(1)
+    for (const module of closure) {
+      expect(confirmation, `${module.key} is not in the confirmation bundle`).toContain(
+        `registry[${JSON.stringify(module.key)}] = function (exports, require, module) {`,
+      )
+    }
+    // The key is the module's path relative to the closure's deepest common
+    // directory, and this closure is one file: the root is the entry's own
+    // directory, so the key carries no `renderer/` segment. It is pinned
+    // because the loader's keys are what the bundle is *read* by, and a reader
+    // diffing this bundle against the others would otherwise have to work that
+    // out from the tool.
+    expect(closure[closure.length - 1]?.key).toBe('/confirm.js')
+    const specifiers = requireSpecifiers(confirmation)
+    for (const specifier of specifiers) expect(isRelative(specifier ?? '')).toBe(true)
+    expect(confirmation).not.toMatch(/\beval\s*\(/)
+    expect(confirmation).not.toMatch(/new\s+Function\s*\(/)
+    // The three documents are three windows and three registries, and each
+    // bundle names only its own entry: a bundle that carried another window's
+    // modules would be a second surface in a document that has one script.
+    for (const [other, otherEntry] of [
+      ['console.js', '/renderer/entry.js'],
+      ['installations.js', '/renderer/installations.js'],
+    ] as const) {
+      expect(confirmation, `the confirmation bundle carries ${other}'s entry`).not.toContain(
+        `registry[${JSON.stringify(otherEntry)}]`,
+      )
+      expect(builtFile(`bundle/${other}`), `${other} carries the confirmation entry`).not.toContain(
+        'registry["/confirm.js"]',
+      )
+    }
   })
 })
 
@@ -341,7 +392,7 @@ describe('the bundle', () => {
     expect(PATHS.entry).toBe(join(CONSOLE_ROOT, 'dist', 'renderer', 'entry.js'))
   })
 
-  it('ships the built preload, the bundle and both documents -- once Task 4.1 lands', (context) => {
+  it('ships the built preloads, the bundles and the documents -- once Task 4.1 lands', (context) => {
     // **The one thing this task cannot finish from here.** `build.files` is
     // electron-builder's list of what goes into the packaged app, and it arrives
     // with Task 4.1 (PR #540), which has not merged. Until it does, the compiled
@@ -349,7 +400,7 @@ describe('the bundle', () => {
     // packaged console would come up with no script to run and no bridge to
     // read, which is the defect this task exists to close, reintroduced at the
     // packager. The plan's 3.4a note says so and this test is the half of it
-    // that can be written now: the four entries are named, derived rather than
+    // that can be written now: the entries are named, derived rather than
     // retyped (`SERVED_FILES` plus the preload path the window is given), and
     // asserted the moment the list exists. Whichever of #540 and this lands
     // second adds them.
@@ -364,7 +415,7 @@ describe('the bundle', () => {
     ]
     // Non-vacuity: an empty `SERVED_FILES` would make the loop below assert
     // nothing at all, and the loop is the whole claim.
-    expect(required.length, 'SERVED_FILES names nothing: the check below would be vacuous').toBe(10)
+    expect(required.length, 'SERVED_FILES names nothing: the check below would be vacuous').toBe(12)
     const files = pkg.build?.files
     if (files === undefined) {
       context.skip(
@@ -1297,6 +1348,7 @@ function plantedConsoleRoot(extra: Readonly<Record<string, string>> = {}): strin
     [join('node_modules', 'elkjs', 'lib', 'elk-worker.min.js')]: WORKER,
     [join('dist', 'renderer', 'entry.js')]: `'use strict';\n`,
     [join('dist', 'renderer', 'installations.js')]: `'use strict';\n`,
+    [join('dist', 'renderer', 'confirm.js')]: `'use strict';\n`,
     ...extra,
   }
   for (const [name, body] of Object.entries(files)) {
@@ -1306,6 +1358,7 @@ function plantedConsoleRoot(extra: Readonly<Record<string, string>> = {}): strin
   }
   mkdirSync(join(root, 'src', 'renderer'), { recursive: true })
   writeFileSync(join(root, 'src', 'renderer', 'index.html'), '<!doctype html>\n')
+  writeFileSync(join(root, 'src', 'renderer', 'confirm.html'), '<!doctype html>\n')
   return root
 }
 
@@ -1363,7 +1416,7 @@ describe('the order the build’s steps run in', () => {
     // about. Without it a refusal below could be the planted tree's doing.
     withPlantedConsole({}, (root) => {
       buildConsole(root)
-      for (const name of ['console.css', 'console.js', 'installations.js', 'index.html']) {
+      for (const name of ['confirm.html', 'confirm.js', 'console.css', 'console.js', 'index.html', 'installations.js']) {
         expect(existsSync(join(root, 'dist', 'bundle', name)), `${name} was not written`).toBe(true)
       }
     })

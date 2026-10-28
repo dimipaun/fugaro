@@ -488,7 +488,7 @@ describe('the packaging configuration the fuses belong to', () => {
     // The served root is `dist/bundle` (see `rendererRoot` in
     // src/main/index.ts, Task 3.4a): `npm run build` writes the scripts and the
     // stylesheet, copies the documents and elkjs's worker there, and those
-    // seven files -- `SERVED_FILES` in src/main/protocol.ts -- are listed by
+    // nine files -- `SERVED_FILES` in src/main/protocol.ts -- are listed by
     // name, or a packaged console opens a window with no page in it. The
     // preloads are named exactly: the dashboard window loads
     // `dist/preload/index.js`, the picker's window
@@ -514,6 +514,8 @@ describe('the packaging configuration the fuses belong to', () => {
       'dist/shared/**/*.js',
       'dist/source/**/*.js',
       '!dist/source/fixture.js',
+      'dist/bundle/confirm.html',
+      'dist/bundle/confirm.js',
       'dist/bundle/console.css',
       'dist/bundle/console.js',
       'dist/bundle/elk-worker.min.js',
