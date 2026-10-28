@@ -28,17 +28,28 @@
 //   - a limit read off the wall clock fails "reads the limits from a clock that
 //     only moves forward, never from the wall clock";
 //   - a run id drawn without checking it against the ids this process already
-//     holds -- one id for two launches in one second, whose `frozen` and
-//     `pending` entries then overwrite each other -- fails "redraws the four hex
+//     holds -- one id for two launches in one second, whose `pending` entry and
+//     issued id then overwrite each other -- fails "redraws the four hex
 //     digits when the id it drew is one this process already holds", and an id
 //     drawn (rather than claimed) where the launch is built fails "claims the id
 //     with the reservation, so a same-tick pair cannot draw one id", and a
-//     redraw that skips the ids this process has already frozen fails "redraws an
+//     redraw that skips the ids this process has already issued fails "redraws an
 //     id this process has already answered, so a replay cannot resolve a new
 //     window";
 //   - an id claimed for a launch whose build refused or threw, and never
 //     released, fails "frees the id a refused or thrown build claimed, so the
 //     next launch can take it";
+//   - an answer for an open or settling run id that resolves to nothing instead
+//     of attaching to the launch in flight fails "attaches a second answer to the
+//     launch in flight, and starts one child in all";
+//   - a frozen object kept once its answer has settled -- one task text per
+//     launch ever confirmed -- fails "holds a launch’s frozen object only while
+//     its answer is unsettled";
+//   - an uncapped outcome record, or one evicting anything but the oldest first,
+//     fails "caps the outcomes it replays, and answers an evicted id with
+//     nothing", and an evicted id drawn again rather than refused by the issued
+//     set fails "never draws an id it has already issued, even once its answer is
+//     evicted";
 //   - a per-installation rate entry left behind once its stamps have expired,
 //     which is memory a renderer's stream of names chooses, fails "drops an
 //     installation once its stamps have expired, so the names cannot pile up";
@@ -745,12 +756,13 @@ describe('the run id, and the second it is cut in', () => {
   })
 
   it('redraws an id this process has already answered, so a replay cannot resolve a new window', async () => {
-    // `frozen` is the third place an id can be, and the one that outlives the
-    // window: an answered launch is released from `claimedRunIds` and from
-    // `inFlight`, and `frozen` keeps its id because a replayed answer still
-    // spawns from it. Drawn again, the id would be re-frozen -- `frozen.set`
-    // overwrites -- and `pending.set` would hand the *new* window's promise to
-    // the old run id, so the next `answer(RUN_ID, …)` (a replay the renderer is
+    // The issued ids are the third place an id can be, and the one that outlives
+    // the window: an answered launch is released from `claimedRunIds` and from
+    // `inFlight`, and its id stays in `issuedRunIds` because a replayed answer
+    // still resolves it (`outcomes` holds that answer; the frozen object itself
+    // is dropped as the launch settles). Drawn again, the id would be committed a
+    // second time, and `pending.set` would hand the *new* window's promise to the
+    // old run id, so the next `answer(RUN_ID, …)` (a replay the renderer is
     // entitled to make) would resolve a window the operator has not answered.
     const confirmer = heldConfirmer()
     const spawner = completingSpawner()

@@ -795,7 +795,11 @@ describe('the launch’s resolution', () => {
     if (!resolved.ok) return
     expect(resolved.value.path).toBe(own.binary)
     expect(resolved.value.version).toBe('0.11.2')
-    expect(decoy.binary).not.toBe(own.binary)
+    // The prefix on `deps.prefixes` holds a `fugaro` of its own, and the walk
+    // must not have reached it: a resolution that read the record's project and
+    // then walked the host would have probed the decoy's `version`, which would
+    // have answered 0.5.0 and been reported as this installation's CLI.
+    expect(decoy.calls()).toBe(0)
   })
 
   it('resolves the binary inside the record’s distribution, never on the host', async () => {
