@@ -39,6 +39,15 @@ func finishedAtTheDeadline(t *testing.T, ctx context.Context, req agent.Request)
 	return res, err
 }
 
+// finishedAtTheRunsDeadline is the same work, returned as the run's own
+// timeouts.stage ends the stage: the convention a stage's own bound follows,
+// and the one this test holds it to.
+func finishedAtTheRunsDeadline(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+	res, err := implement("feature")(t, ctx, req)
+	<-ctx.Done()
+	return res, err
+}
+
 // failedOnItsOwn is an agent that fails its stage with an error of its own,
 // well inside every bound the run has.
 func failedOnItsOwn(_ *testing.T, _ context.Context, _ agent.Request) (agent.Result, error) {
@@ -141,6 +150,28 @@ func TestStageTimeoutStandsWhenTheResultRacesIt(t *testing.T) {
 	}
 	if rec.Halt != nil || rec.Checkpoint != nil {
 		t.Fatalf("a stage that returned a result as its own deadline fired was stopped: halt = %+v, checkpoint = %+v", rec.Halt, rec.Checkpoint)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("record = %+v", rec)
+	}
+	if len(h.agent.calls) != 2 {
+		t.Fatalf("%d stages ran, want implement and review", len(h.agent.calls))
+	}
+}
+
+// TestStageTimeoutStandsWhenTheRunBoundIsReached: the run's own timeouts.stage
+// has the same convention, and the stage's own bound is read the same way — a
+// stage that returns a result as the bound fires is a stage that finished, so
+// the run does not fail it and the loop goes on to the next stage.
+func TestStageTimeoutStandsWhenTheRunBoundIsReached(t *testing.T) {
+	h := newHarness(t, stageTimeoutCfg(t,
+		"timeouts: { total: 1m, stage: 1s, verify: 5s, finalize_reserve: 5s }", ""), nil)
+	rec, err := h.run(t, finishedAtTheRunsDeadline, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Halt != nil || rec.Checkpoint != nil {
+		t.Fatalf("a stage that returned a result as the run's own bound fired was stopped: halt = %+v, checkpoint = %+v", rec.Halt, rec.Checkpoint)
 	}
 	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
 		t.Fatalf("record = %+v", rec)
