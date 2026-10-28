@@ -2906,6 +2906,16 @@ ones up rather than reading records.
 block and the patterns as {repo, period, summary, patterns[], skipped[]}. Neither
 writes a file, so a caller can read a report before committing it.
 
+--submit-draft prints neither: it prints a redacted learning draft a person can
+file as a "Skill learning" issue, and it sends nothing. The draft leaves the
+repository, so it carries no repository name and no run ID -- the runs are
+renumbered run-1, run-2, ... -- and it ends with the one command that sends it,
+gh issue create --web --template skill_learning.yml -R dimipaun/fugaro,
+which the person runs themselves: the form lives in Fugaro's repository, and -R
+is what reaches it from the checkout this command read. --dir still names the
+folder the committed reports the pattern rules read live in; nothing is written
+there, so --stdout and --json are refused beside it.
+
 Usage: `fugaro runs digest`
 
 Flags:
@@ -2923,6 +2933,7 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | the repository to report (owner/name); default: this checkout's origin |
 | `--stdout` | bool | `false` | no | print the report instead of writing it |
+| `--submit-draft` | bool | `false` | no | print a redacted learning draft for a "Skill learning" issue; sends nothing |
 
 Subcommands:
 
