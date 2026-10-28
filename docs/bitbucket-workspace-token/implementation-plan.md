@@ -35,6 +35,20 @@ references decisions by `D#` and findings by `F#`.
   - **D476 = no** (not the recommendation). T2.10 is off, and the risk is stated.
   - **T2 = Cloud-compatible API roots only.** Data Center stays out (D366).
 - **No decision is pending.** Answering a decision approves no task.
+- **Amended 2026-10-27 (docs/secrets-brokering D490, D492, D493, D505).** The owner ruled that a
+  credentials-service proxy keeps the Bitbucket token out of the job (0.14.0), and that **S2 is
+  re-planned against it**: the block and `bitbucket_api_roots` stay as data, enforcement moves to the
+  service (T2.9 is replaced), and the policy version is bumped once. Shared Bitbucket jobs (T2.2,
+  T2.4, T2.6, T2.7) wait until the service admits shared jobs. Which S2 tasks ship in which release
+  is open item O2 there; until it is ruled, that plan moves T2.1, T2.3 and T2.8 to 0.14.0, amends
+  T2.1 and T2.3 (the block is derived whether or not a profile mounts the token, it gains a `proxy`
+  switch, and `VersionSince[4]` is 0.14.0's), and replaces T2.11 by its own 0.14.0 operator notes.
+  Every "0.13.0" below for an S2 task reads as that plan says. T1.1's own text is unchanged except
+  for the pointer sentence; its release mentions are settled by O2's ruling, not by this note.
+  See [../secrets-brokering/implementation-plan.md](../secrets-brokering/implementation-plan.md),
+  "The re-planned Bitbucket S2". **T1.1 and T1.2 stay as approved for 0.12.1**, and T1.1 gains one
+  sentence: a proxy that keeps the token out of the job is designed in docs/secrets-brokering and
+  not built (D490).
 - **T1.1 and T1.2 launch only after run dc73 merges.** T1.2 edits `internal/config/project_secrets.go`,
   dc73's file, and both tasks document the wildcard dc73 ships.
 - **Review round 1 (2026-10-27)** amended D465's recommendation before any answer, added F17,
@@ -50,7 +64,7 @@ references decisions by `D#` and findings by `F#`.
 | Release | Tasks |
 | --- | --- |
 | **0.12.1** | Run **dc73** (the `allow_data_to` wildcard, D464; built and reviewed under its own run). Then **T1.1 (docs, APPROVED 2026-10-27)** and **T1.2 (CLI text, APPROVED 2026-10-27)**, which launch after dc73 merges |
-| **0.13.0** | T2.1–T2.4 (T2.4 on, D466), T2.6, T2.8 (on, D474), T2.9, T2.11 (the lockstep release notes, D477), and T2.7 (Check 181, OWNER-RUN). T1.3 and T1.4 (Check 180) also come later (D468 = no), once a Premium sandbox exists. **T2.10 is off** (D476 = no). **T3.1 is superseded** (D464, dc73). None of these is approved |
+| **0.13.0** (**superseded 2026-10-27**: see the amendment above and docs/secrets-brokering's re-planned S2) | T2.1–T2.4 (T2.4 on, D466), T2.6, T2.8 (on, D474), T2.9, T2.11 (the lockstep release notes, D477), and T2.7 (Check 181, OWNER-RUN). T1.3 and T1.4 (Check 180) also come later (D468 = no), once a Premium sandbox exists. **T2.10 is off** (D476 = no). **T3.1 is superseded** (D464, dc73). None of these is approved |
 
 ## Conventions every part follows
 
@@ -169,7 +183,9 @@ references decisions by `D#` and findings by `F#`.
   - **The reach, in plain words.** Every allow-listed run's agent holds the token's value. **So does
     every launcher of an allow-listed repository**, and launchers are trusted as before (F7, D475):
     a malicious launcher can use the agent to write across the token's reach. In 0.12.1 the docs
-    also say the API URL lock (D474) comes in 0.13.0.
+    also say the API URL lock (D474) comes in 0.13.0. **Pointer sentence (amended 2026-10-27, D490
+    of docs/secrets-brokering):** a proxy that keeps the token out of the job is designed in
+    docs/secrets-brokering and not built.
     Through pushes to another repository's base or Fugaro branches, an agent also reaches **every
     other credential** that repository's runs and builds hold. A hostile agent or launcher can push,
     open and comment on pull requests, and trigger Pipelines in every repository the token reaches,
@@ -210,7 +226,8 @@ references decisions by `D#` and findings by `F#`.
     - the second-machine sentence (D467);
     - the D476 cross-repository review risk;
     - the Data Center statement (T2);
-    - the "not yet live-checked … (Check 180)" label.
+    - the "not yet live-checked … (Check 180)" label;
+    - the pointer sentence to docs/secrets-brokering (amended 2026-10-27).
 
     It does not repeat a pin of dc73's wildcard sentence, which dc73's own tests hold.
   - `TestDocsWarnAboutAProjectWideGitCredential` (its pinned sentences keep their facts, reworded in
@@ -327,6 +344,7 @@ references decisions by `D#` and findings by `F#`.
     (D474).
   - `internal/projectpolicy/bitbucket.go` (new).
   - `internal/projectpolicy/bitbucket_test.go` (new).
+- **Amended 2026-10-27 (docs/secrets-brokering, D493, provisional on its O2):** the block is derived whether or not a profile mounts the token, it carries `proxy`, `config.ProjectSecret` gains `proxy` (accepted on `bitbucket-token` only), `VersionSince[4]` is 0.14.0's, and T2.11 is replaced by that plan's operator notes. Added tests: `TestProjectSecretProxyOnlyOnBitbucketToken`, `TestDeriveBitbucketTokenWithoutAProfile`, `TestBitbucketTokenBlockCarriesProxy`; red step: `TestDeriveBitbucketTokenWithoutAProfile`, which returns nil today.
 - **Interfaces produced:** T2.2, T2.3, T2.4, T2.8 and T2.9 consume these.
   - `Policy.BitbucketAPIRoots []string` (`bitbucket_api_roots`). It is validated as `https://`
     URLs with no query, fragment or userinfo, and is matched exactly after trimming a trailing `/`.

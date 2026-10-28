@@ -24,14 +24,7 @@ func Markdown(d Digest) []byte {
 	if len(d.Runs) == 0 {
 		b.WriteString("No run of this repository finished in this period.\n\n")
 	} else {
-		b.WriteString("| run | status | pr | base | reviews | billed | notional | flags |\n")
-		b.WriteString("| --- | --- | --- | --- | --- | --- | --- | --- |\n")
-		for _, r := range d.Runs {
-			fmt.Fprintf(&b, "| `%s` | %s | %s | %s | %d | %s | %s | %s |\n",
-				r.ID, r.Status, pr(r.PR), yesNo(r.Base), r.Reviews,
-				report.USD(r.Billed), report.USD(r.Notional), flagCell(r.Flags))
-		}
-		b.WriteString("\n")
+		b.WriteString(RunsTable(d.Runs))
 	}
 	if d.Dropped > 0 {
 		fmt.Fprintf(&b, "Rows not shown: %d. The report is capped at %d bytes and the cheapest unflagged rows go first.\n\n",
@@ -57,6 +50,24 @@ func Markdown(d Digest) []byte {
 	b.Write(block)
 	b.WriteString("\n```\n")
 	return []byte(b.String())
+}
+
+// RunsTable is the report's run table: its header, one row per run, and the
+// blank line after it. Every cell is a figure or a closed vocabulary, and the
+// first one is the run's own ID -- so a caller that must not print an ID (a
+// draft that leaves the repository) renumbers its copy before handing it here,
+// and the two renderings of one set of figures cannot drift apart.
+func RunsTable(runs []Run) string {
+	var b strings.Builder
+	b.WriteString("| run | status | pr | base | reviews | billed | notional | flags |\n")
+	b.WriteString("| --- | --- | --- | --- | --- | --- | --- | --- |\n")
+	for _, r := range runs {
+		fmt.Fprintf(&b, "| `%s` | %s | %s | %s | %d | %s | %s | %s |\n",
+			r.ID, r.Status, pr(r.PR), yesNo(r.Base), r.Reviews,
+			report.USD(r.Billed), report.USD(r.Notional), flagCell(r.Flags))
+	}
+	b.WriteString("\n")
+	return b.String()
 }
 
 // Summary is d's machine-readable block: the same figures the tables show,

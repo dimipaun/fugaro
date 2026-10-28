@@ -841,3 +841,82 @@ func TestBaseBranchValidated(t *testing.T) {
 		}
 	}
 }
+
+// TestDigestRunsRefusedWithoutDigestRecipe covers the decoder's own arm for a
+// report run's manifest (task-governance T3.6, Spec.DigestRuns): the run IDs
+// the launching CLI listed, which the digest step reads one record at a time.
+// A manifest is accepted only under a recipe whose first step is digest — the
+// only step that reads it — and every ID is shape-checked, because each one
+// names an object the job will read.
+//
+// The repository-sourced case is the one this package cannot judge: such a
+// task carries its recipe's name and no text, so the launcher judges the file
+// it resolved (internal/cli/run_digest_manifest.go) and the runner resolves
+// the same name at the task's ref. Refusing it here would break the one
+// launcher that writes this field.
+//
+// Mutation (drop the recipe switch from Validate): a manifest under
+// recipe solo parses and this test fails.
+func TestDigestRunsRefusedWithoutDigestRecipe(t *testing.T) {
+	digestText, ok := recipe.CatalogText("run-digest")
+	if !ok {
+		t.Fatal("run-digest is not in the catalog")
+	}
+	const soloText = "version: 1\nname: solo\nsteps:\n  - review: {}\n"
+	digest := &Recipe{Name: "run-digest", Source: "catalog", SHA256: recipe.Sum(digestText), YAML: string(digestText)}
+	solo := &Recipe{Name: "solo", Source: "catalog", SHA256: recipe.Sum([]byte(soloText)), YAML: soloText}
+	base := func(r *Recipe, runs ...string) *Spec {
+		return &Spec{Version: 1, RunID: "20260926-221530-a1b2", Repo: "acme/app", Ref: "main", Task: "x",
+			Recipe: r, DigestRuns: runs}
+	}
+	if err := base(digest, "20260927-100000-abcd", "20260926-090000-1234").Validate(); err != nil {
+		t.Errorf("a report run's manifest: %v", err)
+	}
+	// A repository recipe carries no text: accepted, judged where it is read.
+	if err := base(&Recipe{Name: "reports", Source: "repo"}, "20260927-100000-abcd").Validate(); err != nil {
+		t.Errorf("a repository recipe: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		spec *Spec
+		want string
+	}{
+		{"no recipe at all", base(nil, "20260927-100000-abcd"), "needs a recipe whose first step is digest"},
+		{"a review recipe", base(solo, "20260927-100000-abcd"), "needs a recipe whose first step is digest"},
+		{"recipe text that is not a recipe", base(&Recipe{Name: "solo", Source: "catalog", SHA256: recipe.Sum([]byte("x")), YAML: "x"}, "20260927-100000-abcd"), "needs a recipe whose first step is digest"},
+		{"not a run ID", base(digest, "yesterday"), "must look like 20260926-221530-a1b2"},
+		{"an empty ID", base(digest, ""), "must look like 20260926-221530-a1b2"},
+		{"too many", base(digest, manyIDs(MaxDigestRuns+1)...), "at most 5000 runs"}} {
+		err := tc.spec.Validate()
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want it to mention %q", tc.name, err, tc.want)
+		}
+	}
+	// The field is omitted when there is no manifest, so a spec that is not a
+	// report run is byte-identical to what the previous release wrote, and a
+	// stored one parses back.
+	data, err := json.Marshal(base(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "digest_runs") {
+		t.Fatalf("an absent manifest is written: %s", data)
+	}
+	raw, err := json.Marshal(base(digest, "20260927-100000-abcd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := Parse(raw)
+	if err != nil || len(out.DigestRuns) != 1 || out.DigestRuns[0] != "20260927-100000-abcd" {
+		t.Fatalf("round trip: %+v, %v", out, err)
+	}
+}
+
+// manyIDs is n run IDs of the one shape, for the bound's own case.
+func manyIDs(n int) []string {
+	ids := make([]string, n)
+	for i := range ids {
+		ids[i] = "20260927-100000-abcd"
+	}
+	return ids
+}

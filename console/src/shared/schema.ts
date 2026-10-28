@@ -55,7 +55,7 @@
 // network and no Electron. `sanitize.test.ts` scans `src/shared/` to keep it
 // that way.
 
-import { type Reading, readNumber, unavailable } from './availability'
+import { type Reading, measured, readNumber, unavailable } from './availability'
 import { sanitizeText } from './sanitize'
 import type { TextClass } from './sanitize'
 
@@ -507,6 +507,31 @@ function readingOf(raw: Record<string, unknown>, key: string, field: string): Re
   return readNumber(raw[key], field === '' ? key : `${field}.${key}`)
 }
 
+/** optionalMoneyAt reads a money key the console's shapes carry but no CLI
+ * writes yet (`leased_usd`, owner-approved 2026-10-28 for `total` and every
+ * `repos[]` entry). Absent, `null` and a non-finite number are all
+ * *unavailable*: the document has nothing to say about a lease, which is not a
+ * lease of nothing, so it is `n/a` and never `0`. A finite non-negative number
+ * is measured.
+ *
+ * It is deliberately stricter than `readingOf` about what it *does* carry. The
+ * other money keys are numbers the CLI has written since the shape existed, so
+ * a string at one of them is a document this console has merely not learned to
+ * read, drawn `n/a`; `leased_usd` is a key no version writes, so a value of the
+ * wrong shape there -- or a negative one, which no money field of this contract
+ * can hold -- is a document this console does not understand, and it is refused
+ * by name rather than half-read. That is the shape's own rule for every key it
+ * does not know (`closed`), applied to the value rather than the name. */
+function optionalMoneyAt(raw: Record<string, unknown>, key: string, field: string, where: string): Reading {
+  const at = field === '' ? key : `${field}.${key}`
+  const value = raw[key]
+  if (value === undefined || value === null) return unavailable(`the document has no ${at}`)
+  if (typeof value !== 'number') return refuse('not-a-number', at, where)
+  if (!Number.isFinite(value)) return unavailable(`${at} is not a finite number`)
+  if (value < 0) return refuse('not-a-number', at, where)
+  return measured(value)
+}
+
 // ---------------------------------------------------------------------------
 // The shapes.
 // ---------------------------------------------------------------------------
@@ -541,6 +566,10 @@ export interface TotalsView {
   readonly countedUsd: Reading
   readonly spentUsd: Reading
   readonly notionalUsd: Reading
+  /** leasedUsd is the dollars a lease currently holds reserved. The key is
+   * approved but not emitted yet (2026-10-28), so it is available on every
+   * document until a CLI writes it: absent or `null` is `n/a`, never `0`. */
+  readonly leasedUsd: Reading
   /** null on the wire = no cap set, which is unavailable and not a cap of zero */
   readonly dailyCapUsd: Reading
   readonly percent: Reading
@@ -761,10 +790,17 @@ export const LIVE_MARKERS: readonly string[] = Object.freeze([
 const CONNECTION_KEYS = ['state', 'reason', 'age_seconds']
 const BURN_KEYS = ['known', 'usd_per_min', 'fast']
 const KILL_KEYS = ['by', 'at', 'reason']
-const TOTAL_KEYS = [
+/** TOTAL_KEYS is `JSONTotal`'s own key set (`internal/watch/json.go`), in the
+ * struct's order. Exported so `schema.test.ts` can pin it against the struct,
+ * as it pins `REPO_KEYS`, `RECORD_KEYS` and `RUN_KEYS`. */
+export const TOTAL_KEYS = [
   'counted_usd',
   'spent_usd',
   'notional_usd',
+  // The one key here no `JSONTotal` writes yet (owner, 2026-10-28): approved
+  // ahead of the CLI that will emit it, and accepted as optional for the same
+  // reason `REPO_KEYS` carries it -- see `optionalMoneyAt`.
+  'leased_usd',
   'daily_cap_usd',
   'percent',
   'burn',
@@ -781,13 +817,22 @@ const TOTAL_KEYS = [
  * ("the live half of this file closes every object it decodes"). The list is
  * written out rather than spread, so a later key added to a *total* is a
  * decision about repositories too. Exported so `schema.test.ts` can pin it
- * against the struct the way it pins `RECORD_KEYS`. */
+ * against the struct the way it pins `RECORD_KEYS`.
+ *
+ * **`leased_usd` is the one entry no `JSONRepo` writes yet.** The owner
+ * approved it (2026-10-28) for both `total` and every `repos[]` entry, ahead of
+ * the CLI release that will emit it, so it is here -- and in `TOTAL_KEYS` -- as
+ * an *optional* money key rather than something that would refuse every
+ * document the day the CLI starts writing it. The recorded entry
+ * `schema.test.ts` pins this list against cannot carry it, which is why that
+ * test separates the struct's own keys from this approved addition. */
 export const REPO_KEYS = [
   'slug',
   'repo',
   'counted_usd',
   'spent_usd',
   'notional_usd',
+  'leased_usd',
   'daily_cap_usd',
   'percent',
   'burn',
@@ -1081,6 +1126,7 @@ function totalsOf(total: Record<string, unknown>, field: string, where: string):
     countedUsd: readingOf(total, 'counted_usd', `${field}.counted_usd`),
     spentUsd: readingOf(total, 'spent_usd', `${field}.spent_usd`),
     notionalUsd: readingOf(total, 'notional_usd', `${field}.notional_usd`),
+    leasedUsd: optionalMoneyAt(total, 'leased_usd', field, where),
     dailyCapUsd: readingOf(total, 'daily_cap_usd', `${field}.daily_cap_usd`),
     percent: readingOf(total, 'percent', `${field}.percent`),
     burn: burnAt(required(total, 'burn', field, where), `${field}.burn`, where),

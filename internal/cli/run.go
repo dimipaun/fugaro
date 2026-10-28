@@ -666,6 +666,11 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			if err := checkCloneRigorImage(ctx, env, spec, warn); err != nil {
 				return launchResult{}, err
 			}
+			// The governance: gate, judged the same way and for the same
+			// reason: see checkGovernanceImage.
+			if err := checkCloneGovernanceImage(ctx, env, spec, warn); err != nil {
+				return launchResult{}, err
+			}
 			// The run's own rigor request, gated on the field the same way:
 			// a runner older than rigorRequestSince refuses a task carrying
 			// rigor or paths outright (task.Parse decodes with
@@ -736,6 +741,11 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			// than on a task field: see checkRigorImage. Unconditional, since
 			// the repository's file alone can carry the key.
 			if err := checkRigorImage(ctx, env, slug, spec, kind, warn); err != nil {
+				return launchResult{}, err
+			}
+			// The governance: gate, the same shape as the clone branch's
+			// above and for the same reason.
+			if err := checkGovernanceImage(ctx, env, slug, spec, kind, warn); err != nil {
 				return launchResult{}, err
 			}
 			// The same gate as the clone branch's above, and for the same
@@ -1012,6 +1022,11 @@ type attemptPlan struct {
 	// into the spec, and it is empty for implement and review, so those
 	// specs stay byte-identical to what the previous release wrote.
 	mode string
+	// digestRuns is the manifest of a report run (run_digest_manifest.go):
+	// this repository's runs its digest step may read, listed once here so
+	// every attempt of a batch carries the same list, and empty for every
+	// other launch, whose task stores no manifest at all.
+	digestRuns []string
 }
 
 // resolveAttemptPlan resolves everything a new run's spec needs except its
@@ -1074,11 +1089,23 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	if err != nil {
 		return nil, err
 	}
-	rcp, mode, err := chooseRecipe(ctx, env, o.recipe, checkout, checkoutRoot(ctx, repo), warn, forAttempts)
+	root := checkoutRoot(ctx, repo)
+	rcp, mode, err := chooseRecipe(ctx, env, o.recipe, checkout, root, warn, forAttempts)
 	if err != nil {
 		return nil, err
 	}
-	return &attemptPlan{repo: repo, slug: slug, workflow: workflow, ref: ref, base: base, me: me, account: account, totalOverride: totalOverride, recipe: rcp, mode: mode}, nil
+	// The report run's manifest is listed here, once per launch, and before
+	// the launch itself: the listing and the horizon it needs are cloud
+	// calls of their own, but they come before the task is stored and the
+	// execution started, so a repository already writing its reports is
+	// refused without launching anything. A batch never reaches this with a
+	// report recipe (chooseRecipe refuses --attempts for one), so no
+	// attempt reads another's stored task as a report run still going.
+	digestRuns, err := digestManifest(ctx, env, slug, root, rcp, time.Now(), warn)
+	if err != nil {
+		return nil, err
+	}
+	return &attemptPlan{repo: repo, slug: slug, workflow: workflow, ref: ref, base: base, me: me, account: account, totalOverride: totalOverride, recipe: rcp, mode: mode, digestRuns: digestRuns}, nil
 }
 
 // buildAttemptSpec stamps a fresh run id (or o.runID, when given) onto plan,
@@ -1094,7 +1121,7 @@ func buildAttemptSpec(plan *attemptPlan, o *runOptions, text string) (string, *t
 	}
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: plan.repo, Ref: plan.ref, BaseBranch: plan.base, Workflow: plan.workflow, Task: text, Title: o.title,
 		PlanTask: o.planTask, RequestedBy: plan.me, Batch: o.batch, Recipe: plan.recipe, Mode: plan.mode,
-		Rigor: rigor.Mode(o.rigor), Paths: o.paths}
+		Rigor: rigor.Mode(o.rigor), Paths: o.paths, DigestRuns: plan.digestRuns}
 	if plan.totalOverride != "" {
 		spec.Overrides.TotalTimeout = plan.totalOverride
 	}
@@ -1658,6 +1685,17 @@ func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func
 		if forAttempts {
 			return nil, "", userErr("recipe %s is mode: artifact, which renders a deliverable into the run's bucket and opens no pull request; --attempts launches a fresh batch of pull requests and cannot use it", rr.Name)
 		}
+	}
+	// A report recipe reads this repository's own run records and writes the
+	// reports the repository is missing (task-governance plan T3.6), and the
+	// repository has one report run at a time: a batch's attempts are
+	// launched together, each carrying the same manifest, so they would all
+	// write the same reports into their own pull requests. The batch is
+	// refused here, where the recipe is known, rather than by the
+	// in-flight check in resolveAttemptPlan, which a batch's own attempts
+	// cannot see (they are stored only as they launch).
+	if forAttempts && recipe.UsesDigest(rr.Recipe) {
+		return nil, "", userErr("recipe %s writes this repository's run reports, and a repository has one report run at a time; --attempts launches a batch of runs at once and cannot use it", rr.Name)
 	}
 	printRecipeNote(warn, rr, explicit)
 	// An explicit --recipe default overrides agent.recipe, which applies when
@@ -2224,6 +2262,21 @@ func retrySpec(ctx context.Context, env *cloudEnv, ref string) (string, *task.Sp
 	if err := claudeAccountAllowed(env, spec.Repo, cmp.Or(spec.OAuthToken, config.DefaultClaudeAccount), checkoutAgentAuth(checkout())); err != nil {
 		return "", nil, err
 	}
+	// A report run is refused, the way a follow-up carrying one is
+	// (refuseFollowUpReportMode): --retry launches the task of a first
+	// launch as it stands, so the manifest it carries is the one that launch
+	// listed, stale by now, and none of the checks a fresh report launch
+	// makes — digestManifest's in-flight refusal among them — run at all. A
+	// repository has one report run at a time because both would write the
+	// same reports, and a stale manifest writes a report of records that
+	// have moved on; the launcher of a fresh report run lists them again.
+	// The task says it is one two ways: the manifest itself (digest_runs is
+	// accepted under no other recipe, task.Validate), which is the only one
+	// that speaks for a repository recipe, and the recipe's text or file,
+	// for a report run whose manifest came out empty.
+	if spec.Recipe != nil && (len(spec.DigestRuns) > 0 || digestRecipe(checkoutRoot(ctx, spec.Repo), spec.Recipe)) {
+		return "", nil, userErr("run %s/%s is a report run, and --retry launches the task of its first launch as it stands: its manifest is stale by now, and a repository has one report run at a time, because both would write the same reports — launch a new report run with fugaro run --recipe %s", slug, runID, spec.Recipe.Name)
+	}
 	return slug, spec, nil
 }
 
@@ -2241,17 +2294,29 @@ func checkMaxParallel(ctx context.Context, env *cloudEnv) error {
 	return checkMaxParallelFor(ctx, env, 1)
 }
 
+// activeHorizon is the longest a run can still be going: the longest job
+// timeout, or the cap a per-run override may reach, whichever is more, plus
+// the task timeout slack and the queueing margin. It bounds every "is a run
+// still active" question, which is why the report run's launch shares it
+// with checkMaxParallelFor below (run_digest_manifest.go).
+func activeHorizon(ctx context.Context, env *cloudEnv) (time.Duration, error) {
+	longest, err := env.be.LongestTaskTimeout(ctx)
+	if err != nil {
+		return 0, remote(err)
+	}
+	return max(longest, OverrideCap) + backend.TaskTimeoutSlack + horizonMargin, nil
+}
+
 // checkMaxParallelFor is checkMaxParallel, generalized to a launch that
 // needs room for `need` runs at once: a best-of-N batch (runAttempts) checks
 // for all of N before its first launch, so it never starts part of a batch
 // it cannot finish (design generic-tool G13). need is always 1 outside that
 // one caller, which checkMaxParallel keeps as the common case.
 func checkMaxParallelFor(ctx context.Context, env *cloudEnv, need int) error {
-	longest, err := env.be.LongestTaskTimeout(ctx)
+	horizon, err := activeHorizon(ctx, env)
 	if err != nil {
-		return remote(err)
+		return err
 	}
-	horizon := max(longest, OverrideCap) + backend.TaskTimeoutSlack + horizonMargin
 	active, err := env.be.List(ctx, backend.ListFilter{ActiveOnly: true, Since: time.Now().Add(-horizon)})
 	if err != nil {
 		return remote(err)

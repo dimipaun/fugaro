@@ -118,6 +118,46 @@
         }
       }
     },
+    "governance": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "description": "What a run of this repository may spend on one stage, how much review it accepts, and how far one stage may fan out (docs/task-governance/spec.md §2, §5). Every key is a bound whose smaller value is the stricter one, so this block can only tighten what the project layer set (docs/project-layer.md §5); the keys the project layer may loosen are the ones Fugaro ships defaults for (review_ratio, review_floor_calls, max_subagents, stage_budget). A null block, or a key written as null or 0, sets nothing and takes the default. The stages are the run's three spend stages: an artifact run's plan and render steps have no governance budget, so a key naming one is refused.",
+      "properties": {
+        "review_ratio": { "type": ["integer", "null"], "minimum": 0, "maximum": 1000, "description": "N, the ratio guardrail: review calls above N times the implement stage's calls stop the stage (spec §2). Fugaro's default is 5, and the project layer is the only layer that may loosen it." },
+        "review_floor_calls": { "type": ["integer", "null"], "minimum": 0, "maximum": 100000, "description": "The review-call count below which the ratio is not applied at all, so a short implementation is still reviewed: the bound is max(floor, N x implement calls). Fugaro's default is 20." },
+        "max_subagents": { "type": ["integer", "null"], "minimum": 0, "maximum": 100, "description": "The most distinct sub-agents one stage may start, concurrently or in total (spec §5). Fugaro's default is 5." },
+        "stage_budget": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "description": "A stage's share of the run's budget (G§2). Implement and review are fractions of the per-run cap, review counting the first-line and the senior review together; fix is a fraction of the implement stage's own budget. Fugaro's defaults are 0.7, 0.5 and 0.5.",
+          "properties": {
+            "implement": { "$ref": "#/$defs/stageFraction", "description": "The implement stage's share of the per-run cap. Fugaro's default is 0.7." },
+            "review": { "$ref": "#/$defs/stageFraction", "description": "The review stage's share of the per-run cap, first-line and senior review together. Fugaro's default is 0.5." },
+            "fix": { "$ref": "#/$defs/stageFraction", "description": "The fix stage's share of the implement stage's own budget, not of the per-run cap. Fugaro's default is 0.5." }
+          }
+        },
+        "stage_tokens": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "description": "A stage's token ceiling, in tokens. Unset by default: a stage with no ceiling of its own is bounded by the run's own agent.max_run_tokens.",
+          "properties": {
+            "implement": { "$ref": "#/$defs/stageTokens", "description": "The implement stage's token ceiling; unset by default." },
+            "review": { "$ref": "#/$defs/stageTokens", "description": "The review stage's token ceiling; unset by default." },
+            "fix": { "$ref": "#/$defs/stageTokens", "description": "The fix stage's token ceiling; unset by default." }
+          }
+        },
+        "stage_timeout": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "description": "A stage's own wall-clock ceiling; unset by default. The run's workflows.*.timeouts.stage still bounds it, so a stage timeout longer than that is refused at run start, not here.",
+          "properties": {
+            "implement": { "$ref": "#/$defs/duration", "description": "The implement stage's own wall-clock ceiling; unset by default." },
+            "review": { "$ref": "#/$defs/duration", "description": "The review stage's own wall-clock ceiling; unset by default." },
+            "fix": { "$ref": "#/$defs/duration", "description": "The fix stage's own wall-clock ceiling; unset by default." }
+          }
+        }
+      }
+    },
     "followup": {
       "type": "object",
       "additionalProperties": false,
@@ -171,6 +211,12 @@
       }
     },
     "modelName": { "type": "string", "maxLength": 100, "pattern": "^\\S*$" },
+    "stageFraction": {
+      "type": ["number", "null"],
+      "anyOf": [{ "const": 0 }, { "exclusiveMinimum": 0, "exclusiveMaximum": 1 }, { "type": "null" }],
+      "description": "A stage's share of a budget, as a fraction. 0 or null sets nothing and takes Fugaro's default, and 1 or more is refused: the per-run cap stays the ceiling whatever a stage is given (G6), so a stage that could spend it whole would be no budget at all."
+    },
+    "stageTokens": { "type": ["integer", "null"], "minimum": 0, "maximum": 1000000000000, "description": "A stage's token ceiling, in tokens; 0 or null sets nothing." },
     "githubUserID": {
       "description": "A GitHub numeric user ID, which a rename doesn't change (gh api users/<login> --jq .id).",
       "anyOf": [

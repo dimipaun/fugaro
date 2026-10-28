@@ -222,7 +222,7 @@ export const REPORT_MAX_WEEKS = 522
  *     child exists. The two commands disagree about `--since` and one kind
  *     cannot say both: `report` refuses `3h` and a bare `0` (its `reportRange`
  *     has no duration branch), and `runs ls` refuses `12w` and every date;
- *   - `reportDimension` -- `report --by`'s closed set of seven words;
+ *   - `reportDimension` -- `report --by`'s closed set of eight words;
  *   - `secretScope` -- `secrets ls`'s two mutually exclusive scopes;
  *   - `pullRequest` -- a pull request number, a positive integer;
  *   - `flag` -- a boolean, for the flags the allow-list admits;
@@ -432,13 +432,13 @@ export const CONSOLE_OPERATIONS = [
     method: 'runReport',
     command: 'report',
     flags: ['--json'],
-    summary: 'spend over time, by day, week, month, year, repo, model or person',
+    summary: 'spend over time, by day, week, month, year, repo, model, person or mode',
     args: [
       {
         key: 'by',
         kind: 'reportDimension',
         required: false,
-        why: '`--by` is the breakdown switch the Spend screen draws; its seven words are closed.',
+        why: '`--by` is the breakdown switch the Spend screen draws; its eight words are closed.',
       },
       {
         key: 'since',
@@ -1247,6 +1247,7 @@ const REPORT_DIMENSIONS: readonly string[] = Object.freeze([
   'repo',
   'model',
   'person',
+  'mode',
 ])
 const SECRET_SCOPES: readonly string[] = Object.freeze(['project-wide', 'repo'])
 

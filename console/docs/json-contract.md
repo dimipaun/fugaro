@@ -30,6 +30,24 @@ console spawns (design D1, `FugaroSource`). Where a screen would need a field
 no command emits, the answer is a CLI PR, not a console reader — §7 lists the
 seven gaps the design records, each settled against the code here.
 
+**One bounded exception, named in full** (owner, 2026-10-28). Where a release
+has been *decided* and its wire keys are known, the console accepts a key
+**ahead of the CLI that writes it** — not because a command emits it, but so
+that the day a command starts to, the console's closed decoders do not refuse
+every document whole as `unknown-key`. A key may be named this way only if:
+(i) it is named in its shape's own field table or paragraph in this document;
+(ii) it is read as **optional** — absent is `n/a`, never `0` — and drawn by no
+screen until the release that writes it; and (iii) it is listed in
+`approvedAheadOfTheCLI` in `internal/cli/docs_desktop_console_test.go`, which
+is what keeps the guard below honest: every wire name in a field table outside
+that list is still refused as a field invented from the design.
+`TestDocsDesktopConsoleContractNamesNoInventedField` also fails if a listed key
+later becomes a real JSON key of a shape here, so the list cannot outlive its
+reason. The two keys today are `leased_usd` (§2, and §3's `showRepo` budget
+document) and `compute_usd` (§3) — the latter is already a real key of
+`report --json` (§4), which is why it needs no guard entry and `leased_usd`
+does.
+
 ## 1. The five availability states
 
 The design's first UI rule (§6.1 rule 1): **every number carries an
@@ -116,6 +134,7 @@ permission refusal, which `watchStream` emits once and then returns `dbErr`
 | `counted_usd` | float64 | USD | no | measured |
 | `spent_usd` | float64 | USD | no | measured |
 | `notional_usd` | float64 | USD | no | **notional** — never billed, never capped, never summed into a real total |
+| `leased_usd` | `*float64` | USD | — (not emitted yet) | **optional** (§intro's bounded exception): absent or `null` = unavailable (`n/a`, never `0`); present is measured. The **outstanding** leased dollars — the amount a lease currently holds, where `max_reserve_usd` (§3) is the **ceiling** on one lease. No CLI release writes it yet |
 | `daily_cap_usd` | `*float64` | USD | no | **null = unavailable** (no cap set) |
 | `percent` | `*float64` | 0–100 | no | **null = unavailable**, together with `daily_cap_usd` (`usdPtr`) |
 | `burn` | `JSONBurn` | — | no | see below |
@@ -151,9 +170,39 @@ drift from it.
 | `repo` | string | `owner/name` | no | measured |
 | `counted_usd` / `spent_usd` | float64 | USD | no | measured |
 | `notional_usd` | float64 | USD | no | **notional** |
+| `leased_usd` | `*float64` | USD | — (not emitted yet) | **optional** (§intro's bounded exception): absent or `null` = unavailable (`n/a`, never `0`); present is measured. As on `JSONTotal`: the **outstanding** leased dollars, never the ceiling. No CLI release writes it yet |
 | `daily_cap_usd` / `percent` | `*float64` | USD / 0–100 | no | **null = unavailable** |
 | `burn` | `JSONBurn` | — | no | as above |
 | `kill` | `*JSONKill` | — | no | **null = not killed** |
+
+**Naming, because two lease-flavoured money figures now meet here.** The
+CLI's ledger says `Reserved` (`budget.RunLedger`), and §3 already carries
+`max_reserve_usd`, which the Spend panel draws as "largest single lease (max
+reserve)". `leased_usd` is the **outstanding** side of that pair — the amount a
+lease currently holds — and `max_reserve_usd` is the **ceiling** on any one
+lease. Neither is the other, and neither is a cap: a cap is `daily_cap_usd`,
+and §3's `global`/`showRepo` carry the rest.
+
+**How the console reads it — one rule, stated once.** Absent, `null` and a
+non-finite number are **unavailable** (`n/a`, never `0` — a document with
+nothing to say about a lease has not leased nothing); a finite, non-negative
+number is **measured**. Any other value — a string, a boolean, a negative — is
+handled **the way the decoder that owns the document handles a shape it cannot
+read**, which is the whole of the rule:
+
+  * the console's **closed** decoders (`src/shared/schema.ts`, and the digest)
+    refuse the document by the field's wire path (`total.leased_usd`,
+    `repos[0].leased_usd`). That is deliberate for a key named ahead of its
+    release: no document has ever carried it, so a value of a shape the decoder
+    does not expect is a document this console does not understand, not one it
+    merely has not learned to read — the same judgement `closed` makes about an
+    unknown key *name*;
+  * `budget show`'s caps reader is the console's **tolerant** reader: it refuses
+    no document at all, and draws `n/a` for every number it cannot read (§3).
+    So a `compute_usd` that is not a number is `n/a` there — not a second rule,
+    but the same one in the one place that cannot refuse.
+
+**No screen draws it yet**; the Spend redesign is the reader.
 
 ### `JSONRun` (`internal/watch/json.go`) — a live or queued run
 
@@ -273,7 +322,7 @@ spaces (`enc.SetIndent("", "  ")`, `internal/cli/budget.go`).
 | `gcp_project` | string | — | no | measured |
 | `mode` | string | — | no | `observe` / `enforce` / `""` when unset; `""` also appends a warning. **This is the only document that can carry `""`** — see §2's `mode`, where `watch --json` normalises an unset mode to `observe` |
 | `day` | string | `YYYY-MM-DD`, UTC | no | measured (`budget.DayDate`) |
-| `max_reserve_usd` | `*float64` | USD | no | **null = unavailable** |
+| `max_reserve_usd` | `*float64` | USD | no | **null = unavailable**. The **ceiling** on any one lease (`budget.Limits.MaxReserveMicros`), which the Spend panel draws as "largest single lease (max reserve)"; §2's `leased_usd` is the **outstanding** amount a lease currently holds, and is not this |
 | `global` | `showGlobal` | — | no | below |
 | `defaults` | `showDefaults` | — | no | below |
 | `repos` | `[]showRepo` | — | no | `[]` when none — **empty, not unavailable** |
@@ -299,6 +348,19 @@ or `none`; `perRunCapSource`), `counted_usd`, `spent_usd`,
 the design's §6.2 Spend screen draws** — it is already in the document and
 needs no CLI change (§4.3's "not a gap" note).
 
+**`compute_usd` is approved on each `showRepo` and no CLI release writes it
+yet** (the owner approved it on 2026-10-28, with §2's `leased_usd`): a
+`*float64` of the repository's compute dollars, an **estimate** by design
+(`runstore.Cost.ComputeUSD`, the same account §4 reports — and unlike
+`leased_usd` it is already a real wire name, on `report --json`'s rows and on
+`runstore.Cost`). The console reads it as **optional** — an absent key or `null`
+is **unavailable** (`n/a`, never `0`), a number is **estimated** — and **no
+screen draws it yet**; the Spend redesign is the reader. It is the one key of
+this block not in `showRepo` today, and the row reader accepts it ahead of the
+struct. A value that is not a number is `n/a` and not a refusal, because this
+document's reader refuses nothing: §2 states why that is the same rule and not a
+second one.
+
 `showRun`: `slug`, `run`, `repo`°, `workflow`°, `title`°,
 `stage`°, `round` (**int**, `omitempty` — unlike `watch`'s string),
 `auth`°, `coder`°, `reviewer`°, `spent_usd` float64 (no `omitempty`),
@@ -323,7 +385,7 @@ the exported writer, not a `cli`-side struct. Indented two spaces
 `totals`, `warnings`).
 
 `JSONDoc`: `project`, `source`, `degraded` bool, `notice`°,
-`by` (string: `day`/`week`/`month`/`year`/`repo`/`model`/`person`),
+`by` (string: `day`/`week`/`month`/`year`/`repo`/`model`/`person`/`mode`),
 `since`, `until` (UTC dates), `weeks` (**always the literal
 `"iso-utc-monday"`** — the ISO week convention is declared, not inferred),
 `rows` `[]JSONLine`, `totals` `JSONLine`, `warnings` `[]string`.
@@ -347,15 +409,36 @@ the exported writer, not a `cli`-side struct. Indented two spaces
   ComputeKnown` (`jsonLine`), so it is null for the same rows.
   The key carries **no `omitempty`**, so it is always present and **null**
   rather than absent when the hours are not known: read it as
-  *unavailable*, never as a measured `0`. A degraded `report` is the whole
-  document's null case — `reportDegraded` builds on the run records and sets
-  `rep.NoHours = true` (`reportDegraded`), and `source` says
-  `"run-records"`, so every row's `run_hours` is null (there is no flag for
-  this; the path is chosen by whether spend history is enabled).
+  *unavailable*, never as a measured `0`. **Two paths null it, and only one of
+  them is degraded**: a degraded `report` (`reportDegraded`), which builds on
+  the run records and sets `rep.NoHours = true`; and `--by mode`
+  (`reportByMode`), which also reads the run records and sets it — so a
+  document with `degraded` `false` and `notice` absent can carry no
+  `run_hours` at all. Read the key, never the `degraded` flag, as the fact
+  about the hours.
 - **`tokens` is absent entirely when not tracked** (`TokensTracked`).
 - **`partial`** is the design's `(partial)` marker: the day has no final
   Firestore document. A day beyond the retained window is a **gap**, not a row
   of zeros.
+- **`--by mode` is the second shape whose `source` is `"run-records"`, and it is
+  not degraded** (`reportByMode`). A run's rigor mode is written in its own run
+  record and in no rollup of the spend history, so this one breakdown reads the
+  runs bucket whatever the history holds: `degraded` is `false` and `notice` is
+  absent, and the provenance is in `source` and in `warnings[]`. A console must
+  not read `source: "run-records"` as meaning history is missing.
+  - A row's `key` is a mode — `poc`, `startup`, `pro`, `critical`, `hotfix` —
+    or `none` for a run whose record carries no mode, **or carries one this
+    build does not know**: the raw text of a record is never a key, so a future
+    or invented mode reads as `none` rather than as a word the console has no
+    class for.
+  - Every run counts **once**, on its launch day, so `runs` is the row's run
+    count and `--since`/`--until` bound it by that day. A run whose record the
+    bucket holds and the CLI cannot read did launch: it counts once and is in no
+    money column — *unavailable*, never `0`.
+  - `calls` is `0` on this grouping's rows, as on `--by person`'s: a run record
+    carries no call count, and the column is not drawn. A window holding more
+    runs than the read opens is reported to its newest runs, and `warnings[]`
+    says so.
 
 `JSONTokens`: `in`, `out`, `cache_read`, `cache_write`, all
 int64, none `omitempty`.

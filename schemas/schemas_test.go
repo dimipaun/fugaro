@@ -9,6 +9,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -521,6 +522,112 @@ func TestTaskSchemaInputs(t *testing.T) {
 		if err := validate(head + tc.lit + `}`); err == nil {
 			t.Errorf("schema accepts %s: %s", tc.name, tc.lit)
 		}
+	}
+}
+
+// TestTaskSchemaDigestRuns pins the task schema's `digest_runs` property
+// (task-governance plan T3.6): the report run's manifest, the run IDs the
+// launching CLI listed for the digest step to read. task.schema.json is
+// additionalProperties: false, so without this property every digest launch
+// writes a task.json the published schema rejects.
+//
+// The two rules the schema carries are the decoder's own (Spec.Validate): a
+// run ID of the one shape, and at most task.MaxDigestRuns of them, which the
+// schema copies and TestTaskSchemaDigestRunsBound ties back to the constant.
+//
+// The task carrying the manifest is marshalled from task.Spec rather than
+// written out, so it reads the Go field's own json tag, the way
+// TestTaskSchemaCompressionOffMatchesTheGoField does: renaming the tag or the
+// schema property stops the two agreeing, and the drift would otherwise be
+// silent, since no Go test reads this document and the launcher's own tests
+// never consult it.
+//
+// Mutation (drop the digest_runs property from schemas/task.schema.json, or
+// rename the Go tag): the marshalled task is rejected as an unknown key and
+// this test fails.
+func TestTaskSchemaDigestRuns(t *testing.T) {
+	sch := compile(t, "task.schema.json")
+	validate := func(s task.Spec) error {
+		data, err := json.Marshal(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	// The negative cases below are literals: they carry values task.Spec
+	// itself would not marshal.
+	validateLit := func(lit string) error {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(lit))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	head := `{"version":1,"run_id":"20261027-093000-abcd","repo":"acme/app","ref":"main","task":"x"`
+	spec := task.Spec{Version: 1, RunID: "20261027-093000-abcd", Repo: "acme/app", Ref: "main", Task: "x"}
+	if err := validate(spec); err != nil {
+		t.Fatalf("schema rejects a task carrying no manifest: %v", err)
+	}
+	spec.DigestRuns = []string{"20261026-090000-1234", "20261025-080000-abcd"}
+	if err := validate(spec); err != nil {
+		t.Fatalf("schema rejects a task carrying a manifest, which fugaro run --recipe run-digest writes: %v", err)
+	}
+	for _, tc := range []struct{ name, lit string }{
+		{"not an array", `,"digest_runs":"20261026-090000-1234"`},
+		{"an empty list", `,"digest_runs":[]`},
+		{"not a run ID", `,"digest_runs":["yesterday"]`},
+		{"an empty ID", `,"digest_runs":[""]`},
+		{"a run ID without its four hex digits", `,"digest_runs":["20261026-090000"]`},
+		{"an upper-case run ID", `,"digest_runs":["20261026-090000-ABCD"]`},
+		{"a null element", `,"digest_runs":[null]`},
+	} {
+		if err := validateLit(head + tc.lit + `}`); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, tc.lit)
+		}
+	}
+}
+
+// TestTaskSchemaDigestRunsBound ties the schema's own bound on the manifest to
+// task.MaxDigestRuns: the two are separate copies, and a bound moved in one
+// without the other would publish a schema that admits a list the decoder
+// refuses (or the reverse).
+func TestTaskSchemaDigestRunsBound(t *testing.T) {
+	data, err := os.ReadFile("task.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]struct {
+			MaxItems int `json:"maxItems"`
+			MinItems int `json:"minItems"`
+			Items    struct {
+				Pattern string `json:"pattern"`
+			} `json:"items"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	p, ok := doc.Properties["digest_runs"]
+	if !ok {
+		t.Fatal("task.schema.json has no digest_runs property")
+	}
+	if p.MaxItems != task.MaxDigestRuns {
+		t.Errorf("schema digest_runs maxItems %d != task.MaxDigestRuns %d", p.MaxItems, task.MaxDigestRuns)
+	}
+	// A manifest that is present names at least one run: an empty one is
+	// omitted by the launcher (omitempty), so the schema refuses what the
+	// decoder never sees.
+	if p.MinItems != 1 {
+		t.Errorf("schema digest_runs minItems %d, want 1", p.MinItems)
+	}
+	// The pattern is task.ValidRunID's own shape, which the decoder applies.
+	if !regexp.MustCompile(p.Items.Pattern).MatchString("20261026-090000-abcd") {
+		t.Errorf("schema digest_runs items pattern %q does not match a run ID", p.Items.Pattern)
 	}
 }
 
@@ -1389,6 +1496,8 @@ func TestResultSchemaHalted(t *testing.T) {
 		runstore.HaltKillSwitch, runstore.HaltRunCap, runstore.HaltRepoDailyCap, runstore.HaltGlobalDailyCap,
 		runstore.HaltNoCap, runstore.HaltTokenCap, runstore.HaltBudgetUnavailable, runstore.HaltBudgetTokenExpired,
 		runstore.HaltNoCredential, runstore.HaltCredsRulesDenied,
+		runstore.HaltStageBudget, runstore.HaltReviewRatio, runstore.HaltFanout,
+		runstore.HaltReviewScope, runstore.HaltExpectedExceeded,
 	} {
 		if err := check(r); err != nil {
 			t.Errorf("schema rejects halt reason %q: %v", r, err)
@@ -1396,6 +1505,179 @@ func TestResultSchemaHalted(t *testing.T) {
 	}
 	if err := check("other"); err == nil {
 		t.Error(`schema accepts halt reason "other"`)
+	}
+}
+
+// TestResultSchemaCheckpoint: the checkpoint block a governance halt leaves
+// validates, and the schema refuses the shapes that would let a reader render
+// something the runner did not write — a trigger outside the governance set
+// (the enum is what makes the value safe to render, so a cap's reason is not
+// a checkpoint's trigger), an unknown key, a text field past
+// runstore.MaxCheckpointText, a negative figure and a trigger that is not a
+// string. A record with no checkpoint writes no key at all: absent is the
+// fact "this run did not take a governance halt", which an empty block would
+// blur.
+func TestResultSchemaCheckpoint(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 9, 30, 10, 0, 0, 0, time.UTC)
+	rec := runstore.Record{
+		Version: 1, RunID: "20260930-100000-abcd", Status: runstore.StatusHalted, Stage: "review", Outcome: runstore.OutcomeDraft,
+		Reason: "halted: " + string(runstore.HaltFanout), CostUSD: 1, StartedAt: at,
+		Halt: &runstore.Halt{Reason: runstore.HaltFanout, Scope: "run", At: at, Detail: "2 sub-agents"},
+		Checkpoint: runstore.NewCheckpoint(runstore.Checkpoint{
+			Trigger: string(runstore.HaltFanout), WhyOver: "more sub-agents than the maximum", EstimateUSD: 1,
+		}),
+	}
+	validate := func(t *testing.T, data []byte) error {
+		t.Helper()
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	marshal := func(t *testing.T, rec runstore.Record) []byte {
+		t.Helper()
+		data, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+
+	data := marshal(t, rec)
+	if err := validate(t, data); err != nil {
+		t.Fatalf("schema rejects a checkpoint record: %v\n%s", err, data)
+	}
+
+	// The checkpoint a halt writes before the checkpoint stage exists (T7.3)
+	// carries the trigger alone, and that is the whole block.
+	first := rec
+	first.Checkpoint = runstore.NewCheckpoint(runstore.Checkpoint{Trigger: string(runstore.HaltStageBudget)})
+	firstData := marshal(t, first)
+	if err := validate(t, firstData); err != nil {
+		t.Fatalf("schema rejects a checkpoint of the trigger alone: %v\n%s", err, firstData)
+	}
+	if !bytes.Contains(firstData, []byte(`"checkpoint":{"trigger":"stage_budget"}`)) {
+		t.Errorf("a checkpoint of the trigger alone marshals %s", firstData)
+	}
+
+	// No checkpoint is an absent key, not an empty block.
+	none := rec
+	none.Checkpoint = nil
+	noneData := marshal(t, none)
+	if bytes.Contains(noneData, []byte("checkpoint")) {
+		t.Errorf("a record with no checkpoint writes one: %s", noneData)
+	}
+	if err := validate(t, noneData); err != nil {
+		t.Fatalf("schema rejects a governance halt with no checkpoint: %v\n%s", err, noneData)
+	}
+
+	for _, tc := range []struct {
+		name string
+		rec  runstore.Record
+		from string
+		to   string
+		why  string
+	}{
+		{name: "trigger outside the governance set", from: `"trigger":"fanout"`, to: `"trigger":"kill_switch"`, why: "a cap's reason is not a checkpoint's trigger"},
+		{name: "an unknown key", from: `"trigger":"fanout"`, to: `"who":"x","trigger":"fanout"`, why: "the block is closed"},
+		{name: "a trigger that is not a string", from: `"trigger":"fanout"`, to: `"trigger":1`, why: "the enum is what makes the value safe to render"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bad := bytes.Replace(data, []byte(tc.from), []byte(tc.to), 1)
+			if bytes.Equal(bad, data) {
+				t.Fatalf("no %s in %s", tc.from, data)
+			}
+			if err := validate(t, bad); err == nil {
+				t.Errorf("schema accepts %s (%s): %s", tc.name, tc.why, bad)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name string
+		cp   *runstore.Checkpoint
+	}{
+		{"a text field past the bound", &runstore.Checkpoint{Trigger: string(runstore.HaltFanout), Next: strings.Repeat("n", runstore.MaxCheckpointText+1)}},
+		{"a negative figure", &runstore.Checkpoint{Trigger: string(runstore.HaltFanout), EstimateUSD: -1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bad := rec
+			bad.Checkpoint = tc.cp
+			badData := marshal(t, bad)
+			if err := validate(t, badData); err == nil {
+				t.Errorf("schema accepts %s: %s", tc.name, badData)
+			}
+		})
+	}
+}
+
+// TestResultSchemaCheckpointAgreeWithGo pins result.schema.json's checkpoint
+// block to internal/runstore's own vocabulary and bound, in both directions.
+// The trigger enum and the text bound are hand-written copies of
+// runstore.GovernanceHaltReasons and runstore.MaxCheckpointText, and the
+// runner writes a checkpoint for every reason the former names: a reason the
+// enum lacks is a result.json a consumer validating against the published
+// schema refuses, a value only the enum knows is a trigger no run can write,
+// and a bound that is not the one NewCheckpoint clips to is a wire that either
+// accepts what the runner never writes or refuses what it did.
+//
+// The Go side is read from runstore rather than listed here, so a reason added
+// to it without the schema fails this test instead of silently widening the
+// gap the next time someone reads the enum above.
+func TestResultSchemaCheckpointAgreeWithGo(t *testing.T) {
+	data, err := os.ReadFile("result.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	props, _ := doc["properties"].(map[string]any)
+	cp, ok := props["checkpoint"].(map[string]any)
+	if !ok {
+		t.Fatal("result.schema.json: no checkpoint property")
+	}
+	fields, ok := cp["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("result.schema.json: checkpoint has no properties")
+	}
+
+	trigger, _ := fields["trigger"].(map[string]any)
+	raw, ok := trigger["enum"].([]any)
+	if !ok {
+		t.Fatal("result.schema.json: checkpoint.trigger has no enum")
+	}
+	var got []string
+	for _, v := range raw {
+		s, ok := v.(string)
+		if !ok {
+			t.Fatalf("result.schema.json: checkpoint.trigger enum entry %v is not a string", v)
+		}
+		got = append(got, s)
+	}
+	var want []string
+	for _, reason := range runstore.GovernanceHaltReasons() {
+		want = append(want, string(reason))
+	}
+	if len(want) == 0 {
+		t.Fatal("runstore names no governance halt reason: this test proves nothing")
+	}
+	if !sameStrings(got, want) {
+		t.Errorf("result.schema.json checkpoint.trigger = %v, runstore.GovernanceHaltReasons() = %v", got, want)
+	}
+
+	for _, name := range []string{"done", "why_over", "next", "hard_instructions"} {
+		field, ok := fields[name].(map[string]any)
+		if !ok {
+			t.Fatalf("result.schema.json: checkpoint.%s is missing", name)
+		}
+		if got := field["maxLength"]; got != float64(runstore.MaxCheckpointText) {
+			t.Errorf("result.schema.json checkpoint.%s maxLength = %v, want runstore.MaxCheckpointText (%d)",
+				name, got, runstore.MaxCheckpointText)
+		}
 	}
 }
 
@@ -2349,6 +2631,138 @@ func TestTaskSchemaBaseBranchMatchesTheGoRule(t *testing.T) {
 		}
 		if err := sch.Validate(doc(b)); err == nil {
 			t.Errorf("the schema accepts base_branch %q, which config.ValidBranchName refuses", b)
+		}
+	}
+}
+
+// TestFugaroSchemaGovernance: the governance block's shape, inline snippets
+// like TestSchemaBudgetBlock. Every bound is config.validateGovernance's too:
+// a stage budget is a fraction of the per-run cap and never the cap itself
+// (G6), and 0 (or null) is "unset" in both, so a file may say "no value" the
+// way it says it everywhere else.
+func TestFugaroSchemaGovernance(t *testing.T) {
+	sch := compile(t, "fugaro.schema.json")
+	base := "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  s: { commands: { build: make, test: make } }\n"
+	for _, c := range []struct {
+		gov string
+		ok  bool
+	}{
+		{"governance: { review_ratio: 3, review_floor_calls: 10, max_subagents: 2 }", true},
+		{"governance: { stage_budget: { implement: 0.6, review: 0.4, fix: 0.25 } }", true},
+		{"governance: { stage_tokens: { implement: 1000000, review: 500000, fix: 250000 } }", true},
+		{"governance: { stage_timeout: { implement: 30m, review: 1h30m, fix: 10m } }", true},
+		{"governance:", true},
+		{"governance: {}", true},
+		{"governance: { review_ratio: }", true},
+		{"governance: { review_ratio: 0 }", true},
+		{"governance: { max_subagents: 0 }", true},
+		{"governance: { stage_budget: { implement: 0 } }", true},
+		{"governance: { review_ratio: -1 }", false},
+		{"governance: { review_ratio: 2.5 }", false},
+		{"governance: { review_ratios: 3 }", false},
+		{"governance: { stage_budget: { implement: 1 } }", false},
+		{"governance: { stage_budget: { implement: 1.5 } }", false},
+		{"governance: { stage_budget: { review: -0.5 } }", false},
+		{"governance: { stage_budget: { verify: 0.5 } }", false},
+		{"governance: { stage_tokens: { plan: 1000 } }", false},
+		{"governance: { stage_tokens: { review: -1 } }", false},
+		{"governance: { stage_timeout: { render: 5m } }", false},
+		{"governance: { stage_timeout: { fix: 5x } }", false},
+		{"governance: { tiers: { trivial: { max_subagents: 3 } } }", false},
+		{"governance: 0.7", false},
+		{"governance: { stage_budget: 0.7 }", false},
+	} {
+		err := sch.Validate(yamlInstance(t, []byte(base+c.gov+"\n")))
+		if (err == nil) != c.ok {
+			t.Errorf("%s: schema err = %v, want ok=%v", c.gov, err, c.ok)
+		}
+	}
+}
+
+// TestProjectLayerSchemaGovernance: the layer's own top-level governance
+// block, the same shape and the same bounds (project-layer.schema.json's
+// copy, like rigor). The layer is where the guardrails are loosened, so a
+// looser value than Fugaro's default is valid here and a repository's own
+// file may only tighten it -- which is the merge's rule, not the schema's:
+// the schema refuses what no run could use, and the merge refuses the
+// loosening.
+func TestProjectLayerSchemaGovernance(t *testing.T) {
+	sch := compile(t, "project-layer.schema.json")
+	head := "version: 1\nproject: aurora\ngcp_project: proj-1234\n"
+	for _, c := range []struct {
+		gov string
+		ok  bool
+	}{
+		{"governance: { review_ratio: 20, max_subagents: 12 }", true},
+		{"governance: { stage_budget: { implement: 0.9 } }", true},
+		{"governance: { stage_timeout: { review: 45m } }", true},
+		{"governance: { review_ratio: -1 }", false},
+		{"governance: { stage_budget: { implement: 1 } }", false},
+		{"governance: { stage_timeout: { implement: 5x } }", false},
+		{"governance: { review_ratio: 3, typo: 1 }", false},
+		{"defaults:\n  governance: { review_ratio: 3 }", false},
+	} {
+		err := sch.Validate(yamlInstance(t, []byte(head+c.gov+"\n")))
+		if (err == nil) != c.ok {
+			t.Errorf("%s: schema err = %v, want ok=%v", c.gov, err, c.ok)
+		}
+	}
+}
+
+// TestSchemaGovernanceBoundsMatchGo: the counting keys of the block carry an
+// upper bound in both schemas and the same bound in config.validateGovernance,
+// so the two surfaces a file meets — `fugaro validate`, which reads Go, and
+// the published schema a repository's CI may check against — refuse the same
+// numbers. A bound only one of them knows is a red check nobody can reproduce
+// from the file, or a number a run reads that the schema called impossible.
+// The stage budgets are excluded on purpose: a fraction is bounded by the
+// stageFraction def (under 1), which validateGovernance checks directly, with
+// no Go figure to hold equal.
+func TestSchemaGovernanceBoundsMatchGo(t *testing.T) {
+	for _, tc := range []struct {
+		file    string
+		maximum map[string]int
+	}{
+		{"fugaro.schema.json", map[string]int{
+			"review_ratio":       config.MaxReviewRatio,
+			"review_floor_calls": config.MaxReviewFloorCalls,
+			"max_subagents":      config.MaxGovernanceSubagents,
+		}},
+		{"project-layer.schema.json", map[string]int{
+			"review_ratio":       config.MaxReviewRatio,
+			"review_floor_calls": config.MaxReviewFloorCalls,
+			"max_subagents":      config.MaxGovernanceSubagents,
+		}},
+	} {
+		data, err := os.ReadFile(tc.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(data, &doc); err != nil {
+			t.Fatal(err)
+		}
+		gov, ok := doc["properties"].(map[string]any)["governance"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s: no governance block", tc.file)
+		}
+		props, _ := gov["properties"].(map[string]any)
+		for key, want := range tc.maximum {
+			got, ok := props[key].(map[string]any)["maximum"].(float64)
+			if !ok {
+				t.Errorf("%s: governance.%s has no maximum", tc.file, key)
+				continue
+			}
+			if int(got) != want {
+				t.Errorf("%s: governance.%s maximum = %v, want %d (config's bound)", tc.file, key, got, want)
+			}
+		}
+		tokens, ok := doc["$defs"].(map[string]any)["stageTokens"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s: no stageTokens def", tc.file)
+		}
+		if got, _ := tokens["maximum"].(float64); int(got) != config.MaxStageTokens {
+			t.Errorf("%s: stageTokens maximum = %v, want %d (config's bound)", tc.file, got, config.MaxStageTokens)
 		}
 	}
 }

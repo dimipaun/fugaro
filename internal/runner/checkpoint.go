@@ -103,6 +103,42 @@ func (r *run) startCheckpoints(stageCtx context.Context, stage string) (stop fun
 	return sync.OnceFunc(func() { cancel(); <-done })
 }
 
+// setStageCkptStop registers the running stage's checkpointer stop, or clears
+// it with nil once the stage is over. A stage with no poll is not registered as
+// nil: startCheckpoints returns a no-op func(){} for one, so the field always
+// holds something callable.
+func (r *run) setStageCkptStop(stop func()) {
+	r.mu.Lock()
+	r.stageCkptStop = stop
+	r.mu.Unlock()
+}
+
+// stopStageCheckpointer stops the running stage's checkpointer, if one is
+// live, and waits for it: after it returns, nothing of that poll can write the
+// run's record or the pull request, and its caller is the only writer left.
+//
+// It is a no-op between stages and for a run that never checkpoints
+// (startCheckpoints registers a no-op for one): a run with no poll goroutine
+// has nothing to stop, so any goroutine but the poll's own may call it. A
+// governance halt stops the poll with it before writing the checkpoint's
+// report to the pull request (governanceHalt), because the poll writes the same
+// pull-request state and the same record (prflow.go) and is still alive
+// mid-stage — the halt's own cancel reaches it only after the watcher's grace
+// period.
+//
+// It must not be called from the stage's checkpoint poll goroutine: that is
+// the goroutine it waits for. No tripwire runs there — the poll calls only
+// runner code (checkpointTick and the push path below, prflow.go, and the
+// status render) — so no caller of governanceHalt is on it.
+func (r *run) stopStageCheckpointer() {
+	r.mu.Lock()
+	stop := r.stageCkptStop
+	r.mu.Unlock()
+	if stop != nil {
+		stop()
+	}
+}
+
 // warnCheckpoint logs msg once per run for key.
 func (r *run) warnCheckpoint(key, msg string, args ...any) {
 	if r.ckpt.warned == nil {

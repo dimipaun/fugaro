@@ -21,6 +21,10 @@
 //     billed:notional proportion.
 //   - Every string that came from the database goes through safetext.Strip,
 //     in every output.
+//   - ByMode is the one grouping the day records cannot answer: a run's rigor
+//     mode is written in its own run record and in no rollup, so its rows are
+//     built from run-derived Recs (Rec.Mode) and the source of the report says
+//     so.
 package report
 
 import (
@@ -31,6 +35,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -45,15 +50,21 @@ const (
 	ByRepo   Dim = "repo"
 	ByModel  Dim = "model"
 	ByPerson Dim = "person"
+	ByMode   Dim = "mode"
 )
+
+// ModeNone is ByMode's row for a run whose record carries no rigor mode, and
+// for one whose recorded mode is not a mode the vocabulary knows. A breakdown
+// reads it and never the record's raw text.
+const ModeNone = "none"
 
 // ParseDim parses --by.
 func ParseDim(s string) (Dim, error) {
 	switch d := Dim(s); d {
-	case ByDay, ByWeek, ByMonth, ByYear, ByRepo, ByModel, ByPerson:
+	case ByDay, ByWeek, ByMonth, ByYear, ByRepo, ByModel, ByPerson, ByMode:
 		return d, nil
 	}
-	return "", fmt.Errorf("--by %q: use day, week, month, year, repo, model or person", s)
+	return "", fmt.Errorf("--by %q: use day, week, month, year, repo, model, person or mode", s)
 }
 
 // IsPeriod says whether d groups by time.
@@ -63,6 +74,10 @@ func (d Dim) IsPeriod() bool { return d == ByDay || d == ByWeek || d == ByMonth 
 type Rec struct {
 	budget.DayRecord
 	Partial bool
+	// Mode is the rigor mode the run's record resolved, for ByMode rows. The
+	// day rollups carry no mode, so only the run-record reader sets it and
+	// only the by-mode grouping reads it; "" is ModeNone's row.
+	Mode string
 }
 
 // Compute states of a Row.
@@ -207,6 +222,12 @@ func Build(recs []Rec, d Dim) Report {
 				a.row.ComputeState = ComputeNotTracked
 				markDay(a, r)
 			}
+		case d == ByMode:
+			key := modeKey(r.Mode)
+			a := get(key, "")
+			a.row.Key = Text(key)
+			a.row.NotionalTracked = true
+			addRecord(a, r)
 		case d == ByPerson:
 			var attributed int64
 			for k, p := range r.ByPerson {
@@ -278,6 +299,18 @@ func Build(recs []Rec, d Dim) Report {
 	}
 	rep.Totals = tot.row
 	return rep
+}
+
+// modeKey is the row a recorded rigor mode belongs to: the mode itself, or
+// ModeNone for a record that carries no mode and for one carrying text the
+// vocabulary does not know. A record from a newer writer, or from anything
+// that wrote a mode fugaro never resolved, is grouped as none rather than
+// publishing text this build cannot read as a mode.
+func modeKey(m string) string {
+	if mode, ok := rigor.Parse(m); ok {
+		return string(mode)
+	}
+	return ModeNone
 }
 
 // splitModel splits one model's recorded dollars of a day into billed and

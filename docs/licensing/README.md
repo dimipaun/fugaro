@@ -22,7 +22,7 @@ directories (the owner's ruling of 2026-10-27, keeping O2); `README.md`, `LICENS
 state no client-side MIT exception (counsel's 2.1, checked: none found); SPDX notices on every file in
 `console/` and `mobile/`, a `LICENSES/` directory and the copyleft and app-store audit
 ([dependency-audit.md](dependency-audit.md)) are one
-follow-up run; the CLA text, its URL and the CONTRIBUTING gate wait for counsel's CLA, and the owner's
+follow-up run; the CLA text is counsel's and final, approved as-is on 2026-10-28, while its URL and the CONTRIBUTING gate wait on the owner's Gist and CLA Assistant install, and the owner's
 ruling of 2026-10-27 is that they arrive together for `ee/`, `console/` and `mobile/`, not one directory
 at a time. Questions
 for counsel: the covered coordinator and orchestrator code lives outside the three directories and stays

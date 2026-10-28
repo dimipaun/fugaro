@@ -54,6 +54,14 @@ type prChain struct {
 	// back on: --no-compression sets it, and nothing clears it.
 	CompressionOff bool
 	Recipe         *task.Recipe // the previous run's: a follow-up keeps it unless --recipe names one
+	// PrevReport is whether the previous run's task carried a manifest
+	// (task.Spec.DigestRuns), and so whether the recipe this follow-up
+	// inherits is a report recipe: a manifest is accepted under no other
+	// (task.Validate). It is the one fact about that recipe the launcher
+	// holds when it cannot read the recipe's own file — a repository recipe
+	// by name, read at the run's base, is not in a launcher with no
+	// checkout of that repository (refuseFollowUpRepoRecipe).
+	PrevReport bool
 	// Title is the previous run's own job title (task.Spec.Title, "") when
 	// it has none: a follow-up keeps its run's title, so a chain of
 	// follow-ups stays one job in fugaro watch instead of being listed
@@ -158,6 +166,7 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 	c.CompressionOff = prev.CompressionOff
 	c.Recipe = prev.Recipe
 	c.Title = prev.Title
+	c.PrevReport = len(prev.DigestRuns) > 0
 	// The previous run's record, read once for the two things only it knows:
 	// the mode that run resolved, which a follow-up keeps and may only raise
 	// (T5.2), and the recipe the runner chose for it, which a follow-up keeps
@@ -559,6 +568,9 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		if err := refuseFollowUpArtifactMode(rr.Recipe, rr.Name); err != nil {
 			return nil, err
 		}
+		if err := refuseFollowUpReportMode(rr.Recipe, rr.Name); err != nil {
+			return nil, err
+		}
 		printRecipeNote(warn, rr, true)
 		rcp = rr.taskRecipe()
 	} else if rcp == nil && c.Chosen != nil {
@@ -578,12 +590,27 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		if err := refuseFollowUpArtifactMode(inherited, rcp.Name); err != nil {
 			return nil, err
 		}
+		if err := refuseFollowUpReportMode(inherited, rcp.Name); err != nil {
+			return nil, err
+		}
 	} else if rcp != nil {
 		// An inherited repository recipe by name: task.Recipe carries no
 		// text for one (taskRecipe, recipes_resolve.go), so there is
 		// nothing to parse here. This checkout's copy is read when there
 		// is one; otherwise the runner refuses the file it reads at this
 		// task's base.
+		//
+		// A launcher with no copy of that file can still tell that the
+		// previous run's recipe was a report recipe, from the previous run's
+		// own task: the recipe this follow-up inherits is the one that task
+		// ran, and only a report recipe's task carries a manifest
+		// (task.Validate). Refused from the manifest, here, because the file
+		// this checkout does not have is the one the agent would have run —
+		// the runner's own backstop refuses the same task after it is paid
+		// for, at its base.
+		if c.PrevReport {
+			return nil, refuseReportFollowUp(rcp.Name)
+		}
 		if err := refuseFollowUpRepoRecipe(ctx, repo, rcp.Name); err != nil {
 			return nil, err
 		}
@@ -717,7 +744,7 @@ func recheckFollowUp(ctx context.Context, env *cloudEnv, slug string, spec *task
 // carryChosenRecipe is the recipe a follow-up keeps when the runner chose the
 // previous run's: a repository recipe by name (the runner reads it at the
 // base), any other resolved now and embedded. A repository recipe is refused
-// for the two modes a follow-up cannot run first (refuseFollowUpRepoRecipe),
+// for the mismatches a follow-up cannot carry (refuseFollowUpRepoRecipe),
 // from this checkout's copy of it; the runner refuses the file it reads at
 // the base when there is none here. A note says what is kept, and that the
 // text changed since when it did.
@@ -749,6 +776,9 @@ func carryChosenRecipe(ctx context.Context, env *cloudEnv, repo string, c *prCha
 			return nil, wrap(err)
 		}
 		if err := refuseFollowUpArtifactMode(rr.Recipe, rr.Name); err != nil {
+			return nil, wrap(err)
+		}
+		if err := refuseFollowUpReportMode(rr.Recipe, rr.Name); err != nil {
 			return nil, wrap(err)
 		}
 		printRecipeNote(warn, rr, true)

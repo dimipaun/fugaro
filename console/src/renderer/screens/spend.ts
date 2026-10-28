@@ -169,12 +169,19 @@ import type { ElementLike } from '../app'
 // ---------------------------------------------------------------------------
 
 /**
- * SPEND_DIMENSIONS is `report --by`'s closed set of seven words, in
+ * SPEND_DIMENSIONS is `report --by`'s closed set of eight words, in
  * `internal/report/report.go`'s own order (`ByDay`, `ByWeek`, `ByMonth`,
- * `ByYear`, `ByRepo`, `ByModel`, `ByPerson`, and `ParseDim`'s list). The switch
- * draws this list; a document's `by` that is not one of them is a document from
- * a CLI this build does not know, and the screen says so rather than drawing an
- * eighth word.
+ * `ByYear`, `ByRepo`, `ByModel`, `ByPerson`, `ByMode`, and `ParseDim`'s list).
+ * The switch draws this list; a document's `by` that is not one of them is a
+ * document from a CLI this build does not know, and the screen says so rather
+ * than drawing a ninth word.
+ *
+ * `mode` groups by the rigor mode each run resolved, read from the run records
+ * rather than from the spend history, so its rows are mode words (`poc`,
+ * `startup`, `pro`, `critical`, `hotfix`) or the CLI's own `none` for a run
+ * whose record carries no mode -- and `none` is drawn as its own label, not as
+ * an error. The money grammar is unchanged: model, notional and compute stay
+ * three columns and are never summed, and this breakdown carries no run-hours.
  */
 export const SPEND_DIMENSIONS = Object.freeze([
   'day',
@@ -184,9 +191,10 @@ export const SPEND_DIMENSIONS = Object.freeze([
   'repo',
   'model',
   'person',
+  'mode',
 ] as const)
 
-/** SpendDimension is one of the seven. */
+/** SpendDimension is one of them. */
 export type SpendDimension = (typeof SPEND_DIMENSIONS)[number]
 
 /**
@@ -415,6 +423,20 @@ export interface SpendCapRow {
   readonly counted: Reading
   readonly spent: Reading
   readonly notional: Reading
+  /** compute is the repository's compute dollars, an **estimated** figure by
+   * design (`runstore.Cost.ComputeUSD`). The owner approved `compute_usd` on
+   * each `showRepo` on 2026-10-28 and no CLI writes it yet, so this reads
+   * absent and `null` as `n/a` and draws nothing with it: the Spend redesign
+   * is the screen that will.
+   *
+   * A value that is not a number is `n/a` too, and not a refusal, because this
+   * reader refuses no document at all -- the caps panel is the console's
+   * tolerant reader, and every number it cannot read is `n/a`. The contract
+   * states that as one rule (console/docs/json-contract.md §2): a key named
+   * ahead of its release is handled the way the decoder that owns the document
+   * handles a shape it cannot read; the closed decoders (`shared/schema.ts`,
+   * the digest) refuse it by name, and this one draws `n/a`. */
+  readonly compute: Reading
   readonly headroom: Reading
   readonly dailyCap: Reading
   readonly dailyScope: SpendScope
@@ -1393,6 +1415,7 @@ function capRowOf(raw: unknown): SpendCapRow | null {
     counted: readNumber(repo['counted_usd'], 'repos[].counted_usd'),
     spent: readNumber(repo['spent_usd'], 'repos[].spent_usd'),
     notional: usdReading(repo, 'notional_usd', 'notional'),
+    compute: usdReading(repo, 'compute_usd', 'compute'),
     headroom: readNumber(repo['headroom_usd'], 'repos[].headroom_usd'),
     dailyCap: readNumber(repo['daily_cap_usd'], 'repos[].daily_cap_usd'),
     dailyScope: scopeOf(textAt(repo['daily_cap_source']) ?? ''),
@@ -1430,10 +1453,11 @@ function dimensionOf(raw: string | null): SpendDimension | null {
  * keyClass is the text class a row's key carries, and it is the dimension that
  * decides it: `by repo`'s key is a repository path (or, when the record has no
  * path, the bucket slug `Build` falls back to), `by person`'s is a person,
- * `by model`'s is a model name and a period's is a date. A label is the class
- * for the two that are free text, and it is not a weak class: the free-text
- * rules redact an address, a URL, a path and a token out of a label exactly as
- * they do out of a sentence.
+ * `by model`'s is a model name, `by mode`'s is a mode word or the CLI's own
+ * `none`, and a period's is a date. A label is the class for the ones that are
+ * free text, and it is not a weak class: the free-text rules redact an address,
+ * a URL, a path and a token out of a label exactly as they do out of a
+ * sentence.
  */
 export function keyClass(dimension: SpendDimension | null, key: string): TextClass {
   switch (dimension) {
@@ -1449,6 +1473,7 @@ export function keyClass(dimension: SpendDimension | null, key: string): TextCla
     case 'month':
     case 'year':
     case 'model':
+    case 'mode':
     case null:
       return 'label'
   }
@@ -1498,7 +1523,7 @@ export function buildSpendModel(
     notes.push(`${stray} row(s) outside the range the document covers are listed below and not drawn in the charts: a day axis places a point by its date`)
   }
   if (dimension === null) {
-    notes.push('the document groups by a breakdown this console does not know, so the switch below cannot say which of its seven words it is')
+    notes.push('the document groups by a breakdown this console does not know, so the switch below cannot say which of its eight words it is')
   }
 
   return {
@@ -1665,7 +1690,7 @@ function pickerSince(since: string): string | null {
  * not the first.
  *
  * The three fields are that operation's own: `since` a day or `Nd`/`Nw`,
- * `until` a day, `by` one of the seven words. `--repo` is admitted on this
+ * `until` a day, `by` one of the eight words. `--repo` is admitted on this
  * command by the design's allow-list and is deliberately not here -- this screen
  * draws the whole project, and a field it does not draw is a field it must not
  * send. There is no `--csv`, no path, no free-form string, no command and no
@@ -2050,7 +2075,7 @@ function windowItem(parent: ScreenElement, factory: ScreenFactory, current: bool
  * read as a range nobody chose.
  *
  * Every word is a literal, because they are the console's vocabulary and not a
- * document's strings -- the same rule the breakdown switch's seven words follow.
+ * document's strings -- the same rule the breakdown switch's eight words follow.
  */
 function picker(factory: ScreenFactory, controls: SpendControls): ScreenElement {
   const element = make(factory, 'ol', 'spend-picker')
@@ -2079,7 +2104,7 @@ function picker(factory: ScreenFactory, controls: SpendControls): ScreenElement 
  * by default.
  *
  * It is a control of its own rather than a state of the breakdown switch: the
- * switch's `person` word is one of the seven the CLI has, and the operator's
+ * switch's `person` word is one of the eight the CLI has, and the operator's
  * decision about it is a different thing from the breakdown the screen is
  * currently drawn by. The knob's own `data-enabled` is what the event wiring
  * reads, and the switch's `person` word is drawn disabled until it is on.
@@ -2098,14 +2123,14 @@ function personKnob(factory: ScreenFactory, model: SpendModel): ScreenElement {
   return element
 }
 
-/** tabs draws the breakdown switch: the seven words, which of them is the
+/** tabs draws the breakdown switch: the eight words, which of them is the
  * document's own grouping, and which this console may show. */
 function tabs(factory: ScreenFactory, model: SpendModel): ScreenElement {
   const element = make(factory, 'ol', 'spend-switch')
   element.setAttribute('data-known', model.dimensionKnown ? 'true' : 'false')
   for (const entry of model.switches) {
     const item = cell(element, factory, 'li', 'spend-dim')
-    // The seven words are the CLI's own (`ParseDim`'s help line) and this is
+    // The eight words are the CLI's own (`ParseDim`'s help line) and this is
     // the console drawing its own vocabulary for them, not a document's string.
     literal(item, entry.dimension)
     item.setAttribute('data-dimension', entry.dimension)
@@ -2114,7 +2139,7 @@ function tabs(factory: ScreenFactory, model: SpendModel): ScreenElement {
     if (entry.note !== null) item.setAttribute('title', entry.note)
   }
   if (!model.dimensionKnown) {
-    // An eighth word is a newer CLI. The switch says so in the console's own
+    // A ninth word is a newer CLI. The switch says so in the console's own
     // words rather than drawing the word it does not know -- the value is not
     // echoed, the same rule the Live screen's unknown flags follow.
     const unknown = cell(element, factory, 'li', 'spend-dim', 'spend-dim-unknown')

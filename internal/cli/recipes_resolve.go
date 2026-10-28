@@ -96,17 +96,52 @@ func refuseFollowUpArtifactMode(rcp *recipe.Recipe, name string) error {
 	return nil
 }
 
-// refuseFollowUpRepoRecipe refuses the same two mismatches for a follow-up
+// refuseFollowUpReportMode refuses rcp for a follow-up (fugaro run --pr N
+// continuing PR N): a report recipe is the digest step's (task-governance
+// T3.6), and the launch that runs one lists the records it may read and
+// refuses it while another report run of the repository is going
+// (digestManifest). A follow-up does neither — it carries no digest_runs at
+// all, and its recipe arrives from the previous run, so even a fresh listing
+// would be someone else's list — so the run would write the reports of a
+// repository whose records it never read, and a second report run could write
+// them beside the one already going. The refusal is chooseRecipe's own, from
+// the other side: there it is a batch that cannot carry a report recipe, here
+// a follow-up that cannot.
+//
+// The runner refuses the same mismatch again, at bootstrap, keyed on the
+// recipe it resolved at the task's base (internal/runner/runner.go): this is
+// the refusal of a recipe the launcher resolved itself, from this checkout or
+// the project or the catalog.
+func refuseFollowUpReportMode(rcp *recipe.Recipe, name string) error {
+	if recipe.UsesDigest(rcp) {
+		return refuseReportFollowUp(name)
+	}
+	return nil
+}
+
+// refuseReportFollowUp is refuseFollowUpReportMode's refusal for a caller
+// that knows the recipe's name but has no text to parse: a repository recipe
+// inherited by name, whose steps the launcher judges from this checkout's
+// copy of the file when it has one (refuseFollowUpRepoRecipe) and from the
+// previous run's manifest when it has not (prChain.PrevReport).
+func refuseReportFollowUp(name string) error {
+	return userErr("recipe %s writes this repository's run reports, and a repository has one report run at a time; a follow-up carries no manifest of the records it may read and skips the in-flight check a fresh launch makes, so it cannot use it — schedule a report run of its own with fugaro run --recipe %s", name, name)
+}
+
+// refuseFollowUpRepoRecipe refuses the same mismatches for a follow-up
 // that INHERITS a repository recipe by name — the previous task's
 // task.Recipe{Name, Source: repo}, and the chosen recipe carryChosenRecipe
-// keeps the same way — which carries no text for either refusal above to
+// keeps the same way — which carries no text for the refusals above to
 // read. The file is read from the working directory's checkout when there is
 // one; a name that checkout does not have, or a file it cannot parse, is
 // left alone, because the runner reads the name at THIS task's base
-// (readRepoRecipe, internal/runner/recipe.go) and refuses a bad or artifact
-// one there itself. Nothing but the checkout is consulted: the previous run
-// ran a repository recipe, and a same-named project or catalog recipe is not
-// the one it ran.
+// (readRepoRecipe, internal/runner/recipe.go) and refuses a bad, artifact or
+// report one there itself. The report mismatch is refused here without the
+// file too: a launcher with no copy of it still knows whether the previous
+// run's task carried a manifest, and so whether the recipe this follow-up
+// inherits is a report recipe (newFollowUpSpec, prChain.PrevReport). Nothing
+// but the checkout is consulted: the previous run ran a repository recipe,
+// and a same-named project or catalog recipe is not the one it ran.
 func refuseFollowUpRepoRecipe(ctx context.Context, repo, name string) error {
 	root := checkoutRoot(ctx, repo)
 	if root == "" {
@@ -124,7 +159,10 @@ func refuseFollowUpRepoRecipe(ctx context.Context, repo, name string) error {
 	if err := refuseFollowUpReviewMode(rcp, name); err != nil {
 		return err
 	}
-	return refuseFollowUpArtifactMode(rcp, name)
+	if err := refuseFollowUpArtifactMode(rcp, name); err != nil {
+		return err
+	}
+	return refuseFollowUpReportMode(rcp, name)
 }
 
 // projectRecipesNote is why lc's project recipes are not read, or "": as

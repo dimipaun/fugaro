@@ -280,6 +280,21 @@ func TestDigestFlags(t *testing.T) {
 	if got := flagOf(halted); len(got) != 1 || got[0] != FlagHalt+":"+string(runstore.HaltTokenCap) {
 		t.Errorf("a halted run = %v, want %s", got, FlagHalt+":"+string(runstore.HaltTokenCap))
 	}
+	// A governance stop (T6.1) is a halt reason like any other: the set has to
+	// carry every one of runstore's, or the report a person reads about a run
+	// this runner stopped names it halt:other -- the value reserved for a
+	// record this runner did not write.
+	reasons := runstore.GovernanceHaltReasons()
+	if len(reasons) == 0 {
+		t.Fatal("runstore names no governance halt reason: this test proves nothing")
+	}
+	for _, reason := range reasons {
+		gov := halted
+		gov.Halt = &runstore.Halt{Reason: reason, Scope: "run", At: at(t, "2026-10-21T09:00:00Z")}
+		if got := flagOf(gov); len(got) != 1 || got[0] != FlagHalt+":"+string(reason) {
+			t.Errorf("a run halted by %s = %v, want %s", reason, got, FlagHalt+":"+string(reason))
+		}
+	}
 
 	// One fix round is ordinary; a second one is flagged.
 	fix := func(n int) runstore.Record {
