@@ -77,7 +77,7 @@ func TestGovernanceStrictDecode(t *testing.T) {
 // and the conversion the merge reads is the same numbers (the policy package
 // holds the merge's own shape, config the file's).
 func TestGovernanceReadsAndConverts(t *testing.T) {
-	cfg, ps := Parse([]byte(minimalYAML + "governance:\n  review_ratio: 3\n  max_subagents: 2\n  stage_budget: { fix: 0.25 }\n  stage_timeout: { implement: 45m }\n"))
+	cfg, ps := Parse([]byte(minimalYAML + "governance:\n  review_ratio: 3\n  max_subagents: 2\n  stage_budget: { fix: 0.25 }\n  stage_timeout: { implement: 45m }\n  tiers: { medium: { expected_usd: 2.5, expected_minutes: 60, max_subagents: 4 } }\n"))
 	if len(ps) > 0 {
 		t.Fatalf("problems: %v", ps)
 	}
@@ -91,8 +91,16 @@ func TestGovernanceReadsAndConverts(t *testing.T) {
 	if g.StageTimeout.Implement.Duration != 45*time.Minute || !g.StageTimeout.Implement.Set {
 		t.Fatalf("stage_timeout.implement = %+v", g.StageTimeout.Implement)
 	}
+	if got := g.Tiers.Medium; got != (TierLimits{ExpectedUSD: 2.5, ExpectedMinutes: 60, MaxSubagents: 4}) {
+		t.Fatalf("tiers.medium = %+v", got)
+	}
+	if got := g.Tiers.Trivial; got != (TierLimits{}) {
+		t.Errorf("tiers.trivial = %+v, want unset: a tier the file leaves out sets nothing", got)
+	}
 	want := policy.Governance{ReviewRatio: 3, MaxSubagents: 2,
-		StageBudget: policy.StageBudget{Fix: 0.25}, StageTimeout: policy.StageTimeout{Implement: 45 * time.Minute}}
+		StageBudget:  policy.StageBudget{Fix: 0.25},
+		StageTimeout: policy.StageTimeout{Implement: 45 * time.Minute},
+		Tiers:        policy.TierExpectations{Medium: policy.TierExpectation{ExpectedUSD: 2.5, ExpectedMinutes: 60, MaxSubagents: 4}}}
 	if got := g.Policy(); got != want {
 		t.Errorf("Policy() = %+v, want %+v", got, want)
 	}

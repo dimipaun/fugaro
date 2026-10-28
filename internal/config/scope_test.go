@@ -129,6 +129,7 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		"governance.stage_budget":       InProject | InRepo,
 		"governance.stage_tokens":       InProject | InRepo,
 		"governance.stage_timeout":      InProject | InRepo,
+		"governance.tiers":              InProject | InRepo,
 
 		"workflows.*.profile":                   InRepo,
 		"workflows.*.job_profile":               InRepo,
