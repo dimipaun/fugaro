@@ -1655,6 +1655,45 @@ func TestInitRepoSilentWithoutCeiling(t *testing.T) {
 	}
 }
 
+// update --repo holds a checkout's governance against the run's ceiling too,
+// and with no project layer that ceiling carries Fugaro's own figures
+// (policy.Governance.WithDefaults, T7.1): a file that raises a guardrail is
+// named here as one the run clamps. The file's governance: block is also why
+// the merge runs at all — setsPolicy counts the key being written, so a
+// repository with no budget and no token limit still hears about the
+// guardrail it wrote — while the budget line above stays silent, because a
+// project with no budget has no ceiling to announce.
+func TestInitRepoClampsGovernanceAgainstFugarosDefaults(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	path := writeProject(t, "aurora", "proj-1234")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, "base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc}\n"...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: api-key }\n" +
+		"governance: { review_ratio: 20 }\n" +
+		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), yaml)
+	testutil.Git(t, root, "remote", "add", "origin", "https://github.com/acme/webapp.git")
+	t.Chdir(t.TempDir())
+	out, errOut, err := execute(t, "setup", "--repo", "--print-vars", "--project", "aurora", "--github-app-id", "42", root)
+	if err != nil {
+		t.Fatalf("%v\n%s\n%s", err, out, errOut)
+	}
+	if want := "fugaro.yaml governance.review_ratio: 20 is looser than 5; the runner will use 5"; !strings.Contains(errOut, want) {
+		t.Errorf("stderr lacks %q:\n%s", want, errOut)
+	}
+	if strings.Contains(errOut, "Budget ceiling") {
+		t.Errorf("a project with no budget announced one:\n%s", errOut)
+	}
+	if strings.Contains(out, "governance") {
+		t.Errorf("print-vars stdout must stay the tfvars alone:\n%s", out)
+	}
+}
+
 // --base-image sets the base kind's entry of base_images, from the image's
 // name or KIND=IMAGE, and a later run naming it again replaces it.
 //

@@ -113,6 +113,50 @@ func TestReviewLaunchCarriesTheTier(t *testing.T) {
 	}
 }
 
+// TestRunAttemptsCarryTheTierOnEveryAttempt: a best-of-N batch is one task
+// launched N times, and the tier is part of that task — every attempt is
+// dispatched at the same expectation, so an attempt that dropped it would run
+// with no envelope at all while its siblings had one.
+//
+// Mutation (drop Tier from buildAttemptSpec): no attempt stores a tier, and
+// each of their records carries no tier block.
+func TestRunAttemptsCarryTheTierOnEveryAttempt(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", releaseTier)
+	out, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "--tier", "small", "--json",
+		"Read the plan first.\n\nThen fix it.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var batch batchResult
+	if err := json.Unmarshal([]byte(out), &batch); err != nil {
+		t.Fatal(err)
+	}
+	if len(batch.Runs) != 2 {
+		t.Fatalf("launched %d attempts, want 2 (%s)", len(batch.Runs), out)
+	}
+	for _, r := range batch.Runs {
+		if got := readSpec(t, f, r.RunID).Tier; got != tier.Small {
+			t.Fatalf("attempt %s: tier = %q, want the flag's", r.RunID, got)
+		}
+	}
+}
+
+// A --batch launch (one run under a batch label) carries its tier the same
+// way: the label groups runs, and the tier still describes this one.
+func TestRunBatchCarriesTheTier(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", releaseTier)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261025-140300-abcd",
+		"--batch", "nightly", "--tier", "small", "Fix the flaky test."); err != nil {
+		t.Fatal(err)
+	}
+	spec := readSpec(t, f, "20261025-140300-abcd")
+	if spec.Tier != tier.Small || spec.Batch != "nightly" {
+		t.Fatalf("tier = %q, batch = %q, want the flag's tier under the batch label", spec.Tier, spec.Batch)
+	}
+}
+
 // TestRunTierRefusedWithRetry: --retry launches the stored task as it is, so it
 // takes no task flags at all — a tier given there would be accepted and then
 // silently dropped, which is worse than a refusal.
