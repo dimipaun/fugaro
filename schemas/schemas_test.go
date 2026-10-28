@@ -1506,6 +1506,74 @@ func TestResultSchemaCheckpoint(t *testing.T) {
 	}
 }
 
+// TestResultSchemaCheckpointAgreeWithGo pins result.schema.json's checkpoint
+// block to internal/runstore's own vocabulary and bound, in both directions.
+// The trigger enum and the text bound are hand-written copies of
+// runstore.GovernanceHaltReasons and runstore.MaxCheckpointText, and the
+// runner writes a checkpoint for every reason the former names: a reason the
+// enum lacks is a result.json a consumer validating against the published
+// schema refuses, a value only the enum knows is a trigger no run can write,
+// and a bound that is not the one NewCheckpoint clips to is a wire that either
+// accepts what the runner never writes or refuses what it did.
+//
+// The Go side is read from runstore rather than listed here, so a reason added
+// to it without the schema fails this test instead of silently widening the
+// gap the next time someone reads the enum above.
+func TestResultSchemaCheckpointAgreeWithGo(t *testing.T) {
+	data, err := os.ReadFile("result.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	props, _ := doc["properties"].(map[string]any)
+	cp, ok := props["checkpoint"].(map[string]any)
+	if !ok {
+		t.Fatal("result.schema.json: no checkpoint property")
+	}
+	fields, ok := cp["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("result.schema.json: checkpoint has no properties")
+	}
+
+	trigger, _ := fields["trigger"].(map[string]any)
+	raw, ok := trigger["enum"].([]any)
+	if !ok {
+		t.Fatal("result.schema.json: checkpoint.trigger has no enum")
+	}
+	var got []string
+	for _, v := range raw {
+		s, ok := v.(string)
+		if !ok {
+			t.Fatalf("result.schema.json: checkpoint.trigger enum entry %v is not a string", v)
+		}
+		got = append(got, s)
+	}
+	var want []string
+	for _, reason := range runstore.GovernanceHaltReasons() {
+		want = append(want, string(reason))
+	}
+	if len(want) == 0 {
+		t.Fatal("runstore names no governance halt reason: this test proves nothing")
+	}
+	if !sameStrings(got, want) {
+		t.Errorf("result.schema.json checkpoint.trigger = %v, runstore.GovernanceHaltReasons() = %v", got, want)
+	}
+
+	for _, name := range []string{"done", "why_over", "next", "hard_instructions"} {
+		field, ok := fields[name].(map[string]any)
+		if !ok {
+			t.Fatalf("result.schema.json: checkpoint.%s is missing", name)
+		}
+		if got := field["maxLength"]; got != float64(runstore.MaxCheckpointText) {
+			t.Errorf("result.schema.json checkpoint.%s maxLength = %v, want runstore.MaxCheckpointText (%d)",
+				name, got, runstore.MaxCheckpointText)
+		}
+	}
+}
+
 // TestResultSchemaHaltReasonsAgreeWithGo pins result.schema.json's halt.reason
 // enum to the HaltReason constants in internal/runstore, in both directions:
 // a reason the Go side can write but the enum lacks is a result.json a
