@@ -30,7 +30,9 @@
 //   - a run id drawn without checking it against the ids this process already
 //     holds -- one id for two launches in one second, whose `frozen` and
 //     `pending` entries then overwrite each other -- fails "redraws the four hex
-//     digits when the id it drew is one this process already holds";
+//     digits when the id it drew is one this process already holds", and an id
+//     drawn (rather than claimed) where the launch is built fails "claims the id
+//     with the reservation, so a same-tick pair cannot draw one id";
 //   - a per-installation rate entry left behind once its stamps have expired,
 //     which is memory a renderer's stream of names chooses, fails "drops an
 //     installation once its stamps have expired, so the names cannot pile up";
@@ -640,6 +642,29 @@ describe('the run id, and the second it is cut in', () => {
     expect(spawner.calls[0]?.args).not.toContain(OTHER_PROJECT)
 
     confirmer.decideWindow('20261028-152618-0001', false)
+    void first
+    void second
+  })
+
+  it('claims the id with the reservation, so a same-tick pair cannot draw one id', async () => {
+    // The draw alone is not the property; the **claim** is. Two messages that
+    // arrive in one tick both pass the limits and both start reading their
+    // records, and if the id were drawn where the launch is built, the second
+    // would draw the first's id while the first was still reading -- nothing
+    // frozen, nothing committed, nothing for it to see. Claimed synchronously
+    // with the reservation, the second message's first draw is already an id
+    // this process holds, so it is the redraw that answers.
+    const confirmer = heldConfirmer()
+    const held = runner({ confirmer, random: tails(0xa2fc, 0xa2fc, 0x0001) })
+
+    const first = held.launch(request({ installation: PROJECT }))
+    const second = held.launch(request({ installation: OTHER_PROJECT }))
+    await untilSettled()
+
+    expect(confirmer.opened.map((launch) => launch.runId)).toStrictEqual([RUN_ID, '20261028-152618-0001'])
+    expect(new Set(confirmer.opened.map((launch) => launch.runId)).size).toBe(2)
+
+    for (const open of confirmer.openRunIds) confirmer.decideWindow(open, false)
     void first
     void second
   })

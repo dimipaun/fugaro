@@ -109,9 +109,12 @@ const RUN_ID_DRAWS = 8
  * by it, so `frozen.set` and `pending.set` would overwrite silently, and the
  * first window's yes would then spawn the second launch's frozen object under
  * the first window's answer. Redrawing inside the one place the id is cut,
- * *before* the window opens, is what keeps that from being reachable at all;
- * the ids in flight are checked with the frozen ones, because a window that is
- * open holds its id in `inFlight` before it has anything frozen.
+ * *before* the window opens, is what keeps that from being reachable at all,
+ * and `taken` is asked about all three places an id can be: **claimed** (drawn
+ * by a launch that is still reading its records), **in flight** (a window that
+ * is open) and **frozen** (a launch this process has already answered, whose id
+ * a replayed answer still resolves). The claim is the one that makes the check
+ * complete, because it is the only one that exists before the launch is built.
  *
  * What is left after the retries is a refusal rather than a shared slot: an id
  * this process already holds is one an operator's yes could be attached to the
@@ -373,6 +376,14 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
    * its reservation, under a token, until its run id replaces that token. */
   const inFlightByInstallation = new Map<string, string>()
   const inFlight = new Set<string>()
+  /** the run ids drawn for launches that are **not yet in flight**: a launch
+   * claims its id in the same synchronous block as its reservation, and the
+   * claim is what keeps two messages of one tick from drawing the same id -- so
+   * it lives here rather than in `inFlight`, whose size is the app-wide cap and
+   * would otherwise count one launch twice while its build was reading. An id
+   * leaves this set when it enters `inFlight` (`commit`) or when the launch is
+   * released without one (`launch`'s `finally`). */
+  const claimedRunIds = new Set<string>()
   /** how many reservations this process has taken, and the prefix that keeps a
    * reservation's token from ever reading as a run id (`newRunID`'s shape has no
    * colon in it) */
@@ -461,6 +472,11 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
    * reservation, the caps and their two refusal sentences are true of the whole
    * unsettled interval.
    *
+   * It is also where the id's **claim** ends: `launch` claimed the id before its
+   * first `await` (`claimedRunIds`), and from this line the id is held in
+   * `inFlight`, so the two sets never hold one id at once and `launch`'s
+   * `finally` can delete from both without caring which one had it.
+   *
    * The entry is released on every path out of that interval: a build that
    * refuses or throws, a confirmer that throws, an answer of no, a launch
    * declined because the installation moved, a child that finished, and a child
@@ -472,6 +488,7 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
   function commit(token: string, launch: FrozenLaunch): void {
     inFlight.delete(token)
     inFlight.add(launch.runId)
+    claimedRunIds.delete(launch.runId)
     inFlightByInstallation.set(launch.project, launch.runId)
   }
 
@@ -489,8 +506,15 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
    * built. Every refusal it can make is made **before** the confirmer is asked,
    * which is what "the window does not open for a launch that cannot happen"
    * means in code.
+   *
+   * The run id arrives from `launch` rather than being drawn here, and that is
+   * deliberate: it is claimed **synchronously with the reservation**, before this
+   * function's first `await`, so that two messages of one tick cannot both draw
+   * it (see the claim in `launch`). A request that this function refuses still
+   * had an id drawn and claimed for it, and `launch`'s `finally` frees it with
+   * the reservation.
    */
-  async function build(request: LaunchRequest): Promise<
+  async function build(request: LaunchRequest, runId: string): Promise<
     { readonly ok: true; readonly launch: FrozenLaunch } | { readonly ok: false; readonly reason: string }
   > {
     const looked = await deps.lookUp(request.installation)
@@ -593,20 +617,6 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
     const planTask = checkLaunchPlanTask(request.planTask)
     if (!planTask.ok) return { ok: false, reason: planTask.reason }
 
-    // The id is drawn **unused**, and the refusal that follows is the one this
-    // row makes about its own bookkeeping rather than about the operator: the
-    // four hex digits are the whole of the entropy, so an id this process
-    // already holds is a window whose answer could be attached to another
-    // launch. See `drawRunID`.
-    const runId = drawRunID(new Date(wallClock()), random, (id) => frozen.has(id) || inFlight.has(id))
-    if (runId === null) {
-      return {
-        ok: false,
-        reason:
-          `this console drew ${String(RUN_ID_DRAWS)} run ids that another launch of this process already holds: ` +
-          'the id is the current second and four hex digits, so wait a moment and ask for the launch again',
-      }
-    }
     // The child's working directory is always the app's own private, empty
     // directory -- never the operator's checkout, the installation's recorded
     // one included. `newRunRef` cuts a run from the branch the *working
@@ -819,9 +829,39 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
       // synchronous and it is the last thing before the first `await`, so the
       // next message of a same-tick burst sees this launch already counted.
       const token = reserve(request.installation, at)
-      let held: FrozenLaunch | null = null
+
+      // The id is drawn **and claimed here**, in the same synchronous block as
+      // the reservation and for the same reason: the four hex digits are the
+      // whole of the id's entropy, and the id keys both maps the answer path
+      // reads -- `frozen` (what a yes spawns) and `pending` (whose `decide` an
+      // answer resolves) -- so two launches sharing one id means the second
+      // window's entries replace the first's and the first window's yes spawns
+      // the second launch. Claimed before this launch's first `await`, the id is
+      // one a same-tick message's draw is already refused; drawn where the
+      // launch is *built* instead, the second message of a same-tick pair would
+      // draw the first's id while the first was still reading its records --
+      // nothing claimed, nothing frozen, nothing committed for it to see.
+      const runId = drawRunID(
+        new Date(wallClock()),
+        random,
+        (id) => claimedRunIds.has(id) || inFlight.has(id) || frozen.has(id),
+      )
+      if (runId === null) {
+        // A refusal about this console's own bookkeeping rather than about the
+        // operator, and before any window: an id this process already holds is
+        // one an operator's yes could be attached to the wrong launch, which is
+        // worse than asking again a second later. The slot goes back with the
+        // refusal; the rate stamp does not, like every other refusal here.
+        release(token, request.installation)
+        return refusedOutcome(
+          `this console drew ${String(RUN_ID_DRAWS)} run ids that another launch of this process already holds: ` +
+            'the id is the current second and four hex digits, so wait a moment and ask for the launch again',
+        )
+      }
+      claimedRunIds.add(runId)
+
       try {
-        const built = await build(request)
+        const built = await build(request, runId)
         // A refusal from `build` **keeps the rate stamp**: a request that cannot
         // be built is still a request the operator's console had to read the
         // records for, and a renderer that asked for a launch that never builds
@@ -831,7 +871,6 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
 
         frozen.set(built.launch.runId, built.launch)
         commit(token, built.launch)
-        held = built.launch
 
         const decided = new Promise<LaunchAnswer>((resolve) => {
           pending.set(built.launch.runId, resolve)
@@ -857,11 +896,18 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
         return await settle(built.launch.runId, answered.yes, answered.reason)
       } finally {
         // The one exit this file's own paths do not cover: if `build` or the
-        // confirmer threw outright, the reservation (or the hold `settle` has
-        // already freed) is released here. `release` is idempotent, so the
-        // ordinary paths through `settle` are unaffected by it.
-        if (held === null) release(token, request.installation)
-        else release(held.runId, held.project)
+        // confirmer threw outright, the reservation, the id's claim and the hold
+        // (`settle` has already freed the last of them) are released here. All
+        // three are released whatever happened, because they are this call's
+        // whether or not the launch was built: `release(token, …)` frees the
+        // reservation while the installation's entry is still the token,
+        // `release(runId, …)` frees the id and the entry the commit moved it to,
+        // and `claimedRunIds.delete` frees a claim the commit never took over.
+        // `release` is idempotent, so the ordinary paths through `settle` are
+        // unaffected by it.
+        release(token, request.installation)
+        release(runId, request.installation)
+        claimedRunIds.delete(runId)
       }
     },
 
