@@ -2456,15 +2456,85 @@ const maxCredentialResumes = 3
 // and render steps are not among them (T7.1).
 func (r *run) stageTimeout(stage string) time.Duration {
 	t := r.policy.Governance.StageTimeout
-	switch {
-	case config.IsReviewStage(stage):
-		return t.Review
-	case stage == "fix":
-		return t.Fix
-	case stage == "implement":
+	switch stageTimeoutKey(stage) {
+	case policy.KeyStageTimeoutImplement:
 		return t.Implement
+	case policy.KeyStageTimeoutReview:
+		return t.Review
+	case policy.KeyStageTimeoutFix:
+		return t.Fix
 	}
 	return 0
+}
+
+// stageTimeoutKey is the policy key a stage's own governance.stage_timeout is
+// read and recorded under (policy.KeyStageTimeout*, the spelling the merge's
+// sources and a dropped value's key both use). It is the one stage-to-key
+// mapping stageTimeout and noteStageTimeoutClamped are read through, so the
+// bound a stage is given and the key its record names cannot disagree. A stage
+// governance bounds none of answers "" (T7.1: an artifact run's plan and
+// render steps).
+func stageTimeoutKey(stage string) string {
+	switch {
+	case stage == "implement":
+		return policy.KeyStageTimeoutImplement
+	case config.IsReviewStage(stage):
+		return policy.KeyStageTimeoutReview
+	case stage == "fix":
+		return policy.KeyStageTimeoutFix
+	}
+	return ""
+}
+
+// noteStageTimeoutClamped records and warns about a stage's own
+// governance.stage_timeout that the run does not apply: the run's own
+// timeouts.stage bounds the stage at least as tightly, so the stage's own
+// bound is dropped rather than given a deadline of its own (stageOnce makes
+// that comparison; this is only what the drop is recorded as).
+//
+// Dropping it in silence was the finding this answers. An operator who writes
+// stage_timeout: { implement: 1h } under a run whose timeouts.stage is 40m has
+// asked for a bound no run of that repository applies, and neither the log nor
+// result.json said so. The entry is one of policy.ignored, so the report's
+// policy line and the digest carry it the way they carry a value of
+// fugaro.yaml that a stricter layer dropped.
+//
+// Source is the branch rather than the layer in From: what is in force is the
+// run's own timeouts.stage, which is the run's own configuration and not a
+// policy layer — the vocabulary this record is written in names that the
+// branch's — while Value is the bound the layer in From asked for. From is the
+// layer the stage_timeout key itself came from, which for a governance key is
+// the project layer's ceiling or one of the two files, so result.schema.json's
+// `from` carries "ceiling" as well.
+//
+// A stage whose bound is dropped more than once — review repeats, and a
+// resumed stage runs again — is recorded and warned about once: the entry is
+// keyed by the key and the value, which are the same every time.
+func (r *run) noteStageTimeoutClamped(stage string, own time.Duration) {
+	key := stageTimeoutKey(stage)
+	if key == "" {
+		return
+	}
+	from := r.policy.Sources[key]
+	if from == "" {
+		from = policy.SourceBranch
+	}
+	ig := runstore.PolicyIgnored{Key: key, Value: own.String(), Effective: r.budget.Stage.String(),
+		Source: policy.SourceBranch, From: from}
+	r.mu.Lock()
+	if r.rec.Policy == nil {
+		r.rec.Policy = &runstore.PolicyRecord{}
+	}
+	for _, e := range r.rec.Policy.Ignored {
+		if e.Key == ig.Key && e.Value == ig.Value {
+			r.mu.Unlock()
+			return
+		}
+	}
+	r.rec.Policy.Ignored = append(r.rec.Policy.Ignored, ig)
+	r.mu.Unlock()
+	r.d.Log.Warn("policy: a stage timeout at or above the run's timeouts.stage was ignored",
+		"key", PolicyKeyPath(key), "value", ig.Value, "effective", ig.Effective, "limit_from", ig.From)
 }
 
 // stageOnce is one attempt at a stage: the whole of what stage did before
@@ -2541,23 +2611,35 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 
 	deadlineCtx, cancelDeadline := r.budget.StageContext(ctx)
 	defer cancelDeadline()
-	if dl, ok := deadlineCtx.Deadline(); ok {
-		r.beginBudgetStage(name, n, dl)
-	}
 	// The stage's own governance.stage_timeout, when the run resolved one: it
 	// only ever shortens a stage, so a value at or above the run's own
 	// timeouts.stage leaves that bound in charge and is dropped here rather
-	// than given a deadline of its own. deadlineCtx stays the context that
-	// says which of the two ended the stage (below): it is done only when the
-	// run's own bound, or the finalize reserve under it, is what fired.
+	// than given a deadline of its own — dropped loudly, on the run log and as
+	// one key of result.json's policy.ignored, because a bound the operator
+	// wrote and the run does not apply is exactly what ignoring it silently
+	// means (noteStageTimeoutClamped). deadlineCtx stays the context that says
+	// which of the two ended the stage (below): it is done only when the run's
+	// own bound, or the finalize reserve under it, is what fired.
+	//
+	// ownCtx is built before the registry write below, so the deadline the
+	// registry and the console show is the one the stage is actually under:
+	// when a tighter stage_timeout applies, that is the stage's own bound, and
+	// a registry naming the run's own later one would say the stage has time
+	// it does not have.
 	own := r.stageTimeout(name)
 	ownCtx, cancelOwn := deadlineCtx, context.CancelFunc(func() {})
 	if own > 0 && own < r.budget.Stage {
 		ownCtx, cancelOwn = context.WithTimeout(deadlineCtx, own)
 	} else {
+		if own > 0 {
+			r.noteStageTimeoutClamped(name, own)
+		}
 		own = 0
 	}
 	defer cancelOwn()
+	if dl, ok := ownCtx.Deadline(); ok {
+		r.beginBudgetStage(name, n, dl)
+	}
 	// The halt's way to stop this stage: cancelling with the halt as the
 	// cause, which StageError reads.
 	stageCtx, cancelCause := context.WithCancelCause(ownCtx)

@@ -2,9 +2,12 @@ package runner_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/policy"
@@ -73,8 +76,11 @@ func TestStageTimeoutHaltsWithCheckpoint(t *testing.T) {
 	if len(h.agent.calls) != 1 {
 		t.Fatalf("%d stages ran, want only implement", len(h.agent.calls))
 	}
+	// The checkpoint's why_over names the bound that fired and not the other
+	// one of the two stage_budget trips: money is not what stopped this stage
+	// (T7.6).
 	cp := rec.Checkpoint
-	if cp == nil || cp.Trigger != string(runstore.HaltStageBudget) || cp.WhyOver == "" || cp.EstimateUSD != 1 {
+	if cp == nil || cp.Trigger != string(runstore.HaltStageBudget) || cp.WhyOver != "a stage passed its own time bound" || cp.EstimateUSD != 1 {
 		t.Fatalf("checkpoint = %+v", cp)
 	}
 	pr := onlyPR(t, h.provider)
@@ -84,13 +90,13 @@ func TestStageTimeoutHaltsWithCheckpoint(t *testing.T) {
 	// The status section the halt wrote mid-stage says the same thing in the
 	// vocabulary the record uses, and the report finalize posted carries the
 	// runner's words for the stop, the detail it gave it and the reason.
-	for _, want := range []string{"**Halted**", "checkpoint `stage\\_budget`", "a stage passed its own budget"} {
+	for _, want := range []string{"**Halted**", "checkpoint `stage\\_budget`", "a stage passed its own time bound"} {
 		if !strings.Contains(pr.Body, want) {
 			t.Errorf("the pull request lacks %q:\n%s", want, pr.Body)
 		}
 	}
 	report := lastComment(t, h)
-	for _, want := range []string{"**Halted:** a stage passed its own budget (time)", "halted: stage_budget: time"} {
+	for _, want := range []string{"**Halted:** a stage passed its own time bound (time)", "halted: stage_budget: time"} {
 		if !strings.Contains(report, want) {
 			t.Errorf("the report lacks %q:\n%s", want, report)
 		}
@@ -122,6 +128,115 @@ func TestStageTimeoutNeverAboveTimeoutsStage(t *testing.T) {
 	}
 	if !onlyPR(t, h.provider).Draft {
 		t.Error("a failed run's pull request is not a draft")
+	}
+}
+
+// TestStageTimeoutAboveTheRunBoundIsRecorded: the value the run drops is not
+// dropped in silence. A stage_timeout at or above the run's own
+// timeouts.stage leaves that bound in charge, and the value the layers wrote
+// is recorded as one key of result.json's policy.ignored — so the report's
+// policy line and the digest carry it the way they carry a value of
+// fugaro.yaml a stricter layer dropped — and warned about on the run log,
+// which is where an operator watching a run sees it (T7.6). Both layers a
+// stage timeout can come from are covered: the repository's own file, and the
+// project layer's governance block, which is the run's ceiling and the one
+// case a ceiling value is dropped.
+func TestStageTimeoutAboveTheRunBoundIsRecorded(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		from      string
+		effective string
+	}{
+		{"the repository's own file", policy.SourceBranch, "1s"},
+		{"the project layer's governance block", policy.SourceCeiling, "1s"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var h *harness
+			if tc.from == policy.SourceCeiling {
+				// The layer's own profile carries the run's timeouts.stage, so
+				// the bound that wins is the run's and the value dropped is the
+				// ceiling's.
+				layer := strings.Replace(runnerLayer,
+					"timeouts: { total: 5m, stage: 2m, verify: 1m, finalize_reserve: 30s }",
+					"timeouts: { total: 5m, stage: 1s, verify: 1m, finalize_reserve: 30s }", 1) +
+					"governance: { stage_timeout: { implement: 5m } }\n"
+				h = newHarness(t, layeredRepo, layerSpec(layer))
+			} else {
+				h = newHarness(t, stageTimeoutCfg(t,
+					"timeouts: { total: 1m, stage: 1s, verify: 30s, finalize_reserve: 10s }",
+					"governance:\n  stage_timeout: { implement: 5m }\n"), nil)
+			}
+			logs := &lockedBuf{}
+			h.deps.Log = slog.New(slog.NewTextHandler(logs, nil))
+			rec, err := h.run(t, blockedStage)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The run's own bound is the one in charge: the stage fails the
+			// way a stage cut by timeouts.stage always has, and the dropped
+			// value is not a governance stop.
+			if rec.Status != runstore.StatusFailed || rec.Halt != nil || rec.Checkpoint != nil {
+				t.Fatalf("record = %+v, halt = %+v, checkpoint = %+v", rec, rec.Halt, rec.Checkpoint)
+			}
+			pol := rec.Policy
+			if pol == nil || pol.Sources[policy.KeyStageTimeoutImplement] != tc.from {
+				t.Fatalf("policy = %+v, want the stage timeout sourced as %s", pol, tc.from)
+			}
+			var found bool
+			for _, ig := range pol.Ignored {
+				if ig.Key != policy.KeyStageTimeoutImplement {
+					continue
+				}
+				found = true
+				if ig.Value != "5m0s" || ig.Effective != tc.effective ||
+					ig.Source != policy.SourceBranch || ig.From != tc.from {
+					t.Errorf("ignored = %+v", ig)
+				}
+			}
+			if !found {
+				t.Fatalf("the stage timeout the run does not apply was dropped without being recorded: %+v", pol.Ignored)
+			}
+			if got := logs.String(); !strings.Contains(got, "a stage timeout at or above the run's timeouts.stage was ignored") {
+				t.Errorf("the run log does not warn about the dropped stage timeout:\n%s", got)
+			}
+		})
+	}
+}
+
+// TestRegistryShowsTheStagesOwnDeadline: the deadline the registry carries for
+// a stage — and so the deadline the console draws — is the one the stage is
+// actually under. A governance.stage_timeout tighter than the run's own
+// timeouts.stage bounds the stage, and a registry naming the run's later bound
+// would tell the owner the stage has time it does not have (T7.6).
+func TestRegistryShowsTheStagesOwnDeadline(t *testing.T) {
+	cfg := strings.Replace(gwConfig(t, ""),
+		"timeouts: { total: 5m, stage: 2m, verify: 1m, finalize_reserve: 30s }",
+		"timeouts: { total: 5m, stage: 30s, verify: 1m, finalize_reserve: 30s }", 1) +
+		"governance: { stage_timeout: { implement: 8s } }\n"
+	b := newBK(t, cfg, "enforce", "", capScript(1)...)
+	var seen map[string]any
+	inStage := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		waitUntil(t, "the registry to show the implement stage", func() bool {
+			seen = b.entry()
+			return seen != nil && seen["stage"] == "implement"
+		})
+		return implement("feature")(t, ctx, req)
+	}
+	rec, err := b.run(t, inStage, review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	started, ok1 := seen["stageStartedAt"].(json.Number)
+	deadline, ok2 := seen["stageDeadline"].(json.Number)
+	if !ok1 || !ok2 {
+		t.Fatalf("the registry entry carries no stage deadline: %v", seen)
+	}
+	from, _ := started.Int64()
+	to, _ := deadline.Int64()
+	// The stage's own bound is 8s and the run's is 30s: a deadline more than
+	// half way between them can only be the run's own.
+	if d := time.Duration(to-from) * time.Millisecond; d <= 0 || d > 15*time.Second {
+		t.Fatalf("the registry shows a stage deadline %v away, want the stage's own 8s bound", d)
 	}
 }
 
