@@ -338,6 +338,35 @@ func TestValidateRefusesVertexEnforce(t *testing.T) {
 	}
 }
 
+// TestValidateCeilingCarriesTheProjectLayersGovernance: the project layer's
+// governance block is the ceiling a run's governance keys are merged under
+// (the runner puts it in its first layer, resolvePolicy), so a value this file
+// writes looser than the layer's is one the run clamps and this command has to
+// warn about rather than pass. Merging the file against a ceiling built
+// without the layer's governance is what let it through (T7.1).
+func TestValidateCeilingCarriesTheProjectLayersGovernance(t *testing.T) {
+	layer := func(d time.Duration) *config.Governance {
+		return &config.Governance{StageTimeout: config.StageTimeout{Implement: config.Duration{Duration: d}}}
+	}
+	lc := &localcfg.Config{Name: "aurora"}
+	cfg := &config.Config{Project: "aurora", Governance: layer(5 * time.Minute),
+		Layer: &config.ProjectLayer{Governance: layer(200 * time.Millisecond)}}
+	_, ws, _ := budgetProblems(context.Background(), cfg, lc, lc.Providers)
+	var found bool
+	for _, w := range ws {
+		if w.Path != "governance.stage_timeout.implement" {
+			continue
+		}
+		found = true
+		if want := "5m0s is looser than 200ms; the runner will use 200ms"; w.Message != want {
+			t.Errorf("warning = %q, want %q", w.Message, want)
+		}
+	}
+	if !found {
+		t.Fatalf("warnings = %v, want one about governance.stage_timeout.implement", ws)
+	}
+}
+
 // With unreadable model_prices the one problem is reported; models are not
 // also called unpriced against a table that was never the file's.
 func TestBudgetProblemsSkipPinsWhenPricesAreUnreadable(t *testing.T) {

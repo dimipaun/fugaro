@@ -253,7 +253,7 @@
               "value": { "type": "string" },
               "effective": { "type": "string" },
               "source": { "enum": ["ceiling", "default-branch", "branch", "policy"], "description": "The layer of the effective value." },
-              "from": { "enum": ["default-branch", "branch"], "description": "The layer that asked for the dropped value." }
+              "from": { "enum": ["ceiling", "default-branch", "branch"], "description": "The layer that asked for the dropped value. The ceiling is here for one case: a stage timeout the run's own timeouts.stage bounds at least as tightly, which the run drops and records (T7.6) — the layer that wrote it can be the project layer's governance, which is the ceiling." }
             }
           }
         }

@@ -174,7 +174,16 @@ func budgetProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config
 		}
 		return problems, warnings, nil
 	}
-	e := policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg))
+	// The ceiling is the project's own, governance included: the runner puts
+	// the project layer's governance block in its first layer (resolvePolicy),
+	// so a value this file writes looser than the layer's is one the run
+	// clamps. Merging the file against a ceiling without it is what made this
+	// command pass a file whose governance the run would never apply (T7.1).
+	ceiling := ceilingLayer(lc)
+	if cfg.Layer != nil {
+		ceiling.Governance = cfg.Layer.Governance.Policy()
+	}
+	e := policy.Merge(ceiling, runner.FileLayer(cfg))
 	for _, ig := range e.Ignored {
 		warnings = append(warnings, clampWarning(ig))
 	}
@@ -230,7 +239,7 @@ func budgetProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config
 		return a
 	}
 	allow := func(a config.Agent) []config.Problem {
-		return config.CheckAllowed(a, ef, ceilingLayer(lc).AllowedModels, lc.Routing, routes)
+		return config.CheckAllowed(a, ef, ceiling.AllowedModels, lc.Routing, routes)
 	}
 	allowed, allowNotes := splitByReach(reach, allow(runPins(routed)), allow(runPins(cfg.Agent)))
 	problems = append(problems, allowed...)

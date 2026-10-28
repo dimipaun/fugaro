@@ -182,6 +182,13 @@ func haltReasonText(h runstore.Halt) string {
 	case runstore.HaltCredsRulesDenied:
 		return "the database's rules refused this run's credential state"
 	case runstore.HaltStageBudget:
+		// The stage's own timeout is the same tripwire with the bound that
+		// fired being time rather than money (T7.6), which the detail is the
+		// runner's own word for: the checkpoint's why_over says which of the
+		// two it was, the way the report's line adds the detail beside it.
+		if h.Detail == "time" {
+			return "a stage passed its own time bound"
+		}
 		return "a stage passed its own budget"
 	case runstore.HaltReviewRatio:
 		return "review spent more calls than the ratio allows for the implementation it read"
