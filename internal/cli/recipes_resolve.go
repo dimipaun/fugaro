@@ -108,14 +108,24 @@ func refuseFollowUpArtifactMode(rcp *recipe.Recipe, name string) error {
 // the other side: there it is a batch that cannot carry a report recipe, here
 // a follow-up that cannot.
 //
-// The runner refuses nothing here: the digest step reads the records it is
-// handed, so a report recipe with no manifest is an empty report rather than
-// a failure, and the pull request it opens would be merged as one.
+// The runner refuses the same mismatch again, at bootstrap, keyed on the
+// recipe it resolved at the task's base (internal/runner/runner.go): this is
+// the refusal of a recipe the launcher resolved itself, from this checkout or
+// the project or the catalog.
 func refuseFollowUpReportMode(rcp *recipe.Recipe, name string) error {
 	if recipe.UsesDigest(rcp) {
-		return userErr("recipe %s writes this repository's run reports, and a repository has one report run at a time; a follow-up carries no manifest of the records it may read and skips the in-flight check a fresh launch makes, so it cannot use it — schedule a report run of its own with fugaro run --recipe %s", name, name)
+		return refuseReportFollowUp(name)
 	}
 	return nil
+}
+
+// refuseReportFollowUp is refuseFollowUpReportMode's refusal for a caller
+// that knows the recipe's name but has no text to parse: a repository recipe
+// inherited by name, whose steps the launcher judges from this checkout's
+// copy of the file when it has one (refuseFollowUpRepoRecipe) and from the
+// previous run's manifest when it has not (prChain.PrevReport).
+func refuseReportFollowUp(name string) error {
+	return userErr("recipe %s writes this repository's run reports, and a repository has one report run at a time; a follow-up carries no manifest of the records it may read and skips the in-flight check a fresh launch makes, so it cannot use it — schedule a report run of its own with fugaro run --recipe %s", name, name)
 }
 
 // refuseFollowUpRepoRecipe refuses the same mismatches for a follow-up
@@ -125,10 +135,13 @@ func refuseFollowUpReportMode(rcp *recipe.Recipe, name string) error {
 // read. The file is read from the working directory's checkout when there is
 // one; a name that checkout does not have, or a file it cannot parse, is
 // left alone, because the runner reads the name at THIS task's base
-// (readRepoRecipe, internal/runner/recipe.go) and refuses a bad or artifact
-// one there itself. Nothing but the checkout is consulted: the previous run
-// ran a repository recipe, and a same-named project or catalog recipe is not
-// the one it ran.
+// (readRepoRecipe, internal/runner/recipe.go) and refuses a bad, artifact or
+// report one there itself. The report mismatch is refused here without the
+// file too: a launcher with no copy of it still knows whether the previous
+// run's task carried a manifest, and so whether the recipe this follow-up
+// inherits is a report recipe (newFollowUpSpec, prChain.PrevReport). Nothing
+// but the checkout is consulted: the previous run ran a repository recipe,
+// and a same-named project or catalog recipe is not the one it ran.
 func refuseFollowUpRepoRecipe(ctx context.Context, repo, name string) error {
 	root := checkoutRoot(ctx, repo)
 	if root == "" {

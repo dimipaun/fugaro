@@ -309,12 +309,14 @@ func TestDigestAttemptsRefused(t *testing.T) {
 // records it never read, beside a report run already going. Refused where the
 // recipe is known, before any cloud work: the image gate would refuse some of
 // these for a different reason (the recipe needs 0.13.0) and let the rest
-// through to the runner, which has no refusal of its own here.
+// through to the runner, whose own backstop is the run it has already been
+// paid to start.
 //
-// Mutation (drop the refuseFollowUpReportMode calls from newFollowUpSpec and
-// carryChosenRecipe, and the one from refuseFollowUpRepoRecipe): every arm
-// below launches a job and fails wantRefused on the execution count as well
-// as on the missing refusal.
+// Mutations: drop the refuseFollowUpReportMode calls from newFollowUpSpec and
+// carryChosenRecipe and the one from refuseFollowUpRepoRecipe, and every arm
+// but the last launches a job and fails wantRefused on the execution count as
+// well as on the missing refusal; drop the prChain.PrevReport arm of
+// newFollowUpSpec and the last arm does.
 func TestDigestFollowUpRefused(t *testing.T) {
 	digestRecipeOf := func(t *testing.T) *task.Recipe {
 		t.Helper()
@@ -365,6 +367,16 @@ func TestDigestFollowUpRefused(t *testing.T) {
 	t.Run("inherited as a repository recipe's name", func(t *testing.T) {
 		f := digestFixture(t)
 		reportRecipeCheckout(t)
+		seedReportRoot(t, f, &task.Recipe{Name: "report", Source: string(recipe.SourceRepo)})
+		wantRefusedReport(t, f, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "Have another look")
+	})
+	// The same follow-up from a directory that is not a checkout of the
+	// repository: the recipe's own file is not there to read, and the
+	// previous run's task is what says its recipe is a report one.
+	t.Run("inherited as a repository recipe's name, outside the checkout", func(t *testing.T) {
+		f := digestFixture(t)
+		testutil.IsolateGit(t)
+		t.Chdir(t.TempDir())
 		seedReportRoot(t, f, &task.Recipe{Name: "report", Source: string(recipe.SourceRepo)})
 		wantRefusedReport(t, f, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "Have another look")
 	})
