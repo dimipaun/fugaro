@@ -49,15 +49,19 @@
 
       `#confirm-task` is the whole task text, never cut: it is a `<pre>` so the
       text keeps the shape it was written with, and the stylesheet bounds it and
-      scrolls it rather than the document shortening it.
+      scrolls it rather than the document shortening it. The two classes below
+      are this window's hooks in the theme (design §2.13): its document carries
+      classes rather than the picker's ids, because the id scan in
+      `installations-view.test.ts` holds every id `screens.css` selects to the
+      ids `installations.html` declares.
     -->
     <main>
       <h1>Confirm this run</h1>
       <p id="confirm-status">Reading the launch…</p>
       <dl id="confirm-fields"></dl>
       <h2>The task, as submitted</h2>
-      <pre id="confirm-task" class="confirm-task"></pre>
-      <div id="confirm-actions" class="confirm-actions"></div>
+      <pre id="confirm-task" class="console-confirm-task"></pre>
+      <div id="confirm-actions" class="console-confirm-actions"></div>
     </main>
     <script src="./confirm.js" defer></script>
   </body>

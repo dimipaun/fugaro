@@ -421,12 +421,12 @@ describe('the confirmation document and its view', () => {
       fileURLToPath(new URL('../../src/renderer/theme/screens.css', import.meta.url)),
       'utf8',
     )
-    const rule = /\.confirm-task\s*\{([^}]*)\}/.exec(screens)
+    const rule = /\.console-confirm-task\s*\{([^}]*)\}/.exec(screens)
     expect(rule, 'screens.css carries no rule for the task box').not.toBeNull()
     expect(rule?.[1]).toMatch(/overflow:\s*auto/)
     expect(rule?.[1]).toMatch(/max-height:\s*\S+/)
     // The class is on the box the document declares, so the rule is not styling
     // nothing.
-    expect(html).toContain('class="confirm-task"')
+    expect(html).toContain('class="console-confirm-task"')
   })
 })

@@ -1314,10 +1314,13 @@ main p {
 /* ---- The launch confirmation window (design section 5.1 rule 11) ----------
  *
  * The window's document is hand-written HTML like the picker's, but its hooks
- * are **classes rather than ids**: the scan in `installations-view.test.ts`
- * reads this file for id selectors and holds every one of them to the ids
- * `installations.html` declares, so a second document's ids here would read as
- * undeclared there.
+ * are **classes rather than ids** (design §2.13): the scan in
+ * `installations-view.test.ts` reads this file for id selectors and holds every
+ * one of them to the ids `installations.html` declares, so a second document's
+ * ids here would read as undeclared there. The names carry the chrome's
+ * `console-` prefix, because this window is chrome the main process owns rather
+ * than a screen the dashboard mounts -- and because that is the vocabulary the
+ * design's inventory scan licenses a hook by.
  *
  * The task box is the reason this section exists. Rule 11 shows the **whole**
  * task text, never cut, so the box is bounded and scrolls rather than the
@@ -1325,7 +1328,7 @@ main p {
  * the window would be a window an operator cannot answer.
  */
 
-pre.confirm-task {
+.console-confirm-task {
   max-height: 40vh;
   margin: 0 0 var(--space-md);
   padding: var(--space-xs);
@@ -1341,7 +1344,7 @@ pre.confirm-task {
 /* The two answers are buttons and a button's boundary is `--border-strong` (the
  * role table the picker's controls read from): Cancel is the default, so it is
  * the one drawn first and the one a keyboard reaches. */
-.confirm-actions button {
+.console-confirm-actions button {
   padding: var(--space-2xs) var(--space-xs);
   color: var(--text);
   border: var(--border-width) solid var(--border-strong);
@@ -1349,7 +1352,7 @@ pre.confirm-task {
   transition: color var(--duration-fast) var(--ease-out);
 }
 
-.confirm-actions button:hover {
+.console-confirm-actions button:hover {
   color: var(--accent-ink);
 }
 

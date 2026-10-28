@@ -825,6 +825,30 @@ no time by design, so the marker's stamp is drawn as the string the document hol
 reformatted into a date: the console's own sentence about the time it does not have is the
 `coordinator-age` paragraph, and it is drawn as prose.
 
+### 2.13 The launch confirmation window — `console/src/renderer/confirm.html` + `console/src/renderer/confirm.ts`
+
+The modal the main process opens before it spawns a run (`desktop-console.md`, §5.1 rule 11;
+V2.5.1a). It shows one launch — the installation, the repository the
+launch recorded and the one it converted, the ref, the title and the plan task, the run id,
+the command line word by word, the size of the task as submitted and the **whole** task text —
+and asks the operator for one of two answers: cancel, which is the default, or go ahead.
+
+| Region | Hook | What it holds |
+|---|---|---|
+| The task | `console-confirm-task` | the `pre` holding the task text as submitted, drawn in full and bounded, so a long task scrolls inside the box rather than being shortened or pushing the two answers off the window |
+| The answers | `console-confirm-actions` | the row the view appends its two buttons to: the confirming one, and Cancel |
+
+**Its hooks are classes and not the picker's ids**, although its document is hand-written
+HTML like the picker's: the scan in `console/test/unit/installations-view.test.ts` reads this
+stylesheet for id selectors and holds every one of them to the ids `installations.html`
+declares, so a second document's ids in this file would read there as rules for a page that
+is not served. The four containers the view looks up (`confirm-status`, `confirm-fields`,
+`confirm-task`, `confirm-actions`) are the document's own declarations, and the ids and the
+two hooks above are the whole of what the window carries: **no `data-*` of its own, and no
+rule here keyed on a theme attribute**, since the window is one surface with one ground. The
+field rows are the view's `dt`/`dd` pairs and are styled by the two hooks above rather than
+by a hook of their own; a rule that wanted a third adds it here first.
+
 ---
 
 ## 3. The theme system
@@ -1802,7 +1826,7 @@ are **different sources, which is what makes the comparison worth making**: `bui
 than ship. **The test's non-vacuity assertion is the load-bearing half**: a name dropped from
 the list, or a file written into `dist/bundle/` that nothing vouches for, still fails.
 
-### 5.4 The three `<link>` elements
+### 5.4 The `<link>` elements
 
 One `<link rel="stylesheet" href="./console.css" />` in the `<head>` of **each** of
 `console/src/renderer/index.html`, `console/src/renderer/installations.html` and `console/src/renderer/refusal.html`, beside the existing CSP `<meta>`:
@@ -1815,6 +1839,12 @@ One `<link rel="stylesheet" href="./console.css" />` in the `<head>` of **each**
   maintains;
 - the refusal document **is included**, and that is the point: the one page a console below
   the floor shows must not be the unstyled one.
+
+**Amended 2026-10-28: `console/src/renderer/confirm.html` is the fourth document and links
+the same file the same way** (the launch confirmation window, §2.13, V2.5.1a). Nothing else
+about this section moves with it: the stylesheet is still one file, still served by the same
+handler under the same directive, and the document the window loads is the one page in the
+bundle whose rules are classes rather than the picker's ids.
 
 ### 5.5 The CSP is unchanged, proved
 
