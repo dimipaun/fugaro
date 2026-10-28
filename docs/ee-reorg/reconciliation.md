@@ -104,7 +104,7 @@ gaps.** S1.1's file lists hold (re-verified: `internal/report/`, `internal/cli/r
   `COPY cmd internal images deploy/terraform`, no `ee/`), started by
   `deploy/terraform/gcp/modules/installation/coordinator.tf` (`/usr/local/bin/fugaro coordinator
   sweep`); and `internal/infra` (`CoordinatorSpec`, `CoordinatorImageExists`), `internal/infra/tf/cover.go`
-  (`toCoordinator`) and `init --coordinator` (`internal/cli/init.go`) are core code that set the job up.
+  (`toCoordinator`) and `--coordinator` (`internal/cli/init.go`) are core code that set the job up.
   Those stay core (they deploy a job; the job's binary is what is licensed).
 *Consequence:* E2.1/E2.2 carry S1.4/S1.5 with the additions; D524 decides the sweep's image.
 

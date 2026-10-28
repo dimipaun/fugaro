@@ -89,10 +89,10 @@ calls, which is why the declarer's implementation moves with it (§5.1).
 F6's third gap stays core with it: the sweep job's Terraform
 (`deploy/terraform/gcp/modules/installation/coordinator.tf`, which starts
 `/usr/local/bin/fugaro coordinator sweep`), `internal/infra`'s `CoordinatorSpec` and
-`CoordinatorImageExists`, `internal/infra/tf/cover.go`'s `toCoordinator`, and `fugaro init
---coordinator`. All of it deploys a job; the *job's binary* is what is licensed, not the code that
-schedules it — and the Terraform is buried in the released CLI, where a free installation's
-`fugaro update` must still be able to write it.
+`CoordinatorImageExists`, `internal/infra/tf/cover.go`'s `toCoordinator`, and the `--coordinator`
+opt-in. All of it deploys a job; the *job's binary* is what is licensed, not the code that schedules
+it — and the Terraform is buried in the released CLI, where a free installation's `fugaro update`
+must still be able to write it.
 
 ### Test data
 
