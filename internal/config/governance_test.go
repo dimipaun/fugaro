@@ -2,6 +2,8 @@ package config
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -93,6 +95,78 @@ func TestGovernanceReadsAndConverts(t *testing.T) {
 	}
 	if got := plain.Governance.Policy(); got != (policy.Governance{}) {
 		t.Errorf("Policy() = %+v, want the zero value", got)
+	}
+}
+
+// TestProjectLayerGovernanceIsTopLevel: the layer's block is a top-level key
+// of the layer file, like claude_models, and not a member of defaults:. The
+// defaults overlay is replace-not-tighten, so a block under it would be a
+// value a repository's own file could replace with a looser one; a top-level
+// block never meets the repository's file except in the tighten-only merge
+// (internal/policy). A layer that writes the key under defaults: is refused
+// as an unknown key there, which is what makes the placement a rule and not a
+// convention.
+func TestProjectLayerGovernanceIsTopLevel(t *testing.T) {
+	head := "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+	l, ps := ParseProjectLayer([]byte(head+"governance:\n  review_ratio: 20\n  stage_budget: { implement: 0.9 }\n"), testAnchor)
+	if len(ps) > 0 {
+		t.Fatalf("problems: %v", ps)
+	}
+	if l.Governance == nil || l.Governance.ReviewRatio != 20 || l.Governance.StageBudget.Implement != 0.9 {
+		t.Fatalf("layer governance = %+v", l.Governance)
+	}
+	// The looser-than-default values a repository may not write are valid
+	// here: the project layer is the one layer that loosens the guardrails,
+	// and the merge is what drops a repository's own loosening (G6, D330).
+	if _, ps := ParseProjectLayer([]byte(head+"defaults:\n  governance:\n    review_ratio: 3\n"), testAnchor); len(ps) == 0 {
+		t.Error("defaults.governance was accepted: the block is a top-level key of the layer file")
+	}
+}
+
+// TestGovernanceCorpus reads the two fixtures the schema corpus shares with
+// this package, so the same file is held to both surfaces: the valid one
+// parses to the values it writes, and each invalid one is refused at the path
+// it exists to exercise (a misspelt key, and a stage budget that reaches the
+// per-run cap).
+func TestGovernanceCorpus(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "config", "valid", "governance.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, ps := Parse(data)
+	if len(ps) > 0 {
+		t.Fatalf("problems: %v", ps)
+	}
+	g := cfg.Governance
+	if g == nil {
+		t.Fatal("governance = nil")
+	}
+	if g.ReviewRatio != 4 || g.ReviewFloorCalls != 12 || g.MaxSubagents != 3 {
+		t.Errorf("governance = %+v", g)
+	}
+	if g.StageBudget != (StageBudget{Implement: 0.6, Review: 0.4, Fix: 0.2}) {
+		t.Errorf("stage_budget = %+v", g.StageBudget)
+	}
+	if g.StageTokens != (StageTokens{Implement: 1500000, Review: 800000}) {
+		t.Errorf("stage_tokens = %+v", g.StageTokens)
+	}
+	if !g.StageTimeout.Implement.Set || g.StageTimeout.Implement.Duration != 45*time.Minute {
+		t.Errorf("stage_timeout.implement = %+v", g.StageTimeout.Implement)
+	}
+	// The unknown key is the decoder's own problem, which carries the line
+	// rather than a path (the block it sits in is what strictDecode names);
+	// the fraction is validateGovernance's, which names the key.
+	for file, want := range map[string]struct{ path, msg string }{
+		"governance-unknown-key":      {"", "field stage_budgets not found in type config.Governance"},
+		"governance-stage-budget-cap": {"governance.stage_budget.implement", "stays the ceiling"},
+	} {
+		data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "config", "invalid", file+".yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ps := Parse(data); !hasProblem(ps, want.path, want.msg, 0) {
+			t.Errorf("%s: want a problem at %q mentioning %q, got %v", file, want.path, want.msg, ps)
+		}
 	}
 }
 
