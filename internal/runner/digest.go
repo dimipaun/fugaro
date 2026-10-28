@@ -52,10 +52,10 @@ const (
 	// name like "provision": the record's own stage enum carries no digest
 	// step, and the stage timings' names are free strings.
 	digestStageName = "digest"
-	// digestRecipeName is the catalog recipe a report run's record names: the
-	// launcher writes the manifest for it (internal/cli's digestManifest) and
-	// nothing else, which is how an open report run is told from a run that
-	// merely opened a pull request.
+	// digestRecipeName is the catalog recipe a report run's record names. A
+	// record naming it is a report run's without a further read; a repository's
+	// or a project's own report recipe is named something else, and its run is
+	// told by the manifest its task carries (digestReportRun).
 	digestRecipeName = "run-digest"
 )
 
