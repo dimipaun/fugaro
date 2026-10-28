@@ -423,6 +423,12 @@ test('a partner logo is a name and a self-hosted image, and a broken entry is re
 
   const unnamed = refusal({ logos: [{ image: '/images/partners/x.svg' }] })
   assert.match(unnamed, /name/, `a logo with no name was accepted: an entry that renders a picture nobody is named beside is not social proof — the message was ${JSON.stringify(unnamed)}`)
+
+  const blank = refusal({ logos: [{ name: '""', image: '/images/partners/x.svg' }] })
+  assert.match(blank, /named beside/, `a logo with a blank name was accepted: the section prints the partner's own name beside the logo, so an empty one is a picture nobody is named beside — the message was ${JSON.stringify(blank)}`)
+
+  const spaces = refusal({ logos: [{ name: '"   "', image: '/images/partners/x.svg' }] })
+  assert.match(spaces, /named beside/, `a logo whose name is spaces was accepted: a value that is blank once trimmed is a blank name with a different spelling — the message was ${JSON.stringify(spaces)}`)
 })
 
 // ---- the reader, and the file the loader opens --------------------------------------------
