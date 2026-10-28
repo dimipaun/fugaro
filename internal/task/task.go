@@ -281,18 +281,20 @@ type Spec struct {
 	//
 	// The vocabulary is closed (internal/tier): a value outside it is refused
 	// by Validate below, because a near miss is a launcher's bug rather than a
-	// run's opinion about its own size. A runner before the release that reads
-	// this field refuses the whole spec (Parse disallows unknown fields), the
-	// skew every new task field has. No launcher writes it yet, so a spec that
-	// carries a tier was written by hand and the launch-time image gate rigor's
-	// own fields have (rigorRequestSince) is not here for this one.
+	// run's opinion about its own size. `fugaro run --tier` is the launcher
+	// that writes it, and a --pr follow-up carries the tier the run it follows
+	// recorded (plan T8.1b). A runner before the release that reads this field
+	// refuses the whole spec (Parse disallows unknown fields), the skew every
+	// new task field has, so a launch carrying a tier is gated on an image
+	// that has it (governanceSince) the way rigor's own fields are
+	// (rigorRequestSince).
 	Tier tier.Tier `json:"tier,omitempty"`
 	// ExpectedScope is roughly which files or areas the run is expected to
 	// touch (spec.md §3's expectation envelope). It is paths and not prose:
 	// nothing here reaches a prompt, and each entry is bounded and non-blank
 	// the way Spec.Paths is, because a hand-written task.json is what can make
 	// the list arbitrarily long. Nil for every launch that declares none, which
-	// today is every launch: like Tier above, no launcher writes it yet.
+	// today is every launch: unlike Tier above, no launcher writes it yet.
 	ExpectedScope []string `json:"expected_scope,omitempty"`
 }
 

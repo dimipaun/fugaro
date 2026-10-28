@@ -742,6 +742,11 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			},
 			At:       runstore.RigorAtFinalize,
 			Revision: "origin/main"},
+		// And the expectation tier the run was dispatched at and the figures
+		// the run's governance resolved for it (docs/task-governance T8.1,
+		// D330): a block a run launched with --tier writes, so a schema that
+		// refused it would refuse the runner's own record.
+		Tier: &runstore.TierRecord{Tier: tier.Small, ExpectedUSD: 1, ExpectedMinutes: 30},
 		// And the items the run filed (docs/rigor-modes T4.5, D9): ids of
 		// the files a reviewer finds under docs/backlog/ on the branch.
 		Backlog: []string{"20261024-01", "20261024-02"},

@@ -1,6 +1,7 @@
 package runner_test
 
 import (
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -65,23 +66,53 @@ func TestRunRecordCarriesTheShippedTierDefault(t *testing.T) {
 	}
 }
 
-// TestRunRecordFillsOnlyTheKeysNoLayerSet: the default is per key, so a layer
-// that writes one key of one tier keeps the shipped figure for the others —
-// and a figure larger than the shipped one is kept too, because the project
-// layer is the one layer that may loosen a tier and an expectation above
-// anything Fugaro ships is still only an expectation (D331, G6).
-func TestRunRecordFillsOnlyTheTierKeysNoLayerSet(t *testing.T) {
+// TestRunRecordIgnoresALooserTierInTheRepository: with no project layer the
+// ceiling carries Fugaro's own figures, so the repository's file — the branch
+// the run checks out, which the agent can edit mid-run — may only tighten
+// them. An expectation above the shipped one is dropped, recorded as one key
+// of policy.ignored and warned about, exactly as a looser budget key is, and
+// the record carries the figure the run is actually held to ($1/30m for
+// small).
+//
+// The defaults have to be in the ceiling for that to happen at all: with a
+// ceiling that carried none, the repository's own $2 would be the first value
+// written for the key and would win with it, silently inverting tighten-only
+// for a whole tier (T7.1, D331).
+func TestRunRecordIgnoresALooserTierInTheRepository(t *testing.T) {
 	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "agent:\n",
 		"governance:\n  tiers:\n    small: { expected_usd: 2 }\nagent:\n", 1)
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature", Tier: tier.Small}
 	h := newHarness(t, cfg, spec)
+	var logs lockedBuf
+	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
 	rec, err := h.run(t, implement("feature"), review("ship", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := policy.DefaultTierExpectations().Small
-	if rec.Tier == nil || rec.Tier.ExpectedUSD != 2 || rec.Tier.ExpectedMinutes != want.ExpectedMinutes {
-		t.Errorf("the block = %+v, want the layer's own $2 and the shipped %vm", rec.Tier, want.ExpectedMinutes)
+	if rec.Tier == nil || rec.Tier.ExpectedUSD != want.ExpectedUSD || rec.Tier.ExpectedMinutes != want.ExpectedMinutes {
+		t.Errorf("the block = %+v, want the shipped small expectation %+v: a repository's looser figure is not the run's", rec.Tier, want)
+	}
+	pol := rec.Policy
+	if pol == nil {
+		t.Fatal("the record of a run that dropped a value carries no policy")
+	}
+	var found bool
+	for _, ig := range pol.Ignored {
+		if ig.Key != policy.TierKey(tier.Small, policy.KeyExpectedUSD) {
+			continue
+		}
+		found = true
+		if ig.Value != "2" || ig.Effective != "1" || ig.Source != policy.SourceCeiling || ig.From != policy.SourceBranch {
+			t.Errorf("ignored = %+v", ig)
+		}
+	}
+	if !found {
+		t.Fatalf("the repository's looser tier expectation was dropped without being recorded: %+v", pol.Ignored)
+	}
+	got := logs.String()
+	if !strings.Contains(got, "a looser value in fugaro.yaml was ignored") || !strings.Contains(got, "governance.tiers.small.expected_usd") {
+		t.Errorf("the run log does not warn about the dropped tier figure:\n%s", got)
 	}
 }
 

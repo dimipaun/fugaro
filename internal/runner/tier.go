@@ -39,21 +39,12 @@ func (r *run) recordTier() {
 }
 
 // tierExpectation is what the run expects tier t to cost and take: the value
-// every layer of the run's policy resolved for it, and Fugaro's shipped figure
-// under any key none of them set (policy.DefaultTierExpectations —
-// $0.25/10m, $1/30m, $3/90m, $8/240m).
-//
-// The merge invents nothing, so a repository with no governance.tiers block
-// resolves every key of a tier to zero, and zero here is not "no expectation":
-// it is the tightest value of all, a run expected to cost nothing and take no
-// time, which is the absence of a decision and not one. The defaults have to
-// come from somewhere, and the project layer is the one layer that may loosen
-// them, so this is where the run reads them — the same WithDefaults the ceiling
-// is meant to be built with (policy.Governance.WithDefaults, T7.1). It is here
-// and not in resolvePolicy's ceiling because that ceiling is the owner's
-// environment, and Fugaro's own defaults are not a bound the owner wrote: a
-// record that named it as their source would misname the owner of every
-// governance key (H1).
+// the run's policy resolved for it. The defaults are already in it — the
+// ceiling is built with them (policy.Governance.WithDefaults, T7.1), which is
+// also what makes a repository's looser figure one the merge drops — so there
+// is nothing to fill in here: a tier of the vocabulary always carries the
+// shipped figure ($0.25/10m, $1/30m, $3/90m, $8/240m) unless a layer wrote a
+// tighter one.
 func (r *run) tierExpectation(t tier.Tier) policy.TierExpectation {
-	return policy.Governance{Tiers: r.policy.Governance.Tiers}.WithDefaults().Tiers.For(t)
+	return r.policy.Governance.Tiers.For(t)
 }

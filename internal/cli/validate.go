@@ -74,6 +74,29 @@ func ceilingLayer(lc *localcfg.Config) policy.Layer {
 	return l
 }
 
+// runCeiling is the ceiling a run starts under, as much of it as an offline
+// command can build: ceilingLayer, plus the project layer's governance block
+// with Fugaro's own figures filled in where the layer is silent
+// (policy.Governance.WithDefaults). resolvePolicy builds the runner's ceiling
+// exactly this way (T7.1, D331), so the project layer is the one layer that
+// may loosen a guardrail and every layer under it — the default branch's
+// fugaro.yaml and the branch the run checks out — may only tighten one.
+//
+// It is one function because both commands that hold a fugaro.yaml against the
+// ceiling build it here: `fugaro validate` judges the file in hand, and
+// `fugaro update --repo` says which of its keys the ceiling would clamp. A
+// ceiling without the defaults is what let a repository raise a guardrail
+// Fugaro ships and hear nothing.
+func runCeiling(lc *localcfg.Config, cfg *config.Config) policy.Layer {
+	ceiling := ceilingLayer(lc)
+	var gov policy.Governance
+	if cfg != nil && cfg.Layer != nil {
+		gov = cfg.Layer.Governance.Policy()
+	}
+	ceiling.Governance = gov.WithDefaults()
+	return ceiling
+}
+
 // clampWarning says in words what the runner will do with one value of the
 // file that is looser than what sits above it.
 //
@@ -174,15 +197,13 @@ func budgetProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config
 		}
 		return problems, warnings, nil
 	}
-	// The ceiling is the project's own, governance included: the runner puts
-	// the project layer's governance block in its first layer (resolvePolicy),
-	// so a value this file writes looser than the layer's is one the run
-	// clamps. Merging the file against a ceiling without it is what made this
-	// command pass a file whose governance the run would never apply (T7.1).
-	ceiling := ceilingLayer(lc)
-	if cfg.Layer != nil {
-		ceiling.Governance = cfg.Layer.Governance.Policy()
-	}
+	// The ceiling is the run's own, governance included: the runner puts the
+	// project layer's governance block in its first layer, with Fugaro's
+	// figures filled in where the layer is silent (resolvePolicy, runCeiling),
+	// so a value this file writes looser than either is one the run clamps.
+	// Merging the file against a ceiling without it is what made this command
+	// pass a file whose governance the run would never apply (T7.1).
+	ceiling := runCeiling(lc, cfg)
 	e := policy.Merge(ceiling, runner.FileLayer(cfg))
 	for _, ig := range e.Ignored {
 		warnings = append(warnings, clampWarning(ig))
@@ -1473,10 +1494,15 @@ func keyStates(model string) string {
 	return fmt.Sprintf(`%s is pinned and goes direct, and this call needs a stored Anthropic API key whenever the job holds none: a job with a version of the anthropic-api-key secret mounts one and sends this call to Anthropic as it stands, and a job with none halts — "%s". Whether this job holds one is not a fact this command reads offline, so this is a note and never a refusal`, model, config.MissingAnthropicKey)
 }
 
-// setsPolicy is whether the file has a budget: block or a token limit: the
-// keys that the default branch's file bounds.
+// setsPolicy is whether the file has a budget: block, a token limit or a
+// governance: block: the keys the run's ceiling bounds, and so the keys a
+// command that holds the file against that ceiling has something to say about.
+// The governance half is the key being written rather than the block's
+// contents (RepoGovernanceSet), so an empty block counts — what it bounds is
+// Fugaro's defaults.
 func setsPolicy(cfg *config.Config) bool {
-	return cfg.Budget != nil || cfg.Agent.MaxRunTokens > 0 || cfg.Agent.MaxOutputTokens != (config.RoleTokens{})
+	return cfg.Budget != nil || cfg.Agent.MaxRunTokens > 0 ||
+		cfg.Agent.MaxOutputTokens != (config.RoleTokens{}) || cfg.RepoGovernanceSet
 }
 
 // branchNote says, when the file is a checkout's and its branch isn't the

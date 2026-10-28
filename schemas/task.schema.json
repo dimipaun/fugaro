@@ -76,11 +76,11 @@
     },
     "tier": {
       "enum": ["trivial", "small", "medium", "large"],
-      "description": "The expectation tier of this run (docs/task-governance/spec.md §3, plan T8.1): what the run is expected to cost and take, which selects one tier of fugaro.yaml's governance.tiers. Absent is untiered — every spec written before this release — and no launcher writes the field yet, so a spec that carries a tier was written by hand. The vocabulary is internal/tier's and spelled exactly as it spells it: a near miss (\"Trivial\", \"SMALL\") is refused, never read as an unknown tier. It is not `rigor` above: that one is the review's depth, a different question with a different vocabulary. Needs a 0.13.0 runner: an older runner's task.Parse decodes with DisallowUnknownFields and refuses the field outright."
+      "description": "The expectation tier of this run (docs/task-governance/spec.md §3, plan T8.1): what the run is expected to cost and take, which selects one tier of fugaro.yaml's governance.tiers. Absent is untiered — every spec written before this release, and every launch that declares no tier. fugaro run --tier writes it, and a --pr follow-up carries the tier the run it follows recorded (plan T8.1b). The vocabulary is internal/tier's and spelled exactly as it spells it: a near miss (\"Trivial\", \"SMALL\") is refused, never read as an unknown tier. It is not `rigor` above: that one is the review's depth, a different question with a different vocabulary. Needs a 0.13.0 runner: an older runner's task.Parse decodes with DisallowUnknownFields and refuses the field outright."
     },
     "expected_scope": {
       "type": "array",
-      "description": "Roughly which files or areas the run is expected to touch (docs/task-governance/spec.md §3's expectation envelope). It is paths and never prose: nothing here reaches a prompt. Absent for every spec that declares none, and like `tier` above no launcher writes it yet. A blank entry is no path (the same rule as task.InputNameBlank's, expressed as the pattern), and both bounds are task.MaxDeclaredPaths and task.MaxDeclaredPathBytes. Needs a 0.13.0 runner, the same as `tier` above.",
+      "description": "Roughly which files or areas the run is expected to touch (docs/task-governance/spec.md §3's expectation envelope). It is paths and never prose: nothing here reaches a prompt. Absent for every spec that declares none, and unlike `tier` above no launcher writes it yet. A blank entry is no path (the same rule as task.InputNameBlank's, expressed as the pattern), and both bounds are task.MaxDeclaredPaths and task.MaxDeclaredPathBytes. Needs a 0.13.0 runner, the same as `tier` above.",
       "items": { "type": "string", "pattern": "\\S", "maxLength": 200 },
       "maxItems": 100
     },

@@ -163,7 +163,8 @@ type TierExpectations struct {
 //
 // A tier added to tier.Tiers does not fail to compile here: the switch's
 // missing case returns the zero expectation, which TestTierDefaultsFromProjectLayer
-// catches by walking the vocabulary against the shipped figures.
+// catches by walking the vocabulary (tier.Tiers) against the shipped figures
+// through this lookup.
 func (ts TierExpectations) For(t tier.Tier) TierExpectation {
 	switch t {
 	case tier.Trivial:
@@ -256,9 +257,10 @@ type StageTimeout struct{ Implement, Review, Fix time.Duration }
 //
 // The result is a ceiling layer, so the keys it fills are sourced as the
 // ceiling and not as the file that wrote the block — the defaults are
-// Fugaro's, not the operator's, and a later task that has to name the owner
-// of a governance value in a refusal or a record says so the way
-// policySources does for the published node (H1).
+// Fugaro's, not the operator's, so a consumer that has to name the owner of a
+// governance value asks DefaultGovernanceKeys before it says "ceiling", the
+// way policySources renames the ceiling for the keys the published node set
+// (H1).
 func (g Governance) WithDefaults() Governance {
 	d := DefaultGovernance()
 	if g.ReviewRatio == 0 {
@@ -290,6 +292,43 @@ func (g Governance) WithDefaults() Governance {
 	// stage_tokens and stage_timeout have no default: a stage with no token
 	// ceiling and no timeout of its own is bounded by the run's own.
 	return g
+}
+
+// DefaultGovernanceKeys are the keys of g whose value is the one Fugaro ships
+// for them (DefaultGovernance), keyed as Effective.Sources and Ignored.Key
+// spell them. It is how a consumer tells a guardrail Fugaro itself set from
+// one a layer chose: the ceiling every run starts under is built with the
+// defaults (WithDefaults), so a key whose effective value is still the shipped
+// figure is the ceiling's only because nothing wrote it — no layer made that
+// decision, and a record that sourced it as the ceiling would name the owner
+// of a value he never set (H1).
+//
+// A layer that writes the shipped figure itself is named here too: the value
+// is the default either way, and the two are the same number to every reader.
+// stage_tokens and stage_timeout are never named — they have no shipped
+// default, so a key of theirs is either unset (and has no source at all) or a
+// layer's own.
+func (g Governance) DefaultGovernanceKeys() map[string]bool {
+	d := DefaultGovernance()
+	out := map[string]bool{}
+	mark := func(key string, isDefault bool) {
+		if isDefault {
+			out[key] = true
+		}
+	}
+	mark(KeyReviewRatio, g.ReviewRatio == d.ReviewRatio)
+	mark(KeyReviewFloorCalls, g.ReviewFloorCalls == d.ReviewFloorCalls)
+	mark(KeyMaxSubagents, g.MaxSubagents == d.MaxSubagents)
+	mark(KeyStageBudgetImplement, g.StageBudget.Implement == d.StageBudget.Implement)
+	mark(KeyStageBudgetReview, g.StageBudget.Review == d.StageBudget.Review)
+	mark(KeyStageBudgetFix, g.StageBudget.Fix == d.StageBudget.Fix)
+	for _, t := range tier.Tiers {
+		cur, def := g.Tiers.For(t), d.Tiers.For(t)
+		mark(TierKey(t, KeyExpectedUSD), cur.ExpectedUSD == def.ExpectedUSD)
+		mark(TierKey(t, KeyExpectedMinutes), cur.ExpectedMinutes == def.ExpectedMinutes)
+		mark(TierKey(t, KeyMaxSubagents), cur.MaxSubagents == def.MaxSubagents)
+	}
+	return out
 }
 
 // Layer is one source of policy. The zero value of every field means "unset".
