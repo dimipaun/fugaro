@@ -3,7 +3,7 @@
 // F20, F22).
 //
 // G2.1 is data and a loader, and the point of both is that **the four campaign pages cannot
-// carry a claim this repository cannot back**. Three rules make that true, and each has cases
+// carry a claim this repository cannot back**. Four rules make that true, and each has cases
 // below:
 //
 //   1. **A published figure is never typed into a page.** `website/data/landing.yaml` holds one
@@ -28,6 +28,10 @@
 //      the spec's four message names, and the pre-fill message names the variant it was opened
 //      from (spec §6). A headline or supporting line that is blank is refused as well, because the
 //      hero prints both and this file is the only place that copy is written.
+//   4. **A partner logo is a name beside a self-hosted picture, and the name is there.** The
+//      social-proof section prints the partner's own name beside the logo, so an entry whose
+//      `name` is blank — or spaces, which is the same hole with a different spelling — is a
+//      picture nobody is named beside, which is not social proof (F11, F12, D405).
 //
 // The names in the file are the spec's own four campaigns (`docs/go-to-market/spec.md` §6:
 // Save, Control, Scale, Crew), and the one person named anywhere in it is the owner's own first
@@ -423,6 +427,12 @@ test('a partner logo is a name and a self-hosted image, and a broken entry is re
 
   const unnamed = refusal({ logos: [{ image: '/images/partners/x.svg' }] })
   assert.match(unnamed, /name/, `a logo with no name was accepted: an entry that renders a picture nobody is named beside is not social proof — the message was ${JSON.stringify(unnamed)}`)
+
+  const blank = refusal({ logos: [{ name: '""', image: '/images/partners/x.svg' }] })
+  assert.match(blank, /named beside/, `a logo with a blank name was accepted: the section prints the partner's own name beside the logo, so an empty one is a picture nobody is named beside — the message was ${JSON.stringify(blank)}`)
+
+  const spaces = refusal({ logos: [{ name: '"   "', image: '/images/partners/x.svg' }] })
+  assert.match(spaces, /named beside/, `a logo whose name is spaces was accepted: a value that is blank once trimmed is a blank name with a different spelling — the message was ${JSON.stringify(spaces)}`)
 })
 
 // ---- the reader, and the file the loader opens --------------------------------------------

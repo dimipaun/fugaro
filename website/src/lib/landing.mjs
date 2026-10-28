@@ -17,7 +17,7 @@
 // figure stays one number (D96, D97) and a build of this file reads no README, no generated
 // document and no font.
 //
-// Three rules, and every one of them is a refusal rather than a default:
+// Four rules, and every one of them is a refusal rather than a default:
 //
 //   1. **A proof number is backed or it is the sentinel.** A variant's figure is `unmeasured`,
 //      or it is accepted only beside the entry of the owner's own measurement of this project's
@@ -33,6 +33,11 @@
 //   3. **The four variants are the spec's four campaigns**, at the spec's own paths, and the
 //      pre-fill message names the variant its page is (spec §6). A fifth path is a page no
 //      campaign sends anyone to.
+//   4. **A partner logo is a name beside a self-hosted picture, and the name is there.** The
+//      social-proof section prints the partner's own name beside the logo: an entry whose `name`
+//      is blank is a picture nobody is named beside, which is not social proof. The shipped list
+//      is empty, because the file names no partner until the owner has that partner's written
+//      permission (F11, F12, D405).
 //
 // Nothing here fetches, resolves a host or reads a clock, and no npm package is added for the
 // site's benefit (Global Constraint 5).
@@ -234,7 +239,13 @@ function partnerLogo(value, index, file) {
   const what = `partner_logos[${index}]`
   const entry = asMap(value, file, what)
   refuseUnknownKeys(entry, LOGO_KEYS, file)
-  return { name: asString(entry.name, file, `${what}.name`), image: selfHosted(entry.image, file, `${what}.image`) }
+  const name = asString(entry.name, file, `${what}.name`)
+  if (name.trim() === '') {
+    throw new Error(
+      `${file}: ${what}.name is ${JSON.stringify(name)}, and the social-proof section prints the partner's own name beside the logo. A blank name is a picture nobody is named beside, which is not social proof, and the file names a partner only once the owner has that partner's written permission (F11, F12, D405).`,
+    )
+  }
+  return { name, image: selfHosted(entry.image, file, `${what}.image`) }
 }
 
 /**
