@@ -9,6 +9,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -521,6 +522,90 @@ func TestTaskSchemaInputs(t *testing.T) {
 		if err := validate(head + tc.lit + `}`); err == nil {
 			t.Errorf("schema accepts %s: %s", tc.name, tc.lit)
 		}
+	}
+}
+
+// TestTaskSchemaDigestRuns pins the task schema's `digest_runs` property
+// (task-governance plan T3.6): the report run's manifest, the run IDs the
+// launching CLI listed for the digest step to read. task.schema.json is
+// additionalProperties: false, so without this property every digest launch
+// writes a task.json the published schema rejects.
+//
+// The two rules the schema carries are the decoder's own (Spec.Validate): a
+// run ID of the one shape, and at most task.MaxDigestRuns of them, which the
+// schema copies and TestTaskSchemaDigestRunsBound ties back to the constant.
+//
+// Mutation (drop the digest_runs property from schemas/task.schema.json): the
+// valid instance below is rejected as an unknown key and this test fails.
+func TestTaskSchemaDigestRuns(t *testing.T) {
+	sch := compile(t, "task.schema.json")
+	validate := func(lit string) error {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(lit))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	head := `{"version":1,"run_id":"20261027-093000-abcd","repo":"acme/app","ref":"main","task":"x"`
+	ok := head + `,"digest_runs":["20261026-090000-1234","20261025-080000-abcd"]}`
+	if err := validate(ok); err != nil {
+		t.Fatalf("schema rejects a task carrying a manifest: %v", err)
+	}
+	if err := validate(head + `}`); err != nil {
+		t.Fatalf("schema rejects a task carrying none: %v", err)
+	}
+	for _, tc := range []struct{ name, lit string }{
+		{"not an array", `,"digest_runs":"20261026-090000-1234"`},
+		{"an empty list", `,"digest_runs":[]`},
+		{"not a run ID", `,"digest_runs":["yesterday"]`},
+		{"an empty ID", `,"digest_runs":[""]`},
+		{"a run ID without its four hex digits", `,"digest_runs":["20261026-090000"]`},
+		{"an upper-case run ID", `,"digest_runs":["20261026-090000-ABCD"]`},
+		{"a null element", `,"digest_runs":[null]`},
+	} {
+		if err := validate(head + tc.lit + `}`); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, tc.lit)
+		}
+	}
+}
+
+// TestTaskSchemaDigestRunsBound ties the schema's own bound on the manifest to
+// task.MaxDigestRuns: the two are separate copies, and a bound moved in one
+// without the other would publish a schema that admits a list the decoder
+// refuses (or the reverse).
+func TestTaskSchemaDigestRunsBound(t *testing.T) {
+	data, err := os.ReadFile("task.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]struct {
+			MaxItems int `json:"maxItems"`
+			MinItems int `json:"minItems"`
+			Items    struct {
+				Pattern string `json:"pattern"`
+			} `json:"items"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	p, ok := doc.Properties["digest_runs"]
+	if !ok {
+		t.Fatal("task.schema.json has no digest_runs property")
+	}
+	if p.MaxItems != task.MaxDigestRuns {
+		t.Errorf("schema digest_runs maxItems %d != task.MaxDigestRuns %d", p.MaxItems, task.MaxDigestRuns)
+	}
+	// A manifest that is present names at least one run: an empty one is
+	// omitted by the launcher (omitempty), so the schema refuses what the
+	// decoder never sees.
+	if p.MinItems != 1 {
+		t.Errorf("schema digest_runs minItems %d, want 1", p.MinItems)
+	}
+	// The pattern is task.ValidRunID's own shape, which the decoder applies.
+	if !regexp.MustCompile(p.Items.Pattern).MatchString("20261026-090000-abcd") {
+		t.Errorf("schema digest_runs items pattern %q does not match a run ID", p.Items.Pattern)
 	}
 }
 

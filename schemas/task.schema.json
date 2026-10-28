@@ -126,6 +126,13 @@
     "compression_off": {
       "type": "boolean",
       "description": "task.Spec.CompressionOff, written by fugaro run --no-compression: it disables agent.compression for this run only, overriding the repository's own reviewed choice (docs/design/headroom-compression.md §4). There is no field and no flag to force compression on, so this is the only direction the override goes. Needs a 0.12.0 runner, which is why the launcher gates at launch (internal/cli/recipes_skew.go's compressionSince) every launch whose task carries it: one that writes it, which --no-compression does only when the resolved configuration turns compression on, and a --pr follow-up or a --retry, which inherits it from the run it continues and so carries it even after the repository's key has been removed. task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running the task without it."
+    },
+    "digest_runs": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5000,
+      "items": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
+      "description": "The report run's manifest (task-governance plan T3.6, task.Spec.DigestRuns): the run IDs of the records the digest step may read, which the launching CLI listed from this repository's own runs/ prefix — the last 40 days, newest first, at most task.MaxDigestRuns of them. Absent for every launch that is not a report run, so a spec written for one is byte-identical to what the previous release wrote. The job reads each named record by name and never lists, so this list is what decides which records a run reads; the runner still refuses an ID outside its own repository's prefix (G2). It is accepted only with a recipe whose first step is digest (task.RecipeUsesDigest), the only step that reads it; a repository-sourced recipe carries its name alone, so the launcher judges the file it resolved (internal/cli/run_digest_manifest.go) and the runner resolves that name at the task's ref. Needs a 0.13.0 runner, which is why the launcher's image gate refuses a digest launch at an older job image (internal/cli/recipes_skew.go's digestSince, the same gate the digest step itself needs): task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running the task without its manifest."
     }
   },
   "dependentRequired": {
