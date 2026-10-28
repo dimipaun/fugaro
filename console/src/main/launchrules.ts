@@ -21,7 +21,12 @@
 //      and a leading `-`, and a title may have both. So they are checked by the
 //      rules below -- one line, no control character, no format character, a cap
 //      -- and `ARGUMENT_RE` is untouched for every other field, which is the
-//      point: widening it for a title would widen it for `--repo` too.
+//      point: widening it for a title would widen it for `--repo` too. Each is
+//      also held to the CLI's own list for it (`internal/task`'s `TitleProblem`
+//      and `PlanTaskProblem`, the two lists the launcher and the runner share),
+//      because a value the CLI refuses is a launch that fails *after* the
+//      operator confirmed the window. A plan task is a shape and not prose: an
+//      id that is not `<plan>/<task>` is refused here, whatever a title may be.
 //   3. **The reply is decoded closed.** A field the decoder does not know
 //      refuses the whole reply rather than being ignored, because the values it
 //      carries are drawn as the CLI's own facts.
@@ -130,62 +135,112 @@ const CONTROL_RE = /\p{Cc}/u
  * in the window is the value in the argv. */
 const FORMAT_RE = /\p{Cf}/u
 
-/** LINE_BREAK_RE is what makes a value more than one line. The newline and the
- * carriage return are `Cc` already; U+2028 and U+2029 are not, and both end a
- * line in every rendered document a person reads. */
-const LINE_BREAK_RE = /[\n\r\u2028\u2029]/u
+/** LINE_BREAK_RE is what makes a value more than one line. The newline, the
+ * carriage return and U+0085 (NEL) are Go's own line breaks for a title
+ * (`task.TitleProblem` names all three); U+2028 and U+2029 are not, and both
+ * end a line in every rendered document a person reads. */
+const LINE_BREAK_RE = /[\n\r\u0085\u2028\u2029]/u
 
-interface WordRules {
-  /** the sentence's noun: "the title", "the plan task" */
-  readonly noun: string
-  /** the cap, and its unit, as the refusal names them */
-  readonly cap: number
-  readonly unit: 'character' | 'byte'
-}
-
-const TITLE_RULES: WordRules = { noun: 'the title', cap: MAX_LAUNCH_TITLE_RUNES, unit: 'character' }
-const PLAN_TASK_RULES: WordRules = { noun: 'the plan task', cap: MAX_LAUNCH_PLAN_TASK_BYTES, unit: 'byte' }
+/** PLAN_TASK_ELEM_RE is one "/"-separated element of a plan task id, and it is
+ * `internal/task`'s `PlanTaskElemRE` (`task.PlanTaskProblem`, the list the
+ * launcher and the runner share): letters, digits, '.', '_' and '-', starting
+ * with a letter or a digit. An allow-list rather than a list of refusals,
+ * because the id is shown as text and matched against ids that came out of file
+ * names -- a space, a quote, a control or a Unicode look-alike is not one. */
+const PLAN_TASK_ELEM_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 /**
- * checkLaunchWord is the one rule the title and the plan task share: non-empty
- * when present, one line, no control character, no format character, and inside
- * the cap of its own kind. A space and a leading `-` are allowed -- they are
- * what `ARGUMENT_RE` refuses and what makes these two words of their own kind.
+ * textCharacterProblem is the rule the title and the plan task share: valid
+ * UTF-8, one line, no control character, no format character. It returns the
+ * problem as the console's own sentence, or "" when there is none.
+ *
+ * The UTF-8 check is not a formality: a lone surrogate is not valid UTF-8, and
+ * `TextEncoder` would send U+FFFD in its place -- so the child would be given a
+ * value the window never showed, which is the mismatch the format-character
+ * rule and `checkLaunchTask`'s own check exist to prevent.
  */
-function checkLaunchWord(value: string, rules: WordRules): LaunchValue<string | null> {
-  if (value === '') return { ok: false, reason: `${rules.noun} is empty` }
-  const size = rules.unit === 'character' ? [...value].length : new TextEncoder().encode(value).length
-  if (size > rules.cap) {
-    return {
-      ok: false,
-      reason: `${rules.noun} is ${String(size)} ${rules.unit}s, over the ${String(rules.cap)} this console sends`,
-    }
-  }
-  if (LINE_BREAK_RE.test(value)) return { ok: false, reason: `${rules.noun} is more than one line` }
-  if (CONTROL_RE.test(value)) return { ok: false, reason: `${rules.noun} carries a control character` }
-  if (FORMAT_RE.test(value)) return { ok: false, reason: `${rules.noun} carries a format character` }
-  return { ok: true, value }
+function textCharacterProblem(value: string, noun: string): string {
+  if (LONE_SURROGATE_RE.test(value)) return `${noun} is not valid UTF-8`
+  if (LINE_BREAK_RE.test(value)) return `${noun} is more than one line`
+  if (CONTROL_RE.test(value)) return `${noun} carries a control character`
+  if (FORMAT_RE.test(value)) return `${noun} carries a format character`
+  return ''
 }
 
 /**
- * checkLaunchTitle answers whether `--title` may carry this value. Its absence
- * is allowed and is not an empty title: every surface then falls back to the
- * task's first line, exactly as the CLI does when the flag is not passed, and
- * `null` is that absence.
+ * checkLaunchTitle answers whether `--title` may carry this value, and returns
+ * the title the CLI would store.
+ *
+ * Its absence is allowed and is not an empty title: every surface then falls
+ * back to the task's first line, exactly as the CLI does when the flag is not
+ * passed, and `null` is that absence. Its presence with nothing in it is
+ * refused, whitespace included (`titleFlag` trims the flag and
+ * `task.TitleProblem` refuses what is left: "is empty (or nothing but
+ * whitespace)"), and the value returned is the trimmed one, because the CLI
+ * trims the flag too -- the value in the window is then the value in the argv.
  */
 export function checkLaunchTitle(title: string | null | undefined): LaunchValue<string | null> {
   if (title === null || title === undefined) return { ok: true, value: null }
-  return checkLaunchWord(title, TITLE_RULES)
+  const trimmed = trimTaskText(title)
+  if (trimmed === '') return { ok: false, reason: 'the title is empty (or nothing but whitespace)' }
+  const runes = [...trimmed].length
+  if (runes > MAX_LAUNCH_TITLE_RUNES) {
+    return {
+      ok: false,
+      reason: `the title is ${String(runes)} characters, over the ${String(MAX_LAUNCH_TITLE_RUNES)} this console sends`,
+    }
+  }
+  const problem = textCharacterProblem(trimmed, 'the title')
+  if (problem !== '') return { ok: false, reason: problem }
+  return { ok: true, value: trimmed }
 }
 
 /**
- * checkLaunchPlanTask answers whether `--plan-task` may carry this value, by
- * the same rules and its own cap. Its absence is allowed: the flag is optional
- * to the CLI too, and a run without it plans nothing.
+ * checkLaunchPlanTask answers whether `--plan-task` may carry this value, and
+ * returns the id the CLI would store.
+ *
+ * Its absence is allowed: the flag is optional to the CLI too, and a run
+ * without it plans nothing. A present value is held to the CLI's own shape for
+ * it (`task.PlanTaskProblem`) and not to the title's prose rules -- `<plan>/<task>`,
+ * at least two elements, none of them empty, "." or "..", every element in
+ * `PLAN_TASK_ELEM_RE`, no leading "/" -- because that is the list the launcher
+ * applies and the runner applies again when it reads the task back: a value
+ * this admitted and the CLI refused would fail the launch *after* the operator
+ * confirmed the window, which is the outcome this module exists to prevent.
+ * The id is a shape and not prose, so a space (which a title may have) is not
+ * one, and the value is trimmed like the flag's own `strings.TrimSpace`.
  */
 export function checkLaunchPlanTask(planTask: string | null | undefined): LaunchValue<string | null> {
   if (planTask === null || planTask === undefined) return { ok: true, value: null }
-  return checkLaunchWord(planTask, PLAN_TASK_RULES)
+  const trimmed = trimTaskText(planTask)
+  if (trimmed === '') return { ok: false, reason: 'the plan task is empty' }
+  const bytes = new TextEncoder().encode(trimmed).length
+  if (bytes > MAX_LAUNCH_PLAN_TASK_BYTES) {
+    return {
+      ok: false,
+      reason: `the plan task is ${String(bytes)} bytes, over the ${String(MAX_LAUNCH_PLAN_TASK_BYTES)} this console sends`,
+    }
+  }
+  const problem = textCharacterProblem(trimmed, 'the plan task')
+  if (problem !== '') return { ok: false, reason: problem }
+  if (trimmed.startsWith('/')) return { ok: false, reason: 'the plan task is an absolute path' }
+  const elements = trimmed.split('/')
+  if (elements.length < 2) {
+    return { ok: false, reason: 'the plan task must name a task in a plan, as <plan>/<task>' }
+  }
+  for (const element of elements) {
+    if (element === '') return { ok: false, reason: 'the plan task has an empty path element' }
+    if (element === '.' || element === '..') {
+      return { ok: false, reason: `the plan task has a ${JSON.stringify(element)} path element` }
+    }
+    if (!PLAN_TASK_ELEM_RE.test(element)) {
+      return {
+        ok: false,
+        reason: `the plan task has ${JSON.stringify(element)}, where letters, digits, '.', '_' and '-' are allowed`,
+      }
+    }
+  }
+  return { ok: true, value: trimmed }
 }
 
 /**

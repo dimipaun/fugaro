@@ -100,13 +100,69 @@ describe('the title and the plan task', () => {
   })
 
   it('allows the space and the leading dash that the value alphabet refuses', () => {
-    // The whole reason these two words have kinds of their own:
+    // The whole reason the *title* has a kind of its own:
     // `isSafeArgumentValue`'s `ARGUMENT_RE` and its leading-`-` check refuse
     // both, and a title may hold both. `spawn.ts` is untouched by this change.
     for (const title of ['a title with spaces', '-a title that starts like a flag', 'release 2.0: the fix']) {
       expect(value(checkLaunchTitle(title)), title).toBe(title)
-      expect(value(checkLaunchPlanTask(title)), title).toBe(title)
     }
+    // The plan task does **not** get to hold either: it is a shape and not
+    // prose (`task.PlanTaskProblem`, the list the launcher and the runner both
+    // apply), and its elements are `PlanTaskElemRE`'s alphabet.
+    expect(reason(checkLaunchPlanTask('a title with spaces'))).toContain('as <plan>/<task>')
+    expect(reason(checkLaunchPlanTask('a/title with spaces'))).toContain('where letters, digits')
+    expect(reason(checkLaunchPlanTask('-a title that starts like a flag'))).toContain('as <plan>/<task>')
+  })
+
+  it('refuses a title that is nothing but whitespace, the way the CLI does', () => {
+    // `titleFlag` trims the flag and `task.TitleProblem` refuses what is left
+    // ("is empty (or nothing but whitespace)"), so a whitespace-only title is a
+    // refusal *after* the window, which is what this catches first.
+    for (const blank of [' ', '\t', '\u00a0', '\u3000', '\u0085']) {
+      expect(reason(checkLaunchTitle(blank)), JSON.stringify(blank)).toContain('whitespace')
+    }
+    // A title with whitespace around it is not empty: it is the trimmed value
+    // that the CLI stores, and that is what comes back.
+    expect(value(checkLaunchTitle('  the fix \n'))).toBe('the fix')
+    expect(value(checkLaunchPlanTask('  plan/task '))).toBe('plan/task')
+  })
+
+  it('holds a plan task to the CLI’s own shape, not to the title’s prose rules', () => {
+    // task.PlanTaskProblem: `<plan>/<task>`, at least two elements, none empty,
+    // "." or "..", each in PlanTaskElemRE. A value it refuses is a launch the
+    // CLI would fail after the operator confirmed the window.
+    for (const good of ['plan/task', 'plan-a/task.b', 'p1/t2/t3', '2026-10-28/fix_1']) {
+      expect(value(checkLaunchPlanTask(good)), good).toBe(good)
+    }
+    const bads: readonly [string, string][] = [
+      ['plan', 'as <plan>/<task>'],
+      ['a title with spaces', 'as <plan>/<task>'],
+      ['a/title with spaces', 'where letters, digits'],
+      ['/plan/task', 'absolute path'],
+      ['plan/', 'empty path element'],
+      ['plan//task', 'empty path element'],
+      ['plan/./task', 'path element'],
+      ['plan/../task', 'path element'],
+      ['plan/task a', 'where letters, digits'],
+      ['plan/-task', 'where letters, digits'],
+      ['plan/.hidden', 'where letters, digits'],
+      ['plan/task#1', 'where letters, digits'],
+      ['plan/tas\u202ek', 'format character'],
+    ]
+    for (const [bad, sentence] of bads) {
+      expect(reason(checkLaunchPlanTask(bad)), JSON.stringify(bad)).toContain(sentence)
+    }
+  })
+
+  it('refuses a title or a plan task that is not valid UTF-8, like the task text', () => {
+    // A lone surrogate is not a character: `TextEncoder` would send U+FFFD in
+    // its place, so the value in the window would not be the value in the argv
+    // (task.TitleProblem refuses it too, as "is not valid UTF-8").
+    for (const lone of ['fix \ud800 it', 'fix \udfff it']) {
+      expect(reason(checkLaunchTitle(lone)), JSON.stringify(lone)).toContain('UTF-8')
+      expect(reason(checkLaunchPlanTask(lone)), JSON.stringify(lone)).toContain('UTF-8')
+    }
+    expect(value(checkLaunchTitle('fix 😀 it'))).toBe('fix 😀 it')
   })
 
   it('refuses a title or plan task carrying a bidi override or a zero-width joiner, not stripping it', () => {
@@ -116,9 +172,11 @@ describe('the title and the plan task', () => {
     // the run never kept. The console refuses on its side instead.
     //
     // Mutation (run, restore): delete the `FORMAT_RE` line from
-    // `checkLaunchWord` and every case below stops being refused -- the values
-    // come back through as fine, which is what makes this test the one that
-    // fails when the rule goes.
+    // `textCharacterProblem` and this test fails on every case below -- the
+    // titles come back through as fine, and the plan tasks come back with the
+    // shape's sentence ("where letters, digits ...") instead. It is the one
+    // mutation of this change, and it fails exactly two tests: this one and the
+    // shape test's own format-character row.
     for (const hostile of [
       'fix \u202egnp.exe', // a right-to-left override: reverses the line a reader sees
       'fix \u202dgnp.exe', // a left-to-right override, the same family
@@ -137,9 +195,13 @@ describe('the title and the plan task', () => {
   })
 
   it('refuses a second line, a control character and a value past its cap', () => {
-    for (const multi of ['one\ntwo', 'one\rtwo', 'one\u2028two', 'one\u2029two']) {
+    // U+0085 is a line break to a title (task.TitleProblem names it beside the
+    // newline and the carriage return) and a control character to a plan task;
+    // both refuse it.
+    for (const multi of ['one\ntwo', 'one\rtwo', 'one\u0085two', 'one\u2028two', 'one\u2029two']) {
       expect(reason(checkLaunchTitle(multi)), JSON.stringify(multi)).toContain('more than one line')
     }
+    expect(reason(checkLaunchPlanTask('plan/one\u0085two'))).toContain('more than one line')
     for (const control of ['one\ttwo', 'one\u0000two', 'one\u009ftwo']) {
       expect(reason(checkLaunchTitle(control)), JSON.stringify(control)).toContain('control character')
     }
@@ -147,14 +209,19 @@ describe('the title and the plan task', () => {
     expect(value(checkLaunchTitle(titleAt))).toBe(titleAt)
     expect(reason(checkLaunchTitle(`${titleAt}a`))).toContain(String(MAX_LAUNCH_TITLE_RUNES))
     // The title's cap is in characters and the plan task's in bytes, and the
-    // difference is the point: they are two different kinds of word.
+    // difference is the point: they are two different kinds of word. The plan
+    // task's cap is measured on a value that is a shape ('p/' is two bytes of
+    // it), because the shape is checked after the cap.
     expect(value(checkLaunchTitle('é'.repeat(MAX_LAUNCH_TITLE_RUNES)))).toHaveLength(MAX_LAUNCH_TITLE_RUNES)
-    const planAt = 'a'.repeat(MAX_LAUNCH_PLAN_TASK_BYTES)
+    const planAt = `p/${'a'.repeat(MAX_LAUNCH_PLAN_TASK_BYTES - 2)}`
     expect(value(checkLaunchPlanTask(planAt))).toBe(planAt)
     expect(reason(checkLaunchPlanTask(`${planAt}a`))).toContain(String(MAX_LAUNCH_PLAN_TASK_BYTES))
-    expect(reason(checkLaunchPlanTask('é'.repeat(MAX_LAUNCH_PLAN_TASK_BYTES)))).toContain(
-      String(MAX_LAUNCH_PLAN_TASK_BYTES),
-    )
+    // The plan task's cap is in bytes and its elements are ASCII
+    // (`PlanTaskElemRE`), so for an id the shape would admit the two counts are
+    // the same number -- and the cap is checked before the shape, exactly as
+    // task.PlanTaskProblem orders them: a value over it in bytes is refused
+    // whether or not its shape could have been read.
+    expect(reason(checkLaunchPlanTask('é'.repeat(65)))).toContain(String(MAX_LAUNCH_PLAN_TASK_BYTES))
   })
 })
 

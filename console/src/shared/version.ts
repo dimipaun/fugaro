@@ -89,34 +89,56 @@ export const CLI_VERSION_BUILT_AGAINST = '0.8.1'
  * `0.8.1` would refuse every patch release.
  *
  * **`0.11` is V2.5.1a's own addition, and the set is no longer only "the built
- * minor plus the previous one".** The launch operation carries `--plan-task`,
- * whose release is `LAUNCH_CLI_FLOOR`'s `0.11.2`, and a floor above every minor
- * this range held means the operation would be offered to no installation the
- * console supports: the range is what says "this console drives this CLI with
- * its full dashboard", so it has to reach the minor the floor lives in, while
- * `CLI_VERSION_BUILT_AGAINST` stays the release the JSON documents were read
- * from (moving it is a claim about every figure on every screen, not this
- * task's). The range is therefore a *set*, and the gap it now has (0.9, 0.10)
- * is honest: those releases are drawn in the reduced mode, exactly as they are
- * today.
+ * minor plus the previous one".** The design names it: 0.11 is the newest CLI
+ * minor the launch half of this console was written against -- the shape of the
+ * reply it decodes (`internal/cli/run.go`'s `launchResult`) and the plan task
+ * its graph joins on, which 0.11.2 is the first release to carry. The range is
+ * therefore a *set*, and the gap it now has (0.9, 0.10, 0.12) is honest: those
+ * releases are drawn in the reduced mode.
+ *
+ * It is deliberately **not** `LAUNCH_CLI_FLOOR`'s minor, and the floor is the
+ * higher of the two today. The range says which CLI the console draws its full
+ * dashboard for; the floor says which CLI one operation may be started on, and
+ * they are asked separately (`launchSupported` and `classifyCliVersion`) because
+ * a launch needs one read, not a dashboard. A CLI at or above the floor but
+ * above this range is drawn with the version banner and its spend views held
+ * back -- rule 11 asks the floor question and never range membership -- and a
+ * later release widens the range to the minors whose documents have been
+ * re-read.
  */
 export const SUPPORTED_CLI_MINORS: readonly string[] = Object.freeze(['0.7', '0.8', '0.11'])
 
 /**
- * LAUNCH_CLI_FLOOR is the oldest CLI the launch operation may be offered to:
- * the release `--plan-task` arrived in, which is the newest flag that
- * operation's argv carries (`internal/cli/recipes_skew.go`'s
- * `planTaskSince = "0.11.2"`; a title's `titlesSince` is `0.8.5`, and
- * `--run-id` and `--task-file` are older still).
+ * LAUNCH_CLI_FLOOR is the oldest CLI the launch operation may be offered to: it
+ * is the newer of the two releases that operation needs.
+ *
+ *   1. **The release that ships `--plan-task`**, the newest flag the launch's
+ *      argv carries (`internal/cli/recipes_skew.go`'s
+ *      `planTaskSince = "0.11.2"`; a title's `titlesSince` is `0.8.5`, and
+ *      `--run-id` and `--task-file` are older still).
+ *   2. **The release whose `config list --json` carries `base_branch`**, which
+ *      is the read the operation cannot work without: the launch runs from the
+ *      app's own private, empty directory, so the CLI's own merged order would
+ *      fall back to `main` unseen (§5.1 rule 11, §3.4 rule 7). That release is
+ *      `0.13.0` -- this console's own CLI half ships it, `docs/release-streams.yaml`
+ *      has the CLI stream at `0.12.1`, and `0.13.0` is the not-yet-tagged number
+ *      `digestSince` and `governanceSince` name too.
+ *
+ * The second is the higher of the two, so the floor is it. A floor at
+ * `planTaskSince` would admit every CLI from `0.11.2` to `0.12.1` -- today's
+ * release among them -- and each of those would be offered a launch and then
+ * have **every** repository refused with a sentence telling the operator to set
+ * a setting they have already set: `config list --json` there carries no
+ * `base_branch` at all, so a row that records a branch and one that records
+ * none are the same absent field.
  *
  * It is a **patch-level** floor, and it is deliberately not a member of
- * `SUPPORTED_CLI_MINORS`: that set is minor-granular, so `0.11.0` and `0.11.1`
- * are inside "0.11" and still below this. Membership in the range says which
- * CLI the console draws its dashboard for; this constant says which CLI one
- * operation may be started on, and the two questions are asked separately
- * (`launchSupported` and `classifyCliVersion`).
+ * `SUPPORTED_CLI_MINORS`: that set is minor-granular, and membership in it says
+ * which CLI the console draws its full dashboard for. This constant says which
+ * CLI one operation may be started on, and the two questions are asked
+ * separately (`launchSupported` and `classifyCliVersion`).
  */
-export const LAUNCH_CLI_FLOOR = '0.11.2'
+export const LAUNCH_CLI_FLOOR = '0.13.0'
 
 /**
  * launchSupported answers whether one version line may be launched with, by
@@ -125,11 +147,18 @@ export const LAUNCH_CLI_FLOOR = '0.11.2'
  * The order of the tests is the rule, and each refusal is on the safe side of a
  * spend. An unreadable line, a `dev` build and a prerelease are all `false`: the
  * first two cannot be placed at all, and `parseCliVersion` deliberately does not
- * compare a prerelease tail (`0.11.2-rc.1` is read as `0.11.2`), so accepting
+ * compare a prerelease tail (`0.13.0-rc.1` is read as `0.13.0`), so accepting
  * one here would launch with a release that has not happened. A line at or above
  * the floor -- including a build-metadata tail, which is the same release --
- * answers `true`, and a line below it answers `false` however close: `0.11.1`
- * does not carry the flag the argv names.
+ * answers `true`, and a line below it answers `false` however close: `0.12.1`
+ * carries neither the flag nor the config-list field the operation needs.
+ *
+ * It is deliberately not a membership test, and the two questions disagree on
+ * the same line in both directions: `0.11` is a member of
+ * `SUPPORTED_CLI_MINORS` while `0.11.0` and `0.11.1` are below this floor, and
+ * the floor's own minor is not in that set at all -- a CLI that reaches the
+ * floor is drawn by this console's release with its version banner, which is a
+ * banner and not a refusal.
  */
 export function launchSupported(version: string): boolean {
   const parsed = parseCliVersion(version)
