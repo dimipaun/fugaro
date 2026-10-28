@@ -184,6 +184,58 @@ type Governance struct {
 	StageBudget  StageBudget  `yaml:"stage_budget"`
 	StageTokens  StageTokens  `yaml:"stage_tokens"`
 	StageTimeout StageTimeout `yaml:"stage_timeout"`
+	// Tiers are what a run of each tier is expected to cost and take, and how
+	// far one of its stages may fan out (G§3, D330). A tier is an expectation
+	// and never a cap: the deployed per-run cap stays the ceiling, and an
+	// expected_usd above it is an expectation the run still stops at the cap
+	// for (G6).
+	Tiers GovernanceTiers `yaml:"tiers"`
+}
+
+// GovernanceTiers is governance.tiers: the expectations of the four tiers of
+// the vocabulary (internal/tier). The tiers are named one by one rather than
+// held in a map, so a tier name outside the vocabulary is an unknown key the
+// strict decoder refuses rather than a map entry nothing checks.
+type GovernanceTiers struct {
+	Trivial TierLimits `yaml:"trivial"`
+	Small   TierLimits `yaml:"small"`
+	Medium  TierLimits `yaml:"medium"`
+	Large   TierLimits `yaml:"large"`
+}
+
+// TierLimits is one tier's block. Every key is optional; a key left out,
+// written as null or written as 0 takes Fugaro's default for that tier
+// (policy.DefaultTierExpectations). None of the three is a cap: the per-run cap
+// stays the ceiling whatever a tier says (G6).
+type TierLimits struct {
+	// ExpectedUSD is what a run of this tier is expected to cost; it is an
+	// expectation, not a ceiling, so a value above the deployed per-run cap is
+	// read and the run still stops at the cap.
+	ExpectedUSD float64 `yaml:"expected_usd"`
+	// ExpectedMinutes is what a run of this tier is expected to take.
+	ExpectedMinutes int64 `yaml:"expected_minutes"`
+	// MaxSubagents is the most distinct sub-agents one stage of a run of this
+	// tier may start, concurrently or in total.
+	MaxSubagents int64 `yaml:"max_subagents"`
+}
+
+// Policy is one tier's block as the merge reads it.
+func (t TierLimits) Policy() policy.TierExpectation {
+	return policy.TierExpectation{
+		ExpectedUSD:     t.ExpectedUSD,
+		ExpectedMinutes: t.ExpectedMinutes,
+		MaxSubagents:    t.MaxSubagents,
+	}
+}
+
+// Policy is the block as the merge reads it.
+func (t GovernanceTiers) Policy() policy.TierExpectations {
+	return policy.TierExpectations{
+		Trivial: t.Trivial.Policy(),
+		Small:   t.Small.Policy(),
+		Medium:  t.Medium.Policy(),
+		Large:   t.Large.Policy(),
+	}
 }
 
 // StageBudget is a stage's share of the run's budget, as a fraction: of the
@@ -230,6 +282,7 @@ func (g *Governance) Policy() policy.Governance {
 		StageTimeout: policy.StageTimeout{
 			Implement: g.StageTimeout.Implement.Duration, Review: g.StageTimeout.Review.Duration,
 			Fix: g.StageTimeout.Fix.Duration},
+		Tiers: g.Tiers.Policy(),
 	}
 }
 

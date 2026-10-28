@@ -497,6 +497,36 @@ func validateGovernance(p string, g *Governance) []Problem {
 			add(p+"."+c.key, "must be positive")
 		}
 	}
+	// The tiers are expectations, so what is refused here is a figure no run
+	// could mean — a negative cost or duration, a fan-out past the same bound
+	// max_subagents carries — and never an expectation larger than the per-run
+	// cap: an expected cost above the cap is exactly what G6 says a tier may
+	// say, because the run still stops at the cap. The tier NAMES are not
+	// checked here: they are keys of the block, so a name outside the
+	// vocabulary (internal/tier) is an unknown key the strict decoder refuses
+	// before validation runs.
+	for _, c := range []struct {
+		key string
+		v   TierLimits
+	}{
+		{"tiers.trivial", g.Tiers.Trivial},
+		{"tiers.small", g.Tiers.Small},
+		{"tiers.medium", g.Tiers.Medium},
+		{"tiers.large", g.Tiers.Large},
+	} {
+		if math.IsNaN(c.v.ExpectedUSD) || math.IsInf(c.v.ExpectedUSD, 0) || c.v.ExpectedUSD < 0 {
+			add(p+"."+c.key+".expected_usd", "must be 0 (the tier's default) or a finite dollar expectation")
+		}
+		if c.v.ExpectedMinutes < 0 {
+			add(p+"."+c.key+".expected_minutes", "must not be negative")
+		}
+		switch {
+		case c.v.MaxSubagents < 0:
+			add(p+"."+c.key+".max_subagents", "must not be negative")
+		case c.v.MaxSubagents > MaxGovernanceSubagents:
+			add(p+"."+c.key+".max_subagents", "must be at most %d", MaxGovernanceSubagents)
+		}
+	}
 	return ps
 }
 

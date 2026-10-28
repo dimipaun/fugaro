@@ -25,7 +25,11 @@
 // Effective.Allows and never test len(AllowedModels) == 0.
 package policy
 
-import "time"
+import (
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/tier"
+)
 
 // Policy keys, as used in Effective.Sources and Ignored.Key.
 const (
@@ -54,7 +58,16 @@ const (
 	KeyStageTimeoutImplement = "stage_timeout.implement"
 	KeyStageTimeoutReview    = "stage_timeout.review"
 	KeyStageTimeoutFix       = "stage_timeout.fix"
+	// The three keys every tier of governance.tiers carries, spelled as
+	// fugaro.yaml spells them (T8.1). A tier's own key is one of these three
+	// behind TierKey, so the twelve names are built rather than declared.
+	KeyExpectedUSD     = "expected_usd"
+	KeyExpectedMinutes = "expected_minutes"
 )
+
+// TierKey is the policy key of one tier's own key, as Effective.Sources and
+// Ignored.Key spell it ("tiers.trivial.expected_usd").
+func TierKey(t tier.Tier, key string) string { return "tiers." + string(t) + "." + key }
 
 // Layer names, as used in Effective.Sources and Ignored.Source.
 const (
@@ -97,6 +110,65 @@ const (
 	DefaultStageBudgetFix       = 0.5
 )
 
+// DefaultTierExpectations are the expectations Fugaro ships for the four tiers
+// (G§3, spec §3's starting tiers): trivial $0.25/10m, small $1/30m, medium
+// $3/90m and large $8/240m. The fan-out is 3 for trivial and small — the
+// spec's §5 tripwire, where a small change has no business fanning out — and
+// the untiered default of 5 for medium and large (D332, plan T7.1).
+//
+// None of these is a cap. The deployed per-run cap stays the ceiling whatever
+// a tier expects (G6), so an expected cost above the cap is an expectation the
+// run still stops at the cap for, and no tier key can raise or replace one.
+func DefaultTierExpectations() TierExpectations {
+	return TierExpectations{
+		Trivial: TierExpectation{ExpectedUSD: 0.25, ExpectedMinutes: 10, MaxSubagents: 3},
+		Small:   TierExpectation{ExpectedUSD: 1, ExpectedMinutes: 30, MaxSubagents: 3},
+		Medium:  TierExpectation{ExpectedUSD: 3, ExpectedMinutes: 90, MaxSubagents: DefaultMaxSubagents},
+		Large:   TierExpectation{ExpectedUSD: 8, ExpectedMinutes: 240, MaxSubagents: DefaultMaxSubagents},
+	}
+}
+
+// TierExpectation is one tier's expectation: what a run of that tier is
+// expected to cost and take, and how far one of its stages may fan out. Every
+// field is an expectation and never a cap (G6).
+type TierExpectation struct {
+	// ExpectedUSD is what a run of the tier is expected to cost, in dollars.
+	ExpectedUSD float64
+	// ExpectedMinutes is what a run of the tier is expected to take.
+	ExpectedMinutes int64
+	// MaxSubagents is the most distinct sub-agents one stage of such a run may
+	// start, concurrently or in total (spec §5).
+	MaxSubagents int64
+}
+
+// TierExpectations is the expectation of every tier of tier.Tiers. The tiers
+// are named one by one rather than held in a map, so a tier added to the
+// vocabulary is a compile error here — tightenGovernance's own reason — and an
+// unknown tier name is an unknown key the strict decoder refuses rather than a
+// map entry nothing checks.
+type TierExpectations struct {
+	Trivial TierExpectation
+	Small   TierExpectation
+	Medium  TierExpectation
+	Large   TierExpectation
+}
+
+// withDefaults is t with every key it leaves at zero replaced by d's. A key it
+// does set is kept exactly as written, looser than the default included: the
+// project layer is the one layer that may loosen a guardrail.
+func (t TierExpectation) withDefaults(d TierExpectation) TierExpectation {
+	if t.ExpectedUSD == 0 {
+		t.ExpectedUSD = d.ExpectedUSD
+	}
+	if t.ExpectedMinutes == 0 {
+		t.ExpectedMinutes = d.ExpectedMinutes
+	}
+	if t.MaxSubagents == 0 {
+		t.MaxSubagents = d.MaxSubagents
+	}
+	return t
+}
+
 // DefaultGovernance is the governance every run starts under.
 func DefaultGovernance() Governance {
 	return Governance{
@@ -108,6 +180,7 @@ func DefaultGovernance() Governance {
 			Review:    DefaultStageBudgetReview,
 			Fix:       DefaultStageBudgetFix,
 		},
+		Tiers: DefaultTierExpectations(),
 	}
 }
 
@@ -129,6 +202,9 @@ type Governance struct {
 	StageBudget  StageBudget
 	StageTokens  StageTokens
 	StageTimeout StageTimeout
+	// Tiers are the per-tier expectations (G§3, D330): what a run of a tier is
+	// expected to cost and take, and how far one of its stages may fan out.
+	Tiers TierExpectations
 }
 
 // StageBudget is a stage's share of the run's budget: a fraction of the
@@ -177,6 +253,14 @@ func (g Governance) WithDefaults() Governance {
 	}
 	if g.StageBudget.Fix == 0 {
 		g.StageBudget.Fix = d.StageBudget.Fix
+	}
+	// A tier defaults per key, so a layer that sets only one key of a tier
+	// keeps Fugaro's default for the others of that same tier.
+	g.Tiers = TierExpectations{
+		Trivial: g.Tiers.Trivial.withDefaults(d.Tiers.Trivial),
+		Small:   g.Tiers.Small.withDefaults(d.Tiers.Small),
+		Medium:  g.Tiers.Medium.withDefaults(d.Tiers.Medium),
+		Large:   g.Tiers.Large.withDefaults(d.Tiers.Large),
 	}
 	// stage_tokens and stage_timeout have no default: a stage with no token
 	// ceiling and no timeout of its own is bounded by the run's own.
