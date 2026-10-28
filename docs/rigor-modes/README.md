@@ -142,9 +142,11 @@ operators` section:
   line, and the run's own `fugaro run --mode`/`--path` request), T2.1–T2.3 of
   Slice 2 (a score the run loop does not act on yet), the backlog (T4.3–T4.7),
   T5.1 (the task field that request travels in, `task.Spec.Rigor` and
-  `task.Spec.Paths`, with its image-skew gate) and the per-mode budgets (T6.1).
-  The rest is not: Slice 3, which is what would make the mode decide readiness,
-  Slice 5's follow-up rule (T5.2) and Hotfix gate, and Slices 7 and 8.
+  `task.Spec.Paths`, with its image-skew gate), T5.2 (a follow-up keeps the mode
+  its pull request recorded and may only raise it) and the per-mode budgets
+  (T6.1). The rest is not: Slice 3, which is what would make the mode decide
+  readiness, Slice 5's Hotfix gate, ready PR and recorded follow-up task
+  (T5.3–T5.5), and Slices 7 and 8.
 - **Not a product document.** When the modes ship they get one —
   `docs/rigor-modes.md`, the plan's T7.1 — and this folder is where the design
   and the plan live until then. The two are separate on purpose: a folder that is

@@ -668,11 +668,13 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			// The run's own rigor request, gated on the field the same way:
 			// a runner older than rigorRequestSince refuses a task carrying
 			// rigor or paths outright (task.Parse decodes with
-			// DisallowUnknownFields). A launch that asks for nothing carries
-			// neither field and is never gated.
+			// DisallowUnknownFields). A launch that carries neither field is
+			// never gated — but a follow-up that passed no flag still carries
+			// one when its PR recorded a mode (T5.2), which is what
+			// rigorGateSubject says in the refusal.
 			if asksForRigor(spec) {
 				if err := checkCloneImageSince(env.lc, spec, rigorRequestSince,
-					"the run's own rigor request (--mode, --path)", "the rigor request", "", warn); err != nil {
+					rigorGateSubject(o, spec), "the rigor request", "", warn); err != nil {
 					return launchResult{}, err
 				}
 			}
@@ -739,11 +741,11 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			// reason: the request is a new task field, and a runner that
 			// predates it refuses the whole spec at bootstrap — bytes in the
 			// bucket under a run that never starts. Judged from the deployed
-			// job's build record, and never reached by a launch that asks for
-			// nothing.
+			// job's build record, and never reached by a launch that carries
+			// no such field at all.
 			if asksForRigor(spec) {
 				if err := checkImageSince(ctx, env, slug, spec, kind, rigorRequestSince,
-					"the run's own rigor request (--mode, --path)", "the rigor request", "", warn); err != nil {
+					rigorGateSubject(o, spec), "the rigor request", "", warn); err != nil {
 					return launchResult{}, err
 				}
 			}
