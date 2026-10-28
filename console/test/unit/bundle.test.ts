@@ -359,11 +359,12 @@ describe('the bundle', () => {
     const required = [
       'dist/preload/index.js',
       'dist/preload/installations.js',
+      'dist/preload/confirm.js',
       ...SERVED_FILES.map((path) => `dist/bundle${path}`),
     ]
     // Non-vacuity: an empty `SERVED_FILES` would make the loop below assert
     // nothing at all, and the loop is the whole claim.
-    expect(required.length, 'SERVED_FILES names nothing: the check below would be vacuous').toBe(9)
+    expect(required.length, 'SERVED_FILES names nothing: the check below would be vacuous').toBe(10)
     const files = pkg.build?.files
     if (files === undefined) {
       context.skip(

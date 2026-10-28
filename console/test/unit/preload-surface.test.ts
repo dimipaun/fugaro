@@ -45,8 +45,14 @@ import { createContext, runInContext } from 'node:vm'
 import { describe, expect, it } from 'vitest'
 
 import { CONSOLE_OPERATIONS } from '../../src/main/ipc'
-import { CONSOLE_BRIDGE_KEY, exposeConsoleBridge } from '../../src/preload/index'
+import { CONSOLE_BRIDGE_KEY, EXPOSED_OPERATIONS, exposeConsoleBridge } from '../../src/preload/index'
 import type { ContextBridgeLike, RendererLike } from '../../src/preload/index'
+import {
+  CONFIRM_BRIDGE_KEY,
+  CONFIRM_BRIDGE_PREFIX,
+  createConfirmBridge,
+  isConfirmReply,
+} from '../../src/preload/confirm'
 import { builtFile, builtPath } from '../support/built'
 
 /**
@@ -272,5 +278,118 @@ describe('the surface is the same object whichever way it is built', () => {
     // And the read of the file that produced it, so a build that silently
     // emitted nothing is not mistaken for a build that emitted this.
     expect(readFileSync(builtPath('preload/index.js'), 'utf8')).toBe(source)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The confirmation window's preload (V2.5.1a part 2b-1).
+// ---------------------------------------------------------------------------
+
+/** runBuiltConfirm runs `dist/preload/confirm.js` the way a CommonJS loader
+ * would, in a fresh realm with a recording `require` **and** a recording
+ * `ipcRenderer`, so what the document can reach and what it sends are both
+ * facts this file holds rather than reads of the source. */
+function runBuiltConfirm(
+  scope: { readonly window?: Record<string, unknown>; readonly document?: unknown },
+  reply: unknown = { ok: true, data: {} },
+): {
+  readonly required: readonly string[]
+  readonly exposed: readonly { readonly key: string; readonly api: unknown }[]
+  readonly window: Record<string, unknown> | undefined
+  readonly sent: readonly { readonly channel: string; readonly args: readonly unknown[] }[]
+} {
+  const source = builtFile('preload/confirm.js')
+  const required: string[] = []
+  const sent: { channel: string; args: readonly unknown[] }[] = []
+  const bridge = recordingBridge(scope.window)
+  const renderer: RendererLike = {
+    async invoke(channel: string, ...args: unknown[]): Promise<unknown> {
+      sent.push({ channel, args })
+      return reply
+    },
+  }
+  const sandbox: Record<string, unknown> = {
+    ...scope,
+    require(specifier: string): unknown {
+      required.push(specifier)
+      if (specifier !== 'electron') throw new Error(`the preload required ${specifier}`)
+      return { contextBridge: bridge, ipcRenderer: renderer }
+    },
+    module: { exports: {} },
+    exports: {},
+    console,
+  }
+  runInContext(source, createContext(sandbox), { filename: 'preload/confirm.js' })
+  return { required, exposed: bridge.exposed, window: scope.window, sent }
+}
+
+describe('the confirmation window’s built preload', () => {
+  it('exposes exactly fields and answer, under its own key, and nothing else', () => {
+    const { exposed, window, required } = runBuiltConfirm({ window: {}, document: {} })
+    expect(exposed.map((entry) => entry.key)).toEqual([CONFIRM_BRIDGE_KEY])
+    expect(Object.keys(window ?? {}).sort()).toEqual([CONFIRM_BRIDGE_KEY])
+    const api = (window ?? {})[CONFIRM_BRIDGE_KEY] as Record<string, unknown>
+    expect(Object.isFrozen(api)).toBe(true)
+    expect(Object.keys(api).sort()).toEqual(['answer', 'fields'])
+    expect(required).toEqual(['electron'])
+  })
+
+  it('sends the two channels and nothing else', async () => {
+    const { window, sent } = runBuiltConfirm({ window: {}, document: {} })
+    const api = (window ?? {})[CONFIRM_BRIDGE_KEY] as {
+      fields: () => Promise<unknown>
+      answer: (yes: boolean) => Promise<unknown>
+    }
+    expect(await api.fields()).toStrictEqual({ ok: true, data: {} })
+    expect(await api.answer(true)).toStrictEqual({ ok: true, data: {} })
+    expect(sent).toStrictEqual([
+      { channel: `${CONFIRM_BRIDGE_PREFIX}fields`, args: [] },
+      { channel: `${CONFIRM_BRIDGE_PREFIX}answer`, args: [true] },
+    ])
+  })
+
+  it('is inert where there is no renderer, and does not reach Electron first', () => {
+    const { required, exposed, window } = runBuiltConfirm({ window: {} })
+    expect(required).toEqual([])
+    expect(exposed).toEqual([])
+    expect(window).toEqual({})
+  })
+
+  it('refuses anything that is not a reply, and a renderer that rejects', async () => {
+    const bridge = createConfirmBridge({
+      invoke: async () => 'not a reply',
+    })
+    expect(await bridge.fields()).toStrictEqual({
+      ok: false,
+      reason: 'the confirmation window answered something that is not a reply',
+    })
+    const failing = createConfirmBridge({
+      invoke: async () => {
+        throw new Error('no answer')
+      },
+    })
+    expect(await failing.answer(false)).toStrictEqual({
+      ok: false,
+      reason: 'the confirmation window could not be reached (no answer)',
+    })
+    expect(isConfirmReply({ ok: true, data: null })).toBe(true)
+    expect(isConfirmReply({ ok: false, reason: 'no' })).toBe(true)
+    expect(isConfirmReply({ ok: false })).toBe(false)
+    expect(isConfirmReply({ ok: true })).toBe(false)
+    expect(isConfirmReply('yes')).toBe(false)
+  })
+
+  it('is a third surface: the dashboard’s names no confirm channel anywhere', () => {
+    // The mutation this catches: a `confirm:` row added to the dashboard's
+    // operation table, or a dashboard method that reaches this window's
+    // channels. The dashboard's surface is unchanged at twenty-four rows.
+    expect(EXPOSED_OPERATIONS).toHaveLength(24)
+    for (const [name, method] of [...EXPOSED_OPERATIONS, ...CONSOLE_OPERATIONS.map((row) => [row.name, row.method] as const)]) {
+      expect(name, `${method} is on the confirm prefix`).not.toContain('confirm:')
+      expect(method).not.toBe('fields')
+      expect(method).not.toBe('answer')
+    }
+    expect(CONFIRM_BRIDGE_PREFIX).toBe('confirm:')
+    expect(CONSOLE_BRIDGE_KEY).not.toBe(CONFIRM_BRIDGE_KEY)
   })
 })

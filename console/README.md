@@ -1871,9 +1871,11 @@ seam the renderer entry (Task 3.4a) needs to answer the dashboard's
   `src/renderer/installations.html` in `dist/bundle/`; the two bundles,
   `dist/bundle/console.js` and `dist/bundle/installations.js`; **the served
   stylesheet, `dist/bundle/console.css`** (Task 6.2 — every document links it,
-  so an app packaged without it opens a window with no style at all); the two
-  preloads a window loads by absolute path, `dist/preload/index.js` and
-  `dist/preload/installations.js`; and the compiled main process, shared and
+  so an app packaged without it opens a window with no style at all); the three
+  preloads a window loads by absolute path, `dist/preload/index.js`,
+  `dist/preload/installations.js` and `dist/preload/confirm.js` (the launch
+  confirmation window's, V2.5.1a part 2b-1); and the compiled main process,
+  shared and
   source modules under `dist/**` except the two Task 4.1 excludes by name.
   `test/unit/build-files.test.ts` reads that list off the tree rather than
   repeating it, so a third document or a third preload is covered when it is
@@ -2293,6 +2295,7 @@ rather than moving it: `build.files` is
 ```json
 ["THIRD_PARTY_NOTICES.md", "dist/main/**/*.js", "!dist/main/fuses.js",
  "dist/preload/index.js", "dist/preload/installations.js",
+ "dist/preload/confirm.js",
  "dist/shared/**/*.js", "dist/source/**/*.js", "!dist/source/fixture.js",
  "dist/bundle/console.css", "dist/bundle/console.js",
  "dist/bundle/elk-worker.min.js", "dist/bundle/index.html",

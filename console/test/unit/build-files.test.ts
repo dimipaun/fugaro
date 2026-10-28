@@ -159,7 +159,11 @@ describe('the packaged console carries what it loads', () => {
     // below true and mean nothing.
     expect(documents).toContain('src/renderer/installations.html')
     expect(documents).toContain('src/renderer/refusal.html')
-    expect(preloads).toEqual(['dist/preload/index.js', 'dist/preload/installations.js'])
+    expect(preloads).toEqual([
+      'dist/preload/confirm.js',
+      'dist/preload/index.js',
+      'dist/preload/installations.js',
+    ])
     expect(compiled).toContain('dist/main/picker.js')
     expect(compiled).toContain('dist/renderer/installations.js')
     expect(compiled.length).toBeGreaterThan(15)

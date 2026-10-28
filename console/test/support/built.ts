@@ -75,6 +75,7 @@ const OUTPUTS: readonly string[] = Object.freeze([
   join(DIST, 'main', 'index.js'),
   join(DIST, 'preload', 'index.js'),
   join(DIST, 'preload', 'installations.js'),
+  join(DIST, 'preload', 'confirm.js'),
   join(DIST, 'renderer', 'entry.js'),
   join(DIST, 'renderer', 'installations.js'),
 ])

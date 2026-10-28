@@ -63,8 +63,8 @@ import {
   createLaunchRunner,
   launchOutcomeUnknown,
 } from '../../src/main/launch'
-import type { FrozenLaunch, LaunchConfirmer, LaunchTarget, TargetLookup } from '../../src/main/launch'
-import { RUN_LAUNCH_EQUALS_FLAGS, assertArgvFlags, spawnedArgv } from '../../src/main/spawn'
+import type { ConfirmView, FrozenLaunch, LaunchConfirmer, LaunchTarget, TargetLookup } from '../../src/main/launch'
+import { RUN_LAUNCH_EQUALS_FLAGS, assertArgvFlags, privateWorkingDirectory } from '../../src/main/spawn'
 import type { ChildSpawner, SpawnOptionsLike, SpawnedChildLike, Timers } from '../../src/main/spawn'
 import type { RecordedSpawn, SpawnLogWriter } from '../../src/main/spawnlog'
 
@@ -269,12 +269,12 @@ function recordingTimers(): Timers & { readonly delays: readonly number[] } {
  * the in-flight caps are about. `decide` answers the oldest window still open,
  * which is what a test with a single window reads. */
 function heldConfirmer(): LaunchConfirmer & {
-  readonly opened: readonly FrozenLaunch[]
+  readonly opened: readonly ConfirmView[]
   readonly openRunIds: readonly string[]
   decide(yes: boolean): void
   decideWindow(runId: string, yes: boolean): void
 } {
-  const opened: FrozenLaunch[] = []
+  const opened: ConfirmView[] = []
   const waiting = new Map<string, (yes: boolean, reason?: string) => void>()
   const decideWindow = (runId: string, yes: boolean): void => {
     const held = waiting.get(runId)
@@ -283,15 +283,21 @@ function heldConfirmer(): LaunchConfirmer & {
   }
   return {
     opened,
-    open(launch, answer) {
-      opened.push(launch)
-      waiting.set(launch.runId, answer)
+    open(view, answer) {
+      opened.push(view)
+      waiting.set(view.runId, answer)
     },
     decide(yes) {
       const oldest = [...waiting.keys()][0]
       if (oldest !== undefined) decideWindow(oldest, yes)
     },
     decideWindow,
+    // The window going away on its own: rule 11's installation moved while the
+    // window is open. A run with no window open is not a cancel, exactly as the
+    // real confirmer's `close` is.
+    close(runId) {
+      decideWindow(runId, false)
+    },
     get openRunIds(): readonly string[] {
       return [...waiting.keys()]
     },
@@ -299,13 +305,17 @@ function heldConfirmer(): LaunchConfirmer & {
 }
 
 /** answeringConfirmer is the other half: it answers every window as it opens. */
-function answeringConfirmer(yes: boolean): LaunchConfirmer & { readonly opened: readonly FrozenLaunch[] } {
-  const opened: FrozenLaunch[] = []
+function answeringConfirmer(yes: boolean): LaunchConfirmer & { readonly opened: readonly ConfirmView[] } {
+  const opened: ConfirmView[] = []
   return {
     opened,
-    open(launch, decide) {
-      opened.push(launch)
+    open(view, decide) {
+      opened.push(view)
       decide(yes)
+    },
+    // Nothing stays open to be closed.
+    close() {
+      return undefined
     },
   }
 }
@@ -455,12 +465,12 @@ describe('the launch, and the argv it writes', () => {
     const launched = held.launch(request())
     await untilSettled()
 
-    const frozen = confirmer.opened[0] as FrozenLaunch
+    const view = confirmer.opened[0] as ConfirmView
     // The vector starts at the program word, so the design's row string -- which
     // spells the CLI's own argv -- is everything after it.
-    expect(frozen.argv.slice(1).join(' ')).toBe(rowArgv())
-    expect(frozen.argv[0]).toBe(BINARY)
-    expect(frozen.argv.slice(1)).toStrictEqual([
+    expect(view.argv.slice(1).join(' ')).toBe(rowArgv())
+    expect(view.argv[0]).toBe(BINARY)
+    expect(view.argv.slice(1)).toStrictEqual([
       'run',
       '--task-file',
       '-',
@@ -483,10 +493,10 @@ describe('the launch, and the argv it writes', () => {
     const launched = held.launch(request({ title: 'the backlog', planTask: 'backlog/triage' }))
     await untilSettled()
 
-    const frozen = confirmer.opened[0] as FrozenLaunch
-    expect(frozen.argv.slice(1).join(' ')).toBe(rowArgv({ title: 'the backlog', planTask: 'backlog/triage' }))
-    expect(frozen.argv.filter((word) => word.startsWith('--title'))).toStrictEqual(['--title=the backlog'])
-    expect(frozen.argv.filter((word) => word.startsWith('--plan-task'))).toStrictEqual(['--plan-task=backlog/triage'])
+    const view = confirmer.opened[0] as ConfirmView
+    expect(view.argv.slice(1).join(' ')).toBe(rowArgv({ title: 'the backlog', planTask: 'backlog/triage' }))
+    expect(view.argv.filter((word) => word.startsWith('--title'))).toStrictEqual(['--title=the backlog'])
+    expect(view.argv.filter((word) => word.startsWith('--plan-task'))).toStrictEqual(['--plan-task=backlog/triage'])
 
     confirmer.decide(false)
     await launched
@@ -498,9 +508,9 @@ describe('the launch, and the argv it writes', () => {
     const launched = held.launch(request({ title: '-draft' }))
     await untilSettled()
 
-    const frozen = confirmer.opened[0] as FrozenLaunch
-    expect(frozen.argv).toContain('--title=-draft')
-    expect(frozen.argv).not.toContain('-draft')
+    const view = confirmer.opened[0] as ConfirmView
+    expect(view.argv).toContain('--title=-draft')
+    expect(view.argv).not.toContain('-draft')
 
     confirmer.decide(false)
     await launched
@@ -575,38 +585,43 @@ describe('the launch, and the argv it writes', () => {
 })
 
 describe('the frozen spawn', () => {
-  it('spawns the frozen object’s own words and nothing else, and freezes it', async () => {
+  it('spawns the frozen object’s own words and nothing else, and freezes the view', async () => {
     const confirmer = heldConfirmer()
     const spawner = completingSpawner()
     const held = runner({ confirmer, spawner })
     const launched = held.launch(request())
     await untilSettled()
 
-    const frozen = confirmer.opened[0] as FrozenLaunch
-    expect(Object.isFrozen(frozen)).toBe(true)
-    expect(Object.isFrozen(frozen.argv)).toBe(true)
+    // The window is handed the display-only view, and the view is what the
+    // spawn's own words are read against: the same fields, deep-frozen, with
+    // nothing of the plan, the environment or the task's bytes in it.
+    const view = confirmer.opened[0] as ConfirmView
+    expect(Object.isFrozen(view)).toBe(true)
+    expect(Object.isFrozen(view.argv)).toBe(true)
 
     confirmer.decide(true)
     const outcome = await launched
     expect(outcome.ok).toBe(true)
 
     const call = spawner.calls[0] as SpawnCall
-    expect(call.args).toStrictEqual(frozen.argv.slice(1))
+    expect(call.command).toBe(view.argv[0])
+    expect(call.args).toStrictEqual(view.argv.slice(1))
     expect(call.command).toBe(BINARY)
-    expect(call.options.cwd).toBe(frozen.cwd)
-    expect(spawnedArgv(frozen.plan)).toStrictEqual([call.command, ...call.args])
+    // The child runs in the console's own private, empty directory, and not in
+    // the operator's checkout: the frozen launch's cwd is what it always was.
+    expect(call.options.cwd).toBe(privateWorkingDirectory({}))
   })
 
-  it('carries the run id in `task.NewRunID`’s shape and the task’s own bytes', async () => {
+  it('carries the run id in `task.NewRunID`’s shape and the task’s own size', async () => {
     const confirmer = heldConfirmer()
     const held = runner({ confirmer })
     const launched = held.launch(request({ task: 'a task with an em dash — in it' }))
     await untilSettled()
 
-    const frozen = confirmer.opened[0] as FrozenLaunch
-    expect(frozen.runId).toBe(RUN_ID)
-    expect(frozen.taskText).toBe('a task with an em dash — in it')
-    expect(new TextDecoder().decode(frozen.taskBytes)).toBe(frozen.taskText)
+    const view = confirmer.opened[0] as ConfirmView
+    expect(view.runId).toBe(RUN_ID)
+    expect(view.taskText).toBe('a task with an em dash — in it')
+    expect(view.taskByteLength).toBe(new TextEncoder().encode('a task with an em dash — in it').byteLength)
 
     confirmer.decide(false)
     await launched
@@ -810,7 +825,7 @@ describe('the confirmation seam', () => {
     const launched = held.launch(request())
     await untilSettled()
 
-    const runId = (confirmer.opened[0] as FrozenLaunch).runId
+    const runId = (confirmer.opened[0] as ConfirmView).runId
     expect(await held.answer(runId, true)).toBeUndefined()
     const first = await launched
     expect(first.ok).toBe(true)
@@ -1329,6 +1344,9 @@ describe('a launch that was stopped, and one that failed outright', () => {
         if (calls === 1) throw new Error('the confirmation window is gone')
         held.open(launch, decide)
       },
+      close(runId) {
+        held.close(runId)
+      },
     }
     const spawner = quietSpawner()
     const launcher = runner({ confirmer, spawner })
@@ -1346,6 +1364,33 @@ describe('a launch that was stopped, and one that failed outright', () => {
     expect(held.opened).toHaveLength(1)
     for (const launch of held.opened) held.decideWindow(launch.runId, false)
     expect((await second).reason).toBe(DECLINED_CANCELLED)
+  })
+
+  it('settles as a cancel, spawning nothing, when an open window is closed by name', async () => {
+    // Rule 11: an installation removed or re-chosen while the window is open
+    // closes the window as a cancel. The caller -- `index.ts`, which is watching
+    // the records -- names the run; the seam's `close` is how it says so, and
+    // what comes back is the ordinary decline: no child, and the console's own
+    // cancel sentence rather than the CLI's.
+    const confirmer = heldConfirmer()
+    const spawner = quietSpawner()
+    const launcher = runner({ confirmer, spawner })
+
+    const launched = launcher.launch(request())
+    await untilSettled()
+    expect(confirmer.opened).toHaveLength(1)
+    const window = confirmer.opened[0] as ConfirmView
+    expect(confirmer.openRunIds).toStrictEqual([window.runId])
+
+    confirmer.close(window.runId)
+    const outcome = await launched
+    expect(outcome.ok).toBe(false)
+    expect(outcome.reason).toBe(DECLINED_CANCELLED)
+    expect(spawner.calls).toHaveLength(0)
+    // A close for a run id nothing has open decides nothing, so a second one
+    // after the answer changes no outcome.
+    confirmer.close(window.runId)
+    expect(confirmer.openRunIds).toStrictEqual([])
   })
 
   it('declines, and frees the hold, when the still-recorded read rejects', async () => {
