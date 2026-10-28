@@ -1,11 +1,13 @@
 package runner
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -179,8 +181,82 @@ func haltReasonText(h runstore.Halt) string {
 		return "no credential became usable before the job's own timeout"
 	case runstore.HaltCredsRulesDenied:
 		return "the database's rules refused this run's credential state"
+	case runstore.HaltStageBudget:
+		return "a stage passed the budget for it"
+	case runstore.HaltReviewRatio:
+		return "review spent more calls than the ratio allows for the implementation it read"
+	case runstore.HaltFanout:
+		return "a stage used more sub-agents than the maximum"
+	case runstore.HaltReviewScope:
+		return "the review range covers files this run never changed"
+	case runstore.HaltExpectedExceeded:
+		return "the run passed the cost its tier expected of it"
 	}
 	return string(h.Reason)
+}
+
+// governanceHalt stops the run at a governance tripwire (T6.1, D329, G7): it
+// records the halt, writes the checkpoint report into the run record and puts
+// that report on the pull request, which is opened as a draft when the run has
+// none yet. It reports whether this call is the one that halted the run, the
+// way haltNow does.
+//
+// detail is the runner's own account of what the tripwire saw — a count, a
+// figure, a stage name — and never task text. The checkpoint's trigger,
+// why_over and estimate_usd come from the record itself; done, next and
+// hard_instructions stay empty until the stopping agent answers the checkpoint
+// prompt (T7.2, wired in T7.3).
+func (r *run) governanceHalt(ctx context.Context, reason runstore.HaltReason, detail string) bool {
+	h := runstore.Halt{Reason: reason, Scope: "run", At: r.d.Now().UTC(), Detail: detail}
+	if !r.haltNow(h) {
+		return false
+	}
+	// The report has to reach the record and the pull request whatever
+	// happens next: recording the halt cancelled the stage this was called
+	// from, so the caller's context may already be done.
+	ctx = context.WithoutCancel(ctx)
+	// The record's own model figure is the only money figure a checkpoint can
+	// carry before a tier's expectation exists (T8.1), and it is what a
+	// continuation starts from.
+	r.rec.Checkpoint = runstore.NewCheckpoint(runstore.Checkpoint{
+		Trigger:     string(h.Reason),
+		WhyOver:     haltReasonText(h),
+		EstimateUSD: r.rec.CostUSD,
+	})
+	r.save(ctx)
+	r.checkpointPR(ctx, reason)
+	return true
+}
+
+// checkpointPR puts the checkpoint report on the pull request, opening the
+// draft when the run has none yet: a governance stop must leave a person
+// something to read, and the draft is where they read it. It never asks for
+// the pull request to be made ready. A failure only warns — finalize settles
+// the pull request and writes the same report into its final section.
+func (r *run) checkpointPR(ctx context.Context, reason runstore.HaltReason) {
+	if r.rec.PR == nil {
+		if r.rec.PushedHead == "" || !r.cfg.Git.PR.EarlyDraftOn() {
+			// Nothing to open on: no commit of this run is on the branch yet,
+			// so finalize is what opens the pull request. A run with the early
+			// draft off has no mid-run status section by design.
+			return
+		}
+		r.openDraftPR(ctx, r.rec.Stage, true)
+		return
+	}
+	// during: the stage this was called from is still unwinding, so the
+	// section says a checkpoint landed inside it rather than after it.
+	err := r.writeStatus(ctx, r.rec.PR.Number, r.redact(r.runningSection(r.rec.Stage, true)), statusCallTimeout)
+	switch {
+	case err == nil:
+		r.noteStatusWritten(ctx, r.d.Now())
+	case errors.Is(err, gitprov.ErrPRNotOpen):
+		r.pr.gone = true
+		r.d.Log.Warn("the pull request is no longer open; the checkpoint was not written to it", "pr", r.rec.PR.Number)
+	default:
+		r.d.Log.Warn("writing the checkpoint to the pull request failed; finalize writes the report",
+			"pr", r.rec.PR.Number, "reason", string(reason), "err", r.redact(err.Error()))
+	}
 }
 
 // haltLines is the report's halted line and how to continue. The spend is
