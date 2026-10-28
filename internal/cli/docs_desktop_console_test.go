@@ -603,7 +603,20 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 	// inventory, both of which name commands, not fields.
 	notAKey := map[string]bool{"watch": true, "report": true, "diagnose": true,
 		"logs": true, "doctor": true, "version": true}
+	// approvedAheadOfTheCLI are the wire keys the document names under its own
+	// bounded exception (§intro): the owner has approved a release that will
+	// write them, no shape here carries them yet, and the console accepts them
+	// as optional so that release does not refuse every document whole as
+	// `unknown-key`. Admitting them HERE, in the guard, is the point: a reviewer
+	// found the first such key documented in prose beside the tables, where this
+	// test could not see it, so the exception was invisible to the one check
+	// written to catch a field no command emits. The list is self-cleaning in
+	// both directions below -- an entry that becomes a real json key fails
+	// (its row now belongs to a shape), and one no field table names fails (the
+	// exception must not outlive the documentation that justifies it).
+	approvedAheadOfTheCLI := map[string]bool{"leased_usd": true}
 	checked := 0
+	namedInTable := map[string]bool{}
 	for _, line := range strings.Split(doc, "\n") {
 		m := tableFieldRE.FindString(line)
 		if m == "" {
@@ -615,9 +628,18 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 				continue
 			}
 			checked++
-			if !real[name] {
+			namedInTable[name] = true
+			if !real[name] && !approvedAheadOfTheCLI[name] {
 				t.Errorf("%s's field table names %q, which is not a json key of any shape it documents: a field invented rather than read", path, name)
 			}
+		}
+	}
+	for name := range approvedAheadOfTheCLI {
+		if real[name] {
+			t.Errorf("%s: %q is now a real json key of a shape this document describes; drop it from approvedAheadOfTheCLI and let its table row stand on the struct", path, name)
+		}
+		if !namedInTable[name] {
+			t.Errorf("%s: approvedAheadOfTheCLI lists %q, which no field table names; the exception has to be documented where this test can see it", path, name)
 		}
 	}
 	if checked < 100 {

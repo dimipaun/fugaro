@@ -1618,6 +1618,39 @@ describe('the caps panel', () => {
     expect(texts(row, 'spend-cap-notional')).toEqual([`${NOTIONAL_MARK}$0.00`])
   })
 
+  it('reads `compute_usd` off a cap row as an estimate, and n/a where there is none', () => {
+    // The owner approved `compute_usd` on each `showRepo` on 2026-10-28, ahead
+    // of the CLI release that writes it. The row reader already ignores keys it
+    // does not know, so the console reads the new one into the model -- as an
+    // **estimate**, compute's own account -- and draws nothing with it yet; the
+    // Spend redesign is the screen that will.
+    const model = buildSpendModel(DAY_REPORT, {
+      ...BUDGET,
+      repos: [{ ...THE_REPOS[0], compute_usd: 0.75 }],
+    })
+    const row = model.caps.repos[0]
+    expect(row?.compute.state).toBe('estimated')
+    expect(row?.compute.value).toBe(0.75)
+    // A measured `0` is not the `n/a` an absent key draws -- compute the
+    // document priced at nothing is a figure, and the one value that tells the
+    // two apart.
+    const zero = buildSpendModel(DAY_REPORT, {
+      ...BUDGET,
+      repos: [{ ...THE_REPOS[0], compute_usd: 0 }],
+    })
+    expect(zero.caps.repos[0]?.compute.state).toBe('estimated')
+    expect(zero.caps.repos[0]?.compute.value).toBe(0)
+    // And a row without it -- the recorded document, and a `null` alike -- is
+    // `n/a`, never `$0.00`.
+    expect(modelOf().caps.repos[0]?.compute.state).toBe('unavailable')
+    expect(modelOf().caps.repos[0]?.compute.value).toBeNull()
+    const nulled = buildSpendModel(DAY_REPORT, {
+      ...BUDGET,
+      repos: [{ ...THE_REPOS[0], compute_usd: null }],
+    })
+    expect(nulled.caps.repos[0]?.compute.value).toBeNull()
+  })
+
   it('draws an unrecognised scope word as an unknown, and never echoes it', () => {
     const caps: JSONDoc = {
       ...BUDGET,

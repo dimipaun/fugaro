@@ -423,6 +423,20 @@ export interface SpendCapRow {
   readonly counted: Reading
   readonly spent: Reading
   readonly notional: Reading
+  /** compute is the repository's compute dollars, an **estimated** figure by
+   * design (`runstore.Cost.ComputeUSD`). The owner approved `compute_usd` on
+   * each `showRepo` on 2026-10-28 and no CLI writes it yet, so this reads
+   * absent and `null` as `n/a` and draws nothing with it: the Spend redesign
+   * is the screen that will.
+   *
+   * A value that is not a number is `n/a` too, and not a refusal, because this
+   * reader refuses no document at all -- the caps panel is the console's
+   * tolerant reader, and every number it cannot read is `n/a`. The contract
+   * states that as one rule (console/docs/json-contract.md §2): a key named
+   * ahead of its release is handled the way the decoder that owns the document
+   * handles a shape it cannot read; the closed decoders (`shared/schema.ts`,
+   * the digest) refuse it by name, and this one draws `n/a`. */
+  readonly compute: Reading
   readonly headroom: Reading
   readonly dailyCap: Reading
   readonly dailyScope: SpendScope
@@ -1401,6 +1415,7 @@ function capRowOf(raw: unknown): SpendCapRow | null {
     counted: readNumber(repo['counted_usd'], 'repos[].counted_usd'),
     spent: readNumber(repo['spent_usd'], 'repos[].spent_usd'),
     notional: usdReading(repo, 'notional_usd', 'notional'),
+    compute: usdReading(repo, 'compute_usd', 'compute'),
     headroom: readNumber(repo['headroom_usd'], 'repos[].headroom_usd'),
     dailyCap: readNumber(repo['daily_cap_usd'], 'repos[].daily_cap_usd'),
     dailyScope: scopeOf(textAt(repo['daily_cap_source']) ?? ''),
