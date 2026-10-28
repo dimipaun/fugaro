@@ -143,8 +143,8 @@ func (r *run) afterStage(ctx context.Context, stage string) {
 		return
 	}
 	if r.follow == nil {
-		// A report run's only push is finalize's; the checkpoint below is
-		// skipped for it too.
+		// A report run's only push is finalize's: checkpointsOn() is false
+		// for it, so the boundary checkpoint below pushes nothing.
 		if r.cfg.Git.PR.EarlyDraftOn() && !r.digest && (stage == "implement" || stage == "fix") {
 			if sha, ok := r.verifiedHead(ctx); ok {
 				if r.rec.PR == nil {

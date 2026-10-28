@@ -4080,7 +4080,16 @@ func (r *initRun) forgetRepo(ctx context.Context, c *infra.Clients, t *tf.TF, ba
 // ceiling (the project config's budget) and, when the checkout's fugaro.yaml
 // has a budget block, which of its keys the ceiling would clamp.
 func printCeiling(w io.Writer, lc *localcfg.Config, cfg *config.Config) {
+	// The ceiling is the project's own, governance included: the runner puts
+	// the project layer's governance block in its first layer (resolvePolicy,
+	// T7.1), so a value the file writes looser than the layer's is one the run
+	// clamps. Merging against a ceiling without it is what let `fugaro
+	// validate` pass such a file, and this command is the other reader that
+	// has to say what the run will use.
 	ceiling := ceilingLayer(lc)
+	if cfg.Layer != nil {
+		ceiling.Governance = cfg.Layer.Governance.Policy()
+	}
 	if !reflect.DeepEqual(ceiling, policy.Layer{}) {
 		fmt.Fprintf(w, "Budget ceiling for %s from project %s: %s\n", cfg.Project, lc.Name, ceilingText(ceiling))
 	}

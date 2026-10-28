@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -165,5 +166,40 @@ func TestReportToleratedTitleStaysInsideItsCell(t *testing.T) {
 	}
 	if strings.Contains(got, "\n# Heading") {
 		t.Errorf("a title forged a heading:\n%s", got)
+	}
+}
+
+// TestPolicyLineGivesAStageTimeoutItsOwnWording: a stage timeout the run's
+// own timeouts.stage bounds at least as tightly is dropped for a different
+// reason than a looser value — the bound is not looser than a limit, it can
+// come from the project layer itself — so the report says why rather than
+// folding it into the "looser than the project's limits" sentence (T7.6).
+func TestPolicyLineGivesAStageTimeoutItsOwnWording(t *testing.T) {
+	p := &runstore.PolicyRecord{Ignored: []runstore.PolicyIgnored{
+		{Key: policy.KeyPerRunUSD, Value: "20", Effective: "5", Source: policy.SourceDefaultBranch, From: policy.SourceBranch},
+		{Key: policy.KeyStageTimeoutImplement, Value: "1h", Effective: "40m", Source: policy.SourceCeiling, From: policy.SourceCeiling},
+	}}
+	got := policyLine(p)
+	loose := "**Policy:** 1 value from fugaro.yaml on this branch was looser than the project's limits and was ignored (budget.per_run_usd 20 -> 5)\n\n"
+	if !strings.Contains(got, loose) {
+		t.Errorf("the looser value's sentence is missing or now carries the stage timeout:\n%s\nwant %q", got, loose)
+	}
+	stage := "**Policy:** the run's own timeouts.stage bounds a stage at least as tightly as the stage timeout asked for, so 1 value was ignored (governance.stage_timeout.implement 1h from the project layer -> 40m)\n\n"
+	if !strings.Contains(got, stage) {
+		t.Errorf("the stage timeout has no wording of its own:\n%s\nwant %q", got, stage)
+	}
+}
+
+// TestPolicyLineNamesTheBranchForAStageTimeoutFromTheFile: the same sentence
+// when the layer that asked for the dropped stage timeout is the repository's
+// own file rather than the project layer.
+func TestPolicyLineNamesTheBranchForAStageTimeoutFromTheFile(t *testing.T) {
+	p := &runstore.PolicyRecord{Ignored: []runstore.PolicyIgnored{
+		{Key: policy.KeyStageTimeoutReview, Value: "30m", Effective: "10m", Source: policy.SourceBranch, From: policy.SourceBranch},
+	}}
+	got := policyLine(p)
+	want := "so 1 value was ignored (governance.stage_timeout.review 30m from fugaro.yaml on this branch -> 10m)"
+	if !strings.Contains(got, want) {
+		t.Errorf("policyLine = %q, want %q", got, want)
 	}
 }

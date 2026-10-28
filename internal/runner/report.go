@@ -441,15 +441,30 @@ func followUpSection(fu *FollowUpSection, reason string) string {
 	return b.String()
 }
 
-// policyLine is the report's note that fugaro.yaml values looser than the
-// limits in force were dropped, one entry per key; empty when none were.
+// policyLine is the report's note that the run dropped values a layer wrote:
+// the fugaro.yaml values looser than the limits in force, one entry per key,
+// and the stage timeouts the run's own timeouts.stage bounds at least as
+// tightly (T7.6), which are not looser than a limit but get a sentence of
+// their own so the report does not call them one. Empty when nothing was.
 func policyLine(p *runstore.PolicyRecord) string {
 	if p == nil || len(p.Ignored) == 0 {
 		return ""
 	}
 	type entry struct{ first, last runstore.PolicyIgnored }
 	seen, order, fromDefault := map[string]*entry{}, []string{}, false
+	// The stage timeouts, kept apart: the drop's why is the run's own bound
+	// and never "looser than the project's limits" (the value can come from
+	// the project layer itself), so they must not join the sentence below.
+	var stageKeys []string
+	stage := map[string]runstore.PolicyIgnored{}
 	for _, ig := range p.Ignored {
+		if isStageTimeoutKey(ig.Key) {
+			if _, ok := stage[ig.Key]; !ok {
+				stageKeys = append(stageKeys, ig.Key)
+			}
+			stage[ig.Key] = ig
+			continue
+		}
 		fromDefault = fromDefault || ig.From == policy.SourceDefaultBranch
 		if e := seen[ig.Key]; e != nil {
 			e.last = ig
@@ -458,22 +473,63 @@ func policyLine(p *runstore.PolicyRecord) string {
 		seen[ig.Key] = &entry{ig, ig}
 		order = append(order, ig.Key)
 	}
-	parts := make([]string, len(order))
-	for i, k := range order {
-		e := seen[k]
-		parts[i] = fmt.Sprintf("%s %s -> %s", PolicyKeyPath(k), policyValue(k, e.first.Value), policyValue(k, e.last.Effective))
+	var b strings.Builder
+	if n := len(order); n > 0 {
+		parts := make([]string, n)
+		for i, k := range order {
+			e := seen[k]
+			parts[i] = fmt.Sprintf("%s %s -> %s", PolicyKeyPath(k), policyValue(k, e.first.Value), policyValue(k, e.last.Effective))
+		}
+		where, limits := " on this branch", "the project's limits"
+		if fromDefault {
+			where, limits = "", "the limits set above them"
+		}
+		were := "were"
+		if n == 1 {
+			were = "was"
+		}
+		fmt.Fprintf(&b, "**Policy:** %s from fugaro.yaml%s %s looser than %s and %s ignored (%s)\n\n",
+			Plural(n, "value"), where, were, limits, were, strings.Join(parts, "; "))
 	}
-	n := len(order)
-	where, limits := " on this branch", "the project's limits"
-	if fromDefault {
-		where, limits = "", "the limits set above them"
+	if n := len(stageKeys); n > 0 {
+		parts := make([]string, n)
+		for i, k := range stageKeys {
+			ig := stage[k]
+			parts[i] = fmt.Sprintf("%s %s from %s -> %s",
+				PolicyKeyPath(k), policyValue(k, ig.Value), policyFrom(ig.From), policyValue(k, ig.Effective))
+		}
+		were := "were"
+		if n == 1 {
+			were = "was"
+		}
+		fmt.Fprintf(&b, "**Policy:** the run's own timeouts.stage bounds a stage at least as tightly as the stage timeout asked for, so %s %s ignored (%s)\n\n",
+			Plural(n, "value"), were, strings.Join(parts, "; "))
 	}
-	were := "were"
-	if n == 1 {
-		were = "was"
+	return b.String()
+}
+
+// isStageTimeoutKey is whether key is one of the three stage timeouts
+// governance bounds (the key stageTimeoutKey maps a stage to).
+func isStageTimeoutKey(key string) bool {
+	switch key {
+	case policy.KeyStageTimeoutImplement, policy.KeyStageTimeoutReview, policy.KeyStageTimeoutFix:
+		return true
 	}
-	return fmt.Sprintf("**Policy:** %s from fugaro.yaml%s %s looser than %s and %s ignored (%s)\n\n",
-		Plural(n, "value"), where, were, limits, were, strings.Join(parts, "; "))
+	return false
+}
+
+// policyFrom names the layer that asked for a dropped stage timeout, as
+// PolicyIgnored.From spells it (the ceiling there is the project layer's
+// governance, which the run drops when its own timeouts.stage is tighter).
+func policyFrom(from string) string {
+	switch from {
+	case policy.SourceCeiling:
+		return "the project layer"
+	case policy.SourceDefaultBranch:
+		return "the default branch's fugaro.yaml"
+	default:
+		return "fugaro.yaml on this branch"
+	}
 }
 
 // policyValue is a limit's value for the report. An allow-list's models come

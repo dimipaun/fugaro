@@ -158,6 +158,12 @@ type run struct {
 	spec *task.Spec
 	cfg  *config.Config
 	wf   config.Workflow
+	// cfgRes is how cfg was resolved: the layer each key cfg carries came
+	// from (resolveConfig, set beside cfg). It is read to name the layer the
+	// run's own timeouts.stage came from, which is the source of the bound a
+	// dropped governance.stage_timeout is recorded against (T7.6); nothing
+	// else reads it, and it is nil only for a run that resolved no config.
+	cfgRes *config.Resolution
 	// providers are r.d.Providers with the project layer's claude_models
 	// merged in (config.ApplyClaudeClaims), set once in resolveConfig --
 	// the one place both entry points (bootstrap and readBaseConfig)
@@ -1970,6 +1976,7 @@ func (r *run) resolveConfig(data []byte) (*config.Config, error) {
 		}
 		r.providers = merged
 	}
+	r.cfgRes = out.Res
 	r.rec.ConfigSHA256 = out.Res.ConfigSHA256
 	if r.d.CompressionForTest != "" {
 		// The one way a test reaches a run with compression on. It is
@@ -2499,13 +2506,15 @@ func stageTimeoutKey(stage string) string {
 // policy line and the digest carry it the way they carry a value of
 // fugaro.yaml that a stricter layer dropped.
 //
-// Source is the branch rather than the layer in From: what is in force is the
-// run's own timeouts.stage, which is the run's own configuration and not a
-// policy layer — the vocabulary this record is written in names that the
-// branch's — while Value is the bound the layer in From asked for. From is the
-// layer the stage_timeout key itself came from, which for a governance key is
-// the project layer's ceiling or one of the two files, so result.schema.json's
-// `from` carries "ceiling" as well.
+// Source is the layer the run's own timeouts.stage came from, which is the
+// bound actually in force: the project layer's governance (the ceiling) when
+// its profile set it, the repository's own file (the branch) otherwise — the
+// same question recordPolicy answers for a merge. Value is the bound the layer
+// in From asked for. From is the layer the stage_timeout key itself came from,
+// which for a governance key is the project layer's ceiling or one of the two
+// files, so result.schema.json's `from` carries "ceiling" as well; the two are
+// different layers, and the warning spells them as recordPolicy does
+// ("from" the asking layer, "limit_from" the one that set what is in force).
 //
 // A stage whose bound is dropped more than once — review repeats, and a
 // resumed stage runs again — is recorded and warned about once: the entry is
@@ -2519,8 +2528,12 @@ func (r *run) noteStageTimeoutClamped(stage string, own time.Duration) {
 	if from == "" {
 		from = policy.SourceBranch
 	}
+	source := policy.SourceBranch
+	if r.cfgRes != nil && config.IsLayerSource(r.cfgRes.SourceOf("workflows."+r.rec.Workflow+".timeouts.stage")) {
+		source = policy.SourceCeiling
+	}
 	ig := runstore.PolicyIgnored{Key: key, Value: own.String(), Effective: r.budget.Stage.String(),
-		Source: policy.SourceBranch, From: from}
+		Source: source, From: from}
 	r.mu.Lock()
 	if r.rec.Policy == nil {
 		r.rec.Policy = &runstore.PolicyRecord{}
@@ -2534,7 +2547,8 @@ func (r *run) noteStageTimeoutClamped(stage string, own time.Duration) {
 	r.rec.Policy.Ignored = append(r.rec.Policy.Ignored, ig)
 	r.mu.Unlock()
 	r.d.Log.Warn("policy: a stage timeout at or above the run's timeouts.stage was ignored",
-		"key", PolicyKeyPath(key), "value", ig.Value, "effective", ig.Effective, "limit_from", ig.From)
+		"key", PolicyKeyPath(key), "value", ig.Value, "effective", ig.Effective,
+		"from", ig.From, "limit_from", ig.Source)
 }
 
 // stageOnce is one attempt at a stage: the whole of what stage did before

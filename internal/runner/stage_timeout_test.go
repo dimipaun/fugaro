@@ -188,8 +188,11 @@ func TestStageTimeoutAboveTheRunBoundIsRecorded(t *testing.T) {
 					continue
 				}
 				found = true
+				// Source is the layer the run's own timeouts.stage came
+				// from, which here is the same one that wrote the dropped
+				// governance value: the branch's file or the layer's profile.
 				if ig.Value != "5m0s" || ig.Effective != tc.effective ||
-					ig.Source != policy.SourceBranch || ig.From != tc.from {
+					ig.Source != tc.from || ig.From != tc.from {
 					t.Errorf("ignored = %+v", ig)
 				}
 			}
@@ -233,9 +236,9 @@ func TestRegistryShowsTheStagesOwnDeadline(t *testing.T) {
 	}
 	from, _ := started.Int64()
 	to, _ := deadline.Int64()
-	// The stage's own bound is 8s and the run's is 30s: a deadline more than
-	// half way between them can only be the run's own.
-	if d := time.Duration(to-from) * time.Millisecond; d <= 0 || d > 15*time.Second {
+	// The stage's own bound is 8s and the run's is 30s: anything past 8s plus
+	// slack can only be the run's own.
+	if d := time.Duration(to-from) * time.Millisecond; d <= 0 || d > 10*time.Second {
 		t.Fatalf("the registry shows a stage deadline %v away, want the stage's own 8s bound", d)
 	}
 }
@@ -386,5 +389,42 @@ func TestStageTimeoutFromTheProjectLayer(t *testing.T) {
 	}
 	if len(h.agent.calls) != 1 {
 		t.Fatalf("%d stages ran, want only implement", len(h.agent.calls))
+	}
+}
+
+// TestStageTimeoutClampNamesBothLayers: From is the layer that wrote the
+// dropped stage_timeout and Source is the layer the run's own timeouts.stage
+// came from, and the warning spells them the way recordPolicy does ("from"
+// the asking layer, "limit_from" the one in force). Here the layer's profile
+// sets the run's bound and the repository's own file asks for the looser
+// stage timeout, so the two differ and a swap is visible.
+func TestStageTimeoutClampNamesBothLayers(t *testing.T) {
+	layer := strings.Replace(runnerLayer,
+		"timeouts: { total: 5m, stage: 2m, verify: 1m, finalize_reserve: 30s }",
+		"timeouts: { total: 5m, stage: 1s, verify: 1m, finalize_reserve: 30s }", 1)
+	repo := layeredRepo + "governance: { stage_timeout: { implement: 5m } }\n"
+	h := newHarness(t, repo, layerSpec(layer))
+	logs := &lockedBuf{}
+	h.deps.Log = slog.New(slog.NewTextHandler(logs, nil))
+	rec, err := h.run(t, blockedStage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol := rec.Policy
+	var found bool
+	for _, ig := range pol.Ignored {
+		if ig.Key != policy.KeyStageTimeoutImplement {
+			continue
+		}
+		found = true
+		if ig.From != policy.SourceBranch || ig.Source != policy.SourceCeiling {
+			t.Errorf("ignored = %+v, want From the branch, Source the ceiling", ig)
+		}
+	}
+	if !found {
+		t.Fatalf("the dropped value was not recorded: %+v", pol.Ignored)
+	}
+	if got := logs.String(); !strings.Contains(got, "from=branch") || !strings.Contains(got, "limit_from=ceiling") {
+		t.Errorf("the warning does not spell the two layers as recordPolicy does:\n%s", got)
 	}
 }

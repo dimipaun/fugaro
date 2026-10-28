@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -2062,5 +2063,28 @@ func TestInitRefusesAProjectJobDeleteWhateverAllowDeleteNames(t *testing.T) {
 	}
 	if len(r.ran(t, "apply")) != 0 {
 		t.Fatal("a plan deleting a project job and its launcher grant was applied")
+	}
+}
+
+// TestPrintCeilingCarriesTheProjectLayersGovernance: `update --repo` says
+// what the run will clamp, so its ceiling carries the project layer's
+// governance block the way `fugaro validate`'s and the runner's do (T7.1).
+// Merging against a ceiling built from the project config's budget alone let
+// this command pass a file whose stage timeout the run would never apply.
+func TestPrintCeilingCarriesTheProjectLayersGovernance(t *testing.T) {
+	gov := func(d time.Duration) *config.Governance {
+		return &config.Governance{StageTimeout: config.StageTimeout{Implement: config.Duration{Duration: d}}}
+	}
+	lc := &localcfg.Config{Name: "aurora"}
+	cfg := &config.Config{
+		Project:    "aurora",
+		Budget:     &config.Budget{Mode: config.BudgetEnforce, PerRunUSD: 5},
+		Governance: gov(5 * time.Minute),
+		Layer:      &config.ProjectLayer{Governance: gov(200 * time.Millisecond)},
+	}
+	var b strings.Builder
+	printCeiling(&b, lc, cfg)
+	if got := b.String(); !strings.Contains(got, "governance.stage_timeout.implement") || !strings.Contains(got, "200ms") {
+		t.Fatalf("update --repo's ceiling note does not warn about the layer's tighter stage timeout:\n%s", got)
 	}
 }
