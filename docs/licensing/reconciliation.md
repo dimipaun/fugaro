@@ -609,6 +609,39 @@ The draft's counsel list gains the items the session added. The licence files, t
 
 The owner chose `https://fugaro.dev/legal/subscription-terms` as the Subscription Terms URL and had it written into the four licence files (L4.4). The page is published only after counsel approves the text (L4.3); until then the link does not resolve. The CLA's placeholder was unchanged by this amendment; it is filled by the amendment of 2026-10-29 above.
 
+## Amendment 2026-10-29 (the coordinator leaves the Terms' Core)
+
+The owner ruled (**D531**, 2026-10-29) that the coordinator moves under `ee/`, and that the
+Subscription Terms must stop saying it is Core **now**, without waiting for counsel's next revision
+of the text; the owner tells counsel, this being the owner's call and not a recommendation.
+
+**The one sentence changed** is section 9.1 of [subscription-terms.md](subscription-terms.md), in
+the list of what runs where:
+
+> before: **…the optional credentials service and the coordinator are designed to run in the
+> Customer's own cloud project (both are part of the Core today, not of the Software).**
+>
+> after: **…the optional credentials service and the coordinator are designed to run in the
+> Customer's own cloud project (the credentials service is part of the Core today, not of the
+> Software).**
+
+Only the words that classified the coordinator as Core are gone: the coordinator keeps its place in
+the sentence about where it runs, the credentials service keeps its classification (it is still
+inside the three-directory boundary's complement), and no other wording in the draft changed. A
+**Note for counsel** beside section 9.1 carries the dated note — *edited 2026-10-29 on the owner's
+ruling D531 (counsel not yet consulted: tell counsel in the next revision round)* — and, being a
+drafting note, it is cut from the published page. `website/content/subscription-terms.md` is
+regenerated from the document with `go run ./internal/clidoc`, so the page and the draft stay in
+step, and its text below the status line is the agreement alone.
+
+**Not changed.** The four licence files are untouched (D531 edits Terms text, not the licence), as
+are the decision rows that record the earlier answers (D302's "stay core MIT", D434 and T10 in
+[subscriptions/reconciliation.md](../subscriptions/reconciliation.md)): they are what was decided
+then, and the moves themselves are tasks S0.3 and S0.4 of
+[subscriptions/implementation-plan.md](../subscriptions/implementation-plan.md). Counsel's question
+about the licence's own coverage sentence and the coordinator's released MIT versions (F38, T10)
+is untouched by this edit.
+
 ## UNVERIFIED
 
 - **U1** — **Moot after O2** (`LICENSE` is not changed). What stays unverified is only that GitHub

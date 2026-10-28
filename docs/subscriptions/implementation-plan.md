@@ -185,7 +185,13 @@ The owner's answers and rulings that shape it (non-price; figures are private, D
 
 - **Files:** `docs/licensing/subscription-terms.md`.
 - **Change:** counsel's mark-up plus the rulings, in one run. **The Terms are not revised before
-  counsel answers.** Items:
+  counsel answers — one exception, edited 2026-10-29 on the owner's ruling D531 (counsel not yet
+  consulted: tell counsel in the next revision round).** The owner ruled the coordinator moves
+  under `ee/` and had section 9.1 of
+  [licensing/subscription-terms.md](../licensing/subscription-terms.md) edited at once to stop
+  calling the coordinator Core (the only sentence changed; the website page regenerated from it,
+  [licensing/reconciliation.md](../licensing/reconciliation.md#amendment-2026-10-29-the-coordinator-leaves-the-terms-core)).
+  Everything below still waits for counsel. Items:
   - **§10.4 and §17.4:** after the grace period the console and the app can still **cancel**, and
     the kill switch stays; they cannot launch or change config (T12).
   - **§8.1 and §8.5:** **one key per organisation**, with its seat count, replacing the per-User
