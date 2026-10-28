@@ -121,7 +121,7 @@ Pin every download by version and checksum. Don't pipe a download into a shell, 
 
 ## 7. Build the image locally, and loop
 
-`fugaro image build --local --json` (add `--workflow <name>` with several workflows). `reference/validation.md` has the build notes and the failure table. On Apple silicon, iterate with `--platform linux/arm64`; the cloud build is the amd64 test. A failure goes back to step 4 (then 6 for what changed). If the same failure survives three fixes, stop and ask the user. One loop for the config and the Dockerfile, done when `fugaro validate --json` prints `"valid": true` and the build's smoke result says `"passed": true` for every workflow.
+`fugaro image build --local --json` (add `--workflow <name>` with several workflows). `reference/validation.md` has the build notes and the failure table. On Apple silicon, iterate with `--platform linux/arm64`; the cloud build is the amd64 test. If the same failure survives three fixes, stop and ask the user. One loop for the config and the Dockerfile, done when `fugaro validate --json` prints `"valid": true` and the build's smoke result says `"passed": true` for every workflow.
 
 ## 8. Secrets
 
@@ -129,7 +129,7 @@ From the checkout, run `fugaro secrets ls --repo --json` (not doctor, which list
 
 Setup's prompts (step 9) have no `--repo` to pass: they store a name project-wide, except a per-repository one (`bitbucket-token`, project-wide only through an explicit `project_secrets` allow-list entry); a covered name is not asked for; for this repository's own copy instead, press Ctrl-C at the prompt and run the command it printed in your own terminal, then start setup again.
 
-The user runs these in their own terminal window, not through the agent. One line per missing secret, at its default scope: no `--repo` for the GitHub App key (project-wide), `--repo <owner/name>` for `bitbucket-token` (per-repository by default; project-wide only through that same entry). One workspace or project access token may serve many repositories: store it once, project-wide:
+The user runs these in their own terminal window, not through the agent. One line per missing secret, at its default scope: no `--repo` for the GitHub App key (project-wide), `--repo <owner/name>` for `bitbucket-token` (per-repository by default; project-wide only through that same entry). See [docs/git-providers.md](https://github.com/dimipaun/fugaro/blob/main/docs/git-providers.md#one-workspace-or-project-token-for-many-repositories) for the workspace-or-project-token option. Run:
 
 ```bash user-runs
 # the GitHub App private key (a PEM file: redirected, not typed)
@@ -171,6 +171,6 @@ fugaro update --repo --retire
 
 ## Dogfooding facts
 
-- On GitHub a run can never change `.github/workflows/*` (the job's credential can't push workflow files). A task that needs one is the user's to do by hand.
+- On GitHub a run can never change `.github/workflows/*` (the job's credential can't push workflow files).
 - The in-run verify command is not the merge gate: CI is. Make `commands.test` finish in about the verify timeout (25 to 30 minutes), leave out slow packages, `-race` runs and anything needing Docker, and say which CI job covers what you left out.
 - Services in a Cloud Run job share the job's memory, and `/tmp` is memory: count them in `resources`.

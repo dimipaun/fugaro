@@ -44,9 +44,7 @@ A **workspace access token** or a **project access token** (both Bitbucket Premi
 1. Write the allow-list entry in your local config: `project_secrets: { bitbucket-token: { allow_data_to: [myworkspace/*] } }` names every repository of one workspace, present and future, or list repositories one by one.
 2. Run `fugaro update`, so the project container exists.
 3. Store the token project-wide: `fugaro secrets set bitbucket-token --project-wide < token-file`.
-4. Run each repository's `fugaro update --repo`. It asks nothing: the name is covered.
-
-For the daily image check, the base image must be 0.7.5 or later.
+4. Run each repository's `fugaro update --repo`. It asks nothing: the name is covered. For the daily image check, the base image must be 0.7.5 or later.
 
 **Copy the `project_secrets.bitbucket-token` entry to every operator machine's local config: the shared config never carries it, and without it `fugaro update --repo` asks for a per-repository token.** The entry is operator-local by design (a runs-bucket writer who could publish it could widen what a job mounts), so a machine seeded from the shared config has none, and a value typed at that prompt becomes the repository's own copy and wins over the project's from then on.
 
@@ -62,7 +60,7 @@ For the daily image check, the base image must be 0.7.5 or later.
 
 **One name on every repository.** With one token, every enrolled repository's pull requests and comments carry the same author — the token's name — so name it once, for everyone.
 
-**Bitbucket Data Center is not supported** (owner ruling, 2026-10-15; unchanged). Only Bitbucket Cloud's API is spoken here, and the API root 0.13.0 will let an owner list for self-managed or proxied Bitbucket must speak that same API; in 0.12.1 a run sends the token to Bitbucket Cloud's API root and there is no list yet.
+**Bitbucket Data Center is not supported** (owner ruling, 2026-10-15; unchanged). Only Bitbucket Cloud's API is spoken here, and an API root an owner lists for a self-managed or proxied Bitbucket in 0.13.0 must speak that same API. **In 0.12.1 there is no such list and no check: a launcher can override the job's environment on `jobs.run`, `FUGARO_BITBUCKET_API_URL` among it, and `providers.FromEnv` passes that value unchecked as the API root, so a launcher can have the run send the token to a host of their own (F7).** The lock that refuses any root but `https://api.bitbucket.org/2.0` outside a local invocation, except one the owner allow-lists in the policy, is 0.13.0's (D474, T2.8).
 
 **Bitbucket stays on the per-repository path** (owner ruling, 2026-10-15, design §4.5). A shared project job — one Cloud Run job serving several repositories of a profile — would have to hold **one** credential for every repository it serves, and the owner ruled that a Bitbucket credential cannot be scoped to one project's repositories, so the shared job the phase-3 design assumed has no Bitbucket credential to carry. **Phase 3's shared project jobs serve GitHub repositories** (`provider: github` profiles); each Bitbucket repository keeps its own job and its own `bitbucket-token`, which is what it has today. Bitbucket's own `bitbucket-token` allow-list above still exists for the operator who has such a workspace token and wants the project scope for a repository set of their own, but it is not what a shared job uses. The default Claude token is per repository for its own reason: it is person-owned (design §7).
 

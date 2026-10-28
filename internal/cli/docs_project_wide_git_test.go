@@ -251,10 +251,20 @@ func TestDocsSayTheInitPromptHasNoRepoFlagAndBitbucketIsPerRepository(t *testing
 // the same words, together with the rotation order (F3), the second operator's
 // machine (D467), the cross-repository credential reach (F7) and review risk
 // (F17, D476), that Bitbucket Data Center stays out of scope (D366, T2), the
-// single author every repository's pull requests then carry (F8, D472), and
-// that no one has run the path with such a token yet (D468 = no, Check 180).
+// single author every repository's pull requests then carry (F8, D472),
+// that no one has run the path with such a token yet (D468 = no, Check 180),
+// and where the API-root lock stands: unchecked in 0.12.1, D474's in 0.13.0.
 // The sentences wrap in the files, so the assertions are made against the
 // whitespace-normalized text.
+//
+// Mutations (verified, run and restored): the Data Center paragraph's
+// "in 0.12.1 a run sends the token to Bitbucket Cloud's API root and there is
+// no list yet" put back → FAIL, on both new pins — the claim was the reverse of
+// F7, since `providers.FromEnv` passes `FUGARO_BITBUCKET_API_URL` unchecked and
+// a launcher can override the job's environment; the "is 0.13.0's (D474,
+// T2.8)" clause deleted → FAIL. The base floor's move into step 4 is a
+// placement fix and is deliberately unpinned: the fact is F3's, and pinning
+// where a paragraph sits would fail on the next reordering that keeps it.
 func TestDocsStateTheBitbucketProjectTokenReach(t *testing.T) {
 	providers := strings.Join(strings.Fields(readDoc(t, "docs/git-providers.md")), " ")
 	sec := strings.Join(strings.Fields(readDoc(t, "SECURITY.md")), " ")
@@ -300,6 +310,13 @@ func TestDocsStateTheBitbucketProjectTokenReach(t *testing.T) {
 		"A hostile agent in one repository can open its own malicious pull request in another, and a later review-only run there trusts it.",
 		// Data Center (D366, T2).
 		"**Bitbucket Data Center is not supported**",
+		// And the honest half of the API-root story in 0.12.1: the override is
+		// passed unchecked, a launcher can point it at a host of their own (F7),
+		// and the lock is 0.13.0's. The paragraph said the opposite until the
+		// review of this round, which is the direction a security page must not
+		// drift in.
+		"**In 0.12.1 there is no such list and no check: a launcher can override the job's environment on `jobs.run`, `FUGARO_BITBUCKET_API_URL` among it, and `providers.FromEnv` passes that value unchecked as the API root, so a launcher can have the run send the token to a host of their own (F7).**",
+		"The lock that refuses any root but `https://api.bitbucket.org/2.0` outside a local invocation, except one the owner allow-lists in the policy, is 0.13.0's (D474, T2.8).",
 		// One author on every repository (F8, D472).
 		"every enrolled repository's pull requests and comments carry the same author",
 		// The live check (D468 = no).

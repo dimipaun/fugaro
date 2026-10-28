@@ -25,7 +25,9 @@ answers approve the reconciliation. Each task of the plan still needs the owner'
 **Amended 2026-10-27 (the workspace-token plan, T1.1): D462 reverses D363 for operators who opt in.**
 The owner ruled that an operator who holds one **workspace or project access token** may store it once
 for many repositories through the explicit `project_secrets.bitbucket-token` allow-list, so an
-allow-listed run's agent holds a credential that reaches the whole workspace. That is the reach D363's
+allow-listed run's agent holds a credential that reaches every repository the token covers — the whole
+workspace for a workspace token, one Bitbucket project for a project token, which is the narrower of
+the two. That is the reach D363's
 reversal (O1) was written to avoid, and it is now the operator's own choice rather than the
 installation's default. What does not move: the default is still a repository's own repository access
 token, the allow-list is the only way a Bitbucket token becomes project-wide, and S3 stays parked —
