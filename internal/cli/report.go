@@ -156,16 +156,16 @@ func runReport(cmd *cobra.Command, o *reportOptions) error {
 	if err != nil {
 		return err
 	}
+	m := report.Meta{Project: lc.Name, Source: "firestore", Since: budget.DayDate(from), Un: budget.DayDate(to)}
+	warn := func(s string) { m.Warnings = append(m.Warnings, s) }
+	if dim == report.ByMode {
+		return reportByMode(ctx, cmd, o, lc, m, from, to)
+	}
 	var wantSlug string
 	if o.repo != "" {
 		if wantSlug, err = repoSlugOf(ctx, lc, o.repo); err != nil {
 			return err
 		}
-	}
-	m := report.Meta{Project: lc.Name, Source: "firestore", Since: budget.DayDate(from), Un: budget.DayDate(to)}
-	warn := func(s string) { m.Warnings = append(m.Warnings, s) }
-	if dim == report.ByMode {
-		return reportByMode(ctx, cmd, o, lc, m, from, to)
 	}
 
 	recs, why, err := reportHistory(ctx, lc, wantSlug, from, to, today, warn)
