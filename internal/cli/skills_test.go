@@ -72,7 +72,12 @@ func init() {
 		"row.base_branch",
 		"row.project_layer", "row.project_layer.sha256", "row.project_layer.generation", "row.project_layer.applied", "row.config_sha256",
 		"row.oauth_account", "halt", "verify", "failed", "flaky", "findings", "agent_message",
-		"log_tail", "draft_note", "report_path", "follow_up", "comments_path", "route_by", "reported_usd")
+		"log_tail", "draft_note", "report_path", "follow_up", "comments_path", "route_by", "reported_usd",
+		// The checkpoint a governance halt leaves (T6.2, D329): the working
+		// skill's diagnose reference reads the block, and of its fields the
+		// three the stopping agent answers -- the runner's three are named
+		// there too, but only in prose about the run rather than as reads.
+		"checkpoint", "checkpoint.done", "checkpoint.next", "checkpoint.hard_instructions")
 	// The working skill's status reference names the two money fields of a
 	// runs stats group, so they are checked against the row that carries them.
 	add("runs stats", userStatsDoc{}, "rows[].user", "rows[].counted_usd", "rows[].notional_usd")
