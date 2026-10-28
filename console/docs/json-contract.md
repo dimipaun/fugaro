@@ -189,13 +189,13 @@ other value — a string, a boolean, a negative — is handled **the way the dec
 that owns the document handles a shape it cannot read**, which is the whole of
 the rule:
 
-  * the **closed** decoders (the console's `src/shared/schema.ts`, and the mobile
-    app's `shared/digest`) refuse the document by the field's wire path
-    (`total.leased_usd`, `repos[0].leased_usd`). That is deliberate for a key
-    named ahead of its release: no document has ever carried it, so a value of a
-    shape the decoder does not expect is a document this console does not
-    understand, not one it merely has not learned to read — the same judgement
-    `closed` makes about an unknown key *name*;
+  * the **closed** decoders (the console's `src/shared/schema.ts`, and the shared
+    package's `shared/digest`, consumed by the mobile app today) refuse the
+    document by the field's wire path (`total.leased_usd`, `repos[0].leased_usd`).
+    That is deliberate for a key named ahead of its release: no document has ever
+    carried it, so a value of a shape the decoder does not expect is a document
+    that decoder does not understand, not one it merely has not learned to read —
+    the same judgement `closed` makes about an unknown key *name*;
   * `budget show`'s caps reader is the console's **tolerant** reader: it refuses
     no document at all, and draws `n/a` for every number it cannot read (§3).
     So a `compute_usd` that is not a number is `n/a` there — not a second rule,
@@ -205,8 +205,8 @@ The rule above is about the values a document can carry, and a non-finite
 number is not one of them: JSON has no `NaN` or `Infinity` literal, and Go's
 encoder refuses to marshal either, so no document a command emits can hold one.
 The decoders still answer differently if one reaches them —
-`src/shared/schema.ts`'s `optionalMoneyAt` draws it `n/a`, while **in the mobile
-app's digest a non-finite number is refused** (`RANGE`,
+`src/shared/schema.ts`'s `optionalMoneyAt` draws it `n/a`, while **in the shared
+package's digest a non-finite number is refused** (`RANGE`,
 `shared/digest/index.js`) — which is a fact about their code, not a case a screen
 reading a document will meet.
 
