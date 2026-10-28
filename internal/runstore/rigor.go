@@ -52,7 +52,9 @@ type RigorRecord struct {
 	Mode rigor.Mode `json:"mode"`
 	// From is the layer that decided it (rigor.Layer): "area" for a rule the
 	// run's paths matched, then "repo", "project", Fugaro's built-in
-	// "default", and the run's own "request" (D6's raise-only flag). It is
+	// "default", and the run's own "request" (D6's raise-only request: fugaro
+	// run --mode, or the mode a --pr follow-up keeps from its pull request,
+	// flag or no flag, T5.2). It is
 	// never "reached": that is the resolver's answer to a later moment asking
 	// again — "hold what you already have" (D22) — and the fold keeps the
 	// earlier, narrower reason instead, which is the layer that actually set

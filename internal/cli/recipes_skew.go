@@ -482,8 +482,11 @@ const rigorSince = "0.11.0"
 // rigor: block, judged against the installation's base image by fugaro
 // update --repo. This one names the release whose *task reader* knows the
 // two fields the flags write, and it is judged against the job's own build
-// record by the launch, exactly as titlesSince is; a launch that asks for
-// nothing writes neither field and is never gated.
+// record by the launch, exactly as titlesSince is. The gate is the field's,
+// not the flag's: a launch that asks for nothing writes neither field (both
+// are omitempty) and its spec is byte-identical to what the previous release
+// wrote, so it is never gated — but a follow-up that passed no flag still
+// carries a mode when its PR recorded one (T5.2, rigorGateSubject).
 const rigorRequestSince = "0.11.1"
 
 // governanceSince is the first fugaro release whose config reader knows
@@ -502,10 +505,29 @@ const governanceSince = "0.13.0"
 // asksForRigor reports whether a launch asks for a rigor mode or declares a
 // path: the two task fields a runner older than rigorRequestSince refuses
 // outright, and so the condition the launch's own gate is written on. A
-// launch that asks for nothing carries neither field (both are omitempty) and
-// its spec is byte-identical to what the previous release wrote.
+// launch that asks for nothing carries neither field, and a follow-up
+// inherits a mode rather than asking for one (T5.2): both readings are the
+// spec's, which is the only thing the job reads.
 func asksForRigor(spec *task.Spec) bool {
 	return spec.Rigor != "" || len(spec.Paths) > 0
+}
+
+// rigorGateSubject is what the rigorRequestSince gate calls the field it
+// judges. A launch that passed --mode or --path is described by them; one that
+// passed neither and still carries a mode keeps it from the PR it follows
+// (T5.2), and naming flags nobody gave would send its reader looking for a
+// mistake they did not make — the request is real all the same, and a runner
+// older than rigorRequestSince refuses the whole task for it.
+//
+// The mode is what makes a request kept rather than asked for, so a follow-up
+// that passed no flag and carries paths alone — a stored task, launched again
+// by --retry — is described by the flags: it carries no mode to name, and
+// "(rigor: )" would report the field's absence as the thing the gate judged.
+func rigorGateSubject(o *runOptions, spec *task.Spec) string {
+	if o.rigor == "" && len(o.paths) == 0 && spec.IsFollowUp() && spec.Rigor != "" {
+		return fmt.Sprintf("the mode a follow-up keeps from its PR (rigor: %s)", spec.Rigor)
+	}
+	return "the run's own rigor request (--mode, --path)"
 }
 
 // needsRecipeImage reports whether a launch needs a runner that knows

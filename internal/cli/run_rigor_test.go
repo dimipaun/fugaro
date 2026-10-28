@@ -137,8 +137,9 @@ func TestRunRefusesTooManyDeclaredPaths(t *testing.T) {
 // and task.Parse decodes with DisallowUnknownFields, so a runner older than
 // rigorRequestSince refuses the whole spec at bootstrap — bytes in the bucket
 // under a run that never starts. The launcher therefore refuses the launch,
-// and a launch that asks for nothing is never gated (its spec is
-// byte-identical to what the previous release wrote).
+// and a first run that asks for nothing is never gated (its spec is
+// byte-identical to what the previous release wrote; a follow-up that passed
+// no flag is another matter, TestFollowUpKeptModeIsGatedOnTheJobImage).
 func TestRunRigorRequestIsGatedOnTheJobImage(t *testing.T) {
 	f := newCloudFixture(t)
 	writeBuildRecord(t, f, appSlug, "web", release085)

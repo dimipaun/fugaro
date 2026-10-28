@@ -26,9 +26,13 @@ const (
 	FromArea Layer = "area"
 	// FromRequest is the run's own request, which may raise and never lower
 	// (D6): fugaro run --mode, carried in the task and handed to Resolve as
-	// Request.Mode by the runner. A launcher that passes no flag sends none,
-	// so a record says this only when a launch asked for more than its
-	// configuration did.
+	// Request.Mode by the runner. A first run that passes no flag sends none,
+	// so a record says this when a launch asked for more than its
+	// configuration did — and a --pr follow-up's launcher writes the request
+	// itself, so a record of one says this for the mode that follow-up keeps
+	// from its pull request when it passed no flag at all (T5.2, D6, F14:
+	// followUpRigor, internal/cli). The record cannot tell the two apart, and
+	// neither can this layer's word.
 	FromRequest Layer = "request"
 	// FromReached is the mode this run had already reached at an earlier
 	// moment, kept because a mode never falls within a run (D22). It is not
