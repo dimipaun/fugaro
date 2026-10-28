@@ -155,18 +155,28 @@ describe('the installation list document', () => {
     expect([...(row?.checkouts ?? [])]).toEqual(['/src/app', '/src/other', '/src/anon'])
   })
 
-  it('reads an absent base branch as unrecorded, and refuses one that is not text', () => {
-    // Absent is what an older CLI sends, and it means "unrecorded" -- never a
-    // refusal, which would hide every installation on the machine.
+  it('keeps an absent base branch apart from one that records nothing', () => {
+    // **Two different facts, and §6.8 forbids merging them.** The key absent is
+    // an older CLI, which does not report base branches at all; the key present
+    // with `""` is a config that records none. Reading the first as the second
+    // would tell an operator to set a setting they have already set, so it is
+    // kept as `null` all the way to the launch's own refusal.
     const older = parsed({ installations: [{ name: 'sandbox', gcp_project: 'p', region: 'r' }], warnings: [] })
-    expect(older.ok && older.document.installations[0]?.baseBranch).toBe('')
+    expect(older.ok && older.document.installations[0]?.baseBranch).toBeNull()
     expect(older.ok && [...(older.document.installations[0]?.repositories ?? [])]).toEqual([])
     const rowWithout = parsed({
       installations: [{ name: 'sandbox', checkouts: [{ repository: 'github/o/app', path: '/src/app', valid: true }] }],
     })
     expect(rowWithout.ok && rowWithout.document.installations[0]?.repositories).toEqual([
-      { repository: 'github/o/app', baseBranch: '' },
+      { repository: 'github/o/app', baseBranch: null },
     ])
+    // And the two are not each other: a key that is there and empty stays `''`.
+    const empty = parsed({
+      installations: [{ name: 'sandbox', base_branch: '', checkouts: [{ repository: 'github/o/app', base_branch: '' }] }],
+    })
+    const held = empty.ok ? empty.document.installations[0] : undefined
+    expect(held?.baseBranch).toBe('')
+    expect(held?.repositories).toEqual([{ repository: 'github/o/app', baseBranch: '' }])
 
     // Present and not a string is a document this console does not understand:
     // the value is shown as the branch the run is cut from, so reading it as

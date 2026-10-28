@@ -194,6 +194,29 @@ describe('the title and the plan task', () => {
     expect(reason(checkLaunchTitle('fix \u202egnp.exe'))).not.toContain('gnp.exe')
   })
 
+  it('checks a megabyte of whitespace inside the text in the time a window has', () => {
+    // **The trim must not be quadratic.** Every rule here runs on whatever a
+    // renderer hands it, in the Electron main process, and the three checks that
+    // trim first (`checkLaunchTask`, and the title and the plan task before
+    // their caps) all read the value once. The trailing run of whitespace *inside*
+    // a long text is what a regular expression anchored at the end costs the
+    // most: the engine tries every offset of the text, and one such check
+    // measured 0.77 s at 32 KiB and 13.5 s at 128 KiB, so a megabyte is minutes
+    // -- a window that does not answer, before any of this was about the argv.
+    // The index scan is linear.
+    //
+    // Mutation (run, restore): put the anchored regular expression back into
+    // `trimTaskText` and the same check does not return within minutes -- and a
+    // synchronous call cannot be timed out either, so the test would hang rather
+    // than fail.
+    const megabyte = `do the thing${' '.repeat(1024 * 1024 - 24)}and now`
+    const started = performance.now()
+    expect(reason(checkLaunchTask(megabyte))).toContain(String(MAX_LAUNCH_TASK_BYTES))
+    expect(reason(checkLaunchTitle(megabyte))).toContain(String(MAX_LAUNCH_TITLE_RUNES))
+    expect(reason(checkLaunchPlanTask(megabyte))).toContain(String(MAX_LAUNCH_PLAN_TASK_BYTES))
+    expect(performance.now() - started).toBeLessThan(100)
+  })
+
   it('refuses a second line, a control character and a value past its cap', () => {
     // U+0085 is a line break to a title (task.TitleProblem names it beside the
     // newline and the carriage return) and a control character to a plan task;
@@ -262,6 +285,30 @@ describe('the repository argument', () => {
       expect(reason(launchRepoArgument(recorded)), JSON.stringify(recorded)).not.toBe('')
     }
   })
+
+  it('refuses a name ending in .git and a segment that begins like a flag', () => {
+    // **A `.git` name is a different repository from the one the window showed.**
+    // `task.CanonicalRepo` lowers the identity and trims a trailing `.git`, so
+    // `--repo owner/repo-a.git` starts a run on `owner/repo-a` -- the console
+    // refuses rather than pass an identity whose canonical form is another
+    // string (rule 11: what the window shows is what is spawned).
+    for (const dotGit of ['github/owner/repo-a.git', 'github/owner/repo-a.GIT', 'github/owner/.git']) {
+      expect(reason(launchRepoArgument(dotGit)), dotGit).not.toBe('')
+    }
+    // Only the trailing segment is stripped by that canonical form, so an owner
+    // that merely ends in `.git` is a name the CLI would keep, and the two
+    // segments are held to their own rules.
+    expect(value(launchRepoArgument('github/owner.git/repo-a'))).toBe('owner.git/repo-a')
+    // A segment beginning with `-` is refused even though `task`'s own class
+    // admits it: the value this returns is a word of a command line, and a word
+    // that begins with a hyphen is a flag to whatever reads it next.
+    for (const flagLike of ['github/-owner/repo-a', 'github/owner/-repo-a', 'github/owner/-']) {
+      expect(reason(launchRepoArgument(flagLike)), flagLike).not.toBe('')
+    }
+    // And the refusal quotes the recorded spelling rather than a stripped one:
+    // the sentence says which identity was refused, and never `owner/repo-a`.
+    expect(reason(launchRepoArgument('github/owner/repo-a.git'))).toContain('owner/repo-a.git')
+  })
 })
 
 describe('the recorded base branch', () => {
@@ -289,6 +336,32 @@ describe('the recorded base branch', () => {
     // file, and moving it does not move the launch.
     expect(sentence).not.toContain('git.base_branch')
     expect(reason(recordedBaseBranch({ baseBranch: '', repositories: [] }, 'gitlab/owner/repo-a'))).not.toBe('')
+  })
+
+  it('has its own sentence for a CLI whose document reports no base branches', () => {
+    // **`null` is not "records none".** `base_branch` arrives in
+    // `config list --json` with its own release, so an older CLI's document has
+    // no such key; answering "the installation records no base branch ... set
+    // `repos.<r>.base_branch`" to that operator sends them to a setting they
+    // have already set, about a config that is not the problem. §6.8 keeps the
+    // two apart and so does this.
+    const older = { baseBranch: null, repositories: [{ repository: 'github/owner/repo-a', baseBranch: null }] }
+    const sentence = reason(recordedBaseBranch(older, 'github/owner/repo-a'))
+    expect(sentence).toContain('does not report base branches')
+    expect(sentence).toContain('github/owner/repo-a')
+    expect(sentence).not.toContain('repos.owner/repo-a.base_branch')
+    // Either key alone being absent is that same state: a document that does not
+    // report branches cannot say which branch this repository would be cut from.
+    expect(reason(recordedBaseBranch({ ...older, baseBranch: 'trunk' }, 'github/owner/repo-a'))).toContain(
+      'does not report base branches',
+    )
+    expect(
+      reason(recordedBaseBranch({ baseBranch: null, repositories: [] }, 'github/owner/repo-a')),
+    ).toContain('does not report base branches')
+    // A row that records none is still the ordinary "unrecorded" refusal, and an
+    // installation that records a branch still answers with it.
+    const mixed = { baseBranch: 'trunk', repositories: [{ repository: 'github/owner/repo-a', baseBranch: '' }] }
+    expect(value(recordedBaseBranch(mixed, 'github/owner/repo-a'))).toBe('trunk')
   })
 })
 

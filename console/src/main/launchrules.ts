@@ -32,8 +32,10 @@
 //      carries are drawn as the CLI's own facts.
 
 /** MAX_LAUNCH_TASK_BYTES is the task's cap, in bytes of UTF-8 *after* the
- * trim: the same 16 KiB the CLI's own task carries, so a task this console
- * sends is one the CLI keeps whole. */
+ * trim: 16 KiB, rule 11's own number -- the CLI sets no cap of its own on a
+ * task (`internal/cli/run.go`'s `taskText` reads stdin to EOF and refuses only
+ * an empty one), so this bound is the console's and it is here because the
+ * operator confirms by reading the whole task. */
 export const MAX_LAUNCH_TASK_BYTES = 16384
 
 /** MAX_LAUNCH_TITLE_RUNES is the title's cap, in characters: a title is a
@@ -73,14 +75,50 @@ export interface LaunchTask {
 // ---------------------------------------------------------------------------
 
 /**
- * GO_TRIM_SPACE is `strings.TrimSpace`'s set (`unicode.IsSpace`), and it is
- * written out rather than reached for through `String.prototype.trim`: the two
- * are not the same set. JavaScript also trims U+FEFF, which Go does not, and
- * JavaScript does *not* trim U+0085, which Go does -- so a task the console
- * trimmed with `trim()` and the CLI trimmed with `strings.TrimSpace` would be
- * two different texts, and the window would count bytes the run did not keep.
+ * GO_TRIM_SPACE is `strings.TrimSpace`'s set (`unicode.IsSpace`), written out
+ * rather than reached for through `String.prototype.trim`: the two are not the
+ * same set. JavaScript also trims U+FEFF, which Go does not, and JavaScript
+ * does *not* trim U+0085, which Go does -- so a task the console trimmed with
+ * `trim()` and the CLI trimmed with `strings.TrimSpace` would be two different
+ * texts, and the window would count bytes the run did not keep.
+ *
+ * It is a set of **code points** and not a regular-expression class, because
+ * the two anchors are not the same cost: `/^[<set>]+/` reads the text once, but
+ * `/[<set>]+$/` tries every offset of the text, so a task a renderer filled with
+ * whitespace costs the main process seconds per call -- seconds in which the
+ * window does not answer, before any of this was about the argv. Two index scans
+ * over `charCodeAt` are linear in the text and cannot be made to stall.
+ *
+ * Every character in the set is in the BMP, so a scan by code unit is exact:
+ * none of them is half of a surrogate pair.
  */
-const GO_TRIM_SPACE = '\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000'
+const GO_TRIM_SPACE: ReadonlySet<number> = new Set([
+  0x09,
+  0x0a,
+  0x0b,
+  0x0c,
+  0x0d,
+  0x20,
+  0x85,
+  0xa0,
+  0x1680,
+  0x2000,
+  0x2001,
+  0x2002,
+  0x2003,
+  0x2004,
+  0x2005,
+  0x2006,
+  0x2007,
+  0x2008,
+  0x2009,
+  0x200a,
+  0x2028,
+  0x2029,
+  0x202f,
+  0x205f,
+  0x3000,
+])
 
 /** A surrogate that is not half of a pair is not valid UTF-8: `TextEncoder`
  * would replace it with U+FFFD, and the task that reached the run would be a
@@ -92,7 +130,12 @@ const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF
  * trailing run of `unicode.IsSpace` characters and nothing inside the text.
  */
 function trimTaskText(text: string): string {
-  return text.replace(new RegExp(`^[${GO_TRIM_SPACE}]+`), '').replace(new RegExp(`[${GO_TRIM_SPACE}]+$`), '')
+  let start = 0
+  let end = text.length
+  while (start < end && GO_TRIM_SPACE.has(text.charCodeAt(start))) start += 1
+  while (end > start && GO_TRIM_SPACE.has(text.charCodeAt(end - 1))) end -= 1
+  if (start === 0 && end === text.length) return text
+  return text.slice(start, end)
 }
 
 /**
@@ -249,9 +292,10 @@ export function checkLaunchPlanTask(planTask: string | null | undefined): Launch
  * paragraph a person is confirming.
  *
  * **This is the displayed copy only.** The task that goes to the child is the
- * one `checkLaunchTask` returned, character for character: the CLI sanitises
- * the task's stored copy itself, and a window that showed a different text from
- * the one the run keeps would be the lie the refusal above exists to avoid.
+ * one `checkLaunchTask` returned, character for character: the run keeps the
+ * task verbatim, format characters included, and only this displayed copy
+ * strips them -- a window that showed a different text from the one the run
+ * keeps would be the lie the refusal above exists to avoid.
  */
 export function displayTaskText(task: string): string {
   return task.replace(/\p{Cf}/gu, '')
@@ -271,8 +315,27 @@ const LAUNCH_PROVIDERS: readonly string[] = Object.freeze(['github', 'bitbucket'
  * canonical form could not have produced. */
 const LAUNCH_REPO_SEGMENT_RE = /^[A-Za-z0-9._-]+$/
 
-function canonicalSegment(segment: string): boolean {
-  return LAUNCH_REPO_SEGMENT_RE.test(segment) && segment !== '.' && segment !== '..'
+/**
+ * canonicalSegment is one `owner` or `name` of the CLI's own grammar
+ * (`repoRE`'s class), minus three spellings this conversion refuses although
+ * that grammar admits them:
+ *
+ *   - `.` and `..`, which are path elements and not names.
+ *   - **a segment beginning with `-`**, because what this function builds is a
+ *     word of a command line: a word, or a part of one, that begins with a
+ *     hyphen is a flag to whatever reads it next, and no forge names a
+ *     repository that way.
+ *   - **a name ending in `.git`**, in any case, because the CLI's own canonical
+ *     form *strips* that suffix (`task.CanonicalRepo` lowers the identity and
+ *     trims `.git`), so passing the record through would run on
+ *     `owner/name` while the window said `owner/name.git` -- the same class of
+ *     mismatch as a base branch that is not the one the run is cut from.
+ */
+function canonicalSegment(segment: string, isName: boolean): boolean {
+  if (!LAUNCH_REPO_SEGMENT_RE.test(segment)) return false
+  if (segment === '.' || segment === '..') return false
+  if (segment.startsWith('-')) return false
+  return !(isName && /\.git$/i.test(segment))
 }
 
 /**
@@ -282,9 +345,10 @@ function canonicalSegment(segment: string): boolean {
  *
  * The provider must be one of the two this tree serves, and what is left must
  * be a canonical `owner/name` -- exactly two segments of the CLI's own alphabet,
- * neither of them `.` or `..` -- which is re-checked here rather than trusted:
- * the record comes from a state file on this machine, and `..` in a repository
- * argument is a path the CLI would resolve somewhere else.
+ * neither of them `.` or `..` (`canonicalSegment`'s own rules beside those) --
+ * which is re-checked here rather than trusted: the record comes from a state
+ * file on this machine, and `..` in a repository argument is a path the CLI
+ * would resolve somewhere else.
  */
 export function launchRepoArgument(recorded: string): LaunchValue<string> {
   const parts = recorded.split('/')
@@ -295,7 +359,7 @@ export function launchRepoArgument(recorded: string): LaunchValue<string> {
   if (!LAUNCH_PROVIDERS.includes(provider)) {
     return { ok: false, reason: `${JSON.stringify(recorded)} names ${JSON.stringify(provider)}, which is not a provider this console launches on` }
   }
-  if (!canonicalSegment(owner) || !canonicalSegment(name)) {
+  if (!canonicalSegment(owner, false) || !canonicalSegment(name, true)) {
     return { ok: false, reason: `${JSON.stringify(recorded)} is not a provider and an owner/name` }
   }
   return { ok: true, value: `${owner}/${name}` }
@@ -308,8 +372,8 @@ export function launchRepoArgument(recorded: string): LaunchValue<string> {
  * decoder's type is what the launch passes in).
  */
 export interface LaunchRecords {
-  readonly baseBranch: string
-  readonly repositories: readonly { readonly repository: string; readonly baseBranch: string }[]
+  readonly baseBranch: string | null
+  readonly repositories: readonly { readonly repository: string; readonly baseBranch: string | null }[]
 }
 
 /**
@@ -329,12 +393,32 @@ export interface LaunchRecords {
  * returned as it stands: a repository this app cannot name is not one it can
  * name a setting for. The caller has already established that the installation
  * records the repository at all; this answers which branch, not whether.
+ *
+ * **A `null` is not a branch that is missing, it is a document that does not
+ * report branches.** `config list --json` carries `base_branch` only from the
+ * release that adds it, and an older CLI's document has no such key at all: a
+ * reader that read that absence as `""` would answer "this installation records
+ * no base branch ... set `repos.<r>.base_branch`" to an operator whose config
+ * records it, on a machine where the setting already is, and the sentence would
+ * be about the wrong thing entirely (`console/docs/json-contract.md` §6.8: "a
+ * reader must keep the two apart"). So the two absences get two sentences, and
+ * this one says what is actually wrong -- the CLI in the record is too old for
+ * the read -- rather than what the console guessed.
  */
 export function recordedBaseBranch(installation: LaunchRecords, repository: string): LaunchValue<string> {
   const converted = launchRepoArgument(repository)
   if (!converted.ok) return converted
   const row = installation.repositories.find((record) => record.repository === repository)
-  const recorded = row !== undefined && row.baseBranch !== '' ? row.baseBranch : installation.baseBranch
+  const rowBranch = row === undefined ? undefined : row.baseBranch
+  if (installation.baseBranch === null || rowBranch === null) {
+    return {
+      ok: false,
+      reason:
+        'this CLI does not report base branches: its `config list --json` has no `base_branch`, so the console ' +
+        `cannot say which branch ${repository} would be cut from`,
+    }
+  }
+  const recorded = rowBranch === undefined || rowBranch === '' ? installation.baseBranch : rowBranch
   if (recorded === '') {
     return {
       ok: false,

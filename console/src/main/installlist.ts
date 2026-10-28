@@ -83,16 +83,19 @@ export const MAX_DOCUMENT_STRING = 4096
  * branch an installation's runs are cut from: the installation's own value, and
  * each repository's own with the installation's below it (design §5.1 rule 11 —
  * the window shows the branch the run is cut from, and a launch has no checkout
- * for the CLI's order to read it from). Both are tolerated absent as `''`, which
- * is what an older CLI's silence reads as; a reader must not confuse that with a
- * config that records none, which the CLI prints as `""` too (§6.8).
+ * for the CLI's order to read it from). **`null` is a key the CLI did not print
+ * at all** — an older CLI, which does not report base branches — and `''` is a
+ * key that is there and records none. §6.8 keeps those two apart on purpose, and
+ * so does this reader: reading an older CLI's silence as `''` would send an
+ * operator to set a setting they have already set.
  */
 export interface DiscoveredInstallation {
   readonly name: string
   readonly gcpProject: string
   readonly region: string
-  /** the installation's own recorded base branch, `''` when unrecorded */
-  readonly baseBranch: string
+  /** the installation's own recorded base branch; `null` when the CLI does not
+   * report base branches at all, `''` when its config records none */
+  readonly baseBranch: string | null
   /** every checkout row's repository and its recorded base branch */
   readonly repositories: readonly DiscoveredRepository[]
   readonly checkouts: readonly string[]
@@ -108,13 +111,15 @@ export interface DiscoveredInstallation {
  * not of the directory a path named, and a row whose path has been deleted still
  * records it. `repository` is the CLI's own `<provider>/<owner>/<name>` and is
  * never resolved, joined or looked up here — the launch's own conversion is what
- * admits it or refuses it. `baseBranch` is `''` when the config records none for
- * that repository, in which case the installation's own `baseBranch` is the
- * layer below it.
+ * admits it or refuses it. `baseBranch` is `null` when the row carries no
+ * `base_branch` key at all (an older CLI) and `''` when the key is there and the
+ * config records none for that repository, in which case the installation's own
+ * `baseBranch` is the layer below it. The two are different facts and a reader
+ * must not merge them (§6.8).
  */
 export interface DiscoveredRepository {
   readonly repository: string
-  readonly baseBranch: string
+  readonly baseBranch: string | null
 }
 
 /** InstallationsDocument is the whole read: the installations, in the CLI's own
@@ -183,8 +188,8 @@ export function parseInstallationsDocument(text: string): InstallationsParse {
     }
     const gcpProject = textField(entry, 'gcp_project')
     const region = textField(entry, 'region')
-    const baseBranch = textField(entry, 'base_branch')
-    if (gcpProject === null || region === null || baseBranch === null) {
+    const baseBranch = branchField(entry, 'base_branch')
+    if (gcpProject === null || region === null || baseBranch.kind === 'unreadable') {
       return { ok: false, reason: `the CLI listed ${JSON.stringify(name)} with a field that is not a string` }
     }
     const rows = checkoutsOf(entry)
@@ -215,7 +220,7 @@ export function parseInstallationsDocument(text: string): InstallationsParse {
         name,
         gcpProject,
         region,
-        baseBranch,
+        baseBranch: baseBranch.kind === 'absent' ? null : baseBranch.value,
         repositories: rows.repositories,
         checkouts: rows.paths,
       }),
@@ -272,6 +277,26 @@ function textField(entry: Record<string, unknown>, key: string): string | null {
   return value.length > MAX_DOCUMENT_STRING ? value.slice(0, MAX_DOCUMENT_STRING) : value
 }
 
+/** BranchField is one `base_branch` key's three states, and they are three
+ * different facts. `absent` is a key the CLI did not print at all — an older
+ * CLI, which does not report base branches (§6.8) — `branch` with `""` is a key
+ * that is there and records none, and `unreadable` is the key with a value of
+ * another type, which the caller refuses the document for. `textField` cannot
+ * be used for this one: it reads an absent key as `""`, which is the merge §6.8
+ * forbids and which would tell an operator to set a setting they have already
+ * set. */
+type BranchField =
+  | { readonly kind: 'absent' }
+  | { readonly kind: 'branch'; readonly value: string }
+  | { readonly kind: 'unreadable' }
+
+function branchField(entry: Record<string, unknown>, key: string): BranchField {
+  const value = entry[key]
+  if (value === undefined) return { kind: 'absent' }
+  if (typeof value !== 'string') return { kind: 'unreadable' }
+  return { kind: 'branch', value: value.length > MAX_DOCUMENT_STRING ? value.slice(0, MAX_DOCUMENT_STRING) : value }
+}
+
 /** CheckoutRows is what one installation's `checkouts` array yields: the two
  * lists the console keeps, or why the document is refused. The refusal is a
  * value rather than a sentence because only the caller knows which installation
@@ -314,10 +339,12 @@ type CheckoutRows =
  * installation records would be a launch the operator cannot make.
  *
  * The one field of a row that is *refused* rather than dropped is `base_branch`
- * (`textField`'s rule for a field this console reads): the value is shown in the
- * launch window as the branch the run is cut from, so a row carrying something
- * that is not text is a document this console does not understand, and reading
- * it as "unrecorded" would move that branch in silence.
+ * (`branchField`'s rule for a field this console reads): the value is shown in
+ * the launch window as the branch the run is cut from, so a row carrying
+ * something that is not text is a document this console does not understand, and
+ * reading it as "unrecorded" would move that branch in silence. The key's
+ * *absence* is not that: it is kept as `null`, the one value that says this CLI
+ * does not report base branches at all.
  */
 function checkoutsOf(entry: Record<string, unknown>): CheckoutRows {
   const value = entry['checkouts']
@@ -327,11 +354,11 @@ function checkoutsOf(entry: Record<string, unknown>): CheckoutRows {
   const repositories: DiscoveredRepository[] = []
   for (const row of value) {
     if (!isRecord(row)) continue
-    const branch = textField(row, 'base_branch')
-    if (branch === null) return { kind: 'bad-branch' }
+    const branch = branchField(row, 'base_branch')
+    if (branch.kind === 'unreadable') return { kind: 'bad-branch' }
     const repository = row['repository']
     if (typeof repository === 'string' && repository !== '' && repository.length <= MAX_DOCUMENT_STRING) {
-      repositories.push(Object.freeze({ repository, baseBranch: branch }))
+      repositories.push(Object.freeze({ repository, baseBranch: branch.kind === 'absent' ? null : branch.value }))
     }
     if (row['valid'] !== true) continue
     const candidate = row['path']
