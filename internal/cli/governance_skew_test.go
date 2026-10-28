@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -335,6 +336,40 @@ func TestRunRefusesTheLayersGovernanceOnAnOlderBaseImage(t *testing.T) {
 	}
 }
 
+// TestRunRefusesBothGovernanceKeysOnAnOlderBaseImage is the launch arm where
+// the repository's file and the project layer it resolves over both write the
+// key: the refusal has to name both, because removing either one alone leaves
+// the other behind and the run dies on it just the same. governanceSubject and
+// governanceKnows' fromRepo && fromLayer branch is otherwise reached only
+// through gateGovernance.
+func TestRunRefusesBothGovernanceKeysOnAnOlderBaseImage(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, layerWithGovernance("governance: { review_ratio: 20 }\n"))
+	dir := layerCheckout(t, f, minimalAnchored+"governance: { review_ratio: 3 }\n")
+	registerOtherLocally(t, f)
+	commitRef(t, dir, "main")
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, governanceSince, -1))
+	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the launch refused", err)
+	}
+	for _, want := range []string{
+		"fugaro.yaml's governance: block and the project layer's governance: block of acme/other",
+		"knows the governance: block and the project layer's governance: block",
+		"fugaro image refresh --repo acme/other --workflow " + config.ImplicitWorkflow,
+		"; or remove the governance: block from fugaro.yaml",
+		"remove the governance: block from the project layer",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%v lacks %q", err, want)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
+
 // TestRunRefusesGovernanceOnACloneWorkflowsOlderBaseImage: a checkout: clone
 // workflow has no build record to judge (it runs the installation's base image
 // as it is), so the same gate is judged against base_images.base itself and
@@ -368,6 +403,74 @@ func TestRunDoesNotGateAFileThatWritesNoGovernance(t *testing.T) {
 	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, governanceSince, -1))
 	if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task"); err != nil {
 		t.Fatalf("a file that writes no governance: block must not be gated: %v", err)
+	}
+}
+
+// validateGovernance runs fugaro validate on a repository file whose top level
+// carries governanceLines, in a directory that is no checkout and has no
+// project config: the file's own key is all this judges.
+func validateGovernance(t *testing.T, governanceLines string) (validateOutput, error) {
+	t.Helper()
+	isolateProjects(t, t.TempDir())
+	dir := t.TempDir()
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: example\ngit: { provider: github, base_branch: main }\nagent: { auth: api-key }\n" +
+		governanceLines + "workflows:\n  app: { commands: { build: go build ./..., test: go test ./... } }\n"})
+	out, _, err := execute(t, "validate", "--json", filepath.Join(dir, "fugaro.yaml"))
+	var doc validateOutput
+	if jerr := json.Unmarshal([]byte(out), &doc); jerr != nil {
+		t.Fatalf("output %q: %v", out, jerr)
+	}
+	return doc, err
+}
+
+// TestValidateWarnsThatGovernanceNeedsEveryJobImage: the file is valid — the
+// skew is the installation's, not the file's — so validate warns rather than
+// refusing, the shape rigorImageWarnings has, and names both ways to move an
+// image (the installation's base, and a workflow's own). An explicit null
+// counts: it is the key an older runner refuses.
+func TestValidateWarnsThatGovernanceNeedsEveryJobImage(t *testing.T) {
+	for _, lines := range []string{"governance: { review_ratio: 3 }\n", "governance:\n"} {
+		doc, err := validateGovernance(t, lines)
+		if err != nil {
+			t.Fatalf("%q: err = %v, want a valid file", lines, err)
+		}
+		if !has(doc.Warnings, "governance", "needs fugaro "+governanceSince) {
+			t.Errorf("%q: warnings = %+v, want the governance warning", lines, doc.Warnings)
+		}
+		for _, want := range []string{"fugaro update --base base", "fugaro image refresh"} {
+			if !has(doc.Warnings, "governance", want) {
+				t.Errorf("%q: the warning does not name %q: %+v", lines, want, doc.Warnings)
+			}
+		}
+		if has(doc.Problems, "governance", "") {
+			t.Errorf("%q: the key was refused, and the file is valid: %+v", lines, doc.Problems)
+		}
+	}
+	if doc, err := validateGovernance(t, ""); err != nil || has(doc.Warnings, "governance", "") {
+		t.Errorf("a file that writes no governance: block was warned about: %+v, %v", doc.Warnings, err)
+	}
+}
+
+// TestValidateWarnsWhenTheProjectLayerSetsGovernance: the layer's key reaches
+// every repository of the project, so validate says which of the two wrote it
+// and that the fix is the layer's. The block named is the top-level one: the
+// layer file has no defaults.governance to send its operator to.
+func TestValidateWarnsWhenTheProjectLayerSetsGovernance(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, layerWithGovernance("governance: { review_ratio: 20 }\n"))
+	layerCheckout(t, f, minimalAnchored)
+	_, errOut, err := execute(t, "validate")
+	if err != nil {
+		t.Fatalf("a file that resolves over the layer is valid: %v", err)
+	}
+	for _, want := range []string{"project layer's governance: block", "needs fugaro " + governanceSince, "fugaro update --base base"} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr %q lacks %q", errOut, want)
+		}
+	}
+	if strings.Contains(errOut, "defaults.governance") {
+		t.Errorf("the warning names defaults.governance, which is no key of the layer file: %q", errOut)
 	}
 }
 

@@ -395,10 +395,7 @@ func compressionRequested(ctx context.Context, env *cloudEnv, spec *task.Spec) (
 	if compressionForTest != "" {
 		return true, true
 	}
-	cfg := cascadeRefConfig(ctx, env, spec)
-	if cfg == nil {
-		cfg = checkoutConfig(ctx, spec.Repo)
-	}
+	cfg := launchFileConfig(ctx, env, spec)
 	if cfg == nil {
 		return false, false
 	}
@@ -1018,10 +1015,10 @@ func rigorLaunchSources(ctx context.Context, env *cloudEnv, spec *task.Spec) (fr
 	return cfg.RepoRigorSet, cfg.Layer.SetsRigor()
 }
 
-// launchFileConfig is the configuration a launch's config-key image gates
-// (rigorLaunchSources, governanceLaunchSources) judge: the file the run will
-// check out, from cascadeRefConfig, with the launcher's own checkout standing
-// in when the ref cannot be read.
+// launchFileConfig is the configuration a launch reads the file the run will
+// check out for — the config-key image gates (rigorLaunchSources,
+// governanceLaunchSources) and compressionRequested: from cascadeRefConfig,
+// with the launcher's own checkout standing in when the ref cannot be read.
 func launchFileConfig(ctx context.Context, env *cloudEnv, spec *task.Spec) *config.Config {
 	cfg := cascadeRefConfig(ctx, env, spec)
 	if cfg == nil {
@@ -1142,6 +1139,32 @@ func checkCloneGovernanceImage(ctx context.Context, env *cloudEnv, spec *task.Sp
 	}
 	subject, alt := governanceSubject(spec.Repo, fromRepo, fromLayer)
 	return checkCloneImageSince(env.lc, spec, governanceSince, subject, governanceKnows(fromRepo, fromLayer), "; or "+alt, warn)
+}
+
+// governanceImageWarnings warns, once, that a configuration which writes the
+// key — the repository's file (RepoGovernanceSet) or the project layer it
+// resolved over (SetsGovernance) — needs every job image on governanceSince.
+// It is validate's half of checkGovernanceImage, and a warning rather than a
+// Problem for the reason rigorImageWarnings is one: the file is valid, and what
+// has to move is the installation (the base image, or a workflow's derived
+// one), which is why both ways to move an image are named. The subject says
+// which of the two wrote the key, and names the layer's block the way
+// governanceSubject does — a top-level governance:, not a defaults.governance —
+// because the layer's key reaches every repository of the project and only its
+// operator can remove it.
+func governanceImageWarnings(c *config.Config) []config.Problem {
+	fromRepo, fromLayer := c.RepoGovernanceSet, c.Layer.SetsGovernance()
+	if !fromRepo && !fromLayer {
+		return nil
+	}
+	subject := "this file's governance: block"
+	switch {
+	case fromRepo && fromLayer:
+		subject = "this file's governance: block and the project layer's governance: block"
+	case fromLayer:
+		subject = "the project layer's governance: block"
+	}
+	return []config.Problem{{Path: "governance", Message: subject + " needs fugaro " + governanceSince + " or later in the job image that runs it, and in the CLI of everyone who reads this file: an older runner decodes the file strictly and refuses the run at bootstrap. Run fugaro update --base base in your own terminal window to move the installation's base image, and fugaro image refresh for a workflow's own derived image"}}
 }
 
 // governanceLaunchSources reports, for the launch's governanceSince gate,
