@@ -63,20 +63,27 @@ func TestTierDefaultsFromProjectLayer(t *testing.T) {
 	if d.Tiers != DefaultTierExpectations() {
 		t.Errorf("DefaultGovernance().Tiers = %+v, want DefaultTierExpectations() %+v", d.Tiers, DefaultTierExpectations())
 	}
-	for _, c := range []struct {
-		tier      tier.Tier
-		usd       float64
-		minutes   int64
-		subagents int64
-	}{
-		{tier.Trivial, 0.25, 10, 3},
-		{tier.Small, 1, 30, 3},
-		{tier.Medium, 3, 90, DefaultMaxSubagents},
-		{tier.Large, 8, 240, DefaultMaxSubagents},
-	} {
-		want := TierExpectation{ExpectedUSD: c.usd, ExpectedMinutes: c.minutes, MaxSubagents: c.subagents}
-		if got := tierOf(d.Tiers, c.tier); got != want {
-			t.Errorf("%s = %+v, want %+v", c.tier, got, want)
+	// The shipped figures, walked over the vocabulary rather than spelled out
+	// four times: For is the one lookup from a tier name to the field that
+	// holds its expectation, so a tier added to internal/tier whose case For
+	// does not name reads as the zero expectation — the one value a shipped
+	// figure never is — and this fails.
+	shipped := map[tier.Tier]TierExpectation{
+		tier.Trivial: {ExpectedUSD: 0.25, ExpectedMinutes: 10, MaxSubagents: 3},
+		tier.Small:   {ExpectedUSD: 1, ExpectedMinutes: 30, MaxSubagents: 3},
+		tier.Medium:  {ExpectedUSD: 3, ExpectedMinutes: 90, MaxSubagents: DefaultMaxSubagents},
+		tier.Large:   {ExpectedUSD: 8, ExpectedMinutes: 240, MaxSubagents: DefaultMaxSubagents},
+	}
+	if len(shipped) != len(tier.Tiers) {
+		t.Fatalf("the shipped figures name %d tiers, the vocabulary has %d", len(shipped), len(tier.Tiers))
+	}
+	for _, tt := range tier.Tiers {
+		want, ok := shipped[tt]
+		if !ok {
+			t.Fatalf("tier %q has no shipped figure here, so nothing pins its default", tt)
+		}
+		if got := tierOf(d.Tiers, tt); got != want {
+			t.Errorf("%s = %+v, want %+v", tt, got, want)
 		}
 	}
 

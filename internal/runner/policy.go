@@ -81,9 +81,19 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	// — it arrives with the task, in the layer the run resolved. The policy
 	// node has no governance either, so policyCeiling leaves it standing.
 	//
+	// Fugaro's own defaults are filled in here, because this is the layer every
+	// later one is held to and none of them may loosen (Governance.WithDefaults,
+	// T7.1). Without them the first layer to write a governance key would be the
+	// one that wins with it: a repository's fugaro.yaml — on its default branch,
+	// and on the branch the run checks out, which the agent can edit mid-run —
+	// could raise a guardrail Fugaro ships and nothing would say so. A key the
+	// project layer does write is kept exactly as it stands, looser than the
+	// default included: that layer is where the guardrails are loosened.
+	var gov policy.Governance
 	if l := cfg.Layer; l != nil {
-		ceiling.Governance = l.Governance.Policy()
+		gov = l.Governance.Policy()
 	}
+	ceiling.Governance = gov.WithDefaults()
 	// The project's own policy, when it has published one, *is* the ceiling
 	// for the keys it sets: the node is what the owner says now, where the
 	// copy is what he said when the job was deployed (design §5, plan task
@@ -343,14 +353,30 @@ func FileLayer(cfg *config.Config) policy.Layer {
 // no layer set anything that bears on money or models and nothing was
 // ignored, so a repository without policy writes the same record as before.
 // The per-call output limits are not by themselves a policy.
+//
+// A governance key still at the figure Fugaro ships is not a policy either,
+// even though the ceiling carries it: the ceiling is built with the defaults
+// (Governance.WithDefaults), so a key no layer wrote has the ceiling as its
+// source for the same reason it has a value at all — because Fugaro put it
+// there. Sourcing it as "ceiling" would name the owner of a guardrail he never
+// chose (H1), and it would put all eighteen governance keys in every record,
+// including the records of repositories that write no policy at all. A key a
+// layer did write is kept: the value is then a decision somebody made.
 func policyRecord(e policy.Effective, nDef int) *runstore.PolicyRecord {
-	sources := map[string]string{}
-	for k, v := range e.Sources {
-		sources[k] = v
+	sources := maps.Clone(e.Sources)
+	for k := range e.Governance.DefaultGovernanceKeys() {
+		if sources[k] == policy.SourceCeiling {
+			delete(sources, k)
+		}
 	}
-	delete(sources, policy.KeyMaxOutputCoder)
-	delete(sources, policy.KeyMaxOutputReviewer)
-	if len(sources) == 0 && len(e.Ignored) == 0 {
+	bears := false
+	for k := range sources {
+		if k != policy.KeyMaxOutputCoder && k != policy.KeyMaxOutputReviewer {
+			bears = true
+			break
+		}
+	}
+	if !bears && len(e.Ignored) == 0 {
 		return nil
 	}
 	rec := &runstore.PolicyRecord{Effective: runstore.PolicyEffective{
@@ -358,8 +384,8 @@ func policyRecord(e policy.Effective, nDef int) *runstore.PolicyRecord {
 	if e.MaxOutputCoder > 0 || e.MaxOutputReviewer > 0 {
 		rec.Effective.MaxOutputTokens = &runstore.PolicyOutput{Coder: e.MaxOutputCoder, Reviewer: e.MaxOutputReviewer}
 	}
-	if len(e.Sources) > 0 {
-		rec.Sources = maps.Clone(e.Sources)
+	if len(sources) > 0 {
+		rec.Sources = sources
 	}
 	for i, ig := range e.Ignored {
 		from := policy.SourceBranch

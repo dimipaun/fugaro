@@ -157,8 +157,10 @@ func TestGovernanceTightenOnly(t *testing.T) {
 // TestGovernanceUnsetIsNoGovernance: a merge of layers that carry none is the
 // zero Governance and no source at all. Nothing fills the defaults here —
 // they are the project layer's ceiling (WithDefaults), not something Merge
-// invents — so a caller that never builds one enforces nothing, which is the
-// state this task leaves the runner in (T7.2 wires it).
+// invents — so a caller that never builds one enforces nothing. The runner is
+// no longer such a caller: resolvePolicy builds its ceiling with them, which
+// is also what makes a repository's looser value one the merge drops. What
+// still reads nothing is the enforcement, which T7.2 wires.
 func TestGovernanceUnsetIsNoGovernance(t *testing.T) {
 	e := Merge(Layer{}, Layer{})
 	if e.Governance != (Governance{}) {
