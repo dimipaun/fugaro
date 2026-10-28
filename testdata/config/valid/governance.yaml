@@ -18,5 +18,8 @@ governance:
     implement: 45m
     review: 30m
     fix: 20m
+  tiers:
+    trivial: { expected_usd: 0.2, expected_minutes: 8, max_subagents: 2 }
+    medium: { expected_usd: 2.5, expected_minutes: 60 }
 workflows:
   server: { commands: { build: make, test: make test } }

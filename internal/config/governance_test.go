@@ -173,12 +173,24 @@ func TestGovernanceCorpus(t *testing.T) {
 	if !g.StageTimeout.Implement.Set || g.StageTimeout.Implement.Duration != 45*time.Minute {
 		t.Errorf("stage_timeout.implement = %+v", g.StageTimeout.Implement)
 	}
+	if got := g.Tiers.Trivial; got != (TierLimits{ExpectedUSD: 0.2, ExpectedMinutes: 8, MaxSubagents: 2}) {
+		t.Errorf("tiers.trivial = %+v", got)
+	}
+	if got := g.Tiers.Medium; got != (TierLimits{ExpectedUSD: 2.5, ExpectedMinutes: 60}) {
+		t.Errorf("tiers.medium = %+v: a tier the file writes only two keys of keeps the third unset", got)
+	}
+	if got := g.Tiers.Small; got != (TierLimits{}) {
+		t.Errorf("tiers.small = %+v, want unset: the file names no small tier", got)
+	}
 	// The unknown key is the decoder's own problem, which carries the line
 	// rather than a path (the block it sits in is what strictDecode names);
-	// the fraction is validateGovernance's, which names the key.
+	// the fraction is validateGovernance's, which names the key. An unknown
+	// tier name is the decoder's too: it is a key of the tiers block, so the
+	// strict reader refuses it before any validation runs.
 	for file, want := range map[string]struct{ path, msg string }{
 		"governance-unknown-key":      {"", "field stage_budgets not found in type config.Governance"},
 		"governance-stage-budget-cap": {"governance.stage_budget.implement", "stays the ceiling"},
+		"governance-tier-unknown":     {"", "field enormous not found in type config.GovernanceTiers"},
 	} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "config", "invalid", file+".yaml"))
 		if err != nil {
