@@ -644,8 +644,16 @@ func (r *run) save(ctx context.Context) {
 // poll) — the poll's own writes are ordered with its own save, and the one
 // save the run goroutine makes while a poll is alive, the governance halt's,
 // is ordered after that poll as well, because the halt stops it and waits for
-// it first (governanceHalt, stopStageCheckpointer, checkpoint.go). That is
-// what makes the copy enough here rather than a lock held around the write.
+// it first (governanceHalt, stopStageCheckpointer, checkpoint.go).
+//
+// What the copy does not cover is a writer that holds neither r.mu nor that
+// ordering: the run goroutine's own unlocked writes between stages (the
+// stage's cost and spend, afterStage's branch tip). No lock is held around
+// them, so a save made from a goroutine they are not ordered with would encode
+// a record they are still writing — which is why a governance halt must be
+// called by the run goroutine or by one it joins before those writes
+// (governanceHalt, halt.go). That is what makes the copy enough here rather
+// than a lock held around the write.
 //
 // The copy is shallow, and that is deliberate: the callback goroutines only
 // ever append to the record's slices and set scalars, both under the lock, so
@@ -2507,8 +2515,14 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	stopCheckpoints := r.startCheckpoints(stageCtx, name)
 	r.setStageCkptStop(stopCheckpoints)
 	defer func() {
-		r.setStageCkptStop(nil)
+		// Stopped first, and only then unregistered: on the panic path — the
+		// only path where this defer runs with the poll still alive — a halt
+		// on another goroutine must find the stop and wait on it rather than
+		// read a nil and write the record while the poll's in-flight tick
+		// still is. stop is idempotent, so the normal path, where the stop
+		// above already ran it, is unaffected.
 		stopCheckpoints()
+		r.setStageCkptStop(nil)
 	}()
 	res, err := r.d.Agent.Run(stageCtx, req)
 	stopCheckpoints()

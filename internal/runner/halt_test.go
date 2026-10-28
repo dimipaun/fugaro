@@ -332,8 +332,11 @@ func TestGovernanceHaltWhileCheckpointPollRuns(t *testing.T) {
 		case <-time.After(10 * time.Second):
 			t.Fatal("the checkpoint never pushed")
 		}
-		// The halt, on a goroutine of its own: that is how a tripwire's halt
-		// arrives in a real run. It stops the poll below before it writes.
+		// The halt, on a goroutine of its own — a tripwire's halt does not
+		// arrive on the run goroutine — but one this stage joins before it
+		// returns, which is the ordering governanceHalt requires of a caller
+		// that is not the run goroutine itself (halt.go). It stops the poll
+		// below before it writes.
 		halted := make(chan bool, 1)
 		go func() { halted <- b.h.GovernanceHalt(ctx, runstore.HaltFanout, "review spawned 9 sub-agents of 5") }()
 		for !b.h.Halted() {

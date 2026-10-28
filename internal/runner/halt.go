@@ -208,13 +208,26 @@ func haltReasonText(h runstore.Halt) string {
 // reached. done, next and hard_instructions stay empty until the stopping
 // agent answers the checkpoint prompt (T7.2, wired in T7.3).
 //
-// It may be called mid-stage, from whatever goroutine a tripwire runs on, and
-// the stage's checkpoint poll goroutine is alive then: that poll writes the
-// same pull-request state and the same record (prflow.go, checkpoint.go). So
-// this function stops the poll and waits for it before it writes anything
-// itself — the halt is exactly one writer from that point on, and the poll's
-// last write is ordered before the record this function saves. It must not be
-// called from the poll goroutine, which would make that wait a wait on itself.
+// It may be called mid-stage, and the stage's checkpoint poll goroutine is
+// alive then: that poll writes the same pull-request state and the same record
+// (prflow.go, checkpoint.go). So this function stops the poll and waits for it
+// before it writes anything itself — against the poll it is exactly one writer
+// from that point on, and the poll's last write is ordered before the record
+// this function saves. It must not be called from the poll goroutine, which
+// would make that wait a wait on itself.
+//
+// Stopping the poll is only part of the ordering this function needs, and it
+// is the caller that supplies the rest: the run goroutine writes the record
+// itself, without r.mu, between the agent returning and the stage that
+// follows — the stage's spend and history (stageOnce's res.CostUSD and its
+// Stages entry, updateCost's rec.Cost) and afterStage's boundary push and
+// status write. A halt on a goroutine that neither is the run's nor is joined
+// by it before those writes races them. So T7.2 must call this from the run
+// goroutine, or from a goroutine the run goroutine joins before it writes any
+// of that — the stage's own halt watcher (watchHalt, which stopWatch joins) is
+// the one such goroutine a stage has today. A tripwire that has to run on a
+// goroutine of its own brings those writers under r.mu first, which is why
+// this comment says so rather than leaving the next caller to guess.
 func (r *run) governanceHalt(ctx context.Context, reason runstore.HaltReason, detail string) bool {
 	h := runstore.Halt{Reason: reason, Scope: "run", At: r.d.Now().UTC(), Detail: detail}
 	if !r.haltNow(h) {
