@@ -887,7 +887,10 @@ func TestDiagnoseShowsRouteReportedAndPinWarnings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Route:", "openrouter $0.3000", "Reported:", "$0.4000", "charged $0.3000", "built-in provider price catalog", "zdr", "more than 10% above", "may be too low"} {
+	// The Reported line's parenthetical says the table price settles and
+	// names the one exception, so it does not contradict the Tier line above
+	// it on a run whose tier charge the report floored.
+	for _, want := range []string{"Route:", "openrouter $0.3000", "Reported:", "$0.4000", "charged $0.3000", "the table price settles; an unpriced tier's charge is floored by the report", "built-in provider price catalog", "zdr", "more than 10% above", "may be too low"} {
 		if !strings.Contains(human, want) {
 			t.Fatalf("diagnose lacks %q:\n%s", want, human)
 		}
