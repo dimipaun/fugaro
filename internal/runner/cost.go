@@ -2,6 +2,7 @@ package runner
 
 import (
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
@@ -113,6 +114,12 @@ func (r *run) updateCost() {
 		// The run's prompt-cache token totals, which only the gateway can
 		// count: they are of its per-call usage and of nothing else (P12).
 		c.CacheReadTokens, c.CacheWriteTokens = r.gwCacheRead, r.gwCacheWrite
+		// The tiers a call came back at that the table has no multiplier
+		// for: their calls were charged conservatively (design §6.1), so
+		// the record naming them is what explains the figure a reader sees
+		// (on a provider route nothing else does: the provider's own
+		// reported cost is recorded, never charged).
+		c.ServiceTiers = slices.Clone(r.serviceTiers)
 		notional = r.gwNotional.USD()
 		// The catalog only prices the routes' models, so its staleness is a
 		// fact about what this run charged: a table that holds a stale row for

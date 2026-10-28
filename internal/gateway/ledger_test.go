@@ -40,6 +40,28 @@ func withUsage(t *testing.T, ev anthropicfake.Event, fields map[string]any) anth
 	return ev
 }
 
+// withoutUsage returns ev with keys removed from its usage, for a test whose
+// case is a field the fixture never reports at all. The fakes set every
+// field a real response carries, so a caller cannot express "absent" by
+// leaving one out: it has to take it out.
+func withoutUsage(t *testing.T, ev anthropicfake.Event, keys ...string) anthropicfake.Event {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal([]byte(ev.Data), &m); err != nil {
+		t.Fatal(err)
+	}
+	usage, _ := m["usage"].(map[string]any)
+	if msg, ok := m["message"].(map[string]any); ok {
+		usage = msg["usage"].(map[string]any)
+	}
+	for _, k := range keys {
+		delete(usage, k)
+	}
+	b, _ := json.Marshal(m)
+	ev.Data = string(b)
+	return ev
+}
+
 func maxRates() pricing.Rates { return pricing.Embedded().Max() }
 
 // --- settlement ---
@@ -306,10 +328,17 @@ func TestMessageDeltaCumulativeLastWins(t *testing.T) {
 // provider (OpenRouter's deepseek) answering usage.service_tier "priority":
 // the response was priced at the table's maximum rates times
 // SurpriseMultiplier AND recorded as a violation, and a violation fails the
-// stage. The charge stays the conservative one -- the ledger counts it, so
-// the caps bind on it -- and the tier is recorded instead of failing the
+// stage. The charge stays the conservative one -- the serving model's own
+// rates at the dearest multiple the table knows, which the ledger counts,
+// so the caps bind on it -- and the tier is recorded instead of failing the
 // run: the agent asked for nothing the budget forbids, and a provider can
 // answer with a tier at any time.
+//
+// The rates are the model's own and deliberately NOT the table's maximum:
+// the maximum here is a Claude model's $10/$50, and a DeepSeek call charged
+// those, at twice over, is the tens-of-times inflation this test exists to
+// prevent (the run would die on its cap and the day counters would carry
+// it).
 func TestServiceTierPriorityChargedConservatively(t *testing.T) {
 	u := pricing.Usage{Input: 1000, Output: 500}
 	rep := anthropicfake.StreamOK(sonnet, u)
@@ -317,17 +346,20 @@ func TestServiceTierPriorityChargedConservatively(t *testing.T) {
 	h := newHarness(t, rep)
 	h.post(msg(sonnet, 1000, `"stream":true`))
 	r := h.gw.EndStage()
-	want := maxRates().Cost(u) * pricing.ConservativeTierMultiplier
+	want := cost(t, sonnet, u) * pricing.ConservativeTierMultiplier
 	if r.Used != want {
-		t.Errorf("used %d, want %d (the maximum rates, at the conservative multiple)", r.Used, want)
+		t.Errorf("used %d, want %d (the call's own rates, at the conservative multiple)", r.Used, want)
 	}
-	if want <= cost(t, sonnet, u) || want <= maxRates().Cost(u) {
-		t.Errorf("the conservative charge %d is no dearer than the standard %d or the maximum-rate %d one",
-			want, cost(t, sonnet, u), maxRates().Cost(u))
+	if want <= cost(t, sonnet, u) {
+		t.Errorf("the conservative charge %d is no dearer than the standard %d", want, cost(t, sonnet, u))
 	}
-	if r.Overrun == 0 {
-		t.Error("a call charged above its reservation was not counted as overrun: the charge was capped at the reservation")
+	if dearer := maxRates().Cost(u) * pricing.ConservativeTierMultiplier; want == dearer {
+		t.Errorf("the conservative charge %d is the table's maximum rates: a cheap model is being charged a dear one's money", want)
 	}
+	// A charge over its reservation is not capped at it: the overrun part is
+	// counted, and the whole figure is charged. This fixture's usage fits
+	// under the reservation, so that is TestServiceTierChargeBindsTheCap's
+	// shape, not this one's.
 	if len(r.Violations) != 0 {
 		t.Errorf("violations %q: a provider's own tier must not fail the stage", r.Violations)
 	}
@@ -335,7 +367,7 @@ func TestServiceTierPriorityChargedConservatively(t *testing.T) {
 		t.Errorf("service tiers %q, want the tier recorded under its own name", r.ServiceTiers)
 	}
 	call := h.logs.lastCall(t)
-	if call["priced_as"] != "surprise" || call["service_tier"] != `"priority"` {
+	if call["priced_as"] != "tier" || call["service_tier"] != `"priority"` {
 		t.Errorf("log %v", call)
 	}
 	if l := h.gw.Ledger(); l.Used != want || l.Reserved != 0 {
@@ -354,7 +386,7 @@ func TestServiceTierPriorityChargedConservatively(t *testing.T) {
 // priced as standard or as free.
 func TestUnpricedServiceTiersChargedConservatively(t *testing.T) {
 	u := pricing.Usage{Input: 1000, Output: 500}
-	want := maxRates().Cost(u) * pricing.ConservativeTierMultiplier
+	want := cost(t, sonnet, u) * pricing.ConservativeTierMultiplier
 	huge := strings.Repeat("x", 5000)
 	for _, c := range []struct {
 		name, recorded string
@@ -387,19 +419,28 @@ func TestUnpricedServiceTiersChargedConservatively(t *testing.T) {
 	}
 }
 
-// TestServiceTierMissingIsUnchanged: a response that reports no tier at all
-// (the ordinary case, and the one the fixtures carry) is priced exactly as
-// it always was: the serving model's rates, nothing conservative, nothing
-// recorded. Both shapes of answer are covered, since a provider route
-// settles either.
+// TestServiceTierMissingIsUnchanged: a response whose usage carries no
+// service_tier key at all -- not the standard tier, the field simply not
+// there, which is what a provider that says nothing about tiers sends -- is
+// priced exactly as it always was: the serving model's rates, nothing
+// conservative, nothing recorded. Both shapes of answer are covered, since
+// a provider route settles either. The fakes name a tier on every response,
+// so the fixtures take the key out (withoutUsage): left in, this test would
+// only re-test the standard path below.
 func TestServiceTierMissingIsUnchanged(t *testing.T) {
 	u := pricing.Usage{Input: 1000, Output: 500}
+	noTier := func(rep anthropicfake.Reply) anthropicfake.Reply {
+		for i := range rep.Events {
+			rep.Events[i] = withoutUsage(t, rep.Events[i], "service_tier")
+		}
+		return rep
+	}
 	for _, c := range []struct {
 		name, body string
 		rep        anthropicfake.Reply
 	}{
-		{"streamed", msg(sonnet, 1000, `"stream":true`), anthropicfake.StreamOK(sonnet, u)},
-		{"buffered", msg(sonnet, 1000), anthropicfake.MessageOK(sonnet, u)},
+		{"streamed", msg(sonnet, 1000, `"stream":true`), noTier(anthropicfake.StreamOK(sonnet, u))},
+		{"buffered", msg(sonnet, 1000), noTier(anthropicfake.MessageOK(sonnet, u))},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			h := newHarness(t, c.rep)
@@ -453,13 +494,16 @@ func TestServiceTierChargeBindsTheCap(t *testing.T) {
 		t.Fatalf("the first call: %d %s", resp.StatusCode, b)
 	}
 	rep1 := h.gw.EndStage()
-	want := maxRates().Cost(u) * pricing.ConservativeTierMultiplier
+	want := cost(t, sonnet, u) * pricing.ConservativeTierMultiplier
 	if rep1.Used != want {
 		t.Errorf("used %d, want %d", rep1.Used, want)
 	}
 	if rep1.Used <= w {
 		t.Fatalf("the fixture charges %s, not over its %s reservation: the cap is not what it should test",
 			dollars(rep1.Used), dollars(w))
+	}
+	if rep1.Overrun != rep1.Used-w {
+		t.Errorf("overrun %d, want %d: the part of the charge above its reservation", rep1.Overrun, rep1.Used-w)
 	}
 	h.gw.BeginStage(defaultStage)
 	if resp, b := h.post(body); resp.StatusCode != http.StatusForbidden || !strings.Contains(b, "run cap") {

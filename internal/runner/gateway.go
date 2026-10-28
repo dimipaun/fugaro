@@ -447,6 +447,11 @@ func (r *run) endGatewayStage(stage string) ([]string, int64) {
 	r.reported += rep.Reported
 	r.unreconciled += rep.Unreconciled
 	r.unparsed += rep.UsageUnparsed
+	for _, tier := range rep.ServiceTiers {
+		if !slices.Contains(r.serviceTiers, tier) {
+			r.serviceTiers = append(r.serviceTiers, tier)
+		}
+	}
 	r.mu.Unlock()
 	log := r.d.Log.With("stage", stage)
 	if rep.UsageUnparsed > 0 {

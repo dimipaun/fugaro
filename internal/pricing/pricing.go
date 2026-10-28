@@ -180,9 +180,15 @@ const StandardTier = "standard"
 // which a response reports as "priority" and which a provider's endpoint
 // can serve a call from without the agent having asked for anything, among
 // them -- so the table has no real number to charge one at and must not
-// invent one. Such a call is charged at this multiple of the table's
-// maximum rates instead: never the standard price, which under-charges a
-// tier that costs more than it, and never 0, which is free.
+// invent one. Such a call is charged at this multiple of the rates it would
+// otherwise be priced at -- the serving model's own, or the table's maximum
+// for a model the table doesn't know -- instead: never the standard price,
+// which under-charges a tier that costs more than it, and never 0, which is
+// free. The rates are the call's own and not the dearest row in the table:
+// a tier premium is a multiple of what the model costs, and charging a
+// cheap model a dear one's rates would inflate the record and the shared
+// day counters tens of times over, and halt a run on a cap the model's own
+// rates would have stayed under.
 //
 // It is the dearest multiple the table knows anywhere (SurpriseMultiplier,
 // fast mode's premium) and is deliberately not smaller, so a tier nobody

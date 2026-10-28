@@ -16,6 +16,7 @@ const (
 	pricedTable    = "table"    // the serving model's rates
 	pricedMax      = "max"      // an unknown serving model: the table's maximum rates
 	pricedSurprise = "surprise" // a dimension the request didn't allow: maximum rates × SurpriseMultiplier
+	pricedTier     = "tier"     // a service tier no one prices: the call's own rates × ConservativeTierMultiplier
 
 	settledUsage    = "usage"    // the usage a complete response reported
 	settledPartial  = "partial"  // input and cache from message_start, plus the reserved output

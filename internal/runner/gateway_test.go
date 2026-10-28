@@ -776,6 +776,37 @@ func unparsed2xx() anthropicfake.Reply {
 	return anthropicfake.Reply{Status: 200, Body: "not json at all"}
 }
 
+// tierPriority is a reply that comes back at a service tier the price table
+// has no multiplier for, the shape a live OpenRouter DeepSeek call returned.
+func tierPriority() anthropicfake.Reply {
+	rep := anthropicfake.MessageOK(sonnet, pricing.Usage{Input: 1000, Output: 100})
+	rep.Body = strings.Replace(rep.Body, `"service_tier":"standard"`, `"service_tier":"priority"`, 1)
+	return rep
+}
+
+// TestServiceTierNotedInRecord: a call charged conservatively for an
+// unpriced service tier is in the run's model figure, so the record names
+// the tier: the reader of a provider run has no other way to explain the
+// figure (its provider-reported cost is recorded, never charged) and the
+// stage log is not part of the record. The stage itself goes on.
+func TestServiceTierNotedInRecord(t *testing.T) {
+	g := newGW(t, gwConfig(t, ""), "observe", "", tierPriority())
+	var st []int
+	rec, err := g.run(t, calling(&st, implement("feature"), call{sonnet, 4000}), review("ship", 0))
+	if err != nil || rec.Cost == nil {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("status = %q: a provider's own tier must not fail the stage", rec.Status)
+	}
+	if len(rec.Cost.ServiceTiers) != 1 || rec.Cost.ServiceTiers[0] != `usage.service_tier "priority"` {
+		t.Fatalf("service_tiers = %q, want the tier named in the record", rec.Cost.ServiceTiers)
+	}
+	if !strings.Contains(g.logs.String(), "service tiers charged conservatively") {
+		t.Fatalf("no line naming the tiers:\n%s", g.logs.String())
+	}
+}
+
 func TestUnreconciledRecorded(t *testing.T) {
 	g := newGW(t, gwConfig(t, ""), "observe", "", unparsed2xx())
 	var st []int

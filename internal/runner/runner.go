@@ -306,6 +306,12 @@ type run struct {
 	reported     pricing.Micros
 	unreconciled pricing.Micros
 	unparsed     int
+	// serviceTiers are the service tiers the run's calls came back at that
+	// the price table has no multiplier for, from every stage's report:
+	// those calls were charged conservatively rather than failing the
+	// stage, and the record carries the names so the figure they are in
+	// explains itself (gateway.StageReport's ServiceTiers, design §6.1).
+	serviceTiers []string
 	provider     gitprov.Provider
 	providerKind string
 	providerFrom string          // where providerKind came from, for mismatch errors
