@@ -1901,7 +1901,7 @@ func TestPolicyRecordSchema(t *testing.T) {
 	for name, mut := range map[string]func(p *runstore.PolicyRecord){
 		"bad mode":     func(p *runstore.PolicyRecord) { p.Effective.Mode = "loose" },
 		"bad source":   func(p *runstore.PolicyRecord) { p.Sources["mode"] = "repo" },
-		"bad from":     func(p *runstore.PolicyRecord) { p.Ignored[0].From = "ceiling" },
+		"bad from":     func(p *runstore.PolicyRecord) { p.Ignored[0].From = "repo" },
 		"negative cap": func(p *runstore.PolicyRecord) { p.Effective.PerRunUSD = -1 },
 		"empty model":  func(p *runstore.PolicyRecord) { p.Effective.AllowedModels = []string{""} },
 	} {
@@ -1927,7 +1927,11 @@ func TestPolicyRecordSchema(t *testing.T) {
 // a stored result.json the repository's own validator rejects. `from` stays
 // without "policy" on purpose: the node is not a later layer that can ask for
 // a looser value, it *is* the first layer, and its keys are replaced rather
-// than loosened (plan task 1.3, H1).
+// than loosened (plan task 1.3, H1). It carries "ceiling" for the one case a
+// ceiling value is dropped — a stage timeout the run's own timeouts.stage
+// bounds at least as tightly, which the runner records under the key the
+// project layer's governance wrote (T7.6, runner.noteStageTimeoutClamped) —
+// and the node carries no governance block, so "policy" is never that layer.
 func TestPolicyRecordSchemaLayersAgreeWithGo(t *testing.T) {
 	data, err := os.ReadFile("result.schema.json")
 	if err != nil {
@@ -1966,7 +1970,7 @@ func TestPolicyRecordSchemaLayersAgreeWithGo(t *testing.T) {
 		{"policy.ignored[].source", enum(at(pol, "ignored", "items", "properties", "source", "enum")),
 			slices.Sorted(slices.Values([]string{policy.SourceCeiling, policy.SourceDefaultBranch, policy.SourceBranch, policy.SourcePolicy}))},
 		{"policy.ignored[].from", enum(at(pol, "ignored", "items", "properties", "from", "enum")),
-			slices.Sorted(slices.Values([]string{policy.SourceDefaultBranch, policy.SourceBranch}))},
+			slices.Sorted(slices.Values([]string{policy.SourceCeiling, policy.SourceDefaultBranch, policy.SourceBranch}))},
 	} {
 		if !slices.Equal(where.got, where.want) {
 			t.Errorf("schema's %s = %v, internal/policy's layers are %v", where.name, where.got, where.want)
