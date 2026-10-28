@@ -301,6 +301,8 @@ func rawUsage(t *testing.T, ev anthropicfake.Event, frag string) anthropicfake.E
 // figure alone, and so does a call that reported no cost at all. A charge
 // the floor raised is still not an overrun -- it stops at the reservation --
 // and it is priced from usage the whole way, so none of it is unreconciled.
+// The per-call warning says so in its own words: the multiple, and the report
+// the figure may be instead only where a report was recorded.
 func TestUnpricedTierChargedAtLeastReportedCost(t *testing.T) {
 	u := pricing.Usage{Input: 1000, Output: 500}
 	body := msg(dsModel, 4000, `"stream":true`)
@@ -327,7 +329,11 @@ func TestUnpricedTierChargedAtLeastReportedCost(t *testing.T) {
 		{"no reported cost", "", 0, cons, 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			call, rep := settleCase(t, c.fee, body, tierCostReply(t, u, "priority", c.cost))
+			r := feeRouted(t, c.fee, nil, routedStage, dsRoute, tierCostReply(t, u, "priority", c.cost))
+			if resp, b := r.post(body); resp.StatusCode != http.StatusOK {
+				t.Fatalf("%d %s", resp.StatusCode, b)
+			}
+			call, rep := r.logs.lastCall(t), r.gw.EndStage()
 			if got := pricing.Micros(num(call["charged_micros"])); got != c.want {
 				t.Errorf("charged %d, want %d (the conservative figure is %d)", got, c.want, cons)
 			}
@@ -346,6 +352,16 @@ func TestUnpricedTierChargedAtLeastReportedCost(t *testing.T) {
 			if rep.Overrun != 0 || rep.Unreconciled != 0 {
 				t.Errorf("stage overrun %d unreconciled %d, want 0 and 0: the floor stops at the reservation and prices usage",
 					rep.Overrun, rep.Unreconciled)
+			}
+			// The warning says the figure may be the report only where the
+			// record carries one: a call that reported no cost has no figure
+			// to name, and the line stops at the multiple.
+			wantChargedAs := "2x the rates the call is priced at"
+			if c.cost != "" {
+				wantChargedAs += ", or the provider's reported cost with the route fee if dearer"
+			}
+			if got := r.logs.tierWarnChargedAs(t); got != wantChargedAs {
+				t.Errorf("charged_as %q, want %q", got, wantChargedAs)
 			}
 		})
 	}
@@ -402,7 +418,10 @@ func TestUnpricedTierFloorIsBoundedByTheReservation(t *testing.T) {
 // too -- without it a call that was cut short could settle below what the
 // provider says it cost, which is the hole the floor closes. The floor is
 // still bounded by the reservation, and the part of the charge the usage does
-// not explain is unreconciled, exactly as it is with no floor at all.
+// not explain is unreconciled, exactly as it is with no floor at all. The
+// report that set the floor is recorded beside the charge the way a complete
+// call's is: it is what the provider said the call cost, and it is the only
+// figure that explains the charge the reader sees.
 func TestUnpricedTierFloorOnAPartialCall(t *testing.T) {
 	body := msg(dsModel, 1, `"stream":true`)
 	w := worst(t, dsModel, body, 1, "")
@@ -433,6 +452,17 @@ func TestUnpricedTierFloorOnAPartialCall(t *testing.T) {
 	}
 	if rep.Overrun != 0 || rep.Unreconciled != floor-table {
 		t.Errorf("stage overrun %d unreconciled %d, want 0 and %d", rep.Overrun, rep.Unreconciled, floor-table)
+	}
+	// The report is the floor here, so the record carries it: without it the
+	// stage's Reported -- and the run's reported_usd -- would leave out the
+	// one figure that explains the charge, and diagnose's Tier clause, which
+	// is printed only where the record carries a report, would go silent on
+	// the run that needs it.
+	if got := pricing.Micros(num(call["reported_micros"])); got != 4_000 {
+		t.Errorf("reported_micros %v, want the report %d the floor was made of", call["reported_micros"], 4_000)
+	}
+	if rep.Reported != 4_000 {
+		t.Errorf("stage reported %d, want the report %d the floor was made of", rep.Reported, 4_000)
 	}
 }
 

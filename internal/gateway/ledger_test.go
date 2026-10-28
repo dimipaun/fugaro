@@ -374,8 +374,11 @@ func TestServiceTierPriorityChargedConservatively(t *testing.T) {
 	if l := h.gw.Ledger(); l.Used != want || l.Reserved != 0 {
 		t.Errorf("ledger %+v", l)
 	}
-	if !strings.Contains(h.logs.String(), "service tier not priced") {
-		t.Errorf("no warning naming the tier:\n%s", h.logs.String())
+	// The warning's own words for the figure, and only the multiple: a
+	// Claude call has no route, so no provider reported a cost for it and
+	// the clause naming a report has nothing to name here.
+	if got, want := h.logs.tierWarnChargedAs(t), "2x the rates the call is priced at"; got != want {
+		t.Errorf("charged_as %q, want %q:\n%s", got, want, h.logs.String())
 	}
 }
 
