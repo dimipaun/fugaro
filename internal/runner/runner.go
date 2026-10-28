@@ -2443,23 +2443,19 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 // that is exhausted at that instant. A fourth answer ends the run named.
 const maxCredentialResumes = 3
 
-// stageTimeout is a stage's own wall-clock ceiling, from the run's resolved
-// governance (T7.6): the tighter of the project layer's stage_timeout block
-// and the repository's own, merged by the rule every governance key gets —
-// the layer is the ceiling and the repository's file may only tighten it
-// (T7.1, config's TestGovernanceCeilingReachesTheResolvedConfig). Zero means
-// the run resolved none, and the stage is bounded by the run's own
+// stageTimeout is a stage's own wall-clock ceiling, read off the run's
+// resolved policy (T7.6): the effective stage_timeout of the one merge every
+// governance key goes through, so the project layer's block is the ceiling,
+// the default branch's file and the repository's own may only tighten it, and
+// a value that would loosen an upper layer is recorded in result.json and
+// warned about like any other (policy.Merge, PolicyKeyPath). Zero means the
+// run resolved none, and the stage is bounded by the run's own
 // timeouts.stage alone.
 //
 // Only the three stages governance bounds have one: an artifact run's plan
 // and render steps are not among them (T7.1).
 func (r *run) stageTimeout(stage string) time.Duration {
-	ceiling := policy.Governance{}
-	if r.cfg.Layer != nil {
-		ceiling = r.cfg.Layer.Governance.Policy()
-	}
-	t := policy.Merge(policy.Layer{Governance: ceiling}, policy.Layer{},
-		policy.Layer{Governance: r.cfg.Governance.Policy()}).Governance.StageTimeout
+	t := r.policy.Governance.StageTimeout
 	switch {
 	case config.IsReviewStage(stage):
 		return t.Review

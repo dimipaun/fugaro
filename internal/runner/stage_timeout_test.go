@@ -2,10 +2,12 @@ package runner_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -19,11 +21,28 @@ func stageTimeoutCfg(t *testing.T, timeouts, governance string) string {
 	return cfg + governance
 }
 
-// blockedStage is a stage that runs until its context ends, the way a real
-// agent does: only a bound of the runner's stops it.
-func blockedStage(_ *testing.T, ctx context.Context, _ agent.Request) (agent.Result, error) {
+// blockedStage is blockUntilDone with a cost figure: the halt's checkpoint
+// carries the spend the stage had reached as its estimate, and a zero there
+// would not tell a recorded estimate from a missing one.
+func blockedStage(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+	res, err := blockUntilDone(t, ctx, req)
+	res.CostUSD = 1
+	return res, err
+}
+
+// finishedAtTheDeadline is implement's work done, whose result the stage
+// returns as its own bound ends it: the race the runner must read as work
+// done rather than as a stop.
+func finishedAtTheDeadline(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+	res, err := implement("feature")(t, ctx, req)
 	<-ctx.Done()
-	return agent.Result{CostUSD: 1}, ctx.Err()
+	return res, err
+}
+
+// failedOnItsOwn is an agent that fails its stage with an error of its own,
+// well inside every bound the run has.
+func failedOnItsOwn(_ *testing.T, _ context.Context, _ agent.Request) (agent.Result, error) {
+	return agent.Result{CostUSD: 1}, errors.New("the agent gave up")
 }
 
 // TestStageTimeoutHaltsWithCheckpoint: a stage that reaches its own
@@ -106,10 +125,117 @@ func TestStageTimeoutNeverAboveTimeoutsStage(t *testing.T) {
 	}
 }
 
+// TestStageTimeoutStandsWhenTheResultRacesIt: a stage whose own deadline
+// fired but which returned a result of its own is a stage that finished, the
+// same convention the run's own timeouts.stage has. The run does not stop
+// and no checkpoint is written: only a stage the bound actually cut is a
+// governance halt, which is what the agent's error says.
+func TestStageTimeoutStandsWhenTheResultRacesIt(t *testing.T) {
+	cfg := stageTimeoutCfg(t,
+		"timeouts: { total: 1m, stage: 10s, verify: 5s, finalize_reserve: 5s }",
+		"governance:\n  stage_timeout: { implement: 1s }\n")
+	h := newHarness(t, cfg, nil)
+	rec, err := h.run(t, finishedAtTheDeadline, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Halt != nil || rec.Checkpoint != nil {
+		t.Fatalf("a stage that returned a result as its own deadline fired was stopped: halt = %+v, checkpoint = %+v", rec.Halt, rec.Checkpoint)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("record = %+v", rec)
+	}
+	if len(h.agent.calls) != 2 {
+		t.Fatalf("%d stages ran, want implement and review", len(h.agent.calls))
+	}
+}
+
+// TestStageTimeoutKeepsAnAgentFailureOfItsOwn: an agent that fails its stage
+// with an error of its own, its own deadline never reached, keeps that
+// failure. The bound did not fire, so the stage is not a stop: the record
+// names the stage's own error and no checkpoint is written.
+func TestStageTimeoutKeepsAnAgentFailureOfItsOwn(t *testing.T) {
+	cfg := stageTimeoutCfg(t,
+		"timeouts: { total: 1m, stage: 10s, verify: 5s, finalize_reserve: 5s }",
+		"governance:\n  stage_timeout: { implement: 1s }\n")
+	h := newHarness(t, cfg, nil)
+	rec, err := h.run(t, failedOnItsOwn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Reason != "stage implement failed: the agent gave up" {
+		t.Fatalf("record = %+v", rec)
+	}
+	if rec.Halt != nil || rec.Checkpoint != nil {
+		t.Fatalf("a failure of the agent's own was read as the stage's timeout: halt = %+v, checkpoint = %+v", rec.Halt, rec.Checkpoint)
+	}
+}
+
+// TestStageTimeoutIsNotTheRunsOwnBound: the run's own bound can cut a stage
+// before the stage's own does — here the finalize reserve leaves the stage
+// less time than its governance.stage_timeout asks for — and a stage cut by
+// the run's own bound is the failure it has always been, whatever a stage
+// timeout would have said had it been reached (T7.6). Reporting it as a stop
+// would blame a tripwire that never fired and draft a pull request over a
+// run that simply ran out of its own time.
+func TestStageTimeoutIsNotTheRunsOwnBound(t *testing.T) {
+	cfg := stageTimeoutCfg(t,
+		"timeouts: { total: 30s, stage: 10s, verify: 5s, finalize_reserve: 27s }",
+		"governance:\n  stage_timeout: { implement: 9s }\n")
+	h := newHarness(t, cfg, nil)
+	rec, err := h.run(t, blockedStage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "time budget exhausted") {
+		t.Fatalf("record = %+v", rec)
+	}
+	if rec.Halt != nil || rec.Checkpoint != nil {
+		t.Fatalf("a stage cut by the run's own bound is a governance stop: halt = %+v, checkpoint = %+v", rec.Halt, rec.Checkpoint)
+	}
+	if len(h.agent.calls) != 1 {
+		t.Fatalf("%d stages ran, want only implement", len(h.agent.calls))
+	}
+}
+
+// TestStageTimeoutLooserInTheRepositoryIsRecorded: a stage timeout is one key
+// of the one policy merge, so a repository file that writes a looser value
+// than the project layer's is not applied and is not silently dropped either:
+// the effective bound stays the layer's, and result.json carries the ignored
+// value under the key it was written as (T7.1, D331, docs/project-layer.md).
+func TestStageTimeoutLooserInTheRepositoryIsRecorded(t *testing.T) {
+	layer := runnerLayer + "governance: { stage_timeout: { implement: 200ms } }\n"
+	repo := layeredRepo + "governance: { stage_timeout: { implement: 5m } }\n"
+	h := newHarness(t, repo, layerSpec(layer))
+	rec, err := h.run(t, blockedStage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Halt == nil || rec.Halt.Reason != runstore.HaltStageBudget {
+		t.Fatalf("record = %+v, halt = %+v", rec, rec.Halt)
+	}
+	pol := rec.Policy
+	if pol == nil || pol.Sources[policy.KeyStageTimeoutImplement] != policy.SourceCeiling {
+		t.Fatalf("policy = %+v, want the layer's value as the ceiling's", pol)
+	}
+	var found bool
+	for _, ig := range pol.Ignored {
+		if ig.Key == policy.KeyStageTimeoutImplement {
+			found = true
+			if ig.Value != "5m0s" || ig.Effective != "200ms" || ig.From != policy.SourceBranch {
+				t.Errorf("ignored = %+v", ig)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("the looser value in the repository's file was dropped without being recorded: %+v", pol.Ignored)
+	}
+}
+
 // TestStageTimeoutFromTheProjectLayer: the project layer's governance block is
-// one of the two surfaces a stage's own timeout is read from, and the one an
-// operator sets for every repository of a project (T7.1, T7.4). A run whose
-// layer sets it, with nothing in the repository's own file, is bounded by it.
+// the ceiling a stage's own timeout is read from, and the one an operator sets
+// for every repository of a project (T7.1, T7.4). A run whose layer sets it,
+// with nothing in the repository's own file, is bounded by it.
 func TestStageTimeoutFromTheProjectLayer(t *testing.T) {
 	layer := runnerLayer + "governance: { stage_timeout: { implement: 200ms } }\n"
 	h := newHarness(t, layeredRepo, layerSpec(layer))
