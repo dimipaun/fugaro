@@ -41,13 +41,18 @@
 
 import { join } from 'node:path'
 
-import type { BrowserWindow, BrowserWindowConstructorOptions } from 'electron'
+import type { BrowserWindow, BrowserWindowConstructorOptions, Session } from 'electron'
 
 import type { ConfirmView, LaunchConfirmer } from './launch'
 import type { ConsoleEventLike, IpcMainLike } from './ipc'
 import { SENDER_REFUSAL } from './ipc'
 import { APP_ORIGIN } from './protocol'
-import { consoleWebPreferences, denyPageTitleUpdate, installWebContentsSecurity } from './window'
+import {
+  consoleWebPreferences,
+  denyEveryPermission,
+  denyPageTitleUpdate,
+  installWebContentsSecurity,
+} from './window'
 
 /** CONFIRM_CHANNEL_PREFIX is the whole of this window's IPC surface, and it is a
  * prefix of its own: neither the dashboard's `fugaro:console/` nor the picker's
@@ -118,15 +123,34 @@ export interface ConfirmWindowDeps {
   /** the document this window loads, which is `CONFIRM_ENTRY_URL` in the shipped
    * app and an argument here so a test can read which URL was loaded. */
   readonly entryUrl: string
+  /** session is the Electron `Session` the confirmation window is built on **and**
+   * has its permissions denied on: `confirmOptions` sets it as the window's
+   * `webPreferences.session`, so the denial and the window name the same session.
+   * It is a dependency rather than a read of `session.defaultSession` on purpose:
+   * the confirmation window denies every permission on its own session (defence
+   * in depth), so it does not rely on the request and check handlers the
+   * dashboard installs on `session.defaultSession`. Part 2b-3 passes the real
+   * session at the entry point. */
+  readonly session: Session
 }
 
 /** confirmOptions is the confirmation window's construction options: the
- * dashboard's own hardened `consoleWebPreferences()` with **one** addition, its
- * preload, and the modality that makes it a window the dashboard waits behind.
- * There is no relaxation here and none to make. */
+ * dashboard's own hardened `consoleWebPreferences()` with **two** additions, its
+ * preload and the `session` it is built on, and the modality that makes it a
+ * window the dashboard waits behind. There is no relaxation here and none to
+ * make.
+ *
+ * `session` is set here rather than left to Electron's default because the
+ * window's permission denial in `createConfirmWindow` is installed on that same
+ * session: without it the denial would land on `session.defaultSession` while
+ * the window was built on whatever the caller meant, and a caller that passed a
+ * non-default session would deny a session the window never uses. Setting it is
+ * what makes "the confirm window denies every permission on its own session"
+ * true of the window rather than of the dependency. */
 export function confirmOptions(
   preloadPath: string,
   parent: BrowserWindow | null,
+  session: Session,
 ): BrowserWindowConstructorOptions {
   return {
     width: CONFIRM_WINDOW_SIZE.width,
@@ -138,7 +162,7 @@ export function confirmOptions(
     // `parent` it cannot resolve as an error, and a console with no window open
     // still has to be able to ask.
     ...(parent === null ? {} : { parent }),
-    webPreferences: { ...consoleWebPreferences(), preload: preloadPath },
+    webPreferences: { ...consoleWebPreferences(), preload: preloadPath, session },
   }
 }
 
@@ -223,10 +247,19 @@ export function createConfirmWindow(deps: ConfirmWindowDeps): LaunchConfirmer {
     return { ok: true, data: { answered: true } }
   })
 
+  // Every permission is denied on this window's own session, once, here at
+  // creation rather than per `open`: the denial is a property of the session the
+  // window is built on, so it is in place before the first window exists and a
+  // second window reuses it. It is not `buildHardenedWindow`'s call because that
+  // path creates its own window and its own load, and this module reads the
+  // window's `webContents` once and attaches listeners of its own between
+  // construction and the load (see `open`).
+  denyEveryPermission(deps.session)
+
   return Object.freeze({
     open(view: ConfirmView, decide: (yes: boolean, reason?: string) => void): void {
       const window = new deps.BrowserWindow(
-        confirmOptions(confirmPreloadPath(deps.appPath), deps.parent()),
+        confirmOptions(confirmPreloadPath(deps.appPath), deps.parent(), deps.session),
       )
       // Read the window's `webContents` once, here, while it is alive: every
       // listener below (and the `closed` one especially) has to be able to name

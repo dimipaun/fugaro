@@ -839,6 +839,7 @@ and asks the operator for one of two answers: cancel, which is the default, or g
 | Region | Hook | What it holds |
 |---|---|---|
 | The task | `console-confirm-task` | the `pre` holding the task text as submitted, drawn in full and bounded, so a long task scrolls inside the box rather than being shortened or pushing the two answers off the window |
+| The field list | `console-confirm-fields` | the `dl` holding the `dt`/`dd` field rows, carrying the one rule that wraps a long value inside its `dd` rather than widening the window |
 | The answers | `console-confirm-actions` | the row the view appends its two buttons to: the confirming one, and Cancel |
 
 **Its hooks are classes and not the picker's ids**, although its document is hand-written
@@ -847,11 +848,12 @@ stylesheet for id selectors and holds every one of them to the ids `installation
 declares, so a second document's ids in this file would read there as rules for a page that
 is not served. The four containers the view looks up (`confirm-status`, `confirm-fields`,
 `confirm-task`, `confirm-actions`) are the document's own declarations, and the ids and the
-two hooks above are the whole of what the window carries: **no `data-*` of its own, and no
+three hooks above are the whole of what the window carries: **no `data-*` of its own, and no
 rule here keyed on a theme attribute**, since the window is one surface with one ground. The
-field rows are the view's `dt`/`dd` pairs and **have no hook of their own**: no rule in this
-file selects them, and they carry only what `base.css`'s reset gives every `dt` and `dd`. A
-rule that wanted one adds it here first.
+field rows are the view's `dt`/`dd` pairs and carry **no hook of their own**: the `dl` that
+holds them is `console-confirm-fields`, whose one rule wraps a long value inside its `dd`,
+and apart from that they carry only what `base.css`'s reset gives every `dt` and `dd`. A
+rule that wanted a hook on a row itself adds it here first.
 
 ---
 

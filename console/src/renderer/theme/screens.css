@@ -1328,17 +1328,38 @@ main p {
  * the window would be a window an operator cannot answer.
  */
 
+/* `white-space: pre-wrap` with `overflow-wrap: anywhere` is what keeps the task
+ * box bounded. This document's `main` is the body grid's only child, so it
+ * auto-places into the `auto` column (base.css), whose base size is the item's
+ * min-content contribution -- and a `<pre>`'s default `white-space: pre` makes
+ * that contribution the longest line, so one unbroken 16 KiB line widens the
+ * column and scrolls the page sideways. `pre-wrap` keeps the line breaks and the
+ * spacing the text was written with while allowing a wrap, and `anywhere` -- not
+ * `break-word`, which does not count toward min-content -- lets an unbroken
+ * value break, so the box scrolls inside its bound instead of moving the window. */
 .console-confirm-task {
   max-height: 40vh;
   margin: 0 0 var(--space-md);
   padding: var(--space-xs);
   overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   color: var(--text);
   background: var(--surface-alt);
   border: var(--rule-width) solid var(--border);
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
+}
+
+/* A field value is a repository title, a ref or a path, and one of those can be
+ * thousands of characters with no space to break at. This document's `main` is
+ * the body grid's only child, so it auto-places into the `auto` column, whose
+ * base size is the item's min-content contribution: a value like that widens the
+ * column and scrolls the whole page sideways. `anywhere` lets a long value wrap
+ * inside the `dd` rather than move the window. The `dl` carries the hook. */
+.console-confirm-fields dd {
+  overflow-wrap: anywhere;
 }
 
 /* The two answers are buttons and a button's boundary is `--border-strong` (the
