@@ -17,7 +17,7 @@ const (
 	pricedTable    = "table"    // the serving model's rates
 	pricedMax      = "max"      // an unknown serving model: the table's maximum rates
 	pricedSurprise = "surprise" // a dimension the request didn't allow: maximum rates × SurpriseMultiplier
-	pricedTier     = "tier"     // a service tier no one prices: the call's own rates × ConservativeTierMultiplier
+	pricedTier     = "tier"     // a service tier no one prices: the rates the call was priced at × ConservativeTierMultiplier, or the provider's own reported cost where that is dearer
 
 	settledUsage    = "usage"    // the usage a complete response reported
 	settledPartial  = "partial"  // input and cache from message_start, plus the reserved output
@@ -100,7 +100,7 @@ type charge struct {
 	// call the table priced, the standard tier included.
 	serviceTier string
 	route       string         // the provider route the call went to; "" is Anthropic
-	reported    pricing.Micros // the cost the provider reported, never charged
+	reported    pricing.Micros // the cost the provider reported: recorded for comparison, and the floor under a tier charge, but never the price of a call the table priced
 	// agentID is Claude Code's x-claude-code-agent-id for this call: the
 	// sub-agent that made it, or "" for the main session. The stage's
 	// report counts the distinct ones.

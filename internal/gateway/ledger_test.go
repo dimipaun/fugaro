@@ -349,7 +349,7 @@ func TestServiceTierPriorityChargedConservatively(t *testing.T) {
 	r := h.gw.EndStage()
 	want := cost(t, sonnet, u) * pricing.ConservativeTierMultiplier
 	if r.Used != want {
-		t.Errorf("used %d, want %d (the call's own rates, at the conservative multiple)", r.Used, want)
+		t.Errorf("used %d, want %d (the rates the call was priced at, at the conservative multiple)", r.Used, want)
 	}
 	if want <= cost(t, sonnet, u) {
 		t.Errorf("the conservative charge %d is no dearer than the standard %d", want, cost(t, sonnet, u))
@@ -459,6 +459,57 @@ func TestServiceTiersAreCapped(t *testing.T) {
 	}
 	if len(r.Violations) != 0 {
 		t.Errorf("violations %q: a provider's own tier must not fail the stage", r.Violations)
+	}
+}
+
+// TestServiceTierSetListBoundary: the set keeps every name it is given and
+// only List is bounded (MaxServiceTiers). Exactly MaxServiceTiers distinct
+// names fit with no counter entry, and one more adds a single "+1 more"
+// entry standing for the name beyond the bound. A tier two stages both
+// reported is one tier: the counter is of distinct names, not of the calls
+// or the stages that carried them, which is what Merge's dedup is for.
+func TestServiceTierSetListBoundary(t *testing.T) {
+	tier := func(i int) string { return fmt.Sprintf(`usage.service_tier "tier-%02d"`, i) }
+	first := func(n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = tier(i)
+		}
+		return out
+	}
+	var full ServiceTierSet
+	for _, name := range first(MaxServiceTiers) {
+		full.Add(name)
+	}
+	if got := full.List(); !slices.Equal(got, first(MaxServiceTiers)) {
+		t.Errorf("exactly %d distinct tiers listed as %q, want them and no counter entry", MaxServiceTiers, got)
+	}
+	over := full.clone()
+	over.Add(tier(MaxServiceTiers))
+	want := append(first(MaxServiceTiers), "+1 more")
+	if got := over.List(); !slices.Equal(got, want) {
+		t.Errorf("%d distinct tiers listed as %q, want %q", MaxServiceTiers+1, got, want)
+	}
+	// The set keeps the name the list counts rather than prints: a count of
+	// distinct names cannot be kept without them.
+	if len(over.names) != MaxServiceTiers+1 {
+		t.Errorf("the set kept %d names, want %d", len(over.names), MaxServiceTiers+1)
+	}
+	// Two stages, one tier between them.
+	var a, b ServiceTierSet
+	for _, name := range first(MaxServiceTiers) {
+		a.Add(name)
+	}
+	b.Add(tier(0)) // the same tier a stage already recorded
+	b.Add(tier(MaxServiceTiers))
+	var merged ServiceTierSet
+	merged.Merge(a)
+	merged.Merge(b)
+	if got := merged.List(); !slices.Equal(got, want) {
+		t.Errorf("a tier two stages reported listed as %q, want %q", got, want)
+	}
+	if len(merged.names) != MaxServiceTiers+1 {
+		t.Errorf("the merged set kept %d names, want %d: a repeat counted twice", len(merged.names), MaxServiceTiers+1)
 	}
 }
 

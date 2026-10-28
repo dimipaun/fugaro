@@ -51,7 +51,9 @@ type Cost struct {
 	// have no route and are not in it.
 	RouteBy map[string]float64 `json:"route_by,omitempty"`
 	// ReportedUSD is what providers said their calls cost, summed. It is
-	// recorded to compare with the charge and never settles a call.
+	// recorded to compare with the charge, and on a provider route it is the
+	// floor under the charge for a service tier no one prices: it never
+	// prices a call the table priced.
 	ReportedUSD float64 `json:"reported_usd,omitempty"`
 	// Unreconciled is the USD charged from reservations rather than from
 	// reported usage.
@@ -74,12 +76,12 @@ type Cost struct {
 	// ServiceTiers names the service tiers the run's calls came back at
 	// that the price table has no multiplier for -- `usage.service_tier
 	// "priority"`, spelled as a violation is. Those calls were charged the
-	// conservative multiple of the rates they were priced at (design §6.1)
-	// rather than failing their stage, so the run's model_usd counts that
-	// charge: the name is what explains the figure to a reader who cannot
-	// see the stage logs, and on a provider route it is the only thing that
-	// does, since a provider's own reported cost is not what settles. At
-	// most eight distinct names, then one `+N more` entry counting the rest.
+	// conservative multiple of the rates they were priced at, or the dearer
+	// of that and the provider's own reported cost with the route fee where
+	// the route reported one (design §6.1), rather than failing their stage,
+	// so the run's model_usd counts that charge: the name is what explains
+	// the figure to a reader who cannot see the stage logs. At most eight
+	// distinct names, then one `+N more` entry counting the rest.
 	ServiceTiers []string `json:"service_tiers,omitempty"`
 	// CatalogStale is true when the built-in provider price catalog was
 	// older than its own 30-day threshold, so every model it priced was
