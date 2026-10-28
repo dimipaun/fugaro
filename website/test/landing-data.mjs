@@ -129,7 +129,7 @@ const DEFAULT_VARIANTS = [
 // The document's own fields, as the cases vary them: the booking link, the number (quoted, as
 // the file writes it) and the logo list.
 const DOCUMENT = {
-  calendly: 'https://calendly.com/dimi-fugaro/30min',
+  calendly: 'https://calendly.com/dimi-fugaro/demo',
   number: '"14377842426"',
   logos: null,
 }
@@ -255,7 +255,7 @@ test('the file carries no partner logo and no media, because none exists yet', (
 test('the booking link and the WhatsApp link are built from the file\'s own public identifiers', () => {
   const landing = loadLanding()
 
-  assert.equal(landing.calendlyURL, 'https://calendly.com/dimi-fugaro/30min', 'the file\'s calendly_url is not the owner\'s booking link, which is the one input the pages link (R3)')
+  assert.equal(landing.calendlyURL, 'https://calendly.com/dimi-fugaro/demo', 'the file\'s calendly_url is not the owner\'s booking link, which is the one input the pages link (R3)')
   assert.match(landing.whatsappNumber, /^\d+$/, 'the file\'s whatsapp_number is not the wa.me form: digits alone, written as a string so a leading zero would survive (R3)')
   for (const variant of landing.variants) {
     assert.equal(
@@ -395,13 +395,13 @@ test('a WhatsApp message that does not name its own variant is refused', () => {
 })
 
 test('the booking link and the number are validated where the file writes them', () => {
-  const query = refusal({ calendly: 'https://calendly.com/dimi-fugaro/30min?utm_source=x' })
+  const query = refusal({ calendly: 'https://calendly.com/dimi-fugaro/demo?utm_source=x' })
   assert.match(query, /calendly/, `a booking link carrying a query was accepted: the file writes the link itself, and the UTMs are G2.4's to add at the page — the message was ${JSON.stringify(query)}`)
 
   const host = refusal({ calendly: 'https://example.com/dimi' })
   assert.match(host, /calendly/, `a booking link on another host was accepted: the demo link is Calendly's own origin, which G2.3 has to admit to the CSP and G2.2 has to render — the message was ${JSON.stringify(host)}`)
 
-  const plain = refusal({ calendly: 'http://calendly.com/dimi-fugaro/30min' })
+  const plain = refusal({ calendly: 'http://calendly.com/dimi-fugaro/demo' })
   assert.match(plain, /https/, `a booking link over http was accepted: the page links an https origin — the message was ${JSON.stringify(plain)}`)
 
   const number = refusal({ number: '"+1 437 784 2426"' })
