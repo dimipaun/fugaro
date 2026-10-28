@@ -5,7 +5,7 @@ folded in (§0). **Where this file disagrees with [spec.md](spec.md), it wins.**
 not replace, the subscriptions plan's Slice S1 ([../subscriptions/implementation-plan.md](../subscriptions/implementation-plan.md)),
 which already plans the coordinator's and the report's moves and has not started.
 
-Numbers: decisions **D520–D549** (D520–D534 written, D535–D549 reserved and unused), checks
+Numbers: decisions **D520–D549** (D520–D535 written, D536–D549 reserved and unused), checks
 **200–209** (200–201 proposed, 202–209 reserved and unused). Findings `F1`…, resolutions `R1`… and
 open items `O1`… are local to this folder.
 
@@ -68,15 +68,17 @@ half is false; the credentials-service half stays true (D444). That text is coun
 the sentence. *Consequence:* D531 (counsel's revision S0.4 carries it).
 
 **F3 — Exists: almost none of the governance that moves was ever released.** By `git tag
---contains`: released under MIT are `calls` and `agents` per stage (v0.12.0), `review_scope` and
-the 80% daily-cap warning (`internal/budget/warn.go`, `dailyWarnNotes` in
-`internal/budget/precheck.go`, `internal/watch`; v0.12.1), and the digest and `run-digest`
-recipe (v0.12.0/v0.12.1; staying MIT anyway). Not released: the `governance:` block (#1185, #1194),
+--contains` and `git show <tag>:<file>`: released under MIT are `calls` and `agents` per stage
+(first in v0.11.6), `review_scope` and the 80% daily-cap warning (`internal/budget/warn.go`,
+`dailyWarnNotes` in `internal/budget/precheck.go`, `internal/watch`; v0.12.1), and `fugaro runs
+digest` (v0.12.0) and the `run-digest` recipe text (v0.12.1); the runner's digest step
+(`internal/runner/digest.go`, `33fd7c81f`) is in no tag. The digest stays MIT anyway. Not released: the `governance:` block (#1185, #1194),
 the governance halt and checkpoint report (#1182 and follow-ups), the stage timeout (T7.6, #1207),
 `repeats` (T1.4, #1204), the tier vocabulary and fields (T8.1a, #1212). `governanceSince` and
-`digestSince` in `internal/cli/recipes_skew.go` both name `0.13.0`. The coordinator and
-`fugaro report` were released under MIT in every CLI release from v0.11.0 to v0.12.1 (subscriptions
-R3 covers them as "v0.11.0 through v0.12.0"; v0.12.1 must be added). *Consequence:* the hold means
+`digestSince` in `internal/cli/recipes_skew.go` both name `0.13.0`. `fugaro report` has shipped
+under MIT since v0.1.0 (`newReportCmd` in v0.1.0's `internal/cli/root.go`) and the coordinator in
+every release from v0.11.0; both through v0.12.1 (subscriptions R3 says "v0.11.0 through v0.12.0";
+it must say every release through v0.12.1). *Consequence:* the hold means
 the governance features proper never ship under MIT. R1.
 
 **F4 — Gap: T27 is recorded open in the subscriptions docs.** `docs/subscriptions/reconciliation.md`
@@ -204,6 +206,22 @@ move edits. #1196 (`report --by mode` leftovers: `internal/cli/report.go`, `repo
 draws diagnose's spend) reads record fields that stay core. T8.1b (`--tier`) has no PR yet.
 *Consequence:* D527 (the cut-off) and the plan's first level.
 
+**F16a — Gap: the launch declares to the coordinator through the library.** `internal/cli/run.go`
+calls `coordinator.Reporter{…}.Report` on every launch. S1.2's launch hook "defaults to nothing", so
+a hook that lands before the move would stop every launch's declaration, and after the move an
+untagged CLI's launches are never declared to the coordinator. *Consequence:* E1.1's default is
+today's declarer until E2.1 moves it; D535 records the after-move consequence.
+
+**F16b — Gap: the build context drops `ee/`.** The root `.dockerignore` admits only `go.mod`,
+`go.sum`, `cmd/`, `internal/`, `images/` and `deploy/terraform/`, so a `COPY ee` in a Dockerfile
+fails. *Consequence:* E1.4 edits `.dockerignore` and tests the context.
+
+**F16c — Gap: the label gate does not see the images.** `eeTagLabelGaps` (`scripts/notices_test.go`)
+reads `.goreleaser.yaml` and `release.yml` only; `images.yml` publishes the public base and history
+images on any release tag. A tagged image published before the relabel would carry `ee/` code under
+MIT labels with no gate to stop it. *Consequence:* the images take the tag only after E3.2, and E3.2
+extends the gate to the image builds.
+
 **F17 — Exists: the console consumes two moving commands by argv.** `console/src/main/spawn.ts`
 (`report --json`, `coordinator status --from-store --all --json`), `src/source/cli.ts`, screens
 `spend.ts` and `coordinator.ts`, contract `console/docs/json-contract.md`. It reads `diagnose --json`
@@ -232,7 +250,10 @@ stderr (R4). An untagged CLI (a source build) shows the console a refusal (D522)
   a governance policy hook (defaults and tighten-only merge), a runner stage hook (the stage timeout
   and governance halts), a gateway stage-limit hook (for T7.2 onward), and a digest section hook
   (D528).
-- **R3 — An edition marker.** The binary knows its edition (`core` unless `ee/register` set it),
+- **R3 — An edition marker; the job image's edition decides.** Governance is enforced by the job
+  image's `fugaro`, not by the launcher's (F11): a source-built untagged CLI that launches onto the
+  official tagged base still gets governance enforced, so no launch-time warning may say "ignored"
+  because of the launcher's own edition. The binary knows its edition (`core` unless `ee/register` set it),
   and the base image's build records it where the governance gates can read it (E1.3 chooses the
   carrier: today `checkImageSince` judges the image by its release version only, and `fugaro
   version` has no machine-readable form, while the console's `cli.version` operation parses its
@@ -267,9 +288,9 @@ Every answer cell is empty: nothing here is answered. Recommendation first.
 | --- | --- | --- | --- | --- |
 | **D520** | What does "budgets" cover? | **Governance's budgets only: stage budgets, stage tokens, the review ratio, the fan-out limit and tier expectations. Spend caps (per-run, daily), the 80% daily-cap warning, the kill switch and rigor's per-mode budgets stay MIT.** The caps are the free product's safety net (R4/F8, D436), and the 80% warning shipped under MIT in v0.12.1 | Move the caps too: a free install has no spend ceiling, which contradicts R4/D436 and the released MIT code anyone can keep | |
 | **D521** | Where is the line between core and `ee/` inside governance? | **Core keeps the wire and the mechanism; `ee/` takes the policy.** Core: the `governance:` YAML types and their strict decoding and shape validation, the schemas, `task.Spec.Tier`/`ExpectedScope` and `internal/tier` (the four-word enum the task validator uses), the record fields (`calls`, `agents`, `repeats`, `review_scope`, `checkpoint`), the halt-reason enum, and the runner's generic halt-with-checkpoint-report plumbing that `diagnose` and the digest read. `ee/`: `DefaultGovernance` and the tier defaults, `tightenGovernance`/`tightenTier`, the stage timeout's enforcement, every tripwire that halts (stage budget, tokens, ratio, fan-out, review-scope stop, expected cost), the checkpoint model call (T7.2–T7.3), the tier expected-cost checkpoint (T8.2) and the tier calibration (T8.3). The launch-time skew gates (`checkGovernanceImage`, `refuseGovernanceSkew`) stay core: they protect a free user from an old runner refusing the block (F9). `--tier` (T8.1b) stays a core flag, because it only writes the core `tier` field; what a tier means is `ee/`'s. Why: the MIT digest and `diagnose` read the records (F8), and strict decoding needs the core to know the block (F9) | **Move the decoders too** (ee registers the block): an untagged runner refuses `governance:` and stops every repository of a project that publishes one (F9). **Move the plumbing too:** the core halt path forks in two | |
-| **D522** | How does an untagged build treat the paid surface? | **Config and task fields: decode, warn once, ignore** (`governance:` in `fugaro.yaml` or the project layer; `tier`, `expected_scope` on a task, `--tier` on `fugaro run`); `fugaro validate` says the same. The `expected_scope` drift flag of the MIT digest still reads the field (D528). **Commands whose code is absent** (`fugaro report`, `fugaro coordinator …`): a core stub that exits non-zero with "part of Fugaro Enterprise; this build does not include it" — nothing can run, so warn-and-continue (T27) does not apply | Leave them unknown to cobra: "unknown command" misleads a source builder and the console | |
-| **D523** | What does a tagged binary warn, before any key exists? | **An unconditional one-line stderr notice on each paid command and on a launch that carries `governance:`, naming `ee/LICENSE`; no verifier in 0.13.0.** S2.3 and the key service are not needed to ship the hold | **Ship S2.3 first and warn only without a valid key:** 0.13.0 then waits on the verifier, the signing keys (S3.8) and hand-minted keys (S2.10) | |
-| **D524** | Which images carry the `ee` tag? | **The base image and the history image (the coordinator's sweep) are built with `-tags ee` and `COPY ee`; the credentials image stays untagged. No key secret is mounted (R6).** Amends subscriptions R1, S1.7 (the scan now requires the tag on base and history and its absence on credentials) and S1.9 (no separate coordinator image, no key secret until enforcement). Governance must run where the job runs (F11) | **Two base images (core and ee):** doubles the image builds, scans, signing and mirror entries, and every repository chooses one. **Untagged images:** governance never runs in a job, so the move removes the feature | |
+| **D522** | How does an untagged build treat the paid surface? | **Config and task fields: an untagged runner (a core job image) decodes them, writes one warning to the run log, and ignores them** (`governance:` in `fugaro.yaml` or the project layer; `tier`, `expected_scope` on a task). The launcher, `fugaro validate` and `--tier` warn **only by the job image's edition** (R3), never by their own. The `expected_scope` drift flag of the MIT digest still reads the field (D528). **Commands whose code is absent** (`fugaro report`, `fugaro coordinator …`): a core stub that exits non-zero with "part of Fugaro Enterprise; this build does not include it" — nothing can run, so warn-and-continue (T27) does not apply | Leave them unknown to cobra: "unknown command" misleads a source builder and the console | |
+| **D523** | What does a tagged binary warn, before any key exists? | **An unconditional one-line stderr notice on each paid command (`report`, `coordinator`), naming `ee/LICENSE`, and one line in the run log of a tagged job that enforces `governance:`; no verifier in 0.13.0.** S2.3 and the key service are not needed to ship the hold | **Ship S2.3 first and warn only without a valid key:** 0.13.0 then waits on the verifier, the signing keys (S3.8) and hand-minted keys (S2.10) | |
+| **D524** | Which images carry the `ee` tag? | **The base image and the history image (the coordinator's sweep) are built with `-tags ee` and `COPY ee` (with `.dockerignore` admitting `ee/`, F16b), and only once the relabel has landed (F16c); the credentials image stays untagged. No key secret is mounted (R6).** Amends subscriptions R1, S1.7 (the scan now requires the tag on base and history and its absence on credentials) and S1.9 (no separate coordinator image, no key secret until enforcement). Governance must run where the job runs (F11) | **Two base images (core and ee):** doubles the image builds, scans, signing and mirror entries, and every repository chooses one. **Untagged images:** governance never runs in a job, so the move removes the feature | |
 | **D525** | The run images are public (F14): may anyone pull a tagged image? | **Yes, as with the public source; the licence governs use.** The owner and counsel confirm (O2) | A private registry for the tagged images: every installation then needs registry credentials | |
 | **D526** | What is 0.13.0? | **The first tagged release: governance, `fugaro report` and the coordinator under `ee/`, the relabel of S1.6 (one binary, MIT core plus business-licensed parts), shipping while `ee/LICENSE` still shows the CLA as a bracketed placeholder and the Subscription Terms are not in force** — the owner and counsel confirm that a release may carry that text (O1) | **0.13.0 untagged:** governance, `report` and the coordinator are absent from the release; the console's Spend and project views break. **Hold 0.13.0 until counsel signs off the Terms:** a longer hold | |
 | **D527** | What counts as "in flight", and when is the cut-off? | **In flight: #1216, #1215, #1196, T8.1b and any governance task the owner has approved before the move series' first move PR (E2.x) opens. After that, new governance tasks (T7.2–T7.5, T8.2, T8.3) are born in `ee/`, and nothing new is launched against the moving files** | Finish the whole governance plan in `internal/` first: 0.13.0 waits on T7.2–T8.3, the money-path work | |
@@ -278,8 +299,9 @@ Every answer cell is empty: nothing here is answered. Recommendation first.
 | **D530** | Where does the moved code live? | **`ee/governance/` (policy, defaults, tripwires, timeout, checkpoint call, tier calibration), `ee/report/`, `ee/coordinator/` (library) with `ee/report/cli`, `ee/coordinator/cli`, `ee/governance/cli`; `ee/register` wires all three.** Mirrors S1.4/S1.5 | One `ee/cli` package: a single import hub every paid feature edits | |
 | **D531** | The Subscription Terms say the coordinator is Core (F2) | **Counsel's next revision (subscriptions S0.4) drops "and the coordinator"; until then the website keeps the text and the README of this folder lists the discrepancy** | Edit the website text now: changes counsel's wording without counsel | |
 | **D532** | `ee/README.md` and `.claude/rules/ee.md` | **Replace "net-new organisation features … what is already published under MIT stays there" with: `ee/` holds the business-licensed features, new ones and those the owner moved from the core (D434, D444, this ruling); released MIT versions stay MIT (R1). Keep the three rules** | — (one defensible text; written as a decision because the README is the public statement) | |
-| **D533** | Release notes for 0.13.0 | **A "Licensing" highlight and a `### For operators` entry: per installation, refresh the images (`fugaro image refresh`) so jobs run the tagged base; per project, nothing; a free user who builds from source gets the warnings of D522** | No operator step: an installation on a 0.12.x image keeps refusing `governance:` (F9), which is today's behaviour anyway | |
+| **D533** | Release notes for 0.13.0 | **A "Licensing" highlight and a `### For operators` entry: per installation, `fugaro update` (re-pins the base and copies the history image the coordinator's sweep runs; `fugaro update --base base` for the base alone); per repository, `fugaro image refresh` in each repository's checkout so its workflow images rebuild on the tagged base; an installation that keeps a core (self-built) image gets the warnings of D522** | No operator step: an installation on a 0.12.x image keeps refusing `governance:` (F9), which is today's behaviour anyway | |
 | **D534** | The CLA and outside contributions to the moved files | **None needed: no outside author (F15). The owner confirms the legal reading of agent-written code (O3)** | Ask counsel before moving: delays nothing technical but holds 0.13.0 | |
+| **D535** | After the move, an untagged CLI's launches are not declared to the coordinator (F16a) | **Accept: the released binary is tagged (T21), so only source builds are affected; their runs still appear through the sweep, which reads the runs bucket** | Keep the declarer in core: a piece of the coordinator stays MIT, against D434 | |
 
 ## 5. Open tensions and open items for the owner
 
@@ -306,5 +328,11 @@ Every answer cell is empty: nothing here is answered. Recommendation first.
 - **U3.** The cost of `-tags ee` on the base image's size budget (`images/size-budget.sh`); the
   governance code is small, but the coordinator and report libraries pull `internal/rtdb` and
   Firestore clients that the binary already links.
+- **U5.** Whether `fugaro update` alone refreshes the history image an installation's coordinator
+  sweep runs (`internal/cli/init_images.go` copies it in the images stage), or a further flag is
+  needed; E3.3 confirms before the notes are written.
+- **U6.** Whether the sweep reads every run (the premise of D535's recommendation); `internal/coordinator/sweep.go`
+  reads the runs bucket, but whether a run with no declared intent is joined into the view was not
+  traced.
 - **U4.** Whether the owner's "and later" in the in-flight list covers runs launched after this PR
   merges; D527 proposes a cut-off.
