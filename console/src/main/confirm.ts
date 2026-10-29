@@ -324,11 +324,11 @@ export function createConfirmWindow(deps: ConfirmWindowDeps): LaunchConfirmer {
       // timer in the page: the page is the document whose late arrival is the
       // hazard, and a document shown late, or never shown, must not be able to
       // time its own answerability.
-      for (const event of ['show', 'focus'] as const) {
-        window.on(event, () => {
-          entry.readyAt = now() + CONFIRM_READY_DELAY_MS
-        })
+      const startDelay = (): void => {
+        entry.readyAt = now() + CONFIRM_READY_DELAY_MS
       }
+      window.on('show', startDelay)
+      window.on('focus', startDelay)
 
       // The three denials every window of this app gets: no navigation, no
       // popup and no `<webview>`, on this window's own `webContents`.
