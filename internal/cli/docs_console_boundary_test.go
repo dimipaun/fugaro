@@ -762,7 +762,7 @@ func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 		// this scanner mentions one by necessity and a module-wide count could
 		// therefore never fall to zero.
 		for _, rel := range consoleBoundaryAllowList {
-			if !slices.Contains(mentioning, rel) {
+			if !slices.Contains(mentioning, rel) && !eeCitationWithoutEE(t, rel) {
 				t.Errorf("%s is on consoleBoundaryAllowList but mentions no %s/ path any more: the exception has gone stale and should be removed deliberately, with the commit that stops the file reading the contract (plan Task 0.3 a3)", rel, consoleDirName)
 			}
 		}
@@ -770,6 +770,9 @@ func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 
 	t.Run("an_allow_listed_file_imports_no_console_path_and_embeds_nothing_from_it", func(t *testing.T) {
 		for _, rel := range consoleBoundaryAllowList {
+			if eeCitationWithoutEE(t, rel) {
+				continue
+			}
 			if !slices.Contains(files, rel) {
 				t.Errorf("consoleBoundaryAllowList names %q, which is not a .go file of this module: the walk did not see it", rel)
 				continue

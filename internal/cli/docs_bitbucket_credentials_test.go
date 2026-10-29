@@ -380,7 +380,7 @@ func TestDocsBitbucketCredentialsEveryCitedPathExists(t *testing.T) {
 			if _, err := os.Stat("../../" + p); err == nil {
 				t.Errorf("%s cites %s, which resolves again, so it is no longer a path the tree moved: it must leave bitbucketMoved and be checked like any other", bitbucketCredentialsPlan, p)
 			}
-			if !pathExists(to) {
+			if !pathExists(to) && !eeCitationWithoutEE(t, to) {
 				t.Errorf("bitbucketMoved sends %s to %s, which is not in the tree: the record of a move has to name where the file went", p, to)
 			}
 			continue

@@ -111,8 +111,15 @@ func TestLaunchedByIsDisplayTextOnly(t *testing.T) {
 	}
 	// And the other direction: an allow-list entry for a file that no longer
 	// names the launcher is a stale permission, which is how an allow-list
-	// quietly grows to cover code that should not be on it.
+	// quietly grows to cover code that should not be on it. The ee/ entries are
+	// checked only when ee/ is there: the "core without ee/" workflow deletes it
+	// and runs this test, and the walk above cannot see those files then.
+	_, eeErr := os.Stat(filepath.Join(root, "ee"))
+	eeGone := os.IsNotExist(eeErr)
 	for rel := range launchedByReaders {
+		if eeGone && strings.HasPrefix(rel, "ee/") {
+			continue
+		}
 		b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
 			t.Errorf("allow-list names %s: %v", rel, err)

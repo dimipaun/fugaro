@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -12,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/coordpath"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -447,6 +449,115 @@ func raceSpecAt(t *testing.T, env *cloudEnv, runID string) *task.Spec {
 		t.Fatal(err)
 	}
 	return spec
+}
+
+// installDeclarer installs d as the build's launch declarer for one test, and
+// sends the launch's warnings to the builder it answers.
+func installDeclarer(t *testing.T, d LaunchDeclarer) *strings.Builder {
+	t.Helper()
+	extendState(t)
+	if err := SetLaunchDeclarer(d); err != nil {
+		t.Fatalf("setting the launch declarer: %v", err)
+	}
+	var warned strings.Builder
+	prevWarn := launchWarn
+	launchWarn = &warned
+	t.Cleanup(func() { launchWarn = prevWarn })
+	return &warned
+}
+
+// TestALaunchHandsTheDeclarerItsOwnRun: the launch path reaches an installed
+// declarer through the hook, once, with the launch's own environment, project
+// and spec -- the declarer moved out of the core, and this is the core's half
+// of the seam it moved through.
+func TestALaunchHandsTheDeclarerItsOwnRun(t *testing.T) {
+	f := newCloudFixture(t)
+	env := memEnv(t, f)
+	spec := raceSpecAt(t, env, "20260927-100001-wxyz")
+	var declared []string
+	installDeclarer(t, func(_ context.Context, c *Cloud, slug string, got *task.Spec) error {
+		if c == nil || c.env != env {
+			t.Errorf("the declarer was handed %v, want the launch's own environment", c)
+		}
+		if got == nil || got.RunID != spec.RunID || got.Task != spec.Task {
+			t.Errorf("the declarer was handed the run %v, want the launch's own (%s)", got, spec.RunID)
+		}
+		declared = append(declared, slug)
+		return nil
+	})
+
+	if _, err := launchRun(context.Background(), env, appSlug, spec, time.Now()); err != nil {
+		t.Fatalf("the launch failed: %v", err)
+	}
+	if len(declared) != 1 || declared[0] != appSlug {
+		t.Errorf("the installed declarer declared %v, want one declaration of %s", declared, appSlug)
+	}
+}
+
+// TestAFailedReportDoesNotFailTheLaunch: the coordinator is advisory (spec
+// §3), so a declaration that cannot be written is a warning on stderr and
+// never a failed launch -- a run must not wait on a service that may not be
+// deployed.
+func TestAFailedReportDoesNotFailTheLaunch(t *testing.T) {
+	f := newCloudFixture(t)
+	env := memEnv(t, f)
+	warned := installDeclarer(t, func(context.Context, *Cloud, string, *task.Spec) error {
+		return errors.New("the database is unreachable")
+	})
+
+	if _, err := launchRun(context.Background(), env, appSlug, raceSpec(t, env), time.Now()); err != nil {
+		t.Fatalf("a failed report failed the launch: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want 1", n)
+	}
+	if !strings.Contains(warned.String(), "not reported to the coordinator") {
+		t.Errorf("the failure was silent: %q", warned.String())
+	}
+}
+
+// TestARefusedReportIsQuiet: a launcher who is not a budget admin cannot write
+// the coordinator's record, and that is the expected case for most people who
+// launch rather than a fault to tell them about on every run (owner ruling
+// 2026-10-24). The launch still starts and nothing is printed.
+func TestARefusedReportIsQuiet(t *testing.T) {
+	f := newCloudFixture(t)
+	env := memEnv(t, f)
+	warned := installDeclarer(t, func(context.Context, *Cloud, string, *task.Spec) error {
+		return fmt.Errorf("writing the intent: %w", rtdb.ErrPermission)
+	})
+
+	if _, err := launchRun(context.Background(), env, appSlug, raceSpec(t, env), time.Now()); err != nil {
+		t.Fatalf("a refused report failed the launch: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want 1", n)
+	}
+	if warned.Len() != 0 {
+		t.Errorf("a refused report printed %q, want nothing", warned.String())
+	}
+}
+
+// TestAFailedReportWarnsOnOneSafeLine: any failure other than a refusal is
+// still one warning line, and the error's text, which can quote what a remote
+// database answered, reaches the terminal without its control sequences.
+func TestAFailedReportWarnsOnOneSafeLine(t *testing.T) {
+	f := newCloudFixture(t)
+	env := memEnv(t, f)
+	warned := installDeclarer(t, func(context.Context, *Cloud, string, *task.Spec) error {
+		return errors.New("the database answered \x1b]52;c;cGF3bmVk\x07 503")
+	})
+
+	if _, err := launchRun(context.Background(), env, appSlug, raceSpec(t, env), time.Now()); err != nil {
+		t.Fatalf("a failed report failed the launch: %v", err)
+	}
+	got := warned.String()
+	if strings.Count(got, "\n") != 1 || !strings.HasPrefix(got, "warning: the launch was not reported to the coordinator") {
+		t.Errorf("the warning = %q, want one line", got)
+	}
+	if strings.ContainsRune(got, '\x1b') || strings.ContainsRune(got, '\x07') {
+		t.Errorf("the warning carries the remote text's controls: %q", got)
+	}
 }
 
 // TestUntaggedPaidCommandSaysWhy: with the coordinator's code moved to ee/,
