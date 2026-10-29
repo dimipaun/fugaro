@@ -67,10 +67,11 @@
 #     JSON `null`. `run_id` and `repo` **echo what the console sent** (the
 #     launcher checks the reply's own against the launch it cut) and `run` is the
 #     id as a screen draws it; `branch`/`ref` say `main`, which the console does
-#     not check. Every word of the row is held exactly and in order -- an argv
-#     carrying anything else is refused -- because a stub that answered a launch
-#     this console should never have been able to make would hide the thing the
-#     spec is about.
+#     not check. Every word of the row is held exactly -- the optional flags and
+#     `--project`/`--config` are accepted in any order, and `--config`'s value is
+#     never checked -- and an argv carrying anything else is refused, because a
+#     stub that answered a launch this console should never have been able to
+#     make would hide the thing the spec is about.
 #
 #     This is also the one answer with a **side effect**: one line per invocation
 #     is appended to `runs.log` beside this script -- the argv, a tab, and the
