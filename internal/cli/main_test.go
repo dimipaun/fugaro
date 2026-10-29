@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"gocloud.dev/blob/driver"
+	"gocloud.dev/gcerrors"
+
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -129,6 +132,18 @@ func TestMain(m *testing.M) {
 	cleanupFakes()
 	os.Exit(code)
 }
+
+// stubBucket is the base of a test blob driver: the embedded driver.Bucket is
+// nil, so only the methods a test's driver implements are ever reached, and the
+// four methods driver.Bucket demands whatever the test reaches -- artifacts'
+// appearDriver and the budget compute tests' countListDriver -- are answered
+// here once instead of in each of them.
+type stubBucket struct{ driver.Bucket }
+
+func (stubBucket) ErrorCode(error) gcerrors.ErrorCode { return gcerrors.Unknown }
+func (stubBucket) As(any) bool                        { return false }
+func (stubBucket) ErrorAs(error, any) bool            { return false }
+func (stubBucket) Close() error                       { return nil }
 
 // A test that reaches findLayer's bucket with a gs:// URL and no seam
 // override of its own must crash loudly, not quietly cross the network
