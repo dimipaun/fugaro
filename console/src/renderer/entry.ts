@@ -3366,7 +3366,19 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     if (link.ok && typeof link.data === 'string') logLink = link.data
     else if (!link.ok) sentences['run.logLink'] = link.sentence
 
-    replace(renderRun(factory, buildRunModel({ diagnosis, logs, logLink, sentences }), theme))
+    const drawn = renderRun(factory, buildRunModel({ diagnosis, logs, logLink, sentences }), theme)
+    replace(drawn)
+    // The breadcrumb's `Live` crumb is the way back from a run the operator
+    // opened, and it is the whole of what this screen wires: the same
+    // `show('live')` the nav's own Live button calls, and the run id beside it
+    // is selectable text rather than a control. Nothing else on Run binds
+    // anything -- the retry is `writes.ts`'s refused button.
+    const crumb = classed(drawn, 'run-crumb-live')[0]
+    if (crumb !== undefined) {
+      surface.nodeOf(crumb).addEventListener('click', () => {
+        show('live')
+      })
+    }
   }
 
   // ---- The installation rail's issue view --------------------------------
