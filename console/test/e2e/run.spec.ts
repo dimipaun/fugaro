@@ -678,7 +678,7 @@ test.describe('the Run detail screen', () => {
     // The notional part is the plan's list price inside the stage's figure, so
     // it carries the console's notional mark -- and `verify`, with no notional
     // key at all, is a measured zero rather than a marked one.
-    expect(drawn.spendStageNotional).toEqual(['NOTIONAL~$0.30', 'NOTIONAL~$0.12', '$0.00'])
+    expect(drawn.spendStageNotional).toEqual(['~$0.30', '~$0.12', '$0.00'])
     // `verify` carries no `agents` pointer, which is not a stage that counted
     // zero: the cell says `n/a` and its title says what the absence means.
     expect(drawn.spendStageAgentReasons[2]).toContain('not counted for this stage')

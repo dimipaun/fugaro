@@ -650,8 +650,8 @@ function stageBilled(whole: Reading, part: Reading, basis: string | null): Readi
 
 /** stageNotional is the notional cell: the part of the figure the record wrote,
  * drawn as **notional** and never as money (`formatReading` marks a notional
- * figure `NOTIONAL~$X`), so the plan's list price is never read as a bill. A
- * part of zero is a measured `$0.00` rather than `NOTIONAL~$0.00`, which would
+ * figure `~$X`), so the plan's list price is never read as a bill. A
+ * part of zero is a measured `$0.00` rather than `~$0.00`, which would
  * mark nothing as a plan price.
  *
  * This cell answers only what the record carries, and the fallback for a record

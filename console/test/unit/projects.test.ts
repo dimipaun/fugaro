@@ -1254,7 +1254,7 @@ describe('buildRunModel', () => {
       // Both keys dropped by `omitempty`: nothing billed, nothing notional.
       { name: 'implement', duration_s: 420 },
       // A cascade stage: part of its figure is the plan's, and that part is a
-      // notional figure -- `NOTIONAL~$X`, never money (C1.16, P12). The billed
+      // notional figure -- `~$X`, never money (C1.16, P12). The billed
       // cell holds what is left of the figure.
       { name: 'review', duration_s: 95, model_usd: 2.1, model_notional_usd: 0.6 },
     ]
@@ -1313,7 +1313,7 @@ describe('buildRunModel', () => {
     // carried part, not the absent key, so the fallback does not apply: the
     // billed cell is the figure less the part -- a measured zero, which the
     // notional cell beside it explains -- and the two cells together are the
-    // stage's one figure. Applying the fallback here draws `NOTIONAL~$2.10` in
+    // stage's one figure. Applying the fallback here draws `~$2.10` in
     // both cells and reads as twice what the stage cost.
     const self = buildRunModel(
       runInputs({
@@ -1704,7 +1704,7 @@ describe('renderRun', () => {
     // price and not money the run was billed (C1.16, P12). Together the two are
     // the stage's one figure, never a sum of it. A part of zero is a measured
     // `$0.00` rather than a marked zero.
-    expect(texts(spend, 'run-spend-stage-notional')).toEqual(['$0.00', 'NOTIONAL~$0.05'])
+    expect(texts(spend, 'run-spend-stage-notional')).toEqual(['$0.00', '~$0.05'])
     // The absent counts say which fact they are, in the cell's title.
     expect(all(spend, 'run-spend-stage-calls')[1]?.getAttribute('title')).toBe('not counted for this stage')
     const mode = one(tree, 'run-tolerated')
@@ -1726,7 +1726,7 @@ describe('renderRun', () => {
       'light',
     )
     expect(texts(drawn, 'run-spend-stage-usd')).toEqual(['$0.50'])
-    expect(texts(drawn, 'run-spend-stage-notional')).toEqual(['NOTIONAL~$0.30'])
+    expect(texts(drawn, 'run-spend-stage-notional')).toEqual(['~$0.30'])
     // A record written before the key existed carries no part, and then a
     // subscription run's whole stage figure is the plan's: the usd cell is that
     // figure marked notional and never plain dollars, because `$0.00` there
@@ -1744,7 +1744,7 @@ describe('renderRun', () => {
       }),
     )
     const old = renderRun(factory, before, 'light')
-    expect(texts(old, 'run-spend-stage-usd')).toEqual(['NOTIONAL~$2.10'])
+    expect(texts(old, 'run-spend-stage-usd')).toEqual(['~$2.10'])
     expect(texts(old, 'run-spend-stage-usd')).not.toContain('$2.10')
     expect(texts(old, 'run-spend-stage-notional')).toEqual(['$0.00'])
     // A subscription run that settled a stage without a gateway writes a part
@@ -1752,7 +1752,7 @@ describe('renderRun', () => {
     // is the record's split rather than the fallback: the plan paid all of it, so
     // the billed cell is a measured `$0.00` and the figure stands once, under the
     // notional mark, in the cell beside it. Reading this shape as the fallback
-    // would draw `NOTIONAL~$2.10` twice and read as twice the stage's spend.
+    // would draw `~$2.10` twice and read as twice the stage's spend.
     const self = buildRunModel(
       runInputs({
         diagnosis: {
@@ -1767,7 +1767,7 @@ describe('renderRun', () => {
     )
     const split = renderRun(factory, self, 'light')
     expect(texts(split, 'run-spend-stage-usd')).toEqual(['$0.00'])
-    expect(texts(split, 'run-spend-stage-notional')).toEqual(['NOTIONAL~$2.10'])
+    expect(texts(split, 'run-spend-stage-notional')).toEqual(['~$2.10'])
   })
 
   it('a tolerated title is drawn as text, never markup', () => {

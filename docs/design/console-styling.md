@@ -536,10 +536,10 @@ measured `0` when it counted the stage at zero -- while the same stage's two dol
 `model_usd`, or an absent `model_notional_usd` in the notional cell, is a measured `$0.00`
 and never an `n/a`, and a subscription run's stage whose record carries no notional part at
 all (a record written before C1.16) draws its whole figure in the billed cell as
-`NOTIONAL~$X` rather than as plain dollars -- while one that carries a part equal to its
+`~$X` rather than as plain dollars -- while one that carries a part equal to its
 whole figure, which is what a subscription run writes for a stage it settled without a
 gateway, draws a measured `$0.00` there and the figure once, under the notional mark, in
-the cell beside it; a notional part drawn as `NOTIONAL~$X`; a pull
+the cell beside it; a notional part drawn as `~$X`; a pull
 request with **no link at all** (`run.link` is typed `null`, and `PR_NO_LINK_REASON`
 explains why); logs bounded ("lines not drawn: N of M") and a count of refused lines; replay
 scrubbed / not scrubbed.
@@ -559,7 +559,7 @@ cells are the ledger's split of the stage's one figure and are never a sum of it
 part for `run-spend-stage-usd` (`modelReading`'s rule, §2.5 -- the stage's `model_usd` less
 the part the record carries, so a part equal to the whole figure leaves a measured `$0.00`
 beside the cell that names what paid it -- and, only for a record that carries no part at
-all, that whole figure marked `NOTIONAL~$X`), and the part the record wrote for
+all, that whole figure marked `~$X`), and the part the record wrote for
 `run-spend-stage-notional`, which carries the console's notional mark so the plan's list
 price is never read as money and is a measured `$0.00` when the record carries none. The
 fallback belongs to the billed cell alone: applied to both, one stage's figure would be
