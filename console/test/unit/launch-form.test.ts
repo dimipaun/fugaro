@@ -44,7 +44,9 @@ import {
   MAX_LAUNCH_PLAN_TASK_BYTES,
   MAX_LAUNCH_TASK_BYTES,
   MAX_LAUNCH_TITLE_RUNES,
+  checkLaunchTask,
 } from '../../src/main/launchrules'
+import { TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
 import { bootDashboard } from '../../src/renderer/entry'
 import { ISSUE_CHECKOUT_LABEL, RAIL_NAME_CLASS, RAIL_ROW_CLASS } from '../../src/renderer/entry'
 import {
@@ -56,6 +58,7 @@ import {
   LAUNCH_EMPTY_CLASS,
   LAUNCH_FLOOR_CLASS,
   LAUNCH_FORM_CLASS,
+  LAUNCH_IDS,
   LAUNCH_HELP_CLASS,
   LAUNCH_LAUNCHED_WORD,
   LAUNCH_LABEL_CLASS,
@@ -73,10 +76,14 @@ import {
   LAUNCH_TASK_MAX_BYTES,
   LAUNCH_TITLE_CLASS,
   LAUNCH_TITLE_MAX_RUNES,
+  LAUNCH_TRIM_SPACE,
   LAUNCH_UNREADABLE,
+  launchBytes,
+  launchCheck,
 } from '../../src/renderer/screens/launch'
 import { loadFixture } from '../../src/source/fixture'
 import { FakeDocument, FakeNode, anOkCompatibility, everyNode, keyEvent } from '../support/fakeDom'
+import { githubToken } from '../support/fakeSecrets'
 
 const CONSOLE_ROOT = join(__dirname, '..', '..')
 
@@ -116,6 +123,13 @@ interface AHarness {
   readonly document: FakeDocument
   readonly calls: readonly ACall[]
 }
+
+/** NEL and BOM are the two code points Go's `strings.TrimSpace` set and
+ * JavaScript's `trim()` disagree about: Go trims U+0085 and does not trim
+ * U+FEFF, JavaScript the reverse. They are written as code points rather than as
+ * escapes in a literal, so that a reader of this file sees which two they are. */
+const NEL = String.fromCodePoint(0x85)
+const BOM = String.fromCodePoint(0xfeff)
 
 /** OPEN_REPOSITORIES is what the installation the console is open on records.
  * The list is the main process's own -- already deduplicated, in the CLI's
@@ -291,13 +305,14 @@ function disabledOf(node: FakeNode): boolean {
 /** openForm presses the control that opens the form inline, and gives the select
  * the value a real one reports on its own: the first option it offers. A `select`
  * is the one control whose value a browser derives rather than a case typing it,
- * and the fake node derives nothing. */
-async function openForm(root: FakeNode): Promise<void> {
+ * and the fake node derives nothing. `chosen` is a case whose select offers an
+ * identity the first of `OPEN_REPOSITORIES` is not. */
+async function openForm(root: FakeNode, chosen: string = OPEN_REPOSITORIES[0] ?? ''): Promise<void> {
   one(root, LAUNCH_OPEN_CLASS).click()
   await flush()
   const select = all(root, LAUNCH_REPOSITORY_CLASS)[0]
   if (select === undefined) return
-  ;(select as unknown as { value: string }).value = OPEN_REPOSITORIES[0] ?? ''
+  ;(select as unknown as { value: string }).value = chosen
 }
 
 /** submit presses the form's one submit. */
@@ -327,6 +342,14 @@ function buttonLabelled(root: FakeNode, label: string): FakeNode {
   const button = everyNode(root).find((node) => node.tagName === 'BUTTON' && node.textContent === label)
   if (button === undefined) throw new Error(`no button reads ${label}`)
   return button
+}
+
+/** hintOf is the form's own sentence region: the element `LAUNCH_IDS.hint`
+ * names, which is where `sendLaunch` writes the complaint the check answered. */
+function hintOf(root: FakeNode): FakeNode {
+  const hint = everyNode(root).find((node) => node.attributes.get('id') === LAUNCH_IDS.hint)
+  if (hint === undefined) throw new Error('the launch form drew no hint region')
+  return hint
 }
 
 /** launchCalls is every `launchRun` the bridge recorded, by its argument. */
@@ -748,6 +771,87 @@ describe('the launch control', () => {
     set(document.body, LAUNCH_TASK_CLASS, 'é')
     expect(counter()).toBe('2 of 16 KiB')
   })
+
+  it('counts the task\u2019s bytes with the trim the CLI uses, not JavaScript\u2019s', async () => {
+    // The counter counts the bytes main counts, and main counts them with Go's
+    // `strings.TrimSpace` -- which trims U+0085 and does not trim U+FEFF, the
+    // reverse of `String.prototype.trim` in exactly those two places. A counter
+    // that trimmed like JavaScript would show a task as fitting that main then
+    // refuses, and refuse one main would take.
+    const { document } = await boot()
+    await openForm(document.body)
+
+    const counter = (): string => textOf(one(document.body, LAUNCH_COUNT_CLASS))
+    // U+FEFF is whitespace to JavaScript's `trim` and to nothing in Go's set: the
+    // six bytes of the two pads are part of the task main is given.
+    set(document.body, LAUNCH_TASK_CLASS, `${BOM}abc${BOM}`)
+    expect(counter()).toBe('9 of 16 KiB')
+    // U+0085 is whitespace to Go and not to `trim`: the four bytes of the pads go.
+    set(document.body, LAUNCH_TASK_CLASS, `${NEL}abc${NEL}`)
+    expect(counter()).toBe('3 of 16 KiB')
+  })
+
+  it('passes a task that is exactly at the cap after that trim, and refuses one byte over', async () => {
+    const { document, calls } = await boot()
+    await openForm(document.body)
+
+    // One byte over the cap once Go's trim has been applied: refused, in the
+    // sentence the form already has.
+    set(document.body, LAUNCH_TASK_CLASS, 'x'.repeat(LAUNCH_TASK_MAX_BYTES + 1))
+    await submit(document.body)
+    expect(textOf(hintOf(document.body))).toBe(
+      `the task is ${String(LAUNCH_TASK_MAX_BYTES + 1)} bytes after the trim, over the 16 KiB this console sends`,
+    )
+    expect(launchCalls(calls)).toEqual([])
+
+    // A U+FEFF pad is *not* trimmed by main, so a task at the cap plus one pad
+    // is over it: a form that trimmed like JavaScript would have called this one
+    // fitting, and main would have refused it.
+    set(document.body, LAUNCH_TASK_CLASS, `${'x'.repeat(LAUNCH_TASK_MAX_BYTES)}${BOM}`)
+    await submit(document.body)
+    expect(textOf(hintOf(document.body))).toBe(
+      `the task is ${String(LAUNCH_TASK_MAX_BYTES + 3)} bytes after the trim, over the 16 KiB this console sends`,
+    )
+    expect(launchCalls(calls)).toEqual([])
+
+    // A U+0085 pad *is* trimmed by main, so a task padded to the cap is exactly
+    // at it and goes.
+    set(document.body, LAUNCH_TASK_CLASS, `${NEL}${'x'.repeat(LAUNCH_TASK_MAX_BYTES)}`)
+    await submit(document.body)
+    expect(textOf(hintOf(document.body))).toBe('')
+    expect(launchCalls(calls)).toHaveLength(1)
+  })
+
+  it('keeps a redacted repository\u2019s own identity for the launch, and draws the marker', async () => {
+    // A repository identity that *looks* like a token is one the sanitizer
+    // redacts -- and the drawn label is then not the string main matches against
+    // its own records. So the identity travels beside the label: the option's own
+    // value is the recorded string, and its text is the sanitizer's answer. A
+    // form that sent the label would be a launch refused for every installation
+    // whose repository is named like a credential.
+    const identity = `github/owner/${githubToken()}`
+    const { document, calls } = await boot({ rows: [openRow([identity])] })
+    await openForm(document.body, identity)
+
+    const option = one(document.body, LAUNCH_REPOSITORY_CLASS).children[0] as FakeNode
+    expect(option.textContent, 'the drawn label is not the sanitizer\u2019s answer').toContain(TOKEN_PLACEHOLDER)
+    expect(option.textContent).not.toContain(identity)
+    expect(option.attributes.get('value'), 'the option kept no raw identity').toBe(identity)
+
+    set(document.body, LAUNCH_TASK_CLASS, 'summarise the backlog')
+    await submit(document.body)
+
+    const sent = launchCalls(calls)
+    expect(sent, 'the raw identity reached no launch').toHaveLength(1)
+    expect((sent[0] as Record<string, unknown>)['repository']).toBe(identity)
+    expect(textOf(hintOf(document.body))).toBe('')
+    // And the check agrees with main: the recorded identity is accepted, where
+    // the label the console drew in its place is refused -- which is what makes
+    // the raw value the one that has to travel.
+    expect(launchCheck({ repository: option.textContent ?? '', task: 'x', title: '', planTask: '' }, [identity])).toBe(
+      'choose one of the repositories this installation records',
+    )
+  })
 })
 
 describe('the mirrors of the main process', () => {
@@ -767,5 +871,52 @@ describe('the mirrors of the main process', () => {
     // fact: a reworded cancel sentence must fail here rather than be drawn as a
     // refusal with no explanation.
     expect(LAUNCH_DECLINED_REASON).toBe(DECLINED_CANCELLED)
+  })
+
+  it('trims the task the way launchrules trims it, code point for code point', () => {
+    // `launchBytes` is the counter's own arithmetic and it has to be main's: the
+    // renderer's trim is a mirror of `GO_TRIM_SPACE` (`strings.TrimSpace`), and
+    // the two sets are **not** the same -- JavaScript trims U+FEFF and Go does
+    // not, Go trims U+0085 and JavaScript does not. The comparison is made
+    // through `checkLaunchTask`, which is the original: for every candidate, the
+    // bytes this screen counts have to be the bytes main would send.
+    const candidates: readonly number[] = [
+      // Go's `unicode.IsSpace`: the six ASCII whitespace code points, U+0085 and
+      // the rest of the set, which is what `launchrules` writes out.
+      ...Array.from({ length: 5 }, (_, index) => 0x09 + index),
+      0x20,
+      0x85,
+      0xa0,
+      0x1680,
+      ...Array.from({ length: 11 }, (_, index) => 0x2000 + index),
+      0x2028,
+      0x2029,
+      0x202f,
+      0x205f,
+      0x3000,
+      // Not whitespace to either, and the near misses around the two anchors: a
+      // zero-width space, the Hangul filler, a bidi override, a soft hyphen, and
+      // U+FEFF -- JavaScript's own addition to the set, which Go does not trim.
+      0x200b,
+      0x3164,
+      0x202e,
+      0xad,
+      0xfeff,
+    ]
+    const trimmed: boolean[] = []
+    for (const code of candidates) {
+      const pad = String.fromCodePoint(code)
+      const wrapped = `${pad}x${pad}`
+      const main = checkLaunchTask(wrapped)
+      if (!main.ok) throw new Error(`main refused U+${code.toString(16).toUpperCase()}: not a candidate`)
+      const bytes = main.value.bytes.length
+      trimmed.push(bytes === 1)
+      expect(LAUNCH_TRIM_SPACE.has(code), `U+${code.toString(16).toUpperCase()}`).toBe(bytes === 1)
+      expect(launchBytes(wrapped), `U+${code.toString(16).toUpperCase()}`).toBe(bytes)
+    }
+    // The list is only worth what it finds: a set that trimmed everything or
+    // nothing would pass the loop above for a mirror that agreed with neither.
+    expect(trimmed, 'the candidates trim as much as nothing').toContain(false)
+    expect(trimmed, 'the candidates trim as little as nothing').toContain(true)
   })
 })

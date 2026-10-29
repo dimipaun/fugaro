@@ -219,6 +219,26 @@ type ServiceTokenSetter interface {
 	UseServiceTokens(TokenSource)
 }
 
+// BotAccount is a git host's own account, the one the host attributes commits
+// to: GitHub links a commit to a GitHub App's bot account when the commit's
+// author and committer are that account's noreply identity,
+// "<ID>+<Login>@users.noreply.github.com".
+type BotAccount struct {
+	ID    string // the account's stable numeric user ID
+	Login string // its login, "<slug>[bot]" on GitHub
+}
+
+// BotAccountReader is implemented by a provider whose host links a commit to
+// an account of its own, and is how a run's commits carry that account's
+// identity instead of Fugaro's own (gitops.BotIdentity). The runner reads it
+// once per run, before the first commit. A provider that does not implement
+// it -- Bitbucket's, whose commits are the run's own and have no account to be
+// linked to, and the file-backed test provider -- keeps gitops.Identity, and
+// so does a run whose read fails.
+type BotAccountReader interface {
+	BotAccount(ctx context.Context) (BotAccount, error)
+}
+
 // Provider is what the runner needs from the git host.
 type Provider interface {
 	// EnsurePR creates the pull request for spec.Branch or, if one already
@@ -267,9 +287,9 @@ type Provider interface {
 	//
 	// Self and SelfKnown say whether a comment was posted as the identity
 	// Fugaro uses, which the adapter looks up (GitHub: the App, GET /app
-	// with its JWT when the job holds the App's key, and GET /user with the
-	// run's installation token when the credentials service holds it —
-	// C2.2; Bitbucket: the token's user, GET /user). A lookup the provider
+	// with its JWT, which only this process holding the App's key can sign
+	// — with the credentials service the identity is unknown, C2.2;
+	// Bitbucket: the token's user, GET /user). A lookup the provider
 	// answers definitely (a 4xx other than 408 and 429) leaves SelfKnown
 	// false on every comment, and the answer is kept. A passing failure (a
 	// network error, a 408, 429 or 5xx, a cancelled context) is not kept:

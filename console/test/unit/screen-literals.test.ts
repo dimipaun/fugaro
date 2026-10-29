@@ -228,10 +228,10 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
   // also handed by a document -- the repository identities main recorded -- and
   // the entries below say where each of its arguments came from.
   'launch.ts': {
-    recorded: {
+    'refusalText(recorded)': {
       within: 'options',
       reason:
-        'an entry of `view.repositories`, which `entry.ts`\'s `railRows` read through `sanitizeRefusal` (`stringsOf`) before it reached this screen -- so this is **a sanitizer\'s own answer**, the one document-shaped string a drawer may write (the `graph.ts` `drawInto` entry is the same case). It is the option\'s own text, so the string main receives is the string the operator read, and main matches it against its own records (`launchRepoArgument`, `src/main/launch.ts`), which is why nothing here folds or rewrites it',
+        'the **drawn label** of one `<option>`, which is `refusalText` of an entry of `view.repositories`: a sanitizer\'s own answer (or this file\'s marker for one it refused), which is the one document-shaped string a drawer may write -- the `graph.ts` `drawInto` entry is the same case. The entry of `view.repositories` itself is **raw** (`entry.ts`\'s `railRows` keeps the identities main matches against its own records as they came), so the raw string is never drawn: it is written into the option\'s `value`, where the attribute vocabulary below accounts for it',
     },
     text: {
       within: 'help',
@@ -530,6 +530,11 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
   },
   'launch.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
+    recorded: {
+      within: 'options',
+      reason:
+        'an entry of `view.repositories`, written into the `<option>`\'s `value`: the **recorded repository identity itself**, which is the string main matches against its own records (`launchRepoArgument`, `src/main/launch.ts`) and which `entry.ts` keeps raw for exactly that reason. It is the one attribute of this file that carries a document\'s string, and it is inert -- a `value` is never parsed as markup, never navigated to and never read as a style (unlike `href`, `style` and the rest of `sanitize.test.ts`\'s forbidden set). It cannot be replaced by the drawn text: the label goes through `refusalText`, so a repository named like a credential is drawn as the marker and the launch would then be refused for a repository the operator did pick',
+    },
     id: { within: 'help', reason: 'the parameter of the `help` helper itself; every call site passes a `LAUNCH_IDS` member or this file\'s own `launch-form` id' },
     controlId: { within: 'field', reason: 'the parameter of the `field` helper itself; every call site passes a `LAUNCH_IDS` member' },
     "described.join(' ')": { within: 'field', reason: 'the `LAUNCH_IDS` members a control is described by; every call site passes an array of them' },

@@ -185,7 +185,7 @@ var secretsBoolFlags = map[string]bool{"--json": true, "--project-wide": true, "
 // both maps, so a name in either is enough.
 var budgetBoolFlags = map[string]bool{
 	"--global": true, "--defaults": true, "--clear": true, "--yes": true,
-	"--all": true, "--json": true,
+	"--all": true, "--json": true, "--compute": true,
 	// budget history's own, and the --help cobra adds at Execute time.
 	"--sweep": true, "--rollover": true, "--force": true, "--help": true,
 }

@@ -1598,7 +1598,7 @@ func governanceEditions(ctx context.Context, lc *localcfg.Config, cfg *config.Co
 	}
 	if lc == nil || lc.Name != cfg.Project {
 		return nil, editionUnresolved("no project config for "+pluginwire.Printable(cfg.Project)+" is selected here",
-			"name the installation with --config or --project, or run fugaro setup to create this project's config")
+			"set $FUGARO_PROJECT or $FUGARO_CONFIG, or run fugaro setup to create this project's config")
 	}
 	repo, err := originRepo(ctx)
 	if err != nil {

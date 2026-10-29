@@ -1887,11 +1887,13 @@ describe('the caps panel', () => {
   })
 
   it('reads `compute_usd` off a cap row as an estimate, and n/a where there is none', () => {
-    // The owner approved `compute_usd` on each `showRepo` on 2026-10-28, ahead
-    // of the CLI release that writes it. The row reader already ignores keys it
-    // does not know, so the console reads the new one into the model -- as an
-    // **estimate**, compute's own account -- and draws nothing with it yet; the
-    // Spend redesign is the screen that will.
+    // The owner approved `compute_usd` on each `showRepo` on 2026-10-28, and
+    // `budget show --compute` writes it since 2026-10-29. This console passes
+    // no such flag -- its spawn row is its own reviewed run -- so the key is
+    // still only in a document a person hands this reader. The row reader
+    // already ignores keys it does not know, so the console reads the new one
+    // into the model -- as an **estimate**, compute's own account -- and draws
+    // nothing with it yet; the Spend redesign is the screen that will.
     const model = buildSpendModel(DAY_REPORT, {
       ...BUDGET,
       repos: [{ ...THE_REPOS[0], compute_usd: 0.75 }],

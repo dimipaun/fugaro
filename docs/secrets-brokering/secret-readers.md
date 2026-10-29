@@ -35,7 +35,7 @@ How to read a row:
 | E9 | operator | Operators | Names and metadata only: they add a version and list them; never a value | The `secretVersionAdder` and `viewer` grants (`modules/repo/secrets.tf`, `modules/installation/secrets.tf`) | D145, D147 | never |
 | E10 | operator | Launchers | Names, labels and version counts; never a value | The `fugaroLauncher` custom role's `secretmanager.secrets.list` and `secretmanager.versions.list` (`modules/installation/iam.tf`) | D499 | never |
 | E11 | operator | Managed projects' accounts (`fmgd-`) | The `fmgd-` secrets a managed plan creates, and the readers that plan grants on them | The managed deployer's own `secretmanager.secrets.setIamPolicy`, conditioned on its `fmgd-` prefix (`modules/installation/deployer.tf`) | D499, D503 | never |
-| E12 | operator | Project Owners and Editors | Anything: the basic roles bypass secret-level policy | Project IAM, outside every grant Fugaro writes (`SECURITY.md`, "What is not on by default") | D148 | never |
+| E12 | operator | Project Owners | Anything: `roles/owner` carries `secretmanager.versions.access` and bypasses secret-level IAM | Project IAM, outside every grant Fugaro writes (`SECURITY.md`, "The credentials service") | D148 | never |
 | E13 | operator | `internal/backend/gcp/secrets.go`, the CLI's Secret Manager client | Containers, versions, labels and IAM policies, for provisioning and doctor; one value, the App key `doctor --check-github-app` reads | The Secret Manager API, as the operator's own identity | D147 | never |
 | E14 | operator | `internal/infra/discover.go` | Secret names, labels and IAM policies, to adopt live state into the plan; never a value | The Secret Manager API | D147 | never |
 | E15 | operator | `internal/infra/grants.go` | A secret's IAM policy, to find the member that holds `secretAccessor` on it | The Secret Manager API | D147 | never |
@@ -45,3 +45,11 @@ How to read a row:
 | E19 | operator | `internal/infra/apis.go` | Nothing: the API host is the service `fugaro setup` enables | No call: the host as the service name to enable | D499 | never |
 | E20 | operator | `internal/infra/tf/cover.go` | Nothing: the API host appears in the resource-type and role lists the managed deployer's coverage is pinned against | No call: the host as a resource-type prefix in those lists | D499 | never |
 | E21 | operator | `internal/managed/stateaccounts.go` | Nothing: the API host appears in the mapping of Terraform resource types to the managed state accounts | No call: the host as a resource-type prefix in that mapping | D499 | never |
+
+An **Editor is deliberately not a row**, though this audit named it as one until 2026-10-29:
+`roles/editor` carries `secretmanager.secrets.getIamPolicy` and delete but not
+`secretmanager.versions.access`, so an Editor reads a container only through a `secretAccessor`
+grant of its own — a grant of the kind every row above holds, and one the B0.3 sweep reports per
+container. Naming Editors as readers would be a claim `roles/editor` does not support, and it would
+hide exactly those grants. The owner ruled the wording on 2026-10-29;
+[reconciliation.md](reconciliation.md) F3 and `SECURITY.md` carry the same correction.

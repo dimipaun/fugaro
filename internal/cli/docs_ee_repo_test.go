@@ -324,9 +324,18 @@ func TestEEReadersAreListed(t *testing.T) {
 A new reader joins the list in the same commit, and a name whose test no longer reads ee/ leaves it: the "core without ee/" workflow skips exactly this list, so a name left behind costs coverage and a reader left out takes that workflow down.`, eeDirName, readers, listed)
 	}
 
+	// A test file under ee/ is exempt for the reason eeBoundaryPackage is: what
+	// this scan protects is the core's suite, which the "core without ee/"
+	// workflow runs with the directory deleted -- and a test of an ee/ package
+	// is deleted with it, so it can never be a reader there. It cannot use the
+	// helper either: readRealEE lives in this package, and eeReadingTests is a
+	// list of this package's test names, which the workflow skips by name. So
+	// ee/register's test scanning its own directory is left to that package,
+	// the way internal/eeboundary's walks of the module are left to its own.
 	var found []string
 	for _, rel := range files {
-		if !strings.HasSuffix(rel, "_test.go") || rel == eeRepoFile || strings.HasPrefix(rel, eeBoundaryPackage) {
+		if !strings.HasSuffix(rel, "_test.go") || rel == eeRepoFile ||
+			strings.HasPrefix(rel, eeBoundaryPackage) || strings.HasPrefix(rel, eeDirName+"/") {
 			continue
 		}
 		src, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
