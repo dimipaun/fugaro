@@ -1,4 +1,0 @@
-[
-  {"method": "GET", "path": "/repos/acme/web/pulls/12", "auth": "Bearer ghs_fixture_service_token", "status": 200, "response": {"number": 12, "state": "open", "merged": false, "draft": true, "html_url": "https://github.com/acme/web/pull/12", "node_id": "PR_kwDOA12", "title": "Add search", "user": {"login": "fugaro-app[bot]", "id": 900001, "type": "Bot"}, "author_association": "NONE", "head": {"ref": "fugaro/20260927-101500-abcd", "sha": "0123456789abcdef0123456789abcdef01234567", "repo": {"full_name": "acme/web"}}, "base": {"ref": "main"}}},
-  {"method": "GET", "path": "/user", "auth": "Bearer ghs_fixture_service_token", "status": 200, "response": {"login": "fugaro-app", "id": 4242, "type": "User"}}
-]

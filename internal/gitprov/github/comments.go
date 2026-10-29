@@ -10,6 +10,7 @@ package github
 //   - general comments: https://docs.github.com/en/rest/issues/comments#list-issue-comments
 //   - REST paging (the Link header): https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api
 //   - the App's identity: https://docs.github.com/en/rest/apps/apps#get-the-authenticated-app
+//   - what an installation access token may read: https://docs.github.com/en/rest/authentication/endpoints-available-for-github-app-installation-access-tokens
 //   - author_association: https://docs.github.com/en/graphql/reference/enums#commentauthorassociation
 
 import (
@@ -19,7 +20,6 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -56,6 +56,13 @@ const botSuffix = "[bot]"
 // remembered rather than retried.
 var errNoIdentity = errors.New("the answer names no identity")
 
+// errNoAppKey is the identity read this process has no route for: the App's
+// key is the credentials service's, so there is no JWT to sign, and no
+// endpoint an installation access token may call names the App (see
+// readAppSlug). Like errNoIdentity it is definite -- p.app never changes --
+// so it is remembered rather than retried.
+var errNoAppKey = errors.New("no endpoint an installation access token may call names the App")
+
 // appSlug returns the App's slug, the name Fugaro's own identity is spelled
 // with (REST: <slug>[bot], GraphQL: the bare slug). ok is false when that
 // read failed. A definite answer (the slug, or a 4xx refusal other than 408
@@ -63,16 +70,12 @@ var errNoIdentity = errors.New("the answer names no identity")
 // context, a network error, a 408, 429 or 5xx) is not, so the next call
 // asks again. A failure is warned about once.
 //
-// Which read asks depends on where the App's key is, and neither one hands
-// this process a key (C2.2). When this process holds the key, its JWT reads
-// GET /app, the App's own endpoint. When the key is the credentials
-// service's, there is no JWT here and none is needed: the installation
-// token the run already has -- the one the service minted for it -- reads
-// GET /user, which answers an installation token with the bot account it
-// acts as. Either way a read that fails leaves the identity unknown and
-// every caller that needs it fails closed -- Self stays false
-// (reviewmode.go's trusted gate then wants a collaborator) and a follow-up's
-// comments are not read as Fugaro's.
+// The one read that names the App is GET /app, and only the App's own JWT
+// can make it. With the key in the credentials service (C2.2) this process
+// has no JWT and no other route to the App, so there is no read to make at
+// all: the identity stays unknown and every caller that needs it fails
+// closed -- Self stays false (reviewmode.go's trusted gate then wants a
+// collaborator) and a follow-up's comments are not read as Fugaro's.
 func (p *Provider) appSlug(ctx context.Context) (slug string, ok bool) {
 	p.identityMu.Lock()
 	defer p.identityMu.Unlock()
@@ -84,7 +87,7 @@ func (p *Provider) appSlug(ctx context.Context) (slug string, ok bool) {
 	case err == nil:
 		p.identityDone, p.slug = true, identity
 		return p.slug, p.slug != ""
-	case errors.Is(err, errNoIdentity) || definite(ctx, err):
+	case errors.Is(err, errNoIdentity) || errors.Is(err, errNoAppKey) || definite(ctx, err):
 		p.identityDone = true
 	}
 	if !p.identityWarned {
@@ -98,39 +101,33 @@ func (p *Provider) appSlug(ctx context.Context) (slug string, ok bool) {
 // take. It returns the slug, the read's name (for the warning), and an error
 // that is nil only when there is a slug to return.
 //
-// The installation-token route is the one C2.2 needs, and it is deliberately
-// strict about the answer: only a bot account is the App's own identity, and
-// anything else is refused rather than compared against, because a login
-// that is not the App's bot would make Self true for an author the run is
-// not. An answer with no bot account in it is not a licence to trust every
-// "<something>[bot]" author instead.
+// An installation token is not a second route. GitHub refuses it GET /user
+// ("Resource not accessible by integration"), which is the read the adapter
+// made here before, and GitHub's list of the endpoints an installation
+// access token may call holds nothing else that names the App:
+// GET /installation/repositories lists the installation's repositories, not
+// the App, and GET /apps/{app_slug} needs the slug it would return. So with
+// the key in the credentials service the identity is unknown rather than
+// guessed -- a slug taken from any other account would make Self true for an
+// author the run is not.
+//
+// The answer is deliberately strict for the same reason: an App with no slug
+// has no identity to compare a login against, so the empty slug is refused
+// rather than used.
 func (p *Provider) readAppSlug(ctx context.Context) (slug, what string, err error) {
-	if p.app != nil {
-		var app struct {
-			Slug string `json:"slug"`
-		}
-		if err := p.app.Do(ctx, "GET", "/app", nil, &app); err != nil {
-			return "", "GET /app", err
-		}
-		if app.Slug == "" {
-			return "", "GET /app", errNoIdentity
-		}
-		return app.Slug, "GET /app", nil
+	if p.app == nil {
+		return "", "no App key in this process", errNoAppKey
 	}
-	var bot struct {
-		Login string `json:"login"`
-		Type  string `json:"type"`
+	var app struct {
+		Slug string `json:"slug"`
 	}
-	if err := p.api.Do(ctx, "GET", "/user", nil, &bot); err != nil {
-		return "", "GET /user", err
+	if err := p.app.Do(ctx, "GET", "/app", nil, &app); err != nil {
+		return "", "GET /app", err
 	}
-	if bot.Type != "Bot" {
-		return "", "GET /user", errNoIdentity
+	if app.Slug == "" {
+		return "", "GET /app", errNoIdentity
 	}
-	if slug := strings.TrimSuffix(bot.Login, botSuffix); slug != "" {
-		return slug, "GET /user", nil
-	}
-	return "", "GET /user", errNoIdentity
+	return app.Slug, "GET /app", nil
 }
 
 // definite reports whether err is an answer worth remembering rather than

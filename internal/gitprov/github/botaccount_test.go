@@ -1,13 +1,15 @@
 package github
 
 // The App's bot account, which is what a run's commits are attributed to
-// (docs/git-providers.md). Its slug is read with the App's JWT (GET /app), as
-// the identity behind Self is when the key is in this process, and the account
-// by that name with the installation token (GET /users/<slug>[bot]). The
-// fixtures: the App's own bot, an answer that names a person instead, a
-// refusal, and a credentials-service run, which makes no read at all.
+// (docs/git-providers.md). Its slug comes from comments.go's appSlug, the
+// cached read the comment and review-mode identity shares (GET /app with the
+// App's JWT), and the account by that name with the installation token
+// (GET /users/<slug>[bot]). The fixtures: the App's own bot, an answer that
+// names a person instead, an answer that names another bot, a refusal, and a
+// credentials-service run, which makes no read at all.
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 
@@ -39,6 +41,25 @@ func TestBotAccountRefusesAnAnswerThatIsNotABot(t *testing.T) {
 	}
 }
 
+// TestBotAccountRefusesAnotherAppsBot: the account must be this App's own
+// bot, and exactly it. The fixture's answer is another bot's login, which a
+// suffix check accepts -- and the login is what the commit identity is built
+// from, so accepting it commits as an account that owns nothing of this
+// App's.
+//
+// Mutation (compare with strings.HasSuffix(login, "[bot]") instead of
+// equality with the slug read): this test fails, and a run would commit as
+// other-app[bot] rather than fugaro-app[bot].
+func TestBotAccountRefusesAnotherAppsBot(t *testing.T) {
+	got, err := open(t, "bot_account_other_bot.json").BotAccount(ctx)
+	if err == nil || got != (gitprov.BotAccount{}) {
+		t.Fatalf("BotAccount = %+v, %v, want no account and an error", got, err)
+	}
+	if !strings.Contains(err.Error(), "other-app[bot]") {
+		t.Errorf("the error is %q, want it to name the login it refused", err)
+	}
+}
+
 // TestBotAccountReportsARefusedRead: a read the token may not make is an
 // error the runner logs and falls back from -- never a guessed identity.
 func TestBotAccountReportsARefusedRead(t *testing.T) {
@@ -66,9 +87,42 @@ func TestBotAccountAsksWithTheRunsOwnToken(t *testing.T) {
 	}
 }
 
+// TestBotAccountSharesTheSlugReadWithTheCommentRead: the App's slug is read
+// once per Provider (appSlug's own cache), so a run that reads its bot
+// account at open and then asks for the slug again -- which is what the
+// comment and review-mode reads do -- sends one GET /app, not two.
+//
+// Mutation (read the slug with readAppSlug from BotAccount, as before): this
+// test fails, wanting one GET /app and getting two.
+func TestBotAccountSharesTheSlugReadWithTheCommentRead(t *testing.T) {
+	apps := 0
+	p := fakeAPIWarn(t, func(w http.ResponseWriter, r *http.Request) bool {
+		switch r.URL.Path {
+		case "/app":
+			apps++
+			w.Write([]byte(`{"slug":"fugaro-app"}`))
+			return true
+		case "/users/fugaro-app[bot]":
+			w.Write([]byte(`{"login":"fugaro-app[bot]","id":900001,"type":"Bot"}`))
+			return true
+		}
+		return false
+	}, nil)
+	if _, err := p.BotAccount(ctx); err != nil {
+		t.Fatalf("BotAccount: %v", err)
+	}
+	if slug, ok := p.appSlug(ctx); !ok || slug != "fugaro-app" {
+		t.Fatalf("slug = %q, %t after BotAccount read it", slug, ok)
+	}
+	if apps != 1 {
+		t.Fatalf("GET /app was sent %d times, want one per Provider", apps)
+	}
+}
+
 // TestBotAccountWithoutTheKeyKeepsTheDefault: with the key in the credentials
-// service there is no JWT to read the slug with, so the read fails without a
-// request (the fixture holds none) and the run keeps the default identity.
+// service there is no JWT to read the slug with, and no other route to it, so
+// the read fails without a request (the fixture holds none) and the run keeps
+// the default identity.
 //
 // Mutation (fall back to GET /user with the installation token): this test
 // fails on the unheld request -- the route GitHub refuses.
