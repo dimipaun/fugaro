@@ -118,6 +118,14 @@
         }
       }
     },
+    "ab": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "description": "The repository's A/B opt-out (docs/model-ab-testing, D556, D557). A file that writes no ab: block sets nothing; one that writes it may carry ab.rate: 0 alone, which never samples this repository. Every other key of the block — the challengers, the judge model, the daily pair count and the exchange rates — belongs to the project layer, because a repository author who could name a challenger could send that repository's code to a provider the owner opened only to others. Nothing reads these keys to launch a pair before fugaro 0.15.0.",
+      "properties": {
+        "rate": { "type": ["number", "null"], "minimum": 0, "maximum": 0, "description": "Only 0: sampling is the project layer's rate unless this repository turns it off, which is the whole of what a repository may say here." }
+      }
+    },
     "governance": {
       "type": ["object", "null"],
       "additionalProperties": false,

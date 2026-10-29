@@ -43,6 +43,11 @@ const (
 	// (agent.max_output_tokens.*).
 	KeyMaxOutputCoder    = "max_output_tokens.coder"
 	KeyMaxOutputReviewer = "max_output_tokens.reviewer"
+	// KeyABRate is the A/B sampling rate (docs/model-ab-testing, D557). It is
+	// the one key of the ab: block the merge speaks: every other key of it is
+	// the project layer's own and is read where it is set, never merged,
+	// because a repository may only turn sampling off (D556).
+	KeyABRate = "ab.rate"
 	// The governance keys, spelled as fugaro.yaml spells them under
 	// governance: (docs/task-governance/spec.md §2, §5). The three stages are
 	// the ones a run's governance bounds: an artifact run's plan and render
@@ -319,6 +324,12 @@ type Layer struct {
 	MaxOutputCoder    int64
 	MaxOutputReviewer int64
 	AllowedModels     []string // nil = unset
+	// ABRate is this layer's ab.rate, nil = the layer writes none. It is a
+	// pointer because 0 is a value here and not "unset": turning sampling off
+	// is the whole of what a repository's own ab: block may say (D556), and
+	// the merge has to be able to tell that layer from one that says nothing
+	// (see Merge).
+	ABRate *float64
 	// Governance is this layer's governance limits; the zero value sets
 	// none, which is what leaves the ceiling's own alone (see Governance).
 	Governance Governance
