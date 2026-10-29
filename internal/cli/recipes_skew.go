@@ -1183,41 +1183,127 @@ func governanceKnows(fromRepo, fromLayer bool) string {
 // than governanceSince decodes fugaro.yaml and the project layer with
 // KnownFields, so the key alone kills the run at bootstrap, before the agent
 // starts and after the launch was paid for.
+//
+// The same judge answers the second question the same image raises: a runner
+// new enough to decode the key may still be a core build, which reads the
+// block and enforces nothing in it, and the launch says so (warnCoreJobImage,
+// after the refusal above so a refusal is never printed beside a warning).
+// That half is judged on the key the configuration writes OR on the run's own
+// tier, which a core runner ignores the same way (D522) — the tier is a task
+// field and not a config key, which is why it is read here rather than in
+// run.go's own tier gate.
 func checkGovernanceImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
 	fromRepo, fromLayer := governanceLaunchSources(ctx, env, spec)
-	if !fromRepo && !fromLayer {
+	if !fromRepo && !fromLayer && spec.Tier == "" {
 		return nil
 	}
-	subject, alt := governanceSubject(spec.Repo, fromRepo, fromLayer)
-	return checkImageSince(ctx, env, slug, spec, kind, governanceSince, subject, governanceKnows(fromRepo, fromLayer), "; or "+alt, warn)
+	if fromRepo || fromLayer {
+		subject, alt := governanceSubject(spec.Repo, fromRepo, fromLayer)
+		if err := checkImageSince(ctx, env, slug, spec, kind, governanceSince, subject, governanceKnows(fromRepo, fromLayer), "; or "+alt, warn); err != nil {
+			return err
+		}
+	}
+	warnCoreJobImage(ctx, env, slug, spec, fromRepo, fromLayer, false, warn)
+	return nil
 }
 
 // checkCloneGovernanceImage is checkGovernanceImage for a checkout: clone
 // workflow: see checkCloneImageSince.
 func checkCloneGovernanceImage(ctx context.Context, env *cloudEnv, spec *task.Spec, warn io.Writer) error {
 	fromRepo, fromLayer := governanceLaunchSources(ctx, env, spec)
-	if !fromRepo && !fromLayer {
+	if !fromRepo && !fromLayer && spec.Tier == "" {
 		return nil
 	}
-	subject, alt := governanceSubject(spec.Repo, fromRepo, fromLayer)
-	return checkCloneImageSince(env.lc, spec, governanceSince, subject, governanceKnows(fromRepo, fromLayer), "; or "+alt, warn)
+	if fromRepo || fromLayer {
+		subject, alt := governanceSubject(spec.Repo, fromRepo, fromLayer)
+		if err := checkCloneImageSince(env.lc, spec, governanceSince, subject, governanceKnows(fromRepo, fromLayer), "; or "+alt, warn); err != nil {
+			return err
+		}
+	}
+	// The edition half is judged on the workflow's own build record, the
+	// object checkImageSinceDev reads, so both shapes of this gate answer from
+	// one place. A checkout: clone workflow is never built and so normally has
+	// no record: its job image runs the installation's base image, which
+	// carries none either, and an image no record can speak for is unknown and
+	// gets no warning (design ee-boundary-moves §7). The slug is the launch's
+	// own, resolved the way repoSlugOf resolves it for every other command.
+	if slug, err := repoSlugOf(ctx, env.lc, spec.Repo); err == nil {
+		warnCoreJobImage(ctx, env, slug, spec, fromRepo, fromLayer, true, warn)
+	}
+	return nil
 }
 
-// governanceImageWarnings warns, once, that a configuration which writes the
-// key — the repository's file (RepoGovernanceSet) or the project layer it
-// resolved over (SetsGovernance) — needs every job image on governanceSince.
-// It is validate's half of checkGovernanceImage, and a warning rather than a
-// Problem for the reason rigorImageWarnings is one: the file is valid, and what
-// has to move is the installation (the base image, or a workflow's derived
-// one), which is why both ways to move an image are named. The subject says
-// which of the two wrote the key, and names the layer's block the way
-// governanceSubject does — a top-level governance:, not a defaults.governance —
-// because the layer's key reaches every repository of the project and only its
-// operator can remove it.
-func governanceImageWarnings(c *config.Config) []config.Problem {
+// warnCoreJobImage warns when the build record of slug's workflow reports a
+// core build and this launch asks for something such a build ignores: the
+// governance: block the configuration writes (fromRepo/fromLayer), or the
+// run's own tier. A core runner decodes both and enforces neither (D522), so
+// the launch is never refused over this — the sentence says what the image
+// does with what it was given, and never that anything is licensed (D523).
+//
+// Only a record that says core warns: a record with no edition, an empty one,
+// or none at all is unknown, and an unknown image gets no warning, which is
+// every image built before the field existed and every --image-source mirror
+// (design §7). The read is the one checkImageSinceDev makes, of the same
+// object and through the same bucket, and a failure to read is dropped: this
+// warning's only power is to say something, and every gate that must hold has
+// held by the time it is called.
+func warnCoreJobImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, fromRepo, fromLayer, clone bool, warn io.Writer) {
+	if !fromRepo && !fromLayer && spec.Tier == "" {
+		return
+	}
+	b, err := env.recordBucket(ctx)
+	if err != nil {
+		return
+	}
+	data, _, err := b.Read(ctx, imagecheck.RecordKey(slug, spec.Workflow))
+	if err != nil {
+		return
+	}
+	rec, err := imagecheck.ParseRecord(data)
+	if err != nil || rec.Edition != EditionCore {
+		return
+	}
+	var asks []string
+	if fromRepo || fromLayer {
+		asks = append(asks, "the governance: block")
+	}
+	if spec.Tier != "" {
+		asks = append(asks, "the run's tier")
+	}
+	fix := fmt.Sprintf("Run fugaro image refresh --repo %s --workflow %s in its checkout, in your own terminal window, to have it enforced", spec.Repo, spec.Workflow)
+	if clone {
+		fix = "Run fugaro update --base base in your own terminal window to move the installation's base image to a build that reads it"
+	}
+	fmt.Fprintf(warn, "warning: the job image of %s workflow %s is a core build of fugaro: it reads %s and ignores it, so nothing it sets is enforced by this run. %s\n",
+		spec.Repo, spec.Workflow, strings.Join(asks, " and "), fix)
+}
+
+// governanceImageWarnings is validate's half of checkGovernanceImage, and has
+// that gate's two halves. The first warns, once, that a configuration which
+// writes the key — the repository's file (RepoGovernanceSet) or the project
+// layer it resolved over (SetsGovernance) — needs every job image on
+// governanceSince. It is a warning rather than a Problem for the reason
+// rigorImageWarnings is one: the file is valid, and what has to move is the
+// installation (the base image, or a workflow's derived one), which is why both
+// ways to move an image are named. The subject says which of the two wrote the
+// key, and names the layer's block the way governanceSubject does — a top-level
+// governance:, not a defaults.governance — because the layer's key reaches
+// every repository of the project and only its operator can remove it.
+//
+// The second warns for each of the file's workflows whose job image's build
+// record says it is a core build: such a runner reads the block and enforces
+// nothing in it (D522), so the file is valid and the run it is launched with
+// would simply ignore what the operator set. editionOf answers a workflow's job
+// image edition and whether a record said so at all — an image no record speaks
+// for is unknown and warns about nothing (design ee-boundary-moves §7) — and
+// unresolved is why it could not be asked ("" when it could). A caller that
+// could not ask gets a note rather than silence, so a file whose block needs
+// enforcing is not left looking fine by a command that never looked; the first
+// half prints either way, since it is a statement about the file.
+func governanceImageWarnings(c *config.Config, editionOf func(workflow string) (string, bool), unresolved string) (warnings, notes []config.Problem) {
 	fromRepo, fromLayer := c.RepoGovernanceSet, c.Layer.SetsGovernance()
 	if !fromRepo && !fromLayer {
-		return nil
+		return nil, nil
 	}
 	subject := "this file's governance: block"
 	switch {
@@ -1226,7 +1312,19 @@ func governanceImageWarnings(c *config.Config) []config.Problem {
 	case fromLayer:
 		subject = "the project layer's governance: block"
 	}
-	return []config.Problem{{Path: "governance", Message: subject + " needs fugaro " + governanceSince + " or later in the job image that runs it, and in the CLI of everyone who reads this file: an older runner decodes the file strictly and refuses the run at bootstrap. Run fugaro update --base base in your own terminal window to move the installation's base image, and fugaro image refresh for a workflow's own derived image"}}
+	warnings = append(warnings, config.Problem{Path: "governance", Message: subject + " needs fugaro " + governanceSince + " or later in the job image that runs it, and in the CLI of everyone who reads this file: an older runner decodes the file strictly and refuses the run at bootstrap. Run fugaro update --base base in your own terminal window to move the installation's base image, and fugaro image refresh for a workflow's own derived image"})
+	if editionOf == nil {
+		if unresolved != "" {
+			notes = append(notes, config.Problem{Path: "governance", Message: "the edition of the job images is unresolved: " + unresolved + ", so whether their runners read the governance: block is not known here"})
+		}
+		return warnings, notes
+	}
+	for _, name := range slices.Sorted(maps.Keys(c.Workflows)) {
+		if edition, known := editionOf(name); known && edition == EditionCore {
+			warnings = append(warnings, config.Problem{Path: "workflow " + name, Message: "is a core build of fugaro: the job image of workflow " + name + " reads the governance: block and ignores it, so nothing it sets is enforced by a run of this repository. Run fugaro image refresh in that workflow's checkout to have it enforced"})
+		}
+	}
+	return warnings, notes
 }
 
 // governanceLaunchSources reports, for the launch's governanceSince gate,

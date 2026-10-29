@@ -728,6 +728,13 @@ func TestImageRenderCloudOutputs(t *testing.T) {
 		rec.Image != "" || rec.ImageDigest != "" || rec.Adopted {
 		t.Errorf("record.json = %+v", rec)
 	}
+	// The edition of the binary rendering this record, which is the base
+	// image's own: the launch-side warnings judge the job image by it
+	// (imagecheck.Record.Edition). The test binary is core, which is what a
+	// build without the ee tag writes.
+	if rec.Edition != EditionCore {
+		t.Errorf("record.json edition = %q, want %q", rec.Edition, EditionCore)
+	}
 	// The render step runs the BASE image's own fugaro, so this field is the
 	// base's statement that its runner reads the sealed budget token: the
 	// statement the seal gate trusts for a development base (sealDevRefusal).
