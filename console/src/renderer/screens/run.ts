@@ -7,7 +7,7 @@
 // Seven things are on this screen, and each of them is a rule:
 //
 //   1. **The ledger.** `runstore.Cost`'s three figures, kept apart: the model
-//      dollars (the **billed** part of the model figure -- `NOTIONAL~` only
+//      dollars (the **billed** part of the model figure -- `~$` only
 //      when the whole figure is the subscription's), compute (`est.` when the
 //      document says it is an estimate) and the total. The two accounts are
 //      never summed on screen, exactly as on the Live and Spend screens.

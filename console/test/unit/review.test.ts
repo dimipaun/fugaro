@@ -26,10 +26,12 @@
 //      builds no link from it, because no document on this tree says which
 //      provider the run's repository is on (gap 7, still open).
 //   3. **the section is drawn whether or not it has a row.** "Nothing is waiting
-//      for you" is an answer, and it says "in this feed" because `ready[]` also
-//      ships empty when the runs bucket could not be read -- a distinction the
-//      CLI's own `queued_note` carries on the header (`live-note`), not a second
-//      reason invented here.
+//      for you" is an answer, and the console says it in one sentence: the hedged
+//      "in this feed" one. A frame with no `queued_note` does not say the runs
+//      bucket was read -- `watch`'s first frame never waits for the bucket scan,
+//      and an absent note covers "nobody asked" as well as "it was read" -- so
+//      the design's positive "nothing waiting" sentence is not one this console
+//      can support, and `queued_note`'s presence picks nothing.
 //
 // The last case in this file drives the whole entry, which is the only way to
 // make the plan's `openExternal` claim about the *wiring* rather than about the
@@ -445,13 +447,59 @@ describe('the review inbox’s drawing', () => {
     expect(all(section, 'live-review-note')).toEqual([])
   })
 
-  it('says it about this feed, because an empty ready[] has two causes', () => {
-    // `ready[]` ships empty when nothing is waiting **and** when the runs bucket
-    // could not be read at all; the CLI's own `queued_note` is what tells the
-    // two apart, and the header draws it (`live-note`). A sentence here claiming
-    // "nothing is waiting for you" would be the console answering a question the
-    // document did not answer.
+  it('says the hedge whatever the document says about the runs bucket', () => {
+    // **One sentence for every empty panel, and this is the case that keeps it
+    // honest.** `ready[]` ships empty when nothing is waiting **and** when the
+    // runs bucket has not been read, and the two are not distinguishable from
+    // the document: `queued_note` is absent both when the read succeeded and
+    // when it has not happened yet -- `watch`'s first frame never waits for the
+    // bucket scan (`internal/cli/watch_queued.go`'s `queuedSource`), and
+    // `watch.View.QueuedNote`'s comment says `""` is "when it was, or when
+    // nobody asked". So "nothing waiting" is not a fact this screen can have:
+    // over a feed nobody has read it would assert an empty inbox, which is the
+    // claim the hedge exists to avoid. The design words that positive sentence
+    // and it waits on a not-yet-read signal the CLI does not emit.
     expect(LIVE_REVIEW_EMPTY).toBe('no finished run in this feed is ready for review')
+
+    const silent = drawnSection(aModel([]))
+    expect(one(silent, 'live-review-empty').textContent).toBe(LIVE_REVIEW_EMPTY)
+
+    const noted = drawnSection(
+      aModel([], { queued_note: 'the runs bucket could not be read (retrying)' }),
+    )
+    expect(one(noted, 'live-review-empty').textContent).toBe(LIVE_REVIEW_EMPTY)
+  })
+
+  it('draws the panel as the design’s box: a decorative mark, the CLI’s line, the list', () => {
+    // The check-in-box is the panel's decorative half, so it is `aria-hidden`
+    // and the heading beside it carries the whole of the meaning (design
+    // section 4.3's rule for a decorative mark). It is drawn inside the panel
+    // and **before** the heading, which is the order the panel reads in; the
+    // list follows the heading, so the empty sentence is the line under it.
+    const section = drawnSection(aModel([]))
+    expect(section.nodes.map((node) => node.classes[0])).toEqual([
+      'live-review-icon',
+      'live-review-title',
+      'live-review-list',
+      'live-review-empty',
+    ])
+
+    const icon = one(section, 'live-review-icon')
+    expect(icon.tag).toBe('svg')
+    expect(icon.getAttribute('aria-hidden')).toBe('true')
+    expect(all(section, 'live-review-icon-box')).toHaveLength(1)
+    expect(all(section, 'live-review-icon-check')).toHaveLength(1)
+    // The heading is still the CLI's one line, and still one text run.
+    const heading = one(section, 'live-review-title')
+    expect(heading.nodes, 'the heading is drawn as more than one run').toEqual([])
+    expect(heading.textContent).toBe(`${LIVE_REVIEW_TITLE} (0)`)
+
+    // The mark is not a door either: the empty drawing is walked like the full
+    // one, so a shape that carried a destination or an anchor would fail here.
+    for (const node of walk(section)) {
+      expect(node.getAttribute(DESTINATION_ATTRIBUTE), `${node.tag} carries a destination`).toBeNull()
+      expect(node.tag.toLowerCase()).not.toBe('a')
+    }
   })
 
   it('draws the pull request as text and writes no destination at all', () => {

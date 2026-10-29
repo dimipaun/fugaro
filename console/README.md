@@ -1435,7 +1435,7 @@ The plan's red steps for this task are both here and both are real: removing the
 
 `src/shared/availability.ts` is the contract's five states as a discriminated
 union — **measured**, **notional**, **estimated**, **unavailable**, **gap** —
-with the contract's own spellings for each (`NOTIONAL~`, `est.`, `n/a`, an em
+with this console's own spellings for each (`~$`, `est.`, `n/a`, an em
 dash for a gap, `≥` for a floor) and one `formatReading` that is the only place a
 `Reading` becomes a string. A reading that is not measured carries a *sentence*
 saying why instead of a value, and the constructors refuse to build one without
