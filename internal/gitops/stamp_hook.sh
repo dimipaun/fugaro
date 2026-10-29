@@ -15,6 +15,11 @@ set -eu
 
 fugaro_chain='@FUGARO_CHAIN@'
 
+# A line that is one of the three trailers, as git matches a key: without
+# regard to case, with the whitespace git allows around it, and with the colon
+# that makes it a trailer line at all.
+fugaro_pattern='^[[:space:]]*Fugaro-(Run|Rigor|Model)[[:space:]]*:'
+
 fugaro_stamp() {
 	fugaro_message=$1
 	# Every trailer rule is stated here, and stated per token as well as
@@ -53,9 +58,21 @@ fugaro_stamp() {
 	# A run that stamped nothing does not run git at all: an empty
 	# FUGARO_STAMP_MODEL is a stage that pinned no model (D602), and a message
 	# nothing was asked of should not be rewritten.
-	if [ "$fugaro_stamped" = 1 ]; then
-		git "$@" "$fugaro_message"
+	if [ "$fugaro_stamped" = 0 ]; then
+		return 0
 	fi
+	# A Fugaro-* key is replaced, never duplicated, and a line carrying one is
+	# one wherever it sits in the message: interpret-trailers reads a trailer
+	# block and nothing else, so the trailers a squash wrote into the body of
+	# the message it combined — git does not read those as trailers at all —
+	# would otherwise survive beside the one this commit writes.
+	if grep -q -i -E "$fugaro_pattern" "$fugaro_message"; then
+		# grep -v exits 1 when nothing survives it, which is a message that was
+		# nothing but trailers.
+		fugaro_kept=$(grep -v -i -E "$fugaro_pattern" "$fugaro_message") || fugaro_kept=''
+		printf '%s\n' "$fugaro_kept" > "$fugaro_message"
+	fi
+	git "$@" "$fugaro_message"
 }
 
 # git runs a hook in the root of the working tree (githooks(5)), so the
@@ -65,10 +82,24 @@ if [ "$#" -gt 0 ]; then
 	fugaro_stamp "$1"
 fi
 
+# The repository's own hook directory, when the caller named none: what
+# core.hooksPath resolves to once the entry StampEnv carries is out of the way,
+# which is the repository's own configuration or git's default of
+# $GIT_DIR/hooks. A repository that configured no core.hooksPath still has its
+# hooks run, which naming nothing at all would not do (constraint 2).
+if [ -z "$fugaro_chain" ]; then
+	fugaro_chain=$(unset GIT_CONFIG_COUNT; git rev-parse --git-path hooks) || fugaro_chain=''
+fi
+
 # The repository's own prepare-commit-msg, which the environment
 # configuration pointing core.hooksPath here would otherwise silence
 # (constraint 2), with the arguments git gave this hook and with its exit
-# status: a repository hook that fails a commit still fails it.
-if [ -n "$fugaro_chain" ] && [ -x "$fugaro_chain/prepare-commit-msg" ]; then
-	exec "$fugaro_chain/prepare-commit-msg" "$@"
+# status: a repository hook that fails a commit still fails it. A chain that is
+# this script — a repository whose own configuration points core.hooksPath
+# here — would exec itself, for ever. The two are compared by what they hold
+# and not by how they are spelled, which is the one thing a shell without -ef
+# can say about it.
+fugaro_next="$fugaro_chain/prepare-commit-msg"
+if [ -n "$fugaro_chain" ] && [ -x "$fugaro_next" ] && ! cmp -s "$fugaro_next" "$0"; then
+	exec "$fugaro_next" "$@"
 fi

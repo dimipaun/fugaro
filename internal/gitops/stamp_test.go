@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/dimipaun/fugaro/internal/shellword"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -34,8 +35,9 @@ func runStamp() Stamp {
 // newStampRepo makes a repository with the stamp hooks installed and returns
 // its directory, the hook directory they were written into, and the
 // environment a commit in it is made under. GIT_CONFIG_COUNT is cleared
-// first: StampEnv numbers its own entry after the caller's, and the count
-// this process happens to carry must not decide what a test expects.
+// first: environment configuration naming entries that are not there is
+// configuration git refuses, and the count this process happens to carry is
+// not one a test means to hand the stamp.
 func newStampRepo(t *testing.T, s Stamp, chainTo string) (dir, hooks string, env []string) {
 	t.Helper()
 	t.Setenv("GIT_CONFIG_COUNT", "")
@@ -46,7 +48,15 @@ func newStampRepo(t *testing.T, s Stamp, chainTo string) (dir, hooks string, env
 	if err := WriteStampHooks(hooks, chainTo); err != nil {
 		t.Fatal("WriteStampHooks:", err)
 	}
-	return dir, hooks, StampEnv(s, hooks)
+	return dir, hooks, StampEnv(s, hooks, nil)
+}
+
+// stampCallerEnv is the environment of a run that carries configuration of its
+// own — the credential helper CredentialVars gives every git call a run makes
+// — which the stamp is added to and must not clobber.
+func stampCallerEnv(t *testing.T) []string {
+	t.Helper()
+	return credEnv(t, "https://git.example.invalid")
 }
 
 // stampGit runs git in dir with env appended to this process's environment —
@@ -124,7 +134,7 @@ func TestStampEnvSetsAuthorOnlyWhenGiven(t *testing.T) {
 	const hookDir = "/hooks"
 	s := runStamp()
 	s.Author = &Person{Name: "person-1", Email: "person-1@example.invalid"}
-	got := stampEnvMap(t, StampEnv(s, hookDir))
+	got := stampEnvMap(t, StampEnv(s, hookDir, nil))
 	if got["GIT_AUTHOR_NAME"] != "person-1" || got["GIT_AUTHOR_EMAIL"] != "person-1@example.invalid" {
 		t.Errorf("author = %q <%q>, want the launcher's", got["GIT_AUTHOR_NAME"], got["GIT_AUTHOR_EMAIL"])
 	}
@@ -142,34 +152,49 @@ func TestStampEnvSetsAuthorOnlyWhenGiven(t *testing.T) {
 		"GIT_CONFIG_KEY_0":   "core.hooksPath",
 		"GIT_CONFIG_VALUE_0": hookDir,
 	}
-	if without := stampEnvMap(t, StampEnv(runStamp(), hookDir)); !maps.Equal(without, want) {
+	if without := stampEnvMap(t, StampEnv(runStamp(), hookDir, nil)); !maps.Equal(without, want) {
 		t.Errorf("StampEnv with no author = %v, want %v", without, want)
 	}
 }
 
 // TestStampEnvAppendsToCallerGitConfig: a caller that already carries
-// GIT_CONFIG_* entries keeps them. StampEnv numbers its own entry after the
-// caller's count and returns the larger count, which is what the caller
-// appends to its own environment; the caller's indexes are never reused. The
-// process environment is where the count is read from, which is why a caller
-// with entries of its own puts them there.
+// GIT_CONFIG_* entries keeps them, whichever environment they live in. The
+// count comes from the env the caller passes and not from this process's
+// environment, where the credential helper is not: CredentialVars puts it in
+// the environment of the git calls a run makes, as an env slice. A count read
+// from the process environment would number the stamp's entry over the
+// helper's first — and git resolves as many entries as the count says, so the
+// helper would be gone and a push would ask for a password.
 func TestStampEnvAppendsToCallerGitConfig(t *testing.T) {
-	t.Setenv("GIT_CONFIG_COUNT", "2")
+	t.Setenv("GIT_CONFIG_COUNT", "")
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "--quiet", "-b", "main", ".")
 	const hookDir = "/hooks"
-	got := stampEnvMap(t, StampEnv(runStamp(), hookDir))
-	want := map[string]string{
+	env := StampEnv(runStamp(), hookDir, stampCallerEnv(t))
+	got := stampEnvMap(t, env)
+	for k, want := range map[string]string{
 		"GIT_CONFIG_COUNT":   "3",
 		"GIT_CONFIG_KEY_2":   "core.hooksPath",
 		"GIT_CONFIG_VALUE_2": hookDir,
-	}
-	for k, v := range want {
-		if got[k] != v {
-			t.Errorf("%s = %q, want %q", k, got[k], v)
+	} {
+		if got[k] != want {
+			t.Errorf("%s = %q, want %q", k, got[k], want)
 		}
 	}
-	for _, k := range []string{"GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0", "GIT_CONFIG_KEY_1", "GIT_CONFIG_VALUE_1"} {
-		if v, ok := got[k]; ok {
-			t.Errorf("StampEnv wrote %s = %q, which is one of the caller's own entries", k, v)
+	// What git makes of the pair, which is the whole question: one resolve,
+	// the caller's configuration and the stamp's.
+	for key, want := range map[string]string{
+		"credential.https://git.example.invalid.helper": credentialHelper,
+		"core.hooksPath": hookDir,
+	} {
+		out, err := stampGit(t, dir, env, "config", "--get", key)
+		if err != nil {
+			t.Errorf("git config --get %s: %v\n%s", key, err, out)
+			continue
+		}
+		if strings.TrimSpace(out) != want {
+			t.Errorf("git config --get %s = %q, want %q", key, strings.TrimSpace(out), want)
 		}
 	}
 }
@@ -185,8 +210,26 @@ func TestStampEnvRefusesNewlineInTrailerValue(t *testing.T) {
 	const hookDir = "/hooks"
 	s := runStamp()
 	s.Trailers = []Trailer{{Key: TrailerModel, Value: "claude-opus-5-5\nSigned-off-by: person-1 <person-1@example.invalid>"}}
-	if got := StampEnv(s, hookDir); got != nil {
-		t.Errorf("StampEnv = %v, want nothing: a value with a newline in it adds trailers of its own", got)
+	caller := stampCallerEnv(t)
+	if got := StampEnv(s, hookDir, caller); !slices.Equal(got, caller) {
+		t.Errorf("StampEnv = %v, want the caller's environment unchanged: a value with a newline in it adds trailers of its own", got)
+	}
+}
+
+// TestStampEnvRefusesACountItCannotRead: the count is what decides where the
+// stamp's entry lands. One that cannot be read — a value that is not a number
+// — would put the entry on top of one of the caller's own, which for the
+// credential helper is a helper that stops answering. The stamp is left
+// unwritten instead.
+func TestStampEnvRefusesACountItCannotRead(t *testing.T) {
+	const hookDir = "/hooks"
+	caller := []string{
+		"GIT_CONFIG_COUNT=two",
+		"GIT_CONFIG_KEY_0=credential.https://git.example.invalid.helper",
+		"GIT_CONFIG_VALUE_0=helper",
+	}
+	if got := StampEnv(runStamp(), hookDir, caller); !slices.Equal(got, caller) {
+		t.Errorf("StampEnv = %v, want the caller's environment unchanged", got)
 	}
 }
 
@@ -207,8 +250,9 @@ func TestStampEnvRefusesAnUnsafeAuthor(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := runStamp()
 			s.Author = &Person{Name: tc.who, Email: tc.email}
-			if got := StampEnv(s, hookDir); got != nil {
-				t.Errorf("StampEnv = %v, want nothing: %q <%q> is not an author git should write", got, tc.who, tc.email)
+			caller := stampCallerEnv(t)
+			if got := StampEnv(s, hookDir, caller); !slices.Equal(got, caller) {
+				t.Errorf("StampEnv = %v, want the caller's environment unchanged: %q <%q> is not an author git should write", got, tc.who, tc.email)
 			}
 		})
 	}
@@ -221,8 +265,9 @@ func TestStampEnvRefusesAnUnknownTrailerKey(t *testing.T) {
 	const hookDir = "/hooks"
 	s := runStamp()
 	s.Trailers = append(s.Trailers, Trailer{Key: "Fugaro-Job", Value: "job-1"})
-	if got := StampEnv(s, hookDir); got != nil {
-		t.Errorf("StampEnv = %v, want nothing: Fugaro-Job is not a trailer the hook writes", got)
+	caller := stampCallerEnv(t)
+	if got := StampEnv(s, hookDir, caller); !slices.Equal(got, caller) {
+		t.Errorf("StampEnv = %v, want the caller's environment unchanged: Fugaro-Job is not a trailer the hook writes", got)
 	}
 }
 
@@ -265,6 +310,78 @@ func TestStampHookReplacesCaseFoldedFugaroTrailers(t *testing.T) {
 	}
 }
 
+// TestStampHookReplacesEveryTrailerInTheMessage: a Fugaro-* key is replaced,
+// never duplicated, and a line carrying one is one wherever it sits in the
+// message. interpret-trailers reads the trailer block and nothing else, so a
+// message that carries the trailers of more than one commit — a squash writes
+// each of them into the body — keeps the stale ones beside the one this
+// commit's run writes unless the hook takes them out itself.
+func TestStampHookReplacesEveryTrailerInTheMessage(t *testing.T) {
+	dir, _, env := newStampRepo(t, runStamp(), "")
+	msg := commitStamp(t, dir, env, strings.Join([]string{
+		"first subject\n",
+		"first body\n",
+		"Fugaro-Run: earlier-run",
+		"Fugaro-Rigor: earlier-rigor",
+		"fugaro-model: earlier-model\n",
+		"second subject\n",
+		"second body\n",
+		"Fugaro-Run: earlier-run",
+		"Fugaro-Rigor: earlier-rigor",
+		"Fugaro-Model: earlier-model",
+		"fugaro-run: another-earlier-run\n",
+	}, "\n"))
+	got := trailersOf(msg)
+	for key, want := range map[string][]string{
+		"fugaro-run":   {"run-1"},
+		"fugaro-rigor": {"standard"},
+		"fugaro-model": {"claude-opus-5-5"},
+	} {
+		if !slices.Equal(got[key], want) {
+			t.Errorf("%s = %v, want %v once:\n%s", key, got[key], want, msg)
+		}
+	}
+	for _, stale := range []string{"earlier-run", "earlier-rigor", "earlier-model"} {
+		if strings.Contains(msg, stale) {
+			t.Errorf("the message still carries %s:\n%s", stale, msg)
+		}
+	}
+}
+
+// TestStampHookSquashedCommitKeepsOneTrailer: the same requirement where git
+// writes the message itself. An interactive rebase that squashes makes one
+// commit out of several and copies the message of each into it — trailers and
+// all — and the commit that comes out is stamped once, with the bodies of the
+// commits it was made of still there.
+func TestStampHookSquashedCommitKeepsOneTrailer(t *testing.T) {
+	dir, _, env := newStampRepo(t, runStamp(), "")
+	testutil.WriteFiles(t, dir, map[string]string{"a.txt": "one\n"})
+	testutil.Git(t, dir, "add", "-A")
+	commitStamp(t, dir, env, "first subject\n\nfirst body\n")
+	testutil.WriteFiles(t, dir, map[string]string{"b.txt": "two\n"})
+	testutil.Git(t, dir, "add", "-A")
+	commitStamp(t, dir, env, "second subject\n\nsecond body\n")
+
+	env = append(env, "GIT_SEQUENCE_EDITOR=sed -i '2s/^pick/squash/'", "GIT_EDITOR=true")
+	if out, err := stampGit(t, dir, env, "rebase", "-i", "--root"); err != nil {
+		t.Fatalf("git rebase -i --root: %v\n%s", err, out)
+	}
+	msg := testutil.Git(t, dir, "log", "-1", "--format=%B")
+	if !strings.Contains(msg, "first subject") || !strings.Contains(msg, "second subject") {
+		t.Errorf("the squash did not combine both messages:\n%s", msg)
+	}
+	got := trailersOf(msg)
+	for key, want := range map[string][]string{
+		"fugaro-run":   {"run-1"},
+		"fugaro-rigor": {"standard"},
+		"fugaro-model": {"claude-opus-5-5"},
+	} {
+		if !slices.Equal(got[key], want) {
+			t.Errorf("%s = %v, want %v once after the squash:\n%s", key, got[key], want, msg)
+		}
+	}
+}
+
 // TestStampHookNeverAddsSignedOffBy: Fugaro never writes a Signed-off-by
 // (R1), and it never removes one either (D644) — one the message carries may
 // be a real person's, brought in by a cherry-pick.
@@ -287,8 +404,8 @@ func TestStampHookNeverAddsSignedOffBy(t *testing.T) {
 func TestStampHookOmitsEmptyModel(t *testing.T) {
 	t.Setenv("GIT_CONFIG_COUNT", "")
 	dir, hooks, _ := newStampRepo(t, runStamp(), "")
-	env := append(StampEnv(runStamp(), hooks), "FUGARO_STAMP_MODEL=")
-	if got := stampEnvMap(t, StampEnv(Stamp{Trailers: []Trailer{{Key: TrailerModel}}}, hooks)); got["FUGARO_STAMP_MODEL"] != "" {
+	env := append(StampEnv(runStamp(), hooks, nil), "FUGARO_STAMP_MODEL=")
+	if got := stampEnvMap(t, StampEnv(Stamp{Trailers: []Trailer{{Key: TrailerModel}}}, hooks, nil)); got["FUGARO_STAMP_MODEL"] != "" {
 		t.Errorf("StampEnv set FUGARO_STAMP_MODEL = %q for an empty value, want it left out", got["FUGARO_STAMP_MODEL"])
 	}
 	msg := commitStamp(t, dir, env, "subject\n")
@@ -328,7 +445,7 @@ func TestStampHookChainsToRepositoryHooks(t *testing.T) {
 	names := []string{"pre-commit", "prepare-commit-msg", "commit-msg", "post-commit"}
 	files := map[string]string{}
 	for _, name := range names {
-		files[name] = "#!/bin/sh\nprintf 'hook %s %s\\n' " + name + " \"$*\" >> " + shQuote(marker) + "\n"
+		files[name] = "#!/bin/sh\nprintf 'hook %s %s\\n' " + name + " \"$*\" >> " + shellword.Quote(marker) + "\n"
 	}
 	testutil.WriteFiles(t, repoHooks, files)
 
@@ -336,7 +453,7 @@ func TestStampHookChainsToRepositoryHooks(t *testing.T) {
 	if err := WriteStampHooks(hooks, repoHooks); err != nil {
 		t.Fatal("WriteStampHooks:", err)
 	}
-	env := StampEnv(runStamp(), hooks)
+	env := StampEnv(runStamp(), hooks, nil)
 	msg := commitStamp(t, dir, env, "subject\n")
 	if want := []string{"run-1"}; !slices.Equal(trailersOf(msg)["fugaro-run"], want) {
 		t.Errorf("fugaro-run = %v, want %v: the stamp did not run", trailersOf(msg)["fugaro-run"], want)
@@ -360,6 +477,56 @@ func TestStampHookChainsToRepositoryHooks(t *testing.T) {
 	}
 }
 
+// TestStampHookChainsToDefaultHooksWhenNoneIsNamed: the caller names no hook
+// directory — the common case, a repository that configured no core.hooksPath
+// — and the repository's hooks in git's default $GIT_DIR/hooks still run. The
+// environment configuration pointing core.hooksPath at the stamp directory
+// outranks that default, so without this a repository whose hooks live there
+// would have them stop running, silently (constraint 2).
+func TestStampHookChainsToDefaultHooksWhenNoneIsNamed(t *testing.T) {
+	t.Setenv("GIT_CONFIG_COUNT", "")
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "--quiet", "-b", "main", ".")
+	marker := filepath.Join(t.TempDir(), "ran")
+	testutil.WriteFiles(t, filepath.Join(dir, ".git", "hooks"), map[string]string{
+		"pre-commit":         "#!/bin/sh\nprintf 'pre-commit\\n' >> " + shellword.Quote(marker) + "\n",
+		"prepare-commit-msg": "#!/bin/sh\nprintf 'prepare-commit-msg\\n' >> " + shellword.Quote(marker) + "\n",
+	})
+
+	hooks := filepath.Join(t.TempDir(), "stamp-hooks")
+	if err := WriteStampHooks(hooks, ""); err != nil {
+		t.Fatal("WriteStampHooks:", err)
+	}
+	msg := commitStamp(t, dir, StampEnv(runStamp(), hooks, nil), "subject\n")
+	if want := []string{"run-1"}; !slices.Equal(trailersOf(msg)["fugaro-run"], want) {
+		t.Errorf("fugaro-run = %v, want %v: the stamp did not run", trailersOf(msg)["fugaro-run"], want)
+	}
+	ran, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("no repository hook in $GIT_DIR/hooks ran: %v", err)
+	}
+	for _, name := range []string{"pre-commit", "prepare-commit-msg"} {
+		if !strings.Contains(string(ran), name+"\n") {
+			t.Errorf("%s did not run; the hooks that did:\n%s", name, ran)
+		}
+	}
+}
+
+// TestStampHookDoesNotChainToItself: a repository whose own configuration
+// points core.hooksPath at the stamp directory — .git/config is a file a run's
+// agent can write — would have every hook exec itself, which is a commit that
+// never returns. The chain is not taken when it resolves to the script that is
+// already running, and the commit is made and stamped.
+func TestStampHookDoesNotChainToItself(t *testing.T) {
+	dir, hooks, env := newStampRepo(t, runStamp(), "")
+	testutil.Git(t, dir, "config", "core.hooksPath", hooks)
+	msg := commitStamp(t, dir, env, "subject\n")
+	if want := []string{"run-1"}; !slices.Equal(trailersOf(msg)["fugaro-run"], want) {
+		t.Errorf("fugaro-run = %v, want %v once", trailersOf(msg)["fugaro-run"], want)
+	}
+}
+
 // TestStampHookChainsToAQuotedDirectory: the hook directory a repository
 // configured reaches the pass-through through its text, and a run's agent can
 // write that configuration — so it is one quoted shell word and not something
@@ -373,14 +540,14 @@ func TestStampHookChainsToAQuotedDirectory(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "ran")
 	repoHooks := filepath.Join(t.TempDir(), "the repo's hooks")
 	testutil.WriteFiles(t, repoHooks, map[string]string{
-		"prepare-commit-msg": "#!/bin/sh\nprintf '%s\\n' ran >> " + shQuote(marker) + "\n",
+		"prepare-commit-msg": "#!/bin/sh\nprintf '%s\\n' ran >> " + shellword.Quote(marker) + "\n",
 	})
 
 	hooks := filepath.Join(t.TempDir(), "stamp-hooks")
 	if err := WriteStampHooks(hooks, repoHooks); err != nil {
 		t.Fatal("WriteStampHooks:", err)
 	}
-	msg := commitStamp(t, dir, StampEnv(runStamp(), hooks), "subject\n")
+	msg := commitStamp(t, dir, StampEnv(runStamp(), hooks, nil), "subject\n")
 	if want := []string{"run-1"}; !slices.Equal(trailersOf(msg)["fugaro-run"], want) {
 		t.Errorf("fugaro-run = %v, want %v", trailersOf(msg)["fugaro-run"], want)
 	}
@@ -424,12 +591,36 @@ func TestWriteStampHooksInstallsEveryHook(t *testing.T) {
 		if strings.Contains(string(body), "@FUGARO_CHAIN@") {
 			t.Errorf("%s still carries the chain placeholder:\n%s", name, body)
 		}
-		if !strings.Contains(string(body), shQuote(chain)) {
+		if !strings.Contains(string(body), shellword.Quote(chain)) {
 			t.Errorf("%s does not name the hook directory it chains to:\n%s", name, body)
 		}
 		if stamps := strings.Contains(string(body), "interpret-trailers"); stamps != (name == stampHookName) {
 			t.Errorf("%s stamps = %v, want %v", name, stamps, name == stampHookName)
 		}
+	}
+}
+
+// TestWriteStampHooksRefusesItsOwnDirectory: a chain directory that is the
+// stamp directory itself makes every hook exec itself, and a commit that never
+// comes back. It is refused rather than written, and it is not a state a
+// caller has to invent: reading the repository's core.hooksPath with the
+// stamp's environment in place reads the stamp directory, because the stamp's
+// own entry is one.
+func TestWriteStampHooksRefusesItsOwnDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "stamp-hooks")
+	for _, tc := range []struct{ name, chainTo string }{
+		{"the directory", dir},
+		{"a trailing separator", dir + string(filepath.Separator)},
+		{"a path that cleans to it", filepath.Join(dir, "..", filepath.Base(dir))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := WriteStampHooks(dir, tc.chainTo); err == nil {
+				t.Errorf("WriteStampHooks(%q, %q) = nil, want an error: the chain would exec the stamp itself", dir, tc.chainTo)
+			}
+			if _, err := os.Stat(filepath.Join(dir, stampHookName)); err == nil {
+				t.Error("the hooks were written anyway")
+			}
+		})
 	}
 }
 
@@ -468,7 +659,8 @@ func TestStampHookIgnoresRepositoryTrailerConfig(t *testing.T) {
 // is environment configuration, which outranks the repository's own file
 // (git-config(1)). A repository whose .git/config points core.hooksPath
 // somewhere of its own — or an agent that writes one — cannot make the stamp
-// not run.
+// not run, and the hooks it points at still run: the stamp is added to the
+// repository's hooks and does not replace them.
 func TestStampEnvOutranksRepositoryHooksPath(t *testing.T) {
 	t.Setenv("GIT_CONFIG_COUNT", "")
 	testutil.IsolateGit(t)
@@ -477,7 +669,7 @@ func TestStampEnvOutranksRepositoryHooksPath(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "ran")
 	repoHooks := t.TempDir()
 	testutil.WriteFiles(t, repoHooks, map[string]string{
-		"prepare-commit-msg": "#!/bin/sh\nprintf '%s\\n' repo-hook >> " + shQuote(marker) + "\n",
+		"prepare-commit-msg": "#!/bin/sh\nprintf '%s\\n' repo-hook >> " + shellword.Quote(marker) + "\n",
 	})
 	testutil.Git(t, dir, "config", "core.hooksPath", repoHooks)
 
@@ -485,11 +677,11 @@ func TestStampEnvOutranksRepositoryHooksPath(t *testing.T) {
 	if err := WriteStampHooks(hooks, ""); err != nil {
 		t.Fatal("WriteStampHooks:", err)
 	}
-	msg := commitStamp(t, dir, StampEnv(runStamp(), hooks), "subject\n")
+	msg := commitStamp(t, dir, StampEnv(runStamp(), hooks, nil), "subject\n")
 	if want := []string{"run-1"}; !slices.Equal(trailersOf(msg)["fugaro-run"], want) {
 		t.Errorf("fugaro-run = %v, want %v: the repository's core.hooksPath won", trailersOf(msg)["fugaro-run"], want)
 	}
-	if _, err := os.Stat(marker); err == nil {
-		t.Error("the repository's own hook directory ran, so the environment configuration did not outrank it")
+	if ran, err := os.ReadFile(marker); err != nil || string(ran) != "repo-hook\n" {
+		t.Errorf("the repository's own hook directory ran %q, %v, want it once: the stamp's core.hooksPath outranks the repository's, and the hooks it names are chained to", ran, err)
 	}
 }

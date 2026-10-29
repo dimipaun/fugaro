@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/shellword"
 )
 
 // The trailers a run stamps on the commits it makes (D601). Fugaro-Model
@@ -56,61 +57,80 @@ type Stamp struct {
 	Trailers []Trailer
 }
 
-// StampEnv returns the entries a commit made by a run is made under: the
-// author the launcher named (GIT_AUTHOR_NAME and GIT_AUTHOR_EMAIL only — the
-// committer stays the identity `main` resolves for the run, D645), the trailer
-// values, and the environment configuration that points core.hooksPath at
-// hookDir, where WriteStampHooks wrote the hook that reads them.
+// StampEnv returns env with the entries added that a commit made by a run is
+// made under: the author the launcher named (GIT_AUTHOR_NAME and
+// GIT_AUTHOR_EMAIL only — the committer stays the identity `main` resolves for
+// the run, D645), the trailer values, and the environment configuration that
+// points core.hooksPath at hookDir, where WriteStampHooks wrote the hook that
+// reads them.
 //
 // Environment configuration outranks the repository's own .git/config
 // (git-config(1)), which is why core.hooksPath travels here and not in a file:
 // the repository's config is one the run's agent can write, and it would
 // otherwise decide whether commits are stamped at all.
 //
-// The count is read from the process environment, which is where a caller's
-// own GIT_CONFIG_* entries belong: this sets its entry at that index and
-// returns the larger count, and the caller appends the result to its
-// environment — the later count wins and the caller's indexes are left alone.
-// A caller that keeps its entries anywhere else has them clobbered.
+// The count is the caller's, read from the env passed in: the entry here is
+// numbered after the caller's own GIT_CONFIG_* entries and the count returned
+// is the larger one, so a caller that carries entries of its own keeps every
+// one of them. CredentialVars' credential helper is exactly that — two entries
+// in the environment of the git calls a run makes — and a count read from this
+// process's environment instead would number the stamp's entry over the
+// helper's first and leave git reading the caller's count: a credential helper
+// silently gone, and a push that asks for a password.
 //
 // A stamp that cannot be written safely — a value or a name carrying a control
-// character, a key the hook does not know, no hook directory — yields nothing
-// at all rather than part of one: the run's commits then carry the run's own
-// identity and no trailers, which is the state finalize counts (D603).
-func StampEnv(s Stamp, hookDir string) []string {
-	var env []string
+// character, a key the hook does not know, no hook directory, a count that
+// cannot be read — leaves env as it was rather than adding part of one: the
+// run's commits then carry the run's own identity and no trailers, which is
+// the state finalize counts (D603).
+func StampEnv(s Stamp, hookDir string, env []string) []string {
+	vars := map[string]string{}
 	if s.Author != nil {
 		if !stampField(s.Author.Name) || !stampField(s.Author.Email) {
-			return nil
+			return env
 		}
-		env = append(env, "GIT_AUTHOR_NAME="+s.Author.Name, "GIT_AUTHOR_EMAIL="+s.Author.Email)
+		vars["GIT_AUTHOR_NAME"] = s.Author.Name
+		vars["GIT_AUTHOR_EMAIL"] = s.Author.Email
 	}
 	for _, t := range s.Trailers {
 		name, known := stampVars[t.Key]
 		if !known {
-			return nil
+			return env
 		}
 		if t.Value == "" {
 			continue
 		}
 		if !stampValue(t.Value) {
-			return nil
+			return env
 		}
-		env = append(env, name+"="+t.Value)
+		vars[name] = t.Value
 	}
 	if !stampValue(hookDir) {
-		return nil
+		return env
 	}
+	// The first GIT_CONFIG_COUNT entry is the one git reads, and one this
+	// cannot read is a count whose entries would be numbered over.
 	count := 0
-	if n, err := strconv.Atoi(os.Getenv("GIT_CONFIG_COUNT")); err == nil && n > 0 {
+	for _, kv := range env {
+		key, value, _ := strings.Cut(kv, "=")
+		if key != "GIT_CONFIG_COUNT" {
+			continue
+		}
+		if value == "" {
+			break
+		}
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 {
+			return env
+		}
 		count = n
+		break
 	}
 	index := strconv.Itoa(count)
-	return append(env,
-		"GIT_CONFIG_COUNT="+strconv.Itoa(count+1),
-		"GIT_CONFIG_KEY_"+index+"=core.hooksPath",
-		"GIT_CONFIG_VALUE_"+index+"="+hookDir,
-	)
+	vars["GIT_CONFIG_COUNT"] = strconv.Itoa(count + 1)
+	vars["GIT_CONFIG_KEY_"+index] = "core.hooksPath"
+	vars["GIT_CONFIG_VALUE_"+index] = hookDir
+	return WithVars(env, vars)
 }
 
 // stampField reports whether v can be written as one of git's identity fields.
@@ -168,8 +188,16 @@ const chainHook = `#!/bin/sh
 # pointing core.hooksPath at the stamp hook directory would otherwise silence
 # the repository's own %[1]s (constraint 2).
 fugaro_chain='@FUGARO_CHAIN@'
-if [ -x "$fugaro_chain/%[1]s" ]; then
-	exec "$fugaro_chain/%[1]s" "$@"
+if [ -z "$fugaro_chain" ]; then
+	fugaro_chain=$(unset GIT_CONFIG_COUNT; git rev-parse --git-path hooks) || fugaro_chain=''
+fi
+fugaro_next="$fugaro_chain/%[1]s"
+# A chain that is this script — a repository whose own configuration points
+# core.hooksPath here — would exec itself, for ever. The two are compared by
+# what they hold and not by how they are spelled, which is the one thing a
+# shell without -ef can say about it.
+if [ -n "$fugaro_chain" ] && [ -x "$fugaro_next" ] && ! cmp -s "$fugaro_next" "$0"; then
+	exec "$fugaro_next" "$@"
 fi
 `
 
@@ -177,19 +205,46 @@ fi
 // creates dir if it is not there. prepare-commit-msg stamps the commit being
 // made from the environment StampEnv carries; every other client-side hook
 // name is a pass-through to chainTo, the hook directory the repository
-// configured, which is empty for a repository that configured none.
+// configured.
+//
+// chainTo is the empty string for a repository that configured none, and the
+// hooks then look the repository's own directory up at the commit themselves:
+// it is the one core.hooksPath resolves to with the stamp's own entry out of
+// the way, which is git's default of $GIT_DIR/hooks when the repository
+// configured nothing. That default is the point — the environment
+// configuration pointing core.hooksPath at dir outranks it, so a hook of the
+// repository's in $GIT_DIR/hooks stops running without this, silently
+// (constraint 2).
+//
+// A chainTo that is dir is refused: every hook would exec itself. It is not
+// hypothetical, because a caller that reads the repository's core.hooksPath
+// with the stamp's environment in place reads the stamp directory — the
+// stamp's own entry is a core.hooksPath setting.
 //
 // The mode is not a detail: git ignores a hook that is not executable, with a
 // warning and no failure, and a stamp that silently does not run is worse than
 // one that does not exist.
 func WriteStampHooks(dir, chainTo string) error {
-	if chainTo != "" && !stampValue(chainTo) {
-		return fmt.Errorf("hook chain directory %s carries a control character", safetext.Field(chainTo))
-	}
-	chain := "''"
 	if chainTo != "" {
-		chain = shQuote(chainTo)
+		if !stampValue(chainTo) {
+			return fmt.Errorf("hook chain directory %s carries a control character", safetext.Field(chainTo))
+		}
+		chainAbs, err := filepath.Abs(chainTo)
+		if err != nil {
+			chainAbs = filepath.Clean(chainTo)
+		}
+		dirAbs, err := filepath.Abs(dir)
+		if err != nil {
+			dirAbs = filepath.Clean(dir)
+		}
+		if chainAbs == dirAbs {
+			return fmt.Errorf("hook chain directory %s is the hook directory: every hook would exec itself", safetext.Field(chainTo))
+		}
 	}
+	// A directory reaches a hook through its text, and what names it is the
+	// repository's own configuration, which a run's agent can write: one
+	// shell word, quoted, and never eval'd.
+	chain := shellword.Quote(chainTo)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -204,12 +259,4 @@ func WriteStampHooks(dir, chainTo string) error {
 		}
 	}
 	return nil
-}
-
-// shQuote returns s as one POSIX shell word. A hook is a script and not a
-// command line, so a directory that reaches one through its text — the chain
-// directory comes from the repository's own configuration, which a run's agent
-// can write — is quoted rather than trusted; nothing here is ever eval'd.
-func shQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
