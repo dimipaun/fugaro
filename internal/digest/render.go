@@ -14,6 +14,10 @@ import (
 // (G3) -- the same digest gives byte-identical bytes -- and it renders what
 // Build put in d and nothing else, so a report carries no person and no text
 // a record wrote (G1).
+//
+// The one thing not of d's own fields is the tail a registered extra-section
+// hook returns (section 5.4): a build that registered none, which every core
+// build is, prints the report above and nothing more.
 func Markdown(d Digest) []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Run digest: %s\n\n", d.Period.Key)
@@ -49,6 +53,11 @@ func Markdown(d Digest) []byte {
 	block, _ := json.Marshal(d.Summary())
 	b.Write(block)
 	b.WriteString("\n```\n")
+
+	// A build that registered the extra-section hook prints its sections
+	// after the machine-readable block; a build that registered none prints
+	// nothing here and the bytes above are the whole report (section 5.4).
+	b.WriteString(sectionsMarkdown(d))
 	return []byte(b.String())
 }
 
