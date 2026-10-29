@@ -154,7 +154,7 @@ func newPaidStub(name string) *cobra.Command {
 		Use:                name,
 		DisableFlagParsing: true,
 		RunE: func(*cobra.Command, []string) error {
-			return userErr("%s is part of Fugaro Enterprise; this build does not include it", name)
+			return userErr("%s is part of Fugaro Subscription Edition; this build does not include it", name)
 		},
 	}
 }
