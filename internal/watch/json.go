@@ -3,6 +3,7 @@ package watch
 import (
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -28,9 +29,15 @@ type JSONConn struct {
 }
 
 type JSONTotal struct {
-	CountedUSD  float64   `json:"counted_usd"`
-	SpentUSD    float64   `json:"spent_usd"`
-	NotionalUSD float64   `json:"notional_usd"` // subscription list price: never billed, never capped
+	CountedUSD  float64 `json:"counted_usd"`
+	SpentUSD    float64 `json:"spent_usd"`
+	NotionalUSD float64 `json:"notional_usd"` // subscription list price: never billed, never capped
+	// LeasedUSD is counted minus spent, never negative: the money open leases
+	// hold and have not yet spent. It is always present, 0 when nothing is
+	// leased, and it is *leased, not yet spent* rather than "live leases" --
+	// the sweeper never releases (internal/budget/sweep.go), so a crashed
+	// run's lease stays in the figure for the rest of the (UTC) day.
+	LeasedUSD   float64   `json:"leased_usd"`
 	DailyCapUSD *float64  `json:"daily_cap_usd"`
 	Percent     *float64  `json:"percent"`
 	Burn        JSONBurn  `json:"burn"`
@@ -45,6 +52,7 @@ type JSONRepo struct {
 	CountedUSD  float64   `json:"counted_usd"`
 	SpentUSD    float64   `json:"spent_usd"`
 	NotionalUSD float64   `json:"notional_usd"`
+	LeasedUSD   float64   `json:"leased_usd"` // counted - spent, floored at 0: see JSONTotal
 	DailyCapUSD *float64  `json:"daily_cap_usd"`
 	Percent     *float64  `json:"percent"`
 	Burn        JSONBurn  `json:"burn"`
@@ -210,6 +218,21 @@ func jsonFinished(slug, repo string, r RunRow) JSONFinished {
 		LaunchedBy: r.LaunchedBy, PlanTask: r.PlanTask}
 }
 
+// LeasedUSD is the outstanding leased dollars: counted minus spent, floored at
+// zero. A lease grant raises counted by the reserved amount and the gateway
+// moves settled spend into spent (internal/budget/lease.go), so the difference
+// is what open leases hold and have not yet spent. It is floored rather than
+// trusted because counted below spent is a state no normal write makes, and a
+// negative figure would read as a credit.
+//
+// Exported because both documents that carry the figure compute it from the
+// two counters they already hold -- this file's JSONTotal/JSONRepo and `budget
+// show --json`'s (internal/cli/budget.go) -- and one implementation is what
+// keeps the two from disagreeing.
+func LeasedUSD(counted, spent budget.Micros) float64 {
+	return max(counted-spent, 0).USD()
+}
+
 func usdPtr(b Bar) (cap, pct *float64) {
 	if !b.Has {
 		return nil, nil
@@ -242,11 +265,13 @@ func BuildJSON(project string, v View) JSONDoc {
 		Repos:      []JSONRepo{}, Runs: []JSONRun{}, Finished: []JSONFinished{}, Ready: []JSONFinished{}, QueuedNote: v.QueuedNote}
 	p := v.Project
 	d.Total = JSONTotal{CountedUSD: p.Counted.USD(), SpentUSD: p.Spent.USD(), NotionalUSD: p.Notional.USD(),
-		Burn: jsonBurn(p.Burn), Kill: jsonKill(p.Kill), Runs: p.Runs, RunHours: p.RunHours}
+		LeasedUSD: LeasedUSD(p.Counted, p.Spent),
+		Burn:      jsonBurn(p.Burn), Kill: jsonKill(p.Kill), Runs: p.Runs, RunHours: p.RunHours}
 	d.Total.DailyCapUSD, d.Total.Percent = usdPtr(p.Bar)
 	for _, r := range v.Repos {
 		jr := JSONRepo{Slug: safetext.Strip(r.Slug), Repo: r.Name, CountedUSD: r.Counted.USD(), SpentUSD: r.Spent.USD(),
-			NotionalUSD: r.Notional.USD(), Burn: jsonBurn(r.Burn), Kill: jsonKill(r.Kill)}
+			NotionalUSD: r.Notional.USD(), LeasedUSD: LeasedUSD(r.Counted, r.Spent),
+			Burn: jsonBurn(r.Burn), Kill: jsonKill(r.Kill)}
 		jr.DailyCapUSD, jr.Percent = usdPtr(r.Bar)
 		d.Repos = append(d.Repos, jr)
 		for _, run := range r.Runs {
