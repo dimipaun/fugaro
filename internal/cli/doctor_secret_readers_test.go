@@ -127,6 +127,23 @@ func readerWarningSaying(o doctorOutput, want string) bool {
 	return false
 }
 
+// readerWarningAbout is the sweep's one warning naming want, for a test that
+// has to read a finding rather than only its presence: two containers can be
+// flagged in one run, and the fix is per container.
+func readerWarningAbout(t *testing.T, o doctorOutput, want string) doctorCheck {
+	t.Helper()
+	var got []doctorCheck
+	for _, c := range readerWarnings(o) {
+		if strings.Contains(c.Problem, want) {
+			got = append(got, c)
+		}
+	}
+	if len(got) != 1 {
+		t.Fatalf("the sweep raised %d warnings naming %q, want exactly one: %+v", len(got), want, o.Checks)
+	}
+	return got[0]
+}
+
 // TestDoctorSecretReadersAcceptsFugaroAccounts: the sweep exists to name a
 // member Fugaro did not create, so every class it does create is silent — the
 // job account of a repository the local config lists, and a managed account on
@@ -160,7 +177,8 @@ func TestDoctorSecretReadersAcceptsFugaroAccounts(t *testing.T) {
 // predefined Secret Manager role and a custom role whose permissions list
 // secretmanager.versions.access are both readers; a custom role listing only
 // the metadata permission is not, and neither is the same grant to an account
-// Fugaro creates.
+// Fugaro creates. A person or a group holding the role is a reader too, and
+// the test for that is of its own: this one keeps the account question.
 func TestDoctorSecretReadersFlagsProjectLevelAccess(t *testing.T) {
 	r := newSecretReadersRig(t)
 	r.iam.AddRole("proj-1234", "secret-rotator", "Secret rotator", false)
@@ -171,7 +189,7 @@ func TestDoctorSecretReadersFlagsProjectLevelAccess(t *testing.T) {
 	r.crm.SetPolicy("proj-1234",
 		gcpfake.Binding{Role: "roles/owner", Members: []string{"user:owner@example.com"}},
 		gcpfake.Binding{Role: gcp.SecretAccessorRole, Members: []string{
-			"serviceAccount:stray@project-a.iam.gserviceaccount.com", ours, "user:person-2@example.com"}},
+			"serviceAccount:stray@project-a.iam.gserviceaccount.com", ours}},
 		gcpfake.Binding{Role: "roles/secretmanager.admin", Members: []string{"serviceAccount:admin@project-b.iam.gserviceaccount.com"}},
 		gcpfake.Binding{Role: "projects/proj-1234/roles/secret-rotator", Members: []string{"serviceAccount:rotator@project-c.iam.gserviceaccount.com"}},
 		gcpfake.Binding{Role: "projects/proj-1234/roles/secret-lister", Members: []string{"serviceAccount:lister@project-d.iam.gserviceaccount.com"}})
@@ -193,10 +211,133 @@ func TestDoctorSecretReadersFlagsProjectLevelAccess(t *testing.T) {
 			t.Errorf("problem %q lacks %q", c.Problem, want)
 		}
 	}
-	for _, unwanted := range []string{ours, "lister@project-d", "person-2"} {
+	for _, unwanted := range []string{ours, "lister@project-d"} {
 		if strings.Contains(c.Problem, unwanted) {
 			t.Errorf("problem %q names %q, which is not a project-level reader", c.Problem, unwanted)
 		}
+	}
+}
+
+// TestDoctorSecretReadersFlagsProjectLevelReadersWhoAreNotServiceAccounts: a
+// project-level grant is every container at once whoever holds it, so a person
+// or a group holding a role that reads values is named beside the service
+// accounts — a person is not a Fugaro runtime, and the sweep says who can read
+// rather than who is an account. The Owners are the one exception, because
+// F3's own line names them once and a holder of roles/owner is on it whatever
+// else the policy binds (the owner's ruling, 2026-10-29).
+func TestDoctorSecretReadersFlagsProjectLevelReadersWhoAreNotServiceAccounts(t *testing.T) {
+	r := newSecretReadersRig(t)
+	r.crm.SetPolicy("proj-1234",
+		gcpfake.Binding{Role: "roles/owner", Members: []string{"user:owner@example.com"}},
+		gcpfake.Binding{Role: gcp.SecretAccessorRole, Members: []string{"user:person-2@example.com"}},
+		gcpfake.Binding{Role: "roles/secretmanager.admin", Members: []string{"group:rotators@example.com"}})
+
+	o, err := r.doctor(t)
+	if err != nil {
+		t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+	}
+	c := readerWarningAbout(t, o, "user:person-2@example.com")
+	for _, want := range []string{
+		"user:person-2@example.com (" + gcp.SecretAccessorRole + ")",
+		"group:rotators@example.com (roles/secretmanager.admin)",
+	} {
+		if !strings.Contains(c.Problem, want) {
+			t.Errorf("problem %q lacks %q", c.Problem, want)
+		}
+	}
+	if strings.Contains(c.Problem, "owner@example.com") {
+		t.Errorf("problem %q names an Owner on the project-level warning, and F3 reports the Owners once as information", c.Problem)
+	}
+	if in := readerInfo(o); len(in) != 1 || !strings.Contains(in[0].Problem, "user:owner@example.com") {
+		t.Errorf("the owner line = %+v, want the one line naming user:owner@example.com", in)
+	}
+}
+
+// TestDoctorSecretReadersAdvisesReviewForAContainerFugaroDidNotCreate: the
+// sweep reads every container of the project, and one Fugaro did not create
+// may belong to another application — its readers may be that application's
+// own, so the line asks for a review rather than advising a removal Fugaro has
+// no business making. A container Fugaro created keeps the removal advice and
+// the gcloud line that carries it (the owner's ruling, 2026-10-29).
+func TestDoctorSecretReadersAdvisesReviewForAContainerFugaroDidNotCreate(t *testing.T) {
+	r := newSecretReadersRig(t)
+	const foreign = "another-app-secret"
+	r.sm.Seed(foreign, nil, []byte("foreign-value"))
+	r.sm.SetPolicy(foreign, []gcpfake.Binding{{Role: gcp.SecretAccessorRole, Members: []string{"user:person-7@example.com"}}})
+	r.sm.SetPolicy(r.secretID, []gcpfake.Binding{{Role: gcp.SecretAccessorRole, Members: []string{"user:person-8@example.com"}}})
+
+	o, err := r.doctor(t)
+	if err != nil {
+		t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+	}
+	ours := readerWarningAbout(t, o, "user:person-8@example.com")
+	if ours.Severity != "warning" {
+		t.Errorf("a reader on a container Fugaro created is a %s, want a warning: %+v", ours.Severity, ours)
+	}
+	if !strings.Contains(ours.Fix, "remove-iam-policy-binding") {
+		t.Errorf("the fix for a container Fugaro created does not say how to remove the grant: %q", ours.Fix)
+	}
+	theirs := readerWarningAbout(t, o, "user:person-7@example.com")
+	if !strings.Contains(theirs.Problem, foreign) {
+		t.Errorf("problem %q does not name the container by its id: a container with no Fugaro label has no logical name", theirs.Problem)
+	}
+	if !strings.Contains(theirs.Fix, "review") {
+		t.Errorf("the fix for a container Fugaro did not create does not ask for a review: %q", theirs.Fix)
+	}
+	if strings.Contains(theirs.Fix, "remove-iam-policy-binding") {
+		t.Errorf("the fix for a container Fugaro did not create advises a removal: %q", theirs.Fix)
+	}
+}
+
+// TestDoctorSecretReadersFlagsEveryRoleThatReadsAContainer: a container's
+// readers are the members of every role that carries
+// secretmanager.versions.access — the Secret Manager accessor Fugaro grants,
+// roles/secretmanager.admin, and a custom role whose own definition lists it —
+// and not the members of a role carrying the metadata permission alone.
+func TestDoctorSecretReadersFlagsEveryRoleThatReadsAContainer(t *testing.T) {
+	r := newSecretReadersRig(t)
+	r.iam.AddRole("proj-1234", "secret-rotator", "Secret rotator", false)
+	r.iam.SetRolePermissions("projects/proj-1234/roles/secret-rotator", versionsAccess)
+	r.iam.AddRole("proj-1234", "secret-lister", "Secret lister", false)
+	r.iam.SetRolePermissions("projects/proj-1234/roles/secret-lister", "secretmanager.versions.list")
+	r.sm.SetPolicy(r.secretID, []gcpfake.Binding{
+		{Role: gcp.SecretAccessorRole, Members: []string{"user:person-1@example.com"}},
+		{Role: "roles/secretmanager.admin", Members: []string{"user:person-2@example.com"}},
+		{Role: "projects/proj-1234/roles/secret-rotator", Members: []string{"user:person-3@example.com"}},
+		{Role: "projects/proj-1234/roles/secret-lister", Members: []string{"user:person-4@example.com"}},
+	})
+
+	o, err := r.doctor(t)
+	if err != nil {
+		t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+	}
+	c := readerWarningAbout(t, o, "github-app-key")
+	for _, want := range []string{
+		"user:person-1@example.com (" + gcp.SecretAccessorRole + ")",
+		"user:person-2@example.com (roles/secretmanager.admin)",
+		"user:person-3@example.com (projects/proj-1234/roles/secret-rotator)",
+	} {
+		if !strings.Contains(c.Problem, want) {
+			t.Errorf("problem %q lacks %q", c.Problem, want)
+		}
+	}
+	if strings.Contains(c.Problem, "person-4") {
+		t.Errorf("problem %q names a role that carries only the metadata permission", c.Problem)
+	}
+}
+
+// TestDoctorSecretReadersReportsAContainerRoleItCouldNotRead: a container
+// grant of a custom role nobody could resolve is reported, for the project
+// level's reason — "not read" and "carries nothing" are not the same answer,
+// and a container nobody could ask about is not one that grants nothing.
+func TestDoctorSecretReadersReportsAContainerRoleItCouldNotRead(t *testing.T) {
+	r := newSecretReadersRig(t)
+	r.sm.SetPolicy(r.secretID, []gcpfake.Binding{
+		{Role: "projects/proj-1234/roles/missing", Members: []string{"user:person-5@example.com"}}})
+
+	o, _ := r.doctor(t)
+	if !readerWarningSaying(o, "could not read what projects/proj-1234/roles/missing carries, on secret github-app-key") {
+		t.Errorf("a container's unreadable role is reported as one that carries nothing: %+v", o.Checks)
 	}
 }
 
@@ -523,4 +664,92 @@ func TestDoctorCredentialsServiceDeployersReportsWhatItCouldNotRead(t *testing.T
 			t.Errorf("problem %q reports a policy as unread, and every fake serves one", c.Problem)
 		}
 	})
+}
+
+// TestDoctorCredentialsServiceDeployersCountsProjectLevelActAs: a project-level
+// actAs grant is actAs on every account of the project, the service's own
+// included, so its holder can deploy a revision that runs as the service's
+// account — which reads every credential in the bundle. The line counts them
+// (the owner's ruling, 2026-10-29).
+func TestDoctorCredentialsServiceDeployersCountsProjectLevelActAs(t *testing.T) {
+	r := newSecretReadersRig(t)
+	r.withCredentialsService(t)
+	r.svcs.AddService(infra.CredentialsServiceName)
+	r.iam.AddServiceAccount("proj-1234", credentialsSA, "credentials service")
+	r.crm.SetPolicy("proj-1234",
+		gcpfake.Binding{Role: "roles/iam.serviceAccountUser", Members: []string{"user:person-9@example.com"}})
+
+	o, err := r.doctor(t)
+	if err != nil {
+		t.Fatalf("an info check must not fail doctor: %v", err)
+	}
+	c, ok := doctorCheckByID(o.Checks, "credentials-service-deployers")
+	if !ok || c.OK || c.Severity != "info" {
+		t.Fatalf("credentials-service-deployers = %+v (%+v)", c, o.Checks)
+	}
+	if !strings.Contains(c.Problem, "user:person-9@example.com (roles/iam.serviceAccountUser)") {
+		t.Errorf("problem %q does not name the project-level actAs holder as a deployer", c.Problem)
+	}
+	if !strings.Contains(c.Problem, "1 principal(s)") {
+		t.Errorf("problem %q does not count the one principal", c.Problem)
+	}
+}
+
+// TestDoctorSecretManagerChecksReadsTheProjectPolicyOnce: the reader sweep and
+// the deployer read ask the project's policy different questions, so doctor
+// reads it once and both halves read the same answer. Opting into the
+// credentials service adds a question, not a second read — which is also one
+// more call a launcher's own doctor run can be refused for.
+func TestDoctorSecretManagerChecksReadsTheProjectPolicyOnce(t *testing.T) {
+	projectPolicyReads := func(t *testing.T, optIn bool) int {
+		t.Helper()
+		r := newSecretReadersRig(t)
+		if optIn {
+			r.withCredentialsService(t)
+			r.svcs.AddService(infra.CredentialsServiceName)
+			r.iam.AddServiceAccount("proj-1234", credentialsSA, "credentials service")
+		}
+		if _, err := r.doctor(t); err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		n := 0
+		for _, req := range r.crm.Requests() {
+			if strings.HasSuffix(req.Path, ":getIamPolicy") {
+				n++
+			}
+		}
+		return n
+	}
+	without, with := projectPolicyReads(t, false), projectPolicyReads(t, true)
+	if with != without {
+		t.Errorf("doctor read the project's IAM policy %d time(s) without the credentials service and %d with it: the deployer read is a second question for one policy, not a second read of it", without, with)
+	}
+}
+
+// TestDoctorSecretManagerChecksReadsACustomRoleOnce: only a role's own
+// definition says what it carries, and both halves ask — the sweep whether it
+// reads a secret, the deployer read whether it updates a service. One run
+// resolves a role once, however many questions it is asked about it.
+func TestDoctorSecretManagerChecksReadsACustomRoleOnce(t *testing.T) {
+	r := newSecretReadersRig(t)
+	r.withCredentialsService(t)
+	r.svcs.AddService(infra.CredentialsServiceName)
+	r.iam.AddServiceAccount("proj-1234", credentialsSA, "credentials service")
+	r.iam.AddRole("proj-1234", "secret-runner", "Secret runner", false)
+	r.iam.SetRolePermissions("projects/proj-1234/roles/secret-runner", versionsAccess, runServicesUpdate)
+	r.crm.SetPolicy("proj-1234", gcpfake.Binding{
+		Role: "projects/proj-1234/roles/secret-runner", Members: []string{"user:person-10@example.com"}})
+
+	if _, err := r.doctor(t); err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	n := 0
+	for _, req := range r.iam.Requests() {
+		if strings.Contains(req.Path, "/roles/secret-runner") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("the IAM API was asked what projects/proj-1234/roles/secret-runner carries %d times, want once: one doctor run resolves a role once", n)
+	}
 }
