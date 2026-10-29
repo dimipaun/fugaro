@@ -209,8 +209,10 @@ var planWillCreate = map[string]string{
 // the tree, or a path this plan's tasks create, or this list — and this list is
 // checked the same way (still absent, still cited), so it cannot rot into a
 // hiding place for a real path. P6.6's `internal/budget/token/device.go` left
-// the list in the pull request that landed it (the pairing plan's T2a,
-// 2026-10-29), and the two files still listed here are still absent.
+// the list in the pull request that landed it — the pairing plan's T2, "The
+// phone's key, the typed fingerprint and the device token"
+// (`docs/plans/2026-10-22-mobile-pairing-cli.md`, 2026-10-29) — and the two
+// files still listed here are still absent.
 var planWillCreateElsewhere = map[string]string{
 	"internal/cli/pair.go":                 "P6.6's `fugaro pair` (approved, not built)",
 	"internal/budget/sweep_device_test.go": "P6.6's `m~…` sweep rule's test",

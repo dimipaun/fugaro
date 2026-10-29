@@ -389,10 +389,11 @@ func mobileAuthCitedPaths(doc string, dirs map[string]bool) []string {
 // mobile Phase 6 tasks' (P6.6 and P6.8, approved 2026-10-18 and unbuilt), and
 // the reconciliation's §F23 names the borrowed ones at once. P6.6's
 // `internal/budget/token/device.go` left the list in the pull request that
-// landed it (the pairing plan's T2a, 2026-10-29), which is the deletion every
-// entry owes its own pull request. The list is
-// held here rather than re-derived, so an implementer who finds a fifth adds it
-// visibly instead of loosening the rule.
+// landed it — the pairing plan's T2, "The phone's key, the typed fingerprint
+// and the device token" (`docs/plans/2026-10-22-mobile-pairing-cli.md`,
+// 2026-10-29) — which is the deletion every entry owes its own pull request.
+// The list is held here rather than re-derived, so an implementer who finds a
+// fifth adds it visibly instead of loosening the rule.
 //
 // **The third of this work's own three is not here, and that is the rule
 // working**: `internal/cli/docs_mobile_auth_test.go` is the file this pin is

@@ -267,6 +267,15 @@ func TestDeviceTokenShape(t *testing.T) {
 	if uid, _ := got["uid"].(string); uid != d.UID {
 		t.Errorf("the minted token names uid %q and MintDevice returned %q", uid, d.UID)
 	}
+	// The phone hands this token to Firebase's own sign-in, so the envelope's
+	// iss, sub and aud are as load-bearing as the uid: the run token pins them
+	// for the same reason (token_test.go's TestMintClaims).
+	if got["iss"] != deviceSignerEmail || got["sub"] != deviceSignerEmail {
+		t.Errorf("the minted token's iss and sub are %v and %v, and the signer is %s", got["iss"], got["sub"], deviceSignerEmail)
+	}
+	if got["aud"] != token.Audience {
+		t.Errorf("the minted token's aud is %v, and the phone signs in against %s", got["aud"], token.Audience)
+	}
 	claims, _ := got["claims"].(map[string]any)
 	if len(claims) != 1 {
 		t.Errorf("the device token carries %d custom claims, and M4's is mu alone: %v", len(claims), claims)
@@ -291,6 +300,64 @@ func TestDeviceTokenShape(t *testing.T) {
 		if strings.Contains(s, d.Token) || strings.Contains(s, sig) {
 			t.Fatal("formatting the device token shows the token")
 		}
+	}
+}
+
+// TestDeviceUIDIsDrawnFresh holds the two properties deviceNewUID's comment
+// claims: the name comes from the random source and not from anything a caller
+// can derive, and two mints do not name the same device — a device's uid is
+// what USER matches the token's mu against, so a name two devices share is two
+// devices admitted as one. The source is the seam keyReader already has for the
+// same reason (export_test.go's SetKeyReader).
+func TestDeviceUIDIsDrawnFresh(t *testing.T) {
+	ctx := context.Background()
+	signer := deviceSigner{email: deviceSignerEmail}
+	first, err := token.MintDevice(ctx, signer, deviceNow)
+	if err != nil {
+		t.Fatalf("MintDevice failed: %v", err)
+	}
+	second, err := token.MintDevice(ctx, signer, deviceNow)
+	if err != nil {
+		t.Fatalf("MintDevice failed: %v", err)
+	}
+	if first.UID == second.UID {
+		t.Fatalf("two mints named the same device %q: the uid is derived and not drawn", first.UID)
+	}
+
+	// A source the test holds still: the uid must be the bytes it handed over
+	// and no others.
+	source := bytes.Repeat([]byte{0x2a}, 32)
+	restore := token.SetDeviceUIDReader(bytes.NewReader(source))
+	defer restore()
+	d, err := token.MintDevice(ctx, signer, deviceNow)
+	if err != nil {
+		t.Fatalf("MintDevice with a test source failed: %v", err)
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(d.UID, "m~"))
+	if err != nil {
+		t.Fatalf("the uid's random part is not unpadded base64url: %v", err)
+	}
+	if len(raw) < 16 {
+		t.Errorf("the uid carries %d random bytes, and a device's name must not be guessable", len(raw))
+	}
+	if !bytes.Equal(raw, source[:len(raw)]) {
+		t.Errorf("the uid is not the random source's own bytes: %d bytes came back that the source never handed over", len(raw))
+	}
+}
+
+// TestDeviceUIDDrawFailureIsRefused is the other half of that claim: a source
+// that cannot fill the buffer stops the mint. A fallback — a shorter name, or a
+// fixed one — would be a device anybody could name, and the refusal has to be
+// an error and not a token for a uid nobody drew.
+func TestDeviceUIDDrawFailureIsRefused(t *testing.T) {
+	restore := token.SetDeviceUIDReader(strings.NewReader("too short"))
+	defer restore()
+	d, err := token.MintDevice(context.Background(), deviceSigner{email: deviceSignerEmail}, deviceNow)
+	if err == nil {
+		t.Fatalf("a source with too few bytes minted a token naming %q", d.UID)
+	}
+	if d.UID != "" || d.Token != "" {
+		t.Errorf("a refused draw returned %+v", d)
 	}
 }
 

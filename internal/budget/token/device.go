@@ -203,14 +203,22 @@ func MintDevice(ctx context.Context, signer Signer, now time.Time) (DeviceToken,
 	return DeviceToken{UID: uid, Token: tok}, nil
 }
 
+// deviceUIDReader is deviceNewUID's random source: crypto/rand, replaced only
+// by tests (export_test.go's SetDeviceUIDReader, as keyReader has SetKeyReader).
+var deviceUIDReader io.Reader = rand.Reader
+
 // deviceNewUID draws one device's uid: deviceUIDBytes bytes from crypto/rand
-// behind m~, in unpadded base64url. The alphabet is not taste — §8 ends the
-// delivery's AAD with a zero byte after the uid, and unpadded base64url cannot
-// spell one, so that terminator is the only zero before the key's own bytes. A
-// refused draw is an error and never a fallback to a name anyone could guess.
+// behind m~, in unpadded base64url. The alphabet is not taste, and it is not
+// §8's rule either — that AAD carries the *pairing* uid, p~, and never this
+// one. A device's uid is an RTDB key (config/admin/devices/$uid, §7.1 step 7)
+// and a Firebase uid, so the standard alphabet's '/' would split the node's
+// path and '.', '#', '$', '[', ']' are characters a key may not hold at all; unpadded
+// base64url spells none of them, and it is the one spelling this package
+// already pins for a key (seal.go's keyEncoding). A refused draw is an error
+// and never a fallback to a name anyone could guess.
 func deviceNewUID() (string, error) {
 	raw := make([]byte, deviceUIDBytes)
-	if _, err := io.ReadFull(rand.Reader, raw); err != nil {
+	if _, err := io.ReadFull(deviceUIDReader, raw); err != nil {
 		return "", fmt.Errorf("budget token: generating the device uid failed: %w", err)
 	}
 	return deviceUIDPrefix + base64.RawURLEncoding.EncodeToString(raw), nil
