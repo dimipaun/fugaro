@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
-	"github.com/dimipaun/fugaro/internal/coordinator"
+	"github.com/dimipaun/fugaro/internal/coordpath"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
@@ -1702,7 +1702,7 @@ func TestRulesPreexistingPathsUnchanged(t *testing.T) {
 // the shape a grant hidden under it takes — and belongs here as a diff a
 // reviewer reads rather than as a match this test waves through.
 func isNamedAddition(p string) bool {
-	return isNewCredsPath(p) || p == coordinator.PathRoot
+	return isNewCredsPath(p) || p == coordpath.PathRoot
 }
 
 // isNewCredsPath reports whether p is one of the three things C1.3 adds: the
