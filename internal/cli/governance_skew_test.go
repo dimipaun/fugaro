@@ -680,7 +680,7 @@ func TestValidateWarnsGovernanceOnACoreImage(t *testing.T) {
 // (editionUnresolved in validate.go), each in the words
 // plugin/skills/setup/reference/validation.md promises them in.
 const (
-	editionFixSelectConfig = "name the installation with --config or --project, or run fugaro setup to create this project's config"
+	editionFixSelectConfig = "set $FUGARO_PROJECT or $FUGARO_CONFIG, or run fugaro setup to create this project's config"
 	editionFixCheckout     = "run validate in the repository's own checkout"
 	editionFixOriginSlug   = "run validate in the checkout whose origin names the repository"
 	editionFixBucket       = "check that this machine's credentials can read the installation's runs bucket"
