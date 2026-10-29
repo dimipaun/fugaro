@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The WSL seam's own module (docs/console-windows/implementation-plan.md Part C,
 // T-C4; SECURITY-SENSITIVE, the credential boundary's near side).

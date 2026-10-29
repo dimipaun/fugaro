@@ -30,7 +30,7 @@ The owner's answers that shape it (given, not re-asked):
   `internal/runner` and `internal/cli` are never run whole; comments say why; search before writing a
   helper; docs are tested (`GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1`).
 - `.claude/rules/ee.md` (as E0.2 amends it) for every `ee/**` file: the two-line notice
-  (`SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise`, `See ee/LICENSE for the terms.`), a
+  (`SPDX-License-Identifier: LicenseRef-Fugaro-Subscription`, `See ee/LICENSE for the terms.`), a
   `<name>.license` sibling for JSON and other comment-less types; nothing outside `ee/` imports it
   except `cmd/fugaro/ee_on.go`; `go test ./internal/eeboundary/ -count=1` after every change. **No
   task edits a boundary test to admit a route** (owner's call).
@@ -445,7 +445,7 @@ reused.*
 #### E3.5 Replace the CLA placeholder (O1, owner-supplied URL)
 
 - **Files:** every file that carries `[CLA URL TO BE PUBLISHED]` (found with
-  `grep -rn 'CLA URL TO BE PUBLISHED' .`; `ee/LICENSE`, `LICENSES/LicenseRef-Fugaro-Enterprise.txt`, `console/LICENSE.md`, `mobile/LICENSE.md`, the licensing docs and the pin in `internal/cli/docs_ee_reserved_test.go`).
+  `grep -rn 'CLA URL TO BE PUBLISHED' .`; `ee/LICENSE`, `LICENSES/LicenseRef-Fugaro-Subscription.txt`, `console/LICENSE.md`, `mobile/LICENSE.md`, the licensing docs and the pin in `internal/cli/docs_ee_reserved_test.go`).
 - **Content:** the owner creates the Gist from `docs/licensing/CLA.md` and sends its Raw URL (a
   public link, no secret); this task replaces the placeholder with it everywhere. Nothing else changes.
 - **Tests:** the licensing docs pins. **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1`.

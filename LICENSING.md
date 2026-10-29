@@ -7,11 +7,11 @@ before 0.11.0 is MIT.
 Four parts of the repository are not covered by it. Three of them, `console/`, `mobile/` and
 `ee/`, are excluded from the MIT licence and carry a business licence of their own, one text in
 three files of identical wording, which is counsel's text of 2026-10-27 and replaces the draft the owner adopted on 2026-10-26. Every file under those three directories carries a
-two-line SPDX notice naming that licence as `LicenseRef-Fugaro-Enterprise` — as a comment, or,
+two-line SPDX notice naming that licence as `LicenseRef-Fugaro-Subscription` — as a comment, or,
 where the file type has no comment syntax, in a sibling `<name>.license` carrying the same two
 lines — and the only files without one are each directory's own licence file and its `README`,
 which the licence and the page belong to instead. The text the
-identifier resolves to is [`LICENSES/LicenseRef-Fugaro-Enterprise.txt`](LICENSES/LicenseRef-Fugaro-Enterprise.txt),
+identifier resolves to is [`LICENSES/LicenseRef-Fugaro-Subscription.txt`](LICENSES/LicenseRef-Fugaro-Subscription.txt),
 a byte-for-byte copy of [`ee/LICENSE`](ee/LICENSE). **It names two documents**: the Subscription Terms, at https://fugaro.dev/legal/subscription-terms (the page is **not published yet**; it goes up once counsel has approved the text), and the contributor licence agreement, published at https://gist.githubusercontent.com/dimipaun/d5bb5db937f973b25be5778ce14ec8dd/raw/64918c7fc0f782327db82e7e790db53c3d47d09f/fugaro-cla.md (a raw Gist link pinned to a revision, so a later edit to the Gist does not change it). The licence allows copying and modifying for development and testing,
 and needs a subscription for the correct number of user seats (one seat per person who uses it)
 for production use, under those Subscription Terms.
@@ -34,7 +34,7 @@ The mobile app is under [`mobile/LICENSE.md`](mobile/LICENSE.md), from its first
 release of it has been published. The app's source as published before the change stays under the
 MIT licence it was published under. Its third-party components keep their own licences.
 
-## `ee/`, the enterprise edition
+## `ee/`, the Subscription Edition
 
 [`ee/`](ee/README.md) is excluded from the MIT licence and reserved for net-new organisation
 features, under [`ee/LICENSE`](ee/LICENSE). The directory holds no code yet and nothing under it

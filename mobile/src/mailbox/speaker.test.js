@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
 // The speaker's double (P3.6; P3.4's text-to-speech port is the real seam, and
 // P3.5's `src/voice/speaker.js` is the adapter that hands a built app's client

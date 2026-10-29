@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The graph screen's model: `plan status --json` and the tab a person chose,
 // turned into plain data -- stream columns, release boxes, chips, nodes and

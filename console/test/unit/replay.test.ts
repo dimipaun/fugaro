@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The replay buffer: its two bounds, its scrub, and its export
 // (desktop-console plan Task 2.3; design section 9.2).

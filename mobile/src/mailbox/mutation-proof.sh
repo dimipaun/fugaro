@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+# SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 # See mobile/LICENSE.md for the terms.
 # Mutation-proves the mailbox client's guards (mobile plan, Task P3.6).
 #

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
 // The demo's sample data (owner ruling of 2026-10-19: the built-in demo mode
 // Google Play's reviewers reach everything the app shows through).

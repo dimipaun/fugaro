@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The stylesheet's selectors against the design's §2 inventory (desktop-console
 // plan Task 6.3; design sections 2, 2.1 and 5.5).

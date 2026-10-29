@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The display layer: the only code in the console that touches an element
 // (desktop-console plan Task 2.0; design section 5.1 rules 1, 2 and 7).

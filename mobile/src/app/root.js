@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
 // The app's root component, and the shell every later screen hangs on
 // (mobile plan, Task P3.1; D114, D125; the demo banner is the owner's ruling of

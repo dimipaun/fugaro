@@ -6,7 +6,7 @@ package cli
 // `internal/eeboundary` shows the core never imports, embeds or routes into
 // `ee/`, and `core-without-ee.yml` (staged beside this file) deletes the
 // directory and runs the suite. Neither shows that the *tagged* edition --
-// the one `//go:build ee` compiles, and the one an Enterprise installation
+// the one `//go:build ee` compiles, and the one a Subscription Edition installation
 // ships -- still builds and vets. That is a runner's job, and a runner is not a
 // Fugaro run's to write: GitHub refuses a push that touches
 // `.github/workflows/**`, so the file is staged under docs/pending-workflows/
@@ -293,8 +293,8 @@ func TestStagedCIBuildsBothEditions(t *testing.T) {
 
 	// --- The three steps the plan names -------------------------------------
 	// The tagged vet and the tagged build hand the go tool `ee`, so
-	// cmd/fugaro/ee_on.go is compiled and what is checked is the edition an
-	// Enterprise installation ships -- the half core-without-ee.yml does not
+	// cmd/fugaro/ee_on.go is compiled and what is checked is the edition a
+	// Subscription Edition installation ships -- the half core-without-ee.yml does not
 	// check. The ee test step carries no tag: the packages under ee/ build
 	// without it, so they are covered in the default build too.
 	find := func(cmd string) (int, *eeEditionStep) {

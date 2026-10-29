@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The installation picker: its window, its menu item, and its channels
 // (desktop-console plan Task 3.4b; design sections 3.4 rules 5 and 7, 5.1 rule

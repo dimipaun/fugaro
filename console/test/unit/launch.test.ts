@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The launch (console v2 plan V2.5.1a part 2a, SECURITY-SENSITIVE): the frozen
 // spawn, the confirmation seam, the limits, and the one argv rule 11 writes.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // ETXTBSY (text file busy), the one launch failure `test/support/launch.ts`
 // retries -- and the reason the retry is bounded to it and to nothing else.

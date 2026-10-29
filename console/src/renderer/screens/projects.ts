@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The Projects screen: the design's screen 3, drawn from `budget show --json`,
 // `runs ls --json`, `accounts ls --json` and `secrets ls --json`

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The entitlements the console asks for, and the only ones it may ask for
 // (desktop-console plan Task 4.1; design section 7.2, and section 12's item 4,

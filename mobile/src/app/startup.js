@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
 // The guarded startup and the root error boundary (mobile plan, Task P3.1's
 // shell, extended 2026-10-21 after the Android launch crash).

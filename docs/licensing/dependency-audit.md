@@ -170,7 +170,7 @@ should be acted on without counsel's answer.**
 Clause 1.1, production use:
 
 > You may use the Software in production only if you have agreed to, and are in compliance with, the
-> Agreement, and you hold a valid Fugaro Enterprise Edition subscription for the correct number of
+> Agreement, and you hold a valid Fugaro Subscription Edition subscription for the correct number of
 > user seats.
 
 Clause 4.1, redistribution:
@@ -226,7 +226,7 @@ Collected, so nothing here is buried in the prose above:
 - **Whether `node-forge`'s `(BSD-3-Clause OR GPL-2.0)` is read the way this audit reads it.** The
   audit takes BSD-3-Clause and records that in `copyleftAllowed`; if counsel reads the expression
   differently the allow-list entry is wrong and the dependency is a decision rather than a note.
-- **The LicenceRef copy.** `LICENSES/LicenseRef-Fugaro-Enterprise.txt` answers to the same identifier
+- **The LicenceRef copy.** `LICENSES/LicenseRef-Fugaro-Subscription.txt` answers to the same identifier
   as `ee/LICENSE` and is compared to it byte for byte. What REUSE expects *around* that file (a
   README in `LICENSES/`, `REUSE.toml`, a check in CI) is not settled by this work, and no tool reads
   the directory today.

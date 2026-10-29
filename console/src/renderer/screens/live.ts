@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The Live screen: the design's screen 1, drawn from `watch --json` alone
 // (desktop-console plan Task 2.1; design sections 6.1 rules 2 and 3, 6.2

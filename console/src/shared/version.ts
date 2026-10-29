@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The version skew handshake (desktop-console plan Task 3.2; design section
 // 7.1, D7, and the skew row of section 6.3).

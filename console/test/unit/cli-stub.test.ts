@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The stub `fugaro` the end-to-end specs install (`test/fixtures/bin/fugaro`,
 // desktop-console plan Task 3.3), driven from plain Node.

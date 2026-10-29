@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // parseStdout reads a one-shot read's stdout. Every one-shot command in the
 // console's set prints an INDENTED document (json-contract.md section 9.2): a

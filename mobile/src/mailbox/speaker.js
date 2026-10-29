@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
 // Speaking, behind a port -- and the audio seam P3.6 stubs (mobile plan, Task
 // P3.6; Global Constraint 10, Voice D52).

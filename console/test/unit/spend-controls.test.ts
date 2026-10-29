@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The Spend screen's controls: the range picker, the breakdown switch and the
 // operator's person-view knob (desktop-console plan Task 2.4; design sections

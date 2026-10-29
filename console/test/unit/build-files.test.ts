@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The packaged app carries the files it loads (desktop-console plan Task 3.4b,
 // and the handoff to Task 4.1; design sections 5.1 rule 3 and 8.2).

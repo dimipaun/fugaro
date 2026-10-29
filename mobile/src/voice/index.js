@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
 // The voice screen's one door (mobile plan, Tasks P3.5 and P6.12; D122, D127,
 // D126, D162, D164, D168, D169).

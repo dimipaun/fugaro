@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The redactor against the inputs an independent security review beat it with
 // (desktop-console plan Task 1.4, SECURITY-SENSITIVE). Every input below was,

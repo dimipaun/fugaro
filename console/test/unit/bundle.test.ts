@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The served root, the bundle in it, and the bundler that wrote both
 // (desktop-console plan Task 3.4a, steps 4 and 5; design section 5.1 rules 1, 3

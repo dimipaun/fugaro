@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The redesign draws write actions the console does not perform: Halt fleet,
 // Halt project, Kill and Revive, Reap, Pause task, Retry run, Add cap. The
