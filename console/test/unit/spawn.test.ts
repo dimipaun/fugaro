@@ -4482,6 +4482,17 @@ describe('the wrapper into a distribution', () => {
     expect(probe.reason).not.toContain('the binary exited')
   })
 
+  // 30 s. This case's evidence is real processes rather than a scripted child:
+  // `installWslStub` installs a real `wsl.exe` that execs the real stub
+  // `fugaro`, and the second hop -- the pid the stop named is the CLI's, not
+  // the wrapper shell's -- is read back out of the report file those processes
+  // write. The observed time is all process startup, and `waitFor` below
+  // already allows itself 15 s for exactly that ("a shared CI or developer
+  // machine under load can take seconds to start one"); the suite's implicit
+  // 5 s default overrode that budget, and the case timed out on a macOS runner
+  // while passing on rerun. What the case *asserts* is unchanged, and its
+  // deadline and grace are still the supervisor's injected clock, fired by the
+  // test itself rather than waited out.
   it('cancels inside the distribution, naming the pid the wrapper recorded', async () => {
     // T-F4, F24 and decision D6(a). Killing the Windows-side `wsl.exe` is not
     // documented to kill the Linux process it started, so the console sends one
@@ -4536,7 +4547,7 @@ describe('the wrapper into a distribution', () => {
     expect(killedChild.signal).toBe('SIGTERM')
     expect(killedChild.pid).toBe(killed)
     expect(killedChild.argv).toEqual(['version'])
-  })
+  }, 30_000)
 
   it('sends the stop when `wsl.exe` is gone before the grace runs out', async () => {
     // F24's stated consequence, and the ordering that produces it: the child
