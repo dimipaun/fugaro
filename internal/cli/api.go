@@ -67,19 +67,35 @@ func (c *Cloud) RepoSlug(ctx context.Context, repo string) (string, error) {
 	return repoSlugOf(ctx, c.env.lc, repo)
 }
 
-// BudgetDB is the project's budget database.
+// BudgetDB is the project's budget database, checked to be the database of the
+// project the cloud was opened with: a config whose budget.rtdb_url points at
+// another project's database is refused, exactly as it is on the paths that
+// open one in the core.
 func (c *Cloud) BudgetDB(ctx context.Context) (*rtdb.Client, error) {
-	_, db, err := budgetDBFor(ctx, c.env.lc)
-	return db, err
+	lc, db, err := budgetDBFor(ctx, c.env.lc)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkDBProject(ctx, db, lc); err != nil {
+		return nil, err
+	}
+	return db, nil
 }
 
 // DBErr classifies an error of a database call: a refusal is a user error
 // (exit 1), everything else, an outage included, a remote one (exit 2).
 func (c *Cloud) DBErr(err error, write bool) error { return dbErr(c.env.lc, err, write) }
 
-// Firestore is the client of the project's spend history.
+// Firestore is the client of the project's spend history. A project with no
+// Firebase backend is refused here rather than dereferenced: the core's own
+// reader checks the same two fields before it reaches for one, and a project
+// that never ran `fugaro update --firebase-project` has no history to read.
 func (c *Cloud) Firestore(ctx context.Context) (*firestore.Client, error) {
-	return newReportFirestore(ctx, c.env.lc)
+	lc := c.env.lc
+	if lc.Budget == nil || lc.Budget.FirebaseProject == "" {
+		return nil, userErr("project %s has no Firebase budget backend (budget.firebase_project is not set in its project config), so it has no spend history: an operator runs fugaro update --firebase-project %s --name %s", lc.Name, lc.GCPProject, lc.Name)
+	}
+	return newReportFirestore(ctx, lc)
 }
 
 // FirestoreErr classifies a Firestore read failure: a refusal names the role.
