@@ -36,19 +36,30 @@ const (
 // role of the same name could otherwise answer for it.
 var secretReaderRoles = []string{"roles/secretmanager.admin", "roles/secretmanager.secretAccessor"}
 
-// basicRoles are the project's basic roles. They bypass secret-level IAM
-// whatever a container's own policy says, so their holders are named once
-// rather than per container (F3): it is not a secretAccessor grant that makes
-// an owner able to read a secret.
-var basicRoles = []string{"roles/owner", "roles/editor"}
+// basicRoles are the project's basic roles that read a secret without being
+// granted one. Owner is the only one: it carries secretmanager.versions.access
+// itself and bypasses secret-level IAM whatever a container's own policy says,
+// so its holders are named once rather than per container (F3).
+//
+// Editor is deliberately not here. Secret Manager grants Editor
+// secretmanager.secrets.getIamPolicy and delete but not versions.access: an
+// Editor reads a container only through a secretAccessor grant of its own,
+// which is a grant like any other and the per-container half reports it.
+// Naming Editors as readers would be a claim the live role does not support,
+// and it would hide exactly those grants.
+var basicRoles = []string{"roles/owner"}
 
 // runServiceRoles and actAsRoles are the predefined roles that carry
 // run.services.update (deploying a Cloud Run service) and
 // iam.serviceAccounts.actAs (deploying one that runs as another account),
-// recognized by name for secretReaderRoles' reason.
+// recognized by name for secretReaderRoles' reason. The two lists differ:
+// Editor, run.admin and run.developer update a service without carrying actAs,
+// so a holder of one of them on an account's policy is not a deployer of that
+// account — running as an account needs a serviceAccountUser grant of its own,
+// or Owner, which carries actAs with the rest of its roles.
 var (
 	runServiceRoles = []string{"roles/owner", "roles/editor", "roles/run.admin", "roles/run.developer"}
-	actAsRoles      = append(slices.Clone(runServiceRoles), "roles/iam.serviceAccountUser")
+	actAsRoles      = []string{"roles/owner", "roles/iam.serviceAccountUser"}
 )
 
 // doctorSecretReaderChecks is doctor's "secret-readers-unexpected" sweep (plan
@@ -66,16 +77,16 @@ var (
 // project's, never a version's value: the sweep must not become a reader of
 // the thing it watches (the B0.2 guard's rule for a new reader).
 //
-// Owners and Editors are reported once, as information (F3): they can read
-// every container whatever its own policy says, and naming them per container
-// would bury the grants that mean something.
+// Owners are reported once, as information (F3): they can read every
+// container whatever its own policy says, and naming them per container would
+// bury the grants that mean something.
 func doctorSecretReaderChecks(ctx context.Context, lc *localcfg.Config, sm *gcp.Secrets, crmSvc *crm.Service) []doctorCheck {
 	if sm == nil {
 		return nil
 	}
 	var (
-		ownersEditors []string
-		checks        []doctorCheck
+		owners []string
+		checks []doctorCheck
 	)
 	containers, err := sm.List(ctx, nil)
 	if err != nil {
@@ -98,7 +109,7 @@ func doctorSecretReaderChecks(ctx context.Context, lc *localcfg.Config, sm *gcp.
 			Problem: "could not read the IAM policy of project " + lc.GCPProject + ", so whether it grants anyone a role that reads every secret is unknown, not no: " + oneLineCLI(err.Error()),
 			Fix:     "rerun fugaro doctor with access to the project, or as an operator"})
 	} else {
-		ownersEditors = basicRoleMembers(pol)
+		owners = basicRoleMembers(pol)
 		checks = append(checks, projectLevelReaderChecks(pol, lc.GCPProject, known, roles)...)
 	}
 
@@ -113,7 +124,7 @@ func doctorSecretReaderChecks(ctx context.Context, lc *localcfg.Config, sm *gcp.
 		}
 		var extra []string
 		for _, m := range members {
-			if known[m] || slices.Contains(ownersEditors, m) ||
+			if known[m] || slices.Contains(owners, m) ||
 				(strings.HasPrefix(s.ID, tf.ManagedPrefix) && managedAccountMember(m, lc.GCPProject)) {
 				continue
 			}
@@ -134,10 +145,10 @@ func doctorSecretReaderChecks(ctx context.Context, lc *localcfg.Config, sm *gcp.
 				", so whether they grant secretAccessor to anyone else is unknown, not no",
 			Fix: "rerun fugaro doctor with access to the project, or as an operator who can read each container (gcloud secrets get-iam-policy SECRET)"})
 	}
-	if len(ownersEditors) > 0 {
+	if len(owners) > 0 {
 		checks = append(checks, doctorCheck{ID: "secret-readers-unexpected", Severity: "info",
-			Problem: "Project Owners and Editors read every secret of " + lc.GCPProject + " whatever a container's own policy says, because the basic roles bypass secret-level IAM, so they are named once here and not per container: " + strings.Join(printableNames(ownersEditors), ", "),
-			Fix:     "no grant takes this away: review who holds a basic role (gcloud projects get-iam-policy " + quoteWord(lc.GCPProject) + ") and keep that list short, since every holder can read every credential the installation stores"})
+			Problem: "Project Owners read every secret of " + lc.GCPProject + " whatever a container's own policy says, because roles/owner carries secretmanager.versions.access and bypasses secret-level IAM, so they are named once here and not per container: " + strings.Join(printableNames(owners), ", "),
+			Fix:     "no grant takes this away: review who holds roles/owner (gcloud projects get-iam-policy " + quoteWord(lc.GCPProject) + ") and keep that list short, since every holder can read every credential the installation stores"})
 	}
 	return checks
 }
@@ -321,21 +332,24 @@ func fugaroSecretReaderMembers(lc *localcfg.Config) map[string]bool {
 // The service's own policy and its account's are read beside the project's,
 // because a deploy needs run.services.update on the service AND actAs on its
 // account; a grant of either is named, and a policy that could not be read is
-// named as unread rather than left out.
+// named as unread rather than left out — as is a custom role nobody could
+// resolve, since "not read" and "carries nothing" are not the same answer.
 func doctorCredentialsServiceDeployers(ctx context.Context, lc *localcfg.Config, crmSvc *crm.Service) []doctorCheck {
 	if lc.CredentialsService == nil {
 		return nil
 	}
 	roles := newIAMRoles(ctx, lc)
 	var (
-		deployers []string
+		deployers []deployer
 		unread    []string
 	)
 	pol, err := projectPolicy(ctx, lc, crmSvc)
 	if err != nil {
 		unread = append(unread, "the IAM policy of project "+lc.GCPProject)
 	} else {
-		deployers = append(deployers, deployerMembers(bindingsOf(pol.Bindings, crmBindingFields), roles, runServiceRoles, runServicesUpdate)...)
+		got, unknown := deployerMembers(bindingsOf(pol.Bindings, crmBindingFields), roles, runServiceRoles, runServicesUpdate, "the project's policy")
+		deployers = append(deployers, got...)
+		unread = append(unread, unknown...)
 	}
 	// A test configuration (no_auth with no run endpoint) has nowhere to read
 	// the service from: building the client would point it at the real Cloud
@@ -355,7 +369,9 @@ func doctorCredentialsServiceDeployers(ctx context.Context, lc *localcfg.Config,
 				// not be read is named either way.
 				unread = append(unread, "the IAM policy of the Cloud Run service "+infra.CredentialsServiceName)
 			} else {
-				deployers = append(deployers, deployerMembers(bindingsOf(sp.Bindings, runBindingFields), roles, runServiceRoles, runServicesUpdate)...)
+				got, unknown := deployerMembers(bindingsOf(sp.Bindings, runBindingFields), roles, runServiceRoles, runServicesUpdate, "the Cloud Run service's policy")
+				deployers = append(deployers, got...)
+				unread = append(unread, unknown...)
 			}
 		}
 	} else {
@@ -372,19 +388,35 @@ func doctorCredentialsServiceDeployers(ctx context.Context, lc *localcfg.Config,
 			if err != nil {
 				unread = append(unread, "the IAM policy of "+account)
 			} else {
-				deployers = append(deployers, deployerMembers(bindingsOf(ap.Bindings, saBindingFields), roles, actAsRoles, actAs)...)
+				got, unknown := deployerMembers(bindingsOf(ap.Bindings, saBindingFields), roles, actAsRoles, actAs, "the service account's policy")
+				deployers = append(deployers, got...)
+				unread = append(unread, unknown...)
 			}
 		}
 	} else {
 		unread = append(unread, "the IAM policy of "+account+", in a test configuration")
 	}
-	slices.Sort(deployers)
+	slices.SortFunc(deployers, func(a, b deployer) int {
+		if c := strings.Compare(a.member, b.member); c != 0 {
+			return c
+		}
+		return strings.Compare(a.role, b.role)
+	})
 	deployers = slices.Compact(deployers)
 	slices.Sort(unread)
-	problem := fmt.Sprintf("who may deploy the credentials service (%s): %d principal(s)", infra.CredentialsServiceName, len(deployers))
+	// The count is of principals, not of grants: one person holding two roles
+	// that can deploy is one person who can deploy, and the line exists to say
+	// how many of them there are.
+	principals := map[string]bool{}
+	names := make([]string, 0, len(deployers))
+	for _, d := range deployers {
+		principals[d.member] = true
+		names = append(names, d.String())
+	}
+	problem := fmt.Sprintf("who may deploy the credentials service (%s): %d principal(s)", infra.CredentialsServiceName, len(principals))
 	switch {
-	case len(deployers) > 0:
-		problem += ": " + strings.Join(printableNames(deployers), ", ")
+	case len(names) > 0:
+		problem += ": " + strings.Join(printableNames(names), ", ")
 	case len(unread) == 0:
 		problem += " — nothing it read grants a deploy"
 	}
@@ -417,37 +449,58 @@ func crmBindingFields(b *crm.Binding) (string, []string)               { return 
 func runBindingFields(b *runapi.GoogleIamV1Binding) (string, []string) { return b.Role, b.Members }
 func saBindingFields(b *iam.Binding) (string, []string)                { return b.Role, b.Members }
 
+// deployer is one grant that can deploy: a member and the role it holds it
+// through. The two are kept apart so that the line names each holder with the
+// role that makes it one, and still counts holders rather than grants.
+type deployer struct {
+	member string
+	role   string
+}
+
+func (d deployer) String() string { return d.member + " (" + d.role + ")" }
+
 // deployerMembers is the members of bs that hold a role carrying perm, each
-// named with the role that makes it one.
-func deployerMembers(bs []iamBinding, roles *iamRoles, predefined []string, perm string) []string {
-	var out []string
+// named with the role that makes it one, and what could not be resolved: a
+// custom role nobody could read, described with where it is bound. A role that
+// could not be read is never silently dropped — the caller puts it on the
+// line's "not read" list, so that a policy holding one is never reported as a
+// policy with nothing on it.
+func deployerMembers(bs []iamBinding, roles *iamRoles, predefined []string, perm, where string) (members []deployer, unread []string) {
 	for _, b := range bs {
-		if !roleCarries(b.role, predefined, perm, roles) {
+		carries, errText := roleCarries(b.role, predefined, perm, roles)
+		if errText != "" {
+			unread = append(unread, "what "+pluginwire.Printable(b.role)+" carries, on "+where)
+			continue
+		}
+		if !carries {
 			continue
 		}
 		for _, m := range b.members {
 			if strings.HasPrefix(m, "deleted:") {
 				continue
 			}
-			out = append(out, m+" ("+b.role+")")
+			members = append(members, deployer{member: m, role: b.role})
 		}
 	}
-	return out
+	return members, unread
 }
 
 // roleCarries reports whether role carries perm: a predefined role of the
-// table by name, a custom one from its own definition. A custom role that
-// could not be read is not claimed either way — this read is information, and
-// the reader sweep's own unread line is what names a role nobody could read.
-func roleCarries(role string, predefined []string, perm string, roles *iamRoles) bool {
+// table by name, a custom one from its own definition. errText is set when a
+// custom role could not be read, so the caller can say so rather than count
+// the binding as one that carries nothing.
+func roleCarries(role string, predefined []string, perm string, roles *iamRoles) (bool, string) {
 	if slices.Contains(predefined, role) {
-		return true
+		return true, ""
 	}
 	if !isCustomRole(role) {
-		return false
+		return false, ""
 	}
 	perms, errText := roles.permissions(role)
-	return errText == "" && slices.Contains(perms, perm)
+	if errText != "" {
+		return false, errText
+	}
+	return slices.Contains(perms, perm), ""
 }
 
 // iamRoles answers what a custom role carries, from the IAM API, once per role

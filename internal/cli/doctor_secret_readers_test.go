@@ -103,11 +103,35 @@ func readerWarnings(o doctorOutput) []doctorCheck {
 	return out
 }
 
+// readerInfo is the one project-wide line F3 prints, which shares the sweep's
+// ID with the per-container warnings.
+func readerInfo(o doctorOutput) []doctorCheck {
+	var out []doctorCheck
+	for _, c := range o.Checks {
+		if c.ID == "secret-readers-unexpected" && c.Severity == "info" {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// readerWarningSaying reports whether some warning of the sweep says want:
+// every fail-closed branch adds a check of its own, so a test names the one it
+// means rather than asking whether any warning exists.
+func readerWarningSaying(o doctorOutput, want string) bool {
+	for _, c := range readerWarnings(o) {
+		if strings.Contains(c.Problem, want) {
+			return true
+		}
+	}
+	return false
+}
+
 // TestDoctorSecretReadersAcceptsFugaroAccounts: the sweep exists to name a
 // member Fugaro did not create, so every class it does create is silent — the
 // job account of a repository the local config lists, and a managed account on
-// a container of a managed plan. The owners-and-editors line is the only thing
-// left to say, and it names them once (F3).
+// a container of a managed plan. The owner line is the only thing left to say,
+// and it names them once (F3).
 func TestDoctorSecretReadersAcceptsFugaroAccounts(t *testing.T) {
 	r := newSecretReadersRig(t)
 	slug := mustSlug("github", "acme/app")
@@ -127,7 +151,7 @@ func TestDoctorSecretReadersAcceptsFugaroAccounts(t *testing.T) {
 	}
 	c, ok := doctorCheckByID(o.Checks, "secret-readers-unexpected")
 	if !ok || c.OK || c.Severity != "info" || !strings.Contains(c.Problem, "user:owner@example.com") {
-		t.Fatalf("the owners-and-editors line = %+v", c)
+		t.Fatalf("the owner line = %+v", c)
 	}
 }
 
@@ -296,4 +320,207 @@ func TestDoctorSecretReadersFlagsAnUnknownAccessor(t *testing.T) {
 	if strings.Contains(o.Error, "project-value") {
 		t.Fatalf("doctor reported a secret value: %q", o.Error)
 	}
+}
+
+// TestDoctorSecretReadersDoesNotCallAnEditorAReader: roles/editor carries no
+// secretmanager.versions.access, so an Editor reads a container only through a
+// secretAccessor grant of its own. That grant is a finding on the container's
+// line, and no project-wide line may claim Editor reads every secret — the
+// claim would be false and it would hide the very grant that matters.
+func TestDoctorSecretReadersDoesNotCallAnEditorAReader(t *testing.T) {
+	r := newSecretReadersRig(t)
+	r.crm.SetPolicy("proj-1234", gcpfake.Binding{Role: "roles/editor", Members: []string{"user:editor@example.com"}})
+	r.sm.SetPolicy(r.secretID, []gcpfake.Binding{{Role: gcp.SecretAccessorRole, Members: []string{"user:editor@example.com"}}})
+
+	o, err := r.doctor(t)
+	if err != nil {
+		t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+	}
+	if !readerWarningSaying(o, "user:editor@example.com") {
+		t.Errorf("the Editor's own container grant is not named: %+v", o.Checks)
+	}
+	if in := readerInfo(o); len(in) != 0 {
+		t.Errorf("an Editor is reported as a project-wide reader: %+v", in)
+	}
+}
+
+// TestDoctorSecretReadersReportsWhatItCouldNotRead: a policy or a role nobody
+// could read must be reported, because "not read" and "grants nothing" are not
+// the same answer — silence would read as "no reader", which is the wrong one.
+func TestDoctorSecretReadersReportsWhatItCouldNotRead(t *testing.T) {
+	t.Run("project policy", func(t *testing.T) {
+		r := newSecretReadersRig(t)
+		r.crm.DenyPolicy("proj-1234")
+		o, _ := r.doctor(t)
+		if !readerWarningSaying(o, "could not read the IAM policy of project proj-1234") {
+			t.Errorf("a refused project policy is not reported: %+v", o.Checks)
+		}
+	})
+	t.Run("container policy", func(t *testing.T) {
+		r := newSecretReadersRig(t)
+		r.sm.FailPolicyWith = http.StatusForbidden
+		o, _ := r.doctor(t)
+		if !readerWarningSaying(o, "could not read the IAM policy of 1 secret container(s)") {
+			t.Errorf("a refused container policy is not reported: %+v", o.Checks)
+		}
+		if !readerWarningSaying(o, "github-app-key") {
+			t.Errorf("the unread container is not named: %+v", o.Checks)
+		}
+	})
+	t.Run("custom role", func(t *testing.T) {
+		r := newSecretReadersRig(t)
+		r.crm.SetPolicy("proj-1234", gcpfake.Binding{
+			Role:    "projects/proj-1234/roles/missing",
+			Members: []string{"serviceAccount:rotator@project-c.iam.gserviceaccount.com"}})
+		o, _ := r.doctor(t)
+		if !readerWarningSaying(o, "could not read what projects/proj-1234/roles/missing") {
+			t.Errorf("a role nobody could read is reported as carrying nothing: %+v", o.Checks)
+		}
+	})
+}
+
+// TestDoctorCredentialsServiceDeployersDoesNotTreatUpdatersAsActAs: run.admin
+// and run.developer update a service without carrying iam.serviceAccounts.actAs,
+// so a holder of one of them on the account's policy is not a deployer through
+// that grant.
+func TestDoctorCredentialsServiceDeployersDoesNotTreatUpdatersAsActAs(t *testing.T) {
+	r := newSecretReadersRig(t)
+	r.withCredentialsService(t)
+	r.crm.SetPolicy("proj-1234")
+	r.svcs.AddService(infra.CredentialsServiceName)
+	r.iam.AddServiceAccount("proj-1234", credentialsSA, "credentials service")
+	r.iam.SetServiceAccountPolicy("proj-1234", credentialsSA,
+		gcpfake.Binding{Role: "roles/run.admin", Members: []string{"user:person-5@example.com"}},
+		gcpfake.Binding{Role: "roles/iam.serviceAccountUser", Members: []string{"user:person-4@example.com"}})
+
+	o, err := r.doctor(t)
+	if err != nil {
+		t.Fatalf("an info check must not fail doctor: %v", err)
+	}
+	c, ok := doctorCheckByID(o.Checks, "credentials-service-deployers")
+	if !ok || c.OK || c.Severity != "info" {
+		t.Fatalf("credentials-service-deployers = %+v (%+v)", c, o.Checks)
+	}
+	if strings.Contains(c.Problem, "person-5") {
+		t.Errorf("problem %q names a role that carries no actAs as a deployer", c.Problem)
+	}
+	if !strings.Contains(c.Problem, "user:person-4@example.com (roles/iam.serviceAccountUser)") {
+		t.Errorf("problem %q does not name the actAs holder", c.Problem)
+	}
+	if !strings.Contains(c.Problem, "1 principal(s)") {
+		t.Errorf("problem %q does not count one principal", c.Problem)
+	}
+}
+
+// TestDoctorCredentialsServiceDeployersCountsPrincipalsNotGrants: the line
+// counts people, not grants — one person who holds three qualifying roles is
+// one principal, which is what "who may deploy" asks.
+func TestDoctorCredentialsServiceDeployersCountsPrincipalsNotGrants(t *testing.T) {
+	r := newSecretReadersRig(t)
+	r.withCredentialsService(t)
+	r.svcs.AddService(infra.CredentialsServiceName)
+	r.iam.AddServiceAccount("proj-1234", credentialsSA, "credentials service")
+	r.crm.SetPolicy("proj-1234", gcpfake.Binding{Role: "roles/owner", Members: []string{"user:person-1@example.com"}})
+	r.svcs.SetServicePolicy(infra.CredentialsServiceName,
+		gcpfake.Binding{Role: "roles/run.admin", Members: []string{"user:person-1@example.com"}})
+	r.iam.SetServiceAccountPolicy("proj-1234", credentialsSA,
+		gcpfake.Binding{Role: "roles/iam.serviceAccountUser", Members: []string{"user:person-1@example.com"}})
+
+	o, err := r.doctor(t)
+	if err != nil {
+		t.Fatalf("an info check must not fail doctor: %v", err)
+	}
+	c, ok := doctorCheckByID(o.Checks, "credentials-service-deployers")
+	if !ok || c.OK || c.Severity != "info" {
+		t.Fatalf("credentials-service-deployers = %+v (%+v)", c, o.Checks)
+	}
+	if !strings.Contains(c.Problem, "1 principal(s)") {
+		t.Errorf("problem %q counts grants rather than principals", c.Problem)
+	}
+	for _, want := range []string{
+		"user:person-1@example.com (roles/owner)",
+		"user:person-1@example.com (roles/run.admin)",
+		"user:person-1@example.com (roles/iam.serviceAccountUser)",
+	} {
+		if !strings.Contains(c.Problem, want) {
+			t.Errorf("problem %q lacks %q", c.Problem, want)
+		}
+	}
+}
+
+// TestDoctorCredentialsServiceDeployersReportsWhatItCouldNotRead: the line is
+// information, so an unread policy is not a failure — but it must still be
+// named, and it must keep the line from claiming that nothing grants a deploy.
+func TestDoctorCredentialsServiceDeployersReportsWhatItCouldNotRead(t *testing.T) {
+	// deployers reads the line of a rig that opted in, with everything the
+	// caller seeded served.
+	deployers := func(t *testing.T, r *secretReadersRig) doctorCheck {
+		t.Helper()
+		o, _ := r.doctor(t)
+		c, ok := doctorCheckByID(o.Checks, "credentials-service-deployers")
+		if !ok || c.OK || c.Severity != "info" {
+			t.Fatalf("credentials-service-deployers = %+v (%+v)", c, o.Checks)
+		}
+		return c
+	}
+	t.Run("project policy", func(t *testing.T) {
+		r := newSecretReadersRig(t)
+		r.withCredentialsService(t)
+		r.crm.DenyPolicy("proj-1234")
+		if c := deployers(t, r); !strings.Contains(c.Problem, "the IAM policy of project proj-1234") {
+			t.Errorf("problem %q does not name the refused project policy", c.Problem)
+		}
+	})
+	t.Run("service policy", func(t *testing.T) {
+		r := newSecretReadersRig(t)
+		r.withCredentialsService(t)
+		r.crm.SetPolicy("proj-1234")
+		c := deployers(t, r)
+		if !strings.Contains(c.Problem, "the IAM policy of the Cloud Run service "+infra.CredentialsServiceName) {
+			t.Errorf("problem %q does not name the service policy it could not read", c.Problem)
+		}
+		if strings.Contains(c.Problem, "nothing it read grants a deploy") {
+			t.Errorf("problem %q claims nothing grants a deploy about a policy it never read", c.Problem)
+		}
+	})
+	t.Run("account policy", func(t *testing.T) {
+		r := newSecretReadersRig(t)
+		r.withCredentialsService(t)
+		r.crm.SetPolicy("proj-1234")
+		r.svcs.AddService(infra.CredentialsServiceName)
+		c := deployers(t, r)
+		if !strings.Contains(c.Problem, "the IAM policy of "+credentialsSA) {
+			t.Errorf("problem %q does not name the account policy it could not read", c.Problem)
+		}
+	})
+	t.Run("custom role", func(t *testing.T) {
+		r := newSecretReadersRig(t)
+		r.withCredentialsService(t)
+		r.crm.SetPolicy("proj-1234")
+		r.svcs.AddService(infra.CredentialsServiceName)
+		r.iam.AddServiceAccount("proj-1234", credentialsSA, "credentials service")
+		r.svcs.SetServicePolicy(infra.CredentialsServiceName, gcpfake.Binding{
+			Role: "projects/proj-1234/roles/missing", Members: []string{"user:person-6@example.com"}})
+		c := deployers(t, r)
+		if !strings.Contains(c.Problem, "what projects/proj-1234/roles/missing carries, on the Cloud Run service's policy") {
+			t.Errorf("problem %q does not name the role it could not resolve", c.Problem)
+		}
+		if strings.Contains(c.Problem, "nothing it read grants a deploy") {
+			t.Errorf("problem %q claims nothing grants a deploy about a role it never read", c.Problem)
+		}
+	})
+	t.Run("nothing grants a deploy", func(t *testing.T) {
+		r := newSecretReadersRig(t)
+		r.withCredentialsService(t)
+		r.crm.SetPolicy("proj-1234")
+		r.svcs.AddService(infra.CredentialsServiceName)
+		r.iam.AddServiceAccount("proj-1234", credentialsSA, "credentials service")
+		c := deployers(t, r)
+		if !strings.Contains(c.Problem, "0 principal(s) — nothing it read grants a deploy") {
+			t.Errorf("problem %q does not say that every policy it read was empty", c.Problem)
+		}
+		if strings.Contains(c.Problem, "not read:") {
+			t.Errorf("problem %q reports a policy as unread, and every fake serves one", c.Problem)
+		}
+	})
 }
