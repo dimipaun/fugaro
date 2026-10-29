@@ -58,8 +58,12 @@ export const AVAILABILITY_STATES: readonly AvailabilityState[] = Object.freeze([
 ])
 
 /**
- * NOTIONAL_MARK prefixes a subscription's list price on screen. The `~` is part
- * of the value, so the meaning survives without colour: a notional dollar drawn
+ * NOTIONAL_MARK prefixes a subscription's list price on screen. The owner ruled
+ * the mark is `~` (2026-10-28), and it is part of the value, so the meaning
+ * survives without colour. A tilde also reads as prose's "approximately" -- the
+ * state this most resembles -- so a notional figure is told apart from an
+ * estimated one by ESTIMATED_MARK's `est.`, never by the tilde: `~$0.40` is a
+ * subscription's list price, `est. $0.40` is compute. Drawing a notional dollar
  * as a billed one is a wrong number that looks right.
  */
 export const NOTIONAL_MARK = '~'
