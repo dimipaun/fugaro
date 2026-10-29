@@ -349,6 +349,15 @@ leased), `headroom_usd` `*float64` (**null = unavailable**),
 `kill` `*showKill` (null = not killed). All caps are **null = unavailable** and
 never `0`.
 
+**`spent_usd` is the billed figure, on `global` and on every row alike**: the
+money the gateway charged, under the counter it was counted in. A subscription's
+part is notional, so a cascade run's tier-A dollars are in `notional_usd` and
+only its charged part is here (§2's `auth`/`notional` state the same split for a
+live row, off the registry entry rather than the counters). **A Spend caps row
+reads `spent_usd` as billed and there is no `billed_usd`**: the key does not
+exist, is not planned, and a second name for the same counter would be a way for
+the two to drift apart.
+
 `showDefaults`: `repo_daily_cap_usd`, `repo_per_run_cap_usd`,
 both `*float64`.
 
