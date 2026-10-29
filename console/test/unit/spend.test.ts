@@ -1889,12 +1889,13 @@ describe('the caps panel', () => {
 
   it('reads `compute_usd` off a cap row as an estimate, and n/a where there is none', () => {
     // The owner approved `compute_usd` on each `showRepo` on 2026-10-28, and
-    // `budget show --compute` writes it since 2026-10-29. This console passes
-    // no such flag -- its spawn row is its own reviewed run -- so the key is
-    // still only in a document a person hands this reader. The row reader
-    // already ignores keys it does not know, so the console reads the new one
-    // into the model -- as an **estimate**, compute's own account -- and draws
-    // nothing with it yet; the Spend redesign is the screen that will.
+    // `budget show --compute` writes it since 2026-10-29. This console's own
+    // `budget.show` row declares that flag and the caps panel draws the figure
+    // in its own cell, but no caller passes it yet -- the Spend screen's caps
+    // read is flipped behind `budgetComputeSupported` in its own reviewed run --
+    // so the key is still only in a document a person hands this reader. The
+    // row reader reads it into the model as an **estimate**, compute's own
+    // account, which is what the drawing test below starts from.
     const model = buildSpendModel(DAY_REPORT, {
       ...BUDGET,
       repos: [{ ...THE_REPOS[0], compute_usd: 0.75 }],
@@ -1951,17 +1952,16 @@ describe('the caps panel', () => {
       'light',
     )
     expect(texts(firstRepoRow(zero), 'spend-cap-compute')).toEqual([`${ESTIMATED_MARK} $0.00`])
-    // The key is absent on the recorded document and `null` on a CLI whose
-    // bucket read found no estimate: both are `n/a`, and the cell carries the
+    // A `null` -- the key a `budget show --compute` writes for a repository
+    // whose bucket read found no estimate -- is `n/a`, and the cell carries the
     // reader's own sentence for why, which is what keeps an `n/a` defensible.
-    for (const document of [
-      modelOf(),
-      buildSpendModel(DAY_REPORT, { ...BUDGET, repos: [{ ...THE_REPOS[0], compute_usd: null }] }),
-    ]) {
-      const absent = firstRepoRow(renderSpend(factory, document, 'light'))
-      expect(texts(absent, 'spend-cap-compute')).toEqual([UNAVAILABLE_MARK])
-      expect(one(absent, 'spend-cap-compute').getAttribute('title')).toBe('the document has no compute_usd')
-    }
+    const nulled = buildSpendModel(DAY_REPORT, {
+      ...BUDGET,
+      repos: [{ ...THE_REPOS[0], compute_usd: null }],
+    })
+    const absent = firstRepoRow(renderSpend(factory, nulled, 'light'))
+    expect(texts(absent, 'spend-cap-compute')).toEqual([UNAVAILABLE_MARK])
+    expect(one(absent, 'spend-cap-compute').getAttribute('title')).toBe('the document has no compute_usd')
     // A value that is not a number is `n/a` too, with the reader's sentence for
     // *that* -- the caps panel refuses no document, so a shape it cannot read is
     // the same drawn state as a key it was not sent, and the two are told apart
@@ -1973,9 +1973,25 @@ describe('the caps panel', () => {
     const wrongRow = firstRepoRow(renderSpend(factory, wrongKind, 'light'))
     expect(texts(wrongRow, 'spend-cap-compute')).toEqual([UNAVAILABLE_MARK])
     expect(one(wrongRow, 'spend-cap-compute').getAttribute('title')).toBe('compute_usd is a string, not a number')
-    // Every repository row draws one, not just the first: the cell is the row's
-    // and not a property of one fixture row.
-    expect(all(renderSpend(factory, modelOf(), 'light'), 'spend-cap-compute')).toHaveLength(THE_REPOS.length)
+    // The column is the read's and not the row's. The key is flag-conditioned,
+    // so a document read without `--compute` -- the recorded fixture, and every
+    // document this console produces today -- carries it on no row and draws no
+    // compute cell at all: an `n/a` on every row would be a permanent column
+    // for a flag nobody passed. Once one row carries it, every row draws the
+    // cell, and a row that carries none is `n/a` rather than blank.
+    expect(all(renderSpend(factory, modelOf(), 'light'), 'spend-cap-compute')).toHaveLength(0)
+    const mixed = renderSpend(
+      factory,
+      buildSpendModel(DAY_REPORT, {
+        ...BUDGET,
+        repos: [{ ...THE_REPOS[0], compute_usd: 0.12 }, ...THE_REPOS.slice(1)],
+      }),
+      'light',
+    )
+    expect(all(mixed, 'spend-cap-compute')).toHaveLength(THE_REPOS.length)
+    const [, withoutIt] = all(mixed, 'spend-cap-repo')
+    if (withoutIt === undefined) throw new Error('no second repository row')
+    expect(texts(withoutIt, 'spend-cap-compute')).toEqual([UNAVAILABLE_MARK])
   })
 
   it('draws an unrecognised scope word as an unknown, and never echoes it', () => {

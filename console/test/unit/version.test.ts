@@ -423,6 +423,23 @@ describe('budgetComputeSupported', () => {
     expect(budgetComputeSupported('0.12.1')).toBe(false)
     expect(budgetComputeSupported(LAUNCH_CLI_FLOOR)).toBe(false)
   })
+
+  it('is asked over a range whose every member is below the floor, so no reachable state passes the flag yet', () => {
+    // The predicate is named before its caller, and the caller alone is not
+    // enough: the Spend screen's caps read is withheld in every mode that is
+    // not `ok` (`REDUCED_VIEW_OPERATIONS.caps`, `src/main/ipc.ts`), and `ok` is
+    // exact-minor membership of this range -- so a CLI at or above the floor is
+    // a CLI whose caps read is withheld. Widening the range to the minor that
+    // carries the flag is the other half of the change, and this test fails the
+    // day it lands without the floor being reconsidered in the same commit.
+    for (const minor of SUPPORTED_CLI_MINORS) {
+      expect(budgetComputeSupported(`${minor}.0`), minor).toBe(false)
+      expect(budgetComputeSupported(`${minor}.9`), minor).toBe(false)
+    }
+    const above = classifyCliVersion(BUDGET_COMPUTE_CLI_FLOOR)
+    expect(above.mode).toBe('reduced')
+    expect(hidesView(above, 'caps')).toBe(true)
+  })
 })
 
 // ---------------------------------------------------------------------------

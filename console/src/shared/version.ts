@@ -177,11 +177,10 @@ export function launchSupported(version: string): boolean {
  * the question a caller asks before passing `--compute` is this constant's, and
  * neither `SUPPORTED_CLI_MINORS` nor `classifyCliVersion` answers it.
  *
- * It is asked only where the flag would be passed, and this console passes it
- * from exactly one place: the Spend screen's caps read. Nothing else asks,
- * because every other caller of `budget show` -- the rail and the Projects
- * screen -- would pay for the runs-bucket listing the flag costs and draw none
- * of it.
+ * It is asked only where the flag would be passed, and this console has exactly
+ * one such place: the Spend screen's caps read. Nothing else asks, because
+ * every other caller of `budget show` -- the rail and the Projects screen --
+ * would pay for the runs-bucket listing the flag costs and draw none of it.
  */
 export const BUDGET_COMPUTE_CLI_FLOOR = '0.13.0'
 
@@ -190,12 +189,19 @@ export const BUDGET_COMPUTE_CLI_FLOOR = '0.13.0'
  * `budget show --compute`, by comparing it against `BUDGET_COMPUTE_CLI_FLOOR`
  * at the patch level.
  *
- * **No caller asks it yet, and that is deliberate**: the console's caps read is
- * `showBudget({})` in `src/renderer/entry.ts`, so no spawn passes `--compute`
- * until that caller is flipped -- behind this predicate -- in its own reviewed
- * run. The predicate ships first so that the caller's change is a change of a
- * caller and not of a rule, and `version.test.ts` covers it at, below and above
- * the floor in the meantime.
+ * **No caller asks it yet, and no reachable console state could pass the flag
+ * today -- both are deliberate, and they are two different facts.** The caller
+ * is `showBudget({})` in `src/renderer/entry.ts`, so no spawn passes
+ * `--compute` until that call is flipped behind this predicate. But flipping it
+ * is not enough on its own: the caps read is withheld in every compatibility
+ * mode that is not `ok` (`REDUCED_VIEW_OPERATIONS.caps`, `src/main/ipc.ts`),
+ * and `ok` is exact-minor membership of `SUPPORTED_CLI_MINORS` -- `0.7`, `0.8`
+ * and `0.11`, every member of which is below this floor. So the range has to
+ * widen to the minor that carries the flag before any spawn may ask for the
+ * figure, and the predicate is named now, covered by `version.test.ts` at,
+ * below and above the floor, so that the run which widens the range and the run
+ * which flips the caller ask one rule between them rather than each writing its
+ * own comparison.
  */
 export function budgetComputeSupported(version: string): boolean {
   return meetsCliFloor(version, BUDGET_COMPUTE_CLI_FLOOR)
