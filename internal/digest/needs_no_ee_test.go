@@ -39,7 +39,11 @@ func TestDigestNeedsNoEE(t *testing.T) {
 		}
 		const module = "github.com/dimipaun/fugaro/"
 		eePrefix := module + "ee/"
-		reportPath := module + "internal/report"
+		// Spelled in two pieces so this test's own source holds no literal of
+		// the import path it refuses: the digest's independence is checked by
+		// grepping the tree for that import, and this file must not turn up in
+		// that list.
+		reportPath := module + "internal/" + "report"
 
 		type step struct{ dir, chain string }
 		seen := map[string]bool{}

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"io"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -11,8 +12,10 @@ import (
 	"gocloud.dev/blob"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -313,5 +316,192 @@ func TestAPICloudOverBucketReadsTheBucket(t *testing.T) {
 	}
 	if got := o.Input().Task; got == nil || got.RunID != id {
 		t.Errorf("the run read back = %+v, want the task the bucket holds", got)
+	}
+}
+
+// TestAPILsSlugsAnswersTheCoresSlugs: the moved report command lists the
+// repositories a window's runs live in through the core's own slug resolution,
+// so the published one has to be that resolution and not a second one.
+func TestAPILsSlugsAnswersTheCoresSlugs(t *testing.T) {
+	ctx := context.Background()
+	env := memEnv(t, newCloudFixture(t))
+	c := &Cloud{env: env}
+
+	for _, tc := range []struct {
+		name      string
+		repo      string
+		all       bool
+		wantSlugs *lsOptions
+	}{
+		{"a named repository", "acme/app", false, &lsOptions{repo: "acme/app"}},
+		{"the project's own", "", false, &lsOptions{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := c.LsSlugs(ctx, tc.repo, tc.all, io.Discard)
+			if err != nil {
+				t.Fatalf("Cloud.LsSlugs: %v", err)
+			}
+			want, err := lsSlugs(ctx, env, tc.wantSlugs, io.Discard)
+			if err != nil {
+				t.Fatalf("lsSlugs: %v", err)
+			}
+			if len(want) == 0 {
+				t.Fatal("the core's own slug resolution answered nothing: this test would compare two empty answers")
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("Cloud.LsSlugs = %v, want lsSlugs's %v", got, want)
+			}
+		})
+	}
+}
+
+// TestAPILoadRowsAnswersTheCoresLoader: the moved report command's degraded
+// path lists the run records through ls's own loader, so the published one has
+// to be that loader on the same window.
+func TestAPILoadRowsAnswersTheCoresLoader(t *testing.T) {
+	ctx := context.Background()
+	env := memEnv(t, newCloudFixture(t))
+	c := &Cloud{env: env}
+	since := time.UnixMilli(1_700_000_000_000)
+	now := time.UnixMilli(1_700_100_000_000)
+	const id = "20261024-120000-abcd"
+	s := runstore.Open(env.bucket.Bucket, appSlug, id)
+	if err := s.WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: id, Backend: "cloud-run", Job: "job", LaunchedAt: time.UnixMilli(1_700_000_000_000)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: appSlug, Status: runstore.StatusSucceeded}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := c.LoadRows(ctx, []string{appSlug}, since, io.Discard, now)
+	if err != nil {
+		t.Fatalf("Cloud.LoadRows: %v", err)
+	}
+	want, err := loadRows(ctx, env, lsFilter{slugs: []string{appSlug}, since: since, warn: io.Discard}, now)
+	if err != nil {
+		t.Fatalf("loadRows: %v", err)
+	}
+	if len(want) == 0 {
+		t.Fatal("the core's own loader answered no rows: this test would compare two empty answers")
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Cloud.LoadRows = %+v, want loadRows's %+v", got, want)
+	}
+}
+
+// TestAPIReadRunRecordsAnswersTheCoresRead: the moved report command's by-mode
+// rows read the window's runs through the core's own bounded reader, and may
+// see only the three facts those rows read.
+func TestAPIReadRunRecordsAnswersTheCoresRead(t *testing.T) {
+	ctx := context.Background()
+	env := memEnv(t, newCloudFixture(t))
+	c := &Cloud{env: env}
+	const id = "20261024-120000-abcd"
+	s := runstore.Open(env.bucket.Bucket, appSlug, id)
+	if err := s.WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: id, Backend: "cloud-run", Job: "job", LaunchedAt: time.UnixMilli(1_700_000_000_000)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: appSlug, Status: runstore.StatusSucceeded}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, gotUn, gotTrunc, err := c.ReadRunRecords(ctx, []string{appSlug}, time.Time{}, time.Time{}, 10)
+	if err != nil {
+		t.Fatalf("Cloud.ReadRunRecords: %v", err)
+	}
+	want, wantUn, wantTrunc, err := readRunObjects(ctx, env, []string{appSlug}, time.Time{}, time.Time{}, 10)
+	if err != nil {
+		t.Fatalf("readRunObjects: %v", err)
+	}
+	if len(want) == 0 {
+		t.Fatal("the core's own read found no run: this test would compare two empty answers")
+	}
+	if len(got) != len(want) || gotUn != wantUn || gotTrunc != wantTrunc {
+		t.Fatalf("Cloud.ReadRunRecords = %d runs, unlaunched %d, truncated %v; want %d, %d, %v",
+			len(got), gotUn, gotTrunc, len(want), wantUn, wantTrunc)
+	}
+	for i := range want {
+		if got[i].ID() != want[i].id {
+			t.Errorf("run %d's ID = %q, want %q", i, got[i].ID(), want[i].id)
+		}
+		if got[i].RecordCorrupt() != want[i].recordCorrupt {
+			t.Errorf("run %d's RecordCorrupt = %v, want %v", i, got[i].RecordCorrupt(), want[i].recordCorrupt)
+		}
+		if want[i].record == nil {
+			t.Errorf("run %d's core record is nil: this test cannot tell the accessors apart", i)
+			continue
+		}
+		if !reflect.DeepEqual(got[i].Record(), want[i].record) {
+			t.Errorf("run %d's Record = %+v, want %+v", i, got[i].Record(), want[i].record)
+		}
+	}
+}
+
+// TestAPIBudgetNowIsTheBudgetClock: the moved report command measures its own
+// --since/--until window back from the budget commands' clock, so the
+// published one has to be that clock and not a second one.
+func TestAPIBudgetNowIsTheBudgetClock(t *testing.T) {
+	if d := time.Since(BudgetNow()); d < -time.Minute || d > time.Minute {
+		t.Errorf("BudgetNow() is %v from now: it is not a wall clock", d)
+	}
+}
+
+// TestAPIRecordOfRunAnswersTheCoreRecord: the moved report command's degraded
+// path turns each listed run into a one-run day record through the core's own
+// conversion, so the two groupings cannot divide a run differently.
+func TestAPIRecordOfRunAnswersTheCoreRecord(t *testing.T) {
+	row := runview.Row{
+		Repo: "acme/app", Created: time.UnixMilli(1_700_000_000_000),
+		RequestedBy: "person-1@example.com",
+		Cost:        runstore.NewCost(1.25, 0, runstore.BasisAPIList).WithNotional(0.25),
+	}
+	if !reflect.DeepEqual(RecordOfRun(row), recordOfRun(row)) {
+		t.Errorf("RecordOfRun = %+v, want recordOfRun's %+v", RecordOfRun(row), recordOfRun(row))
+	}
+}
+
+// TestAPIComputeSourcesAnswersTheCoreSources: the moved report command names
+// each compute estimate's price table through the core's own collector, sorted
+// and deduplicated the same way.
+func TestAPIComputeSourcesAnswersTheCoreSources(t *testing.T) {
+	rows := []runview.Row{
+		{Cost: runstore.Cost{ComputeSource: "gcp-list"}},
+		{Cost: runstore.Cost{ComputeSource: "vm-table"}},
+		{Cost: runstore.Cost{ComputeSource: "gcp-list"}},
+		{Cost: runstore.Cost{}},
+	}
+	got, want := ComputeSources(rows), computeSources(rows)
+	if len(want) == 0 {
+		t.Fatal("the core's own collector answered nothing: this test would compare two empty answers")
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ComputeSources = %v, want computeSources's %v", got, want)
+	}
+}
+
+// TestAPIApplyCostAnswersTheCoreCost: the moved report command writes a run's
+// cost into a day record through the core's own split, so a mixed run's
+// dollars are divided the same way on both sides of the boundary.
+func TestAPIApplyCostAnswersTheCoreCost(t *testing.T) {
+	c := runstore.NewCost(1.25, 0.10, runstore.BasisAPIList).WithNotional(0.25)
+	var got, want budget.DayRecord
+	ApplyCost(&got, c)
+	applyCost(&want, c)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ApplyCost wrote %+v, want applyCost's %+v", got, want)
+	}
+}
+
+// TestAPIPaidCommandNamesIsACopy: the list is a reader, not a seam, so a
+// caller that mutates the slice it answers must not change what the next call
+// sees. E1.7b's review found the copy untested.
+func TestAPIPaidCommandNamesIsACopy(t *testing.T) {
+	first := PaidCommandNames()
+	if len(first) == 0 {
+		t.Fatal("PaidCommandNames answered nothing: this test would pass on an empty list")
+	}
+	first[0] = "not-a-command"
+	if again := PaidCommandNames(); again[0] == "not-a-command" {
+		t.Error("PaidCommandNames answered the slice a caller had already changed")
 	}
 }

@@ -604,13 +604,15 @@ D525 keeps the tagged images public: anyone may pull them, and the licence gover
 
 ## 10. The helper API an `ee/` command needs from `internal/cli`
 
-S1.1's list, made concrete: `internal/cli/api.go` (E1.1, plus E2.1a for the coordinator's move)
-publishes exactly these, and nothing more. An `ee/` command that needs something outside this list
-either imports a leaf package that already exists (`internal/safetext` for terminal-safe text) or
-adds a helper here, in the open.
+S1.1's list, made concrete: `internal/cli/api.go` (E1.1, plus E2.1a for the coordinator's move, plus
+E2.2a for the report's) publishes exactly these, and nothing more. An `ee/` command that needs
+something outside this list either imports a leaf package that already exists (`internal/safetext`
+for terminal-safe text) or adds a helper here, in the open.
 
 The first block is E1.1's; the second is E2.1a's, which publishes what the coordinator's command and
-library read beside the cloud.
+library read beside the cloud; the third is E2.2a's, which publishes what `fugaro report`'s command
+reads beside the cloud — the run reading its degraded and by-mode paths make, and the four helpers
+those paths share with the core.
 
 | Core helper today | Published in `api.go` | Signature |
 | --- | --- | --- |
@@ -647,6 +649,27 @@ library read beside the cloud.
 | `checkDatabaseHost` (`history.go:187`) | `CheckDatabaseHost` | `func CheckDatabaseHost(rawURL, firebaseProject string) error` |
 | `envProject`, `envFirebaseFP`, `envRTDBURL`, `envRunsBucket` (`history.go:34`) | `EnvProject`, `EnvFirebaseFP`, `EnvRTDBURL`, `EnvRunsBucket` | consts |
 | `reportIntentTimeout` (`run.go:2918`) | `ReportIntentTimeout` | const |
+
+The third block (E2.2a) is what `fugaro report`'s command reads where the second block's list stops:
+the run reader its degraded and by-mode paths share with `runs ls`/`runs stats`, and the four core
+helpers those two paths call.
+
+| Core helper today | Published in `api.go` | Signature |
+| --- | --- | --- |
+| `lsSlugs` (`runs.go:212`), `lsOptions` | `Cloud.LsSlugs` | `func (c *Cloud) LsSlugs(ctx context.Context, repo string, all bool, warn io.Writer) ([]string, error)` |
+| `loadRows` (`runs.go:255`), `lsFilter` | `Cloud.LoadRows` | `func (c *Cloud) LoadRows(ctx context.Context, slugs []string, since time.Time, warn io.Writer, now time.Time) ([]runview.Row, error)` |
+| `readRunObjects` (`runs_stats.go:392`), `runObject` (`runs_stats.go:343`) | `Cloud.ReadRunRecords`, `RunRecord` (opaque: `ID`, `Record`, `RecordCorrupt`) | `func (c *Cloud) ReadRunRecords(ctx context.Context, slugs []string, since, until time.Time, max int) ([]RunRecord, int, bool, error)` |
+| `userStatsMaxRuns` (`runs_stats.go:54`) | `UserStatsMaxRuns` | const |
+| `budgetNow` (`budget.go:58`) | `BudgetNow` | `func BudgetNow() time.Time` |
+| `recordOfRun` (`report.go:602`) | `RecordOfRun` | `func RecordOfRun(r runview.Row) budget.DayRecord` |
+| `computeSources` (`report.go:532`) | `ComputeSources` | `func ComputeSources(rows []runview.Row) []string` |
+| `applyCost` (`report.go:592`) | `ApplyCost` | `func ApplyCost(rec *budget.DayRecord, c runstore.Cost)` |
+
+`applyCost` and `microsOfUSD` stay in the core with `recordOfRun` — the design's "what moves" list
+(§3) names them, and this corrects it: `recordOfRun` is core (it is one of the five symbols core MIT
+code reads) and calls both, so a moved copy of them would be a second implementation of the split a
+run's dollars get. The moved command reaches them through `Cloud`'s readers above and the exported
+`ApplyCost`/`RecordOfRun` wrappers, which call the core's own `applyCost`/`microsOfUSD` unchanged.
 
 Notes that make this list the right size:
 
