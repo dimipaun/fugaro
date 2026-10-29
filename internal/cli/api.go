@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"slices"
 
 	"github.com/spf13/cobra"
 
@@ -109,3 +110,16 @@ func RemoteErr(err error) error { return remote(err) }
 
 // ClipRunes is s cut to n runes.
 func ClipRunes(s string, n int) string { return clipRunes(s, n) }
+
+// PaidCommandNames are the command names whose code the owner moves out of the
+// core. A reader, not a seam: the commands a build holds are its own business,
+// so there is no setter and a caller cannot change the list the stubs are built
+// from (design docs/design/ee-boundary-moves.md §9, D536).
+//
+// The core's skill checks read it to tell a name the released binary answers to
+// — the core command today, a registration after the move, the stub in a build
+// carrying none of that code — from a name no build has, and to hand a paid
+// name's flags to the tagged tree, where the command that carries them is
+// (ee/plugincheck). It answers a copy, so a caller that appends to it changes
+// nothing.
+func PaidCommandNames() []string { return slices.Clone(paidCommandNames) }
