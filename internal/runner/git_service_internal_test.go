@@ -164,6 +164,38 @@ func gitRunIdentity(t *testing.T) *token.Session {
 	return tok
 }
 
+// gitServiceBotID and gitServiceBotLogin are the App's bot account the fake
+// GitHub API answers GET /user with: the identity a run's commits are
+// attributed to (resolveCommitIdentity), which is what the provider asks the
+// API for once, before the first commit.
+const (
+	gitServiceBotID    = "900001"
+	gitServiceBotLogin = "fugaro-app[bot]"
+)
+
+// gitHubAPIFake is the GitHub API as a run's own reads meet it: GET /user,
+// answered with the App's bot account. The provider's API root is this server
+// and never api.github.com, so the identity read is hermetic like the rest of
+// the run, and a run that asked for anything else is a failure rather than a
+// call this fake would guess an answer for.
+func gitHubAPIFake(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/user" {
+			t.Errorf("the run asked the GitHub API for %s, which this fake does not answer", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"login": gitServiceBotLogin, "id": 900001, "type": "Bot",
+		}); err != nil {
+			t.Errorf("the fake GitHub API could not answer: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
 // gitServiceRun is a run whose job has the credentials service on: the
 // service's URL, the App's ID and no App key of its own anywhere in the
 // environment.
@@ -178,10 +210,11 @@ func gitServiceRun(t *testing.T, svc *gitServiceFake, meta *httptest.Server, id 
 	env := []string{
 		providers.EnvGitHubAppID + "=1234",
 		credentialsServiceURLEnv + "=" + svc.srv.URL,
+		providers.EnvGitHubAPIURL + "=" + gitHubAPIFake(t).URL,
 		metadataHostEnv + "=127.0.0.1:1",
 	}
 	if meta != nil {
-		env[2] = metadataHostEnv + "=" + strings.TrimPrefix(meta.URL, "http://")
+		env[3] = metadataHostEnv + "=" + strings.TrimPrefix(meta.URL, "http://")
 	}
 	r := svcRun(t, "api-key", func(r *run) {
 		r.d.Env = env
