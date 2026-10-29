@@ -25,13 +25,13 @@
 //     an operator is told about an obviously refused value without a round trip.
 //     It is not a boundary, and main refuses what it misses.
 //
-// Every value is a text node -- never `innerHTML`, never a link, never an image
-// -- and every refusal is main's own sentence as text: rule 11 draws the CLI's
-// message verbatim, so a message that carries markup arrives as characters
-// rather than as an element. The two values a class cannot draw are the launch's
-// own recorded ones -- a repository identity and the `launchResult` facts -- and
-// they are written as the strings they are (`identity` and `fact` below say
-// why).
+// Every value is a text node -- never a markup-parsing slot, never a link,
+// never an image -- and every refusal is main's own sentence as text: rule 11
+// draws the CLI's message verbatim, so a message that carries markup arrives as
+// characters rather than as an element. The two values a class cannot draw are
+// the launch's own recorded ones -- a repository identity and the `launchResult`
+// facts -- and they are written as the strings they are (`identity` and `fact`
+// below say why).
 //
 // The three caps and the cancel sentence are mirrored rather than imported,
 // because a screen may not read a main-process value: `launch-form.test.ts`
