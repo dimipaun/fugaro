@@ -51,7 +51,7 @@ blind judge run. No code ever changes a default.
 | A retried arm never duplicates a pair, and a chosen `--run-id` is never sampled | A3.0 `TestRetryRefusesABTask`; A3.1 `TestEligibleExcludesChosenRunID` |
 | An untagged build that sees `ab:` keys writes only the D522 capability line, from the runner | A2.1 `TestUntaggedRunnerABKeysCapabilityLine` |
 | No figure from fewer than 20 decisive pairs; same records give the same report | A4.2 `TestBelowMinimumNoConclusion`, `TestReportDeterministic` |
-| No person, task text or free text in an A/B output | A4.3 `TestABReportHasNoPerson`, A4.4 `TestDigestABSectionClosedVocabulary` (only if the digest section stays, T2) |
+| No person, task text or free text in an A/B output | A4.3 `TestABReportHasNoPerson` |
 | The judge never sees a run ID, branch name, model ID or commit metadata | A5.1 `TestBundleCarriesNoIdentifier`; Check 211 |
 | The judge is one tool-less call over untrusted diffs, and an answer outside its vocabulary is a tie | A5.2 `TestJudgeIsToolLess`, `TestJudgePromptWrapsDiffsAsUntrusted`, `TestJudgeAnswerOutsideVocabularyIsTie` |
 | Challenger records do not skew other figures (D568) | A4.5 `TestDigestCountsChallengersApart`; A4.3 `TestSpendNoteSaysShadowIncluded`; task-governance T8.3's brief (a constraint on that task, born in `ee/`) |
@@ -275,10 +275,10 @@ injection from a challenger's diff.
 - **Red step:** compile failure, then the known-value tests against published table values.
 - **Reviewer tier:** standard. **OWNER-RUN:** no.
 
-### A4.3 The A/B report command (D570: a new dedicated command; its name is open, T1)
+### A4.3 The `fugaro ab` command (D570: a new dedicated command, named `fugaro ab` by the owner, T1)
 
-- **Files:** `ee/report/ab.go` (new), `ee/report/ab_test.go` (new), the command's file under `ee/ab`
-  (new, named once T1 is ruled), `ee/register/ab_report.go` (new; wires it under D550/D530), the
+- **Files:** `ee/report/ab.go` (new), `ee/report/ab_test.go` (new), `ee/ab/command.go` (new; `fugaro ab`, with
+  subcommands such as `fugaro ab show` possible later), `ee/register/ab_command.go` (new; wires it under D550/D530), the
   untagged stub that exits with the D522 capability line (new; where ee-reorg's stub pattern puts it),
   and `ee/report/cli/report.go` and its test (the command file E2.2 moves there from
   `internal/cli/report.go`) only for the spend groupings' note.
@@ -286,29 +286,20 @@ injection from a challenger's diff.
   challenger): pairs, wins/losses/ties, interval, median cost ratio,
   halt rate per arm, recommendation; JSON carries the recommendation object (R3). The spend groupings' notes say shadow
   spend is included (D568).
-- **Tests:** `TestReportByABRows`, `TestABReportHasNoPerson`, `TestABReportSuppressesSmallGroups`,
-  `TestABReportJSONRecommendation`, `TestABReportExcludesInvalidPairs`, `TestSpendNoteSaysShadowIncluded`, `TestABReportCommandRegistered`,
-  `TestABReportUntaggedStubExitsWithCapabilityLine`.
-- **Command:** `go test ./ee/report/... -run 'TestReportByAB|TestABReport|TestSpendNote' -count=1` plus the stub's test in its package
+- **Tests:** `TestABRows`, `TestABReportHasNoPerson`, `TestABReportSuppressesSmallGroups`,
+  `TestABReportJSONRecommendation`, `TestABReportExcludesInvalidPairs`, `TestSpendNoteSaysShadowIncluded`, `TestABCommandRegistered`,
+  `TestABUntaggedStubExitsWithCapabilityLine`.
+- **Command:** `go test ./ee/report/... -run 'TestABRows|TestABReport|TestABCommand|TestABUntagged|TestSpendNote' -count=1` plus the stub's test in its package
 - **Depends on:** A4.1, A4.2, ee-reorg E2.2 (`ee/report` exists).
-- **Commit:** `ee/report: the A/B report command, rows per mode and tier`
-- **Red step:** the new command is refused as unknown.
+- **Commit:** `ee/report: the `fugaro ab` command, rows per mode and tier`
+- **Red step:** `fugaro ab` is refused as unknown.
 - **Reviewer tier:** standard. **OWNER-RUN:** no.
 
-### A4.4 The digest's A/B section (OPTIONAL: held until the owner rules whether it stays, T2)
+### A4.4 DROPPED (the digest's A/B section; owner, 2026-10-29)
 
-- **Files:** `ee/ab/digest.go` (new), `ee/ab/digest_test.go` (new), `ee/register/ab_digest.go` (new),
-  `ee/register/ab_digest_test.go` (new).
-- **Interfaces:** consumes ee-reorg E1.2b's section hook (`internal/digest/section.go`, #1249, open; an
-  untagged digest has no section by E1.2b's default, so no core test is added here); renders a
-  closed-vocabulary section within `digest.MaxBytes`.
-- **Tests:** `TestDigestABSectionClosedVocabulary`, `TestDigestABSectionFitsBudget`,
-  `TestDigestABSectionRegistered`.
-- **Command:** `go test ./ee/ab/ ./ee/register/ -run 'TestDigestAB' -count=1`
-- **Depends on:** A4.3, ee-reorg E1.2b.
-- **Commit:** `ee/ab: the digest's A/B section`
-- **Red step:** the section is absent from a tagged digest.
-- **Reviewer tier:** standard. **OWNER-RUN:** no.
+Considered and declined: one results surface only (`fugaro ab`), which avoids a second hook in the MIT
+digest and the `capTo`/section-hook interaction. The number is not reused. A4.5 (challengers counted apart
+in the digest) is unaffected. Reopen only on a new owner ruling.
 
 ### A4.5 The digest counts challengers apart (MIT)
 
@@ -410,7 +401,7 @@ injection from a challenger's diff.
 ### A6.1 How-to, skill and release notes
 
 - **Files:** `docs/how-to/model-ab-testing.md` (new), `plugin/skills/working/SKILL.md` (how to read
-  the A/B report command; that a challenger run is not the developer's to follow up; the `ab-judge` routine and
+  `fugaro ab`; that a challenger run is not the developer's to follow up; the `ab-judge` routine and
   `ab.judge_model`), `website/content/cli-reference.md`
   (regenerated by the tagged generator), `docs/releases/vX.Y.Z.md` of the release that ships A3.3 (a
   `### For operators` entry: per installation, set `ab:` in the project layer and publish it; nothing
@@ -428,7 +419,7 @@ injection from a challenger's diff.
 - **Files:** `docs/gcp-live-checklist.md` (Check 212, NOT RUN).
 - **What it measures:** a pair whose challenger is a provider model routed for the sandbox repository,
   judged by A5.2: both wall times (U4), both costs within the per-run cap, the verdict object, and that
-  the A/B report command lists the pair as below the minimum.
+  `fugaro ab` lists the pair as below the minimum.
 - **Tests / Command:** `go test ./internal/cli/ -run Docs -count=1`.
 - **Depends on:** A3.3, A5.3 (one file).
 - **Commit:** `docs(checklist): Check 212, a provider challenger end to end`
@@ -439,16 +430,15 @@ injection from a challenger's diff.
 
 **Edges** (from the Depends on lines): A1.1 → A2.1, A3.0, A3.3, A4.1, A4.5; A1.2 → A3.0, A3.1, A3.2,
 A5.2; A2.1 → A3.3, A5.1; A3.0 → A3.3, A5.2; A3.1, A3.2 → A3.3; A3.2 → A5.2; A3.3 → A2.2, A6.1, A6.2;
-A4.1, A4.2 → A4.3; A4.1 → A5.2, A5.4; A4.3 → A4.4, A5.4, A6.1; A5.1 → A5.2; A5.2 → A5.3, A5.4, A6.1;
-A2.2 → A5.3; A5.3 → A6.2. External (ee-reorg): E1.1 → A3.0; E1.5 → A3.3, A5.2; E2.2 → A4.3;
-E1.2b → A4.4; E1.7 → A6.1.
+A4.1, A4.2 → A4.3; A4.1 → A5.2, A5.4; A4.3 → A5.4, A6.1; A5.1 → A5.2; A5.2 → A5.3, A5.4, A6.1;
+A2.2 → A5.3; A5.3 → A6.2. External (ee-reorg): E1.1 → A3.0; E1.5 → A3.3, A5.2; E2.2 → A4.3; E1.7 → A6.1.
 
 | Level | Tasks (run concurrently) |
 | --- | --- |
 | L0 | A1.1, A1.2, A4.2 |
 | L1 | A2.1, A3.0, A3.1, A3.2, A4.1, A4.5 |
 | L2 | A3.3, A4.3, A5.1 |
-| L3 | A2.2, A4.4 (optional, T2), A5.2 |
+| L3 | A2.2, A5.2 |
 | L4 | A5.3, A5.4, A6.1 |
 | L5 | A6.2 |
 
@@ -474,7 +464,7 @@ A5.4 (one file, `ee/ab/score.go`).
 | `schemas/*.schema.json` | A1.1 (`task`, `result`; L0), A1.2 (`project-layer`, `fugaro`; L0): different files |
 | `schemas/schemas_test.go` | A1.1 only (A1.2 and A5.2 run the schema tests without editing them) |
 | `schemas/recipe.schema.json` | A5.2 only |
-| `ee/register/*` | A3.3 (`ab_launch.go`), A4.3 (`ab_report.go`), A4.4 (`ab_digest.go`, optional), A5.2 (`ab_judge.go`): one new file each, no shared file |
+| `ee/register/*` | A3.3 (`ab_launch.go`), A4.3 (`ab_command.go`), A5.2 (`ab_judge.go`): one new file each, no shared file |
 
 Files outside this plan written by open or planned work: `internal/cli/extend.go`, `api.go`, `run.go`
 (ee-reorg E1.1, #1252), `internal/policy/merge.go` (governance and ee-reorg tasks),

@@ -2,8 +2,8 @@
 
 **Status: plan only; nothing is implemented; no task approved.** Decisions D550–D573 were answered by the owner on
 2026-10-29: the recommendation in every row except D570 (a new dedicated command, not the
-recommendation). The answers are not task approvals. Open: the new command's name and whether the
-digest section stays (reconciliation.md section 4, T1 and T2).
+recommendation). The answers are not task approvals. T1-T3 are resolved: the command is `fugaro ab`;
+the digest section (A4.4) is dropped (reconciliation.md section 4).
 
 **Spec owner:** the Fugaro owner. **Spec received:** 2026-10-28. **Reconciled against** `origin/main`
 at `c192e8766` and the docs of the 22 PRs open on 2026-10-29.
@@ -11,8 +11,8 @@ at `c192e8766` and the docs of the 22 PRs open on 2026-10-29.
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The owner's "Fugaro Model A/B Testing Spec", **verbatim** |
-| [reconciliation.md](reconciliation.md) | The headline table, findings F1–F22 against the code, resolutions R1–R5, decisions D550–D573 (answered 2026-10-29), open tensions T1–T3, open items O1–O3, UNVERIFIED U1–U6. **Where it disagrees with `spec.md`, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Slices A1–A6, tasks A1.1–A6.2 (with A3.0), levels L0–L5, the critical path, the shared-files table, Checks 210–212. **Nothing in it is approved** |
+| [reconciliation.md](reconciliation.md) | The headline table, findings F1–F22 against the code, resolutions R1–R5, decisions D550–D573 (answered 2026-10-29), tensions T1–T3 (resolved), open items O1–O3, UNVERIFIED U1–U6. **Where it disagrees with `spec.md`, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Slices A1–A6, tasks A1.1–A6.2 (with A3.0; A4.4 dropped), levels L0–L5, the critical path, the shared-files table, Checks 210–212. **Nothing in it is approved** |
 
 ## Headline
 
