@@ -1,6 +1,6 @@
 # Model A/B testing
 
-**Status: plan only; nothing is implemented; no task approved.** Decisions D550–D572 are written with
+**Status: plan only; nothing is implemented; no task approved.** Decisions D550–D573 are written with
 recommendations and **none is answered yet**: every answer cell is empty until the owner rules.
 
 **Spec owner:** the Fugaro owner. **Spec received:** 2026-10-28. **Reconciled against** `origin/main`
@@ -9,8 +9,8 @@ at `c192e8766` and the docs of the 22 PRs open on 2026-10-29.
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The owner's "Fugaro Model A/B Testing Spec", **verbatim** |
-| [reconciliation.md](reconciliation.md) | The headline table, findings F1–F22 against the code, resolutions R1–R5, decisions D550–D572 (all open), open items O1–O2, UNVERIFIED U1–U5. **Where it disagrees with `spec.md`, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Slices A1–A6, tasks A1.1–A6.2, levels L0–L5, the critical path, the shared-files table, Checks 210–212. **Nothing in it is approved** |
+| [reconciliation.md](reconciliation.md) | The headline table, findings F1–F22 against the code, resolutions R1–R5, decisions D550–D573 (all open), open items O1–O2, UNVERIFIED U1–U5. **Where it disagrees with `spec.md`, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Slices A1–A6, tasks A1.1–A6.2 (with A3.0), levels L0–L5, the critical path, the shared-files table, Checks 210–212. **Nothing in it is approved** |
 
 ## Headline
 
@@ -32,5 +32,5 @@ None. It is byte for byte as received.
 
 | Block | Use |
 | --- | --- |
-| **D550–D579** | this work's block: **D550–D572** written (all open); **D573–D579** reserved and unused. Taken above the highest decision on `main` and in every open PR's docs (D537 written; D549 the top of ee-reorg's reserved block D520–D549) |
+| **D550–D579** | this work's block: **D550–D573** written (all open); **D574–D579** reserved and unused. Taken above the highest decision on `main` and in every open PR's docs (D537 written; D549 the top of ee-reorg's reserved block D520–D549) |
 | **Checks 210–219** | this work's block: **210–212** proposed by the plan (written by A2.2, A5.3, A6.2; run by the owner; NOT RUN); **213–219** reserved and unused. Above ee-reorg's Checks 200–209 |
