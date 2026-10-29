@@ -385,9 +385,12 @@ func mobileAuthCitedPaths(doc string, dirs map[string]bool) []string {
 // the same change, and a reader can see from the list alone what is still
 // missing.
 //
-// The plan writes three of these as this work's own new paths and four as the
+// The plan writes three of these as this work's own new paths and three as the
 // mobile Phase 6 tasks' (P6.6 and P6.8, approved 2026-10-18 and unbuilt), and
-// the reconciliation's §F23 names the four borrowed ones at once. The list is
+// the reconciliation's §F23 names the borrowed ones at once. P6.6's
+// `internal/budget/token/device.go` left the list in the pull request that
+// landed it (the pairing plan's T2a, 2026-10-29), which is the deletion every
+// entry owes its own pull request. The list is
 // held here rather than re-derived, so an implementer who finds a fifth adds it
 // visibly instead of loosening the rule.
 //
@@ -400,7 +403,6 @@ func mobileAuthCitedPaths(doc string, dirs map[string]bool) []string {
 var mobileAuthWillCreate = map[string]string{
 	"docs/mobile-auth/provider-sign-in.md": "P6's provider path, written out and refused",
 	"internal/cli/pair.go":                 "mobile Task P6.6 (`fugaro pair`), approved 2026-10-18 and unbuilt",
-	"internal/budget/token/device.go":      "mobile Task P6.6's device token, approved 2026-10-18 and unbuilt",
 	"mobile/src/pairing":                   "mobile Task P6.8, approved 2026-10-18 and unbuilt",
 	"mobile/src/overview":                  "mobile Task P6.8's overview screen, approved 2026-10-18 and unbuilt",
 }

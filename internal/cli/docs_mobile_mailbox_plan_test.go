@@ -208,10 +208,11 @@ var planWillCreate = map[string]string{
 // here is what keeps the derivation honest: a path the plan cites is either in
 // the tree, or a path this plan's tasks create, or this list — and this list is
 // checked the same way (still absent, still cited), so it cannot rot into a
-// hiding place for a real path.
+// hiding place for a real path. P6.6's `internal/budget/token/device.go` left
+// the list in the pull request that landed it (the pairing plan's T2a,
+// 2026-10-29), and the two files still listed here are still absent.
 var planWillCreateElsewhere = map[string]string{
 	"internal/cli/pair.go":                 "P6.6's `fugaro pair` (approved, not built)",
-	"internal/budget/token/device.go":      "P6.6's device token",
 	"internal/budget/sweep_device_test.go": "P6.6's `m~…` sweep rule's test",
 }
 
@@ -913,7 +914,7 @@ var planPhaseSixMerged = map[string]string{
 // confirmation) has no path here: its deliverable is app code this plan names
 // nowhere, so only its listing is asserted.
 var planPhaseSixUnbuilt = map[string][]string{
-	"P6.6":  {"internal/cli/pair.go", "internal/budget/token/device.go", "internal/budget/sweep_device_test.go"},
+	"P6.6":  {"internal/cli/pair.go", "internal/budget/sweep_device_test.go"},
 	"P6.7":  {"internal/cli/mailbox.go"},
 	"P6.12": nil,
 	"P6.13": {"internal/cli/mailbox.go"},
