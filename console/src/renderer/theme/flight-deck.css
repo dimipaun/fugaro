@@ -429,3 +429,321 @@ span.live-fleet-waiting {
   font-size: var(--text-xs);
   color: var(--text-2);
 }
+
+/* ---------------------------------------------------------------------------
+ * The project runs panel -- the Live view's repositories, their runs table and
+ * the pipeline segments (console redesign, step 2b, `console/src/renderer/
+ * screens/live.ts`'s `repoBlock()`, `runTable()` and `pipelineCell()`).
+ *
+ * **One panel per repository, and one table inside each.** The panel is the
+ * raised surface the design's step 2 asks for -- `--surface` under a `--line`
+ * hairline at `--radius-xl` -- and everything below the header is the project's
+ * own: its meters, its kill banner, its runs.
+ *
+ * **The table scrolls in its own box, and the box is what has a width.** The
+ * seven columns need about 1080 px to be read, and a narrower window scrolls the
+ * box rather than dropping a column: a figure is never hidden to make a layout
+ * fit (styling design section 4.2), and the values these columns carry have no
+ * `title` behind them. The width is a raw length rather than a token, like the
+ * rail's two, because it is a fact about the drawing and section 3.1's token
+ * vocabulary is closed.
+ *
+ * The ground here is `--surface`, `--text` and `--font-mono`, the three names
+ * this stylesheet scopes to the shell's header (see the file's header comment):
+ * inside a screen they resolve to the palette the un-rebuilt screens use, which
+ * is the ground the whole console is painted on until the last screen is
+ * rebuilt. Every other value is the redesign's own token.
+ * ------------------------------------------------------------------------- */
+
+div.live-repos,
+div.live-orphans {
+  display: grid;
+  gap: var(--section-gap);
+}
+
+section.live-repo {
+  display: grid;
+  align-content: start;
+  gap: var(--space-sm);
+  padding: var(--panel-pad);
+  background: var(--surface);
+  border: var(--rule-width) solid var(--line);
+  border-radius: var(--radius-xl);
+}
+
+/* The header: the caption and the repository on the left, the figures and the
+ * project's control on the right, and the gap between them is what carries the
+ * two apart -- `space-between` with a wrapping row, so a narrow window stacks
+ * the figures under the name rather than squeezing the name. */
+header.live-repo-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2xs) var(--space-lg);
+}
+
+header.live-repo-head span.live-repo-label {
+  font-size: var(--text-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+header.live-repo-head span.live-repo-name {
+  font-family: var(--font-mono);
+  font-size: var(--text-h2);
+  color: var(--text);
+}
+
+div.live-repo-figures {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-md);
+}
+
+span.live-repo-figure {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2xs);
+}
+
+span.live-repo-figure-label {
+  font-size: var(--text-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* The three figures are readings drawn through `numberCell`, so each already
+ * carries `live-num`'s tabular figures and right alignment. Notional spend is
+ * the one figure on the panel that is outside the cap, so it is the one painted
+ * with the notional tone (styling design section 6.1 rule 1). */
+header.live-repo-head span.live-repo-notional {
+  font-size: var(--text-lg);
+  color: var(--notional);
+}
+
+header.live-repo-head span.live-repo-counted,
+header.live-repo-head span.live-repo-cap,
+header.live-repo-head span.live-burn-rate {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+
+header.live-repo-head span.live-repo-sep {
+  color: var(--text-3);
+}
+
+/* The bar and the burn window share a row, and the row wraps rather than
+ * shrinking either: the sparkline is a shape, and a squeezed shape is a wrong
+ * one. */
+div.live-repo-meters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2xs) var(--space-md);
+}
+
+/* Halt project and Reap are drawn and refused (`writes.ts`): a real button that
+ * stays in the tab order, so a reader meets it and hears why it does nothing.
+ * The cursor says the same thing to a pointer that `aria-disabled` says to a
+ * reader, and neither is the whole of the mark -- the button's own description
+ * carries the sentence. */
+button.live-halt,
+button.live-reap {
+  padding: var(--space-3xs) var(--space-xs);
+  background: var(--surface-2);
+  color: var(--text-2);
+  border: var(--rule-width) solid var(--line-strong);
+  border-radius: var(--radius-chip);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  cursor: not-allowed;
+}
+
+/* ---- The runs table ------------------------------------------------------ */
+
+div.live-runs {
+  overflow-x: auto;
+  border: var(--rule-width) solid var(--line-subtle);
+  border-radius: var(--radius-lg);
+}
+
+table.live-table {
+  width: 100%;
+  min-width: 1080px;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+table.live-table th.live-table-head {
+  padding: var(--space-2xs) var(--space-sm);
+  font-size: var(--text-label);
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--text-3);
+  border-bottom: var(--rule-width) solid var(--line);
+}
+
+table.live-table td {
+  padding: var(--space-2xs) var(--space-sm);
+  vertical-align: top;
+  border-bottom: var(--rule-width) solid var(--line-subtle);
+}
+
+table.live-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* The run id is the row's door (`entry.ts`'s `wireRuns` reads this cell's drawn
+ * text), so it is drawn as one: mono, the way an id is compared, and underlined,
+ * which is the whole mark -- there is no second channel for it, and nothing on
+ * this screen navigates from a pointer alone. */
+table.live-table td.live-run-id {
+  font-family: var(--font-mono);
+  color: var(--live-text);
+  text-decoration: underline;
+}
+
+td.live-run-title {
+  font-size: var(--text-md);
+}
+
+/* The pipeline: five segments, then the run's own line. **The segments are
+ * decoration** -- `aria-hidden`, and every one of them is said in words under
+ * them -- so the marks are a shape's tones and nothing more: what is behind the
+ * run, what it is doing, what is left, and the danger tone when the heartbeat is
+ * gone. */
+td.live-pipeline {
+  min-width: 220px;
+}
+
+ol.live-pipeline-segments {
+  display: flex;
+  gap: var(--space-3xs);
+  margin: 0 0 var(--space-2xs);
+  padding: 0;
+  list-style: none;
+}
+
+li.live-pipeline-segment {
+  flex: 1 1 0;
+  min-width: 18px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line);
+}
+
+li.live-pipeline-segment[data-mark='past'] {
+  background: var(--decor);
+}
+
+li.live-pipeline-segment[data-mark='current'] {
+  background: var(--live);
+}
+
+li.live-pipeline-segment[data-mark='danger'] {
+  background: var(--danger);
+}
+
+div.live-run-when {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3xs) var(--space-2xs);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+
+div.live-run-when span.live-run-dot,
+div.live-run-when span.live-run-word {
+  color: var(--text-3);
+}
+
+/* The coder and the reviewer are two mono values in one cell, separated by the
+ * column they share rather than by a mark: the heading names both. */
+td.live-run-coder span.live-run-models,
+td.live-run-coder span.live-run-auth {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+
+td.live-run-coder span.live-run-models {
+  margin-right: var(--space-2xs);
+}
+
+/* The status chip: the word is the state and the tone is the second channel
+ * (styling design section 3.5). Queued is outlined in the live pair, running is
+ * the live tone, a lost heartbeat is the danger tint with a decorative pip, and
+ * a finished run is neutral -- because being done is not a state that needs
+ * attention. The transparent border keeps all four the same size. */
+span.live-run-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3xs);
+  padding: 0 var(--space-2xs);
+  border: var(--rule-width) solid transparent;
+  border-radius: var(--radius-chip);
+  font-size: var(--text-label);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--live-text);
+}
+
+span.live-run-pip {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+
+tr.live-run-queued span.live-run-chip {
+  border-color: var(--live-border);
+}
+
+tr.live-run-lost span.live-run-chip {
+  background: var(--danger-tint);
+  border-color: var(--danger-border);
+  color: var(--danger-text);
+}
+
+tr.live-run-done span.live-run-chip {
+  color: var(--text-2);
+}
+
+/* A lost row is tinted rather than struck through: the run did not fail, the
+ * console stopped hearing from it, and the gradient says which end of the row
+ * the state belongs to. */
+tr.live-run-lost td {
+  background-image: linear-gradient(90deg, var(--danger-tint), transparent);
+}
+
+/* The row's own tone, on the cell that starts it: a rule down the left edge is
+ * the structural tone the design gives a queued row, and a stuck one is a
+ * failure. The first cell carries it so the rule is the row's left edge rather
+ * than a border a collapsed table has to arbitrate. */
+tr.live-run-queued td:first-child {
+  border-left: 3px solid var(--live);
+}
+
+tr.live-run-stuck td:first-child {
+  border-left: 3px solid var(--danger);
+}
+
+/* The status cell holds the chip, the CLI's flags and, on a lost run, Reap. A
+ * table cell cannot be a flex container without leaving the table, so the parts
+ * are inline and the spacing between them is a margin on every part but the
+ * first. */
+td.live-run-status {
+  white-space: nowrap;
+  font-size: var(--text-xs);
+}
+
+td.live-run-status > * + * {
+  margin-left: var(--space-2xs);
+}

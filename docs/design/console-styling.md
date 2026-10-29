@@ -263,16 +263,17 @@ not read is drawn **with the CLI's warning line underneath it**, never hidden.
 ### 2.3 Live — `console/src/renderer/screens/live.ts`
 
 The default screen: one glance at what is spending money now. Regions in tree order:
-header → total block → `ol.live-repos` of `li.live-repo`, each with a cap bar, a burn
-sparkline and a kill banner and an `ol.live-runs` of `li.live-run` → an optional
-`ol.live-orphans` → **`section.live-review`**, the review inbox (v2 plan Task V2.7.1,
+header → total block → `div.live-repos` of `section.live-repo`, each with a meters row (a
+cap bar and a burn sparkline), a kill banner and a `div.live-runs` holding a
+`table.live-table` of `tr.live-run` → an optional
+`div.live-orphans` → **`section.live-review`**, the review inbox (v2 plan Task V2.7.1,
 design F26). The header is `header.live-header` (`h1.live-project`, mode, day, the
 connection cell, an optional note, and — when the caller keeps a feed reading — the
 `p.live-since` "last read" line, with the `div.live-stale` banner after it once that feed is
 stale). **The stale banner and the last-read line are the header's last children, not
 siblings after the repositories**: `header()` appends them itself, inside the `header` it
 builds, and `renderLive` appends exactly five things to the
-root — the header, the total, `ol.live-repos`, the optional `ol.live-orphans` and
+root — the header, the total, `div.live-repos`, the optional `div.live-orphans` and
 `section.live-review`.
 A rule that puts the banner below the repos list is a rule that selects it in a place it
 never occupies.
@@ -293,9 +294,9 @@ section at all: not an inert one, and not one waiting for a provider.
 |---|---|
 | Header | `live-header`, `live-project`, `live-mode`, `live-day`, `live-connection`, `live-connection-age`, `live-connection-reason`, `live-note` |
 | Total | `live-total` (the panel root, with `live-fleet`), `live-counted`, `live-cap`, `live-percent`, `live-total-notional`, `live-total-percent` (the cap bar, an `svg`), `live-fleet-wide` (the wide cell), `live-fleet-cap`, `live-fleet-cap-label`, `live-fleet-hero`, `live-fleet-hero-note`, `live-fleet-bar`, `live-fleet-track`, `live-fleet-segment` (one `rect` per account the bar draws, keyed by `data-account`), `live-fleet-legend`, `live-fleet-key`, `live-fleet-swatch` (one mark per account the bar draws — a row whose account it does not draw has none), `live-fleet-key-word`, `live-fleet-unread` (a value the document does not carry), `live-fleet-counted`, `live-fleet-sep`, `live-fleet-full`, `live-fleet-warn-icon`, `live-fleet-full-word`, `live-fleet-stats`, `live-fleet-stat`, `live-fleet-stat-label`, `live-fleet-burn`, `live-fleet-burn-unit`, `live-fleet-active`, `live-fleet-lost`, `live-fleet-queued`, `live-fleet-waiting` |
-| Repository | `live-repos`, `live-repo`, `live-repo-name`, `live-repo-counted`, `live-repo-cap`, `live-repo-percent`, `live-repo-notional`, `live-burn-rate`, `live-burn`, `live-burn-bar`, `live-burn-unit`, `live-runs`, `live-orphans` |
-| Run row | `live-run`, `live-run-id`, `live-run-title`, `live-run-mode`, `live-run-stage`, `live-run-round`, `live-run-verify`, `live-run-models`, `live-run-recipe`, `live-run-auth`, `live-run-spend`, `live-run-age`, `live-run-flag`, `live-run-contradiction`, `live-run-workflow`, `live-run-requester`, `live-run-started-by` |
-| Condition classes on a row | `live-run-queued`, `live-run-stuck` |
+| Repository | `live-repos`, `live-repo` (a `section` with an accessible name — "Project runs"), `live-repo-head`, `live-repo-label`, `live-repo-name`, `live-repo-figures`, `live-repo-figure`, `live-repo-figure-label`, `live-repo-sep`, `live-repo-counted`, `live-repo-cap`, `live-repo-notional`, `live-repo-percent`, `live-repo-meters`, `live-halt` (a `button`, drawn disabled), `live-burn-rate`, `live-burn`, `live-burn-bar`, `live-burn-unit`, `live-runs`, `live-orphans` |
+| Run row | `live-table` (the `table` itself), `live-table-head` (one `th` per column), `live-run` (a `tr`), `live-run-id`, `live-run-title`, `live-run-mode`, `live-pipeline`, `live-pipeline-segments`, `live-pipeline-segment` (one `li` per segment, keyed by `data-mark`), `live-run-when`, `live-run-dot`, `live-run-word`, `live-run-stage`, `live-run-round`, `live-run-state`, `live-run-coder`, `live-run-models`, `live-run-auth`, `live-run-spend`, `live-run-age`, `live-run-status`, `live-run-chip` (the state's own word), `live-run-pip` (the lost chip's decorative mark), `live-run-flag`, `live-run-contradiction`, `live-reap` (a `button`, drawn disabled and only on a lost run) |
+| Condition classes on a row | `live-run-queued`, `live-run-stuck`, `live-run-lost`, `live-run-done` |
 | Review inbox | `live-review`, `live-review-title` (the CLI's one line, `Ready for your review (N)`, drawn as **one text run** — `reviewSection` writes the words, the parentheses and the count together, so no rule can space them apart), `live-review-list`, `live-review-row`, `live-review-repo`, `live-review-number`, `live-review-url`, `live-review-run-title`, `live-review-age`, `live-review-run-id`, `live-review-empty`, `live-review-note`, `live-review-capped`, `live-review-dropped` (the count of rows the cap left out), `live-review-of`, `live-review-total` |
 | Kill banner | `live-kill`, `live-kill-word`, `live-kill-by`, `live-kill-at`, `live-kill-reason` |
 | Stale / recency | `live-stale`, `live-stale-word`, `live-stale-silence`, `live-stale-threshold`, `live-stale-at`, `live-since`, `live-since-word`, `live-since-at`, `live-since-age` |
@@ -323,6 +324,7 @@ whose mode is the built-in default.
 | `data-state` | **two vocabularies.** On a bar: the reading's availability, of which **three of the contract's five words reach this screen** — `measured`, `unavailable`, `gap`. Or, on the connection cell only, **the word that cell drew**: the CLI's connection state, or `n/a` when `putText` refused it | `bar()` writes it from a **percent** reading (`live.ts` 877-882), and its one call site passes one (`repo.percent`), whose only two states are `measured` and `unavailable`; **the fleet budget panel's cap bar carries no `data-state` at all** — it is an `svg` of `rect`s keyed by `data-account`, and the panel's own cap, headroom and counts carry the text and, where there is no number, the reason in `title`; `spark()`'s bars write `measured` or `gap` — `gap` for a sample that is not plottable and for the one bar of an empty sparkline (896-925). **`notional` and `estimated` are in the attribute's vocabulary and never on this screen**: Live's notional figures go through `numberCell`, which writes the text and the `~$` mark and no state, so a rule for `[data-state='notional']` matches nothing here (the attribute is Spend's, §2.4). `header()` sets it on `span.live-connection` from the cell's own `textContent`, deliberately — an attribute echoing the raw value would put back on screen exactly what the refusal kept off it. **A `[data-state='…']` rule for a state colour must therefore name the words this screen draws — `measured`, `unavailable`, `gap` — and may not assume the connection cell carries one of them**; a rule that paints every `[data-state]` element would paint that cell for a value that is not a state |
 | `data-account` | `counted` \| `spent` \| `leased` \| `headroom` | which money account a shape on the fleet budget panel draws. The **account is the attribute and not part of the class name**: every `rect.live-fleet-segment` and every `span.live-fleet-swatch` carries one class in common, and a rule reads the account off this attribute — the shape every other tone on this tree uses. `fleetAccounts` names them, so the value is one of the four words above and never a word from the document. **A swatch is drawn only for an account the bar draws**: a mark keys a fill, so the Leased row of the two-segment fallback (the bar paints no lease there) has none, and a rule may not read a row's mark as an account the bar drew |
 | `data-segments` | an integer as a string | how many pieces a sparkline broke into |
+| `data-mark` | `past` \| `current` \| `future` \| `danger` | what a pipeline segment draws: one `li.live-pipeline-segment` per segment, and the mark is the attribute rather than part of the class name, the shape every other tone on this tree uses (the fleet bar's `data-account`, a row's `data-tone`). **The segments are decoration** — the list is `aria-hidden` and the run's stage, round and state are written as text under it (`div.live-run-when`) — so no rule may read a mark as the only place a state lives. A stage this build does not know draws **no `current` segment at all**: every segment is `future` and the stage's own word is still drawn |
 | `data-tone` | `plain` \| `amber` \| `alarm` \| `queued` | row and flag severity |
 | `data-queued` | `true` \| `false` | |
 | `data-flag` | `silent` \| `lost` \| `near deadline` \| `over deadline` \| `stuck` \| `queued` \| `unknown health` \| `unknown deadline` | one `span.live-run-flag` per flag |
@@ -620,14 +622,16 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 |---|---|---|---|
 | **Money** | `usd` | Live (spend, counted, cap, notional, burn rate, sparkline title), Spend (points, peaks, rows, totals, every cap), Projects (reserve, caps, job model/compute/total), Run (ledger, stage spend, reported, charged, routes, models), degraded (all totals) | `$` + grouping + **2 decimals**, sign before the `$` |
 | **Share** | `percent` | Live (cap percent, bar fills), Spend (`data-height`) | 1 decimal + `%` |
-| **Duration / time** | `seconds` | Live (run age, connection age, silence), Run (stage duration, replay window), degraded (feed age) | 0 decimals + ` s` |
+| **Duration / time** | `seconds` | Live (connection age, silence), Run (stage duration, replay window), degraded (feed age) | 0 decimals + ` s` |
+| **A span, as a person says it** | `duration` | Live (**a run's age only**, the ELAPSED column of the runs table) | `21s`, `29m 21s`, `1h 02m` — the three scales, never a raw count |
 | **Time (money-shaped)** | `hours` | Spend (run hours, totals) | 2 decimals + ` h` |
 | **Count** | `count` | Live (**the review inbox only**: the ready rows it holds, how many it drew and how many the document carried), Spend (runs, tokens), Projects (counts, versions), Run (tests, lines, records), Coordinator (a repository's records, how many of them are in flight, its collisions, and what a bound left out), degraded (runs, searched) | 0 decimals + grouping |
 
 **Live's money, shares and durations are what its *run* rows are made of**; the only `count`
 readings on the screen are the review inbox's three (v2 plan Task V2.7.1), each a count of a
 list the document carries and therefore `measured` — which is why the section can draw it
-without a reason. The rest of the screen's numbers are `usd`, `percent` and `seconds`, and
+without a reason. The rest of the screen's numbers are `usd`, `percent`, `seconds` and the
+run row's one `duration`, and
 `data-segments` — the one other integer it puts on an element — is a bare attribute on the
 sparkline list (`String(line.segments)`), not a reading drawn through `formatReading`, so it
 carries no mark, no `title` and no state.

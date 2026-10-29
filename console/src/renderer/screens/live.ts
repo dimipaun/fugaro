@@ -53,13 +53,13 @@ import {
   unavailable,
 } from '../../shared/availability'
 import type { Reading, Sample } from '../../shared/availability'
-import { launcherCell } from '../../shared/launcher'
 import { rigorModeWord } from '../../shared/rigor'
 import type { RigorView } from '../../shared/rigor'
 import { sanitizeText } from '../../shared/sanitize'
 import type { BurnView, FinishedView, KillView, LiveDocument, RunView, TotalsView } from '../../shared/schema'
 import { putReading, putText } from '../app'
 import type { ElementLike } from '../app'
+import { disabledWrite } from '../writes'
 
 // ---------------------------------------------------------------------------
 // The thresholds.
@@ -820,6 +820,161 @@ function rowOf(run: RunView, rigor: ReadonlyMap<string, RigorView>): LiveRunRow 
   }
 }
 
+// ---------------------------------------------------------------------------
+// The pipeline and the run's own state.
+// ---------------------------------------------------------------------------
+
+/** PipelineStage is one of the five segments a run row's pipeline draws, in the
+ * order a run moves through them. */
+export type PipelineStage = 'queued' | 'build' | 'implement' | 'review' | 'done'
+
+/** PIPELINE_SEGMENTS is the five segments in drawing order. */
+export const PIPELINE_SEGMENTS: readonly PipelineStage[] = Object.freeze([
+  'queued',
+  'build',
+  'implement',
+  'review',
+  'done',
+])
+
+/**
+ * STAGE_SEGMENTS maps **the runner's own stage names** onto the five segments.
+ * The names are not invented here: they are the strings `internal/runner` writes
+ * onto the record (`r.rec.Stage = ...`, and `r.stage(ctx, name, ...)`'s callers
+ * for `plan`, `implement`, `review`, `fix` and `review_first`), plus the
+ * `"queued"` the CLI's own queued rows carry (`internal/watch/queued.go`).
+ *
+ * **The five segments are coarser than the stages on purpose.** A pipeline bar
+ * is a glance at where a run is, not a transcript of the runner's steps, so the
+ * setup stages (`provision`, `bootstrap`, `plan`) are one segment, the work
+ * stages (`implement`, `fix`, `review_first`) are another, the gate and the
+ * review (`check`, `review`) are a third, and the finishing stages (`finalize`,
+ * `writeback`, `render`, `digest`) are the last. `build` is the segment's name
+ * rather than the runner's, because the runner has no stage by that name.
+ *
+ * **It is a `Map` rather than an object literal** for the reason
+ * `HEALTH_SEVERITY` is: a document's stage string is untrusted, and
+ * `STAGE_SEGMENTS['constructor']` on an object literal answers with something
+ * inherited rather than with nothing.
+ */
+const STAGE_SEGMENTS: ReadonlyMap<string, PipelineStage> = new Map([
+  ['queued', 'queued'],
+  ['provision', 'build'],
+  ['bootstrap', 'build'],
+  ['plan', 'build'],
+  ['implement', 'implement'],
+  ['fix', 'implement'],
+  ['review_first', 'implement'],
+  ['check', 'review'],
+  ['review', 'review'],
+  ['finalize', 'done'],
+  ['writeback', 'done'],
+  ['render', 'done'],
+  ['digest', 'done'],
+])
+
+/**
+ * stageSegment is the segment a stage name lights, or `null` for a stage this
+ * build has never heard of. **A stage the console does not know marks no current
+ * segment** -- the row still prints the stage's own text, which is the whole
+ * reason the text line is not the decoration -- because guessing a segment from
+ * an unknown word would draw a position on the bar that nothing stated.
+ */
+export function stageSegment(stage: string): PipelineStage | null {
+  return STAGE_SEGMENTS.get(stage) ?? null
+}
+
+/** SegmentMark is how one segment of a pipeline is drawn. */
+export type SegmentMark = 'past' | 'current' | 'future' | 'danger'
+
+/** DrawnSegment is one segment and the mark it carries. */
+export interface DrawnSegment {
+  readonly stage: PipelineStage
+  readonly mark: SegmentMark
+}
+
+/**
+ * pipelineOf is the five segments as one row draws them: everything before the
+ * run's own segment is past, the run's segment is current, and everything after
+ * it is future.
+ *
+ * **A lost heartbeat turns the current segment into `danger` and nothing else.**
+ * The run is still *at* that segment -- the position is the CLI's own stage --
+ * and what changed is that the console has stopped hearing from it, which is the
+ * one thing the row's colour is allowed to say. A stage this build does not know
+ * lights nothing: with no current segment there is no past either, so the bar is
+ * entirely future and the text line under it carries the stage.
+ */
+export function pipelineOf(row: LiveRunRow): readonly DrawnSegment[] {
+  const known = stageSegment(row.stage)
+  const at = known === null ? -1 : PIPELINE_SEGMENTS.indexOf(known)
+  const lost = row.flags.some((flag) => flag.name === 'lost')
+  return PIPELINE_SEGMENTS.map((stage, index): DrawnSegment => {
+    if (at === -1 || index > at) return { stage, mark: 'future' }
+    if (index < at) return { stage, mark: 'past' }
+    return { stage, mark: lost ? 'danger' : 'current' }
+  })
+}
+
+/**
+ * RunState is a run's condition in one word -- the word the pipeline's own line
+ * and the STATUS chip both draw.
+ *
+ * **It is derived from what the document carries and never from the clock**: the
+ * CLI computes `health` and the deadline flags (`internal/watch/build.go`), the
+ * queued flag is the queue's own, and the last segment is the stage the runner
+ * recorded. A console that turned an age into "lost" would call every
+ * long-running healthy run lost, which is the failure `live.ts`'s header
+ * describes.
+ *
+ * `done` is the console's word for a run whose recorded stage is one of the
+ * finishing ones: the registry still lists it -- so it is still on this screen,
+ * and still spending -- and its pipeline is at its last segment. It is not a
+ * claim that the run has finished, and the pipeline bar beside it says which
+ * segment it is at.
+ */
+export type RunState = 'queued' | 'running' | 'lost' | 'done'
+
+/** runStateOf is the one word for a run's condition. The order of the tests is
+ * the order of precedence: a queued run has no stage to be lost at, and a lost
+ * heartbeat is the worse fact of the two remaining. */
+export function runStateOf(row: LiveRunRow): RunState {
+  if (row.queued) return 'queued'
+  if (row.flags.some((flag) => flag.name === 'lost')) return 'lost'
+  if (stageSegment(row.stage) === 'done') return 'done'
+  return 'running'
+}
+
+/**
+ * RUN_QUEUED_WORD, RUN_RUNNING_WORD, RUN_LOST_WORD and RUN_DONE_WORD are the
+ * console's own words for the four states, declared once each so that the copy a
+ * person reads and the word the union names cannot drift. They are this file's
+ * vocabulary and not a document's: `stateWordInto` is the only thing that draws
+ * them, and it draws nothing else.
+ */
+const RUN_QUEUED_WORD = 'queued'
+const RUN_RUNNING_WORD = 'running'
+const RUN_LOST_WORD = 'lost'
+const RUN_DONE_WORD = 'done'
+
+/** MARK_PAST, MARK_CURRENT, MARK_FUTURE and MARK_DANGER are the four things a
+ * pipeline segment can be, spelled once. They are the console's own words --
+ * `pipelineOf` assigns them and nothing a document carries reaches them -- and
+ * they are drawn through an if-chain rather than interpolated so that each is a
+ * named constant a reader can find. */
+const MARK_PAST = 'past'
+const MARK_CURRENT = 'current'
+const MARK_FUTURE = 'future'
+const MARK_DANGER = 'danger'
+
+/** stateWordInto writes the console's word for a run's state into an element. */
+function stateWordInto(element: ScreenElement, state: RunState): void {
+  if (state === 'queued') literal(element, RUN_QUEUED_WORD)
+  else if (state === 'lost') literal(element, RUN_LOST_WORD)
+  else if (state === 'done') literal(element, RUN_DONE_WORD)
+  else literal(element, RUN_RUNNING_WORD)
+}
+
 /**
  * reviewRowOf builds one row of the review inbox from a `ready[]` entry.
  *
@@ -1192,28 +1347,110 @@ function spark(factory: ScreenFactory, line: Sparkline): ScreenElement {
   return element
 }
 
-/** runRow draws one run of a repository. */
-function runRow(factory: ScreenFactory, row: LiveRunRow): ScreenElement {
-  const classes = ['live-run']
-  if (row.queued) classes.push('live-run-queued')
-  if (row.stuck) classes.push('live-run-stuck')
-  const element = make(factory, 'li', ...classes)
-  element.setAttribute('data-tone', row.tone)
-  element.setAttribute('data-queued', row.queued ? 'true' : 'false')
-
-  textCell(element, factory, 'span', row.run, 'runId', 'runs[].run', 'live-run-id')
-  textCell(element, factory, 'span', row.title, 'sentence', 'runs[].title', 'live-run-title')
-  if (row.rigor !== null) modeChip(element, factory, row.rigor)
-  textCell(element, factory, 'span', row.stage, 'label', 'runs[].stage', 'live-run-stage')
-  textCell(element, factory, 'span', row.round, 'label', 'runs[].round', 'live-run-round')
-  textCell(element, factory, 'span', row.verify, 'label', 'runs[].verify', 'live-run-verify')
-  textCell(element, factory, 'span', row.models, 'label', 'runs[].models', 'live-run-models')
-  if (row.recipe !== null) {
-    textCell(element, factory, 'span', row.recipe, 'label', 'runs[].recipe', 'live-run-recipe')
+/**
+ * wireOrUnavailable draws one of a run's own strings, and the console's
+ * unavailable mark when the feed carries none.
+ *
+ * The CLI writes its own dash for a field it has nothing for (`dash()` in
+ * `internal/watch/build.go`, which is why a queued row reads `-` for its stage,
+ * round and models), and that is a value the document chose, drawn as itself.
+ * An **empty** value is the other case: it is a key the document left out of
+ * this run, and `n/a` with the field's name in the `title` is what every other
+ * absent value on this screen says. It goes through `putReading` because that is
+ * the one writer that draws the console's mark and its reason together;
+ * `formatReading` answers the mark for a reading with no value whatever its
+ * unit.
+ */
+/** putActor writes one of the two actors a run's feed recorded -- its coder and
+ * its reviewer -- or the console's own `n/a` with the reason in the `title` when
+ * the feed carried none.
+ *
+ * **`n/a` and never an empty cell.** A missing model is not a model that ran for
+ * nothing: the cell says the question was asked and could not be answered, which
+ * is what `putReading` writes and what an empty span would not (design section
+ * 6.1 rule 1). Nothing here is invented -- `models` and `auth` are the two
+ * fields the frame carries. */
+function putActor(element: ScreenElement, raw: string, field: string): void {
+  if (raw === '') {
+    putReading(element, unavailable(`the document carries no ${field}`), 'count')
+    return
   }
-  textCell(element, factory, 'span', row.auth, 'label', 'runs[].auth', 'live-run-auth')
-  numberCell(element, factory, 'span', row.spend, 'usd', 'live-run-spend')
-  numberCell(element, factory, 'span', row.age, 'seconds', 'live-run-age')
+  putText(element, raw, 'label', field)
+}
+
+/**
+ * pipelineCell draws the PIPELINE column: the five segments, then the run's own
+ * line under them.
+ *
+ * **The segments are decoration and the line is the meaning.** They are a
+ * `aria-hidden` list -- a shape a reader cannot inspect is better hidden than
+ * announced as five unlabelled marks -- and the words under them say the same
+ * thing in the console's own text: the CLI's stage, the round it is on, and the
+ * run's state. That is design section 3.5's rule taken at its word: no colour
+ * here carries anything the text does not.
+ *
+ * A stage this build does not know lights no segment at all (`pipelineOf`) and
+ * its own word is still drawn, so a newer CLI's stage appears as text on a bar
+ * with nothing lit rather than as a bar that guessed.
+ */
+function pipelineCell(factory: ScreenFactory, row: LiveRunRow, state: RunState): ScreenElement {
+  const element = make(factory, 'td', 'live-pipeline')
+
+  const segments = make(factory, 'ol', 'live-pipeline-segments')
+  segments.setAttribute('aria-hidden', 'true')
+  for (const segment of pipelineOf(row)) {
+    // **The mark is `data-mark` and not part of the class name**, which is the
+    // shape every other tone on this tree uses (the fleet bar's `data-account`,
+    // a row's `data-tone`): one class in common and one attribute a rule reads
+    // the state off. The segment's own name is written nowhere: the bar is
+    // decorative, and the stage the run is at is text in the line under it.
+    const drawn = cell(segments, factory, 'li', 'live-pipeline-segment')
+    // The mark is written here rather than in a helper so the element and the
+    // attribute are one statement apart: a reader checking which elements carry
+    // `data-mark` reads this file, and a helper would put the answer a call away.
+    if (segment.mark === 'past') drawn.setAttribute('data-mark', MARK_PAST)
+    else if (segment.mark === 'current') drawn.setAttribute('data-mark', MARK_CURRENT)
+    else if (segment.mark === 'danger') drawn.setAttribute('data-mark', MARK_DANGER)
+    else drawn.setAttribute('data-mark', MARK_FUTURE)
+  }
+  element.append(segments)
+
+  const when = cell(element, factory, 'div', 'live-run-when')
+  textCell(when, factory, 'span', row.stage, 'label', 'runs[].stage', 'live-run-stage')
+  literal(cell(when, factory, 'span', 'live-run-dot'), RUN_DOT)
+  literal(cell(when, factory, 'span', 'live-run-word'), RUN_ROUND_WORD)
+  textCell(when, factory, 'span', row.round, 'label', 'runs[].round', 'live-run-round')
+  literal(cell(when, factory, 'span', 'live-run-dot'), RUN_DOT)
+  stateWordInto(cell(when, factory, 'span', 'live-run-state'), state)
+  return element
+}
+
+/**
+ * statusCell draws the STATUS column: the run's chip, the flags the CLI set
+ * beside it, and -- on a run whose heartbeat is lost -- the Reap button.
+ *
+ * **The chip's tone is the row's condition class and not an attribute.** The
+ * four states are already the row's own (`live-run-queued`, `live-run-lost`,
+ * `live-run-done`, and running for a row with none), so the stylesheet paints
+ * one chip from one rule set and the state has no second spelling to drift from.
+ *
+ * The flags are the CLI's own conclusions, drawn as words with their threshold
+ * in the `title`, exactly as they were before the row became a table: they moved
+ * into this cell and did not disappear.
+ */
+function statusCell(factory: ScreenFactory, row: LiveRunRow, state: RunState): ScreenElement {
+  const element = make(factory, 'td', 'live-run-status')
+
+  const chip = cell(element, factory, 'span', 'live-run-chip')
+  if (state === 'lost') {
+    // The pip is the chip's decorative half: a lost heartbeat is the one state
+    // the design gives a mark beside its word, and the word is still the whole
+    // of the meaning (styling design section 3.5).
+    const pip = cell(chip, factory, 'span', 'live-run-pip')
+    pip.setAttribute('aria-hidden', 'true')
+    literal(pip, RUN_PIP)
+  }
+  stateWordInto(chip, state)
 
   for (const flag of row.flags) {
     const drawn = cell(element, factory, 'span', 'live-run-flag')
@@ -1227,21 +1464,101 @@ function runRow(factory: ScreenFactory, row: LiveRunRow): ScreenElement {
     putText(drawn, row.contradiction, 'sentence', 'runs[].health')
     drawn.setAttribute('data-contradiction', 'true')
   }
-  if (row.workflow !== null) {
-    textCell(element, factory, 'span', row.workflow, 'label', 'runs[].workflow', 'live-run-workflow')
-  }
-  if (row.requestedBy !== null) {
-    textCell(element, factory, 'span', row.requestedBy, 'person', 'runs[].requested_by', 'live-run-requester')
-  }
-  // Who started the run, as the short form a row has room for: the CLI's own
-  // cut (`runview.LauncherShort`), drawn as a `label` -- `shared/launcher.ts`
-  // says why the class is not `person` here. A run whose record carries no
-  // launcher draws no cell at all, never another person's name.
-  const startedBy = launcherCell(row.launchedBy)
-  if (startedBy !== null) {
-    textCell(element, factory, 'span', startedBy, 'label', 'runs[].launched_by', 'live-run-started-by')
+  if (state === 'lost') {
+    // Drawn disabled and inert (`writes.ts`): the redesign draws Reap where a
+    // lost run is, and this console performs no write but launch-from-console.
+    element.append(disabledWrite(factory, 'live-reap', 'Reap'))
   }
   return element
+}
+
+/**
+ * runRow draws one run of a repository, as one row of its table.
+ *
+ * **Seven columns, and the row is the door.** The RUN cell carries
+ * `live-run-id`, which is what `entry.ts`'s `wireRuns` reads to open Run detail
+ * -- the cell's own drawn text and nothing else, so a run id the sanitizer
+ * refused opens nothing. The rest is the design's table: the title (with the
+ * rigor chip beside it), the pipeline, the two models the feed recorded, the
+ * spend, the age as a duration, and the state with its flags.
+ */
+function runRow(factory: ScreenFactory, row: LiveRunRow): ScreenElement {
+  const state = runStateOf(row)
+  const classes = ['live-run']
+  if (row.queued) classes.push('live-run-queued')
+  if (row.stuck) classes.push('live-run-stuck')
+  if (state === 'lost') classes.push('live-run-lost')
+  if (state === 'done') classes.push('live-run-done')
+  const element = make(factory, 'tr', ...classes)
+  element.setAttribute('data-tone', row.tone)
+  element.setAttribute('data-queued', row.queued ? 'true' : 'false')
+
+  textCell(element, factory, 'td', row.run, 'runId', 'runs[].run', 'live-run-id')
+
+  const task = textCell(element, factory, 'td', row.title, 'sentence', 'runs[].title', 'live-run-title')
+  if (row.rigor !== null) modeChip(task, factory, row.rigor)
+
+  element.append(pipelineCell(factory, row, state))
+
+  const actors = cell(element, factory, 'td', 'live-run-coder')
+  putActor(cell(actors, factory, 'span', 'live-run-models'), row.models, 'runs[].models')
+  putActor(cell(actors, factory, 'span', 'live-run-auth'), row.auth, 'runs[].auth')
+
+  numberCell(element, factory, 'td', row.spend, 'usd', 'live-run-spend')
+  // The age is a **span**, not a count of seconds: `duration` is the unit a
+  // person reads (`29m 21s`), and the raw second count `seconds` draws is the
+  // measurement rather than the answer.
+  numberCell(element, factory, 'td', row.age, 'duration', 'live-run-age')
+
+  element.append(statusCell(factory, row, state))
+  return element
+}
+
+/** RUN_DOT is the separator the pipeline's text line is written with, once, so
+ * the two dots are the same character rather than two that look alike. */
+const RUN_DOT = '·'
+
+/** RUN_ROUND_WORD is the word in front of a run's round number. */
+const RUN_ROUND_WORD = 'round'
+
+/** RUN_PIP is the mark a lost heartbeat's chip carries beside its word. It is
+ * decoration and says nothing the word does not: the chip is `aria-hidden`'s
+ * opposite -- a reader hears `lost` -- and a pip alone would be exactly the
+ * colour-only state the design forbids. */
+const RUN_PIP = '●'
+
+/** runTableHead draws the table's seven column headings. */
+function runTableHead(factory: ScreenFactory): ScreenElement {
+  const head = make(factory, 'thead')
+  const row = cell(head, factory, 'tr')
+  literal(cell(row, factory, 'th', 'live-table-head'), 'RUN')
+  literal(cell(row, factory, 'th', 'live-table-head'), 'TASK')
+  literal(cell(row, factory, 'th', 'live-table-head'), 'PIPELINE')
+  literal(cell(row, factory, 'th', 'live-table-head'), 'CODER / REVIEWER')
+  literal(cell(row, factory, 'th', 'live-table-head'), 'COST')
+  literal(cell(row, factory, 'th', 'live-table-head'), 'ELAPSED')
+  literal(cell(row, factory, 'th', 'live-table-head'), 'STATUS')
+  return head
+}
+
+/**
+ * runTable draws a runs table: the headings and one row per run.
+ *
+ * **The box that scrolls is drawn by the caller** and the table goes inside it,
+ * because the two boxes on this screen have different grounds and because the
+ * class belongs to the caller that knows which one it is drawing (`live-runs`
+ * inside a project, `live-orphans` for the repo-less rows).
+ *
+ * A repository with no run draws the headings and no row: an empty table says
+ * "this project has nothing running", which is a fact, where a table that
+ * vanished would be a fact the reader has to infer.
+ */
+function runTable(factory: ScreenFactory, rows: readonly LiveRunRow[]): ScreenElement {
+  const table = make(factory, 'table', 'live-table')
+  table.append(runTableHead(factory))
+  const body = cell(table, factory, 'tbody')
+  for (const row of rows) body.append(runRow(factory, row))
+  return table
 }
 
 /** modeChip is one run's rigor mode, as the single mark a Live row has room
@@ -1275,27 +1592,95 @@ function modeChip(parent: ScreenElement, factory: ScreenFactory, rigor: RigorVie
   literal(drawn, word)
 }
 
-/** repoBlock draws one repository: its name, its bar, its burn and its runs. */
-function repoBlock(factory: ScreenFactory, repo: LiveRepoRow): ScreenElement {
-  const element = make(factory, 'li', 'live-repo')
-  element.setAttribute('data-key', sanitizedKey(repo.slug))
-  element.setAttribute('data-killed', repo.kill === null ? 'false' : 'true')
+/** PANEL_NAME is a project panel's accessible name. The caption inside it says
+ * which project; a section's name is what a reader arriving at it hears first,
+ * so it says what the whole panel is. */
+const PANEL_NAME = 'Project runs'
+
+/** PANEL_CAPTION, REPO_SPENT_WORD, REPO_COUNTED_WORD and REPO_BURN_WORD are the
+ * panel's own words: the caption over the repository's identity and the three
+ * labels over its figures. They are the console's vocabulary, and each one is
+ * drawn through `literal` and nothing else. */
+const PANEL_CAPTION = 'PROJECT'
+const REPO_SPENT_WORD = 'spent'
+const REPO_COUNTED_WORD = 'counted'
+const REPO_BURN_WORD = 'burn'
+
+/** REPO_SEP is the mark between what a project counted and the cap it counted
+ * against. */
+const REPO_SEP = '/'
+
+/**
+ * repoHead draws a project panel's header: the caption, the repository's own
+ * identity, and its figures.
+ *
+ * **`spent` is the notional reading, and the tilde is what makes that honest.**
+ * The figure is the repository's `notional_usd` -- a subscription's list price,
+ * billed to nobody and counted against no cap (design section 6.1 rule 1) -- and
+ * it is drawn through `formatReading`, so it arrives already marked `~$`. The
+ * word beside it says what the account is and the mark says what the dollars
+ * are, and neither is left to the colour of the number.
+ *
+ * The bar and the burn window sit under the figures rather than in them: they
+ * are the same readings drawn as shapes, and a shape inside the figures line
+ * would be a second place for the same number to disagree with itself.
+ */
+function repoHead(factory: ScreenFactory, repo: LiveRepoRow): ScreenElement {
+  const element = make(factory, 'header', 'live-repo-head')
+  literal(cell(element, factory, 'span', 'live-repo-label'), PANEL_CAPTION)
 
   // `repoDisplayName` (internal/watch/build.go) falls back to the slash-free
   // slug when the host's config does not name the repository: the slash decides
   // the class, as `spend.ts`'s `keyClass` does (review round 2 of PR 494).
   textCell(element, factory, 'span', repo.repo, repo.repo.includes('/') ? 'repository' : 'slug', 'repos[].repo', 'live-repo-name')
-  numberCell(element, factory, 'span', repo.countedUsd, 'usd', 'live-repo-counted')
-  numberCell(element, factory, 'span', repo.dailyCapUsd, 'usd', 'live-repo-cap')
-  bar(element, factory, repo.percent, 'live-repo-percent')
-  numberCell(element, factory, 'span', repo.notionalUsd, 'usd', 'live-repo-notional')
-  numberCell(element, factory, 'span', repo.burnPerMin, 'usd', 'live-burn-rate')
-  labelBurnRate(element, factory, repo)
-  element.append(spark(factory, repo.spark))
-  if (repo.kill !== null) element.append(killBanner(factory, repo.kill))
 
-  const runs = cell(element, factory, 'ol', 'live-runs')
-  for (const row of repo.runs) runs.append(runRow(factory, row))
+  const figures = cell(element, factory, 'div', 'live-repo-figures')
+
+  const spent = cell(figures, factory, 'span', 'live-repo-figure')
+  literal(cell(spent, factory, 'span', 'live-repo-figure-label'), REPO_SPENT_WORD)
+  numberCell(spent, factory, 'span', repo.notionalUsd, 'usd', 'live-repo-notional')
+
+  const counted = cell(figures, factory, 'span', 'live-repo-figure')
+  literal(cell(counted, factory, 'span', 'live-repo-figure-label'), REPO_COUNTED_WORD)
+  numberCell(counted, factory, 'span', repo.countedUsd, 'usd', 'live-repo-counted')
+  literal(cell(counted, factory, 'span', 'live-repo-sep'), REPO_SEP)
+  numberCell(counted, factory, 'span', repo.dailyCapUsd, 'usd', 'live-repo-cap')
+
+  const burn = cell(figures, factory, 'span', 'live-repo-figure')
+  literal(cell(burn, factory, 'span', 'live-repo-figure-label'), REPO_BURN_WORD)
+  numberCell(burn, factory, 'span', repo.burnPerMin, 'usd', 'live-burn-rate')
+  labelBurnRate(burn, factory, repo)
+
+  // Halt project, drawn disabled and inert (`writes.ts`): the redesign draws the
+  // control a project's owner expects, and this console performs no write but
+  // launch-from-console.
+  figures.append(disabledWrite(factory, 'live-halt', 'Halt project'))
+  return element
+}
+
+/**
+ * repoBlock draws one project: its header, its bar, its burn window, its kill
+ * banner and its runs table.
+ *
+ * **The panel is a `section` with a name**, so a reader arriving at it hears
+ * what it is before hearing what is in it, and the runs table is inside it with
+ * its own scrolling box (`runTable`).
+ */
+function repoBlock(factory: ScreenFactory, repo: LiveRepoRow): ScreenElement {
+  const element = make(factory, 'section', 'live-repo')
+  element.setAttribute('aria-label', PANEL_NAME)
+  element.setAttribute('data-key', sanitizedKey(repo.slug))
+  element.setAttribute('data-killed', repo.kill === null ? 'false' : 'true')
+
+  element.append(repoHead(factory, repo))
+
+  const meters = cell(element, factory, 'div', 'live-repo-meters')
+  bar(meters, factory, repo.percent, 'live-repo-percent')
+  meters.append(spark(factory, repo.spark))
+
+  if (repo.kill !== null) element.append(killBanner(factory, repo.kill))
+  const runs = cell(element, factory, 'div', 'live-runs')
+  runs.append(runTable(factory, repo.runs))
   return element
 }
 
@@ -1480,12 +1865,14 @@ interface FleetSegment extends FleetAccount {
  * **The bar and the legend are both drawn from this one list**, so the legend
  * cannot come to describe a segment the bar does not draw.
  *
- * While the CLI writes no `leased_usd` (`schema.ts`'s `optionalMoneyAt` reads it
- * as optional, so it is `unavailable` on every document today), the split into
- * spent and leased cannot be drawn: the bar then carries the one figure the
- * document does hold -- `counted_usd` -- and the Leased row stays, unmeasured, as
- * the one place the absence is visible. Drawing "spent" alone and calling the
- * rest leased would be inventing a division the document does not carry.
+ * The CLI writes `leased_usd` on `total` and on every repository row (#1256), so
+ * a document that carries it draws the three-way split. `schema.ts` still reads
+ * it as optional (`optionalMoneyAt`), because a *recording* made before that
+ * release does not carry it -- and on such a document the split cannot be drawn:
+ * the bar then carries the one figure the document does hold -- `counted_usd` --
+ * and the Leased row stays, unmeasured, as the one place the absence is visible.
+ * Drawing "spent" alone and calling the rest leased would be inventing a division
+ * the document does not carry.
  *
  * `counted_usd` is the sum of the split's two parts, so it is the account under
  * the cap in exactly one of the two shapes and never a rule of its own: adding
@@ -1568,9 +1955,9 @@ function fleetBar(factory: LiveFactory, segments: readonly FleetSegment[]): Scre
  *
  * **The swatch is drawn only for an account the bar draws.** A swatch is a key:
  * a mark beside a word the bar never painted claims a colour that is nowhere on
- * the bar, and the Leased row is exactly that row while the CLI writes no
- * `leased_usd` -- its own `n/a`, with the reading's reason in the title, is what
- * says the question was asked and could not be answered.
+ * the bar, and the Leased row is exactly that row on a document that does not
+ * carry `leased_usd` -- its own `n/a`, with the reading's reason in the title,
+ * is what says the question was asked and could not be answered.
  *
  * The swatch is a decorative mark and carries `aria-hidden`; the word and the
  * value are the text, which is what makes the bar's segments readable at all.
@@ -1696,8 +2083,8 @@ function fleetFullBanner(factory: ScreenFactory): ScreenElement {
  * **Three accounts, and none of them added to another.** The cap line carries
  * today's cap; the hero carries notional spend, which is outside the cap and is
  * never a segment of the bar; and the bar carries what *is* under the cap --
- * spent, leased and headroom, or counted and headroom when the CLI does not
- * write `leased_usd` yet. The legend repeats the bar's own values as text, so
+ * spent, leased and headroom, or counted and headroom on a recording made before
+ * `leased_usd` shipped. The legend repeats the bar's own values as text, so
  * the shape is not the only place a number lives.
  *
  * The kill banner is appended, as it was: this panel is where a fleet-wide kill
@@ -1852,12 +2239,18 @@ export function renderLive(factory: LiveFactory, model: LiveModel, theme: LiveTh
   root.append(header(factory, model))
   root.append(total(factory, model))
 
-  const repos = cell(root, factory, 'ol', 'live-repos')
+  // A `div` and not an `ol`: each child is a `section`, and a list whose items
+  // are not list items is markup that says one thing and means another.
+  const repos = cell(root, factory, 'div', 'live-repos')
   for (const repo of model.repos) repos.append(repoBlock(factory, repo))
 
   if (model.orphans.length > 0) {
-    const orphans = cell(root, factory, 'ol', 'live-orphans')
-    for (const row of model.orphans) orphans.append(runRow(factory, row))
+    // A run the console cannot place under a repository is still a run that is
+    // spending, so it is drawn -- in the same table, with no panel around it,
+    // which is exactly the fact: nothing in this document says which project it
+    // belongs to.
+    const orphans = cell(root, factory, 'div', 'live-orphans')
+    orphans.append(runTable(factory, model.orphans))
   }
 
   // The review inbox is last: the screen answers "what is spending now" first,

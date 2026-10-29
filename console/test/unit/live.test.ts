@@ -625,7 +625,8 @@ describe('the row model', () => {
 /**
  * fleetModel is the fixture's last frame with its `total` edited **on the wire
  * and read back through the decoder**, the way the `queued_note` case above
- * does it: `leased_usd` is a key the CLI does not write yet, and a panel
+ * does it: `leased_usd` is optional in `schema.ts` (a recording made before it
+ * shipped does not carry it), and a panel
  * asserted against a decoded object built by hand would be asserted against a
  * shape `schema.ts` never produces.
  */
@@ -759,9 +760,9 @@ describe('the fleet budget panel', () => {
     expect(segmentOffsets(tree)).toEqual(['0', '80', '100'])
   })
 
-  it('draws two segments and says Leased is not measured while no CLI writes it', () => {
-    // `leased_usd` is approved but not emitted (2026-10-28), so every document
-    // today is this one. The split cannot be drawn, and the legend's Leased row
+  it('draws two segments and says Leased is not measured when the document lacks it', () => {
+    // `leased_usd` is optional on the wire, so a recording made before it
+    // shipped is this one. The split cannot be drawn, and the legend's Leased row
     // is where the console says so -- with the reading's own reason in its
     // title, which is what makes `n/a` an answer rather than a hole.
     const tree = renderLive(factory, fleetModel({ counted_usd: 50, spent_usd: undefined, leased_usd: undefined, daily_cap_usd: 100, percent: 50 }), 'light')
