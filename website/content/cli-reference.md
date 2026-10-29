@@ -3,7 +3,7 @@
 # Fugaro CLI reference
 
 Every command and flag `fugaro` ships, generated from the command tree
-(`internal/cli.NewRootCmd`) by `go run ./internal/clidoc`. Cobra's own `help`
+(`internal/cli.NewRootCmd`) by `go run ./ee/clidoc`. Cobra's own `help`
 and `completion` commands, the root's `-v, --version` flag, and the
 `-h, --help` flag of every command, are part of what `fugaro --help` lists,
 so they are here too. Commands the CLI

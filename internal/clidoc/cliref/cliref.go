@@ -77,7 +77,7 @@ func Generate(root *cobra.Command) string {
 	b.WriteString(header + "\n\n")
 	b.WriteString("# Fugaro CLI reference\n\n")
 	b.WriteString("Every command and flag `fugaro` ships, generated from the command tree\n")
-	b.WriteString("(`internal/cli.NewRootCmd`) by `go run ./internal/clidoc`. Cobra's own `help`\n")
+	b.WriteString("(`internal/cli.NewRootCmd`) by `go run ./ee/clidoc`. Cobra's own `help`\n")
 	b.WriteString("and `completion` commands, the root's `-v, --version` flag, and the\n")
 	b.WriteString("`-h, --help` flag of every command, are part of what `fugaro --help` lists,\n")
 	b.WriteString("so they are here too. Commands the CLI\n")
