@@ -356,12 +356,18 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"the build service account",
 		// Owners read every secret; an Editor does not read one of its own.
 		// roles/editor carries secretmanager.secrets.getIamPolicy and delete
-		// but not secretmanager.versions.access, so an Editor's read is a
+		// but not secretmanager.versions.access, so an Editor's own read is a
 		// container grant like any other — and the wider claim would hide
 		// exactly those grants from the reader (the owner's ruling, 2026-10-29;
-		// docs/secrets-brokering/reconciliation.md F3).
+		// docs/secrets-brokering/reconciliation.md F3). It also carries
+		// iam.serviceAccounts.actAs and run.services.update, though, so an
+		// Editor can read a secret indirectly by deploying code that runs as an
+		// account holding one: the sentence has to name that mechanism itself,
+		// so "directly, only through its own grant" is not read as "cannot read
+		// one at all", and so it points at nothing undefined in this document
+		// (the independent review's findings, 2026-10-29).
 		"Project Owners bypass any secret-level policy",
-		"an Editor reads a secret only through a `secretAccessor` grant of its own",
+		"an Editor reads a secret directly, only through its own `secretAccessor` grant; indirectly, by carrying `iam.serviceAccounts.actAs` and `run.services.update`, which let it deploy code that runs as an account holding one",
 		// Q6's shape and its cost.
 		"One secret, one grant, one leak",
 		"a read of the bundle is every credential the service holds at once",

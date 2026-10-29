@@ -1,16 +1,24 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"gocloud.dev/blob"
+	"gocloud.dev/blob/driver"
+
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -425,5 +433,131 @@ func TestShowComputeRefusesAFigureItCannotAddUp(t *testing.T) {
 	}
 	if w := computeWarnings(doc); len(w) != 1 || !strings.Contains(w[0], "do not add up to a number") {
 		t.Errorf("compute warnings = %v, want one saying the figures do not add up", w)
+	}
+}
+
+// countListScheme is the URL scheme the counting runs bucket is opened with
+// (countlist://), registered below so a fixture can point bucket_url at it.
+const countListScheme = "countlist"
+
+// countListBucket is the driver that scheme's opener hands out: the test that
+// installs one clears it again. The tests in this package do not run in
+// parallel, so one package-level slot is enough.
+var countListBucket *countListDriver
+
+func init() {
+	blob.DefaultURLMux().RegisterBucket(countListScheme, countListOpener{})
+}
+
+// countListOpener opens the counting runs bucket.
+type countListOpener struct{}
+
+func (countListOpener) OpenBucketURL(context.Context, *url.URL) (*blob.Bucket, error) {
+	if countListBucket == nil {
+		return nil, fmt.Errorf("%s:// opened with no counting bucket installed", countListScheme)
+	}
+	return blob.NewBucket(countListBucket), nil
+}
+
+// countListDriver is a runs bucket whose only object is the installation's
+// project marker and whose listings are counted. A read that must not happen is
+// a listing this counter records, which is the point of the fixture: --compute
+// reading nothing is asserted as a count, not as an absence of warnings. The
+// marker is served because the project-name check every cloud command makes
+// reads it, and that read is not the one under test.
+type countListDriver struct {
+	stubBucket
+	marker  []byte
+	mu      sync.Mutex
+	listing int
+}
+
+// listings is how many listings the bucket has been asked for.
+func (d *countListDriver) listings() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.listing
+}
+
+// ListPaged counts the call and answers an empty page: no repository in this
+// bucket has runs, so a listing that should not happen is the only one there is
+// to see.
+func (d *countListDriver) ListPaged(context.Context, *driver.ListOptions) (*driver.ListPage, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.listing++
+	return &driver.ListPage{}, nil
+}
+
+// NewRangeReader serves the project marker.
+func (d *countListDriver) NewRangeReader(_ context.Context, key string, _, _ int64, _ *driver.ReaderOptions) (driver.Reader, error) {
+	if key != infra.ProjectMarkerObject {
+		return nil, fmt.Errorf("%s://: no object %s", countListScheme, key)
+	}
+	return &countListReader{Reader: bytes.NewReader(d.marker)}, nil
+}
+
+// countListReader serves the marker's bytes.
+type countListReader struct{ *bytes.Reader }
+
+func (r *countListReader) Close() error { return nil }
+func (r *countListReader) As(any) bool  { return false }
+func (r *countListReader) Attributes() *driver.ReaderAttributes {
+	return &driver.ReaderAttributes{ContentType: "application/json", Size: int64(r.Len())}
+}
+
+// installCountListBucket points the fixture's runs bucket at the counting
+// bucket, which serves the marker the fixture itself wrote, so the name check
+// the command makes passes and the listing is the only bucket call left to
+// count.
+func installCountListBucket(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	marker, err := os.ReadFile(filepath.Join(f.runsDir(), filepath.FromSlash(infra.ProjectMarkerObject)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	countListBucket = &countListDriver{marker: marker}
+	t.Cleanup(func() { countListBucket = nil })
+	f.rewriteConfig(t, "file://"+f.runsDir(), countListScheme+"://runs")
+}
+
+// A document whose repository list is empty reads nothing:
+// budget.BucketFacts treats an empty Slugs as every repository in the bucket,
+// so `--compute` on such a document (--all over a database that names no
+// repository, or a project config that names none) would otherwise read about
+// two days of records across every repository in the bucket -- the read the
+// long help promises the flag avoids. A key `budget.Unkey` refuses is not this
+// case: its row is still listed, under the raw key, and it is unknown either
+// way. The counting bucket is the whole assertion: no listing is asked for.
+func TestShowComputeOnAnEmptyDocumentReadsNothing(t *testing.T) {
+	// The control: the same bucket on a document that does list a repository is
+	// asked for a listing, so the zero below is a read the command did not make
+	// and not a fixture that counts nothing.
+	control := newBudgetFixture(t, "")
+	seedCaps(control, 100, 20)
+	installCountListBucket(t, control)
+	control.db.Set(budget.PathSpendRepo(today(), appSlug), map[string]any{"counted": usd1})
+	if doc, _ := showCompute(t, "budget", "show", "--all", "--json", "--compute"); len(doc.Repos) != 1 {
+		t.Fatalf("the control document lists %d repositories, want 1", len(doc.Repos))
+	}
+	if n := countListBucket.listings(); n == 0 {
+		t.Fatal("a document that lists a repository asked for no listing: the counter is not wired to the read")
+	}
+
+	// No caps, kill switches, counters or running runs name a repository, so
+	// --all lists none.
+	f := newBudgetFixture(t, "")
+	seedCaps(f, 100, 20)
+	installCountListBucket(t, f)
+
+	doc, _ := showCompute(t, "budget", "show", "--all", "--json", "--compute")
+	if len(doc.Repos) != 0 {
+		t.Fatalf("the empty document lists %d repositories: %+v", len(doc.Repos), doc.Repos)
+	}
+	if n := countListBucket.listings(); n != 0 {
+		t.Errorf("--compute on a document that lists no repository made %d listing call(s): an empty list is every repository to the facts reader, the read the flag must not pay for", n)
+	}
+	if w := computeWarnings(doc); len(w) != 0 {
+		t.Errorf("the empty document warns about compute: %v", w)
 	}
 }

@@ -48,8 +48,11 @@ How to read a row:
 
 An **Editor is deliberately not a row**, though this audit named it as one until 2026-10-29:
 `roles/editor` carries `secretmanager.secrets.getIamPolicy` and delete but not
-`secretmanager.versions.access`, so an Editor reads a container only through a `secretAccessor`
-grant of its own — a grant of the kind every row above holds, and one the B0.3 sweep reports per
-container. Naming Editors as readers would be a claim `roles/editor` does not support, and it would
-hide exactly those grants. The owner ruled the wording on 2026-10-29;
+`secretmanager.versions.access`, so an Editor reads a container **directly** only through a
+`secretAccessor` grant of its own — a grant of the kind every row above holds, and one the B0.3
+sweep reports per container. Naming Editors as readers would be a claim `roles/editor` does not
+support, and it would hide exactly those grants. An Editor also reads one **indirectly**: it carries
+`iam.serviceAccounts.actAs` and `run.services.update`, so it can deploy code that runs as an account
+holding a grant — a deploy rather than a read of its own, and the reason the
+`credentials-service-deployers` line names it. The owner ruled the wording on 2026-10-29;
 [reconciliation.md](reconciliation.md) F3 and `SECURITY.md` carry the same correction.

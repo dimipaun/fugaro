@@ -665,6 +665,12 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 // warning and no figures at all: `budget show` is what the console's rail and
 // Projects screens call, so --compute may never fail the command.
 func repoCompute(ctx context.Context, lc *localcfg.Config, day int64, slugs []string, warn func(string)) map[string]computeFigure {
+	// No repository is not every repository: an empty Slugs is the whole
+	// bucket to budget.BucketFacts, and a document that lists no repository
+	// has no row to carry a figure for. Answer without opening the bucket.
+	if len(slugs) == 0 {
+		return map[string]computeFigure{}
+	}
 	facts := &lazyFacts{lc: lc, warn: warn, slugs: slugs}
 	defer facts.close()
 	byDay, _, err := facts.Facts(ctx, day, day)

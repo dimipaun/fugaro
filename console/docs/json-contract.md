@@ -71,11 +71,17 @@ The columns below say which field needs which state. The recurring shapes:
   `age_seconds` and `notional_micros` are all this shape.
 - **`omitempty` on a number** is how a numeric key can be *absent* instead of
   `null`, and an absent number is never *unavailable*: it means the CLI left the
-  key out on purpose. There are two, both in §3: `compute_usd`, absent unless
-  `budget show --compute` asked for it (the one flag-conditioned key, and a
-  figure the command cannot give is written `null`, never left out), and
-  `showRun`'s `round`, an int whose `0` a run in its first round omits. Every
-  other number here is always present, `null` when it is not known.
+  key out on purpose, which is a figure the shape has no reason to carry rather
+  than a gap. `compute_usd` is the one flag-conditioned key (§3): absent unless
+  `budget show --compute` asked for it, and a figure the command cannot give is
+  written `null`, never left out. §2's `pr_number` (on `JSONRun` and on
+  `JSONFinished`) is the same rule for a run that has recorded no pull request
+  — absent, never `0`, which no repository numbering from 1 issues — as is §3's
+  `showRun` `round`, an int whose `0` a run in its first round omits. Which
+  numbers a shape leaves out is its own rows' business; a **pointer** number
+  whose row carries no `omitempty` is always present, `null` when it is not
+  known, and a plain number that can be `0` and mean nothing carries its own
+  flag instead (`JSONBurn.Known`, below).
 - **`omitempty` on a string or a slice**: an **absent key** means *none* or
   *empty*, which is a fact rather than a gap.
 - **`bool` flags that say "I don't know"**: `JSONBurn.Known` is the one that
