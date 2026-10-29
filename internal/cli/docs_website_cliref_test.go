@@ -26,7 +26,7 @@ package cli
 // the tagged generator -- ee/clidoc/cliref_test.go's TestCliReferenceIsCurrent
 // asserts the committed file is exactly its output -- and it cannot live in
 // this package: ee/ is the one thing a core package may not import. The core's
-// own subset check is internal/clidoc/cliref_test.go's
+// own subset check is internal/clidoc/coreref_test.go's
 // TestCoreCommandsAreInTheReference.
 
 import (

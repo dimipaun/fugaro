@@ -11,7 +11,7 @@ package main
 // message. It lives under ee/ because the tree it reads is the tagged one: the
 // blank import in main.go is what puts ee/register's edition and registrations
 // into this test binary, and the core keeps the subset half of the check
-// (internal/clidoc/cliref_test.go's TestCoreCommandsAreInTheReference).
+// (internal/clidoc/coreref_test.go's TestCoreCommandsAreInTheReference).
 
 import (
 	"os"

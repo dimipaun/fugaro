@@ -215,11 +215,34 @@ var planWillCreateElsewhere = map[string]string{
 	"internal/budget/sweep_device_test.go": "P6.6's `m~…` sweep rule's test",
 }
 
+// planPathMoved is the third case, and the narrowest: a path the plan names
+// that has since *moved*, so it is neither in the tree under that name nor ever
+// going to be created by a task. The plan is a dated record and is not edited
+// when the tree moves under it (ee-reorg E1.7a moved the reference's generator
+// into internal/clidoc/cliref/ and renamed the core's own check), so the
+// citation stays true through the successor, and this record is what says so:
+// the old path is gone, the successor is here, and the plan still names the old
+// one. Anything wider would be a place for a real path to hide.
+var planPathMoved = map[string]struct {
+	successor string
+	why       string
+}{
+	"internal/clidoc/cliref.go": {
+		successor: "internal/clidoc/cliref/cliref.go",
+		why:       "ee-reorg E1.7a split the renderer out of the core's `package main` command",
+	},
+	"internal/clidoc/cliref_test.go": {
+		successor: "internal/clidoc/coreref_test.go",
+		why:       "ee-reorg E1.7a left the core's subset check here and moved the whole-file one under ee/",
+	},
+}
+
 // TestMailboxPlanEveryCitedPathExists is the path half of the citations pin,
 // derived from the plan rather than kept by hand. Every backticked `internal/`,
 // `shared/`, `mobile/`, `docs/`, `website/`, `deploy/` or `scripts/` path the
 // plan names must be in the tree — or be one of the handful T1–T8 create, each
-// of which must still be absent and still be named by the plan.
+// of which must still be absent and still be named by the plan, or one of the
+// two ee-reorg E1.7a moved, whose successor must be present in its place.
 //
 // Mutation (verified, run and restored): rename a cited path in the plan
 // (`internal/cli/docs_website_cliref_test.go` -> `…_test2.go`) and this test
@@ -246,6 +269,12 @@ func TestMailboxPlanEveryCitedPathExists(t *testing.T) {
 		if _, ok := planWillCreateElsewhere[p]; ok {
 			// Absence is asserted by the loop at the end of this test, where the
 			// list is walked with its reasons.
+			continue
+		}
+		if _, ok := planPathMoved[p]; ok {
+			// Absence of the old path and presence of its successor are asserted
+			// by the loop at the end of this test, where the record is walked
+			// with both.
 			continue
 		}
 		if p == "docs/pending-workflows/shared-tests.yml" {
@@ -275,6 +304,20 @@ func TestMailboxPlanEveryCitedPathExists(t *testing.T) {
 		}
 		if !named[p] {
 			t.Errorf("planWillCreateElsewhere names %s (%s), which the plan no longer cites: the list must only excuse paths the document actually names", p, why)
+		}
+	}
+	// The moved paths, walked the same way and with the successor the record
+	// exists for: the plan is unedited, so a citation of it is answered by the
+	// file the path became, and by nothing else.
+	for p, moved := range planPathMoved {
+		if _, err := os.Stat("../../" + p); err == nil {
+			t.Errorf("%s: %s is in the tree again (%s), so the move recorded here has been undone or never happened: it must leave planPathMoved and be checked like any other path", mailboxPlan, p, moved.why)
+		}
+		if _, err := os.Stat("../../" + moved.successor); err != nil {
+			t.Errorf("%s: %s's successor %s is not in the tree (%s), so the plan's citation points at nothing at all: %v", mailboxPlan, p, moved.successor, moved.why, err)
+		}
+		if !named[p] {
+			t.Errorf("planPathMoved names %s (%s), which the plan no longer cites: the record must only excuse paths the document actually names", p, moved.why)
 		}
 	}
 }
@@ -326,7 +369,10 @@ func TestMailboxPlanCitationsExist(t *testing.T) {
 		"internal/budget/rules/rules.go",
 		"internal/budget/rules/rules.json.tmpl",
 		"internal/budget/rules/emulator_mailbox_test.go",
-		// The precedents the plan borrows from.
+		// The precedents the plan borrows from. The two clidoc paths are the
+		// plan's own wording, which a dated record keeps; what they point at
+		// today is the successor each one moved to (planPathMoved, in the
+		// derivation test below, is where that is asserted).
 		"internal/watch/acks.go",
 		"internal/watch/prstate.go",
 		"internal/runstore/launch.go",
@@ -381,13 +427,14 @@ func TestMailboxPlanCitationsExist(t *testing.T) {
 		// The reference's generator moved out of the core (ee-reorg E1.7a). The
 		// plan's citation of `internal/clidoc/cliref.go` is about rendering the
 		// reference from the tree, and the renderer is what is still here: the
-		// file the plan names is pinned by the anchor list above, and the half
-		// of its drift check the core can run is beside it. The released tree's
-		// own generator and the whole-file check are under ee/, which this test
-		// never reads -- the "core without ee/" workflow deletes that directory
-		// and runs this suite.
+		// file the plan names is the citation the anchor list above keeps and
+		// planPathMoved answers, and the half of its drift check the core can
+		// run is coreref_test.go, which is what the plan's `cliref_test.go`
+		// became. The released tree's own generator and the whole-file check are
+		// under ee/, which this test never reads -- the "core without ee/"
+		// workflow deletes that directory and runs this suite.
 		"internal/clidoc/cliref/cliref.go": {"func Generate(", "func Prepare("},
-		"internal/clidoc/cliref_test.go":   {"func TestCoreCommandsAreInTheReference("},
+		"internal/clidoc/coreref_test.go":  {"func TestCoreCommandsAreInTheReference("},
 		"shared/mailbox/index.js":          {"DEFAULT_WINDOW_MS", "MIN_WINDOW_MS", "MAX_WINDOW_MS", "MAX_PROMPT_TTL_MS", "DEFAULT_MAX_SEEN", "defaultMaxPerSender", "export function step(", "export function initialState("},
 		"shared/lease/index.js":            {"CLAIM_TTL", "MAX_CLOCK_SKEW", "export function takeLease(", "export function readLease(", "export function releaseLease(", "export function validateLease("},
 		"shared/presence/index.js":         {"export function evaluatePresence(", "MAX_BOOT_ID_LENGTH"},
