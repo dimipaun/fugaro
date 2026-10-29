@@ -125,6 +125,43 @@ function syntheticFrames(): string {
  * the well-known prefixes and nothing else -- never the app's `PATH` (rule 4). */
 const HANDSHAKE_TARGET: SpawnTarget = Object.freeze({ project: '' })
 
+/** SeededCheckout is one `checkouts[]` row of the installations document, as
+ * `internal/cli/config_list.go` marshals it (`console/docs/json-contract.md`
+ * §6.8). The launch reads the identity and the recorded branch from it -- the
+ * repository a launch may be cut for is exactly what this list names.
+ *
+ * The row is written the way a real document carries one, which is what makes
+ * it worth seeding: **every** row has an absolute `path` -- it is the recorded
+ * directory, kept whether or not the path still passes re-validation -- and a
+ * row that did not pass is the only one with a `reason`, which is a code from
+ * the CLI's closed set and never a sentence. */
+export interface SeededCheckout {
+  /** the CLI's own `<provider>/<owner>/<name>` identity, verbatim */
+  readonly repository: string
+  /** the branch this repository's runs are cut from; `''` is the key there and
+   * recording none, which is the state the launch refuses */
+  readonly baseBranch: string
+  /** the absolute directory the CLI recorded this repository at, printed as it
+   * holds it: a row that is no longer a checkout still names the path */
+  readonly path: string
+  /** whether the path passed the CLI's own re-validation on the read; a row
+   * that did not carries `reason: 'missing'` (the directory is not there any
+   * more), which is one of the codes `config_list.go` reports */
+  readonly valid?: boolean
+}
+
+/** SeededLaunchRecords is the launch's own half of the installations document:
+ * the installation's recorded base branch and the repositories its checkouts
+ * name. Both are optional, and **each key is written only when a spec seeds it**
+ * -- an omitted key is omitted from the document, which is the older CLI §6.8
+ * keeps apart from a key that is there and records `''` (a branch none is
+ * recorded for) or `[]` (no path is remembered, which is not the same fact as a
+ * CLI that does not know what a checkout is). */
+export interface SeededLaunchRecords {
+  readonly baseBranch?: string
+  readonly checkouts?: readonly SeededCheckout[]
+}
+
 /** CliStub is an installed stub, and the environment that makes the console
  * find it. */
 export interface CliStub {
@@ -204,8 +241,27 @@ export interface CliStub {
    * it is the state the "set up your first installation" screen is drawn for.
    * (Not "no output": a CLI that printed nothing is text the console refuses, and
    * the picker draws its warning line instead of that screen.) `warnings` are
-   * further lines the CLI prints after its own, verbatim. */
-  seedInstallationsList(projects: readonly string[], warnings?: readonly string[]): void
+   * further lines the CLI prints after its own, verbatim.
+   *
+   * `records` is the launch's own half of the document, and each of its two keys
+   * is written only when a spec seeds it, so every document a spec already
+   * seeded is byte for byte the document it was *and* an absent key keeps
+   * meaning "this CLI does not report it". The launch reads an installation's
+   * `base_branch` and its `checkouts[]` repositories, and §6.8's states of the
+   * two keys are different facts: `baseBranch` left out writes no key at all --
+   * an older CLI, which does not report base branches, and a launch refused for
+   * that reason -- `baseBranch: ''` writes a key that records none, and a string
+   * writes it; `checkouts` left out is the same distinction for the paths, and
+   * `checkouts: []` is written as an empty list, which is "none are
+   * remembered". Each row is `{repository, path, base_branch, enrolled, valid,
+   * reason}` as the CLI prints it, `reason` only on the rows that failed the
+   * read: a `valid` row is one of the directories this installation is used
+   * from, and any row naming a `repository` is one a launch may be cut for. */
+  seedInstallationsList(
+    projects: readonly string[],
+    warnings?: readonly string[],
+    records?: SeededLaunchRecords,
+  ): void
   /** seedPlan replaces the `plan status --json` document the stub answers with,
    * in both places the stub was installed. It is the committed fixture until a
    * spec asks for another one, and it is the one document a spec may want to
@@ -363,17 +419,46 @@ export function installCliStub(line: string): CliStub {
       writeFileSync(join(where, 'coordinator-status.json'), coordinator)
       return join(where, 'fugaro')
     },
-    seedInstallationsList(projects: readonly string[], extra: readonly string[] = []): void {
+    seedInstallationsList(
+      projects: readonly string[],
+      extra: readonly string[] = [],
+      records?: SeededLaunchRecords,
+    ): void {
       // The document, as `internal/cli/config_list.go` marshals it: the
       // installations in the CLI's order, and the warning lines beside them. A
       // name prefixed `unreadable:` is the state that matters most here -- the
       // CLI lists the installation with its fields empty *and* says why, and a
       // picker that hid the row would be hiding an installation the machine
       // has.
+      //
+      // The launch's two keys are added only when a spec seeded them: with them
+      // left out, every document a spec already wrote stays the document it was,
+      // and the absent `base_branch` keeps meaning what §6.8 makes it mean.
+      const launch = records ?? {}
+      const checkouts = (launch.checkouts ?? []).map((row) =>
+        Object.freeze({
+          repository: row.repository,
+          path: row.path,
+          base_branch: row.baseBranch,
+          enrolled: true,
+          valid: row.valid ?? true,
+          // `reason` is `omitempty` in `config_list.go` and the CLI writes it only
+          // for a row its own re-validation refused; `missing` is the code for a
+          // directory that is not there any more.
+          ...(row.valid === false ? { reason: 'missing' } : {}),
+        }),
+      )
       const installations = projects.map((name) =>
         name.startsWith('unreadable:')
           ? { name: name.slice('unreadable:'.length), gcp_project: '', region: '', shared_merged: false }
-          : { name, gcp_project: `fugaro-${name}-123456`, region: 'europe-west4', shared_merged: true },
+          : {
+              name,
+              gcp_project: `fugaro-${name}-123456`,
+              region: 'europe-west4',
+              shared_merged: true,
+              ...(launch.baseBranch === undefined ? {} : { base_branch: launch.baseBranch }),
+              ...(launch.checkouts === undefined ? {} : { checkouts }),
+            },
       )
       const warnings = [
         ...projects
