@@ -1,6 +1,10 @@
 # The mobile app's sign-in, pairing and allowlist, reconciled against the code
 
-**Status: plan only; no code is implemented, and nothing here is approved.** This document reads
+**Status: plan only; no code is implemented, and nothing here is approved. Amended 2026-10-22:**
+the owner accepted **D221–D236 as recommended**, with **P0 and P1 approved** and **P3–P5 ordered
+after P6.6 and P6.8** — recorded, with the provenance of the relay, in [README.md](README.md); every
+other part stays proposed. The paragraph below is the state of 2026-10-21 and is kept as written.
+This document reads
 the owner's [spec.md](spec.md) ("Fugaro Mobile App Auth Spec", 2026-10-20) against the tree at
 `main` `d9dda8f3` (`cli: fugaro --version and fugaro -v print the version, like fugaro version
 (#794)`) on **2026-10-21**, and against the neighbouring documents it names. Every path and symbol

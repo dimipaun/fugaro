@@ -2,6 +2,9 @@
 
 **Status: plan only; no code is implemented; approval gate open.** This plan follows from
 [reconciliation.md](reconciliation.md), which wins wherever it disagrees with [spec.md](spec.md).
+**Amended 2026-10-22:** the owner accepted the parts **as recommended**, with **P0 and P1 approved**
+and **P3–P5 ordered after P6.6 and P6.8**; the gate stays open for **every other part** — see
+[README.md](README.md), which records the ruling and the provenance of the relay.
 Every path and symbol below was re-read against `main` at `d9dda8f3` (`cli: fugaro --version and
 fugaro -v print the version, like fugaro version (#794)`) on **2026-10-21**, and is cited by **path
 and symbol, never by line number**. A path marked **new** does not exist yet.
