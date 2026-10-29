@@ -1033,11 +1033,26 @@ describe('the launch the entry wires', () => {
     expect(body.indexOf('createConfirmWindow(')).toBeLessThan(body.indexOf('await lifecycle.start()'))
     expect(index).not.toContain('fromPartition')
 
+    // ...and before the **picker**, which is the other path that puts the
+    // surface on `ipcMain`: `installInstallationPicker` registers the rail's
+    // operations and closes over `onChosen`, so a picker installed first is a
+    // window whose choose can reach `run.launch` -- and `cancelFor` -- before the
+    // confirmer the launch would be answered through exists.
+    const pickerAt = body.indexOf('installInstallationPicker(')
+    if (pickerAt < 0) throw new Error('the scan found no installInstallationPicker: it would pass by finding nothing')
+    expect(body.indexOf('createConfirmWindow(')).toBeLessThan(pickerAt)
+
     // The module-scope runner is the fail-closed default: the declining
     // confirmer is what answers a launch before `main` has built the window.
     const declared = /let launchRunner = createLaunchRunner\(\{[\s\S]*?\n\}\)\n/.exec(index)
     if (declared === null) throw new Error('the entry has no module-scope launchRunner to read')
     expect(declared[0]).toContain('confirmer: DECLINING_CONFIRMER')
+
+    // Exactly the two: the fail-closed one at module scope and the one `main`
+    // builds over the window's confirmer. A third would be a second launcher --
+    // its own in-flight caps, its own run ids, its own held windows -- beside
+    // the one the surface and the cancel paths read.
+    expect(withoutComments(index).match(/createLaunchRunner\(/g) ?? []).toHaveLength(2)
 
     // And the runner built in `main` is over the window's own confirmer, never
     // over the declining one.
