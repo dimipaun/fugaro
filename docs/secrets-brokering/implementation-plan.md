@@ -202,8 +202,10 @@ plan; this table says what happens to each task, and the levels below include th
   `secretmanager.versions.access` (a predefined Secret Manager role or a custom role listing it),
   other than the classes Fugaro grants — service accounts, and, because a project-level grant is
   every container at once, a person or a group. The account classes are the guard's exception rows
-  (B0.2). Owners are reported once, as info (F3); an Editor is not a reader, and its container grant
-  is a finding like any other. **The remove advice and its
+  (B0.2). Owners are reported once, as info (F3); an Editor is not a project-wide reader — its
+  container grant is a finding like any other — though it can read a value indirectly, since
+  `roles/editor` carries `iam.serviceAccounts.actAs` and `run.services.update` and it may deploy
+  code that runs as an account holding a grant (the deployer line below names it). **The remove advice and its
   `gcloud secrets remove-iam-policy-binding` line belong to a container carrying Fugaro's managed
   label**: for a container Fugaro did not create the line reviews its readers instead, because they
   may belong to another application in the same project (the owner's ruling, 2026-10-29). A policy

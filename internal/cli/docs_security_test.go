@@ -362,11 +362,12 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		// docs/secrets-brokering/reconciliation.md F3). It also carries
 		// iam.serviceAccounts.actAs and run.services.update, though, so an
 		// Editor can read a secret indirectly by deploying code that runs as an
-		// account holding one: the sentence has to say both, so "directly, only
-		// through its own grant" is not read as "cannot read one at all" (the
-		// independent review's finding, 2026-10-29).
+		// account holding one: the sentence has to name that mechanism itself,
+		// so "directly, only through its own grant" is not read as "cannot read
+		// one at all", and so it points at nothing undefined in this document
+		// (the independent review's findings, 2026-10-29).
 		"Project Owners bypass any secret-level policy",
-		"an Editor reads a secret directly, only through its own `secretAccessor` grant; indirectly, by acting as an account that holds one (the deployers line names them)",
+		"an Editor reads a secret directly, only through its own `secretAccessor` grant; indirectly, by carrying `iam.serviceAccounts.actAs` and `run.services.update`, which let it deploy code that runs as an account holding one",
 		// Q6's shape and its cost.
 		"One secret, one grant, one leak",
 		"a read of the bundle is every credential the service holds at once",

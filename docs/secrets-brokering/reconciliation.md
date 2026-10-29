@@ -113,12 +113,16 @@ operators add versions. *Consequence:* the spec's §1 bullet "remove Secret Mana
 service account except the credential service's" is achievable for **service accounts**; SECURITY.md
 must keep saying that humans are outside it.
 
-**F3, corrected 2026-10-29 (owner's ruling, B0.3 follow-up).** Owners only. `roles/editor` carries
-`secretmanager.secrets.getIamPolicy` and delete but not `secretmanager.versions.access`, so an
-Editor is not a reader of every secret and not a reader at all until a container's own policy grants
-it `secretAccessor` — a grant the per-container sweep reports like any other, and one that naming
-Editors as readers would hide. This finding, §3's table, the audit's E12 row, SECURITY.md and
-`website/content/security.md` are corrected together; `fugaro doctor` was right all along
+**F3, corrected 2026-10-29 (owner's ruling, B0.3 follow-up; widened by the independent review of
+2026-10-29).** Owners only. `roles/editor` carries `secretmanager.secrets.getIamPolicy` and delete
+but not `secretmanager.versions.access`, so an Editor is not a reader of every secret and reads one
+**directly** only through a `secretAccessor` grant a container's own policy gives it — a grant the
+per-container sweep reports like any other, and one that naming Editors as readers would hide. It
+reads one **indirectly** as well: `roles/editor` also carries `iam.serviceAccounts.actAs` and
+`run.services.update`, so an Editor can deploy code that runs as an account holding a grant (the
+`credentials-service-deployers` line names the Editor as a deployer for exactly this reason). This
+finding, §3's table, the audit's E12 row, SECURITY.md and `website/content/security.md` are corrected
+together; `fugaro doctor` was right all along
 (`TestDoctorSecretReadersDoesNotCallAnEditorAReader`).
 
 **F4, Rule.** D145 (2026-10-17) kept two classes out of the service on purpose: Bitbucket tokens
