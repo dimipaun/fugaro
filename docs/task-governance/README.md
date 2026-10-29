@@ -1,7 +1,17 @@
 # Task governance and periodic run reviews
 
-**Status (2026-10-28): partly implemented — T1.1–T1.4, T2.1–T2.3, T3.1, T3.2, T3.6, T4.1–T4.3,
-T5.1, T5.2, T6.1, T6.2 and T7.1 are on `main`; no other task of this plan has merged.** The
+**Status (2026-10-29): partly implemented, and what remains is born in `ee/`.** T1.1–T1.4,
+T2.1–T2.3, T3.1–T3.6, T4.1–T4.3, T5.1, T5.2, T6.1, T6.2, T7.1, T7.6 and T8.1 (both halves: T8.1a's
+tier vocabulary and fields, T8.1b's `fugaro run --tier`) are on `main`; T4.4 is authorised and not
+started. **The remaining governance tasks — T7.2–T7.5, T8.2 and T8.3's
+calibration half — are re-targeted to `ee/governance` (D527, D530): they are written there rather
+than moved into it, behind the core hooks the ee-reorg plan's E1.2 adds (and the gateway
+stage-limit hook T7.2 wires first), and none is started.** The wire and the mechanism stay in
+`internal/` under MIT, the policy goes to `ee/governance`; T8.3's `ExpectedScope` drift flag stays
+in the MIT `internal/digest` (D528), and **D523 defers every licence notice and warning** until the
+verifier, the key-minting service and the launch are ready.
+[implementation-plan.md](implementation-plan.md) §"Where the remaining tasks live" names the file
+and the hook for each. The
 rigor plan's T4.2 (a run's report listing the findings its mode tolerated, #1156) is on `main` too,
 and is not a task of this plan. Every stage's record carries `calls` (the gateway's stage report,
 absent without a gateway), `agents` (the sub-agent tool calls the relay counted on the stage's
@@ -25,7 +35,7 @@ outcome, review rounds and halt) and overlap the same existing commands and skil
 | [spec.md](spec.md) | The task governance spec (2026-10-22), **verbatim** |
 | [spec-periodic-reviews.md](spec-periodic-reviews.md) | The periodic run-review request (2026-10-25, dictated), **verbatim** |
 | [reconciliation.md](reconciliation.md) | Findings F1–F38 against the code, resolutions R1–R8, decisions D320–D333 with the owner's answers of 2026-10-26, D320 followed through (§5.1), tensions T1–T3, items O1–O9, UNVERIFIED U1–U8. **Where it disagrees with either spec, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Eight slices, 30 tasks, six parallel levels, the critical path, the shared-files table, Checks 135–139. Nothing in it is approved |
+| [implementation-plan.md](implementation-plan.md) | Eight slices, 30 tasks, six parallel levels, the critical path, the shared-files table, Checks 135–139, and (2026-10-29) the `ee/` re-target of what remains (D527, D530). Partly implemented; each remaining task still needs the owner's own explicit go |
 
 ## Typos fixed in the specs
 
@@ -36,7 +46,7 @@ None. Both are byte for byte as received.
 | Block | Use |
 | --- | --- |
 | **D320–D359** | this work's decision block. **D320–D333** are written and answered; **D334–D359** are reserved and unused. Taken above the highest decision on `main` (D311, inside the licensing block D300–D319, which is reserved through D319) and in every open PR's docs (D260). D272–D299 stay unused as the licensing work left them |
-| **Checks 135–144** | this work's check block. **135–139** are proposed by the plan (written by tasks T3.5 and T7.5, run by the owner, NOT RUN); **140–144** reserved and unused. The highest check on `main` is 134 (licensing's reserved 130–134); open PRs reach 124 |
+| **Checks 135–144** | this work's check block. **135, 136 and 139** are written by T3.5 and on `main` (owner-run, NOT RUN); **137 and 138** are T7.5's and unwritten; **140–144** reserved and unused. The block sits above 134 (licensing's reserved 130–134) and the register's highest written section is 149 |
 
 The owner's ruling of 2026-10-25 on the shape of the periodic reviews is recorded in the
 reconciliation (§1): a user's reports land in their own repository, redacted; central submission
