@@ -40,8 +40,9 @@ import (
 //
 //   - The shape is closed. The keys are exactly the credentials the platform
 //     defines — the model credentials (config.AnthropicSecret and the
-//     claude-oauth-token family) and the GitHub App's private key
-//     (config.GitHubAppKeySecret, C2.1) — and a key outside that set is
+//     claude-oauth-token family), the GitHub App's private key
+//     (config.GitHubAppKeySecret, C2.1) and the upstream Bitbucket credential
+//     (config.BitbucketSecret, D506) — and a key outside that set is
 //     refused rather than ignored: a typo'd key that parsed would be a
 //     credential nobody meant to store, read as nothing and never noticed.
 //     The published shape is schemas/creds-bundle.schema.json, and
@@ -75,10 +76,11 @@ import (
 // (config.ClaudeAccountSecret), which is what a workflow's `secrets:` would
 // have named and what `fugaro creds set` writes.
 //
-// The App key is the one entry that is not a model credential (C2.1, D145):
-// it has no tier, no account, and no cascade ever sees it — Credentials is
-// the whole of what the cascade is offered, and it answers the model
-// credentials alone.
+// Two entries are not model credentials and no cascade ever sees either
+// (C2.1, D145, D506): the App key, which the mint signs a JWT with, and the
+// upstream Bitbucket credential, which the git proxy forwards with. Neither
+// has a tier or an account, and Credentials — the whole of what the cascade
+// is offered — answers the model credentials alone.
 
 const (
 	// MaxBundleBytes bounds the bundle document before it is parsed. 64 KiB
@@ -195,10 +197,11 @@ func BundleRefusal(err error) string {
 	return ErrBundleUnreadable.Error()
 }
 
-// Kind is what a bundle entry is for. The bundle holds two kinds of thing:
-// the model credentials the cascade selects, each with a tier, and the GitHub
-// App's private key, which the mint signs with and which is not a candidate
-// for anything (C2.1).
+// Kind is what a bundle entry is for. The bundle holds three kinds of thing:
+// the model credentials the cascade selects, each with a tier, the GitHub
+// App's private key, which the mint signs with, and the upstream Bitbucket
+// credential the git proxy forwards with (D506) — the last two are candidates
+// for nothing (C2.1, B1.2).
 type Kind string
 
 const (
@@ -212,13 +215,19 @@ const (
 	// select would be an App private key attached to an Anthropic call as the
 	// caller's credential.
 	KindGitHubApp Kind = "github-app"
+	// KindGit is the upstream git credential: the document key
+	// config.BitbucketSecret, the Bitbucket token the proxy forwards a
+	// proxied repository's git and REST requests with (D506). It has no tier
+	// and it must never reach the cascade, for the App key's reason: the
+	// cascade would offer the caller's own git token to a model call.
+	KindGit Kind = "git"
 )
 
 // Entry is one credential the bundle holds, as the cascade names it.
 type Entry struct {
 	// Kind is what the entry is for: KindModel for a credential the cascade
-	// may select, KindGitHubApp for the App key. Credentials answers the
-	// model ones alone.
+	// may select, KindGitHubApp for the App key, KindGit for the upstream
+	// git credential. Credentials answers the model ones alone.
 	Kind Kind
 	// Name is the credential's name: the Claude account's for tier A
 	// (config.DefaultClaudeAccount for the bare token), and
@@ -228,8 +237,9 @@ type Entry struct {
 	// mint's own refusal name it by.
 	Name string
 	// Tier is the cost class (creds.TierA, creds.TierB). It is empty for an
-	// entry that is not a model credential: the App key is spent nowhere, so
-	// it has no tier to settle a call against.
+	// entry that is not a model credential: the App key and the upstream
+	// Bitbucket credential are spent nowhere, so neither has a tier to settle
+	// a call against.
 	Tier creds.Tier
 	// Key is the document's own key for this credential
 	// (config.ClaudeAccountSecret for a named account). It is not a value.
@@ -300,6 +310,10 @@ type Bundle struct {
 	// exactly one document key, and a second occurrence of that key is a
 	// duplicate the loader refuses.
 	appKey int
+	// gitToken is the index of the upstream Bitbucket credential's entry, or
+	// -1 when the document holds none, under the same rule as appKey: one
+	// document key, one entry, a duplicate refused.
+	gitToken int
 }
 
 // Len is how many credentials the document holds.
@@ -367,6 +381,30 @@ func (b *Bundle) AppKey() (Entry, bool) {
 	return b.entries[b.appKey], true
 }
 
+// BitbucketToken answers the bundle's upstream Bitbucket credential (D506),
+// which is the entry whose document key is config.BitbucketSecret and whose
+// kind is KindGit. found=false is a document that holds none, which the git
+// route refuses on and never falls back from (D143: a silent fallback would
+// be the token the job already holds).
+//
+// It selects by KIND rather than by name, for AppKey's reason: the name this
+// credential goes by is a name the rest of the platform speaks — and it is
+// spoken where the kind is NOT in hand, in the proxy's audit line (R2: names
+// only) and in the document listing an operator reads — so the one thing that
+// must be certain is that the entry answered here is the git credential and
+// not a model account. The loader refuses a model account resolving to that
+// name for the same reason (CredentialKey), so the two cannot disagree.
+//
+// The entry it answers carries the name the audit line needs and the value
+// the forward uses, and neither the name nor the value is ever logged or put
+// in an error: Entry renders as a name and a redaction (TestBundleValueNeverInErrorOrLog).
+func (b *Bundle) BitbucketToken() (Entry, bool) {
+	if b == nil || b.gitToken < 0 {
+		return Entry{}, false
+	}
+	return b.entries[b.gitToken], true
+}
+
 // String renders the bundle as its names and tiers. It is what makes
 // `log.Printf("%v", bundle)` safe.
 func (b *Bundle) String() string {
@@ -392,20 +430,38 @@ func (b *Bundle) LogValue() slog.Value { return slog.StringValue(b.String()) }
 // The keys are the platform's credentials and nothing else: the project's
 // Anthropic API key (config.AnthropicSecret, tier B), the Claude OAuth tokens
 // (config.ClaudeOAuthToken for the default account and the
-// claude-oauth-token-<name> namespace, tier A) and the GitHub App's private
-// key (config.GitHubAppKeySecret, C2.1), which is the one key that is not a
-// model credential: its kind is KindGitHubApp and it has no tier, because the
-// mint signs a JWT with it rather than spending it on a call.
+// claude-oauth-token-<name> namespace, tier A), the GitHub App's private key
+// (config.GitHubAppKeySecret, C2.1) and the upstream Bitbucket credential
+// (config.BitbucketSecret, D506) — the last two are the keys that are not
+// model credentials: their kinds are KindGitHubApp and KindGit and they have
+// no tier, because the mint signs a JWT with one and the proxy forwards the
+// other rather than either being spent on a call.
 func CredentialKey(key string) (name string, kind Kind, tier creds.Tier, ok bool) {
 	switch {
 	case key == config.GitHubAppKeySecret:
 		return config.GitHubAppKeySecret, KindGitHubApp, "", true
+	case key == config.BitbucketSecret:
+		return config.BitbucketSecret, KindGit, "", true
 	case key == config.AnthropicSecret:
 		return config.AnthropicSecret, KindModel, creds.TierB, true
 	case key == config.ClaudeOAuthToken:
 		return config.DefaultClaudeAccount, KindModel, creds.TierA, true
 	case strings.HasPrefix(key, config.ClaudeOAuthTokenPrefix):
 		account := strings.TrimPrefix(key, config.ClaudeOAuthTokenPrefix)
+		// The one name the account family may not take, because it is the
+		// name of another credential of this same document: an account
+		// spelled claude-oauth-token-bitbucket-token resolves to
+		// config.BitbucketSecret, which is the git entry's document key and
+		// the name the proxy's audit line, the policy's block and the job's
+		// own mount speak for the upstream token. It would shadow that
+		// credential by name — one name, two credentials, and the audit line
+		// no longer says which. The DefaultClaudeAccount reservation
+		// (config.ValidateClaudeAccounts) is the same rule on the config
+		// side: a name already spoken for is refused rather than loaded
+		// under a second meaning.
+		if account == config.BitbucketSecret {
+			return "", "", "", false
+		}
 		// The whole namespace is reserved for named accounts
 		// (config.ClaudeOAuthSecret), but a *credential* of the bundle is
 		// one an account can actually be named: a suffix outside the
@@ -479,7 +535,7 @@ func ParseBundle(raw []byte) (*Bundle, error) {
 	if n := len(root.Content) / 2; n > MaxBundleCredentials {
 		return nil, bundleErr(ErrBundleTooMany, "")
 	}
-	b := &Bundle{entries: make([]Entry, 0, len(root.Content)/2), byName: make(map[string]int, len(root.Content)/2), appKey: -1}
+	b := &Bundle{entries: make([]Entry, 0, len(root.Content)/2), byName: make(map[string]int, len(root.Content)/2), appKey: -1, gitToken: -1}
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		k, v := root.Content[i], root.Content[i+1]
 		if k.Kind != yaml.ScalarNode || k.Tag != "!!str" {
@@ -515,6 +571,10 @@ func ParseBundle(raw []byte) (*Bundle, error) {
 			if b.appKey >= 0 {
 				return nil, bundleErr(ErrBundleUnknownKey, k.Value)
 			}
+		} else if kind == KindGit {
+			if b.gitToken >= 0 {
+				return nil, bundleErr(ErrBundleUnknownKey, k.Value)
+			}
 		} else if _, dup := b.byName[name]; dup {
 			return nil, bundleErr(ErrBundleUnknownKey, k.Value)
 		}
@@ -527,9 +587,12 @@ func ParseBundle(raw []byte) (*Bundle, error) {
 		if v.Value == "" || len(v.Value) > MaxBundleValueBytes {
 			return nil, bundleErr(ErrBundleBadValue, k.Value)
 		}
-		if kind == KindGitHubApp {
+		switch kind {
+		case KindGitHubApp:
 			b.appKey = len(b.entries)
-		} else {
+		case KindGit:
+			b.gitToken = len(b.entries)
+		default:
 			b.byName[name] = len(b.entries)
 		}
 		b.entries = append(b.entries, Entry{Kind: kind, Name: name, Tier: tier, Key: k.Value, value: secret{value: v.Value}})

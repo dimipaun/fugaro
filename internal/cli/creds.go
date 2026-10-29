@@ -139,6 +139,7 @@ NAME is a credential the service can issue, in the document's own spelling:
   ` + config.ClaudeOAuthTokenPrefix + `<account>       a named Claude account's OAuth token (tier A)
   ` + config.AnthropicSecret + `                the project's Anthropic API key (tier B)
   ` + config.GitHubAppKeySecret + `                  the GitHub App's private key (no tier: the mint signs with it)
+  ` + config.BitbucketSecret + `                   the upstream Bitbucket token (no tier: the git proxy forwards with it)
 
 The value is read only from stdin: pipe or redirect it in
 (fugaro creds set ` + config.ClaudeOAuthToken + ` < token-file), or, when stdin is a terminal, paste it
@@ -713,8 +714,8 @@ func credsDisabledRefusal(id, did string) error {
 // pasted value can land in (the rule `fugaro secrets set`'s own name check
 // follows), and nothing this command prints may carry a value.
 func credsNameRefusal() error {
-	return userErr("the NAME must be a credential the credentials service holds: %s (the project's Anthropic API key, tier B), %s (the default Claude account's OAuth token, tier A) or %s<account> for a named account, where <account> is a Claude account name (lower case, at most %d characters). Nothing was read and nothing was written",
-		config.AnthropicSecret, config.ClaudeOAuthToken, config.ClaudeOAuthTokenPrefix, config.MaxClaudeAccountNameLen)
+	return userErr("the NAME must be a credential the credentials service holds: %s (the project's Anthropic API key, tier B), %s (the default Claude account's OAuth token, tier A), %s<account> for a named account, where <account> is a Claude account name (lower case, at most %d characters), or %s (the upstream Bitbucket token). Nothing was read and nothing was written",
+		config.AnthropicSecret, config.ClaudeOAuthToken, config.ClaudeOAuthTokenPrefix, config.MaxClaudeAccountNameLen, config.BitbucketSecret)
 }
 
 // credsDocRefusal is the document the container holds not being one the
