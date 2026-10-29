@@ -157,15 +157,15 @@ const STATE_SOURCE = readFileSync(
  * a screen silently draws nothing for.
  */
 const COORDINATOR_STATE_SOURCE = readFileSync(
-  fileURLToPath(new URL('../../../internal/coordinator/state.go', import.meta.url)),
+  fileURLToPath(new URL('../../../ee/coordinator/state.go', import.meta.url)),
   'utf8',
 )
 const COORDINATOR_VIEW_SOURCE = readFileSync(
-  fileURLToPath(new URL('../../../internal/coordinator/view.go', import.meta.url)),
+  fileURLToPath(new URL('../../../ee/coordinator/view.go', import.meta.url)),
   'utf8',
 )
 const COORDINATOR_SWEEP_SOURCE = readFileSync(
-  fileURLToPath(new URL('../../../internal/coordinator/sweep.go', import.meta.url)),
+  fileURLToPath(new URL('../../../ee/coordinator/sweep.go', import.meta.url)),
   'utf8',
 )
 
@@ -1755,39 +1755,39 @@ describe('the coordinator’s stored project view (T1.2)', () => {
     // gained and this console did not is a value the screen draws nothing for.
     const pairs: readonly (readonly [readonly StructTag[], readonly string[], string])[] = [
       [
-        structTags(COORDINATOR_STATE_SOURCE, 'StoredProjectView', 'internal/coordinator/state.go'),
+        structTags(COORDINATOR_STATE_SOURCE, 'StoredProjectView', 'ee/coordinator/state.go'),
         COORDINATOR_STATUS_KEYS,
         'the document',
       ],
       [
-        structTags(COORDINATOR_STATE_SOURCE, 'RepoView', 'internal/coordinator/state.go'),
+        structTags(COORDINATOR_STATE_SOURCE, 'RepoView', 'ee/coordinator/state.go'),
         COORDINATOR_REPO_KEYS,
         'repos[]',
       ],
-      [structTags(COORDINATOR_VIEW_SOURCE, 'View', 'internal/coordinator/view.go'), COORDINATOR_VIEW_KEYS, 'view'],
+      [structTags(COORDINATOR_VIEW_SOURCE, 'View', 'ee/coordinator/view.go'), COORDINATOR_VIEW_KEYS, 'view'],
       [
-        structTags(COORDINATOR_VIEW_SOURCE, 'Record', 'internal/coordinator/view.go'),
+        structTags(COORDINATOR_VIEW_SOURCE, 'Record', 'ee/coordinator/view.go'),
         COORDINATOR_RECORD_KEYS,
         'records[]',
       ],
-      [structTags(COORDINATOR_VIEW_SOURCE, 'Run', 'internal/coordinator/view.go'), COORDINATOR_RUN_KEYS, 'runs[]'],
+      [structTags(COORDINATOR_VIEW_SOURCE, 'Run', 'ee/coordinator/view.go'), COORDINATOR_RUN_KEYS, 'runs[]'],
       [
-        structTags(COORDINATOR_VIEW_SOURCE, 'PullRequest', 'internal/coordinator/view.go'),
+        structTags(COORDINATOR_VIEW_SOURCE, 'PullRequest', 'ee/coordinator/view.go'),
         COORDINATOR_PR_KEYS,
         'pr',
       ],
       [
-        structTags(COORDINATOR_VIEW_SOURCE, 'Collision', 'internal/coordinator/view.go'),
+        structTags(COORDINATOR_VIEW_SOURCE, 'Collision', 'ee/coordinator/view.go'),
         COORDINATOR_COLLISION_KEYS,
         'collisions[]',
       ],
       [
-        structTags(COORDINATOR_SWEEP_SOURCE, 'Unread', 'internal/coordinator/sweep.go'),
+        structTags(COORDINATOR_SWEEP_SOURCE, 'Unread', 'ee/coordinator/sweep.go'),
         COORDINATOR_UNREAD_KEYS,
         'unread[]',
       ],
       [
-        structTags(COORDINATOR_SWEEP_SOURCE, 'Stale', 'internal/coordinator/sweep.go'),
+        structTags(COORDINATOR_SWEEP_SOURCE, 'Stale', 'ee/coordinator/sweep.go'),
         COORDINATOR_STALE_KEYS,
         'stale',
       ],

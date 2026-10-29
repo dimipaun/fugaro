@@ -47,7 +47,7 @@ import (
 //   - It reads. There is no store of the coordinator's own, no service, no
 //     MCP front door and no model credential anywhere on this path: two
 //     readers the tree already has — a gitprov.Provider and the runs bucket —
-//     and the pure join in internal/coordinator between them.
+//     and the pure join in ee/coordinator between them.
 //   - It is read-only to GitHub as well (P2, Q3 answered (A)): every
 //     repository is read through the coordinator's own installation token,
 //     minted per repository with a named read-only permission set and no
@@ -67,7 +67,7 @@ import (
 // CLI as the transport, and it takes NOTHING BACK: the command writes one
 // record and prints it, and it issues no advice, reads no state back and
 // compares the declaration against nothing. The record's shape, its
-// deterministic ID and its validation live in internal/coordinator
+// deterministic ID and its validation live in ee/coordinator
 // (Intent, IntentID, Reporter), because `report_intent` (P8) is this same
 // writer behind the front door and a second transport must not invent a
 // second record.

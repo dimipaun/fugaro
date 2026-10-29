@@ -1736,8 +1736,8 @@ export function decodePlanStatus(raw: unknown, where = 'the plan status document
  * `fugaro coordinator status --from-store --all --json` is a **fourth**
  * document, and like the plan status one it is not a shape of the feed: it is
  * every repository the installation's local config lists, each with the view
- * the coordinator's sweep last stored for it (`internal/coordinator/state.go`,
- * `StoredProjectView`; `internal/cli/coordinator_view.go`,
+ * the coordinator's sweep last stored for it (`ee/coordinator/state.go`,
+ * `StoredProjectView`; `ee/coordinator/cli/coordinator_view.go`,
  * `runCoordinatorStatusFromStore`). So it has its own door,
  * `decodeCoordinatorStatus`.
  *
@@ -1759,8 +1759,8 @@ export function decodePlanStatus(raw: unknown, where = 'the plan status document
  */
 
 /** The exact key sets of the stored project view and of each object in it, in
- * the structs' declaration order (`internal/coordinator/state.go`,
- * `internal/coordinator/view.go`, `internal/coordinator/sweep.go`). A test reads
+ * the structs' declaration order (`ee/coordinator/state.go`,
+ * `ee/coordinator/view.go`, `ee/coordinator/sweep.go`). A test reads
  * the same fields off those files, so a key one side gains without the other is
  * a failing test rather than an unread field. */
 export const COORDINATOR_STATUS_KEYS: readonly string[] = Object.freeze(['repos'])

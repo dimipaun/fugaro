@@ -13,7 +13,7 @@
 // token — minted per repository and cached for the token's life (D193's
 // answer). The readers behind both — a gitprov.Provider and the runs bucket —
 // are opened by the CLI command that renders the view
-// (internal/cli/coordinator.go), which is where the plan puts them, so the
+// (ee/coordinator/cli/coordinator.go), which is where the plan puts them, so the
 // view opens nothing itself.
 //
 // The one thing here that writes is state.go, the subtree D195 names and the

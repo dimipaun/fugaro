@@ -598,7 +598,7 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   { command: 'doctor', kind: 'allowed', where: 'internal/cli/doctor.go:159' },
   // Bitbucket credentials T1.2: the project view's read, the one command here
   // whose subject is the coordinator's *stored* view rather than a live read.
-  { command: 'coordinator status', kind: 'allowed', where: 'internal/cli/coordinator.go:560' },
+  { command: 'coordinator status', kind: 'allowed', where: 'ee/coordinator/cli/coordinator.go:565' },
   // **The console's one write** (design §5.1 rule 11, D22). `run` was the
   // first writer in this list and the one no argv could drive; since V2.5.1a it
   // is a command the allow-list admits, in exactly one argv, so it is `allowed`
