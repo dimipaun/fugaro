@@ -6,10 +6,11 @@
 go, and answering a decision is not approving a task.** It builds [spec.md](spec.md) **as amended by
 [reconciliation.md](reconciliation.md)**, which wins where they differ.
 
-**No owner answer shapes this plan yet.** Decisions D600–D649 are written with recommendations and
-**empty answer cells** (the owner could not be asked while this was written). The plan follows the
-**recommendations**; every task names the decisions it rests on, and a task whose decision is
-answered otherwise is re-planned before it starts. Tasks marked **GATED** are not planned in detail
+**The owner answered D600–D649 on 2026-10-29: every answer is the recommendation except D618**
+(shared images across repos, scoped to repos with an identical resolved dependency set), which
+slice C below follows (C7, C8) and which is an open tension awaiting confirmation (reconciliation
+T6, O6). Answers are not task approvals: slice A still needs the owner's explicit go. Every task
+names the decisions it rests on. Tasks marked **GATED** are not planned in detail
 because their decision may remove them.
 
 Slices, each independent and orderable (D600 recommends A first, alone):
@@ -18,7 +19,7 @@ Slices, each independent and orderable (D600 recommends A first, alone):
 | --- | --- | --- | --- |
 | **A** Authorship and trailers | Commits authored by the launcher when a repository opts in; `Fugaro-Run`, `Fugaro-Rigor`, `Fugaro-Model` trailers on the commits the runner pushes, on by default (D647) | MIT | D600–D606, D644, D645, D647–D649 |
 | **B** Forge cleanup, CI status, GitLab | One list of forge kinds; a CI-status read; GitLab only after its own reconciliation | MIT | D610, D611; D614/D615 for B2 |
-| **C** Repositories and images | Bitbucket listing in `fugaro project sync`; lockfile-first image layers; a digest check at launch; read-only context repositories; a SECURITY.md registry note | MIT | D613, D617–D625 |
+| **C** Repositories and images | Bitbucket listing in `fugaro project sync`; lockfile-first image layers; a digest check at launch; images shared between repos with the same resolved dependency set; read-only context repositories; a SECURITY.md registry note | MIT | D613, D617–D625 (D618 answered against the recommendation) |
 | **D** Change sets | Linked runs created together, a draft hold, a settle step, advisory merge order | `ee/` (D616, amended in round 2); the task's wire fields in core (ee-reorg D521) | D613–D616, D641, D642; ee-reorg's coordinator move |
 | **E** People and tokens | The roles design (D446) first; `fugaro user` over the existing IAM lists | MIT for E1; the rest per E0 | D627–D638 |
 
@@ -429,14 +430,48 @@ from it. **Not sized here** beyond: L, security-sensitive throughout.
 - **Reviewer:** standard, plus the independent review `.claude/rules/credentials-service.md` requires
   for `SECURITY.md`.
 
-#### C7. Project images, a lock and a resolver: a design (GATED: D617, D618, D622)
+#### C7. Shared images keyed by the resolved dependency set: a design (D617, D618 as answered, D622)
 
-Docs only, in this folder: a per-project image as an opt-in, where its lock lives (the runs bucket
-beside `builds/`), how `fugaro image refresh` reads it, the build's multi-repository credential, the
-migration, and the local resolver command (withdrawn C2) as the lock's input. Today the build record
-already pins one repository's commit (`imagecheck.Record`'s source commit), so per-repository images
-need no lock. `fugaro project sync` never un-enrolls; the spec's "removed repositories are dropped"
-applies to a project image's lock only, and the design says how.
+Docs only, in this folder. D618 was answered **not as recommended**: images are shared across
+repositories, but only between repositories with an identical resolved dependency set, so a change
+to one forks it automatically. The design covers: the key (a hash of the resolved dependency set:
+the lockfiles and tool files `imagecheck.Record.KeyFiles` tracks, the base image and `image.setup`,
+resolved on the operator's machine, D622); the D617 lock in the runs bucket beside `builds/` that
+records hash to digest; how `fugaro image refresh` reads it; fork, never mutate in place; what is
+baked (today's derived image bakes one repository's source at its commit, so the shared layer holds
+only the dependency set and each run still gets its source from the clone); the migration from
+per-(repository, workflow) images; the build's credential; and the local resolver command (withdrawn
+C2) as the key's input. `fugaro project sync` never un-enrolls; removed repositories are dropped from
+the lock only. It answers reconciliation T6 (a)-(c) and cannot start C8 until the owner confirms T6.
+
+#### C8. Build, lock and job update for shared images (GATED: C7 and the owner's confirmation of T6)
+
+- **Decisions:** D617, D618, D619, D620, D621.
+- **Interfaces:** `imagecheck.Key(resolved) string` (the hash), `imagecheck.Lock` (hash to digest, a
+  JSON object in the runs bucket under `builds/`, decoded strictly, schema in `schemas/`),
+  `imagecheck.Record` gains `Key`; the job update takes the lock's digest for a repository's hash.
+- **Files:** `internal/imagecheck/record.go`, `internal/imagecheck/lock.go` (new),
+  `internal/imagecheck/lock_test.go` (new), `internal/image/render.go`, `internal/cli/image_refresh.go`,
+  `internal/cli/image_record.go`, `internal/backend/gcp/` (the per-repository job update),
+  `schemas/` (the lock). `internal/cli/run.go` is not touched here (C4 reads the lock through
+  `imagecheck`), so it stays within its existing writers.
+- **Behaviour:** `fugaro image refresh` computes each repository's key; repositories with the same
+  key build once and share the digest; a repository whose key changes builds or adopts another
+  image and updates only its own job; an image already in the lock is never rebuilt or overwritten
+  in place; the lock is written after a successful build; D621's triggers apply per key.
+- **Tests:** `TestKeyIdenticalForIdenticalDependencySets`, `TestKeyChangesWithAnyLockfile`,
+  `TestRefreshBuildsOnceForSharedKey`, `TestRefreshForksOnChange`,
+  `TestRefreshNeverOverwritesALockedDigest`, `TestRefreshUpdatesOnlyTheChangedRepositoryJob`,
+  `TestLockDecodesStrictly`, `TestRunDigestComparesAgainstTheLockForItsKey` (extends C4).
+- **Command:** `go test ./internal/imagecheck/ ./internal/image/ ./internal/cli/ -run 'Key|Lock|Refresh|TestRunDigest' -count=1`
+- **Depends on:** C3 and C4 (the same files, earlier level), C7 (the design).
+- **Red step:** `TestRefreshBuildsOnceForSharedKey` fails: two repositories build twice.
+- **Commit:** `image: repositories with the same resolved dependency set share one image`
+- **OWNER-RUN:** a sandbox refresh across two repositories with one set and one with another;
+  confirm one build, two jobs on one digest, and a fork on a dependency change (a new live check
+  number is taken from the reserved 236-249 block when X1 is next amended).
+- **Reviewer:** opus + mandatory independent review (the registry layout and job definitions of
+  every installation change).
 
 ### Slice D: change sets (GATED: D613, D614, D616, D641, D642)
 
@@ -581,7 +616,8 @@ from E0.
 | D614 | D2, D3; B2 if needed |
 | D615 | D4; B2 if blocking is chosen |
 | D616, D637 | D3, D4 (`ee/`); all others MIT |
-| D617, D618, D622 | C7 |
+| D617, D618, D622 | C7, C8 |
+| D619 (with D618) | C4, C8 |
 | D619 | C4 |
 | D620 | C3 |
 | D621 | C6 (`TestDocsBuildsOutsideRunBudget`); no nightly job is planned |
@@ -613,7 +649,7 @@ only.**
 | Level | Tasks (concurrent) |
 | --- | --- |
 | **L0** | A1, A2a, B1, C3, C4, C6, E1, X1; docs B3, C7, E0 |
-| **L1** | A2b, B2, C1 |
+| **L1** | A2b, B2, C1, C8 |
 | **L2** | A3, C5a |
 | **L3** | A4, C5b, D1 |
 | **L4** | A5 (OWNER-RUN), C5c |
@@ -622,7 +658,8 @@ only.**
 | **L7** | D4 |
 
 **Critical path:** A2a → A2b → C5a → C5b → C5c → D2 → D3 → D4 (eight levels), with D3 also gated on
-the ee-reorg coordinator move. **Slice A's own path** is A2a → A2b → A3 → A4 → A5 (five levels; A1
+the ee-reorg coordinator move. Slice C's image chain is C3, C4, C7 (L0) then C8 (L1) and is off the
+critical path. **Slice A's own path** is A2a → A2b → A3 → A4 → A5 (five levels; A1
 runs beside A2a).
 
 **Shared files (no level holds two writers of one file):**
@@ -657,8 +694,10 @@ runs beside A2a).
 | `docs/gcp-live-checklist.md` | X1 (L0) |
 | the next release's notes file under `docs/releases/` | B2 (L1), A4 (L3), C5c (L4) |
 | `internal/config/config.go`, `internal/config/validate.go`, `schemas/fugaro.schema.json`, `schemas/schemas_test.go` | A2a (L0) |
-| `internal/imagecheck/record.go` | C4 (L0) |
-| `images/derived/Dockerfile.tmpl`, `internal/image/render.go` | C3 (L0) |
+| `internal/imagecheck/record.go` | C4 (L0), C8 (L1) |
+| `internal/imagecheck/lock.go`, `internal/cli/image_refresh.go`, `internal/cli/image_record.go`, `internal/backend/gcp/` job update | C8 (L1) |
+| `images/derived/Dockerfile.tmpl` | C3 (L0) |
+| `internal/image/render.go` | C3 (L0), C8 (L1) |
 | `internal/gitprov/providers/providers.go` | B1 (L0) |
 | `internal/gitprov/bitbucket/` (new files) | B2 `statuses.go` (L1), C1 `list.go` (L1): different files |
 
