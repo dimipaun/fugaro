@@ -602,7 +602,7 @@ func TestAPIRefuseHTTP2DebugAnswersTheCoresRefusal(t *testing.T) {
 // are computed from the bucket, and the moved command reads them through this
 // handle. Both sides have to answer the same facts for the same project.
 func TestAPILiveFactsAnswersTheCoresReader(t *testing.T) {
-	f := newCloudFixture(t)
+	newCloudFixture(t)
 	lc, err := localcfg.Load(os.Getenv("FUGARO_CONFIG"))
 	if err != nil {
 		t.Fatal(err)

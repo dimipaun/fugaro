@@ -585,6 +585,10 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		// (E2.2b), as §6.13's did with the coordinator; ee/report/cli's
 		// console contract test carries them, as that one does.
 		reflect.TypeOf(Diagnosis{}),
+		// The degraded watch document: `degraded` and `notice` are its own
+		// two keys (E2.2b — the report's JSONDoc, which spelled both, moved
+		// to ee/report and no longer supplies them to this check).
+		reflect.TypeOf(watchDegradedDoc{}),
 		reflect.TypeOf(configListDoc{}), reflect.TypeOf(configListInstallation{}),
 		reflect.TypeOf(configListCheckout{}),
 		reflect.TypeOf(plan.Document{}), reflect.TypeOf(plan.Node{}),
