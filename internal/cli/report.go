@@ -328,7 +328,10 @@ func reportLive(ctx context.Context, lc *localcfg.Config, days []int64, warn fun
 type lazyFacts struct {
 	lc   *localcfg.Config
 	warn func(string)
-	env  *cloudEnv
+	// slugs narrows the pass to these repositories; empty reads every one in
+	// the bucket (budget.BucketFacts).
+	slugs []string
+	env   *cloudEnv
 }
 
 func (l *lazyFacts) Facts(ctx context.Context, from, to int64) (map[int64][]budget.RunFact, map[string]string, error) {
@@ -337,7 +340,7 @@ func (l *lazyFacts) Facts(ctx context.Context, from, to int64) (map[int64][]budg
 		return nil, nil, err
 	}
 	l.env = env
-	return budget.BucketFacts{Bucket: env.bucket.Bucket, Warn: l.warn}.Facts(ctx, from, to)
+	return budget.BucketFacts{Bucket: env.bucket.Bucket, Warn: l.warn, Slugs: l.slugs}.Facts(ctx, from, to)
 }
 
 func (l *lazyFacts) close() {
