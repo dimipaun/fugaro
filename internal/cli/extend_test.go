@@ -39,6 +39,23 @@ func commandPaths(root *cobra.Command) []string {
 	return paths
 }
 
+// builtTreePaths is the tree the CLI builds with nothing registered: the
+// released tree plus a stub for every paid name the core no longer holds the
+// code for. `coordinator` is that name today -- its library and command moved
+// to ee/ in E2.1b -- and a registration is what replaces the stub, so a test
+// that compares a built tree against a baseline asks this rather than spelling
+// the stub out, which is how the baseline went stale when the move landed.
+func builtTreePaths() []string {
+	paths := coreRootPaths()
+	for _, name := range paidCommandNames {
+		if !coreSurface().rootCommands[name] {
+			paths = append(paths, "fugaro "+name)
+		}
+	}
+	sort.Strings(paths)
+	return paths
+}
+
 func findCmd(t *testing.T, root *cobra.Command, name string) *cobra.Command {
 	t.Helper()
 	c, _, err := root.Find([]string{name})
@@ -89,7 +106,11 @@ func TestRegisteredCommandJoinsTheRoot(t *testing.T) {
 func TestRegisteredCommandCannotShadowACoreCommand(t *testing.T) {
 	extendState(t)
 	want := findCmd(t, newCoreRoot(), "run").Short
-	before := coreRootPaths()
+	// The tree the CLI builds with nothing registered: what a refused
+	// registration must leave exactly as it found it. Building the tree here
+	// would seal the registry and the refusals below would be refusals for the
+	// wrong reason.
+	before := builtTreePaths()
 
 	core := coreSurface()
 	for _, name := range []string{"run", "account", "help", "completion", "__complete", "__completeNoDesc"} {
@@ -284,7 +305,7 @@ func TestRegistrationTakesNoEarlierRegistrationsName(t *testing.T) {
 	}
 
 	root := NewRootCmd()
-	want := append(coreRootPaths(), "fugaro fugaro-test-paid")
+	want := append(builtTreePaths(), "fugaro fugaro-test-paid")
 	sort.Strings(want)
 	if got := commandPaths(root); !slices.Equal(got, want) {
 		t.Errorf("a refused registration reached the tree:\n%v\nwant\n%v", got, want)
@@ -303,8 +324,7 @@ func TestRegistrationTakesNoEarlierRegistrationsName(t *testing.T) {
 // an answer the CLI gives (D522), not an absence.
 func TestNoRegistrationLeavesTheRootUnchanged(t *testing.T) {
 	extendState(t)
-	got, want := commandPaths(NewRootCmd()), append(coreRootPaths(), "fugaro coordinator")
-	sort.Strings(want)
+	got, want := commandPaths(NewRootCmd()), builtTreePaths()
 	if len(got) != len(want) {
 		t.Fatalf("the built tree holds %d commands, the released one %d:\n%v\n%v", len(got), len(want), got, want)
 	}
