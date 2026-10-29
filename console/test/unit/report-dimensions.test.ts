@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The `--by` vocabulary, held in one place: `report`'s own list of breakdowns
-// (`internal/report/report.go`, `ParseDim`) and the three copies the console
+// (`ee/report/report.go`, `ParseDim`) and the three copies the console
 // keeps -- the Spend screen's switch (`SPEND_DIMENSIONS`, `spend.ts`), the IPC
 // allow-list (`REPORT_DIMENSIONS`, `ipc.ts`) and the redactor's field table
 // (`REPORT_DIMENSIONS`, `redact.ts`).
@@ -34,16 +34,16 @@ function read(relative: string): string {
 
 /**
  * cliDimensions reads `report --by`'s words out of the CLI's own help. The
- * `--by` flag's usage line in `internal/cli/report.go` is the list
+ * `--by` flag's usage line in `ee/report/cli/report.go` is the list
  * `fugaro report --help` prints and the set `ParseDim` accepts, so reading it
  * is reading the CLI rather than a copy of it. It throws rather than returning
  * an empty list so that a renamed flag or a reworded line fails here by name.
  */
 function cliDimensions(): string[] {
-  const source = read('internal/cli/report.go')
+  const source = read('ee/report/cli/report.go')
   const flag = /StringVar\(&o\.by,\s*"by",\s*"[^"]*",\s*"([^"]*)"\)/.exec(source)
   if (flag === null || flag[1] === undefined) {
-    throw new Error('internal/cli/report.go no longer declares --by with a usage line')
+    throw new Error('ee/report/cli/report.go no longer declares --by with a usage line')
   }
   return flag[1].replace(/^group by\s+/, '').split(/,\s*|\s+or\s+/)
 }

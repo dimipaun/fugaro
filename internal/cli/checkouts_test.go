@@ -242,7 +242,10 @@ func TestConsoleAllowListedReadsWriteNothing(t *testing.T) {
 		{"runs", "ls", "--json"},
 		{"runs", "stats", "--json"},
 		{"budget", "show", "--json"},
-		{"report", "--json"},
+		// `report` is not here: the command moved to ee/ (E2.2b, D444), so an
+		// untagged build answers the name with the D522 stub and never reaches
+		// the checkout. The tagged tree's read of this checkout is asserted in
+		// ee/report/cli/checkouts_test.go, against the same fixture rule.
 		{"secrets", "ls", "--json", "--repo", "acme/app"},
 		// The graph screen's read (GV1.6): a cloud read of this checkout's
 		// own repository, so it resolves the checkout like runs ls does.

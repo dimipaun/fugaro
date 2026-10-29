@@ -59,7 +59,7 @@ states are:
 |---|---|---|
 | **measured** | the number | A counter the CLI read. |
 | **notional** | `NOTIONAL~` | A subscription's list price: never billed, never capped (`JSONTotal.NotionalUSD`'s own comment, `internal/watch/json.go`). |
-| **estimated** | the number, marked | Compute, an estimate by design (`JSONLine.ComputeEstimated`, `internal/report/render.go`). |
+| **estimated** | the number, marked | Compute, an estimate by design (`JSONLine.ComputeEstimated`, `ee/report/render.go`). |
 | **unavailable** | `n/a` | The document says the value is not known. A nil pointer, an absent key, `[]`. |
 | **gap** | a broken line / hollow bar | The stream stopped. Never interpolated across. |
 
@@ -437,11 +437,11 @@ bool°. `°` = `omitempty`.
 
 ## 4. `fugaro report --json`
 
-**Command:** `internal/cli/report.go` `newReportCmd` / `runReport`.
-**Document:** `internal/report/render.go` `JSONDoc`, written
+**Command:** `ee/report/cli/report.go` `NewReportCmd` (the command moved to `ee/` in E2.2) / `runReport`.
+**Document:** `ee/report/render.go` `JSONDoc`, written
 by **`report.JSON(w io.Writer, rep Report, m Meta) error`** —
 the exported writer, not a `cli`-side struct. Indented two spaces
-(`report.JSON`, `internal/report/render.go`). A schema note also lives above the type
+(`report.JSON`, `ee/report/render.go`). A schema note also lives above the type
 (`render.go`'s comment block: `by`, `since`, `until`, `weeks`, `rows`,
 `totals`, `warnings`).
 
@@ -461,7 +461,7 @@ the exported writer, not a `cli`-side struct. Indented two spaces
   floats: the console parses the string, and micros is the integer of record.
 - **`model_micros`/`model_usd` are null exactly when the row is `unreadable`**
   — a by-mode row for which the CLI has no readable run record at all
-  (`Row.Unreadable`, `internal/report/report.go`; only `--by mode` sets it):
+  (`Row.Unreadable`, `ee/report/report.go`; only `--by mode` sets it):
   every run in it either has a `result.json` the build cannot read, or has not
   written one yet. The row still counts its `runs`, and null is *unavailable*,
   never a measured `0`. Every other row writes both keys, so a number there is
@@ -543,7 +543,7 @@ the exported writer, not a `cli`-side struct. Indented two spaces
 `JSONTokens`: `in`, `out`, `cache_read`, `cache_write`, all
 int64, none `omitempty`.
 
-**Flags** (`newReportCmd`, `internal/cli/report.go`): `--repo`, `--since`, `--until`, `--by`, `--json`,
+**Flags** (`newReportCmd`, `ee/report/cli/report.go`): `--repo`, `--since`, `--until`, `--by`, `--json`,
 `--csv` (the allow-list excludes `--csv`), plus the cloud flags.
 
 ## 5. `fugaro runs ls --json` (and the degraded feed's body)
