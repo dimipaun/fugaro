@@ -145,7 +145,8 @@ func targetFor(path string) (noticeTarget, bool) {
 }
 
 // thirdPartyDir is a directory of vendored third-party files under a licence
-// directory. Those files are not Fugaro's to license (console/LICENSE.md §7.1),
+// directory. Those files are not Fugaro's to license (the console's own
+// LICENSE.md §7.1),
 // so they carry their own licence instead of the notice: the licence text sits
 // in the directory as `licence`, and every other file has a sibling
 // `<name>.license` whose first line names that licence's SPDX identifier, as
