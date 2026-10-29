@@ -537,7 +537,8 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string) error {
 	// not a bundle key (a value pasted into the argument position, say) is
 	// refused without a cloud call and without being echoed.
 	// The kind is kept, not just checked: it is what says whether this name's
-	// value is one line (every model credential) or a PEM (the App key).
+	// value is one line (every model credential and the upstream Bitbucket
+	// token) or a PEM (the App key).
 	_, kind, _, ok := credsvc.CredentialKey(name)
 	if !ok {
 		return credsNameRefusal()
@@ -743,10 +744,11 @@ func credsDocRefusal(id string, err error) error {
 
 // readBundleValue reads NAME's value, whose shape KIND decides. It is
 // readSecret's shape (secrets.go) — a terminal gets a hidden prompt, anything
-// else is read to EOF — with this command's own rules: a model credential is
-// one line, and the GitHub App's key is the one entry that is a PEM, which the
-// hidden prompt cannot take (it reads one line), so that name comes in on
-// stdin and a terminal is refused before anything is read. The bound is the
+// else is read to EOF — with this command's own rules: a model credential and
+// the upstream Bitbucket token are one line each, and the GitHub App's key is
+// the one entry that is a PEM, which the hidden prompt cannot take (it reads
+// one line), so that name comes in on stdin and a terminal is refused before
+// anything is read. The bound is the
 // loader's per-credential one rather than Secret Manager's.
 //
 // The value never comes from an argument, a flag or the environment: this
@@ -794,9 +796,10 @@ func readBundleValue(ctx context.Context, in io.Reader, prompt io.Writer, name s
 // bundle's own bound, credsvc.MaxBundleValueBytes — the loader's
 // per-credential limit, which a longer value would break, so it is refused
 // here rather than by the service later. What shape the value has to be is
-// KIND's: a model credential is one line with no whitespace at either end
-// (`fugaro secrets set`'s rule), and the App key is one PEM block that the
-// service's own mint can parse. Errors never quote the value.
+// KIND's: a model credential and the upstream Bitbucket token are one line
+// with no whitespace at either end (`fugaro secrets set`'s rule), and the App
+// key is one PEM block that the service's own mint can parse. Errors never
+// quote the value.
 func validateBundleValue(raw []byte, kind credsvc.Kind) error {
 	switch {
 	case len(raw) == 0:

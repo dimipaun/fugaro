@@ -73,15 +73,17 @@ func (s *scriptedSource) readCount() int {
 }
 
 // bundleDoc is a valid document holding every credential the platform
-// defines: the two model families and the GitHub App's private key (C2.1).
-// The App key is in it on purpose — it is in the document and NOT in the
-// cascade, and a document without one would not show that.
+// defines: the two model families, the GitHub App's private key (C2.1) and
+// the upstream Bitbucket token (D506). The last two are in it on purpose —
+// each is in the document and NOT in the cascade, and a document without one
+// would not show that.
 func bundleDoc(t *testing.T) []byte {
 	t.Helper()
 	return []byte("claude-oauth-token: " + fakeCred(t, "default") + "\n" +
 		"claude-oauth-token-alice: " + fakeCred(t, "alice") + "\n" +
 		config.AnthropicSecret + ": " + fakeCred(t, "paid") + "\n" +
-		config.GitHubAppKeySecret + ": " + fakeCred(t, "appkey") + "\n")
+		config.GitHubAppKeySecret + ": " + fakeCred(t, "appkey") + "\n" +
+		config.BitbucketSecret + ": " + fakeCred(t, "gittoken") + "\n")
 }
 
 // TestBundleLoadsOncePerCall: one read of the container answers a whole
@@ -107,8 +109,8 @@ func TestBundleLoadsOncePerCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got := b.Names(); len(got) != 4 {
-		t.Fatalf("names = %v, want the four credentials of the document", got)
+	if got := b.Names(); len(got) != 5 {
+		t.Fatalf("names = %v, want the five credentials of the document", got)
 	}
 	// Every credential of one call, and every credential of the next call
 	// inside the TTL, comes from the one read.
@@ -734,10 +736,11 @@ func TestBundleSchemaMatchesTheLoader(t *testing.T) {
 // secret's logical name and the credential's name is the account's, which is
 // what the policy's accounts block, the marks and the wire contract speak.
 //
-// It is also where the App key's exclusion is pinned from the document side
-// (C2.1): the key is loaded and is reachable through AppKey, and it is in
-// NEITHER Credentials (what the cascade is offered) nor a candidate — a bundle
-// that holds it holds one credential fewer than it holds entries.
+// It is also where the exclusions are pinned from the document side: the App
+// key (C2.1) and the upstream Bitbucket token (D506) are loaded, each is
+// reachable through its own kind-based accessor, and each is in NEITHER
+// Credentials (what the cascade is offered) nor a candidate — a bundle that
+// holds them holds two credentials fewer than it holds entries.
 func TestBundleCredentialKeyIsTheCascadesSpelling(t *testing.T) {
 	b, err := ParseBundle(bundleDoc(t))
 	if err != nil {
@@ -797,6 +800,29 @@ func TestBundleCredentialKeyIsTheCascadesSpelling(t *testing.T) {
 			t.Errorf("Credentials() offers the App key (%v) to the cascade", c)
 		}
 	}
+	// The upstream Bitbucket token, the same way: in the document, findable by
+	// its KIND, not a model credential, and not a candidate.
+	git, ok := b.BitbucketToken()
+	if !ok {
+		t.Fatalf("BitbucketToken() found nothing, and the document holds %q", config.BitbucketSecret)
+	}
+	if git.Kind != KindGit || git.Tier != "" || git.Key != config.BitbucketSecret {
+		t.Errorf("the git entry = %+v, want the git kind, no tier, keyed %q", git, config.BitbucketSecret)
+	}
+	if git.Value() == "" {
+		t.Error("the git entry has no value")
+	}
+	if _, ok := b.Lookup(config.BitbucketSecret); ok {
+		t.Errorf("Lookup(%q) answered, and it answers model credentials only", config.BitbucketSecret)
+	}
+	for _, c := range got {
+		if c.Name == config.BitbucketSecret {
+			t.Errorf("Credentials() offers the git token (%v) to the cascade", c)
+		}
+	}
+	if want, got := b.Len(), len(got); want != got+2 {
+		t.Errorf("the document holds %d entries and the cascade is offered %d, want two kind-only credentials", want, got)
+	}
 }
 
 // TestBundleCredentialKeyHoldsTheAccountNameRuleInBothHalves: CredentialKey is
@@ -843,6 +869,14 @@ func TestBundleCredentialKeyHoldsTheAccountNameRuleInBothHalves(t *testing.T) {
 		{name: "the app key", key: config.GitHubAppKeySecret, wantName: config.GitHubAppKeySecret, wantKind: KindGitHubApp, wantTier: "", wantOK: true},
 		{name: "the app key under the account prefix", key: config.ClaudeAccountSecret(config.GitHubAppKeySecret), wantName: config.GitHubAppKeySecret, wantKind: KindModel, wantTier: creds.TierA, wantOK: true},
 		{name: "an app key that is not the app key", key: "github-app-private-key", wantOK: false},
+		// The upstream Bitbucket token: the second key that is not a model
+		// credential — a kind of its own, no tier.
+		{name: "the upstream git token", key: config.BitbucketSecret, wantName: config.BitbucketSecret, wantKind: KindGit, wantTier: "", wantOK: true},
+		{name: "a git token that is not the git token", key: "bitbucket-tokens", wantOK: false},
+		// The one account name the family may not take: it resolves to the
+		// git entry's own key, so the name would mean two credentials.
+		{name: "an account named like the git token", key: config.ClaudeAccountSecret(config.BitbucketSecret), wantOK: false},
+		{name: "an account that merely starts like it", key: config.ClaudeAccountSecret(config.BitbucketSecret + "-x"), wantName: config.BitbucketSecret + "-x", wantKind: KindModel, wantTier: creds.TierA, wantOK: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			gotName, gotKind, gotTier, ok := CredentialKey(tc.key)

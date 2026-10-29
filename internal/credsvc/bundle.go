@@ -234,7 +234,9 @@ type Entry struct {
 	// config.AnthropicSecret for tier B. It is what the marks, the policy's
 	// accounts block and the wire contract's headers all speak. The App key's
 	// name is config.GitHubAppKeySecret, which is what the audit line and the
-	// mint's own refusal name it by.
+	// mint's own refusal name it by; the upstream Bitbucket token's is
+	// config.BitbucketSecret, which is the name the proxy's audit line speaks
+	// (R2: names only) and never its value.
 	Name string
 	// Tier is the cost class (creds.TierA, creds.TierB). It is empty for an
 	// entry that is not a model credential: the App key and the upstream
@@ -455,10 +457,18 @@ func CredentialKey(key string) (name string, kind Kind, tier creds.Tier, ok bool
 		// the name the proxy's audit line, the policy's block and the job's
 		// own mount speak for the upstream token. It would shadow that
 		// credential by name — one name, two credentials, and the audit line
-		// no longer says which. The DefaultClaudeAccount reservation
-		// (config.ValidateClaudeAccounts) is the same rule on the config
-		// side: a name already spoken for is refused rather than loaded
-		// under a second meaning.
+		// no longer says which.
+		//
+		// The refusal is this package's own and only the bundle's: the config
+		// side reserves config.DefaultClaudeAccount and nothing else
+		// (config.ValidateClaudeAccounts, config.ValidClaudeAccountRef), so an
+		// account named bitbucket-token is still configurable and still
+		// admittable by a policy. What this refuses is writing that account's
+		// KEY into the bundle — the bundle is the one document where the two
+		// names would collide — and a document that already holds one is
+		// refused whole rather than read under a name that means two things.
+		// Teaching the config side the same reservation is a change of its
+		// own, and it is not made here.
 		if account == config.BitbucketSecret {
 			return "", "", "", false
 		}
