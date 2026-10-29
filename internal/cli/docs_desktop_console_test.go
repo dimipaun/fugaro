@@ -2,14 +2,17 @@ package cli
 
 // The console's Go-side contract tests (desktop-console plan, Task 0.1).
 //
-// This file is named by Task 0.3's boundary test as the ONE Go file allowed to
-// reference a path under console/ -- and it references it the way every
+// This file is on Task 0.3's boundary test's allow-list as one of the Go files
+// that may reference a path under console/ -- and it references it the way every
 // docs_*_test.go here references docs/: readDoc(t, path) reads the bytes. It
 // imports nothing from console/, embeds nothing from it and adds no go.mod
 // dependency to reach it. Everything below that reads a console/ file reads it
-// as bytes for the same reason, and stays in this file so that the allow-list
-// keeps its single entry: the console's copy of a Go decision is checked here
-// against the Go source, and the second such copy is
+// as bytes for the same reason, and the sections whose command is still in the
+// core keep being read here: the one entry ee-reorg E2.1b added beside this file
+// is the moved coordinator command's own console_contract_test.go, which reads
+// that command's section and skips here (consoleMovedSections). The console's
+// copy of a Go decision is checked here against the Go source, and the second
+// such copy is
 // TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource, reading
 // console/tools/scrub-fixture/scrub.ts.
 //

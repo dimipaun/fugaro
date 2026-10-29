@@ -489,7 +489,7 @@ func TestWindowsConsoleWorkflowIsReleaseTimeOnly(t *testing.T) {
 		// module-root directory's name: a Go file in this package that writes that
 		// directory as a path is a boundary reference the allow-list test counts,
 		// and this is a check about a workflow's upload path rather than a reason
-		// to widen a one-entry allow-list.
+		// to widen a closed allow-list.
 		if !strings.HasSuffix(step.With["path"], "release/*.exe") {
 			t.Errorf("%s's upload step uploads %q, which does not name the installer", path, step.With["path"])
 		}
@@ -748,7 +748,7 @@ func TestDocsWindowsConsoleClaimsAboutOtherFilesAreTrue(t *testing.T) {
 
 	// 6. And the figure the suite's size is given as, in the two other places it
 	// is written: `vitest run --dir test/unit`, not the whole `test/` tree. (The
-	// number itself cannot be counted from here: this package's one-entry
+	// number itself cannot be counted from here: this package's closed
 	// console boundary allow-list is what stops a Go file in it reading the
 	// console tree, which is why the command travels beside the figure.)
 	text, wfPath := consoleWorkflowText(t, windowsConsoleWorkflowPath, appliedConsoleWindowsPath)
