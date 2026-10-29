@@ -116,6 +116,7 @@ PROXY_SRC="$HERE/check190"
 # an environment variable.
 DEPLOY_FLAGS=(
   --project="$P" --region="$L" --image="$IMG"
+  --no-allow-unauthenticated
   --timeout=3600 --min-instances=0 --max-instances=1
   --set-secrets="/chk190/token=${SECRET}:latest"
   --set-env-vars="CHK190_TOKEN_FILE=/chk190/token,CHK190_STALL_SECONDS=${SLOW_SECONDS},CHK190_STALL_PREFIX=/chk190-slow/"
@@ -426,7 +427,23 @@ guard_inputs() {
   fact "token-file" PASS "mode 0600, non-empty, read from CHECK190_TOKEN_FILE (the path is not printed, and the value is in no log line, no argument and no block)"
 }
 
-# guard_deploy_is_iam_only is here.
+# guard_deploy_is_iam_only: the deploy line is the one place a throwaway service
+# could be left answering the whole internet, and the token it attaches is a real
+# one — so the flag is read out of the argv a real run would pass rather than
+# trusted to be in it. Without this the only thing that would notice a dropped
+# flag is the request probe after the deploy, and that probe is a request to a
+# service that is already public by then.
+guard_deploy_is_iam_only() {
+  local f
+  for f in "${DEPLOY_FLAGS[@]}"; do
+    if [ "$f" = --no-allow-unauthenticated ]; then
+      fact "deploy-iam-only" PASS "the deploy line carries --no-allow-unauthenticated: the service requires IAM and the token it attaches is behind no public URL"
+      return 0
+    fi
+  done
+  stop "the deploy line does not carry --no-allow-unauthenticated (DEPLOY_FLAGS is: $(printf '%s ' "${DEPLOY_FLAGS[@]}")), so the throwaway service would answer anyone who found its URL, with the sandbox repository's own token behind it. This check refuses before anything is created: add the flag back to DEPLOY_FLAGS and run again. Nothing was created"
+}
+
 # guard_proxy_source: the proxy this check deploys is the main.go committed
 # beside it, and nothing else. A missing file is a stop before anything exists.
 guard_proxy_source() {
@@ -893,6 +910,7 @@ main() {
   guard_xtrace
   guard_project
   guard_inputs
+  guard_deploy_is_iam_only
   guard_proxy_source
   guard_resources
 
@@ -914,7 +932,7 @@ main() {
 # printed in this order whatever happened, one that was never reached reads
 # FAIL — not reached, and any other recorded key follows, in the order the run
 # recorded it. That is what makes the block safe to diff between two runs.
-BLOCK_KEYS=(fugaro-version project-region repo token-file proxy-source baseline scratch
+BLOCK_KEYS=(fugaro-version project-region repo token-file deploy-iam-only proxy-source baseline scratch
   service-config iam-policy unauthenticated-request clone-full clone-blobless push-small
   push-big-http1 cold-start timeout-3600 branch-deleted restore scratch-removed)
 
