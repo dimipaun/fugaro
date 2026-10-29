@@ -1307,7 +1307,7 @@ func recordLabel(r coordinatorRecord) string {
 //   - TestCoordinatorReportPrintsNoAdvice: the part's third red step at the
 //     command — the output is the record and nothing else. The half of it that
 //     is about reading nothing back is the writer's own dependency list
-//     (internal/coordinator's TestReportReadsNothingBack), because a command
+//     (ee/coordinator's TestReportReadsNothingBack), because a command
 //     cannot read back through a writer that has no read.
 //   - TestCoordinatorReportRefusesAWriteTheRulesDeny: a database that refuses
 //     the write is the caller's error and not an outage, and it says what the
@@ -1509,7 +1509,7 @@ func TestCoordinatorReportRefusesADeclarationThatDeclaresNothing(t *testing.T) {
 // suggestion, no summary of what is already in flight — because the report
 // path takes nothing back and a command that advised from what it wrote would
 // be advising from nothing. The reading half of the same rule is
-// internal/coordinator's TestReportReadsNothingBack, asserted against the
+// ee/coordinator's TestReportReadsNothingBack, asserted against the
 // writer's own dependency list.
 //
 // Hand mutation this fails on: printing a collision summary under the record.
@@ -1692,7 +1692,7 @@ func TestADeclareThatSkipsTheDatabaseDeclaresNothing(t *testing.T) {
 // The aggregation job's entry point (docs/coordinator/implementation-plan.md,
 // part P5). These tests are the command's half — the environment it reads, the
 // database it writes and the exit code it leaves — and not the sweep's own
-// logic, which internal/coordinator's tests hold. What they are here for is the
+// logic, which ee/coordinator's tests hold. What they are here for is the
 // wiring: a tick that reaches the real database, the real runs bucket and P2's
 // own read, driven end to end with fakes at the three seams.
 
