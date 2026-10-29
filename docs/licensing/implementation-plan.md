@@ -557,9 +557,9 @@ reads, stores or knows about keys (D308 with D303 as amended).
 - **OWNER-RUN:** yes (the approval and the publication); an agent may prepare the website page
   once the approved text exists.
 - **Status 2026-10-29:** counsel's restructured text is in [subscription-terms.md](subscription-terms.md)
-  and on the draft page; it still carries counsel's draft banner and bracketed party details, and
-  two of its figures are held back for the owner (the late-payment interest rate and the Community
-  liability cap), so the step is not done.
+  and on the draft page; it still carries counsel's draft banner and bracketed party details, so
+  the step is not done; the two figures first held back (the late-payment interest rate and the
+  Community liability cap) went in on the owner's ruling of 2026-10-29.
 
 #### L4.5 — Amend the Subscription Terms to the owner's answers (new 2026-10-27, done)
 - **Files:** `docs/licensing/subscription-terms.md` (the answers applied, prices kept as bracketed

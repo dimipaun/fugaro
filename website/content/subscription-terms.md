@@ -374,7 +374,7 @@ Terms, and to the maximum extent permitted by law, the Licensor provides no warr
 service-level commitment or support, other than public GitHub issues under section 8.1 (Support),
 for the Community Plan, any Free Plan or any Beta Feature, and the Licensor's aggregate liability
 arising out of or relating to them shall not exceed
-**[LIABILITY CAP FOR COMMUNITY, FREE PLANS AND BETA FEATURES]**.
+US$100.
 
 10.6 **Beta Features.** The Licensor may make available features or versions of the Software
 identified as beta, preview, experimental or similar ("Beta Features"). The Customer may choose
@@ -420,7 +420,7 @@ purchase through the Merchant of Record, these Terms determine whether a refund 
 advance for each billing period, as section 13.2 (Payment), for a Team Subscription, or section 19
 (Enterprise commercial terms), for an Enterprise Subscription, provides.
 
-12.2 **Late payment.** Overdue amounts bear interest at **[LATE-PAYMENT INTEREST RATE]**, or at the
+12.2 **Late payment.** Overdue amounts bear interest at 12% per year, or at the
 highest rate permitted by law if lower, from the date on which the Licensor or the Merchant of
 Record gives notice that the amount is overdue.
 

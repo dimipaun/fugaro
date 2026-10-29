@@ -90,9 +90,9 @@ now carries counsel's text of 2026-10-28, which reorganises the agreement by pla
 and renumbers it from 24 sections to 34 (for example: fees, payment and taxes are section 12,
 Enterprise commercial terms section 19, assignment section 31, changes to the Terms section 29).
 It adds a patent licence, an indemnity, resellers, a Quebec language clause and limits for the
-Community Plan, Free Plans and Beta Features, and drops the drafting notes. Two figures in it are
-held back from this public repository as bracketed items for the owner to decide (the late-payment
-interest rate and the Community liability cap). The document still carries counsel's draft banner
+Community Plan, Free Plans and Beta Features, and drops the drafting notes. Two figures in it
+(the late-payment interest rate and the Community liability cap) were first held back as bracketed
+items; the owner ruled on 2026-10-29 that they go in as counsel wrote them. The document still carries counsel's draft banner
 and bracketed party details, so it is still **not in force**; the page at `/legal/subscription-terms`
 is regenerated from it. Section map and open points:
 [reconciliation.md](reconciliation.md#amendment-2026-10-29-counsels-restructured-subscription-terms).

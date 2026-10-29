@@ -391,7 +391,7 @@ Terms, and to the maximum extent permitted by law, the Licensor provides no warr
 service-level commitment or support, other than public GitHub issues under section 8.1 (Support),
 for the Community Plan, any Free Plan or any Beta Feature, and the Licensor's aggregate liability
 arising out of or relating to them shall not exceed
-**[LIABILITY CAP FOR COMMUNITY, FREE PLANS AND BETA FEATURES]**.
+US$100.
 
 10.6 **Beta Features.** The Licensor may make available features or versions of the Software
 identified as beta, preview, experimental or similar ("Beta Features"). The Customer may choose
@@ -437,7 +437,7 @@ purchase through the Merchant of Record, these Terms determine whether a refund 
 advance for each billing period, as section 13.2 (Payment), for a Team Subscription, or section 19
 (Enterprise commercial terms), for an Enterprise Subscription, provides.
 
-12.2 **Late payment.** Overdue amounts bear interest at **[LATE-PAYMENT INTEREST RATE]**, or at the
+12.2 **Late payment.** Overdue amounts bear interest at 12% per year, or at the
 highest rate permitted by law if lower, from the date on which the Licensor or the Merchant of
 Record gives notice that the amount is overdue.
 
@@ -767,9 +767,9 @@ choisi d'être lié par les présentes Conditions et tous les documents qui s'y 
 Counsel's text answers most of the earlier draft's questions (an indemnity, a patent licence, a
 Quebec language clause, the late-payment rate, resellers and the merchant of record). What remains:
 
-1. **The two figures held back** (sections 10.5 and 12.2): counsel's text states a liability cap
-   for the Community Plan, Free Plans and Beta Features and a late-payment interest rate; the
-   owner decides whether this public copy publishes them.
+1. **The two figures once held back** (sections 10.5 and 12.2): counsel's text states a liability
+   cap for the Community Plan, Free Plans and Beta Features and a late-payment interest rate; the
+   owner ruled on 2026-10-29 that both go in as counsel wrote them, and they are now in the text.
 2. **Counsel's open comment on section 4.4** (Modifications): whether the clause should rest on the
    contributor licence agreement alone. The earlier draft's assignment of rights in Modifications
    to the Licensor is not in counsel's text.

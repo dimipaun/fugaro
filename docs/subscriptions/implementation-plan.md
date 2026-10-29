@@ -204,7 +204,7 @@ The owner's answers and rulings that shape it (non-price; figures are private, D
   [licensing/reconciliation.md](../licensing/reconciliation.md#amendment-2026-10-29-the-coordinator-leaves-the-terms-core)).
   **Status 2026-10-29:** counsel returned the Terms, dated 2026-10-28, restructured by plan and
   renumbered (sections 1 to 34; [licensing/reconciliation.md](../licensing/reconciliation.md#amendment-2026-10-29-counsels-restructured-subscription-terms)),
-  and the tree carries that text as written, but for two figures held back for the owner. It does
+  and the tree carries that text as written; the two figures first held back for the owner went in on 2026-10-29. It does
   not carry the items below, which stay open; the section numbers are counsel's. Items:
   - **§9.1 and §27.4:** after the grace period the console and the app can still **cancel**, and
     the kill switch stays; they cannot launch or change config (T12).
