@@ -895,12 +895,12 @@ carries that difference as leased_usd, the money leased and not yet spent: a
 crashed run's lease is never released, so it stays in the figure for the rest
 of the day. --compute adds each repository's compute dollars, read from the
 runs bucket: a run's compute is in its own record and nowhere in the
-database, so the flag costs one listing and one read per run of the day and
-is left off by everything that only needs the counters. The figure is an
-estimate by design, priced from each run's own price table, and covers the
-runs that started today and recorded a result: a run still in flight has
-recorded none, so today's is partial, and a repository whose runs recorded
-no estimate is null, never 0.
+database, so the flag costs a listing of the bucket's repositories and one
+read per run of the day, and everything that only needs the counters leaves
+it off. The figure is an estimate by design, priced from each run's own
+price table, and covers the runs that started today and recorded a result:
+a run still in flight has recorded none, so today's is partial, and a
+repository whose runs recorded no estimate is null, never 0.
 
 Usage: `fugaro budget show`
 

@@ -252,12 +252,12 @@ func newBudgetShowCmd() *cobra.Command {
 			"crashed run's lease is never released, so it stays in the figure for the rest\n" +
 			"of the day. --compute adds each repository's compute dollars, read from the\n" +
 			"runs bucket: a run's compute is in its own record and nowhere in the\n" +
-			"database, so the flag costs one listing and one read per run of the day and\n" +
-			"is left off by everything that only needs the counters. The figure is an\n" +
-			"estimate by design, priced from each run's own price table, and covers the\n" +
-			"runs that started today and recorded a result: a run still in flight has\n" +
-			"recorded none, so today's is partial, and a repository whose runs recorded\n" +
-			"no estimate is null, never 0.",
+			"database, so the flag costs a listing of the bucket's repositories and one\n" +
+			"read per run of the day, and everything that only needs the counters leaves\n" +
+			"it off. The figure is an estimate by design, priced from each run's own\n" +
+			"price table, and covers the runs that started today and recorded a result:\n" +
+			"a run still in flight has recorded none, so today's is partial, and a\n" +
+			"repository whose runs recorded no estimate is null, never 0.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runBudgetShow(cmd, &o) },
 	}
