@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // TestDigestNeedsNoEE: the digest is MIT and stays MIT (D444, T11), so this
@@ -33,10 +34,7 @@ func TestDigestNeedsNoEE(t *testing.T) {
 	})
 
 	t.Run("the import closure stays in the core", func(t *testing.T) {
-		root, err := moduleRoot()
-		if err != nil {
-			t.Fatal(err)
-		}
+		root := testutil.ModuleRoot()
 		const module = "github.com/dimipaun/fugaro/"
 		eePrefix := module + "ee/"
 		// Spelled in two pieces so this test's own source holds no literal of
@@ -73,25 +71,6 @@ func TestDigestNeedsNoEE(t *testing.T) {
 			}
 		}
 	})
-}
-
-// moduleRoot walks up from the test's directory to the directory holding
-// go.mod. Hermetic: no go list, no network.
-func moduleRoot() (string, error) {
-	dir, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir, nil
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", os.ErrNotExist
-		}
-		dir = parent
-	}
 }
 
 // importsOf is every import path the .go files in dir declare, read with

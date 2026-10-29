@@ -151,8 +151,13 @@ change of the two, and the plan lists the copy.
 `internal/report/` in full (`report.go`, `render.go`, `report_test.go`), and the command part of
 `internal/cli/report.go` + `report_test.go`: `newReportCmd`, `reportOptions`, `reportRange`,
 `runReport`, `reportEmit`, `reportByMode`, `modeRecords`, `reportDegraded`, `reportLive`,
-`lazyFacts`, `daysWithCompute`, `microsOfUSD`, `applyCost`, `reportMaxRuns`, `reportModeSourceNote`,
+`lazyFacts`, `daysWithCompute`, `reportMaxRuns`, `reportModeSourceNote`,
 `reportComputeEstimateNote`.
+
+**`applyCost` and `microsOfUSD` stay in the core** (corrected by E2.2a: S1.1 listed them among what
+moves). `recordOfRun` is core — it is one of the five symbols below — and calls both, so a moved copy
+would be a second implementation of the split a run's dollars get. The moved command reaches them
+through §10's `ApplyCost` and `RecordOfRun`, which call the core's own helpers unchanged.
 
 **`reportHistory` moves with the command** (corrected by E0.3: S1.1 listed it among what stays in
 core). It returns `[]report.Rec` (`internal/cli/report.go:210`), so a core copy would have to name
@@ -161,7 +166,9 @@ mention in core is a comment (`internal/cli/project_enroll.go:332`). Nothing cor
 
 ### What stays in the core, in a new `internal/cli/reportcore.go`
 
-Exactly the five symbols core MIT code reads, each with the callers that pin it:
+The five symbols core MIT code reads, each with the callers that pin it — and, staying with
+`recordOfRun` because it calls them, its two helpers `applyCost` (`report.go:592`) and `microsOfUSD`
+(`report.go:580`), which the "what moves" list above used to name (corrected by E2.2a):
 
 | Symbol | Read by |
 | --- | --- |

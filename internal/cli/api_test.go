@@ -326,7 +326,15 @@ func TestAPILsSlugsAnswersTheCoresSlugs(t *testing.T) {
 	ctx := context.Background()
 	env := memEnv(t, newCloudFixture(t))
 	c := &Cloud{env: env}
+	seedAPIRun(t, env, appSlug, "20261024-120000-abcd")
+	// A repository the local config does not list, so the bucket's slugs and
+	// the config's are not the same answer.
+	seedAPIRun(t, env, mustSlug("github", "owner/repo-b"), "20261024-130000-abcd")
 
+	// all=true is the branch the by-mode path uses (it covers every
+	// repository the bucket holds, not only the local config's), and it
+	// answers from the bucket alone: a wrapper that dropped the flag would
+	// still answer the config's slugs here, so this case is what pins it.
 	for _, tc := range []struct {
 		name      string
 		repo      string
@@ -335,6 +343,7 @@ func TestAPILsSlugsAnswersTheCoresSlugs(t *testing.T) {
 	}{
 		{"a named repository", "acme/app", false, &lsOptions{repo: "acme/app"}},
 		{"the project's own", "", false, &lsOptions{}},
+		{"every slug in the bucket", "", true, &lsOptions{all: true}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := c.LsSlugs(ctx, tc.repo, tc.all, io.Discard)
@@ -364,14 +373,7 @@ func TestAPILoadRowsAnswersTheCoresLoader(t *testing.T) {
 	c := &Cloud{env: env}
 	since := time.UnixMilli(1_700_000_000_000)
 	now := time.UnixMilli(1_700_100_000_000)
-	const id = "20261024-120000-abcd"
-	s := runstore.Open(env.bucket.Bucket, appSlug, id)
-	if err := s.WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: id, Backend: "cloud-run", Job: "job", LaunchedAt: time.UnixMilli(1_700_000_000_000)}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: appSlug, Status: runstore.StatusSucceeded}); err != nil {
-		t.Fatal(err)
-	}
+	seedAPIRun(t, env, appSlug, "20261024-120000-abcd")
 
 	got, err := c.LoadRows(ctx, []string{appSlug}, since, io.Discard, now)
 	if err != nil {
@@ -396,53 +398,87 @@ func TestAPIReadRunRecordsAnswersTheCoresRead(t *testing.T) {
 	ctx := context.Background()
 	env := memEnv(t, newCloudFixture(t))
 	c := &Cloud{env: env}
-	const id = "20261024-120000-abcd"
-	s := runstore.Open(env.bucket.Bucket, appSlug, id)
+	seedAPIRun(t, env, appSlug, "20261024-120000-abcd")
+	minted := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+
+	// The bounds are distinct and non-zero, and each one is what decides
+	// whether the run is in: the by-mode path relies on the until bound
+	// dropping a run minted after a window that ends in the past, so a
+	// wrapper that swapped since and until, or dropped one, has to fail here.
+	for _, tc := range []struct {
+		name     string
+		since    time.Time
+		until    time.Time
+		wantRuns int
+	}{
+		{"the window that holds it", minted.Add(-time.Hour), minted.Add(time.Hour), 1},
+		{"a window that ends when it was minted", minted.Add(-time.Hour), minted, 0},
+		{"a window that starts after it was minted", minted.Add(time.Hour), time.Time{}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, gotUn, gotTrunc, err := c.ReadRunRecords(ctx, []string{appSlug}, tc.since, tc.until, 10)
+			if err != nil {
+				t.Fatalf("Cloud.ReadRunRecords: %v", err)
+			}
+			want, wantUn, wantTrunc, err := readRunObjects(ctx, env, []string{appSlug}, tc.since, tc.until, 10)
+			if err != nil {
+				t.Fatalf("readRunObjects: %v", err)
+			}
+			if len(got) != tc.wantRuns || len(want) != tc.wantRuns {
+				t.Fatalf("the read answered %d runs (core %d), want %d: the window's bounds decide what is in it",
+					len(got), len(want), tc.wantRuns)
+			}
+			if gotUn != wantUn || gotTrunc != wantTrunc {
+				t.Fatalf("Cloud.ReadRunRecords = unlaunched %d, truncated %v; readRunObjects = %d, %v",
+					gotUn, gotTrunc, wantUn, wantTrunc)
+			}
+			for i := range want {
+				if got[i].ID() != want[i].id {
+					t.Errorf("run %d's ID = %q, want %q", i, got[i].ID(), want[i].id)
+				}
+				if got[i].RecordCorrupt() != want[i].recordCorrupt {
+					t.Errorf("run %d's RecordCorrupt = %v, want %v", i, got[i].RecordCorrupt(), want[i].recordCorrupt)
+				}
+				if want[i].record == nil {
+					t.Errorf("run %d's core record is nil: this test cannot tell the accessors apart", i)
+					continue
+				}
+				if !reflect.DeepEqual(got[i].Record(), want[i].record) {
+					t.Errorf("run %d's Record = %+v, want %+v", i, got[i].Record(), want[i].record)
+				}
+			}
+		})
+	}
+}
+
+// seedAPIRun writes one launch and one record for slug's run id into the
+// fixture's runs bucket: a reader over the bucket then has a run to answer
+// with, and a comparison against the core that ran on two empty answers would
+// prove nothing.
+func seedAPIRun(t *testing.T, env *cloudEnv, slug, id string) {
+	t.Helper()
+	ctx := context.Background()
+	s := runstore.Open(env.bucket.Bucket, slug, id)
 	if err := s.WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: id, Backend: "cloud-run", Job: "job", LaunchedAt: time.UnixMilli(1_700_000_000_000)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: appSlug, Status: runstore.StatusSucceeded}); err != nil {
+	if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: slug, Status: runstore.StatusSucceeded}); err != nil {
 		t.Fatal(err)
-	}
-
-	got, gotUn, gotTrunc, err := c.ReadRunRecords(ctx, []string{appSlug}, time.Time{}, time.Time{}, 10)
-	if err != nil {
-		t.Fatalf("Cloud.ReadRunRecords: %v", err)
-	}
-	want, wantUn, wantTrunc, err := readRunObjects(ctx, env, []string{appSlug}, time.Time{}, time.Time{}, 10)
-	if err != nil {
-		t.Fatalf("readRunObjects: %v", err)
-	}
-	if len(want) == 0 {
-		t.Fatal("the core's own read found no run: this test would compare two empty answers")
-	}
-	if len(got) != len(want) || gotUn != wantUn || gotTrunc != wantTrunc {
-		t.Fatalf("Cloud.ReadRunRecords = %d runs, unlaunched %d, truncated %v; want %d, %d, %v",
-			len(got), gotUn, gotTrunc, len(want), wantUn, wantTrunc)
-	}
-	for i := range want {
-		if got[i].ID() != want[i].id {
-			t.Errorf("run %d's ID = %q, want %q", i, got[i].ID(), want[i].id)
-		}
-		if got[i].RecordCorrupt() != want[i].recordCorrupt {
-			t.Errorf("run %d's RecordCorrupt = %v, want %v", i, got[i].RecordCorrupt(), want[i].recordCorrupt)
-		}
-		if want[i].record == nil {
-			t.Errorf("run %d's core record is nil: this test cannot tell the accessors apart", i)
-			continue
-		}
-		if !reflect.DeepEqual(got[i].Record(), want[i].record) {
-			t.Errorf("run %d's Record = %+v, want %+v", i, got[i].Record(), want[i].record)
-		}
 	}
 }
 
 // TestAPIBudgetNowIsTheBudgetClock: the moved report command measures its own
 // --since/--until window back from the budget commands' clock, so the
-// published one has to be that clock and not a second one.
+// published one has to be that clock and not a second one — a copy of the
+// value, or a call to time.Now, would print a different report on the day the
+// core's own tests pin.
 func TestAPIBudgetNowIsTheBudgetClock(t *testing.T) {
-	if d := time.Since(BudgetNow()); d < -time.Minute || d > time.Minute {
-		t.Errorf("BudgetNow() is %v from now: it is not a wall clock", d)
+	fixed := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+	old := budgetNow
+	budgetNow = func() time.Time { return fixed }
+	defer func() { budgetNow = old }()
+	if got := BudgetNow(); !got.Equal(fixed) {
+		t.Errorf("BudgetNow() = %v, want the clock the core's tests installed, %v", got, fixed)
 	}
 }
 
