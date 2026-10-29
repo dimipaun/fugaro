@@ -378,8 +378,11 @@ func TestMailboxPlanCitationsExist(t *testing.T) {
 		"internal/watch/acks.go":         {"func AckPath("},
 		"internal/watch/prstate.go":      {"func (p *PRState) ask("},
 		"internal/runstore/launch.go":    {"func (s *Store) Claim(", "ClaimTTL"},
-		"internal/clidoc/cliref.go":      {"defaultPath"},
-		"internal/clidoc/cliref_test.go": {"func TestCliReferenceIsCurrent("},
+		// The reference's generator moved out of the core (ee-reorg E1.7a): the
+		// plan cites the file and the flag default by name, and both are under
+		// ee/ now, where the released tree is read.
+		"ee/clidoc/main.go":              {"defaultPath"},
+		"ee/clidoc/cliref_test.go":       {"func TestCliReferenceIsCurrent("},
 		"shared/mailbox/index.js":        {"DEFAULT_WINDOW_MS", "MIN_WINDOW_MS", "MAX_WINDOW_MS", "MAX_PROMPT_TTL_MS", "DEFAULT_MAX_SEEN", "defaultMaxPerSender", "export function step(", "export function initialState("},
 		"shared/lease/index.js":          {"CLAIM_TTL", "MAX_CLOCK_SKEW", "export function takeLease(", "export function readLease(", "export function releaseLease(", "export function validateLease("},
 		"shared/presence/index.js":       {"export function evaluatePresence(", "MAX_BOOT_ID_LENGTH"},

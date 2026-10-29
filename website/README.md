@@ -1565,7 +1565,7 @@ The site's other gate is the Go side, which holds every fact to the file it is d
 from:
 
 ```sh
-GOFLAGS=-p=2 go test ./internal/cli ./internal/clidoc -run 'Docs|Lint|Website|CliRef' -count=1
+GOFLAGS=-p=2 go test ./internal/cli ./internal/clidoc/... ./ee/clidoc -run 'Docs|Lint|Website|CliRef|CoreCommands' -count=1
 ```
 
 **The `Website|CliRef` half is not decoration.** The plan's baseline for this suite is
@@ -1573,8 +1573,11 @@ GOFLAGS=-p=2 go test ./internal/cli ./internal/clidoc -run 'Docs|Lint|Website|Cl
 tests it selects in `internal/cli`, none is named `TestWebsite*` or `TestCliRef*`, so a
 run of it alone is green with every fact the site renders unexecuted. `Website` selects the
 boundary test, the install pins and the security page; `CliRef` selects the reference's
-pins, in `internal/cli` and in `internal/clidoc` where the generator's own tests live. The
-names are the ones the docs-only guard in `ci.yml` already uses for the same tests.
+pins — in `internal/cli`, in `internal/clidoc/cliref` where the renderer's own rules are
+checked, and in `ee/clidoc` where the committed file is held to the tagged tree's output —
+and `CoreCommands` selects the core's subset check of that file, which is named for the rule
+it applies rather than for the file it reads. The names are the ones the docs-only guard in
+`ci.yml` already uses for the same tests.
 `website/test/readme.mjs` holds this command to that: every test function the site's Go
 test files declare has to be selected by the pattern this section prints.
 
@@ -1601,7 +1604,7 @@ check until this document says the same thing.
 
 | File | Source | Regenerate with |
 |---|---|---|
-| `content/cli-reference.md` | the command tree, `internal/cli.NewRootCmd` | `go run ./internal/clidoc` |
+| `content/cli-reference.md` | the command tree the released binary builds, `internal/cli.NewRootCmd` | `go run ./ee/clidoc` |
 | `content/security.md` | `SECURITY.md`, byte for byte below the title | `go run ./internal/clidoc` |
 | `content/subscription-terms.md` | `docs/licensing/subscription-terms.md`, sections 1 to 24 with the drafting notes cut, under a draft status line | `go run ./internal/clidoc` |
 | `content/costs.json` | `fugaro stats runs --project <installation> --json`, and it is the aggregation's output verbatim | owner-run: `fugaro stats runs --project <installation> --json > website/content/costs.json` |
@@ -1609,9 +1612,12 @@ check until this document says the same thing.
 
 Three things about those commands are worth stating rather than leaving to the table:
 
-- **One generator, two files.** `go run ./internal/clidoc` writes both generated documents
-  from their sources; it compiles into the build cache and writes nothing into the tree
-  besides its output.
+- **One generator per file.** `go run ./internal/clidoc` writes the security and
+  subscription-terms pages from their sources, and `go run ./ee/clidoc` writes the CLI
+  reference from the tagged command tree — the tree the released binary builds (design
+  `docs/design/ee-boundary-moves.md` §9). Two generators, one file each, so neither can
+  overwrite the other's output. Each compiles into the build cache and writes nothing into
+  the tree besides its output.
 - **The costs file is the owner's to produce, and it may be absent.** The aggregation reads
   one named installation's run records, is refused inside a coding agent's session, and
   prints percentiles per recipe with the window and the sample size behind each — never a
