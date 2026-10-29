@@ -1561,25 +1561,27 @@ type validateOutput struct {
 }
 
 // governanceEditions is the job images' edition, for governanceImageWarnings:
-// a lookup over the file's workflows, and the reason it could not be built (""
-// when it could).
+// a lookup over the file's workflows, and the note to print instead when it
+// could not be built ("" when it could).
 //
 // The edition is a field of the build record the runs bucket holds
 // (imagecheck.Record.Edition), so building this is a bucket read, and --offline
 // does not make it: the flag promises this command reads neither the runs
-// bucket nor the project's published policy, and the reason it hands back is
-// what the caller prints instead (design ee-boundary-moves §7). Everything else
-// that can leave the edition unknown is a state this command already reports
-// for other reasons — no project config selected for the file's project, a
-// directory that is no checkout of a repository it can name, a bucket this
-// checkout's credentials cannot open — and each is a note and never a problem:
-// the file is valid whichever image it ends up built for.
+// bucket nor the project's published policy, and the note says the edition is
+// unresolved offline the way the layer and the published policy do (design
+// ee-boundary-moves §7). Everything else that can leave the edition unknown is
+// a state this command already reports for other reasons — no project config
+// selected for the file's project, a directory that is no checkout of a
+// repository it can name, a bucket this checkout's credentials cannot open —
+// and each is a note and never a problem: the file is valid whichever image it
+// ends up built for.
 //
 // The road is the one every other command in this package takes to an image
 // from a checkout: the project config's own client (openCloudFor), the origin's
-// slug, and one read of RecordKey(slug, workflow) per workflow the file names.
-// The map is the memo: a workflow is read once, and a record that is missing or
-// unreadable leaves its workflow unknown rather than failing the command.
+// slug, and one read of RecordKey(slug, workflow) per workflow a record can
+// speak for. The map is the memo: a workflow is read once, and a record that is
+// missing or unreadable leaves its workflow unknown rather than failing the
+// command.
 //
 // A file that writes no governance: block asks nothing of any image, so this
 // opens nothing and answers (nil, "") — the same condition
@@ -1590,36 +1592,42 @@ func governanceEditions(ctx context.Context, lc *localcfg.Config, cfg *config.Co
 		return nil, ""
 	}
 	if offline {
-		return nil, "--offline was given, which reads no build record"
+		return nil, "the job images' edition unresolved offline: --offline reads neither the runs bucket nor the published policy, so whether their runners read the governance: block is not known here; run validate without --offline to have the records read"
 	}
 	if lc == nil || lc.Name != cfg.Project {
-		return nil, fmt.Sprintf("no project config for %s is selected here", pluginwire.Printable(cfg.Project))
+		return nil, editionUnresolved("no project config for " + pluginwire.Printable(cfg.Project) + " is selected here")
 	}
 	repo, err := originRepo(ctx)
 	if err != nil {
-		return nil, fmt.Sprintf("this directory is no checkout of a repository whose name can be read here (%v)", oneLine(err.Error()))
+		return nil, editionUnresolved(fmt.Sprintf("this directory is no checkout of a repository whose name can be read here (%v)", oneLine(err.Error())))
 	}
 	slug, err := repoSlugOf(ctx, lc, repo)
 	if err != nil {
-		return nil, fmt.Sprintf("the storage slug of %s could not be resolved (%v)", pluginwire.Printable(repo), oneLine(err.Error()))
+		return nil, editionUnresolved(fmt.Sprintf("the storage slug of %s could not be resolved (%v)", pluginwire.Printable(repo), oneLine(err.Error())))
 	}
 	env, err := openCloudFor(ctx, lc)
 	if err != nil {
-		return nil, fmt.Sprintf("the installation's runs bucket could not be opened (%v)", oneLine(err.Error()))
+		return nil, editionUnresolved(fmt.Sprintf("the installation's runs bucket could not be opened (%v)", oneLine(err.Error())))
 	}
 	defer env.Close()
 	b, err := env.recordBucket(ctx)
 	if err != nil {
-		return nil, fmt.Sprintf("the installation's runs bucket could not be opened (%v)", oneLine(err.Error()))
+		return nil, editionUnresolved(fmt.Sprintf("the installation's runs bucket could not be opened (%v)", oneLine(err.Error())))
 	}
 	editions := make(map[string]string, len(cfg.Workflows))
-	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
+	for _, name := range governanceEditionWorkflows(cfg) {
 		editions[name] = recordEditionIn(ctx, b, slug, name)
 	}
 	return func(workflow string) (string, bool) {
 		e := editions[workflow]
 		return e, e != ""
 	}, ""
+}
+
+// editionUnresolved is the note for a command that could not read the job
+// images' records for a reason other than --offline.
+func editionUnresolved(why string) string {
+	return "the job images' edition unresolved: " + why + ", so whether their runners read the governance: block is not known here"
 }
 
 // recordEditionIn is the edition the build record of slug's workflow reports,
@@ -1745,8 +1753,8 @@ func newValidateCmd() *cobra.Command {
 				warnings = append(warnings, config.CheckWarnings(cfg, filepath.Dir(path))...)
 				warnings = append(warnings, cloneWorkflowWarnings(cfg)...)
 				warnings = append(warnings, rigorImageWarnings(cfg)...)
-				editionOf, unresolved := governanceEditions(cmd.Context(), lc, cfg, offline)
-				gw, gn := governanceImageWarnings(cfg, editionOf, unresolved)
+				editionOf, note := governanceEditions(cmd.Context(), lc, cfg, offline)
+				gw, gn := governanceImageWarnings(cfg, editionOf, note)
 				warnings, notes = append(warnings, gw...), append(notes, gn...)
 				pp, pw, pn := providerProblems(cmd.Context(), ecfg, lc, claimed)
 				problems, warnings, notes = append(problems, pp...), append(warnings, pw...), append(notes, pn...)

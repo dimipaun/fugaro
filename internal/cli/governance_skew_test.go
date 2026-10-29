@@ -482,7 +482,8 @@ func TestGovernanceOnAnOldImageStillRefuses(t *testing.T) {
 // core image says so too — judged at the same call site, which is why run.go
 // needs no change (the tier's own release gate is untouched: this image is a
 // current release, so nothing refuses). A launch that asks for no tier on the
-// same image says nothing: the warning is about what the run asks for.
+// same image says nothing: the warning is about what the run asks for. Neither
+// does an image that gate refuses, which is the last two cases here.
 func TestTierOnACoreImageWarns(t *testing.T) {
 	f := newCloudFixture(t)
 	configSkewCheckout(t, f, configSkewHead+configSkewWorkflow)
@@ -510,37 +511,73 @@ func TestTierOnACoreImageWarns(t *testing.T) {
 	if strings.Contains(quiet, "core build of fugaro") {
 		t.Errorf("a launch that asks for no tier and writes no governance: block warns: %q", quiet)
 	}
+
+	// An image the gates refuse is not warned about: a warning describes what a
+	// run does with what it was given, and a refused launch has no run. The
+	// tier's own release gate is the one that fires here — this launch writes
+	// no governance: block, so the skew half above never runs — and a record
+	// that cannot say which base it was built from is refused by that gate too.
+	f3 := newCloudFixture(t)
+	configSkewCheckout(t, f3, configSkewHead+configSkewWorkflow)
+	older := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, governanceSince, -1)
+	writeEditionBuildRecord(t, f3, mustSlug("github", "acme/other"), "svc", older, EditionCore)
+	_, oldErr, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "--tier", "small", "A task")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "the run's own tier request (--tier) needs a job image") {
+		t.Fatalf("err = %v, want the tier's release gate to refuse an image older than the field", err)
+	}
+	if strings.Contains(oldErr, "core build of fugaro") {
+		t.Errorf("a refused launch warns about the image's edition: %q", oldErr)
+	}
+	writeEditionBuildRecord(t, f3, mustSlug("github", "acme/other"), "svc", "", EditionCore)
+	_, noBaseErr, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "--tier", "small", "A task")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "does not say which base image it was built from") {
+		t.Fatalf("err = %v, want a record that names no base refused", err)
+	}
+	if strings.Contains(noBaseErr, "core build of fugaro") {
+		t.Errorf("a record that names no base warns about the image's edition: %q", noBaseErr)
+	}
+	if n := len(f3.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
 }
 
-// TestCloneWorkflowOnACoreImageWarns: a checkout: clone workflow's job image is
-// the installation's base image, and the edition half of its gate reads the
-// same object the derived one reads — the workflow's build record — so the two
-// shapes of the gate answer from one place. A clone workflow is never built and
-// so normally has no record at all, which is the unknown state that warns about
-// nothing (design ee-boundary-moves §7); what this pins is the branch, and that
-// its fix is the one that image has (fugaro update --base base, not an image
-// refresh of a workflow that is never built).
-func TestCloneWorkflowOnACoreImageWarns(t *testing.T) {
+// TestCloneWorkflowOnACoreRecordDoesNotWarn: a checkout: clone workflow is
+// never built, so it has no build record of its own, and a record left under
+// its key by an earlier life as a base-kind workflow describes an image the
+// job does not run — the clone job runs the installation's base image itself.
+// Its edition is therefore unknown, and an unknown image warns about nothing
+// (design ee-boundary-moves §7); the tag lands in that base image's own build
+// (§8), not in this gate. validate reads no record for such a workflow either,
+// so the two commands agree about what they cannot see. The skew half of the
+// same gate still judges the base image by its ref, so a clone workflow that
+// writes governance: is not left unjudged.
+func TestCloneWorkflowOnACoreRecordDoesNotWarn(t *testing.T) {
 	f := newCloudFixture(t)
+	isolateCache(t)
 	f.appendConfig(t, "base_images: {base: "+releaseTier+"}\n")
 	configSkewCheckout(t, f, configSkewHead+"governance: { review_ratio: 3 }\n"+
 		"workflows:\n  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n")
 	writeEditionBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseTier, EditionCore)
 	_, errOut, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
 	if err != nil {
-		t.Fatalf("a core job image must be warned about, never refused: %v", err)
+		t.Fatalf("a clone workflow writing governance: is judged by its base image, and that image is current: %v", err)
 	}
-	for _, want := range []string{
-		"the job image of acme/other workflow svc is a core build of fugaro",
-		"reads the governance: block and ignores it",
-		"fugaro update --base base",
-	} {
-		if !strings.Contains(errOut, want) {
-			t.Errorf("stderr %q lacks %q", errOut, want)
-		}
+	if strings.Contains(errOut, "core build of fugaro") {
+		t.Errorf("stderr %q warns about a record the clone job's image does not answer to", errOut)
 	}
 	if n := len(f.run.Executions()); n != 1 {
 		t.Fatalf("%d executions, want the run launched", n)
+	}
+
+	_, valErr, err := execute(t, "validate")
+	if err != nil {
+		t.Fatalf("validate judges the same file: %v", err)
+	}
+	if strings.Contains(valErr, "core build of fugaro") {
+		t.Errorf("validate warned about a record no clone workflow's image answers to: %q", valErr)
+	}
+	if !strings.Contains(valErr, "needs fugaro "+governanceSince) {
+		t.Errorf("validate stderr %q lacks the skew half", valErr)
 	}
 }
 

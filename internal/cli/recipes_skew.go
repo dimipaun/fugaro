@@ -1203,34 +1203,29 @@ func checkGovernanceImage(ctx context.Context, env *cloudEnv, slug string, spec 
 			return err
 		}
 	}
-	warnCoreJobImage(ctx, env, slug, spec, fromRepo, fromLayer, false, warn)
+	warnCoreJobImage(ctx, env, slug, spec, fromRepo, fromLayer, warn)
 	return nil
 }
 
 // checkCloneGovernanceImage is checkGovernanceImage for a checkout: clone
-// workflow: see checkCloneImageSince.
+// workflow: see checkCloneImageSince. It has that gate's skew half and no
+// edition half: the edition is a field of the workflow's build record, a clone
+// workflow is never built and so has none (checkCloneImageSince's own comment,
+// and baseBranchSkew reaches the same conclusion about the same image), and a
+// record left under its key by an earlier life as a base-kind workflow
+// describes an image this job does not run. What it runs is the installation's
+// base image itself, whose edition no record carries — it is built and
+// published by the release, not rendered into one — so it is unknown, and an
+// unknown image warns about nothing (design ee-boundary-moves §7). That
+// image's own build is where the tag lands (§8: images/base/Dockerfile is
+// built with -tags ee), which is the answer for this shape of job.
 func checkCloneGovernanceImage(ctx context.Context, env *cloudEnv, spec *task.Spec, warn io.Writer) error {
 	fromRepo, fromLayer := governanceLaunchSources(ctx, env, spec)
-	if !fromRepo && !fromLayer && spec.Tier == "" {
+	if !fromRepo && !fromLayer {
 		return nil
 	}
-	if fromRepo || fromLayer {
-		subject, alt := governanceSubject(spec.Repo, fromRepo, fromLayer)
-		if err := checkCloneImageSince(env.lc, spec, governanceSince, subject, governanceKnows(fromRepo, fromLayer), "; or "+alt, warn); err != nil {
-			return err
-		}
-	}
-	// The edition half is judged on the workflow's own build record, the
-	// object checkImageSinceDev reads, so both shapes of this gate answer from
-	// one place. A checkout: clone workflow is never built and so normally has
-	// no record: its job image runs the installation's base image, which
-	// carries none either, and an image no record can speak for is unknown and
-	// gets no warning (design ee-boundary-moves §7). The slug is the launch's
-	// own, resolved the way repoSlugOf resolves it for every other command.
-	if slug, err := repoSlugOf(ctx, env.lc, spec.Repo); err == nil {
-		warnCoreJobImage(ctx, env, slug, spec, fromRepo, fromLayer, true, warn)
-	}
-	return nil
+	subject, alt := governanceSubject(spec.Repo, fromRepo, fromLayer)
+	return checkCloneImageSince(env.lc, spec, governanceSince, subject, governanceKnows(fromRepo, fromLayer), "; or "+alt, warn)
 }
 
 // warnCoreJobImage warns when the build record of slug's workflow reports a
@@ -1247,7 +1242,14 @@ func checkCloneGovernanceImage(ctx context.Context, env *cloudEnv, spec *task.Sp
 // object and through the same bucket, and a failure to read is dropped: this
 // warning's only power is to say something, and every gate that must hold has
 // held by the time it is called.
-func warnCoreJobImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, fromRepo, fromLayer, clone bool, warn io.Writer) {
+//
+// An image the gates refuse is not warned about either: a warning describes
+// what a run would do with what it was given, and a refused launch has no run.
+// Both this gate's skew half and run.go's own tier gate judge the record's
+// base release against governanceSince, and a record that cannot say which
+// base it was built from is refused by both, so a record that predates the
+// release or names no base is left to the refusal.
+func warnCoreJobImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, fromRepo, fromLayer bool, warn io.Writer) {
 	if !fromRepo && !fromLayer && spec.Tier == "" {
 		return
 	}
@@ -1260,7 +1262,10 @@ func warnCoreJobImage(ctx context.Context, env *cloudEnv, slug string, spec *tas
 		return
 	}
 	rec, err := imagecheck.ParseRecord(data)
-	if err != nil || rec.Edition != EditionCore {
+	if err != nil || rec.Edition != EditionCore || rec.BaseRef == "" {
+		return
+	}
+	if rel, known := releaseOf(rec.BaseRef); known && imagePredates(rel, governanceSince) {
 		return
 	}
 	var asks []string
@@ -1270,12 +1275,8 @@ func warnCoreJobImage(ctx context.Context, env *cloudEnv, slug string, spec *tas
 	if spec.Tier != "" {
 		asks = append(asks, "the run's tier")
 	}
-	fix := fmt.Sprintf("Run fugaro image refresh --repo %s --workflow %s in its checkout, in your own terminal window, to have it enforced", spec.Repo, spec.Workflow)
-	if clone {
-		fix = "Run fugaro update --base base in your own terminal window to move the installation's base image to a build that reads it"
-	}
-	fmt.Fprintf(warn, "warning: the job image of %s workflow %s is a core build of fugaro: it reads %s and ignores it, so nothing it sets is enforced by this run. %s\n",
-		spec.Repo, spec.Workflow, strings.Join(asks, " and "), fix)
+	fmt.Fprintf(warn, "warning: the job image of %s workflow %s is a core build of fugaro: it reads %s and ignores it, so nothing it sets is enforced by this run. Run fugaro image refresh --repo %s --workflow %s in its checkout, in your own terminal window, to have it enforced\n",
+		spec.Repo, spec.Workflow, strings.Join(asks, " and "), spec.Repo, spec.Workflow)
 }
 
 // governanceImageWarnings is validate's half of checkGovernanceImage, and has
@@ -1296,11 +1297,13 @@ func warnCoreJobImage(ctx context.Context, env *cloudEnv, slug string, spec *tas
 // would simply ignore what the operator set. editionOf answers a workflow's job
 // image edition and whether a record said so at all — an image no record speaks
 // for is unknown and warns about nothing (design ee-boundary-moves §7) — and
-// unresolved is why it could not be asked ("" when it could). A caller that
-// could not ask gets a note rather than silence, so a file whose block needs
-// enforcing is not left looking fine by a command that never looked; the first
-// half prints either way, since it is a statement about the file.
-func governanceImageWarnings(c *config.Config, editionOf func(workflow string) (string, bool), unresolved string) (warnings, notes []config.Problem) {
+// note is the sentence to print when there is no editionOf to ask ("" when
+// there is one). A caller that could not ask gets a note rather than silence,
+// so a file whose block needs enforcing is not left looking fine by a command
+// that never looked; the first half prints either way, since it is a statement
+// about the file. Only the workflows a record can speak for are asked at all:
+// governanceEditionWorkflows.
+func governanceImageWarnings(c *config.Config, editionOf func(workflow string) (string, bool), note string) (warnings, notes []config.Problem) {
 	fromRepo, fromLayer := c.RepoGovernanceSet, c.Layer.SetsGovernance()
 	if !fromRepo && !fromLayer {
 		return nil, nil
@@ -1314,17 +1317,34 @@ func governanceImageWarnings(c *config.Config, editionOf func(workflow string) (
 	}
 	warnings = append(warnings, config.Problem{Path: "governance", Message: subject + " needs fugaro " + governanceSince + " or later in the job image that runs it, and in the CLI of everyone who reads this file: an older runner decodes the file strictly and refuses the run at bootstrap. Run fugaro update --base base in your own terminal window to move the installation's base image, and fugaro image refresh for a workflow's own derived image"})
 	if editionOf == nil {
-		if unresolved != "" {
-			notes = append(notes, config.Problem{Path: "governance", Message: "the edition of the job images is unresolved: " + unresolved + ", so whether their runners read the governance: block is not known here"})
+		if note != "" {
+			notes = append(notes, config.Problem{Path: "governance", Message: note})
 		}
 		return warnings, notes
 	}
-	for _, name := range slices.Sorted(maps.Keys(c.Workflows)) {
+	for _, name := range governanceEditionWorkflows(c) {
 		if edition, known := editionOf(name); known && edition == EditionCore {
 			warnings = append(warnings, config.Problem{Path: "workflow " + name, Message: "is a core build of fugaro: the job image of workflow " + name + " reads the governance: block and ignores it, so nothing it sets is enforced by a run of this repository. Run fugaro image refresh in that workflow's checkout to have it enforced"})
 		}
 	}
 	return warnings, notes
+}
+
+// governanceEditionWorkflows are the file's workflows whose job image a build
+// record can speak for. A checkout: clone workflow is not one of them: it is
+// never built, so it has no record of its own, and what its job runs is the
+// installation's base image, which no record describes (design
+// ee-boundary-moves §7). A record left under its key by an earlier life as a
+// base-kind workflow describes an image the job does not run, so reading it
+// would warn about the wrong image rather than about none.
+func governanceEditionWorkflows(c *config.Config) []string {
+	var out []string
+	for _, name := range slices.Sorted(maps.Keys(c.Workflows)) {
+		if c.Workflows[name].Checkout != config.CheckoutClone {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // governanceLaunchSources reports, for the launch's governanceSince gate,

@@ -826,3 +826,34 @@ func TestImageRecordKeepsSealedBudgetToken(t *testing.T) {
 		t.Fatalf("the recorded record lost sealed_budget_token: %+v", rec)
 	}
 }
+
+// TestImageRecordKeepsEdition: the same for the edition, which is the whole
+// carrier of the launch-side warning a core job image gets (design
+// ee-boundary-moves §7): the record step re-marshals what render and gate read
+// and wrote, so a field dropped there would silence every edition warning with
+// nothing else failing. The test binary is a build without the ee tag, which is
+// what a core image's own render step writes.
+//
+// Mutation (run, restored): clear rec.Edition in the record step — this test
+// fails.
+func TestImageRecordKeepsEdition(t *testing.T) {
+	checkoutWith(t, npmFiles())
+	testutil.Git(t, ".", "remote", "set-url", "origin", "https://bitbucket.org/acme/app.git")
+	ws, bucket := t.TempDir(), "file://"+t.TempDir()
+	if _, stderr, err := execute(t, "image", "render", "--workflow", "app", "--cloud-outputs", ws); err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	testutil.WriteFiles(t, ws, map[string]string{"image-digest": "sha256:" + strings.Repeat("1", 64) + "\n", "base-digest": "b@sha256:" + strings.Repeat("2", 64) + "\n"})
+	slug := mustSlug("bitbucket", "acme/app")
+	if _, _, err := execute(t, "image", "gate", "--record", filepath.Join(ws, "record.json"), "--slug", slug, "--bucket", bucket); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execute(t, "image", "record", "--in", filepath.Join(ws, "record.json"), "--digest-from", filepath.Join(ws, "image-digest"),
+		"--base-digest-from", filepath.Join(ws, "base-digest"), "--image", "img", "--base", "b:1", "--build-id", "b1", "--slug", slug, "--bucket", bucket); err != nil {
+		t.Fatal(err)
+	}
+	rec := readImageRecord(t, bucket)
+	if rec == nil || rec.Edition != EditionCore {
+		t.Fatalf("the recorded record's edition = %+v, want %q", rec, EditionCore)
+	}
+}
